@@ -35,7 +35,6 @@ SYSTEM_PRESETS: list[AgentProfile] = [
             "en": "General-purpose assistant with all skills",
         },
     ),
-
     # ── 内容创作 ──────────────────────────────────────────────────────
     AgentProfile(
         id="content-creator",
@@ -43,10 +42,16 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="多平台内容策划与发布，擅长小红书/公众号/抖音文案",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@xiaohongshu-creator", "openakita/skills@wechat-article", "openakita/skills@chinese-writing",
-            "openakita/skills@content-research-writer", "openakita/skills@douyin-tool", "openakita/skills@summarizer",
-            "jimliu/baoyu-skills@baoyu-image-gen", "jimliu/baoyu-skills@baoyu-cover-image",
-            "jimliu/baoyu-skills@baoyu-article-illustrator", "jimliu/baoyu-skills@baoyu-infographic",
+            "openakita/skills@xiaohongshu-creator",
+            "openakita/skills@wechat-article",
+            "openakita/skills@chinese-writing",
+            "openakita/skills@content-research-writer",
+            "openakita/skills@douyin-tool",
+            "openakita/skills@summarizer",
+            "jimliu/baoyu-skills@baoyu-image-gen",
+            "jimliu/baoyu-skills@baoyu-cover-image",
+            "jimliu/baoyu-skills@baoyu-article-illustrator",
+            "jimliu/baoyu-skills@baoyu-infographic",
             "jimliu/baoyu-skills@baoyu-format-markdown",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
@@ -72,9 +77,13 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="短视频/长视频脚本策划与分镜",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@douyin-tool", "openakita/skills@bilibili-watcher", "openakita/skills@youtube-summarizer",
-            "openakita/skills@content-research-writer", "openakita/skills@summarizer",
-            "jimliu/baoyu-skills@baoyu-image-gen", "jimliu/baoyu-skills@baoyu-slide-deck",
+            "openakita/skills@douyin-tool",
+            "openakita/skills@bilibili-watcher",
+            "openakita/skills@youtube-summarizer",
+            "openakita/skills@content-research-writer",
+            "openakita/skills@summarizer",
+            "jimliu/baoyu-skills@baoyu-image-gen",
+            "jimliu/baoyu-skills@baoyu-slide-deck",
             "jimliu/baoyu-skills@baoyu-cover-image",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
@@ -99,9 +108,12 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="搜索引擎优化内容写作，提升搜索排名",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@content-research-writer", "openakita/skills@chinese-writing",
-            "openakita/skills@apify-scraper", "openakita/skills@summarizer",
-            "jimliu/baoyu-skills@baoyu-url-to-markdown", "jimliu/baoyu-skills@baoyu-format-markdown",
+            "openakita/skills@content-research-writer",
+            "openakita/skills@chinese-writing",
+            "openakita/skills@apify-scraper",
+            "openakita/skills@summarizer",
+            "jimliu/baoyu-skills@baoyu-url-to-markdown",
+            "jimliu/baoyu-skills@baoyu-format-markdown",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
         custom_prompt=(
@@ -125,8 +137,10 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="中文长篇小说/故事创作，人物塑造与情节构建",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@chinese-novelist", "openakita/skills@chinese-writing",
-            "jimliu/baoyu-skills@baoyu-comic", "jimliu/baoyu-skills@baoyu-image-gen",
+            "openakita/skills@chinese-novelist",
+            "openakita/skills@chinese-writing",
+            "jimliu/baoyu-skills@baoyu-comic",
+            "jimliu/baoyu-skills@baoyu-image-gen",
             "jimliu/baoyu-skills@baoyu-article-illustrator",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
@@ -145,7 +159,6 @@ SYSTEM_PRESETS: list[AgentProfile] = [
             "en": "Chinese novel and story writing",
         },
     ),
-
     # ── 企业办公 ──────────────────────────────────────────────────────
     AgentProfile(
         id="office-doc",
@@ -153,8 +166,12 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="办公文档处理专家，擅长 Word/PPT/Excel",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@docx", "openakita/skills@pptx", "openakita/skills@xlsx", "openakita/skills@pdf",
-            "openakita/skills@ppt-creator", "openakita/skills@translate-pdf",
+            "openakita/skills@docx",
+            "openakita/skills@pptx",
+            "openakita/skills@xlsx",
+            "openakita/skills@pdf",
+            "openakita/skills@ppt-creator",
+            "openakita/skills@translate-pdf",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
         custom_prompt=(
@@ -178,8 +195,11 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="招聘/考勤/制度起草，企业人力资源管理",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@docx", "openakita/skills@xlsx", "openakita/skills@pdf",
-            "openakita/skills@chinese-writing", "openakita/skills@internal-comms",
+            "openakita/skills@docx",
+            "openakita/skills@xlsx",
+            "openakita/skills@pdf",
+            "openakita/skills@chinese-writing",
+            "openakita/skills@internal-comms",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
         custom_prompt=(
@@ -203,8 +223,10 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="合同审查/合规分析/法规检索",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@docx", "openakita/skills@pdf",
-            "openakita/skills@translate-pdf", "openakita/skills@chinese-writing",
+            "openakita/skills@docx",
+            "openakita/skills@pdf",
+            "openakita/skills@translate-pdf",
+            "openakita/skills@chinese-writing",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
         custom_prompt=(
@@ -229,11 +251,16 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="品牌推广/活动策划/市场分析",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@content-research-writer", "openakita/skills@xiaohongshu-creator",
-            "openakita/skills@docx", "openakita/skills@pptx",
-            "openakita/skills@apify-scraper", "openakita/skills@summarizer",
-            "jimliu/baoyu-skills@baoyu-image-gen", "jimliu/baoyu-skills@baoyu-infographic",
-            "jimliu/baoyu-skills@baoyu-cover-image", "jimliu/baoyu-skills@baoyu-slide-deck",
+            "openakita/skills@content-research-writer",
+            "openakita/skills@xiaohongshu-creator",
+            "openakita/skills@docx",
+            "openakita/skills@pptx",
+            "openakita/skills@apify-scraper",
+            "openakita/skills@summarizer",
+            "jimliu/baoyu-skills@baoyu-image-gen",
+            "jimliu/baoyu-skills@baoyu-infographic",
+            "jimliu/baoyu-skills@baoyu-cover-image",
+            "jimliu/baoyu-skills@baoyu-slide-deck",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
         custom_prompt=(
@@ -257,8 +284,10 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="智能客服/FAQ/工单处理",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@knowledge-capture", "openakita/skills@chinese-writing",
-            "openakita/skills@docx", "openakita/skills@summarizer",
+            "openakita/skills@knowledge-capture",
+            "openakita/skills@chinese-writing",
+            "openakita/skills@docx",
+            "openakita/skills@summarizer",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
         custom_prompt=(
@@ -283,9 +312,13 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="项目计划/进度追踪/周报管理",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@xlsx", "openakita/skills@docx", "openakita/skills@pptx",
-            "openakita/skills@todoist-task", "openakita/skills@pretty-mermaid",
-            "openakita/skills@github-automation", "jimliu/baoyu-skills@baoyu-infographic",
+            "openakita/skills@xlsx",
+            "openakita/skills@docx",
+            "openakita/skills@pptx",
+            "openakita/skills@todoist-task",
+            "openakita/skills@pretty-mermaid",
+            "openakita/skills@github-automation",
+            "jimliu/baoyu-skills@baoyu-infographic",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
         custom_prompt=(
@@ -303,7 +336,6 @@ SYSTEM_PRESETS: list[AgentProfile] = [
             "en": "Project planning, progress tracking, weekly reports",
         },
     ),
-
     # ── 教育辅助 ──────────────────────────────────────────────────────
     AgentProfile(
         id="language-tutor",
@@ -311,8 +343,10 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="外语学习/翻译/口语练习",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@translate-pdf", "openakita/skills@chinese-writing",
-            "openakita/skills@summarizer", "jimliu/baoyu-skills@baoyu-url-to-markdown",
+            "openakita/skills@translate-pdf",
+            "openakita/skills@chinese-writing",
+            "openakita/skills@summarizer",
+            "jimliu/baoyu-skills@baoyu-url-to-markdown",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
         custom_prompt=(
@@ -337,9 +371,14 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="论文写作/文献综述/引用管理",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@content-research-writer", "openakita/skills@pdf", "openakita/skills@docx",
-            "openakita/skills@chinese-writing", "openakita/skills@translate-pdf", "openakita/skills@summarizer",
-            "jimliu/baoyu-skills@baoyu-infographic", "jimliu/baoyu-skills@baoyu-format-markdown",
+            "openakita/skills@content-research-writer",
+            "openakita/skills@pdf",
+            "openakita/skills@docx",
+            "openakita/skills@chinese-writing",
+            "openakita/skills@translate-pdf",
+            "openakita/skills@summarizer",
+            "jimliu/baoyu-skills@baoyu-infographic",
+            "jimliu/baoyu-skills@baoyu-format-markdown",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
         custom_prompt=(
@@ -362,7 +401,11 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         name="数学辅导",
         description="数学解题/公式推导/概念讲解",
         type=AgentType.SYSTEM,
-        skills=["openakita/skills@pretty-mermaid", "openakita/skills@xlsx", "openakita/skills@canvas-design"],
+        skills=[
+            "openakita/skills@pretty-mermaid",
+            "openakita/skills@xlsx",
+            "openakita/skills@canvas-design",
+        ],
         skills_mode=SkillsMode.INCLUSIVE,
         custom_prompt=(
             "你是数学教学专家。擅长解题思路讲解、公式推导、概念图示。"
@@ -380,7 +423,6 @@ SYSTEM_PRESETS: list[AgentProfile] = [
             "en": "Math problem solving, formula derivation, concept explanation",
         },
     ),
-
     # ── 生活效率 ──────────────────────────────────────────────────────
     AgentProfile(
         id="schedule-manager",
@@ -388,9 +430,12 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="日程安排/提醒/会议纪要",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@todoist-task", "openakita/skills@datetime-tool",
-            "openakita/skills@google-calendar-automation", "openakita/skills@gmail-automation",
-            "openakita/skills@docx", "openakita/skills@summarizer",
+            "openakita/skills@todoist-task",
+            "openakita/skills@datetime-tool",
+            "openakita/skills@google-calendar-automation",
+            "openakita/skills@gmail-automation",
+            "openakita/skills@docx",
+            "openakita/skills@summarizer",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
         custom_prompt=(
@@ -414,9 +459,14 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="读书笔记/知识库整理/Obsidian 管理",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@obsidian-skills", "openakita/skills@notebooklm", "openakita/skills@knowledge-capture",
-            "openakita/skills@summarizer", "openakita/skills@pdf", "openakita/skills@translate-pdf",
-            "jimliu/baoyu-skills@baoyu-url-to-markdown", "jimliu/baoyu-skills@baoyu-format-markdown",
+            "openakita/skills@obsidian-skills",
+            "openakita/skills@notebooklm",
+            "openakita/skills@knowledge-capture",
+            "openakita/skills@summarizer",
+            "openakita/skills@pdf",
+            "openakita/skills@translate-pdf",
+            "jimliu/baoyu-skills@baoyu-url-to-markdown",
+            "jimliu/baoyu-skills@baoyu-format-markdown",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
         custom_prompt=(
@@ -440,14 +490,15 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="语雀文档/知识库/周报管理",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@yuque-skills", "openakita/skills@chinese-writing",
-            "openakita/skills@summarizer", "openakita/skills@content-research-writer",
+            "openakita/skills@yuque-skills",
+            "openakita/skills@chinese-writing",
+            "openakita/skills@summarizer",
+            "openakita/skills@content-research-writer",
             "jimliu/baoyu-skills@baoyu-format-markdown",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
         custom_prompt=(
-            "你是语雀文档管理专家。帮助用户在语雀平台上创建文档、"
-            "整理知识库、生成周报和团队报告。"
+            "你是语雀文档管理专家。帮助用户在语雀平台上创建文档、整理知识库、生成周报和团队报告。"
         ),
         icon="📝",
         color="#00B96B",
@@ -460,7 +511,6 @@ SYSTEM_PRESETS: list[AgentProfile] = [
             "en": "Yuque docs, knowledge base, weekly reports",
         },
     ),
-
     # ── 开发运维 ──────────────────────────────────────────────────────
     AgentProfile(
         id="code-assistant",
@@ -468,14 +518,21 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="代码开发助手，擅长编码、调试和 Git 操作",
         type=AgentType.SYSTEM,
         skills=[
-            "obra/superpowers@using-superpowers", "obra/superpowers@brainstorming",
-            "obra/superpowers@writing-plans", "obra/superpowers@executing-plans",
-            "obra/superpowers@test-driven-development", "obra/superpowers@systematic-debugging",
-            "obra/superpowers@verification-before-completion", "obra/superpowers@finishing-a-development-branch",
-            "obra/superpowers@requesting-code-review", "obra/superpowers@receiving-code-review",
-            "obra/superpowers@using-git-worktrees", "obra/superpowers@subagent-driven-development",
+            "obra/superpowers@using-superpowers",
+            "obra/superpowers@brainstorming",
+            "obra/superpowers@writing-plans",
+            "obra/superpowers@executing-plans",
+            "obra/superpowers@test-driven-development",
+            "obra/superpowers@systematic-debugging",
+            "obra/superpowers@verification-before-completion",
+            "obra/superpowers@finishing-a-development-branch",
+            "obra/superpowers@requesting-code-review",
+            "obra/superpowers@receiving-code-review",
+            "obra/superpowers@using-git-worktrees",
+            "obra/superpowers@subagent-driven-development",
             "obra/superpowers@dispatching-parallel-agents",
-            "openakita/skills@code-review", "openakita/skills@github-automation",
+            "openakita/skills@code-review",
+            "openakita/skills@github-automation",
             "openakita/skills@changelog-generator",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
@@ -501,12 +558,20 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         type=AgentType.SYSTEM,
         skills=[
             "news-search",
-            "browser-click", "browser-get-content", "browser-list-tabs",
-            "browser-navigate", "browser-new-tab", "browser-open",
-            "browser-screenshot", "browser-status", "browser-switch-tab",
-            "browser-task", "browser-type",
+            "browser-click",
+            "browser-get-content",
+            "browser-list-tabs",
+            "browser-navigate",
+            "browser-new-tab",
+            "browser-open",
+            "browser-screenshot",
+            "browser-status",
+            "browser-switch-tab",
+            "browser-task",
+            "browser-type",
             "desktop-screenshot",
-            "openakita/skills@apify-scraper", "openakita/skills@summarizer",
+            "openakita/skills@apify-scraper",
+            "openakita/skills@summarizer",
             "jimliu/baoyu-skills@baoyu-url-to-markdown",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
@@ -533,8 +598,10 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="数据分析师，擅长数据处理、可视化和统计",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@xlsx", "openakita/skills@pdf",
-            "openakita/skills@pretty-mermaid", "openakita/skills@apify-scraper",
+            "openakita/skills@xlsx",
+            "openakita/skills@pdf",
+            "openakita/skills@pretty-mermaid",
+            "openakita/skills@apify-scraper",
             "openakita/skills@canvas-design",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
@@ -559,11 +626,15 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="CI/CD 流水线、容器编排、监控告警",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@github-automation", "openakita/skills@changelog-generator",
+            "openakita/skills@github-automation",
+            "openakita/skills@changelog-generator",
             "openakita/skills@code-review",
-            "obra/superpowers@systematic-debugging", "obra/superpowers@verification-before-completion",
-            "obra/superpowers@using-git-worktrees", "obra/superpowers@finishing-a-development-branch",
-            "obra/superpowers@writing-plans", "obra/superpowers@executing-plans",
+            "obra/superpowers@systematic-debugging",
+            "obra/superpowers@verification-before-completion",
+            "obra/superpowers@using-git-worktrees",
+            "obra/superpowers@finishing-a-development-branch",
+            "obra/superpowers@writing-plans",
+            "obra/superpowers@executing-plans",
         ],
         skills_mode=SkillsMode.INCLUSIVE,
         custom_prompt=(
@@ -587,9 +658,12 @@ SYSTEM_PRESETS: list[AgentProfile] = [
         description="系统设计/架构图/技术选型",
         type=AgentType.SYSTEM,
         skills=[
-            "openakita/skills@pretty-mermaid", "openakita/skills@ppt-creator",
-            "openakita/skills@pptx", "openakita/skills@docx",
-            "obra/superpowers@brainstorming", "obra/superpowers@writing-plans",
+            "openakita/skills@pretty-mermaid",
+            "openakita/skills@ppt-creator",
+            "openakita/skills@pptx",
+            "openakita/skills@docx",
+            "obra/superpowers@brainstorming",
+            "obra/superpowers@writing-plans",
             "obra/superpowers@executing-plans",
             "jimliu/baoyu-skills@baoyu-infographic",
         ],
@@ -633,10 +707,7 @@ def deploy_system_presets(store: ProfileStore) -> int:
             existing = store.get(preset.id)
             if existing and existing.is_system:
                 if existing.user_customized:
-                    logger.debug(
-                        f"Skipping customized preset: {preset.id} "
-                        f"(user_customized=True)"
-                    )
+                    logger.debug(f"Skipping customized preset: {preset.id} (user_customized=True)")
                     continue
                 needs_upgrade = (
                     sorted(existing.skills) != sorted(preset.skills)
@@ -659,10 +730,7 @@ def deploy_system_presets(store: ProfileStore) -> int:
                     store._cache[preset.id] = updated
                     store._persist(updated)
                     deployed += 1
-                    logger.info(
-                        f"Upgraded system preset: {preset.id} "
-                        f"(skills/category synced)"
-                    )
+                    logger.info(f"Upgraded system preset: {preset.id} (skills/category synced)")
     if deployed:
         logger.info(f"Deployed/upgraded {deployed} system preset profile(s)")
     return deployed
@@ -686,6 +754,4 @@ def ensure_presets_on_mode_enable(agents_dir: str | Path) -> None:
     store = get_profile_store(agents_dir)
     deployed = deploy_system_presets(store)
     if deployed:
-        logger.info(
-            f"Multi-agent mode enabled: deployed {deployed} preset(s) to {agents_dir}"
-        )
+        logger.info(f"Multi-agent mode enabled: deployed {deployed} preset(s) to {agents_dir}")

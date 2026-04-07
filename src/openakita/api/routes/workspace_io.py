@@ -21,6 +21,7 @@ router = APIRouter()
 def _project_root() -> Path:
     try:
         from openakita.config import settings
+
         return Path(settings.project_root)
     except Exception:
         return Path.cwd()
@@ -138,9 +139,7 @@ async def import_backup(body: ImportRequest):
         }
         if skipped:
             resp["skipped_files"] = result.get("skipped_files", [])
-            resp["message"] = (
-                f"{skipped} 个文件因被占用而跳过，建议重启后重新还原"
-            )
+            resp["message"] = f"{skipped} 个文件因被占用而跳过，建议重启后重新还原"
         return resp
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -227,6 +226,7 @@ def _register_backup_task(scheduler: object, settings: dict) -> None:
         deletable=False,
     )
     import asyncio
+
     try:
         loop = asyncio.get_running_loop()
         loop.create_task(scheduler.add_task(task))
@@ -237,4 +237,5 @@ def _register_backup_task(scheduler: object, settings: dict) -> None:
 
 def _get_cron_trigger_type():
     from openakita.scheduler.task import TriggerType
+
     return TriggerType.CRON

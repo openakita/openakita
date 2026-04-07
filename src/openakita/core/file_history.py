@@ -134,7 +134,9 @@ class FileHistoryManager:
 
         logger.debug(
             "Created snapshot %s for message %s (%d files)",
-            snapshot_id, message_id, len(snapshot.tracked_files),
+            snapshot_id,
+            message_id,
+            len(snapshot.tracked_files),
         )
         return snapshot_id
 
@@ -160,7 +162,7 @@ class FileHistoryManager:
             return []
 
         restored: list[str] = []
-        snapshots_to_rewind = self._snapshots[target_idx + 1:]
+        snapshots_to_rewind = self._snapshots[target_idx + 1 :]
 
         for snap in reversed(snapshots_to_rewind):
             for abs_path, info in snap.tracked_files.items():
@@ -183,7 +185,9 @@ class FileHistoryManager:
 
         logger.info(
             "Rewound to message %s: restored %d files, removed %d snapshots",
-            target_message_id, len(restored), len(snapshots_to_rewind),
+            target_message_id,
+            len(restored),
+            len(snapshots_to_rewind),
         )
         return restored
 

@@ -17,9 +17,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _VALID_ACTIONS = (
-    "get_resources", "list_orgs", "get_org",
-    "preview", "create", "create_from_template",
-    "update_org", "delete_org",
+    "get_resources",
+    "list_orgs",
+    "get_org",
+    "preview",
+    "create",
+    "create_from_template",
+    "update_org",
+    "delete_org",
 )
 
 
@@ -52,10 +57,7 @@ class OrgSetupHandler:
             return await self._update_org(params)
         elif action == "delete_org":
             return await self._delete_org(params)
-        return (
-            f"❌ Unknown action: {action}. "
-            f"Valid: {', '.join(_VALID_ACTIONS)}"
-        )
+        return f"❌ Unknown action: {action}. Valid: {', '.join(_VALID_ACTIONS)}"
 
     # ------------------------------------------------------------------
     # get_resources
@@ -67,17 +69,20 @@ class OrgSetupHandler:
         preset_ids: set[str] = set()
         try:
             from ...agents.presets import SYSTEM_PRESETS
+
             agents = []
             for p in SYSTEM_PRESETS:
                 if getattr(p, "hidden", False):
                     continue
-                agents.append({
-                    "id": p.id,
-                    "name": p.name,
-                    "description": p.description,
-                    "category": getattr(p, "category", "general"),
-                    "skills_summary": p.skills[:5] if p.skills else ["all (全能)"],
-                })
+                agents.append(
+                    {
+                        "id": p.id,
+                        "name": p.name,
+                        "description": p.description,
+                        "category": getattr(p, "category", "general"),
+                        "skills_summary": p.skills[:5] if p.skills else ["all (全能)"],
+                    }
+                )
                 preset_ids.add(p.id)
             result["agents"] = agents
         except Exception as e:
@@ -86,18 +91,21 @@ class OrgSetupHandler:
 
         try:
             from ...agents.profile import get_profile_store
+
             store = get_profile_store()
             custom_agents = []
             for p in store.list_all(include_ephemeral=False, include_hidden=False):
                 if p.id in preset_ids or p.is_system:
                     continue
-                custom_agents.append({
-                    "id": p.id,
-                    "name": p.name,
-                    "description": p.description or "",
-                    "category": "custom",
-                    "skills_summary": p.skills[:5] if p.skills else ["all (全能)"],
-                })
+                custom_agents.append(
+                    {
+                        "id": p.id,
+                        "name": p.name,
+                        "description": p.description or "",
+                        "category": "custom",
+                        "skills_summary": p.skills[:5] if p.skills else ["all (全能)"],
+                    }
+                )
             if custom_agents:
                 result["custom_agents"] = custom_agents
         except Exception as e:
@@ -115,6 +123,7 @@ class OrgSetupHandler:
 
         try:
             from ...orgs.tool_categories import TOOL_CATEGORIES
+
             result["tool_categories"] = dict(TOOL_CATEGORIES.items())
         except Exception:
             result["tool_categories"] = {}
@@ -155,8 +164,7 @@ class OrgSetupHandler:
                 f"边: {o.get('edge_count', 0)}"
             )
         lines.append(
-            "\n使用 get_org 查看某个组织的完整结构，"
-            "使用 update_org 修改，使用 delete_org 删除。"
+            "\n使用 get_org 查看某个组织的完整结构，使用 update_org 修改，使用 delete_org 删除。"
         )
         return "\n".join(lines)
 
@@ -225,11 +233,9 @@ class OrgSetupHandler:
                 src = self._find_title_by_node_id(org.nodes, e.source)
                 tgt = self._find_title_by_node_id(org.nodes, e.target)
                 etype = e.edge_type.value if hasattr(e.edge_type, "value") else e.edge_type
-                label = f" \"{e.label}\"" if getattr(e, "label", "") else ""
+                label = f' "{e.label}"' if getattr(e, "label", "") else ""
                 bidir = "↔" if getattr(e, "bidirectional", True) else "→"
-                lines.append(
-                    f"- `{e.id}` {src} {bidir} {tgt} ({etype}{label})"
-                )
+                lines.append(f"- `{e.id}` {src} {bidir} {tgt} ({etype}{label})")
 
         lines.append(
             "\n---\n"
@@ -272,8 +278,7 @@ class OrgSetupHandler:
             tools_str = f" 工具: {', '.join(tools)}" if tools else ""
 
             lines.append(
-                f"{indent}- **{n['role_title']}**{dept_str} → Agent: {agent_label}"
-                f"{tools_str}"
+                f"{indent}- **{n['role_title']}**{dept_str} → Agent: {agent_label}{tools_str}"
             )
 
         h_edges = [e for e in edges if e.get("edge_type") == "hierarchy"]
@@ -292,7 +297,7 @@ class OrgSetupHandler:
                 src = self._find_title_by_id(nodes, e["source"])
                 tgt = self._find_title_by_id(nodes, e["target"])
                 etype = e.get("edge_type", "collaborate")
-                label = f" \"{e['label']}\"" if e.get("label") else ""
+                label = f' "{e["label"]}"' if e.get("label") else ""
                 bidir = "↔" if e.get("bidirectional", True) else "→"
                 lines.append(f"- {src} {bidir} {tgt} ({etype}{label})")
 
@@ -395,7 +400,8 @@ class OrgSetupHandler:
         # --- 1. Top-level field updates ---
         update_fields = params.get("update_fields") or {}
         safe_fields = {
-            k: v for k, v in update_fields.items()
+            k: v
+            for k, v in update_fields.items()
             if k not in ("id", "created_at", "nodes", "edges", "status")
         }
 
@@ -416,16 +422,15 @@ class OrgSetupHandler:
 
         # Clean edges referencing removed nodes
         edges_list = [
-            e.to_dict() for e in org.edges
+            e.to_dict()
+            for e in org.edges
             if e.source not in remove_ids and e.target not in remove_ids
         ]
 
         # --- 3. Update / add nodes ---
         from ...orgs.tool_categories import get_avatar_for_role, get_preset_for_role
 
-        title_to_id: dict[str, str] = {
-            nd["role_title"]: nid for nid, nd in nodes_dict.items()
-        }
+        title_to_id: dict[str, str] = {nd["role_title"]: nid for nid, nd in nodes_dict.items()}
         new_edges: list[dict] = []
 
         for upd in params.get("update_nodes", []):
@@ -446,8 +451,13 @@ class OrgSetupHandler:
                 # Merge update into existing node
                 updated_fields = []
                 for field in (
-                    "role_title", "role_goal", "department", "level",
-                    "agent_profile_id", "external_tools", "custom_prompt",
+                    "role_title",
+                    "role_goal",
+                    "department",
+                    "level",
+                    "agent_profile_id",
+                    "external_tools",
+                    "custom_prompt",
                 ):
                     if field in upd and upd[field] is not None:
                         old_val = existing.get(field)
@@ -462,8 +472,7 @@ class OrgSetupHandler:
 
                 if updated_fields:
                     changes.append(
-                        f"修改节点「{existing['role_title']}」: "
-                        f"{', '.join(updated_fields)}"
+                        f"修改节点「{existing['role_title']}」: {', '.join(updated_fields)}"
                     )
 
                 # Handle parent change → new edge
@@ -473,16 +482,19 @@ class OrgSetupHandler:
                     if parent_id:
                         # Remove old hierarchy edges targeting this node
                         edges_list = [
-                            e for e in edges_list
+                            e
+                            for e in edges_list
                             if not (e["target"] == node_id and e.get("edge_type") == "hierarchy")
                         ]
-                        new_edges.append({
-                            "id": f"edge_{uuid.uuid4().hex[:12]}",
-                            "source": parent_id,
-                            "target": node_id,
-                            "edge_type": "hierarchy",
-                            "bidirectional": True,
-                        })
+                        new_edges.append(
+                            {
+                                "id": f"edge_{uuid.uuid4().hex[:12]}",
+                                "source": parent_id,
+                                "target": node_id,
+                                "edge_type": "hierarchy",
+                                "bidirectional": True,
+                            }
+                        )
                         changes.append(
                             f"更新层级：{existing['role_title']} 的上级改为 {parent_title}"
                         )
@@ -523,13 +535,15 @@ class OrgSetupHandler:
                 if parent_title:
                     parent_id = title_to_id.get(parent_title)
                     if parent_id:
-                        new_edges.append({
-                            "id": f"edge_{uuid.uuid4().hex[:12]}",
-                            "source": parent_id,
-                            "target": new_id,
-                            "edge_type": "hierarchy",
-                            "bidirectional": True,
-                        })
+                        new_edges.append(
+                            {
+                                "id": f"edge_{uuid.uuid4().hex[:12]}",
+                                "source": parent_id,
+                                "target": new_id,
+                                "edge_type": "hierarchy",
+                                "bidirectional": True,
+                            }
+                        )
 
         edges_list.extend(new_edges)
 
@@ -544,18 +558,10 @@ class OrgSetupHandler:
                             f"请通过修改节点的 parent_role_title 调整层级"
                         )
                     else:
-                        src_title = self._find_title_by_id(
-                            list(nodes_dict.values()), e["source"]
-                        )
-                        tgt_title = self._find_title_by_id(
-                            list(nodes_dict.values()), e["target"]
-                        )
-                        edges_list = [
-                            ex for ex in edges_list if ex.get("id") != edge_id_ref
-                        ]
-                        changes.append(
-                            f"删除连线 {src_title} → {tgt_title} ({e.get('edge_type')})"
-                        )
+                        src_title = self._find_title_by_id(list(nodes_dict.values()), e["source"])
+                        tgt_title = self._find_title_by_id(list(nodes_dict.values()), e["target"])
+                        edges_list = [ex for ex in edges_list if ex.get("id") != edge_id_ref]
+                        changes.append(f"删除连线 {src_title} → {tgt_title} ({e.get('edge_type')})")
                     found = True
                     break
             if not found:
@@ -567,8 +573,7 @@ class OrgSetupHandler:
             etype = er.get("edge_type", "")
             if etype not in allowed_edge_types:
                 changes.append(
-                    f"⚠️ add_edges 不支持 edge_type='{etype}'，"
-                    f"层级关系请用 parent_role_title"
+                    f"⚠️ add_edges 不支持 edge_type='{etype}'，层级关系请用 parent_role_title"
                 )
                 continue
 
@@ -588,16 +593,13 @@ class OrgSetupHandler:
                 continue
 
             duplicate = any(
-                e["source"] == src_id and e["target"] == tgt_id
-                and e.get("edge_type") == etype
+                e["source"] == src_id and e["target"] == tgt_id and e.get("edge_type") == etype
                 for e in edges_list
             )
             if duplicate:
                 src_title = nodes_dict[src_id].get("role_title", src_id)
                 tgt_title = nodes_dict[tgt_id].get("role_title", tgt_id)
-                changes.append(
-                    f"⚠️ 连线已存在: {src_title} → {tgt_title} ({etype})，跳过"
-                )
+                changes.append(f"⚠️ 连线已存在: {src_title} → {tgt_title} ({etype})，跳过")
                 continue
 
             new_edge = {
@@ -612,7 +614,7 @@ class OrgSetupHandler:
 
             src_title = nodes_dict[src_id].get("role_title", src_id)
             tgt_title = nodes_dict[tgt_id].get("role_title", tgt_id)
-            label_str = f" \"{er.get('label')}\"" if er.get("label") else ""
+            label_str = f' "{er.get("label")}"' if er.get("label") else ""
             changes.append(f"添加连线 {src_title} ↔ {tgt_title} ({etype}{label_str})")
 
         # --- 6. Recalculate positions ---
@@ -635,7 +637,7 @@ class OrgSetupHandler:
             if not changes:
                 return "ℹ️ 未检测到任何变更。请提供要修改的内容。"
 
-            summary = "\n".join(f"  {i+1}. {c}" for i, c in enumerate(changes))
+            summary = "\n".join(f"  {i + 1}. {c}" for i, c in enumerate(changes))
             edge_summary = self._format_edge_summary(org.edges)
             return (
                 f"✅ 组织「{org.name}」修改成功！\n\n"
@@ -656,6 +658,7 @@ class OrgSetupHandler:
             return "❌ delete_org 需要提供 org_id"
 
         from ...orgs.runtime import get_runtime
+
         rt = get_runtime()
         if rt is not None:
             try:
@@ -690,8 +693,10 @@ class OrgSetupHandler:
     def _get_org_manager(self):
         """Get OrgManager from the running app or create one."""
         from ...config import settings
+
         try:
             from ...orgs.manager import OrgManager
+
             return OrgManager(settings.data_dir)
         except Exception as e:
             logger.error(f"[OrgSetup] Cannot get OrgManager: {e}")
@@ -767,18 +772,18 @@ class OrgSetupHandler:
                 continue
             parent_id = title_to_id.get(parent_title)
             if parent_id is None:
-                errors.append(
-                    f"节点「{node['role_title']}」的上级「{parent_title}」未找到"
-                )
+                errors.append(f"节点「{node['role_title']}」的上级「{parent_title}」未找到")
                 continue
             edge_id = f"edge_{uuid.uuid4().hex[:12]}"
-            edges.append({
-                "id": edge_id,
-                "source": parent_id,
-                "target": node["id"],
-                "edge_type": "hierarchy",
-                "bidirectional": True,
-            })
+            edges.append(
+                {
+                    "id": edge_id,
+                    "source": parent_id,
+                    "target": node["id"],
+                    "edge_type": "hierarchy",
+                    "bidirectional": True,
+                }
+            )
 
         allowed_edge_types = ("collaborate", "escalate", "consult")
         for er in params.get("edges", []):
@@ -803,14 +808,16 @@ class OrgSetupHandler:
             if src_id == tgt_id:
                 errors.append(f"edges 中 source 和 target 不能是同一节点: '{src_ref}'")
                 continue
-            edges.append({
-                "id": f"edge_{uuid.uuid4().hex[:12]}",
-                "source": src_id,
-                "target": tgt_id,
-                "edge_type": etype,
-                "label": er.get("label", ""),
-                "bidirectional": er.get("bidirectional", True),
-            })
+            edges.append(
+                {
+                    "id": f"edge_{uuid.uuid4().hex[:12]}",
+                    "source": src_id,
+                    "target": tgt_id,
+                    "edge_type": etype,
+                    "label": er.get("label", ""),
+                    "bidirectional": er.get("bidirectional", True),
+                }
+            )
 
         root_nodes = [n for n in nodes if n["level"] == 0]
         if not root_nodes:
@@ -845,6 +852,7 @@ class OrgSetupHandler:
             return "default"
         try:
             from ...agents.presets import SYSTEM_PRESETS
+
             for p in SYSTEM_PRESETS:
                 if p.id == agent_id:
                     return f"{p.name} ({p.id})"
@@ -852,6 +860,7 @@ class OrgSetupHandler:
             pass
         try:
             from ...agents.profile import get_profile_store
+
             profile = get_profile_store().get(agent_id)
             if profile:
                 return f"{profile.name} ({agent_id})"

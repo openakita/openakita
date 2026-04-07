@@ -18,6 +18,7 @@ from enum import Flag, auto
 
 class CommandScope(Flag):
     """Where a command is available."""
+
     CLI = auto()
     DESKTOP = auto()
     ALL = CLI | DESKTOP
@@ -26,6 +27,7 @@ class CommandScope(Flag):
 @dataclass(frozen=True, slots=True)
 class CommandDef:
     """Metadata for a single slash command."""
+
     name: str
     label: str
     description: str
@@ -43,26 +45,25 @@ COMMANDS: tuple[CommandDef, ...] = (
     CommandDef("persona", "切换角色", "切换 Agent 的人格预设", args_hint="<角色ID>"),
     CommandDef("agent", "切换 Agent", "在多 Agent 间切换", args_hint="<Agent名>"),
     CommandDef("agents", "Agent 列表", "显示可用的 Agent 列表"),
-    CommandDef("org", "组织模式", "切换到组织编排模式", args_hint="<组织名|off>",
-               scope=CommandScope.DESKTOP),
+    CommandDef(
+        "org",
+        "组织模式",
+        "切换到组织编排模式",
+        args_hint="<组织名|off>",
+        scope=CommandScope.DESKTOP,
+    ),
     CommandDef("thinking", "深度思考", "设置思考模式", args_hint="on|off|auto"),
     CommandDef("thinking_depth", "思考程度", "设置思考程度", args_hint="low|medium|high"),
-    CommandDef("status", "Agent 状态", "显示 Agent 运行状态",
-               scope=CommandScope.CLI),
-    CommandDef("selfcheck", "自检", "运行系统自检",
-               scope=CommandScope.CLI),
-    CommandDef("memory", "记忆信息", "查看 Agent 记忆",
-               scope=CommandScope.CLI),
-    CommandDef("skills", "技能列表", "查看已安装技能",
-               scope=CommandScope.CLI),
-    CommandDef("channels", "IM 通道", "查看 IM 通道状态",
-               scope=CommandScope.CLI),
-    CommandDef("sessions", "会话列表", "查看 CLI 历史会话",
-               scope=CommandScope.CLI),
-    CommandDef("session", "切换会话", "切换到指定的 CLI 会话", args_hint="<#>",
-               scope=CommandScope.CLI),
-    CommandDef("exit", "退出", "退出 OpenAkita", aliases=("quit",),
-               scope=CommandScope.CLI),
+    CommandDef("status", "Agent 状态", "显示 Agent 运行状态", scope=CommandScope.CLI),
+    CommandDef("selfcheck", "自检", "运行系统自检", scope=CommandScope.CLI),
+    CommandDef("memory", "记忆信息", "查看 Agent 记忆", scope=CommandScope.CLI),
+    CommandDef("skills", "技能列表", "查看已安装技能", scope=CommandScope.CLI),
+    CommandDef("channels", "IM 通道", "查看 IM 通道状态", scope=CommandScope.CLI),
+    CommandDef("sessions", "会话列表", "查看 CLI 历史会话", scope=CommandScope.CLI),
+    CommandDef(
+        "session", "切换会话", "切换到指定的 CLI 会话", args_hint="<#>", scope=CommandScope.CLI
+    ),
+    CommandDef("exit", "退出", "退出 OpenAkita", aliases=("quit",), scope=CommandScope.CLI),
 )
 
 

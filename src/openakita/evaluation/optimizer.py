@@ -63,59 +63,63 @@ class FeedbackAnalyzer:
         # 1. 任务完成率分析
         if metrics.task_completion_rate < self.COMPLETION_THRESHOLD:
             failure_analysis = self._analyze_failures(results)
-            actions.append(OptimizationAction(
-                action_type="memory",
-                description=(
-                    f"任务完成率 ({metrics.task_completion_rate:.1%}) 低于阈值 "
-                    f"({self.COMPLETION_THRESHOLD:.0%})，需要记录失败模式"
-                ),
-                details={
-                    "completion_rate": metrics.task_completion_rate,
-                    "failure_patterns": failure_analysis,
-                },
-            ))
+            actions.append(
+                OptimizationAction(
+                    action_type="memory",
+                    description=(
+                        f"任务完成率 ({metrics.task_completion_rate:.1%}) 低于阈值 "
+                        f"({self.COMPLETION_THRESHOLD:.0%})，需要记录失败模式"
+                    ),
+                    details={
+                        "completion_rate": metrics.task_completion_rate,
+                        "failure_patterns": failure_analysis,
+                    },
+                )
+            )
 
         # 2. 工具准确率分析
         if metrics.tool_selection_accuracy < self.TOOL_ACCURACY_THRESHOLD:
             tool_analysis = self._analyze_tool_errors(results)
-            actions.append(OptimizationAction(
-                action_type="tool",
-                description=(
-                    f"工具准确率 ({metrics.tool_selection_accuracy:.1%}) 低于阈值，"
-                    f"需要更新工具描述"
-                ),
-                details={
-                    "accuracy": metrics.tool_selection_accuracy,
-                    "error_tools": tool_analysis,
-                },
-            ))
+            actions.append(
+                OptimizationAction(
+                    action_type="tool",
+                    description=(
+                        f"工具准确率 ({metrics.tool_selection_accuracy:.1%}) 低于阈值，"
+                        f"需要更新工具描述"
+                    ),
+                    details={
+                        "accuracy": metrics.tool_selection_accuracy,
+                        "error_tools": tool_analysis,
+                    },
+                )
+            )
 
         # 3. 循环检测率分析
         if metrics.loop_detection_rate > self.LOOP_RATE_THRESHOLD:
-            actions.append(OptimizationAction(
-                action_type="prompt",
-                description=(
-                    f"循环检测率 ({metrics.loop_detection_rate:.1%}) 过高，"
-                    f"需要调整推理指导"
-                ),
-                details={
-                    "loop_rate": metrics.loop_detection_rate,
-                    "loop_traces": [
-                        r.trace_id for r in results if r.metrics.loop_detected
-                    ],
-                },
-            ))
+            actions.append(
+                OptimizationAction(
+                    action_type="prompt",
+                    description=(
+                        f"循环检测率 ({metrics.loop_detection_rate:.1%}) 过高，需要调整推理指导"
+                    ),
+                    details={
+                        "loop_rate": metrics.loop_detection_rate,
+                        "loop_traces": [r.trace_id for r in results if r.metrics.loop_detected],
+                    },
+                )
+            )
 
         # 4. 效率分析
         if metrics.avg_iterations > 15:
-            actions.append(OptimizationAction(
-                action_type="prompt",
-                description=(
-                    f"平均迭代次数 ({metrics.avg_iterations:.1f}) 过高，"
-                    f"需要优化推理效率"
-                ),
-                details={"avg_iterations": metrics.avg_iterations},
-            ))
+            actions.append(
+                OptimizationAction(
+                    action_type="prompt",
+                    description=(
+                        f"平均迭代次数 ({metrics.avg_iterations:.1f}) 过高，需要优化推理效率"
+                    ),
+                    details={"avg_iterations": metrics.avg_iterations},
+                )
+            )
 
         # 5. Judge 建议汇总
         all_suggestions: list[str] = []
@@ -129,18 +133,19 @@ class FeedbackAnalyzer:
                 suggestion_count[s] = suggestion_count.get(s, 0) + 1
 
             frequent = [
-                s for s, c in sorted(
-                    suggestion_count.items(), key=lambda x: x[1], reverse=True
-                )
+                s
+                for s, c in sorted(suggestion_count.items(), key=lambda x: x[1], reverse=True)
                 if c >= 2
             ][:5]
 
             if frequent:
-                actions.append(OptimizationAction(
-                    action_type="skill",
-                    description="Judge 频繁建议的能力改进",
-                    details={"suggestions": frequent},
-                ))
+                actions.append(
+                    OptimizationAction(
+                        action_type="skill",
+                        description="Judge 频繁建议的能力改进",
+                        details={"suggestions": frequent},
+                    )
+                )
 
         return actions
 
@@ -156,11 +161,13 @@ class FeedbackAnalyzer:
                 tag_counts[tag] = tag_counts.get(tag, 0) + 1
 
         for tag, count in sorted(tag_counts.items(), key=lambda x: x[1], reverse=True):
-            patterns.append({
-                "pattern": tag,
-                "count": count,
-                "percentage": count / max(len(failed), 1),
-            })
+            patterns.append(
+                {
+                    "pattern": tag,
+                    "count": count,
+                    "percentage": count / max(len(failed), 1),
+                }
+            )
 
         return patterns
 
@@ -180,15 +187,15 @@ class FeedbackAnalyzer:
                     tool_error_count[tool] = tool_error_count.get(tool, 0) + 1
 
         error_tools = []
-        for tool, errors in sorted(
-            tool_error_count.items(), key=lambda x: x[1], reverse=True
-        ):
+        for tool, errors in sorted(tool_error_count.items(), key=lambda x: x[1], reverse=True):
             total = tool_total_count.get(tool, errors)
-            error_tools.append({
-                "tool": tool,
-                "error_traces": errors,
-                "total_traces": total,
-            })
+            error_tools.append(
+                {
+                    "tool": tool,
+                    "error_traces": errors,
+                    "total_traces": total,
+                }
+            )
 
         return error_tools[:10]
 
@@ -245,9 +252,7 @@ class FeedbackOptimizer:
                 applied.append(action)
 
             except Exception as e:
-                logger.error(
-                    f"[Optimizer] Failed to apply action '{action.action_type}': {e}"
-                )
+                logger.error(f"[Optimizer] Failed to apply action '{action.action_type}': {e}")
 
         # 保存动作记录
         await self._save_action_log(applied)
@@ -276,18 +281,19 @@ class FeedbackOptimizer:
         ]
         for p in patterns:
             memory_entry.append(
-                f"- **{p['pattern']}**: 出现 {p['count']} 次 "
-                f"(占比 {p['percentage']:.0%})"
+                f"- **{p['pattern']}**: 出现 {p['count']} 次 (占比 {p['percentage']:.0%})"
             )
 
-        memory_entry.extend([
-            "",
-            "### 改进方向",
-            "",
-            "- 针对高频失败模式优化推理策略",
-            "- 加强工具错误后的恢复能力",
-            "",
-        ])
+        memory_entry.extend(
+            [
+                "",
+                "### 改进方向",
+                "",
+                "- 针对高频失败模式优化推理策略",
+                "- 加强工具错误后的恢复能力",
+                "",
+            ]
+        )
 
         content = "\n".join(memory_entry)
 
@@ -318,14 +324,13 @@ class FeedbackOptimizer:
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "accuracy": action.details.get("accuracy", 0),
             "error_tools": error_tools,
-            "recommendations": [
-                f"检查工具 '{t['tool']}' 的错误处理逻辑"
-                for t in error_tools[:5]
-            ],
+            "recommendations": [f"检查工具 '{t['tool']}' 的错误处理逻辑" for t in error_tools[:5]],
         }
 
         if dry_run:
-            logger.info(f"[Optimizer][DryRun] Tool feedback: {json.dumps(report, ensure_ascii=False)}")
+            logger.info(
+                f"[Optimizer][DryRun] Tool feedback: {json.dumps(report, ensure_ascii=False)}"
+            )
             return
 
         os.makedirs(self._output_dir, exist_ok=True)
@@ -429,12 +434,14 @@ class FeedbackOptimizer:
                 pass
 
         for action in actions:
-            existing.append({
-                "action_type": action.action_type,
-                "description": action.description,
-                "applied": action.applied,
-                "timestamp": action.timestamp,
-            })
+            existing.append(
+                {
+                    "action_type": action.action_type,
+                    "description": action.description,
+                    "applied": action.applied,
+                    "timestamp": action.timestamp,
+                }
+            )
 
         with open(log_path, "w", encoding="utf-8") as f:
             json.dump(existing, f, ensure_ascii=False, indent=2)
@@ -509,8 +516,7 @@ class DailyEvaluator:
         }
 
         logger.info(
-            f"[DailyEval] Complete: {len(results)} traces, "
-            f"{len(applied)} optimizations applied"
+            f"[DailyEval] Complete: {len(results)} traces, {len(applied)} optimizations applied"
         )
 
         return summary

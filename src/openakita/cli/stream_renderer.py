@@ -61,8 +61,14 @@ async def render_stream(
                     continue
 
                 _handle_event(
-                    etype, event, live, console, agent_name,
-                    buffer, tool_stack, state,
+                    etype,
+                    event,
+                    live,
+                    console,
+                    agent_name,
+                    buffer,
+                    tool_stack,
+                    state,
                 )
                 if state["graceful_done"]:
                     break
@@ -112,9 +118,7 @@ def _handle_event(
 
     if etype == E.THINKING_START:
         ref["thinking_started"] = True
-        live.update(
-            Text(f"  💭 思考中 (轮次 {ref['iteration']})...", style="dim italic")
-        )
+        live.update(Text(f"  💭 思考中 (轮次 {ref['iteration']})...", style="dim italic"))
         return
 
     if etype == E.THINKING_END:
@@ -310,9 +314,7 @@ def _handle_security_confirm_interactive(event: dict, console: Console) -> None:
             }
             console.print(f"  {labels.get(decision, decision)}")
         else:
-            console.print(
-                f"  [yellow]⚠️ 确认项已过期或不存在 (id={confirm_id[:8]}…)[/yellow]"
-            )
+            console.print(f"  [yellow]⚠️ 确认项已过期或不存在 (id={confirm_id[:8]}…)[/yellow]")
     except Exception as exc:
         console.print(f"  [red]确认处理失败: {exc}[/red]")
 
@@ -323,9 +325,7 @@ def _handle_ask_user_interactive(event: dict, console: Console) -> None:
     options = event.get("options", [])
 
     console.print()
-    console.print(
-        Panel(question, title="[bold]❓ 需要你的回答[/bold]", border_style="blue")
-    )
+    console.print(Panel(question, title="[bold]❓ 需要你的回答[/bold]", border_style="blue"))
 
     if options:
         for i, opt in enumerate(options, 1):

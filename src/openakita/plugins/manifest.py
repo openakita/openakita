@@ -26,37 +26,43 @@ VALID_TYPES = {"python", "mcp", "skill"}
 
 _PLUGIN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9\-_.]{0,128}$")
 
-BASIC_PERMISSIONS = frozenset({
-    "tools.register",
-    "hooks.basic",
-    "config.read",
-    "config.write",
-    "data.own",
-    "log",
-    "skill",
-})
+BASIC_PERMISSIONS = frozenset(
+    {
+        "tools.register",
+        "hooks.basic",
+        "config.read",
+        "config.write",
+        "data.own",
+        "log",
+        "skill",
+    }
+)
 
-ADVANCED_PERMISSIONS = frozenset({
-    "memory.read",
-    "memory.write",
-    "channel.register",
-    "channel.send",
-    "hooks.message",
-    "hooks.retrieve",
-    "retrieval.register",
-    "search.register",
-    "routes.register",
-    "brain.access",
-    "vector.access",
-    "settings.read",
-    "llm.register",
-})
+ADVANCED_PERMISSIONS = frozenset(
+    {
+        "memory.read",
+        "memory.write",
+        "channel.register",
+        "channel.send",
+        "hooks.message",
+        "hooks.retrieve",
+        "retrieval.register",
+        "search.register",
+        "routes.register",
+        "brain.access",
+        "vector.access",
+        "settings.read",
+        "llm.register",
+    }
+)
 
-SYSTEM_PERMISSIONS = frozenset({
-    "hooks.all",
-    "memory.replace",
-    "system.config.write",  # reserved: will gate writes to global settings
-})
+SYSTEM_PERMISSIONS = frozenset(
+    {
+        "hooks.all",
+        "memory.replace",
+        "system.config.write",  # reserved: will gate writes to global settings
+    }
+)
 
 ALL_PERMISSIONS = BASIC_PERMISSIONS | ADVANCED_PERMISSIONS | SYSTEM_PERMISSIONS
 
@@ -97,9 +103,7 @@ class PluginManifest(BaseModel):
     @classmethod
     def _validate_id(cls, v: str) -> str:
         if not _PLUGIN_ID_RE.match(v):
-            raise ValueError(
-                f"Plugin ID '{v}' is invalid — must match {_PLUGIN_ID_RE.pattern}"
-            )
+            raise ValueError(f"Plugin ID '{v}' is invalid — must match {_PLUGIN_ID_RE.pattern}")
         return v
 
     @field_validator("plugin_type")
@@ -262,9 +266,7 @@ def parse_manifest(plugin_dir: Path) -> PluginManifest:
 
     missing = REQUIRED_FIELDS - set(raw.keys())
     if missing:
-        raise ManifestError(
-            f"Missing required fields in {manifest_path}: {missing}"
-        )
+        raise ManifestError(f"Missing required fields in {manifest_path}: {missing}")
 
     permissions = raw.get("permissions", [])
     if isinstance(permissions, list):
@@ -355,7 +357,9 @@ def validate_plugin(plugin_dir: Path) -> list[str]:
             if not skill_path.exists():
                 issues.append(f"Declared skill file not found: {skill_file}")
             else:
-                skill_md = skill_path if skill_path.name.upper() == "SKILL.MD" else skill_path / "SKILL.md"
+                skill_md = (
+                    skill_path if skill_path.name.upper() == "SKILL.MD" else skill_path / "SKILL.md"
+                )
                 if skill_md.exists():
                     try:
                         content = skill_md.read_text(encoding="utf-8")

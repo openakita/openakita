@@ -146,9 +146,7 @@ class STTClient:
             logger.warning(f"[STT] No API key for endpoint {endpoint.name}")
             return None
 
-        base_url = normalize_base_url(
-            endpoint.base_url, extra_suffixes=("/audio/transcriptions",)
-        )
+        base_url = normalize_base_url(endpoint.base_url, extra_suffixes=("/audio/transcriptions",))
         url = f"{base_url}/audio/transcriptions"
         model = endpoint.model or "whisper-1"
 

@@ -102,7 +102,12 @@ _ALWAYS_EXCLUDE_FILES = {
 }
 
 _EXCLUDE_ROOT_EXTENSIONS = {
-    ".docx", ".xlsx", ".pptx", ".js", ".py", ".exe",
+    ".docx",
+    ".xlsx",
+    ".pptx",
+    ".js",
+    ".py",
+    ".exe",
 }
 
 _SQLITE_TEMP_EXTENSIONS = {".db-shm", ".db-wal", ".db-journal"}
@@ -231,10 +236,7 @@ def create_backup(
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         for root, dirs, files in os.walk(workspace_path):
             # Skip hidden/excluded directories early for performance
-            dirs[:] = [
-                d for d in dirs
-                if d not in ("node_modules", "Lib", "__pycache__", ".git")
-            ]
+            dirs[:] = [d for d in dirs if d not in ("node_modules", "Lib", "__pycache__", ".git")]
 
             for fname in files:
                 full = Path(root) / fname
@@ -273,9 +275,7 @@ def create_backup(
 
 def _rotate_backups(backup_dir: Path, workspace_id: str, max_backups: int) -> None:
     """Remove oldest backup files exceeding max_backups."""
-    pattern = re.compile(
-        rf"^openakita-backup-{re.escape(workspace_id)}-\d{{8}}_\d{{6}}\.zip$"
-    )
+    pattern = re.compile(rf"^openakita-backup-{re.escape(workspace_id)}-\d{{8}}_\d{{6}}\.zip$")
     backups = sorted(
         (f for f in backup_dir.iterdir() if f.is_file() and pattern.match(f.name)),
         key=lambda f: f.stat().st_mtime,
@@ -387,9 +387,7 @@ def list_backups(backup_path: str) -> list[dict[str, Any]]:
             "filename": f.name,
             "path": str(f),
             "size_bytes": stat.st_size,
-            "created_at": datetime.fromtimestamp(
-                stat.st_mtime, tz=UTC
-            ).isoformat(),
+            "created_at": datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
         }
 
         # Try to read manifest for extra metadata

@@ -47,7 +47,8 @@ def run_cli_wizard():
             _test_endpoint_interactive(endpoints)
         elif choice == "5":
             save_endpoints_config(
-                endpoints, settings,
+                endpoints,
+                settings,
                 compiler_endpoints=_compiler_eps,
                 stt_endpoints=_stt_eps,
             )
@@ -410,7 +411,9 @@ def quick_add_endpoint(
 
     endpoints, compiler_eps, stt_eps, settings = load_endpoints_config()
 
-    used_env_keys = {ep.api_key_env for ep in [*endpoints, *compiler_eps, *stt_eps] if ep.api_key_env}
+    used_env_keys = {
+        ep.api_key_env for ep in [*endpoints, *compiler_eps, *stt_eps] if ep.api_key_env
+    }
     env_key = _unique_env_key(info.api_key_env_suggestion, used_env_keys)
 
     endpoint = EndpointConfig(
@@ -426,7 +429,9 @@ def quick_add_endpoint(
 
     endpoints.append(endpoint)
     endpoints.sort(key=lambda x: x.priority)
-    save_endpoints_config(endpoints, settings, compiler_endpoints=compiler_eps, stt_endpoints=stt_eps)
+    save_endpoints_config(
+        endpoints, settings, compiler_endpoints=compiler_eps, stt_endpoints=stt_eps
+    )
 
     print(f"[OK] 已添加端点: {name}")
 

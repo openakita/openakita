@@ -202,9 +202,7 @@ async def by_agent(
         return {"error": "database not available"}
     start_str, end_str = _parse_range(start, end, period)
     try:
-        by_agent_data = await db.get_token_usage_by_agent(
-            start_time=start_str, end_time=end_str
-        )
+        by_agent_data = await db.get_token_usage_by_agent(start_time=start_str, end_time=end_str)
     except Exception as e:
         logger.error(f"[TokenStats] by-agent query failed: {e}")
         await _reset_db()

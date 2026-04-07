@@ -66,7 +66,13 @@ class CodeQualityHandler:
         return any((Path(cwd) / f).exists() for f in indicators)
 
     def _detect_js_project(self, cwd: str) -> bool:
-        indicators = ["package.json", ".eslintrc", ".eslintrc.js", ".eslintrc.json", ".eslintrc.yml"]
+        indicators = [
+            "package.json",
+            ".eslintrc",
+            ".eslintrc.js",
+            ".eslintrc.json",
+            ".eslintrc.yml",
+        ]
         return any((Path(cwd) / f).exists() for f in indicators)
 
     async def _run_ruff(self, paths: list[str], cwd: str) -> str | None:
@@ -83,9 +89,7 @@ class CodeQualityHandler:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
             )
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=30
-            )
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
 
             output = stdout.decode("utf-8", errors="replace").strip()
             if not output:
@@ -136,9 +140,7 @@ class CodeQualityHandler:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
             )
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=60
-            )
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=60)
 
             output = stdout.decode("utf-8", errors="replace").strip()
             if not output:

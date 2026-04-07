@@ -105,6 +105,7 @@ def validate_identity_file(name: str, content: str) -> dict[str, list[str]]:
     if name == "POLICIES.yaml":
         try:
             import yaml
+
             data = yaml.safe_load(content)
             if data is None:
                 pass  # empty file is ok
@@ -138,6 +139,7 @@ def validate_identity_file(name: str, content: str) -> dict[str, list[str]]:
 
     elif name == "MEMORY.md":
         from openakita.memory.types import MEMORY_MD_MAX_CHARS
+
         if len(content) > MEMORY_MD_MAX_CHARS:
             warnings.append(
                 f"内容超出 {MEMORY_MD_MAX_CHARS} 字符限制"
@@ -155,19 +157,19 @@ def validate_identity_file(name: str, content: str) -> dict[str, list[str]]:
         unknown_sections = [s.strip() for s in found if s.strip() not in known_sections]
         if unknown_sections:
             warnings.append(
-                f"包含非标准段落: {', '.join(unknown_sections)}，"
-                "不影响保存但可能不被系统识别"
+                f"包含非标准段落: {', '.join(unknown_sections)}，不影响保存但可能不被系统识别"
             )
 
     elif name == "prompts/policies.md":
-        system_titles = {"三条红线（必须遵守）", "意图声明（每次纯文本回复必须遵守）",
-                         "切换模型的工具上下文隔离"}
+        system_titles = {
+            "三条红线（必须遵守）",
+            "意图声明（每次纯文本回复必须遵守）",
+            "切换模型的工具上下文隔离",
+        }
         found = re.findall(r"^## (.+)", content, re.MULTILINE)
         overridden = [s.strip() for s in found if s.strip() in system_titles]
         if overridden:
-            warnings.append(
-                f"以下段落会被系统内置策略覆盖: {', '.join(overridden)}"
-            )
+            warnings.append(f"以下段落会被系统内置策略覆盖: {', '.join(overridden)}")
 
     return {"errors": errors, "warnings": warnings}
 
@@ -215,7 +217,9 @@ async def list_identity_files():
             "exists": path.exists(),
             "restricted": name in _RESTRICTED_FILES,
             "is_runtime": name.startswith("runtime/"),
-            "warning_key": _FILE_WARNINGS.get(name, "runtime" if name.startswith("runtime/") else None),
+            "warning_key": _FILE_WARNINGS.get(
+                name, "runtime" if name.startswith("runtime/") else None
+            ),
             "budget_tokens": _BUDGET_MAP.get(name),
         }
         if path.exists():
@@ -263,11 +267,14 @@ async def write_identity_file(req: FileWriteRequest, request: Request):
     # Validate
     result = validate_identity_file(name, req.content)
     if result["errors"]:
-        raise HTTPException(400, detail={
-            "message": "格式校验失败",
-            "errors": result["errors"],
-            "warnings": result["warnings"],
-        })
+        raise HTTPException(
+            400,
+            detail={
+                "message": "格式校验失败",
+                "errors": result["errors"],
+                "warnings": result["warnings"],
+            },
+        )
     if result["warnings"] and not req.force:
         return {
             "saved": False,
@@ -310,6 +317,7 @@ async def reload_identity(request: Request):
 
     # Force recompile runtime artifacts
     from openakita.prompt.compiler import compile_all
+
     identity_dir = _identity_dir()
     compile_all(identity_dir)
 
@@ -338,15 +346,18 @@ async def compile_identity(request: Request, mode: str = "rules"):
                 brain = getattr(local, "brain", None)
         if brain:
             from openakita.prompt.compiler import PromptCompiler
+
             compiler = PromptCompiler(brain=brain)
             await compiler.compile_all(identity_dir)
             mode_used = "llm"
         else:
             from openakita.prompt.compiler import compile_all
+
             compile_all(identity_dir)
             mode_used = "rules (LLM not available)"
     else:
         from openakita.prompt.compiler import compile_all
+
         compile_all(identity_dir)
         mode_used = "rules"
 
@@ -356,6 +367,7 @@ async def compile_identity(request: Request, mode: str = "rules"):
         _try_rebuild_prompt(agent)
 
     from openakita.prompt.compiler import get_compiled_content
+
     compiled = get_compiled_content(identity_dir)
     _key_rt = {
         "agent_core": "runtime/agent.core.md",
@@ -382,6 +394,7 @@ async def compile_status():
     identity_dir = _identity_dir()
 
     from openakita.prompt.compiler import check_compiled_outdated, get_compiled_content
+
     compiled = get_compiled_content(identity_dir)
     outdated = check_compiled_outdated(identity_dir)
 

@@ -49,7 +49,11 @@ class PluginsHandler:
             loaded_ids = {p["id"] for p in loaded}
             failed_ids = set(failed)
             for entry in state.plugins.values():
-                if not entry.enabled and entry.plugin_id not in loaded_ids and entry.plugin_id not in failed_ids:
+                if (
+                    not entry.enabled
+                    and entry.plugin_id not in loaded_ids
+                    and entry.plugin_id not in failed_ids
+                ):
                     disabled_ids.append(entry.plugin_id)
 
         if not loaded and not failed and not disabled_ids:
@@ -113,11 +117,7 @@ class PluginsHandler:
         if loaded is None:
             failed = pm.list_failed()
             if plugin_id in failed:
-                return (
-                    f"# 插件: {plugin_id}\n\n"
-                    f"**状态**: 加载失败\n"
-                    f"**错误**: {failed[plugin_id]}"
-                )
+                return f"# 插件: {plugin_id}\n\n**状态**: 加载失败\n**错误**: {failed[plugin_id]}"
             return f"未找到插件 '{plugin_id}'。"
 
         manifest = loaded.manifest

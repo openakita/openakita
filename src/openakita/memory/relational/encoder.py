@@ -111,13 +111,15 @@ class MemoryEncoder:
 
         # Build temporal chain
         for i in range(1, len(nodes)):
-            edges.append(MemoryEdge(
-                source_id=nodes[i - 1].id,
-                target_id=nodes[i].id,
-                edge_type=EdgeType.FOLLOWED_BY,
-                dimension=Dimension.TEMPORAL,
-                weight=0.6,
-            ))
+            edges.append(
+                MemoryEdge(
+                    source_id=nodes[i - 1].id,
+                    target_id=nodes[i].id,
+                    edge_type=EdgeType.FOLLOWED_BY,
+                    dimension=Dimension.TEMPORAL,
+                    weight=0.6,
+                )
+            )
 
         # Build entity co-occurrence edges
         entity_node_map: dict[str, list[str]] = {}
@@ -131,14 +133,16 @@ class MemoryEncoder:
                 continue
             for i in range(len(nids)):
                 for j in range(i + 1, min(i + 3, len(nids))):
-                    edges.append(MemoryEdge(
-                        source_id=nids[i],
-                        target_id=nids[j],
-                        edge_type=EdgeType.INVOLVES,
-                        dimension=Dimension.ENTITY,
-                        weight=0.5,
-                        metadata={"entity": ent_name},
-                    ))
+                    edges.append(
+                        MemoryEdge(
+                            source_id=nids[i],
+                            target_id=nids[j],
+                            edge_type=EdgeType.INVOLVES,
+                            dimension=Dimension.ENTITY,
+                            weight=0.5,
+                            metadata={"entity": ent_name},
+                        )
+                    )
 
         return EncodingResult(nodes=nodes, edges=edges)
 
@@ -170,26 +174,30 @@ class MemoryEncoder:
 
         # Link summary to all partial nodes as context
         for pn in partial_nodes:
-            edges.append(MemoryEdge(
-                source_id=pn.id,
-                target_id=summary_node.id,
-                edge_type=EdgeType.PART_OF,
-                dimension=Dimension.CONTEXT,
-                weight=0.5,
-            ))
+            edges.append(
+                MemoryEdge(
+                    source_id=pn.id,
+                    target_id=summary_node.id,
+                    edge_type=EdgeType.PART_OF,
+                    dimension=Dimension.CONTEXT,
+                    weight=0.5,
+                )
+            )
 
         # Scan summary for causal language
         has_causal = bool(
             _CAUSAL_KEYWORDS_ZH.search(summary) or _CAUSAL_KEYWORDS_EN.search(summary)
         )
         if has_causal and len(partial_nodes) >= 2:
-            edges.append(MemoryEdge(
-                source_id=partial_nodes[0].id,
-                target_id=partial_nodes[-1].id,
-                edge_type=EdgeType.LED_TO,
-                dimension=Dimension.CAUSAL,
-                weight=0.4,
-            ))
+            edges.append(
+                MemoryEdge(
+                    source_id=partial_nodes[0].id,
+                    target_id=partial_nodes[-1].id,
+                    edge_type=EdgeType.LED_TO,
+                    dimension=Dimension.CAUSAL,
+                    weight=0.4,
+                )
+            )
 
         return EncodingResult(nodes=new_nodes, edges=edges)
 
@@ -237,13 +245,15 @@ class MemoryEncoder:
         if existing_nodes and nodes:
             for en in existing_nodes:
                 best_target = self._find_best_matching_node(en, nodes)
-                edges.append(MemoryEdge(
-                    source_id=en.id,
-                    target_id=best_target.id,
-                    edge_type=EdgeType.RELATED_TO,
-                    dimension=Dimension.CONTEXT,
-                    weight=0.4,
-                ))
+                edges.append(
+                    MemoryEdge(
+                        source_id=en.id,
+                        target_id=best_target.id,
+                        edge_type=EdgeType.RELATED_TO,
+                        dimension=Dimension.CONTEXT,
+                        weight=0.4,
+                    )
+                )
 
         return EncodingResult(nodes=nodes, edges=edges)
 
@@ -380,11 +390,13 @@ Output ONLY valid JSON array:"""
             entities = []
             for e in item.get("entities", []):
                 if isinstance(e, dict):
-                    entities.append(EntityRef(
-                        name=e.get("name", ""),
-                        type=e.get("type", "concept"),
-                        role=e.get("role", ""),
-                    ))
+                    entities.append(
+                        EntityRef(
+                            name=e.get("name", ""),
+                            type=e.get("type", "concept"),
+                            role=e.get("role", ""),
+                        )
+                    )
 
             node = MemoryNode(
                 content=item.get("content", "")[:500],
@@ -400,18 +412,18 @@ Output ONLY valid JSON array:"""
 
         # Build temporal chain
         for i in range(1, len(nodes)):
-            edges.append(MemoryEdge(
-                source_id=nodes[i - 1].id,
-                target_id=nodes[i].id,
-                edge_type=EdgeType.FOLLOWED_BY,
-                dimension=Dimension.TEMPORAL,
-                weight=0.7,
-            ))
+            edges.append(
+                MemoryEdge(
+                    source_id=nodes[i - 1].id,
+                    target_id=nodes[i].id,
+                    edge_type=EdgeType.FOLLOWED_BY,
+                    dimension=Dimension.TEMPORAL,
+                    weight=0.7,
+                )
+            )
 
         # Build causal edges from causal_refs
-        node_contents: list[tuple[str, str]] = [
-            (n.content.lower()[:80], n.id) for n in nodes
-        ]
+        node_contents: list[tuple[str, str]] = [(n.content.lower()[:80], n.id) for n in nodes]
         for item, node in zip(items, nodes, strict=False):
             if not isinstance(item, dict):
                 continue
@@ -423,13 +435,15 @@ Output ONLY valid JSON array:"""
                     if target_id == node.id:
                         continue
                     if self._text_similarity(ref_lower, content_key):
-                        edges.append(MemoryEdge(
-                            source_id=node.id,
-                            target_id=target_id,
-                            edge_type=EdgeType.LED_TO,
-                            dimension=Dimension.CAUSAL,
-                            weight=0.6,
-                        ))
+                        edges.append(
+                            MemoryEdge(
+                                source_id=node.id,
+                                target_id=target_id,
+                                edge_type=EdgeType.LED_TO,
+                                dimension=Dimension.CAUSAL,
+                                weight=0.6,
+                            )
+                        )
                         break
 
         # Entity co-occurrence
@@ -442,13 +456,15 @@ Output ONLY valid JSON array:"""
                 continue
             for i in range(len(nids)):
                 for j in range(i + 1, min(i + 3, len(nids))):
-                    edges.append(MemoryEdge(
-                        source_id=nids[i],
-                        target_id=nids[j],
-                        edge_type=EdgeType.INVOLVES,
-                        dimension=Dimension.ENTITY,
-                        weight=0.5,
-                        metadata={"entity": ent_name},
-                    ))
+                    edges.append(
+                        MemoryEdge(
+                            source_id=nids[i],
+                            target_id=nids[j],
+                            edge_type=EdgeType.INVOLVES,
+                            dimension=Dimension.ENTITY,
+                            weight=0.5,
+                            metadata={"entity": ent_name},
+                        )
+                    )
 
         return nodes, edges

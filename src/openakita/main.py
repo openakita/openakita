@@ -45,6 +45,7 @@ setup_logging(
 )
 logger = logging.getLogger(__name__)
 
+
 # 初始化追踪系统
 def _init_tracing() -> None:
     """根据配置初始化 Agent 追踪系统"""
@@ -58,6 +59,7 @@ def _init_tracing() -> None:
             tracer.add_exporter(ConsoleExporter())
         logger.info("[Tracing] 追踪系统已启用")
     set_tracer(tracer)
+
 
 _init_tracing()
 
@@ -97,12 +99,14 @@ async def _init_orchestrator():
     if _orchestrator is not None:
         return
     from openakita.agents.orchestrator import AgentOrchestrator
+
     _orchestrator = AgentOrchestrator()
     if _message_gateway:
         _orchestrator.set_gateway(_message_gateway)
     logger.info("[MultiAgent] AgentOrchestrator initialized")
     try:
         from openakita.agents.presets import ensure_presets_on_mode_enable
+
         ensure_presets_on_mode_enable(settings.data_dir / "agents")
     except Exception as e:
         logger.warning(f"[Main] Failed to deploy presets on orchestrator init: {e}")
@@ -222,6 +226,7 @@ def _ensure_channel_deps() -> None:
     patch_simplejson_jsondecodeerror(logger=logger)
     try:
         from openakita.runtime_env import inject_module_paths_runtime
+
         inject_module_paths_runtime()
     except Exception:
         pass
@@ -243,7 +248,7 @@ def _ensure_channel_deps() -> None:
         enabled_channels.append("wechat")
 
     # 补充从 im_bots 中提取已启用的通道类型，确保依赖检测覆盖 UI 创建的 Bot
-    for bot_cfg in (settings.im_bots or []):
+    for bot_cfg in settings.im_bots or []:
         if bot_cfg.get("enabled", True):
             channel_type = bot_cfg.get("type", "")
             if channel_type and channel_type not in enabled_channels:
@@ -311,11 +316,13 @@ def _ensure_channel_deps() -> None:
     if _user_index:
         _host = _user_index.split("//")[1].split("/")[0] if "//" in _user_index else ""
         _mirror_sources.append((_user_index, _host))
-    _mirror_sources.extend([
-        ("https://mirrors.aliyun.com/pypi/simple/", "mirrors.aliyun.com"),
-        ("https://pypi.tuna.tsinghua.edu.cn/simple/", "pypi.tuna.tsinghua.edu.cn"),
-        ("https://pypi.org/simple/", "pypi.org"),
-    ])
+    _mirror_sources.extend(
+        [
+            ("https://mirrors.aliyun.com/pypi/simple/", "mirrors.aliyun.com"),
+            ("https://pypi.tuna.tsinghua.edu.cn/simple/", "pypi.tuna.tsinghua.edu.cn"),
+            ("https://pypi.org/simple/", "pypi.org"),
+        ]
+    )
 
     extra: dict = {}
     if sys.platform == "win32":
@@ -348,7 +355,8 @@ def _ensure_channel_deps() -> None:
         # 清理之前失败的导入在 sys.modules 中留下的残余条目，
         # 确保后续 import 能从新安装的路径加载完整模块。
         stale = [
-            k for k in sys.modules
+            k
+            for k in sys.modules
             if any(k == n or k.startswith(n + ".") for n in failed_import_names)
         ]
         for k in stale:
@@ -363,6 +371,7 @@ def _ensure_channel_deps() -> None:
             logger.info(f"已注入通道依赖路径: {target_str}")
         try:
             from openakita.runtime_env import inject_module_paths_runtime
+
             inject_module_paths_runtime()
         except Exception:
             pass
@@ -377,10 +386,15 @@ def _ensure_channel_deps() -> None:
             f"(源: offline wheels)"
         )
         offline_cmd = [
-            py, "-m", "pip", "install",
+            py,
+            "-m",
+            "pip",
+            "install",
             "--no-index",
-            "--find-links", str(bundled_wheels),
-            "--target", str(target_dir),
+            "--find-links",
+            str(bundled_wheels),
+            "--target",
+            str(target_dir),
             "--prefer-binary",
             *missing,
         ]
@@ -405,7 +419,8 @@ def _ensure_channel_deps() -> None:
             logger.warning(f"离线 wheels 安装异常，回退在线镜像: {e}")
 
     def _pip_install_via_mirrors(
-        packages: list[str], label_prefix: str = "",
+        packages: list[str],
+        label_prefix: str = "",
     ) -> bool:
         """Try installing *packages* through all mirror sources. Return True on success."""
         for idx, (index_url, trusted_host) in enumerate(_mirror_sources):
@@ -416,16 +431,20 @@ def _ensure_channel_deps() -> None:
                     f"[bold]{', '.join(packages)}[/bold] (源: {source_label}) ..."
                 )
             else:
-                console.print(
-                    f"[yellow]⏳[/yellow] 切换镜像源重试: {source_label} ..."
-                )
+                console.print(f"[yellow]⏳[/yellow] 切换镜像源重试: {source_label} ...")
 
             pip_cmd = [
-                py, "-m", "pip", "install",
-                "--target", str(target_dir),
-                "-i", index_url,
+                py,
+                "-m",
+                "pip",
+                "install",
+                "--target",
+                str(target_dir),
+                "-i",
+                index_url,
                 "--prefer-binary",
-                "--timeout", "60",
+                "--timeout",
+                "60",
                 *packages,
             ]
             if trusted_host:
@@ -447,7 +466,9 @@ def _ensure_channel_deps() -> None:
                     return True
                 else:
                     err_tail = (result.stderr or result.stdout or "").strip()[-300:]
-                    logger.warning(f"镜像源 {source_label} 安装失败 (exit {result.returncode}): {err_tail}")
+                    logger.warning(
+                        f"镜像源 {source_label} 安装失败 (exit {result.returncode}): {err_tail}"
+                    )
             except subprocess.TimeoutExpired:
                 logger.warning(f"镜像源 {source_label} 安装超时")
             except Exception as e:
@@ -500,7 +521,9 @@ def _ensure_channel_deps() -> None:
         )
 
 
-def _create_bot_adapter(bot_type: str, creds: dict, *, channel_name: str, bot_id: str, agent_profile_id: str):
+def _create_bot_adapter(
+    bot_type: str, creds: dict, *, channel_name: str, bot_id: str, agent_profile_id: str
+):
     """Create an IM adapter instance from im_bots config entry.
 
     Uses the centralized adapter registry instead of if/elif branches.
@@ -547,8 +570,11 @@ async def apply_im_bot(bot_cfg: dict) -> bool:
     channel_name = _bot_channel_name(bot_cfg)
     try:
         adapter = _create_bot_adapter(
-            bot_type, creds,
-            channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_id,
+            bot_type,
+            creds,
+            channel_name=channel_name,
+            bot_id=bot_id,
+            agent_profile_id=agent_id,
         )
         if adapter:
             await _message_gateway.register_adapter(adapter)
@@ -624,6 +650,7 @@ async def init_core_services(agent_or_master):
 
     if _desktop_pool is None:
         from openakita.agents.factory import AgentFactory, AgentInstancePool
+
         _desktop_pool = AgentInstancePool(AgentFactory(), idle_timeout=600)
         await _desktop_pool.start()
         logger.info("[Main] Desktop AgentInstancePool initialized (idle_timeout=600s)")
@@ -927,8 +954,11 @@ async def start_im_channels(agent_or_master):
 
             try:
                 adapter = _create_bot_adapter(
-                    bot_type, creds,
-                    channel_name=_channel_name, bot_id=bot_id, agent_profile_id=agent_id,
+                    bot_type,
+                    creds,
+                    channel_name=_channel_name,
+                    bot_id=bot_id,
+                    agent_profile_id=agent_id,
                 )
                 if adapter:
                     await _message_gateway.register_adapter(adapter)
@@ -1099,7 +1129,6 @@ def print_help():
     console.print(table)
 
 
-
 def show_channels():
     """显示 IM 通道状态"""
     table = Table(title="IM 通道状态")
@@ -1113,9 +1142,13 @@ def show_channels():
         ("企业微信(HTTP)", settings.wework_enabled, settings.wework_corp_id),
         ("企业微信(WS)", settings.wework_ws_enabled, settings.wework_ws_bot_id),
         ("钉钉", settings.dingtalk_enabled, settings.dingtalk_client_id),
-        ("OneBot", settings.onebot_enabled,
-         settings.onebot_ws_url if settings.onebot_mode == "forward"
-         else f"{settings.onebot_reverse_host}:{settings.onebot_reverse_port}"),
+        (
+            "OneBot",
+            settings.onebot_enabled,
+            settings.onebot_ws_url
+            if settings.onebot_mode == "forward"
+            else f"{settings.onebot_reverse_host}:{settings.onebot_reverse_port}",
+        ),
         ("QQ 官方机器人", settings.qqbot_enabled, settings.qqbot_app_id),
         ("微信", settings.wechat_enabled, settings.wechat_token),
     ]
@@ -1181,7 +1214,9 @@ async def run_interactive():
         nonlocal _cli_chat_id
         _cli_chat_id = _cid
         if _session_manager:
-            cs = _session_manager.get_session(channel="cli", chat_id=_cid, user_id="cli_user", create_if_missing=True)
+            cs = _session_manager.get_session(
+                channel="cli", chat_id=_cid, user_id="cli_user", create_if_missing=True
+            )
             if cs:
                 agent._cli_session = cs
                 mc = len(cs.context.get_messages())
@@ -1234,7 +1269,19 @@ async def run_interactive():
     from .cli.stream_renderer import render_stream
     from .commands.registry import CommandScope, find_command, get_commands
 
-    _cli_handled = {"help", "status", "selfcheck", "memory", "skills", "channels", "clear", "sessions", "session", "exit", "quit"}
+    _cli_handled = {
+        "help",
+        "status",
+        "selfcheck",
+        "memory",
+        "skills",
+        "channels",
+        "clear",
+        "sessions",
+        "session",
+        "exit",
+        "quit",
+    }
     cli_commands = [
         (f"/{c.name}", c.description)
         for c in get_commands()
@@ -1245,10 +1292,10 @@ async def run_interactive():
     async def _process_message(user_input: str):
         """Process a single user message (extracted for early-input replay)."""
         session_messages: list[dict] = []
-        _active_session = getattr(agent_or_master, '_cli_session', None)
+        _active_session = getattr(agent_or_master, "_cli_session", None)
         if _active_session:
             session_messages = _active_session.context.get_messages()
-        elif hasattr(agent_or_master, '_context'):
+        elif hasattr(agent_or_master, "_context"):
             session_messages = agent_or_master._context.messages
         _sid = _active_session.id if _active_session else _cli_chat_id
         event_stream = agent_or_master.chat_with_session_stream(
@@ -1269,12 +1316,17 @@ async def run_interactive():
 
                 # N7: Queue early input if agent is not ready yet
                 if not init_done.is_set():
-                    if user_input.startswith("/") and user_input.lower().strip() in ("/exit", "/quit"):
+                    if user_input.startswith("/") and user_input.lower().strip() in (
+                        "/exit",
+                        "/quit",
+                    ):
                         console.print("[yellow]再见！[/yellow]")
                         shutdown_event.set()
                         break
                     early_input_queue.append(user_input.strip())
-                    console.print(f"[dim]已缓存消息 ({len(early_input_queue)})，Agent 就绪后将自动处理[/dim]")
+                    console.print(
+                        f"[dim]已缓存消息 ({len(early_input_queue)})，Agent 就绪后将自动处理[/dim]"
+                    )
                     continue
 
                 # Replay queued messages after initialization
@@ -1325,13 +1377,18 @@ async def run_interactive():
                         _new_id = f"cli_{_uuid.uuid4().hex[:12]}"
                         if _session_manager:
                             cli_session = _session_manager.get_session(
-                                channel="cli", chat_id=_new_id, user_id="cli_user",
+                                channel="cli",
+                                chat_id=_new_id,
+                                user_id="cli_user",
                                 create_if_missing=True,
                             )
                             if cli_session:
                                 agent_or_master._cli_session = cli_session
                         else:
-                            if hasattr(agent_or_master, '_cli_session') and agent_or_master._cli_session:
+                            if (
+                                hasattr(agent_or_master, "_cli_session")
+                                and agent_or_master._cli_session
+                            ):
                                 agent_or_master._cli_session.context.clear_messages()
                         agent_or_master._conversation_history.clear()
                         agent_or_master._context.messages.clear()
@@ -1354,6 +1411,7 @@ async def run_interactive():
                                 console.print("[yellow]没有历史 CLI 会话[/yellow]")
                             else:
                                 from rich.table import Table as _Tbl
+
                                 tbl = _Tbl(title="CLI 会话列表")
                                 tbl.add_column("#", style="cyan", width=4)
                                 tbl.add_column("会话 ID", style="green")
@@ -1366,7 +1424,9 @@ async def run_interactive():
                                         str(i),
                                         s.session_key.split(":")[1][:16],
                                         str(len(s.context.get_messages())),
-                                        s.created_at.strftime("%m-%d %H:%M") if hasattr(s, "created_at") and s.created_at else "?",
+                                        s.created_at.strftime("%m-%d %H:%M")
+                                        if hasattr(s, "created_at") and s.created_at
+                                        else "?",
                                         is_cur,
                                     )
                                 console.print(tbl)
@@ -1376,7 +1436,9 @@ async def run_interactive():
                         continue
 
                     elif cmd == "/session":
-                        console.print("[yellow]用法: /session <序号>  (先用 /sessions 查看列表)[/yellow]")
+                        console.print(
+                            "[yellow]用法: /session <序号>  (先用 /sessions 查看列表)[/yellow]"
+                        )
                         continue
 
                     elif cmd.startswith("/session "):
@@ -1401,7 +1463,9 @@ async def run_interactive():
                                         json.dumps({"chat_id": _cli_chat_id}), encoding="utf-8"
                                     )
                                     msg_count = len(target.context.get_messages())
-                                    console.print(f"[green]已切换到会话 ({msg_count} 条消息)[/green]")
+                                    console.print(
+                                        f"[green]已切换到会话 ({msg_count} 条消息)[/green]"
+                                    )
                                 else:
                                     console.print("[red]序号超出范围[/red]")
                             except ValueError:
@@ -1411,7 +1475,9 @@ async def run_interactive():
                     else:
                         known = find_command(cmd)
                         if known:
-                            console.print(f"[yellow]命令 /{known.name} 暂不支持 CLI，请在 Desktop 中使用[/yellow]")
+                            console.print(
+                                f"[yellow]命令 /{known.name} 暂不支持 CLI，请在 Desktop 中使用[/yellow]"
+                            )
                         else:
                             console.print(f"[red]未知命令: {cmd}[/red]")
                             print_help()
@@ -1555,10 +1621,7 @@ def main(
         # 检查是否至少有一个可用的 LLM 端点
         from .llm.config import get_default_config_path
 
-        has_endpoint = (
-            settings.anthropic_api_key
-            or get_default_config_path().exists()
-        )
+        has_endpoint = settings.anthropic_api_key or get_default_config_path().exists()
         if not has_endpoint:
             console.print("[red]错误: 未配置任何 LLM 端点[/red]")
             console.print(
@@ -1573,7 +1636,9 @@ def main(
 @app.command()
 def init(
     project_dir: str | None = typer.Argument(None, help="项目目录（默认当前目录）"),
-    quick: bool = typer.Option(False, "--quick", "-q", help="快速模式：仅配置 Provider + API Key + Model"),
+    quick: bool = typer.Option(
+        False, "--quick", "-q", help="快速模式：仅配置 Provider + API Key + Model"
+    ),
 ):
     """
     初始化 OpenAkita - 交互式配置向导
@@ -1633,6 +1698,7 @@ def run(
         # 桌面通知
         from .config import settings
         from .core.desktop_notify import notify_task_completed
+
         if settings.desktop_notify_enabled:
             notify_task_completed(
                 task[:80],
@@ -1824,7 +1890,9 @@ def _reset_globals():
 
 @app.command()
 def serve(
-    dev: bool = typer.Option(False, "--dev", help="开发模式：监控 src/ 目录的 .py 文件变化，自动重启服务"),
+    dev: bool = typer.Option(
+        False, "--dev", help="开发模式：监控 src/ 目录的 .py 文件变化，自动重启服务"
+    ),
 ):
     """
     启动服务模式 (无 CLI，只运行 IM 通道)
@@ -1853,8 +1921,13 @@ def serve(
     global console
     if getattr(sys, "frozen", False) or os.environ.get("NO_COLOR"):
         import io
-        console = Console(file=io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace"),
-                          force_terminal=False, no_color=True, highlight=False)
+
+        console = Console(
+            file=io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace"),
+            force_terminal=False,
+            no_color=True,
+            highlight=False,
+        )
 
     # ── 心跳文件机制 ──
     # 后端进程通过独立守护线程定期写入心跳文件，供 Tauri 侧判断进程真实健康状态。
@@ -1870,6 +1943,7 @@ def serve(
         try:
             _heartbeat_file.parent.mkdir(parents=True, exist_ok=True)
             from openakita import __git_hash__, __version__
+
             data = {
                 "pid": os.getpid(),
                 "timestamp": time.time(),
@@ -1924,6 +1998,7 @@ def serve(
         _heartbeat_phase = "initializing"
 
         from openakita import get_version_string
+
         _version_str = get_version_string()
         logger.info(f"OpenAkita {_version_str} starting...")
 
@@ -1969,6 +2044,7 @@ def serve(
         _api_fatal = False
         try:
             from openakita.api.server import start_api_server
+
             api_task = await start_api_server(
                 agent=agent_or_master,
                 shutdown_event=shutdown_event,
@@ -1991,21 +2067,27 @@ def serve(
         if _api_fatal:
             # HTTP API 是 Setup Center 的核心依赖，启动失败时应退出进程
             # 让 Tauri 能正确检测到进程退出并报错给用户
-            console.print("[red]HTTP API 启动失败，进程即将退出。请检查端口 18900 是否被占用。[/red]")
+            console.print(
+                "[red]HTTP API 启动失败，进程即将退出。请检查端口 18900 是否被占用。[/red]"
+            )
             shutdown_event.set()
 
         console.print()
         if dev:
-            console.print("[bold]服务运行中 [cyan](dev 模式)[/cyan]...[/bold] 文件变化时自动重启，按 Ctrl+C 停止")
+            console.print(
+                "[bold]服务运行中 [cyan](dev 模式)[/cyan]...[/bold] 文件变化时自动重启，按 Ctrl+C 停止"
+            )
         else:
             console.print("[bold]服务运行中...[/bold] 按 Ctrl+C 停止")
 
         # ── dev 模式：文件监控自动重启 ──
         _watch_task = None
         if dev:
+
             async def _file_watcher():
                 try:
                     from watchfiles import awatch
+
                     src_dir = Path(__file__).resolve().parent  # src/openakita/
                     console.print(f"[dim]📂 监控目录: {src_dir}[/dim]")
                     async for changes in awatch(
@@ -2015,7 +2097,9 @@ def serve(
                         step=500,
                     ):
                         changed_files = [Path(p).name for _, p in changes]
-                        console.print(f"\n[cyan]🔄 检测到文件变化: {', '.join(changed_files)}，正在重启...[/cyan]")
+                        console.print(
+                            f"\n[cyan]🔄 检测到文件变化: {', '.join(changed_files)}，正在重启...[/cyan]"
+                        )
                         cfg._restart_requested = True
                         shutdown_event.set()
                         return
@@ -2111,6 +2195,7 @@ def serve(
             # 重新扫描并注入模块路径（模块可能在服务运行期间安装/卸载）
             try:
                 from openakita.runtime_env import inject_module_paths_runtime
+
                 n = inject_module_paths_runtime()
                 if n > 0:
                     console.print(f"[dim]已注入 {n} 个新模块路径[/dim]")
@@ -2120,6 +2205,7 @@ def serve(
             # 等待端口释放（旧 uvicorn 关闭后 TCP socket 可能处于 TIME_WAIT）
             try:
                 from openakita.api.server import API_HOST, API_PORT, wait_for_port_free
+
                 _api_port = int(os.environ.get("API_PORT", API_PORT))
                 console.print(f"[dim]等待端口 {_api_port} 释放...[/dim]")
                 if not wait_for_port_free(API_HOST, _api_port, timeout=15.0):
@@ -2310,7 +2396,9 @@ def plugin_validate(
         console.print()
         for e in errors:
             console.print(f"  [bold red]✗[/bold red] {e}")
-        console.print(f"\n[bold red]校验失败[/bold red]（{len(errors)} 个错误，{len(warnings)} 个警告）")
+        console.print(
+            f"\n[bold red]校验失败[/bold red]（{len(errors)} 个错误，{len(warnings)} 个警告）"
+        )
         raise typer.Exit(1)
 
     if warnings:

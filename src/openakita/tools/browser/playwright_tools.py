@@ -110,6 +110,7 @@ class PlaywrightTools:
             raw_text = await self._page.inner_text("body")
             # 去掉多余空白，截取前 500 字
             import re as _re
+
             cleaned = _re.sub(r"\s+", " ", raw_text).strip()
             if cleaned:
                 page_text_brief = cleaned[:500]
@@ -118,6 +119,7 @@ class PlaywrightTools:
 
         if not path:
             from datetime import datetime
+
             screenshots_dir = Path("data/screenshots")
             screenshots_dir.mkdir(parents=True, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -327,15 +329,23 @@ class PlaywrightTools:
             for i, page in enumerate(all_pages):
                 try:
                     title = await page.title()
-                    tabs.append({
-                        "index": i, "url": page.url,
-                        "title": title, "is_current": page == self._page,
-                    })
+                    tabs.append(
+                        {
+                            "index": i,
+                            "url": page.url,
+                            "title": title,
+                            "is_current": page == self._page,
+                        }
+                    )
                 except Exception:
-                    tabs.append({
-                        "index": i, "url": page.url,
-                        "title": "(无法获取)", "is_current": page == self._page,
-                    })
+                    tabs.append(
+                        {
+                            "index": i,
+                            "url": page.url,
+                            "title": "(无法获取)",
+                            "is_current": page == self._page,
+                        }
+                    )
             return {
                 "success": True,
                 "result": {"tabs": tabs, "count": len(tabs), "message": f"共 {len(tabs)} 个标签页"},
@@ -459,10 +469,16 @@ class PlaywrightTools:
         close_selectors = [
             'button[aria-label="Close"]',
             'button[aria-label="关闭"]',
-            ".close-btn", ".close-button", ".btn-close",
-            '[class*="close"]', '[class*="dismiss"]',
-            ".c-tips-container .close", ".login-guide-close", "#s-top-loginbtn",
-            ".modal-close", ".popup-close",
+            ".close-btn",
+            ".close-button",
+            ".btn-close",
+            '[class*="close"]',
+            '[class*="dismiss"]',
+            ".c-tips-container .close",
+            ".login-guide-close",
+            "#s-top-loginbtn",
+            ".modal-close",
+            ".popup-close",
             'button:has-text("我知道了")',
             'button:has-text("关闭")',
             'button:has-text("跳过")',

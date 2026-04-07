@@ -58,8 +58,7 @@ def classify_error(error: str) -> ErrorCategory:
 
 _CATEGORY_MESSAGES: dict[ErrorCategory, str] = {
     ErrorCategory.CONTENT_FILTER: (
-        "⚠️ 抱歉，处理过程中获取到的部分内容触发了平台安全审核，"
-        "请换个方式重新提问。"
+        "⚠️ 抱歉，处理过程中获取到的部分内容触发了平台安全审核，请换个方式重新提问。"
     ),
     ErrorCategory.AUTH: "⚠️ AI 服务认证失败，请检查 API Key 配置是否正确。",
     ErrorCategory.QUOTA: "⚠️ AI 服务配额已用尽或请求过于频繁，请稍后重试。",

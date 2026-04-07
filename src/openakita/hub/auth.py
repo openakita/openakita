@@ -64,7 +64,9 @@ class HubAuthClient:
             logger.error("Failed to request device code: %s", e)
             return None
 
-    async def poll_for_token(self, device_code: str, interval: int = 5, timeout: int = 900) -> AuthResult:
+    async def poll_for_token(
+        self, device_code: str, interval: int = 5, timeout: int = 900
+    ) -> AuthResult:
         """Step 2: Poll for token until user authorizes or timeout."""
         deadline = time.monotonic() + timeout
         current_interval = interval

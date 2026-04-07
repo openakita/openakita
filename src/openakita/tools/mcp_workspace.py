@@ -51,9 +51,7 @@ async def prepare_chrome_devtools_args(client: MCPClient, server_name: str) -> N
     if prev_injected and prev_injected in config.args:
         config.args.remove(prev_injected)
 
-    has_user_set = any(
-        a.split("=")[0] in _BROWSER_URL_ARG_KEYS for a in config.args
-    )
+    has_user_set = any(a.split("=")[0] in _BROWSER_URL_ARG_KEYS for a in config.args)
     if has_user_set:
         return
 
@@ -66,7 +64,8 @@ async def prepare_chrome_devtools_args(client: MCPClient, server_name: str) -> N
         _injected_browser_urls[server_name] = arg
         logger.info(
             "Chrome CDP detected at port %d, injected --browser-url for %s",
-            port, server_name,
+            port,
+            server_name,
         )
 
 
@@ -159,17 +158,19 @@ async def add_server_to_workspace(
     catalog.scan_mcp_directory(config_base_dir)
     catalog.invalidate_cache()
 
-    client.add_server(MCPServerConfig(
-        name=name,
-        command=command,
-        args=resolved_args,
-        env=env,
-        description=description,
-        transport=transport,
-        url=url,
-        headers=headers or {},
-        cwd=str(server_dir),
-    ))
+    client.add_server(
+        MCPServerConfig(
+            name=name,
+            command=command,
+            args=resolved_args,
+            env=env,
+            description=description,
+            transport=transport,
+            url=url,
+            headers=headers or {},
+            cwd=str(server_dir),
+        )
+    )
 
     connect_result = None
     result = await client.connect(name)
@@ -248,17 +249,19 @@ async def reload_all_servers(
             continue
         if transport in ("streamable_http", "sse") and not server.url:
             continue
-        client.add_server(MCPServerConfig(
-            name=server.identifier,
-            command=server.command or "",
-            args=list(server.args or []),
-            env=dict(server.env or {}),
-            description=server.name or "",
-            transport=transport,
-            url=server.url or "",
-            headers=dict(server.headers or {}),
-            cwd=server.config_dir or "",
-        ))
+        client.add_server(
+            MCPServerConfig(
+                name=server.identifier,
+                command=server.command or "",
+                args=list(server.args or []),
+                env=dict(server.env or {}),
+                description=server.name or "",
+                transport=transport,
+                url=server.url or "",
+                headers=dict(server.headers or {}),
+                cwd=server.config_dir or "",
+            )
+        )
 
     return {
         "catalog_count": catalog.server_count,

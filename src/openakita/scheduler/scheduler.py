@@ -85,14 +85,10 @@ class TaskScheduler:
         self._lock = asyncio.Lock()
 
         # 回调：任务因连续失败被自动禁用时触发
-        self.on_task_auto_disabled: (
-            Callable[[ScheduledTask], Awaitable[None]] | None
-        ) = None
+        self.on_task_auto_disabled: Callable[[ScheduledTask], Awaitable[None]] | None = None
 
         # 回调：启动时有 missed 任务汇总通知
-        self.on_missed_tasks_summary: (
-            Callable[[list[ScheduledTask]], Awaitable[None]] | None
-        ) = None
+        self.on_missed_tasks_summary: Callable[[list[ScheduledTask]], Awaitable[None]] | None = None
 
         # 加载任务
         self._load_tasks()
@@ -176,8 +172,7 @@ class TaskScheduler:
         async with self._lock:
             # T1: Remove all SESSION tasks on stop
             session_ids = [
-                tid for tid, t in self._tasks.items()
-                if t.durability == TaskDurability.SESSION
+                tid for tid, t in self._tasks.items() if t.durability == TaskDurability.SESSION
             ]
             for tid in session_ids:
                 self._tasks.pop(tid, None)
@@ -210,8 +205,7 @@ class TaskScheduler:
             user_tasks = [t for t in self._tasks.values() if t.deletable]
             if len(user_tasks) >= self.MAX_TASKS:
                 raise ValueError(
-                    f"已达到任务数量上限（{self.MAX_TASKS}），"
-                    f"请先取消不需要的任务再创建新任务"
+                    f"已达到任务数量上限（{self.MAX_TASKS}），请先取消不需要的任务再创建新任务"
                 )
 
             trigger = Trigger.from_config(task.trigger_type.value, task.trigger_config)
@@ -261,10 +255,20 @@ class TaskScheduler:
         return "ok"
 
     _UPDATABLE_FIELDS: set[str] = {
-        "name", "description", "prompt", "reminder_message",
-        "task_type", "trigger_type", "trigger_config",
-        "channel_id", "chat_id", "user_id", "agent_profile_id",
-        "metadata", "script_path", "action",
+        "name",
+        "description",
+        "prompt",
+        "reminder_message",
+        "task_type",
+        "trigger_type",
+        "trigger_config",
+        "channel_id",
+        "chat_id",
+        "user_id",
+        "agent_profile_id",
+        "metadata",
+        "script_path",
+        "action",
     }
 
     async def update_task(self, task_id: str, updates: dict) -> bool:
@@ -428,9 +432,7 @@ class TaskScheduler:
 
         if self._plugin_hooks:
             try:
-                await self._plugin_hooks.dispatch(
-                    "on_schedule", task=task, execution=execution
-                )
+                await self._plugin_hooks.dispatch("on_schedule", task=task, execution=execution)
             except Exception as e:
                 logger.debug(f"on_schedule hook error: {e}")
 
@@ -683,7 +685,8 @@ class TaskScheduler:
 
         try:
             data = [
-                task.to_dict() for task in self._tasks.values()
+                task.to_dict()
+                for task in self._tasks.values()
                 if task.durability != TaskDurability.SESSION
             ]
             safe_json_write(tasks_file, data, fsync=True)
@@ -697,6 +700,7 @@ class TaskScheduler:
             logger.debug(f"Skipping duplicate execution append: {execution.id}")
             return
         from ..utils.atomic_io import append_jsonl
+
         executions_file = self.storage_path / "executions.json"
         try:
             append_jsonl(executions_file, execution.to_dict(), fsync=True)

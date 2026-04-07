@@ -86,21 +86,26 @@ class StickerHandler:
         abs_path = str(resolved)
         file_url = f"/api/files?path={urllib.parse.quote(abs_path, safe='')}"
 
-        return json.dumps({
-            "ok": True,
-            "channel": "desktop",
-            "receipts": [{
-                "index": 0,
-                "status": "delivered",
-                "type": "image",
-                "path": abs_path,
-                "file_url": file_url,
-                "caption": "",
-                "name": name,
-                "size": resolved.stat().st_size if resolved.exists() else 0,
+        return json.dumps(
+            {
+                "ok": True,
                 "channel": "desktop",
-            }],
-        }, ensure_ascii=False)
+                "receipts": [
+                    {
+                        "index": 0,
+                        "status": "delivered",
+                        "type": "image",
+                        "path": abs_path,
+                        "file_url": file_url,
+                        "caption": "",
+                        "name": name,
+                        "size": resolved.stat().st_size if resolved.exists() else 0,
+                        "channel": "desktop",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        )
 
     @staticmethod
     def _get_adapter_and_chat_id():

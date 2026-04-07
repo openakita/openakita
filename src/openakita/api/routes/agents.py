@@ -15,7 +15,19 @@ _deleting_bot_ids: set[str] = set()
 _deleting_lock = asyncio.Lock()
 
 # Valid IM bot types
-VALID_BOT_TYPES = frozenset({"feishu", "telegram", "dingtalk", "wework", "wework_ws", "onebot", "onebot_reverse", "qqbot", "wechat"})
+VALID_BOT_TYPES = frozenset(
+    {
+        "feishu",
+        "telegram",
+        "dingtalk",
+        "wework",
+        "wework_ws",
+        "onebot",
+        "onebot_reverse",
+        "qqbot",
+        "wechat",
+    }
+)
 
 
 def _invalidate_bot_agent_sessions(bot_cfg: dict) -> None:
@@ -26,6 +38,7 @@ def _invalidate_bot_agent_sessions(bot_cfg: dict) -> None:
     """
     try:
         from openakita.main import _bot_channel_name, get_message_gateway
+
         gw = get_message_gateway()
         if gw is None or gw.session_manager is None:
             return
@@ -38,7 +51,9 @@ def _invalidate_bot_agent_sessions(bot_cfg: dict) -> None:
                 cleared += 1
         if cleared:
             gw.session_manager.mark_dirty()
-            logger.info(f"[Agents API] Cleared _bot_default_agent on {cleared} sessions for {channel_name}")
+            logger.info(
+                f"[Agents API] Cleared _bot_default_agent on {cleared} sessions for {channel_name}"
+            )
     except Exception as e:
         logger.warning(f"[Agents API] Failed to invalidate bot agent sessions: {e}")
 
@@ -175,6 +190,7 @@ async def create_bot(body: BotCreateRequest):
 
     if bot.get("enabled", True):
         from openakita.main import apply_im_bot
+
         await apply_im_bot(bot)
 
     return {"status": "ok", "bot": bot}
@@ -186,7 +202,9 @@ async def update_bot(bot_id: str, body: BotUpdateRequest):
     from openakita.config import runtime_state, settings
 
     bots = list(settings.im_bots)
-    idx = next((i for i, b in enumerate(bots) if isinstance(b, dict) and b.get("id") == bot_id), None)
+    idx = next(
+        (i for i, b in enumerate(bots) if isinstance(b, dict) and b.get("id") == bot_id), None
+    )
     if idx is None:
         raise HTTPException(status_code=404, detail=f"bot '{bot_id}' not found")
 
@@ -219,6 +237,7 @@ async def update_bot(bot_id: str, body: BotUpdateRequest):
         _invalidate_bot_agent_sessions(bot)
 
     from openakita.main import apply_im_bot, remove_im_bot
+
     if bot.get("enabled", True):
         await apply_im_bot(bot)
     else:
@@ -250,6 +269,7 @@ async def delete_bot(bot_id: str):
 
         if deleted:
             from openakita.main import _bot_channel_name, get_message_gateway, remove_im_bot
+
             await remove_im_bot(deleted[0])
 
             channel_name = _bot_channel_name(deleted[0])
@@ -258,8 +278,7 @@ async def delete_bot(bot_id: str):
                 purged = gw.session_manager.purge_channel(channel_name)
                 if purged:
                     logger.info(
-                        f"[Agents API] Purged {purged} sessions for deleted bot: "
-                        f"{channel_name}"
+                        f"[Agents API] Purged {purged} sessions for deleted bot: {channel_name}"
                     )
 
         return {"status": "ok"}
@@ -274,7 +293,9 @@ async def toggle_bot(bot_id: str, body: BotToggleRequest):
     from openakita.config import runtime_state, settings
 
     bots = list(settings.im_bots)
-    idx = next((i for i, b in enumerate(bots) if isinstance(b, dict) and b.get("id") == bot_id), None)
+    idx = next(
+        (i for i, b in enumerate(bots) if isinstance(b, dict) and b.get("id") == bot_id), None
+    )
     if idx is None:
         raise HTTPException(status_code=404, detail=f"bot '{bot_id}' not found")
 
@@ -286,6 +307,7 @@ async def toggle_bot(bot_id: str, body: BotToggleRequest):
     logger.info(f"[Agents API] Toggled bot {bot_id}: enabled={body.enabled}")
 
     from openakita.main import apply_im_bot, remove_im_bot
+
     if body.enabled:
         await apply_im_bot(bot)
     else:
@@ -403,7 +425,9 @@ async def create_agent_profile(body: ProfileCreateRequest):
 
     valid_modes = {"all", "inclusive", "exclusive"}
     if body.skills_mode not in valid_modes:
-        raise HTTPException(status_code=400, detail=f"skills_mode must be one of: {', '.join(valid_modes)}")
+        raise HTTPException(
+            status_code=400, detail=f"skills_mode must be one of: {', '.join(valid_modes)}"
+        )
 
     store = get_profile_store()
 
@@ -460,7 +484,9 @@ async def update_agent_profile(profile_id: str, body: ProfileUpdateRequest, requ
     if body.skills_mode is not None:
         valid_modes = {"all", "inclusive", "exclusive"}
         if body.skills_mode not in valid_modes:
-            raise HTTPException(status_code=400, detail=f"skills_mode must be one of: {', '.join(valid_modes)}")
+            raise HTTPException(
+                status_code=400, detail=f"skills_mode must be one of: {', '.join(valid_modes)}"
+            )
 
     store = get_profile_store()
     update_data = body.model_dump(exclude_unset=True)
@@ -525,6 +551,7 @@ async def reset_agent_profile(profile_id: str, request: Request):
             reset_data[field] = getattr(existing, field, getattr(preset, field))
         reset_data["user_customized"] = False
         from openakita.agents.profile import AgentProfile
+
         profile = AgentProfile.from_dict(reset_data)
         store._cache[profile_id] = profile
         store._persist(profile)
@@ -658,12 +685,11 @@ async def get_profile_memory_stats(profile_id: str):
         return {"exists": False, "semantic_count": 0, "db_size_bytes": 0}
 
     import aiosqlite
+
     semantic_count = 0
     try:
         async with aiosqlite.connect(str(db_path)) as db:
-            cursor = await db.execute(
-                "SELECT COUNT(*) FROM semantic_memories"
-            )
+            cursor = await db.execute("SELECT COUNT(*) FROM semantic_memories")
             row = await cursor.fetchone()
             semantic_count = row[0] if row else 0
     except Exception:
@@ -711,6 +737,7 @@ async def get_agent_health():
     """Get health metrics from the orchestrator."""
     try:
         from openakita.main import _orchestrator
+
         if _orchestrator:
             return {"health": _orchestrator.get_health_stats()}
     except Exception:
@@ -735,6 +762,7 @@ async def get_topology(request: Request):
     orchestrator = None
     try:
         from openakita.main import _orchestrator
+
         orchestrator = _orchestrator
     except (ImportError, AttributeError):
         pass
@@ -760,12 +788,20 @@ async def get_topology(request: Request):
                 "color": getattr(sp, "color", None) or p.color or "#6b7280",
             }
         else:
-            profile_map[p.id] = {"name": p.name, "icon": p.icon or "🤖", "color": p.color or "#6b7280"}
+            profile_map[p.id] = {
+                "name": p.name,
+                "icon": p.icon or "🤖",
+                "color": p.color or "#6b7280",
+            }
     for pid, p in stored_profiles.items():
         if getattr(p, "hidden", False):
             hidden_profile_ids.add(pid)
         if pid not in profile_map:
-            profile_map[pid] = {"name": p.name, "icon": p.icon or "🤖", "color": getattr(p, "color", None) or "#6b7280"}
+            profile_map[pid] = {
+                "name": p.name,
+                "icon": p.icon or "🤖",
+                "color": getattr(p, "color", None) or "#6b7280",
+            }
 
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -775,7 +811,9 @@ async def get_topology(request: Request):
         stats = pool.get_stats()
         for entry in stats.get("sessions", []):
             sid = entry["session_id"]
-            agents_in_session = entry.get("agents", [{"profile_id": entry.get("profile_id", "default")}])
+            agents_in_session = entry.get(
+                "agents", [{"profile_id": entry.get("profile_id", "default")}]
+            )
 
             for agent_info in agents_in_session:
                 pid = agent_info["profile_id"]
@@ -801,39 +839,48 @@ async def get_topology(request: Request):
                         if task and task.is_active:
                             status = "running"
                             iteration = task.iteration
-                            tools_executed = list(task.tools_executed[-5:]) if task.tools_executed else []
+                            tools_executed = (
+                                list(task.tools_executed[-5:]) if task.tools_executed else []
+                            )
                             tools_total = len(task.tools_executed)
                             if hasattr(task, "started_at") and task.started_at:
                                 import time
+
                                 elapsed_s = int(time.time() - task.started_at)
 
                 conv_title = ""
                 if session_manager:
                     try:
-                        sess = session_manager.get_session("desktop", sid, "desktop_user", create_if_missing=False)
+                        sess = session_manager.get_session(
+                            "desktop", sid, "desktop_user", create_if_missing=False
+                        )
                         if sess and hasattr(sess, "context"):
-                            msgs = sess.context.messages if hasattr(sess.context, "messages") else []
+                            msgs = (
+                                sess.context.messages if hasattr(sess.context, "messages") else []
+                            )
                             for m in msgs:
                                 if m.get("role") == "user":
                                     conv_title = (m.get("content") or "")[:60]
                     except Exception:
                         pass
 
-                nodes.append({
-                    "id": node_id,
-                    "profile_id": pid,
-                    "name": pinfo["name"],
-                    "icon": pinfo["icon"],
-                    "color": pinfo["color"],
-                    "status": status,
-                    "is_sub_agent": False,
-                    "parent_id": None,
-                    "iteration": iteration,
-                    "tools_executed": tools_executed,
-                    "tools_total": tools_total,
-                    "elapsed_s": elapsed_s,
-                    "conversation_title": conv_title,
-                })
+                nodes.append(
+                    {
+                        "id": node_id,
+                        "profile_id": pid,
+                        "name": pinfo["name"],
+                        "icon": pinfo["icon"],
+                        "color": pinfo["color"],
+                        "status": status,
+                        "is_sub_agent": False,
+                        "parent_id": None,
+                        "iteration": iteration,
+                        "tools_executed": tools_executed,
+                        "tools_total": tools_total,
+                        "elapsed_s": elapsed_s,
+                        "conversation_title": conv_title,
+                    }
+                )
 
     # Sub-agent states from orchestrator
     if orchestrator and pool:
@@ -846,14 +893,26 @@ async def get_topology(request: Request):
                     if sub_id not in seen_ids:
                         seen_ids.add(sub_id)
                         sub_pid = sub.get("profile_id", "")
-                        pinfo = profile_map.get(sub_pid, {"name": sub.get("name", sub_pid), "icon": sub.get("icon", "🤖"), "color": "#6b7280"})
+                        pinfo = profile_map.get(
+                            sub_pid,
+                            {
+                                "name": sub.get("name", sub_pid),
+                                "icon": sub.get("icon", "🤖"),
+                                "color": "#6b7280",
+                            },
+                        )
                         sub_status = sub.get("status", "running")
                         if sub_status == "starting":
                             sub_status = "running"
 
                         _VALID_SUB_STATUSES = {
-                            "running", "completed", "error", "idle",
-                            "cancelled", "timeout", "interrupted",
+                            "running",
+                            "completed",
+                            "error",
+                            "idle",
+                            "cancelled",
+                            "timeout",
+                            "interrupted",
                         }
 
                         from_agent = sub.get("from_agent", "")
@@ -861,21 +920,25 @@ async def get_topology(request: Request):
                         if from_agent and f"{sid}::{from_agent}" in seen_ids:
                             parent_node_id = f"{sid}::{from_agent}"
 
-                        nodes.append({
-                            "id": sub_id,
-                            "profile_id": sub_pid,
-                            "name": sub.get("name", pinfo["name"]),
-                            "icon": sub.get("icon", pinfo["icon"]),
-                            "color": pinfo["color"],
-                            "status": sub_status if sub_status in _VALID_SUB_STATUSES else "running",
-                            "is_sub_agent": True,
-                            "parent_id": parent_node_id,
-                            "iteration": sub.get("iteration", 0),
-                            "tools_executed": sub.get("tools_executed", [])[-5:],
-                            "tools_total": sub.get("tools_total", 0),
-                            "elapsed_s": sub.get("elapsed_s", 0),
-                            "conversation_title": "",
-                        })
+                        nodes.append(
+                            {
+                                "id": sub_id,
+                                "profile_id": sub_pid,
+                                "name": sub.get("name", pinfo["name"]),
+                                "icon": sub.get("icon", pinfo["icon"]),
+                                "color": pinfo["color"],
+                                "status": sub_status
+                                if sub_status in _VALID_SUB_STATUSES
+                                else "running",
+                                "is_sub_agent": True,
+                                "parent_id": parent_node_id,
+                                "iteration": sub.get("iteration", 0),
+                                "tools_executed": sub.get("tools_executed", [])[-5:],
+                                "tools_total": sub.get("tools_total", 0),
+                                "elapsed_s": sub.get("elapsed_s", 0),
+                                "conversation_title": "",
+                            }
+                        )
                         edges.append({"from": parent_node_id, "to": sub_id, "type": "delegate"})
             except Exception as exc:
                 logger.warning(f"[Topology] sub-agent states error for {sid}: {exc}")
@@ -884,7 +947,9 @@ async def get_topology(request: Request):
     # (e.g. conversations whose agent instances were reaped due to idle timeout).
     # Use chat_id as node ID to stay consistent with pool-based nodes (which use
     # conversation_id), ensuring the frontend sees stable node IDs.
-    pool_session_ids = {n["id"].split("::")[0] for n in nodes if not n["id"].startswith("dormant::")}
+    pool_session_ids = {
+        n["id"].split("::")[0] for n in nodes if not n["id"].startswith("dormant::")
+    }
     _MAX_IDLE_NODES = 3
     _IDLE_CUTOFF = datetime.now() - timedelta(minutes=30)
     _idle_added = 0
@@ -911,21 +976,23 @@ async def get_topology(request: Request):
                             conv_title = (m.get("content") or "")[:60]
 
                     seen_ids.add(sid)
-                    nodes.append({
-                        "id": sid,
-                        "profile_id": pid,
-                        "name": pinfo["name"],
-                        "icon": pinfo["icon"],
-                        "color": pinfo["color"],
-                        "status": "idle",
-                        "is_sub_agent": False,
-                        "parent_id": None,
-                        "iteration": 0,
-                        "tools_executed": [],
-                        "tools_total": 0,
-                        "elapsed_s": 0,
-                        "conversation_title": conv_title,
-                    })
+                    nodes.append(
+                        {
+                            "id": sid,
+                            "profile_id": pid,
+                            "name": pinfo["name"],
+                            "icon": pinfo["icon"],
+                            "color": pinfo["color"],
+                            "status": "idle",
+                            "is_sub_agent": False,
+                            "parent_id": None,
+                            "iteration": 0,
+                            "tools_executed": [],
+                            "tools_total": 0,
+                            "elapsed_s": 0,
+                            "conversation_title": conv_title,
+                        }
+                    )
                     _idle_added += 1
                 except Exception as exc:
                     logger.debug(f"[Topology] skip session {getattr(sess, 'chat_id', '?')}: {exc}")
@@ -941,21 +1008,23 @@ async def get_topology(request: Request):
             dormant_id = f"dormant::{pid}"
             if dormant_id not in seen_ids:
                 seen_ids.add(dormant_id)
-                nodes.append({
-                    "id": dormant_id,
-                    "profile_id": pid,
-                    "name": pinfo["name"],
-                    "icon": pinfo["icon"],
-                    "color": pinfo["color"],
-                    "status": "dormant",
-                    "is_sub_agent": False,
-                    "parent_id": None,
-                    "iteration": 0,
-                    "tools_executed": [],
-                    "tools_total": 0,
-                    "elapsed_s": 0,
-                    "conversation_title": "",
-                })
+                nodes.append(
+                    {
+                        "id": dormant_id,
+                        "profile_id": pid,
+                        "name": pinfo["name"],
+                        "icon": pinfo["icon"],
+                        "color": pinfo["color"],
+                        "status": "dormant",
+                        "is_sub_agent": False,
+                        "parent_id": None,
+                        "iteration": 0,
+                        "tools_executed": [],
+                        "tools_total": 0,
+                        "elapsed_s": 0,
+                        "conversation_title": "",
+                    }
+                )
 
     # Aggregate stats
     total_req = 0

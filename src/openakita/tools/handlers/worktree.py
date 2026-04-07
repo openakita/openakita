@@ -73,6 +73,7 @@ class WorktreeHandler:
 
         # Check for uncommitted changes
         from ...utils.worktree import _run_git
+
         code, stdout, stderr = await _run_git(["status", "--porcelain"], cwd=cwd)
         has_changes = bool(stdout.strip())
 
@@ -92,11 +93,14 @@ class WorktreeHandler:
 
         if action == "remove":
             from ...utils.worktree import cleanup_agent_worktree
+
             success = await cleanup_agent_worktree(info, project_root=project_root)
             self._active_worktree = None
             if success:
                 return f"Exited and removed worktree '{info.branch}'."
-            return f"Exited worktree but cleanup had issues. Branch '{info.branch}' may still exist."
+            return (
+                f"Exited worktree but cleanup had issues. Branch '{info.branch}' may still exist."
+            )
         else:
             self._active_worktree = None
             return (

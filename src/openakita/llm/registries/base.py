@@ -40,7 +40,9 @@ class ProviderInfo:
     requires_api_key: bool = True  # 是否需要 API Key（本地服务如 Ollama 为 False）
     is_local: bool = False  # 是否为本地服务商
     coding_plan_base_url: str | None = None  # Coding Plan 专用 API 地址（为 None 则不支持）
-    coding_plan_api_type: str | None = None  # Coding Plan 模式下的协议类型（为 None 则与 api_type 相同）
+    coding_plan_api_type: str | None = (
+        None  # Coding Plan 模式下的协议类型（为 None 则与 api_type 相同）
+    )
     note: str | None = None  # 前端 i18n key — 服务商提示信息（如"NVIDIA 免费模型限制输出"）
 
 

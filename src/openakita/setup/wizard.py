@@ -35,10 +35,19 @@ def _ask_secret(prompt_text: str, *, allow_empty: bool = False) -> str:
         console.print(f"  [dim]Received: {masked}[/dim]")
     return value
 
+
 _CHINA_SLUGS = {
-    "dashscope", "kimi-cn", "minimax-cn", "siliconflow",
-    "volcengine", "zhipu-cn", "qianfan", "hunyuan", "yunwu",
-    "longcat", "iflow",
+    "dashscope",
+    "kimi-cn",
+    "minimax-cn",
+    "siliconflow",
+    "volcengine",
+    "zhipu-cn",
+    "qianfan",
+    "hunyuan",
+    "yunwu",
+    "longcat",
+    "iflow",
 }
 
 
@@ -115,7 +124,12 @@ class SetupWizard:
 
     def _run_quick(self) -> bool:
         """快速模式：仅 Provider + API Key + Model，然后写 .env 并测试。"""
-        console.print(Panel("[bold cyan]Quick Setup Mode[/bold cyan]\n仅需三步：选择 Provider → 填写 API Key → 选择模型", border_style="cyan"))
+        console.print(
+            Panel(
+                "[bold cyan]Quick Setup Mode[/bold cyan]\n仅需三步：选择 Provider → 填写 API Key → 选择模型",
+                border_style="cyan",
+            )
+        )
         console.print()
 
         self._create_directories()
@@ -221,7 +235,9 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
 商。请勿在对话中提供敏感的个人信息、密码、密钥等机密数据，除非
 你充分了解并接受相关风险。
 """
-        console.print(Panel(Markdown(agreement_text), title="Risk Acknowledgment", border_style="yellow"))
+        console.print(
+            Panel(Markdown(agreement_text), title="Risk Acknowledgment", border_style="yellow")
+        )
         console.print()
 
         if not Confirm.ask(
@@ -306,7 +322,9 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
     def _choose_locale(self):
         """选择语言/地区，自动推导后续配置的合理默认值"""
         self._step_screen(2, "Language & Region")
-        console.print("This affects default settings for model downloads, voice recognition, etc.\n")
+        console.print(
+            "This affects default settings for model downloads, voice recognition, etc.\n"
+        )
 
         detected = self._detect_locale()
         default_choice = "1" if detected == "zh" else "2"
@@ -341,7 +359,9 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
                 "SCHEDULER_TIMEZONE": "UTC",
             }
             console.print("\n[green]Selected: English / International[/green]")
-            console.print("[dim]Models will download from HuggingFace, voice recognition defaults to English[/dim]\n")
+            console.print(
+                "[dim]Models will download from HuggingFace, voice recognition defaults to English[/dim]\n"
+            )
 
     def _create_directories(self):
         """创建必要的目录结构"""
@@ -401,7 +421,9 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
         # Backfill .env compat vars from the first endpoint for legacy code paths
         if self._llm_endpoints:
             first = self._llm_endpoints[0]
-            self.config.setdefault("ANTHROPIC_API_KEY", self.config.get(first.get("api_key_env", ""), ""))
+            self.config.setdefault(
+                "ANTHROPIC_API_KEY", self.config.get(first.get("api_key_env", ""), "")
+            )
             self.config.setdefault("ANTHROPIC_BASE_URL", first.get("base_url", ""))
             self.config.setdefault("DEFAULT_MODEL", first.get("model", ""))
 
@@ -418,9 +440,7 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
         # Summary
         endpoints_path = self.project_dir / "data" / "llm_endpoints.json"
         console.print("\n[green]LLM configuration complete![/green]")
-        console.print(
-            f"[dim]Advanced endpoint settings can be edited in {endpoints_path}[/dim]\n"
-        )
+        console.print(f"[dim]Advanced endpoint settings can be edited in {endpoints_path}[/dim]\n")
 
     def _pick_provider(self) -> dict | None:
         """Show grouped provider list and let the user pick one."""
@@ -506,6 +526,7 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
             get_provider_slug_from_base_url,
             infer_capabilities,
         )
+
         resolved_slug = get_provider_slug_from_base_url(base_url) or slug
         caps = infer_capabilities(model, provider_slug=resolved_slug)
         capabilities = [k for k, v in caps.items() if v and k != "thinking_only"]
@@ -584,7 +605,9 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
             end = min(start + page_size, len(models))
             page_models = models[start:end]
 
-            console.print(f"\n[bold]Models (page {page + 1}/{total_pages}, {len(models)} total):[/bold]\n")
+            console.print(
+                f"\n[bold]Models (page {page + 1}/{total_pages}, {len(models)} total):[/bold]\n"
+            )
             for i, m in enumerate(page_models, 1):
                 console.print(f"  [cyan][{i}][/cyan] {m['id']}")
 
@@ -641,7 +664,9 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
         configure = Confirm.ask("Configure Prompt Compiler?", default=True)
 
         if not configure:
-            console.print("[dim]Skipping Compiler configuration (will use main model as fallback).[/dim]\n")
+            console.print(
+                "[dim]Skipping Compiler configuration (will use main model as fallback).[/dim]\n"
+            )
             return
 
         # 选择 Provider
@@ -664,11 +689,11 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
             compiler_config["api_type"] = "openai"
             compiler_config["base_url"] = "https://dashscope.aliyuncs.com/compatible-mode/v1"
             compiler_config["api_key_env"] = "DASHSCOPE_API_KEY"
-            compiler_config["model"] = Prompt.ask(
-                "Model name", default="qwen-turbo-latest"
-            )
+            compiler_config["model"] = Prompt.ask("Model name", default="qwen-turbo-latest")
             # 检查是否需要单独配置 API Key
-            existing_key = self.config.get("DASHSCOPE_API_KEY") or os.environ.get("DASHSCOPE_API_KEY")
+            existing_key = self.config.get("DASHSCOPE_API_KEY") or os.environ.get(
+                "DASHSCOPE_API_KEY"
+            )
             if not existing_key:
                 api_key = _ask_secret("Enter DashScope API Key")
                 self.config["DASHSCOPE_API_KEY"] = api_key
@@ -758,6 +783,7 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
                 get_provider_slug_from_base_url,
                 infer_capabilities,
             )
+
             provider_slug = get_provider_slug_from_base_url(base_url) or provider
             caps = infer_capabilities(model, provider_slug=provider_slug)
             capabilities = [k for k, v in caps.items() if v and k != "thinking_only"]
@@ -784,35 +810,39 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
 
         primary_cfg = self.config.get("_compiler_primary")
         if primary_cfg:
-            compiler_endpoints.append({
-                "name": "compiler-primary",
-                "provider": primary_cfg.get("provider", "openai-compatible"),
-                "api_type": primary_cfg.get("api_type", "openai"),
-                "base_url": primary_cfg.get("base_url", ""),
-                "api_key_env": primary_cfg.get("api_key_env", ""),
-                "model": primary_cfg.get("model", ""),
-                "priority": 1,
-                "max_tokens": 2048,
-                "timeout": 30,
-                "capabilities": ["text"],
-                "note": "Prompt Compiler 主端点（快速模型，不启用思考）",
-            })
+            compiler_endpoints.append(
+                {
+                    "name": "compiler-primary",
+                    "provider": primary_cfg.get("provider", "openai-compatible"),
+                    "api_type": primary_cfg.get("api_type", "openai"),
+                    "base_url": primary_cfg.get("base_url", ""),
+                    "api_key_env": primary_cfg.get("api_key_env", ""),
+                    "model": primary_cfg.get("model", ""),
+                    "priority": 1,
+                    "max_tokens": 2048,
+                    "timeout": 30,
+                    "capabilities": ["text"],
+                    "note": "Prompt Compiler 主端点（快速模型，不启用思考）",
+                }
+            )
 
         backup_cfg = self.config.get("_compiler_backup")
         if backup_cfg:
-            compiler_endpoints.append({
-                "name": "compiler-backup",
-                "provider": backup_cfg.get("provider", "openai-compatible"),
-                "api_type": backup_cfg.get("api_type", "openai"),
-                "base_url": backup_cfg.get("base_url", ""),
-                "api_key_env": backup_cfg.get("api_key_env", ""),
-                "model": backup_cfg.get("model", ""),
-                "priority": 2,
-                "max_tokens": 2048,
-                "timeout": 30,
-                "capabilities": ["text"],
-                "note": "Prompt Compiler 备用端点",
-            })
+            compiler_endpoints.append(
+                {
+                    "name": "compiler-backup",
+                    "provider": backup_cfg.get("provider", "openai-compatible"),
+                    "api_type": backup_cfg.get("api_type", "openai"),
+                    "base_url": backup_cfg.get("base_url", ""),
+                    "api_key_env": backup_cfg.get("api_key_env", ""),
+                    "model": backup_cfg.get("model", ""),
+                    "priority": 2,
+                    "max_tokens": 2048,
+                    "timeout": 30,
+                    "capabilities": ["text"],
+                    "note": "Prompt Compiler 备用端点",
+                }
+            )
 
         if compiler_endpoints:
             existing_data["compiler_endpoints"] = compiler_endpoints
@@ -855,7 +885,9 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
         console.print("  [6] QQ 官方机器人")
         console.print("  [7] Skip\n")
 
-        choice = Prompt.ask("Select channel", choices=["1", "2", "3", "4", "5", "6", "7"], default="7")
+        choice = Prompt.ask(
+            "Select channel", choices=["1", "2", "3", "4", "5", "6", "7"], default="7"
+        )
 
         channel_map = {
             "1": ("telegram", self._configure_telegram),
@@ -885,14 +917,14 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
         self.config["TELEGRAM_REQUIRE_PAIRING"] = "true" if use_pairing else "false"
 
         # Webhook（可选）
-        webhook_url = Prompt.ask(
-            "Webhook URL (leave empty for long-polling)", default=""
-        )
+        webhook_url = Prompt.ask("Webhook URL (leave empty for long-polling)", default="")
         if webhook_url:
             self.config["TELEGRAM_WEBHOOK_URL"] = webhook_url
 
         # 代理配置（大陆用户常用）
-        use_proxy = Confirm.ask("Use a proxy for Telegram? (recommended in mainland China)", default=False)
+        use_proxy = Confirm.ask(
+            "Use a proxy for Telegram? (recommended in mainland China)", default=False
+        )
         if use_proxy:
             proxy = Prompt.ask(
                 "Enter proxy URL",
@@ -961,8 +993,10 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
         ob = FeishuOnboard(domain=domain)
 
         with Progress(
-            SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
-            console=console, transient=True,
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
         ) as progress:
             task = progress.add_task("正在初始化 Device Flow...", total=None)
             try:
@@ -980,12 +1014,14 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
             progress.remove_task(task)
 
         verification_uri = init_data.get("verification_uri", "")
-        console.print(Panel(
-            f"请使用飞书 APP 扫描下方二维码完成授权\n\n"
-            f"或在浏览器中打开: [link]{verification_uri}[/link]",
-            title="飞书扫码授权",
-            border_style="green",
-        ))
+        console.print(
+            Panel(
+                f"请使用飞书 APP 扫描下方二维码完成授权\n\n"
+                f"或在浏览器中打开: [link]{verification_uri}[/link]",
+                title="飞书扫码授权",
+                border_style="green",
+            )
+        )
         render_qr_terminal(verification_uri)
 
         console.print("\n[dim]等待扫码授权（最多 3 分钟）...[/dim]")
@@ -1125,7 +1161,11 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
         models_list = [
             ("1", "shibing624/text2vec-base-chinese", "Chinese optimized (~100MB)"),
             ("2", "sentence-transformers/all-MiniLM-L6-v2", "English optimized (~90MB)"),
-            ("3", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2", "Multilingual (~120MB)"),
+            (
+                "3",
+                "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+                "Multilingual (~120MB)",
+            ),
         ]
         # 找到默认选项的序号
         default_model_choice = "1"
@@ -1184,8 +1224,12 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
         use_voice = Confirm.ask("Enable local voice recognition (Whisper)?", default=True)
         if not use_voice:
             self.config.setdefault("WHISPER_MODEL", "base")
-            self.config.setdefault("WHISPER_LANGUAGE", getattr(self, "_defaults", {}).get("WHISPER_LANGUAGE", "zh"))
-            console.print("[dim]Voice will be configured with defaults, model downloads on first use.[/dim]\n")
+            self.config.setdefault(
+                "WHISPER_LANGUAGE", getattr(self, "_defaults", {}).get("WHISPER_LANGUAGE", "zh")
+            )
+            console.print(
+                "[dim]Voice will be configured with defaults, model downloads on first use.[/dim]\n"
+            )
             return
 
         defaults = getattr(self, "_defaults", {})
@@ -1224,7 +1268,9 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
         ]
         # 英语时 .en 模型更小，提示用户
         if whisper_lang == "en":
-            console.print("[dim]  Note: English .en models are auto-selected and are more efficient[/dim]\n")
+            console.print(
+                "[dim]  Note: English .en models are auto-selected and are more efficient[/dim]\n"
+            )
 
         model_choice = Prompt.ask(
             "Select model size",
@@ -1266,7 +1312,16 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
         # Persona
         persona = Prompt.ask(
             "Persona preset (role personality)",
-            choices=["default", "business", "tech_expert", "butler", "girlfriend", "boyfriend", "family", "jarvis"],
+            choices=[
+                "default",
+                "business",
+                "tech_expert",
+                "butler",
+                "girlfriend",
+                "boyfriend",
+                "family",
+                "jarvis",
+            ],
             default="default",
         )
         if persona != "default":
@@ -1277,7 +1332,9 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
         self.config["STICKER_ENABLED"] = "true" if use_sticker else "false"
 
         # Proactive (living presence)
-        use_proactive = Confirm.ask("Enable living-presence mode? (proactive greetings & follow-ups)", default=False)
+        use_proactive = Confirm.ask(
+            "Enable living-presence mode? (proactive greetings & follow-ups)", default=False
+        )
         if use_proactive:
             self.config["PROACTIVE_ENABLED"] = "true"
             max_daily = Prompt.ask("  Max daily proactive messages", default="3")
@@ -1295,7 +1352,9 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
         self.config["SCHEDULER_ENABLED"] = "true" if use_scheduler else "false"
         if use_scheduler:
             defaults = getattr(self, "_defaults", {})
-            tz = Prompt.ask("  Timezone", default=defaults.get("SCHEDULER_TIMEZONE", "Asia/Shanghai"))
+            tz = Prompt.ask(
+                "  Timezone", default=defaults.get("SCHEDULER_TIMEZONE", "Asia/Shanghai")
+            )
             self.config["SCHEDULER_TIMEZONE"] = tz
 
         # Session (会话)
@@ -1382,99 +1441,115 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
                 lines.append(f"{env_var}={self.config.get(env_var, '')}")
                 written_keys.add(env_var)
 
-        lines.extend([
-            "",
-            "# ========== Model Configuration ==========",
-            f"DEFAULT_MODEL={self.config.get('DEFAULT_MODEL', 'claude-sonnet-4-20250514')}",
-            f"MAX_TOKENS={self.config.get('MAX_TOKENS', '0')}",
-            f"THINKING_MODE={self.config.get('THINKING_MODE', 'auto')}",
-        ])
+        lines.extend(
+            [
+                "",
+                "# ========== Model Configuration ==========",
+                f"DEFAULT_MODEL={self.config.get('DEFAULT_MODEL', 'claude-sonnet-4-20250514')}",
+                f"MAX_TOKENS={self.config.get('MAX_TOKENS', '0')}",
+                f"THINKING_MODE={self.config.get('THINKING_MODE', 'auto')}",
+            ]
+        )
 
-        lines.extend([
-            "",
-            "# ========== Agent Configuration ==========",
-            "AGENT_NAME=OpenAkita",
-            f"MAX_ITERATIONS={self.config.get('MAX_ITERATIONS', '300')}  # ReAct 循环最大迭代次数",
-            "AUTO_CONFIRM=false  # 工具调用是否自动确认（无需人工审批）",
-            "SELFCHECK_AUTOFIX=true  # Agent 自检发现问题后是否自动修复",
-            "FORCE_TOOL_CALL_MAX_RETRIES=1  # LLM 未返回工具调用时的强制重试次数",
-            "TOOL_MAX_PARALLEL=1  # 并行工具调用最大数量",
-            "# ALLOW_PARALLEL_TOOLS_WITH_INTERRUPT_CHECKS=false",
-            "",
-            "# ========== Timeout ==========",
-            "PROGRESS_TIMEOUT_SECONDS=600  # 任务无进展超时（秒），0=不限",
-            "HARD_TIMEOUT_SECONDS=0  # 任务硬超时（秒），0=不限",
-            "",
-            "# ========== Paths & Logging ==========",
-            "DATABASE_PATH=data/agent.db",
-            f"LOG_LEVEL={self.config.get('LOG_LEVEL', 'INFO')}",
-            "LOG_DIR=logs  # 日志文件目录",
-            "LOG_FILE_PREFIX=openakita  # 日志文件名前缀",
-            "LOG_MAX_SIZE_MB=10  # 单个日志文件最大大小（MB）",
-            "LOG_BACKUP_COUNT=30  # 日志文件保留份数",
-            "LOG_RETENTION_DAYS=30  # 日志文件保留天数",
-            "LOG_TO_CONSOLE=true  # 是否输出到控制台",
-            "LOG_TO_FILE=true  # 是否写入文件",
-            "# LOG_FORMAT=%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-            "",
-            "# ========== Tools ==========",
-            "MCP_ENABLED=true  # 启用 MCP 工具服务器",
-            "DESKTOP_ENABLED=true  # 启用桌面自动化（截屏/键鼠）",
-            "",
-        ])
+        lines.extend(
+            [
+                "",
+                "# ========== Agent Configuration ==========",
+                "AGENT_NAME=OpenAkita",
+                f"MAX_ITERATIONS={self.config.get('MAX_ITERATIONS', '300')}  # ReAct 循环最大迭代次数",
+                "AUTO_CONFIRM=false  # 工具调用是否自动确认（无需人工审批）",
+                "SELFCHECK_AUTOFIX=true  # Agent 自检发现问题后是否自动修复",
+                "FORCE_TOOL_CALL_MAX_RETRIES=1  # LLM 未返回工具调用时的强制重试次数",
+                "TOOL_MAX_PARALLEL=1  # 并行工具调用最大数量",
+                "# ALLOW_PARALLEL_TOOLS_WITH_INTERRUPT_CHECKS=false",
+                "",
+                "# ========== Timeout ==========",
+                "PROGRESS_TIMEOUT_SECONDS=600  # 任务无进展超时（秒），0=不限",
+                "HARD_TIMEOUT_SECONDS=0  # 任务硬超时（秒），0=不限",
+                "",
+                "# ========== Paths & Logging ==========",
+                "DATABASE_PATH=data/agent.db",
+                f"LOG_LEVEL={self.config.get('LOG_LEVEL', 'INFO')}",
+                "LOG_DIR=logs  # 日志文件目录",
+                "LOG_FILE_PREFIX=openakita  # 日志文件名前缀",
+                "LOG_MAX_SIZE_MB=10  # 单个日志文件最大大小（MB）",
+                "LOG_BACKUP_COUNT=30  # 日志文件保留份数",
+                "LOG_RETENTION_DAYS=30  # 日志文件保留天数",
+                "LOG_TO_CONSOLE=true  # 是否输出到控制台",
+                "LOG_TO_FILE=true  # 是否写入文件",
+                "# LOG_FORMAT=%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+                "",
+                "# ========== Tools ==========",
+                "MCP_ENABLED=true  # 启用 MCP 工具服务器",
+                "DESKTOP_ENABLED=true  # 启用桌面自动化（截屏/键鼠）",
+                "",
+            ]
+        )
 
         # 网络代理
         if self.config.get("HTTP_PROXY") or self.config.get("HTTPS_PROXY"):
-            lines.extend([
-                "# ========== Network Proxy ==========",
-                f"HTTP_PROXY={self.config.get('HTTP_PROXY', '')}",
-                f"HTTPS_PROXY={self.config.get('HTTPS_PROXY', '')}",
-                "# ALL_PROXY=",
-                "# FORCE_IPV4=false",
-                "",
-            ])
+            lines.extend(
+                [
+                    "# ========== Network Proxy ==========",
+                    f"HTTP_PROXY={self.config.get('HTTP_PROXY', '')}",
+                    f"HTTPS_PROXY={self.config.get('HTTPS_PROXY', '')}",
+                    "# ALL_PROXY=",
+                    "# FORCE_IPV4=false",
+                    "",
+                ]
+            )
         else:
-            lines.extend([
-                "# ========== Network Proxy (optional) ==========",
-                "# HTTP_PROXY=http://127.0.0.1:7890",
-                "# HTTPS_PROXY=http://127.0.0.1:7890",
-                "# ALL_PROXY=socks5://127.0.0.1:1080",
-                "# FORCE_IPV4=false",
-                "",
-            ])
+            lines.extend(
+                [
+                    "# ========== Network Proxy (optional) ==========",
+                    "# HTTP_PROXY=http://127.0.0.1:7890",
+                    "# HTTPS_PROXY=http://127.0.0.1:7890",
+                    "# ALL_PROXY=socks5://127.0.0.1:1080",
+                    "# FORCE_IPV4=false",
+                    "",
+                ]
+            )
 
         # GitHub Token
         if self.config.get("GITHUB_TOKEN"):
-            lines.extend([
-                "# ========== GitHub Token ==========",
-                f"GITHUB_TOKEN={self.config['GITHUB_TOKEN']}",
-                "",
-            ])
+            lines.extend(
+                [
+                    "# ========== GitHub Token ==========",
+                    f"GITHUB_TOKEN={self.config['GITHUB_TOKEN']}",
+                    "",
+                ]
+            )
         else:
-            lines.extend([
-                "# ========== GitHub Token (optional) ==========",
-                "# GITHUB_TOKEN=",
-                "",
-            ])
+            lines.extend(
+                [
+                    "# ========== GitHub Token (optional) ==========",
+                    "# GITHUB_TOKEN=",
+                    "",
+                ]
+            )
 
         # Whisper
         whisper_lang = self.config.get("WHISPER_LANGUAGE", "zh")
-        lines.extend([
-            "# ========== Voice (optional) ==========",
-            f"WHISPER_MODEL={self.config.get('WHISPER_MODEL', 'base')}",
-            f"WHISPER_LANGUAGE={whisper_lang}",
-            "",
-        ])
+        lines.extend(
+            [
+                "# ========== Voice (optional) ==========",
+                f"WHISPER_MODEL={self.config.get('WHISPER_MODEL', 'base')}",
+                f"WHISPER_LANGUAGE={whisper_lang}",
+                "",
+            ]
+        )
 
         # IM 通道配置
         lines.append("# ========== IM Channels ==========")
 
         if self.config.get("TELEGRAM_ENABLED"):
-            lines.extend([
-                f"TELEGRAM_ENABLED={self.config.get('TELEGRAM_ENABLED', 'false')}",
-                f"TELEGRAM_BOT_TOKEN={self.config.get('TELEGRAM_BOT_TOKEN', '')}",
-                f"TELEGRAM_REQUIRE_PAIRING={self.config.get('TELEGRAM_REQUIRE_PAIRING', 'true')}",
-            ])
+            lines.extend(
+                [
+                    f"TELEGRAM_ENABLED={self.config.get('TELEGRAM_ENABLED', 'false')}",
+                    f"TELEGRAM_BOT_TOKEN={self.config.get('TELEGRAM_BOT_TOKEN', '')}",
+                    f"TELEGRAM_REQUIRE_PAIRING={self.config.get('TELEGRAM_REQUIRE_PAIRING', 'true')}",
+                ]
+            )
             if self.config.get("TELEGRAM_WEBHOOK_URL"):
                 lines.append(f"TELEGRAM_WEBHOOK_URL={self.config['TELEGRAM_WEBHOOK_URL']}")
             else:
@@ -1485,206 +1560,254 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
             else:
                 lines.append("# TELEGRAM_PROXY=")
         else:
-            lines.extend([
-                "TELEGRAM_ENABLED=false",
-                "# TELEGRAM_BOT_TOKEN=",
-                "# TELEGRAM_WEBHOOK_URL=",
-                "# TELEGRAM_PAIRING_CODE=",
-                "# TELEGRAM_PROXY=",
-            ])
+            lines.extend(
+                [
+                    "TELEGRAM_ENABLED=false",
+                    "# TELEGRAM_BOT_TOKEN=",
+                    "# TELEGRAM_WEBHOOK_URL=",
+                    "# TELEGRAM_PAIRING_CODE=",
+                    "# TELEGRAM_PROXY=",
+                ]
+            )
         lines.append("")
 
         if self.config.get("FEISHU_ENABLED"):
-            lines.extend([
-                f"FEISHU_ENABLED={self.config.get('FEISHU_ENABLED', 'false')}",
-                f"FEISHU_APP_ID={self.config.get('FEISHU_APP_ID', '')}",
-                f"FEISHU_APP_SECRET={self.config.get('FEISHU_APP_SECRET', '')}",
-                f"FEISHU_STREAMING_ENABLED={self.config.get('FEISHU_STREAMING_ENABLED', 'true')}",
-                f"FEISHU_GROUP_STREAMING={self.config.get('FEISHU_GROUP_STREAMING', 'true')}",
-                f"FEISHU_GROUP_RESPONSE_MODE={self.config.get('FEISHU_GROUP_RESPONSE_MODE', 'mention_only')}",
-            ])
+            lines.extend(
+                [
+                    f"FEISHU_ENABLED={self.config.get('FEISHU_ENABLED', 'false')}",
+                    f"FEISHU_APP_ID={self.config.get('FEISHU_APP_ID', '')}",
+                    f"FEISHU_APP_SECRET={self.config.get('FEISHU_APP_SECRET', '')}",
+                    f"FEISHU_STREAMING_ENABLED={self.config.get('FEISHU_STREAMING_ENABLED', 'true')}",
+                    f"FEISHU_GROUP_STREAMING={self.config.get('FEISHU_GROUP_STREAMING', 'true')}",
+                    f"FEISHU_GROUP_RESPONSE_MODE={self.config.get('FEISHU_GROUP_RESPONSE_MODE', 'mention_only')}",
+                ]
+            )
         else:
-            lines.extend([
-                "FEISHU_ENABLED=false",
-                "# FEISHU_APP_ID=",
-                "# FEISHU_APP_SECRET=",
-                "# FEISHU_STREAMING_ENABLED=true",
-                "# FEISHU_GROUP_STREAMING=true",
-                "# FEISHU_GROUP_RESPONSE_MODE=mention_only",
-            ])
+            lines.extend(
+                [
+                    "FEISHU_ENABLED=false",
+                    "# FEISHU_APP_ID=",
+                    "# FEISHU_APP_SECRET=",
+                    "# FEISHU_STREAMING_ENABLED=true",
+                    "# FEISHU_GROUP_STREAMING=true",
+                    "# FEISHU_GROUP_RESPONSE_MODE=mention_only",
+                ]
+            )
         lines.append("")
 
         if self.config.get("WEWORK_ENABLED"):
-            lines.extend([
-                f"WEWORK_ENABLED={self.config.get('WEWORK_ENABLED', 'false')}",
-                f"WEWORK_CORP_ID={self.config.get('WEWORK_CORP_ID', '')}",
-                f"WEWORK_TOKEN={self.config.get('WEWORK_TOKEN', '')}",
-                f"WEWORK_ENCODING_AES_KEY={self.config.get('WEWORK_ENCODING_AES_KEY', '')}",
-                f"WEWORK_CALLBACK_PORT={self.config.get('WEWORK_CALLBACK_PORT', '9880')}",
-                f"WEWORK_CALLBACK_HOST={self.config.get('WEWORK_CALLBACK_HOST', '0.0.0.0')}",
-            ])
+            lines.extend(
+                [
+                    f"WEWORK_ENABLED={self.config.get('WEWORK_ENABLED', 'false')}",
+                    f"WEWORK_CORP_ID={self.config.get('WEWORK_CORP_ID', '')}",
+                    f"WEWORK_TOKEN={self.config.get('WEWORK_TOKEN', '')}",
+                    f"WEWORK_ENCODING_AES_KEY={self.config.get('WEWORK_ENCODING_AES_KEY', '')}",
+                    f"WEWORK_CALLBACK_PORT={self.config.get('WEWORK_CALLBACK_PORT', '9880')}",
+                    f"WEWORK_CALLBACK_HOST={self.config.get('WEWORK_CALLBACK_HOST', '0.0.0.0')}",
+                ]
+            )
         else:
-            lines.extend([
-                "WEWORK_ENABLED=false",
-                "# WEWORK_CORP_ID=",
-                "# WEWORK_TOKEN=",
-                "# WEWORK_ENCODING_AES_KEY=",
-                "# WEWORK_CALLBACK_PORT=9880",
-                "# WEWORK_CALLBACK_HOST=0.0.0.0",
-            ])
+            lines.extend(
+                [
+                    "WEWORK_ENABLED=false",
+                    "# WEWORK_CORP_ID=",
+                    "# WEWORK_TOKEN=",
+                    "# WEWORK_ENCODING_AES_KEY=",
+                    "# WEWORK_CALLBACK_PORT=9880",
+                    "# WEWORK_CALLBACK_HOST=0.0.0.0",
+                ]
+            )
         lines.append("")
 
         if self.config.get("DINGTALK_ENABLED"):
-            lines.extend([
-                f"DINGTALK_ENABLED={self.config.get('DINGTALK_ENABLED', 'false')}",
-                f"DINGTALK_CLIENT_ID={self.config.get('DINGTALK_CLIENT_ID', '')}",
-                f"DINGTALK_CLIENT_SECRET={self.config.get('DINGTALK_CLIENT_SECRET', '')}",
-            ])
+            lines.extend(
+                [
+                    f"DINGTALK_ENABLED={self.config.get('DINGTALK_ENABLED', 'false')}",
+                    f"DINGTALK_CLIENT_ID={self.config.get('DINGTALK_CLIENT_ID', '')}",
+                    f"DINGTALK_CLIENT_SECRET={self.config.get('DINGTALK_CLIENT_SECRET', '')}",
+                ]
+            )
         else:
-            lines.extend([
-                "DINGTALK_ENABLED=false",
-                "# DINGTALK_CLIENT_ID=",
-                "# DINGTALK_CLIENT_SECRET=",
-            ])
+            lines.extend(
+                [
+                    "DINGTALK_ENABLED=false",
+                    "# DINGTALK_CLIENT_ID=",
+                    "# DINGTALK_CLIENT_SECRET=",
+                ]
+            )
         lines.append("")
 
         if self.config.get("ONEBOT_ENABLED"):
             onebot_mode = self.config.get("ONEBOT_MODE", "reverse")
-            lines.extend([
-                f"ONEBOT_ENABLED={self.config.get('ONEBOT_ENABLED', 'false')}",
-                f"ONEBOT_MODE={onebot_mode}",
-            ])
+            lines.extend(
+                [
+                    f"ONEBOT_ENABLED={self.config.get('ONEBOT_ENABLED', 'false')}",
+                    f"ONEBOT_MODE={onebot_mode}",
+                ]
+            )
             if onebot_mode == "forward":
-                lines.append(f"ONEBOT_WS_URL={self.config.get('ONEBOT_WS_URL', 'ws://127.0.0.1:8080')}")
+                lines.append(
+                    f"ONEBOT_WS_URL={self.config.get('ONEBOT_WS_URL', 'ws://127.0.0.1:8080')}"
+                )
                 lines.append("# ONEBOT_REVERSE_PORT=6700")
                 lines.append("# ONEBOT_REVERSE_HOST=0.0.0.0")
             else:
-                lines.append(f"ONEBOT_REVERSE_PORT={self.config.get('ONEBOT_REVERSE_PORT', '6700')}")
-                lines.append(f"ONEBOT_REVERSE_HOST={self.config.get('ONEBOT_REVERSE_HOST', '0.0.0.0')}")
+                lines.append(
+                    f"ONEBOT_REVERSE_PORT={self.config.get('ONEBOT_REVERSE_PORT', '6700')}"
+                )
+                lines.append(
+                    f"ONEBOT_REVERSE_HOST={self.config.get('ONEBOT_REVERSE_HOST', '0.0.0.0')}"
+                )
                 lines.append("# ONEBOT_WS_URL=ws://127.0.0.1:8080")
             lines.append(f"ONEBOT_ACCESS_TOKEN={self.config.get('ONEBOT_ACCESS_TOKEN', '')}")
         else:
-            lines.extend([
-                "ONEBOT_ENABLED=false",
-                "# ONEBOT_MODE=reverse",
-                "# ONEBOT_WS_URL=ws://127.0.0.1:8080",
-                "# ONEBOT_REVERSE_PORT=6700",
-                "# ONEBOT_REVERSE_HOST=0.0.0.0",
-                "# ONEBOT_ACCESS_TOKEN=",
-            ])
+            lines.extend(
+                [
+                    "ONEBOT_ENABLED=false",
+                    "# ONEBOT_MODE=reverse",
+                    "# ONEBOT_WS_URL=ws://127.0.0.1:8080",
+                    "# ONEBOT_REVERSE_PORT=6700",
+                    "# ONEBOT_REVERSE_HOST=0.0.0.0",
+                    "# ONEBOT_ACCESS_TOKEN=",
+                ]
+            )
         lines.append("")
 
         if self.config.get("QQBOT_ENABLED"):
-            lines.extend([
-                f"QQBOT_ENABLED={self.config.get('QQBOT_ENABLED', 'false')}",
-                f"QQBOT_APP_ID={self.config.get('QQBOT_APP_ID', '')}",
-                f"QQBOT_APP_SECRET={self.config.get('QQBOT_APP_SECRET', '')}",
-                f"QQBOT_SANDBOX={self.config.get('QQBOT_SANDBOX', 'true')}",
-                f"QQBOT_MODE={self.config.get('QQBOT_MODE', 'websocket')}",
-            ])
+            lines.extend(
+                [
+                    f"QQBOT_ENABLED={self.config.get('QQBOT_ENABLED', 'false')}",
+                    f"QQBOT_APP_ID={self.config.get('QQBOT_APP_ID', '')}",
+                    f"QQBOT_APP_SECRET={self.config.get('QQBOT_APP_SECRET', '')}",
+                    f"QQBOT_SANDBOX={self.config.get('QQBOT_SANDBOX', 'true')}",
+                    f"QQBOT_MODE={self.config.get('QQBOT_MODE', 'websocket')}",
+                ]
+            )
             if self.config.get("QQBOT_MODE") == "webhook":
                 lines.append(f"QQBOT_WEBHOOK_PORT={self.config.get('QQBOT_WEBHOOK_PORT', '9890')}")
-                lines.append(f"QQBOT_WEBHOOK_PATH={self.config.get('QQBOT_WEBHOOK_PATH', '/qqbot/callback')}")
+                lines.append(
+                    f"QQBOT_WEBHOOK_PATH={self.config.get('QQBOT_WEBHOOK_PATH', '/qqbot/callback')}"
+                )
             else:
                 lines.append("# QQBOT_WEBHOOK_PORT=9890")
                 lines.append("# QQBOT_WEBHOOK_PATH=/qqbot/callback")
         else:
-            lines.extend([
-                "QQBOT_ENABLED=false",
-                "# QQBOT_APP_ID=",
-                "# QQBOT_APP_SECRET=",
-                "# QQBOT_SANDBOX=true",
-                "# QQBOT_MODE=websocket",
-                "# QQBOT_WEBHOOK_PORT=9890",
-                "# QQBOT_WEBHOOK_PATH=/qqbot/callback",
-            ])
+            lines.extend(
+                [
+                    "QQBOT_ENABLED=false",
+                    "# QQBOT_APP_ID=",
+                    "# QQBOT_APP_SECRET=",
+                    "# QQBOT_SANDBOX=true",
+                    "# QQBOT_MODE=websocket",
+                    "# QQBOT_WEBHOOK_PORT=9890",
+                    "# QQBOT_WEBHOOK_PATH=/qqbot/callback",
+                ]
+            )
         lines.append("")
 
         # 人格系统
-        lines.extend([
-            "# ========== Persona ==========",
-            f"PERSONA_NAME={self.config.get('PERSONA_NAME', 'default')}",
-            "",
-        ])
+        lines.extend(
+            [
+                "# ========== Persona ==========",
+                f"PERSONA_NAME={self.config.get('PERSONA_NAME', 'default')}",
+                "",
+            ]
+        )
 
         # 表情包
-        lines.extend([
-            "# ========== Sticker ==========",
-            f"STICKER_ENABLED={self.config.get('STICKER_ENABLED', 'true')}",
-            "# STICKER_DATA_DIR=data/sticker",
-            "",
-        ])
+        lines.extend(
+            [
+                "# ========== Sticker ==========",
+                f"STICKER_ENABLED={self.config.get('STICKER_ENABLED', 'true')}",
+                "# STICKER_DATA_DIR=data/sticker",
+                "",
+            ]
+        )
 
         # 活人感模式 —— 启用后 Agent 会主动发消息（问候、跟进、闲聊等），模拟真人互动节奏
         lines.append("# ========== Proactive (Living Presence) ==========")
         if self.config.get("PROACTIVE_ENABLED") == "true":
-            lines.extend([
-                "PROACTIVE_ENABLED=true  # 启用活人感模式",
-                f"PROACTIVE_MAX_DAILY_MESSAGES={self.config.get('PROACTIVE_MAX_DAILY_MESSAGES', '3')}  # 每日最多主动消息数",
-                f"PROACTIVE_MIN_INTERVAL_MINUTES={self.config.get('PROACTIVE_MIN_INTERVAL_MINUTES', '120')}  # 两条主动消息最短间隔（分钟）",
-                f"PROACTIVE_QUIET_HOURS_START={self.config.get('PROACTIVE_QUIET_HOURS_START', '23')}  # 免打扰时段开始（24h）",
-                f"PROACTIVE_QUIET_HOURS_END={self.config.get('PROACTIVE_QUIET_HOURS_END', '7')}  # 免打扰时段结束（24h）",
-                f"PROACTIVE_IDLE_THRESHOLD_HOURS={self.config.get('PROACTIVE_IDLE_THRESHOLD_HOURS', '3')}  # 用户空闲多久后触发主动问候（AI 动态调整）",
-            ])
+            lines.extend(
+                [
+                    "PROACTIVE_ENABLED=true  # 启用活人感模式",
+                    f"PROACTIVE_MAX_DAILY_MESSAGES={self.config.get('PROACTIVE_MAX_DAILY_MESSAGES', '3')}  # 每日最多主动消息数",
+                    f"PROACTIVE_MIN_INTERVAL_MINUTES={self.config.get('PROACTIVE_MIN_INTERVAL_MINUTES', '120')}  # 两条主动消息最短间隔（分钟）",
+                    f"PROACTIVE_QUIET_HOURS_START={self.config.get('PROACTIVE_QUIET_HOURS_START', '23')}  # 免打扰时段开始（24h）",
+                    f"PROACTIVE_QUIET_HOURS_END={self.config.get('PROACTIVE_QUIET_HOURS_END', '7')}  # 免打扰时段结束（24h）",
+                    f"PROACTIVE_IDLE_THRESHOLD_HOURS={self.config.get('PROACTIVE_IDLE_THRESHOLD_HOURS', '3')}  # 用户空闲多久后触发主动问候（AI 动态调整）",
+                ]
+            )
         else:
-            lines.extend([
-                "PROACTIVE_ENABLED=false  # 启用活人感模式（主动问候/跟进/闲聊）",
-                "# PROACTIVE_MAX_DAILY_MESSAGES=3  # 每日最多主动消息数",
-                "# PROACTIVE_MIN_INTERVAL_MINUTES=120  # 两条主动消息最短间隔（分钟）",
-                "# PROACTIVE_QUIET_HOURS_START=23  # 免打扰时段开始（24h）",
-                "# PROACTIVE_QUIET_HOURS_END=7  # 免打扰时段结束（24h）",
-                "# PROACTIVE_IDLE_THRESHOLD_HOURS=3  # 用户空闲多久后触发主动问候（AI 动态调整）",
-            ])
+            lines.extend(
+                [
+                    "PROACTIVE_ENABLED=false  # 启用活人感模式（主动问候/跟进/闲聊）",
+                    "# PROACTIVE_MAX_DAILY_MESSAGES=3  # 每日最多主动消息数",
+                    "# PROACTIVE_MIN_INTERVAL_MINUTES=120  # 两条主动消息最短间隔（分钟）",
+                    "# PROACTIVE_QUIET_HOURS_START=23  # 免打扰时段开始（24h）",
+                    "# PROACTIVE_QUIET_HOURS_END=7  # 免打扰时段结束（24h）",
+                    "# PROACTIVE_IDLE_THRESHOLD_HOURS=3  # 用户空闲多久后触发主动问候（AI 动态调整）",
+                ]
+            )
         lines.append("")
 
         # 记忆系统配置
-        lines.extend([
-            "# ========== Memory System ==========",
-            f"EMBEDDING_MODEL={self.config.get('EMBEDDING_MODEL', 'shibing624/text2vec-base-chinese')}",
-            f"EMBEDDING_DEVICE={self.config.get('EMBEDDING_DEVICE', 'cpu')}  # 嵌入模型运行设备: cpu / cuda / mps",
-            f"MODEL_DOWNLOAD_SOURCE={self.config.get('MODEL_DOWNLOAD_SOURCE', 'auto')}  # 模型下载源: auto / huggingface / modelscope",
-            "MEMORY_HISTORY_DAYS=30  # 记忆保留天数",
-            "MEMORY_MAX_HISTORY_FILES=1000  # 最大历史文件数",
-            "MEMORY_MAX_HISTORY_SIZE_MB=500  # 历史文件最大总大小（MB）",
-            "",
-        ])
+        lines.extend(
+            [
+                "# ========== Memory System ==========",
+                f"EMBEDDING_MODEL={self.config.get('EMBEDDING_MODEL', 'shibing624/text2vec-base-chinese')}",
+                f"EMBEDDING_DEVICE={self.config.get('EMBEDDING_DEVICE', 'cpu')}  # 嵌入模型运行设备: cpu / cuda / mps",
+                f"MODEL_DOWNLOAD_SOURCE={self.config.get('MODEL_DOWNLOAD_SOURCE', 'auto')}  # 模型下载源: auto / huggingface / modelscope",
+                "MEMORY_HISTORY_DAYS=30  # 记忆保留天数",
+                "MEMORY_MAX_HISTORY_FILES=1000  # 最大历史文件数",
+                "MEMORY_MAX_HISTORY_SIZE_MB=500  # 历史文件最大总大小（MB）",
+                "",
+            ]
+        )
 
         # 调度器
-        lines.extend([
-            "# ========== Scheduler ==========",
-            f"SCHEDULER_ENABLED={self.config.get('SCHEDULER_ENABLED', 'true')}",
-            f"SCHEDULER_TIMEZONE={self.config.get('SCHEDULER_TIMEZONE', 'Asia/Shanghai')}",
-            "SCHEDULER_MAX_CONCURRENT=5  # 最大并发调度任务数",
-            "SCHEDULER_TASK_TIMEOUT=600  # 单个调度任务超时（秒）",
-            "",
-        ])
+        lines.extend(
+            [
+                "# ========== Scheduler ==========",
+                f"SCHEDULER_ENABLED={self.config.get('SCHEDULER_ENABLED', 'true')}",
+                f"SCHEDULER_TIMEZONE={self.config.get('SCHEDULER_TIMEZONE', 'Asia/Shanghai')}",
+                "SCHEDULER_MAX_CONCURRENT=5  # 最大并发调度任务数",
+                "SCHEDULER_TASK_TIMEOUT=600  # 单个调度任务超时（秒）",
+                "",
+            ]
+        )
 
         # 会话
-        lines.extend([
-            "# ========== Session ==========",
-            f"SESSION_TIMEOUT_MINUTES={self.config.get('SESSION_TIMEOUT_MINUTES', '30')}  # 会话超时（分钟）",
-            f"SESSION_MAX_HISTORY={self.config.get('SESSION_MAX_HISTORY', '50')}  # 每个会话保留的最大消息条数",
-            "SESSION_STORAGE_PATH=data/sessions  # 会话持久化存储路径",
-            "",
-        ])
+        lines.extend(
+            [
+                "# ========== Session ==========",
+                f"SESSION_TIMEOUT_MINUTES={self.config.get('SESSION_TIMEOUT_MINUTES', '30')}  # 会话超时（分钟）",
+                f"SESSION_MAX_HISTORY={self.config.get('SESSION_MAX_HISTORY', '50')}  # 每个会话保留的最大消息条数",
+                "SESSION_STORAGE_PATH=data/sessions  # 会话持久化存储路径",
+                "",
+            ]
+        )
 
         # 多 Agent 配置
         lines.append("# ========== Multi-Agent Orchestration ==========")
         if self.config.get("ORCHESTRATION_ENABLED") == "true":
-            lines.extend([
-                "ORCHESTRATION_ENABLED=true  # 启用多 Agent 协作",
-                f"ORCHESTRATION_MODE={self.config.get('ORCHESTRATION_MODE', 'single')}  # 编排模式: single / parallel / pipeline",
-                "ORCHESTRATION_BUS_ADDRESS=tcp://127.0.0.1:5555  # ZeroMQ 请求总线地址",
-                "ORCHESTRATION_PUB_ADDRESS=tcp://127.0.0.1:5556  # ZeroMQ 发布地址",
-                "ORCHESTRATION_MIN_WORKERS=1  # 最小 Worker 数",
-                "ORCHESTRATION_MAX_WORKERS=5  # 最大 Worker 数",
-            ])
+            lines.extend(
+                [
+                    "ORCHESTRATION_ENABLED=true  # 启用多 Agent 协作",
+                    f"ORCHESTRATION_MODE={self.config.get('ORCHESTRATION_MODE', 'single')}  # 编排模式: single / parallel / pipeline",
+                    "ORCHESTRATION_BUS_ADDRESS=tcp://127.0.0.1:5555  # ZeroMQ 请求总线地址",
+                    "ORCHESTRATION_PUB_ADDRESS=tcp://127.0.0.1:5556  # ZeroMQ 发布地址",
+                    "ORCHESTRATION_MIN_WORKERS=1  # 最小 Worker 数",
+                    "ORCHESTRATION_MAX_WORKERS=5  # 最大 Worker 数",
+                ]
+            )
         else:
-            lines.extend([
-                "ORCHESTRATION_ENABLED=false",
-                "# ORCHESTRATION_MODE=single",
-                "# ORCHESTRATION_BUS_ADDRESS=tcp://127.0.0.1:5555",
-            ])
+            lines.extend(
+                [
+                    "ORCHESTRATION_ENABLED=false",
+                    "# ORCHESTRATION_MODE=single",
+                    "# ORCHESTRATION_BUS_ADDRESS=tcp://127.0.0.1:5555",
+                ]
+            )
         lines.append("")
 
         return "\n".join(lines)
@@ -1745,9 +1868,7 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
                 missing_display.append(f"{pip_name} ({import_name})")
 
         if not missing_pip:
-            console.print(
-                f"  [green]✓[/green] {self._selected_channel} 通道依赖已就绪"
-            )
+            console.print(f"  [green]✓[/green] {self._selected_channel} 通道依赖已就绪")
             return
 
         console.print(
@@ -1774,9 +1895,7 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
             self._channel_deps_missing = missing_pip
             extra = CHANNEL_EXTRAS.get(self._selected_channel, "")
             if extra:
-                console.print(
-                    f"  [dim]稍后可运行: pip install openakita[{extra}][/dim]"
-                )
+                console.print(f"  [dim]稍后可运行: pip install openakita[{extra}][/dim]")
             return
 
         with Progress(
@@ -1785,12 +1904,13 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
             console=console,
             transient=True,
         ) as progress:
-            task = progress.add_task(
-                f"Installing {', '.join(missing_pip)}...", total=None
-            )
+            task = progress.add_task(f"Installing {', '.join(missing_pip)}...", total=None)
             try:
                 cmd = [
-                    sys.executable, "-m", "pip", "install",
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
                     "--prefer-binary",
                     *missing_pip,
                 ]
@@ -1839,9 +1959,7 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
                     self._channel_deps_ok = False
                     self._channel_deps_missing = missing_pip
             except subprocess.TimeoutExpired:
-                progress.update(
-                    task, description="[red]✗ 安装超时 (120s)[/red]"
-                )
+                progress.update(task, description="[red]✗ 安装超时 (120s)[/red]")
                 self._channel_deps_ok = False
                 self._channel_deps_missing = missing_pip
             except Exception as e:
@@ -1859,9 +1977,7 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
         if not self._selected_channel:
             return
         if not self._channel_deps_ok and self._selected_channel != "telegram":
-            console.print(
-                "  [dim]跳过通道连通性测试（依赖未就绪）[/dim]\n"
-            )
+            console.print("  [dim]跳过通道连通性测试（依赖未就绪）[/dim]\n")
             return
 
         # 仅对有简易验证 API 的通道提供测试
@@ -1876,9 +1992,7 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
             return
 
         display_name, verify_fn = entry
-        do_test = Confirm.ask(
-            f"  Test {display_name} credentials now?", default=True
-        )
+        do_test = Confirm.ask(f"  Test {display_name} credentials now?", default=True)
         if not do_test:
             return
 
@@ -1887,9 +2001,7 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
             TextColumn("[progress.description]{task.description}"),
             console=console,
         ) as progress:
-            task = progress.add_task(
-                f"Verifying {display_name} credentials...", total=None
-            )
+            task = progress.add_task(f"Verifying {display_name} credentials...", total=None)
             try:
                 ok, detail = verify_fn()
                 if ok:
@@ -1993,8 +2105,12 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
                 first_ep = self._llm_endpoints[0] if self._llm_endpoints else {}
                 api_key_env = first_ep.get("api_key_env", "ANTHROPIC_API_KEY")
                 api_key = self.config.get(api_key_env, self.config.get("ANTHROPIC_API_KEY", ""))
-                base_url = first_ep.get("base_url", self.config.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com"))
-                model = first_ep.get("model", self.config.get("DEFAULT_MODEL", "claude-sonnet-4-20250514"))
+                base_url = first_ep.get(
+                    "base_url", self.config.get("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+                )
+                model = first_ep.get(
+                    "model", self.config.get("DEFAULT_MODEL", "claude-sonnet-4-20250514")
+                )
                 is_anthropic = first_ep.get("api_type", "openai") == "anthropic"
 
                 if is_anthropic:
@@ -2089,29 +2205,27 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
             if extra:
                 parts.append(f"Install with: `pip install openakita[{extra}]`")
             else:
-                parts.append(
-                    f"Install with: `pip install {' '.join(self._channel_deps_missing)}`"
-                )
+                parts.append(f"Install with: `pip install {' '.join(self._channel_deps_missing)}`")
             parts.append("")
-            parts.append(
-                "Without these dependencies the IM channel will **not start**."
-            )
+            parts.append("Without these dependencies the IM channel will **not start**.")
 
-        parts.extend([
-            "",
-            "## Next Steps",
-            "",
-            "1. Customize `identity/SOUL.md` to personalize your agent",
-            "2. Run `openakita` to start chatting",
-            "3. Check `openakita --help` for all commands",
-            "",
-            "## Documentation",
-            "",
-            "- GitHub: https://github.com/openakita/openakita",
-            "- Docs: https://github.com/openakita/openakita/tree/main/docs",
-            "",
-            "Enjoy your loyal AI companion!",
-        ])
+        parts.extend(
+            [
+                "",
+                "## Next Steps",
+                "",
+                "1. Customize `identity/SOUL.md` to personalize your agent",
+                "2. Run `openakita` to start chatting",
+                "3. Check `openakita --help` for all commands",
+                "",
+                "## Documentation",
+                "",
+                "- GitHub: https://github.com/openakita/openakita",
+                "- Docs: https://github.com/openakita/openakita/tree/main/docs",
+                "",
+                "Enjoy your loyal AI companion!",
+            ]
+        )
 
         console.print(
             Panel(

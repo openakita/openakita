@@ -77,9 +77,7 @@ class NotebookHandler:
         content = json.dumps(nb, ensure_ascii=False, indent=1)
         path.write_text(content, encoding="utf-8")
 
-    async def _create_cell(
-        self, path: Path, cell_idx: int, language: str, content: str
-    ) -> str:
+    async def _create_cell(self, path: Path, cell_idx: int, language: str, content: str) -> str:
         nb = await self._load_notebook(path)
 
         if nb is None:
@@ -109,9 +107,7 @@ class NotebookHandler:
         await self._save_notebook(path, nb)
         return f"Notebook cell created at index {cell_idx} in {path}"
 
-    async def _edit_cell(
-        self, path: Path, cell_idx: int, old_string: str, new_string: str
-    ) -> str:
+    async def _edit_cell(self, path: Path, cell_idx: int, old_string: str, new_string: str) -> str:
         nb = await self._load_notebook(path)
         if nb is None:
             return f"❌ Notebook 不存在: {path}"

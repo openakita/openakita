@@ -21,22 +21,24 @@ from .state import PluginState
 logger = logging.getLogger(__name__)
 
 UNLOAD_TIMEOUT = 5.0
-_ALLOWED_HOST_REFS = frozenset({
-    "api_app",
-    "brain",
-    "channel_registry",
-    "external_retrieval_sources",
-    "gateway",
-    "mcp_client",
-    "memory_backends",
-    "memory_manager",
-    "search_backends",
-    "skill_catalog",
-    "skill_loader",
-    "tool_catalog",
-    "tool_definitions",
-    "tool_registry",
-})
+_ALLOWED_HOST_REFS = frozenset(
+    {
+        "api_app",
+        "brain",
+        "channel_registry",
+        "external_retrieval_sources",
+        "gateway",
+        "mcp_client",
+        "memory_backends",
+        "memory_manager",
+        "search_backends",
+        "skill_catalog",
+        "skill_loader",
+        "tool_catalog",
+        "tool_definitions",
+        "tool_registry",
+    }
+)
 
 
 class PluginManager:
@@ -198,18 +200,18 @@ class PluginManager:
                     reason = entry.disabled_reason
                 logger.info(
                     "Plugin '%s' is disabled (%s), skipping",
-                    manifest.id, reason or "user",
+                    manifest.id,
+                    reason or "user",
                 )
                 continue
 
             if manifest.conflicts:
-                conflict = next(
-                    (c for c in manifest.conflicts if c in self._loaded), None
-                )
+                conflict = next((c for c in manifest.conflicts if c in self._loaded), None)
                 if conflict:
                     logger.warning(
                         "Plugin '%s' conflicts with loaded '%s', skipping",
-                        manifest.id, conflict,
+                        manifest.id,
+                        conflict,
                     )
                     self._failed[manifest.id] = f"conflicts with {conflict}"
                     continue
@@ -235,9 +237,7 @@ class PluginManager:
                 self._state.record_error(manifest.id, msg)
             except Exception as e:
                 msg = f"{type(e).__name__}: {e}"
-                logger.error(
-                    "Plugin '%s' failed to load: %s", manifest.id, msg, exc_info=True
-                )
+                logger.error("Plugin '%s' failed to load: %s", manifest.id, msg, exc_info=True)
                 self._failed[manifest.id] = msg
                 self._state.record_error(manifest.id, msg)
 
@@ -249,13 +249,12 @@ class PluginManager:
         """Notify LLM registries to pick up plugin-provided providers."""
         try:
             from ..llm.registries import reload_registries
+
             reload_registries()
         except Exception as e:
             logger.debug("LLM registry reload skipped: %s", e)
 
-    async def _load_single(
-        self, manifest: PluginManifest, plugin_dir: Path
-    ) -> None:
+    async def _load_single(self, manifest: PluginManifest, plugin_dir: Path) -> None:
         state_entry = self._state.ensure_entry(manifest.id)
         granted = self._resolve_permissions(manifest, state_entry.granted_permissions)
         state_entry.granted_permissions = granted
@@ -276,8 +275,8 @@ class PluginManager:
 
         try:
             if manifest.plugin_type == "python":
-                plugin_instance, module_name, sys_path_entry = (
-                    self._load_python_plugin(manifest, plugin_dir)
+                plugin_instance, module_name, sys_path_entry = self._load_python_plugin(
+                    manifest, plugin_dir
                 )
                 plugin_instance.on_load(api)
                 self._try_load_plugin_skill(manifest, plugin_dir, api)
@@ -308,9 +307,7 @@ class PluginManager:
         """
         entry_path = plugin_dir / manifest.entry
         if not entry_path.exists():
-            raise FileNotFoundError(
-                f"Plugin entry '{manifest.entry}' not found in {plugin_dir}"
-            )
+            raise FileNotFoundError(f"Plugin entry '{manifest.entry}' not found in {plugin_dir}")
 
         module_name = f"openakita_plugin_{manifest.id.replace('-', '_')}"
         spec = importlib.util.spec_from_file_location(module_name, entry_path)
@@ -345,9 +342,7 @@ class PluginManager:
                     sys.path.remove(plugin_dir_str)
                 except ValueError:
                     pass
-            raise AttributeError(
-                f"Plugin module {entry_path} must export a 'Plugin' class"
-            )
+            raise AttributeError(f"Plugin module {entry_path} must export a 'Plugin' class")
 
         if not (isinstance(plugin_class, type) and issubclass(plugin_class, PluginBase)):
             sys.modules.pop(module_name, None)
@@ -362,14 +357,10 @@ class PluginManager:
 
         return plugin_class(), module_name, plugin_dir_str if added_to_path else ""
 
-    def _load_mcp_plugin(
-        self, manifest: PluginManifest, plugin_dir: Path, api: PluginAPI
-    ) -> None:
+    def _load_mcp_plugin(self, manifest: PluginManifest, plugin_dir: Path, api: PluginAPI) -> None:
         config_path = plugin_dir / manifest.entry
         if not config_path.exists():
-            raise FileNotFoundError(
-                f"MCP config '{manifest.entry}' not found in {plugin_dir}"
-            )
+            raise FileNotFoundError(f"MCP config '{manifest.entry}' not found in {plugin_dir}")
 
         mcp_config = json.loads(config_path.read_text(encoding="utf-8"))
         mcp_client = self._host_refs.get("mcp_client")
@@ -398,9 +389,7 @@ class PluginManager:
     ) -> None:
         skill_path = plugin_dir / manifest.entry
         if not skill_path.exists():
-            raise FileNotFoundError(
-                f"Skill entry '{manifest.entry}' not found in {plugin_dir}"
-            )
+            raise FileNotFoundError(f"Skill entry '{manifest.entry}' not found in {plugin_dir}")
         skill_loader = self._host_refs.get("skill_loader")
         if skill_loader is None:
             api.log("No skill_loader available", "warning")
@@ -485,17 +474,15 @@ class PluginManager:
 
     def _unload_plugin_skills(self, loaded: _LoadedPlugin) -> None:
         """Remove skills contributed by this plugin and reset _skills_loaded if needed."""
-        had_skill = (
-            loaded.manifest.plugin_type == "skill"
-            or loaded.manifest.provides.get("skill")
-        )
+        had_skill = loaded.manifest.plugin_type == "skill" or loaded.manifest.provides.get("skill")
         if had_skill:
             skill_loader = self._host_refs.get("skill_loader")
             if skill_loader is not None:
                 registry = getattr(skill_loader, "registry", None)
                 if registry is not None:
                     skill_ids = [
-                        sid for sid, entry in list(registry.items())
+                        sid
+                        for sid, entry in list(registry.items())
                         if getattr(entry, "plugin_source", "") == f"plugin:{loaded.manifest.id}"
                     ]
                     for sid in skill_ids:
@@ -509,14 +496,14 @@ class PluginManager:
                     if skill_ids:
                         logger.debug(
                             "Removed %d skill(s) from plugin '%s'",
-                            len(skill_ids), loaded.manifest.id,
+                            len(skill_ids),
+                            loaded.manifest.id,
                         )
             self._refresh_skill_catalog()
 
         if getattr(self, "_skills_loaded", False):
             has_other_skills = any(
-                lp.manifest.plugin_type == "skill"
-                or lp.manifest.provides.get("skill")
+                lp.manifest.plugin_type == "skill" or lp.manifest.provides.get("skill")
                 for lp in self._loaded.values()
             )
             if not has_other_skills:
@@ -544,13 +531,12 @@ class PluginManager:
             else:
                 logger.info(
                     "Plugin '%s' requests '%s' (not yet approved)",
-                    manifest.id, perm,
+                    manifest.id,
+                    perm,
                 )
         return granted
 
-    def approve_permissions(
-        self, plugin_id: str, permissions: list[str]
-    ) -> None:
+    def approve_permissions(self, plugin_id: str, permissions: list[str]) -> None:
         """Grant additional permissions (called from UI approval flow)."""
         from .manifest import ALL_PERMISSIONS
 
@@ -568,9 +554,7 @@ class PluginManager:
 
         self._save_state()
 
-    def revoke_permissions(
-        self, plugin_id: str, permissions: list[str]
-    ) -> None:
+    def revoke_permissions(self, plugin_id: str, permissions: list[str]) -> None:
         """Revoke previously granted permissions."""
         entry = self._state.get_entry(plugin_id)
         if entry is not None:
@@ -598,9 +582,7 @@ class PluginManager:
                     timeout=UNLOAD_TIMEOUT,
                 )
         except (TimeoutError, Exception) as e:
-            logger.warning(
-                "Plugin '%s' on_unload error: %s", plugin_id, e
-            )
+            logger.warning("Plugin '%s' on_unload error: %s", plugin_id, e)
 
         loaded.api._cleanup()
 
@@ -617,9 +599,7 @@ class PluginManager:
         logger.info("Plugin '%s' unloaded", plugin_id)
         return True
 
-    async def disable_plugin(
-        self, plugin_id: str, reason: str = "user"
-    ) -> None:
+    async def disable_plugin(self, plugin_id: str, reason: str = "user") -> None:
         self._state.disable(plugin_id, reason)
         await self.unload_plugin(plugin_id)
         self._save_state()
@@ -649,7 +629,9 @@ class PluginManager:
                 logger.info("Auto-disable: fully unloaded plugin '%s'", plugin_id)
             except Exception as e:
                 logger.warning(
-                    "Auto-disable: unload failed for plugin '%s': %s", plugin_id, e,
+                    "Auto-disable: unload failed for plugin '%s': %s",
+                    plugin_id,
+                    e,
                 )
 
         try:
@@ -681,21 +663,23 @@ class PluginManager:
         for lp in self._loaded.values():
             pending = list(lp.api._pending_permissions) if lp.api._pending_permissions else []
             granted = list(lp.api._granted_permissions)
-            result.append({
-                "id": lp.manifest.id,
-                "capability_id": lp.manifest.capability_id,
-                "namespace": lp.manifest.namespace,
-                "origin": lp.manifest.origin,
-                "name": lp.manifest.name,
-                "version": lp.manifest.version,
-                "type": lp.manifest.plugin_type,
-                "category": lp.manifest.category,
-                "permissions": lp.manifest.permissions,
-                "permission_level": lp.manifest.max_permission_level,
-                "review_status": lp.manifest.review_status,
-                "granted_permissions": granted,
-                "pending_permissions": pending,
-            })
+            result.append(
+                {
+                    "id": lp.manifest.id,
+                    "capability_id": lp.manifest.capability_id,
+                    "namespace": lp.manifest.namespace,
+                    "origin": lp.manifest.origin,
+                    "name": lp.manifest.name,
+                    "version": lp.manifest.version,
+                    "type": lp.manifest.plugin_type,
+                    "category": lp.manifest.category,
+                    "permissions": lp.manifest.permissions,
+                    "permission_level": lp.manifest.max_permission_level,
+                    "review_status": lp.manifest.review_status,
+                    "granted_permissions": granted,
+                    "pending_permissions": pending,
+                }
+            )
         return result
 
     def _find_plugin_dir(self, plugin_id: str) -> Path | None:

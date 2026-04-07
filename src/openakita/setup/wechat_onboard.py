@@ -34,6 +34,7 @@ MAX_QR_REFRESH_COUNT = 3
 def _onboard_common_headers() -> dict[str, str]:
     """Shared iLink headers for QR login requests (same constants as wechat adapter)."""
     import os
+
     compat_ver = os.environ.get("WECHAT_OPENCLAW_COMPAT_VERSION", "2.1.6")
     app_id = os.environ.get("WECHAT_ILINK_APP_ID", "bot")
     parts = compat_ver.split(".")
@@ -98,9 +99,7 @@ class WeChatOnboard:
         qrcode_img = data.get("qrcode_img_content", "")
 
         if not qrcode or not qrcode_img:
-            raise WeChatOnboardError(
-                f"get_bot_qrcode 返回数据不完整: {data}"
-            )
+            raise WeChatOnboardError(f"get_bot_qrcode 返回数据不完整: {data}")
 
         return {
             "qrcode": qrcode,
@@ -134,9 +133,7 @@ class WeChatOnboard:
         except (httpx.ReadTimeout, httpx.ConnectTimeout):
             return {"status": "wait"}
         except httpx.HTTPStatusError as exc:
-            logger.warning(
-                "QR poll HTTP error %s, treating as wait", exc.response.status_code
-            )
+            logger.warning("QR poll HTTP error %s, treating as wait", exc.response.status_code)
             return {"status": "wait"}
         except httpx.TransportError as exc:
             logger.warning("QR poll network error, treating as wait: %s", exc)
@@ -205,7 +202,9 @@ class WeChatOnboard:
                     raise WeChatOnboardError(
                         f"二维码已过期且已刷新 {MAX_QR_REFRESH_COUNT} 次，请重试"
                     )
-                logger.info("QR expired, auto-refreshing (%d/%d)", qr_refresh_count, MAX_QR_REFRESH_COUNT)
+                logger.info(
+                    "QR expired, auto-refreshing (%d/%d)", qr_refresh_count, MAX_QR_REFRESH_COUNT
+                )
                 self._poll_base_url = self._base_url
                 new_qr = await self.fetch_qrcode()
                 current_qrcode = new_qr["qrcode"]

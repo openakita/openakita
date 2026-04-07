@@ -70,6 +70,7 @@ def _import_aiohttp():
             aiohttp = ah
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
+
             raise ImportError(import_or_hint("aiohttp"))
 
 
@@ -104,6 +105,7 @@ class BotMsgCrypt:
             from Crypto.Cipher import AES
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
+
             raise ImportError(import_or_hint("Crypto"))
 
         import os
@@ -155,6 +157,7 @@ class BotMsgCrypt:
             from Crypto.Cipher import AES
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
+
             raise ImportError(import_or_hint("Crypto"))
 
         encrypted = base64.b64decode(ciphertext)
@@ -172,16 +175,13 @@ class BotMsgCrypt:
         msg_len = struct.unpack("!I", content[16:20])[0]
         if 20 + msg_len > len(content):
             raise ValueError(
-                f"msg_len={msg_len} exceeds content boundary "
-                f"(content_len={len(content)})"
+                f"msg_len={msg_len} exceeds content boundary (content_len={len(content)})"
             )
         msg = content[20 : 20 + msg_len].decode("utf-8")
 
         return msg
 
-    def verify_url(
-        self, msg_signature: str, timestamp: str, nonce: str, echostr: str
-    ) -> str:
+    def verify_url(self, msg_signature: str, timestamp: str, nonce: str, echostr: str) -> str:
         """
         验证回调 URL（GET 请求）
 
@@ -193,9 +193,7 @@ class BotMsgCrypt:
             raise ValueError("URL verification signature mismatch")
         return self._decrypt(echostr)
 
-    def decrypt_msg(
-        self, json_body: str, msg_signature: str, timestamp: str, nonce: str
-    ) -> str:
+    def decrypt_msg(self, json_body: str, msg_signature: str, timestamp: str, nonce: str) -> str:
         """
         解密回调消息（POST 请求，JSON 格式）
 
@@ -220,9 +218,7 @@ class BotMsgCrypt:
 
         return self._decrypt(encrypt_str)
 
-    def encrypt_reply(
-        self, reply_json: str, nonce: str, timestamp: str | None = None
-    ) -> str:
+    def encrypt_reply(self, reply_json: str, nonce: str, timestamp: str | None = None) -> str:
         """
         加密被动回复消息
 
@@ -265,6 +261,7 @@ class BotMsgCrypt:
             from Crypto.Cipher import AES
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
+
             raise ImportError(import_or_hint("Crypto"))
 
         iv = self.aes_key[:16]
@@ -339,9 +336,7 @@ class WeWorkBotConfig:
         if not self.encoding_aes_key or not self.encoding_aes_key.strip():
             raise ValueError("WeWorkBotConfig: encoding_aes_key is required")
         if not (1 <= self.callback_port <= 65535):
-            raise ValueError(
-                f"WeWorkBotConfig: invalid callback_port {self.callback_port}"
-            )
+            raise ValueError(f"WeWorkBotConfig: invalid callback_port {self.callback_port}")
 
 
 # ==================== 适配器 ====================
@@ -418,7 +413,9 @@ class WeWorkBotAdapter(ChannelAdapter):
         bot_id: str | None = None,
         agent_profile_id: str = "default",
     ):
-        super().__init__(channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_profile_id)
+        super().__init__(
+            channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_profile_id
+        )
 
         self.config = WeWorkBotConfig(
             corp_id=corp_id,
@@ -540,21 +537,13 @@ class WeWorkBotAdapter(ChannelAdapter):
                     f"企业微信回调端口 {self.config.callback_port} 绑定失败：权限不足，"
                     f"请尝试使用大于 1024 的端口。"
                 ) from e
-            raise ConnectionError(
-                f"企业微信回调服务器启动失败: {e}"
-            ) from e
+            raise ConnectionError(f"企业微信回调服务器启动失败: {e}") from e
 
-    async def _handle_health(
-        self, request: "aiohttp.web.Request"
-    ) -> "aiohttp.web.Response":
+    async def _handle_health(self, request: "aiohttp.web.Request") -> "aiohttp.web.Response":
         """健康检查端点"""
-        return aiohttp.web.json_response(
-            {"status": "ok", "channel": "wework", "mode": "bot"}
-        )
+        return aiohttp.web.json_response({"status": "ok", "channel": "wework", "mode": "bot"})
 
-    async def _handle_get_callback(
-        self, request: "aiohttp.web.Request"
-    ) -> "aiohttp.web.Response":
+    async def _handle_get_callback(self, request: "aiohttp.web.Request") -> "aiohttp.web.Response":
         """处理 GET 回调 — 企业微信 URL 验证"""
         if not self._crypt:
             return aiohttp.web.Response(text="Encryption not configured", status=500)
@@ -565,18 +554,14 @@ class WeWorkBotAdapter(ChannelAdapter):
         echostr = request.query.get("echostr", "")
 
         try:
-            reply_echostr = self._crypt.verify_url(
-                msg_signature, timestamp, nonce, echostr
-            )
+            reply_echostr = self._crypt.verify_url(msg_signature, timestamp, nonce, echostr)
             logger.info("WeWorkBot: URL verification successful")
             return aiohttp.web.Response(text=reply_echostr)
         except Exception as e:
             logger.error(f"WeWorkBot: URL verification failed: {e}")
             return aiohttp.web.Response(text="Verification failed", status=403)
 
-    async def _handle_post_callback(
-        self, request: "aiohttp.web.Request"
-    ) -> "aiohttp.web.Response":
+    async def _handle_post_callback(self, request: "aiohttp.web.Request") -> "aiohttp.web.Response":
         """
         处理 POST 回调 — 接收加密 JSON 消息
 
@@ -595,26 +580,20 @@ class WeWorkBotAdapter(ChannelAdapter):
 
         try:
             # 解密 JSON 消息
-            decrypted_json = self._crypt.decrypt_msg(
-                body, msg_signature, timestamp, nonce
-            )
+            decrypted_json = self._crypt.decrypt_msg(body, msg_signature, timestamp, nonce)
             logger.debug(f"WeWorkBot: Decrypted: {decrypted_json[:300]}")
 
             msg_data = json.loads(decrypted_json)
             msg_type = msg_data.get("msgtype", "")
 
             if msg_type == "stream":
-                return await self._handle_stream_refresh(
-                    msg_data, nonce, timestamp
-                )
+                return await self._handle_stream_refresh(msg_data, nonce, timestamp)
             else:
                 # 新用户消息
                 return await self._handle_new_message(msg_data, nonce, timestamp)
 
         except Exception as e:
-            logger.error(
-                f"WeWorkBot: Message processing failed: {e}", exc_info=True
-            )
+            logger.error(f"WeWorkBot: Message processing failed: {e}", exc_info=True)
             # 返回空 200 避免企业微信重试
             return aiohttp.web.Response(text="", status=200)
 
@@ -638,9 +617,7 @@ class WeWorkBotAdapter(ChannelAdapter):
 
         if not session:
             # 未知 stream_id → 直接终止
-            logger.warning(
-                f"WeWorkBot: Unknown stream_id={stream_id}, terminating"
-            )
+            logger.warning(f"WeWorkBot: Unknown stream_id={stream_id}, terminating")
             reply_payload = json.dumps(
                 {
                     "msgtype": "stream",
@@ -648,19 +625,14 @@ class WeWorkBotAdapter(ChannelAdapter):
                 },
                 ensure_ascii=False,
             )
-            encrypted = self._crypt.encrypt_reply(
-                reply_payload, nonce, timestamp
-            )
-            return aiohttp.web.Response(
-                text=encrypted, content_type="application/json"
-            )
+            encrypted = self._crypt.encrypt_reply(reply_payload, nonce, timestamp)
+            return aiohttp.web.Response(text=encrypted, content_type="application/json")
 
         # 检查是否超时
         elapsed = time.time() - session.created_at
         if elapsed > STREAM_TIMEOUT and not session.is_finished:
             logger.warning(
-                f"WeWorkBot: Stream {stream_id} timeout ({elapsed:.0f}s), "
-                f"force finishing"
+                f"WeWorkBot: Stream {stream_id} timeout ({elapsed:.0f}s), force finishing"
             )
             session.is_finished = True
             if not session.content:
@@ -704,8 +676,7 @@ class WeWorkBotAdapter(ChannelAdapter):
                     )
                 reply_stream["msg_item"] = msg_items
                 logger.info(
-                    f"WeWorkBot: Stream {stream_id} finishing with "
-                    f"{len(msg_items)} image(s)"
+                    f"WeWorkBot: Stream {stream_id} finishing with {len(msg_items)} image(s)"
                 )
 
             reply_payload = json.dumps(
@@ -738,9 +709,7 @@ class WeWorkBotAdapter(ChannelAdapter):
             )
 
         encrypted = self._crypt.encrypt_reply(reply_payload, nonce, timestamp)
-        return aiohttp.web.Response(
-            text=encrypted, content_type="application/json"
-        )
+        return aiohttp.web.Response(text=encrypted, content_type="application/json")
 
     async def _cleanup_stream_session(self, stream_id: str) -> None:
         """清理已完成的 stream session 及其关联映射"""
@@ -800,19 +769,23 @@ class WeWorkBotAdapter(ChannelAdapter):
             event_type = event_data.get("eventtype", msg_data.get("event_type", "unknown"))
             logger.info(
                 "WeWorkBot: Event received: type=%s, user=%s, chat=%s, data=%s",
-                event_type, userid, chat_id, json.dumps(event_data, ensure_ascii=False)[:200],
+                event_type,
+                userid,
+                chat_id,
+                json.dumps(event_data, ensure_ascii=False)[:200],
             )
-            await self._emit_event(event_type, {
-                "chatid": chat_id,
-                "chattype": chattype,
-                "userid": userid,
-                "raw": msg_data,
-            })
+            await self._emit_event(
+                event_type,
+                {
+                    "chatid": chat_id,
+                    "chattype": chattype,
+                    "userid": userid,
+                    "raw": msg_data,
+                },
+            )
             reply_payload = json.dumps({})
             encrypted = self._crypt.encrypt_reply(reply_payload, nonce, timestamp)
-            return aiohttp.web.Response(
-                text=encrypted, content_type="application/json"
-            )
+            return aiohttp.web.Response(text=encrypted, content_type="application/json")
 
         # ── 创建 StreamSession ──
         stream_id = f"stream_{msgid}_{int(time.time())}"
@@ -832,8 +805,7 @@ class WeWorkBotAdapter(ChannelAdapter):
                 self._msgid_to_stream[msgid] = stream_id
 
         logger.info(
-            f"WeWorkBot: Created stream session {stream_id} "
-            f"for msgid={msgid}, chat={chat_id}"
+            f"WeWorkBot: Created stream session {stream_id} for msgid={msgid}, chat={chat_id}"
         )
 
         # 异步处理实际消息
@@ -852,9 +824,7 @@ class WeWorkBotAdapter(ChannelAdapter):
             ensure_ascii=False,
         )
         encrypted = self._crypt.encrypt_reply(reply_payload, nonce, timestamp)
-        return aiohttp.web.Response(
-            text=encrypted, content_type="application/json"
-        )
+        return aiohttp.web.Response(text=encrypted, content_type="application/json")
 
     # ==================== 消息解析 ====================
 
@@ -881,36 +851,22 @@ class WeWorkBotAdapter(ChannelAdapter):
             chat_type_str = "group" if chattype == "group" else "private"
 
             if msg_type == "text":
-                await self._handle_text_message(
-                    msg_data, msgid, userid, chat_id, chat_type_str
-                )
+                await self._handle_text_message(msg_data, msgid, userid, chat_id, chat_type_str)
             elif msg_type == "image":
-                await self._handle_image_message(
-                    msg_data, msgid, userid, chat_id, chat_type_str
-                )
+                await self._handle_image_message(msg_data, msgid, userid, chat_id, chat_type_str)
             elif msg_type == "mixed":
-                await self._handle_mixed_message(
-                    msg_data, msgid, userid, chat_id, chat_type_str
-                )
+                await self._handle_mixed_message(msg_data, msgid, userid, chat_id, chat_type_str)
             elif msg_type == "voice":
-                await self._handle_voice_message(
-                    msg_data, msgid, userid, chat_id, chat_type_str
-                )
+                await self._handle_voice_message(msg_data, msgid, userid, chat_id, chat_type_str)
             elif msg_type == "file":
-                await self._handle_file_message(
-                    msg_data, msgid, userid, chat_id, chat_type_str
-                )
+                await self._handle_file_message(msg_data, msgid, userid, chat_id, chat_type_str)
             elif msg_type == "video":
-                await self._handle_video_message(
-                    msg_data, msgid, userid, chat_id, chat_type_str
-                )
+                await self._handle_video_message(msg_data, msgid, userid, chat_id, chat_type_str)
             else:
                 logger.info(f"WeWorkBot: Unhandled message type: {msg_type}")
 
         except Exception as e:
-            logger.error(
-                f"WeWorkBot: Error processing message: {e}", exc_info=True
-            )
+            logger.error(f"WeWorkBot: Error processing message: {e}", exc_info=True)
 
     async def _handle_text_message(
         self,
@@ -935,8 +891,7 @@ class WeWorkBotAdapter(ChannelAdapter):
         # 因此所有到达的群消息实际上都是 @了机器人的。此处用 ^@\S+ 正则做二次确认
         # 是保守策略（消息文本开头包含 @mention），对私聊则无需检测。
         is_mentioned = bool(
-            msg_data.get("chattype") == "group"
-            and re.match(r"^@\S+", text_content)
+            msg_data.get("chattype") == "group" and re.match(r"^@\S+", text_content)
         )
         is_direct_message = chat_type == "private"
 
@@ -957,7 +912,11 @@ class WeWorkBotAdapter(ChannelAdapter):
             is_mentioned=is_mentioned,
             is_direct_message=is_direct_message,
             raw=msg_data,
-            metadata={"is_group": chat_type == "group", "sender_name": "", "chat_name": msg_data.get("chatname", "")},
+            metadata={
+                "is_group": chat_type == "group",
+                "sender_name": "",
+                "chat_name": msg_data.get("chatname", ""),
+            },
         )
 
         self._log_message(unified)
@@ -1000,7 +959,11 @@ class WeWorkBotAdapter(ChannelAdapter):
             is_mentioned=is_mentioned,
             is_direct_message=is_direct_message,
             raw=msg_data,
-            metadata={"is_group": chat_type == "group", "sender_name": "", "chat_name": msg_data.get("chatname", "")},
+            metadata={
+                "is_group": chat_type == "group",
+                "sender_name": "",
+                "chat_name": msg_data.get("chatname", ""),
+            },
         )
 
         self._log_message(unified)
@@ -1084,7 +1047,11 @@ class WeWorkBotAdapter(ChannelAdapter):
             is_mentioned=is_mentioned,
             is_direct_message=is_direct_message,
             raw=msg_data,
-            metadata={"is_group": chat_type == "group", "sender_name": "", "chat_name": msg_data.get("chatname", "")},
+            metadata={
+                "is_group": chat_type == "group",
+                "sender_name": "",
+                "chat_name": msg_data.get("chatname", ""),
+            },
         )
 
         self._log_message(unified)
@@ -1110,9 +1077,7 @@ class WeWorkBotAdapter(ChannelAdapter):
             content = MessageContent(text=transcription)
         else:
             logger.warning("[WeWorkBot] Voice transcription empty, msgid=%s", msgid)
-            content = MessageContent(
-                text="[语音消息，平台未能识别，请重新发送或改用文字]"
-            )
+            content = MessageContent(text="[语音消息，平台未能识别，请重新发送或改用文字]")
 
         is_direct_message = chat_type == "private"
         # 智能机器人 HTTP 回调只在群聊被 @时投递，故群语音消息 is_mentioned=True
@@ -1129,7 +1094,11 @@ class WeWorkBotAdapter(ChannelAdapter):
             is_mentioned=is_mentioned,
             is_direct_message=is_direct_message,
             raw=msg_data,
-            metadata={"is_group": chat_type == "group", "sender_name": "", "chat_name": msg_data.get("chatname", "")},
+            metadata={
+                "is_group": chat_type == "group",
+                "sender_name": "",
+                "chat_name": msg_data.get("chatname", ""),
+            },
         )
 
         self._log_message(unified)
@@ -1172,7 +1141,11 @@ class WeWorkBotAdapter(ChannelAdapter):
             is_mentioned=is_mentioned,
             is_direct_message=is_direct_message,
             raw=msg_data,
-            metadata={"is_group": chat_type == "group", "sender_name": "", "chat_name": msg_data.get("chatname", "")},
+            metadata={
+                "is_group": chat_type == "group",
+                "sender_name": "",
+                "chat_name": msg_data.get("chatname", ""),
+            },
         )
 
         self._log_message(unified)
@@ -1213,7 +1186,11 @@ class WeWorkBotAdapter(ChannelAdapter):
             is_mentioned=is_mentioned,
             is_direct_message=is_direct_message,
             raw=msg_data,
-            metadata={"is_group": chat_type == "group", "sender_name": "", "chat_name": msg_data.get("chatname", "")},
+            metadata={
+                "is_group": chat_type == "group",
+                "sender_name": "",
+                "chat_name": msg_data.get("chatname", ""),
+            },
         )
 
         self._log_message(unified)
@@ -1295,16 +1272,11 @@ class WeWorkBotAdapter(ChannelAdapter):
 
         # ── 降级: response_url ──
         logger.info(
-            f"WeWorkBot: No active stream for chat_id={chat_id}, "
-            f"falling back to response_url"
+            f"WeWorkBot: No active stream for chat_id={chat_id}, falling back to response_url"
         )
-        return await self._send_via_response_url_fallback(
-            chat_id, message.reply_to, text
-        )
+        return await self._send_via_response_url_fallback(chat_id, message.reply_to, text)
 
-    def _find_stream_by_chat(
-        self, chat_id: str, user_id: str | None = None
-    ) -> str | None:
+    def _find_stream_by_chat(self, chat_id: str, user_id: str | None = None) -> str | None:
         """
         查找活跃的 stream session
 
@@ -1354,8 +1326,7 @@ class WeWorkBotAdapter(ChannelAdapter):
 
         if not url:
             raise RuntimeError(
-                f"WeWorkBot: No response_url for chat_id={chat_id}, "
-                f"already consumed or expired"
+                f"WeWorkBot: No response_url for chat_id={chat_id}, already consumed or expired"
             )
 
         data = {
@@ -1377,9 +1348,7 @@ class WeWorkBotAdapter(ChannelAdapter):
                     f"errcode={result.get('errcode')}, errmsg={result.get('errmsg')}"
                 )
 
-            logger.info(
-                f"WeWorkBot: Sent via response_url fallback ({len(text)} chars)"
-            )
+            logger.info(f"WeWorkBot: Sent via response_url fallback ({len(text)} chars)")
             return "response_url_sent"
 
         except Exception as e:
@@ -1472,23 +1441,16 @@ class WeWorkBotAdapter(ChannelAdapter):
 
         # 读取图片 → 转格式(如需) → base64 + md5
         try:
-            b64_data, md5_hash = await self._prepare_image_for_stream(
-                image_path
-            )
+            b64_data, md5_hash = await self._prepare_image_for_stream(image_path)
         except Exception as e:
             # 图片处理失败 → raise 让 handler 处理，不消耗 stream/response_url
-            logger.error(
-                f"WeWorkBot: Failed to prepare image {image_path}: {e}"
-            )
-            raise RuntimeError(
-                f"Failed to prepare image for stream: {e}"
-            ) from e
+            logger.error(f"WeWorkBot: Failed to prepare image {image_path}: {e}")
+            raise RuntimeError(f"Failed to prepare image for stream: {e}") from e
 
         # 检查限制
         if len(session.pending_images) >= 10:
             logger.warning(
-                f"WeWorkBot: Stream {stream_id} already has 10 images, "
-                f"skipping {image_path}"
+                f"WeWorkBot: Stream {stream_id} already has 10 images, skipping {image_path}"
             )
             return f"stream:{stream_id}:image_limit"
 
@@ -1524,9 +1486,7 @@ class WeWorkBotAdapter(ChannelAdapter):
 
     # ── 图片处理 ──
 
-    async def _prepare_image_for_stream(
-        self, image_path: str
-    ) -> tuple[str, str]:
+    async def _prepare_image_for_stream(self, image_path: str) -> tuple[str, str]:
         """
         准备图片用于 stream msg_item
 
@@ -1549,25 +1509,18 @@ class WeWorkBotAdapter(ChannelAdapter):
         if not is_jpg and not is_png:
             # 需要转换为 JPG
             raw_data = await self._convert_image_to_jpg(raw_data, path.name)
-            logger.info(
-                f"WeWorkBot: Converted {path.name} to JPG "
-                f"({len(raw_data)} bytes)"
-            )
+            logger.info(f"WeWorkBot: Converted {path.name} to JPG ({len(raw_data)} bytes)")
 
         # 检查大小 (10MB)
         if len(raw_data) > 10 * 1024 * 1024:
-            raise ValueError(
-                f"Image too large: {len(raw_data)} bytes (max 10MB)"
-            )
+            raise ValueError(f"Image too large: {len(raw_data)} bytes (max 10MB)")
 
         b64_data = base64.b64encode(raw_data).decode("utf-8")
         md5_hash = hashlib.md5(raw_data).hexdigest()
 
         return b64_data, md5_hash
 
-    async def _convert_image_to_jpg(
-        self, raw_data: bytes, filename: str
-    ) -> bytes:
+    async def _convert_image_to_jpg(self, raw_data: bytes, filename: str) -> bytes:
         """
         将图片转换为 JPG 格式
 
@@ -1587,13 +1540,12 @@ class WeWorkBotAdapter(ChannelAdapter):
             return output.getvalue()
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
+
             hint = import_or_hint("PIL")
             logger.warning(f"WeWorkBot: {hint}，无法转换 {filename}，尝试发送原始数据")
             return raw_data
         except Exception as e:
-            logger.error(
-                f"WeWorkBot: Image conversion failed for {filename}: {e}"
-            )
+            logger.error(f"WeWorkBot: Image conversion failed for {filename}: {e}")
             raise
 
     # ==================== 媒体处理 ====================
@@ -1620,19 +1572,15 @@ class WeWorkBotAdapter(ChannelAdapter):
         if media.extra and media.extra.get("aes_encrypted") and self._crypt:
             try:
                 raw_data = self._crypt.decrypt_media(raw_data)
-                logger.debug(
-                    f"WeWorkBot: Decrypted media {media.filename} "
-                    f"({len(raw_data)} bytes)"
-                )
+                logger.debug(f"WeWorkBot: Decrypted media {media.filename} ({len(raw_data)} bytes)")
             except Exception as e:
-                logger.error(
-                    f"WeWorkBot: Failed to decrypt media {media.filename}: {e}"
-                )
+                logger.error(f"WeWorkBot: Failed to decrypt media {media.filename}: {e}")
                 media.status = MediaStatus.FAILED
                 raise ValueError(f"Media decryption failed for {media.filename}") from e
 
         # 保存到本地
         from openakita.channels.base import sanitize_filename
+
         safe_name = sanitize_filename(Path(media.filename).name or "download")
         local_path = self.media_dir / safe_name
         with open(local_path, "wb") as f:
@@ -1680,8 +1628,7 @@ class WeWorkBotAdapter(ChannelAdapter):
 
                 if expired_streams:
                     logger.info(
-                        f"WeWorkBot: Cleaned {len(expired_streams)} "
-                        f"expired stream sessions"
+                        f"WeWorkBot: Cleaned {len(expired_streams)} expired stream sessions"
                     )
 
                 # ── 清理 response_url 缓存 ──
@@ -1690,9 +1637,7 @@ class WeWorkBotAdapter(ChannelAdapter):
                     keys = list(self._msgid_response_urls.keys())[:excess]
                     for k in keys:
                         self._msgid_response_urls.pop(k, None)
-                    logger.info(
-                        f"WeWorkBot: Cleaned {excess} expired msgid→url entries"
-                    )
+                    logger.info(f"WeWorkBot: Cleaned {excess} expired msgid→url entries")
 
                 if len(self._response_urls) > 100:
                     excess = len(self._response_urls) - 50

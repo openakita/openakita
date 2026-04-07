@@ -158,11 +158,7 @@ async def engine_stream(async_gen: AsyncIterator[Any]) -> AsyncIterator[Any]:
             item = await asyncio.to_thread(buf.get)
             if item is _STREAM_DONE:
                 break
-            if (
-                isinstance(item, tuple)
-                and len(item) == 2
-                and item[0] == _STREAM_ERROR
-            ):
+            if isinstance(item, tuple) and len(item) == 2 and item[0] == _STREAM_ERROR:
                 raise item[1]
             yield item
     finally:

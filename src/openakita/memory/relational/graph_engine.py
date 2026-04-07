@@ -22,15 +22,11 @@ _TIME_PATTERNS_EN = re.compile(
     r"\b(yesterday|last week|last month|recently|before|previously|history|timeline)\b",
     re.IGNORECASE,
 )
-_CAUSAL_PATTERNS_ZH = re.compile(
-    r"(为什么|原因|导致|根因|怎么回事|因为|造成)", re.IGNORECASE
-)
+_CAUSAL_PATTERNS_ZH = re.compile(r"(为什么|原因|导致|根因|怎么回事|因为|造成)", re.IGNORECASE)
 _CAUSAL_PATTERNS_EN = re.compile(
     r"\b(why|because|cause|reason|root cause|led to|resulted)\b", re.IGNORECASE
 )
-_ENTITY_PATTERNS_ZH = re.compile(
-    r"(关于.+的|.+的所有|.+的完整记录|.+的历史)", re.IGNORECASE
-)
+_ENTITY_PATTERNS_ZH = re.compile(r"(关于.+的|.+的所有|.+的完整记录|.+的历史)", re.IGNORECASE)
 
 
 class GraphEngine:
@@ -88,11 +84,13 @@ class GraphEngine:
                 continue
             multi_score = self._score_node(node, cues, base_score)
             dims_matched = self._matched_dimensions(node, cues)
-            results.append(RetrievalResult(
-                node=node,
-                score=multi_score,
-                dimensions_matched=dims_matched,
-            ))
+            results.append(
+                RetrievalResult(
+                    node=node,
+                    score=multi_score,
+                    dimensions_matched=dims_matched,
+                )
+            )
 
         results.sort(key=lambda r: r.score, reverse=True)
 
@@ -161,12 +159,35 @@ class GraphEngine:
         # Extract potential entity names (CJK chunks and English words > 3 chars)
         words = re.findall(r"[\u4e00-\u9fff]+|[a-zA-Z_]{3,}", query)
         stop_words = {
-            "what", "when", "where", "why", "how", "the", "and", "for",
-            "about", "with", "from", "that", "this", "have", "has",
+            "what",
+            "when",
+            "where",
+            "why",
+            "how",
+            "the",
+            "and",
+            "for",
+            "about",
+            "with",
+            "from",
+            "that",
+            "this",
+            "have",
+            "has",
         }
         cjk_stop_prefixes = [
-            "什么时候", "有没有", "能不能", "是不是", "为什么",
-            "怎么样", "什么", "怎么", "哪里", "关于", "所有", "如何",
+            "什么时候",
+            "有没有",
+            "能不能",
+            "是不是",
+            "为什么",
+            "怎么样",
+            "什么",
+            "怎么",
+            "哪里",
+            "关于",
+            "所有",
+            "如何",
         ]
         cjk_particles = set("的了在是和与把被让给对从向往到过着")
         keywords: list[str] = []
@@ -178,7 +199,7 @@ class GraphEngine:
             prefix_stripped = False
             for sp in cjk_stop_prefixes:
                 if w.startswith(sp) and len(w) > len(sp) + 1:
-                    tail = w[len(sp):]
+                    tail = w[len(sp) :]
                     if tail not in seen_kw and len(tail) >= 2:
                         keywords.append(tail)
                         seen_kw.add(tail)
@@ -190,7 +211,7 @@ class GraphEngine:
             # CJK long chunks: generate meaningful bigrams (skip particles)
             if len(w) >= 4 and ord(w[0]) >= 0x4E00:
                 for i in range(len(w) - 1):
-                    bigram = w[i: i + 2]
+                    bigram = w[i : i + 2]
                     if bigram[0] not in cjk_particles and bigram[1] not in cjk_particles:
                         if bigram not in seen_kw:
                             keywords.append(bigram)

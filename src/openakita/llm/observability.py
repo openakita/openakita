@@ -130,19 +130,24 @@ class LLMObserver:
     def on_request_start(self, metrics: LLMCallMetrics) -> None:
         logger.debug(
             "LLM request start: endpoint=%s model=%s request_id=%s",
-            metrics.endpoint, metrics.model, metrics.request_id,
+            metrics.endpoint,
+            metrics.model,
+            metrics.request_id,
         )
 
     def on_first_token(self, metrics: LLMCallMetrics) -> None:
         logger.debug(
             "LLM TTFT: %.1fms request_id=%s",
-            metrics.ttft_ms or 0, metrics.request_id,
+            metrics.ttft_ms or 0,
+            metrics.request_id,
         )
 
     def on_stall_detected(self, metrics: LLMCallMetrics, idle_seconds: float) -> None:
         logger.warning(
             "LLM streaming stall detected: %.1fs idle, request_id=%s endpoint=%s",
-            idle_seconds, metrics.request_id, metrics.endpoint,
+            idle_seconds,
+            metrics.request_id,
+            metrics.endpoint,
         )
 
     def on_request_end(self, metrics: LLMCallMetrics) -> None:
@@ -155,7 +160,9 @@ class LLMObserver:
     def on_error(self, metrics: LLMCallMetrics) -> None:
         logger.error(
             "LLM error: %s request_id=%s endpoint=%s",
-            metrics.error, metrics.request_id, metrics.endpoint,
+            metrics.error,
+            metrics.request_id,
+            metrics.endpoint,
         )
 
 

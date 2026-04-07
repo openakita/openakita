@@ -41,9 +41,7 @@ class OpenRouterRegistry(ProviderRegistry):
                         name=m.get("name", model_id),
                         capabilities=self._parse_capabilities(architecture, model_id),
                         context_window=m.get("context_length"),
-                        max_output_tokens=m.get("top_provider", {}).get(
-                            "max_completion_tokens"
-                        ),
+                        max_output_tokens=m.get("top_provider", {}).get("max_completion_tokens"),
                         pricing=m.get("pricing"),
                     )
                 )

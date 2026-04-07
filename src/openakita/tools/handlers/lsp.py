@@ -82,12 +82,14 @@ class _LSPConnection:
 
     async def _request_locked(self, method: str, params: dict) -> dict | None:
         msg_id = _next_id()
-        body = json.dumps({
-            "jsonrpc": "2.0",
-            "id": msg_id,
-            "method": method,
-            "params": params,
-        })
+        body = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "method": method,
+                "params": params,
+            }
+        )
         header = f"Content-Length: {len(body.encode('utf-8'))}\r\n\r\n"
         payload = (header + body).encode("utf-8")
 
@@ -129,7 +131,8 @@ class _LSPConnection:
 
     @staticmethod
     async def _read_one_message(
-        stdout: asyncio.StreamReader, timeout: float,
+        stdout: asyncio.StreamReader,
+        timeout: float,
     ) -> dict | None:
         """Read one complete JSON-RPC message from the stream."""
         try:
@@ -147,7 +150,8 @@ class _LSPConnection:
                 return None
 
             body_bytes = await asyncio.wait_for(
-                stdout.readexactly(content_length), timeout=timeout,
+                stdout.readexactly(content_length),
+                timeout=timeout,
             )
             return json.loads(body_bytes.decode("utf-8"))
         except Exception as e:
@@ -198,7 +202,7 @@ class LSPHandler:
             if not fp.exists():
                 return f"File not found: {file_path}"
             if fp.stat().st_size > MAX_FILE_SIZE:
-                return f"File too large (>{MAX_FILE_SIZE // (1024*1024)}MB): {file_path}"
+                return f"File too large (>{MAX_FILE_SIZE // (1024 * 1024)}MB): {file_path}"
         else:
             fp = Path(file_path) if file_path else None
 
@@ -207,8 +211,7 @@ class LSPHandler:
         if not server_cmd:
             ext = Path(detect_path).suffix
             return (
-                f"No LSP server available for {ext} files. "
-                f"Install the appropriate language server."
+                f"No LSP server available for {ext} files. Install the appropriate language server."
             )
 
         try:
@@ -242,9 +245,13 @@ class LSPHandler:
         if operation == "goToDefinition":
             return await conn.request("textDocument/definition", td_pos)
         elif operation == "findReferences":
-            return await conn.request("textDocument/references", {
-                **td_pos, "context": {"includeDeclaration": True},
-            })
+            return await conn.request(
+                "textDocument/references",
+                {
+                    **td_pos,
+                    "context": {"includeDeclaration": True},
+                },
+            )
         elif operation == "hover":
             return await conn.request("textDocument/hover", td_pos)
         elif operation == "documentSymbol":
@@ -265,7 +272,9 @@ class LSPHandler:
             return None
 
     async def _get_or_start(
-        self, server_cmd: list[str], file_path: Path | None,
+        self,
+        server_cmd: list[str],
+        file_path: Path | None,
     ) -> _LSPConnection:
         cache_key = server_cmd[0]
 
@@ -286,11 +295,14 @@ class LSPHandler:
 
         conn = _LSPConnection(process)
         root_uri = Path(cwd).as_uri()
-        await conn.request("initialize", {
-            "processId": os.getpid(),
-            "rootUri": root_uri,
-            "capabilities": {},
-        })
+        await conn.request(
+            "initialize",
+            {
+                "processId": os.getpid(),
+                "rootUri": root_uri,
+                "capabilities": {},
+            },
+        )
         await conn.notify("initialized", {})
 
         if file_path:
@@ -306,14 +318,17 @@ class LSPHandler:
             text = file_path.read_text(encoding="utf-8", errors="replace")[:MAX_FILE_SIZE]
         except Exception:
             return
-        await conn.notify("textDocument/didOpen", {
-            "textDocument": {
-                "uri": file_path.as_uri(),
-                "languageId": file_path.suffix.lstrip("."),
-                "version": 1,
-                "text": text,
+        await conn.notify(
+            "textDocument/didOpen",
+            {
+                "textDocument": {
+                    "uri": file_path.as_uri(),
+                    "languageId": file_path.suffix.lstrip("."),
+                    "version": 1,
+                    "text": text,
+                },
             },
-        })
+        )
 
 
 def create_handler(agent: "Agent"):

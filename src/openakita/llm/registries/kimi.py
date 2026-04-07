@@ -35,10 +35,13 @@ class KimiChinaRegistry(ProviderRegistry):
             mid = (m.get("id") or "").strip()
             if not mid:
                 continue
-            out.append(ModelInfo(
-                id=mid, name=mid,
-                capabilities=infer_capabilities(mid, provider_slug="kimi"),
-            ))
+            out.append(
+                ModelInfo(
+                    id=mid,
+                    name=mid,
+                    capabilities=infer_capabilities(mid, provider_slug="kimi"),
+                )
+            )
         return sorted(out, key=lambda x: x.id)
 
 
@@ -67,9 +70,11 @@ class KimiInternationalRegistry(ProviderRegistry):
             mid = (m.get("id") or "").strip()
             if not mid:
                 continue
-            out.append(ModelInfo(
-                id=mid, name=mid,
-                capabilities=infer_capabilities(mid, provider_slug="kimi"),
-            ))
+            out.append(
+                ModelInfo(
+                    id=mid,
+                    name=mid,
+                    capabilities=infer_capabilities(mid, provider_slug="kimi"),
+                )
+            )
         return sorted(out, key=lambda x: x.id)
-

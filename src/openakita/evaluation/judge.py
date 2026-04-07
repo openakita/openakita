@@ -134,9 +134,11 @@ class Judge:
 
         prompt = JUDGE_PROMPT.format(trace_summary=trace_summary)
 
-        _tt = set_tracking_context(TokenTrackingContext(
-            operation_type="evaluation",
-        ))
+        _tt = set_tracking_context(
+            TokenTrackingContext(
+                operation_type="evaluation",
+            )
+        )
         try:
             model = self._model or self._brain.model
             response = await asyncio.to_thread(
@@ -201,13 +203,15 @@ class Judge:
             duration = f"{span.duration_ms:.0f}ms" if span.duration_ms else "?"
             attrs_str = ""
             if span.attributes:
-                key_attrs = {k: v for k, v in span.attributes.items()
-                           if k in ("model", "tool_name", "error_type", "error_message")}
+                key_attrs = {
+                    k: v
+                    for k, v in span.attributes.items()
+                    if k in ("model", "tool_name", "error_type", "error_message")
+                }
                 if key_attrs:
                     attrs_str = f" {key_attrs}"
             parts.append(
-                f"  {status_icon} [{span.span_type.value}] {span.name} "
-                f"({duration}){attrs_str}"
+                f"  {status_icon} [{span.span_type.value}] {span.name} ({duration}){attrs_str}"
             )
 
         return "\n".join(parts)

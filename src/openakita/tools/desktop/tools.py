@@ -377,8 +377,10 @@ keys 是按键数组，如 ['ctrl', 'c']""",
                             "tool": {
                                 "type": "string",
                                 "enum": [
-                                    "desktop_click", "desktop_type",
-                                    "desktop_hotkey", "desktop_scroll",
+                                    "desktop_click",
+                                    "desktop_type",
+                                    "desktop_hotkey",
+                                    "desktop_scroll",
                                     "desktop_wait",
                                 ],
                                 "description": "The desktop tool to execute.",
@@ -642,8 +644,13 @@ class DesktopToolHandler:
         if len(actions) > 20:
             return {"error": "desktop_batch supports at most 20 actions per call."}
 
-        allowed = {"desktop_click", "desktop_type", "desktop_hotkey",
-                    "desktop_scroll", "desktop_wait"}
+        allowed = {
+            "desktop_click",
+            "desktop_type",
+            "desktop_hotkey",
+            "desktop_scroll",
+            "desktop_wait",
+        }
         results = []
         for i, action in enumerate(actions):
             tool = action.get("tool", "")

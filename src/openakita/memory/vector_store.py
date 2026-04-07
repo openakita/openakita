@@ -30,9 +30,11 @@ def _lazy_import():
         # 模块可能在服务运行期间安装，路径尚未注入 sys.path。
         # 在导入前尝试刷新一次（idempotent，不会重复添加已有路径）。
         import sys
+
         if "sentence_transformers" not in sys.modules:
             try:
                 from openakita.runtime_env import inject_module_paths_runtime
+
                 inject_module_paths_runtime()
             except Exception:
                 pass
@@ -43,6 +45,7 @@ def _lazy_import():
             _sentence_transformers_available = True
         except ImportError as e:
             from openakita.tools._import_helper import import_or_hint
+
             hint = import_or_hint("sentence_transformers")
             logger.info(f"[VectorStore] 向量搜索未启用: {hint}")
             logger.debug(f"sentence_transformers ImportError 详情: {e}", exc_info=True)
@@ -57,6 +60,7 @@ def _lazy_import():
             # 在导入前禁用 chromadb 遥测，避免因 posthog 缺失导致 ImportError
             # chromadb 在 import 时会检查这些环境变量
             import os
+
             os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
             os.environ.setdefault("CHROMA_TELEMETRY", "False")
 
@@ -65,6 +69,7 @@ def _lazy_import():
             _chromadb = chromadb
         except ImportError as e:
             from openakita.tools._import_helper import import_or_hint
+
             hint = import_or_hint("chromadb")
             logger.info(f"[VectorStore] ChromaDB 未启用: {hint}")
             logger.debug(f"chromadb ImportError 详情: {e}", exc_info=True)
@@ -167,9 +172,7 @@ class VectorStore:
 
                 resolved = detect_best_source()
             _apply_source_env(resolved)
-            logger.info(
-                f"[VectorStore] 预配置 HF_ENDPOINT (源={resolved.value})"
-            )
+            logger.info(f"[VectorStore] 预配置 HF_ENDPOINT (源={resolved.value})")
         except Exception as e:
             logger.debug(f"[VectorStore] 预配置 HF_ENDPOINT 失败 (非致命): {e}")
 
@@ -225,9 +228,7 @@ class VectorStore:
                 self._import_missing = False
                 self._retry_count = 0
 
-            logger.info(
-                f"[VectorStore] ✓ 初始化完成，已加载 {collection.count()} 条记忆"
-            )
+            logger.info(f"[VectorStore] ✓ 初始化完成，已加载 {collection.count()} 条记忆")
 
         except Exception as e:
             err_msg = str(e)
@@ -422,9 +423,7 @@ class VectorStore:
 
         参数和返回值与 search() 完全相同。
         """
-        return await asyncio.to_thread(
-            self.search, query, limit, filter_type, min_importance
-        )
+        return await asyncio.to_thread(self.search, query, limit, filter_type, min_importance)
 
     def delete_memory(self, memory_id: str) -> bool:
         """

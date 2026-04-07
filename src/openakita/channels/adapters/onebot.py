@@ -43,6 +43,7 @@ def _import_websockets():
             websockets = ws
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
+
             raise ImportError(import_or_hint("websockets"))
 
 
@@ -100,7 +101,9 @@ class OneBotAdapter(ChannelAdapter):
         bot_id: str | None = None,
         agent_profile_id: str = "default",
     ):
-        super().__init__(channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_profile_id)
+        super().__init__(
+            channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_profile_id
+        )
 
         self.config = OneBotConfig(
             mode=mode,
@@ -154,13 +157,13 @@ class OneBotAdapter(ChannelAdapter):
                         f"OneBot 反向 WS 端口 {self.config.reverse_port} 已被占用，"
                         f"请修改配置或释放端口。"
                     ) from e
-                raise ConnectionError(
-                    f"OneBot 反向 WS 服务器启动失败: {e}"
-                ) from e
+                raise ConnectionError(f"OneBot 反向 WS 服务器启动失败: {e}") from e
             self._receive_task = asyncio.create_task(self._server.wait_closed())
         else:
             self._receive_task = asyncio.create_task(self._receive_loop_with_reconnect())
-            logger.info(f"OneBot adapter starting in forward mode, will connect to {self.config.ws_url}")
+            logger.info(
+                f"OneBot adapter starting in forward mode, will connect to {self.config.ws_url}"
+            )
 
     async def stop(self) -> None:
         self._running = False
@@ -360,13 +363,12 @@ class OneBotAdapter(ChannelAdapter):
                 self._seen_message_ids.popitem(last=False)
 
         import time as _time
+
         event_time = data.get("time")
         if event_time and isinstance(event_time, (int, float)):
             age_s = _time.time() - event_time
             if age_s > self.STALE_MESSAGE_THRESHOLD_S:
-                logger.info(
-                    f"OneBot: stale message discarded (age={age_s:.0f}s): {msg_id}"
-                )
+                logger.info(f"OneBot: stale message discarded (age={age_s:.0f}s): {msg_id}")
                 return
 
         message_type = data.get("message_type")
@@ -410,8 +412,7 @@ class OneBotAdapter(ChannelAdapter):
             if _reply_to_id in self._bot_sent_msg_ids:
                 is_mentioned = True
                 logger.info(
-                    f"OneBot: implicit mention detected "
-                    f"(reply to bot message {_reply_to_id})"
+                    f"OneBot: implicit mention detected (reply to bot message {_reply_to_id})"
                 )
 
         sender = data.get("sender") or {}
@@ -464,7 +465,7 @@ class OneBotAdapter(ChannelAdapter):
         last_end = 0
         for match in self._CQ_PATTERN.finditer(message):
             if match.start() > last_end:
-                text = message[last_end: match.start()]
+                text = message[last_end : match.start()]
                 if text:
                     result.append({"type": "text", "data": {"text": _decode_cq_entities(text)}})
 
@@ -503,6 +504,7 @@ class OneBotAdapter(ChannelAdapter):
                 text_parts.append(data.get("text") or "")
             elif seg_type == "image":
                 import mimetypes
+
                 img_file = data.get("file") or "image.jpg"
                 img_mime = mimetypes.guess_type(img_file)[0] or "image/jpeg"
                 media = MediaFile.create(
@@ -570,7 +572,9 @@ class OneBotAdapter(ChannelAdapter):
     async def _call_api(self, action: str, params: dict = None) -> Any:
         ws = self._ws
         if not ws or getattr(ws, "closed", True):
-            mode_hint = "反向 WS 尚无客户端连接" if self.config.mode == "reverse" else "WebSocket 未连接"
+            mode_hint = (
+                "反向 WS 尚无客户端连接" if self.config.mode == "reverse" else "WebSocket 未连接"
+            )
             raise RuntimeError(f"OneBot {mode_hint}")
 
         echo = str(uuid.uuid4())
@@ -656,9 +660,13 @@ class OneBotAdapter(ChannelAdapter):
             raise ValueError(f"Invalid chat_id for OneBot: {message.chat_id!r}")
 
         if self._is_group_message(message):
-            result = await self._call_api("send_group_msg", {"group_id": chat_id, "message": msg_array})
+            result = await self._call_api(
+                "send_group_msg", {"group_id": chat_id, "message": msg_array}
+            )
         else:
-            result = await self._call_api("send_private_msg", {"user_id": chat_id, "message": msg_array})
+            result = await self._call_api(
+                "send_private_msg", {"user_id": chat_id, "message": msg_array}
+            )
 
         mid = str((result or {}).get("message_id", ""))
         self._record_bot_msg_id(mid)
@@ -687,13 +695,21 @@ class OneBotAdapter(ChannelAdapter):
             chat_id_int = int(chat_id)
             is_group = self._chat_type_map.get(chat_id, "group") == "group"
             if is_group:
-                await self._call_api("set_input_status", {
-                    "group_id": chat_id_int, "event_type": "1",
-                })
+                await self._call_api(
+                    "set_input_status",
+                    {
+                        "group_id": chat_id_int,
+                        "event_type": "1",
+                    },
+                )
             else:
-                await self._call_api("set_input_status", {
-                    "user_id": chat_id_int, "event_type": "1",
-                })
+                await self._call_api(
+                    "set_input_status",
+                    {
+                        "user_id": chat_id_int,
+                        "event_type": "1",
+                    },
+                )
         except Exception:
             pass
 
@@ -784,7 +800,9 @@ class OneBotAdapter(ChannelAdapter):
         api = "upload_group_file" if _is_grp else "upload_private_file"
         key = "group_id" if _is_grp else "user_id"
         try:
-            result = await self._call_api(api, {key: chat_id_int, "file": file_str, "name": path.name})
+            result = await self._call_api(
+                api, {key: chat_id_int, "file": file_str, "name": path.name}
+            )
             real_mid = (result or {}).get("message_id")
             mid = str(real_mid) if real_mid else f"file_{chat_id}"
             if real_mid:

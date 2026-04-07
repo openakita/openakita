@@ -26,6 +26,7 @@ try:
     from pywinauto.timings import TimeoutError as PywinautoTimeoutError
 except ImportError:
     from openakita.tools._import_helper import import_or_hint
+
     raise ImportError(import_or_hint("pywinauto"))
 
 logger = logging.getLogger(__name__)

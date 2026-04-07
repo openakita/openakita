@@ -134,21 +134,20 @@ class TaskExecutor:
             message_sent = False
 
             if task.channel_id and task.chat_id and self.gateway:
-                message_sent = await self._deliver_reminder_message(
-                    task, message
-                )
+                message_sent = await self._deliver_reminder_message(task, message)
             elif self.gateway:
                 # 有网关但任务未配置通道，尝试所有已知通道
-                message_sent = await self._deliver_via_fallback_channels(
-                    task, message
-                )
+                message_sent = await self._deliver_via_fallback_channels(task, message)
             # else: 无网关，无法发送
 
             if not message_sent:
                 # 最后的兜底：尝试桌面通知
                 desktop_sent = await self._try_desktop_notify_fallback(task, message)
                 if not desktop_sent:
-                    return False, f"提醒投递失败: 所有通道均不可用，提醒内容「{message[:50]}」未能送达"
+                    return (
+                        False,
+                        f"提醒投递失败: 所有通道均不可用，提醒内容「{message[:50]}」未能送达",
+                    )
 
                 return True, f"提醒已通过桌面通知送达（IM 通道不可用）: {message[:80]}"
 
@@ -170,9 +169,7 @@ class TaskExecutor:
             logger.error(f"TaskExecutor: reminder {task.id} failed: {error_msg}")
             return False, error_msg
 
-    async def _deliver_reminder_message(
-        self, task: ScheduledTask, message: str
-    ) -> bool:
+    async def _deliver_reminder_message(self, task: ScheduledTask, message: str) -> bool:
         """
         向任务配置的主通道投递提醒消息。
 
@@ -184,11 +181,9 @@ class TaskExecutor:
 
         # 检查主通道适配器是否存在且运行中
         adapter = (
-            self.gateway.get_adapter(channel_id)
-            if hasattr(self.gateway, 'get_adapter')
-            else None
+            self.gateway.get_adapter(channel_id) if hasattr(self.gateway, "get_adapter") else None
         )
-        channel_active = adapter is not None and getattr(adapter, 'is_running', False)
+        channel_active = adapter is not None and getattr(adapter, "is_running", False)
 
         try:
             msg_id = await self.gateway.send(
@@ -197,9 +192,7 @@ class TaskExecutor:
                 text=message,
             )
         except Exception as e:
-            logger.warning(
-                f"TaskExecutor: reminder {task.id} primary send error: {e}"
-            )
+            logger.warning(f"TaskExecutor: reminder {task.id} primary send error: {e}")
             msg_id = None
             channel_active = False
 
@@ -220,9 +213,7 @@ class TaskExecutor:
         )
         return await self._deliver_via_fallback_channels(task, message)
 
-    async def _deliver_via_fallback_channels(
-        self, task: ScheduledTask, message: str
-    ) -> bool:
+    async def _deliver_via_fallback_channels(self, task: ScheduledTask, message: str) -> bool:
         """尝试通过所有已知的备用 IM 通道投递提醒"""
         targets = self._find_all_im_targets()
         primary = (task.channel_id, task.chat_id)
@@ -232,11 +223,9 @@ class TaskExecutor:
                 continue  # 主通道已失败，跳过
 
             adapter = (
-                self.gateway.get_adapter(channel)
-                if hasattr(self.gateway, 'get_adapter')
-                else None
+                self.gateway.get_adapter(channel) if hasattr(self.gateway, "get_adapter") else None
             )
-            if not adapter or not getattr(adapter, 'is_running', False):
+            if not adapter or not getattr(adapter, "is_running", False):
                 continue
 
             try:
@@ -245,23 +234,19 @@ class TaskExecutor:
                     chat_id=chat_id,
                     text=message,
                 )
-                if msg_id is not None or (adapter and getattr(adapter, 'is_running', False)):
+                if msg_id is not None or (adapter and getattr(adapter, "is_running", False)):
                     logger.info(
                         f"TaskExecutor: reminder {task.id} delivered via fallback "
                         f"{channel}/{chat_id} (msg_id={msg_id})"
                     )
                     return True
             except Exception as e:
-                logger.warning(
-                    f"TaskExecutor: fallback send failed for {channel}/{chat_id}: {e}"
-                )
+                logger.warning(f"TaskExecutor: fallback send failed for {channel}/{chat_id}: {e}")
                 continue
 
         return False
 
-    async def _try_desktop_notify_fallback(
-        self, task: ScheduledTask, message: str
-    ) -> bool:
+    async def _try_desktop_notify_fallback(self, task: ScheduledTask, message: str) -> bool:
         """当所有 IM 通道失败时，尝试桌面通知作为最后兜底"""
         try:
             from ..config import settings
@@ -385,7 +370,11 @@ class TaskExecutor:
             task_timeout = self.timeout_seconds
             if task.metadata and isinstance(task.metadata, dict):
                 custom_timeout = task.metadata.get("timeout_seconds")
-                if custom_timeout and isinstance(custom_timeout, (int, float)) and custom_timeout > 0:
+                if (
+                    custom_timeout
+                    and isinstance(custom_timeout, (int, float))
+                    and custom_timeout > 0
+                ):
                     task_timeout = int(custom_timeout)
                     logger.info(
                         f"TaskExecutor: using task-level timeout {task_timeout}s "
@@ -396,7 +385,9 @@ class TaskExecutor:
                     self._run_agent(agent, prompt), timeout=task_timeout
                 )
             except TimeoutError:
-                timeout_display = f"{task_timeout // 60} 分钟" if task_timeout >= 60 else f"{task_timeout} 秒"
+                timeout_display = (
+                    f"{task_timeout // 60} 分钟" if task_timeout >= 60 else f"{task_timeout} 秒"
+                )
                 error_msg = f"任务执行超时（超过 {timeout_display} 未完成）"
                 logger.error(f"TaskExecutor: task {task.id} timed out after {task_timeout}s")
                 if not skip_end_notification:
@@ -531,6 +522,7 @@ class TaskExecutor:
             tokens = getattr(agent, "_im_context_tokens", None)
             if tokens:
                 from ..core.im_context import reset_im_context
+
                 reset_im_context(tokens)
                 agent._im_context_tokens = None
         except Exception as e:

@@ -35,6 +35,7 @@ _PLAYBOOKS_RE = re.compile(
 
 class GitHubSource(NamedTuple):
     """归一化后的 GitHub 仓库坐标。"""
+
     owner: str
     repo: str
     subdir: str | None
@@ -73,6 +74,7 @@ def parse_playbooks_source(url: str) -> GitHubSource | None:
 # ---------------------------------------------------------------------------
 # Content validation
 # ---------------------------------------------------------------------------
+
 
 def is_html_content(text: str) -> bool:
     """检测 HTTP 响应是否是 HTML 网页而非 Markdown。"""

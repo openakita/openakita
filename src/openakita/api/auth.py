@@ -30,32 +30,40 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-ACCESS_TOKEN_TTL = 24 * 3600          # 24 hours
-REFRESH_TOKEN_TTL = 90 * 24 * 3600    # 90 days
+ACCESS_TOKEN_TTL = 24 * 3600  # 24 hours
+REFRESH_TOKEN_TTL = 90 * 24 * 3600  # 90 days
 REFRESH_COOKIE_NAME = "openakita_refresh"
 PASSWORD_ENV_VAR = "OPENAKITA_WEB_PASSWORD"
 
-AUTH_EXEMPT_PATHS = frozenset({
-    "/",
-    "/api/health",
-    "/api/auth/login",
-    "/api/auth/logout",
-    "/api/auth/refresh",
-    "/api/auth/check",
-    "/api/logs/frontend",
-})
+AUTH_EXEMPT_PATHS = frozenset(
+    {
+        "/",
+        "/api/health",
+        "/api/auth/login",
+        "/api/auth/logout",
+        "/api/auth/refresh",
+        "/api/auth/check",
+        "/api/logs/frontend",
+    }
+)
 AUTH_EXEMPT_PREFIXES = ("/web/", "/web", "/ws/", "/docs", "/openapi.json", "/redoc", "/user-docs")
 
 # ---------------------------------------------------------------------------
 # Password hashing (scrypt, stdlib)
 # ---------------------------------------------------------------------------
 
+
 def _hash_password(password: str, salt: bytes | None = None) -> tuple[str, str]:
     """Hash password with scrypt. Returns (hash_hex, salt_hex)."""
     if salt is None:
         salt = secrets.token_bytes(16)
     h = hashlib.scrypt(
-        password.encode(), salt=salt, n=16384, r=8, p=1, dklen=32,
+        password.encode(),
+        salt=salt,
+        n=16384,
+        r=8,
+        p=1,
+        dklen=32,
     )
     return h.hex(), salt.hex()
 
@@ -63,8 +71,12 @@ def _hash_password(password: str, salt: bytes | None = None) -> tuple[str, str]:
 def _verify_password(password: str, hash_hex: str, salt_hex: str) -> bool:
     try:
         h = hashlib.scrypt(
-            password.encode(), salt=bytes.fromhex(salt_hex),
-            n=16384, r=8, p=1, dklen=32,
+            password.encode(),
+            salt=bytes.fromhex(salt_hex),
+            n=16384,
+            r=8,
+            p=1,
+            dklen=32,
         )
         return hmac.compare_digest(h.hex(), hash_hex)
     except (ValueError, TypeError):
@@ -74,6 +86,7 @@ def _verify_password(password: str, hash_hex: str, salt_hex: str) -> bool:
 # ---------------------------------------------------------------------------
 # Web Access config (data/web_access.json)
 # ---------------------------------------------------------------------------
+
 
 class WebAccessConfig:
     """Manages the web_access.json file."""
@@ -112,7 +125,11 @@ class WebAccessConfig:
             # if the password actually changed (avoids needless rehash on every start)
             existing_hash = self._data.get("password_hash", "")
             existing_salt = self._data.get("password_salt", "")
-            if not existing_hash or not existing_salt or not _verify_password(env_password, existing_hash, existing_salt):
+            if (
+                not existing_hash
+                or not existing_salt
+                or not _verify_password(env_password, existing_hash, existing_salt)
+            ):
                 hash_hex, salt_hex = _hash_password(env_password)
                 self._data["password_hash"] = hash_hex
                 self._data["password_salt"] = salt_hex
@@ -139,7 +156,8 @@ class WebAccessConfig:
                 "  You can reset it via the Desktop Setup Center or set\n"
                 "  %s environment variable.\n"
                 "═══════════════════════════════════════════════════════════",
-                generated, PASSWORD_ENV_VAR,
+                generated,
+                PASSWORD_ENV_VAR,
             )
 
         if needs_save:
@@ -241,6 +259,7 @@ def _make_hint(password: str) -> str:
 # Rate limiter (simple in-memory, per-IP)
 # ---------------------------------------------------------------------------
 
+
 class RateLimiter:
     """Simple sliding-window rate limiter."""
 
@@ -270,6 +289,7 @@ _login_limiter = RateLimiter(max_requests=5, window_seconds=60)
 # ---------------------------------------------------------------------------
 # Middleware
 # ---------------------------------------------------------------------------
+
 
 def get_client_ip(request: Request, *, trust_proxy: bool = False) -> str:
     """Return the client IP, respecting X-Forwarded-For when trust_proxy is on."""

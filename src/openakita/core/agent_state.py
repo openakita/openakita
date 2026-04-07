@@ -235,29 +235,33 @@ class TaskState:
         if self.skip_event.is_set():
             _skip_reason = self.skip_reason or "用户认为该步骤耗时过长或不正确"
             self.clear_skip()
-            working_messages.append({
-                "role": "user",
-                "content": (
-                    f"[系统提示-用户跳过步骤] 用户跳过了上述工具执行。原因: {_skip_reason}\n"
-                    "请反思: 该步骤是否有问题？是否需要换个方法继续？"
-                    "请整理思路后继续完成任务。"
-                ),
-            })
+            working_messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"[系统提示-用户跳过步骤] 用户跳过了上述工具执行。原因: {_skip_reason}\n"
+                        "请反思: 该步骤是否有问题？是否需要换个方法继续？"
+                        "请整理思路后继续完成任务。"
+                    ),
+                }
+            )
             logger.info(f"[SkipReflect] Injected skip reflection prompt: {_skip_reason}")
 
         # 2) 检查用户插入消息
         _inserts = await self.drain_user_inserts()
         for _ins_text in _inserts:
-            working_messages.append({
-                "role": "user",
-                "content": (
-                    f"[用户插入消息] {_ins_text}\n"
-                    "[系统提示] 以上是用户在任务执行期间插入的消息。"
-                    "请判断: 1) 这是对当前任务的补充（融入决策继续）"
-                    "还是 2) 一个全新任务（告知用户收到，完成当前任务后执行）。"
-                    "如不确定，使用 ask_user 工具向用户确认。"
-                ),
-            })
+            working_messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"[用户插入消息] {_ins_text}\n"
+                        "[系统提示] 以上是用户在任务执行期间插入的消息。"
+                        "请判断: 1) 这是对当前任务的补充（融入决策继续）"
+                        "还是 2) 一个全新任务（告知用户收到，完成当前任务后执行）。"
+                        "如不确定，使用 ask_user 工具向用户确认。"
+                    ),
+                }
+            )
             logger.info(f"[UserInsert] Injected user insert into context: {_ins_text[:60]}")
 
     def reset_for_model_switch(self) -> None:
@@ -450,7 +454,9 @@ class AgentState:
             elif self.current_task:
                 self.current_task.cancel(reason)
 
-    def skip_current_step(self, reason: str = "用户请求跳过当前步骤", session_id: str | None = None) -> None:
+    def skip_current_step(
+        self, reason: str = "用户请求跳过当前步骤", session_id: str | None = None
+    ) -> None:
         """跳过当前正在执行的步骤（不终止任务）"""
         session_id = session_id or None
         with self._tasks_lock:

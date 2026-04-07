@@ -30,6 +30,7 @@ try:
     import mss.tools
 except ImportError:
     from openakita.tools._import_helper import import_or_hint
+
     raise ImportError(import_or_hint("mss"))
 
 
@@ -37,6 +38,7 @@ def _get_self_hwnd() -> int | None:
     """Get the HWND of the current process's console/window for exclusion."""
     try:
         import ctypes
+
         hwnd = ctypes.windll.kernel32.GetConsoleWindow()
         return hwnd if hwnd else None
     except Exception:
@@ -50,11 +52,13 @@ def _hide_self_window() -> int | None:
     """
     try:
         import ctypes
+
         hwnd = _get_self_hwnd()
         if hwnd:
             SW_HIDE = 0
             ctypes.windll.user32.ShowWindow(hwnd, SW_HIDE)
             import time
+
             time.sleep(0.05)  # let the compositor update
             return hwnd
     except Exception:
@@ -66,6 +70,7 @@ def _restore_window(hwnd: int) -> None:
     """Restore a previously hidden window."""
     try:
         import ctypes
+
         SW_SHOW = 5
         ctypes.windll.user32.ShowWindow(hwnd, SW_SHOW)
     except Exception:

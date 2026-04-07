@@ -20,12 +20,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-VALID_HOOK_NAMES = frozenset({
-    "on_activate",
-    "on_deactivate",
-    "before_execute",
-    "after_execute",
-})
+VALID_HOOK_NAMES = frozenset(
+    {
+        "on_activate",
+        "on_deactivate",
+        "before_execute",
+        "after_execute",
+    }
+)
 
 _HOOK_TIMEOUT = 15.0
 _MAX_OUTPUT_BYTES = 32_768
@@ -43,9 +45,7 @@ def validate_hooks(hooks: dict, skill_dir: Path | None = None) -> list[str]:
 
     for name, script in hooks.items():
         if name not in VALID_HOOK_NAMES:
-            warnings.append(
-                f"Unknown hook '{name}', valid hooks: {sorted(VALID_HOOK_NAMES)}"
-            )
+            warnings.append(f"Unknown hook '{name}', valid hooks: {sorted(VALID_HOOK_NAMES)}")
         if not isinstance(script, str) or not script.strip():
             warnings.append(f"Hook '{name}' script must be a non-empty string")
             continue
@@ -55,9 +55,7 @@ def validate_hooks(hooks: dict, skill_dir: Path | None = None) -> list[str]:
             try:
                 script_path.relative_to(skill_dir.resolve())
             except ValueError:
-                warnings.append(
-                    f"Hook '{name}' script '{script}' escapes skill directory"
-                )
+                warnings.append(f"Hook '{name}' script '{script}' escapes skill directory")
 
     return warnings
 
@@ -105,6 +103,7 @@ class SkillHookRunner:
             return {"ok": False, "output": msg, "exit_code": None}
 
         import os as _os
+
         env = dict(_os.environ)
         env["OPENAKITA_SKILL_ID"] = self._skill_id
         env["OPENAKITA_HOOK_NAME"] = hook_name
@@ -152,7 +151,9 @@ class SkillHookRunner:
             if exit_code != 0:
                 logger.warning(
                     "[SkillHook] %s/%s exited with code %d",
-                    self._skill_id, hook_name, exit_code,
+                    self._skill_id,
+                    hook_name,
+                    exit_code,
                 )
 
             return {"ok": exit_code == 0, "output": output, "exit_code": exit_code}
@@ -164,7 +165,9 @@ class SkillHookRunner:
         except Exception as e:
             logger.error(
                 "[SkillHook] Failed to run %s/%s: %s",
-                self._skill_id, hook_name, e,
+                self._skill_id,
+                hook_name,
+                e,
             )
             return {"ok": False, "output": str(e), "exit_code": None}
 
@@ -179,8 +182,7 @@ def create_hook_runner(skill_id: str, skill_dir: Path, hooks: dict) -> SkillHook
         return None
 
     valid_hooks = {
-        k: v for k, v in hooks.items()
-        if k in VALID_HOOK_NAMES and isinstance(v, str) and v.strip()
+        k: v for k, v in hooks.items() if k in VALID_HOOK_NAMES and isinstance(v, str) and v.strip()
     }
 
     if not valid_hooks:

@@ -27,9 +27,24 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".opus", ".m4a", ".aac", ".flac", ".amr"}
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv"}
 FILE_EXTENSIONS = {
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-    ".zip", ".rar", ".7z", ".tar", ".gz",
-    ".txt", ".csv", ".json", ".xml", ".yaml", ".yml",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+    ".zip",
+    ".rar",
+    ".7z",
+    ".tar",
+    ".gz",
+    ".txt",
+    ".csv",
+    ".json",
+    ".xml",
+    ".yaml",
+    ".yml",
 }
 
 MEDIA_LINE_PREFIX = "MEDIA:"
@@ -100,10 +115,7 @@ def validate_path_security(
 
     if allowed_prefixes:
         norm_lower = normalized.lower().replace("\\", "/")
-        if not any(
-            norm_lower.startswith(p.lower().replace("\\", "/"))
-            for p in allowed_prefixes
-        ):
+        if not any(norm_lower.startswith(p.lower().replace("\\", "/")) for p in allowed_prefixes):
             raise PathSecurityError(
                 file_path,
                 f"Path not under allowed prefixes: {allowed_prefixes}",
@@ -207,7 +219,7 @@ def parse_media_from_text(
         for line in lines:
             trimmed = line.strip()
             if trimmed.upper().startswith(MEDIA_LINE_PREFIX):
-                payload = trimmed[len(MEDIA_LINE_PREFIX):].strip()
+                payload = trimmed[len(MEDIA_LINE_PREFIX) :].strip()
                 if payload and _try_add(payload) and remove_from_text:
                     continue
             kept_lines.append(line)
@@ -216,24 +228,29 @@ def parse_media_from_text(
 
     # 2. 解析 Markdown 图片 ![alt](path)
     if parse_markdown_images:
+
         def _md_replacer(m: re.Match) -> str:
             source = m.group(2)
             if _try_add(source) and remove_from_text:
                 return ""
             return m.group(0)
+
         cleaned = _RE_MARKDOWN_IMAGE.sub(_md_replacer, cleaned)
 
     # 3. 解析 HTML <img src="..."> 标签
     if parse_markdown_images:
+
         def _html_img_replacer(m: re.Match) -> str:
             source = m.group(1)
             if _try_add(source) and remove_from_text:
                 return ""
             return m.group(0)
+
         cleaned = _RE_HTML_IMG.sub(_html_img_replacer, cleaned)
 
     # 4. 解析 Markdown 链接 [text](path)（仅提取媒体扩展名的链接）
     if parse_markdown_images:
+
         def _md_link_replacer(m: re.Match) -> str:
             source = m.group(2)
             ext = Path(source.split("?")[0]).suffix.lower()
@@ -242,10 +259,12 @@ def parse_media_from_text(
             if _try_add(source) and remove_from_text:
                 return ""
             return m.group(0)
+
         cleaned = _RE_MARKDOWN_LINK.sub(_md_link_replacer, cleaned)
 
     # 5. 解析裸本地路径（独占一行的绝对路径，以已知扩展名结尾）
     if parse_bare_paths:
+
         def _bare_replacer(m: re.Match) -> str:
             candidate = m.group(1).strip()
             ext = Path(candidate).suffix.lower()
@@ -254,6 +273,7 @@ def parse_media_from_text(
             if _try_add(candidate) and remove_from_text:
                 return ""
             return m.group(0)
+
         cleaned = _RE_BARE_LOCAL_PATH.sub(_bare_replacer, cleaned)
 
     # 清理连续空行

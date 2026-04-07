@@ -325,6 +325,7 @@ class RalphLoop:
                     content = content[:insert_pos] + "\n" + task_info + content[insert_pos:]
 
             from openakita.memory.types import MEMORY_MD_MAX_CHARS, truncate_memory_md
+
             if len(content) > MEMORY_MD_MAX_CHARS:
                 logger.warning(
                     f"MEMORY.md exceeds limit after progress save "

@@ -34,7 +34,9 @@ class ConnectionManager:
         await ws.accept()
         async with self._lock:
             self._connections.append((ws, is_local))
-        logger.debug("WebSocket client connected (local=%s, total: %d)", is_local, len(self._connections))
+        logger.debug(
+            "WebSocket client connected (local=%s, total: %d)", is_local, len(self._connections)
+        )
 
     async def disconnect(self, ws: WebSocket) -> None:
         async with self._lock:
@@ -83,7 +85,9 @@ class ConnectionManager:
             except Exception:
                 pass
         if to_close:
-            logger.info("Disconnected %d remote WebSocket client(s) after password change", len(to_close))
+            logger.info(
+                "Disconnected %d remote WebSocket client(s) after password change", len(to_close)
+            )
         return len(to_close)
 
     @property
@@ -114,6 +118,7 @@ def _authenticate_ws(ws: WebSocket, config: WebAccessConfig) -> bool:
     # trust_proxy; proxy-forwarded ones must provide a valid token.
     if _is_local_ws(ws):
         import os
+
         trust_proxy = os.environ.get("TRUST_PROXY", "").lower() in ("1", "true", "yes")
         if not trust_proxy or not ws.headers.get("x-forwarded-for"):
             return True
@@ -138,11 +143,15 @@ async def ws_events(ws: WebSocket):
     await manager.connect(ws, is_local=is_local)
     try:
         # Send initial connection confirmation
-        await ws.send_text(json.dumps({
-            "event": "connected",
-            "data": {"message": "WebSocket connected"},
-            "ts": time.time(),
-        }))
+        await ws.send_text(
+            json.dumps(
+                {
+                    "event": "connected",
+                    "data": {"message": "WebSocket connected"},
+                    "ts": time.time(),
+                }
+            )
+        )
 
         # Keep connection alive; listen for client messages (ping/pong, etc.)
         while True:

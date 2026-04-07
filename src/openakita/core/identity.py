@@ -187,12 +187,14 @@ class Identity:
                 return current_content
             else:
                 # 场景 4：不一致 → 加入待提示列表
-                self._pending_upgrades.append({
-                    "name": name,
-                    "path": path,
-                    "example_path": example_path,
-                    "hash_key": hash_key,
-                })
+                self._pending_upgrades.append(
+                    {
+                        "name": name,
+                        "path": path,
+                        "example_path": example_path,
+                        "hash_key": hash_key,
+                    }
+                )
                 hashes[hash_key] = current_hash
                 _save_hashes(identity_dir, hashes)
                 return current_content
@@ -317,6 +319,7 @@ class Identity:
 
         try:
             from zoneinfo import ZoneInfo
+
             tz = ZoneInfo(self._get_configured_timezone())
         except Exception:
             tz = timezone(timedelta(hours=8))
@@ -560,6 +563,7 @@ class Identity:
 
             if new_memory != memory:
                 from openakita.memory.types import MEMORY_MD_MAX_CHARS, truncate_memory_md
+
                 if len(new_memory) > MEMORY_MD_MAX_CHARS:
                     logger.warning(
                         f"MEMORY.md exceeds limit after section update "

@@ -251,8 +251,13 @@ class SessionManager:
 
             if create_if_missing:
                 session = self._create_session(
-                    channel, chat_id, user_id, thread_id, config,
-                    chat_type=chat_type, display_name=display_name,
+                    channel,
+                    chat_id,
+                    user_id,
+                    thread_id,
+                    config,
+                    chat_type=chat_type,
+                    display_name=display_name,
                     chat_name=chat_name,
                 )
                 self._sessions[session_key] = session
@@ -343,7 +348,9 @@ class SessionManager:
                 logger.info(f"Closed session: {session_key}")
         if closed_session is not None:
             self._dispatch_hook_fire_and_forget(
-                "on_session_end", session=closed_session, session_key=session_key,
+                "on_session_end",
+                session=closed_session,
+                session_key=session_key,
                 reason="close",
             )
             return True
@@ -401,10 +408,7 @@ class SessionManager:
     async def cleanup_expired(self) -> int:
         """清理过期会话"""
         with self._sessions_lock:
-            expired_keys = [
-                key for key, session in self._sessions.items()
-                if session.is_expired()
-            ]
+            expired_keys = [key for key, session in self._sessions.items() if session.is_expired()]
 
             for key in expired_keys:
                 session = self._sessions[key]
@@ -427,8 +431,7 @@ class SessionManager:
         """
         with self._sessions_lock:
             keys_to_remove = [
-                key for key, session in self._sessions.items()
-                if session.channel == channel_name
+                key for key, session in self._sessions.items() if session.channel == channel_name
             ]
             for key in keys_to_remove:
                 del self._sessions[key]
@@ -441,8 +444,7 @@ class SessionManager:
             self.mark_dirty()
             self._save_sessions()
             logger.info(
-                f"Purged {len(keys_to_remove)} sessions and registry for channel: "
-                f"{channel_name}"
+                f"Purged {len(keys_to_remove)} sessions and registry for channel: {channel_name}"
             )
 
         return len(keys_to_remove)
@@ -563,9 +565,15 @@ class SessionManager:
             logger.error(f"Failed to parse {path.name}: {e}")
             return None
 
-    _MEDIA_BLOCK_TYPES = frozenset({
-        "image", "video", "video_url", "audio", "input_audio",
-    })
+    _MEDIA_BLOCK_TYPES = frozenset(
+        {
+            "image",
+            "video",
+            "video_url",
+            "audio",
+            "input_audio",
+        }
+    )
 
     def _clean_large_content_in_messages(self, messages: list[dict]) -> None:
         """
@@ -588,37 +596,42 @@ class SessionManager:
 
                 # 图片/视频/音频块 → 替换为文字占位符
                 if block_type in self._MEDIA_BLOCK_TYPES:
-                    cleaned.append({
-                        "type": "text",
-                        "text": "[历史媒体内容已清理]",
-                    })
+                    cleaned.append(
+                        {
+                            "type": "text",
+                            "text": "[历史媒体内容已清理]",
+                        }
+                    )
                     continue
 
                 # image_url 内嵌 data URI → 替换
                 if block_type == "image_url":
                     url = (block.get("image_url") or {}).get("url", "")
                     if url.startswith("data:"):
-                        cleaned.append({
-                            "type": "text",
-                            "text": "[历史图片已清理]",
-                        })
+                        cleaned.append(
+                            {
+                                "type": "text",
+                                "text": "[历史图片已清理]",
+                            }
+                        )
                         continue
 
                 # tool_result 中的大型内容
                 if block_type == "tool_result":
                     result_content = block.get("content", "")
                     if isinstance(result_content, str) and len(result_content) > 10000:
-                        if (
-                            "base64" in result_content.lower()
-                            or result_content.startswith("data:image")
+                        if "base64" in result_content.lower() or result_content.startswith(
+                            "data:image"
                         ):
                             block = dict(block)
                             block["content"] = "[图片数据已清理，请重新截图]"
                         else:
                             from openakita.core.tool_executor import smart_truncate
+
                             block = dict(block)
                             block["content"], _ = smart_truncate(
-                                result_content, 4000,
+                                result_content,
+                                4000,
                                 label="session_restore",
                                 save_full=True,
                             )
@@ -652,9 +665,7 @@ class SessionManager:
         except Exception as e:
             logger.warning(f"Failed to save channel registry: {e}")
 
-    def _update_channel_registry(
-        self, channel: str, chat_id: str, user_id: str
-    ) -> None:
+    def _update_channel_registry(self, channel: str, chat_id: str, user_id: str) -> None:
         """
         更新通道注册表
 
@@ -688,9 +699,7 @@ class SessionManager:
         self._channel_registry[channel] = entry[:20]
         self._save_channel_registry()
 
-    def get_known_channel_target(
-        self, channel: str
-    ) -> tuple[str, str] | None:
+    def get_known_channel_target(self, channel: str) -> tuple[str, str] | None:
         """
         从通道注册表查找通道的最后已知 chat_id
 
@@ -712,9 +721,7 @@ class SessionManager:
                 return (channel, top["chat_id"])
         return None
 
-    def get_all_channel_targets(
-        self, channel: str
-    ) -> list[tuple[str, str]]:
+    def get_all_channel_targets(self, channel: str) -> list[tuple[str, str]]:
         """返回通道的所有已知 chat_id（多群场景）。"""
         entry = self._channel_registry.get(channel)
         if isinstance(entry, dict):

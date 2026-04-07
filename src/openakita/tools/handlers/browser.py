@@ -40,16 +40,18 @@ _BROWSER_LOCK_TIMEOUT = 300.0  # seconds
 # Operations that mutate page state or are long-running.
 # Read-only helpers (get_content, screenshot, status, list_tabs, wait) are
 # intentionally excluded to avoid blocking during page-mutating operations.
-_LOCKED_BROWSER_OPS = frozenset({
-    "browser_navigate",
-    "browser_click",
-    "browser_type",
-    "browser_scroll",
-    "browser_execute_js",
-    "browser_new_tab",
-    "browser_switch_tab",
-    "browser_close",
-})
+_LOCKED_BROWSER_OPS = frozenset(
+    {
+        "browser_navigate",
+        "browser_click",
+        "browser_type",
+        "browser_scroll",
+        "browser_execute_js",
+        "browser_new_tab",
+        "browser_switch_tab",
+        "browser_close",
+    }
+)
 
 
 class BrowserHandler:
@@ -87,6 +89,7 @@ class BrowserHandler:
         has_manager = hasattr(self.agent, "browser_manager") and self.agent.browser_manager
         if not has_manager:
             from openakita.runtime_env import IS_FROZEN
+
             if IS_FROZEN:
                 return "❌ 浏览器服务未启动。请尝试重启应用，如仍有问题请查看日志排查原因。"
             else:
@@ -136,14 +139,15 @@ class BrowserHandler:
         holder = getattr(self.agent, "name", "") or "agent"
         try:
             async with _browser_lock_manager.lock(
-                "tool:browser", holder=holder, timeout=_BROWSER_LOCK_TIMEOUT,
+                "tool:browser",
+                holder=holder,
+                timeout=_BROWSER_LOCK_TIMEOUT,
             ):
                 return await self._dispatch(tool_name, params)
         except TimeoutError:
             current_holder = await _browser_lock_manager.get_holder("tool:browser")
             logger.warning(
-                f"[Browser] Lock timeout for {tool_name} "
-                f"(holder={current_holder}, waiter={holder})"
+                f"[Browser] Lock timeout for {tool_name} (holder={current_holder}, waiter={holder})"
             )
             return {
                 "success": False,
@@ -285,6 +289,7 @@ class BrowserHandler:
 
             try:
                 from ..browser.chrome_finder import detect_chrome_devtools_mcp
+
                 devtools_info = detect_chrome_devtools_mcp()
                 if devtools_info["available"] and not manager.using_user_chrome:
                     result_data["hint"] = (
@@ -302,6 +307,7 @@ class BrowserHandler:
                     check_mcp_chrome_extension,
                     detect_chrome_devtools_mcp,
                 )
+
                 devtools_info = detect_chrome_devtools_mcp()
                 if devtools_info["available"]:
                     hints.append(
@@ -318,10 +324,12 @@ class BrowserHandler:
                 pass
 
             from openakita.runtime_env import IS_FROZEN
+
             if IS_FROZEN:
                 chrome_running_hint = ""
                 try:
                     from ..browser.manager import BrowserManager
+
                     if BrowserManager._is_chrome_process_running():
                         chrome_running_hint = (
                             "检测到 Chrome 浏览器正在运行，这可能导致配置文件冲突。"
@@ -329,14 +337,15 @@ class BrowserHandler:
                         )
                 except Exception:
                     pass
-                error_msg = (
-                    "❌ 无法启动浏览器。"
-                    + (chrome_running_hint or
-                       "浏览器组件已内置，请尝试重启应用。"
-                       "如仍有问题，请检查杀毒软件是否拦截 Chromium 启动。")
+                error_msg = "❌ 无法启动浏览器。" + (
+                    chrome_running_hint
+                    or "浏览器组件已内置，请尝试重启应用。"
+                    "如仍有问题，请检查杀毒软件是否拦截 Chromium 启动。"
                 )
             else:
-                error_msg = "无法启动浏览器。请安装: pip install playwright && playwright install chromium"
+                error_msg = (
+                    "无法启动浏览器。请安装: pip install playwright && playwright install chromium"
+                )
             if hints:
                 error_msg += "\n\n" + "\n".join(hints)
 
@@ -357,6 +366,7 @@ class BrowserHandler:
         if len(output) > max_length:
             total_chars = len(output)
             from ...core.tool_executor import save_overflow
+
             overflow_path = save_overflow("browser_get_content", output)
             output = output[:max_length]
             output += (
@@ -365,11 +375,10 @@ class BrowserHandler:
                 f"完整内容已保存到: {overflow_path}\n"
                 f'使用 read_file(path="{overflow_path}", offset=1, limit=300) '
                 f"查看完整内容。\n"
-                f"也可以用 browser_get_content(selector=\"...\") 缩小查询范围。"
+                f'也可以用 browser_get_content(selector="...") 缩小查询范围。'
             )
 
         return output
-
 
     # ── view_image / screenshot 多模态支持 ────────────
 
@@ -377,6 +386,7 @@ class BrowserHandler:
         """检查当前 LLM 是否支持 vision（图片输入）。"""
         try:
             from ...llm.capabilities import get_provider_slug_from_base_url, infer_capabilities
+
             brain = getattr(self.agent, "brain", None)
             if not brain:
                 return False
@@ -426,7 +436,12 @@ class BrowserHandler:
                 return f"❌ 无法读取图片: {path_str}（文件不存在或格式不支持）"
             b64_data, media_type, w, h = loaded
             return await self._build_view_image_result(
-                path_str, b64_data, media_type, w, h, question,
+                path_str,
+                b64_data,
+                media_type,
+                w,
+                h,
+                question,
             )
 
         p = Path(path_str)
@@ -448,12 +463,22 @@ class BrowserHandler:
 
         b64_data, media_type, w, h = loaded
         return await self._build_view_image_result(
-            path_str, b64_data, media_type, w, h, question,
+            path_str,
+            b64_data,
+            media_type,
+            w,
+            h,
+            question,
         )
 
     async def _build_view_image_result(
-        self, path_str: str, b64_data: str, media_type: str,
-        w: int, h: int, question: str,
+        self,
+        path_str: str,
+        b64_data: str,
+        media_type: str,
+        w: int,
+        h: int,
+        question: str,
     ) -> str | list:
         """根据模型 vision 能力构建 view_image 结果。"""
         if self._model_supports_vision():
@@ -475,11 +500,13 @@ class BrowserHandler:
     async def _download_and_load_image(url: str) -> tuple[str, str, int, int] | None:
         """下载 HTTP(S) 图片到临时文件并加载为 base64。"""
         import tempfile
+
         try:
             import httpx
         except ImportError:
             try:
                 import urllib.request
+
                 with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                     urllib.request.urlretrieve(url, tmp.name)
                     tmp_path = tmp.name
@@ -495,8 +522,10 @@ class BrowserHandler:
                     if not content_type.startswith("image/"):
                         return None
                     ext = {
-                        "image/png": ".png", "image/jpeg": ".jpg",
-                        "image/gif": ".gif", "image/webp": ".webp",
+                        "image/png": ".png",
+                        "image/jpeg": ".jpg",
+                        "image/gif": ".gif",
+                        "image/webp": ".webp",
                     }.get(content_type.split(";")[0].strip(), ".png")
                     with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
                         tmp.write(resp.content)
@@ -506,6 +535,7 @@ class BrowserHandler:
 
         try:
             from ...channels.media.image_prep import prepare_image_file_for_context
+
             result = prepare_image_file_for_context(Path(tmp_path))
         finally:
             try:
@@ -515,7 +545,10 @@ class BrowserHandler:
         return result
 
     async def _describe_image_with_vl(
-        self, b64_data: str, media_type: str, question: str = "",
+        self,
+        b64_data: str,
+        media_type: str,
+        question: str = "",
     ) -> str:
         """使用 VL 模型对图片进行文字描述（当主模型不支持 vision 时的降级方案）。"""
         try:

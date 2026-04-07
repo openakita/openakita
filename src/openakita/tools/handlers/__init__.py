@@ -91,7 +91,9 @@ class SystemHandlerRegistry:
                 self._permission_checks[tool_name] = check_permissions
 
         logger.info(
-            "Registered handler: %s (%d tools)", handler_name, len(tool_names or []),
+            "Registered handler: %s (%d tools)",
+            handler_name,
+            len(tool_names or []),
         )
 
     def unregister(self, handler_name: str) -> bool:

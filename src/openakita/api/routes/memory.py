@@ -161,7 +161,11 @@ async def list_memories(
     else:
         results = store.load_all_memories()
         if type:
-            results = [m for m in results if (m.type.value if hasattr(m.type, "value") else str(m.type)) == type]
+            results = [
+                m
+                for m in results
+                if (m.type.value if hasattr(m.type, "value") else str(m.type)) == type
+            ]
         if min_score > 0:
             results = [m for m in results if m.importance_score >= min_score]
         results.sort(key=lambda m: (m.importance_score, m.created_at or datetime.min), reverse=True)
@@ -312,29 +316,33 @@ async def get_memory_graph(request: Request, limit: int = 500):
         for n in raw_nodes:
             ents = [{"name": e.name, "type": e.type} for e in n.entities[:5]]
             group = f"entity:{ents[0]['name']}" if ents else f"type:{n.node_type.value}"
-            nodes_out.append({
-                "id": n.id,
-                "content": n.content[:200],
-                "node_type": n.node_type.value.upper(),
-                "importance": n.importance,
-                "entities": ents,
-                "action_category": n.action_category,
-                "occurred_at": n.occurred_at.isoformat() if n.occurred_at else None,
-                "session_id": n.session_id,
-                "project": n.project,
-                "group": group,
-            })
+            nodes_out.append(
+                {
+                    "id": n.id,
+                    "content": n.content[:200],
+                    "node_type": n.node_type.value.upper(),
+                    "importance": n.importance,
+                    "entities": ents,
+                    "action_category": n.action_category,
+                    "occurred_at": n.occurred_at.isoformat() if n.occurred_at else None,
+                    "session_id": n.session_id,
+                    "project": n.project,
+                    "group": group,
+                }
+            )
 
         raw_edges = rs.get_all_edges(node_ids)
         for e in raw_edges:
             if e.source_id in node_ids and e.target_id in node_ids:
-                links_out.append({
-                    "source": e.source_id,
-                    "target": e.target_id,
-                    "edge_type": e.edge_type.value,
-                    "dimension": e.dimension.value,
-                    "weight": e.weight,
-                })
+                links_out.append(
+                    {
+                        "source": e.source_id,
+                        "target": e.target_id,
+                        "edge_type": e.edge_type.value,
+                        "dimension": e.dimension.value,
+                        "weight": e.weight,
+                    }
+                )
     else:
         store = _get_store(request)
         if store:
@@ -344,18 +352,20 @@ async def get_memory_graph(request: Request, limit: int = 500):
             all_mems = store.load_all_memories()[:limit]
             subject_map: dict[str, list[str]] = defaultdict(list)
             for m in all_mems:
-                nodes_out.append({
-                    "id": m.id,
-                    "content": (m.content or "")[:200],
-                    "node_type": (m.type.value if hasattr(m.type, "value") else "FACT").upper(),
-                    "importance": m.importance_score,
-                    "entities": [],
-                    "action_category": "",
-                    "occurred_at": m.created_at.isoformat() if m.created_at else None,
-                    "session_id": "",
-                    "project": "",
-                    "group": f"type:{m.type.value if hasattr(m.type, 'value') else 'fact'}",
-                })
+                nodes_out.append(
+                    {
+                        "id": m.id,
+                        "content": (m.content or "")[:200],
+                        "node_type": (m.type.value if hasattr(m.type, "value") else "FACT").upper(),
+                        "importance": m.importance_score,
+                        "entities": [],
+                        "action_category": "",
+                        "occurred_at": m.created_at.isoformat() if m.created_at else None,
+                        "session_id": "",
+                        "project": "",
+                        "group": f"type:{m.type.value if hasattr(m.type, 'value') else 'fact'}",
+                    }
+                )
                 if m.subject:
                     subject_map[m.subject].append(m.id)
 
@@ -372,19 +382,29 @@ async def get_memory_graph(request: Request, limit: int = 500):
                     node_set = {n["id"] for n in nodes_out}
                     for lid in linked_ids:
                         if lid in node_set:
-                            links_out.append({
-                                "source": m.id, "target": lid,
-                                "edge_type": "linked", "dimension": "context", "weight": 0.5,
-                            })
+                            links_out.append(
+                                {
+                                    "source": m.id,
+                                    "target": lid,
+                                    "edge_type": "linked",
+                                    "dimension": "context",
+                                    "weight": 0.5,
+                                }
+                            )
 
             for _subj, ids in subject_map.items():
                 if len(ids) >= 2:
                     for i in range(len(ids)):
                         for j in range(i + 1, min(i + 3, len(ids))):
-                            links_out.append({
-                                "source": ids[i], "target": ids[j],
-                                "edge_type": "same_subject", "dimension": "entity", "weight": 0.4,
-                            })
+                            links_out.append(
+                                {
+                                    "source": ids[i],
+                                    "target": ids[j],
+                                    "edge_type": "same_subject",
+                                    "dimension": "entity",
+                                    "weight": 0.4,
+                                }
+                            )
 
     return {
         "nodes": nodes_out,

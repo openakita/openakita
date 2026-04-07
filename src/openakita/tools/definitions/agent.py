@@ -240,8 +240,16 @@ AGENT_TOOLS = [
                 "scenario": "✅ 正确：同时调研多个项目（同类任务 → 同一 Agent 多副本）",
                 "params": {
                     "tasks": [
-                        {"agent_id": "browser-agent", "message": "深入调研 OpenAkita 项目的架构、功能和社区活跃度", "reason": "调研项目A"},
-                        {"agent_id": "browser-agent", "message": "深入调研 OpenClaw 项目的架构、功能和社区活跃度", "reason": "调研项目B"},
+                        {
+                            "agent_id": "browser-agent",
+                            "message": "深入调研 OpenAkita 项目的架构、功能和社区活跃度",
+                            "reason": "调研项目A",
+                        },
+                        {
+                            "agent_id": "browser-agent",
+                            "message": "深入调研 OpenClaw 项目的架构、功能和社区活跃度",
+                            "reason": "调研项目B",
+                        },
                     ],
                 },
                 "expected": "系统自动为 browser-agent 创建2个独立副本，并行执行后合并返回",
@@ -250,8 +258,16 @@ AGENT_TOOLS = [
                 "scenario": "✅ 正确：不同类型任务并行（异类任务 → 不同专业 Agent）",
                 "params": {
                     "tasks": [
-                        {"agent_id": "browser-agent", "message": "在网上调研 React 19 的新特性", "reason": "网络调研"},
-                        {"agent_id": "code-assistant", "message": "分析当前项目的 React 版本升级兼容性", "reason": "代码分析"},
+                        {
+                            "agent_id": "browser-agent",
+                            "message": "在网上调研 React 19 的新特性",
+                            "reason": "网络调研",
+                        },
+                        {
+                            "agent_id": "code-assistant",
+                            "message": "分析当前项目的 React 版本升级兼容性",
+                            "reason": "代码分析",
+                        },
                     ],
                 },
                 "expected": "调研和代码分析并行执行",

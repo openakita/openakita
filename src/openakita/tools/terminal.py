@@ -49,14 +49,13 @@ class TerminalSession:
     env: dict = field(default_factory=dict)
     last_command: str | None = None
     last_exit_code: int | None = None
-    _bg_process: asyncio.subprocess.Process | None = field(
-        default=None, repr=False
-    )
+    _bg_process: asyncio.subprocess.Process | None = field(default=None, repr=False)
     _bg_task: asyncio.Task | None = field(default=None, repr=False)
     _started_at: float | None = field(default=None, repr=False)
 
     def _get_terminal_dir(self) -> Path:
         from ..config import settings
+
         terminal_dir = Path(settings.openakita_home) / "data" / "terminals"
         terminal_dir.mkdir(parents=True, exist_ok=True)
         return terminal_dir
@@ -85,6 +84,7 @@ class TerminalSession:
         try:
             content = self.output_file.read_text(encoding="utf-8")
             import re
+
             content = re.sub(
                 r"running_for_ms: \d+",
                 f"running_for_ms: {elapsed_ms}",
@@ -96,15 +96,8 @@ class TerminalSession:
             pass
 
     def _write_footer(self, exit_code: int) -> None:
-        elapsed_ms = (
-            int((time.time() - self._started_at) * 1000) if self._started_at else 0
-        )
-        footer = (
-            f"\n---\n"
-            f"exit_code: {exit_code}\n"
-            f"elapsed_ms: {elapsed_ms}\n"
-            f"---\n"
-        )
+        elapsed_ms = int((time.time() - self._started_at) * 1000) if self._started_at else 0
+        footer = f"\n---\nexit_code: {exit_code}\nelapsed_ms: {elapsed_ms}\n---\n"
         try:
             with open(self.output_file, "a", encoding="utf-8") as f:
                 f.write(footer)
@@ -127,6 +120,7 @@ class TerminalSession:
             if sys.platform == "win32":
                 try:
                     import ctypes
+
                     oem_cp = ctypes.windll.kernel32.GetOEMCP()
                     return data.decode(f"cp{oem_cp}", errors="replace")
                 except Exception:
@@ -155,6 +149,7 @@ class TerminalSession:
 
         try:
             from ..runtime_env import IS_FROZEN, get_python_executable
+
             if IS_FROZEN:
                 _ext_py = get_python_executable()
                 if _ext_py:
@@ -186,13 +181,13 @@ class TerminalSession:
                 stdout=(
                     f"{reason}\n"
                     f"Output streaming to: {self.output_file}\n"
-                    f"Monitor with: read_file(path=\"{self.output_file}\")\n"
+                    f'Monitor with: read_file(path="{self.output_file}")\n'
                     f"The terminal file header has pid and running_for_ms "
                     f"(updated every 5s).\n"
                     f"When finished, a footer with exit_code and elapsed_ms "
                     f"will appear.\n"
                     f"Poll with exponential backoff to check progress.\n"
-                    f"Kill if needed: run_shell(command=\"kill {pid}\")"
+                    f'Kill if needed: run_shell(command="kill {pid}")'
                 ),
                 stderr="",
                 backgrounded=True,
@@ -294,6 +289,7 @@ class TerminalSession:
         """Prepare command for execution (Windows encoding, etc.)."""
         if TerminalSession._cached_shell_tool is None:
             from .shell import ShellTool
+
             tool = ShellTool.__new__(ShellTool)
             tool._is_windows = sys.platform == "win32"
             tool._oem_encoding = None
@@ -328,13 +324,15 @@ class TerminalSessionManager:
     def list_sessions(self) -> list[dict]:
         result = []
         for sid, session in self.sessions.items():
-            result.append({
-                "id": sid,
-                "cwd": session.cwd,
-                "last_command": session.last_command,
-                "last_exit_code": session.last_exit_code,
-                "has_background_process": session._bg_process is not None,
-            })
+            result.append(
+                {
+                    "id": sid,
+                    "cwd": session.cwd,
+                    "last_command": session.last_command,
+                    "last_exit_code": session.last_exit_code,
+                    "has_background_process": session._bg_process is not None,
+                }
+            )
         return result
 
     async def execute(

@@ -85,7 +85,9 @@ def build_namespace(
     plugin_id: str = "",
     project_id: str = "",
 ) -> str:
-    origin_value = CapabilityOrigin(origin).value if not isinstance(origin, CapabilityOrigin) else origin.value
+    origin_value = (
+        CapabilityOrigin(origin).value if not isinstance(origin, CapabilityOrigin) else origin.value
+    )
     if origin_value == CapabilityOrigin.PLUGIN.value:
         return f"plugin:{normalize_slug(plugin_id or 'unknown')}"
     if origin_value == CapabilityOrigin.PROJECT.value:

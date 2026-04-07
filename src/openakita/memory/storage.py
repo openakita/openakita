@@ -104,9 +104,7 @@ class MemoryStorage:
             self._conn.execute(
                 "CREATE TABLE IF NOT EXISTS _schema_meta (key TEXT PRIMARY KEY, value TEXT)"
             )
-            cur = self._conn.execute(
-                "SELECT value FROM _schema_meta WHERE key = 'version'"
-            )
+            cur = self._conn.execute("SELECT value FROM _schema_meta WHERE key = 'version'")
             row = cur.fetchone()
             return int(row[0]) if row else 0
         except Exception:
@@ -369,7 +367,9 @@ class MemoryStorage:
         c.execute("CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_memories_priority ON memories(priority)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at)")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance_score)")
+        c.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memories_importance ON memories(importance_score)"
+        )
         c.execute("CREATE INDEX IF NOT EXISTS idx_memories_subject ON memories(subject)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_memories_episode ON memories(source_episode_id)")
 
@@ -388,9 +388,13 @@ class MemoryStorage:
         # extraction_queue
         c.execute("CREATE INDEX IF NOT EXISTS idx_eq_status ON extraction_queue(status)")
         try:
-            c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_session_turn ON extraction_queue(session_id, turn_index)")
+            c.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_session_turn ON extraction_queue(session_id, turn_index)"
+            )
         except sqlite3.IntegrityError:
-            logger.warning("[MemoryStorage] extraction_queue has duplicate (session_id, turn_index), deduplicating...")
+            logger.warning(
+                "[MemoryStorage] extraction_queue has duplicate (session_id, turn_index), deduplicating..."
+            )
             c.execute("""
                 DELETE FROM extraction_queue
                 WHERE id NOT IN (
@@ -398,7 +402,9 @@ class MemoryStorage:
                     GROUP BY session_id, turn_index
                 )
             """)
-            c.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_session_turn ON extraction_queue(session_id, turn_index)")
+            c.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_session_turn ON extraction_queue(session_id, turn_index)"
+            )
         except sqlite3.OperationalError:
             pass
 
@@ -573,9 +579,7 @@ class MemoryStorage:
                     raise
                 logger.error(f"Failed to batch save memories: {e}")
 
-    def load_all(
-        self, scope: str = "global", scope_owner: str = ""
-    ) -> list[dict]:
+    def load_all(self, scope: str = "global", scope_owner: str = "") -> list[dict]:
         if not self._conn:
             return []
         try:
@@ -595,9 +599,7 @@ class MemoryStorage:
         if not self._conn:
             return None
         try:
-            cursor = self._conn.execute(
-                "SELECT * FROM memories WHERE id = ?", (memory_id,)
-            )
+            cursor = self._conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,))
             rows = self._rows_to_dicts(cursor)
             return rows[0] if rows else None
         except Exception as e:
@@ -623,11 +625,24 @@ class MemoryStorage:
         if not self._conn or not updates:
             return False
         allowed = {
-            "content", "type", "priority", "source", "importance_score",
-            "access_count", "tags", "subject", "predicate", "confidence",
-            "decay_rate", "last_accessed_at", "superseded_by",
-            "source_episode_id", "updated_at", "metadata",
-            "scope", "scope_owner",
+            "content",
+            "type",
+            "priority",
+            "source",
+            "importance_score",
+            "access_count",
+            "tags",
+            "subject",
+            "predicate",
+            "confidence",
+            "decay_rate",
+            "last_accessed_at",
+            "superseded_by",
+            "source_episode_id",
+            "updated_at",
+            "metadata",
+            "scope",
+            "scope_owner",
         }
         filtered = {k: v for k, v in updates.items() if k in allowed}
         if not filtered:
@@ -644,9 +659,7 @@ class MemoryStorage:
 
         with self._lock:
             try:
-                self._conn.execute(
-                    f"UPDATE memories SET {set_clause} WHERE id = ?", values
-                )
+                self._conn.execute(f"UPDATE memories SET {set_clause} WHERE id = ?", values)
                 self._conn.commit()
                 return True
             except Exception as e:
@@ -732,9 +745,7 @@ class MemoryStorage:
                 conditions.append("(scope_owner IS NULL OR scope_owner = ?)")
                 params.append(scope_owner)
             where = " AND ".join(conditions) if conditions else "1=1"
-            cur = self._conn.execute(
-                f"SELECT COUNT(*) FROM memories WHERE {where}", params
-            )
+            cur = self._conn.execute(f"SELECT COUNT(*) FROM memories WHERE {where}", params)
             return cur.fetchone()[0]
         except Exception:
             return 0
@@ -880,7 +891,10 @@ class MemoryStorage:
             return None
         try:
             cur = self._conn.execute("SELECT * FROM episodes WHERE id = ?", (episode_id,))
-            rows = self._rows_to_dicts(cur, json_fields=["action_nodes", "entities", "tools_used", "linked_memory_ids", "tags"])
+            rows = self._rows_to_dicts(
+                cur,
+                json_fields=["action_nodes", "entities", "tools_used", "linked_memory_ids", "tags"],
+            )
             return rows[0] if rows else None
         except Exception as e:
             logger.error(f"Failed to get episode {episode_id}: {e}")
@@ -926,7 +940,10 @@ class MemoryStorage:
                 f"SELECT * FROM episodes WHERE {where} ORDER BY started_at DESC LIMIT ?",
                 params,
             )
-            return self._rows_to_dicts(cur, json_fields=["action_nodes", "entities", "tools_used", "linked_memory_ids", "tags"])
+            return self._rows_to_dicts(
+                cur,
+                json_fields=["action_nodes", "entities", "tools_used", "linked_memory_ids", "tags"],
+            )
         except Exception as e:
             logger.error(f"Failed to search episodes: {e}")
             return []
@@ -936,9 +953,15 @@ class MemoryStorage:
         if not self._conn or not updates:
             return False
         allowed = {
-            "summary", "goal", "outcome", "importance_score",
-            "access_count", "linked_memory_ids", "tags",
-            "entities", "tools_used",
+            "summary",
+            "goal",
+            "outcome",
+            "importance_score",
+            "access_count",
+            "linked_memory_ids",
+            "tags",
+            "entities",
+            "tools_used",
         }
         filtered = {k: v for k, v in updates.items() if k in allowed}
         if not filtered:
@@ -954,9 +977,7 @@ class MemoryStorage:
 
         with self._lock:
             try:
-                self._conn.execute(
-                    f"UPDATE episodes SET {set_clause} WHERE id = ?", values
-                )
+                self._conn.execute(f"UPDATE episodes SET {set_clause} WHERE id = ?", values)
                 self._conn.commit()
                 return True
             except Exception as e:
@@ -991,10 +1012,10 @@ class MemoryStorage:
         if not self._conn:
             return None
         try:
-            cur = self._conn.execute(
-                "SELECT * FROM scratchpad WHERE user_id = ?", (user_id,)
+            cur = self._conn.execute("SELECT * FROM scratchpad WHERE user_id = ?", (user_id,))
+            rows = self._rows_to_dicts(
+                cur, json_fields=["active_projects", "open_questions", "next_steps"]
             )
-            rows = self._rows_to_dicts(cur, json_fields=["active_projects", "open_questions", "next_steps"])
             return rows[0] if rows else None
         except Exception as e:
             logger.error(f"Failed to get scratchpad: {e}")
@@ -1324,7 +1345,9 @@ class MemoryStorage:
             self._conn.commit()
             recovered = cur.rowcount
             if recovered:
-                logger.warning(f"[ExtractionQueue] Recovered {recovered} stuck items (>{stuck_timeout_minutes}m)")
+                logger.warning(
+                    f"[ExtractionQueue] Recovered {recovered} stuck items (>{stuck_timeout_minutes}m)"
+                )
             return recovered
         except Exception as e:
             if _is_db_locked(e):
@@ -1468,9 +1491,7 @@ class MemoryStorage:
         if not self._conn:
             return None
         try:
-            cursor = self._conn.execute(
-                "SELECT * FROM attachments WHERE id = ?", (attachment_id,)
-            )
+            cursor = self._conn.execute("SELECT * FROM attachments WHERE id = ?", (attachment_id,))
             rows = self._rows_to_dicts(cursor, json_fields=["linked_memory_ids"])
             return rows[0] if rows else None
         except Exception as e:

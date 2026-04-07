@@ -112,6 +112,7 @@ def write_config_safe(
     # Atomic write with file lock
     try:
         from filelock import FileLock
+
         lock = FileLock(str(path) + ".lock", timeout=10)
         with lock:
             _atomic_write(path, write_data)

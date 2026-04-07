@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RetrievalCandidate:
     """检索候选项, 带综合评分"""
+
     memory_id: str = ""
     content: str = ""
     memory_type: str = ""
@@ -62,10 +63,10 @@ class RetrievalEngine:
         "{context_hint}"
         "\n规则:\n"
         "1. 提取核心实体、名称、主题词，去掉语气词/助词/代词\n"
-        "2. 如果涉及文件/图片/视频，提取描述性关键词（如\"猫\"\"报告\"）和可能的文件名\n"
+        '2. 如果涉及文件/图片/视频，提取描述性关键词（如"猫""报告"）和可能的文件名\n'
         "3. 保留专有名词、技术术语原样\n"
-        "4. 输出 JSON: {{\"keywords\": [\"关键词1\", \"关键词2\", ...], "
-        "\"intent\": \"search_memory|search_file|general\"}}\n"
+        '4. 输出 JSON: {{"keywords": ["关键词1", "关键词2", ...], '
+        '"intent": "search_memory|search_file|general"}}\n'
         "5. keywords 最多 6 个，每个 1-4 个词\n"
         "只输出 JSON，不要其他内容。"
     )
@@ -100,7 +101,9 @@ class RetrievalEngine:
         episode_results = self._search_episodes(enhanced_query)
         recent_results = self._search_recent(days=3, query=enhanced_query)
         attachment_results = self._search_attachments(
-            query, search_keywords, intent,
+            query,
+            search_keywords,
+            intent,
         )
 
         candidates = self._merge_and_deduplicate(
@@ -170,9 +173,7 @@ class RetrievalEngine:
                         )
                         items = future.result(timeout=5.0)
                 else:
-                    items = asyncio.run(
-                        asyncio.wait_for(source.retrieve(query, 5), timeout=3.0)
-                    )
+                    items = asyncio.run(asyncio.wait_for(source.retrieve(query, 5), timeout=3.0))
 
                 for item in items or []:
                     results.append(
@@ -189,7 +190,8 @@ class RetrievalEngine:
             except Exception as e:
                 logger.warning(
                     "External retrieval source '%s' failed: %s, skipped",
-                    source_name, e,
+                    source_name,
+                    e,
                 )
         return results
 
@@ -233,17 +235,19 @@ class RetrievalEngine:
             if mem.expires_at and mem.expires_at < now:
                 continue
             relevance = max(0.0, min(1.0, raw_score))
-            candidates.append(RetrievalCandidate(
-                memory_id=mem.id,
-                content=mem.to_markdown(),
-                memory_type=mem.type.value,
-                source_type="semantic",
-                relevance=relevance,
-                recency_score=self._compute_recency(mem.updated_at),
-                importance_score=mem.importance_score,
-                access_frequency_score=self._compute_access_score(mem.access_count),
-                raw_data=mem.to_dict(),
-            ))
+            candidates.append(
+                RetrievalCandidate(
+                    memory_id=mem.id,
+                    content=mem.to_markdown(),
+                    memory_type=mem.type.value,
+                    source_type="semantic",
+                    relevance=relevance,
+                    recency_score=self._compute_recency(mem.updated_at),
+                    importance_score=mem.importance_score,
+                    access_frequency_score=self._compute_access_score(mem.access_count),
+                    raw_data=mem.to_dict(),
+                )
+            )
         return candidates
 
     def _search_episodes(self, query: str, limit: int = 5) -> list[RetrievalCandidate]:
@@ -256,25 +260,28 @@ class RetrievalEngine:
 
         candidates = []
         for ep in episodes[:limit]:
-            candidates.append(RetrievalCandidate(
-                memory_id=ep.id,
-                content=ep.to_markdown(),
-                memory_type="episode",
-                source_type="episode",
-                relevance=0.6,
-                recency_score=self._compute_recency(ep.ended_at),
-                importance_score=ep.importance_score,
-                access_frequency_score=self._compute_access_score(ep.access_count),
-                raw_data=ep.to_dict(),
-            ))
+            candidates.append(
+                RetrievalCandidate(
+                    memory_id=ep.id,
+                    content=ep.to_markdown(),
+                    memory_type="episode",
+                    source_type="episode",
+                    relevance=0.6,
+                    recency_score=self._compute_recency(ep.ended_at),
+                    importance_score=ep.importance_score,
+                    access_frequency_score=self._compute_access_score(ep.access_count),
+                    raw_data=ep.to_dict(),
+                )
+            )
         return candidates
 
     def _search_recent(
-        self, days: int = 3, limit: int = 5, query: str = "",
+        self,
+        days: int = 3,
+        limit: int = 5,
+        query: str = "",
     ) -> list[RetrievalCandidate]:
-        memories = self.store.query_semantic(
-            min_importance=0.6, limit=limit
-        )
+        memories = self.store.query_semantic(min_importance=0.6, limit=limit)
         now = datetime.now()
         query_tokens = set(query.lower().split()) if query else set()
         candidates = []
@@ -291,25 +298,47 @@ class RetrievalEngine:
                 overlap = sum(1 for t in query_tokens if t in content_lower)
                 relevance = 0.2 if overlap == 0 else min(0.7, 0.3 + 0.1 * overlap)
 
-            candidates.append(RetrievalCandidate(
-                memory_id=mem.id,
-                content=mem.to_markdown(),
-                memory_type=mem.type.value,
-                source_type="recent",
-                relevance=relevance,
-                recency_score=recency,
-                importance_score=mem.importance_score,
-                access_frequency_score=self._compute_access_score(mem.access_count),
-                raw_data=mem.to_dict(),
-            ))
+            candidates.append(
+                RetrievalCandidate(
+                    memory_id=mem.id,
+                    content=mem.to_markdown(),
+                    memory_type=mem.type.value,
+                    source_type="recent",
+                    relevance=relevance,
+                    recency_score=recency,
+                    importance_score=mem.importance_score,
+                    access_frequency_score=self._compute_access_score(mem.access_count),
+                    raw_data=mem.to_dict(),
+                )
+            )
         return candidates
 
     _MEDIA_KEYWORDS = (
-        "图片", "照片", "图", "photo", "image", "picture",
-        "视频", "video", "clip",
-        "文件", "文档", "file", "document", "doc", "pdf",
-        "音频", "语音", "audio", "voice",
-        "发给你的", "给你的", "上次的", "那个", "那张", "那份",
+        "图片",
+        "照片",
+        "图",
+        "photo",
+        "image",
+        "picture",
+        "视频",
+        "video",
+        "clip",
+        "文件",
+        "文档",
+        "file",
+        "document",
+        "doc",
+        "pdf",
+        "音频",
+        "语音",
+        "audio",
+        "voice",
+        "发给你的",
+        "给你的",
+        "上次的",
+        "那个",
+        "那张",
+        "那份",
     )
 
     def _search_attachments(
@@ -323,9 +352,8 @@ class RetrievalEngine:
 
         使用 LLM 拆解后的关键词逐词搜索，合并去重。
         """
-        has_media_hint = (
-            intent == "search_file"
-            or any(kw in raw_query.lower() for kw in self._MEDIA_KEYWORDS)
+        has_media_hint = intent == "search_file" or any(
+            kw in raw_query.lower() for kw in self._MEDIA_KEYWORDS
         )
         if not has_media_hint:
             return []
@@ -357,17 +385,19 @@ class RetrievalEngine:
                 desc_parts.append(f"URL: {att.url}")
             content = " | ".join(desc_parts)
 
-            candidates.append(RetrievalCandidate(
-                memory_id=f"attach:{att.id}",
-                content=content,
-                memory_type="attachment",
-                source_type="attachment",
-                relevance=0.85,
-                recency_score=self._compute_recency(att.created_at),
-                importance_score=0.7,
-                access_frequency_score=0.3,
-                raw_data=att.to_dict(),
-            ))
+            candidates.append(
+                RetrievalCandidate(
+                    memory_id=f"attach:{att.id}",
+                    content=content,
+                    memory_type="attachment",
+                    source_type="attachment",
+                    relevance=0.85,
+                    recency_score=self._compute_recency(att.created_at),
+                    importance_score=0.7,
+                    access_frequency_score=0.3,
+                    raw_data=att.to_dict(),
+                )
+            )
         return candidates
 
     @staticmethod
@@ -376,18 +406,48 @@ class RetrievalEngine:
     ) -> list[str]:
         """从拆解关键词中筛选适合附件搜索的词（过滤掉媒体类型词本身）."""
         _STOP_WORDS = {
-            "图片", "照片", "图", "photo", "image", "picture",
-            "视频", "video", "clip", "文件", "文档", "file",
-            "document", "doc", "pdf", "音频", "语音", "audio", "voice",
-            "发给你的", "给你的", "上次的", "那个", "那张", "那份",
-            "给我", "找到", "一下", "看看", "的", "了", "吧", "呢",
-            "在哪", "哪里", "怎么",
+            "图片",
+            "照片",
+            "图",
+            "photo",
+            "image",
+            "picture",
+            "视频",
+            "video",
+            "clip",
+            "文件",
+            "文档",
+            "file",
+            "document",
+            "doc",
+            "pdf",
+            "音频",
+            "语音",
+            "audio",
+            "voice",
+            "发给你的",
+            "给你的",
+            "上次的",
+            "那个",
+            "那张",
+            "那份",
+            "给我",
+            "找到",
+            "一下",
+            "看看",
+            "的",
+            "了",
+            "吧",
+            "呢",
+            "在哪",
+            "哪里",
+            "怎么",
         }
 
         def _is_valid(token: str) -> bool:
             if not token or token.lower() in _STOP_WORDS:
                 return False
-            has_cjk = any('\u4e00' <= c <= '\u9fff' for c in token)
+            has_cjk = any("\u4e00" <= c <= "\u9fff" for c in token)
             return len(token) >= 1 if has_cjk else len(token) >= 2
 
         terms: list[str] = []
@@ -445,7 +505,9 @@ class RetrievalEngine:
         return result
 
     def _decompose_with_llm(
-        self, query: str, recent_messages: list[dict] | None = None,
+        self,
+        query: str,
+        recent_messages: list[dict] | None = None,
     ) -> dict | None:
         """调用 think_lightweight (compiler model) 做查询拆解."""
         from openakita.core.tool_executor import smart_truncate as _st
@@ -463,12 +525,17 @@ class RetrievalEngine:
 
         query_trunc, _ = _st(query, 500, save_full=False, label="retrieval_query")
         prompt = self.QUERY_DECOMPOSE_PROMPT.format(
-            query=query_trunc, context_hint=context_hint,
+            query=query_trunc,
+            context_hint=context_hint,
         )
 
         try:
             think_lw = getattr(self.brain, "think_lightweight", None)
-            think_fn = think_lw if (think_lw and callable(think_lw)) else getattr(self.brain, "think", None)
+            think_fn = (
+                think_lw
+                if (think_lw and callable(think_lw))
+                else getattr(self.brain, "think", None)
+            )
             if not think_fn:
                 return None
 
@@ -479,6 +546,7 @@ class RetrievalEngine:
 
             if loop and loop.is_running():
                 import concurrent.futures
+
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                     future = pool.submit(asyncio.run, think_fn(prompt, system="只输出JSON"))
                     response = future.result(timeout=10)
@@ -503,8 +571,7 @@ class RetrievalEngine:
                 intent = "general"
 
             logger.info(
-                f"[Retrieval] LLM decompose: \"{query[:50]}\" → "
-                f"keywords={keywords}, intent={intent}"
+                f'[Retrieval] LLM decompose: "{query[:50]}" → keywords={keywords}, intent={intent}'
             )
             return {"keywords": keywords, "intent": intent}
 
@@ -516,26 +583,100 @@ class RetrievalEngine:
     def _decompose_with_rules(query: str) -> dict:
         """规则降级: 正则 + 停用词过滤."""
         _STOP = {
-            "的", "了", "吗", "吧", "呢", "啊", "哦", "嗯", "是", "在",
-            "有", "和", "与", "或", "但", "不", "也", "都", "就", "还",
-            "要", "会", "能", "可以", "这个", "那个", "什么", "怎么",
-            "为什么", "哪个", "哪里", "多少", "一下", "一些", "the", "a", "an", "is", "are", "was", "were", "be", "been",
-            "this", "that", "what", "how", "where", "when", "who", "which",
-            "do", "does", "did", "will", "would", "can", "could", "should",
-            "给我", "帮我", "请", "看看", "找到", "告诉我",
+            "的",
+            "了",
+            "吗",
+            "吧",
+            "呢",
+            "啊",
+            "哦",
+            "嗯",
+            "是",
+            "在",
+            "有",
+            "和",
+            "与",
+            "或",
+            "但",
+            "不",
+            "也",
+            "都",
+            "就",
+            "还",
+            "要",
+            "会",
+            "能",
+            "可以",
+            "这个",
+            "那个",
+            "什么",
+            "怎么",
+            "为什么",
+            "哪个",
+            "哪里",
+            "多少",
+            "一下",
+            "一些",
+            "the",
+            "a",
+            "an",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "this",
+            "that",
+            "what",
+            "how",
+            "where",
+            "when",
+            "who",
+            "which",
+            "do",
+            "does",
+            "did",
+            "will",
+            "would",
+            "can",
+            "could",
+            "should",
+            "给我",
+            "帮我",
+            "请",
+            "看看",
+            "找到",
+            "告诉我",
         }
 
         keywords = []
         intent = "general"
 
-        _FILE_HINTS = {"图片", "照片", "图", "文件", "文档", "视频", "音频", "语音",
-                       "photo", "image", "file", "video", "audio", "document"}
+        _FILE_HINTS = {
+            "图片",
+            "照片",
+            "图",
+            "文件",
+            "文档",
+            "视频",
+            "音频",
+            "语音",
+            "photo",
+            "image",
+            "file",
+            "video",
+            "audio",
+            "document",
+        }
         if any(h in query.lower() for h in _FILE_HINTS):
             intent = "search_file"
 
         for m in re.finditer(r'[A-Za-z]:[\\\/][^\s"\']+', query):
             keywords.append(m.group(0))
-        for m in re.finditer(r'[\w.-]+\.(?:py|js|ts|md|json|yaml|toml|jpg|png|pdf|docx|mp4|mp3)\b', query):
+        for m in re.finditer(
+            r"[\w.-]+\.(?:py|js|ts|md|json|yaml|toml|jpg|png|pdf|docx|mp4|mp3)\b", query
+        ):
             keywords.append(m.group(0))
 
         for token in re.split(r"[\s,，。、!！?？:：;；\"'()（）【】]+", query):
@@ -584,7 +725,7 @@ class RetrievalEngine:
         entities = []
         for m in re.finditer(r'[A-Za-z]:[\\\/][^\s"\']+', query):
             entities.append(m.group(0))
-        for m in re.finditer(r'[\w-]+\.(?:py|js|ts|md|json|yaml|toml)\b', query):
+        for m in re.finditer(r"[\w-]+\.(?:py|js|ts|md|json|yaml|toml)\b", query):
             entities.append(m.group(0))
         words = [w for w in query.split() if len(w) > 2]
         entities.extend(words[:5])
@@ -612,10 +753,27 @@ class RetrievalEngine:
     # Reranking
     # ==================================================================
 
-    _ACTION_WORDS = frozenset({
-        "打开", "关闭", "运行", "执行", "安装", "部署", "启动", "停止",
-        "创建", "删除", "修改", "搜索", "下载", "上传", "去", "进入", "访问",
-    })
+    _ACTION_WORDS = frozenset(
+        {
+            "打开",
+            "关闭",
+            "运行",
+            "执行",
+            "安装",
+            "部署",
+            "启动",
+            "停止",
+            "创建",
+            "删除",
+            "修改",
+            "搜索",
+            "下载",
+            "上传",
+            "去",
+            "进入",
+            "访问",
+        }
+    )
 
     def _rerank(
         self,

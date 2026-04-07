@@ -50,9 +50,7 @@ class BundleMapper:
             "name": f"{bundle.path.name} (from {bundle.ecosystem})",
             "version": bundle.manifest.get("version", "0.0.0"),
             "type": "skill",
-            "description": bundle.manifest.get(
-                "description", f"Imported from {bundle.ecosystem}"
-            ),
+            "description": bundle.manifest.get("description", f"Imported from {bundle.ecosystem}"),
             "author": bundle.manifest.get("author", bundle.ecosystem),
             "category": "imported",
             "tags": [bundle.ecosystem, "bundle"],
@@ -105,9 +103,7 @@ class BundleMapper:
         plugin_dir = path / ".claude-plugin"
         if plugin_dir.is_dir() and (plugin_dir / "plugin.json").exists():
             try:
-                data = json.loads(
-                    (plugin_dir / "plugin.json").read_text(encoding="utf-8")
-                )
+                data = json.loads((plugin_dir / "plugin.json").read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError) as e:
                 logger.warning("Cannot parse %s: %s", plugin_dir / "plugin.json", e)
                 return None
@@ -118,9 +114,7 @@ class BundleMapper:
             settings_path = path / "settings.json"
             if settings_path.exists():
                 try:
-                    info.settings = json.loads(
-                        settings_path.read_text(encoding="utf-8")
-                    )
+                    info.settings = json.loads(settings_path.read_text(encoding="utf-8"))
                 except (json.JSONDecodeError, OSError) as e:
                     logger.warning("Cannot parse %s: %s", settings_path, e)
             return info
@@ -139,9 +133,7 @@ class BundleMapper:
         plugin_dir = path / ".cursor-plugin"
         if plugin_dir.is_dir() and (plugin_dir / "plugin.json").exists():
             try:
-                data = json.loads(
-                    (plugin_dir / "plugin.json").read_text(encoding="utf-8")
-                )
+                data = json.loads((plugin_dir / "plugin.json").read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError) as e:
                 logger.warning("Cannot parse %s: %s", plugin_dir / "plugin.json", e)
                 return None
@@ -175,9 +167,7 @@ class BundleMapper:
         plugin_dir = path / ".codex-plugin"
         if plugin_dir.is_dir() and (plugin_dir / "plugin.json").exists():
             try:
-                data = json.loads(
-                    (plugin_dir / "plugin.json").read_text(encoding="utf-8")
-                )
+                data = json.loads((plugin_dir / "plugin.json").read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError) as e:
                 logger.warning("Cannot parse %s: %s", plugin_dir / "plugin.json", e)
                 return None

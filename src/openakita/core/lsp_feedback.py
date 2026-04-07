@@ -58,8 +58,7 @@ class DiagnosticReport:
         for d in self.diagnostics[:max_items]:
             severity_icon = {"error": "E", "warning": "W"}.get(d.severity, "I")
             lines.append(
-                f"  {severity_icon} {d.file}:{d.line}:{d.column} "
-                f"[{d.source}/{d.code}] {d.message}"
+                f"  {severity_icon} {d.file}:{d.line}:{d.column} [{d.source}/{d.code}] {d.message}"
             )
 
         if len(self.diagnostics) > max_items:
@@ -102,9 +101,7 @@ class LSPFeedbackCollector:
             except Exception as e:
                 logger.debug("LSP backend '%s' error: %s", name, e)
 
-        report.diagnostics.sort(
-            key=lambda d: (0 if d.severity == "error" else 1, d.file, d.line)
-        )
+        report.diagnostics.sort(key=lambda d: (0 if d.severity == "error" else 1, d.file, d.line))
         return report
 
 
@@ -125,7 +122,10 @@ class RuffBackend(DiagnosticBackend):
 
         try:
             proc = await asyncio.create_subprocess_exec(
-                "ruff", "check", "--output-format=json", *py_files,
+                "ruff",
+                "check",
+                "--output-format=json",
+                *py_files,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -163,7 +163,12 @@ class TypeScriptBackend(DiagnosticBackend):
 
         try:
             proc = await asyncio.create_subprocess_exec(
-                "npx", "tsc", "--noEmit", "--pretty", "false", *ts_files,
+                "npx",
+                "tsc",
+                "--noEmit",
+                "--pretty",
+                "false",
+                *ts_files,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -180,14 +185,16 @@ class TypeScriptBackend(DiagnosticBackend):
                         loc_and_msg = parts[1].split("): ")
                         loc_parts = loc_and_msg[0].split(",") if loc_and_msg else ["0", "0"]
                         msg = loc_and_msg[1] if len(loc_and_msg) > 1 else ""
-                        diagnostics.append(Diagnostic(
-                            file=file_path,
-                            line=int(loc_parts[0]) if loc_parts else 0,
-                            column=int(loc_parts[1]) if len(loc_parts) > 1 else 0,
-                            severity="error",
-                            message=msg,
-                            source="tsc",
-                        ))
+                        diagnostics.append(
+                            Diagnostic(
+                                file=file_path,
+                                line=int(loc_parts[0]) if loc_parts else 0,
+                                column=int(loc_parts[1]) if len(loc_parts) > 1 else 0,
+                                severity="error",
+                                message=msg,
+                                source="tsc",
+                            )
+                        )
             return diagnostics
         except FileNotFoundError:
             return []

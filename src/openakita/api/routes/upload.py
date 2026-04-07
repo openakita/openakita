@@ -28,6 +28,7 @@ def get_upload_dir() -> Path:
     global UPLOAD_DIR
     if UPLOAD_DIR is None:
         import os
+
         root = os.environ.get("OPENAKITA_ROOT", "").strip()
         base = Path(root) if root else Path.home() / ".openakita"
         UPLOAD_DIR = base / "uploads"

@@ -29,6 +29,7 @@ def _project_root() -> Path:
     """Return the project root (settings.project_root or cwd)."""
     try:
         from openakita.config import settings
+
         return Path(settings.project_root)
     except Exception:
         return Path.cwd()
@@ -42,6 +43,7 @@ def _endpoints_config_path() -> Path:
     """
     try:
         from openakita.llm.config import get_default_config_path
+
         return get_default_config_path()
     except Exception:
         return _project_root() / "data" / "llm_endpoints.json"
@@ -88,7 +90,7 @@ def _needs_quoting(value: str) -> bool:
         return True  # leading/trailing whitespace
     if value[0] in ('"', "'"):
         return True  # starts with a quote char
-    return any(ch in value for ch in (' ', '#', '"', "'", '\\'))
+    return any(ch in value for ch in (" ", "#", '"', "'", "\\"))
 
 
 def _quote_env_value(value: str) -> str:
@@ -261,9 +263,7 @@ async def write_env(body: EnvUpdateRequest):
     existing = ""
     if env_path.exists():
         existing = env_path.read_bytes().decode("utf-8", errors="replace")
-    new_content = _update_env_content(
-        existing, body.entries, delete_keys=set(body.delete_keys)
-    )
+    new_content = _update_env_content(existing, body.entries, delete_keys=set(body.delete_keys))
     env_path.write_text(new_content, encoding="utf-8")
     for key, value in body.entries.items():
         if value:
@@ -275,22 +275,41 @@ async def write_env(body: EnvUpdateRequest):
 
     # Determine if any changed keys require a service restart
     _RESTART_REQUIRED_PREFIXES = (
-        "TELEGRAM_", "FEISHU_", "DINGTALK_", "WEWORK_", "ONEBOT_", "QQ_",
-        "WECHAT_", "IM_", "REDIS_", "DATABASE_", "SANDBOX_",
+        "TELEGRAM_",
+        "FEISHU_",
+        "DINGTALK_",
+        "WEWORK_",
+        "ONEBOT_",
+        "QQ_",
+        "WECHAT_",
+        "IM_",
+        "REDIS_",
+        "DATABASE_",
+        "SANDBOX_",
     )
     _HOT_RELOAD_PREFIXES = (
-        "OPENAI_", "ANTHROPIC_", "LLM_", "DEFAULT_MODEL", "TEMPERATURE",
-        "MAX_TOKENS", "OPENAKITA_THEME", "LANGUAGE",
+        "OPENAI_",
+        "ANTHROPIC_",
+        "LLM_",
+        "DEFAULT_MODEL",
+        "TEMPERATURE",
+        "MAX_TOKENS",
+        "OPENAKITA_THEME",
+        "LANGUAGE",
     )
     changed_keys = {k for k, v in body.entries.items() if v} | set(body.delete_keys)
     restart_required = any(
-        any(k.upper().startswith(p) for p in _RESTART_REQUIRED_PREFIXES)
-        for k in changed_keys
+        any(k.upper().startswith(p) for p in _RESTART_REQUIRED_PREFIXES) for k in changed_keys
     )
-    hot_reloadable = all(
-        any(k.upper().startswith(p) for p in _HOT_RELOAD_PREFIXES) or k.upper().startswith("OPENAKITA_")
-        for k in changed_keys
-    ) if changed_keys else True
+    hot_reloadable = (
+        all(
+            any(k.upper().startswith(p) for p in _HOT_RELOAD_PREFIXES)
+            or k.upper().startswith("OPENAKITA_")
+            for k in changed_keys
+        )
+        if changed_keys
+        else True
+    )
 
     return {
         "status": "ok",
@@ -329,6 +348,7 @@ async def write_endpoints(body: EndpointsWriteRequest):
 def _get_endpoint_manager():
     """Get or create the EndpointManager singleton for the current workspace."""
     from openakita.llm.endpoint_manager import EndpointManager
+
     root = _project_root()
     _mgr = getattr(_get_endpoint_manager, "_instance", None)
     if _mgr is None or _mgr._ws_dir != root:
@@ -423,6 +443,7 @@ def _trigger_reload(request: Request) -> bool:
         gateway = getattr(request.app.state, "gateway", None)
         if gateway and hasattr(gateway, "stt_client") and gateway.stt_client:
             from openakita.llm.config import load_endpoints_config
+
             _, _, stt_eps, _ = load_endpoints_config()
             gateway.stt_client.reload(stt_eps)
         logger.info("[Config API] Hot-reload triggered after config change")
@@ -470,6 +491,7 @@ async def reload_config(request: Request):
         if gateway and hasattr(gateway, "stt_client") and gateway.stt_client:
             try:
                 from openakita.llm.config import load_endpoints_config
+
                 _, _, stt_eps, _ = load_endpoints_config()
                 gateway.stt_client.reload(stt_eps)
                 stt_reloaded = True
@@ -618,15 +640,15 @@ async def write_agent_mode(body: AgentModeRequest, request: Request):
     old = settings.multi_agent_enabled
     settings.multi_agent_enabled = body.enabled
     runtime_state.save()
-    logger.info(
-        f"[Config API] multi_agent_enabled: {old} -> {body.enabled}"
-    )
+    logger.info(f"[Config API] multi_agent_enabled: {old} -> {body.enabled}")
 
     if body.enabled and not old:
         try:
             from openakita.main import _init_orchestrator
+
             await _init_orchestrator()
             from openakita.main import _orchestrator
+
             if _orchestrator is not None:
                 request.app.state.orchestrator = _orchestrator
                 logger.info("[Config API] Orchestrator initialized and bound to app.state")
@@ -634,6 +656,7 @@ async def write_agent_mode(body: AgentModeRequest, request: Request):
             logger.warning(f"[Config API] Failed to init orchestrator on mode switch: {e}")
         try:
             from openakita.agents.presets import ensure_presets_on_mode_enable
+
             ensure_presets_on_mode_enable(settings.data_dir / "agents")
         except Exception as e:
             logger.warning(f"[Config API] Failed to deploy presets: {e}")
@@ -691,7 +714,8 @@ async def write_tool_loading(body: ToolLoadingRequest, request: Request):
     runtime_state.save()
     logger.info(
         "[Config API] tool-loading updated: tools=%s, categories=%s",
-        body.always_load_tools, body.always_load_categories,
+        body.always_load_tools,
+        body.always_load_categories,
     )
     return {
         "status": "ok",
@@ -775,7 +799,12 @@ async def list_models_api(body: ListModelsRequest):
         friendly = str(e)
         if "errno 2" in raw or "no such file" in raw:
             friendly = "SSL 证书文件缺失，请重新安装或更新应用"
-        elif "connect" in raw or "connection refused" in raw or "no route" in raw or "unreachable" in raw:
+        elif (
+            "connect" in raw
+            or "connection refused" in raw
+            or "no route" in raw
+            or "unreachable" in raw
+        ):
             friendly = "无法连接到服务商，请检查 API 地址和网络连接"
             try:
                 from openakita.llm.providers.proxy_utils import format_proxy_hint
@@ -785,7 +814,12 @@ async def list_models_api(body: ListModelsRequest):
                     friendly += hint
             except Exception:
                 pass
-        elif "401" in raw or "unauthorized" in raw or "invalid api key" in raw or "authentication" in raw:
+        elif (
+            "401" in raw
+            or "unauthorized" in raw
+            or "invalid api key" in raw
+            or "authentication" in raw
+        ):
             friendly = "API Key 无效或已过期，请检查后重试"
         elif "403" in raw or "forbidden" in raw or "permission" in raw:
             friendly = "API Key 权限不足，请确认已开通模型访问权限"
@@ -800,6 +834,7 @@ async def list_models_api(body: ListModelsRequest):
 
 # ─── Security Policy Routes ───────────────────────────────────────────
 
+
 def _read_policies_yaml() -> dict | None:
     """Read identity/POLICIES.yaml as dict.
 
@@ -807,6 +842,7 @@ def _read_policies_yaml() -> dict | None:
     Callers must check for None before writing to prevent data loss (P1-9).
     """
     import yaml
+
     policies_path = _project_root() / "identity" / "POLICIES.yaml"
     if not policies_path.exists():
         return {}
@@ -823,6 +859,7 @@ def _write_policies_yaml(data: dict) -> bool:
     Returns False if the write was refused (P1-9: 防止配置文件覆盖丢失).
     """
     import yaml
+
     existing = _read_policies_yaml()
     if existing is None:
         logger.error("[Config] 拒绝写入 POLICIES.yaml: 当前文件无法正确读取，写入可能导致数据丢失")
@@ -856,6 +893,7 @@ async def write_security_config(body: SecurityConfigUpdate):
         return {"status": "error", "message": "配置写入失败"}
     try:
         from openakita.core.policy import reset_policy_engine
+
         reset_policy_engine()
     except Exception:
         pass
@@ -895,6 +933,7 @@ async def write_security_zones(body: SecurityZonesUpdate):
     _write_policies_yaml(data)
     try:
         from openakita.core.policy import reset_policy_engine
+
         reset_policy_engine()
     except Exception:
         pass
@@ -933,6 +972,7 @@ async def write_security_commands(body: SecurityCommandsUpdate):
     _write_policies_yaml(data)
     try:
         from openakita.core.policy import reset_policy_engine
+
         reset_policy_engine()
     except Exception:
         pass
@@ -976,6 +1016,7 @@ async def write_security_sandbox(body: SecuritySandboxUpdate):
     _write_policies_yaml(data)
     try:
         from openakita.core.policy import reset_policy_engine
+
         reset_policy_engine()
     except Exception:
         pass
@@ -988,6 +1029,7 @@ async def read_permission_mode():
     """读取当前安全模式（前端 cautious/smart/trust 与后端同步）。"""
     try:
         from openakita.core.policy import get_policy_engine
+
         pe = get_policy_engine()
         mode = getattr(pe, "_frontend_mode", "smart")
         return {"mode": mode}
@@ -1011,6 +1053,7 @@ async def write_permission_mode(body: _PermissionModeBody):
         return {"status": "error", "message": f"无效的安全模式: {mode}"}
     try:
         from openakita.core.policy import get_policy_engine
+
         pe = get_policy_engine()
         pe._frontend_mode = mode
         pe._config.confirmation.mode = mode
@@ -1035,6 +1078,7 @@ async def read_security_audit():
     """Read recent audit log entries."""
     try:
         from openakita.core.audit_logger import get_audit_logger
+
         entries = get_audit_logger().tail(50)
         return {"entries": entries}
     except Exception as e:
@@ -1046,6 +1090,7 @@ async def list_checkpoints():
     """List recent file checkpoints."""
     try:
         from openakita.core.checkpoint import get_checkpoint_manager
+
         checkpoints = get_checkpoint_manager().list_checkpoints(20)
         return {"checkpoints": checkpoints}
     except Exception as e:
@@ -1060,6 +1105,7 @@ async def rewind_checkpoint(body: dict):
         return {"status": "error", "message": "checkpoint_id required"}
     try:
         from openakita.core.checkpoint import get_checkpoint_manager
+
         success = get_checkpoint_manager().rewind_to_checkpoint(checkpoint_id)
         return {"status": "ok" if success else "error"}
     except Exception as e:
@@ -1076,6 +1122,7 @@ async def security_confirm(body: SecurityConfirmRequest):
     logger.info(f"[Security] Confirmation received: {body.confirm_id} -> {body.decision}")
     try:
         from openakita.core.policy import get_policy_engine
+
         engine = get_policy_engine()
         found = engine.resolve_ui_confirm(body.confirm_id, body.decision)
         if not found:
@@ -1090,6 +1137,7 @@ async def reset_death_switch():
     """Reset the death switch (exit read-only mode)."""
     try:
         from openakita.core.policy import get_policy_engine
+
         engine = get_policy_engine()
         engine.reset_readonly_mode()
         return {"status": "ok", "readonly_mode": False}
@@ -1105,7 +1153,12 @@ async def read_security_confirmation():
     """Read confirmation config."""
     data = _read_policies_yaml()
     if data is None:
-        return {"mode": "smart", "timeout_seconds": 60, "default_on_timeout": "deny", "confirm_ttl": 120}
+        return {
+            "mode": "smart",
+            "timeout_seconds": 60,
+            "default_on_timeout": "deny",
+            "confirm_ttl": 120,
+        }
     c = data.get("security", {}).get("confirmation", {})
     return {
         "mode": c.get("mode", "smart"),
@@ -1145,6 +1198,7 @@ async def write_security_confirmation(body: _ConfirmationUpdate):
     _write_policies_yaml(data)
     try:
         from openakita.core.policy import reset_policy_engine
+
         reset_policy_engine()
     except Exception:
         pass
@@ -1163,6 +1217,7 @@ async def read_self_protection():
     sp = data.get("security", {}).get("self_protection", {})
     try:
         from openakita.core.policy import get_policy_engine
+
         pe = get_policy_engine()
         readonly = pe.readonly_mode
     except Exception:
@@ -1210,6 +1265,7 @@ async def write_self_protection(body: _SelfProtectionUpdate):
     _write_policies_yaml(data)
     try:
         from openakita.core.policy import reset_policy_engine
+
         reset_policy_engine()
     except Exception:
         pass
@@ -1224,6 +1280,7 @@ async def read_user_allowlist():
     """Read the persistent user allowlist."""
     try:
         from openakita.core.policy import get_policy_engine
+
         return get_policy_engine().get_user_allowlist()
     except Exception:
         return {"commands": [], "tools": []}
@@ -1236,6 +1293,7 @@ async def add_allowlist_entry(body: dict):
     entry = {k: v for k, v in body.items() if k != "type"}
     try:
         from openakita.core.policy import get_policy_engine
+
         pe = get_policy_engine()
         al = pe._config.user_allowlist
         if entry_type == "command":
@@ -1253,6 +1311,7 @@ async def delete_allowlist_entry(entry_type: str, index: int):
     """Remove an entry from the persistent user allowlist."""
     try:
         from openakita.core.policy import get_policy_engine
+
         ok = get_policy_engine().remove_allowlist_entry(entry_type, index)
         return {"status": "ok" if ok else "error", "message": "" if ok else "无效索引"}
     except Exception as e:

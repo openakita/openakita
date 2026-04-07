@@ -29,9 +29,15 @@ DEFAULT_MSG_TTL = 300
 TASK_MSG_TTL = 1800  # 30 min — deliverables / results must survive long orchestration rounds
 DEADLOCK_CHECK_INTERVAL = 30
 
-_TASK_MSG_TYPES = frozenset({
-    "task_assign", "task_result", "task_delivered", "task_accepted", "task_rejected",
-})
+_TASK_MSG_TYPES = frozenset(
+    {
+        "task_assign",
+        "task_result",
+        "task_delivered",
+        "task_accepted",
+        "task_rejected",
+    }
+)
 
 
 class NodeMailbox:
@@ -208,13 +214,13 @@ class OrgMessenger:
                 for msg_id, msg in list(self._pending_messages.items()):
                     try:
                         from datetime import datetime
+
                         sent_ts = datetime.fromisoformat(msg.created_at).timestamp()
                     except Exception:
                         continue
                     default_ttl = (
                         TASK_MSG_TTL
-                        if getattr(msg, "msg_type", None)
-                        and msg.msg_type.value in _TASK_MSG_TYPES
+                        if getattr(msg, "msg_type", None) and msg.msg_type.value in _TASK_MSG_TYPES
                         else DEFAULT_MSG_TTL
                     )
                     ttl = msg.metadata.get("ttl", default_ttl)
@@ -230,9 +236,7 @@ class OrgMessenger:
     def set_deadlock_handler(self, handler: Callable[[list[list[str]]], Any]) -> None:
         self._on_deadlock = handler
 
-    def register_handler(
-        self, node_id: str, handler: Callable[[OrgMessage], Coroutine]
-    ) -> None:
+    def register_handler(self, node_id: str, handler: Callable[[OrgMessage], Coroutine]) -> None:
         self._message_handlers[node_id] = handler
 
     def register_node(
@@ -246,9 +250,7 @@ class OrgMessenger:
     def unregister_node(self, node_id: str) -> None:
         self._mailboxes.pop(node_id, None)
         self._message_handlers.pop(node_id, None)
-        affinities_to_remove = [
-            k for k, v in self._task_affinity.items() if v == node_id
-        ]
+        affinities_to_remove = [k for k, v in self._task_affinity.items() if v == node_id]
         for k in affinities_to_remove:
             self._task_affinity.pop(k, None)
 
@@ -273,10 +275,7 @@ class OrgMessenger:
         target = self._org.get_node(msg.to_node)
         if target is None:
             avail = ", ".join(f"{n.id}({n.role_title})" for n in self._org.nodes[:20])
-            logger.warning(
-                f"[Messenger] Target node not found: {msg.to_node}. "
-                f"Available: {avail}"
-            )
+            logger.warning(f"[Messenger] Target node not found: {msg.to_node}. Available: {avail}")
             return False
 
         if target.status == NodeStatus.FROZEN:
@@ -362,7 +361,10 @@ class OrgMessenger:
         return msg
 
     async def escalate(
-        self, from_node: str, content: str, priority: int = 1,
+        self,
+        from_node: str,
+        content: str,
+        priority: int = 1,
         metadata: dict | None = None,
     ) -> OrgMessage | None:
         parent = self._org.get_parent(from_node)
@@ -392,7 +394,8 @@ class OrgMessenger:
             sender = self._org.get_node(msg.from_node)
             if sender:
                 targets = [
-                    n.id for n in self._org.nodes
+                    n.id
+                    for n in self._org.nodes
                     if n.department == sender.department and n.id != msg.from_node
                 ]
         else:

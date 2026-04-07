@@ -25,18 +25,40 @@ logger = logging.getLogger(__name__)
 _ps_version_cache: dict[str, Any] | None = None
 
 # 只读 cmdlet 前缀（参考 CC readOnlyValidation.ts CMDLET_ALLOWLIST）
-READ_ONLY_PREFIXES = frozenset({
-    "Get-", "Test-", "Resolve-", "Select-", "Where-",
-    "Format-", "Measure-", "Compare-", "Find-", "Show-",
-    "ConvertTo-", "ConvertFrom-",
-})
+READ_ONLY_PREFIXES = frozenset(
+    {
+        "Get-",
+        "Test-",
+        "Resolve-",
+        "Select-",
+        "Where-",
+        "Format-",
+        "Measure-",
+        "Compare-",
+        "Find-",
+        "Show-",
+        "ConvertTo-",
+        "ConvertFrom-",
+    }
+)
 
 # 只读 cmdlet 完全匹配
-READ_ONLY_EXACT = frozenset({
-    "Where-Object", "ForEach-Object", "Sort-Object", "Group-Object",
-    "Measure-Object", "Select-Object", "Out-String", "Out-Null",
-    "Write-Output", "Write-Host", "Write-Verbose", "Write-Debug",
-})
+READ_ONLY_EXACT = frozenset(
+    {
+        "Where-Object",
+        "ForEach-Object",
+        "Sort-Object",
+        "Group-Object",
+        "Measure-Object",
+        "Select-Object",
+        "Out-String",
+        "Out-Null",
+        "Write-Output",
+        "Write-Host",
+        "Write-Verbose",
+        "Write-Debug",
+    }
+)
 
 
 def detect_ps_version() -> dict[str, Any]:
@@ -70,15 +92,24 @@ def detect_ps_version() -> dict[str, Any]:
             continue
         try:
             proc = subprocess.run(
-                [exe, "-NoProfile", "-NonInteractive", "-Command",
-                 "$PSVersionTable.PSVersion.ToString() + '|' + $PSVersionTable.PSEdition"],
-                capture_output=True, text=True, timeout=10,
+                [
+                    exe,
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "$PSVersionTable.PSVersion.ToString() + '|' + $PSVersionTable.PSEdition",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             if proc.returncode == 0 and proc.stdout.strip():
                 parts = proc.stdout.strip().split("|")
                 ver_str = parts[0].strip()
-                edition = parts[1].strip() if len(parts) > 1 else ("Core" if exe == "pwsh" else "Desktop")
+                edition = (
+                    parts[1].strip() if len(parts) > 1 else ("Core" if exe == "pwsh" else "Desktop")
+                )
                 major = int(ver_str.split(".")[0]) if ver_str else 0
 
                 result = {
@@ -187,7 +218,11 @@ class PowerShellHandler:
         encoded = base64.b64encode(full_command.encode("utf-16-le")).decode("ascii")
 
         cmd_args = [
-            exe, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded,
+            exe,
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            encoded,
         ]
 
         cwd = working_dir or getattr(self.agent, "default_cwd", None) or os.getcwd()
@@ -195,10 +230,12 @@ class PowerShellHandler:
         env = os.environ.copy()
         try:
             from ...runtime_env import IS_FROZEN, get_python_executable
+
             if IS_FROZEN:
                 _ext_py = get_python_executable()
                 if _ext_py:
                     from pathlib import Path
+
                     _py_dir = str(Path(_ext_py).parent)
                     env["PATH"] = _py_dir + os.pathsep + env.get("PATH", "")
         except Exception:
@@ -218,7 +255,8 @@ class PowerShellHandler:
             )
 
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(), timeout=timeout,
+                process.communicate(),
+                timeout=timeout,
             )
 
             stdout = self._decode(stdout_bytes)
@@ -263,6 +301,7 @@ class PowerShellHandler:
         except UnicodeDecodeError:
             try:
                 import ctypes
+
                 oem_cp = ctypes.windll.kernel32.GetOEMCP()
                 return data.decode(f"cp{oem_cp}", errors="replace")
             except Exception:

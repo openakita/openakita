@@ -42,7 +42,9 @@ class CLIAnythingHandler:
         return f"Unknown cli_anything tool: {tool_name}"
 
     async def _run_cmd(
-        self, cmd: list[str], timeout: float = _CMD_TIMEOUT,
+        self,
+        cmd: list[str],
+        timeout: float = _CMD_TIMEOUT,
     ) -> tuple[int, str, str]:
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -51,7 +53,8 @@ class CLIAnythingHandler:
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout,
+                proc.communicate(),
+                timeout=timeout,
             )
             return (
                 proc.returncode or 0,
@@ -84,23 +87,23 @@ class CLIAnythingHandler:
                     if lower.startswith(_CLI_PREFIX) and lower not in seen:
                         full_path = os.path.join(d, entry)
                         if os.access(full_path, os.X_OK) or (
-                            os.name == "nt" and any(
-                                lower.endswith(ext)
-                                for ext in (".exe", ".cmd", ".bat", ".ps1")
-                            )
+                            os.name == "nt"
+                            and any(lower.endswith(ext) for ext in (".exe", ".cmd", ".bat", ".ps1"))
                         ):
                             app_name = entry
                             for ext in (".exe", ".cmd", ".bat", ".ps1"):
                                 if app_name.lower().endswith(ext):
                                     app_name = app_name[: -len(ext)]
                                     break
-                            app_short = app_name[len(_CLI_PREFIX):]
+                            app_short = app_name[len(_CLI_PREFIX) :]
                             seen.add(lower)
-                            found.append({
-                                "command": app_name,
-                                "app": app_short,
-                                "path": full_path,
-                            })
+                            found.append(
+                                {
+                                    "command": app_name,
+                                    "app": app_short,
+                                    "path": full_path,
+                                }
+                            )
             except OSError:
                 continue
 

@@ -190,8 +190,7 @@ class OpenAIProvider(LLMProvider):
         """
         messages = body.get("messages", [])
         body_chars = sum(
-            len(str(m.get("content", ""))) + len(str(m.get("tool_calls", "")))
-            for m in messages
+            len(str(m.get("content", ""))) + len(str(m.get("tool_calls", ""))) for m in messages
         )
         tools = body.get("tools", [])
         if tools:
@@ -264,7 +263,9 @@ class OpenAIProvider(LLMProvider):
                     raise AuthenticationError(f"Authentication failed: {body}", status_code=401)
                 if response.status_code == 429:
                     raise RateLimitError(f"Rate limit exceeded: {body}", status_code=429)
-                raise LLMError(f"API error ({response.status_code}): {body}", status_code=response.status_code)
+                raise LLMError(
+                    f"API error ({response.status_code}): {body}", status_code=response.status_code
+                )
 
             try:
                 data = response.json()
@@ -279,7 +280,11 @@ class OpenAIProvider(LLMProvider):
 
             # 某些 OpenAI 兼容 API 在 HTTP 200 响应体内返回错误（不走标准 HTTP 状态码）
             if "error" in data and data["error"]:
-                err_obj = data["error"] if isinstance(data["error"], dict) else {"message": str(data["error"])}
+                err_obj = (
+                    data["error"]
+                    if isinstance(data["error"], dict)
+                    else {"message": str(data["error"])}
+                )
                 err_msg = err_obj.get("message", str(err_obj))
                 err_code = err_obj.get("code", "")
                 logger.warning(
@@ -380,7 +385,11 @@ class OpenAIProvider(LLMProvider):
                             err_data = json.loads(line)
                             if "error" in err_data:
                                 err_obj = err_data["error"]
-                                err_msg = err_obj.get("message", str(err_obj)) if isinstance(err_obj, dict) else str(err_obj)
+                                err_msg = (
+                                    err_obj.get("message", str(err_obj))
+                                    if isinstance(err_obj, dict)
+                                    else str(err_obj)
+                                )
                                 raise LLMError(f"Stream error from '{self.name}': {err_msg}")
                         except json.JSONDecodeError:
                             if "error" in line.lower():
@@ -409,7 +418,9 @@ class OpenAIProvider(LLMProvider):
             raise LLMError(f"Stream timeout: {detail}")
         except httpx.RequestError as e:
             detail = f"{type(e).__name__}: {e}" if str(e) else f"{type(e).__name__}({repr(e)})"
-            self.mark_unhealthy(f"Stream request error: {detail}", is_local=self._is_local_endpoint())
+            self.mark_unhealthy(
+                f"Stream request error: {detail}", is_local=self._is_local_endpoint()
+            )
             raise LLMError(f"Stream request failed: {detail}")
 
     async def _chat_via_stream(self, request: LLMRequest) -> LLMResponse:
@@ -461,9 +472,7 @@ class OpenAIProvider(LLMProvider):
                 stop_reason = _stop_map.get(raw_reason, StopReason.END_TURN)
 
             elif event_type == "error":
-                raise LLMError(
-                    f"Stream error from '{self.name}': {event.get('error', 'unknown')}"
-                )
+                raise LLMError(f"Stream error from '{self.name}': {event.get('error', 'unknown')}")
 
         content_blocks: list = []
         text = "".join(text_parts)
@@ -475,11 +484,13 @@ class OpenAIProvider(LLMProvider):
                 args = json.loads(tc["arguments"]) if tc["arguments"] else {}
             except json.JSONDecodeError:
                 args = {"_raw": tc["arguments"]}
-            content_blocks.append(ToolUseBlock(
-                id=call_id,
-                name=tc["name"],
-                input=args,
-            ))
+            content_blocks.append(
+                ToolUseBlock(
+                    id=call_id,
+                    name=tc["name"],
+                    input=args,
+                )
+            )
 
         if tool_calls and stop_reason != StopReason.MAX_TOKENS:
             stop_reason = StopReason.TOOL_USE
@@ -503,9 +514,15 @@ class OpenAIProvider(LLMProvider):
     def _is_local_endpoint(self) -> bool:
         """检查是否为本地端点（Ollama/LM Studio 等）"""
         url = self.base_url.lower()
-        return any(host in url for host in (
-            "localhost", "127.0.0.1", "0.0.0.0", "[::1]",
-        ))
+        return any(
+            host in url
+            for host in (
+                "localhost",
+                "127.0.0.1",
+                "0.0.0.0",
+                "[::1]",
+            )
+        )
 
     def _get_auth(self) -> _BearerAuth:
         """获取认证信息（通过 httpx Auth 机制，确保重定向时不丢失凭据）"""
@@ -560,14 +577,17 @@ class OpenAIProvider(LLMProvider):
         is_always_thinking = False
         if not thinking_enabled and self.config.has_capability("thinking"):
             from ..capabilities import is_thinking_only
+
             is_always_thinking = is_thinking_only(
-                self.config.model, provider_slug=self.config.provider,
+                self.config.model,
+                provider_slug=self.config.provider,
             )
             if is_always_thinking:
                 thinking_enabled = True
 
         messages = convert_messages_to_openai(
-            request.messages, request.system,
+            request.messages,
+            request.system,
             provider=self.config.provider,
             enable_thinking=thinking_enabled,
         )
@@ -587,9 +607,8 @@ class OpenAIProvider(LLMProvider):
         # 这些模型拒绝 max_tokens 参数，要求使用 max_completion_tokens。
         # 检测方式：模型名含 "o1-"/"o3-"/"o4-" 且 provider 为 openai。
         _model_lower = self.config.model.lower()
-        _is_openai_reasoning = (
-            self.config.provider == "openai"
-            and any(tag in _model_lower for tag in ("o1-", "o3-", "o4-", "/o1", "/o3", "/o4"))
+        _is_openai_reasoning = self.config.provider == "openai" and any(
+            tag in _model_lower for tag in ("o1-", "o3-", "o4-", "/o1", "/o3", "/o4")
         )
         _token_key = "max_completion_tokens" if _is_openai_reasoning else "max_tokens"
 
@@ -654,9 +673,15 @@ class OpenAIProvider(LLMProvider):
         #     "Value error, current model does not support parameter enable_thinking"
         #
         # 两类模型都不支持 OpenAI 风格的 thinking: {"type": "enabled"} + reasoning_effort
-        elif self.config.provider in ("siliconflow", "siliconflow-intl") and self.config.has_capability("thinking"):
+        elif self.config.provider in (
+            "siliconflow",
+            "siliconflow-intl",
+        ) and self.config.has_capability("thinking"):
             from ..capabilities import is_thinking_only
-            sf_thinking_only = is_thinking_only(self.config.model, provider_slug=self.config.provider)
+
+            sf_thinking_only = is_thinking_only(
+                self.config.model, provider_slug=self.config.provider
+            )
 
             if sf_thinking_only:
                 # B 类：天然思考模型 — 只允许 thinking_budget 控制深度
@@ -721,10 +746,7 @@ class OpenAIProvider(LLMProvider):
         #   "Invalid combination of reasoning_effort and thinking type: medium + disabled"
         #
         # 排除: DashScope、SiliconFlow、本地端点、OpenRouter（上面已各自处理）
-        elif (
-            self.config.has_capability("thinking")
-            and not is_local
-        ):
+        elif self.config.has_capability("thinking") and not is_local:
             body.pop("enable_thinking", None)
 
             if request.enable_thinking or is_always_thinking:
@@ -745,7 +767,9 @@ class OpenAIProvider(LLMProvider):
         # enable_thinking (bool) 不在此列：Ollama 0.9+ 原生支持，
         # 其他本地引擎（LM Studio / 旧版 Ollama）对未知简单字段静默忽略。
         if is_local:
-            _stripped = [k for k in ("thinking", "thinking_budget", "reasoning_effort") if k in body]
+            _stripped = [
+                k for k in ("thinking", "thinking_budget", "reasoning_effort") if k in body
+            ]
             for _key in _stripped:
                 body.pop(_key, None)
             if _stripped:
@@ -757,7 +781,7 @@ class OpenAIProvider(LLMProvider):
         # 若端点曾因 thinking/reasoning_effort 返回 400，
         # 客户端自愈逻辑已在 provider 上标记 _thinking_params_unsupported，
         # 此处作为最终安全网，确保不再发送任何 thinking 相关参数。
-        if getattr(self, '_thinking_params_unsupported', False):
+        if getattr(self, "_thinking_params_unsupported", False):
             for _tp in ("thinking", "reasoning_effort", "enable_thinking", "thinking_budget"):
                 body.pop(_tp, None)
 
@@ -879,6 +903,7 @@ class OpenAIProvider(LLMProvider):
         # content 为空。此时尝试从 reasoning 中提取结构化内容作为兜底。
         if not text_content and not has_tool_calls and reasoning_content:
             import re
+
             yaml_match = re.search(
                 r"```(?:yaml)?\s*\n(.+?)```",
                 reasoning_content,
@@ -956,39 +981,47 @@ class OpenAIProvider(LLMProvider):
             elif isinstance(r, dict):
                 reasoning = r.get("content", "") or ""
         if reasoning:
-            events.append({
-                "type": "content_block_delta",
-                "delta": {"type": "thinking", "text": reasoning},
-            })
+            events.append(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "thinking", "text": reasoning},
+                }
+            )
 
         # 2) Text content
         if delta.get("content"):
-            events.append({
-                "type": "content_block_delta",
-                "delta": {"type": "text", "text": delta["content"]},
-            })
+            events.append(
+                {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text", "text": delta["content"]},
+                }
+            )
 
         # 3) Tool calls
         if "tool_calls" in delta:
             tool_calls = delta["tool_calls"]
             if tool_calls:
                 tc = tool_calls[0]
-                events.append({
-                    "type": "content_block_delta",
-                    "delta": {
-                        "type": "tool_use",
-                        "id": tc.get("id"),
-                        "name": tc.get("function", {}).get("name"),
-                        "arguments": tc.get("function", {}).get("arguments"),
-                    },
-                })
+                events.append(
+                    {
+                        "type": "content_block_delta",
+                        "delta": {
+                            "type": "tool_use",
+                            "id": tc.get("id"),
+                            "name": tc.get("function", {}).get("name"),
+                            "arguments": tc.get("function", {}).get("arguments"),
+                        },
+                    }
+                )
 
         # 4) Finish reason → message_stop
         if choice.get("finish_reason"):
-            events.append({
-                "type": "message_stop",
-                "stop_reason": choice["finish_reason"],
-            })
+            events.append(
+                {
+                    "type": "message_stop",
+                    "stop_reason": choice["finish_reason"],
+                }
+            )
 
         if not events:
             return {"type": "ping"}

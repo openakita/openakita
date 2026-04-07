@@ -75,7 +75,6 @@ def verify_python_executable(path: str) -> bool:
         return False
 
 
-
 # NOTE: _which_real_python / _scan_common_python_dirs / _get_python_from_env_var
 # 已移除 — 不再搜索用户系统中的 Python，只使用项目自带/自行安装的 Python。
 # 这消除了因用户 Anaconda、Windows Store 假桩、版本不一致等导致的冲突。
@@ -110,6 +109,7 @@ def _get_openakita_root() -> Path:
     优先使用 OPENAKITA_ROOT 环境变量，默认 ~/.openakita。
     """
     import os
+
     env_root = os.environ.get("OPENAKITA_ROOT", "").strip()
     if env_root:
         return Path(env_root)
@@ -158,6 +158,7 @@ def get_python_executable() -> str | None:
     # 1. 检查 {project_root}/data/venv/ — 工作区虚拟环境
     try:
         from .config import settings
+
         workspace_venv = settings.project_root / "data" / "venv"
         py = _find_python_in_dir(workspace_venv)
         if py and verify_python_executable(str(py)):
@@ -229,17 +230,18 @@ def get_pip_command(packages: list[str], *, index_url: str | None = None) -> lis
     if IS_FROZEN and py == sys.executable:
         return None
 
-    effective_index = (
-        os.environ.get("PIP_INDEX_URL", "").strip()
-        or index_url
-        or _DEFAULT_PIP_INDEX
-    )
+    effective_index = os.environ.get("PIP_INDEX_URL", "").strip() or index_url or _DEFAULT_PIP_INDEX
     trusted_host = effective_index.split("//")[1].split("/")[0] if "//" in effective_index else ""
 
     return [
-        py, "-m", "pip", "install",
-        "-i", effective_index,
-        "--trusted-host", trusted_host,
+        py,
+        "-m",
+        "pip",
+        "install",
+        "-i",
+        effective_index,
+        "--trusted-host",
+        trusted_host,
         "--prefer-binary",
         *packages,
     ]
@@ -284,6 +286,7 @@ def ensure_ssl_certs() -> None:
     # 方式 1: certifi 模块可用且路径有效
     try:
         import certifi
+
         pem_path = certifi.where()
         if Path(pem_path).is_file():
             os.environ["SSL_CERT_FILE"] = pem_path
@@ -309,9 +312,7 @@ def ensure_ssl_certs() -> None:
     # 方式 3: 清除无效的 SSL_CERT_FILE，让 httpx 回退到 certifi.where()
     if existing:
         del os.environ["SSL_CERT_FILE"]
-        logger.warning(
-            "Removed invalid SSL_CERT_FILE. httpx will fall back to certifi default."
-        )
+        logger.warning("Removed invalid SSL_CERT_FILE. httpx will fall back to certifi default.")
         return
 
     logger.warning(
@@ -438,8 +439,8 @@ def _register_dll_directories(os_module) -> None:
     """
     # 已知需要注册 DLL 目录的包及其 DLL 子路径
     _DLL_SUBDIRS = [
-        ("torch", "lib"),          # PyTorch: c10.dll, torch_cpu.dll, libiomp5md.dll
-        ("torch", "bin"),          # PyTorch 某些版本把 DLL 放在 bin/
+        ("torch", "lib"),  # PyTorch: c10.dll, torch_cpu.dll, libiomp5md.dll
+        ("torch", "bin"),  # PyTorch 某些版本把 DLL 放在 bin/
     ]
 
     registered = []

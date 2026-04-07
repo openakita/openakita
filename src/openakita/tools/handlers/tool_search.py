@@ -99,7 +99,9 @@ class ToolSearchHandler:
 
         logger.info(
             "[ToolSearch] query=%r → discovered %d tools: %s",
-            query, len(discovered_names), discovered_names,
+            query,
+            len(discovered_names),
+            discovered_names,
         )
 
         results = []

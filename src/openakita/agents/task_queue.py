@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 class Priority(IntEnum):
     """Task priority levels. Lower value = higher priority."""
+
     URGENT = 0
     HIGH = 1
     NORMAL = 2
@@ -29,6 +30,7 @@ class Priority(IntEnum):
 @dataclass(order=True)
 class QueuedTask:
     """A task in the priority queue."""
+
     priority: int
     created_at: float = field(compare=True)
     task_id: str = field(default_factory=lambda: f"qt_{uuid.uuid4().hex[:10]}", compare=False)
@@ -189,9 +191,7 @@ class TaskQueue:
                 for tid in finished_ids:
                     self._active.pop(tid, None)
 
-            self._active[task.task_id] = asyncio.create_task(
-                self._execute_task(task)
-            )
+            self._active[task.task_id] = asyncio.create_task(self._execute_task(task))
 
     async def _execute_task(self, task: QueuedTask) -> None:
         """Execute a single task and resolve its future."""

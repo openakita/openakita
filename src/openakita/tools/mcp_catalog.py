@@ -181,7 +181,9 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
         except (KeyError, ValueError, IndexError) as e:
             logger.warning(
                 "[MCPCatalog] str.format failed (template=%r, keys=%s): %s",
-                template[:60], list(kwargs.keys()), e,
+                template[:60],
+                list(kwargs.keys()),
+                e,
             )
             return template + " " + " | ".join(f"{k}={v}" for k, v in kwargs.items())
 
@@ -485,9 +487,7 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
                 return True
         return False
 
-    def clone_filtered(
-        self, server_ids: list[str], *, mode: str = "inclusive"
-    ) -> "MCPCatalog":
+    def clone_filtered(self, server_ids: list[str], *, mode: str = "inclusive") -> "MCPCatalog":
         """创建一个过滤后的 catalog 副本（用于子 Agent per-profile MCP 隔离）。
 
         Args:
@@ -499,9 +499,8 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
         for s in self._servers:
             if not s.enabled:
                 continue
-            if (
-                (mode == "inclusive" and s.identifier in id_set)
-                or (mode == "exclusive" and s.identifier not in id_set)
+            if (mode == "inclusive" and s.identifier in id_set) or (
+                mode == "exclusive" and s.identifier not in id_set
             ):
                 clone._servers.append(s)
         return clone
@@ -546,12 +545,14 @@ Use `connect_mcp_server(server)` to connect a server and discover its tools.
 
         tool_infos = []
         for t in tools:
-            tool_infos.append(MCPToolInfo(
-                name=t.get("name", ""),
-                description=t.get("description", ""),
-                server=server_id,
-                arguments=t.get("input_schema") or t.get("inputSchema", {}),
-            ))
+            tool_infos.append(
+                MCPToolInfo(
+                    name=t.get("name", ""),
+                    description=t.get("description", ""),
+                    server=server_id,
+                    arguments=t.get("input_schema") or t.get("inputSchema", {}),
+                )
+            )
         target.tools = tool_infos
         self._cached_catalog = None
         logger.info(f"Synced {len(tool_infos)} tools from runtime for MCP server: {server_id}")

@@ -26,6 +26,7 @@ def patch_simplejson_jsondecodeerror(*, logger: logging.Logger | None = None) ->
     try:
         from json.decoder import JSONDecodeError as _JSONDecodeError
     except Exception:
+
         class _JSONDecodeError(ValueError):
             pass
 

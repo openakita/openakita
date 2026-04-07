@@ -67,6 +67,7 @@ def _serialize_config_schema(schema: list[MCPConfigField]) -> list[dict]:
         for f in schema
     ]
 
+
 router = APIRouter()
 
 
@@ -129,6 +130,7 @@ async def list_mcp_servers(request: Request):
         return {"error": "Agent not initialized", "servers": []}
 
     from openakita.config import settings
+
     if not settings.mcp_enabled:
         return {"mcp_enabled": False, "servers": [], "message": "MCP is disabled"}
 
@@ -153,30 +155,29 @@ async def list_mcp_servers(request: Request):
         schema = catalog_info.config_schema if catalog_info else []
         config_status, config_complete = _check_config_status(schema) if schema else ({}, True)
 
-        servers.append({
-            "name": name,
-            "description": server_config.description if server_config else "",
-            "transport": server_config.transport if server_config else "stdio",
-            "url": server_config.url if server_config else "",
-            "command": server_config.command if server_config else "",
-            "connected": name in connected,
-            "enabled": catalog_info.enabled if catalog_info else True,
-            "auto_connect": catalog_info.auto_connect if catalog_info else False,
-            "tools": [
-                {"name": t.name, "description": t.description}
-                for t in tools
-            ],
-            "tool_count": len(tools),
-            "has_instructions": bool(
-                catalog_info and catalog_info.instructions
-            ) if catalog_info else False,
-            "catalog_tool_count": len(catalog_info.tools) if catalog_info else 0,
-            "source": source,
-            "removable": source == "workspace",
-            "config_schema": _serialize_config_schema(schema),
-            "config_status": config_status,
-            "config_complete": config_complete,
-        })
+        servers.append(
+            {
+                "name": name,
+                "description": server_config.description if server_config else "",
+                "transport": server_config.transport if server_config else "stdio",
+                "url": server_config.url if server_config else "",
+                "command": server_config.command if server_config else "",
+                "connected": name in connected,
+                "enabled": catalog_info.enabled if catalog_info else True,
+                "auto_connect": catalog_info.auto_connect if catalog_info else False,
+                "tools": [{"name": t.name, "description": t.description} for t in tools],
+                "tool_count": len(tools),
+                "has_instructions": bool(catalog_info and catalog_info.instructions)
+                if catalog_info
+                else False,
+                "catalog_tool_count": len(catalog_info.tools) if catalog_info else 0,
+                "source": source,
+                "removable": source == "workspace",
+                "config_schema": _serialize_config_schema(schema),
+                "config_status": config_status,
+                "config_complete": config_complete,
+            }
+        )
 
     return {
         "mcp_enabled": True,
@@ -222,6 +223,7 @@ async def connect_mcp_server(request: Request, body: MCPConnectRequest):
                 }
 
     from openakita.tools.mcp_workspace import prepare_chrome_devtools_args
+
     await prepare_chrome_devtools_args(client, body.server_name)
 
     result = await client.connect(body.server_name)
@@ -300,10 +302,13 @@ async def add_mcp_server(request: Request, body: MCPServerAddRequest):
 
     if not body.name.strip():
         return {"status": "error", "message": "服务器名称不能为空"}
-    if not re.match(r'^[a-zA-Z0-9_-]+$', body.name.strip()):
+    if not re.match(r"^[a-zA-Z0-9_-]+$", body.name.strip()):
         return {"status": "error", "message": "服务器名称只能包含字母、数字、连字符和下划线"}
     if body.transport not in VALID_TRANSPORTS:
-        return {"status": "error", "message": f"不支持的传输协议: {body.transport}（支持: {', '.join(sorted(VALID_TRANSPORTS))}）"}
+        return {
+            "status": "error",
+            "message": f"不支持的传输协议: {body.transport}（支持: {', '.join(sorted(VALID_TRANSPORTS))}）",
+        }
     if body.transport == "stdio" and not body.command.strip():
         return {"status": "error", "message": "stdio 模式需要填写启动命令"}
     if body.transport in ("streamable_http", "sse") and not body.url.strip():

@@ -26,17 +26,19 @@ from .multimodal import convert_content_blocks_to_openai
 #
 # 注意: OpenRouter 使用 reasoning 字段（非 reasoning_content），
 # 由 _convert_single_message_to_openai 单独处理
-_REASONING_CONTENT_PROVIDERS = frozenset({
-    "moonshot",         # legacy Kimi
-    "kimi-cn",          # Kimi 中国区
-    "kimi-int",         # Kimi 国际区
-    "deepseek",         # DeepSeek Reasoner
-    "dashscope",        # 通义千问 Qwen3 / QwQ
-    "siliconflow",      # 硅基流动（托管 DeepSeek-R1 / QwQ / Qwen3 等）
-    "siliconflow-intl", # 硅基流动国际区
-    "volcengine",       # 火山引擎（托管 DeepSeek-R1 / doubao-seed 等）
-    "zhipu",            # 智谱 GLM-5 / GLM-4.7
-})
+_REASONING_CONTENT_PROVIDERS = frozenset(
+    {
+        "moonshot",  # legacy Kimi
+        "kimi-cn",  # Kimi 中国区
+        "kimi-int",  # Kimi 国际区
+        "deepseek",  # DeepSeek Reasoner
+        "dashscope",  # 通义千问 Qwen3 / QwQ
+        "siliconflow",  # 硅基流动（托管 DeepSeek-R1 / QwQ / Qwen3 等）
+        "siliconflow-intl",  # 硅基流动国际区
+        "volcengine",  # 火山引擎（托管 DeepSeek-R1 / doubao-seed 等）
+        "zhipu",  # 智谱 GLM-5 / GLM-4.7
+    }
+)
 
 
 def _needs_reasoning_content(provider: str) -> bool:
@@ -77,7 +79,9 @@ def convert_messages_to_openai(
 
     for msg in messages:
         converted = _convert_single_message_to_openai(
-            msg, provider=provider, enable_thinking=enable_thinking,
+            msg,
+            provider=provider,
+            enable_thinking=enable_thinking,
         )
         if converted:
             if isinstance(converted, list):
@@ -340,6 +344,7 @@ def _convert_openai_content_to_blocks(content: list[dict]) -> list[ContentBlock]
             url = video_url.get("url", "")
             if url:
                 import re
+
                 match = re.match(r"data:([^;]+);base64,(.+)", url)
                 if match:
                     media_type = match.group(1)
@@ -352,7 +357,9 @@ def _convert_openai_content_to_blocks(content: list[dict]) -> list[ContentBlock]
             if data:
                 mime_map = {"wav": "audio/wav", "mp3": "audio/mpeg", "pcm16": "audio/pcm"}
                 media_type = mime_map.get(fmt, f"audio/{fmt}")
-                blocks.append(AudioBlock(audio=AudioContent(media_type=media_type, data=data, format=fmt)))
+                blocks.append(
+                    AudioBlock(audio=AudioContent(media_type=media_type, data=data, format=fmt))
+                )
         elif item_type == "document":
             source = item.get("source", {})
             if source.get("type") == "base64":
@@ -389,7 +396,9 @@ def convert_messages_to_responses(
 
     for msg in messages:
         converted = _convert_single_message_to_responses(
-            msg, provider=provider, enable_thinking=enable_thinking,
+            msg,
+            provider=provider,
+            enable_thinking=enable_thinking,
         )
         if converted:
             if isinstance(converted, list):
@@ -435,14 +444,17 @@ def _convert_single_message_to_responses(
 
             # tool_use → function_call items
             import json
+
             for tu in tool_uses:
-                result.append({
-                    "type": "function_call",
-                    "call_id": tu.id,
-                    "name": tu.name,
-                    "arguments": json.dumps(tu.input, ensure_ascii=False),
-                    "status": "completed",
-                })
+                result.append(
+                    {
+                        "type": "function_call",
+                        "call_id": tu.id,
+                        "name": tu.name,
+                        "arguments": json.dumps(tu.input, ensure_ascii=False),
+                        "status": "completed",
+                    }
+                )
         else:
             # user 消息
             openai_content = convert_content_blocks_to_openai(other_blocks, provider=provider)

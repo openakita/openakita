@@ -28,6 +28,7 @@ def _notify_scheduler_change(action: str = "update") -> None:
     """Fire-and-forget WS broadcast for scheduler state changes."""
     try:
         from openakita.api.routes.websocket import broadcast_event
+
         asyncio.ensure_future(broadcast_event("scheduler:task_update", {"action": action}))
     except Exception:
         pass
@@ -120,12 +121,16 @@ async def create_task(request: Request, body: TaskCreateRequest):
     try:
         trigger_type = TriggerType(body.trigger_type)
     except ValueError:
-        return JSONResponse(status_code=422, content={"error": f"Invalid trigger_type: {body.trigger_type}"})
+        return JSONResponse(
+            status_code=422, content={"error": f"Invalid trigger_type: {body.trigger_type}"}
+        )
 
     try:
         task_type = TaskType(body.task_type)
     except ValueError:
-        return JSONResponse(status_code=422, content={"error": f"Invalid task_type: {body.task_type}"})
+        return JSONResponse(
+            status_code=422, content={"error": f"Invalid task_type: {body.task_type}"}
+        )
 
     description = body.reminder_message or body.prompt or body.name
     task = ScheduledTask.create(
@@ -176,17 +181,23 @@ async def update_task(request: Request, task_id: str, body: TaskUpdateRequest):
 
     if body.task_type is not None:
         from openakita.scheduler.task import TaskType
+
         try:
             updates["task_type"] = TaskType(body.task_type)
         except ValueError:
-            return JSONResponse(status_code=422, content={"error": f"Invalid task_type: {body.task_type}"})
+            return JSONResponse(
+                status_code=422, content={"error": f"Invalid task_type: {body.task_type}"}
+            )
 
     if body.trigger_type is not None:
         from openakita.scheduler.task import TriggerType
+
         try:
             updates["trigger_type"] = TriggerType(body.trigger_type)
         except ValueError:
-            return JSONResponse(status_code=422, content={"error": f"Invalid trigger_type: {body.trigger_type}"})
+            return JSONResponse(
+                status_code=422, content={"error": f"Invalid trigger_type: {body.trigger_type}"}
+            )
 
     if body.trigger_config is not None:
         updates["trigger_config"] = body.trigger_config
@@ -227,11 +238,15 @@ async def delete_task(request: Request, task_id: str):
         return JSONResponse(status_code=404, content={"error": "Task not found"})
 
     if not task.deletable:
-        return JSONResponse(status_code=403, content={"error": "System task cannot be deleted, use disable instead"})
+        return JSONResponse(
+            status_code=403, content={"error": "System task cannot be deleted, use disable instead"}
+        )
 
     result = await scheduler.remove_task(task_id)
     if result == "system_task":
-        return JSONResponse(status_code=403, content={"error": "System task cannot be deleted, use disable instead"})
+        return JSONResponse(
+            status_code=403, content={"error": "System task cannot be deleted, use disable instead"}
+        )
     if result == "not_found":
         return JSONResponse(status_code=404, content={"error": "Task not found"})
 
@@ -367,9 +382,7 @@ async def list_channels(request: Request):
         # 1. Active memory sessions
         sessions = session_manager.list_sessions()
         if sessions:
-            sessions.sort(
-                key=lambda s: getattr(s, "last_active", dt.min), reverse=True
-            )
+            sessions.sort(key=lambda s: getattr(s, "last_active", dt.min), reverse=True)
             for s in sessions:
                 if getattr(s, "state", None) and str(s.state.value) == "closed":
                     continue
@@ -377,15 +390,17 @@ async def list_channels(request: Request):
                 cid = getattr(s, "chat_id", None)
                 if not ch or not cid or ch in skip_channels:
                     continue
-                _add_or_merge({
-                    "channel_id": ch,
-                    "chat_id": cid,
-                    "user_id": getattr(s, "user_id", None),
-                    "last_active": getattr(s, "last_active", dt.min).isoformat(),
-                    "chat_name": getattr(s, "chat_name", "") or "",
-                    "chat_type": getattr(s, "chat_type", "private") or "private",
-                    "display_name": getattr(s, "display_name", "") or "",
-                })
+                _add_or_merge(
+                    {
+                        "channel_id": ch,
+                        "chat_id": cid,
+                        "user_id": getattr(s, "user_id", None),
+                        "last_active": getattr(s, "last_active", dt.min).isoformat(),
+                        "chat_name": getattr(s, "chat_name", "") or "",
+                        "chat_type": getattr(s, "chat_type", "private") or "private",
+                        "display_name": getattr(s, "display_name", "") or "",
+                    }
+                )
 
         # 2. Persisted sessions from file
         sessions_file = getattr(session_manager, "storage_path", None)
@@ -402,15 +417,17 @@ async def list_channels(request: Request):
                         state = s.get("state", "")
                         if not ch or not cid or state == "closed" or ch in skip_channels:
                             continue
-                        _add_or_merge({
-                            "channel_id": ch,
-                            "chat_id": cid,
-                            "user_id": s.get("user_id"),
-                            "last_active": s.get("last_active", ""),
-                            "chat_name": s.get("chat_name", ""),
-                            "chat_type": s.get("chat_type", "private"),
-                            "display_name": s.get("display_name", ""),
-                        })
+                        _add_or_merge(
+                            {
+                                "channel_id": ch,
+                                "chat_id": cid,
+                                "user_id": s.get("user_id"),
+                                "last_active": s.get("last_active", ""),
+                                "chat_name": s.get("chat_name", ""),
+                                "chat_type": s.get("chat_type", "private"),
+                                "display_name": s.get("display_name", ""),
+                            }
+                        )
                 except Exception as e:
                     logger.warning(f"Failed to read sessions file: {e}")
 
@@ -421,7 +438,9 @@ async def list_channels(request: Request):
                 if ch in skip_channels:
                     continue
                 # 兼容新格式（list of dicts）和旧格式（单 dict）
-                items = entry if isinstance(entry, list) else [entry] if isinstance(entry, dict) else []
+                items = (
+                    entry if isinstance(entry, list) else [entry] if isinstance(entry, dict) else []
+                )
                 for item in items:
                     if not isinstance(item, dict):
                         continue
@@ -431,15 +450,17 @@ async def list_channels(request: Request):
                     pair = (ch, cid)
                     if pair in seen:
                         continue
-                    _add_or_merge({
-                        "channel_id": ch,
-                        "chat_id": cid,
-                        "user_id": item.get("user_id"),
-                        "last_active": item.get("last_seen", ""),
-                        "chat_name": "",
-                        "chat_type": "private",
-                        "display_name": "",
-                    })
+                    _add_or_merge(
+                        {
+                            "channel_id": ch,
+                            "chat_id": cid,
+                            "user_id": item.get("user_id"),
+                            "last_active": item.get("last_seen", ""),
+                            "chat_name": "",
+                            "chat_type": "private",
+                            "display_name": "",
+                        }
+                    )
 
     # 4. Running gateway adapters — show configured bots even without sessions
     adapters = getattr(gateway, "_adapters", {})
@@ -449,9 +470,7 @@ async def list_channels(request: Request):
             continue
         if not getattr(adapter, "is_running", False) and adapter_name not in started:
             continue
-        already_listed = any(
-            adapter_name == entry["channel_id"] for entry in results
-        )
+        already_listed = any(adapter_name == entry["channel_id"] for entry in results)
         if already_listed:
             continue
         fallback_chat_id = ""
@@ -459,15 +478,17 @@ async def list_channels(request: Request):
             target = session_manager.get_known_channel_target(adapter_name)
             if target:
                 fallback_chat_id = target[1]
-        _add_or_merge({
-            "channel_id": adapter_name,
-            "chat_id": fallback_chat_id,
-            "user_id": None,
-            "last_active": "",
-            "chat_name": "",
-            "chat_type": "private",
-            "display_name": "",
-        })
+        _add_or_merge(
+            {
+                "channel_id": adapter_name,
+                "chat_id": fallback_chat_id,
+                "user_id": None,
+                "last_active": "",
+                "chat_name": "",
+                "chat_type": "private",
+                "display_name": "",
+            }
+        )
 
     alias_store = getattr(gateway, "chat_aliases", None)
     if alias_store:
@@ -481,6 +502,7 @@ async def list_channels(request: Request):
 
     # Enrich with bot display names from settings
     from openakita.config import settings
+
     bot_name_map: dict[str, str] = {}
     for b in getattr(settings, "im_bots", []):
         if isinstance(b, dict) and b.get("id") and b.get("name"):

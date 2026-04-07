@@ -78,9 +78,7 @@ class FallbackResolver:
 
     def record_success(self, profile_id: str) -> None:
         with self._lock:
-            entry = self._health.setdefault(
-                profile_id, _HealthEntry(profile_id=profile_id)
-            )
+            entry = self._health.setdefault(profile_id, _HealthEntry(profile_id=profile_id))
             entry.record_success()
             if entry.degraded:
                 entry.degraded = False
@@ -88,9 +86,7 @@ class FallbackResolver:
 
     def record_failure(self, profile_id: str) -> None:
         with self._lock:
-            entry = self._health.setdefault(
-                profile_id, _HealthEntry(profile_id=profile_id)
-            )
+            entry = self._health.setdefault(profile_id, _HealthEntry(profile_id=profile_id))
             entry.record_failure()
             if entry.should_degrade and not entry.degraded:
                 entry.degraded = True
@@ -143,7 +139,4 @@ class FallbackResolver:
         fb_profile = self.resolve_fallback(profile_id)
         if not fb_profile:
             return None
-        return (
-            f"⚠️ 当前 Agent 连续处理失败，已自动切换到 "
-            f"**{fb_profile.get_display_name()}** 处理。"
-        )
+        return f"⚠️ 当前 Agent 连续处理失败，已自动切换到 **{fb_profile.get_display_name()}** 处理。"

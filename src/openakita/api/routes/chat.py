@@ -134,6 +134,7 @@ async def _broadcast_chat_event(event: str, data: dict) -> None:
     """Broadcast a chat event via WebSocket to all connected clients."""
     try:
         from .websocket import broadcast_event
+
         await broadcast_event(event, data)
     except Exception:
         pass
@@ -150,6 +151,7 @@ def _resolve_agent(agent: object):
 
 def _is_multi_agent_enabled() -> bool:
     from openakita.config import settings
+
     return settings.multi_agent_enabled
 
 
@@ -179,7 +181,9 @@ def _resolve_profile(agent_profile_id: str | None):
     return AgentProfile(id="default", name="Default Agent")
 
 
-async def _get_agent_for_session(request: Request, conversation_id: str, agent_profile_id: str | None = None):
+async def _get_agent_for_session(
+    request: Request, conversation_id: str, agent_profile_id: str | None = None
+):
     """Get a per-session Agent from pool, or fallback to global agent."""
     pool = getattr(request.app.state, "agent_pool", None)
     if pool is not None and conversation_id:
@@ -226,15 +230,15 @@ def _apply_agent_profile(session: object, new_profile_id: str) -> bool:
     except Exception:
         pass  # graceful fallback — allow switch if validation infra unavailable
 
-    ctx.agent_switch_history.append({
-        "from": old_profile_id,
-        "to": new_profile_id,
-        "at": datetime.now().isoformat(),
-    })
-    ctx.agent_profile_id = new_profile_id
-    logger.info(
-        f"[Chat API] Agent profile switched: {old_profile_id!r} -> {new_profile_id!r}"
+    ctx.agent_switch_history.append(
+        {
+            "from": old_profile_id,
+            "to": new_profile_id,
+            "at": datetime.now().isoformat(),
+        }
     )
+    ctx.agent_profile_id = new_profile_id
+    logger.info(f"[Chat API] Agent profile switched: {old_profile_id!r} -> {new_profile_id!r}")
     return True
 
 
@@ -283,7 +287,8 @@ def _schedule_background_save(
                     session_manager.mark_dirty()
                 logger.info(
                     "[Chat API] Background save: %d chars (conv=%s)",
-                    len(bg_reply), conversation_id,
+                    len(bg_reply),
+                    conversation_id,
                 )
             except Exception as e:
                 logger.warning("[Chat API] Background save failed: %s", e)
@@ -354,7 +359,7 @@ async def _stream_chat(
             try:
                 logger.info(
                     f"[Chat API] 回复完成: {_reply_chars}字 | "
-                    f"\"{preview}{'...' if _reply_chars > 100 else ''}\""
+                    f'"{preview}{"..." if _reply_chars > 100 else ""}"'
                 )
             except (UnicodeEncodeError, OSError):
                 pass
@@ -402,6 +407,7 @@ async def _stream_chat(
 
         # --- Session management ---
         import uuid as _uuid
+
         conversation_id = chat_request.conversation_id or f"api_{_uuid.uuid4().hex[:12]}"
         session = None
         session_messages_history: list[dict] = []
@@ -423,7 +429,9 @@ async def _stream_chat(
                     # 这与 IM 路径一致：gateway 先 add_message，再传 session_messages
                     if chat_request.message:
                         session.add_message("user", chat_request.message)
-                    session_messages_history = list(session.context.messages) if hasattr(session, "context") else []
+                    session_messages_history = (
+                        list(session.context.messages) if hasattr(session, "context") else []
+                    )
                     session_manager.mark_dirty()
             except Exception as e:
                 logger.warning(f"[Chat API] Session management error: {e}")
@@ -504,9 +512,7 @@ async def _stream_chat(
         _agent_errored = False
         while True:
             try:
-                event = await asyncio.wait_for(
-                    _agent_queue.get(), timeout=SSE_KEEPALIVE_INTERVAL
-                )
+                event = await asyncio.wait_for(_agent_queue.get(), timeout=SSE_KEEPALIVE_INTERVAL)
             except TimeoutError:
                 if not _client_disconnected and not await _check_disconnected():
                     yield _sse("heartbeat", {"ts": time.time()})
@@ -609,7 +615,7 @@ async def _stream_chat(
                     except (json.JSONDecodeError, TypeError, KeyError, ValueError) as exc:
                         logger.warning(
                             f"[Chat API] Delegation artifact parse failed: {exc!r}, "
-                            f"chunk preview: {_del_result[max(0, _search_pos - 50):_search_pos + 100]}"
+                            f"chunk preview: {_del_result[max(0, _search_pos - 50) : _search_pos + 100]}"
                         )
                         break
                 if _art_marker in _del_result:
@@ -705,7 +711,9 @@ async def _stream_chat(
                 if session_manager:
                     session_manager.mark_dirty()
             except Exception as e:
-                logger.error(f"[Chat API] Failed to save assistant message to session: {e}", exc_info=True)
+                logger.error(
+                    f"[Chat API] Failed to save assistant message to session: {e}", exc_info=True
+                )
 
         # Ensure sub-agent records are flushed to disk
         if session and hasattr(session, "context") and session_manager:
@@ -721,8 +729,9 @@ async def _stream_chat(
                 _usage_data = dict(_cached)
             else:
                 re = getattr(actual_agent, "reasoning_engine", None)
-                trace = getattr(actual_agent, "_last_finalized_trace", None) or \
-                    (getattr(re, "_last_react_trace", []) if re else [])
+                trace = getattr(actual_agent, "_last_finalized_trace", None) or (
+                    getattr(re, "_last_react_trace", []) if re else []
+                )
                 if trace:
                     total_in = sum(t.get("tokens", {}).get("input", 0) for t in trace)
                     total_out = sum(t.get("tokens", {}).get("output", 0) for t in trace)
@@ -731,7 +740,9 @@ async def _stream_chat(
                         "output_tokens": total_out,
                         "total_tokens": total_in + total_out,
                     }
-                ctx_mgr = getattr(actual_agent, "context_manager", None) or getattr(re, "_context_manager", None)
+                ctx_mgr = getattr(actual_agent, "context_manager", None) or getattr(
+                    re, "_context_manager", None
+                )
                 if ctx_mgr and hasattr(ctx_mgr, "get_max_context_tokens"):
                     _max_ctx = ctx_mgr.get_max_context_tokens()
                     _msgs = getattr(re, "_last_working_messages", None) or getattr(
@@ -766,9 +777,16 @@ async def _stream_chat(
                     # 任务完成时回调会 drain queue 并保存 session。
                     _bg_save_scheduled = True
                     _schedule_background_save(
-                        _agent_task, _agent_done, _agent_queue, _sse,
-                        session, session_manager, conversation_id,
-                        _full_reply, _collected_artifacts, _save_done,
+                        _agent_task,
+                        _agent_done,
+                        _agent_queue,
+                        _sse,
+                        session,
+                        session_manager,
+                        conversation_id,
+                        _full_reply,
+                        _collected_artifacts,
+                        _save_done,
                     )
 
         # Drain remaining queue events to accumulate _full_reply for deferred save
@@ -821,12 +839,15 @@ async def _stream_chat(
         if _conv_id:
             await get_lifecycle_manager().finish(_conv_id, generation=busy_generation)
             if _full_reply:
-                await _broadcast_chat_event("chat:message_update", {
-                    "conversation_id": _conv_id,
-                    "client_id": getattr(chat_request, "client_id", "") or "",
-                    "last_message_preview": _full_reply[:100],
-                    "timestamp": time.time(),
-                })
+                await _broadcast_chat_event(
+                    "chat:message_update",
+                    {
+                        "conversation_id": _conv_id,
+                        "client_id": getattr(chat_request, "client_id", "") or "",
+                        "last_message_preview": _full_reply[:100],
+                        "timestamp": time.time(),
+                    },
+                )
 
 
 @router.post("/api/chat")
@@ -916,11 +937,13 @@ async def chat(request: Request, body: ChatRequest):
                 "[Chat API] 疑似编码损坏: 消息含 %d/%d 个问号且无非ASCII字符, "
                 "客户端可能在发送前将中文编码为ASCII(errors=replace)。"
                 "请确认客户端使用 UTF-8 编码 JSON body | conv=%s",
-                _q, len(_msg), conversation_id,
+                _q,
+                len(_msg),
+                conversation_id,
             )
 
     logger.info(
-        f"[Chat API] 收到消息: \"{msg_preview}\""
+        f'[Chat API] 收到消息: "{msg_preview}"'
         + (f" (+{att_count}个附件)" if att_count else "")
         + (f" | endpoint={body.endpoint}" if body.endpoint else "")
         + (f" | mode={effective_mode}" if effective_mode != "agent" else "")
@@ -933,7 +956,9 @@ async def chat(request: Request, body: ChatRequest):
     # Pass pre-resolved conversation_id so _stream_chat doesn't generate a new one
     body.conversation_id = conversation_id
 
-    sse_gen = _stream_chat(body, agent, session_manager, http_request=request, busy_generation=busy_gen)
+    sse_gen = _stream_chat(
+        body, agent, session_manager, http_request=request, busy_generation=busy_gen
+    )
     if is_dual_loop():
         sse_gen = engine_stream(sse_gen)
 
@@ -1045,14 +1070,23 @@ async def chat_insert(request: Request, body: ChatControlRequest):
         ok = actual_agent.skip_current_step(reason, session_id=_skip_conv_id)
         logger.info(f"[Chat API] Insert -> SKIP: reason={reason!r}, ok={ok}")
         if not ok:
-            return {"status": "warning", "action": "skip", "reason": reason, "message": "No active task to skip"}
+            return {
+                "status": "warning",
+                "action": "skip",
+                "reason": reason,
+                "message": "No active task to skip",
+            }
         return {"status": "ok", "action": "skip", "reason": reason}
 
     _insert_conv_id = conv_id or getattr(actual_agent, "_current_conversation_id", None)
     ok = await to_engine(actual_agent.insert_user_message(body.message, session_id=_insert_conv_id))
     logger.info(f"[Chat API] Insert 作为普通消息: ok={ok}, message={body.message[:60]!r}")
     if not ok:
-        return {"status": "warning", "action": "insert", "message": "No active task, message dropped"}
+        return {
+            "status": "warning",
+            "action": "insert",
+            "message": "No active task, message dropped",
+        }
     return {"status": "ok", "action": "insert", "message": body.message[:100]}
 
 
@@ -1062,6 +1096,7 @@ async def get_sub_agent_tasks(request: Request, conversation_id: str = ""):
     orchestrator = None
     try:
         from openakita.main import _orchestrator
+
         orchestrator = _orchestrator
     except (ImportError, AttributeError):
         pass
@@ -1086,7 +1121,10 @@ async def get_sub_agent_records(request: Request, conversation_id: str = ""):
         return []
     try:
         session = session_manager.get_session(
-            "desktop", conversation_id, "desktop_user", create_if_missing=False,
+            "desktop",
+            conversation_id,
+            "desktop_user",
+            create_if_missing=False,
         )
         if session and hasattr(session, "context"):
             return getattr(session.context, "sub_agent_records", [])

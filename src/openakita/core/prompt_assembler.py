@@ -168,9 +168,7 @@ class PromptAssembler:
         identity_dir = settings.identity_path
 
         budget_config = (
-            BudgetConfig.for_context_window(context_window)
-            if context_window > 0
-            else None
+            BudgetConfig.for_context_window(context_window) if context_window > 0 else None
         )
 
         return build_system_prompt(
@@ -214,9 +212,7 @@ class PromptAssembler:
             compile_all(identity_dir)
 
         budget_config = (
-            BudgetConfig.for_context_window(context_window)
-            if context_window > 0
-            else None
+            BudgetConfig.for_context_window(context_window) if context_window > 0 else None
         )
 
         return build_system_prompt(
@@ -259,8 +255,12 @@ class PromptAssembler:
         try:
             cwd = os.getcwd()
             entries = sorted(os.listdir(cwd))[:30]
-            dirs = [e for e in entries if os.path.isdir(os.path.join(cwd, e)) and not e.startswith(".")]
-            files = [e for e in entries if os.path.isfile(os.path.join(cwd, e)) and not e.startswith(".")]
+            dirs = [
+                e for e in entries if os.path.isdir(os.path.join(cwd, e)) and not e.startswith(".")
+            ]
+            files = [
+                e for e in entries if os.path.isfile(os.path.join(cwd, e)) and not e.startswith(".")
+            ]
             if dirs:
                 parts.append(f"- 子目录: {', '.join(dirs[:15])}")
             if files:

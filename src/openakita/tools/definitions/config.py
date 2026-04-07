@@ -116,7 +116,7 @@ API Key 存入 .env，JSON 中只引用环境变量名。
                     "type": "object",
                     "description": (
                         "要修改的配置键值对（set 时必填）。"
-                        "key 使用大写环境变量名，如 {\"LOG_LEVEL\": \"DEBUG\", \"PROACTIVE_ENABLED\": \"true\"}"
+                        'key 使用大写环境变量名，如 {"LOG_LEVEL": "DEBUG", "PROACTIVE_ENABLED": "true"}'
                     ),
                 },
                 "endpoint": {
@@ -199,16 +199,38 @@ API Key 存入 .env，JSON 中只引用环境变量名。
                         "update 必填: slug（定位），其余为要修改的字段。"
                     ),
                     "properties": {
-                        "slug": {"type": "string", "description": "服务商唯一标识（小写字母、数字、连字符）"},
+                        "slug": {
+                            "type": "string",
+                            "description": "服务商唯一标识（小写字母、数字、连字符）",
+                        },
                         "name": {"type": "string", "description": "显示名称"},
-                        "api_type": {"type": "string", "enum": ["openai", "anthropic"], "description": "API 协议类型"},
+                        "api_type": {
+                            "type": "string",
+                            "enum": ["openai", "anthropic"],
+                            "description": "API 协议类型",
+                        },
                         "default_base_url": {"type": "string", "description": "默认 API 地址"},
-                        "api_key_env_suggestion": {"type": "string", "description": "建议的 API Key 环境变量名"},
-                        "supports_model_list": {"type": "boolean", "description": "是否支持拉取模型列表"},
+                        "api_key_env_suggestion": {
+                            "type": "string",
+                            "description": "建议的 API Key 环境变量名",
+                        },
+                        "supports_model_list": {
+                            "type": "boolean",
+                            "description": "是否支持拉取模型列表",
+                        },
                         "requires_api_key": {"type": "boolean", "description": "是否需要 API Key"},
-                        "is_local": {"type": "boolean", "description": "是否为本地服务（如 Ollama）"},
-                        "coding_plan_base_url": {"type": "string", "description": "Coding Plan 专用 API 地址"},
-                        "coding_plan_api_type": {"type": "string", "description": "Coding Plan 协议类型"},
+                        "is_local": {
+                            "type": "boolean",
+                            "description": "是否为本地服务（如 Ollama）",
+                        },
+                        "coding_plan_base_url": {
+                            "type": "string",
+                            "description": "Coding Plan 专用 API 地址",
+                        },
+                        "coding_plan_api_type": {
+                            "type": "string",
+                            "description": "Coding Plan 协议类型",
+                        },
                     },
                 },
                 "slug": {

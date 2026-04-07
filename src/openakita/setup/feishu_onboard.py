@@ -152,9 +152,7 @@ class FeishuOnboard:
 
             await asyncio.sleep(interval)
 
-        raise FeishuOnboardError(
-            f"轮询超时: {max_attempts} 次尝试后仍未完成授权"
-        )
+        raise FeishuOnboardError(f"轮询超时: {max_attempts} 次尝试后仍未完成授权")
 
     async def _post(self, **form_fields: str) -> dict[str, Any]:
         """发送 x-www-form-urlencoded POST 请求到 Device Flow 端点"""

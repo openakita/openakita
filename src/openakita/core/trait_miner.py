@@ -150,6 +150,7 @@ class TraitMiner:
 
         try:
             from .tool_executor import smart_truncate as _st
+
             msg_trunc, _ = _st(message, 800, save_full=False, label="trait_msg")
             prompt = TRAIT_MINING_PROMPT.format(message=msg_trunc)
             response = await self.brain.compiler_think(
@@ -317,9 +318,7 @@ class TraitMiner:
         # 如果有 brain，用 LLM 分析回答
         if self.brain:
             try:
-                preference = await self._analyze_answer_with_llm(
-                    dimension, answer, dim_info
-                )
+                preference = await self._analyze_answer_with_llm(dimension, answer, dim_info)
                 if preference is None:
                     # 用户跳过
                     self._asked_dimensions.add(dimension)

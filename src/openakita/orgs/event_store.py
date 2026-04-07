@@ -34,6 +34,7 @@ class OrgEventStore:
     def clear(self) -> None:
         """Remove all event files (used during org reset)."""
         import shutil
+
         for d in (self._events_dir, self._logs_dir):
             if d.exists():
                 shutil.rmtree(d, ignore_errors=True)
@@ -134,7 +135,8 @@ class OrgEventStore:
                         continue
                     evt = json.loads(line)
                     if evt.get("actor") == node_id and evt.get("event_type") in (
-                        "task_started", "node_activated"
+                        "task_started",
+                        "node_activated",
                     ):
                         return evt
             except Exception:
@@ -152,12 +154,22 @@ class OrgEventStore:
     ) -> list[dict]:
         """Get an audit trail of important events."""
         important_types = event_types or [
-            "org_started", "org_stopped", "org_paused", "org_resumed",
-            "user_command", "task_completed", "task_failed",
-            "node_frozen", "node_unfrozen", "node_dismissed",
-            "scaling_requested", "scaling_approved", "scaling_rejected",
+            "org_started",
+            "org_stopped",
+            "org_paused",
+            "org_resumed",
+            "user_command",
+            "task_completed",
+            "task_failed",
+            "node_frozen",
+            "node_unfrozen",
+            "node_dismissed",
+            "scaling_requested",
+            "scaling_approved",
+            "scaling_rejected",
             "approval_resolved",
-            "heartbeat_decision", "standup_completed",
+            "heartbeat_decision",
+            "standup_completed",
         ]
         since = (datetime.now(UTC) - timedelta(days=days)).isoformat()
         all_events = self.query(since=since, limit=1000)
@@ -222,11 +234,13 @@ class OrgEventStore:
                 tasks_completed += 1
             elif etype == "task_failed":
                 tasks_failed += 1
-                errors.append({
-                    "time": evt.get("timestamp", ""),
-                    "node": evt.get("actor", ""),
-                    "error": evt.get("data", {}).get("error", "")[:100],
-                })
+                errors.append(
+                    {
+                        "time": evt.get("timestamp", ""),
+                        "node": evt.get("actor", ""),
+                        "error": evt.get("data", {}).get("error", "")[:100],
+                    }
+                )
             elif etype in ("message_sent", "task_assigned"):
                 messages_sent += 1
 

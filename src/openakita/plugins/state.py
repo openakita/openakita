@@ -32,7 +32,9 @@ class PluginState:
 
     schema_version: int = _SCHEMA_VERSION
     plugins: dict[str, PluginStateEntry] = field(default_factory=dict)
-    active_backends: dict[str, str] = field(default_factory=dict)  # reserved for future memory/search backend switching
+    active_backends: dict[str, str] = field(
+        default_factory=dict
+    )  # reserved for future memory/search backend switching
 
     def get_entry(self, plugin_id: str) -> PluginStateEntry | None:
         return self.plugins.get(plugin_id)
@@ -74,9 +76,7 @@ class PluginState:
 
     def remove_plugin(self, plugin_id: str) -> None:
         self.plugins.pop(plugin_id, None)
-        self.active_backends = {
-            k: v for k, v in self.active_backends.items() if v != plugin_id
-        }
+        self.active_backends = {k: v for k, v in self.active_backends.items() if v != plugin_id}
 
     def save(self, path: Path) -> None:
         data = {
@@ -113,7 +113,9 @@ class PluginState:
         state = cls()
         file_version = data.get("schema_version", 1)
         if file_version < _SCHEMA_VERSION:
-            logger.info("Migrating plugin_state.json from v%d to v%d", file_version, _SCHEMA_VERSION)
+            logger.info(
+                "Migrating plugin_state.json from v%d to v%d", file_version, _SCHEMA_VERSION
+            )
         plugins_data = data.get("plugins", {})
         if not isinstance(plugins_data, dict):
             logger.warning("Corrupt plugin_state.json: 'plugins' is not a dict, starting fresh")

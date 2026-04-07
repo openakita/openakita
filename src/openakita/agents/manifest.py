@@ -23,11 +23,28 @@ MAX_PACKAGE_SIZE = 50 * 1024 * 1024  # 50MB
 MAX_SINGLE_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 MAX_ICON_SIZE = 256 * 1024  # 256KB
 
-FORBIDDEN_EXTENSIONS = frozenset({
-    ".exe", ".bat", ".cmd", ".sh", ".bash", ".ps1",
-    ".py", ".rb", ".pl", ".php", ".jar", ".class",
-    ".dll", ".so", ".dylib", ".msi", ".deb", ".rpm",
-})
+FORBIDDEN_EXTENSIONS = frozenset(
+    {
+        ".exe",
+        ".bat",
+        ".cmd",
+        ".sh",
+        ".bash",
+        ".ps1",
+        ".py",
+        ".rb",
+        ".pl",
+        ".php",
+        ".jar",
+        ".class",
+        ".dll",
+        ".so",
+        ".dylib",
+        ".msi",
+        ".deb",
+        ".rpm",
+    }
+)
 
 
 @dataclass
@@ -45,6 +62,7 @@ class ManifestAuthor:
 @dataclass
 class ExternalSkillRef:
     """Reference to a third-party skill fetched from its original source at install time."""
+
     id: str
     source: str  # e.g. "owner/repo@skill-name"
     version: str = ""
@@ -121,19 +139,21 @@ class AgentManifest:
 
         errors.extend(self.author.validate())
 
-        if self.min_platform_version and not _SEMVER_PATTERN.match(
-            self.min_platform_version
-        ):
-            errors.append(
-                f"Invalid min_platform_version: {self.min_platform_version!r}"
-            )
+        if self.min_platform_version and not _SEMVER_PATTERN.match(self.min_platform_version):
+            errors.append(f"Invalid min_platform_version: {self.min_platform_version!r}")
 
         return errors
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
-        for key in ["name_i18n", "description_i18n", "tags", "bundled_skills",
-                     "required_builtin_skills", "required_external_skills"]:
+        for key in [
+            "name_i18n",
+            "description_i18n",
+            "tags",
+            "bundled_skills",
+            "required_builtin_skills",
+            "required_external_skills",
+        ]:
             if not d.get(key):
                 d.pop(key, None)
         for key in ["category", "license", "min_platform_version", "checksum"]:
@@ -154,8 +174,7 @@ class AgentManifest:
 
         ext_skills_raw = data.get("required_external_skills", [])
         ext_skills = [
-            ExternalSkillRef.from_dict(s) if isinstance(s, dict) else s
-            for s in ext_skills_raw
+            ExternalSkillRef.from_dict(s) if isinstance(s, dict) else s for s in ext_skills_raw
         ]
 
         return cls(

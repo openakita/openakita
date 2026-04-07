@@ -64,7 +64,8 @@ async def health(request: Request):
         "version_full": get_version_string(),
         "pid": os.getpid(),
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "agent_initialized": hasattr(request.app.state, "agent") and request.app.state.agent is not None,
+        "agent_initialized": hasattr(request.app.state, "agent")
+        and request.app.state.agent is not None,
         "local_ip": _get_lan_ip(),
     }
 
@@ -123,7 +124,8 @@ async def _check_with_timeout(name: str, provider, timeout: float = 30) -> Healt
     """Wrap _check_endpoint_readonly with a per-endpoint timeout."""
     try:
         return await asyncio.wait_for(
-            _check_endpoint_readonly(name, provider), timeout=timeout,
+            _check_endpoint_readonly(name, provider),
+            timeout=timeout,
         )
     except TimeoutError:
         return HealthResult(
@@ -152,6 +154,7 @@ async def orchestrator_state(request: Request):
     if orchestrator is None:
         try:
             from openakita.main import _orchestrator
+
             orchestrator = _orchestrator
         except (ImportError, AttributeError):
             pass
@@ -185,62 +188,74 @@ async def diagnostics():
 
     # C1: Runtime
     runtime_type = "bundled" if getattr(sys, "frozen", False) else "venv"
-    checks.append({
-        "id": "C1_BUNDLED_RUNTIME",
-        "title": "内置运行时",
-        "status": "pass",
-        "code": "RUNTIME_OK",
-        "evidence": [f"Python {platform.python_version()}, {runtime_type}"],
-        "autoFix": False,
-        "fixHint": None,
-    })
+    checks.append(
+        {
+            "id": "C1_BUNDLED_RUNTIME",
+            "title": "内置运行时",
+            "status": "pass",
+            "code": "RUNTIME_OK",
+            "evidence": [f"Python {platform.python_version()}, {runtime_type}"],
+            "autoFix": False,
+            "fixHint": None,
+        }
+    )
 
     # C2: pip availability
     try:
         import pip
+
         pip_ver = pip.__version__
-        checks.append({
-            "id": "C2_PIP",
-            "title": "包管理器",
-            "status": "pass",
-            "code": "PIP_OK",
-            "evidence": [f"pip {pip_ver}"],
-            "autoFix": False,
-            "fixHint": None,
-        })
+        checks.append(
+            {
+                "id": "C2_PIP",
+                "title": "包管理器",
+                "status": "pass",
+                "code": "PIP_OK",
+                "evidence": [f"pip {pip_ver}"],
+                "autoFix": False,
+                "fixHint": None,
+            }
+        )
     except Exception:
-        checks.append({
-            "id": "C2_PIP",
-            "title": "包管理器",
-            "status": "warn",
-            "code": "PIP_UNAVAILABLE",
-            "evidence": ["pip not importable — optional module installation disabled"],
-            "autoFix": False,
-            "fixHint": None,
-        })
+        checks.append(
+            {
+                "id": "C2_PIP",
+                "title": "包管理器",
+                "status": "warn",
+                "code": "PIP_UNAVAILABLE",
+                "evidence": ["pip not importable — optional module installation disabled"],
+                "autoFix": False,
+                "fixHint": None,
+            }
+        )
 
     # C3: Core package integrity
     try:
         from openakita.setup_center import bridge  # noqa: F401
-        checks.append({
-            "id": "C3_CORE",
-            "title": "核心引擎",
-            "status": "pass",
-            "code": "CORE_OK",
-            "evidence": [f"openakita {backend_version}"],
-            "autoFix": False,
-            "fixHint": None,
-        })
+
+        checks.append(
+            {
+                "id": "C3_CORE",
+                "title": "核心引擎",
+                "status": "pass",
+                "code": "CORE_OK",
+                "evidence": [f"openakita {backend_version}"],
+                "autoFix": False,
+                "fixHint": None,
+            }
+        )
     except Exception as exc:
-        checks.append({
-            "id": "C3_CORE",
-            "title": "核心引擎",
-            "status": "fail",
-            "code": "CORE_IMPORT_ERROR",
-            "evidence": [str(exc)[:300]],
-            "autoFix": False,
-            "fixHint": "核心模块损坏，建议重装 OpenAkita",
-        })
+        checks.append(
+            {
+                "id": "C3_CORE",
+                "title": "核心引擎",
+                "status": "fail",
+                "code": "CORE_IMPORT_ERROR",
+                "evidence": [str(exc)[:300]],
+                "autoFix": False,
+                "fixHint": "核心模块损坏，建议重装 OpenAkita",
+            }
+        )
 
     failing = [c for c in checks if c["status"] not in ("pass", "warn")]
     summary = "broken" if failing else "healthy"
@@ -286,10 +301,7 @@ async def health_check(request: Request, body: HealthCheckRequest):
         results.append(result)
     else:
         # Check all endpoints concurrently with per-endpoint timeout
-        tasks = [
-            _check_with_timeout(name, p)
-            for name, p in llm_client._providers.items()
-        ]
+        tasks = [_check_with_timeout(name, p) for name, p in llm_client._providers.items()]
         results = list(await asyncio.gather(*tasks))
 
     return {"results": [r.model_dump() for r in results]}
@@ -329,4 +341,3 @@ async def health_loop(request: Request):
         "llm_concurrent": llm_stats,
         "org_concurrency": org_stats,
     }
-

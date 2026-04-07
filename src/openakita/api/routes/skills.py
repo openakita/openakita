@@ -21,9 +21,11 @@ def _notify_skills_changed(action: str = "reload") -> None:
     """Fire-and-forget WS broadcast for skill state changes."""
     try:
         from openakita.api.routes.websocket import broadcast_event
+
         asyncio.ensure_future(broadcast_event("skills:changed", {"action": action}))
     except Exception:
         pass
+
 
 router = APIRouter()
 
@@ -51,6 +53,7 @@ def _read_external_allowlist() -> tuple[Path, set[str] | None]:
 
     try:
         from openakita.config import settings
+
         base_path = settings.project_root
     except Exception:
         base_path = Path.cwd()
@@ -90,9 +93,12 @@ def _apply_allowlist_and_rebuild_catalog(request: Request) -> int:
     removed = 0
     if loader:
         from openakita.core.agent import _collect_preset_referenced_skills
+
         effective = loader.compute_effective_allowlist(external_allowlist)
         agent_skills = _collect_preset_referenced_skills()
-        removed = loader.prune_external_by_allowlist(effective, agent_referenced_skills=agent_skills)
+        removed = loader.prune_external_by_allowlist(
+            effective, agent_referenced_skills=agent_skills
+        )
 
     catalog = getattr(actual_agent, "skill_catalog", None)
     if catalog:
@@ -156,7 +162,10 @@ async def _auto_translate_new_skills(request: Request, install_url: str) -> None
             if not skill_dir.exists():
                 continue
             await auto_translate_skill(
-                skill_dir, skill.name, skill.description, brain,
+                skill_dir,
+                skill.name,
+                skill.description,
+                brain,
             )
     except Exception as e:
         logger.warning(f"Auto-translate after install failed: {e}")
@@ -220,25 +229,27 @@ async def list_skills(request: Request):
             except (ValueError, TypeError):
                 relative_path = sid
 
-        skills.append({
-            "skill_id": sid,
-            "capability_id": getattr(skill, "capability_id", ""),
-            "namespace": getattr(skill, "namespace", ""),
-            "origin": getattr(skill, "origin", "project"),
-            "visibility": getattr(skill, "visibility", "public"),
-            "permission_profile": getattr(skill, "permission_profile", ""),
-            "name": skill.name,
-            "description": skill.description,
-            "name_i18n": skill.name_i18n or None,
-            "description_i18n": skill.description_i18n or None,
-            "system": is_system,
-            "enabled": is_enabled,
-            "category": skill.category,
-            "tool_name": skill.tool_name,
-            "config": config,
-            "path": relative_path,
-            "source_url": getattr(skill, "source_url", None),
-        })
+        skills.append(
+            {
+                "skill_id": sid,
+                "capability_id": getattr(skill, "capability_id", ""),
+                "namespace": getattr(skill, "namespace", ""),
+                "origin": getattr(skill, "origin", "project"),
+                "visibility": getattr(skill, "visibility", "public"),
+                "permission_profile": getattr(skill, "permission_profile", ""),
+                "name": skill.name,
+                "description": skill.description,
+                "name_i18n": skill.name_i18n or None,
+                "description_i18n": skill.description_i18n or None,
+                "system": is_system,
+                "enabled": is_enabled,
+                "category": skill.category,
+                "tool_name": skill.tool_name,
+                "config": config,
+                "path": relative_path,
+                "source_url": getattr(skill, "source_url", None),
+            }
+        )
 
     def _sort_key(s: dict) -> tuple:
         enabled = s.get("enabled", False)
@@ -270,6 +281,7 @@ async def update_skill_config(request: Request):
 
     try:
         from openakita.config import settings
+
         config_file = settings.project_root / "data" / "skill_configs.json"
     except Exception:
         config_file = Path.cwd() / "data" / "skill_configs.json"
@@ -356,7 +368,8 @@ async def install_skill(request: Request):
                 skill_dir_name = candidates[0].name
                 logger.error(
                     "Installed skill %s has invalid SKILL.md, removing: %s",
-                    skill_dir_name, parse_err,
+                    skill_dir_name,
+                    parse_err,
                 )
                 shutil.rmtree(str(candidates[0]), ignore_errors=True)
                 return {
@@ -412,12 +425,14 @@ async def uninstall_skill(request: Request):
 
     try:
         from openakita.config import settings
+
         workspace_dir = str(settings.project_root)
     except Exception:
         workspace_dir = str(__import__("pathlib").Path.cwd())
 
     try:
         from openakita.setup_center.bridge import uninstall_skill as _uninstall_skill
+
         await asyncio.to_thread(_uninstall_skill, workspace_dir, skill_id)
     except Exception as e:
         logger.error("Skill uninstall failed: %s", e, exc_info=True)
@@ -453,7 +468,11 @@ async def reload_skills(request: Request):
     """
     from openakita.core.agent import Agent
 
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = (
+        await request.json()
+        if request.headers.get("content-type", "").startswith("application/json")
+        else {}
+    )
     skill_name = (body.get("skill_name") or "").strip()
 
     agent = getattr(request.app.state, "agent", None)
@@ -666,6 +685,7 @@ def _on_skills_changed_api(action: str) -> None:
 
 try:
     from openakita.skills.events import register_on_change
+
     register_on_change(_on_skills_changed_api)
 except Exception:
     pass

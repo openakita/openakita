@@ -39,7 +39,7 @@ def _try_repair_json(s: str) -> dict | None:
     if not s.startswith("{"):
         return None
 
-    for suffix in ['"}', '"}}', '"}}}}', '"}]}', '"]}', '"}', '}', '}}', '}}}']:
+    for suffix in ['"}', '"}}', '"}}}}', '"}]}', '"]}', '"}', "}", "}}", "}}}"]:
         try:
             result = json.loads(s + suffix)
             if isinstance(result, dict):
@@ -65,8 +65,7 @@ def _dump_raw_arguments(tool_name: str, arguments: str) -> None:
         dump_file = debug_dir / f"truncated_args_{tool_name}_{ts}.txt"
         dump_file.write_text(arguments, encoding="utf-8")
         logger.info(
-            f"[TOOL_CALL] Raw truncated arguments ({len(arguments)} chars) "
-            f"saved to {dump_file}"
+            f"[TOOL_CALL] Raw truncated arguments ({len(arguments)} chars) saved to {dump_file}"
         )
     except Exception as exc:
         logger.warning(f"[TOOL_CALL] Failed to dump raw arguments: {exc}")
@@ -140,7 +139,6 @@ def convert_tool_calls_from_openai(tool_calls: list[dict]) -> list[ToolUseBlock]
         func = tc.get("function") or {}
         tc_type = tc.get("type")
         if tc_type == "function" or (not tc_type and isinstance(func, dict) and func.get("name")):
-
             arguments = func.get("arguments", "{}")
             if isinstance(arguments, str):
                 try:
@@ -172,19 +170,25 @@ def convert_tool_calls_from_openai(tool_calls: list[dict]) -> list[ToolUseBlock]
                             f"error. Raw args ({arg_len} chars) dumped to data/llm_debug/."
                         )
                         # write_file 截断修复后若 path 丢失，注入截断提示而非传入不完整参数
-                        if tool_name == "write_file" and "content" in input_dict and "path" not in input_dict:
+                        if (
+                            tool_name == "write_file"
+                            and "content" in input_dict
+                            and "path" not in input_dict
+                        ):
                             content_len = len(str(input_dict.get("content", "")))
                             logger.warning(
                                 f"[TOOL_CALL] write_file JSON repaired but 'path' is missing "
                                 f"(content length={content_len}). Likely truncated by output token limit."
                             )
-                            input_dict = {PARSE_ERROR_KEY: (
-                                f"⚠️ 你的 write_file 调用因内容过长（{content_len} 字符）被 API 截断，"
-                                f"'path' 参数丢失。请用以下方法解决：\n"
-                                "1. 将大文件内容拆分为多次小写入（每次 < 8000 字符）\n"
-                                "2. 或使用 run_shell + Python 脚本生成大文件\n"
-                                "3. 先写骨架文件，再用多次追加写入填充内容"
-                            )}
+                            input_dict = {
+                                PARSE_ERROR_KEY: (
+                                    f"⚠️ 你的 write_file 调用因内容过长（{content_len} 字符）被 API 截断，"
+                                    f"'path' 参数丢失。请用以下方法解决：\n"
+                                    "1. 将大文件内容拆分为多次小写入（每次 < 8000 字符）\n"
+                                    "2. 或使用 run_shell + Python 脚本生成大文件\n"
+                                    "3. 先写骨架文件，再用多次追加写入填充内容"
+                                )
+                            }
                     else:
                         err_msg = (
                             f"❌ 工具 '{tool_name}' 的参数 JSON 被 API 截断且无法修复"
@@ -307,15 +311,15 @@ def _parse_invoke_blocks(content: str) -> list[ToolUseBlock]:
         )
         tool_calls.append(tool_call)
         logger.info(
-            f"[TEXT_TOOL_PARSE] Extracted tool call: {tool_name} "
-            f"with params: {list(params.keys())}"
+            f"[TEXT_TOOL_PARSE] Extracted tool call: {tool_name} with params: {list(params.keys())}"
         )
 
     return tool_calls
 
 
 def _make_invoke_wrapper_parser(
-    open_tag: str, close_tag: str,
+    open_tag: str,
+    close_tag: str,
 ) -> Callable[[str], tuple[str, list[ToolUseBlock]]]:
     """为使用 <invoke> 内部结构的 XML 包装格式创建解析器。
 
@@ -325,10 +329,12 @@ def _make_invoke_wrapper_parser(
     _open_esc = re.escape(open_tag)
     _close_esc = re.escape(close_tag)
     _complete_re = re.compile(
-        f"{_open_esc}\\s*(.*?)\\s*{_close_esc}", re.DOTALL | re.IGNORECASE,
+        f"{_open_esc}\\s*(.*?)\\s*{_close_esc}",
+        re.DOTALL | re.IGNORECASE,
     )
     _incomplete_re = re.compile(
-        f"{_open_esc}\\s*(.*?)$", re.DOTALL | re.IGNORECASE,
+        f"{_open_esc}\\s*(.*?)$",
+        re.DOTALL | re.IGNORECASE,
     )
 
     def parser(text: str) -> tuple[str, list[ToolUseBlock]]:
@@ -388,11 +394,13 @@ def _parse_kimi_k2(text: str) -> tuple[str, list[ToolUseBlock]]:
             except json.JSONDecodeError:
                 arguments = {"raw": arguments_str}
 
-            tool_calls.append(ToolUseBlock(
-                id=f"kimi_call_{tool_id.replace('.', '_').replace(':', '_')}",
-                name=func_name,
-                input=arguments,
-            ))
+            tool_calls.append(
+                ToolUseBlock(
+                    id=f"kimi_call_{tool_id.replace('.', '_').replace(':', '_')}",
+                    name=func_name,
+                    input=arguments,
+                )
+            )
             logger.info(
                 f"[KIMI_TOOL_PARSE] Extracted tool call: {func_name} "
                 f"with args: {list(arguments.keys())}"
@@ -403,10 +411,15 @@ def _parse_kimi_k2(text: str) -> tuple[str, list[ToolUseBlock]]:
 
     clean = re.sub(
         r"<<\|tool_calls_section_begin\|>>.*?<<\|tool_calls_section_end\|>>",
-        "", text, flags=re.DOTALL,
+        "",
+        text,
+        flags=re.DOTALL,
     ).strip()
     clean = re.sub(
-        r"<<\|tool_calls_section_begin\|>>.*$", "", clean, flags=re.DOTALL,
+        r"<<\|tool_calls_section_begin\|>>.*$",
+        "",
+        clean,
+        flags=re.DOTALL,
     ).strip()
     return clean, tool_calls
 
@@ -421,16 +434,20 @@ def _parse_kimi_k2(text: str) -> tuple[str, list[ToolUseBlock]]:
 # </tool_call>
 
 _FUNC_PARAM_COMPLETE_RE = re.compile(
-    r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL | re.IGNORECASE,
+    r"<tool_call>\s*(.*?)\s*</tool_call>",
+    re.DOTALL | re.IGNORECASE,
 )
 _FUNC_PARAM_INCOMPLETE_RE = re.compile(
-    r"<tool_call>\s*(.*?)$", re.DOTALL | re.IGNORECASE,
+    r"<tool_call>\s*(.*?)$",
+    re.DOTALL | re.IGNORECASE,
 )
 _FUNC_NAME_RE = re.compile(
-    r"<function=([^>]+)>", re.IGNORECASE,
+    r"<function=([^>]+)>",
+    re.IGNORECASE,
 )
 _FUNC_PARAM_RE = re.compile(
-    r"<parameter=([^>]+)>(.*?)</parameter>", re.DOTALL | re.IGNORECASE,
+    r"<parameter=([^>]+)>(.*?)</parameter>",
+    re.DOTALL | re.IGNORECASE,
 )
 
 
@@ -460,11 +477,13 @@ def _parse_function_param(text: str) -> tuple[str, list[ToolUseBlock]]:
             except (json.JSONDecodeError, ValueError):
                 params[key] = val
 
-        tool_calls.append(ToolUseBlock(
-            id=f"func_param_{uuid.uuid4().hex[:8]}",
-            name=tool_name,
-            input=params,
-        ))
+        tool_calls.append(
+            ToolUseBlock(
+                id=f"func_param_{uuid.uuid4().hex[:8]}",
+                name=tool_name,
+                input=params,
+            )
+        )
         logger.info(
             f"[FUNC_PARAM_PARSE] Extracted tool call: {tool_name} "
             f"with params: {list(params.keys())}"
@@ -478,10 +497,12 @@ def _parse_function_param(text: str) -> tuple[str, list[ToolUseBlock]]:
 # ── GLM 格式 ──────────────────────────────────────────
 
 _GLM_COMPLETE_RE = re.compile(
-    r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL | re.IGNORECASE,
+    r"<tool_call>\s*(.*?)\s*</tool_call>",
+    re.DOTALL | re.IGNORECASE,
 )
 _GLM_INCOMPLETE_RE = re.compile(
-    r"<tool_call>\s*(.*?)$", re.DOTALL | re.IGNORECASE,
+    r"<tool_call>\s*(.*?)$",
+    re.DOTALL | re.IGNORECASE,
 )
 _GLM_KV_RE = re.compile(
     r"<arg_key>\s*(.*?)\s*</arg_key>\s*<arg_value>\s*(.*?)\s*</arg_value>",
@@ -512,14 +533,15 @@ def _parse_glm(text: str) -> tuple[str, list[ToolUseBlock]]:
             except json.JSONDecodeError:
                 params[key] = val
 
-        tool_calls.append(ToolUseBlock(
-            id=f"glm_call_{uuid.uuid4().hex[:8]}",
-            name=tool_name,
-            input=params,
-        ))
+        tool_calls.append(
+            ToolUseBlock(
+                id=f"glm_call_{uuid.uuid4().hex[:8]}",
+                name=tool_name,
+                input=params,
+            )
+        )
         logger.info(
-            f"[GLM_TOOL_PARSE] Extracted tool call: {tool_name} "
-            f"with params: {list(params.keys())}"
+            f"[GLM_TOOL_PARSE] Extracted tool call: {tool_name} with params: {list(params.keys())}"
         )
 
     # 即使未提取到工具也清理标签，防止原始标签泄漏到用户界面
@@ -600,11 +622,7 @@ def _extract_tool_from_obj(obj: dict) -> tuple[str, dict] | None:
     if not name or not isinstance(name, str):
         return None
     args = (
-        obj.get("args")
-        or obj.get("arguments")
-        or obj.get("parameters")
-        or obj.get("input")
-        or {}
+        obj.get("args") or obj.get("arguments") or obj.get("parameters") or obj.get("input") or {}
     )
     return name, args if isinstance(args, dict) else {}
 
@@ -671,11 +689,13 @@ def _parse_tool_call_tags(text: str) -> tuple[str, list[ToolUseBlock]]:
         result = _parse_tool_call_tag_body(m.group(1))
         if result:
             name, args = result
-            tool_calls.append(ToolUseBlock(
-                id=f"tag_call_{uuid.uuid4().hex[:12]}",
-                name=name,
-                input=args,
-            ))
+            tool_calls.append(
+                ToolUseBlock(
+                    id=f"tag_call_{uuid.uuid4().hex[:12]}",
+                    name=name,
+                    input=args,
+                )
+            )
             spans_to_remove.append((m.start(), m.end()))
 
     if not tool_calls:
@@ -683,11 +703,13 @@ def _parse_tool_call_tags(text: str) -> tuple[str, list[ToolUseBlock]]:
             result = _parse_tool_call_tag_body(m.group(1))
             if result:
                 name, args = result
-                tool_calls.append(ToolUseBlock(
-                    id=f"tag_call_{uuid.uuid4().hex[:12]}",
-                    name=name,
-                    input=args,
-                ))
+                tool_calls.append(
+                    ToolUseBlock(
+                        id=f"tag_call_{uuid.uuid4().hex[:12]}",
+                        name=name,
+                        input=args,
+                    )
+                )
                 spans_to_remove.append((m.start(), m.end()))
 
     if not tool_calls:
@@ -848,6 +870,7 @@ def register_tool_names(names: Iterable[str]) -> None:
     """手动注册工具名到文本工具调用解析的白名单中。"""
     _KNOWN_TOOL_NAMES.update(names)
 
+
 _DOT_STYLE_RE = re.compile(r"\.([a-z][a-z0-9_]{2,})\s*\(")
 
 
@@ -921,15 +944,16 @@ def _parse_dot_style(text: str) -> tuple[str, list[ToolUseBlock]]:
             continue
         args_str = text[paren_start + 1 : paren_end]
         arguments = _parse_python_kwargs(args_str)
-        tool_calls.append(ToolUseBlock(
-            id=f"dot_{uuid.uuid4().hex[:12]}",
-            name=tool_name,
-            input=arguments,
-        ))
+        tool_calls.append(
+            ToolUseBlock(
+                id=f"dot_{uuid.uuid4().hex[:12]}",
+                name=tool_name,
+                input=arguments,
+            )
+        )
         spans_to_remove.append((m.start(), paren_end + 1))
         logger.info(
-            f"[DOT_TOOL_PARSE] Extracted tool call: {tool_name} "
-            f"with args: {list(arguments.keys())}"
+            f"[DOT_TOOL_PARSE] Extracted tool call: {tool_name} with args: {list(arguments.keys())}"
         )
 
     if not tool_calls:
@@ -992,11 +1016,13 @@ def _parse_bracket_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
         args_str = text[paren_start + 1 : paren_end]
         arguments = _parse_python_kwargs(args_str)
 
-        tool_calls.append(ToolUseBlock(
-            id=f"bracket_{uuid.uuid4().hex[:12]}",
-            name=tool_name,
-            input=arguments,
-        ))
+        tool_calls.append(
+            ToolUseBlock(
+                id=f"bracket_{uuid.uuid4().hex[:12]}",
+                name=tool_name,
+                input=arguments,
+            )
+        )
         spans_to_remove.append((m.start(), closing_bracket + 1))
         logger.info(
             f"[BRACKET_TOOL_PARSE] Extracted tool call: {tool_name} "
@@ -1097,11 +1123,13 @@ def _parse_fenced_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
         if not tool_name or tool_name not in _KNOWN_TOOL_NAMES or arguments is None:
             continue
 
-        tool_calls.append(ToolUseBlock(
-            id=f"fenced_{uuid.uuid4().hex[:12]}",
-            name=tool_name,
-            input=arguments,
-        ))
+        tool_calls.append(
+            ToolUseBlock(
+                id=f"fenced_{uuid.uuid4().hex[:12]}",
+                name=tool_name,
+                input=arguments,
+            )
+        )
         spans_to_remove.append((m.start(), m.end()))
         logger.info(
             f"[FENCED_TOOL_PARSE] Extracted tool call: {tool_name} "
@@ -1210,9 +1238,7 @@ def parse_text_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
             clean, tools = fmt.parse(clean)
             if tools:
                 all_tools.extend(tools)
-                logger.info(
-                    f"[TEXT_TOOL_PARSE] {fmt.name}: extracted {len(tools)} tool calls"
-                )
+                logger.info(f"[TEXT_TOOL_PARSE] {fmt.name}: extracted {len(tools)} tool calls")
     return clean, all_tools
 
 
@@ -1295,4 +1321,3 @@ def convert_tool_result_to_responses(call_id: str, content: str) -> dict:
         "call_id": call_id,
         "output": content,
     }
-

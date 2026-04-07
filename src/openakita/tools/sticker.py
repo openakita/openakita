@@ -35,7 +35,9 @@ MOOD_KEYWORDS = {
 class StickerEngine:
     """表情包引擎"""
 
-    INDEX_URL = "https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/chinesebqb_github.json"
+    INDEX_URL = (
+        "https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/chinesebqb_github.json"
+    )
     _MIRRORS = [
         "https://cdn.jsdelivr.net/gh/zhaoolee/ChineseBQB@master/",
         "https://raw.gitmirror.com/zhaoolee/ChineseBQB/master/",
@@ -272,7 +274,7 @@ class StickerEngine:
 
         urls_to_try = [url]
         if url.startswith(self._GITHUB_RAW_PREFIX):
-            relative = url[len(self._GITHUB_RAW_PREFIX):]
+            relative = url[len(self._GITHUB_RAW_PREFIX) :]
             for mirror in self._MIRRORS:
                 urls_to_try.append(mirror + relative)
 

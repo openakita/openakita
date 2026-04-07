@@ -34,6 +34,7 @@ class WecomOnboardError(Exception):
 
 def _get_plat_code() -> int:
     import sys
+
     return _PLAT_CODES.get(sys.platform, 3)
 
 
@@ -116,15 +117,11 @@ class WecomOnboard:
 
             status = result.get("status", "")
             if status in ("expired", "error"):
-                raise WecomOnboardError(
-                    f"扫码终止: {status} - {result.get('error', '')}"
-                )
+                raise WecomOnboardError(f"扫码终止: {status} - {result.get('error', '')}")
 
             await asyncio.sleep(interval)
 
-        raise WecomOnboardError(
-            f"轮询超时: {max_attempts} 次尝试后仍未完成扫码"
-        )
+        raise WecomOnboardError(f"轮询超时: {max_attempts} 次尝试后仍未完成扫码")
 
     async def _get(self, path: str, *, params: dict[str, str] | None = None) -> dict[str, Any]:
         """发送 GET 请求到企微 QR 配置端点"""

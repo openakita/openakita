@@ -37,6 +37,7 @@ if sys.platform == "win32":
     # 防止 emoji 等字符在打印时触发 GBK 编码异常
     try:
         import ctypes
+
         ctypes.windll.kernel32.SetConsoleOutputCP(65001)
         ctypes.windll.kernel32.SetConsoleCP(65001)
     except Exception:
@@ -56,6 +57,7 @@ if getattr(sys, "frozen", False):
 # 通过 subprocess 执行 `cmd /c ver` 触发阻塞（在某些环境中 cmd 子进程会卡死）。
 if sys.platform == "win32":
     import platform as _platform
+
     try:
         _wv = sys.getwindowsversion()
         _platform._uname_cache = _platform.uname_result(

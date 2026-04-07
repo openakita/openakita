@@ -49,6 +49,7 @@ def atomic_json_write(path: Path, data: Any, *, indent: int = 2) -> None:
 # Enhanced: atomic write with .bak backup + Windows PermissionError retry
 # ---------------------------------------------------------------------------
 
+
 def safe_write(
     path: Path, content: str, *, backup: bool = True, retries: int = 3, fsync: bool = False
 ) -> None:
@@ -89,7 +90,8 @@ def safe_write(
 
     logger.warning(
         "Atomic rename failed after %d retries (%s), falling back to direct write",
-        retries, last_err,
+        retries,
+        last_err,
     )
     path.write_text(content, encoding="utf-8")
     tmp.unlink(missing_ok=True)

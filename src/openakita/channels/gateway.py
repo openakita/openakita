@@ -36,9 +36,11 @@ def _notify_im_event(event: str, data: dict | None = None) -> None:
     """Fire-and-forget WS broadcast for IM events."""
     try:
         from openakita.api.routes.websocket import broadcast_event
+
         asyncio.ensure_future(broadcast_event(event, data))
     except Exception:
         pass
+
 
 from ..utils.errors import format_user_friendly_error as format_user_friendly_error  # re-export
 
@@ -557,7 +559,9 @@ class ThinkingCommandHandler:
         if text_lower.startswith("/thinking_depth "):
             depth = text_lower.split(None, 1)[1].strip()
             if depth not in self.VALID_DEPTHS:
-                return f"❌ 无效的思考深度: `{depth}`\n可选: `low`（低）| `medium`（中）| `high`（高）"
+                return (
+                    f"❌ 无效的思考深度: `{depth}`\n可选: `low`（低）| `medium`（中）| `high`（高）"
+                )
             session.set_metadata("thinking_depth", depth)
             return f"✅ 思考深度已设置为: **{self.DEPTH_LABELS[depth]}**"
 
@@ -668,9 +672,7 @@ class RestartCommandHandler:
         self._pending: dict[str, RestartSession] = {}
         self._timeout_tasks: dict[str, asyncio.Task] = {}
         # 由 MessageGateway 注入
-        self._send_feedback_fn: Callable[
-            [UnifiedMessage, str], Awaitable[None]
-        ] | None = None
+        self._send_feedback_fn: Callable[[UnifiedMessage, str], Awaitable[None]] | None = None
         self._shutdown_event: asyncio.Event | None = None
 
     # ---------- 命令识别 ----------
@@ -701,7 +703,9 @@ class RestartCommandHandler:
     # ---------- 核心流程 ----------
 
     async def handle_restart_command(
-        self, session_key: str, message: UnifiedMessage,
+        self,
+        session_key: str,
+        message: UnifiedMessage,
     ) -> None:
         """处理 /restart 命令：生成确认码并发送给用户"""
         if session_key in self._pending:
@@ -740,7 +744,9 @@ class RestartCommandHandler:
         )
 
     async def handle_pending_input(
-        self, session_key: str, message: UnifiedMessage,
+        self,
+        session_key: str,
+        message: UnifiedMessage,
     ) -> bool:
         """
         处理待确认会话中的用户输入。
@@ -862,9 +868,11 @@ class MessageGateway:
         self.stt_client = stt_client
 
         from .bot_config import BotConfigStore
+
         self.bot_config = BotConfigStore()
 
         from .chat_aliases import ChatAliasStore
+
         self.chat_aliases = ChatAliasStore()
 
         # 注册的适配器 {channel_name: adapter}
@@ -939,7 +947,9 @@ class MessageGateway:
         self._progress_buffers: dict[str, list[str]] = {}  # session_key -> [lines]
         self._progress_flush_tasks: dict[str, asyncio.Task] = {}  # session_key -> flush task
         self._progress_throttle_seconds: float = 2.0  # 默认节流窗口
-        self._progress_card_accum: dict[str, list[str]] = {}  # session_key -> accumulated progress lines (for card PATCH)
+        self._progress_card_accum: dict[
+            str, list[str]
+        ] = {}  # session_key -> accumulated progress lines (for card PATCH)
 
         # ==================== 群聊响应策略 ====================
         self._smart_throttle = SmartModeThrottle()
@@ -966,7 +976,11 @@ class MessageGateway:
                     f"App ID: {info['app_id']}",
                     f"Connected: {'Yes' if info['connected'] else 'No'}",
                     f"Streaming: {'ON' if info['streaming_enabled'] else 'OFF'}"
-                    + (f" (group: {'ON' if info['group_streaming'] else 'OFF'})" if info['streaming_enabled'] else ""),
+                    + (
+                        f" (group: {'ON' if info['group_streaming'] else 'OFF'})"
+                        if info["streaming_enabled"]
+                        else ""
+                    ),
                     f"Group mode: {info['group_response_mode']}",
                 ]
                 return "\n".join(lines)
@@ -1012,18 +1026,22 @@ class MessageGateway:
             # Deploy system presets on first enable
             try:
                 from openakita.agents.presets import ensure_presets_on_mode_enable
+
                 ensure_presets_on_mode_enable(settings.data_dir / "agents")
             except Exception as e:
                 logger.warning(f"[Gateway] Failed to deploy presets: {e}")
             # Initialize orchestrator — rollback on failure
             try:
                 from openakita.main import _init_orchestrator
+
                 await _init_orchestrator()
             except Exception as e:
                 logger.error(f"[Gateway] Failed to init orchestrator, rolling back: {e}")
                 settings.multi_agent_enabled = False
                 runtime_state.save()
-                return f"❌ 多Agent模式开启失败（Orchestrator 初始化出错: {e}）\n已回滚到单Agent模式。"
+                return (
+                    f"❌ 多Agent模式开启失败（Orchestrator 初始化出错: {e}）\n已回滚到单Agent模式。"
+                )
             return "✅ 已切换到 **多Agent模式 (Beta)**\n新消息将通过多Agent系统处理。"
 
         if arg in OFF_ARGS:
@@ -1055,9 +1073,7 @@ class MessageGateway:
             return True
         return False
 
-    async def _handle_agent_command(
-        self, message: UnifiedMessage, user_text: str
-    ) -> str | None:
+    async def _handle_agent_command(self, message: UnifiedMessage, user_text: str) -> str | None:
         """
         处理多Agent相关命令。仅当 multi_agent_enabled 时执行；否则返回提示。
 
@@ -1139,11 +1155,13 @@ class MessageGateway:
         if old_id.lower() == agent_id:
             return f"ℹ️ 当前已是 **{p.icon} {p.name}**"
 
-        ctx.agent_switch_history.append({
-            "from": old_id,
-            "to": p.id,
-            "at": datetime.now().isoformat(),
-        })
+        ctx.agent_switch_history.append(
+            {
+                "from": old_id,
+                "to": p.id,
+                "at": datetime.now().isoformat(),
+            }
+        )
         ctx.agent_profile_id = p.id
         self.session_manager.mark_dirty()
         logger.info(f"[IM] Agent switched: {old_id!r} -> {agent_id!r} for {session.session_key}")
@@ -1180,19 +1198,23 @@ class MessageGateway:
         ]
 
         if settings.multi_agent_enabled:
-            lines.extend([
-                "",
-                "**多Agent:**",
-                "  `/切换` / `/switch` — 列出或切换 Agent",
-                "  `/状态` / `/status` — 查看当前 Agent 信息",
-                "  `/重置` / `/agent_reset` — 重置为默认 Agent",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "**多Agent:**",
+                    "  `/切换` / `/switch` — 列出或切换 Agent",
+                    "  `/状态` / `/status` — 查看当前 Agent 信息",
+                    "  `/重置` / `/agent_reset` — 重置为默认 Agent",
+                ]
+            )
 
-        lines.extend([
-            "",
-            "**系统:**",
-            "  `/restart` / `/重启` — 重启服务（需确认）",
-        ])
+        lines.extend(
+            [
+                "",
+                "**系统:**",
+                "  `/restart` / `/重启` — 重启服务（需确认）",
+            ]
+        )
 
         return "\n".join(lines)
 
@@ -1218,11 +1240,7 @@ class MessageGateway:
         p = profile_map.get(current_id.lower())
 
         if p:
-            return (
-                f"🤖 **当前 Agent**\n\n"
-                f"**{p.icon} {p.name}** (`{p.id}`)\n"
-                f"{p.description}"
-            )
+            return f"🤖 **当前 Agent**\n\n**{p.icon} {p.name}** (`{p.id}`)\n{p.description}"
         return f"🤖 **当前 Agent**\n\nID: `{current_id}`"
 
     def _handle_agent_reset(self, session: Session) -> str:
@@ -1237,11 +1255,13 @@ class MessageGateway:
             label = "默认 Agent" if reset_target == "default" else f"**{reset_target}**"
             return f"ℹ️ 当前已是{label}"
 
-        ctx.agent_switch_history.append({
-            "from": old_id,
-            "to": reset_target,
-            "at": datetime.now().isoformat(),
-        })
+        ctx.agent_switch_history.append(
+            {
+                "from": old_id,
+                "to": reset_target,
+                "at": datetime.now().isoformat(),
+            }
+        )
         ctx.agent_profile_id = reset_target
         self.session_manager.mark_dirty()
         logger.info(f"[IM] Agent reset to {reset_target} for {session.session_key}")
@@ -1269,10 +1289,7 @@ class MessageGateway:
         if bot_agent != "default" and not session.context.agent_switch_history:
             session.context.agent_profile_id = bot_agent
             self.session_manager.mark_dirty()
-            logger.info(
-                f"[IM] Applied bot default agent: {bot_agent} "
-                f"for {session.session_key}"
-            )
+            logger.info(f"[IM] Applied bot default agent: {bot_agent} for {session.session_key}")
 
     # ==================== 自然语言意图检测 ====================
 
@@ -1335,6 +1352,7 @@ class MessageGateway:
             except ValueError:
                 pass
         from ..config import settings
+
         raw = settings.group_response_mode
         try:
             return GroupResponseMode(raw)
@@ -1348,6 +1366,7 @@ class MessageGateway:
         if per_bot:
             return set(per_bot) if not isinstance(per_bot, set) else per_bot
         from ..config import settings
+
         raw = getattr(settings, "group_allowlist", None)
         if raw:
             return set(raw) if not isinstance(raw, set) else raw
@@ -1356,7 +1375,10 @@ class MessageGateway:
     # ==================== 群聊上下文缓冲区方法 ====================
 
     def _buffer_group_context(
-        self, message: "UnifiedMessage", *, text: str | None = None,
+        self,
+        message: "UnifiedMessage",
+        *,
+        text: str | None = None,
     ) -> None:
         """将被过滤的群聊消息缓存到上下文缓冲区。
 
@@ -1379,15 +1401,21 @@ class MessageGateway:
             return
 
         sender = (message.metadata or {}).get("sender_name", message.user_id or "")
-        buf.append({
-            "ts": now,
-            "user": sender,
-            "user_id": message.user_id,
-            "text": display[:500],
-        })
+        buf.append(
+            {
+                "ts": now,
+                "user": sender,
+                "user_id": message.user_id,
+                "text": display[:500],
+            }
+        )
 
     def _get_group_context(
-        self, channel: str, chat_id: str, *, max_items: int = 10,
+        self,
+        channel: str,
+        chat_id: str,
+        *,
+        max_items: int = 10,
     ) -> list[dict]:
         """获取群聊上下文缓冲区中的近期消息（已过期的自动淘汰）。"""
         buf_key = f"{channel}:{chat_id}"
@@ -1427,6 +1455,7 @@ class MessageGateway:
         仅当适配器声明 ``add_reaction`` 能力时执行。
         """
         import os
+
         if os.environ.get("SMART_REACTION_ENABLED", "").lower() not in ("1", "true", "yes"):
             return
         adapter = self._adapters.get(message.channel)
@@ -1444,6 +1473,7 @@ class MessageGateway:
         """Load persisted group policy from JSON and apply to adapters."""
         import json
         from pathlib import Path
+
         policy_path = Path("data/sessions/group_policy.json")
         if not policy_path.exists():
             return
@@ -1492,11 +1522,14 @@ class MessageGateway:
 
         self._apply_persisted_group_policy()
 
-        _notify_im_event("im:channel_status", {
-            "started": started,
-            "failed": failed,
-            "failed_reasons": failed_reasons,
-        })
+        _notify_im_event(
+            "im:channel_status",
+            {
+                "started": started,
+                "failed": failed,
+                "failed_reasons": failed_reasons,
+            },
+        )
 
         # 启动消息处理循环
         self._processing_task = asyncio.create_task(self._process_loop())
@@ -1509,9 +1542,7 @@ class MessageGateway:
                 f"MessageGateway started with {len(started)}/{len(self._adapters)} adapters"
                 f" (failed: {', '.join(failed)})"
             )
-            self._retry_failed_task = asyncio.create_task(
-                self._retry_failed_adapters_loop()
-            )
+            self._retry_failed_task = asyncio.create_task(self._retry_failed_adapters_loop())
         else:
             logger.info(f"MessageGateway started with {len(started)} adapters")
 
@@ -1539,11 +1570,14 @@ class MessageGateway:
         if adapter:
             adapter._running = False
 
-        _notify_im_event("im:channel_status", {
-            "started": list(self._started_adapters),
-            "failed": list(self._failed_adapters),
-            "failed_reasons": dict(self._failed_adapter_reasons),
-        })
+        _notify_im_event(
+            "im:channel_status",
+            {
+                "started": list(self._started_adapters),
+                "failed": list(self._failed_adapters),
+                "failed_reasons": dict(self._failed_adapter_reasons),
+            },
+        )
         logger.warning(f"Adapter {name} reported fatal failure: {reason}")
 
     async def _retry_failed_adapters_loop(self) -> None:
@@ -1590,11 +1624,14 @@ class MessageGateway:
             if recovered:
                 stale_rounds = 0
                 delay = _BACKOFF_BASE
-                _notify_im_event("im:channel_status", {
-                    "started": list(self._started_adapters),
-                    "failed": list(self._failed_adapters),
-                    "failed_reasons": dict(self._failed_adapter_reasons),
-                })
+                _notify_im_event(
+                    "im:channel_status",
+                    {
+                        "started": list(self._started_adapters),
+                        "failed": list(self._failed_adapters),
+                        "failed_reasons": dict(self._failed_adapter_reasons),
+                    },
+                )
                 logger.info(
                     f"[RetryAdapter] Recovered adapters: {recovered}. "
                     f"Still failing: {list(self._failed_adapters) or 'none'}"
@@ -1632,6 +1669,7 @@ class MessageGateway:
             logger.info("ffmpeg auto-configured via static-ffmpeg")
         except ImportError as e:
             from openakita.tools._import_helper import import_or_hint
+
             hint = import_or_hint("static_ffmpeg")
             logger.warning(f"ffmpeg 不可用: {hint}")
             logger.warning(f"static_ffmpeg ImportError 详情: {e}", exc_info=True)
@@ -1663,21 +1701,31 @@ class MessageGateway:
             with tempfile.TemporaryDirectory() as tmpdir:
                 output_pattern = str(Path(tmpdir) / "frame_%03d.jpg")
                 cmd = [
-                    "ffmpeg", "-i", video_path,
-                    "-vf", f"fps=1/{interval_seconds}",
-                    "-frames:v", str(max_frames),
-                    "-q:v", "2",
-                    "-y", output_pattern,
+                    "ffmpeg",
+                    "-i",
+                    video_path,
+                    "-vf",
+                    f"fps=1/{interval_seconds}",
+                    "-frames:v",
+                    str(max_frames),
+                    "-q:v",
+                    "2",
+                    "-y",
+                    output_pattern,
                 ]
                 import subprocess
                 import sys as _sys
+
                 try:
                     _kw: dict = {}
                     if _sys.platform == "win32":
                         _kw["creationflags"] = subprocess.CREATE_NO_WINDOW
                     subprocess.run(
-                        cmd, capture_output=True, timeout=60,
-                        check=False, **_kw,
+                        cmd,
+                        capture_output=True,
+                        timeout=60,
+                        check=False,
+                        **_kw,
                     )
                 except Exception as e:
                     logger.error(f"ffmpeg keyframe extraction failed: {e}")
@@ -1706,6 +1754,7 @@ class MessageGateway:
         if "whisper" not in sys.modules:
             try:
                 from openakita.runtime_env import inject_module_paths_runtime
+
                 inject_module_paths_runtime()
             except Exception:
                 pass
@@ -1754,6 +1803,7 @@ class MessageGateway:
 
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
+
             hint = import_or_hint("whisper")
             logger.warning(f"Whisper 不可用（本进程内不再重试）: {hint}")
             self._whisper_unavailable = True
@@ -1910,10 +1960,7 @@ class MessageGateway:
             cleaned += 1
 
         # 清理 ModelCommandHandler 中过期的切换会话
-        stale = [
-            k for k, s in self._model_cmd_handler._switch_sessions.items()
-            if s.is_expired
-        ]
+        stale = [k for k, s in self._model_cmd_handler._switch_sessions.items() if s.is_expired]
         for k in stale:
             del self._model_cmd_handler._switch_sessions[k]
             cleaned += 1
@@ -2004,14 +2051,14 @@ class MessageGateway:
         - INSERT: 将用户消息注入任务上下文，让 LLM 决策如何处理
         """
         if not self._accepting:
-            logger.debug(f"[Shutdown] Message rejected (drain mode): {message.channel}/{message.user_id}")
+            logger.debug(
+                f"[Shutdown] Message rejected (drain mode): {message.channel}/{message.user_id}"
+            )
             return
 
         if self._plugin_hooks:
             try:
-                await self._plugin_hooks.dispatch(
-                    "on_message_received", message=message
-                )
+                await self._plugin_hooks.dispatch("on_message_received", message=message)
             except Exception as e:
                 logger.debug(f"on_message_received hook error: {e}")
 
@@ -2023,7 +2070,8 @@ class MessageGateway:
         # 不经过消息队列、不进入 Agent、不污染会话上下文。
         if self._restart_cmd_handler.has_pending_session(session_key):
             consumed = await self._restart_cmd_handler.handle_pending_input(
-                session_key, message,
+                session_key,
+                message,
             )
             if consumed:
                 return
@@ -2046,9 +2094,14 @@ class MessageGateway:
 
                 # 群聊响应模式过滤（防止未 @ 的群消息通过中断路径注入上下文）
                 if message.chat_type == "group" and not message.is_direct_message:
-                    _irq_mode = self._get_group_response_mode(message.channel, message.chat_id, message.user_id)
+                    _irq_mode = self._get_group_response_mode(
+                        message.channel, message.chat_id, message.user_id
+                    )
                     if _irq_mode == GroupResponseMode.MENTION_ONLY and not message.is_mentioned:
-                        _is_stop_or_skip = self.agent_handler and self.agent_handler.classify_interrupt(user_text) in ("stop", "skip")
+                        _is_stop_or_skip = (
+                            self.agent_handler
+                            and self.agent_handler.classify_interrupt(user_text) in ("stop", "skip")
+                        )
                         if not _is_stop_or_skip:
                             with contextlib.suppress(Exception):
                                 self._buffer_group_context(message, text=user_text)
@@ -2060,7 +2113,9 @@ class MessageGateway:
 
                 # 会话隔离校验：只有当 agent 正在处理本会话的任务时，
                 # cancel/skip/insert 操作才应生效（防止 A 用户误杀 B 用户的任务）
-                _agent_ref = getattr(self.agent_handler, "_agent_ref", None) if self.agent_handler else None
+                _agent_ref = (
+                    getattr(self.agent_handler, "_agent_ref", None) if self.agent_handler else None
+                )
                 _resolved_sid = self._resolve_task_session_id(session_key, _agent_ref)
                 _session_matches = _resolved_sid is not None
 
@@ -2093,7 +2148,8 @@ class MessageGateway:
                         await self._send_feedback(message, "✅ 收到，正在停止当前任务…")
                     elif msg_type == "skip":
                         ok = self.agent_handler.skip_current_step(
-                            f"用户发送跳过指令: {user_text}", session_id=_resolved_sid,
+                            f"用户发送跳过指令: {user_text}",
+                            session_id=_resolved_sid,
                         )
                         if ok:
                             await self._send_feedback(message, "⏭️ 收到，正在跳过当前步骤…")
@@ -2120,12 +2176,16 @@ class MessageGateway:
                                 is_interrupt=True,
                             )
                             self.session_manager.mark_dirty()
-                            _notify_im_event("im:new_message", {
-                                "channel": message.channel, "role": "user",
-                                "session_id": _ins_session.session_key,
-                                "chat_type": _ins_session.chat_type,
-                                "display_name": _ins_session.display_name,
-                            })
+                            _notify_im_event(
+                                "im:new_message",
+                                {
+                                    "channel": message.channel,
+                                    "role": "user",
+                                    "session_id": _ins_session.session_key,
+                                    "chat_type": _ins_session.chat_type,
+                                    "display_name": _ins_session.display_name,
+                                },
+                            )
 
                         # --- 中断路径：下载媒体/文件并增强注入文本 ---
                         _insert_text = user_text
@@ -2177,12 +2237,17 @@ class MessageGateway:
 
                         try:
                             ok = await self.agent_handler.insert_user_message(
-                                _insert_text, session_id=_resolved_sid,
+                                _insert_text,
+                                session_id=_resolved_sid,
                             )
                             if ok:
-                                await self._send_feedback(message, "💬 收到，已将消息注入当前任务。")
+                                await self._send_feedback(
+                                    message, "💬 收到，已将消息注入当前任务。"
+                                )
                             else:
-                                await self._send_feedback(message, "⚠️ 当前没有正在执行的任务，消息未能注入。")
+                                await self._send_feedback(
+                                    message, "⚠️ 当前没有正在执行的任务，消息未能注入。"
+                                )
                         except Exception as e:
                             logger.error(f"[Interrupt] INSERT failed for {session_key}: {e}")
                             await self._send_feedback(message, "❌ 消息注入失败，请稍后再试。")
@@ -2210,18 +2275,38 @@ class MessageGateway:
 
     # ==================== 中断快路径 ====================
 
-    _ABORT_TRIGGERS = frozenset({
-        "停止", "停", "stop", "停止执行", "取消", "取消任务",
-        "算了", "不用了", "别做了", "停下", "halt", "abort", "cancel",
-        "やめて", "중지",
-        "/stop", "/停止", "/取消", "/cancel", "/abort",
-        "kill", "kill all",
-    })
+    _ABORT_TRIGGERS = frozenset(
+        {
+            "停止",
+            "停",
+            "stop",
+            "停止执行",
+            "取消",
+            "取消任务",
+            "算了",
+            "不用了",
+            "别做了",
+            "停下",
+            "halt",
+            "abort",
+            "cancel",
+            "やめて",
+            "중지",
+            "/stop",
+            "/停止",
+            "/取消",
+            "/cancel",
+            "/abort",
+            "kill",
+            "kill all",
+        }
+    )
 
     @classmethod
     def _normalize_abort_text(cls, text: str) -> str:
         """Strip @mentions and whitespace for abort detection"""
         import re
+
         return re.sub(r"@\S+\s*", "", text).strip().lower()
 
     @classmethod
@@ -2231,7 +2316,10 @@ class MessageGateway:
         return normalized in cls._ABORT_TRIGGERS
 
     async def _cancel_session(
-        self, session_key: str, message: UnifiedMessage, user_text: str,
+        self,
+        session_key: str,
+        message: UnifiedMessage,
+        user_text: str,
     ) -> None:
         """Fast-path: cancel the running task for a session and send feedback"""
         _agent_ref = getattr(self.agent_handler, "_agent_ref", None) if self.agent_handler else None
@@ -2253,9 +2341,7 @@ class MessageGateway:
         if task and not task.done():
             task.cancel()
 
-        logger.info(
-            f"[Abort-FastPath] Session {session_key} cancelled: {user_text}"
-        )
+        logger.info(f"[Abort-FastPath] Session {session_key} cancelled: {user_text}")
         await self._send_feedback(message, "✅ 收到，正在停止当前任务…")
 
     # ==================== 中断机制 ====================
@@ -2326,9 +2412,8 @@ class MessageGateway:
 
         def _match_key(key: str) -> bool:
             base_matched = (
-                (key.startswith(prefix_underscore) and chat_id_seg_underscore in key)
-                or (key.startswith(prefix_colon) and chat_id_seg_colon in key)
-            )
+                key.startswith(prefix_underscore) and chat_id_seg_underscore in key
+            ) or (key.startswith(prefix_colon) and chat_id_seg_colon in key)
             if not base_matched:
                 return False
             if thread_id:
@@ -2466,7 +2551,7 @@ class MessageGateway:
 
         logger.info(
             f"[IM] <<< 收到消息: channel={message.channel}, user={message.user_id}, "
-            f"text=\"{user_text[:100]}\""
+            f'text="{user_text[:100]}"'
         )
 
         typing_task: asyncio.Task | None = None
@@ -2474,7 +2559,9 @@ class MessageGateway:
         try:
             # ==================== 群聊响应过滤 ====================
             if message.chat_type == "group" and not message.is_direct_message:
-                mode = self._get_group_response_mode(message.channel, message.chat_id, message.user_id)
+                mode = self._get_group_response_mode(
+                    message.channel, message.chat_id, message.user_id
+                )
 
                 if mode == GroupResponseMode.DISABLED:
                     logger.debug(f"[IM] Group message ignored (disabled): {user_text[:50]}")
@@ -2482,6 +2569,7 @@ class MessageGateway:
 
                 if mode == GroupResponseMode.ALLOWLIST:
                     from .policy import GroupPolicyConfig, GroupPolicyType, check_group_policy
+
                     gp_config = GroupPolicyConfig(
                         policy=GroupPolicyType.ALLOWLIST,
                         allowlist=self._get_group_allowlist(message.channel),
@@ -2497,7 +2585,9 @@ class MessageGateway:
                 if mode == GroupResponseMode.MENTION_ONLY and not message.is_mentioned:
                     with contextlib.suppress(Exception):
                         self._buffer_group_context(message, text=user_text)
-                    logger.debug(f"[IM] Group message ignored (mention_only), buffered: {user_text[:50]}")
+                    logger.debug(
+                        f"[IM] Group message ignored (mention_only), buffered: {user_text[:50]}"
+                    )
                     return
 
                 if mode == GroupResponseMode.SMART and not message.is_mentioned:
@@ -2506,7 +2596,9 @@ class MessageGateway:
                             self._buffer_group_context(message, text=user_text)
                         # Smart 模式过滤时，尝试添加 emoji 反应表示"已收到"
                         await self._try_smart_reaction(message)
-                        logger.debug(f"[IM] Group message throttled (smart), buffered: {user_text[:50]}")
+                        logger.debug(
+                            f"[IM] Group message throttled (smart), buffered: {user_text[:50]}"
+                        )
                         return
                     self._smart_throttle.record_process(message.chat_id)
                     message.metadata["group_smart_mode"] = True
@@ -2542,7 +2634,9 @@ class MessageGateway:
                     thread_id=message.thread_id,
                 )
                 response_text = await self._thinking_cmd_handler.handle_command(
-                    session_key, user_text, _thinking_session,
+                    session_key,
+                    user_text,
+                    _thinking_session,
                 )
                 if response_text:
                     await self._send_response(message, response_text)
@@ -2556,7 +2650,10 @@ class MessageGateway:
                 return
 
             # /feishu 命令族（仅飞书渠道生效）
-            if _cmd_lower.startswith("/feishu") and message.channel.split(":")[0] in ("feishu", "lark"):
+            if _cmd_lower.startswith("/feishu") and message.channel.split(":")[0] in (
+                "feishu",
+                "lark",
+            ):
                 feishu_resp = await self._handle_feishu_command(_cmd_lower, message)
                 if feishu_resp is not None:
                     await self._send_response(message, feishu_resp)
@@ -2590,9 +2687,7 @@ class MessageGateway:
                         user_id=message.user_id,
                         thread_id=message.thread_id,
                     )
-                    resp = await self._handle_agent_switch(
-                        _switch_session, f"/切换 {arg}"
-                    )
+                    resp = await self._handle_agent_switch(_switch_session, f"/切换 {arg}")
                 else:
                     resp = None
                 if resp:
@@ -2619,15 +2714,18 @@ class MessageGateway:
                     self.session_manager.mark_dirty()
                     # 同步清理 SQLite 中的 conversation_turns，防止 getChatHistory 兜底加载旧数据
                     try:
-                        _agent_ref = getattr(self.agent_handler, "_agent_ref", None) if self.agent_handler else None
+                        _agent_ref = (
+                            getattr(self.agent_handler, "_agent_ref", None)
+                            if self.agent_handler
+                            else None
+                        )
                         _mm = getattr(_agent_ref, "memory_manager", None) if _agent_ref else None
                         if _mm and hasattr(_mm, "store"):
                             _mm.store.delete_turns_for_session(_reset_session.id)
                     except Exception as _e:
                         logger.warning(f"[IM] Failed to clear SQLite turns on reset: {_e}")
                     logger.info(
-                        f"[IM] Context reset for {session_key}: "
-                        f"cleared {_old_count} messages"
+                        f"[IM] Context reset for {session_key}: cleared {_old_count} messages"
                     )
                 await self._send_response(
                     message, "好的，已开启新话题。之前的对话上下文已清除，请说说你的新需求吧~"
@@ -2637,7 +2735,9 @@ class MessageGateway:
             # 停止/跳过指令兜底（非处理中状态下收到这些指令，直接返回提示）
             _IDLE_STOP_CMDS = {"/stop", "/停止", "/cancel", "/abort", "/skip", "/跳过"}
             if _cmd_lower in _IDLE_STOP_CMDS:
-                await self._send_response(message, "当前没有正在执行的任务。发送 `/help` 查看可用指令。")
+                await self._send_response(
+                    message, "当前没有正在执行的任务。发送 `/help` 查看可用指令。"
+                )
                 return
 
             # ==================== 正常消息处理流程 ====================
@@ -2657,7 +2757,9 @@ class MessageGateway:
                 try:
                     message = await hook(message)
                 except Exception as hook_err:
-                    logger.warning(f"[Gateway] Pre-process hook {hook.__qualname__} failed: {hook_err}")
+                    logger.warning(
+                        f"[Gateway] Pre-process hook {hook.__qualname__} failed: {hook_err}"
+                    )
 
             # 3. 媒体预处理（下载图片、语音转文字）
             await self._preprocess_media(message)
@@ -2751,9 +2853,8 @@ class MessageGateway:
                         else:
                             event_lines.append(f"- 事件: {evt_type}")
                     if event_lines:
-                        event_text = (
-                            "[系统提示] 以下是最近发生的重要事件，请注意：\n"
-                            + "\n".join(event_lines)
+                        event_text = "[系统提示] 以下是最近发生的重要事件，请注意：\n" + "\n".join(
+                            event_lines
                         )
                         session.context.add_message("system", event_text)
 
@@ -2762,7 +2863,9 @@ class MessageGateway:
             if message.chat_type == "group" and not message.is_direct_message:
                 try:
                     _ctx_items = self._get_group_context(
-                        message.channel, message.chat_id, max_items=10,
+                        message.channel,
+                        message.chat_id,
+                        max_items=10,
                     )
                     if _ctx_items:
                         _ctx_text = self._format_group_context(_ctx_items)
@@ -2785,12 +2888,16 @@ class MessageGateway:
                 channel_message_id=message.channel_message_id,
             )
             self.session_manager.mark_dirty()  # 触发保存
-            _notify_im_event("im:new_message", {
-                "channel": message.channel, "role": "user",
-                "session_id": session.session_key,
-                "chat_type": session.chat_type,
-                "display_name": session.display_name,
-            })
+            _notify_im_event(
+                "im:new_message",
+                {
+                    "channel": message.channel,
+                    "role": "user",
+                    "session_id": session.session_key,
+                    "chat_type": session.chat_type,
+                    "display_name": session.display_name,
+                },
+            )
 
             # 6. 调用 Agent 处理（支持中断检查 + 流式输出）
             response_text, streamed_ok = await self._call_agent(session, message)
@@ -2800,7 +2907,9 @@ class MessageGateway:
                 try:
                     response_text = await hook(message, response_text)
                 except Exception as hook_err:
-                    logger.warning(f"[Gateway] Post-process hook {hook.__qualname__} failed: {hook_err}")
+                    logger.warning(
+                        f"[Gateway] Post-process hook {hook.__qualname__} failed: {hook_err}"
+                    )
 
             # 7.5 空回复保护
             if not response_text or not response_text.strip():
@@ -2836,18 +2945,22 @@ class MessageGateway:
             session.add_message(role="assistant", content=response_text, **_msg_meta)
             self.session_manager.mark_dirty()
             self.session_manager.flush()
-            _notify_im_event("im:new_message", {
-                "channel": message.channel, "role": "assistant",
-                "session_id": session.session_key,
-                "chat_type": session.chat_type,
-                "display_name": session.display_name,
-            })
+            _notify_im_event(
+                "im:new_message",
+                {
+                    "channel": message.channel,
+                    "role": "assistant",
+                    "session_id": session.session_key,
+                    "chat_type": session.chat_type,
+                    "display_name": session.display_name,
+                },
+            )
 
             # 9. 发送响应（流式已通过卡片 PATCH 送达则跳过）
             logger.info(
                 f"[IM] >>> 回复完成: channel={message.channel}, user={message.user_id}, "
                 f"len={len(response_text)}, streamed={streamed_ok}, "
-                f"preview=\"{response_text[:80]}\""
+                f'preview="{response_text[:80]}"'
             )
             if not streamed_ok:
                 # For adapters that render <think> natively, extract ALL
@@ -2874,11 +2987,13 @@ class MessageGateway:
                     _cp = session.get_metadata("chain_push")
                     if _cp is None:
                         from ..config import settings as _s
+
                         _cp = _s.im_chain_push
                     if _cp and _adapter:
                         with contextlib.suppress(Exception):
                             await _adapter.clear_typing(
-                                message.chat_id, thread_id=message.thread_id,
+                                message.chat_id,
+                                thread_id=message.thread_id,
                             )
 
                 self._progress_card_accum.pop(session.session_key, None)
@@ -2920,9 +3035,12 @@ class MessageGateway:
             if _adapter:
                 with contextlib.suppress(Exception):
                     await _adapter.clear_typing(message.chat_id, thread_id=message.thread_id)
-                if hasattr(_adapter, "_streaming_buffers") and hasattr(_adapter, "_make_session_key"):
+                if hasattr(_adapter, "_streaming_buffers") and hasattr(
+                    _adapter, "_make_session_key"
+                ):
                     _adapter._streaming_buffers.pop(
-                        _adapter._make_session_key(message.chat_id, message.thread_id), None,
+                        _adapter._make_session_key(message.chat_id, message.thread_id),
+                        None,
                     )
             # 标记会话处理完成
             async with self._interrupt_lock:
@@ -2967,7 +3085,9 @@ class MessageGateway:
 
                 # 调用 Agent 处理（typing 由外层 typing_task 覆盖，中断不走流式）
                 response_text, _ = await self._call_agent(
-                    session, interrupt_msg, allow_streaming=False,
+                    session,
+                    interrupt_msg,
+                    allow_streaming=False,
                 )
 
                 # 后处理钩子
@@ -2975,7 +3095,9 @@ class MessageGateway:
                     try:
                         response_text = await hook(interrupt_msg, response_text)
                     except Exception as hook_err:
-                        logger.warning(f"[Gateway] Post-process hook {hook.__qualname__} failed: {hook_err}")
+                        logger.warning(
+                            f"[Gateway] Post-process hook {hook.__qualname__} failed: {hook_err}"
+                        )
 
                 # 记录响应（含思维链摘要 + 工具执行摘要）
                 _int_chain = None
@@ -3113,26 +3235,28 @@ class MessageGateway:
                 suffix = Path(fil.local_path).suffix.lower()
                 _fname = fil.filename or Path(fil.local_path).name
                 if suffix == ".pdf" or "pdf" in mime:
-                    file_data = base64.b64encode(
-                        Path(fil.local_path).read_bytes()
-                    ).decode("utf-8")
-                    files_data.append({
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "application/pdf",
-                            "data": file_data,
-                        },
-                        "filename": _fname,
-                        "local_path": fil.local_path,
-                    })
+                    file_data = base64.b64encode(Path(fil.local_path).read_bytes()).decode("utf-8")
+                    files_data.append(
+                        {
+                            "type": "document",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "application/pdf",
+                                "data": file_data,
+                            },
+                            "filename": _fname,
+                            "local_path": fil.local_path,
+                        }
+                    )
                 else:
-                    files_data.append({
-                        "type": "file",
-                        "filename": _fname,
-                        "local_path": fil.local_path,
-                        "mime_type": mime or suffix,
-                    })
+                    files_data.append(
+                        {
+                            "type": "file",
+                            "filename": _fname,
+                            "local_path": fil.local_path,
+                            "mime_type": mime or suffix,
+                        }
+                    )
             except Exception as e:
                 logger.warning(f"[Interrupt] _build_pending_files failed for {fil.local_path}: {e}")
         return files_data
@@ -3211,7 +3335,9 @@ class MessageGateway:
         if adapter and hasattr(adapter, "send_text"):
             try:
                 _meta = {
-                    "is_group": (message.metadata or {}).get("is_group", message.chat_type == "group"),
+                    "is_group": (message.metadata or {}).get(
+                        "is_group", message.chat_type == "group"
+                    ),
                     "_interim": True,
                 }
                 await adapter.send_text(
@@ -3223,7 +3349,9 @@ class MessageGateway:
             except Exception as e:
                 logger.warning(f"[Feedback] Failed to send feedback to {message.channel}: {e}")
 
-    async def _call_agent_with_typing(self, session: Session, message: UnifiedMessage) -> tuple[str, bool]:
+    async def _call_agent_with_typing(
+        self, session: Session, message: UnifiedMessage
+    ) -> tuple[str, bool]:
         """调用 Agent 处理消息，期间持续发送 typing 状态"""
         import asyncio
 
@@ -3245,7 +3373,11 @@ class MessageGateway:
             await asyncio.sleep(4)  # Telegram typing 状态持续约 5 秒
 
     async def _call_agent(
-        self, session: Session, message: UnifiedMessage, *, allow_streaming: bool = True,
+        self,
+        session: Session,
+        message: UnifiedMessage,
+        *,
+        allow_streaming: bool = True,
     ) -> tuple[str, bool]:
         """
         调用 Agent 处理消息（支持多模态：图片、语音）
@@ -3267,12 +3399,16 @@ class MessageGateway:
             for voice in message.content.voices:
                 # 双路保留：始终存储原始音频路径到 pending_audio
                 if voice.local_path and Path(voice.local_path).exists():
-                    audio_data_list.append({
-                        "local_path": voice.local_path,
-                        "mime_type": voice.mime_type or "audio/wav",
-                        "duration": voice.duration,
-                        "transcription": voice.transcription if voice.transcription not in (None, "", "[语音识别失败]") else None,
-                    })
+                    audio_data_list.append(
+                        {
+                            "local_path": voice.local_path,
+                            "mime_type": voice.mime_type or "audio/wav",
+                            "duration": voice.duration,
+                            "transcription": voice.transcription
+                            if voice.transcription not in (None, "", "[语音识别失败]")
+                            else None,
+                        }
+                    )
 
                 if voice.transcription and voice.transcription not in ("[语音识别失败]", ""):
                     # 语音已转写，用转写文字作为输入（保底）
@@ -3312,7 +3448,8 @@ class MessageGateway:
 
                         raw = Path(img.local_path).read_bytes()
                         result = prepare_image_for_context(
-                            raw, media_type=img.mime_type or "image/jpeg",
+                            raw,
+                            media_type=img.mime_type or "image/jpeg",
                         )
                         if result:
                             b64_data, media_type, _w, _h = result
@@ -3328,17 +3465,13 @@ class MessageGateway:
                                 }
                             )
                         else:
-                            logger.warning(
-                                f"Image too large to embed, skipping: "
-                                f"{img.local_path}"
-                            )
+                            logger.warning(f"Image too large to embed, skipping: {img.local_path}")
                     except Exception as e:
                         logger.error(f"Failed to read image: {e}")
 
             # 检查图片下载失败
             failed_images = [
-                img for img in message.content.images
-                if img.status == MediaStatus.FAILED
+                img for img in message.content.images if img.status == MediaStatus.FAILED
             ]
             if failed_images:
                 reasons = "; ".join(img.description or "未知原因" for img in failed_images)
@@ -3356,7 +3489,9 @@ class MessageGateway:
 
             # 处理视频文件 - 多模态输入
             videos_data = []
-            VIDEO_SIZE_LIMIT = 7 * 1024 * 1024  # 7MB (base64 后 ~9.3MB，低于 DashScope 10MB data-uri 限制)
+            VIDEO_SIZE_LIMIT = (
+                7 * 1024 * 1024
+            )  # 7MB (base64 后 ~9.3MB，低于 DashScope 10MB data-uri 限制)
             for vid in message.content.videos:
                 if vid.local_path and Path(vid.local_path).exists():
                     try:
@@ -3375,7 +3510,9 @@ class MessageGateway:
                                         "local_path": vid.local_path,
                                     }
                                 )
-                            logger.info(f"Video encoded as base64: {vid.local_path} ({file_size / 1024 / 1024:.1f}MB)")
+                            logger.info(
+                                f"Video encoded as base64: {vid.local_path} ({file_size / 1024 / 1024:.1f}MB)"
+                            )
                         else:
                             # 视频超过大小限制，用 ffmpeg 截取关键帧降级为图片
                             logger.info(
@@ -3400,14 +3537,15 @@ class MessageGateway:
                                 session.set_metadata("pending_images", images_data)
                                 logger.info(f"Extracted {len(keyframes)} keyframes from video")
                             else:
-                                logger.warning(f"Failed to extract keyframes from: {vid.local_path}")
+                                logger.warning(
+                                    f"Failed to extract keyframes from: {vid.local_path}"
+                                )
                     except Exception as e:
                         logger.error(f"Failed to process video: {e}")
 
             # 检查视频下载失败
             failed_videos = [
-                vid for vid in message.content.videos
-                if vid.status == MediaStatus.FAILED
+                vid for vid in message.content.videos if vid.status == MediaStatus.FAILED
             ]
             if failed_videos:
                 reasons = "; ".join(vid.description or "未知原因" for vid in failed_videos)
@@ -3433,44 +3571,79 @@ class MessageGateway:
                         suffix = Path(fil.local_path).suffix.lower()
                         _fname = fil.filename or Path(fil.local_path).name
                         if suffix == ".pdf" or "pdf" in mime:
-                            file_data = base64.b64encode(
-                                Path(fil.local_path).read_bytes()
-                            ).decode("utf-8")
-                            files_data.append({
-                                "type": "document",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": "application/pdf",
-                                    "data": file_data,
-                                },
-                                "filename": _fname,
-                                "local_path": fil.local_path,
-                            })
+                            file_data = base64.b64encode(Path(fil.local_path).read_bytes()).decode(
+                                "utf-8"
+                            )
+                            files_data.append(
+                                {
+                                    "type": "document",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": "application/pdf",
+                                        "data": file_data,
+                                    },
+                                    "filename": _fname,
+                                    "local_path": fil.local_path,
+                                }
+                            )
                             logger.info(f"PDF file encoded: {fil.local_path}")
                         elif suffix in (
-                            ".md", ".txt", ".csv", ".json", ".jsonl",
-                            ".xml", ".yaml", ".yml", ".toml", ".ini", ".cfg",
-                            ".log", ".py", ".js", ".ts", ".jsx", ".tsx",
-                            ".html", ".htm", ".css", ".sql", ".sh", ".bat",
-                            ".ps1", ".java", ".c", ".cpp", ".h", ".hpp",
-                            ".go", ".rs", ".rb", ".php", ".lua", ".r",
-                            ".swift", ".kt", ".scala", ".conf", ".env",
-                            ".gitignore", ".dockerfile", ".makefile",
+                            ".md",
+                            ".txt",
+                            ".csv",
+                            ".json",
+                            ".jsonl",
+                            ".xml",
+                            ".yaml",
+                            ".yml",
+                            ".toml",
+                            ".ini",
+                            ".cfg",
+                            ".log",
+                            ".py",
+                            ".js",
+                            ".ts",
+                            ".jsx",
+                            ".tsx",
+                            ".html",
+                            ".htm",
+                            ".css",
+                            ".sql",
+                            ".sh",
+                            ".bat",
+                            ".ps1",
+                            ".java",
+                            ".c",
+                            ".cpp",
+                            ".h",
+                            ".hpp",
+                            ".go",
+                            ".rs",
+                            ".rb",
+                            ".php",
+                            ".lua",
+                            ".r",
+                            ".swift",
+                            ".kt",
+                            ".scala",
+                            ".conf",
+                            ".env",
+                            ".gitignore",
+                            ".dockerfile",
+                            ".makefile",
                         ) or mime.startswith("text/"):
                             _TEXT_FILE_SIZE_LIMIT = 512 * 1024  # 512KB
                             _fpath = Path(fil.local_path)
                             if _fpath.stat().st_size <= _TEXT_FILE_SIZE_LIMIT:
                                 _content = _fpath.read_text(
-                                    encoding="utf-8", errors="replace",
+                                    encoding="utf-8",
+                                    errors="replace",
                                 )
                                 input_text += (
-                                    f"\n\n--- 文件: {_fname} ---\n"
-                                    f"{_content}\n"
-                                    f"--- 文件结束 ---"
+                                    f"\n\n--- 文件: {_fname} ---\n{_content}\n--- 文件结束 ---"
                                 )
                                 logger.info(
-                                    f"Text file injected: {fil.local_path} "
-                                    f"({len(_content)} chars)"
+                                    f"Text file injected: {fil.local_path} ({len(_content)} chars)"
                                 )
                             else:
                                 input_text += (
@@ -3483,16 +3656,14 @@ class MessageGateway:
                                 )
                         else:
                             input_text += (
-                                f"\n[附件: {_fname} ({mime or suffix}), "
-                                f"本地路径: {fil.local_path}]"
+                                f"\n[附件: {_fname} ({mime or suffix}), 本地路径: {fil.local_path}]"
                             )
                     except Exception as e:
                         logger.error(f"Failed to process file: {e}")
 
             # 检查文件下载失败
             failed_files = [
-                fil for fil in message.content.files
-                if fil.status == MediaStatus.FAILED
+                fil for fil in message.content.files if fil.status == MediaStatus.FAILED
             ]
             if failed_files:
                 reasons = "; ".join(fil.description or "未知原因" for fil in failed_files)
@@ -3516,6 +3687,7 @@ class MessageGateway:
             adapter = self._adapters.get(message.channel)
             is_group = message.chat_type == "group"
             from ..config import settings as _cfg
+
             use_streaming = (
                 allow_streaming
                 and adapter is not None
@@ -3523,39 +3695,37 @@ class MessageGateway:
                 and hasattr(adapter, "is_streaming_enabled")
                 and adapter.is_streaming_enabled(is_group)
                 and self.agent_handler_stream is not None
-                and not (_cfg.multi_agent_enabled and getattr(self, "_orchestrator_ref", None) is not None)
+                and not (
+                    _cfg.multi_agent_enabled
+                    and getattr(self, "_orchestrator_ref", None) is not None
+                )
             )
 
             streamed_ok = False
             _has_orchestrator = (
-                _cfg.multi_agent_enabled
-                and getattr(self, "_orchestrator_ref", None) is not None
+                _cfg.multi_agent_enabled and getattr(self, "_orchestrator_ref", None) is not None
             )
             if use_streaming:
                 response, streamed_ok = await self._call_agent_streaming(
-                    session, input_text, message, adapter,
+                    session,
+                    input_text,
+                    message,
+                    adapter,
                 )
             elif _has_orchestrator:
                 # Orchestrator 自带 idle_timeout + hard_timeout 进度监控，
                 # 不再套 wait_for 墙钟超时，避免活跃任务被误杀
                 response = await self.agent_handler(session, input_text)
             else:
-                _AGENT_TIMEOUT = float(
-                    os.environ.get("AGENT_HANDLER_TIMEOUT", "1200")
-                )
+                _AGENT_TIMEOUT = float(os.environ.get("AGENT_HANDLER_TIMEOUT", "1200"))
                 try:
                     response = await asyncio.wait_for(
                         self.agent_handler(session, input_text),
                         timeout=_AGENT_TIMEOUT,
                     )
                 except TimeoutError:
-                    logger.error(
-                        f"[Gateway] Agent handler timed out after {_AGENT_TIMEOUT}s"
-                    )
-                    response = (
-                        f"⚠️ 处理超时（{int(_AGENT_TIMEOUT)}秒），"
-                        f"请稍后重试或简化您的问题。"
-                    )
+                    logger.error(f"[Gateway] Agent handler timed out after {_AGENT_TIMEOUT}s")
+                    response = f"⚠️ 处理超时（{int(_AGENT_TIMEOUT)}秒），请稍后重试或简化您的问题。"
 
             return (response, streamed_ok)
 
@@ -3573,8 +3743,11 @@ class MessageGateway:
             session.set_metadata("_current_message", None)
 
     async def _call_agent_streaming(
-        self, session: Session, input_text: str,
-        message: UnifiedMessage, adapter,
+        self,
+        session: Session,
+        input_text: str,
+        message: UnifiedMessage,
+        adapter,
     ) -> tuple[str, bool]:
         """Consume agent_handler_stream, pipe tokens to adapter.stream_token,
         then finalize.  Returns (full_reply, streamed_ok)."""
@@ -3584,11 +3757,9 @@ class MessageGateway:
         chain_push = session.get_metadata("chain_push")
         if chain_push is None:
             from ..config import settings as _s
+
             chain_push = _s.im_chain_push
-        can_stream_thinking = (
-            chain_push
-            and hasattr(adapter, "stream_thinking")
-        )
+        can_stream_thinking = chain_push and hasattr(adapter, "stream_thinking")
 
         _thinking_buf = ""
 
@@ -3606,7 +3777,8 @@ class MessageGateway:
                     delta = event.get("content", "")
                     reply_text += delta
                     await adapter.stream_token(
-                        message.chat_id, delta,
+                        message.chat_id,
+                        delta,
                         thread_id=message.thread_id,
                         is_group=is_group,
                     )
@@ -3616,14 +3788,19 @@ class MessageGateway:
                         thinking_content = event.get("content", "")
                         if thinking_content:
                             await adapter.stream_thinking(
-                                message.chat_id, thinking_content,
+                                message.chat_id,
+                                thinking_content,
                                 thread_id=message.thread_id,
                                 is_group=is_group,
                             )
                 elif etype == "thinking_end":
                     if can_stream_thinking and hasattr(adapter, "stream_thinking"):
                         dur_ms = event.get("duration_ms", 0)
-                        sk = adapter._make_session_key(message.chat_id, message.thread_id) if hasattr(adapter, "_make_session_key") else ""
+                        sk = (
+                            adapter._make_session_key(message.chat_id, message.thread_id)
+                            if hasattr(adapter, "_make_session_key")
+                            else ""
+                        )
                         if sk and hasattr(adapter, "_streaming_thinking_ms") and dur_ms:
                             adapter._streaming_thinking_ms[sk] = dur_ms
                     if not can_stream_thinking and chain_push and _thinking_buf:
@@ -3637,7 +3814,8 @@ class MessageGateway:
                     if content:
                         if can_stream_thinking and hasattr(adapter, "stream_chain_text"):
                             await adapter.stream_chain_text(
-                                message.chat_id, content,
+                                message.chat_id,
+                                content,
                                 thread_id=message.thread_id,
                                 is_group=is_group,
                             )
@@ -3652,7 +3830,9 @@ class MessageGateway:
                     tool_ok = event.get("success", True)
                     if chain_push:
                         status = "✅" if tool_ok else "❌"
-                        await self.emit_progress_event(session, f"{status} 工具 {tool_name} 执行完成")
+                        await self.emit_progress_event(
+                            session, f"{status} 工具 {tool_name} 执行完成"
+                        )
                 elif etype == "ask_user":
                     if not reply_text:
                         reply_text = event.get("question", "")
@@ -3693,7 +3873,9 @@ class MessageGateway:
         await self.flush_progress(session)
 
         ok = await adapter.finalize_stream(
-            message.chat_id, reply_text, thread_id=message.thread_id,
+            message.chat_id,
+            reply_text,
+            thread_id=message.thread_id,
         )
         return (reply_text, ok)
 
@@ -3705,20 +3887,20 @@ class MessageGateway:
     # - onebot/qqbot: 一般无严格限制
     _CHANNEL_MAX_LENGTH: dict[str, int] = {
         "telegram": 4000,
-        "wework":   0,       # 0 = 不分片，整条发送
-        "dingtalk":  18000,
-        "feishu":    28000,
-        "lark":      28000,
-        "onebot":    20000,
-        "qqbot":     20000,
-        "wechat":    4000,
+        "wework": 0,  # 0 = 不分片，整条发送
+        "dingtalk": 18000,
+        "feishu": 28000,
+        "lark": 28000,
+        "onebot": 20000,
+        "qqbot": 20000,
+        "wechat": 4000,
     }
     _DEFAULT_MAX_LENGTH = 4000
 
     # 分片间发送间隔（秒），避免触发平台限流
     _SPLIT_SEND_INTERVAL: dict[str, float] = {
         "telegram": 0.5,
-        "wechat":   2.5,
+        "wechat": 2.5,
     }
     _DEFAULT_SPLIT_INTERVAL = 0.15
 
@@ -3798,9 +3980,7 @@ class MessageGateway:
         channel = original.channel
         base_channel = channel.split(":")[0].split("_")[0]
 
-        max_length = self._CHANNEL_MAX_LENGTH.get(
-            base_channel, self._DEFAULT_MAX_LENGTH
-        )
+        max_length = self._CHANNEL_MAX_LENGTH.get(base_channel, self._DEFAULT_MAX_LENGTH)
         from .text_splitter import (
             add_fragment_numbers,
             chunk_markdown_text,
@@ -3809,16 +3989,17 @@ class MessageGateway:
 
         # 预留分片序号长度：先做一次粗估（假设最多 10 片），分片后再精确添加
         _est_prefix = estimate_number_prefix_len(10)
-        _effective_max = max(max_length - _est_prefix, max_length // 2) if max_length > 0 else max_length
+        _effective_max = (
+            max(max_length - _est_prefix, max_length // 2) if max_length > 0 else max_length
+        )
         messages = chunk_markdown_text(text_to_send, _effective_max) if text_to_send else []
         messages = add_fragment_numbers(messages)
 
-        interval = self._SPLIT_SEND_INTERVAL.get(
-            base_channel, self._DEFAULT_SPLIT_INTERVAL
-        )
+        interval = self._SPLIT_SEND_INTERVAL.get(base_channel, self._DEFAULT_SPLIT_INTERVAL)
 
         footer = adapter.format_final_footer(
-            original.chat_id, thread_id=original.thread_id,
+            original.chat_id,
+            thread_id=original.thread_id,
         )
         if footer and messages:
             messages[-1] = messages[-1] + footer
@@ -3843,17 +4024,18 @@ class MessageGateway:
             )
 
             from .retry import async_with_retry
+
             try:
                 await async_with_retry(
-                    adapter.send_message, outgoing,
+                    adapter.send_message,
+                    outgoing,
                     max_retries=2,
                     base_delay=1.0,
                     operation_name=f"send_response[{i + 1}/{len(messages)}]",
                 )
             except Exception as e:
                 logger.error(
-                    f"Failed to send response part {i + 1}/{len(messages)} "
-                    f"after retries: {e}"
+                    f"Failed to send response part {i + 1}/{len(messages)} after retries: {e}"
                 )
                 failed_at = i
                 break
@@ -3882,9 +4064,7 @@ class MessageGateway:
             try:
                 await adapter.send_message(plain_out)
             except Exception as e2:
-                logger.error(
-                    f"Plain-text fallback also failed for part {failed_at + j + 1}: {e2}"
-                )
+                logger.error(f"Plain-text fallback also failed for part {failed_at + j + 1}: {e2}")
                 _sent_count = failed_at + j
                 _fail_hint = (
                     f"消息发送失败（已送达 {_sent_count}/{len(messages)} 段），请稍后重试。"
@@ -3919,15 +4099,19 @@ class MessageGateway:
                     continue
                 try:
                     await adapter.send_image(
-                        original.chat_id, img.path, reply_to=reply_to,
+                        original.chat_id,
+                        img.path,
+                        reply_to=reply_to,
                     )
                 except Exception as e:
                     logger.warning(f"[SendResponse] send extracted image failed: {e}")
                     with contextlib.suppress(Exception):
                         fname = Path(img.path).name if img.path else "image"
                         await adapter.send_text(
-                            original.chat_id, f"📎 {fname}",
-                            reply_to=reply_to, metadata=outgoing_meta,
+                            original.chat_id,
+                            f"📎 {fname}",
+                            reply_to=reply_to,
+                            metadata=outgoing_meta,
                         )
 
         if adapter.has_capability("send_file"):
@@ -3937,15 +4121,19 @@ class MessageGateway:
                     continue
                 try:
                     await adapter.send_file(
-                        original.chat_id, file.path, reply_to=reply_to,
+                        original.chat_id,
+                        file.path,
+                        reply_to=reply_to,
                     )
                 except Exception as e:
                     logger.warning(f"[SendResponse] send extracted file failed: {e}")
                     with contextlib.suppress(Exception):
                         fname = Path(file.path).name if file.path else "file"
                         await adapter.send_text(
-                            original.chat_id, f"📎 {fname}",
-                            reply_to=reply_to, metadata=outgoing_meta,
+                            original.chat_id,
+                            f"📎 {fname}",
+                            reply_to=reply_to,
+                            metadata=outgoing_meta,
                         )
 
         if adapter.has_capability("send_voice"):
@@ -3954,15 +4142,19 @@ class MessageGateway:
                     continue
                 try:
                     await adapter.send_voice(
-                        original.chat_id, audio.path, reply_to=reply_to,
+                        original.chat_id,
+                        audio.path,
+                        reply_to=reply_to,
                     )
                 except Exception as e:
                     logger.warning(f"[SendResponse] send extracted audio failed: {e}")
                     with contextlib.suppress(Exception):
                         fname = Path(audio.path).name if audio.path else "audio"
                         await adapter.send_text(
-                            original.chat_id, f"📎 {fname}",
-                            reply_to=reply_to, metadata=outgoing_meta,
+                            original.chat_id,
+                            f"📎 {fname}",
+                            reply_to=reply_to,
+                            metadata=outgoing_meta,
                         )
 
     async def _send_error(self, original: UnifiedMessage, error: str) -> None:
@@ -3974,7 +4166,9 @@ class MessageGateway:
             return
 
         try:
-            _meta = {"is_group": (original.metadata or {}).get("is_group", original.chat_type == "group")}
+            _meta = {
+                "is_group": (original.metadata or {}).get("is_group", original.chat_type == "group")
+            }
             friendly = format_user_friendly_error(error)
             await adapter.send_text(
                 chat_id=original.chat_id,
@@ -4056,7 +4250,11 @@ class MessageGateway:
 
                 header = f"📋 每日系统自检报告（{report_date}）\n\n"
                 full_text = header + report_md
-                _meta = {"is_group": (message.metadata or {}).get("is_group", message.chat_type == "group")}
+                _meta = {
+                    "is_group": (message.metadata or {}).get(
+                        "is_group", message.chat_type == "group"
+                    )
+                }
 
                 # 分段发送（兼容 Telegram 4096 限制）
                 max_len = 3500
@@ -4202,10 +4400,7 @@ class MessageGateway:
         if hasattr(adapter, "build_simple_card") and hasattr(adapter, "send_card"):
             card = adapter.build_simple_card(
                 title=f"⚠️ 安全确认 — {risk_level}",
-                content=(
-                    f"**工具**: {tool_name}\n"
-                    f"**原因**: {reason}"
-                ),
+                content=(f"**工具**: {tool_name}\n**原因**: {reason}"),
                 buttons=[
                     {"text": "✅ 允许", "value": "security_allow"},
                     {"text": "❌ 拒绝", "value": "security_deny"},
@@ -4225,7 +4420,11 @@ class MessageGateway:
             logger.warning(f"[Security] Failed to send confirmation: {e}")
 
     async def _handle_im_security_confirm(
-        self, session: "Session", event: dict, adapter, message: "UnifiedMessage",
+        self,
+        session: "Session",
+        event: dict,
+        adapter,
+        message: "UnifiedMessage",
     ) -> None:
         """Handle security_confirm events in IM streaming.
 
@@ -4262,6 +4461,7 @@ class MessageGateway:
 
         try:
             from ..core.policy import get_policy_engine
+
             get_policy_engine().resolve_ui_confirm(confirm_id, decision)
         except Exception as exc:
             logger.warning(f"[Security] IM confirm resolve failed: {exc}")
@@ -4275,7 +4475,9 @@ class MessageGateway:
         return await queue.get()
 
     async def _try_patch_progress_to_card(
-        self, session: Session, new_lines: list[str],
+        self,
+        session: Session,
+        new_lines: list[str],
     ) -> bool:
         """尝试将进度文本 PATCH 到思考卡片（不消费卡片）。
 
@@ -4347,6 +4549,7 @@ class MessageGateway:
         # chain_push 开关守卫
         if not force:
             from ..config import settings as _s
+
             _push = session.get_metadata("chain_push")
             if _push is None:
                 _push = _s.im_chain_push
@@ -4359,7 +4562,8 @@ class MessageGateway:
         else:
             base_ch = session.channel.split(":")[0].split("_")[0]
             throttle = self._CHANNEL_PROGRESS_THROTTLE.get(
-                base_ch, self._progress_throttle_seconds,
+                base_ch,
+                self._progress_throttle_seconds,
             )
 
         buf = self._progress_buffers.setdefault(session_key, [])
@@ -4454,9 +4658,7 @@ class MessageGateway:
         try:
             current_message = session.get_metadata("_current_message")
             reply_to = (
-                getattr(current_message, "channel_message_id", None)
-                if current_message
-                else None
+                getattr(current_message, "channel_message_id", None) if current_message else None
             )
         except Exception:
             reply_to = None

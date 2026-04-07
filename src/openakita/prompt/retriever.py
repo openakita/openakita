@@ -143,7 +143,9 @@ async def async_search_related_memories(
         try:
             recent = getattr(memory_manager, "_recent_messages", None)
             result = retrieval_engine.retrieve(
-                query=query, recent_messages=recent, max_tokens=400,
+                query=query,
+                recent_messages=recent,
+                max_tokens=400,
             )
             if result:
                 return result, True

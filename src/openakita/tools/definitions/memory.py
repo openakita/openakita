@@ -152,7 +152,10 @@ MEMORY_TOOLS = [
 
 **提示**：使用具体的关键词效果更好（如工具名、文件名、错误信息），避免过于宽泛的搜索词。""",
         "related_tools": [
-            {"name": "search_memory", "relation": "搜索已学习的语义记忆（偏好/事实/规则）时改用 search_memory"},
+            {
+                "name": "search_memory",
+                "relation": "搜索已学习的语义记忆（偏好/事实/规则）时改用 search_memory",
+            },
         ],
         "input_schema": {
             "type": "object",

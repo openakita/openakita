@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 class RootCause(StrEnum):
     """失败根因分类"""
+
     CONTEXT_LOSS = "context_loss"
     TOOL_LIMITATION = "tool_limitation"
     PLAN_DEFICIENCY = "plan_deficiency"
@@ -39,6 +40,7 @@ class RootCause(StrEnum):
 
 class HarnessGap(StrEnum):
     """Harness 缺口类型"""
+
     MISSING_TOOL = "missing_tool"
     INSUFFICIENT_DOCS = "insufficient_docs"
     MISSING_GUARDRAIL = "missing_guardrail"
@@ -52,6 +54,7 @@ class HarnessGap(StrEnum):
 @dataclass
 class FailureMetrics:
     """失败任务量化指标"""
+
     total_tokens: int = 0
     total_iterations: int = 0
     total_tool_calls: int = 0
@@ -64,6 +67,7 @@ class FailureMetrics:
 @dataclass
 class FailureAnalysisResult:
     """单次失败分析结果"""
+
     task_id: str
     timestamp: str
     root_cause: RootCause
@@ -114,13 +118,20 @@ class FailureAnalyzer:
 
         metrics = self._compute_metrics(react_trace, budget_summary)
         root_cause = self._classify_root_cause(
-            react_trace, supervisor_events, budget_summary, exit_reason,
+            react_trace,
+            supervisor_events,
+            budget_summary,
+            exit_reason,
         )
         harness_gap = self._identify_harness_gap(
-            root_cause, react_trace, supervisor_events,
+            root_cause,
+            react_trace,
+            supervisor_events,
         )
         evidence = self._collect_evidence(
-            react_trace, supervisor_events, exit_reason,
+            react_trace,
+            supervisor_events,
+            exit_reason,
         )
         suggestion = self._generate_suggestion(root_cause, harness_gap, metrics)
 
@@ -151,6 +162,7 @@ class FailureAnalyzer:
         # Decision Trace
         try:
             from ..tracing.tracer import get_tracer
+
             tracer = get_tracer()
             tracer.record_decision(
                 decision_type="failure_analysis",
@@ -182,7 +194,11 @@ class FailureAnalyzer:
 
         if exit_reason == "max_iterations":
             # 检查是否是循环导致
-            loop_events = [e for e in supervisor_events if e.get("pattern") in ("signature_repeat", "reasoning_loop")]
+            loop_events = [
+                e
+                for e in supervisor_events
+                if e.get("pattern") in ("signature_repeat", "reasoning_loop")
+            ]
             if loop_events:
                 return RootCause.LOOP_DETECTED
             return RootCause.PLAN_DEFICIENCY
@@ -201,11 +217,9 @@ class FailureAnalyzer:
                     return RootCause.EXTERNAL_FAILURE
 
         # 检查上下文丢失（压缩后迷失方向）
-        compression_count = sum(
-            1 for t in react_trace if t.get("context_compressed")
-        )
+        compression_count = sum(1 for t in react_trace if t.get("context_compressed"))
         if compression_count >= 2:
-            late_errors = self._count_tool_errors(react_trace[len(react_trace)//2:])
+            late_errors = self._count_tool_errors(react_trace[len(react_trace) // 2 :])
             if late_errors > 3:
                 return RootCause.CONTEXT_LOSS
 
@@ -226,7 +240,11 @@ class FailureAnalyzer:
 
         if root_cause == RootCause.LOOP_DETECTED:
             # 检查 supervisor 是否及时介入
-            loop_events = [e for e in supervisor_events if e.get("pattern") in ("signature_repeat", "reasoning_loop")]
+            loop_events = [
+                e
+                for e in supervisor_events
+                if e.get("pattern") in ("signature_repeat", "reasoning_loop")
+            ]
             if not loop_events:
                 return HarnessGap.SUPERVISION_GAP
             return HarnessGap.POOR_CONTEXT_ENGINEERING
@@ -267,8 +285,7 @@ class FailureAnalyzer:
         # Supervisor 事件
         for event in supervisor_events[-3:]:
             evidence.append(
-                f"Supervisor: {event.get('pattern', '?')} "
-                f"level={event.get('level', '?')}"
+                f"Supervisor: {event.get('pattern', '?')} level={event.get('level', '?')}"
             )
 
         return evidence
@@ -334,7 +351,9 @@ class FailureAnalyzer:
     # ==================== 辅助方法 ====================
 
     def _compute_metrics(
-        self, react_trace: list[dict], budget_summary: dict,
+        self,
+        react_trace: list[dict],
+        budget_summary: dict,
     ) -> FailureMetrics:
         """计算量化指标"""
         metrics = FailureMetrics()

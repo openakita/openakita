@@ -33,6 +33,7 @@ def _notify_windows(title: str, body: str, sound: bool = True) -> bool:
     logo_xml = ""
     try:
         from ..config import settings
+
         logo_path = settings.project_root / "docs" / "assets" / "logo.png"
         if logo_path.exists():
             logo_uri = f"file:///{logo_path.as_posix()}"
@@ -76,7 +77,9 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
         )
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()
-            logger.warning(f"Windows toast PowerShell failed (rc={result.returncode}): {stderr[:200]}")
+            logger.warning(
+                f"Windows toast PowerShell failed (rc={result.returncode}): {stderr[:200]}"
+            )
             return False
         return True
     except subprocess.TimeoutExpired:
@@ -162,6 +165,7 @@ def _fallback_beep() -> None:
     try:
         if _system == "Windows":
             import winsound
+
             winsound.MessageBeep(winsound.MB_ICONASTERISK)
         else:
             sys.stdout.write("\a")
@@ -223,7 +227,8 @@ async def send_desktop_notification_async(
     """发送桌面通知（异步版本，不阻塞事件循环）"""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
-        None, lambda: send_desktop_notification(title, body, sound=sound, fallback_beep=fallback_beep)
+        None,
+        lambda: send_desktop_notification(title, body, sound=sound, fallback_beep=fallback_beep),
     )
 
 
@@ -273,6 +278,9 @@ async def notify_task_completed_async(
     return await loop.run_in_executor(
         None,
         lambda: notify_task_completed(
-            task_name, success, duration_seconds=duration_seconds, sound=sound,
+            task_name,
+            success,
+            duration_seconds=duration_seconds,
+            sound=sound,
         ),
     )

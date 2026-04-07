@@ -55,6 +55,7 @@ def _get_bug_report_endpoint() -> str:
     if not _BUG_REPORT_ENDPOINT:
         try:
             from openakita.config import settings
+
             _BUG_REPORT_ENDPOINT = getattr(settings, "bug_report_endpoint", "")
         except Exception:
             pass
@@ -77,6 +78,7 @@ def _collect_system_info() -> dict:
     # OpenAkita version
     try:
         from openakita import get_version_string
+
         info["openakita_version"] = get_version_string()
     except Exception:
         info["openakita_version"] = "unknown"
@@ -85,6 +87,7 @@ def _collect_system_info() -> dict:
     packages: dict[str, str] = {}
     try:
         from importlib.metadata import version as get_pkg_version
+
         for pkg in KEY_PACKAGES:
             try:
                 packages[pkg] = get_pkg_version(pkg)
@@ -97,10 +100,9 @@ def _collect_system_info() -> dict:
     # pip list (all installed packages for full reproducibility)
     try:
         from importlib.metadata import distributions
+
         info["pip_packages"] = {
-            d.metadata["Name"]: d.metadata["Version"]
-            for d in distributions()
-            if d.metadata["Name"]
+            d.metadata["Name"]: d.metadata["Version"] for d in distributions() if d.metadata["Name"]
         }
     except Exception:
         pass
@@ -108,26 +110,29 @@ def _collect_system_info() -> dict:
     # Memory
     try:
         import psutil
+
         mem = psutil.virtual_memory()
-        info["memory_total_gb"] = round(mem.total / (1024 ** 3), 1)
-        info["memory_available_gb"] = round(mem.available / (1024 ** 3), 1)
+        info["memory_total_gb"] = round(mem.total / (1024**3), 1)
+        info["memory_available_gb"] = round(mem.available / (1024**3), 1)
     except ImportError:
         pass
 
     # Disk
     try:
         from openakita.config import settings
+
         usage = shutil.disk_usage(settings.project_root)
-        info["disk_free_gb"] = round(usage.free / (1024 ** 3), 1)
+        info["disk_free_gb"] = round(usage.free / (1024**3), 1)
     except Exception:
         try:
             usage = shutil.disk_usage(Path.cwd())
-            info["disk_free_gb"] = round(usage.free / (1024 ** 3), 1)
+            info["disk_free_gb"] = round(usage.free / (1024**3), 1)
         except Exception:
             pass
 
     # subprocess flags: hide console window on Windows
     import subprocess
+
     _sp_kwargs: dict = {}
     if platform.system() == "Windows":
         _sp_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -135,10 +140,15 @@ def _collect_system_info() -> dict:
     # Git availability (common cause of [WinError 2])
     try:
         result = subprocess.run(
-            ["git", "--version"], capture_output=True, text=True, timeout=5,
+            ["git", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
             **_sp_kwargs,
         )
-        info["git_version"] = result.stdout.strip() if result.returncode == 0 else f"error: {result.stderr.strip()}"
+        info["git_version"] = (
+            result.stdout.strip() if result.returncode == 0 else f"error: {result.stderr.strip()}"
+        )
     except FileNotFoundError:
         info["git_version"] = "NOT FOUND (git not in PATH)"
     except Exception as e:
@@ -148,7 +158,10 @@ def _collect_system_info() -> dict:
     for cmd in ["node", "npm"]:
         try:
             result = subprocess.run(
-                [cmd, "--version"], capture_output=True, text=True, timeout=5,
+                [cmd, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
                 **_sp_kwargs,
             )
             info[f"{cmd}_version"] = result.stdout.strip() if result.returncode == 0 else "error"
@@ -160,6 +173,7 @@ def _collect_system_info() -> dict:
     # Configured endpoints count
     try:
         from openakita.llm.config import get_default_config_path, load_endpoints_config
+
         config_path = get_default_config_path()
         if config_path.exists():
             eps, compiler_eps, stt_eps, _ = load_endpoints_config(config_path)
@@ -174,6 +188,7 @@ def _collect_system_info() -> dict:
     # Project root path
     try:
         from openakita.config import settings
+
         info["project_root"] = str(settings.project_root)
     except Exception:
         pass
@@ -181,6 +196,7 @@ def _collect_system_info() -> dict:
     # IM channels
     try:
         from openakita.config import settings
+
         channels = []
         if getattr(settings, "telegram_enabled", False):
             channels.append("telegram")
@@ -202,6 +218,7 @@ def _collect_system_info() -> dict:
 
     # PATH environment variable (useful for diagnosing "command not found")
     import os
+
     info["path_env"] = os.environ.get("PATH", "")
 
     return info
@@ -222,6 +239,7 @@ def _get_recent_llm_debug_files(count: int = 20) -> list[Path]:
     """Get the most recent llm_debug files sorted by modification time."""
     try:
         from openakita.config import settings
+
         debug_dir = settings.project_root / "data" / "llm_debug"
     except Exception:
         debug_dir = Path.cwd() / "data" / "llm_debug"
@@ -237,6 +255,7 @@ def _resolve_data_dir() -> Path:
     """Return the workspace data/ directory."""
     try:
         from openakita.config import settings
+
         return settings.data_dir
     except Exception:
         return Path.cwd() / "data"
@@ -248,9 +267,11 @@ def _resolve_global_logs_dir() -> Path:
     Respects custom root via OPENAKITA_ROOT env var or settings.openakita_home."""
     try:
         from openakita.config import settings
+
         return settings.openakita_home / "logs"
     except Exception:
         import os
+
         root = os.environ.get("OPENAKITA_ROOT", "").strip()
         return Path(root) / "logs" if root else Path.home() / ".openakita" / "logs"
 
@@ -327,14 +348,26 @@ def _collect_sanitized_config() -> dict:
     global _SENSITIVE_KEY_RE
     if _SENSITIVE_KEY_RE is None:
         _SENSITIVE_KEY_RE = re.compile(
-            r"(key|secret|token|password|credential|auth|apikey|api_key)", re.IGNORECASE,
+            r"(key|secret|token|password|credential|auth|apikey|api_key)",
+            re.IGNORECASE,
         )
 
     sanitized: dict = {}
     for k, v in sorted(os.environ.items()):
-        if not k.startswith(("OPENAKITA", "ANTHROPIC", "OPENAI", "FEISHU",
-                             "TELEGRAM", "DINGTALK", "WEWORK", "WECHAT",
-                             "ONEBOT", "QQ")):
+        if not k.startswith(
+            (
+                "OPENAKITA",
+                "ANTHROPIC",
+                "OPENAI",
+                "FEISHU",
+                "TELEGRAM",
+                "DINGTALK",
+                "WEWORK",
+                "WECHAT",
+                "ONEBOT",
+                "QQ",
+            )
+        ):
             continue
         sanitized[k] = "***" if _SENSITIVE_KEY_RE.search(k) else v
 
@@ -364,6 +397,7 @@ async def get_feedback_config():
     """
     try:
         from openakita.config import settings
+
         return {
             "captcha_scene_id": getattr(settings, "captcha_scene_id", ""),
             "captcha_prefix": getattr(settings, "captcha_prefix", ""),
@@ -446,7 +480,9 @@ async def _upload_to_worker(
                 oss_err = oss_resp.text[:1500]
                 logger.error(
                     "OSS direct upload failed: status=%s body=%s url=%s",
-                    oss_resp.status_code, oss_err, upload_url[:120],
+                    oss_resp.status_code,
+                    oss_err,
+                    upload_url[:120],
                 )
                 raise HTTPException(
                     status_code=502,
@@ -464,7 +500,8 @@ async def _upload_to_worker(
                 issue_url = complete_resp.json().get("issue_url")
             else:
                 logger.warning(
-                    "Complete phase returned %s (non-fatal)", complete_resp.status_code,
+                    "Complete phase returned %s (non-fatal)",
+                    complete_resp.status_code,
                 )
 
         return {
@@ -489,6 +526,7 @@ def _feedback_temp_dir() -> Path:
     if FEEDBACK_TEMP_DIR is None:
         try:
             from openakita.config import settings
+
             FEEDBACK_TEMP_DIR = settings.project_root / "temp-feedback"
         except Exception:
             FEEDBACK_TEMP_DIR = Path.cwd() / "temp-feedback"
@@ -530,7 +568,9 @@ async def _try_upload_or_save(
         local_path = _save_zip_locally(report_id, zip_bytes)
         logger.warning(
             "Cloud upload failed (%s %s), saved locally: %s",
-            exc.status_code, exc.detail, local_path,
+            exc.status_code,
+            exc.detail,
+            local_path,
         )
         return {
             "status": "upload_failed",
@@ -542,7 +582,9 @@ async def _try_upload_or_save(
     except Exception as exc:
         local_path = _save_zip_locally(report_id, zip_bytes)
         logger.warning(
-            "Cloud upload failed (%s), saved locally: %s", exc, local_path,
+            "Cloud upload failed (%s), saved locally: %s",
+            exc,
+            local_path,
         )
         return {
             "status": "upload_failed",
@@ -621,6 +663,7 @@ async def submit_bug_report(
         if upload_logs:
             try:
                 from openakita.config import settings
+
                 main_log = settings.log_file_path
                 error_log = settings.error_log_path
                 logs_dir = settings.log_dir_path
@@ -651,8 +694,11 @@ async def submit_bug_report(
             # Multi-agent delegation logs (recent 3 days, max 2 MB)
             data_dir = _resolve_data_dir()
             _add_dir_recent(
-                zf, data_dir / "delegation_logs", "delegation_logs",
-                patterns=("*.jsonl",), max_total_bytes=2 * 1024 * 1024,
+                zf,
+                data_dir / "delegation_logs",
+                "delegation_logs",
+                patterns=("*.jsonl",),
+                max_total_bytes=2 * 1024 * 1024,
             )
 
         if upload_debug:
@@ -664,33 +710,50 @@ async def submit_bug_report(
                     pass
             # ReAct reasoning traces (recent 3 days, max 5 MB)
             _add_dir_recent(
-                zf, data_dir / "react_traces", "react_traces",
-                patterns=("*.json",), max_total_bytes=5 * 1024 * 1024,
+                zf,
+                data_dir / "react_traces",
+                "react_traces",
+                patterns=("*.json",),
+                max_total_bytes=5 * 1024 * 1024,
             )
             # Agent traces (recent 3 days, max 2 MB)
             _add_dir_recent(
-                zf, data_dir / "traces", "traces",
-                patterns=("*.json",), max_total_bytes=2 * 1024 * 1024,
+                zf,
+                data_dir / "traces",
+                "traces",
+                patterns=("*.json",),
+                max_total_bytes=2 * 1024 * 1024,
             )
             # Orchestration org events (recent 3 days, max 2 MB)
             _add_dir_recent(
-                zf, data_dir / "orgs", "orgs",
-                patterns=("*.jsonl", "*.md"), max_total_bytes=2 * 1024 * 1024,
+                zf,
+                data_dir / "orgs",
+                "orgs",
+                patterns=("*.jsonl", "*.md"),
+                max_total_bytes=2 * 1024 * 1024,
             )
             # Tool output overflow (recent 3 days, max 2 MB)
             _add_dir_recent(
-                zf, data_dir / "tool_overflow", "tool_overflow",
-                patterns=("*.txt",), max_total_bytes=2 * 1024 * 1024,
+                zf,
+                data_dir / "tool_overflow",
+                "tool_overflow",
+                patterns=("*.txt",),
+                max_total_bytes=2 * 1024 * 1024,
             )
             # Failure analysis reports (recent 3 days, max 1 MB)
             _add_dir_recent(
-                zf, data_dir / "failure_analysis", "failure_analysis",
+                zf,
+                data_dir / "failure_analysis",
+                "failure_analysis",
                 max_total_bytes=1 * 1024 * 1024,
             )
             # Task retrospects (recent 3 days, max 1 MB)
             _add_dir_recent(
-                zf, data_dir / "retrospects", "retrospects",
-                patterns=("*.jsonl",), max_total_bytes=1 * 1024 * 1024,
+                zf,
+                data_dir / "retrospects",
+                "retrospects",
+                patterns=("*.jsonl",),
+                max_total_bytes=1 * 1024 * 1024,
             )
             # Small state files — always include
             _add_file(zf, data_dir / "runtime_state.json", "state/runtime_state.json")
@@ -698,12 +761,14 @@ async def submit_bug_report(
             _add_file(zf, data_dir / "backend.heartbeat", "state/backend.heartbeat")
             _add_file(zf, data_dir / "sessions" / "sessions.json", "state/sessions.json")
             _add_file(
-                zf, data_dir / "sessions" / "channel_registry.json",
+                zf,
+                data_dir / "sessions" / "channel_registry.json",
                 "state/channel_registry.json",
             )
             _add_file(zf, data_dir / "scheduler" / "tasks.json", "state/scheduler_tasks.json")
             _add_file(
-                zf, data_dir / "scheduler" / "executions.json",
+                zf,
+                data_dir / "scheduler" / "executions.json",
                 "state/scheduler_executions.json",
             )
             # Sanitized config snapshot
@@ -762,12 +827,17 @@ async def submit_feature_request(
         zf.writestr("metadata.json", json.dumps(metadata, ensure_ascii=False, indent=2))
         await _pack_images(zf, images)
 
-    contact_brief = " | ".join(
-        f for f in [
-            f"Email: {contact_email}" if contact_email else "",
-            f"WeChat: {contact_wechat}" if contact_wechat else "",
-        ] if f
-    ) or "(no contact)"
+    contact_brief = (
+        " | ".join(
+            f
+            for f in [
+                f"Email: {contact_email}" if contact_email else "",
+                f"WeChat: {contact_wechat}" if contact_wechat else "",
+            ]
+            if f
+        )
+        or "(no contact)"
+    )
 
     return await _try_upload_or_save(
         report_id=report_id,

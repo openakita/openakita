@@ -32,6 +32,7 @@ def _get_workspace_root(request: Request) -> Path:
     # Fallback: try settings
     try:
         from openakita.core.settings import settings
+
         if settings.workspace_dir:
             return Path(settings.workspace_dir)
     except Exception:
@@ -76,11 +77,11 @@ async def serve_file(request: Request, path: str = ""):
         Path.home().resolve(),  # Allow files from user home (Downloads, etc.)
     ]
 
-    is_safe = any(
-        full_path.is_relative_to(root) for root in safe_roots
-    )
+    is_safe = any(full_path.is_relative_to(root) for root in safe_roots)
     if not is_safe:
-        raise HTTPException(status_code=403, detail="Access denied: path outside allowed directories")
+        raise HTTPException(
+            status_code=403, detail="Access denied: path outside allowed directories"
+        )
 
     if not full_path.exists() or not full_path.is_file():
         raise HTTPException(status_code=404, detail=f"File not found: {path}")

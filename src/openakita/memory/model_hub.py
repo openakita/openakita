@@ -245,9 +245,7 @@ def _load_from_modelscope(model_name: str, device: str = "cpu"):
         return SentenceTransformer(model_name, device=device)
 
     except Exception as e:
-        logger.warning(
-            f"[ModelHub] ⚠ ModelScope 下载失败 ({e})，回退到 hf-mirror (国内镜像)"
-        )
+        logger.warning(f"[ModelHub] ⚠ ModelScope 下载失败 ({e})，回退到 hf-mirror (国内镜像)")
         _apply_source_env(ModelSource.HF_MIRROR)
         return SentenceTransformer(model_name, device=device)
 
@@ -263,9 +261,7 @@ def _load_from_hf(model_name: str, device: str = "cpu"):
     from sentence_transformers import SentenceTransformer
 
     current_endpoint = os.environ.get("HF_ENDPOINT", "")
-    logger.debug(
-        f"[ModelHub] _load_from_hf: HF_ENDPOINT={current_endpoint or '(未设置)'}"
-    )
+    logger.debug(f"[ModelHub] _load_from_hf: HF_ENDPOINT={current_endpoint or '(未设置)'}")
 
     try:
         return SentenceTransformer(model_name, device=device)
@@ -337,9 +333,7 @@ def load_embedding_model(
                 model = SentenceTransformer(model_name, device=device)
                 return model
             except Exception as e:
-                logger.warning(
-                    f"[ModelHub] 离线加载缓存失败 ({e})，将重新下载"
-                )
+                logger.warning(f"[ModelHub] 离线加载缓存失败 ({e})，将重新下载")
             finally:
                 if old_offline is None:
                     os.environ.pop("HF_HUB_OFFLINE", None)
@@ -372,21 +366,15 @@ def load_embedding_model(
             last_error = e
             if attempt < max_retries:
                 backoff = initial_backoff * (2 ** (attempt - 1))
-                logger.warning(
-                    f"[ModelHub] ⚠ 模型加载失败 (尝试 {attempt}/{max_retries}): {e}"
-                )
+                logger.warning(f"[ModelHub] ⚠ 模型加载失败 (尝试 {attempt}/{max_retries}): {e}")
                 logger.info(
-                    f"[ModelHub] 将在 {backoff:.0f}s 后重试... "
-                    f"(剩余 {max_retries - attempt} 次)"
+                    f"[ModelHub] 将在 {backoff:.0f}s 后重试... (剩余 {max_retries - attempt} 次)"
                 )
                 time.sleep(backoff)
                 # 重试前重新配置环境（可能因回退被改过）
                 _apply_source_env(resolved)
             else:
-                logger.error(
-                    f"[ModelHub] ✗ 模型加载最终失败 "
-                    f"(已重试 {max_retries} 次): {e}"
-                )
+                logger.error(f"[ModelHub] ✗ 模型加载最终失败 (已重试 {max_retries} 次): {e}")
                 logger.error(
                     "[ModelHub] 排查建议: "
                     "① 检查网络连接 "

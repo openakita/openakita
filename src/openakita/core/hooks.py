@@ -159,9 +159,7 @@ class ShellHook(HookHandler):
                 stderr=asyncio.subprocess.PIPE,
                 env={"HOOK_EVENT": event.value, "HOOK_CONTEXT": env_context},
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=self._timeout
-            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self._timeout)
             duration = (time.monotonic() - start) * 1000
             return HookResult(
                 hook_id=self.hook_id,
@@ -249,19 +247,25 @@ class HookExecutor:
                 if not result.success:
                     logger.warning(
                         "Hook %s failed for %s: %s",
-                        handler.hook_id, event.value, result.error,
+                        handler.hook_id,
+                        event.value,
+                        result.error,
                     )
             except Exception as e:
                 logger.error(
                     "Hook %s crashed for %s: %s",
-                    handler.hook_id, event.value, e,
+                    handler.hook_id,
+                    event.value,
+                    e,
                 )
-                results.append(HookResult(
-                    hook_id=handler.hook_id,
-                    event=event.value,
-                    success=False,
-                    error=str(e),
-                ))
+                results.append(
+                    HookResult(
+                        hook_id=handler.hook_id,
+                        event=event.value,
+                        success=False,
+                        error=str(e),
+                    )
+                )
 
         return results
 

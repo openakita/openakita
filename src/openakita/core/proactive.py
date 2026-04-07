@@ -100,9 +100,7 @@ class ProactiveFeedbackTracker:
         )
         self._save()
 
-    def record_reaction(
-        self, reaction_type: str, response_delay_minutes: float = 0
-    ) -> None:
+    def record_reaction(self, reaction_type: str, response_delay_minutes: float = 0) -> None:
         """
         记录用户对最近一条主动消息的反应
 
@@ -182,7 +180,8 @@ class ProactiveFeedbackTracker:
         - negative    → 大幅拉长（用户反感，上限 24h）
         """
         idle_records = [
-            r for r in self.records
+            r
+            for r in self.records
             if r.timestamp > cutoff and r.reaction and r.msg_type == "idle_chat"
         ]
 
@@ -203,14 +202,10 @@ class ProactiveFeedbackTracker:
             )
         elif ign / total > 0.5:
             threshold = min(24, base_hours * 2)
-            logger.info(
-                "Idle threshold increased to %dh (idle_chat often ignored)", threshold
-            )
+            logger.info("Idle threshold increased to %dh (idle_chat often ignored)", threshold)
         elif pos / total > 0.8:
             threshold = max(1, base_hours - 1)
-            logger.info(
-                "Idle threshold decreased to %dh (idle_chat well received)", threshold
-            )
+            logger.info("Idle threshold decreased to %dh (idle_chat well received)", threshold)
 
         return threshold
 
@@ -272,7 +267,10 @@ class ProactiveEngine:
         hour = now.hour
         if effective_config.quiet_hours_start > effective_config.quiet_hours_end:
             # 跨午夜 (如 23:00-07:00)
-            if hour >= effective_config.quiet_hours_start or hour < effective_config.quiet_hours_end:
+            if (
+                hour >= effective_config.quiet_hours_start
+                or hour < effective_config.quiet_hours_end
+            ):
                 return None
         else:
             # 同日 (如 01:00-05:00)
@@ -309,9 +307,7 @@ class ProactiveEngine:
         # 早安 (7-9 点，当日还没发过)
         if 7 <= hour <= 9:
             today_types = [
-                r.msg_type
-                for r in self.feedback.records
-                if r.timestamp.date() == now.date()
+                r.msg_type for r in self.feedback.records if r.timestamp.date() == now.date()
             ]
             if "morning_greeting" not in today_types:
                 return "morning_greeting"
@@ -319,9 +315,7 @@ class ProactiveEngine:
         # 晚安 (21-22 点)
         if 21 <= hour <= 22:
             today_types = [
-                r.msg_type
-                for r in self.feedback.records
-                if r.timestamp.date() == now.date()
+                r.msg_type for r in self.feedback.records if r.timestamp.date() == now.date()
             ]
             if "goodnight" not in today_types:
                 # 只有亲近角色才发晚安

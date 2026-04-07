@@ -86,7 +86,7 @@ class EntityResolver:
             "Given these entity names extracted from conversations, "
             "group them by whether they refer to the same concept.\n\n"
             f"Entities: {unique}\n\n"
-            "Output JSON: {\"groups\": [[\"canonical\", \"alias1\", \"alias2\"], ...]}\n"
+            'Output JSON: {"groups": [["canonical", "alias1", "alias2"], ...]}\n'
             "Each group's first element is the canonical name. "
             "Single-member groups need not be listed."
         )
@@ -100,6 +100,7 @@ class EntityResolver:
             response_text = resp.content if hasattr(resp, "content") else str(resp)
             import json
             import re as _re
+
             json_str = response_text.strip()
             _match = _re.search(r"```(?:json)?\s*([\s\S]*?)```", json_str)
             if _match:

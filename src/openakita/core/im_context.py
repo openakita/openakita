@@ -38,4 +38,3 @@ def reset_im_context(tokens: tuple[Any, Any]) -> None:
     tok1, tok2 = tokens
     current_im_session.reset(tok1)
     current_im_gateway.reset(tok2)
-

@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 class ValidationResult(StrEnum):
     """验证结果"""
+
     PASS = "pass"
     WARN = "warn"
     FAIL = "fail"
@@ -32,6 +33,7 @@ class ValidationResult(StrEnum):
 @dataclass
 class ValidatorOutput:
     """单个验证器的输出"""
+
     name: str
     result: ValidationResult
     reason: str = ""
@@ -41,12 +43,17 @@ class ValidatorOutput:
 @dataclass
 class ValidationReport:
     """综合验证报告"""
+
     outputs: list[ValidatorOutput] = field(default_factory=list)
 
     @property
     def all_passed(self) -> bool:
         applicable = [o for o in self.outputs if o.result != ValidationResult.SKIP]
-        return all(o.result in (ValidationResult.PASS, ValidationResult.WARN) for o in applicable) if applicable else True
+        return (
+            all(o.result in (ValidationResult.PASS, ValidationResult.WARN) for o in applicable)
+            if applicable
+            else True
+        )
 
     @property
     def any_failed(self) -> bool:
@@ -70,7 +77,11 @@ class ValidationReport:
         for o in self.outputs:
             if o.result == ValidationResult.SKIP:
                 continue
-            icon = "✓" if o.result == ValidationResult.PASS else ("⚠" if o.result == ValidationResult.WARN else "✗")
+            icon = (
+                "✓"
+                if o.result == ValidationResult.PASS
+                else ("⚠" if o.result == ValidationResult.WARN else "✗")
+            )
             parts.append(f"{icon} {o.name}: {o.reason}")
         return "\n".join(parts) if parts else "No applicable validators"
 
@@ -80,17 +91,16 @@ class BaseValidator(ABC):
 
     @property
     @abstractmethod
-    def name(self) -> str:
-        ...
+    def name(self) -> str: ...
 
     @abstractmethod
-    def validate(self, context: ValidationContext) -> ValidatorOutput:
-        ...
+    def validate(self, context: ValidationContext) -> ValidatorOutput: ...
 
 
 @dataclass
 class ValidationContext:
     """验证上下文（传递给所有验证器的数据）"""
+
     user_request: str = ""
     assistant_response: str = ""
     executed_tools: list[str] = field(default_factory=list)
@@ -134,7 +144,9 @@ class PlanValidator(BaseValidator):
             failed = sum(1 for s in steps if s.get("status") == "failed")
 
             if pending > 0:
-                pending_ids = [s.get("id", "?") for s in steps if s.get("status") in ("pending", "in_progress")]
+                pending_ids = [
+                    s.get("id", "?") for s in steps if s.get("status") in ("pending", "in_progress")
+                ]
                 return ValidatorOutput(
                     name=self.name,
                     result=ValidationResult.FAIL,
@@ -251,14 +263,15 @@ class CompletePlanValidator(BaseValidator):
 
     def validate(self, context: ValidationContext) -> ValidatorOutput:
         if "complete_todo" in context.executed_tools:
-                return ValidatorOutput(
-                    name=self.name,
-                    result=ValidationResult.PASS,
-                    reason="complete_todo was called",
-                )
+            return ValidatorOutput(
+                name=self.name,
+                result=ValidationResult.PASS,
+                reason="complete_todo was called",
+            )
 
         try:
             from ..tools.handlers.plan import has_active_todo
+
             if context.conversation_id and has_active_todo(context.conversation_id):
                 return ValidatorOutput(
                     name=self.name,
@@ -304,15 +317,18 @@ class ValidatorRegistry:
                 report.outputs.append(output)
             except Exception as e:
                 logger.warning(f"[Validator] {validator.name} error: {e}")
-                report.outputs.append(ValidatorOutput(
-                    name=validator.name,
-                    result=ValidationResult.SKIP,
-                    reason=f"Validator error: {e}",
-                ))
+                report.outputs.append(
+                    ValidatorOutput(
+                        name=validator.name,
+                        result=ValidationResult.SKIP,
+                        reason=f"Validator error: {e}",
+                    )
+                )
 
         # Decision Trace
         try:
             from ..tracing.tracer import get_tracer
+
             tracer = get_tracer()
             tracer.record_decision(
                 decision_type="deterministic_validation",

@@ -81,6 +81,7 @@ class InProcessBackend(AgentBackend):
         create_agent_fn: Callable,
     ) -> TeammateResult:
         """启动 Teammate 任务。"""
+
         async def _execute():
             try:
                 agent = await create_agent_fn(task.agent_id, task)
@@ -151,10 +152,7 @@ class TeamManager:
         self._tasks = tasks
 
         # Launch all tasks concurrently
-        coros = [
-            self._backend.run_teammate(task, create_agent_fn)
-            for task in tasks
-        ]
+        coros = [self._backend.run_teammate(task, create_agent_fn) for task in tasks]
         results = await asyncio.gather(*coros, return_exceptions=True)
 
         self._results = []
@@ -162,12 +160,14 @@ class TeamManager:
             if isinstance(r, TeammateResult):
                 self._results.append(r)
             elif isinstance(r, Exception):
-                self._results.append(TeammateResult(
-                    task_id="unknown",
-                    agent_id="unknown",
-                    success=False,
-                    error=str(r),
-                ))
+                self._results.append(
+                    TeammateResult(
+                        task_id="unknown",
+                        agent_id="unknown",
+                        success=False,
+                        error=str(r),
+                    )
+                )
 
         return self._results
 

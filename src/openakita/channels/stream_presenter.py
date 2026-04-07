@@ -121,7 +121,8 @@ class StreamPresenter(ABC):
             await self.start()
         try:
             return await self._do_finalize(
-                self._accumulated_text, self._accumulated_thinking,
+                self._accumulated_text,
+                self._accumulated_thinking,
             )
         except Exception as e:
             logger.warning(f"[StreamPresenter] finalize failed: {e}")
@@ -156,7 +157,8 @@ class NullStreamPresenter(StreamPresenter):
     async def _do_start(self) -> None:
         try:
             self._placeholder_msg_id = await self._adapter.send_text(
-                self.chat_id, "💭 正在思考…",
+                self.chat_id,
+                "💭 正在思考…",
                 thread_id=self.thread_id,
             )
         except Exception:

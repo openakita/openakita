@@ -141,10 +141,7 @@ class AgentPackageHandler:
             skills_count = len(p.skills) if p.skills else 0
             type_label = "系统" if p.is_system else "自定义"
             cat = f" [{p.category}]" if p.category else ""
-            lines.append(
-                f"- **{p.name}** (`{p.id}`) — {type_label}{cat}, "
-                f"{skills_count} 个技能"
-            )
+            lines.append(f"- **{p.name}** (`{p.id}`) — {type_label}{cat}, {skills_count} 个技能")
 
         lines.append(f"\n共 {len(profiles)} 个 Agent 可导出。")
         lines.append("使用 `export_agent` 工具导出指定 Agent。")
@@ -188,9 +185,7 @@ class AgentPackageHandler:
         if info["bundled_skills"]:
             lines.append(f"**捆绑技能**: {', '.join(info['bundled_skills'])}")
         if manifest.get("required_builtin_skills"):
-            lines.append(
-                f"**需要内置技能**: {', '.join(manifest['required_builtin_skills'])}"
-            )
+            lines.append(f"**需要内置技能**: {', '.join(manifest['required_builtin_skills'])}")
 
         ext_skills = manifest.get("required_external_skills", [])
         if ext_skills:
@@ -259,6 +254,7 @@ class AgentPackageHandler:
             loader = getattr(self.agent, "skill_loader", None)
             if loader:
                 from ...config import settings
+
                 loader.load_all(settings.project_root)
                 logger.info("Skills reloaded after agent package import")
         except Exception as e:

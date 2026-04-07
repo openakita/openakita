@@ -31,12 +31,12 @@ logger = logging.getLogger(__name__)
 
 # ─── 内置分类 ──────────────────────────────────────────────────────────
 BUILTIN_CATEGORIES: list[dict[str, Any]] = [
-    {"id": "general",      "label": "通用基础", "color": "#4A90D9", "builtin": True},
-    {"id": "content",      "label": "内容创作", "color": "#FF6B6B", "builtin": True},
-    {"id": "enterprise",   "label": "企业办公", "color": "#27AE60", "builtin": True},
-    {"id": "education",    "label": "教育辅助", "color": "#8E44AD", "builtin": True},
+    {"id": "general", "label": "通用基础", "color": "#4A90D9", "builtin": True},
+    {"id": "content", "label": "内容创作", "color": "#FF6B6B", "builtin": True},
+    {"id": "enterprise", "label": "企业办公", "color": "#27AE60", "builtin": True},
+    {"id": "education", "label": "教育辅助", "color": "#8E44AD", "builtin": True},
     {"id": "productivity", "label": "生活效率", "color": "#E74C3C", "builtin": True},
-    {"id": "devops",       "label": "开发运维", "color": "#95A5A6", "builtin": True},
+    {"id": "devops", "label": "开发运维", "color": "#95A5A6", "builtin": True},
 ]
 _BUILTIN_IDS = frozenset(c["id"] for c in BUILTIN_CATEGORIES)
 
@@ -80,9 +80,13 @@ def safe_skills_mode(value: Any) -> SkillsMode:
 
 
 # SYSTEM Profile 中不可被用户修改的身份字段（其余均可自定义）
-_SYSTEM_IMMUTABLE_FIELDS = frozenset({
-    "id", "type", "created_by",
-})
+_SYSTEM_IMMUTABLE_FIELDS = frozenset(
+    {
+        "id",
+        "type",
+        "created_by",
+    }
+)
 
 
 @dataclass
@@ -259,6 +263,7 @@ def get_profile_store(base_dir: str | Path | None = None) -> ProfileStore:
             return _global_store
         if base_dir is None:
             from openakita.config import settings
+
             base_dir = settings.data_dir / "agents"
         _global_store = ProfileStore(base_dir)
         return _global_store
@@ -336,12 +341,29 @@ class ProfileStore:
         logger.info(f"ProfileStore saved: {profile.id} ({profile.type.value})")
 
     # 仅用于判断"用户是否实质修改了系统 Agent"的字段集（hidden/visibility 不算）
-    _CUSTOMIZATION_FIELDS = frozenset({
-        "name", "description", "icon", "color", "skills", "skills_mode",
-        "tools", "tools_mode", "mcp_servers", "mcp_mode", "plugins", "plugins_mode",
-        "custom_prompt", "category", "fallback_profile_id", "preferred_endpoint",
-        "identity_mode", "memory_mode", "memory_inherit_global",
-    })
+    _CUSTOMIZATION_FIELDS = frozenset(
+        {
+            "name",
+            "description",
+            "icon",
+            "color",
+            "skills",
+            "skills_mode",
+            "tools",
+            "tools_mode",
+            "mcp_servers",
+            "mcp_mode",
+            "plugins",
+            "plugins_mode",
+            "custom_prompt",
+            "category",
+            "fallback_profile_id",
+            "preferred_endpoint",
+            "identity_mode",
+            "memory_mode",
+            "memory_inherit_global",
+        }
+    )
 
     def update(self, profile_id: str, updates: dict[str, Any]) -> AgentProfile:
         """
@@ -359,12 +381,10 @@ class ProfileStore:
                 blocked = set(updates.keys()) & _SYSTEM_IMMUTABLE_FIELDS
                 if blocked:
                     logger.warning(
-                        f"SYSTEM profile {profile_id}: "
-                        f"ignoring immutable fields: {blocked}"
+                        f"SYSTEM profile {profile_id}: ignoring immutable fields: {blocked}"
                     )
                     updates = {
-                        k: v for k, v in updates.items()
-                        if k not in _SYSTEM_IMMUTABLE_FIELDS
+                        k: v for k, v in updates.items() if k not in _SYSTEM_IMMUTABLE_FIELDS
                     }
                 # 实质修改时自动标记
                 if set(updates.keys()) & self._CUSTOMIZATION_FIELDS:
@@ -387,9 +407,7 @@ class ProfileStore:
         Raises ValueError if profile_id collides with reserved directory names.
         """
         if profile_id in self._RESERVED_DIR_NAMES:
-            raise ValueError(
-                f"Profile ID '{profile_id}' conflicts with a reserved directory name"
-            )
+            raise ValueError(f"Profile ID '{profile_id}' conflicts with a reserved directory name")
         return self._base_dir / profile_id
 
     def ensure_profile_dir(self, profile_id: str) -> Path:
@@ -406,15 +424,14 @@ class ProfileStore:
             if existing is None:
                 return False
             if existing.is_system:
-                raise PermissionError(
-                    f"Cannot delete SYSTEM profile: {profile_id}"
-                )
+                raise PermissionError(f"Cannot delete SYSTEM profile: {profile_id}")
             del self._cache[profile_id]
             fp = self._profiles_dir / f"{profile_id}.json"
             if fp.exists():
                 fp.unlink()
 
         import shutil
+
         profile_dir = self.get_profile_dir(profile_id)
         if profile_dir.is_dir():
             shutil.rmtree(profile_dir, ignore_errors=True)
@@ -451,8 +468,7 @@ class ProfileStore:
                 self._ephemeral.clear()
             else:
                 to_remove = [
-                    pid for pid in self._ephemeral
-                    if pid.startswith(f"ephemeral_{session_prefix}")
+                    pid for pid in self._ephemeral if pid.startswith(f"ephemeral_{session_prefix}")
                 ]
                 count = len(to_remove)
                 for pid in to_remove:
@@ -470,7 +486,8 @@ class ProfileStore:
 
     @staticmethod
     def _validate_system_update(
-        existing: AgentProfile, new: AgentProfile,
+        existing: AgentProfile,
+        new: AgentProfile,
     ) -> None:
         """检查对 SYSTEM Profile 的修改是否合法"""
         for f in _SYSTEM_IMMUTABLE_FIELDS:
@@ -513,11 +530,13 @@ class ProfileStore:
             result.append({**bc, "agent_count": cat_counts.get(bc["id"], 0)})
         with self._lock:
             for cc in self._custom_categories:
-                result.append({
-                    **cc,
-                    "builtin": False,
-                    "agent_count": cat_counts.get(cc["id"], 0),
-                })
+                result.append(
+                    {
+                        **cc,
+                        "builtin": False,
+                        "agent_count": cat_counts.get(cc["id"], 0),
+                    }
+                )
         return result
 
     def add_category(self, cat_id: str, label: str, color: str) -> dict[str, Any]:
@@ -538,17 +557,14 @@ class ProfileStore:
             raise PermissionError(f"不能删除内置分类: {cat_id}")
         with self._lock:
             agent_count = sum(
-                1 for p in self._cache.values()
-                if p.category == cat_id and not p.hidden
+                1 for p in self._cache.values() if p.category == cat_id and not p.hidden
             )
             if agent_count > 0:
                 raise ValueError(
                     f"分类 '{cat_id}' 下还有 {agent_count} 个 Agent，请先移除或更换分类"
                 )
             before = len(self._custom_categories)
-            self._custom_categories = [
-                c for c in self._custom_categories if c["id"] != cat_id
-            ]
+            self._custom_categories = [c for c in self._custom_categories if c["id"] != cat_id]
             if len(self._custom_categories) == before:
                 return False
             self._persist_categories()

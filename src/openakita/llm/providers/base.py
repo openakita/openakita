@@ -64,17 +64,17 @@ class RPMRateLimiter:
 
             tag = f" endpoint={endpoint_name}" if endpoint_name else ""
             logger.info(
-                f"[RPM]{tag} rate limit reached ({self._rpm} rpm), "
-                f"waiting {wait_time:.1f}s"
+                f"[RPM]{tag} rate limit reached ({self._rpm} rpm), waiting {wait_time:.1f}s"
             )
             await asyncio.sleep(max(wait_time, 0.1))
 
+
 # 冷静期时长（秒）- 按错误类型区分
-COOLDOWN_AUTH = 60         # 认证错误: 1 分钟（需要人工干预，但不宜锁太久）
-COOLDOWN_QUOTA = 300       # 配额耗尽: 5 分钟（配额恢复通常需要数小时）
-COOLDOWN_STRUCTURAL = 10   # 结构性错误: 10 秒（上层会快速识别处理）
-COOLDOWN_TRANSIENT = 5     # 瞬时错误: 5 秒（超时/连接失败，很可能快速恢复）
-COOLDOWN_DEFAULT = 30      # 默认: 30 秒
+COOLDOWN_AUTH = 60  # 认证错误: 1 分钟（需要人工干预，但不宜锁太久）
+COOLDOWN_QUOTA = 300  # 配额耗尽: 5 分钟（配额恢复通常需要数小时）
+COOLDOWN_STRUCTURAL = 10  # 结构性错误: 10 秒（上层会快速识别处理）
+COOLDOWN_TRANSIENT = 5  # 瞬时错误: 5 秒（超时/连接失败，很可能快速恢复）
+COOLDOWN_DEFAULT = 30  # 默认: 30 秒
 COOLDOWN_GLOBAL_FAILURE = 10  # 全局故障（所有端点同时失败）: 10 秒
 
 # 渐进式冷静期退避 —— 连续失败时按次数递增
@@ -96,13 +96,11 @@ class LLMProvider(ABC):
         self._healthy = True
         self._last_error: str | None = None
         self._cooldown_until: float = 0  # 冷静期结束时间戳
-        self._error_category: str = ""   # 错误分类
+        self._error_category: str = ""  # 错误分类
         self._consecutive_cooldowns: int = 0  # 连续进入冷静期次数（无成功请求间隔）
         self._is_extended_cooldown: bool = False  # 是否处于升级冷静期
         _rpm = config.rpm_limit if isinstance(config.rpm_limit, int) else 0
-        self._rate_limiter: RPMRateLimiter | None = (
-            RPMRateLimiter(_rpm) if _rpm > 0 else None
-        )
+        self._rate_limiter: RPMRateLimiter | None = RPMRateLimiter(_rpm) if _rpm > 0 else None
 
     @property
     def name(self) -> str:
@@ -132,7 +130,9 @@ class LLMProvider(ABC):
                 self._is_extended_cooldown = False
                 # 渐进退避冷静期结束后重置连续计数，给端点重新证明自己的机会
                 self._consecutive_cooldowns = 0
-                logger.info(f"[LLM] endpoint={self.name} progressive cooldown expired, reset to healthy")
+                logger.info(
+                    f"[LLM] endpoint={self.name} progressive cooldown expired, reset to healthy"
+                )
 
         return self._healthy
 
@@ -193,9 +193,8 @@ class LLMProvider(ABC):
         # - 只在从健康 → 不健康时递增（同一轮重试中多次 mark_unhealthy 不重复计数）
         # - 结构性错误不累计：每次重试结果相同
         # - 本地端点 transient 错误不累计：超时是资源不足，惩罚无意义
-        skip_escalation = (
-            self._error_category == "structural"
-            or (is_local and self._error_category == "transient")
+        skip_escalation = self._error_category == "structural" or (
+            is_local and self._error_category == "transient"
         )
         if not skip_escalation and not was_already_unhealthy:
             self._consecutive_cooldowns += 1
@@ -333,36 +332,75 @@ class LLMProvider(ABC):
         err_lower = error.lower()
 
         # 配额耗尽类（必须在 auth 之前，因为也是 403 状态码）
-        if any(kw in err_lower for kw in [
-            "allocationquota", "freetieronly", "insufficient_quota",
-            "quota_exceeded", "billing", "free tier",
-            "free_tier", "quota", "exceeded your current",
-        ]):
+        if any(
+            kw in err_lower
+            for kw in [
+                "allocationquota",
+                "freetieronly",
+                "insufficient_quota",
+                "quota_exceeded",
+                "billing",
+                "free tier",
+                "free_tier",
+                "quota",
+                "exceeded your current",
+            ]
+        ):
             return "quota"
 
         # 认证类
-        if any(kw in err_lower for kw in [
-            "auth", "401", "403", "api_key", "invalid key", "permission",
-        ]):
+        if any(
+            kw in err_lower
+            for kw in [
+                "auth",
+                "401",
+                "403",
+                "api_key",
+                "invalid key",
+                "permission",
+            ]
+        ):
             return "auth"
 
         # 结构性/格式类
         # 注意: 用 "(400)" 而非 "400"，避免匹配 HTML 中的 CSS 类名等内容
-        if any(kw in err_lower for kw in [
-            "invalid_request", "invalid_parameter", "messages with role",
-            "must be a response", "does not support", "not supported",
-            "(400)", "(413)",
-            "payload too large", "request entity too large",
-            "larger than allowed",
-        ]):
+        if any(
+            kw in err_lower
+            for kw in [
+                "invalid_request",
+                "invalid_parameter",
+                "messages with role",
+                "must be a response",
+                "does not support",
+                "not supported",
+                "(400)",
+                "(413)",
+                "payload too large",
+                "request entity too large",
+                "larger than allowed",
+            ]
+        ):
             return "structural"
 
         # 瞬时类（网络/超时）
-        if any(kw in err_lower for kw in [
-            "timeout", "timed out", "connect", "connection",
-            "network", "unreachable", "reset", "eof", "broken pipe",
-            "502", "503", "504", "529",
-        ]):
+        if any(
+            kw in err_lower
+            for kw in [
+                "timeout",
+                "timed out",
+                "connect",
+                "connection",
+                "network",
+                "unreachable",
+                "reset",
+                "eof",
+                "broken pipe",
+                "502",
+                "503",
+                "504",
+                "529",
+            ]
+        ):
             return "transient"
 
         return "unknown"

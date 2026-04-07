@@ -109,7 +109,8 @@ class StreamingToolExecutor:
             if self._is_bash_error(pending.tool_name, e):
                 logger.warning(
                     "Bash error in %s, aborting siblings: %s",
-                    pending.tool_name, e,
+                    pending.tool_name,
+                    e,
                 )
                 self._abort_event.set()
         finally:

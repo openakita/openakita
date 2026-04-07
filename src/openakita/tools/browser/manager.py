@@ -21,11 +21,15 @@ logger = logging.getLogger(__name__)
 _IS_MAC = platform.system() == "Darwin"
 
 # Mach-O / fat binary magic bytes (covers both byte orders)
-_MACHO_MAGICS = frozenset({
-    b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",  # 32-bit
-    b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",  # 64-bit
-    b"\xca\xfe\xba\xbe",                         # universal (fat)
-})
+_MACHO_MAGICS = frozenset(
+    {
+        b"\xfe\xed\xfa\xce",
+        b"\xce\xfa\xed\xfe",  # 32-bit
+        b"\xfe\xed\xfa\xcf",
+        b"\xcf\xfa\xed\xfe",  # 64-bit
+        b"\xca\xfe\xba\xbe",  # universal (fat)
+    }
+)
 
 _LAUNCH_TIMEOUT = 30  # seconds
 
@@ -67,6 +71,7 @@ def _is_server_environment() -> bool:
     # Windows: 远程桌面会话
     try:
         import ctypes
+
         SM_REMOTESESSION = 0x1000
         if ctypes.windll.user32.GetSystemMetrics(SM_REMOTESESSION) != 0:
             return True
@@ -76,6 +81,7 @@ def _is_server_environment() -> bool:
     # Windows: 通过注册表检测 Windows Server 版本
     try:
         import winreg
+
         key = winreg.OpenKey(
             winreg.HKEY_LOCAL_MACHINE,
             r"SOFTWARE\Microsoft\Windows NT\CurrentVersion",
@@ -113,7 +119,8 @@ def _ensure_macos_executability(target: Path) -> None:
     try:
         subprocess.run(
             ["xattr", "-cr", str(target)],
-            capture_output=True, timeout=30,
+            capture_output=True,
+            timeout=30,
         )
     except Exception:
         pass
@@ -129,10 +136,7 @@ def _ensure_macos_executability(target: Path) -> None:
             except OSError:
                 pass
     if fixed:
-        logger.info(
-            f"[Browser] Fixed execute permissions for {fixed} "
-            f"binaries in {target.name}"
-        )
+        logger.info(f"[Browser] Fixed execute permissions for {fixed} binaries in {target.name}")
 
 
 def _find_bundled_browser_executable() -> str | None:
@@ -147,6 +151,7 @@ def _find_bundled_browser_executable() -> str | None:
     import sys
 
     from openakita.runtime_env import IS_FROZEN
+
     if not IS_FROZEN:
         return None
 
@@ -175,9 +180,7 @@ def _find_bundled_browser_executable() -> str | None:
     candidates: list[Path] = []
     for root in search_roots:
         if is_mac:
-            candidates.append(
-                root / "browser" / "Chromium.app" / "Contents" / "MacOS" / "Chromium"
-            )
+            candidates.append(root / "browser" / "Chromium.app" / "Contents" / "MacOS" / "Chromium")
         candidates.append(root / "browser" / exe_name)
 
         for pw_name in ("playwright-browsers", "playwright-browser"):
@@ -191,8 +194,12 @@ def _find_bundled_browser_executable() -> str | None:
                 elif is_mac:
                     for mac_dir in ("chrome-mac-arm64", "chrome-mac"):
                         candidates.append(
-                            chromium_dir / mac_dir / "Chromium.app"
-                            / "Contents" / "MacOS" / "Chromium"
+                            chromium_dir
+                            / mac_dir
+                            / "Chromium.app"
+                            / "Contents"
+                            / "MacOS"
+                            / "Chromium"
                         )
                         candidates.append(chromium_dir / mac_dir / headless_name)
                 else:
@@ -217,9 +224,7 @@ def _find_bundled_browser_executable() -> str | None:
                 path.chmod(path.stat().st_mode | 0o755)
                 logger.info(f"[Browser] Fixed execute permission: {path}")
             except OSError as e:
-                logger.warning(
-                    f"[Browser] Cannot set execute permission for {path}: {e}"
-                )
+                logger.warning(f"[Browser] Cannot set execute permission for {path}: {e}")
                 continue
 
         logger.info(f"[Browser] Found bundled browser executable: {path}")
@@ -341,6 +346,7 @@ class BrowserManager:
 
         # Chrome 检测
         from .chrome_finder import detect_chrome_installation
+
         self._chrome_path, self._chrome_user_data = detect_chrome_installation()
 
         # 内置 Chromium 检测（PyInstaller 打包环境）
@@ -368,14 +374,17 @@ class BrowserManager:
             if platform.system() == "Windows":
                 result = subprocess.run(
                     ["tasklist", "/FI", "IMAGENAME eq chrome.exe", "/FO", "CSV", "/NH"],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 return '"chrome.exe"' in result.stdout.lower()
             else:
                 result = subprocess.run(
                     ["pgrep", "-x", "chrome"],
-                    capture_output=True, timeout=5,
+                    capture_output=True,
+                    timeout=5,
                 )
                 return result.returncode == 0
         except Exception:
@@ -455,7 +464,9 @@ class BrowserManager:
                             break
 
             if not headless:
-                logger.info("[Browser] All headed strategies failed, restarting driver for headless retry...")
+                logger.info(
+                    "[Browser] All headed strategies failed, restarting driver for headless retry..."
+                )
                 await self._cleanup_playwright()
                 if not await self._start_playwright_driver():
                     logger.error("[Browser] Cannot restart Playwright driver for headless fallback")
@@ -485,9 +496,7 @@ class BrowserManager:
                                 f"[Browser] Headless fallback {strategy.value} also failed: {e}"
                             )
 
-            logger.error(
-                f"[Browser] All strategies failed: {'; '.join(self._startup_errors)}"
-            )
+            logger.error(f"[Browser] All strategies failed: {'; '.join(self._startup_errors)}")
             self.state = BrowserState.ERROR
             await self._cleanup_playwright()
             return False
@@ -498,6 +507,7 @@ class BrowserManager:
             from playwright.async_api import async_playwright
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
+
             hint = import_or_hint("playwright")
             logger.error(f"Playwright 导入失败: {hint}")
             self.state = BrowserState.ERROR
@@ -506,6 +516,7 @@ class BrowserManager:
         if _IS_MAC:
             try:
                 import playwright as _pw_pkg
+
                 _ensure_macos_executability(Path(_pw_pkg.__file__).parent / "driver")
             except Exception:
                 pass
@@ -517,7 +528,8 @@ class BrowserManager:
             try:
                 pw_ctx = async_playwright()
                 self._playwright = await asyncio.wait_for(
-                    pw_ctx.start(), timeout=20,
+                    pw_ctx.start(),
+                    timeout=20,
                 )
                 return True
             except TimeoutError:
@@ -625,8 +637,7 @@ class BrowserManager:
         # 如果有内置可执行文件，跳过 — 会在 _try_bundled_chromium 里用 executable_path
         if self._bundled_executable:
             logger.info(
-                f"[Browser] Will use bundled executable directly: "
-                f"{self._bundled_executable}"
+                f"[Browser] Will use bundled executable directly: {self._bundled_executable}"
             )
             return
 
@@ -634,6 +645,7 @@ class BrowserManager:
 
         if IS_FROZEN:
             import sys
+
             _meipass = getattr(sys, "_MEIPASS", None)
             if _meipass:
                 for pw_name in ("playwright-browsers", "playwright-browser"):
@@ -688,7 +700,8 @@ class BrowserManager:
 
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"http://localhost:{self._cdp_port}/json/version", timeout=2.0,
+                f"http://localhost:{self._cdp_port}/json/version",
+                timeout=2.0,
             )
             if response.status_code != 200:
                 return False
@@ -696,9 +709,7 @@ class BrowserManager:
         logger.info(f"[Browser] Found Chrome at localhost:{self._cdp_port}")
 
         self._browser = await asyncio.wait_for(
-            self._playwright.chromium.connect_over_cdp(
-                f"http://localhost:{self._cdp_port}"
-            ),
+            self._playwright.chromium.connect_over_cdp(f"http://localhost:{self._cdp_port}"),
             timeout=15,
         )
 
@@ -732,6 +743,7 @@ class BrowserManager:
 
         if use_oa_profile:
             from .chrome_finder import get_openakita_chrome_profile, sync_chrome_cookies
+
             user_data = get_openakita_chrome_profile()
             if self._chrome_user_data:
                 sync_chrome_cookies(self._chrome_user_data, user_data)
@@ -784,10 +796,7 @@ class BrowserManager:
 
         exe_path = Path(exe)
         if not exe_path.exists():
-            hint = (
-                f"Chromium 可执行文件不存在: {exe}\n"
-                "请运行: playwright install chromium"
-            )
+            hint = f"Chromium 可执行文件不存在: {exe}\n请运行: playwright install chromium"
             browsers_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "(default)")
             logger.error(
                 f"[Browser] Chromium preflight FAIL: {hint} "
@@ -841,8 +850,7 @@ class BrowserManager:
 
         exe_label = "bundled" if exe_path else "playwright"
         logger.info(
-            f"[Browser] Launching Chromium "
-            f"(headless={effective_headless}, exe={exe_label})"
+            f"[Browser] Launching Chromium (headless={effective_headless}, exe={exe_label})"
         )
 
         last_err: Exception | None = None
@@ -854,10 +862,7 @@ class BrowserManager:
                 return True
         except Exception as e:
             last_err = e
-            logger.info(
-                f"[Browser] persistent_context failed ({e}), "
-                "trying standard launch..."
-            )
+            logger.info(f"[Browser] persistent_context failed ({e}), trying standard launch...")
             await self._close_browser_silently()
 
         # --- 策略 2: 传统 launch + new_context + new_page ---
@@ -873,10 +878,13 @@ class BrowserManager:
         raise last_err or RuntimeError("Chromium launch failed")
 
     async def _launch_persistent(
-        self, exe_path: str | None, headless: bool,
+        self,
+        exe_path: str | None,
+        headless: bool,
     ) -> bool:
         """用 launch_persistent_context 原子启动浏览器 + 页面。"""
         import tempfile
+
         user_data = tempfile.mkdtemp(prefix="oa_chromium_")
 
         kwargs: dict[str, Any] = {
@@ -901,14 +909,13 @@ class BrowserManager:
         self._page.set_default_timeout(30000)
 
         self.visible = not headless
-        logger.info(
-            f"Browser started with Chromium persistent_context "
-            f"(visible={self.visible})"
-        )
+        logger.info(f"Browser started with Chromium persistent_context (visible={self.visible})")
         return True
 
     async def _launch_standard(
-        self, exe_path: str | None, headless: bool,
+        self,
+        exe_path: str | None,
+        headless: bool,
     ) -> bool:
         """传统 launch + new_context + new_page。"""
         launch_kwargs: dict[str, Any] = {

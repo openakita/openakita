@@ -90,7 +90,9 @@ def normalize_stream_event(event: dict | None) -> dict:
         if "step_id" in payload and "stepId" not in payload:
             payload["stepId"] = payload["step_id"]
 
-    if event_type == StreamEventType.PLAN_READY_FOR_APPROVAL.value and isinstance(payload.get("data"), dict):
+    if event_type == StreamEventType.PLAN_READY_FOR_APPROVAL.value and isinstance(
+        payload.get("data"), dict
+    ):
         data = dict(payload["data"])
         payload.setdefault("conversation_id", data.get("conversation_id", ""))
         payload.setdefault("plan_id", data.get("plan_id", ""))

@@ -144,9 +144,7 @@ class OrgNotifier:
             lines.append(body_preview)
 
         if msg.requires_approval and msg.approval_id:
-            lines.append(
-                f"\n回复「{msg.approval_id} 批准」或「{msg.approval_id} 拒绝」处理此项"
-            )
+            lines.append(f"\n回复「{msg.approval_id} 批准」或「{msg.approval_id} 拒绝」处理此项")
 
         return "\n".join(lines)
 
@@ -156,45 +154,59 @@ class OrgNotifier:
 
     async def _send_feishu(self, webhook_url: str, text: str) -> bool:
         import httpx
+
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(webhook_url, json={
-                "msg_type": "text",
-                "content": {"text": text},
-            })
+            resp = await client.post(
+                webhook_url,
+                json={
+                    "msg_type": "text",
+                    "content": {"text": text},
+                },
+            )
             return resp.status_code == 200
 
     async def _send_dingtalk(self, webhook_url: str, text: str) -> bool:
         import httpx
+
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(webhook_url, json={
-                "msgtype": "text",
-                "text": {"content": text},
-            })
+            resp = await client.post(
+                webhook_url,
+                json={
+                    "msgtype": "text",
+                    "text": {"content": text},
+                },
+            )
             return resp.status_code == 200
 
     async def _send_wechat_work(self, webhook_url: str, text: str) -> bool:
         import httpx
+
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(webhook_url, json={
-                "msgtype": "text",
-                "text": {"content": text},
-            })
+            resp = await client.post(
+                webhook_url,
+                json={
+                    "msgtype": "text",
+                    "text": {"content": text},
+                },
+            )
             return resp.status_code == 200
 
-    async def _send_generic_webhook(
-        self, webhook_url: str, text: str, msg: InboxMessage
-    ) -> bool:
+    async def _send_generic_webhook(self, webhook_url: str, text: str, msg: InboxMessage) -> bool:
         import httpx
+
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(webhook_url, json={
-                "event": "org_notification",
-                "org_id": msg.org_id,
-                "msg_id": msg.id,
-                "title": msg.title,
-                "body": text,
-                "priority": msg.priority.value,
-                "requires_approval": msg.requires_approval,
-                "approval_id": msg.approval_id,
-                "created_at": msg.created_at,
-            })
+            resp = await client.post(
+                webhook_url,
+                json={
+                    "event": "org_notification",
+                    "org_id": msg.org_id,
+                    "msg_id": msg.id,
+                    "title": msg.title,
+                    "body": text,
+                    "priority": msg.priority.value,
+                    "requires_approval": msg.requires_approval,
+                    "approval_id": msg.approval_id,
+                    "created_at": msg.created_at,
+                },
+            )
             return resp.status_code == 200

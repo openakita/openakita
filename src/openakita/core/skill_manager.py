@@ -100,9 +100,11 @@ class SkillManager:
                     external_allowlist = {str(x).strip() for x in al if str(x).strip()}
             effective = self._loader.compute_effective_allowlist(external_allowlist)
             from openakita.skills.preset_utils import collect_preset_referenced_skills
+
             agent_skills = collect_preset_referenced_skills()
             removed = self._loader.prune_external_by_allowlist(
-                effective, agent_referenced_skills=agent_skills,
+                effective,
+                agent_referenced_skills=agent_skills,
             )
             if removed:
                 logger.info(f"External skills filtered: {removed} disabled")
@@ -166,7 +168,10 @@ class SkillManager:
             clone_url = f"https://github.com/{pb.owner}/{pb.repo}.git"
             effective_subdir = subdir or pb.subdir
             return await self._install_from_git(
-                clone_url, name or pb.subdir, effective_subdir, skills_dir,
+                clone_url,
+                name or pb.subdir,
+                effective_subdir,
+                skills_dir,
             )
 
         # 3. raw.githubusercontent.com → 作为文件 URL 直接下载
@@ -253,13 +258,18 @@ class SkillManager:
     @staticmethod
     def _classify_git_clone_failure(output: str) -> tuple[ErrorType, str]:
         lower = output.lower()
-        if any(k in lower for k in ("timed out", "timeout", "could not resolve", "connection", "network")):
+        if any(
+            k in lower
+            for k in ("timed out", "timeout", "could not resolve", "connection", "network")
+        ):
             return ErrorType.TRANSIENT, "git_network_failure"
         if any(k in lower for k in ("repository not found", "not found", "404")):
             return ErrorType.RESOURCE_NOT_FOUND, "git_repo_not_found"
         if any(k in lower for k in ("permission denied", "authentication failed", "access denied")):
             return ErrorType.PERMISSION, "git_permission_denied"
-        if any(k in lower for k in ("not recognized", "command not found", "no such file or directory")):
+        if any(
+            k in lower for k in ("not recognized", "command not found", "no such file or directory")
+        ):
             return ErrorType.DEPENDENCY, "git_dependency_missing"
         return ErrorType.PERMANENT, "git_clone_failed"
 
@@ -275,7 +285,9 @@ class SkillManager:
         return True
 
     def _record_failure_class(self, failure_class: str) -> None:
-        self._failure_class_streaks[failure_class] = self._failure_class_streaks.get(failure_class, 0) + 1
+        self._failure_class_streaks[failure_class] = (
+            self._failure_class_streaks.get(failure_class, 0) + 1
+        )
         self._failure_class_last_seen[failure_class] = time.time()
 
     def _reset_failure_streaks(self) -> None:
@@ -416,6 +428,7 @@ class SkillManager:
             if temp_dir and temp_dir.exists():
                 with contextlib.suppress(BaseException):
                     import shutil
+
                     shutil.rmtree(temp_dir)
 
     async def _install_from_url(
@@ -451,6 +464,7 @@ class SkillManager:
 
             if not skill_name:
                 from urllib.parse import urlparse
+
                 path = urlparse(url).path
                 skill_name = path.split("/")[-1].replace(".md", "").replace("skill", "").strip("-_")
 
@@ -467,6 +481,7 @@ class SkillManager:
                     for file_url in extra_files:
                         try:
                             from urllib.parse import urlparse as _urlparse
+
                             file_name = _urlparse(file_url).path.split("/")[-1]
                             if not file_name:
                                 continue
@@ -517,6 +532,7 @@ class SkillManager:
     def _cleanup_broken_skill_dir(skill_dir: Path) -> None:
         """清理安装失败的残留目录。"""
         import shutil
+
         if skill_dir and skill_dir.exists():
             with contextlib.suppress(Exception):
                 shutil.rmtree(skill_dir)

@@ -58,11 +58,7 @@ def _parse_env_content(content: str) -> dict[str, str]:
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
             inner = value[1:-1]
             if "\\" in inner:
-                inner = (
-                    inner.replace("\\\\", "\x00")
-                    .replace('\\"', '"')
-                    .replace("\x00", "\\")
-                )
+                inner = inner.replace("\\\\", "\x00").replace('\\"', '"').replace("\x00", "\\")
             value = inner
         else:
             for sep in (" #", "\t#"):
@@ -145,6 +141,7 @@ def ensure_env_loaded(config_path: Path | None = None) -> Path | None:
         return env_path
     logger.debug("No .env file found at %s", env_path)
     return None
+
 
 _workspace_env_loaded: set[str] = set()
 

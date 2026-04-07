@@ -80,6 +80,7 @@ class PersonaHandler:
         success = self.agent.persona_manager.switch_preset(preset_name)
         if success:
             from ...config import runtime_state, settings
+
             settings.persona_name = preset_name
             runtime_state.save()
             return (
@@ -109,8 +110,7 @@ class PersonaHandler:
             if store_dir.exists():
                 store = ProfileStore(store_dir)
                 custom_profiles = [
-                    p for p in store.list_all(include_ephemeral=False)
-                    if p.type.value == "custom"
+                    p for p in store.list_all(include_ephemeral=False) if p.type.value == "custom"
                 ]
                 if custom_profiles:
                     names = [f"{p.icon} {p.name}" for p in custom_profiles]
@@ -176,15 +176,16 @@ class PersonaHandler:
 
             # 查找同 dimension 已有记忆，更新而非新建
             if store:
-                existing = store.query_semantic(
-                    memory_type="persona_trait", limit=50
-                )
+                existing = store.query_semantic(memory_type="persona_trait", limit=50)
                 for old in existing:
                     if old.content.startswith(f"{dimension}="):
-                        store.update_semantic(old.id, {
-                            "content": f"{dimension}={preference}",
-                            "importance_score": max(old.importance_score, trait.confidence),
-                        })
+                        store.update_semantic(
+                            old.id,
+                            {
+                                "content": f"{dimension}={preference}",
+                                "importance_score": max(old.importance_score, trait.confidence),
+                            },
+                        )
                         return f"✅ 已更新人格偏好: {dimension} = {preference} (来源: {source})"
 
             memory = Memory(
@@ -209,6 +210,7 @@ class PersonaHandler:
         self.agent.proactive_engine.toggle(enabled)
         # 更新配置并持久化
         from ...config import runtime_state, settings
+
         settings.proactive_enabled = enabled
         runtime_state.save()
 
@@ -245,11 +247,15 @@ class PersonaHandler:
             lines.append(f"**关心话题**: {', '.join(merged.care_topics)}")
 
         # 活人感状态
-        proactive_status = "已开启" if (
-            hasattr(self.agent, "proactive_engine")
-            and self.agent.proactive_engine
-            and self.agent.proactive_engine.config.enabled
-        ) else "已关闭"
+        proactive_status = (
+            "已开启"
+            if (
+                hasattr(self.agent, "proactive_engine")
+                and self.agent.proactive_engine
+                and self.agent.proactive_engine.config.enabled
+            )
+            else "已关闭"
+        )
         lines.append(f"\n**活人感模式**: {proactive_status}")
 
         if merged.user_customizations:

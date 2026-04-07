@@ -15,11 +15,11 @@ class SalesforceAdapter(BaseAPIAdapter):
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
-        self.username = config.get('username')
-        self.password = config.get('password')
-        self.security_token = config.get('security_token')
-        self.consumer_key = config.get('consumer_key')
-        self.consumer_secret = config.get('consumer_secret')
+        self.username = config.get("username")
+        self.password = config.get("password")
+        self.security_token = config.get("security_token")
+        self.consumer_key = config.get("consumer_key")
+        self.consumer_secret = config.get("consumer_secret")
         self.instance_url = None
         self.access_token = None
         self._session = None
@@ -29,21 +29,24 @@ class SalesforceAdapter(BaseAPIAdapter):
             raise AuthenticationError("缺少 Salesforce 认证信息")
 
         try:
-            async with aiohttp.ClientSession() as session, session.post(
-                'https://login.salesforce.com/services/oauth2/token',
-                data={
-                    'grant_type': 'password',
-                    'client_id': self.consumer_key,
-                    'client_secret': self.consumer_secret,
-                    'username': self.username,
-                    'password': f"{self.password}{self.security_token}"
-                },
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as response:
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(
+                    "https://login.salesforce.com/services/oauth2/token",
+                    data={
+                        "grant_type": "password",
+                        "client_id": self.consumer_key,
+                        "client_secret": self.consumer_secret,
+                        "username": self.username,
+                        "password": f"{self.password}{self.security_token}",
+                    },
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response,
+            ):
                 result = await response.json()
                 if response.status == 200:
-                    self.access_token = result['access_token']
-                    self.instance_url = result['instance_url']
+                    self.access_token = result["access_token"]
+                    self.instance_url = result["instance_url"]
                     return True
                 else:
                     raise AuthenticationError(f"Salesforce 认证失败：{result}")
@@ -58,15 +61,15 @@ class SalesforceAdapter(BaseAPIAdapter):
 
         headers = {
             "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
         async with self._session.request(
             method,
             f"{self.instance_url}{endpoint}",
             headers=headers,
-            json=kwargs.get('json'),
-            timeout=aiohttp.ClientTimeout(total=30)
+            json=kwargs.get("json"),
+            timeout=aiohttp.ClientTimeout(total=30),
         ) as response:
             result = await response.json()
             if response.status >= 400:
@@ -89,8 +92,8 @@ class FXiaokeAdapter(BaseAPIAdapter):
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
-        self.app_key = config.get('app_key')
-        self.app_secret = config.get('app_secret')
+        self.app_key = config.get("app_key")
+        self.app_secret = config.get("app_secret")
         self.access_token = None
         self._session = None
 
@@ -99,17 +102,20 @@ class FXiaokeAdapter(BaseAPIAdapter):
             raise AuthenticationError("缺少纷享销客认证信息")
 
         try:
-            async with aiohttp.ClientSession() as session, session.post(
-                'https://open.fxiaoke.com/webapp/oauth2/token',
-                json={
-                    'appKey': self.app_key,
-                    'appSecret': self.app_secret,
-                    'grantType': 'client'
-                }
-            ) as response:
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(
+                    "https://open.fxiaoke.com/webapp/oauth2/token",
+                    json={
+                        "appKey": self.app_key,
+                        "appSecret": self.app_secret,
+                        "grantType": "client",
+                    },
+                ) as response,
+            ):
                 result = await response.json()
-                if response.status == 200 and result.get('errorCode') == 0:
-                    self.access_token = result['data']['accessToken']
+                if response.status == 200 and result.get("errorCode") == 0:
+                    self.access_token = result["data"]["accessToken"]
                     return True
                 else:
                     raise AuthenticationError(f"纷享销客认证失败：{result}")
@@ -124,18 +130,18 @@ class FXiaokeAdapter(BaseAPIAdapter):
 
         headers = {
             "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
         async with self._session.request(
             method,
             f"https://open.fxiaoke.com{endpoint}",
             headers=headers,
-            json=kwargs.get('json'),
-            timeout=aiohttp.ClientTimeout(total=30)
+            json=kwargs.get("json"),
+            timeout=aiohttp.ClientTimeout(total=30),
         ) as response:
             result = await response.json()
-            if response.status >= 400 or result.get('errorCode', 0) != 0:
+            if response.status >= 400 or result.get("errorCode", 0) != 0:
                 raise self._handle_error(response.status, result)
             return result
 
@@ -148,7 +154,7 @@ class FXiaokeAdapter(BaseAPIAdapter):
 
 
 def create_crm_adapter(provider: str, config: dict[str, Any]) -> BaseAPIAdapter:
-    providers = {'salesforce': SalesforceAdapter, 'fxiaoke': FXiaokeAdapter}
+    providers = {"salesforce": SalesforceAdapter, "fxiaoke": FXiaokeAdapter}
     if provider not in providers:
         raise ValueError(f"不支持的 CRM 提供商：{provider}")
     return providers[provider](config)

@@ -126,23 +126,47 @@ class ShellTool:
     # ------------------------------------------------------------------
     POWERSHELL_PATTERNS = [
         # 原有
-        r"Get-EventLog", r"Get-ScheduledTask",
-        r"ConvertFrom-Csv", r"ConvertTo-Csv",
-        r"Select-Object", r"Where-Object", r"ForEach-Object",
-        r"Import-Module", r"Get-Process", r"Get-Service",
-        r"Get-ChildItem", r"Set-ExecutionPolicy",
+        r"Get-EventLog",
+        r"Get-ScheduledTask",
+        r"ConvertFrom-Csv",
+        r"ConvertTo-Csv",
+        r"Select-Object",
+        r"Where-Object",
+        r"ForEach-Object",
+        r"Import-Module",
+        r"Get-Process",
+        r"Get-Service",
+        r"Get-ChildItem",
+        r"Set-ExecutionPolicy",
         # 新增常见 cmdlet
-        r"Sort-Object", r"Out-File", r"Out-String",
-        r"Invoke-WebRequest", r"Invoke-RestMethod",
-        r"Test-Path", r"New-Item", r"Remove-Item", r"Copy-Item", r"Move-Item",
-        r"Measure-Object", r"Group-Object",
-        r"ConvertTo-Json", r"ConvertFrom-Json",
-        r"Write-Output", r"Write-Host", r"Write-Error",
-        r"Get-Content", r"Set-Content", r"Add-Content",
-        r"Get-ItemProperty", r"Set-ItemProperty",
-        r"Start-Process", r"Stop-Process",
-        r"Get-WmiObject", r"Get-CimInstance",
-        r"New-Object", r"Add-Type",
+        r"Sort-Object",
+        r"Out-File",
+        r"Out-String",
+        r"Invoke-WebRequest",
+        r"Invoke-RestMethod",
+        r"Test-Path",
+        r"New-Item",
+        r"Remove-Item",
+        r"Copy-Item",
+        r"Move-Item",
+        r"Measure-Object",
+        r"Group-Object",
+        r"ConvertTo-Json",
+        r"ConvertFrom-Json",
+        r"Write-Output",
+        r"Write-Host",
+        r"Write-Error",
+        r"Get-Content",
+        r"Set-Content",
+        r"Add-Content",
+        r"Get-ItemProperty",
+        r"Set-ItemProperty",
+        r"Start-Process",
+        r"Stop-Process",
+        r"Get-WmiObject",
+        r"Get-CimInstance",
+        r"New-Object",
+        r"Add-Type",
     ]
 
     # 通用 Verb-Noun 模式：PowerShell cmdlet 格式为 Verb-Noun（如 Get-Item, Test-Path）
@@ -173,9 +197,7 @@ class ShellTool:
     # 进程清理（Windows 安全杀死进程树）
     # ------------------------------------------------------------------
 
-    async def _kill_process_tree(
-        self, process: asyncio.subprocess.Process
-    ) -> None:
+    async def _kill_process_tree(self, process: asyncio.subprocess.Process) -> None:
         """杀死进程及其所有子进程，然后带超时地等待退出。
 
         Windows 上 process.kill() 仅杀死直接子进程，孙进程（如 node 启动的
@@ -221,6 +243,7 @@ class ShellTool:
             return self._oem_encoding
         try:
             import ctypes
+
             oem_cp = ctypes.windll.kernel32.GetOEMCP()
             self._oem_encoding = f"cp{oem_cp}"
         except Exception:
@@ -301,14 +324,14 @@ class ShellTool:
         # 尝试匹配 powershell/pwsh ... -Command "内容" 或 powershell/pwsh ... -Command '内容'
         # 也处理 -Command {脚本块} 的情况
         m = re.match(
-            r"^(?:powershell|pwsh)(?:\.exe)?"       # powershell 或 pwsh
-            r"(?:\s+-\w+)*"                          # 可选参数如 -NoProfile
-            r"\s+-Command\s+"                        # -Command
+            r"^(?:powershell|pwsh)(?:\.exe)?"  # powershell 或 pwsh
+            r"(?:\s+-\w+)*"  # 可选参数如 -NoProfile
+            r"\s+-Command\s+"  # -Command
             r"(?:"
-            r'"((?:[^"\\]|\\.)*)"|'                  # "双引号内容"
-            r"'((?:[^'\\]|\\.)*)'|"                  # '单引号内容'
-            r"\{(.*)\}|"                             # {脚本块}
-            r"(.+)"                                  # 无引号直接跟内容
+            r'"((?:[^"\\]|\\.)*)"|'  # "双引号内容"
+            r"'((?:[^'\\]|\\.)*)'|"  # '单引号内容'
+            r"\{(.*)\}|"  # {脚本块}
+            r"(.+)"  # 无引号直接跟内容
             r")\s*$",
             command.strip(),
             re.IGNORECASE | re.DOTALL,
@@ -370,9 +393,10 @@ class ShellTool:
 
         if work_dir and is_unc_path(work_dir):
             return CommandResult(
-                returncode=-1, stdout="",
+                returncode=-1,
+                stdout="",
                 stderr=f"Blocked: UNC working directory ({work_dir}). "
-                       "Use a local path or mapped drive letter.",
+                "Use a local path or mapped drive letter.",
             )
 
         # 合并环境变量
@@ -386,6 +410,7 @@ class ShellTool:
         # 能找到 brew/node/npm/python3 等用户已安装的工具。
         try:
             from ..utils.path_helper import resolve_macos_login_shell_path
+
             _shell_path = resolve_macos_login_shell_path()
             if _shell_path:
                 cmd_env["PATH"] = _shell_path
@@ -396,10 +421,12 @@ class ShellTool:
         # 使 `python script.py` 自动找到正确解释器
         try:
             from ..runtime_env import IS_FROZEN, get_python_executable
+
             if IS_FROZEN:
                 _ext_py = get_python_executable()
                 if _ext_py:
                     from pathlib import Path
+
                     _py_dir = str(Path(_ext_py).parent)
                     cmd_env["PATH"] = _py_dir + os.pathsep + cmd_env.get("PATH", "")
         except Exception:
@@ -479,6 +506,7 @@ class ShellTool:
         cmd_env = os.environ.copy()
         try:
             from ..utils.path_helper import resolve_macos_login_shell_path
+
             _shell_path = resolve_macos_login_shell_path()
             if _shell_path:
                 cmd_env["PATH"] = _shell_path
@@ -486,10 +514,12 @@ class ShellTool:
             pass
         try:
             from ..runtime_env import IS_FROZEN, get_python_executable
+
             if IS_FROZEN:
                 _ext_py = get_python_executable()
                 if _ext_py:
                     from pathlib import Path
+
                     _py_dir = str(Path(_ext_py).parent)
                     cmd_env["PATH"] = _py_dir + os.pathsep + cmd_env.get("PATH", "")
         except Exception:
@@ -527,6 +557,7 @@ class ShellTool:
     async def pip_install(self, package: str) -> CommandResult:
         """使用 pip 安装包（PyInstaller 兼容：使用 runtime_env 获取正确的 Python 解释器）"""
         from openakita.runtime_env import IS_FROZEN, get_python_executable
+
         py = get_python_executable()
         if py:
             return await self.run(f'"{py}" -m pip install {package}')
@@ -535,7 +566,7 @@ class ShellTool:
                 returncode=-1,
                 stdout="",
                 stderr="未找到可用的 Python 解释器，无法执行 pip install。"
-                       "请前往「设置中心 → Python 环境」使用「一键修复」。",
+                "请前往「设置中心 → Python 环境」使用「一键修复」。",
             )
         return await self.run(f"pip install {package}")
 

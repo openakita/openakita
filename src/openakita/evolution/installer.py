@@ -75,6 +75,7 @@ class AutoInstaller:
         """尝试通过 pip 安装"""
         # PyInstaller 兼容: 检查当前环境是否支持 pip install
         from openakita.runtime_env import can_pip_install
+
         if not can_pip_install():
             return InstallResult(
                 success=False,

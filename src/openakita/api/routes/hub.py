@@ -33,6 +33,7 @@ router = APIRouter()
 def _project_root() -> Path:
     try:
         from openakita.config import settings
+
         return Path(settings.project_root)
     except Exception:
         return Path.cwd()
@@ -40,9 +41,11 @@ def _project_root() -> Path:
 
 def _get_stores():
     from openakita.config import settings
+
     root = Path(settings.project_root)
 
     from openakita.agents.profile import get_profile_store
+
     profile_store = get_profile_store()
 
     skills_dir = Path(settings.skills_path)
@@ -212,6 +215,7 @@ async def export_agent_json(req: ExportJsonRequest):
         return {"ok": True, "path": str(out)}
 
     from fastapi.responses import JSONResponse
+
     return JSONResponse(content=export_data)
 
 
@@ -257,6 +261,7 @@ async def batch_export_agents_json(req: BatchExportJsonRequest):
         return {"ok": True, "path": str(out)}
 
     from fastapi.responses import JSONResponse
+
     return JSONResponse(content=result)
 
 
@@ -317,13 +322,15 @@ async def import_agent(
         msg = f"导入成功: {len(imported)} 个 Agent"
         if skipped:
             msg += f"（{len(skipped)} 个 ID 冲突已重命名: {', '.join(skipped)}）"
-        return {"message": msg, "profile": imported[0] if len(imported) == 1 else None, "imported": imported}
+        return {
+            "message": msg,
+            "profile": imported[0] if len(imported) == 1 else None,
+            "imported": imported,
+        }
 
     from openakita.agents.packager import AgentInstaller, PackageError
 
-    with tempfile.NamedTemporaryFile(
-        suffix=".akita-agent", delete=False
-    ) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=".akita-agent", delete=False) as tmp:
         tmp.write(content)
         tmp_path = Path(tmp.name)
 
@@ -354,9 +361,7 @@ async def inspect_package(file: UploadFile = File(...)):
 
     profile_store, skills_dir, _ = _get_stores()
 
-    with tempfile.NamedTemporaryFile(
-        suffix=".akita-agent", delete=False
-    ) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=".akita-agent", delete=False) as tmp:
         content = await file.read()
         tmp.write(content)
         tmp_path = Path(tmp.name)
@@ -404,13 +409,16 @@ async def list_exportable():
 # Hub proxy routes — forward requests to the OpenAkita Platform
 # ---------------------------------------------------------------------------
 
+
 def _get_hub_client():
     from openakita.hub import AgentHubClient
+
     return AgentHubClient()
 
 
 def _get_skill_client():
     from openakita.hub import SkillStoreClient
+
     return SkillStoreClient()
 
 
@@ -458,7 +466,10 @@ async def hub_install_agent(request: Request, agent_id: str, force: bool = False
         package_path = await client.download(agent_id)
     except Exception as e:
         logger.warning(f"Hub download unavailable: {e}")
-        raise HTTPException(status_code=502, detail="远程 Agent Store 暂不可用，无法下载。可通过 .akita-agent 文件本地导入。")
+        raise HTTPException(
+            status_code=502,
+            detail="远程 Agent Store 暂不可用，无法下载。可通过 .akita-agent 文件本地导入。",
+        )
     finally:
         await client.close()
 
@@ -474,11 +485,13 @@ async def hub_install_agent(request: Request, agent_id: str, force: bool = False
 
     if profile.hub_source is None:
         profile.hub_source = {}
-    profile.hub_source.update({
-        "platform": "openakita",
-        "agent_id": agent_id,
-        "installed_at": datetime.now().isoformat(),
-    })
+    profile.hub_source.update(
+        {
+            "platform": "openakita",
+            "agent_id": agent_id,
+            "installed_at": datetime.now().isoformat(),
+        }
+    )
     profile_store.save(profile)
 
     _reload_skills(request)
@@ -502,8 +515,12 @@ async def hub_search_skills(
     client = _get_skill_client()
     try:
         result = await client.search(
-            query=q, category=category, trust_level=trust_level,
-            sort=sort, page=page, limit=limit,
+            query=q,
+            category=category,
+            trust_level=trust_level,
+            sort=sort,
+            page=page,
+            limit=limit,
         )
         return result
     except Exception as e:

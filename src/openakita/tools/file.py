@@ -13,10 +13,24 @@ import aiofiles.os
 logger = logging.getLogger(__name__)
 
 DEFAULT_IGNORE_DIRS = {
-    ".git", "node_modules", "__pycache__", ".venv", "venv",
-    ".mypy_cache", ".pytest_cache", ".ruff_cache", "dist",
-    "build", ".next", ".nuxt", "coverage", ".tox", ".eggs",
-    ".cache", ".parcel-cache", "egg-info",
+    ".git",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "dist",
+    "build",
+    ".next",
+    ".nuxt",
+    "coverage",
+    ".tox",
+    ".eggs",
+    ".cache",
+    ".parcel-cache",
+    "egg-info",
 }
 
 
@@ -164,22 +178,16 @@ class FileTool:
         if suffix in self.BINARY_EXTENSIONS:
             raise ValueError(f"Cannot edit binary file: {file_path.name}")
         try:
-            async with aiofiles.open(
-                file_path, encoding="utf-8", newline=""
-            ) as f:
+            async with aiofiles.open(file_path, encoding="utf-8", newline="") as f:
                 return await f.read()
         except UnicodeDecodeError as e:
-            raise ValueError(
-                f"Cannot decode file (non-UTF-8): {file_path.name}"
-            ) from e
+            raise ValueError(f"Cannot decode file (non-UTF-8): {file_path.name}") from e
 
     async def _write_preserving_newlines(self, path: str, content: str) -> None:
         """写入文件内容，保留原始换行符（不做 LF→CRLF 转换）。"""
         file_path = self._resolve_path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        async with aiofiles.open(
-            file_path, mode="w", encoding="utf-8", newline=""
-        ) as f:
+        async with aiofiles.open(file_path, mode="w", encoding="utf-8", newline="") as f:
             await f.write(content)
 
     async def edit(
@@ -287,8 +295,7 @@ class FileTool:
                 continue
             # 跳过 .xxx 隐藏目录（除 .github 等常用目录）
             if any(
-                p.startswith(".") and p not in (".github", ".vscode", ".cursor")
-                for p in parts[:-1]
+                p.startswith(".") and p not in (".github", ".vscode", ".cursor") for p in parts[:-1]
             ):
                 continue
 
@@ -317,7 +324,7 @@ class FileTool:
                         start = max(0, i - context_lines)
                         end = min(len(lines), i + context_lines + 1)
                         entry["context_before"] = lines[start:i]
-                        entry["context_after"] = lines[i + 1:end]
+                        entry["context_after"] = lines[i + 1 : end]
                     results.append(entry)
 
         return results
@@ -333,9 +340,7 @@ class FileTool:
             elif file_path.is_dir():
                 children = list(file_path.iterdir())
                 if children:
-                    logger.warning(
-                        f"Refused to delete non-empty directory {file_path}"
-                    )
+                    logger.warning(f"Refused to delete non-empty directory {file_path}")
                     return False
                 file_path.rmdir()
             return True

@@ -61,8 +61,12 @@ def prepare_image_file_for_context(
 
     ext = p.suffix.lower()
     mime_map = {
-        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-        ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".bmp": "image/bmp",
     }
     media_type = mime_map.get(ext, "image/jpeg")
 
@@ -73,8 +77,10 @@ def prepare_image_file_for_context(
         return None
 
     return prepare_image_for_context(
-        raw, media_type=media_type,
-        max_base64_bytes=max_base64_bytes, max_pixels=max_pixels,
+        raw,
+        media_type=media_type,
+        max_base64_bytes=max_base64_bytes,
+        max_pixels=max_pixels,
     )
 
 
@@ -113,10 +119,7 @@ def _compress_with_pil(
         img.save(buf, format="JPEG", quality=quality)
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         if len(b64) <= max_base64_bytes:
-            logger.debug(
-                f"[ImagePrep] Compressed to {len(b64)} b64 chars "
-                f"(q={quality}, {w}x{h})"
-            )
+            logger.debug(f"[ImagePrep] Compressed to {len(b64)} b64 chars (q={quality}, {w}x{h})")
             return b64, "image/jpeg", w, h
         quality -= _QUALITY_STEP
 
@@ -146,6 +149,7 @@ def _probe_dimensions(raw_bytes: bytes) -> tuple[int, int]:
         import io
 
         from PIL import Image
+
         img = Image.open(io.BytesIO(raw_bytes))
         return img.size
     except Exception:

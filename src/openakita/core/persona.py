@@ -190,7 +190,9 @@ class PersonaManager:
     """三层人格管理器"""
 
     def __init__(self, personas_dir: Path | str, active_preset: str = "default"):
-        self.personas_dir = Path(personas_dir) if not isinstance(personas_dir, Path) else personas_dir
+        self.personas_dir = (
+            Path(personas_dir) if not isinstance(personas_dir, Path) else personas_dir
+        )
         self.active_preset_name = active_preset
         self.user_traits: list[PersonaTrait] = []
         self._preset_cache: dict[str, str] = {}
@@ -285,7 +287,9 @@ class PersonaManager:
                         return
             # 新增
             self.user_traits.append(trait)
-            logger.info(f"Trait added: {trait.dimension}={trait.preference} (conf={trait.confidence:.2f})")
+            logger.info(
+                f"Trait added: {trait.dimension}={trait.preference} (conf={trait.confidence:.2f})"
+            )
 
     def load_traits_from_memories(self, memories: list[dict]) -> None:
         """从记忆系统加载 PERSONA_TRAIT 类型的记忆"""
@@ -346,6 +350,7 @@ class PersonaManager:
             from zoneinfo import ZoneInfo
 
             from ..config import settings
+
             tz = ZoneInfo(settings.scheduler_timezone)
             now = datetime.now(tz)
         except Exception:
@@ -478,8 +483,7 @@ class PersonaManager:
                 continue
             # 检查是否已有高置信度的数据
             has_high_conf = any(
-                t.dimension == dim_key and t.confidence >= 0.7
-                for t in self.user_traits
+                t.dimension == dim_key and t.confidence >= 0.7 for t in self.user_traits
             )
             if not has_high_conf:
                 return dim_key

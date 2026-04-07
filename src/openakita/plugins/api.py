@@ -86,7 +86,8 @@ class PluginAPI:
         # Wrap skill_loader with capability-scoped proxy
         if "skill_loader" in self._host and self._host["skill_loader"] is not None:
             self._host["skill_loader"] = _ScopedSkillLoader(
-                self._host["skill_loader"], plugin_id=plugin_id,
+                self._host["skill_loader"],
+                plugin_id=plugin_id,
             )
         self._registered_tools: list[str] = []
         self._registered_channels: list[str] = []
@@ -106,16 +107,13 @@ class PluginAPI:
         log_path = log_dir / f"{self._plugin_id}.log"
 
         if not any(
-            isinstance(h, RotatingFileHandler)
-            and getattr(h, "baseFilename", "") == str(log_path)
+            isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", "") == str(log_path)
             for h in self._logger.handlers
         ):
             handler = RotatingFileHandler(
                 log_path, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
             )
-            handler.setFormatter(
-                logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-            )
+            handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
             self._logger.addHandler(handler)
 
     def _check_permission(self, required: str, *, raise_on_deny: bool = False) -> bool:
@@ -183,9 +181,7 @@ class PluginAPI:
         config = self._read_config_file()
         config.update(updates)
         config_path = self._data_dir / "config.json"
-        config_path.write_text(
-            json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        config_path.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def get_data_dir(self) -> Path | None:
         if not self._check_permission("data.own"):
@@ -196,9 +192,7 @@ class PluginAPI:
 
     # --- Tool registration (basic) ---
 
-    def register_tools(
-        self, definitions: list[dict], handler: Callable
-    ) -> None:
+    def register_tools(self, definitions: list[dict], handler: Callable) -> None:
         if not self._check_permission("tools.register"):
             return
         tool_registry = self._host.get("tool_registry")
@@ -263,12 +257,17 @@ class PluginAPI:
 
         basic_hooks = {"on_init", "on_shutdown", "on_schedule", "on_config_change", "on_error"}
         message_hooks = {
-            "on_message_received", "on_message_sending",
-            "on_session_start", "on_session_end",
+            "on_message_received",
+            "on_message_sending",
+            "on_session_start",
+            "on_session_end",
         }
         retrieve_hooks = {
-            "on_retrieve", "on_prompt_build", "on_tool_result",
-            "on_before_tool_use", "on_after_tool_use",
+            "on_retrieve",
+            "on_prompt_build",
+            "on_tool_result",
+            "on_before_tool_use",
+            "on_after_tool_use",
         }
 
         if hook_name in basic_hooks:
@@ -288,9 +287,7 @@ class PluginAPI:
             self.log("No hook_registry available", "warning")
             return
 
-        self._hook_registry.register(
-            hook_name, callback, plugin_id=self._plugin_id
-        )
+        self._hook_registry.register(hook_name, callback, plugin_id=self._plugin_id)
         timeout = self._manifest.hook_timeout
         self._hook_registry.set_timeout(hook_name, self._plugin_id, timeout)
         self._registered_hooks.append(hook_name)
@@ -312,9 +309,7 @@ class PluginAPI:
 
         pending = self._host.setdefault("_pending_plugin_routers", [])
         pending.append((self._plugin_id, router))
-        self.log(
-            f"API app not yet available, routes queued for /api/plugins/{self._plugin_id}"
-        )
+        self.log(f"API app not yet available, routes queued for /api/plugins/{self._plugin_id}")
 
     # --- Channel registration (advanced) ---
 
@@ -363,9 +358,7 @@ class PluginAPI:
                 "backend": backend,
                 "replace": replace_mode,
             }
-            self.log(
-                f"Registered memory backend (replace={replace_mode})"
-            )
+            self.log(f"Registered memory backend (replace={replace_mode})")
         else:
             self.log("No memory_backends registry available", "warning")
 
@@ -542,8 +535,7 @@ class PluginAPI:
             external_sources = self._host.get("external_retrieval_sources")
             if external_sources is not None:
                 to_remove = [
-                    s for s in external_sources
-                    if getattr(s, "_plugin_id", None) == self._plugin_id
+                    s for s in external_sources if getattr(s, "_plugin_id", None) == self._plugin_id
                 ]
                 for s in to_remove:
                     try:
@@ -581,9 +573,9 @@ class PluginAPI:
         if tool_defs is not None:
             registered = set(self._registered_tools)
             to_remove = [
-                d for d in tool_defs
-                if d.get("name", d.get("function", {}).get("name", ""))
-                in registered
+                d
+                for d in tool_defs
+                if d.get("name", d.get("function", {}).get("name", "")) in registered
             ]
             for d in to_remove:
                 try:
@@ -598,7 +590,6 @@ class PluginAPI:
                     tool_catalog.remove_tool(name)
                 except Exception:
                     pass
-
 
     def _cleanup_channels(self) -> None:
         """Remove plugin-registered channel types from the adapter registry."""
@@ -642,7 +633,6 @@ class PluginAPI:
             if hasattr(mcp_client, "remove_server"):
                 mcp_client.remove_server(server_name)
 
-
     def __getattr__(self, name: str) -> Any:
         logger.warning(
             "[PluginAPI] Plugin '%s' accessed non-existent attribute '%s' — "
@@ -663,8 +653,16 @@ class _ScopedSkillLoader:
     parser, registry, or private attributes.
     """
 
-    _ALLOWED = frozenset({"load_skill", "unload_skill", "get_tool_definitions",
-                          "get_skill", "get_skill_body", "loaded_count"})
+    _ALLOWED = frozenset(
+        {
+            "load_skill",
+            "unload_skill",
+            "get_tool_definitions",
+            "get_skill",
+            "get_skill_body",
+            "loaded_count",
+        }
+    )
 
     def __init__(self, real_loader: Any, plugin_id: str) -> None:
         self._real = real_loader
@@ -675,11 +673,11 @@ class _ScopedSkillLoader:
             return getattr(self._real, name)
         logger.warning(
             "[ScopedSkillLoader] Plugin '%s' tried to access '%s' — blocked",
-            self._plugin_id, name,
+            self._plugin_id,
+            name,
         )
         raise AttributeError(
-            f"ScopedSkillLoader does not expose '{name}'. "
-            f"Allowed: {sorted(self._ALLOWED)}"
+            f"ScopedSkillLoader does not expose '{name}'. Allowed: {sorted(self._ALLOWED)}"
         )
 
 

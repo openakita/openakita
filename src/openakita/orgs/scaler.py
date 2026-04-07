@@ -61,7 +61,9 @@ class OrgScaler:
     # Auto-clone — triggered when a node's mailbox exceeds threshold
     # ------------------------------------------------------------------
 
-    async def maybe_auto_clone(self, org_id: str, node_id: str, pending_count: int) -> OrgNode | None:
+    async def maybe_auto_clone(
+        self, org_id: str, node_id: str, pending_count: int
+    ) -> OrgNode | None:
         """Check if auto-clone should trigger, and if so, create a clone immediately."""
         org = self._runtime.get_org(org_id)
         if not org or not org.scaling_enabled:
@@ -76,7 +78,9 @@ class OrgScaler:
         if len(org.nodes) >= org.max_nodes:
             return None
 
-        existing_clones = [n for n in org.nodes if n.clone_source == node_id and n.status != NodeStatus.OFFLINE]
+        existing_clones = [
+            n for n in org.nodes if n.clone_source == node_id and n.status != NodeStatus.OFFLINE
+        ]
         if len(existing_clones) >= node.auto_clone_max:
             return None
 
@@ -114,25 +118,33 @@ class OrgScaler:
 
         parent = org.get_parent(node_id)
         if parent:
-            org.edges.append(OrgEdge(
-                source=parent.id,
-                target=new_node.id,
-                edge_type=EdgeType.HIERARCHY,
-            ))
+            org.edges.append(
+                OrgEdge(
+                    source=parent.id,
+                    target=new_node.id,
+                    edge_type=EdgeType.HIERARCHY,
+                )
+            )
 
-        org.edges.append(OrgEdge(
-            source=node_id,
-            target=new_node.id,
-            edge_type=EdgeType.COLLABORATE,
-            label="clone-of",
-        ))
+        org.edges.append(
+            OrgEdge(
+                source=node_id,
+                target=new_node.id,
+                edge_type=EdgeType.COLLABORATE,
+                label="clone-of",
+            )
+        )
 
         await self._runtime._save_org(org)
 
         self._runtime.get_event_store(org_id).emit(
-            "auto_clone_created", node_id,
-            {"clone_id": new_node.id, "pending_count": pending_count,
-             "threshold": node.auto_clone_threshold},
+            "auto_clone_created",
+            node_id,
+            {
+                "clone_id": new_node.id,
+                "pending_count": pending_count,
+                "threshold": node.auto_clone_threshold,
+            },
         )
 
         logger.info(
@@ -147,8 +159,12 @@ class OrgScaler:
     # ------------------------------------------------------------------
 
     async def request_clone(
-        self, org_id: str, requester: str, source_node_id: str,
-        reason: str, ephemeral: bool = True,
+        self,
+        org_id: str,
+        requester: str,
+        source_node_id: str,
+        reason: str,
+        ephemeral: bool = True,
     ) -> ScalingRequest:
         org = self._runtime.get_org(org_id)
         if not org:
@@ -167,7 +183,8 @@ class OrgScaler:
         self._pending.setdefault(org_id, []).append(req)
 
         self._runtime.get_event_store(org_id).emit(
-            "scaling_requested", requester,
+            "scaling_requested",
+            requester,
             {"type": "clone", "source": source_node_id, "reason": reason},
         )
 
@@ -177,9 +194,13 @@ class OrgScaler:
         return req
 
     def request_recruit(
-        self, org_id: str, requester: str,
-        role_title: str, role_goal: str,
-        department: str, parent_node_id: str,
+        self,
+        org_id: str,
+        requester: str,
+        role_title: str,
+        role_goal: str,
+        department: str,
+        parent_node_id: str,
         reason: str,
     ) -> ScalingRequest:
         org = self._runtime.get_org(org_id)
@@ -202,7 +223,8 @@ class OrgScaler:
         self._pending.setdefault(org_id, []).append(req)
 
         self._runtime.get_event_store(org_id).emit(
-            "scaling_requested", requester,
+            "scaling_requested",
+            requester,
             {"type": "recruit", "role_title": role_title, "reason": reason},
         )
 
@@ -247,14 +269,18 @@ class OrgScaler:
         await self._runtime._save_org(org)
 
         self._runtime.get_event_store(org_id).emit(
-            "scaling_approved", approved_by,
+            "scaling_approved",
+            approved_by,
             {"request_id": req.id, "new_node_id": new_node.id},
         )
 
         return req
 
     def reject_request(
-        self, org_id: str, request_id: str, rejected_by: str = "user",
+        self,
+        org_id: str,
+        request_id: str,
+        rejected_by: str = "user",
         reason: str = "",
     ) -> ScalingRequest:
         req = self._find_request(org_id, request_id)
@@ -266,7 +292,8 @@ class OrgScaler:
         req.resolved_by = rejected_by
 
         self._runtime.get_event_store(org_id).emit(
-            "scaling_rejected", rejected_by,
+            "scaling_rejected",
+            rejected_by,
             {"request_id": req.id, "reason": reason},
         )
 
@@ -311,7 +338,9 @@ class OrgScaler:
             node_memories = bb.read_node(node_id, limit=50)
             for mem in node_memories:
                 bb.write_department(
-                    node.department, mem.content, node_id,
+                    node.department,
+                    mem.content,
+                    node_id,
                     memory_type=mem.memory_type,
                     tags=mem.tags + ["dismissed_node"],
                 )
@@ -326,7 +355,9 @@ class OrgScaler:
         await self._runtime._save_org(org)
 
         self._runtime.get_event_store(org_id).emit(
-            "node_dismissed", by, {"node_id": node_id, "role": node.role_title},
+            "node_dismissed",
+            by,
+            {"node_id": node_id, "role": node.role_title},
         )
 
         return True
@@ -375,11 +406,13 @@ class OrgScaler:
 
         parent = org.get_parent(source.id)
         if parent:
-            org.edges.append(OrgEdge(
-                source=parent.id,
-                target=new_node.id,
-                edge_type=EdgeType.HIERARCHY,
-            ))
+            org.edges.append(
+                OrgEdge(
+                    source=parent.id,
+                    target=new_node.id,
+                    edge_type=EdgeType.HIERARCHY,
+                )
+            )
 
         return new_node
 
@@ -402,11 +435,13 @@ class OrgScaler:
         org.nodes.append(new_node)
 
         if parent:
-            org.edges.append(OrgEdge(
-                source=parent.id,
-                target=new_node.id,
-                edge_type=EdgeType.HIERARCHY,
-            ))
+            org.edges.append(
+                OrgEdge(
+                    source=parent.id,
+                    target=new_node.id,
+                    edge_type=EdgeType.HIERARCHY,
+                )
+            )
 
         return new_node
 

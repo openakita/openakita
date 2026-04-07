@@ -48,9 +48,7 @@ class ConversationLifecycleManager:
 
     # ── Public API ──────────────────────────────────────────────────────
 
-    async def start(
-        self, conversation_id: str, client_id: str
-    ) -> tuple[BusyInfo | None, int]:
+    async def start(self, conversation_id: str, client_id: str) -> tuple[BusyInfo | None, int]:
         """Mark a conversation as busy.
 
         Returns ``(conflict, generation)``:
@@ -68,13 +66,17 @@ class ConversationLifecycleManager:
             self._generation_counter += 1
             gen = self._generation_counter
             self._busy[conversation_id] = BusyInfo(
-                client_id=client_id, generation=gen,
+                client_id=client_id,
+                generation=gen,
             )
 
-        await self._broadcast("chat:busy", {
-            "conversation_id": conversation_id,
-            "client_id": client_id,
-        })
+        await self._broadcast(
+            "chat:busy",
+            {
+                "conversation_id": conversation_id,
+                "client_id": client_id,
+            },
+        )
         return None, gen
 
     async def finish(
@@ -101,18 +103,24 @@ class ConversationLifecycleManager:
                 logger.debug(
                     "[Lifecycle] finish() skipped: generation mismatch "
                     "conv=%s current=%d requested=%d",
-                    conversation_id, existing.generation, generation,
+                    conversation_id,
+                    existing.generation,
+                    generation,
                 )
                 return False
             del self._busy[conversation_id]
 
-        await self._broadcast("chat:idle", {
-            "conversation_id": conversation_id,
-        })
+        await self._broadcast(
+            "chat:idle",
+            {
+                "conversation_id": conversation_id,
+            },
+        )
         return True
 
     async def get_busy_status(
-        self, conversation_id: str = "",
+        self,
+        conversation_id: str = "",
     ) -> dict:
         """Query busy state — powers ``GET /api/chat/busy``."""
         async with self._lock:
@@ -143,6 +151,7 @@ class ConversationLifecycleManager:
     async def _broadcast(self, event: str, data: dict) -> None:
         try:
             from .websocket import broadcast_event
+
             await broadcast_event(event, data)
         except Exception:
             pass
@@ -150,10 +159,7 @@ class ConversationLifecycleManager:
     def _expire_stale(self) -> None:
         """Remove entries older than BUSY_TIMEOUT_SECONDS.  Caller holds ``self._lock``."""
         now = time.time()
-        stale = [
-            k for k, v in self._busy.items()
-            if now - v.start_time > BUSY_TIMEOUT_SECONDS
-        ]
+        stale = [k for k, v in self._busy.items() if now - v.start_time > BUSY_TIMEOUT_SECONDS]
         for k in stale:
             logger.info("[Lifecycle] Auto-releasing stale busy lock: conv=%s", k)
             del self._busy[k]

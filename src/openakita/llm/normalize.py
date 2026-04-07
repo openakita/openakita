@@ -51,10 +51,7 @@ def normalize_messages_for_api(
 
 def _filter_internal_messages(messages: list[dict]) -> list[dict]:
     """过滤内部/虚拟消息（带 _internal 或 _synthetic 标记）。"""
-    return [
-        m for m in messages
-        if not m.get("_internal") and not m.get("_synthetic")
-    ]
+    return [m for m in messages if not m.get("_internal") and not m.get("_synthetic")]
 
 
 def _merge_consecutive_user_messages(messages: list[dict]) -> list[dict]:
@@ -90,8 +87,12 @@ def _hoist_tool_results_in_user(messages: list[dict]) -> list[dict]:
         if not isinstance(content, list):
             continue
 
-        tool_results = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_result"]
-        others = [b for b in content if not (isinstance(b, dict) and b.get("type") == "tool_result")]
+        tool_results = [
+            b for b in content if isinstance(b, dict) and b.get("type") == "tool_result"
+        ]
+        others = [
+            b for b in content if not (isinstance(b, dict) and b.get("type") == "tool_result")
+        ]
 
         if tool_results and others:
             msg["content"] = tool_results + others
@@ -186,7 +187,8 @@ def _ensure_tool_result_pairing(messages: list[dict]) -> list[dict]:
         if not isinstance(content, list):
             continue
         msg["content"] = [
-            block for block in content
+            block
+            for block in content
             if not (
                 isinstance(block, dict)
                 and block.get("type") == "tool_result"

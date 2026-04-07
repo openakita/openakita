@@ -143,9 +143,7 @@ class ToolRegistry:
             return False
         return tool.check_concurrency_safe(tool_input)
 
-    def partition_tool_calls(
-        self, tool_calls: list[dict]
-    ) -> list[dict]:
+    def partition_tool_calls(self, tool_calls: list[dict]) -> list[dict]:
         """将工具调用分区为并发安全批次和串行批次。
 
         返回格式:

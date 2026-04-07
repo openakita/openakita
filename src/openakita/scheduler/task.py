@@ -83,8 +83,7 @@ class TaskExecution:
     def finish(self, success: bool, result: str = None, error: str = None) -> None:
         if self.finished_at is not None:
             logger.warning(
-                f"TaskExecution {self.id}: finish() called again "
-                f"(already {self.status}), ignoring"
+                f"TaskExecution {self.id}: finish() called again (already {self.status}), ignoring"
             )
             return
         self.finished_at = datetime.now()
@@ -320,11 +319,17 @@ class ScheduledTask:
             TaskStatus.DISABLED,
         },
         TaskStatus.SCHEDULED: {
-            TaskStatus.RUNNING, TaskStatus.DISABLED, TaskStatus.CANCELLED,
-            TaskStatus.COMPLETED, TaskStatus.MISSED,
+            TaskStatus.RUNNING,
+            TaskStatus.DISABLED,
+            TaskStatus.CANCELLED,
+            TaskStatus.COMPLETED,
+            TaskStatus.MISSED,
         },
         TaskStatus.RUNNING: {
-            TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.SCHEDULED, TaskStatus.CANCELLED,
+            TaskStatus.COMPLETED,
+            TaskStatus.FAILED,
+            TaskStatus.SCHEDULED,
+            TaskStatus.CANCELLED,
         },
         TaskStatus.COMPLETED: {TaskStatus.SCHEDULED, TaskStatus.DISABLED, TaskStatus.CANCELLED},
         TaskStatus.FAILED: {TaskStatus.SCHEDULED, TaskStatus.DISABLED, TaskStatus.CANCELLED},
@@ -397,8 +402,7 @@ class ScheduledTask:
             logger.info(f"Task {self.id}: force-reset to SCHEDULED, reason={reason}")
         else:
             logger.debug(
-                f"Task {self.id}: force_reset_to_scheduled called "
-                f"in {self.status.value}, no-op"
+                f"Task {self.id}: force_reset_to_scheduled called in {self.status.value}, no-op"
             )
 
     def mark_running(self) -> None:
@@ -412,8 +416,7 @@ class ScheduledTask:
         """标记执行完成"""
         if self.status != TaskStatus.RUNNING:
             logger.warning(
-                f"Task {self.id}: mark_completed called from {self.status.value}, "
-                f"expected RUNNING"
+                f"Task {self.id}: mark_completed called from {self.status.value}, expected RUNNING"
             )
             return
 
@@ -433,8 +436,7 @@ class ScheduledTask:
         """标记执行失败"""
         if self.status != TaskStatus.RUNNING:
             logger.warning(
-                f"Task {self.id}: mark_failed called from {self.status.value}, "
-                f"expected RUNNING"
+                f"Task {self.id}: mark_failed called from {self.status.value}, expected RUNNING"
             )
             return
 

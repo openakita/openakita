@@ -36,7 +36,8 @@ class WorktreeInfo:
 async def _run_git(args: list[str], cwd: str | Path | None = None) -> tuple[int, str, str]:
     """执行 git 命令。"""
     proc = await asyncio.create_subprocess_exec(
-        "git", *args,
+        "git",
+        *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=str(cwd) if cwd else None,

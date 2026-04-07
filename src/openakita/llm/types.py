@@ -10,7 +10,11 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 _OPENAI_ENDPOINT_SUFFIXES = (
-    "/chat/completions", "/completions", "/embeddings", "/models", "/responses",
+    "/chat/completions",
+    "/completions",
+    "/embeddings",
+    "/models",
+    "/responses",
 )
 
 
@@ -128,7 +132,9 @@ class AudioContent:
     format: str = "wav"  # 音频格式: "wav", "mp3", "pcm16", etc.
 
     @classmethod
-    def from_base64(cls, data: str, media_type: str = "audio/wav", fmt: str = "wav") -> "AudioContent":
+    def from_base64(
+        cls, data: str, media_type: str = "audio/wav", fmt: str = "wav"
+    ) -> "AudioContent":
         return cls(media_type=media_type, data=data, format=fmt)
 
     @classmethod
@@ -140,8 +146,12 @@ class AudioContent:
         file_path = Path(path)
         suffix = file_path.suffix.lower().lstrip(".")
         mime_map = {
-            "wav": "audio/wav", "mp3": "audio/mpeg", "ogg": "audio/ogg",
-            "flac": "audio/flac", "m4a": "audio/mp4", "webm": "audio/webm",
+            "wav": "audio/wav",
+            "mp3": "audio/mpeg",
+            "ogg": "audio/ogg",
+            "flac": "audio/flac",
+            "m4a": "audio/mp4",
+            "webm": "audio/webm",
         }
         media_type = mime_map.get(suffix, f"audio/{suffix}")
         data = base64.b64encode(file_path.read_bytes()).decode("utf-8")
@@ -161,7 +171,9 @@ class DocumentContent:
     filename: str = ""  # 原始文件名
 
     @classmethod
-    def from_base64(cls, data: str, media_type: str = "application/pdf", filename: str = "") -> "DocumentContent":
+    def from_base64(
+        cls, data: str, media_type: str = "application/pdf", filename: str = ""
+    ) -> "DocumentContent":
         return cls(media_type=media_type, data=data, filename=filename)
 
     @classmethod
@@ -354,8 +366,14 @@ class DocumentBlock(ContentBlock):
 
 # 内容块联合类型
 ContentBlockType = (
-    TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock
-    | ImageBlock | VideoBlock | AudioBlock | DocumentBlock
+    TextBlock
+    | ThinkingBlock
+    | ToolUseBlock
+    | ToolResultBlock
+    | ImageBlock
+    | VideoBlock
+    | AudioBlock
+    | DocumentBlock
 )
 
 
@@ -373,8 +391,7 @@ class Message:
         return {
             "role": self.role,
             "content": [
-                block.to_dict() if hasattr(block, "to_dict") else block
-                for block in self.content
+                block.to_dict() if hasattr(block, "to_dict") else block for block in self.content
             ],
         }
 
@@ -459,8 +476,7 @@ class LLMResponse:
         return {
             "id": self.id,
             "content": [
-                block.to_dict() if hasattr(block, "to_dict") else block
-                for block in self.content
+                block.to_dict() if hasattr(block, "to_dict") else block for block in self.content
             ],
             "stop_reason": self.stop_reason.value,
             "usage": {
@@ -490,7 +506,9 @@ class EndpointConfig:
     extra_params: dict | None = None  # 额外参数
     note: str | None = None  # 备注
     rpm_limit: int = 0  # 每分钟请求数限制 (0=不限流)
-    pricing_tiers: list[dict] | None = None  # 阶梯定价 [{"max_input": 128000, "input_price": 1.2, "output_price": 7.2}, ...]
+    pricing_tiers: list[dict] | None = (
+        None  # 阶梯定价 [{"max_input": 128000, "input_price": 1.2, "output_price": 7.2}, ...]
+    )
     price_currency: str = "CNY"  # 价格货币单位
     enabled: bool = True  # 是否启用 (false=停用，不参与调用但保留配置)
     stream_only: bool = False  # 仅流式模式 (某些中转站/relay 要求 stream=true)
@@ -527,7 +545,10 @@ class EndpointConfig:
         # （用户显式配置过 capabilities 的情况下不覆盖其意图）
         if caps == {"text"} and model:
             from .capabilities import get_provider_slug_from_base_url, infer_capabilities
-            provider_slug = get_provider_slug_from_base_url(self.base_url) if self.base_url else None
+
+            provider_slug = (
+                get_provider_slug_from_base_url(self.base_url) if self.base_url else None
+            )
             inferred = infer_capabilities(model, provider_slug=provider_slug)
             if inferred.get(cap, False):
                 return True
@@ -559,7 +580,12 @@ class EndpointConfig:
         tiers = self.pricing_tiers
         if not tiers:
             return 0.0
-        sorted_tiers = sorted(tiers, key=lambda t: (t.get("max_input") or 0) if t.get("max_input", -1) != -1 else float("inf"))
+        sorted_tiers = sorted(
+            tiers,
+            key=lambda t: (
+                (t.get("max_input") or 0) if t.get("max_input", -1) != -1 else float("inf")
+            ),
+        )
         matched = sorted_tiers[-1]
         for tier in sorted_tiers:
             cap = tier.get("max_input", -1)

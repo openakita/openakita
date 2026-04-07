@@ -116,6 +116,7 @@ class ProjectStore:
 
     def update_task(self, project_id: str, task_id: str, updates: dict) -> ProjectTask | None:
         from openakita.orgs.models import TaskStatus
+
         proj = self._projects.get(project_id)
         if not proj:
             return None

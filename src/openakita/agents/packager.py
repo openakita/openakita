@@ -93,7 +93,7 @@ class AgentPackager:
         external_skill_refs: list[ExternalSkillRef] = []
         builtin_skills: list[str] = []
 
-        for skill_name in (candidate_skills or []):
+        for skill_name in candidate_skills or []:
             skill_path = self._find_skill(skill_name)
             if skill_path is None:
                 builtin_skills.append(skill_name)
@@ -107,14 +107,16 @@ class AgentPackager:
                 bundled_skill_names.append(skill_name)
             else:
                 meta = self._read_skill_meta(skill_path)
-                external_skill_refs.append(ExternalSkillRef(
-                    id=skill_name,
-                    source=meta.get("source", skill_name),
-                    version=meta.get("version", ""),
-                    license=meta.get("license", "unknown"),
-                    url=meta.get("url", ""),
-                    required=True,
-                ))
+                external_skill_refs.append(
+                    ExternalSkillRef(
+                        id=skill_name,
+                        source=meta.get("source", skill_name),
+                        version=meta.get("version", ""),
+                        license=meta.get("license", "unknown"),
+                        url=meta.get("url", ""),
+                        required=True,
+                    )
+                )
 
         manifest = AgentManifest(
             spec_version=SPEC_VERSION,
@@ -149,7 +151,9 @@ class AgentPackager:
         license_3rd_party = self._generate_license_3rd_party(external_skill_refs)
 
         def _write_zip(zf: zipfile.ZipFile) -> None:
-            zf.writestr("manifest.json", json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2))
+            zf.writestr(
+                "manifest.json", json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2)
+            )
             zf.writestr("profile.json", json.dumps(profile_data, ensure_ascii=False, indent=2))
             if readme:
                 zf.writestr("README.md", readme)
@@ -170,8 +174,7 @@ class AgentPackager:
         package_bytes = buf.getvalue()
         if len(package_bytes) > MAX_PACKAGE_SIZE:
             raise PackageError(
-                f"Package too large: {len(package_bytes)} bytes "
-                f"(max {MAX_PACKAGE_SIZE})"
+                f"Package too large: {len(package_bytes)} bytes (max {MAX_PACKAGE_SIZE})"
             )
 
         checksum = f"sha256:{hashlib.sha256(package_bytes).hexdigest()}"
@@ -288,9 +291,7 @@ class AgentInstaller:
                         bundled_skills.append(parts[1])
 
             has_readme = "README.md" in zf.namelist()
-            has_icon = any(
-                n in zf.namelist() for n in ["icon.png", "icon.svg"]
-            )
+            has_icon = any(n in zf.namelist() for n in ["icon.png", "icon.svg"])
 
             conflict = self.profile_store.exists(manifest.id)
 
@@ -345,9 +346,13 @@ class AgentInstaller:
             if self.profile_store.exists(profile_id) and not force:
                 profile_id = self._resolve_conflict(profile_id)
 
-            installed_skills = self._install_skills(zf, manifest.bundled_skills, agent_id=manifest.id)
+            installed_skills = self._install_skills(
+                zf, manifest.bundled_skills, agent_id=manifest.id
+            )
 
-            ext_results = self._fetch_external_skills(manifest.required_external_skills, agent_id=manifest.id)
+            ext_results = self._fetch_external_skills(
+                manifest.required_external_skills, agent_id=manifest.id
+            )
             installed_skills.extend(ext_results)
 
             profile_data["id"] = profile_id
@@ -380,9 +385,7 @@ class AgentInstaller:
         if not package_path.exists():
             raise PackageError(f"File not found: {package_path}")
         if package_path.stat().st_size > MAX_PACKAGE_SIZE:
-            raise PackageError(
-                f"Package too large: {package_path.stat().st_size} bytes"
-            )
+            raise PackageError(f"Package too large: {package_path.stat().st_size} bytes")
         if not zipfile.is_zipfile(package_path):
             raise PackageError(f"Not a valid ZIP file: {package_path}")
 
@@ -396,20 +399,13 @@ class AgentInstaller:
         for info in zf.infolist():
             errors = validate_file_safety(info.filename)
             if errors:
-                raise PackageError(
-                    f"Security violation: {'; '.join(errors)}"
-                )
+                raise PackageError(f"Security violation: {'; '.join(errors)}")
             if info.file_size > MAX_SINGLE_FILE_SIZE:
-                raise PackageError(
-                    f"File too large: {info.filename} "
-                    f"({info.file_size} bytes)"
-                )
+                raise PackageError(f"File too large: {info.filename} ({info.file_size} bytes)")
             if info.is_dir():
                 continue
             if info.external_attr >> 16 & 0o120000 == 0o120000:
-                raise PackageError(
-                    f"Symlinks not allowed: {info.filename}"
-                )
+                raise PackageError(f"Symlinks not allowed: {info.filename}")
 
     # ── Skill version helpers ──
 
@@ -433,6 +429,7 @@ class AgentInstaller:
                 import re as _re
 
                 import yaml
+
                 m = _re.match(r"^---\s*\n(.*?)\n---", skill_md.read_text("utf-8"), _re.DOTALL)
                 if m:
                     fm = yaml.safe_load(m.group(1)) or {}
@@ -449,14 +446,23 @@ class AgentInstaller:
         if not existing:
             return True
         try:
+
             def _parts(v: str) -> tuple[int, ...]:
                 return tuple(int(x) for x in v.split(".")[:3])
+
             return _parts(incoming) > _parts(existing)
         except (ValueError, TypeError):
             return incoming > existing
 
-    def _write_origin(self, skill_dir: Path, *, source: str, version: str | None,
-                      origin_type: str, agent_id: str = "") -> None:
+    def _write_origin(
+        self,
+        skill_dir: Path,
+        *,
+        source: str,
+        version: str | None,
+        origin_type: str,
+        agent_id: str = "",
+    ) -> None:
         """Write .openakita-origin.json sidecar to track provenance."""
         data = {
             "source": source,
@@ -490,6 +496,7 @@ class AgentInstaller:
             import re as _re
 
             import yaml
+
             content = zf.read(skill_md_path).decode("utf-8", errors="replace")
             m = _re.match(r"^---\s*\n(.*?)\n---", content, _re.DOTALL)
             if m:
@@ -502,7 +509,9 @@ class AgentInstaller:
     # ── Skill installation ──
 
     def _install_skills(
-        self, zf: zipfile.ZipFile, bundled_skills: list[str],
+        self,
+        zf: zipfile.ZipFile,
+        bundled_skills: list[str],
         agent_id: str = "",
     ) -> list[str]:
         """Extract and install bundled skills with version-aware dedup."""
@@ -513,8 +522,7 @@ class AgentInstaller:
         for skill_name in bundled_skills:
             skill_prefix = f"skills/{skill_name}/"
             skill_files = [
-                n for n in zf.namelist()
-                if n.startswith(skill_prefix) and not n.endswith("/")
+                n for n in zf.namelist() if n.startswith(skill_prefix) and not n.endswith("/")
             ]
 
             if not skill_files:
@@ -542,22 +550,29 @@ class AgentInstaller:
             target_dir.mkdir(parents=True, exist_ok=True)
 
             for filename in skill_files:
-                rel_path = filename[len(skill_prefix):]
+                rel_path = filename[len(skill_prefix) :]
                 target_file = target_dir / rel_path
                 target_file.parent.mkdir(parents=True, exist_ok=True)
                 target_file.write_bytes(zf.read(filename))
 
             self._write_origin(
-                target_dir, source="bundled", version=incoming_ver,
-                origin_type="bundled", agent_id=agent_id,
+                target_dir,
+                source="bundled",
+                version=incoming_ver,
+                origin_type="bundled",
+                agent_id=agent_id,
             )
             installed.append(skill_name)
-            logger.info(f"Installed bundled skill: {skill_name} v{incoming_ver or '?'} -> {target_dir}")
+            logger.info(
+                f"Installed bundled skill: {skill_name} v{incoming_ver or '?'} -> {target_dir}"
+            )
 
         return installed
 
     def _fetch_external_skills(
-        self, ext_refs: list[Any], agent_id: str = "",
+        self,
+        ext_refs: list[Any],
+        agent_id: str = "",
     ) -> list[str]:
         """Fetch required_external_skills with version-aware dedup.
 
@@ -587,21 +602,23 @@ class AgentInstaller:
             try:
                 target_dir = self._install_from_source(skill_id, source)
                 self._write_origin(
-                    target_dir, source=source, version=incoming_ver,
-                    origin_type="external", agent_id=agent_id,
+                    target_dir,
+                    source=source,
+                    version=incoming_ver,
+                    origin_type="external",
+                    agent_id=agent_id,
                 )
                 installed.append(skill_id)
-                logger.info(f"Fetched external skill: {skill_id} v{incoming_ver or 'latest'} from {source}")
+                logger.info(
+                    f"Fetched external skill: {skill_id} v{incoming_ver or 'latest'} from {source}"
+                )
             except Exception as e:
                 level = "Required" if required else "Optional"
                 logger.warning(
-                    f"{level} external skill failed to install: {skill_id} "
-                    f"(source: {source}): {e}"
+                    f"{level} external skill failed to install: {skill_id} (source: {source}): {e}"
                 )
                 if required:
-                    logger.warning(
-                        f"Please install '{skill_id}' manually from: {source}"
-                    )
+                    logger.warning(f"Please install '{skill_id}' manually from: {source}")
 
         return installed
 
@@ -633,22 +650,20 @@ class AgentInstaller:
         with tempfile.TemporaryDirectory() as tmpdir:
             subprocess.run(
                 ["git", "clone", "--depth=1", repo_url, tmpdir],
-                check=True, capture_output=True, timeout=60,
+                check=True,
+                capture_output=True,
+                timeout=60,
             )
 
             src_skill = Path(tmpdir) / skill_name
             if not src_skill.exists():
                 src_skill = Path(tmpdir) / "skills" / skill_name
             if not src_skill.exists():
-                raise FileNotFoundError(
-                    f"Skill directory '{skill_name}' not found in {repo_url}"
-                )
+                raise FileNotFoundError(f"Skill directory '{skill_name}' not found in {repo_url}")
 
             skill_md = src_skill / "SKILL.md"
             if not skill_md.exists():
-                raise FileNotFoundError(
-                    f"SKILL.md not found in {src_skill}"
-                )
+                raise FileNotFoundError(f"SKILL.md not found in {src_skill}")
 
             for file in src_skill.rglob("*"):
                 if file.is_file():
@@ -663,10 +678,6 @@ class AgentInstaller:
         for i in range(1, 100):
             new_id = f"{profile_id}-{i}"
             if not self.profile_store.exists(new_id):
-                logger.info(
-                    f"ID conflict resolved: {profile_id} -> {new_id}"
-                )
+                logger.info(f"ID conflict resolved: {profile_id} -> {new_id}")
                 return new_id
-        raise PackageError(
-            f"Cannot resolve ID conflict for: {profile_id}"
-        )
+        raise PackageError(f"Cannot resolve ID conflict for: {profile_id}")

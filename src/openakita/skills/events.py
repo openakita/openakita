@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 class SkillEvent(StrEnum):
     """Skill lifecycle event types."""
+
     LOAD = "load"
     RELOAD = "reload"
     INSTALL = "install"

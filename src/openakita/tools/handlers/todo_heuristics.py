@@ -23,17 +23,67 @@ def should_require_todo(user_message: str) -> bool:
     msg = user_message.lower()
 
     zh_action_words = [
-        "打开", "搜索", "截图", "发给", "发送", "写", "创建",
-        "执行", "运行", "读取", "查看", "保存", "下载", "上传",
-        "复制", "粘贴", "删除", "编辑", "修改", "更新", "安装",
-        "配置", "设置", "启动", "关闭",
+        "打开",
+        "搜索",
+        "截图",
+        "发给",
+        "发送",
+        "写",
+        "创建",
+        "执行",
+        "运行",
+        "读取",
+        "查看",
+        "保存",
+        "下载",
+        "上传",
+        "复制",
+        "粘贴",
+        "删除",
+        "编辑",
+        "修改",
+        "更新",
+        "安装",
+        "配置",
+        "设置",
+        "启动",
+        "关闭",
     ]
     en_action_words = [
-        "open", "search", "screenshot", "send", "write", "create",
-        "execute", "run", "read", "view", "save", "download", "upload",
-        "copy", "paste", "delete", "edit", "modify", "update", "install",
-        "configure", "setup", "start", "stop", "close", "deploy", "build",
-        "test", "refactor", "migrate", "fix", "implement", "add", "remove",
+        "open",
+        "search",
+        "screenshot",
+        "send",
+        "write",
+        "create",
+        "execute",
+        "run",
+        "read",
+        "view",
+        "save",
+        "download",
+        "upload",
+        "copy",
+        "paste",
+        "delete",
+        "edit",
+        "modify",
+        "update",
+        "install",
+        "configure",
+        "setup",
+        "start",
+        "stop",
+        "close",
+        "deploy",
+        "build",
+        "test",
+        "refactor",
+        "migrate",
+        "fix",
+        "implement",
+        "add",
+        "remove",
     ]
 
     zh_connectors = ["然后", "接着", "之后", "并且", "再", "最后"]
@@ -41,12 +91,11 @@ def should_require_todo(user_message: str) -> bool:
 
     action_count = sum(1 for w in zh_action_words if w in msg)
     for w in en_action_words:
-        if _re.search(r'\b' + _re.escape(w), msg):
+        if _re.search(r"\b" + _re.escape(w), msg):
             action_count += 1
 
-    has_connector = (
-        any(w in msg for w in zh_connectors)
-        or any(_re.search(r'\b' + _re.escape(w) + r'\b', msg) for w in en_connectors)
+    has_connector = any(w in msg for w in zh_connectors) or any(
+        _re.search(r"\b" + _re.escape(w) + r"\b", msg) for w in en_connectors
     )
 
     comma_separated = "，" in msg or "," in msg

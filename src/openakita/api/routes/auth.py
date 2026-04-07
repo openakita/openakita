@@ -82,6 +82,7 @@ def _is_local_from_real_ip(request: Request) -> bool:
 
 # ── POST /api/auth/login ──
 
+
 @router.post("/login")
 async def login(request: Request, response: Response):
     config = _get_config(request)
@@ -119,6 +120,7 @@ async def login(request: Request, response: Response):
 
 # ── POST /api/auth/refresh ──
 
+
 @router.post("/refresh")
 async def refresh(request: Request, response: Response):
     config = _get_config(request)
@@ -146,6 +148,7 @@ async def refresh(request: Request, response: Response):
 
 # ── POST /api/auth/logout ──
 
+
 @router.post("/logout")
 async def logout(response: Response):
     _clear_refresh_cookie(response)
@@ -153,6 +156,7 @@ async def logout(response: Response):
 
 
 # ── GET /api/auth/check ──
+
 
 @router.get("/check")
 async def check_auth(request: Request, response: Response):
@@ -164,21 +168,34 @@ async def check_auth(request: Request, response: Response):
 
     # Local requests are always authenticated (unless behind proxy)
     if is_local:
-        return {"authenticated": True, "method": "local", "password_user_set": config.password_user_set}
+        return {
+            "authenticated": True,
+            "method": "local",
+            "password_user_set": config.password_user_set,
+        }
 
     # Check bearer token
     auth_header = request.headers.get("authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
         if config.validate_access_token(token):
-            return {"authenticated": True, "method": "token", "password_user_set": config.password_user_set}
+            return {
+                "authenticated": True,
+                "method": "token",
+                "password_user_set": config.password_user_set,
+            }
 
     # Check refresh cookie (means user has a valid session)
     cookie = request.cookies.get(REFRESH_COOKIE_NAME)
     if cookie:
         payload = config.validate_refresh_token(cookie)
         if payload:
-            return {"authenticated": True, "method": "refresh_cookie", "needs_refresh": True, "password_user_set": config.password_user_set}
+            return {
+                "authenticated": True,
+                "method": "refresh_cookie",
+                "needs_refresh": True,
+                "password_user_set": config.password_user_set,
+            }
 
     return {"authenticated": False}
 
@@ -186,6 +203,7 @@ async def check_auth(request: Request, response: Response):
 # ── POST /api/auth/change-password ──
 # Local: no current_password needed.
 # Remote: must provide correct current_password (old password).
+
 
 @router.post("/change-password")
 async def change_password(request: Request):
@@ -207,14 +225,24 @@ async def change_password(request: Request):
     config.change_password(new_password)
 
     from .websocket import manager
+
     disconnected = await manager.disconnect_remote_clients()
 
     origin = "localhost" if is_local else "remote"
-    logger.info("Web access password changed from %s, disconnected %d remote session(s)", origin, disconnected)
-    return {"status": "ok", "message": "Password changed. All remote sessions invalidated.", "disconnected": disconnected}
+    logger.info(
+        "Web access password changed from %s, disconnected %d remote session(s)",
+        origin,
+        disconnected,
+    )
+    return {
+        "status": "ok",
+        "message": "Password changed. All remote sessions invalidated.",
+        "disconnected": disconnected,
+    }
 
 
 # ── GET /api/auth/password-hint (local only) ──
+
 
 @router.get("/password-hint")
 async def password_hint(request: Request):

@@ -90,6 +90,7 @@ async def discover_webmcp_tools(backend: Any) -> WebMCPDiscoveryResult:
         data = result.get("result", {})
         if isinstance(data, str):
             import json
+
             data = json.loads(data)
 
         tools = []

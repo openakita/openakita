@@ -48,11 +48,10 @@ class SearchHandler:
 
         return await self._fallback_keyword_search(query, search_path, max_results)
 
-    async def _fallback_keyword_search(
-        self, query: str, search_path: str, max_results: int
-    ) -> str:
+    async def _fallback_keyword_search(self, query: str, search_path: str, max_results: int) -> str:
         """Fallback: use grep-based keyword search when vector store is unavailable."""
         import re
+
         keywords = re.findall(r"\b[a-zA-Z_]\w{2,}\b", query)
         if not keywords:
             keywords = query.split()[:3]
@@ -96,7 +95,9 @@ class SearchHandler:
         )
         lines.append("")
         for r in unique:
-            lines.append(f"  {r.get('file', '?')}:{r.get('line', '?')}: {r.get('text', '').strip()}")
+            lines.append(
+                f"  {r.get('file', '?')}:{r.get('line', '?')}: {r.get('text', '').strip()}"
+            )
 
         return "\n".join(lines)
 

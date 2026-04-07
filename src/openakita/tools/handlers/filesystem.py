@@ -35,6 +35,7 @@ def _get_terminal_manager(agent: "Agent") -> Any:
     clean up on next access.
     """
     from ..terminal import TerminalSessionManager
+
     agent_id = id(agent)
     mgr = _terminal_mgr_strong_refs.get(agent_id)
     if mgr is not None:
@@ -184,9 +185,7 @@ class FilesystemHandler:
         tmp.write(code)
         tmp.close()
 
-        logger.info(
-            "[Windows fix] Multiline python -c → temp file: %s", tmp.name
-        )
+        logger.info("[Windows fix] Multiline python -c → temp file: %s", tmp.name)
         return f'python "{tmp.name}"'
 
     # run_shell 成功输出最大行数
@@ -214,6 +213,7 @@ class FilesystemHandler:
                     continue
 
         import platform
+
         if platform.system() == "Windows":
             command = self._fix_windows_python_c(command)
 
@@ -241,6 +241,7 @@ class FilesystemHandler:
         )
 
         from ...logging import get_session_log_buffer
+
         log_buffer = get_session_log_buffer()
 
         if result.backgrounded:
@@ -323,6 +324,7 @@ class FilesystemHandler:
 
         total_lines = len(lines)
         from ...core.tool_executor import save_overflow
+
         overflow_path = save_overflow("run_shell", text)
         truncated = "\n".join(lines[: self.SHELL_MAX_LINES])
         truncated += (
@@ -380,12 +382,14 @@ class FilesystemHandler:
         result = f"文件已写入: {path}"
 
         from ...core.im_context import get_im_session
+
         if not get_im_session():
             result += (
                 "\n\n💡 当前为 Desktop 模式，用户无法直接访问服务器文件。"
                 "请将文件的关键内容直接包含在回复中，"
                 "或调用 deliver_artifacts(artifacts=[{type: 'file', path: '"
-                + str(path) + "'}]) 使文件在前端可下载。"
+                + str(path)
+                + "'}]) 使文件在前端可下载。"
             )
         return result
 
@@ -440,15 +444,15 @@ class FilesystemHandler:
             )
 
         shown = "\n".join(lines[start:end])
-        result = f"文件内容 (第 {start+1}-{end} 行，共 {total_lines} 行):\n{shown}"
+        result = f"文件内容 (第 {start + 1}-{end} 行，共 {total_lines} 行):\n{shown}"
 
         # 如果还有更多内容，附加分页提示
         if end < total_lines:
             remaining = total_lines - end
             result += (
                 f"\n\n[OUTPUT_TRUNCATED] 文件共 {total_lines} 行，"
-                f"当前显示第 {start+1}-{end} 行，剩余 {remaining} 行。\n"
-                f'使用 read_file(path="{path}", offset={end+1}, limit={limit}) '
+                f"当前显示第 {start + 1}-{end} 行，剩余 {remaining} 行。\n"
+                f'使用 read_file(path="{path}", offset={end + 1}, limit={limit}) '
                 f"查看后续内容。"
             )
 
@@ -477,10 +481,7 @@ class FilesystemHandler:
             target = self._resolve_to_abs(path)
             write_roots = policy.get("write_roots") or []
             if not self._is_under_any_root(target, write_roots):
-                msg = (
-                    "❌ 自检自动修复护栏：禁止编辑该路径。"
-                    f"\n目标: {target}"
-                )
+                msg = f"❌ 自检自动修复护栏：禁止编辑该路径。\n目标: {target}"
                 logger.warning(msg)
                 return msg
 
@@ -488,7 +489,10 @@ class FilesystemHandler:
 
         try:
             result = await self.agent.file_tool.edit(
-                path, old_string, new_string, replace_all=replace_all,
+                path,
+                old_string,
+                new_string,
+                replace_all=replace_all,
             )
             replaced = result["replaced"]
             if replace_all and replaced > 1:
@@ -517,7 +521,9 @@ class FilesystemHandler:
         pattern = params.get("pattern", "*")
         recursive = params.get("recursive", False)
         files = await self.agent.file_tool.list_dir(
-            path, pattern=pattern, recursive=recursive,
+            path,
+            pattern=pattern,
+            recursive=recursive,
         )
 
         max_items = params.get("max_items", self.LIST_DIR_DEFAULT_MAX)
@@ -534,7 +540,7 @@ class FilesystemHandler:
         result = f"目录内容 (显示前 {max_items} 条，共 {total} 条):\n" + "\n".join(shown)
         result += (
             f"\n\n[OUTPUT_TRUNCATED] 目录共 {total} 条目，已显示前 {max_items} 条。\n"
-            f"如需查看更多，请使用 list_directory(path=\"{path}\", max_items={total}) "
+            f'如需查看更多，请使用 list_directory(path="{path}", max_items={total}) '
             f"或缩小查询范围。"
         )
         return result
@@ -565,7 +571,8 @@ class FilesystemHandler:
 
         try:
             results = await self.agent.file_tool.grep(
-                pattern, path,
+                pattern,
+                path,
                 include=include,
                 context_lines=context_lines,
                 max_results=max_results,
@@ -600,8 +607,9 @@ class FilesystemHandler:
 
         if len(output.split("\n")) > self.SHELL_MAX_LINES:
             from ...core.tool_executor import save_overflow
+
             overflow_path = save_overflow("grep", output)
-            truncated = "\n".join(output.split("\n")[:self.SHELL_MAX_LINES])
+            truncated = "\n".join(output.split("\n")[: self.SHELL_MAX_LINES])
             truncated += (
                 f"\n\n[OUTPUT_TRUNCATED] 完整结果已保存到: {overflow_path}\n"
                 f'使用 read_file(path="{overflow_path}", offset={self.SHELL_MAX_LINES + 1}) '
@@ -660,9 +668,7 @@ class FilesystemHandler:
         output = f"找到 {total} 个文件（按修改时间排序）:\n" + "\n".join(file_list)
 
         if total > max_show:
-            output += (
-                f"\n\n[OUTPUT_TRUNCATED] 共 {total} 个文件，已显示前 {max_show} 个。"
-            )
+            output += f"\n\n[OUTPUT_TRUNCATED] 共 {total} 个文件，已显示前 {max_show} 个。"
 
         return output
 

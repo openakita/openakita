@@ -30,6 +30,7 @@ class SkillStoreHandler:
     def _get_client(self):
         if self._client is None:
             from ...hub import SkillStoreClient
+
             self._client = SkillStoreClient()
         return self._client
 
@@ -146,6 +147,7 @@ class SkillStoreHandler:
             loader = getattr(self.agent, "skill_loader", None)
             if loader:
                 from ...config import settings
+
                 loader.load_all(settings.project_root)
 
             catalog = getattr(self.agent, "skill_catalog", None)
@@ -157,6 +159,7 @@ class SkillStoreHandler:
                 self.agent._update_skill_tools()
 
             from ...skills.events import SkillEvent, notify_skills_changed
+
             notify_skills_changed(SkillEvent.STORE_INSTALL)
 
             logger.info("Skills reloaded after Store install")
@@ -175,7 +178,11 @@ class SkillStoreHandler:
             return f"❌ 获取详情失败: {e}"
 
         s = detail.get("skill", detail)
-        trust_icons = {"official": "🏛️ Official", "certified": "✅ Certified", "community": "🌐 Community"}
+        trust_icons = {
+            "official": "🏛️ Official",
+            "certified": "✅ Certified",
+            "community": "🌐 Community",
+        }
 
         lines = [
             "📋 Skill 详情\n",

@@ -172,6 +172,7 @@ class DailyConsolidator:
                 logger.warning("Generated MEMORY.md content too short, skipping refresh")
                 return False
             from .lifecycle import _safe_write_with_backup
+
             _safe_write_with_backup(self.memory_md_path, content)
             logger.info("MEMORY.md refreshed")
 
@@ -339,8 +340,7 @@ class DailyConsolidator:
 
         # 2. 筛选高置信度或高访问量的
         qualified = [
-            m for m in persona_memories
-            if m.importance_score >= 0.7 or m.access_count >= 3
+            m for m in persona_memories if m.importance_score >= 0.7 or m.access_count >= 3
         ]
 
         if not qualified:
@@ -403,7 +403,12 @@ class DailyConsolidator:
         care_traits = {}
 
         style_dims = {"formality", "humor", "emoji_usage", "reply_length", "address_style"}
-        interaction_dims = {"proactiveness", "emotional_distance", "encouragement", "sticker_preference"}
+        interaction_dims = {
+            "proactiveness",
+            "emotional_distance",
+            "encouragement",
+            "sticker_preference",
+        }
         care_dims = {"care_topics"}
 
         for dim, (pref, mem) in promoted_traits.items():
@@ -439,6 +444,7 @@ class DailyConsolidator:
         # 6. 触发重编译
         try:
             from ..prompt.compiler import compile_all
+
             compile_all(self.identity_dir)
             logger.info("Triggered prompt recompilation after persona trait promotion")
         except Exception as e:
@@ -481,7 +487,10 @@ class DailyConsolidator:
             if memory.id in deleted_ids:
                 continue
 
-            if self.memory_manager.vector_store is not None and self.memory_manager.vector_store.enabled:
+            if (
+                self.memory_manager.vector_store is not None
+                and self.memory_manager.vector_store.enabled
+            ):
                 similar = self.memory_manager.vector_store.search(
                     memory.content,
                     limit=5,
@@ -510,7 +519,9 @@ class DailyConsolidator:
 
                     if is_dup:
                         keep, remove = self._decide_which_to_keep(memory, other_memory)
-                        logger.info(f"Duplicate found: '{remove.content}' -> keeping '{keep.content}'")
+                        logger.info(
+                            f"Duplicate found: '{remove.content}' -> keeping '{keep.content}'"
+                        )
                         self.memory_manager.delete_memory(remove.id)
                         deleted_ids.add(remove.id)
             else:

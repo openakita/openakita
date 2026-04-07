@@ -50,12 +50,14 @@ async def list_models(request: Request):
         key_env = getattr(provider.config, "api_key_env", "") or ""
         has_key = bool(key_env and os.environ.get(key_env, "").strip())
 
-        models.append(ModelInfo(
-            name=name,
-            provider=getattr(provider.config, "provider", "unknown"),
-            model=provider.model,
-            status=status,
-            has_api_key=has_key,
-        ).model_dump())
+        models.append(
+            ModelInfo(
+                name=name,
+                provider=getattr(provider.config, "provider", "unknown"),
+                model=provider.model,
+                status=status,
+                has_api_key=has_key,
+            ).model_dump()
+        )
 
     return {"models": models}

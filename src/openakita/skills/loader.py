@@ -18,6 +18,7 @@ _CURRENT_PLATFORM = sys.platform  # "win32", "darwin", "linux"
 
 logger = logging.getLogger(__name__)
 
+
 def _resolve_user_workspace_skills() -> Path:
     """动态解析当前用户工作区的技能目录。
 
@@ -26,9 +27,11 @@ def _resolve_user_workspace_skills() -> Path:
     """
     try:
         from ..config import settings
+
         return settings.skills_path
     except Exception:
         import os
+
         root = os.environ.get("OPENAKITA_ROOT", "").strip()
         if root:
             return Path(root) / "workspaces" / "default" / "skills"
@@ -68,100 +71,102 @@ SYSTEM_SKILL_DIRECTORIES = [
 
 # 打包时默认不启用的外部技能（新安装 / 无 data/skills.json 时生效）。
 # 用户通过前端面板手动勾选后会创建 skills.json，之后以用户选择为准。
-DEFAULT_DISABLED_SKILLS: frozenset[str] = frozenset({
-    "openakita/skills@algorithmic-art",
-    "openakita/skills@apify-scraper",
-    "jimliu/baoyu-skills@baoyu-article-illustrator",
-    "jimliu/baoyu-skills@baoyu-comic",
-    "jimliu/baoyu-skills@baoyu-cover-image",
-    "jimliu/baoyu-skills@baoyu-format-markdown",
-    "jimliu/baoyu-skills@baoyu-image-gen",
-    "jimliu/baoyu-skills@baoyu-infographic",
-    "jimliu/baoyu-skills@baoyu-slide-deck",
-    "jimliu/baoyu-skills@baoyu-url-to-markdown",
-    "openakita/skills@bilibili-watcher",
-    "openakita/skills@brand-guidelines",
-    "openakita/skills@changelog-generator",
-    "openakita/skills@chinese-novelist",
-    "openakita/skills@chinese-writing",
-    "openakita/skills@code-reviewer",
-    "openakita/skills@douyin-tool",
-    "openakita/skills@frontend-design",
-    "openakita/skills@github-automation",
-    "openakita/skills@gmail-automation",
-    "openakita/skills@google-calendar-automation",
-    "openakita/skills@image-understander",
-    "openakita/skills@internal-comms",
-    "openakita/skills@knowledge-capture",
-    "openakita/skills@moltbook",
-    "openakita/skills@notebooklm",
-    "openakita/skills@obsidian-skills",
-    "openakita/skills@ppt-creator",
-    "openakita/skills@pretty-mermaid",
-    "openakita/skills@slack-gif-creator",
-    "openakita/skills@summarizer",
-    "obra/superpowers@brainstorming",
-    "obra/superpowers@dispatching-parallel-agents",
-    "obra/superpowers@executing-plans",
-    "obra/superpowers@finishing-a-development-branch",
-    "obra/superpowers@receiving-code-review",
-    "obra/superpowers@requesting-code-review",
-    "obra/superpowers@subagent-driven-development",
-    "obra/superpowers@systematic-debugging",
-    "obra/superpowers@test-driven-development",
-    "obra/superpowers@using-git-worktrees",
-    "obra/superpowers@using-superpowers",
-    "obra/superpowers@verification-before-completion",
-    "obra/superpowers@writing-plans",
-    "obra/superpowers@writing-skills",
-    "openakita/skills@theme-factory",
-    "openakita/skills@todoist-task",
-    "openakita/skills@translate-pdf",
-    "openakita/skills@video-downloader",
-    "openakita/skills@webapp-testing",
-    "openakita/skills@wechat-article",
-    "openakita/skills@xiaohongshu-creator",
-    "openakita/skills@youtube-summarizer",
-    "openakita/skills@yuque-skills",
-    # IM 办公 CLI
-    "openakita/skills@feishu-cli",
-    "openakita/skills@wecom-cli",
-    "openakita/skills@dingtalk-cli",
-    # AI 视频生成
-    "openakita/skills@seedance-video",
-    # 出行与地图
-    "openakita/skills@amap-maps",
-    "openakita/skills@fliggy-travel",
-    "openakita/skills@didi-ride",
-    # 腾讯生态
-    "openakita/skills@qq-channel",
-    "openakita/skills@tencent-meeting",
-    "openakita/skills@tencent-survey",
-    "openakita/skills@tencent-news",
-    "openakita/skills@tencent-ima",
-    # 百度系 Skills
-    "openakita/skills@baidu-search",
-    "openakita/skills@baidu-netdisk",
-    "openakita/skills@baidu-baike",
-    "openakita/skills@baidu-maps",
-    "openakita/skills@baidu-scholar",
-    "openakita/skills@miaoda-app-builder",
-    "openakita/skills@baidu-paddleocr-doc",
-    "openakita/skills@baidu-paddleocr-text",
-    "openakita/skills@baidu-deep-research",
-    "openakita/skills@baidu-ecommerce",
-    "openakita/skills@baidu-marketing",
-    "openakita/skills@baidu-picture-book",
-    "openakita/skills@baidu-ppt-gen",
-    "openakita/skills@baidu-video-notes",
-    "openakita/skills@baidu-yijian",
-    "openakita/skills@baidu-famou",
-    "openakita/skills@xiaodu-control",
-    # 电商工具
-    "openakita/skills@taobaoke-tool",
-    # 网易云音乐
-    "openakita/skills@netease-music",
-})
+DEFAULT_DISABLED_SKILLS: frozenset[str] = frozenset(
+    {
+        "openakita/skills@algorithmic-art",
+        "openakita/skills@apify-scraper",
+        "jimliu/baoyu-skills@baoyu-article-illustrator",
+        "jimliu/baoyu-skills@baoyu-comic",
+        "jimliu/baoyu-skills@baoyu-cover-image",
+        "jimliu/baoyu-skills@baoyu-format-markdown",
+        "jimliu/baoyu-skills@baoyu-image-gen",
+        "jimliu/baoyu-skills@baoyu-infographic",
+        "jimliu/baoyu-skills@baoyu-slide-deck",
+        "jimliu/baoyu-skills@baoyu-url-to-markdown",
+        "openakita/skills@bilibili-watcher",
+        "openakita/skills@brand-guidelines",
+        "openakita/skills@changelog-generator",
+        "openakita/skills@chinese-novelist",
+        "openakita/skills@chinese-writing",
+        "openakita/skills@code-reviewer",
+        "openakita/skills@douyin-tool",
+        "openakita/skills@frontend-design",
+        "openakita/skills@github-automation",
+        "openakita/skills@gmail-automation",
+        "openakita/skills@google-calendar-automation",
+        "openakita/skills@image-understander",
+        "openakita/skills@internal-comms",
+        "openakita/skills@knowledge-capture",
+        "openakita/skills@moltbook",
+        "openakita/skills@notebooklm",
+        "openakita/skills@obsidian-skills",
+        "openakita/skills@ppt-creator",
+        "openakita/skills@pretty-mermaid",
+        "openakita/skills@slack-gif-creator",
+        "openakita/skills@summarizer",
+        "obra/superpowers@brainstorming",
+        "obra/superpowers@dispatching-parallel-agents",
+        "obra/superpowers@executing-plans",
+        "obra/superpowers@finishing-a-development-branch",
+        "obra/superpowers@receiving-code-review",
+        "obra/superpowers@requesting-code-review",
+        "obra/superpowers@subagent-driven-development",
+        "obra/superpowers@systematic-debugging",
+        "obra/superpowers@test-driven-development",
+        "obra/superpowers@using-git-worktrees",
+        "obra/superpowers@using-superpowers",
+        "obra/superpowers@verification-before-completion",
+        "obra/superpowers@writing-plans",
+        "obra/superpowers@writing-skills",
+        "openakita/skills@theme-factory",
+        "openakita/skills@todoist-task",
+        "openakita/skills@translate-pdf",
+        "openakita/skills@video-downloader",
+        "openakita/skills@webapp-testing",
+        "openakita/skills@wechat-article",
+        "openakita/skills@xiaohongshu-creator",
+        "openakita/skills@youtube-summarizer",
+        "openakita/skills@yuque-skills",
+        # IM 办公 CLI
+        "openakita/skills@feishu-cli",
+        "openakita/skills@wecom-cli",
+        "openakita/skills@dingtalk-cli",
+        # AI 视频生成
+        "openakita/skills@seedance-video",
+        # 出行与地图
+        "openakita/skills@amap-maps",
+        "openakita/skills@fliggy-travel",
+        "openakita/skills@didi-ride",
+        # 腾讯生态
+        "openakita/skills@qq-channel",
+        "openakita/skills@tencent-meeting",
+        "openakita/skills@tencent-survey",
+        "openakita/skills@tencent-news",
+        "openakita/skills@tencent-ima",
+        # 百度系 Skills
+        "openakita/skills@baidu-search",
+        "openakita/skills@baidu-netdisk",
+        "openakita/skills@baidu-baike",
+        "openakita/skills@baidu-maps",
+        "openakita/skills@baidu-scholar",
+        "openakita/skills@miaoda-app-builder",
+        "openakita/skills@baidu-paddleocr-doc",
+        "openakita/skills@baidu-paddleocr-text",
+        "openakita/skills@baidu-deep-research",
+        "openakita/skills@baidu-ecommerce",
+        "openakita/skills@baidu-marketing",
+        "openakita/skills@baidu-picture-book",
+        "openakita/skills@baidu-ppt-gen",
+        "openakita/skills@baidu-video-notes",
+        "openakita/skills@baidu-yijian",
+        "openakita/skills@baidu-famou",
+        "openakita/skills@xiaodu-control",
+        # 电商工具
+        "openakita/skills@taobaoke-tool",
+        # 网易云音乐
+        "openakita/skills@netease-music",
+    }
+)
 
 
 class SkillLoader:
@@ -378,7 +383,9 @@ class SkillLoader:
             sid = skill_dir.name
 
             registered = self.registry.register(
-                skill, skill_id=sid, plugin_source=plugin_source,
+                skill,
+                skill_id=sid,
+                plugin_source=plugin_source,
             )
             if not registered:
                 logger.warning(f"Skill '{sid}' registration rejected (conflict)")
@@ -436,9 +443,7 @@ class SkillLoader:
             return skill.body
         return None
 
-    def compute_effective_allowlist(
-        self, external_allowlist: set[str] | None
-    ) -> set[str] | None:
+    def compute_effective_allowlist(self, external_allowlist: set[str] | None) -> set[str] | None:
         """根据 skills.json 的 allowlist 和默认禁用列表，计算最终的有效 allowlist。
 
         - skills.json 存在且有 external_allowlist -> 直接使用（用户显式选择）
@@ -576,7 +581,8 @@ class SkillLoader:
             except ValueError:
                 logger.warning(
                     "Script path traversal blocked: %s resolves outside skill dir %s",
-                    script_name, skill.skill_dir,
+                    script_name,
+                    skill.skill_dir,
                 )
                 return None
             if candidate.exists():
@@ -613,7 +619,7 @@ class SkillLoader:
                 return False, (
                     f"Script not found: {script_name}\n"
                     f"Available scripts: {', '.join(available)}\n"
-                    f"Use one of the available scripts, or use get_skill_info(\"{name}\") "
+                    f'Use one of the available scripts, or use get_skill_info("{name}") '
                     f"to check usage instructions."
                 )
             else:
@@ -621,7 +627,7 @@ class SkillLoader:
                     f"Script not found: {script_name}\n"
                     f"This skill has NO executable scripts — it is an instruction-only skill.\n"
                     f"DO NOT retry run_skill_script for this skill.\n"
-                    f"Instead: use get_skill_info(\"{name}\") to read the skill instructions, "
+                    f'Instead: use get_skill_info("{name}") to read the skill instructions, '
                     f"then write Python code and execute it via run_shell."
                 )
 
@@ -631,6 +637,7 @@ class SkillLoader:
         if script_path.suffix == ".py":
             # PyInstaller 兼容: 使用 runtime_env 获取正确的 Python 解释器
             from openakita.runtime_env import get_python_executable
+
             py = get_python_executable()
             if not py:
                 return False, "Python 解释器不可用，无法执行脚本"
@@ -641,6 +648,7 @@ class SkillLoader:
                 # Windows 上尝试 Git Bash 的常见路径
                 if sys.platform == "win32":
                     import os as _os
+
                     _sd = _os.environ.get("SYSTEMDRIVE", "C:")
                     for candidate in [
                         rf"{_sd}\Program Files\Git\bin\bash.exe",
@@ -689,8 +697,9 @@ class SkillLoader:
             truncated = False
             stdout_bytes = raw_stdout[:MAX_OUTPUT_BYTES] if raw_stdout else b""
             stderr_bytes = raw_stderr[:MAX_OUTPUT_BYTES] if raw_stderr else b""
-            if (raw_stdout and len(raw_stdout) > MAX_OUTPUT_BYTES) or \
-               (raw_stderr and len(raw_stderr) > MAX_OUTPUT_BYTES):
+            if (raw_stdout and len(raw_stdout) > MAX_OUTPUT_BYTES) or (
+                raw_stderr and len(raw_stderr) > MAX_OUTPUT_BYTES
+            ):
                 truncated = True
 
             output = stdout_bytes.decode("utf-8", errors="replace")
@@ -725,7 +734,8 @@ class SkillLoader:
         except ValueError:
             logger.warning(
                 "Reference path traversal blocked: %s resolves outside references dir %s",
-                ref_name, skill.references_dir,
+                ref_name,
+                skill.references_dir,
             )
             return None
         if ref_path.exists():

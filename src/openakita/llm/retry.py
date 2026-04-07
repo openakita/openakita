@@ -121,13 +121,30 @@ def should_retry(
             return False
 
     # Always retry transient errors
-    if any(kw in error_str for kw in (
-        "timeout", "timed out", "connect", "connection", "network",
-        "429", "502", "503", "504", "529",
-        "econnreset", "epipe", "eof",
-        "readerror", "read error", "remotedisconnected", "broken pipe",
-        "readtimeout", "incompleteread",
-    )):
+    if any(
+        kw in error_str
+        for kw in (
+            "timeout",
+            "timed out",
+            "connect",
+            "connection",
+            "network",
+            "429",
+            "502",
+            "503",
+            "504",
+            "529",
+            "econnreset",
+            "epipe",
+            "eof",
+            "readerror",
+            "read error",
+            "remotedisconnected",
+            "broken pipe",
+            "readtimeout",
+            "incompleteread",
+        )
+    ):
         return True
 
     # Retry rate limit errors
@@ -164,6 +181,7 @@ def is_context_overflow_error(error: Exception) -> int | None:
 
     # Try to extract suggested max from error message
     import re
+
     patterns = [
         r"max_tokens.*?(\d+)",
         r"maximum.*?(\d+)\s*tokens",

@@ -133,7 +133,9 @@ _DASHSCOPE_MAX_DATA_URI_BYTES = 10 * 1024 * 1024  # DashScope API 限制 10MB pe
 _KIMI_MAX_DATA_URI_BYTES = 10 * 1024 * 1024  # Kimi 保守按 10MB 限制
 
 
-def _check_video_data_uri_size(video: VideoContent, provider_name: str, max_bytes: int) -> str | None:
+def _check_video_data_uri_size(
+    video: VideoContent, provider_name: str, max_bytes: int
+) -> str | None:
     """检查视频 data URL 是否超过 provider 大小限制，超过则返回降级文本"""
     if video.media_type == "url":
         return None

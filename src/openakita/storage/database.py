@@ -568,7 +568,14 @@ class Database:
         operation_type: str | None = None,
     ) -> list[dict]:
         """按维度聚合 token 用量"""
-        allowed = {"endpoint_name", "operation_type", "model", "session_id", "channel", "agent_profile_id"}
+        allowed = {
+            "endpoint_name",
+            "operation_type",
+            "model",
+            "session_id",
+            "channel",
+            "agent_profile_id",
+        }
         if group_by not in allowed:
             group_by = "endpoint_name"
 
@@ -594,7 +601,7 @@ class Database:
                    COUNT(*) AS request_count,
                    COALESCE(SUM(estimated_cost), 0) AS total_cost
             FROM token_usage
-            WHERE {' AND '.join(where)}
+            WHERE {" AND ".join(where)}
             GROUP BY {group_by}
             ORDER BY total_tokens DESC
         """
@@ -629,7 +636,7 @@ class Database:
                    SUM(input_tokens + output_tokens) AS total_tokens,
                    COUNT(*) AS request_count
             FROM token_usage
-            WHERE {' AND '.join(where)}
+            WHERE {" AND ".join(where)}
             GROUP BY time_bucket
             ORDER BY time_bucket
         """

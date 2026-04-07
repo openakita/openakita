@@ -73,8 +73,7 @@ _NODE_SCHEMA = {
             "type": "array",
             "items": {"type": "string"},
             "description": (
-                "外部工具（类目名或工具名，如 "
-                "'research'、'filesystem'、'planning'、'browser'）"
+                "外部工具（类目名或工具名，如 'research'、'filesystem'、'planning'、'browser'）"
             ),
         },
         "custom_prompt": {
@@ -136,9 +135,14 @@ ORG_SETUP_TOOLS = [
                 "action": {
                     "type": "string",
                     "enum": [
-                        "get_resources", "list_orgs", "get_org",
-                        "preview", "create", "create_from_template",
-                        "update_org", "delete_org",
+                        "get_resources",
+                        "list_orgs",
+                        "get_org",
+                        "preview",
+                        "create",
+                        "create_from_template",
+                        "update_org",
+                        "delete_org",
                     ],
                     "description": (
                         "操作类型："

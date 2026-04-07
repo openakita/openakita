@@ -32,15 +32,26 @@ _FAIL_CLOSED_TOOL_PREFIXES = (
 )
 
 # Tools whose permission maps to the "edit" permission category
-EDIT_TOOLS = frozenset({
-    "write_file", "edit_file", "replace_in_file",
-    "create_file", "delete_file", "rename_file",
-})
+EDIT_TOOLS = frozenset(
+    {
+        "write_file",
+        "edit_file",
+        "replace_in_file",
+        "create_file",
+        "delete_file",
+        "rename_file",
+    }
+)
 
-READ_TOOLS = frozenset({
-    "read_file", "list_directory", "search_files",
-    "web_search", "news_search",
-})
+READ_TOOLS = frozenset(
+    {
+        "read_file",
+        "list_directory",
+        "search_files",
+        "web_search",
+        "news_search",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -54,6 +65,7 @@ class PermissionRule:
         pattern:    A glob pattern for path matching, or "*" for all paths.
         action:     One of "allow", "deny", "ask".
     """
+
     permission: str
     pattern: str
     action: str  # "allow" | "deny" | "ask"
@@ -218,6 +230,7 @@ class PermissionDecision:
     policy_name: 命中的策略名称
     decision_chain: 决策经过（审计用）
     """
+
     behavior: str
     reason: str = ""
     reason_detail: str = ""
@@ -280,13 +293,16 @@ def check_permission(
     # Step 2: PolicyEngine（仅 agent 模式 / mode 规则放行后）
     try:
         from .policy import get_policy_engine
+
         pe = get_policy_engine()
         pr = pe.assert_tool_allowed(tool_name, tool_input)
-        chain.append({
-            "layer": "policy_engine",
-            "decision": pr.decision.value,
-            "policy": pr.policy_name,
-        })
+        chain.append(
+            {
+                "layer": "policy_engine",
+                "decision": pr.decision.value,
+                "policy": pr.policy_name,
+            }
+        )
         return PermissionDecision(
             behavior=pr.decision.value,
             reason=pr.reason,
@@ -325,8 +341,10 @@ def check_mode_permission(
         return None
 
     ruleset = (
-        PLAN_MODE_RULESET if mode == "plan"
-        else COORDINATOR_MODE_RULESET if mode == "coordinator"
+        PLAN_MODE_RULESET
+        if mode == "plan"
+        else COORDINATOR_MODE_RULESET
+        if mode == "coordinator"
         else ASK_MODE_RULESET
     )
     permission = _tool_to_permission(tool_name)
@@ -364,105 +382,113 @@ def check_mode_permission(
 
 # ==================== Preset Rulesets ====================
 
-DEFAULT_RULESET: Ruleset = from_config({
-    "*": "allow",
-})
+DEFAULT_RULESET: Ruleset = from_config(
+    {
+        "*": "allow",
+    }
+)
 
-PLAN_MODE_RULESET: Ruleset = from_config({
-    "*": "deny",
-    "read": "allow",
-    "edit": {"*": "deny", "data/plans/*.md": "allow"},
-    "run_shell": "deny",
-    "create_plan_file": "allow",
-    "exit_plan_mode": "allow",
-    "get_todo_status": "allow",
-    "ask_user": "allow",
-    "web_search": "allow",
-    "news_search": "allow",
-    "search_memory": "allow",
-    "get_tool_info": "allow",
-    "get_skill_info": "allow",
-    "list_skills": "allow",
-    "list_mcp_servers": "allow",
-    "get_mcp_instructions": "allow",
-    "get_workspace_map": "allow",
-    "get_session_logs": "allow",
-    "browser_screenshot": "allow",
-    "view_image": "allow",
-    "list_scheduled_tasks": "allow",
-    "get_user_profile": "allow",
-    "get_persona_profile": "allow",
-    "read_file": "allow",
-    "list_directory": "allow",
-    "grep": "allow",
-    "glob": "allow",
-})
+PLAN_MODE_RULESET: Ruleset = from_config(
+    {
+        "*": "deny",
+        "read": "allow",
+        "edit": {"*": "deny", "data/plans/*.md": "allow"},
+        "run_shell": "deny",
+        "create_plan_file": "allow",
+        "exit_plan_mode": "allow",
+        "get_todo_status": "allow",
+        "ask_user": "allow",
+        "web_search": "allow",
+        "news_search": "allow",
+        "search_memory": "allow",
+        "get_tool_info": "allow",
+        "get_skill_info": "allow",
+        "list_skills": "allow",
+        "list_mcp_servers": "allow",
+        "get_mcp_instructions": "allow",
+        "get_workspace_map": "allow",
+        "get_session_logs": "allow",
+        "browser_screenshot": "allow",
+        "view_image": "allow",
+        "list_scheduled_tasks": "allow",
+        "get_user_profile": "allow",
+        "get_persona_profile": "allow",
+        "read_file": "allow",
+        "list_directory": "allow",
+        "grep": "allow",
+        "glob": "allow",
+    }
+)
 
-ASK_MODE_RULESET: Ruleset = from_config({
-    "*": "deny",
-    "read": "allow",
-    "edit": "deny",
-    "run_shell": "deny",
-    "ask_user": "allow",
-    "web_search": "allow",
-    "news_search": "allow",
-    "search_memory": "allow",
-    "add_memory": "allow",
-    "get_memory_stats": "allow",
-    "list_recent_tasks": "allow",
-    "trace_memory": "allow",
-    "search_conversation_traces": "allow",
-    "get_tool_info": "allow",
-    "get_skill_info": "allow",
-    "list_skills": "allow",
-    "list_mcp_servers": "allow",
-    "get_mcp_instructions": "allow",
-    "get_todo_status": "allow",
-    "get_workspace_map": "allow",
-    "get_session_logs": "allow",
-    "browser_screenshot": "allow",
-    "view_image": "allow",
-    "list_scheduled_tasks": "allow",
-    "get_user_profile": "allow",
-    "get_persona_profile": "allow",
-    "read_file": "allow",
-    "list_directory": "allow",
-    "grep": "allow",
-    "glob": "allow",
-})
+ASK_MODE_RULESET: Ruleset = from_config(
+    {
+        "*": "deny",
+        "read": "allow",
+        "edit": "deny",
+        "run_shell": "deny",
+        "ask_user": "allow",
+        "web_search": "allow",
+        "news_search": "allow",
+        "search_memory": "allow",
+        "add_memory": "allow",
+        "get_memory_stats": "allow",
+        "list_recent_tasks": "allow",
+        "trace_memory": "allow",
+        "search_conversation_traces": "allow",
+        "get_tool_info": "allow",
+        "get_skill_info": "allow",
+        "list_skills": "allow",
+        "list_mcp_servers": "allow",
+        "get_mcp_instructions": "allow",
+        "get_todo_status": "allow",
+        "get_workspace_map": "allow",
+        "get_session_logs": "allow",
+        "browser_screenshot": "allow",
+        "view_image": "allow",
+        "list_scheduled_tasks": "allow",
+        "get_user_profile": "allow",
+        "get_persona_profile": "allow",
+        "read_file": "allow",
+        "list_directory": "allow",
+        "grep": "allow",
+        "glob": "allow",
+    }
+)
 
-COORDINATOR_MODE_RULESET: Ruleset = from_config({
-    "*": "deny",
-    "delegate_to_agent": "allow",
-    "delegate_parallel": "allow",
-    "spawn_agent": "allow",
-    "create_agent": "allow",
-    "task_stop": "allow",
-    "send_agent_message": "allow",
-    "create_todo": "allow",
-    "update_todo_step": "allow",
-    "get_todo_status": "allow",
-    "complete_todo": "allow",
-    "create_plan_file": "allow",
-    "exit_plan_mode": "allow",
-    "web_search": "allow",
-    "news_search": "allow",
-    "search_memory": "allow",
-    "add_memory": "allow",
-    "get_chat_history": "allow",
-    "list_skills": "allow",
-    "get_skill_info": "allow",
-    "get_tool_info": "allow",
-    "ask_user": "allow",
-    "read": "allow",
-    "read_file": "allow",
-    "list_directory": "allow",
-    "grep": "allow",
-    "glob": "allow",
-    "get_workspace_map": "allow",
-    "list_mcp_servers": "allow",
-    "get_mcp_instructions": "allow",
-    "get_session_logs": "allow",
-    "get_user_profile": "allow",
-    "get_persona_profile": "allow",
-})
+COORDINATOR_MODE_RULESET: Ruleset = from_config(
+    {
+        "*": "deny",
+        "delegate_to_agent": "allow",
+        "delegate_parallel": "allow",
+        "spawn_agent": "allow",
+        "create_agent": "allow",
+        "task_stop": "allow",
+        "send_agent_message": "allow",
+        "create_todo": "allow",
+        "update_todo_step": "allow",
+        "get_todo_status": "allow",
+        "complete_todo": "allow",
+        "create_plan_file": "allow",
+        "exit_plan_mode": "allow",
+        "web_search": "allow",
+        "news_search": "allow",
+        "search_memory": "allow",
+        "add_memory": "allow",
+        "get_chat_history": "allow",
+        "list_skills": "allow",
+        "get_skill_info": "allow",
+        "get_tool_info": "allow",
+        "ask_user": "allow",
+        "read": "allow",
+        "read_file": "allow",
+        "list_directory": "allow",
+        "grep": "allow",
+        "glob": "allow",
+        "get_workspace_map": "allow",
+        "list_mcp_servers": "allow",
+        "get_mcp_instructions": "allow",
+        "get_session_logs": "allow",
+        "get_user_profile": "allow",
+        "get_persona_profile": "allow",
+    }
+)

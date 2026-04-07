@@ -73,7 +73,13 @@ def build_httpx_timeout(timeout_value: object, default: float = 60.0) -> httpx.T
     def _to_float_or_none(v: object) -> float | None:
         if v is None:
             return None
-        if isinstance(v, str) and v.strip().lower() in ("none", "null", "off", "disable", "disabled"):
+        if isinstance(v, str) and v.strip().lower() in (
+            "none",
+            "null",
+            "off",
+            "disable",
+            "disabled",
+        ):
             return None
         try:
             return float(v)  # type: ignore[arg-type]
@@ -168,9 +174,12 @@ def _detect_proxy_source() -> tuple[str, str] | None:
         (proxy_url, source_description) 或 None
     """
     for env_var in [
-        "ALL_PROXY", "all_proxy",
-        "HTTPS_PROXY", "https_proxy",
-        "HTTP_PROXY", "http_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
     ]:
         proxy = (os.environ.get(env_var) or "").strip()
         if proxy:
@@ -232,9 +241,7 @@ def get_proxy_config() -> str | None:
         return None
 
     if not _proxy_logged:
-        logger.info(
-            f"[Proxy] LLM proxy enabled from {source}: {_redact_proxy_url(proxy)}"
-        )
+        logger.info(f"[Proxy] LLM proxy enabled from {source}: {_redact_proxy_url(proxy)}")
         _proxy_logged = True
     return proxy
 

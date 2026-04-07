@@ -39,12 +39,24 @@ logger = logging.getLogger(__name__)
 # Catalog-excluded tools — these are always loaded with full schema via LLM
 # tools parameter, so they are excluded from the textual catalog to save tokens.
 # Sorted tuple for stable iteration order (prompt cache friendly).
-CATALOG_EXCLUDED_TOOLS = tuple(sorted({
-    "run_shell", "read_file", "write_file", "edit_file",
-    "list_directory", "ask_user", "glob",
-    "web_search", "web_fetch", "delete_file", "read_lints",
-    "semantic_search",
-}))
+CATALOG_EXCLUDED_TOOLS = tuple(
+    sorted(
+        {
+            "run_shell",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "list_directory",
+            "ask_user",
+            "glob",
+            "web_search",
+            "web_fetch",
+            "delete_file",
+            "read_lints",
+            "semantic_search",
+        }
+    )
+)
 _CATALOG_EXCLUDED_SET = frozenset(CATALOG_EXCLUDED_TOOLS)
 
 # Backwards compat alias
@@ -119,7 +131,7 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
     }
 
     TOOL_ENTRY_TEMPLATE = "- **{name}**: {description}"  # only used with _safe_format
-    CATEGORY_TEMPLATE = "\n### {category}\n{tools}"     # only used with _safe_format
+    CATEGORY_TEMPLATE = "\n### {category}\n{tools}"  # only used with _safe_format
 
     @staticmethod
     def _safe_format(template: str, **kwargs: str) -> str:
@@ -129,7 +141,9 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
         except (KeyError, ValueError, IndexError) as e:
             logger.warning(
                 "[ToolCatalog] str.format failed (template=%r, keys=%s): %s",
-                template[:60], list(kwargs.keys()), e,
+                template[:60],
+                list(kwargs.keys()),
+                e,
             )
             return template + " " + " | ".join(f"{k}={v}" for k, v in kwargs.items())
 
@@ -143,8 +157,7 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
         nameless = [t for t in tools if not t.get("name")]
         if nameless:
             logger.warning(
-                "[ToolCatalog] __init__: skipped %d tool(s) without a name, "
-                "keys present: %s",
+                "[ToolCatalog] __init__: skipped %d tool(s) without a name, keys present: %s",
                 len(nameless),
                 [list(t.keys())[:5] for t in nameless[:3]],
             )
@@ -261,11 +274,13 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
         for tool_name in CATALOG_EXCLUDED_TOOLS:
             tool = self._tools.get(tool_name)
             if tool:
-                schemas.append({
-                    "name": tool["name"],
-                    "description": tool.get("description", ""),
-                    "input_schema": tool.get("input_schema", {}),
-                })
+                schemas.append(
+                    {
+                        "name": tool["name"],
+                        "description": tool.get("description", ""),
+                        "input_schema": tool.get("input_schema", {}),
+                    }
+                )
         return schemas
 
     def is_high_freq_tool(self, tool_name: str) -> bool:
@@ -299,7 +314,9 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
                 desc = f"[deferred] {desc}"
             source = self._tool_sources.get(name, "")
             suffix = f" _(from {source})_" if source else ""
-            entry = self._safe_format(self.TOOL_ENTRY_TEMPLATE, name=name, description=desc) + suffix
+            entry = (
+                self._safe_format(self.TOOL_ENTRY_TEMPLATE, name=name, description=desc) + suffix
+            )
             entries.append(entry)
 
         return self._safe_format(
@@ -524,8 +541,7 @@ Use `get_tool_info(tool_name)` to see full parameters before calling.
         nameless = [t for t in tools if not t.get("name")]
         if nameless:
             logger.warning(
-                "[ToolCatalog] update_tools: skipped %d tool(s) without a name, "
-                "keys present: %s",
+                "[ToolCatalog] update_tools: skipped %d tool(s) without a name, keys present: %s",
                 len(nameless),
                 [list(t.keys())[:5] for t in nameless[:3]],
             )

@@ -26,9 +26,9 @@ class SendGridAdapter(BaseAPIAdapter):
         """
         super().__init__(config)
         self.base_url = "https://api.sendgrid.com/v3"
-        self.api_key = config.get('api_key')
-        self.from_email = config.get('from_email')
-        self.from_name = config.get('from_name', 'OpenAkita')
+        self.api_key = config.get("api_key")
+        self.from_email = config.get("from_email")
+        self.from_name = config.get("from_name", "OpenAkita")
         self._session: aiohttp.ClientSession | None = None
 
     async def authenticate(self) -> bool:
@@ -40,19 +40,21 @@ class SendGridAdapter(BaseAPIAdapter):
             async with aiohttp.ClientSession() as session:
                 headers = {
                     "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
                 }
                 async with session.get(
                     f"{self.base_url}/scopes",
                     headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=10)
+                    timeout=aiohttp.ClientTimeout(total=10),
                 ) as response:
                     if response.status == 200:
                         return True
                     elif response.status == 401:
                         raise AuthenticationError("SendGrid API Key 无效")
                     else:
-                        raise APIError(f"SendGrid 认证失败：{response.status}", status_code=response.status)
+                        raise APIError(
+                            f"SendGrid 认证失败：{response.status}", status_code=response.status
+                        )
         except aiohttp.ClientError as e:
             raise APIError(f"SendGrid 连接失败：{str(e)}")
 
@@ -63,18 +65,15 @@ class SendGridAdapter(BaseAPIAdapter):
 
         self._log_request(endpoint, method, kwargs)
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
 
         try:
             async with self._session.request(
                 method,
                 f"{self.base_url}{endpoint}",
                 headers=headers,
-                json=kwargs.get('json'),
-                timeout=aiohttp.ClientTimeout(total=30)
+                json=kwargs.get("json"),
+                timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
                 result = await response.json()
 
@@ -93,7 +92,7 @@ class SendGridAdapter(BaseAPIAdapter):
         content_type: str = "text/plain",
         cc: list[str] | None = None,
         bcc: list[str] | None = None,
-        attachments: list[dict] | None = None
+        attachments: list[dict] | None = None,
     ) -> dict[str, Any]:
         """
         发送邮件
@@ -110,10 +109,7 @@ class SendGridAdapter(BaseAPIAdapter):
         Returns:
             API 响应
         """
-        personalization = {
-            "to": [{"email": email} for email in to_emails],
-            "subject": subject
-        }
+        personalization = {"to": [{"email": email} for email in to_emails], "subject": subject}
 
         if cc:
             personalization["cc"] = [{"email": email} for email in cc]
@@ -122,14 +118,8 @@ class SendGridAdapter(BaseAPIAdapter):
 
         payload = {
             "personalizations": [personalization],
-            "from": {
-                "email": self.from_email,
-                "name": self.from_name
-            },
-            "content": [{
-                "type": content_type,
-                "value": content
-            }]
+            "from": {"email": self.from_email, "name": self.from_name},
+            "content": [{"type": content_type, "value": content}],
         }
 
         if attachments:
@@ -159,10 +149,10 @@ class AliyunMailAdapter(BaseAPIAdapter):
                 - region: 区域 (默认 cn-hangzhou)
         """
         super().__init__(config)
-        self.access_key_id = config.get('access_key_id')
-        self.access_key_secret = config.get('access_key_secret')
-        self.account_name = config.get('account_name')
-        self.region = config.get('region', 'cn-hangzhou')
+        self.access_key_id = config.get("access_key_id")
+        self.access_key_secret = config.get("access_key_secret")
+        self.account_name = config.get("account_name")
+        self.region = config.get("region", "cn-hangzhou")
         self.endpoint = f"http://dm.{self.region}.aliyuncs.com"
         self._session: aiohttp.ClientSession | None = None
 
@@ -179,12 +169,10 @@ class AliyunMailAdapter(BaseAPIAdapter):
 
         signing_key = f"{self.access_key_secret}&"
         signature = hmac.new(
-            signing_key.encode('utf-8'),
-            string_to_sign.encode('utf-8'),
-            hashlib.sha1
+            signing_key.encode("utf-8"), string_to_sign.encode("utf-8"), hashlib.sha1
         ).digest()
 
-        return base64.b64encode(signature).decode('utf-8')
+        return base64.b64encode(signature).decode("utf-8")
 
     async def authenticate(self) -> bool:
         """验证 AccessKey 是否有效"""
@@ -205,11 +193,12 @@ class AliyunMailAdapter(BaseAPIAdapter):
 
             params["Signature"] = self._sign(params)
 
-            async with aiohttp.ClientSession() as session, session.get(
-                self.endpoint,
-                params=params,
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as response:
+            async with (
+                aiohttp.ClientSession() as session,
+                session.get(
+                    self.endpoint, params=params, timeout=aiohttp.ClientTimeout(total=10)
+                ) as response,
+            ):
                 result = await response.json()
                 if response.status == 200 and "RequestId" in result:
                     return True
@@ -223,26 +212,25 @@ class AliyunMailAdapter(BaseAPIAdapter):
         if not self._session:
             self._session = aiohttp.ClientSession()
 
-        params = kwargs.get('params', {})
-        params.update({
-            "Action": endpoint,
-            "Format": "JSON",
-            "Version": "2015-11-23",
-            "AccessKeyId": self.access_key_id,
-            "Timestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "SignatureMethod": "HMAC-SHA1",
-            "SignatureVersion": "1.0",
-            "SignatureNonce": str(uuid.uuid4()),
-        })
+        params = kwargs.get("params", {})
+        params.update(
+            {
+                "Action": endpoint,
+                "Format": "JSON",
+                "Version": "2015-11-23",
+                "AccessKeyId": self.access_key_id,
+                "Timestamp": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "SignatureMethod": "HMAC-SHA1",
+                "SignatureVersion": "1.0",
+                "SignatureNonce": str(uuid.uuid4()),
+            }
+        )
 
         params["Signature"] = self._sign(params)
 
         try:
             async with self._session.request(
-                method,
-                self.endpoint,
-                params=params,
-                timeout=aiohttp.ClientTimeout(total=30)
+                method, self.endpoint, params=params, timeout=aiohttp.ClientTimeout(total=30)
             ) as response:
                 result = await response.json()
 
@@ -254,11 +242,7 @@ class AliyunMailAdapter(BaseAPIAdapter):
             raise APIError(f"阿里云邮件调用失败：{str(e)}")
 
     async def send_email(
-        self,
-        to_address: str,
-        subject: str,
-        html_body: str,
-        from_alias: str | None = None
+        self, to_address: str, subject: str, html_body: str, from_alias: str | None = None
     ) -> dict[str, Any]:
         """
         发送邮件
@@ -278,7 +262,7 @@ class AliyunMailAdapter(BaseAPIAdapter):
             "ToAddress": to_address,
             "Subject": subject,
             "HtmlBody": html_body,
-            "ReplyToAddress": "false"
+            "ReplyToAddress": "false",
         }
 
         if from_alias:
@@ -305,10 +289,7 @@ def create_mail_adapter(provider: str, config: dict[str, Any]) -> BaseAPIAdapter
     Returns:
         邮件适配器实例
     """
-    providers = {
-        'sendgrid': SendGridAdapter,
-        'aliyun': AliyunMailAdapter
-    }
+    providers = {"sendgrid": SendGridAdapter, "aliyun": AliyunMailAdapter}
 
     if provider not in providers:
         raise ValueError(f"不支持的邮件服务提供商：{provider}")

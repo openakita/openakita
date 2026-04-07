@@ -58,6 +58,7 @@ class AgentHubClient:
     def _get_version() -> str:
         try:
             from .._bundled_version import __version__
+
             return __version__
         except Exception:
             return "dev"
@@ -139,7 +140,9 @@ class AgentHubClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def rate(self, agent_id: str, score: int, comment: str = "", token: str = "") -> dict[str, Any]:
+    async def rate(
+        self, agent_id: str, score: int, comment: str = "", token: str = ""
+    ) -> dict[str, Any]:
         client = await self._get_client()
         headers = {}
         if token:

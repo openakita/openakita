@@ -32,23 +32,37 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     # Public API
-    "require_todo_for_session", "is_todo_required",
-    "has_active_todo", "get_active_plan_id",
-    "register_active_todo", "unregister_active_todo",
-    "clear_session_todo_state", "cleanup_session",
-    "auto_close_todo", "cancel_todo", "force_close_plan",
-    "register_plan_handler", "get_todo_handler_for_session",
+    "require_todo_for_session",
+    "is_todo_required",
+    "has_active_todo",
+    "get_active_plan_id",
+    "register_active_todo",
+    "unregister_active_todo",
+    "clear_session_todo_state",
+    "cleanup_session",
+    "auto_close_todo",
+    "cancel_todo",
+    "force_close_plan",
+    "register_plan_handler",
+    "get_todo_handler_for_session",
     "get_active_todo_prompt",
-    "get_active_todo_sessions", "iter_active_todo_sessions",
+    "get_active_todo_sessions",
+    "iter_active_todo_sessions",
     # Private but depended on externally (transition period)
-    "_session_active_todos", "_session_todo_required", "_session_handlers",
+    "_session_active_todos",
+    "_session_todo_required",
+    "_session_handlers",
     "_emit_todo_lifecycle_event",
     # Backward-compatible aliases
-    "has_active_plan", "get_active_plan_prompt",
-    "require_plan_for_session", "is_plan_required",
-    "register_active_plan", "unregister_active_plan",
+    "has_active_plan",
+    "get_active_plan_prompt",
+    "require_plan_for_session",
+    "is_plan_required",
+    "register_active_plan",
+    "unregister_active_plan",
     "clear_session_plan_state",
-    "auto_close_plan", "cancel_plan",
+    "auto_close_plan",
+    "cancel_plan",
     "get_plan_handler_for_session",
 ]
 
@@ -78,7 +92,7 @@ def _prune_oldest_sessions() -> None:
     victims = list(stale)[:excess]
     if len(victims) < excess:
         remaining = [sid for sid in all_ids if sid not in set(victims)]
-        victims.extend(remaining[:excess - len(victims)])
+        victims.extend(remaining[: excess - len(victims)])
     for sid in victims:
         cleanup_session(sid)
     if victims:
@@ -151,6 +165,7 @@ def _emit_todo_lifecycle_event(session_id: str, event_type: str, plan: dict | No
     try:
         from ...api.routes.websocket import broadcast_event
         from ...core.engine_bridge import fire_in_api
+
         data: dict = {"sessionId": session_id, "type": event_type}
         if plan:
             data["planId"] = plan.get("id", "")
@@ -194,6 +209,7 @@ def auto_close_todo(session_id: str) -> bool:
         # leave it in_progress for the next turn to avoid the race condition
         # where auto_close runs right after the LLM sets a step in_progress.
         from datetime import datetime as _dt
+
         _now = _dt.now().isoformat()
         current_turn = plan.get("_current_turn_id", "")
         for step in steps:

@@ -12,22 +12,24 @@ from .sandbox import PluginErrorTracker
 
 logger = logging.getLogger(__name__)
 
-HOOK_NAMES = frozenset({
-    "on_init",
-    "on_shutdown",
-    "on_message_received",
-    "on_message_sending",
-    "on_retrieve",
-    "on_tool_result",
-    "on_session_start",
-    "on_session_end",
-    "on_prompt_build",
-    "on_schedule",
-    "on_before_tool_use",
-    "on_after_tool_use",
-    "on_config_change",
-    "on_error",
-})
+HOOK_NAMES = frozenset(
+    {
+        "on_init",
+        "on_shutdown",
+        "on_message_received",
+        "on_message_sending",
+        "on_retrieve",
+        "on_tool_result",
+        "on_session_start",
+        "on_session_end",
+        "on_prompt_build",
+        "on_schedule",
+        "on_before_tool_use",
+        "on_after_tool_use",
+        "on_config_change",
+        "on_error",
+    }
+)
 
 DEFAULT_HOOK_TIMEOUT = 5.0
 _SKIP = object()  # sentinel for skipped/failed callbacks
@@ -35,6 +37,7 @@ _SKIP = object()  # sentinel for skipped/failed callbacks
 
 def _wrap_callback(fn: Callable, plugin_id: str) -> Callable:
     """Wrap a callback so we can attach metadata even for bound methods."""
+
     async def _wrapper(**kwargs):
         result = fn(**kwargs)
         if asyncio.iscoroutine(result):
@@ -65,9 +68,7 @@ class HookRegistry:
         plugin_id: str = "",
     ) -> None:
         if hook_name not in HOOK_NAMES:
-            raise ValueError(
-                f"Unknown hook '{hook_name}', must be one of {sorted(HOOK_NAMES)}"
-            )
+            raise ValueError(f"Unknown hook '{hook_name}', must be one of {sorted(HOOK_NAMES)}")
         try:
             callback.__plugin_id__ = plugin_id  # type: ignore[attr-defined]
             callback.__hook_timeout__ = DEFAULT_HOOK_TIMEOUT  # type: ignore[attr-defined]
@@ -76,13 +77,15 @@ class HookRegistry:
             self._hooks[hook_name].append(wrapper)
             logger.debug(
                 "Hook '%s' registered (wrapped) callback from plugin '%s'",
-                hook_name, plugin_id,
+                hook_name,
+                plugin_id,
             )
             return
         self._hooks[hook_name].append(callback)
         logger.debug(
             "Hook '%s' registered callback from plugin '%s'",
-            hook_name, plugin_id,
+            hook_name,
+            plugin_id,
         )
 
     def set_timeout(self, hook_name: str, plugin_id: str, timeout: float) -> None:
@@ -96,9 +99,7 @@ class HookRegistry:
         for hook_name in list(self._hooks):
             before = len(self._hooks[hook_name])
             self._hooks[hook_name] = [
-                cb
-                for cb in self._hooks[hook_name]
-                if getattr(cb, "__plugin_id__", "") != plugin_id
+                cb for cb in self._hooks[hook_name] if getattr(cb, "__plugin_id__", "") != plugin_id
             ]
             removed += before - len(self._hooks[hook_name])
         return removed
@@ -124,9 +125,7 @@ class HookRegistry:
 
             try:
                 if asyncio.iscoroutinefunction(callback):
-                    return await asyncio.wait_for(
-                        callback(**kwargs), timeout=timeout
-                    )
+                    return await asyncio.wait_for(callback(**kwargs), timeout=timeout)
                 else:
                     return await asyncio.wait_for(
                         asyncio.to_thread(callback, **kwargs),
@@ -135,20 +134,21 @@ class HookRegistry:
             except TimeoutError:
                 logger.warning(
                     "Hook '%s' callback from plugin '%s' timed out (%.1fs), skipped",
-                    hook_name, plugin_id, timeout,
+                    hook_name,
+                    plugin_id,
+                    timeout,
                 )
-                self._error_tracker.record_error(
-                    plugin_id, f"hook:{hook_name}", "timeout"
-                )
+                self._error_tracker.record_error(plugin_id, f"hook:{hook_name}", "timeout")
                 return _SKIP
             except BaseException as e:
                 logger.error(
                     "Hook '%s' callback from plugin '%s' raised %s: %s",
-                    hook_name, plugin_id, type(e).__name__, e,
+                    hook_name,
+                    plugin_id,
+                    type(e).__name__,
+                    e,
                 )
-                self._error_tracker.record_error(
-                    plugin_id, f"hook:{hook_name}", str(e)
-                )
+                self._error_tracker.record_error(plugin_id, f"hook:{hook_name}", str(e))
                 return _SKIP
 
         raw = await asyncio.gather(*(_run_one(cb) for cb in callbacks))
@@ -173,6 +173,7 @@ class HookRegistry:
             timeout = getattr(callback, "__hook_timeout__", DEFAULT_HOOK_TIMEOUT)
             if asyncio.iscoroutinefunction(callback):
                 import concurrent.futures
+
                 try:
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                         future = pool.submit(asyncio.run, callback(**kwargs))
@@ -182,19 +183,19 @@ class HookRegistry:
                 except concurrent.futures.TimeoutError:
                     logger.warning(
                         "Hook '%s' async callback from plugin '%s' timed out in sync dispatch",
-                        hook_name, plugin_id,
+                        hook_name,
+                        plugin_id,
                     )
-                    self._error_tracker.record_error(
-                        plugin_id, f"hook:{hook_name}", "timeout"
-                    )
+                    self._error_tracker.record_error(plugin_id, f"hook:{hook_name}", "timeout")
                 except BaseException as e:
                     logger.error(
                         "Hook '%s' sync-dispatch from plugin '%s' raised %s: %s",
-                        hook_name, plugin_id, type(e).__name__, e,
+                        hook_name,
+                        plugin_id,
+                        type(e).__name__,
+                        e,
                     )
-                    self._error_tracker.record_error(
-                        plugin_id, f"hook:{hook_name}", str(e)
-                    )
+                    self._error_tracker.record_error(plugin_id, f"hook:{hook_name}", str(e))
             else:
                 try:
                     result = callback(**kwargs)
@@ -203,11 +204,12 @@ class HookRegistry:
                 except BaseException as e:
                     logger.error(
                         "Hook '%s' sync callback from plugin '%s' raised %s: %s",
-                        hook_name, plugin_id, type(e).__name__, e,
+                        hook_name,
+                        plugin_id,
+                        type(e).__name__,
+                        e,
                     )
-                    self._error_tracker.record_error(
-                        plugin_id, f"hook:{hook_name}", str(e)
-                    )
+                    self._error_tracker.record_error(plugin_id, f"hook:{hook_name}", str(e))
         return results
 
     def get_hooks(self, hook_name: str) -> list[Callable]:

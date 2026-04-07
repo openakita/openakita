@@ -39,16 +39,22 @@ NOTEBOOK_TOOLS = [
                 "cell_language": {
                     "type": "string",
                     "enum": [
-                        "python", "markdown", "javascript", "typescript",
-                        "r", "sql", "shell", "raw", "other",
+                        "python",
+                        "markdown",
+                        "javascript",
+                        "typescript",
+                        "r",
+                        "sql",
+                        "shell",
+                        "raw",
+                        "other",
                     ],
                     "description": "Cell 语言类型",
                 },
                 "old_string": {
                     "type": "string",
                     "description": (
-                        "要替换的文本（编辑现有 cell 时必填，需唯一匹配，"
-                        "包含 3-5 行上下文）"
+                        "要替换的文本（编辑现有 cell 时必填，需唯一匹配，包含 3-5 行上下文）"
                     ),
                 },
                 "new_string": {

@@ -29,24 +29,32 @@ class SandboxPolicy:
     """沙箱策略定义"""
 
     allowed_dirs: list[str] = field(default_factory=list)
-    denied_dirs: list[str] = field(default_factory=lambda: [
-        "/etc/shadow", "/etc/passwd", "/root",
-        os.path.expanduser("~/.ssh"),
-        os.path.expanduser("~/.aws"),
-    ])
+    denied_dirs: list[str] = field(
+        default_factory=lambda: [
+            "/etc/shadow",
+            "/etc/passwd",
+            "/root",
+            os.path.expanduser("~/.ssh"),
+            os.path.expanduser("~/.aws"),
+        ]
+    )
     allowed_commands: list[str] = field(default_factory=list)
-    denied_commands: list[str] = field(default_factory=lambda: [
-        "rm -rf /",
-        "mkfs*",
-        "dd if=/dev/*",
-        ":(){ :|:& };:",
-    ])
-    denied_command_patterns: list[str] = field(default_factory=lambda: [
-        r"curl\s+.*\|\s*(?:bash|sh|zsh)",
-        r"wget\s+.*\|\s*(?:bash|sh|zsh)",
-        r"eval\s+\$\(",
-        r">\s*/dev/sd[a-z]",
-    ])
+    denied_commands: list[str] = field(
+        default_factory=lambda: [
+            "rm -rf /",
+            "mkfs*",
+            "dd if=/dev/*",
+            ":(){ :|:& };:",
+        ]
+    )
+    denied_command_patterns: list[str] = field(
+        default_factory=lambda: [
+            r"curl\s+.*\|\s*(?:bash|sh|zsh)",
+            r"wget\s+.*\|\s*(?:bash|sh|zsh)",
+            r"eval\s+\$\(",
+            r">\s*/dev/sd[a-z]",
+        ]
+    )
     max_execution_time: int = 120
     allow_network: bool = True
     writable_dirs: list[str] = field(default_factory=list)
@@ -123,13 +131,19 @@ class CommandSandbox:
         verdict = self.check_command(command)
         if not verdict.allowed and verdict.reason:
             if "deny rule" in verdict.reason:
-                verdict = SandboxVerdict(allowed=False, reason=f"命令被安全规则禁止: {command.split()[0] if command.split() else command}")
+                verdict = SandboxVerdict(
+                    allowed=False,
+                    reason=f"命令被安全规则禁止: {command.split()[0] if command.split() else command}",
+                )
             elif "dangerous pattern" in verdict.reason:
                 verdict = SandboxVerdict(allowed=False, reason="检测到危险命令模式，已拦截")
             elif "denied directory" in verdict.reason:
                 verdict = SandboxVerdict(allowed=False, reason="命令涉及受保护的系统目录，禁止访问")
             elif "not in allowed list" in verdict.reason:
-                verdict = SandboxVerdict(allowed=False, reason=f"命令 '{command.split()[0] if command.split() else command}' 不在允许列表中")
+                verdict = SandboxVerdict(
+                    allowed=False,
+                    reason=f"命令 '{command.split()[0] if command.split() else command}' 不在允许列表中",
+                )
         return verdict
 
     def _check_dir_access(self, command: str) -> str:
@@ -158,9 +172,11 @@ class CommandSandbox:
 # P1-1: SandboxExecutor — subprocess 隔离执行
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SandboxResult:
     """沙箱执行结果"""
+
     stdout: str
     stderr: str
     returncode: int

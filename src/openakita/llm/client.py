@@ -391,11 +391,16 @@ class LLMClient:
             LLMClient._global_inflight += 1
             try:
                 return await self._chat_impl(
-                    messages=messages, system=system, tools=tools,
-                    max_tokens=max_tokens, temperature=temperature,
-                    enable_thinking=enable_thinking, thinking_depth=thinking_depth,
+                    messages=messages,
+                    system=system,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    enable_thinking=enable_thinking,
+                    thinking_depth=thinking_depth,
                     conversation_id=conversation_id,
-                    cancel_event=cancel_event, **kwargs,
+                    cancel_event=cancel_event,
+                    **kwargs,
                 )
             finally:
                 LLMClient._global_inflight -= 1
@@ -485,7 +490,9 @@ class LLMClient:
                     )
 
         if eligible:
-            return await self._try_endpoints(eligible, request, allow_failover=allow_failover, cancel_event=cancel_event)
+            return await self._try_endpoints(
+                eligible, request, allow_failover=allow_failover, cancel_event=cancel_event
+            )
 
         # eligible 为空 — 使用公共降级策略
         providers = await self._resolve_providers_with_fallback(
@@ -500,7 +507,9 @@ class LLMClient:
             prefer_endpoint=self._last_success_endpoint if has_tool_context else None,
             cancel_event=cancel_event,
         )
-        return await self._try_endpoints(providers, request, allow_failover=allow_failover, cancel_event=cancel_event)
+        return await self._try_endpoints(
+            providers, request, allow_failover=allow_failover, cancel_event=cancel_event
+        )
 
     async def chat_stream(
         self,
@@ -542,11 +551,16 @@ class LLMClient:
             LLMClient._global_inflight += 1
             try:
                 async for event in self._chat_stream_impl(
-                    messages=messages, system=system, tools=tools,
-                    max_tokens=max_tokens, temperature=temperature,
-                    enable_thinking=enable_thinking, thinking_depth=thinking_depth,
+                    messages=messages,
+                    system=system,
+                    tools=tools,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    enable_thinking=enable_thinking,
+                    thinking_depth=thinking_depth,
                     conversation_id=conversation_id,
-                    cancel_event=cancel_event, **kwargs,
+                    cancel_event=cancel_event,
+                    **kwargs,
                 ):
                     yield event
             finally:
@@ -624,7 +638,8 @@ class LLMClient:
                 async for event in provider.chat_stream(request):
                     if cancel_event and cancel_event.is_set():
                         raise UserCancelledError(
-                            reason="用户请求停止", source="llm_stream_mid",
+                            reason="用户请求停止",
+                            source="llm_stream_mid",
                         )
                     yielded = True
                     yield event
@@ -687,7 +702,8 @@ class LLMClient:
                     if cancel_event:
                         try:
                             await asyncio.wait_for(
-                                cancel_event.wait(), timeout=delay,
+                                cancel_event.wait(),
+                                timeout=delay,
                             )
                             raise UserCancelledError(
                                 reason="用户请求停止",
@@ -827,22 +843,20 @@ class LLMClient:
             if unhealthy_count > 0:
                 # 按错误类型分组
                 structural = [p for p in unhealthy if p.error_category == "structural"]
-                quota_or_auth = [
-                    p for p in unhealthy
-                    if p.error_category in ("quota", "auth")
-                ]
+                quota_or_auth = [p for p in unhealthy if p.error_category in ("quota", "auth")]
                 non_structural = [p for p in unhealthy if p.error_category != "structural"]
 
                 # ── 降级 2: 等待瞬时冷静期恢复 ──
                 transient_like = [
-                    p for p in non_structural
-                    if p.error_category not in ("quota", "auth")
+                    p for p in non_structural if p.error_category not in ("quota", "auth")
                 ]
                 if transient_like:
                     min_transient_cd = min(p.cooldown_remaining for p in transient_like)
                     if 0 < min_transient_cd <= 35:
                         if cancel_event and cancel_event.is_set():
-                            raise UserCancelledError(reason="用户请求停止", source="llm_cooldown_wait")
+                            raise UserCancelledError(
+                                reason="用户请求停止", source="llm_cooldown_wait"
+                            )
                         logger.info(
                             f"[LLM] All endpoints in cooldown. "
                             f"Waiting {min_transient_cd}s for transient recovery..."
@@ -851,7 +865,8 @@ class LLMClient:
                         if cancel_event:
                             try:
                                 await asyncio.wait_for(
-                                    cancel_event.wait(), timeout=wait_seconds,
+                                    cancel_event.wait(),
+                                    timeout=wait_seconds,
                                 )
                                 raise UserCancelledError(
                                     reason="用户请求停止",
@@ -904,7 +919,8 @@ class LLMClient:
             # Portkey 核心规则：当没有健康目标时，绕过 circuit breaker 尝试所有目标
             # 排除 quota/auth 错误的端点（这类错误重试无意义）
             retryable = [
-                p for p in base_capability_matched
+                p
+                for p in base_capability_matched
                 if p.is_healthy or p.error_category not in ("quota", "auth")
             ]
             if retryable:
@@ -969,15 +985,11 @@ class LLMClient:
         # 3) 定期清理所有过期的 conversation overrides（防止内存泄漏）
         #    仅当积累超过阈值时触发，避免每次调用都遍历
         if len(self._conversation_overrides) > 50:
-            expired_keys = [
-                k for k, v in self._conversation_overrides.items() if v.is_expired
-            ]
+            expired_keys = [k for k, v in self._conversation_overrides.items() if v.is_expired]
             for k in expired_keys:
                 self._conversation_overrides.pop(k, None)
             if expired_keys:
-                logger.debug(
-                    f"[LLM] Cleaned {len(expired_keys)} expired conversation overrides"
-                )
+                logger.debug(f"[LLM] Cleaned {len(expired_keys)} expired conversation overrides")
 
         eligible = []
         override_provider = None
@@ -1038,9 +1050,7 @@ class LLMClient:
         # 端点亲和性：有工具上下文时，将上次成功的端点提升到队列前端
         # 这样 failover 后的下一次调用会继续使用成功的端点，而不是回到高优先级的故障端点
         if prefer_endpoint:
-            prefer_provider = next(
-                (p for p in eligible if p.name == prefer_endpoint), None
-            )
+            prefer_provider = next((p for p in eligible if p.name == prefer_endpoint), None)
             if prefer_provider:
                 eligible.remove(prefer_provider)
                 eligible.insert(0, prefer_provider)
@@ -1210,7 +1220,8 @@ class LLMClient:
                     if cancel_event:
                         try:
                             await asyncio.wait_for(
-                                cancel_event.wait(), timeout=delay,
+                                cancel_event.wait(),
+                                timeout=delay,
                             )
                             raise UserCancelledError(
                                 reason="用户请求停止",
@@ -1311,6 +1322,7 @@ class LLMClient:
             except AuthenticationError as e:
                 error_str = str(e)
                 from .providers.base import LLMProvider as _BaseProvider
+
                 error_cat = _BaseProvider._classify_error(error_str)
                 if error_cat == "quota":
                     logger.error(f"[LLM] endpoint={provider.name} quota_exhausted={e}")
@@ -1333,6 +1345,7 @@ class LLMClient:
                 errors.append(f"{provider.name}: {e}")
 
                 from .providers.base import LLMProvider as _BaseProvider
+
                 auto_category = _BaseProvider._classify_error(error_str)
 
                 if auto_category == "quota":
@@ -1395,11 +1408,17 @@ class LLMClient:
 
                     if is_non_retryable:
                         _content_error_patterns = [
-                            "exceeded limit", "max bytes",
-                            "payload too large", "request entity too large",
-                            "content too large", "larger than allowed",
-                            "(413)", "context length", "too many tokens",
-                            "string too long", "data_inspection",
+                            "exceeded limit",
+                            "max bytes",
+                            "payload too large",
+                            "request entity too large",
+                            "content too large",
+                            "larger than allowed",
+                            "(413)",
+                            "context length",
+                            "too many tokens",
+                            "string too long",
+                            "data_inspection",
                             "inappropriate content",
                         ]
                         if any(p in _err_lower for p in _content_error_patterns):
@@ -1451,9 +1470,7 @@ class LLMClient:
 
         # ── 全局故障检测 ──
         if len(failed_providers) >= 2:
-            transient_count = sum(
-                1 for fp in failed_providers if fp.error_category == "transient"
-            )
+            transient_count = sum(1 for fp in failed_providers if fp.error_category == "transient")
             if transient_count >= len(failed_providers) * 0.5:
                 shortened = 0
                 for fp in failed_providers:
@@ -1475,7 +1492,7 @@ class LLMClient:
             )
 
         hint = _friendly_error_hint(failed_providers)
-        has_content_error = any(getattr(fp, '_content_error', False) for fp in failed_providers)
+        has_content_error = any(getattr(fp, "_content_error", False) for fp in failed_providers)
         all_structural = has_content_error or all(
             fp.error_category == "structural" for fp in failed_providers
         )
@@ -1516,9 +1533,8 @@ class LLMClient:
             "extra inputs are not permitted",
             "unsupported parameter",
         ]
-        if (
-            any(p in error_str for p in _reject_patterns)
-            and ("thinking" in error_str or "reasoning_effort" in error_str)
+        if any(p in error_str for p in _reject_patterns) and (
+            "thinking" in error_str or "reasoning_effort" in error_str
         ):
             if not getattr(request, "_thinking_stripped", False):
                 request._thinking_stripped = True  # type: ignore[attr-defined]
@@ -1564,25 +1580,31 @@ class LLMClient:
             if btype == "text":
                 rebuilt.append(TextBlock(text=block.get("text", "")))
             elif btype == "tool_use":
-                rebuilt.append(ToolUseBlock(
-                    id=block.get("id", ""),
-                    name=block.get("name", ""),
-                    input=block.get("input", {}),
-                ))
+                rebuilt.append(
+                    ToolUseBlock(
+                        id=block.get("id", ""),
+                        name=block.get("name", ""),
+                        input=block.get("input", {}),
+                    )
+                )
             elif btype == "tool_result":
-                rebuilt.append(ToolResultBlock(
-                    tool_use_id=block.get("tool_use_id", ""),
-                    content=block.get("content", ""),
-                    is_error=block.get("is_error", False),
-                ))
+                rebuilt.append(
+                    ToolResultBlock(
+                        tool_use_id=block.get("tool_use_id", ""),
+                        content=block.get("content", ""),
+                        is_error=block.get("is_error", False),
+                    )
+                )
             elif btype == "image":
                 source = block.get("source", {})
-                rebuilt.append(ImageBlock(
-                    image=ImageContent(
-                        media_type=source.get("media_type", "image/png"),
-                        data=source.get("data", ""),
+                rebuilt.append(
+                    ImageBlock(
+                        image=ImageContent(
+                            media_type=source.get("media_type", "image/png"),
+                            data=source.get("data", ""),
+                        )
                     )
-                ))
+                )
             elif btype == "thinking":
                 rebuilt.append(ThinkingBlock(thinking=block.get("thinking", "")))
             else:
@@ -1698,7 +1720,9 @@ class LLMClient:
                 if force_all or cat == "transient" or (include_structural and cat == "structural"):
                     provider.reset_cooldown()
                     reset_count += 1
-                    logger.info(f"[LLM] endpoint={name} cooldown reset (category={cat}, force_all={force_all})")
+                    logger.info(
+                        f"[LLM] endpoint={name} cooldown reset (category={cat}, force_all={force_all})"
+                    )
         if reset_count:
             logger.info(f"[LLM] Reset cooldowns for {reset_count} endpoints")
         return reset_count

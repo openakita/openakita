@@ -32,8 +32,10 @@ logger = logging.getLogger(__name__)
 # Enums
 # ---------------------------------------------------------------------------
 
+
 class PolicyDecision(StrEnum):
     """策略判定结果"""
+
     ALLOW = "allow"
     DENY = "deny"
     CONFIRM = "confirm"
@@ -41,6 +43,7 @@ class PolicyDecision(StrEnum):
 
 class Zone(StrEnum):
     """安全区域"""
+
     WORKSPACE = "workspace"
     CONTROLLED = "controlled"
     PROTECTED = "protected"
@@ -49,6 +52,7 @@ class Zone(StrEnum):
 
 class OpType(StrEnum):
     """操作类型"""
+
     READ = "read"
     CREATE = "create"
     EDIT = "edit"
@@ -59,6 +63,7 @@ class OpType(StrEnum):
 
 class RiskLevel(StrEnum):
     """Shell 命令风险等级"""
+
     CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"
@@ -197,29 +202,49 @@ _MEDIUM_RISK_SHELL_PATTERNS: list[str] = [
 
 # Default blocked shell commands (direct DENY)
 _DEFAULT_BLOCKED_COMMANDS: list[str] = [
-    "reg", "regedit", "netsh", "schtasks", "sc",
-    "wmic", "bcdedit", "shutdown", "taskkill",
+    "reg",
+    "regedit",
+    "netsh",
+    "schtasks",
+    "sc",
+    "wmic",
+    "bcdedit",
+    "shutdown",
+    "taskkill",
 ]
 
 # ---------------------------------------------------------------------------
 # Default zone paths per platform
 # ---------------------------------------------------------------------------
 
+
 def _default_protected_paths() -> list[str]:
     """Platform-specific default protected paths."""
     paths = []
     if platform.system() == "Windows":
-        paths.extend([
-            "C:/Program Files/**",
-            "C:/Program Files (x86)/**",
-            "C:/Windows/**",
-            "C:/ProgramData/**",
-        ])
+        paths.extend(
+            [
+                "C:/Program Files/**",
+                "C:/Program Files (x86)/**",
+                "C:/Windows/**",
+                "C:/ProgramData/**",
+            ]
+        )
     else:
-        paths.extend([
-            "/usr/**", "/bin/**", "/sbin/**", "/lib/**", "/lib64/**",
-            "/boot/**", "/etc/**", "/dev/**", "/proc/**", "/sys/**",
-        ])
+        paths.extend(
+            [
+                "/usr/**",
+                "/bin/**",
+                "/sbin/**",
+                "/lib/**",
+                "/lib64/**",
+                "/boot/**",
+                "/etc/**",
+                "/dev/**",
+                "/proc/**",
+                "/sys/**",
+            ]
+        )
         if platform.system() == "Darwin":
             paths.extend(["/System/**", "/Library/**"])
     return paths
@@ -239,9 +264,11 @@ def _default_forbidden_paths() -> list[str]:
 # Data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class PolicyResult:
     """策略引擎判定结果"""
+
     decision: PolicyDecision
     reason: str = ""
     policy_name: str = ""
@@ -251,6 +278,7 @@ class PolicyResult:
 @dataclass
 class ZonePolicyConfig:
     """四区路径配置"""
+
     enabled: bool = True
     workspace: list[str] = field(default_factory=list)
     controlled: list[str] = field(default_factory=list)
@@ -262,6 +290,7 @@ class ZonePolicyConfig:
 @dataclass
 class ConfirmationConfig:
     """确认门配置"""
+
     enabled: bool = True
     timeout_seconds: int = 60
     default_on_timeout: str = "deny"
@@ -273,6 +302,7 @@ class ConfirmationConfig:
 @dataclass
 class UserAllowlistEntry:
     """持久化白名单条目"""
+
     pattern: str = ""
     name: str = ""
     zone: str = ""
@@ -284,6 +314,7 @@ class UserAllowlistEntry:
 @dataclass
 class UserAllowlistConfig:
     """用户白名单配置"""
+
     commands: list[dict[str, Any]] = field(default_factory=list)
     tools: list[dict[str, Any]] = field(default_factory=list)
 
@@ -291,6 +322,7 @@ class UserAllowlistConfig:
 @dataclass
 class CommandPatternConfig:
     """命令模式拦截配置"""
+
     enabled: bool = True
     custom_critical: list[str] = field(default_factory=list)
     custom_high: list[str] = field(default_factory=list)
@@ -301,6 +333,7 @@ class CommandPatternConfig:
 @dataclass
 class CheckpointConfig:
     """文件快照配置"""
+
     enabled: bool = True
     max_snapshots: int = 50
     snapshot_dir: str = "data/checkpoints"
@@ -309,6 +342,7 @@ class CheckpointConfig:
 @dataclass
 class SelfProtectionConfig:
     """自保护配置"""
+
     enabled: bool = True
     protected_dirs: list[str] = field(
         default_factory=lambda: ["data/", "identity/", "logs/", "src/"]
@@ -322,6 +356,7 @@ class SelfProtectionConfig:
 @dataclass
 class SandboxConfig:
     """沙箱配置"""
+
     enabled: bool = True
     backend: str = "auto"
     sandbox_risk_levels: list[str] = field(default_factory=lambda: ["HIGH"])
@@ -333,6 +368,7 @@ class SandboxConfig:
 @dataclass
 class ToolPolicyRule:
     """工具策略规则 (backward compat)"""
+
     tool_name: str
     decision: PolicyDecision = PolicyDecision.ALLOW
     dangerous_patterns: list[str] = field(default_factory=list)
@@ -344,6 +380,7 @@ class ToolPolicyRule:
 @dataclass
 class SecurityConfig:
     """完整六层安全配置"""
+
     enabled: bool = True
     zones: ZonePolicyConfig = field(default_factory=ZonePolicyConfig)
     confirmation: ConfirmationConfig = field(default_factory=ConfirmationConfig)
@@ -359,6 +396,7 @@ class SecurityConfig:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _expand_home(p: str) -> str:
     """Expand ~ to user home, normalise separators."""
@@ -399,16 +437,31 @@ def _tool_to_optype(tool_name: str, params: dict[str, Any]) -> OpType:
     安全原则：未知工具默认归为 CREATE（有副作用），避免误放行。
     """
     _READ_TOOLS = (
-        "read_file", "list_directory", "grep", "glob",
-        "search_files", "web_search", "news_search",
-        "browser_screenshot", "view_image",
-        "get_tool_info", "get_skill_info", "list_skills",
-        "get_workspace_map", "get_session_logs",
-        "get_todo_status", "get_user_profile", "get_persona_profile",
-        "list_mcp_servers", "get_mcp_instructions",
-        "list_scheduled_tasks", "search_memory",
-        "list_recent_tasks", "trace_memory",
-        "search_conversation_traces", "get_memory_stats",
+        "read_file",
+        "list_directory",
+        "grep",
+        "glob",
+        "search_files",
+        "web_search",
+        "news_search",
+        "browser_screenshot",
+        "view_image",
+        "get_tool_info",
+        "get_skill_info",
+        "list_skills",
+        "get_workspace_map",
+        "get_session_logs",
+        "get_todo_status",
+        "get_user_profile",
+        "get_persona_profile",
+        "list_mcp_servers",
+        "get_mcp_instructions",
+        "list_scheduled_tasks",
+        "search_memory",
+        "list_recent_tasks",
+        "trace_memory",
+        "search_conversation_traces",
+        "get_memory_stats",
     )
     if tool_name in _READ_TOOLS:
         return OpType.READ
@@ -427,20 +480,39 @@ def _tool_to_optype(tool_name: str, params: dict[str, Any]) -> OpType:
     if tool_name in ("delete_file", "rename_file"):
         return OpType.DELETE
     if tool_name in (
-        "run_shell", "run_powershell", "call_mcp_tool",
-        "browser_navigate", "browser_use", "browser_click", "browser_type",
-        "desktop_click", "desktop_type",
+        "run_shell",
+        "run_powershell",
+        "call_mcp_tool",
+        "browser_navigate",
+        "browser_use",
+        "browser_click",
+        "browser_type",
+        "desktop_click",
+        "desktop_type",
     ):
         return OpType.CREATE
     return OpType.CREATE
 
 
+_ZONE_LABELS = {
+    "workspace": "工作区",
+    "controlled": "受控区",
+    "protected": "受保护区",
+    "forbidden": "禁止访问区",
+}
+_OP_LABELS = {
+    "read": "读取",
+    "create": "创建",
+    "edit": "编辑",
+    "overwrite": "覆盖写入",
+    "delete": "删除",
+    "recursive_delete": "批量删除",
+}
 
-_ZONE_LABELS = {"workspace": "工作区", "controlled": "受控区", "protected": "受保护区", "forbidden": "禁止访问区"}
-_OP_LABELS = {"read": "读取", "create": "创建", "edit": "编辑", "overwrite": "覆盖写入", "delete": "删除", "recursive_delete": "批量删除"}
 
 def _zone_label(zone: Zone) -> str:
     return _ZONE_LABELS.get(zone.value, zone.value)
+
 
 def _op_label(op: OpType) -> str:
     return _OP_LABELS.get(op.value, op.value)
@@ -449,6 +521,7 @@ def _op_label(op: OpType) -> str:
 # ---------------------------------------------------------------------------
 # Policy Engine
 # ---------------------------------------------------------------------------
+
 
 class PolicyEngine:
     """
@@ -528,6 +601,7 @@ class PolicyEngine:
 
         try:
             import yaml
+
             with open(path, encoding="utf-8") as f:
                 data = yaml.safe_load(f)
             if not data or not isinstance(data, dict):
@@ -617,7 +691,8 @@ class PolicyEngine:
             spc.audit_path = sp.get("audit_path", spc.audit_path)
             spc.death_switch_threshold = sp.get("death_switch_threshold", 3)
             spc.death_switch_total_multiplier = sp.get(
-                "death_switch_total_multiplier", 3,
+                "death_switch_total_multiplier",
+                3,
             )
 
         # sandbox
@@ -658,8 +733,7 @@ class PolicyEngine:
                 existing = {r.tool_name for r in self._config.tool_policies}
                 if rule.tool_name in existing:
                     self._config.tool_policies = [
-                        r for r in self._config.tool_policies
-                        if r.tool_name != rule.tool_name
+                        r for r in self._config.tool_policies if r.tool_name != rule.tool_name
                     ]
                 self._config.tool_policies.append(rule)
 
@@ -762,8 +836,14 @@ class PolicyEngine:
 
         # L1: Zone × OpType matrix for file operations
         file_tools = {
-            "read_file", "write_file", "edit_file", "delete_file",
-            "list_directory", "grep", "glob", "search_replace",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "delete_file",
+            "list_directory",
+            "grep",
+            "glob",
+            "search_replace",
         }
         if tool_name in file_tools:
             zone_result = self._check_zone_policy(tool_name, params)
@@ -785,7 +865,8 @@ class PolicyEngine:
             self._skill_allowlists[skill_id] = set(tool_names)
             logger.debug(
                 "[Policy] Skill '%s' granted temporary access to: %s",
-                skill_id, tool_names,
+                skill_id,
+                tool_names,
             )
 
     def remove_skill_allowlist(self, skill_id: str) -> None:
@@ -794,7 +875,8 @@ class PolicyEngine:
         if removed:
             logger.debug(
                 "[Policy] Revoked skill '%s' temporary access to: %s",
-                skill_id, removed,
+                skill_id,
+                removed,
             )
 
     def clear_skill_allowlists(self) -> None:
@@ -828,9 +910,7 @@ class PolicyEngine:
 
         return self._config.zones.default_zone
 
-    def _check_zone_policy(
-        self, tool_name: str, params: dict[str, Any]
-    ) -> PolicyResult | None:
+    def _check_zone_policy(self, tool_name: str, params: dict[str, Any]) -> PolicyResult | None:
         """L1: Check file operation against zone × op_type matrix."""
         if not self._config.zones.enabled:
             return None
@@ -887,8 +967,7 @@ class PolicyEngine:
             return PolicyResult(
                 decision=PolicyDecision.ALLOW,
                 reason="",
-                metadata={"needs_checkpoint": True, "zone": zone.value,
-                          "op_type": op_type.value},
+                metadata={"needs_checkpoint": True, "zone": zone.value, "op_type": op_type.value},
             )
         return None
 
@@ -932,9 +1011,7 @@ class PolicyEngine:
 
         return RiskLevel.LOW
 
-    def _check_shell_command(
-        self, tool_name: str, params: dict[str, Any]
-    ) -> PolicyResult | None:
+    def _check_shell_command(self, tool_name: str, params: dict[str, Any]) -> PolicyResult | None:
         """L3: Check shell command for blocked commands and risk patterns."""
         command = str(params.get("command", ""))
         if not command:
@@ -1023,9 +1100,7 @@ class PolicyEngine:
 
     # ----- L5: Self-protection ----------------------------------------------
 
-    def _check_self_protection(
-        self, tool_name: str, params: dict[str, Any]
-    ) -> PolicyResult | None:
+    def _check_self_protection(self, tool_name: str, params: dict[str, Any]) -> PolicyResult | None:
         """L5: Prevent deletion of agent's own critical directories."""
         if not self._config.self_protection.enabled:
             return None
@@ -1106,9 +1181,7 @@ class PolicyEngine:
 
     # ----- Death switch & audit helpers -------------------------------------
 
-    def _on_deny(
-        self, tool_name: str, params: dict[str, Any], result: PolicyResult
-    ) -> None:
+    def _on_deny(self, tool_name: str, params: dict[str, Any], result: PolicyResult) -> None:
         self._consecutive_denials += 1
         self._total_denials += 1
         consecutive_threshold = self._config.self_protection.death_switch_threshold
@@ -1148,6 +1221,7 @@ class PolicyEngine:
     def _confirm_cache_key(self, tool_name: str, params: dict[str, Any]) -> str:
         """Generate a cache key for a confirmed action."""
         import hashlib
+
         param_str = f"{tool_name}:{params.get('command', '')}{params.get('path', '')}"
         return hashlib.md5(param_str.encode()).hexdigest()
 
@@ -1197,7 +1271,10 @@ class PolicyEngine:
         }
 
     def _persist_allowlist_entry(
-        self, tool_name: str, params: dict[str, Any], needs_sandbox: bool,
+        self,
+        tool_name: str,
+        params: dict[str, Any],
+        needs_sandbox: bool,
     ) -> None:
         """Append an entry to the persistent user_allowlist in YAML."""
         from datetime import datetime
@@ -1229,6 +1306,7 @@ class PolicyEngine:
             import yaml
 
             from ..config import settings
+
             yaml_path = settings.identity_path / "POLICIES.yaml"
             if not yaml_path.exists():
                 return
@@ -1263,7 +1341,9 @@ class PolicyEngine:
         return {"commands": list(al.commands), "tools": list(al.tools)}
 
     def _check_persistent_allowlist(
-        self, tool_name: str, params: dict[str, Any],
+        self,
+        tool_name: str,
+        params: dict[str, Any],
     ) -> dict[str, Any] | None:
         """Check if tool call matches a persistent user allowlist entry.
 
@@ -1282,7 +1362,9 @@ class PolicyEngine:
         return None
 
     def _check_allowlists(
-        self, tool_name: str, params: dict[str, Any],
+        self,
+        tool_name: str,
+        params: dict[str, Any],
     ) -> dict[str, Any] | None:
         """Check all three allowlist tiers: persistent → session → TTL.
 
@@ -1293,14 +1375,20 @@ class PolicyEngine:
         # Tier 1: Persistent allowlist
         persistent = self._check_persistent_allowlist(tool_name, params)
         if persistent is not None:
-            return {"confirmed_bypass": True, "needs_sandbox": persistent.get("needs_sandbox", False)}
+            return {
+                "confirmed_bypass": True,
+                "needs_sandbox": persistent.get("needs_sandbox", False),
+            }
 
         key = self._confirm_cache_key(tool_name, params)
 
         # Tier 2: Session allowlist
         session_entry = self._session_allowlist.get(key)
         if session_entry is not None:
-            return {"confirmed_bypass": True, "needs_sandbox": session_entry.get("needs_sandbox", False)}
+            return {
+                "confirmed_bypass": True,
+                "needs_sandbox": session_entry.get("needs_sandbox", False),
+            }
 
         # Tier 3: TTL cache
         cache_entry = self._confirmed_cache.get(key)
@@ -1316,11 +1404,17 @@ class PolicyEngine:
         return None
 
     def store_ui_pending(
-        self, tool_id: str, tool_name: str, params: dict[str, Any],
-        *, session_id: str = "", needs_sandbox: bool = False,
+        self,
+        tool_id: str,
+        tool_name: str,
+        params: dict[str, Any],
+        *,
+        session_id: str = "",
+        needs_sandbox: bool = False,
     ) -> None:
         """Store a pending UI confirmation (SSE security_confirm sent)."""
         import time
+
         self._cleanup_expired_confirms()
         self._pending_ui_confirms[tool_id] = {
             "tool_name": tool_name,
@@ -1333,11 +1427,11 @@ class PolicyEngine:
     def _cleanup_expired_confirms(self) -> None:
         """Remove pending confirmations older than confirm_ttl seconds."""
         import time
+
         ttl = self._config.confirmation.confirm_ttl
         now = time.time()
         expired = [
-            k for k, v in self._pending_ui_confirms.items()
-            if now - v.get("created_at", 0) > ttl
+            k for k, v in self._pending_ui_confirms.items() if now - v.get("created_at", 0) > ttl
         ]
         for k in expired:
             self._pending_ui_confirms.pop(k, None)
@@ -1345,8 +1439,7 @@ class PolicyEngine:
     def cleanup_session(self, session_id: str) -> None:
         """Remove all pending confirmations for a session and clear session allowlist."""
         to_remove = [
-            k for k, v in self._pending_ui_confirms.items()
-            if v.get("session_id") == session_id
+            k for k, v in self._pending_ui_confirms.items() if v.get("session_id") == session_id
         ]
         for k in to_remove:
             self._pending_ui_confirms.pop(k, None)
@@ -1391,6 +1484,7 @@ class PolicyEngine:
 
     def _audit(self, tool_name: str, params: dict, result: PolicyResult) -> None:
         import time
+
         entry = {
             "timestamp": time.time(),
             "tool_name": tool_name,
@@ -1405,12 +1499,11 @@ class PolicyEngine:
             self._audit_log = self._audit_log[-500:]
 
         if result.decision != PolicyDecision.ALLOW:
-            logger.info(
-                f"[Policy] {result.decision.value}: {tool_name} — {result.reason}"
-            )
+            logger.info(f"[Policy] {result.decision.value}: {tool_name} — {result.reason}")
 
         try:
             from .audit_logger import get_audit_logger
+
             get_audit_logger().log(
                 tool_name=tool_name,
                 decision=result.decision.value,
@@ -1424,6 +1517,7 @@ class PolicyEngine:
 
         try:
             from ..tracing.tracer import get_tracer
+
             tracer = get_tracer()
             tracer.record_decision(
                 decision_type="policy_check",
@@ -1453,6 +1547,7 @@ def get_policy_engine() -> PolicyEngine:
         _global_policy_engine = PolicyEngine()
         try:
             from ..config import settings
+
             yaml_path = settings.identity_path / "POLICIES.yaml"
         except Exception:
             yaml_path = Path("identity/POLICIES.yaml")

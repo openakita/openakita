@@ -99,9 +99,14 @@ class ConsolidationTracker:
         if result:
             entry["summary"] = {
                 k: result.get(k, 0)
-                for k in ["unextracted_processed", "duplicates_removed",
-                           "memories_decayed", "sessions_processed",
-                           "memories_extracted", "memories_added"]
+                for k in [
+                    "unextracted_processed",
+                    "duplicates_removed",
+                    "memories_decayed",
+                    "sessions_processed",
+                    "memories_extracted",
+                    "memories_added",
+                ]
             }
         history.append(entry)
 

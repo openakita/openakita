@@ -38,9 +38,7 @@ def _read_text_robust(path: Path) -> str:
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError:
-        logger.warning(
-            "Failed to decode %s as UTF-8, falling back to system encoding", path
-        )
+        logger.warning("Failed to decode %s as UTF-8, falling back to system encoding", path)
         try:
             return raw.decode(locale.getpreferredencoding(False), errors="replace")
         except Exception:
@@ -62,11 +60,7 @@ def _parse_env(content: str) -> dict[str, str]:
         if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
             inner = value[1:-1]
             if "\\" in inner:
-                inner = (
-                    inner.replace("\\\\", "\x00")
-                    .replace('\\"', '"')
-                    .replace("\x00", "\\")
-                )
+                inner = inner.replace("\\\\", "\x00").replace('\\"', '"').replace("\x00", "\\")
             value = inner
         else:
             for sep in (" #", "\t#"):
@@ -188,9 +182,7 @@ class EndpointManager:
                 )
 
             ep_list = config.get(endpoint_type, [])
-            existing = next(
-                (e for e in ep_list if e.get("name") == name), None
-            )
+            existing = next((e for e in ep_list if e.get("name") == name), None)
 
             # Resolve api_key_env
             if api_key is not None:
@@ -199,25 +191,19 @@ class EndpointManager:
                 # If this env_var is shared with other endpoints and the key
                 # value is DIFFERENT, allocate a new unique env_var for this
                 # endpoint to avoid overwriting others.
-                other_users = self._find_endpoints_using_env_var(
-                    config, env_var, exclude_name=name
-                )
+                other_users = self._find_endpoints_using_env_var(config, env_var, exclude_name=name)
                 if other_users:
                     env = _parse_env(_read_text_robust(self._env_path))
                     old_val = env.get(env_var, "")
                     if old_val and old_val != api_key:
-                        env_var = self._allocate_unique_env_var(
-                            endpoint, config
-                        )
+                        env_var = self._allocate_unique_env_var(endpoint, config)
 
                 # Write .env first (prefer losing an orphan key over losing endpoint data)
                 self._write_env_key(env_var, api_key)
                 os.environ[env_var] = api_key
             else:
                 env_var = (
-                    existing.get("api_key_env", "")
-                    if existing
-                    else endpoint.get("api_key_env", "")
+                    existing.get("api_key_env", "") if existing else endpoint.get("api_key_env", "")
                 )
 
             endpoint["api_key_env"] = env_var
@@ -229,9 +215,7 @@ class EndpointManager:
             else:
                 ep_list.append(endpoint)
 
-            ep_list.sort(
-                key=lambda e: (int(e.get("priority", 999)), e.get("name", ""))
-            )
+            ep_list.sort(key=lambda e: (int(e.get("priority", 999)), e.get("name", "")))
             config[endpoint_type] = ep_list
             self._write_json(config)
 
@@ -268,9 +252,7 @@ class EndpointManager:
             if clean_env:
                 env_var = removed.get("api_key_env", "")
                 if env_var:
-                    still_used = self._find_endpoints_using_env_var(
-                        config, env_var
-                    )
+                    still_used = self._find_endpoints_using_env_var(config, env_var)
                     if not still_used:
                         self._delete_env_key(env_var)
                         os.environ.pop(env_var, None)
@@ -278,9 +260,7 @@ class EndpointManager:
             self._write_json(config)
             return removed
 
-    def list_endpoints(
-        self, endpoint_type: str = "endpoints"
-    ) -> list[dict]:
+    def list_endpoints(self, endpoint_type: str = "endpoints") -> list[dict]:
         """Read endpoints from config file."""
         config = self._read_json()
         return config.get(endpoint_type, [])
@@ -303,15 +283,17 @@ class EndpointManager:
             for ep in config.get(list_key, []):
                 env_var = ep.get("api_key_env", "")
                 key_present = bool(env_var and env.get(env_var, "").strip())
-                result.append({
-                    "name": ep.get("name", ""),
-                    "type": list_key,
-                    "provider": ep.get("provider", ""),
-                    "model": ep.get("model", ""),
-                    "key_env": env_var,
-                    "key_present": key_present,
-                    "enabled": ep.get("enabled", True),
-                })
+                result.append(
+                    {
+                        "name": ep.get("name", ""),
+                        "type": list_key,
+                        "provider": ep.get("provider", ""),
+                        "model": ep.get("model", ""),
+                        "key_env": env_var,
+                        "key_present": key_present,
+                        "enabled": ep.get("enabled", True),
+                    }
+                )
         return result
 
     # ------------------------------------------------------------------
@@ -328,9 +310,7 @@ class EndpointManager:
         except (json.JSONDecodeError, OSError) as e:
             bak = self._json_path.with_suffix(".json.bak")
             if bak.exists():
-                logger.warning(
-                    "Primary config corrupted (%s), restoring from backup", e
-                )
+                logger.warning("Primary config corrupted (%s), restoring from backup", e)
                 try:
                     content = _read_text_robust(bak)
                     data = json.loads(content)
@@ -412,9 +392,7 @@ class EndpointManager:
     # env var naming
     # ------------------------------------------------------------------
 
-    def _resolve_env_var(
-        self, endpoint: dict, existing: dict | None, config: dict
-    ) -> str:
+    def _resolve_env_var(self, endpoint: dict, existing: dict | None, config: dict) -> str:
         """Determine the env var name for an endpoint."""
         # If editing and endpoint already has an env var, keep it
         if existing and existing.get("api_key_env"):
@@ -442,6 +420,7 @@ class EndpointManager:
 
         # Extremely unlikely fallback
         import uuid
+
         return f"{base_name}_{uuid.uuid4().hex[:6]}"
 
     def _collect_used_env_vars(self, config: dict) -> set[str]:

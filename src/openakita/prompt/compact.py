@@ -111,6 +111,6 @@ def get_compact_user_message(
     if suppress_followup:
         msg += (
             "\n\n请直接从中断处继续，不要询问用户。"
-            "不要确认摘要、不要回顾之前的工作、不要加\"我继续\"之类的前缀。"
+            '不要确认摘要、不要回顾之前的工作、不要加"我继续"之类的前缀。'
         )
     return msg

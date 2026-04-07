@@ -166,7 +166,8 @@ def _build_plugin_list(pm, plugins_dir: Path) -> tuple[list[dict[str, Any]], dic
             pending_perms = loaded_info.get("pending_permissions", pending_perms)
             granted_perms = loaded_info.get("granted_permissions", granted_perms)
             row = {
-                **meta, **loaded_info,
+                **meta,
+                **loaded_info,
                 "status": "loaded",
                 "enabled": enabled,
                 "granted_permissions": granted_perms,
@@ -251,7 +252,9 @@ async def list_plugins(request: Request) -> dict[str, Any]:
 
 class InstallBody(BaseModel):
     source: str = Field(..., min_length=1)
-    background: bool = Field(False, description="Return immediately with install_id for SSE progress tracking")
+    background: bool = Field(
+        False, description="Return immediately with install_id for SSE progress tracking"
+    )
 
 
 _PROGRESS_TTL = 120
@@ -261,22 +264,24 @@ async def _do_install(src: str, plugins_dir: Path, progress: InstallProgress, re
     """Core install logic shared by sync and background modes."""
     if installer._is_git_url(src):
         plugin_id = await asyncio.to_thread(
-            installer.install_from_git, src, plugins_dir, progress=progress,
+            installer.install_from_git,
+            src,
+            plugins_dir,
+            progress=progress,
         )
     elif src.startswith(("http://", "https://")):
         plugin_id = await asyncio.to_thread(
-            installer.install_from_url, src, plugins_dir, progress=progress,
+            installer.install_from_url,
+            src,
+            plugins_dir,
+            progress=progress,
         )
     else:
         local = Path(src)
         if (local / "plugin.json").is_file():
-            plugin_id = await asyncio.to_thread(
-                installer.install_from_path, local, plugins_dir
-            )
+            plugin_id = await asyncio.to_thread(installer.install_from_path, local, plugins_dir)
         else:
-            plugin_id = await asyncio.to_thread(
-                installer.install_bundle, local, plugins_dir
-            )
+            plugin_id = await asyncio.to_thread(installer.install_bundle, local, plugins_dir)
 
     pm = _get_plugin_manager(request)
     hot_loaded = False
@@ -299,6 +304,7 @@ async def install_plugin(body: InstallBody, request: Request) -> dict[str, Any]:
     installer._register_progress(install_id, progress)
 
     if body.background:
+
         async def _background():
             async with _plugin_op_lock:
                 try:
@@ -330,13 +336,16 @@ async def install_plugin(body: InstallBody, request: Request) -> dict[str, Any]:
                 code = PluginErrorCode.NETWORK_ERROR
             else:
                 code = PluginErrorCode.INSTALL_FAILED
-            raise HTTPException(status_code=400, detail=make_error_response(code, detail=err_str)) from e
+            raise HTTPException(
+                status_code=400, detail=make_error_response(code, detail=err_str)
+            ) from e
         except Exception as e:
             progress.finish(error=str(e))
             installer._unregister_progress(install_id)
             logger.exception("Unexpected error installing plugin from %s", src)
             raise HTTPException(
-                status_code=500, detail=make_error_response(PluginErrorCode.INTERNAL_ERROR),
+                status_code=500,
+                detail=make_error_response(PluginErrorCode.INTERNAL_ERROR),
             ) from e
 
         progress.finish(result={"plugin_id": plugin_id, "hot_loaded": hot_loaded})
@@ -493,7 +502,9 @@ async def update_plugin_config(
         if hook_reg is not None:
             try:
                 await hook_reg.dispatch(
-                    "on_config_change", plugin_id=plugin_id, config=current,
+                    "on_config_change",
+                    plugin_id=plugin_id,
+                    config=current,
                 )
             except Exception:
                 logger.debug("on_config_change dispatch failed for '%s'", plugin_id)
@@ -600,11 +611,13 @@ async def get_plugin_permissions(plugin_id: str, request: Request) -> dict[str, 
             level = "system"
         else:
             level = "unknown"
-        perm_details.append({
-            "permission": p,
-            "level": level,
-            "granted": p in granted or p in BASIC_PERMISSIONS,
-        })
+        perm_details.append(
+            {
+                "permission": p,
+                "level": level,
+                "granted": p in granted or p in BASIC_PERMISSIONS,
+            }
+        )
 
     return {
         "ok": True,
@@ -665,7 +678,12 @@ async def get_plugin_icon(plugin_id: str) -> Response:
     icon_path = plugin_dir / icon_name
     data = icon_path.read_bytes()
     ext = icon_path.suffix.lower()
-    media_map = {".png": "image/png", ".svg": "image/svg+xml", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+    media_map = {
+        ".png": "image/png",
+        ".svg": "image/svg+xml",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+    }
     return Response(content=data, media_type=media_map.get(ext, "application/octet-stream"))
 
 
@@ -758,7 +776,10 @@ async def plugin_health(request: Request) -> dict[str, Any]:
     """Plugin system health summary for monitoring dashboards."""
     pm = _get_plugin_manager(request)
     if pm is None:
-        return {"ok": True, "data": {"status": "unavailable", "loaded": 0, "failed": 0, "disabled": 0}}
+        return {
+            "ok": True,
+            "data": {"status": "unavailable", "loaded": 0, "failed": 0, "disabled": 0},
+        }
     loaded = pm.list_loaded()
     failed = pm.list_failed()
     disabled_count = 0
@@ -767,7 +788,11 @@ async def plugin_health(request: Request) -> dict[str, Any]:
         loaded_ids = {p["id"] for p in loaded}
         failed_ids = set(failed)
         for entry in state.plugins.values():
-            if not entry.enabled and entry.plugin_id not in loaded_ids and entry.plugin_id not in failed_ids:
+            if (
+                not entry.enabled
+                and entry.plugin_id not in loaded_ids
+                and entry.plugin_id not in failed_ids
+            ):
                 disabled_count += 1
     error_tracker = getattr(pm, "_error_tracker", None)
     auto_disabled = []

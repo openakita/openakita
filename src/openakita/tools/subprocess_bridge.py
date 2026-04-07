@@ -112,9 +112,7 @@ class SubprocessBridge:
                 env=env,
                 **_NO_WINDOW_FLAGS,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
 
             if proc.returncode != 0:
                 err_msg = stderr.decode("utf-8", errors="replace").strip()

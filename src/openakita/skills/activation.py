@@ -33,7 +33,8 @@ class SkillActivationManager:
             self._dormant[skill.skill_id] = list(skill.paths)
             logger.debug(
                 "Registered conditional skill '%s' with patterns: %s",
-                skill.skill_id, skill.paths,
+                skill.skill_id,
+                skill.paths,
             )
 
     def unregister(self, skill_id: str) -> None:

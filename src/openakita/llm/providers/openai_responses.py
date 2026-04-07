@@ -80,6 +80,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
             return None
 
         import httpx
+
         base_timeout = self.config.timeout or 180
         scale = min(est_tokens / 60_000, 3.0)
         new_read = min(base_timeout * scale, 540.0)
@@ -111,6 +112,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
 
         try:
             import httpx
+
             response = await client.post(
                 self._api_url,
                 headers=self._build_headers(),
@@ -124,9 +126,12 @@ class OpenAIResponsesProvider(OpenAIProvider):
                     raise AuthenticationError(f"Authentication failed: {body}", status_code=401)
                 if response.status_code == 429:
                     raise RateLimitError(f"Rate limit exceeded: {body}", status_code=429)
-                raise LLMError(f"API error ({response.status_code}): {body}", status_code=response.status_code)
+                raise LLMError(
+                    f"API error ({response.status_code}): {body}", status_code=response.status_code
+                )
 
             from json import JSONDecodeError
+
             try:
                 data = response.json()
             except JSONDecodeError:
@@ -139,7 +144,11 @@ class OpenAIResponsesProvider(OpenAIProvider):
                 )
 
             if "error" in data and data["error"]:
-                err_obj = data["error"] if isinstance(data["error"], dict) else {"message": str(data["error"])}
+                err_obj = (
+                    data["error"]
+                    if isinstance(data["error"], dict)
+                    else {"message": str(data["error"])}
+                )
                 err_msg = err_obj.get("message", str(err_obj))
                 raise LLMError(f"API error in response body: {err_msg}")
 
@@ -164,6 +173,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
 
         except Exception as e:
             import httpx
+
             if isinstance(e, (AuthenticationError, RateLimitError, LLMError)):
                 raise
             if isinstance(e, httpx.TimeoutException):
@@ -178,7 +188,8 @@ class OpenAIResponsesProvider(OpenAIProvider):
 
     def _build_request_body(self, request: LLMRequest) -> dict:
         input_items, instructions = convert_messages_to_responses(
-            request.messages, request.system,
+            request.messages,
+            request.system,
             provider=self.config.provider,
             enable_thinking=request.enable_thinking,
         )
@@ -225,8 +236,14 @@ class OpenAIResponsesProvider(OpenAIProvider):
 
         # 清理 Chat Completions 专有字段（可能经 extra_params 泄漏）
         for _cc_key in (
-            "max_tokens", "max_completion_tokens", "tool_choice", "stop",
-            "enable_thinking", "thinking", "thinking_budget", "reasoning_effort",
+            "max_tokens",
+            "max_completion_tokens",
+            "tool_choice",
+            "stop",
+            "enable_thinking",
+            "thinking",
+            "thinking_budget",
+            "reasoning_effort",
         ):
             body.pop(_cc_key, None)
 
@@ -275,7 +292,11 @@ class OpenAIResponsesProvider(OpenAIProvider):
         status = data.get("status", "completed")
         if status == "failed":
             err_detail = data.get("last_error") or {}
-            err_msg = err_detail.get("message", "unknown error") if isinstance(err_detail, dict) else str(err_detail)
+            err_msg = (
+                err_detail.get("message", "unknown error")
+                if isinstance(err_detail, dict)
+                else str(err_detail)
+            )
             raise LLMError(f"Responses API returned failed status: {err_msg}")
         if has_tool_calls:
             stop_reason = StopReason.TOOL_USE
@@ -393,6 +414,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
 
         try:
             import httpx
+
             async with client.stream(
                 "POST",
                 self._api_url,
@@ -404,10 +426,15 @@ class OpenAIResponsesProvider(OpenAIProvider):
                     error_body = await response.aread()
                     error_text = error_body.decode(errors="replace")[:500]
                     if response.status_code == 401:
-                        raise AuthenticationError(f"Authentication failed: {error_text}", status_code=401)
+                        raise AuthenticationError(
+                            f"Authentication failed: {error_text}", status_code=401
+                        )
                     if response.status_code == 429:
                         raise RateLimitError(f"Rate limit exceeded: {error_text}", status_code=429)
-                    raise LLMError(f"API error ({response.status_code}): {error_text}", status_code=response.status_code)
+                    raise LLMError(
+                        f"API error ({response.status_code}): {error_text}",
+                        status_code=response.status_code,
+                    )
 
                 has_content = False
                 async for line in response.aiter_lines():
@@ -450,9 +477,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
                                 raise LLMError(f"Stream error from '{self.name}': {err_msg}")
                         except json.JSONDecodeError:
                             if "error" in line.lower():
-                                raise LLMError(
-                                    f"Stream error from '{self.name}': {line[:500]}"
-                                )
+                                raise LLMError(f"Stream error from '{self.name}': {line[:500]}")
 
                 if has_content:
                     self.mark_healthy()
@@ -468,20 +493,15 @@ class OpenAIResponsesProvider(OpenAIProvider):
 
         except Exception as e:
             import httpx
+
             if isinstance(e, (AuthenticationError, RateLimitError, LLMError)):
                 raise
             if isinstance(e, httpx.TimeoutException):
                 detail = f"{type(e).__name__}: {e}"
-                self.mark_unhealthy(
-                    f"Timeout: {detail}", is_local=self._is_local_endpoint()
-                )
+                self.mark_unhealthy(f"Timeout: {detail}", is_local=self._is_local_endpoint())
                 raise LLMError(f"Stream timeout: {detail}")
             if isinstance(e, httpx.RequestError):
-                detail = (
-                    f"{type(e).__name__}: {e}"
-                    if str(e)
-                    else f"{type(e).__name__}({repr(e)})"
-                )
+                detail = f"{type(e).__name__}: {e}" if str(e) else f"{type(e).__name__}({repr(e)})"
                 self.mark_unhealthy(
                     f"Stream request error: {detail}",
                     is_local=self._is_local_endpoint(),

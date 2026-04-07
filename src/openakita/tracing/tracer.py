@@ -483,7 +483,9 @@ class AgentTracer:
             try:
                 exporter.export(trace)
             except Exception as e:
-                logger.warning(f"[Tracing] Failed to export trace to {type(exporter).__name__}: {e}")
+                logger.warning(
+                    f"[Tracing] Failed to export trace to {type(exporter).__name__}: {e}"
+                )
 
 
 # 全局 tracer 实例

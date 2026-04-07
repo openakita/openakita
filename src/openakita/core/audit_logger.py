@@ -16,10 +16,21 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-_SENSITIVE_KEYS = frozenset({
-    "api_key", "password", "secret", "token", "credential", "auth",
-    "access_key", "secret_key", "private_key", "apikey", "passwd",
-})
+_SENSITIVE_KEYS = frozenset(
+    {
+        "api_key",
+        "password",
+        "secret",
+        "token",
+        "credential",
+        "auth",
+        "access_key",
+        "secret_key",
+        "private_key",
+        "apikey",
+        "passwd",
+    }
+)
 
 
 def _mask_sensitive(text: str, max_len: int = 200) -> str:
@@ -30,6 +41,7 @@ def _mask_sensitive(text: str, max_len: int = 200) -> str:
     for key in _SENSITIVE_KEYS:
         if key in masked.lower():
             import re
+
             masked = re.sub(
                 rf"({key}['\"]?\s*[:=]\s*['\"]?)([^'\"\\s,}}]+)",
                 r"\1***MASKED***",
@@ -90,6 +102,7 @@ def get_audit_logger() -> AuditLogger:
     if _global_audit is None:
         try:
             from .policy import get_policy_engine
+
             cfg = get_policy_engine().config.self_protection
             _global_audit = AuditLogger(path=cfg.audit_path)
         except Exception:

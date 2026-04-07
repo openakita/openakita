@@ -70,13 +70,16 @@ def append_tool_result(
     is_error: bool = False,
 ) -> None:
     """追加一条工具结果到 transcript。"""
-    append_entry(session_id, {
-        "type": "tool_result",
-        "tool_use_id": tool_use_id,
-        "tool_name": tool_name,
-        "content": result[:5000] if len(result) > 5000 else result,
-        "is_error": is_error,
-    })
+    append_entry(
+        session_id,
+        {
+            "type": "tool_result",
+            "tool_use_id": tool_use_id,
+            "tool_name": tool_name,
+            "content": result[:5000] if len(result) > 5000 else result,
+            "is_error": is_error,
+        },
+    )
 
 
 def append_compact_boundary(session_id: str, summary: str = "") -> None:
@@ -84,10 +87,13 @@ def append_compact_boundary(session_id: str, summary: str = "") -> None:
 
     加载时可以从此标记后开始读取，跳过已压缩的前半部分。
     """
-    append_entry(session_id, {
-        "type": "compact_boundary",
-        "summary": summary,
-    })
+    append_entry(
+        session_id,
+        {
+            "type": "compact_boundary",
+            "summary": summary,
+        },
+    )
 
 
 def load_transcript(
@@ -125,7 +131,7 @@ def load_transcript(
                 logger.warning("Skipped malformed transcript line %d in %s", i, session_id)
 
     if from_compact_boundary and last_boundary_idx >= 0:
-        return entries[last_boundary_idx + 1:]
+        return entries[last_boundary_idx + 1 :]
 
     return entries
 

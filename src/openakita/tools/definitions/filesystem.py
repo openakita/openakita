@@ -36,7 +36,7 @@ FILESYSTEM_TOOLS = [
             "- Terminal file header has pid and running_for_ms (updated every 5s).\n"
             "- When finished, footer with exit_code and elapsed_ms appears.\n"
             "- Poll with exponential backoff: read file → check → wait → read again.\n"
-            "- If hung, kill the process using run_shell(command=\"kill {pid}\").\n\n"
+            '- If hung, kill the process using run_shell(command="kill {pid}").\n\n'
             "Multiple commands:\n"
             "- Independent commands → make separate run_shell calls in parallel\n"
             "- Dependent commands → chain with && (e.g., mkdir foo && cd foo && git init)\n"

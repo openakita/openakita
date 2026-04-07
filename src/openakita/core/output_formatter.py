@@ -86,27 +86,33 @@ class StreamJSONFormatter(OutputFormatter):
         return line
 
     def format_message(self, role: str, content: str, **kwargs) -> str:
-        return self._emit({
-            "type": "message",
-            "role": role,
-            "content": content,
-            **kwargs,
-        })
+        return self._emit(
+            {
+                "type": "message",
+                "role": role,
+                "content": content,
+                **kwargs,
+            }
+        )
 
     def format_tool_use(self, tool_name: str, tool_input: dict) -> str:
-        return self._emit({
-            "type": "tool_use",
-            "name": tool_name,
-            "input": tool_input,
-        })
+        return self._emit(
+            {
+                "type": "tool_use",
+                "name": tool_name,
+                "input": tool_input,
+            }
+        )
 
     def format_tool_result(self, tool_name: str, result: str, is_error: bool = False) -> str:
-        return self._emit({
-            "type": "tool_result",
-            "name": tool_name,
-            "content": result[:2000],
-            "is_error": is_error,
-        })
+        return self._emit(
+            {
+                "type": "tool_result",
+                "name": tool_name,
+                "content": result[:2000],
+                "is_error": is_error,
+            }
+        )
 
     def format_final(self, conversation: list[dict]) -> str:
         return self._emit({"type": "done"})

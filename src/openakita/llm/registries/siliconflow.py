@@ -47,7 +47,8 @@ class _SiliconFlowBase(ProviderRegistry):
                         id=model_id,
                         name=model_id,
                         capabilities=infer_capabilities(
-                            model_id, provider_slug=self._provider_slug(),
+                            model_id,
+                            provider_slug=self._provider_slug(),
                         ),
                     )
                 )

@@ -63,9 +63,10 @@ class MemoryPriority(Enum):
 
 class MemoryScope(StrEnum):
     """记忆作用域"""
-    GLOBAL = "global"      # 全局共享（当前行为）
-    AGENT = "agent"        # Agent 私有
-    SESSION = "session"    # 会话私有
+
+    GLOBAL = "global"  # 全局共享（当前行为）
+    AGENT = "agent"  # Agent 私有
+    SESSION = "session"  # 会话私有
 
 
 def _short_uuid() -> str:
@@ -174,8 +175,8 @@ class SemanticMemory:
     source_episode_id: str | None = None
 
     # v3: 记忆分层
-    scope: str = "global"        # MemoryScope value
-    scope_owner: str = ""        # agent_profile_id or session_id
+    scope: str = "global"  # MemoryScope value
+    scope_owner: str = ""  # agent_profile_id or session_id
 
     # v4: 多 Agent 记忆隔离
     agent_id: str = ""
@@ -233,24 +234,22 @@ class SemanticMemory:
             importance_score=data.get("importance_score", 0.5),
             confidence=data.get("confidence", 0.5),
             decay_rate=data.get("decay_rate", 0.1),
-            last_accessed_at=datetime.fromisoformat(last_accessed)
-            if last_accessed
-            else None,
+            last_accessed_at=datetime.fromisoformat(last_accessed) if last_accessed else None,
             superseded_by=data.get("superseded_by"),
             source_episode_id=data.get("source_episode_id"),
             scope=data.get("scope", "global"),
             scope_owner=data.get("scope_owner", ""),
             agent_id=data.get("agent_id", ""),
-            expires_at=datetime.fromisoformat(data["expires_at"]) if data.get("expires_at") else None,
+            expires_at=datetime.fromisoformat(data["expires_at"])
+            if data.get("expires_at")
+            else None,
         )
 
     def to_markdown(self) -> str:
         tags_str = ", ".join(self.tags) if self.tags else ""
         prefix = f"[{self.type.value}]"
         subj = f" {self.subject}:" if self.subject else ""
-        return f"- {prefix}{subj} {self.content}" + (
-            f" (tags: {tags_str})" if tags_str else ""
-        )
+        return f"- {prefix}{subj} {self.content}" + (f" (tags: {tags_str})" if tags_str else "")
 
 
 # 向后兼容别名
@@ -443,7 +442,8 @@ class Scratchpad:
 
 class AttachmentDirection(Enum):
     """附件方向"""
-    INBOUND = "inbound"    # 用户发送给 agent
+
+    INBOUND = "inbound"  # 用户发送给 agent
     OUTBOUND = "outbound"  # agent 生成/发送给用户
 
 
@@ -467,15 +467,15 @@ class Attachment:
     file_size: int = 0
 
     # 存储位置 (至少一个非空)
-    local_path: str = ""       # 本地磁盘路径
-    url: str = ""              # 远程 URL (IM 平台等)
+    local_path: str = ""  # 本地磁盘路径
+    url: str = ""  # 远程 URL (IM 平台等)
 
     direction: AttachmentDirection = AttachmentDirection.INBOUND
 
     # 内容理解 — 由 LLM / OCR / STT 生成
-    description: str = ""      # 图片/视频/文件的自然语言描述
-    transcription: str = ""    # 语音/视频转写文本
-    extracted_text: str = ""   # 从文档提取的文本摘要
+    description: str = ""  # 图片/视频/文件的自然语言描述
+    transcription: str = ""  # 语音/视频转写文本
+    extracted_text: str = ""  # 从文档提取的文本摘要
     tags: list[str] = field(default_factory=list)
 
     # 关联
@@ -534,8 +534,13 @@ class Attachment:
     @property
     def searchable_text(self) -> str:
         """合并所有可搜索文本字段"""
-        parts = [self.description, self.transcription, self.extracted_text,
-                 self.filename, self.original_filename]
+        parts = [
+            self.description,
+            self.transcription,
+            self.extracted_text,
+            self.filename,
+            self.original_filename,
+        ]
         parts.extend(self.tags)
         return " ".join(p for p in parts if p)
 
@@ -554,9 +559,11 @@ class Attachment:
     @property
     def is_document(self) -> bool:
         return self.mime_type in (
-            "application/pdf", "application/msword",
+            "application/pdf",
+            "application/msword",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "text/plain", "text/markdown",
+            "text/plain",
+            "text/markdown",
         ) or self.mime_type.startswith("text/")
 
 

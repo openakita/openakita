@@ -211,10 +211,7 @@ class SessionLogBuffer:
         保留 _global 和 keep_sid，淘汰最不活跃的 session。
         """
         protected = {"_global", keep_sid, self._current_session_id or ""}
-        candidates = [
-            (sid, buf) for sid, buf in self._buffers.items()
-            if sid not in protected
-        ]
+        candidates = [(sid, buf) for sid, buf in self._buffers.items() if sid not in protected]
         if not candidates:
             return
         # 按 deque 中最后一条日志的时间排序，淘汰最旧的

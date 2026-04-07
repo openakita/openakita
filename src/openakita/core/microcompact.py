@@ -135,7 +135,9 @@ def snip_old_segments(
 
     logger.info(
         "history_snip: removed %d messages (%d groups), %d remaining",
-        snipped_msgs, to_snip, len(remaining),
+        snipped_msgs,
+        to_snip,
+        len(remaining),
     )
     return remaining, snipped_msgs
 

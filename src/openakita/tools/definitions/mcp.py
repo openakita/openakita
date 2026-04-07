@@ -97,34 +97,47 @@ SSE 模式: add_mcp_server(name="legacy-api", transport="sse", url="http://local
         "input_schema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "服务器唯一标识符（如 web-search, my-database）"},
+                "name": {
+                    "type": "string",
+                    "description": "服务器唯一标识符（如 web-search, my-database）",
+                },
                 "transport": {
                     "type": "string",
                     "enum": ["stdio", "streamable_http", "sse"],
                     "description": "传输协议: stdio(本地进程) | streamable_http(HTTP远程) | sse(SSE远程,兼容旧版MCP)",
                     "default": "stdio",
                 },
-                "command": {"type": "string", "description": "启动命令 (stdio 模式必填，如 python, npx, node)"},
+                "command": {
+                    "type": "string",
+                    "description": "启动命令 (stdio 模式必填，如 python, npx, node)",
+                },
                 "args": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "命令参数列表 (如 [\"-m\", \"my_server\"])",
+                    "description": '命令参数列表 (如 ["-m", "my_server"])',
                     "default": [],
                 },
                 "env": {
                     "type": "object",
-                    "description": "额外环境变量 (如 {\"API_KEY\": \"xxx\"})",
+                    "description": '额外环境变量 (如 {"API_KEY": "xxx"})',
                     "default": {},
                 },
                 "url": {"type": "string", "description": "服务 URL (streamable_http 模式必填)"},
                 "headers": {
                     "type": "object",
-                    "description": "自定义 HTTP 请求头 (streamable_http/sse 模式可用，如 {\"Authorization\": \"Bearer xxx\"})",
+                    "description": '自定义 HTTP 请求头 (streamable_http/sse 模式可用，如 {"Authorization": "Bearer xxx"})',
                     "default": {},
                 },
                 "description": {"type": "string", "description": "服务器描述 (可选)"},
-                "instructions": {"type": "string", "description": "使用说明文本 (可选，将写入 INSTRUCTIONS.md)"},
-                "auto_connect": {"type": "boolean", "description": "启动时是否自动连接此服务器 (默认 false)", "default": False},
+                "instructions": {
+                    "type": "string",
+                    "description": "使用说明文本 (可选，将写入 INSTRUCTIONS.md)",
+                },
+                "auto_connect": {
+                    "type": "boolean",
+                    "description": "启动时是否自动连接此服务器 (默认 false)",
+                    "default": False,
+                },
             },
             "required": ["name"],
         },

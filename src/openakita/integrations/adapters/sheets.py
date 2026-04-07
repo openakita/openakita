@@ -24,8 +24,8 @@ class GoogleSheetsAdapter(BaseAPIAdapter):
                 - spreadsheet_id: 电子表格 ID
         """
         super().__init__(config)
-        self.credentials = config.get('credentials')
-        self.spreadsheet_id = config.get('spreadsheet_id')
+        self.credentials = config.get("credentials")
+        self.spreadsheet_id = config.get("spreadsheet_id")
         self._token: str | None = None
         self._token_expiry: datetime | None = None
         self._session: aiohttp.ClientSession | None = None
@@ -45,33 +45,32 @@ class GoogleSheetsAdapter(BaseAPIAdapter):
 
             now = datetime.utcnow()
             payload = {
-                'iss': self.credentials['client_email'],
-                'scope': 'https://www.googleapis.com/auth/spreadsheets',
-                'aud': 'https://oauth2.googleapis.com/token',
-                'exp': int(now.timestamp()) + 3600,
-                'iat': int(now.timestamp())
+                "iss": self.credentials["client_email"],
+                "scope": "https://www.googleapis.com/auth/spreadsheets",
+                "aud": "https://oauth2.googleapis.com/token",
+                "exp": int(now.timestamp()) + 3600,
+                "iat": int(now.timestamp()),
             }
 
-            assertion = jwt.encode(
-                payload,
-                self.credentials['private_key'],
-                algorithm='RS256'
-            )
+            assertion = jwt.encode(payload, self.credentials["private_key"], algorithm="RS256")
 
-            async with aiohttp.ClientSession() as session, session.post(
-                'https://oauth2.googleapis.com/token',
-                data={
-                    'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-                    'assertion': assertion
-                },
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as response:
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(
+                    "https://oauth2.googleapis.com/token",
+                    data={
+                        "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                        "assertion": assertion,
+                    },
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response,
+            ):
                 result = await response.json()
 
                 if response.status == 200:
-                    self._token = result['access_token']
+                    self._token = result["access_token"]
                     self._token_expiry = datetime.utcnow().replace(
-                        second=datetime.utcnow().second + result['expires_in'] - 300
+                        second=datetime.utcnow().second + result["expires_in"] - 300
                     )
                     return True
                 else:
@@ -86,19 +85,16 @@ class GoogleSheetsAdapter(BaseAPIAdapter):
 
         await self.authenticate()
 
-        headers = {
-            "Authorization": f"Bearer {self._token}",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": f"Bearer {self._token}", "Content-Type": "application/json"}
 
         try:
             async with self._session.request(
                 method,
                 f"https://sheets.googleapis.com/v4/{endpoint}",
                 headers=headers,
-                json=kwargs.get('json'),
-                params=kwargs.get('params'),
-                timeout=aiohttp.ClientTimeout(total=30)
+                json=kwargs.get("json"),
+                params=kwargs.get("params"),
+                timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
                 result = await response.json()
 
@@ -120,7 +116,7 @@ class GoogleSheetsAdapter(BaseAPIAdapter):
             二维数组数据
         """
         result = await self.call(f"spreadsheets/{self.spreadsheet_id}/values/{range}")
-        return result.get('values', [])
+        return result.get("values", [])
 
     async def update_values(self, range: str, values: list[list[Any]]) -> dict[str, Any]:
         """
@@ -136,10 +132,7 @@ class GoogleSheetsAdapter(BaseAPIAdapter):
         return await self.call(
             f"spreadsheets/{self.spreadsheet_id}/values/{range}",
             method="PUT",
-            json={
-                "values": values,
-                "valueInputOption": "RAW"
-            }
+            json={"values": values, "valueInputOption": "RAW"},
         )
 
     async def append_values(self, range: str, values: list[list[Any]]) -> dict[str, Any]:
@@ -156,11 +149,7 @@ class GoogleSheetsAdapter(BaseAPIAdapter):
         return await self.call(
             f"spreadsheets/{self.spreadsheet_id}/values/{range}:append",
             method="POST",
-            json={
-                "values": values,
-                "valueInputOption": "RAW",
-                "insertDataOption": "INSERT_ROWS"
-            }
+            json={"values": values, "valueInputOption": "RAW", "insertDataOption": "INSERT_ROWS"},
         )
 
     async def close(self):
@@ -184,9 +173,9 @@ class TencentDocsAdapter(BaseAPIAdapter):
                 - spreadsheet_id: 表格 ID
         """
         super().__init__(config)
-        self.app_id = config.get('app_id')
-        self.secret_key = config.get('secret_key')
-        self.spreadsheet_id = config.get('spreadsheet_id')
+        self.app_id = config.get("app_id")
+        self.secret_key = config.get("secret_key")
+        self.spreadsheet_id = config.get("spreadsheet_id")
         self._token: str | None = None
         self._session: aiohttp.ClientSession | None = None
 
@@ -196,18 +185,18 @@ class TencentDocsAdapter(BaseAPIAdapter):
             raise AuthenticationError("缺少腾讯文档认证信息")
 
         try:
-            async with aiohttp.ClientSession() as session, session.post(
-                'https://docs.qq.com/api/token',
-                json={
-                    'appId': self.app_id,
-                    'secretKey': self.secret_key
-                },
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as response:
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(
+                    "https://docs.qq.com/api/token",
+                    json={"appId": self.app_id, "secretKey": self.secret_key},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as response,
+            ):
                 result = await response.json()
 
-                if response.status == 200 and 'token' in result:
-                    self._token = result['token']
+                if response.status == 200 and "token" in result:
+                    self._token = result["token"]
                     return True
                 else:
                     raise AuthenticationError(f"腾讯文档认证失败：{result}")
@@ -221,19 +210,16 @@ class TencentDocsAdapter(BaseAPIAdapter):
 
         await self.authenticate()
 
-        headers = {
-            "Authorization": f"Bearer {self._token}",
-            "Content-Type": "application/json"
-        }
+        headers = {"Authorization": f"Bearer {self._token}", "Content-Type": "application/json"}
 
         try:
             async with self._session.request(
                 method,
                 f"https://docs.qq.com/api/{endpoint}",
                 headers=headers,
-                json=kwargs.get('json'),
-                params=kwargs.get('params'),
-                timeout=aiohttp.ClientTimeout(total=30)
+                json=kwargs.get("json"),
+                params=kwargs.get("params"),
+                timeout=aiohttp.ClientTimeout(total=30),
             ) as response:
                 result = await response.json()
 
@@ -255,7 +241,7 @@ class TencentDocsAdapter(BaseAPIAdapter):
             二维数组数据
         """
         result = await self.call(f"spreadsheet/{self.spreadsheet_id}/sheet/{sheet_id}/data")
-        return result.get('data', [])
+        return result.get("data", [])
 
     async def update_cells(self, sheet_id: str, updates: list[dict]) -> dict[str, Any]:
         """
@@ -271,7 +257,7 @@ class TencentDocsAdapter(BaseAPIAdapter):
         return await self.call(
             f"spreadsheet/{self.spreadsheet_id}/sheet/{sheet_id}/cells",
             method="PUT",
-            json={"updates": updates}
+            json={"updates": updates},
         )
 
     async def close(self):
@@ -293,10 +279,7 @@ def create_sheets_adapter(provider: str, config: dict[str, Any]) -> BaseAPIAdapt
     Returns:
         表格适配器实例
     """
-    providers = {
-        'google': GoogleSheetsAdapter,
-        'tencent': TencentDocsAdapter
-    }
+    providers = {"google": GoogleSheetsAdapter, "tencent": TencentDocsAdapter}
 
     if provider not in providers:
         raise ValueError(f"不支持的表格服务提供商：{provider}")

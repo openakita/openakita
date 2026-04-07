@@ -325,7 +325,9 @@ class MemoryManager:
         except Exception:
             self._turn_offset = 0
         if self._turn_offset > 0:
-            logger.info(f"[Memory] start_session({session_id}): resuming at turn_offset={self._turn_offset}")
+            logger.info(
+                f"[Memory] start_session({session_id}): resuming at turn_offset={self._turn_offset}"
+            )
 
         replace = self._get_replace_backend()
         if replace is not None:
@@ -335,7 +337,9 @@ class MemoryManager:
             logger.debug(f"[Memory] start_session({session_id}): fresh session (offset=0)")
 
     def record_turn(
-        self, role: str, content: str,
+        self,
+        role: str,
+        content: str,
         tool_calls: list | None = None,
         tool_results: list | None = None,
         attachments: list[dict] | None = None,
@@ -456,7 +460,9 @@ class MemoryManager:
                 await self._save_extracted_item(item)
                 saved += 1
             if saved:
-                logger.info(f"[Memory] Topic-change extraction: {saved} items saved from {len(turns)} turns")
+                logger.info(
+                    f"[Memory] Topic-change extraction: {saved} items saved from {len(turns)} turns"
+                )
             # Reset turn buffer — new topic starts fresh
             self._session_turns.clear()
             return saved
@@ -520,7 +526,9 @@ class MemoryManager:
                         is_dup = await self._check_duplicate_with_llm(content, existing_content)
                         if is_dup:
                             self._evolve_memory(s, content, importance)
-                            logger.debug(f"[Memory] Dedup L2: LLM confirmed dup, evolved {s.id[:8]}")
+                            logger.debug(
+                                f"[Memory] Dedup L2: LLM confirmed dup, evolved {s.id[:8]}"
+                            )
                             return s.id
             except Exception as e:
                 logger.debug(f"[Memory] Dedup search failed: {e}")
@@ -561,8 +569,8 @@ class MemoryManager:
         if len(a) > 15 and len(b) > 15 and (a in b or b in a):
             return "exact"
         if len(a) >= 10 and len(b) >= 10:
-            bigrams_a = {a[i:i+2] for i in range(len(a) - 1)}
-            bigrams_b = {b[i:i+2] for i in range(len(b) - 1)}
+            bigrams_a = {a[i : i + 2] for i in range(len(a) - 1)}
+            bigrams_b = {b[i : i + 2] for i in range(len(b) - 1)}
             if bigrams_a and bigrams_b:
                 overlap = len(bigrams_a & bigrams_b) / len(bigrams_a | bigrams_b)
                 if overlap > 0.8:
@@ -600,9 +608,9 @@ class MemoryManager:
         updates: dict = {
             "confidence": min(1.0, existing.confidence + 0.1),
         }
-        should_update_content = (
-            new_importance > existing.importance_score
-            or (new_importance >= existing.importance_score and len(new_content) > len(existing.content or ""))
+        should_update_content = new_importance > existing.importance_score or (
+            new_importance >= existing.importance_score
+            and len(new_content) > len(existing.content or "")
         )
         if should_update_content:
             updates["content"] = new_content
@@ -645,6 +653,7 @@ class MemoryManager:
         """Read memory_mode from config. Defaults to 'auto'."""
         try:
             from openakita.config import settings
+
             return getattr(settings, "memory_mode", "auto")
         except Exception:
             return "auto"
@@ -690,7 +699,8 @@ class MemoryManager:
                 try:
                     items, scores = await asyncio.wait_for(
                         self.extractor.extract_from_conversation(
-                            turns, cited_memories=cited or None,
+                            turns,
+                            cited_memories=cited or None,
                         ),
                         timeout=30.0,
                     )
@@ -704,7 +714,9 @@ class MemoryManager:
                             saved_memory_ids.append(mid)
                         saved += 1
                     if saved:
-                        logger.info(f"[Memory] Profile extraction: {saved}/{len(items)} items saved")
+                        logger.info(
+                            f"[Memory] Profile extraction: {saved}/{len(items)} items saved"
+                        )
                 except Exception as e:
                     logger.warning(f"[Memory] Profile extraction failed: {e}")
 
@@ -721,7 +733,9 @@ class MemoryManager:
                             saved_memory_ids.append(mid)
                         exp_saved += 1
                     if exp_saved:
-                        logger.info(f"[Memory] Experience extraction: {exp_saved}/{len(exp_items)} items saved")
+                        logger.info(
+                            f"[Memory] Experience extraction: {exp_saved}/{len(exp_items)} items saved"
+                        )
                 except Exception as e:
                     logger.warning(f"[Memory] Experience extraction failed: {e}")
 
@@ -729,7 +743,9 @@ class MemoryManager:
                 if ep_id:
                     try:
                         if saved_memory_ids:
-                            self.store.update_episode(ep_id, {"linked_memory_ids": saved_memory_ids})
+                            self.store.update_episode(
+                                ep_id, {"linked_memory_ids": saved_memory_ids}
+                            )
                         linked = self.store.link_turns_to_episode(session_id, ep_id)
                         logger.info(
                             f"[Memory] Episode links: {len(saved_memory_ids)} memories, "
@@ -743,13 +759,18 @@ class MemoryManager:
                 if mode in ("mode2", "auto") and self._ensure_relational():
                     try:
                         turn_dicts = [
-                            {"role": t.role, "content": t.content,
-                             "tool_calls": t.tool_calls, "tool_results": t.tool_results}
+                            {
+                                "role": t.role,
+                                "content": t.content,
+                                "tool_calls": t.tool_calls,
+                                "tool_results": t.tool_results,
+                            }
                             for t in turns
                         ]
                         existing = relational_pending_snapshot
                         result = await self.relational_encoder.encode_session(
-                            turn_dicts, existing_nodes=existing or None,
+                            turn_dicts,
+                            existing_nodes=existing or None,
                             session_id=session_id,
                         )
                         if result.nodes:
@@ -799,7 +820,9 @@ class MemoryManager:
                     )
                     enqueued += 1
             if enqueued:
-                logger.info(f"[Memory] Enqueued {enqueued} turns for deferred extraction (no event loop)")
+                logger.info(
+                    f"[Memory] Enqueued {enqueued} turns for deferred extraction (no event loop)"
+                )
         except Exception as e:
             logger.warning(f"[Memory] Failed to enqueue session turns: {e}")
 
@@ -843,7 +866,9 @@ class MemoryManager:
                 import json
                 from datetime import datetime
 
-                fallback_file = fallback_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{turn_index}.json"
+                fallback_file = (
+                    fallback_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{turn_index}.json"
+                )
                 fallback_file.write_text(
                     json.dumps(
                         {"session_id": session_id, "turn_index": turn_index, "content": content},
@@ -851,9 +876,13 @@ class MemoryManager:
                     ),
                     encoding="utf-8",
                 )
-                logger.warning(f"[Memory] Enqueue failed ({e}), saved to fallback file: {fallback_file}")
+                logger.warning(
+                    f"[Memory] Enqueue failed ({e}), saved to fallback file: {fallback_file}"
+                )
             except Exception as e2:
-                logger.error(f"[Memory] Both enqueue and fallback failed: enqueue={e}, fallback={e2}")
+                logger.error(
+                    f"[Memory] Both enqueue and fallback failed: enqueue={e}, fallback={e2}"
+                )
 
     # ==================== Context Compression Hook ====================
 
@@ -883,7 +912,9 @@ class MemoryManager:
         mode = self._get_memory_mode()
         if mode in ("mode2", "auto") and self._ensure_relational():
             try:
-                result = self.relational_encoder.encode_quick(messages, self._current_session_id or "")
+                result = self.relational_encoder.encode_quick(
+                    messages, self._current_session_id or ""
+                )
                 if result.nodes:
                     for n in result.nodes:
                         if self.agent_id and not n.agent_id:
@@ -930,21 +961,25 @@ class MemoryManager:
     DUPLICATE_DISTANCE_THRESHOLD = 0.12
 
     COMMON_PREFIXES = [
-        "任务执行复盘发现问题：", "任务执行复盘：", "复盘发现：",
-        "系统自检发现：", "自检发现的典型问题模式：",
+        "任务执行复盘发现问题：",
+        "任务执行复盘：",
+        "复盘发现：",
+        "系统自检发现：",
+        "自检发现的典型问题模式：",
         "系统自检发现的典型问题模式：",
-        "用户偏好：", "用户习惯：", "学习到：", "记住：",
+        "用户偏好：",
+        "用户习惯：",
+        "学习到：",
+        "记住：",
     ]
 
     def _strip_common_prefix(self, content: str) -> str:
         for prefix in self.COMMON_PREFIXES:
             if content.startswith(prefix):
-                return content[len(prefix):]
+                return content[len(prefix) :]
         return content
 
-    def add_memory(
-        self, memory: Memory, scope: str = "global", scope_owner: str = ""
-    ) -> str:
+    def add_memory(self, memory: Memory, scope: str = "global", scope_owner: str = "") -> str:
         """添加记忆 (v1 compat: writes to both v1 and v2 stores)"""
         with self._memories_lock:
             existing = list(self._memories.values())
@@ -953,7 +988,11 @@ class MemoryManager:
                 return ""
             memory = unique[0]
 
-            if self.vector_store is not None and self.vector_store.enabled and len(self._memories) > 0:
+            if (
+                self.vector_store is not None
+                and self.vector_store.enabled
+                and len(self._memories) > 0
+            ):
                 core_content = self._strip_common_prefix(memory.content)
                 similar = self.vector_store.search(core_content, limit=3)
                 for mid, distance in similar:
@@ -1002,7 +1041,9 @@ class MemoryManager:
         if hasattr(memory, "expires_at"):
             sem.expires_at = memory.expires_at
         self.store.save_semantic(
-            self._stamp_agent_id(sem), scope=scope, scope_owner=scope_owner,
+            self._stamp_agent_id(sem),
+            scope=scope,
+            scope_owner=scope_owner,
             skip_dedup=True,
         )
 
@@ -1089,6 +1130,7 @@ class MemoryManager:
         if replace is not None:
             try:
                 import concurrent.futures
+
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                     future = pool.submit(
                         asyncio.run,
@@ -1123,7 +1165,10 @@ class MemoryManager:
                 )
         return await asyncio.to_thread(
             self.retrieval_engine.retrieve,
-            task_description, self._recent_messages, None, 700,
+            task_description,
+            self._recent_messages,
+            None,
+            700,
         )
 
     def _keyword_search(self, query: str, limit: int = 5) -> list[Memory]:
@@ -1154,12 +1199,14 @@ class MemoryManager:
             result = await lifecycle.consolidate_daily()
         except Exception as e:
             from ..llm.types import LLMError
+
             if isinstance(e, LLMError):
                 self._reload_from_sqlite()
                 raise  # LLM unavailable — legacy fallback would fail too
             logger.error(f"[Manager] Daily consolidation failed, using legacy: {e}")
             from ..config import settings
             from .daily_consolidator import DailyConsolidator
+
             dc = DailyConsolidator(
                 data_dir=self.data_dir,
                 memory_md_path=self.memory_md_path,
@@ -1247,9 +1294,7 @@ class MemoryManager:
             tags=tags or [],
         )
         self.store.save_attachment(attachment)
-        logger.info(
-            f"[Memory] Recorded attachment: {filename} ({direction}, {mime_type})"
-        )
+        logger.info(f"[Memory] Recorded attachment: {filename} ({direction}, {mime_type})")
         return attachment.id
 
     def search_attachments(
@@ -1262,8 +1307,11 @@ class MemoryManager:
     ) -> list[Attachment]:
         """搜索附件 — 用户问"那天发给你的猫图"时调用"""
         return self.store.search_attachments(
-            query=query, mime_type=mime_type,
-            direction=direction, session_id=session_id, limit=limit,
+            query=query,
+            mime_type=mime_type,
+            direction=direction,
+            session_id=session_id,
+            limit=limit,
         )
 
     def get_attachment(self, attachment_id: str) -> Attachment | None:
@@ -1271,9 +1319,7 @@ class MemoryManager:
 
     # ==================== Stats ====================
 
-    def get_stats(
-        self, scope: str = "global", scope_owner: str = ""
-    ) -> dict:
+    def get_stats(self, scope: str = "global", scope_owner: str = "") -> dict:
         type_counts: dict[str, int] = {}
         priority_counts: dict[str, int] = {}
         for memory in self._memories.values():

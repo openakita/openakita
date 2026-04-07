@@ -100,6 +100,7 @@ class MemoryModeRouter:
             )
             if isinstance(result, str) and result:
                 from .types import MemoryNode, NodeType
+
                 node = MemoryNode(content=result, node_type=NodeType.FACT)
                 return [RetrievalResult(node=node, score=0.5)]
             return []

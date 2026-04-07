@@ -33,6 +33,7 @@ class AgentHubHandler:
     def _get_client(self):
         if self._client is None:
             from ...hub import AgentHubClient
+
             self._client = AgentHubClient()
         return self._client
 
@@ -130,13 +131,16 @@ class AgentHubHandler:
             return f"❌ 安装失败: {e}"
 
         from datetime import datetime
+
         if profile.hub_source is None:
             profile.hub_source = {}
-        profile.hub_source.update({
-            "platform": "openakita",
-            "agent_id": agent_id,
-            "installed_at": datetime.now().isoformat(),
-        })
+        profile.hub_source.update(
+            {
+                "platform": "openakita",
+                "agent_id": agent_id,
+                "installed_at": datetime.now().isoformat(),
+            }
+        )
         profile_store.save(profile)
 
         self._try_reload_skills()
@@ -188,6 +192,7 @@ class AgentHubHandler:
             loader = getattr(self.agent, "skill_loader", None)
             if loader:
                 from ...config import settings
+
                 loader.load_all(settings.project_root)
                 logger.info("Skills reloaded after Hub install")
         except Exception as e:

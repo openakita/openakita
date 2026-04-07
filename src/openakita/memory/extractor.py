@@ -217,7 +217,8 @@ duration 参考:
 
         try:
             response = await self._call_brain_main(
-                prompt, system="你是记忆提取专家。只输出 NONE 或 JSON 数组。",
+                prompt,
+                system="你是记忆提取专家。只输出 NONE 或 JSON 数组。",
             )
 
             text = (getattr(response, "content", None) or str(response)).strip()
@@ -249,16 +250,18 @@ duration 参考:
                         "ERROR": "7d",
                         "FACT": "permanent",
                     }.get(mem_type, "permanent")
-                results.append({
-                    "type": mem_type,
-                    "subject": (item.get("subject") or "").strip(),
-                    "predicate": (item.get("predicate") or "").strip(),
-                    "content": c,
-                    "importance": max(0.1, min(1.0, float(item.get("importance", 0.5)))),
-                    "duration": duration,
-                    "is_update": bool(item.get("is_update", False)),
-                    "update_hint": (item.get("update_hint") or "").strip(),
-                })
+                results.append(
+                    {
+                        "type": mem_type,
+                        "subject": (item.get("subject") or "").strip(),
+                        "predicate": (item.get("predicate") or "").strip(),
+                        "content": c,
+                        "importance": max(0.1, min(1.0, float(item.get("importance", 0.5)))),
+                        "duration": duration,
+                        "is_update": bool(item.get("is_update", False)),
+                        "update_hint": (item.get("update_hint") or "").strip(),
+                    }
+                )
 
             if results:
                 logger.info(f"[Extractor v2] Extracted {len(results)} items from {turn.role}")
@@ -380,7 +383,9 @@ duration 参考:
         if not self.brain or not turns:
             return [], []
 
-        user_turns = [t for t in turns if t.role == "user" and t.content and len(t.content.strip()) >= 10]
+        user_turns = [
+            t for t in turns if t.role == "user" and t.content and len(t.content.strip()) >= 10
+        ]
         if not user_turns:
             return [], []
 
@@ -405,12 +410,13 @@ duration 参考:
         has_citations = cited_memories and len(cited_memories) > 0
         if has_citations:
             cited_text = "\n".join(
-                f"- ID={m['id']} | {m.get('content', '')[:150]}"
-                for m in cited_memories
+                f"- ID={m['id']} | {m.get('content', '')[:150]}" for m in cited_memories
             )
             prompt += self.CITATION_SCORING_SECTION.format(cited_memories=cited_text)
-            prompt += "\n\n最终输出格式: {\"memories\": [...], \"citation_scores\": [...]}\n如果没有要提取的记忆，memories 为空数组。只输出 JSON。"
-            system_msg = "你是记忆提取+评分专家。输出 JSON 对象，包含 memories 和 citation_scores 两个字段。"
+            prompt += '\n\n最终输出格式: {"memories": [...], "citation_scores": [...]}\n如果没有要提取的记忆，memories 为空数组。只输出 JSON。'
+            system_msg = (
+                "你是记忆提取+评分专家。输出 JSON 对象，包含 memories 和 citation_scores 两个字段。"
+            )
         else:
             system_msg = "你是记忆提取专家。只输出 NONE 或 JSON 数组。"
 
@@ -433,15 +439,20 @@ duration 参考:
 
             items = self._parse_memory_items(data.get("memories", []))
             scores = [
-                s for s in data.get("citation_scores", [])
+                s
+                for s in data.get("citation_scores", [])
                 if isinstance(s, dict) and "memory_id" in s
             ]
 
             if items:
-                logger.info(f"[Extractor] Conversation extraction: {len(items)} items from {len(turns)} turns")
+                logger.info(
+                    f"[Extractor] Conversation extraction: {len(items)} items from {len(turns)} turns"
+                )
             if scores:
                 useful_count = sum(1 for s in scores if s.get("useful"))
-                logger.info(f"[Extractor] Citation scoring: {useful_count}/{len(scores)} marked useful")
+                logger.info(
+                    f"[Extractor] Citation scoring: {useful_count}/{len(scores)} marked useful"
+                )
             return items, scores
 
         except Exception as e:
@@ -480,7 +491,8 @@ duration 参考:
 
         try:
             response = await self._call_brain_main(
-                prompt, system="你是任务经验总结专家。只输出 NONE 或 JSON 数组。",
+                prompt,
+                system="你是任务经验总结专家。只输出 NONE 或 JSON 数组。",
             )
             text = (getattr(response, "content", None) or str(response)).strip()
             if "NONE" in text.upper() or not text:
@@ -516,20 +528,25 @@ duration 参考:
             duration = (item.get("duration") or "").strip()
             if duration not in ("permanent", "7d", "24h", "session"):
                 duration = {
-                    "RULE": "permanent", "PREFERENCE": "permanent",
-                    "SKILL": "permanent", "ERROR": "7d", "FACT": "permanent",
+                    "RULE": "permanent",
+                    "PREFERENCE": "permanent",
+                    "SKILL": "permanent",
+                    "ERROR": "7d",
+                    "FACT": "permanent",
                     "EXPERIENCE": "permanent",
                 }.get(mem_type, "permanent")
-            results.append({
-                "type": mem_type,
-                "subject": (item.get("subject") or "").strip(),
-                "predicate": (item.get("predicate") or "").strip(),
-                "content": c,
-                "importance": min(1.0, max(0.3, float(item.get("importance", 0.5)))),
-                "duration": duration,
-                "is_update": bool(item.get("is_update", False)),
-                "update_hint": "",
-            })
+            results.append(
+                {
+                    "type": mem_type,
+                    "subject": (item.get("subject") or "").strip(),
+                    "predicate": (item.get("predicate") or "").strip(),
+                    "content": c,
+                    "importance": min(1.0, max(0.3, float(item.get("importance", 0.5)))),
+                    "duration": duration,
+                    "is_update": bool(item.get("is_update", False)),
+                    "update_hint": "",
+                }
+            )
         return results
 
     def _build_tool_context(
@@ -546,9 +563,15 @@ duration 参考:
         for tc in (tool_calls or [])[:5]:
             name = tc.get("name", "unknown")
             inp = tc.get("input", {})
-            key_params = {k: v for k, v in inp.items() if k in (
-                "command", "path", "query", "url", "content", "filename"
-            )} if isinstance(inp, dict) else {}
+            key_params = (
+                {
+                    k: v
+                    for k, v in inp.items()
+                    if k in ("command", "path", "query", "url", "content", "filename")
+                }
+                if isinstance(inp, dict)
+                else {}
+            )
             params_str = json.dumps(key_params, ensure_ascii=False)
             params_trunc, _ = _st(params_str, 400, save_full=False, label="mem_tool_param")
             lines.append(f"  - {name}({params_trunc})")
@@ -581,10 +604,12 @@ duration 参考:
         action_nodes = self._extract_action_nodes(turns)
 
         from openakita.core.tool_executor import smart_truncate as _st
+
         def _episode_line(t):
             c, _ = _st(t.content or "", 600, save_full=False, label="mem_episode")
             suffix = f" [调用了 {len(t.tool_calls)} 个工具]" if t.tool_calls else ""
             return f"[{t.role}]: {c}{suffix}"
+
         conv_text = "\n".join(_episode_line(t) for t in turns[-20:])
 
         episode = Episode(
@@ -599,9 +624,7 @@ duration 参考:
         if self.brain:
             try:
                 prompt = self.EPISODE_PROMPT.format(conversation=conv_text)
-                resp = await self._call_brain(
-                    prompt, system="你是交互情节分析专家。只输出 JSON。"
-                )
+                resp = await self._call_brain(prompt, system="你是交互情节分析专家。只输出 JSON。")
                 text = (getattr(resp, "content", None) or str(resp)).strip()
                 json_match = re.search(r"\{[\s\S]*\}", text)
                 if json_match:
@@ -643,20 +666,24 @@ duration 参考:
                 for tr in turn.tool_results:
                     if tr.get("tool_use_id") == tc_id or not tc_id:
                         content = tr.get("content", "")
-                        result_summary = (content if isinstance(content, str) else str(content))[:200]
+                        result_summary = (content if isinstance(content, str) else str(content))[
+                            :200
+                        ]
                         if tr.get("is_error"):
                             success = False
                             error_msg = result_summary
                         break
 
-                nodes.append(ActionNode(
-                    tool_name=name,
-                    key_params=key_params,
-                    result_summary=result_summary,
-                    success=success,
-                    error_message=error_msg,
-                    timestamp=turn.timestamp,
-                ))
+                nodes.append(
+                    ActionNode(
+                        tool_name=name,
+                        key_params=key_params,
+                        result_summary=result_summary,
+                        success=success,
+                        error_message=error_msg,
+                        timestamp=turn.timestamp,
+                    )
+                )
         return nodes
 
     def _generate_fallback_summary(self, turns: list[ConversationTurn]) -> str:
@@ -671,7 +698,7 @@ duration 参考:
             text = turn.content or ""
             for m in re.finditer(r'[A-Za-z]:[\\\/][^\s"\']+', text):
                 entities.add(m.group(0))
-            for m in re.finditer(r'[\w-]+\.(?:py|js|ts|md|json|yaml|toml|sh)\b', text):
+            for m in re.finditer(r"[\w-]+\.(?:py|js|ts|md|json|yaml|toml|sh)\b", text):
                 entities.add(m.group(0))
         return list(entities)[:20]
 
@@ -698,6 +725,7 @@ duration 参考:
                 text = (getattr(resp, "content", None) or str(resp)).strip()
 
                 from openakita.core.tool_executor import smart_truncate as _st
+
                 sp_content, _ = _st(text, 2000, save_full=False, label="mem_scratchpad")
                 return Scratchpad(
                     user_id=user_id,
@@ -715,9 +743,7 @@ duration 参考:
         if episode.summary:
             date_str = episode.ended_at.strftime("%m/%d")
             progress = f"- {date_str}: {episode.summary[:100]}"
-            pad.content = self._append_to_section(
-                pad.content, "近期进展", progress
-            )
+            pad.content = self._append_to_section(pad.content, "近期进展", progress)
         pad.updated_at = datetime.now()
         return pad
 
@@ -785,18 +811,20 @@ duration 参考:
                     if len(snippet) < 6 or snippet in seen:
                         continue
                     seen.add(snippet)
-                    results.append(SemanticMemory(
-                        type=MemoryType.RULE,
-                        priority=MemoryPriority.PERMANENT,
-                        content=snippet,
-                        source="quick_rule_scan",
-                        subject="user",
-                        predicate="rule",
-                        importance_score=0.9,
-                        confidence=0.7,
-                        created_at=_dt.now(),
-                        updated_at=_dt.now(),
-                    ))
+                    results.append(
+                        SemanticMemory(
+                            type=MemoryType.RULE,
+                            priority=MemoryPriority.PERMANENT,
+                            content=snippet,
+                            source="quick_rule_scan",
+                            subject="user",
+                            predicate="rule",
+                            importance_score=0.9,
+                            confidence=0.7,
+                            created_at=_dt.now(),
+                            updated_at=_dt.now(),
+                        )
+                    )
                     if len(results) >= 10:
                         return results
         return results
@@ -878,56 +906,65 @@ duration 参考:
 
         if any(k in text for k in ("我喜欢", "我更喜欢", "我习惯", "我偏好", "请以后", "以后请")):
             pref_content, _ = _st(text, 400, save_full=False, label="mem_pref")
-            memories.append(Memory(
-                type=MemoryType.PREFERENCE,
-                priority=MemoryPriority.LONG_TERM,
-                content=pref_content,
-                source="turn_sync",
-                importance_score=0.7,
-                tags=["preference"],
-            ))
+            memories.append(
+                Memory(
+                    type=MemoryType.PREFERENCE,
+                    priority=MemoryPriority.LONG_TERM,
+                    content=pref_content,
+                    source="turn_sync",
+                    importance_score=0.7,
+                    tags=["preference"],
+                )
+            )
 
         if any(k in text for k in ("不要", "必须", "禁止", "永远不要", "务必")):
             rule_content, _ = _st(text, 400, save_full=False, label="mem_rule")
-            memories.append(Memory(
-                type=MemoryType.RULE,
-                priority=MemoryPriority.LONG_TERM,
-                content=rule_content,
-                source="turn_sync",
-                importance_score=0.8 if "永远不要" in text else 0.7,
-                tags=["rule"],
-            ))
+            memories.append(
+                Memory(
+                    type=MemoryType.RULE,
+                    priority=MemoryPriority.LONG_TERM,
+                    content=rule_content,
+                    source="turn_sync",
+                    importance_score=0.8 if "永远不要" in text else 0.7,
+                    tags=["rule"],
+                )
+            )
 
         m = re.search(r"[A-Za-z]:\\\\[^\s\"']{3,}", text)
         if m:
-            memories.append(Memory(
-                type=MemoryType.FACT,
-                priority=MemoryPriority.LONG_TERM,
-                content=f"用户提到路径: {m.group(0)}",
-                source="turn_sync",
-                importance_score=0.6,
-                tags=["path", "fact"],
-            ))
+            memories.append(
+                Memory(
+                    type=MemoryType.FACT,
+                    priority=MemoryPriority.LONG_TERM,
+                    content=f"用户提到路径: {m.group(0)}",
+                    source="turn_sync",
+                    importance_score=0.6,
+                    tags=["path", "fact"],
+                )
+            )
 
         return memories[:2]
 
     def extract_from_task_completion(
-        self, task_description: str, success: bool,
-        tool_calls: list[dict], errors: list[str],
+        self,
+        task_description: str,
+        success: bool,
+        tool_calls: list[dict],
+        errors: list[str],
     ) -> list[Memory]:
         """Deprecated: Episode 已接管会话总结，不再自动创建低质量 skill 记忆。"""
         return []
 
     async def extract_with_llm(
-        self, conversation: list[ConversationTurn], context: str = "",
+        self,
+        conversation: list[ConversationTurn],
+        context: str = "",
     ) -> list[Memory]:
         """使用 LLM 批量提取 (保留)"""
         if not self.brain or not conversation:
             return []
 
-        conv_text = "\n".join(
-            f"[{t.role}]: {t.content}" for t in conversation[-30:]
-        )
+        conv_text = "\n".join(f"[{t.role}]: {t.content}" for t in conversation[-30:])
 
         prompt = f"""分析以下对话，提取值得长期记住的信息。
 
@@ -1004,16 +1041,18 @@ duration 参考:
                 else:
                     priority = MemoryPriority.SHORT_TERM
 
-                memories.append(Memory(
-                    type=mem_type,
-                    priority=priority,
-                    content=content,
-                    source=source,
-                    importance_score=importance,
-                    subject=item.get("subject", ""),
-                    predicate=item.get("predicate", ""),
-                    tags=item.get("tags", []),
-                ))
+                memories.append(
+                    Memory(
+                        type=mem_type,
+                        priority=priority,
+                        content=content,
+                        source=source,
+                        importance_score=importance,
+                        subject=item.get("subject", ""),
+                        predicate=item.get("predicate", ""),
+                        tags=item.get("tags", []),
+                    )
+                )
 
         except json.JSONDecodeError as e:
             logger.debug(f"Failed to parse JSON response: {e}")

@@ -172,20 +172,17 @@ class EvalMetrics:
             period_end=now,
             task_completion_rate=completed / total,
             tool_selection_accuracy=no_tool_errors / total,
-            avg_tool_calls_per_task=(
-                sum(r.metrics.total_tool_calls for r in results) / total
-            ),
+            avg_tool_calls_per_task=(sum(r.metrics.total_tool_calls for r in results) / total),
             avg_iterations=sum(r.metrics.total_iterations for r in results) / total,
             avg_token_usage=int(
-                sum(r.metrics.total_input_tokens + r.metrics.total_output_tokens for r in results) / total
+                sum(r.metrics.total_input_tokens + r.metrics.total_output_tokens for r in results)
+                / total
             ),
             avg_latency_ms=sum(r.metrics.total_duration_ms for r in results) / total,
             loop_detection_rate=loops / total,
             error_recovery_rate=(recovered / len(had_errors)) if had_errors else 1.0,
             rollback_rate=rollbacks / total,
-            avg_judge_score=(
-                sum(r.judge_score for r in results) / total
-            ),
+            avg_judge_score=(sum(r.judge_score for r in results) / total),
         )
 
         return metrics

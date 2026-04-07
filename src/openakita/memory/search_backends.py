@@ -39,22 +39,17 @@ class SearchBackend(Protocol):
         """搜索, 返回 [(memory_id, score), ...], score 越高越相关"""
         ...
 
-    def add(self, memory_id: str, content: str, metadata: dict | None = None) -> bool:
-        ...
+    def add(self, memory_id: str, content: str, metadata: dict | None = None) -> bool: ...
 
-    def delete(self, memory_id: str) -> bool:
-        ...
+    def delete(self, memory_id: str) -> bool: ...
 
-    def batch_add(self, items: list[dict]) -> int:
-        ...
+    def batch_add(self, items: list[dict]) -> int: ...
 
     @property
-    def available(self) -> bool:
-        ...
+    def available(self) -> bool: ...
 
     @property
-    def backend_type(self) -> str:
-        ...
+    def backend_type(self) -> str: ...
 
 
 # =========================================================================
@@ -116,6 +111,7 @@ class FTS5Backend:
         if self._jieba_available is None:
             try:
                 import jieba
+
                 self._jieba = jieba
                 self._jieba_available = True
                 self._jieba.setLogLevel(logging.WARNING)
@@ -236,9 +232,7 @@ class APIEmbeddingBackend:
         if query_emb is None:
             return []
 
-        memories = self._storage.query(
-            memory_type=filter_type, limit=200
-        )
+        memories = self._storage.query(memory_type=filter_type, limit=200)
         if not memories:
             return []
 
@@ -269,9 +263,7 @@ class APIEmbeddingBackend:
         if not text.strip():
             return None
 
-        content_hash = hashlib.sha256(
-            f"{self._model}:{text}".encode()
-        ).hexdigest()
+        content_hash = hashlib.sha256(f"{self._model}:{text}".encode()).hexdigest()
 
         cached = self._storage.get_cached_embedding(content_hash)
         if cached is not None:
@@ -280,15 +272,14 @@ class APIEmbeddingBackend:
         embedding = self._call_api(text)
         if embedding is not None:
             blob = self._floats_to_bytes(embedding)
-            self._storage.save_cached_embedding(
-                content_hash, blob, self._model, len(embedding)
-            )
+            self._storage.save_cached_embedding(content_hash, blob, self._model, len(embedding))
         return embedding
 
     def _call_api(self, text: str) -> list[float] | None:
         try:
             if self._httpx is None:
                 import httpx
+
                 self._httpx = httpx
 
             if self._provider == "dashscope":

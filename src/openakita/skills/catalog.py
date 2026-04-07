@@ -55,7 +55,9 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
         except (KeyError, ValueError, IndexError) as e:
             logger.warning(
                 "[SkillCatalog] str.format failed (template=%r, keys=%s): %s",
-                template[:60], list(kwargs.keys()), e,
+                template[:60],
+                list(kwargs.keys()),
+                e,
             )
             return template + " " + " | ".join(f"{k}={v}" for k, v in kwargs.items())
 
@@ -78,7 +80,8 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
         但仍保留在注册表中供 list_skills / get_skill_info 按需发现。
         """
         skills = [
-            s for s in self.registry.list_enabled()
+            s
+            for s in self.registry.list_enabled()
             if not s.disable_model_invocation and not s.catalog_hidden
         ]
         if self._usage_tracker:
@@ -148,7 +151,8 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
 
             logger.info(
                 "Generated skill catalog with %d skills (%d hidden)",
-                len(skills), hidden_count,
+                len(skills),
+                hidden_count,
             )
             return catalog
 

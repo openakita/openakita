@@ -94,6 +94,7 @@ class MediaHandler:
             logger.info(f"Whisper model '{self.whisper_model}' loaded successfully")
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
+
             hint = import_or_hint("whisper")
             logger.warning(f"Whisper 不可用（本进程内不再重试）: {hint}")
             self._whisper_unavailable = True
@@ -281,6 +282,7 @@ class MediaHandler:
 
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
+
             hint = import_or_hint("pytesseract")
             logger.warning(f"OCR 不可用: {hint}")
             return ""
@@ -360,6 +362,7 @@ class MediaHandler:
 
             except ImportError:
                 from openakita.tools._import_helper import import_or_hint
+
                 hint = import_or_hint("fitz")
                 raise ImportError(f"PDF 提取不可用: {hint}")
 
@@ -378,6 +381,7 @@ class MediaHandler:
 
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
+
             hint = import_or_hint("docx")
             raise ImportError(f"DOCX 提取不可用: {hint}")
 
@@ -401,6 +405,7 @@ class MediaHandler:
 
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
+
             hint = import_or_hint("openpyxl")
             raise ImportError(f"XLSX 提取不可用: {hint}")
 
@@ -423,5 +428,6 @@ class MediaHandler:
 
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
+
             hint = import_or_hint("pptx")
             raise ImportError(f"PPTX 提取不可用: {hint}")

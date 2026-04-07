@@ -26,32 +26,60 @@ _REAP_INTERVAL_SECONDS = 60  # 每分钟检查一次
 # INCLUSIVE 模式下始终保留的基础系统工具。
 # 所有子 Agent（含用户手动创建的）都需要这些工具才能正常工作。
 # 只有浏览器、桌面控制、MCP、定时任务等专用工具需在 profile.skills 显式列出。
-ESSENTIAL_TOOL_NAMES: frozenset[str] = frozenset({
-    "run_shell", "read_file", "write_file", "list_directory",
-    "web_search", "deliver_artifacts", "get_chat_history",
-    "search_memory", "add_memory",
-    "create_todo", "update_todo_step", "get_todo_status", "complete_todo",
-    "list_skills", "get_skill_info",
-    "get_tool_info", "set_task_timeout",
-    "get_image_file", "get_voice_file",
-})
+ESSENTIAL_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "run_shell",
+        "read_file",
+        "write_file",
+        "list_directory",
+        "web_search",
+        "deliver_artifacts",
+        "get_chat_history",
+        "search_memory",
+        "add_memory",
+        "create_todo",
+        "update_todo_step",
+        "get_todo_status",
+        "complete_todo",
+        "list_skills",
+        "get_skill_info",
+        "get_tool_info",
+        "set_task_timeout",
+        "get_image_file",
+        "get_voice_file",
+    }
+)
 
-ESSENTIAL_SYSTEM_SKILLS: frozenset[str] = frozenset({
-    # 规划（多步任务的核心）
-    "create-todo", "update-todo-step", "get-todo-status", "complete-todo",
-    # 技能发现（渐进式披露入口 — 外部技能必须先 get_skill_info 读指令）
-    "get-skill-info", "list-skills",
-    # 文件系统（外部技能执行的基础 — 读指令→写代码→run-shell 执行）
-    "run-shell", "read-file", "write-file", "list-directory",
-    # IM 通道（接收用户输入、交付文件）
-    "deliver-artifacts", "get-chat-history", "get-image-file", "get-voice-file",
-    # 记忆
-    "search-memory", "add-memory",
-    # 信息检索
-    "web-search",
-    # 系统
-    "get-tool-info", "set-task-timeout",
-})
+ESSENTIAL_SYSTEM_SKILLS: frozenset[str] = frozenset(
+    {
+        # 规划（多步任务的核心）
+        "create-todo",
+        "update-todo-step",
+        "get-todo-status",
+        "complete-todo",
+        # 技能发现（渐进式披露入口 — 外部技能必须先 get_skill_info 读指令）
+        "get-skill-info",
+        "list-skills",
+        # 文件系统（外部技能执行的基础 — 读指令→写代码→run-shell 执行）
+        "run-shell",
+        "read-file",
+        "write-file",
+        "list-directory",
+        # IM 通道（接收用户输入、交付文件）
+        "deliver-artifacts",
+        "get-chat-history",
+        "get-image-file",
+        "get-voice-file",
+        # 记忆
+        "search-memory",
+        "add-memory",
+        # 信息检索
+        "web-search",
+        # 系统
+        "get-tool-info",
+        "set-task-timeout",
+    }
+)
 
 
 class _GlobalStoreSource:
@@ -75,11 +103,13 @@ class _GlobalStoreSource:
         memories = self._store.search_semantic(query, limit=limit)
         results = []
         for mem in memories:
-            results.append({
-                "id": f"global::{mem.id}",
-                "content": mem.to_markdown(),
-                "relevance": 0.6,
-            })
+            results.append(
+                {
+                    "id": f"global::{mem.id}",
+                    "content": mem.to_markdown(),
+                    "relevance": 0.6,
+                }
+            )
         return results
 
 
@@ -93,7 +123,11 @@ class AgentFactory:
     """
 
     async def create(
-        self, profile: AgentProfile, *, parent_brain: Any = None, **kwargs: Any,
+        self,
+        profile: AgentProfile,
+        *,
+        parent_brain: Any = None,
+        **kwargs: Any,
     ) -> Agent:
         from openakita.core.agent import Agent
 
@@ -126,7 +160,8 @@ class AgentFactory:
         if needs_rebuild and hasattr(agent, "_context"):
             base_prompt = agent.identity.get_system_prompt()
             agent._context.system = agent._build_system_prompt(
-                base_prompt, use_compiled=True,
+                base_prompt,
+                use_compiled=True,
             )
 
         # ── 身份隔离 ──
@@ -141,10 +176,13 @@ class AgentFactory:
         if profile.permission_rules:
             try:
                 from ..core.permission import from_config
+
                 ruleset = from_config(
-                    {r["permission"]: {r.get("pattern", "*"): r["action"]}
-                     for r in profile.permission_rules
-                     if "permission" in r and "action" in r}
+                    {
+                        r["permission"]: {r.get("pattern", "*"): r["action"]}
+                        for r in profile.permission_rules
+                        if "permission" in r and "action" in r
+                    }
                 )
                 if ruleset and hasattr(agent, "_tool_executor"):
                     agent._tool_executor._extra_permission_rules = ruleset
@@ -239,10 +277,7 @@ class AgentFactory:
             # 显式选择的技能即使全局 disabled 也应在此 Agent 上可用
             if profile.skills:
                 for skill in registry.list_all(include_disabled=True):
-                    if (
-                        skill.disabled
-                        and AgentFactory._skill_in_set(skill.skill_id, exact, short)
-                    ):
+                    if skill.disabled and AgentFactory._skill_in_set(skill.skill_id, exact, short):
                         skill.disabled = False
 
         elif profile.skills_mode == SkillsMode.EXCLUSIVE:
@@ -276,22 +311,24 @@ class AgentFactory:
 
         if profile.tools_mode == "inclusive":
             agent._tools = [
-                t for t in agent._tools
+                t
+                for t in agent._tools
                 if t["name"] in specified or t["name"] in ESSENTIAL_TOOL_NAMES
             ]
         elif profile.tools_mode == "exclusive":
             agent._tools = [
-                t for t in agent._tools
+                t
+                for t in agent._tools
                 if t["name"] not in specified or t["name"] in ESSENTIAL_TOOL_NAMES
             ]
 
         agent._tools.sort(key=lambda t: t["name"])
 
         from ..tools.catalog import ToolCatalog
+
         agent.tool_catalog = ToolCatalog(agent._tools)
         logger.info(
-            f"Tool filter applied: mode={profile.tools_mode}, "
-            f"remaining={len(agent._tools)} tools"
+            f"Tool filter applied: mode={profile.tools_mode}, remaining={len(agent._tools)} tools"
         )
 
     @staticmethod
@@ -327,6 +364,7 @@ class AgentFactory:
         profile_identity_dir = profile_dir / "identity"
 
         from ..config import settings
+
         global_identity_dir = settings.identity_path
 
         resolver = ProfileIdentityResolver(profile_identity_dir, global_identity_dir)
@@ -338,13 +376,11 @@ class AgentFactory:
         if hasattr(agent, "_context"):
             base_prompt = identity.get_system_prompt()
             agent._context.system = agent._build_system_prompt(
-                base_prompt, use_compiled=True,
+                base_prompt,
+                use_compiled=True,
             )
 
-        logger.info(
-            f"Identity override applied: profile={profile.id}, "
-            f"dir={profile_identity_dir}"
-        )
+        logger.info(f"Identity override applied: profile={profile.id}, dir={profile_identity_dir}")
 
     @staticmethod
     def _apply_memory_isolation(agent: Agent, profile: AgentProfile) -> None:
@@ -358,7 +394,7 @@ class AgentFactory:
         memory_dir = profile_dir / "memory"
         memory_dir.mkdir(parents=True, exist_ok=True)
 
-        memory_md_path = (profile_dir / "identity" / "MEMORY.md")
+        memory_md_path = profile_dir / "identity" / "MEMORY.md"
         if not memory_md_path.exists():
             memory_md_path = settings.memory_path
 
@@ -379,9 +415,7 @@ class AgentFactory:
         if profile.memory_inherit_global:
             global_store = agent.memory_manager.store
             isolated_mm._global_store_ref = global_store
-            isolated_mm.retrieval_engine._external_sources.append(
-                _GlobalStoreSource(global_store)
-            )
+            isolated_mm.retrieval_engine._external_sources.append(_GlobalStoreSource(global_store))
 
         agent.memory_manager = isolated_mm
 
@@ -407,9 +441,8 @@ class AgentFactory:
         loaded_ids = list(pm.loaded_plugins.keys())
 
         for plugin_id in loaded_ids:
-            should_keep = (
-                (profile.plugins_mode == "inclusive" and plugin_id in specified)
-                or (profile.plugins_mode == "exclusive" and plugin_id not in specified)
+            should_keep = (profile.plugins_mode == "inclusive" and plugin_id in specified) or (
+                profile.plugins_mode == "exclusive" and plugin_id not in specified
             )
             if not should_keep:
                 try:
@@ -506,9 +539,7 @@ class AgentInstancePool:
 
     def invalidate_profile(self, profile_id: str) -> int:
         """Drop all pooled Agent instances bound to *profile_id*."""
-        to_remove = [
-            key for key, entry in self._pool.items() if entry.profile_id == profile_id
-        ]
+        to_remove = [key for key, entry in self._pool.items() if entry.profile_id == profile_id]
         removed = 0
         for key in to_remove:
             entry = self._pool.pop(key, None)
@@ -524,13 +555,13 @@ class AgentInstancePool:
                 self._create_locks.pop(key, None)
 
         if removed:
-            logger.info(
-                f"Pool invalidated profile={profile_id} across {removed} session(s)"
-            )
+            logger.info(f"Pool invalidated profile={profile_id} across {removed} session(s)")
         return removed
 
     async def get_or_create(
-        self, session_id: str, profile: AgentProfile,
+        self,
+        session_id: str,
+        profile: AgentProfile,
     ) -> Agent:
         """获取已有实例或创建新实例。
 
@@ -568,7 +599,8 @@ class AgentInstancePool:
 
             parent_brain = None
             session_entries = [
-                e for e in self._pool.values()
+                e
+                for e in self._pool.values()
                 if e.session_id == session_id and hasattr(e.agent, "brain")
             ]
             if session_entries:
@@ -576,8 +608,11 @@ class AgentInstancePool:
                 def _sort_key(e: _PoolEntry) -> tuple:
                     profile = getattr(e.agent, "_agent_profile", None)
                     is_default = e.profile_id == "default"
-                    is_system = profile is not None and getattr(profile, "type", None) == AgentType.SYSTEM
+                    is_system = (
+                        profile is not None and getattr(profile, "type", None) == AgentType.SYSTEM
+                    )
                     return (not is_default, not is_system, e.created_at)
+
                 best = min(session_entries, key=_sort_key)
                 parent_brain = best.agent.brain
 
@@ -588,13 +623,13 @@ class AgentInstancePool:
             new_entry = _PoolEntry(agent, profile.id, session_id, current_version)
             self._pool[key] = new_entry
 
-        logger.info(
-            f"Pool created agent: session={session_id}, profile={profile.id}"
-        )
+        logger.info(f"Pool created agent: session={session_id}, profile={profile.id}")
         return agent
 
     def get_existing(
-        self, session_id: str, profile_id: str | None = None,
+        self,
+        session_id: str,
+        profile_id: str | None = None,
     ) -> Agent | None:
         """Return an existing Agent without creating a new one.
 
@@ -637,10 +672,12 @@ class AgentInstancePool:
 
         sessions: dict[str, list[dict]] = {}
         for e in entries:
-            sessions.setdefault(e.session_id, []).append({
-                "profile_id": e.profile_id,
-                "idle_seconds": round(e.idle_seconds, 1),
-            })
+            sessions.setdefault(e.session_id, []).append(
+                {
+                    "profile_id": e.profile_id,
+                    "idle_seconds": round(e.idle_seconds, 1),
+                }
+            )
 
         return {
             "total": len(entries),
@@ -661,6 +698,7 @@ class AgentInstancePool:
             return self._profile_store
         try:
             from openakita.agents.profile import get_profile_store
+
             return get_profile_store()
         except Exception:
             return None

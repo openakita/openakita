@@ -98,7 +98,8 @@ class SkillWatcher:
             if self._debounce_timer:
                 self._debounce_timer.cancel()
             self._debounce_timer = threading.Timer(
-                DEBOUNCE_SECONDS, self._fire_reload,
+                DEBOUNCE_SECONDS,
+                self._fire_reload,
             )
             self._debounce_timer.daemon = True
             self._debounce_timer.start()
@@ -131,6 +132,7 @@ def clear_all_skill_caches() -> None:
     # F13: Clear loader internal caches
     try:
         from .loader import SkillLoader
+
         if hasattr(SkillLoader, "_load_cache"):
             SkillLoader._load_cache = {}
     except Exception:
@@ -139,6 +141,7 @@ def clear_all_skill_caches() -> None:
     # F13: Clear parser memoization cache
     try:
         from .parser import SkillParser
+
         if hasattr(SkillParser, "_parse_cache"):
             SkillParser._parse_cache.clear()
     except Exception:

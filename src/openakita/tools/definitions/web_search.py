@@ -26,7 +26,10 @@ WEB_SEARCH_TOOLS = [
             "- browser: Interactive web tasks (login, form filling, screenshots)"
         ),
         "related_tools": [
-            {"name": "browser_navigate", "relation": "需要打开网页查看完整内容或截图时改用 browser_navigate"},
+            {
+                "name": "browser_navigate",
+                "relation": "需要打开网页查看完整内容或截图时改用 browser_navigate",
+            },
             {"name": "news_search", "relation": "专门搜索新闻时改用 news_search"},
         ],
         "detail": """使用 DuckDuckGo 搜索网页。

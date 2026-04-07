@@ -67,7 +67,13 @@ class ChannelAdapter(ABC):
         "markdown": False,
     }
 
-    def __init__(self, *, channel_name: str | None = None, bot_id: str | None = None, agent_profile_id: str = "default"):
+    def __init__(
+        self,
+        *,
+        channel_name: str | None = None,
+        bot_id: str | None = None,
+        agent_profile_id: str = "default",
+    ):
         self._message_callback: MessageCallback | None = None
         self._event_callback: EventCallback | None = None
         self._failure_callback: FailureCallback | None = None
@@ -126,8 +132,7 @@ class ChannelAdapter(ABC):
         port = getattr(config, "callback_port", None) or getattr(config, "webhook_port", None)
         if isinstance(port, int) and port < 1024:
             warnings.append(
-                f"[{self.channel_name}] 端口 {port} < 1024，"
-                f"可能需要 root 权限或 setcap 配置。"
+                f"[{self.channel_name}] 端口 {port} < 1024，可能需要 root 权限或 setcap 配置。"
             )
 
         return warnings

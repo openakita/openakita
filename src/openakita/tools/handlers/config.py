@@ -25,32 +25,59 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # 黑名单: 不允许通过聊天修改的字段
 # ---------------------------------------------------------------------------
-_READONLY_FIELDS = frozenset({
-    "project_root",
-    "database_path",
-    "session_storage_path",
-    "log_dir",
-    "log_file_prefix",
-})
+_READONLY_FIELDS = frozenset(
+    {
+        "project_root",
+        "database_path",
+        "session_storage_path",
+        "log_dir",
+        "log_file_prefix",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # 需重启才能生效的字段
 # ---------------------------------------------------------------------------
-_RESTART_REQUIRED_FIELDS = frozenset({
-    "telegram_enabled", "telegram_bot_token", "telegram_webhook_url",
-    "telegram_pairing_code", "telegram_require_pairing", "telegram_proxy",
-    "feishu_enabled", "feishu_app_id", "feishu_app_secret",
-    "wework_enabled", "wework_corp_id", "wework_token", "wework_encoding_aes_key",
-    "wework_callback_port", "wework_callback_host",
-    "dingtalk_enabled", "dingtalk_client_id", "dingtalk_client_secret",
-    "onebot_enabled", "onebot_ws_url", "onebot_access_token",
-    "qqbot_enabled", "qqbot_app_id", "qqbot_app_secret", "qqbot_sandbox",
-    "qqbot_mode", "qqbot_webhook_port", "qqbot_webhook_path",
-    "wechat_enabled", "wechat_token",
-    "orchestration_enabled", "orchestration_mode",
-    "orchestration_bus_address", "orchestration_pub_address",
-    "embedding_model", "embedding_device",
-})
+_RESTART_REQUIRED_FIELDS = frozenset(
+    {
+        "telegram_enabled",
+        "telegram_bot_token",
+        "telegram_webhook_url",
+        "telegram_pairing_code",
+        "telegram_require_pairing",
+        "telegram_proxy",
+        "feishu_enabled",
+        "feishu_app_id",
+        "feishu_app_secret",
+        "wework_enabled",
+        "wework_corp_id",
+        "wework_token",
+        "wework_encoding_aes_key",
+        "wework_callback_port",
+        "wework_callback_host",
+        "dingtalk_enabled",
+        "dingtalk_client_id",
+        "dingtalk_client_secret",
+        "onebot_enabled",
+        "onebot_ws_url",
+        "onebot_access_token",
+        "qqbot_enabled",
+        "qqbot_app_id",
+        "qqbot_app_secret",
+        "qqbot_sandbox",
+        "qqbot_mode",
+        "qqbot_webhook_port",
+        "qqbot_webhook_path",
+        "wechat_enabled",
+        "wechat_token",
+        "orchestration_enabled",
+        "orchestration_mode",
+        "orchestration_bus_address",
+        "orchestration_pub_address",
+        "embedding_model",
+        "embedding_device",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # 敏感字段模式
@@ -63,8 +90,17 @@ _SENSITIVE_PATTERN = re.compile(r"(api_key|secret|token|password)", re.IGNORECAS
 _CATEGORY_RULES: list[tuple[tuple[str, ...], str]] = [
     (("anthropic_", "default_model", "max_tokens"), "LLM"),
     (("dashscope_",), "LLM/DashScope"),
-    (("agent_name", "max_iterations", "force_tool_call",
-      "tool_max_parallel", "allow_parallel", "selfcheck_"), "Agent"),
+    (
+        (
+            "agent_name",
+            "max_iterations",
+            "force_tool_call",
+            "tool_max_parallel",
+            "allow_parallel",
+            "selfcheck_",
+        ),
+        "Agent",
+    ),
     (("thinking_",), "Agent/思考模式"),
     (("im_chain_push",), "IM/思维链推送"),
     (("progress_timeout", "hard_timeout"), "Agent/超时"),
@@ -256,7 +292,9 @@ class ConfigHandler:
                     default_val = "(dynamic)"
 
             sensitive = _is_sensitive(field_name)
-            display_current = _mask_value(current_val) if sensitive and current_val else str(current_val)
+            display_current = (
+                _mask_value(current_val) if sensitive and current_val else str(current_val)
+            )
             display_default = str(default_val)
 
             annotation = field_info.annotation
@@ -278,10 +316,12 @@ class ConfigHandler:
 
         if not grouped:
             if category_filter:
-                return f"未找到分类 \"{category_filter}\" 的配置项。调用 action=discover 不带 category 可查看所有分类。"
+                return f'未找到分类 "{category_filter}" 的配置项。调用 action=discover 不带 category 可查看所有分类。'
             return "未发现可配置项。"
 
-        lines = [f"## 可配置项（共 {sum(len(v) for v in grouped.values())} 项，{len(grouped)} 个分类）\n"]
+        lines = [
+            f"## 可配置项（共 {sum(len(v) for v in grouped.values())} 项，{len(grouped)} 个分类）\n"
+        ]
         for cat in sorted(grouped.keys()):
             items = grouped[cat]
             modified_count = sum(1 for it in items if it["is_modified"])
@@ -336,9 +376,7 @@ class ConfigHandler:
             val = getattr(settings, field_name, None)
             if _is_sensitive(field_name) and val:
                 val = _mask_value(val)
-            grouped.setdefault(cat, []).append(
-                f"- `{field_name.upper()}` = {val}"
-            )
+            grouped.setdefault(cat, []).append(f"- `{field_name.upper()}` = {val}")
 
         # 追加 LLM 端点概览（当查看 LLM 分类或无过滤时）
         if not category_filter or "LLM" in category_filter:
@@ -349,7 +387,9 @@ class ConfigHandler:
         if not grouped:
             return "未找到匹配的配置项。"
 
-        parts.append("## 当前配置" + (f" (分类: {category_filter})" if category_filter else "") + "\n")
+        parts.append(
+            "## 当前配置" + (f" (分类: {category_filter})" if category_filter else "") + "\n"
+        )
         for cat in sorted(grouped.keys()):
             parts.append(f"### {cat}")
             parts.extend(grouped[cat])
@@ -361,6 +401,7 @@ class ConfigHandler:
         """格式化 LLM 端点摘要"""
         try:
             from ...llm.config import load_endpoints_config
+
             endpoints, compiler_eps, stt_eps, _ = load_endpoints_config()
         except Exception:
             return ["- ⚠️ 无法读取端点配置"]
@@ -392,7 +433,7 @@ class ConfigHandler:
 
         updates = params.get("updates")
         if not updates or not isinstance(updates, dict):
-            return "❌ updates 参数缺失或格式错误，应为 {\"KEY\": \"value\"} 字典"
+            return '❌ updates 参数缺失或格式错误，应为 {"KEY": "value"} 字典'
 
         # 项目根目录
         project_root = Path(settings.project_root)
@@ -460,7 +501,9 @@ class ConfigHandler:
 
             # 热重载 settings（reload 已跳过 _PERSISTABLE_KEYS 字段）
             changed_fields = settings.reload()
-            logger.info(f"[ConfigHandler] set: updated {len(env_entries)} entries, reloaded fields: {changed_fields}")
+            logger.info(
+                f"[ConfigHandler] set: updated {len(env_entries)} entries, reloaded fields: {changed_fields}"
+            )
 
             # 双重保险：恢复运行时持久化字段（防止旧版 reload 或异常路径覆盖）
             try:
@@ -471,6 +514,7 @@ class ConfigHandler:
             # 持久化 runtime_state（如果修改了可持久化的字段）
             try:
                 from ...config import _PERSISTABLE_KEYS
+
                 if any(k.lower() in _PERSISTABLE_KEYS for k in env_entries):
                     runtime_state.save()
             except Exception as e:
@@ -505,7 +549,9 @@ class ConfigHandler:
             return f"值 {value} 过大。{msg}"
         return None
 
-    def _validate_value(self, field_name: str, field_info: Any, value: Any) -> tuple[Any, str | None]:
+    def _validate_value(
+        self, field_name: str, field_info: Any, value: Any
+    ) -> tuple[Any, str | None]:
         """校验配置值的类型和合法性。返回 (validated_value, error_or_None)"""
         annotation = field_info.annotation
 
@@ -650,10 +696,10 @@ class ConfigHandler:
         if removed is None:
             all_eps = mgr.list_endpoints(endpoint_type)
             available = ", ".join(e.get("name", "") for e in all_eps) or "(无)"
-            return f"❌ 未找到端点 \"{endpoint_name}\"。当前 {target} 端点: {available}"
+            return f'❌ 未找到端点 "{endpoint_name}"。当前 {target} 端点: {available}'
 
         reload_info = self._reload_llm_client()
-        return f"✅ 已删除端点 \"{endpoint_name}\" ({target})。{reload_info}"
+        return f'✅ 已删除端点 "{endpoint_name}" ({target})。{reload_info}'
 
     # ------------------------------------------------------------------
     # test_endpoint: 测试连通性
@@ -676,12 +722,12 @@ class ConfigHandler:
 
         if not target_ep:
             available = ", ".join(ep.name for ep in all_eps) or "(无)"
-            return f"❌ 未找到端点 \"{endpoint_name}\"。可用端点: {available}"
+            return f'❌ 未找到端点 "{endpoint_name}"。可用端点: {available}'
 
         api_key = target_ep.get_api_key()
         if not api_key:
             return (
-                f"❌ 端点 \"{endpoint_name}\" 未配置 API Key。\n"
+                f'❌ 端点 "{endpoint_name}" 未配置 API Key。\n'
                 f"请设置环境变量 {target_ep.api_key_env or '(未指定)'} 或在端点配置中提供 api_key。"
             )
 
@@ -709,7 +755,7 @@ class ConfigHandler:
 
                 if resp.status_code < 400:
                     return (
-                        f"✅ 端点 \"{endpoint_name}\" 连通正常\n"
+                        f'✅ 端点 "{endpoint_name}" 连通正常\n'
                         f"- 状态码: {resp.status_code}\n"
                         f"- 延迟: {elapsed_ms}ms\n"
                         f"- 服务商: {target_ep.provider} | 模型: {target_ep.model}"
@@ -717,17 +763,17 @@ class ConfigHandler:
                 else:
                     body_preview = (resp.text or "")[:300]
                     return (
-                        f"⚠️ 端点 \"{endpoint_name}\" 返回错误\n"
+                        f'⚠️ 端点 "{endpoint_name}" 返回错误\n'
                         f"- 状态码: {resp.status_code}\n"
                         f"- 延迟: {elapsed_ms}ms\n"
                         f"- 响应: {body_preview}"
                     )
         except httpx.ConnectError as e:
-            return f"❌ 端点 \"{endpoint_name}\" 连接失败: 无法连接到 {target_ep.base_url}\n{e}"
+            return f'❌ 端点 "{endpoint_name}" 连接失败: 无法连接到 {target_ep.base_url}\n{e}'
         except httpx.TimeoutException:
-            return f"❌ 端点 \"{endpoint_name}\" 请求超时 (15s)"
+            return f'❌ 端点 "{endpoint_name}" 请求超时 (15s)'
         except Exception as e:
-            return f"❌ 端点 \"{endpoint_name}\" 测试失败: {type(e).__name__}: {e}"
+            return f'❌ 端点 "{endpoint_name}" 测试失败: {type(e).__name__}: {e}'
 
     # ------------------------------------------------------------------
     # set_ui: 设置 UI 偏好
@@ -829,7 +875,9 @@ class ConfigHandler:
 
         slug = entry["slug"].strip()
         if not self._PROVIDER_SLUG_PATTERN.match(slug):
-            return f"slug 格式无效: '{slug}'（只允许小写字母、数字、连字符、下划线，不能以符号开头）"
+            return (
+                f"slug 格式无效: '{slug}'（只允许小写字母、数字、连字符、下划线，不能以符号开头）"
+            )
 
         api_type = entry["api_type"].strip()
         if api_type not in self._PROVIDER_VALID_API_TYPES:
@@ -873,8 +921,11 @@ class ConfigHandler:
             "api_key_env_suggestion": (provider_data.get("api_key_env_suggestion") or "").strip(),
             "supports_model_list": provider_data.get("supports_model_list", True),
             "supports_capability_api": provider_data.get("supports_capability_api", False),
-            "registry_class": provider_data.get("registry_class") or (
-                "AnthropicRegistry" if provider_data["api_type"].strip() == "anthropic" else "OpenAIRegistry"
+            "registry_class": provider_data.get("registry_class")
+            or (
+                "AnthropicRegistry"
+                if provider_data["api_type"].strip() == "anthropic"
+                else "OpenAIRegistry"
             ),
             "requires_api_key": provider_data.get("requires_api_key", True),
             "is_local": provider_data.get("is_local", False),
@@ -996,6 +1047,7 @@ class ConfigHandler:
         """从 provider registry 获取默认配置"""
         try:
             from ...llm.registries import list_providers
+
             for p in list_providers():
                 if p.slug == provider_slug:
                     return {
@@ -1068,8 +1120,10 @@ class ConfigHandler:
             icon = "✅" if installed else "⬜"
             lines.append(f"### {icon} {ext['name']} ({ext['category']})")
             lines.append(f"{ext['description']}")
-            lines.append(f"- 状态: {'**已安装**' if installed else '未安装'}"
-                         + (f" (`{path}`)" if installed else ""))
+            lines.append(
+                f"- 状态: {'**已安装**' if installed else '未安装'}"
+                + (f" (`{path}`)" if installed else "")
+            )
             lines.append(f"- 安装: `{ext['install']}`")
             lines.append(f"- 升级: `{ext['upgrade']}`")
             if ext.get("setup"):
@@ -1094,8 +1148,7 @@ class ConfigHandler:
             lines.append("")
 
         lines.append(
-            "感谢这些项目的贡献者们，让 AI Agent 能够更可靠地与真实世界的"
-            "网站和桌面软件交互。"
+            "感谢这些项目的贡献者们，让 AI Agent 能够更可靠地与真实世界的网站和桌面软件交互。"
         )
         return "\n".join(lines)
 

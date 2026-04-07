@@ -61,7 +61,9 @@ class LockManager:
                     self._locks[resource] = ResourceLock(resource)
         return self._locks[resource]
 
-    def lock(self, resource: str, *, holder: str = "", timeout: float | None = None) -> AsyncContextManager:
+    def lock(
+        self, resource: str, *, holder: str = "", timeout: float | None = None
+    ) -> AsyncContextManager:
         """
         Get an async context manager for a resource lock.
 
@@ -108,7 +110,9 @@ class LockManager:
                     lock.release()
                     released += 1
                 except RuntimeError:
-                    logger.warning(f"[LockManager] Cannot release lock {name} — not owned by current task")
+                    logger.warning(
+                        f"[LockManager] Cannot release lock {name} — not owned by current task"
+                    )
         # Clean up unused lock entries to prevent memory growth
         async with self._meta_lock:
             stale_keys = [k for k, v in self._locks.items() if not v.locked and v.acquire_count > 0]

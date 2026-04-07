@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 class BudgetAction(Enum):
     """预算动作（值为严重程度，越大越严重）"""
+
     OK = 0
     WARNING = 1
     DOWNGRADE = 2
@@ -38,6 +39,7 @@ class BudgetAction(Enum):
 
 class BudgetExceeded(Exception):
     """预算耗尽异常"""
+
     def __init__(self, dimension: str, used: float, limit: float):
         self.dimension = dimension
         self.used = used
@@ -48,11 +50,12 @@ class BudgetExceeded(Exception):
 @dataclass
 class BudgetConfig:
     """预算配置"""
-    max_tokens: int = 0          # 0 = 不限制
-    max_cost_usd: float = 0.0   # 0 = 不限制
+
+    max_tokens: int = 0  # 0 = 不限制
+    max_cost_usd: float = 0.0  # 0 = 不限制
     max_duration_seconds: int = 0  # 0 = 不限制
-    max_iterations: int = 0      # 0 = 不限制
-    max_tool_calls: int = 0      # 0 = 不限制
+    max_iterations: int = 0  # 0 = 不限制
+    max_tool_calls: int = 0  # 0 = 不限制
 
     warning_threshold: float = 0.80
     downgrade_threshold: float = 0.90
@@ -63,18 +66,21 @@ class BudgetConfig:
 
     @property
     def has_any_limit(self) -> bool:
-        return any([
-            self.max_tokens > 0,
-            self.max_cost_usd > 0,
-            self.max_duration_seconds > 0,
-            self.max_iterations > 0,
-            self.max_tool_calls > 0,
-        ])
+        return any(
+            [
+                self.max_tokens > 0,
+                self.max_cost_usd > 0,
+                self.max_duration_seconds > 0,
+                self.max_iterations > 0,
+                self.max_tool_calls > 0,
+            ]
+        )
 
 
 @dataclass
 class BudgetStatus:
     """预算状态快照"""
+
     action: BudgetAction
     dimension: str = ""
     usage_ratio: float = 0.0
@@ -90,7 +96,9 @@ class ResourceBudget:
     ReasoningEngine 每轮迭代调用 check() 检查预算。
     """
 
-    def __init__(self, config: BudgetConfig | None = None, parent: ResourceBudget | None = None) -> None:
+    def __init__(
+        self, config: BudgetConfig | None = None, parent: ResourceBudget | None = None
+    ) -> None:
         self._config = config or BudgetConfig()
         self._parent: ResourceBudget | None = parent
         self._start_time: float = 0.0
@@ -163,9 +171,15 @@ class ResourceBudget:
         sub_config = BudgetConfig(
             max_tokens=int(self._config.max_tokens * ratio) if self._config.max_tokens else 0,
             max_cost_usd=self._config.max_cost_usd * ratio if self._config.max_cost_usd else 0.0,
-            max_duration_seconds=int(self._config.max_duration_seconds * ratio) if self._config.max_duration_seconds else 0,
-            max_iterations=int(self._config.max_iterations * ratio) if self._config.max_iterations else 0,
-            max_tool_calls=int(self._config.max_tool_calls * ratio) if self._config.max_tool_calls else 0,
+            max_duration_seconds=int(self._config.max_duration_seconds * ratio)
+            if self._config.max_duration_seconds
+            else 0,
+            max_iterations=int(self._config.max_iterations * ratio)
+            if self._config.max_iterations
+            else 0,
+            max_tool_calls=int(self._config.max_tool_calls * ratio)
+            if self._config.max_tool_calls
+            else 0,
             warning_threshold=self._config.warning_threshold,
             downgrade_threshold=self._config.downgrade_threshold,
             pause_threshold=self._config.pause_threshold,
@@ -200,6 +214,7 @@ class ResourceBudget:
             # Decision Trace
             try:
                 from ..tracing.tracer import get_tracer
+
                 tracer = get_tracer()
                 tracer.record_decision(
                     decision_type="budget_check",
@@ -241,34 +256,57 @@ class ResourceBudget:
         results: list[BudgetStatus] = []
 
         if self._config.max_tokens > 0:
-            results.append(self._check_dimension(
-                "tokens", self._tokens_used, self._config.max_tokens,
-            ))
+            results.append(
+                self._check_dimension(
+                    "tokens",
+                    self._tokens_used,
+                    self._config.max_tokens,
+                )
+            )
 
         if self._config.max_cost_usd > 0:
-            results.append(self._check_dimension(
-                "cost_usd", self._cost_used, self._config.max_cost_usd,
-            ))
+            results.append(
+                self._check_dimension(
+                    "cost_usd",
+                    self._cost_used,
+                    self._config.max_cost_usd,
+                )
+            )
 
         if self._config.max_duration_seconds > 0:
-            results.append(self._check_dimension(
-                "duration", self.elapsed_seconds, self._config.max_duration_seconds,
-            ))
+            results.append(
+                self._check_dimension(
+                    "duration",
+                    self.elapsed_seconds,
+                    self._config.max_duration_seconds,
+                )
+            )
 
         if self._config.max_iterations > 0:
-            results.append(self._check_dimension(
-                "iterations", self._iterations_used, self._config.max_iterations,
-            ))
+            results.append(
+                self._check_dimension(
+                    "iterations",
+                    self._iterations_used,
+                    self._config.max_iterations,
+                )
+            )
 
         if self._config.max_tool_calls > 0:
-            results.append(self._check_dimension(
-                "tool_calls", self._tool_calls_used, self._config.max_tool_calls,
-            ))
+            results.append(
+                self._check_dimension(
+                    "tool_calls",
+                    self._tool_calls_used,
+                    self._config.max_tool_calls,
+                )
+            )
 
         return results
 
     def _check_dimension(
-        self, dimension: str, used: float, limit: float,
+        self,
+        dimension: str,
+        used: float,
+        limit: float,
     ) -> BudgetStatus:
         """检查单个维度"""
         if limit <= 0:
@@ -311,6 +349,7 @@ def create_budget_from_settings() -> ResourceBudget:
     """从 settings 创建预算管理器"""
     try:
         from ..config import settings
+
         config = BudgetConfig(
             max_tokens=getattr(settings, "task_budget_tokens", 0),
             max_cost_usd=getattr(settings, "task_budget_cost", 0.0),

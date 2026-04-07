@@ -164,8 +164,11 @@ class RelationalMemoryStore:
                 c.execute(
                     "INSERT INTO mdrm_nodes_fts (node_id, content_tokens, action_tokens) "
                     "VALUES (?, ?, ?)",
-                    (row[0], self._tokenize_for_fts(row[1] or ""),
-                     self._tokenize_for_fts(row[2] or "")),
+                    (
+                        row[0],
+                        self._tokenize_for_fts(row[1] or ""),
+                        self._tokenize_for_fts(row[2] or ""),
+                    ),
                 )
                 count += 1
             if count:
@@ -202,8 +205,10 @@ class RelationalMemoryStore:
                 continue
             first = ord(seg[0])
             is_cjk = (
-                0x4E00 <= first <= 0x9FFF or 0x3400 <= first <= 0x4DBF
-                or 0x3040 <= first <= 0x309F or 0x30A0 <= first <= 0x30FF
+                0x4E00 <= first <= 0x9FFF
+                or 0x3400 <= first <= 0x4DBF
+                or 0x3040 <= first <= 0x309F
+                or 0x30A0 <= first <= 0x30FF
                 or 0xAC00 <= first <= 0xD7AF
             )
             if is_cjk:
@@ -211,7 +216,7 @@ class RelationalMemoryStore:
                     result.append(seg)
                 else:
                     for i in range(len(seg) - 1):
-                        result.append(seg[i: i + 2])
+                        result.append(seg[i : i + 2])
             else:
                 stripped = seg.strip()
                 if stripped:
@@ -226,14 +231,11 @@ class RelationalMemoryStore:
             )
             row = cur.fetchone()
             if row:
-                self._conn.execute(
-                    "DELETE FROM mdrm_nodes_fts WHERE rowid = ?", (row[0],)
-                )
+                self._conn.execute("DELETE FROM mdrm_nodes_fts WHERE rowid = ?", (row[0],))
             self._conn.execute(
                 "INSERT INTO mdrm_nodes_fts (node_id, content_tokens, action_tokens) "
                 "VALUES (?, ?, ?)",
-                (node_id, self._tokenize_for_fts(content),
-                 self._tokenize_for_fts(action_verb)),
+                (node_id, self._tokenize_for_fts(content), self._tokenize_for_fts(action_verb)),
             )
         except sqlite3.OperationalError:
             pass
@@ -246,9 +248,7 @@ class RelationalMemoryStore:
             )
             row = cur.fetchone()
             if row:
-                self._conn.execute(
-                    "DELETE FROM mdrm_nodes_fts WHERE rowid = ?", (row[0],)
-                )
+                self._conn.execute("DELETE FROM mdrm_nodes_fts WHERE rowid = ?", (row[0],))
         except sqlite3.OperationalError:
             pass
 
@@ -262,8 +262,11 @@ class RelationalMemoryStore:
                 self._conn.execute(
                     "INSERT INTO mdrm_nodes_fts (node_id, content_tokens, action_tokens) "
                     "VALUES (?, ?, ?)",
-                    (row[0], self._tokenize_for_fts(row[1] or ""),
-                     self._tokenize_for_fts(row[2] or "")),
+                    (
+                        row[0],
+                        self._tokenize_for_fts(row[1] or ""),
+                        self._tokenize_for_fts(row[2] or ""),
+                    ),
                 )
                 count += 1
             self._conn.commit()
@@ -312,9 +315,7 @@ class RelationalMemoryStore:
         )
 
         # Update entity index
-        self._conn.execute(
-            "DELETE FROM mdrm_entity_index WHERE node_id = ?", (node.id,)
-        )
+        self._conn.execute("DELETE FROM mdrm_entity_index WHERE node_id = ?", (node.id,))
         for ent in node.entities:
             try:
                 self._conn.execute(
@@ -346,22 +347,28 @@ class RelationalMemoryStore:
                     agent_id)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    node.id, node.content, node.node_type.value,
+                    node.id,
+                    node.content,
+                    node.node_type.value,
                     node.occurred_at.isoformat(),
                     (node.valid_from or node.occurred_at).isoformat(),
                     node.valid_until.isoformat() if node.valid_until else None,
-                    entities_json, node.action_verb, node.action_category,
-                    node.session_id, node.project, node.goal,
-                    node.importance, node.confidence, node.access_count,
+                    entities_json,
+                    node.action_verb,
+                    node.action_category,
+                    node.session_id,
+                    node.project,
+                    node.goal,
+                    node.importance,
+                    node.confidence,
+                    node.access_count,
                     node.embedding,
                     node.created_at.isoformat() if node.created_at else now,
                     now,
                     node.agent_id,
                 ),
             )
-            self._conn.execute(
-                "DELETE FROM mdrm_entity_index WHERE node_id = ?", (node.id,)
-            )
+            self._conn.execute("DELETE FROM mdrm_entity_index WHERE node_id = ?", (node.id,))
             for ent in node.entities:
                 try:
                     self._conn.execute(
@@ -382,9 +389,13 @@ class RelationalMemoryStore:
         return self._row_to_node(cur.description, row)
 
     def delete_node(self, node_id: str) -> bool:
-        self._conn.execute("DELETE FROM mdrm_edges WHERE source_id=? OR target_id=?", (node_id, node_id))
+        self._conn.execute(
+            "DELETE FROM mdrm_edges WHERE source_id=? OR target_id=?", (node_id, node_id)
+        )
         self._conn.execute("DELETE FROM mdrm_entity_index WHERE node_id=?", (node_id,))
-        self._conn.execute("DELETE FROM mdrm_reachable WHERE source_id=? OR target_id=?", (node_id, node_id))
+        self._conn.execute(
+            "DELETE FROM mdrm_reachable WHERE source_id=? OR target_id=?", (node_id, node_id)
+        )
         self._delete_fts(node_id)
         cur = self._conn.execute("DELETE FROM mdrm_nodes WHERE id=?", (node_id,))
         self._conn.commit()
@@ -631,7 +642,9 @@ class RelationalMemoryStore:
         )
         return [r[0] for r in cur.fetchall()]
 
-    def add_alias(self, alias: str, canonical: str, confidence: float = 0.5, source: str = "rule") -> None:
+    def add_alias(
+        self, alias: str, canonical: str, confidence: float = 0.5, source: str = "rule"
+    ) -> None:
         self._conn.execute(
             "INSERT OR REPLACE INTO mdrm_entity_aliases (alias, canonical, confidence, source) VALUES (?,?,?,?)",
             (alias.lower(), canonical.lower(), confidence, source),
@@ -657,16 +670,12 @@ class RelationalMemoryStore:
         self._conn.commit()
 
     def decay_edges(self, factor: float = 0.98) -> int:
-        cur = self._conn.execute(
-            "UPDATE mdrm_edges SET weight = weight * ?", (factor,)
-        )
+        cur = self._conn.execute("UPDATE mdrm_edges SET weight = weight * ?", (factor,))
         self._conn.commit()
         return cur.rowcount
 
     def prune_weak_edges(self, threshold: float = 0.05) -> int:
-        cur = self._conn.execute(
-            "DELETE FROM mdrm_edges WHERE weight < ?", (threshold,)
-        )
+        cur = self._conn.execute("DELETE FROM mdrm_edges WHERE weight < ?", (threshold,))
         self._conn.commit()
         return cur.rowcount
 
@@ -690,8 +699,10 @@ class RelationalMemoryStore:
                 entities_raw = json.loads(entities_raw)
             except Exception:
                 entities_raw = []
-        entities = [EntityRef(name=e.get("name", ""), type=e.get("type", "concept"), role=e.get("role", ""))
-                    for e in entities_raw]
+        entities = [
+            EntityRef(name=e.get("name", ""), type=e.get("type", "concept"), role=e.get("role", ""))
+            for e in entities_raw
+        ]
 
         nt = NodeType.EVENT
         try:

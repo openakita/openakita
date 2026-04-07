@@ -64,7 +64,9 @@ def _read_i18n_from_yaml(skill_dir: Path) -> dict[str, dict[str, str]]:
                 for fkey in _KNOWN_FIELDS:
                     if fkey in fields:
                         val = fields[fkey]
-                        entry[fkey] = str(val) if not isinstance(val, list) else ",".join(str(v) for v in val)
+                        entry[fkey] = (
+                            str(val) if not isinstance(val, list) else ",".join(str(v) for v in val)
+                        )
                 if entry:
                     result[lang] = entry
         return result
@@ -101,7 +103,8 @@ def write_i18n(skill_dir: Path, data: dict[str, dict[str, str]]) -> None:
         except Exception as e:
             logger.error(
                 "Cannot parse existing %s — aborting write_i18n to prevent data loss: %s",
-                yaml_file, e,
+                yaml_file,
+                e,
             )
             return
 

@@ -53,6 +53,7 @@ class DesktopHandler:
                 self._desktop_handler = DesktopToolHandler()
             except ImportError as e:
                 from openakita.tools._import_helper import import_or_hint
+
                 hint = import_or_hint("pyautogui") or str(e)
                 logger.warning(f"Desktop tools not available: {hint}")
                 self._available = False
@@ -71,6 +72,7 @@ class DesktopHandler:
         """
         if not self._available:
             from openakita.tools._import_helper import import_or_hint
+
             hint = import_or_hint("pyautogui")
             if hint:
                 return f"桌面工具不可用: {hint}"

@@ -287,8 +287,7 @@ class QQBotOnboard:
             }
 
         raise QQBotOnboardError(
-            "创建机器人失败且未找到已有机器人。"
-            "请前往 https://q.qq.com/qqbot/openclaw/ 手动操作。"
+            "创建机器人失败且未找到已有机器人。请前往 https://q.qq.com/qqbot/openclaw/ 手动操作。"
         )
 
 

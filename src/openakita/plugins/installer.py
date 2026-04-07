@@ -130,9 +130,7 @@ def _safe_extract_zip(zf: zipfile.ZipFile, dest: Path) -> None:
                 f"Zip archive exceeds size limit ({_MAX_EXTRACT_SIZE // 1024 // 1024} MB)"
             )
         if file_count > _MAX_EXTRACT_FILES:
-            raise PluginInstallError(
-                f"Zip archive exceeds file count limit ({_MAX_EXTRACT_FILES})"
-            )
+            raise PluginInstallError(f"Zip archive exceeds file count limit ({_MAX_EXTRACT_FILES})")
         name = info.filename
         if name.startswith("/") or ".." in Path(name).parts:
             raise PluginInstallError(f"Unsafe zip entry: {name!r}")
@@ -250,7 +248,7 @@ def _normalize_git_url(source: str) -> str:
         idx = s.find(host)
         if idx < 0:
             continue
-        after_host = s[idx + len(host):]
+        after_host = s[idx + len(host) :]
         segments = after_host.split("/")
         if len(segments) >= 2:
             owner_repo = s[: idx + len(host)] + "/".join(segments[:2])
@@ -261,7 +259,10 @@ def _normalize_git_url(source: str) -> str:
 
 
 def install_from_git(
-    source: str, plugins_dir: Path, *, branch: str = "",
+    source: str,
+    plugins_dir: Path,
+    *,
+    branch: str = "",
     progress: InstallProgress | None = None,
 ) -> str:
     """Clone a Git repository and install the plugin from it."""
@@ -282,7 +283,11 @@ def install_from_git(
 
         try:
             proc = subprocess.run(
-                cmd, check=False, capture_output=True, text=True, timeout=120,
+                cmd,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
         except FileNotFoundError:
             raise PluginInstallError(
@@ -361,7 +366,10 @@ def install_from_git(
 
 
 def install_from_url(
-    url: str, plugins_dir: Path, *, progress: InstallProgress | None = None,
+    url: str,
+    plugins_dir: Path,
+    *,
+    progress: InstallProgress | None = None,
 ) -> str:
     plugins_dir = plugins_dir.resolve()
     plugins_dir.mkdir(parents=True, exist_ok=True)

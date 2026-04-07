@@ -53,6 +53,7 @@ def _tokenize_for_dedup(text: str) -> set[str]:
     if not _jieba_loaded:
         try:
             import jieba
+
             jieba.setLogLevel(logging.WARNING)
             _jieba_mod = jieba
         except ImportError:
@@ -101,6 +102,7 @@ def _safe_write_with_backup(path: Path, content: str) -> None:
     try:
         if path.exists():
             import shutil
+
             shutil.copy2(path, backup)
     except Exception as e:
         logger.warning(f"Failed to create backup of {path}: {e}")
@@ -112,6 +114,7 @@ def _safe_write_with_backup(path: Path, content: str) -> None:
         if backup.exists():
             try:
                 import shutil
+
                 shutil.copy2(backup, path)
                 logger.info(f"Restored {path} from backup")
             except Exception as e2:
@@ -210,7 +213,9 @@ class LifecycleManager:
                 ConversationTurn(
                     role=t["role"],
                     content=t.get("content") or "",
-                    timestamp=datetime.fromisoformat(t["timestamp"]) if t.get("timestamp") else datetime.now(),
+                    timestamp=datetime.fromisoformat(t["timestamp"])
+                    if t.get("timestamp")
+                    else datetime.now(),
                     tool_calls=t.get("tool_calls") or [],
                     tool_results=t.get("tool_results") or [],
                 )
@@ -283,15 +288,15 @@ class LifecycleManager:
                 should_update = (
                     item.get("is_update")
                     or importance > existing.importance_score
-                    or (importance >= existing.importance_score
-                        and len(content) > len(existing.content or ""))
+                    or (
+                        importance >= existing.importance_score
+                        and len(content) > len(existing.content or "")
+                    )
                 )
                 if should_update:
                     updates["content"] = content
                 self.store.update_semantic(existing.id, updates)
-                logger.debug(
-                    f"[Lifecycle] Dedup L1: evolved {existing.id[:8]} (subject+predicate)"
-                )
+                logger.debug(f"[Lifecycle] Dedup L1: evolved {existing.id[:8]} (subject+predicate)")
                 return
 
         # --- Dedup layer 2: content similarity via search backend ---
@@ -303,13 +308,14 @@ class LifecycleManager:
                         continue
                     level = _fast_content_dedup(content, s.content or "")
                     if level == "exact":
-                        self.store.update_semantic(s.id, {
-                            "importance_score": max(s.importance_score, importance),
-                            "confidence": min(1.0, s.confidence + 0.1),
-                        })
-                        logger.debug(
-                            f"[Lifecycle] Dedup L2: evolved {s.id[:8]} (content match)"
+                        self.store.update_semantic(
+                            s.id,
+                            {
+                                "importance_score": max(s.importance_score, importance),
+                                "confidence": min(1.0, s.confidence + 0.1),
+                            },
                         )
+                        logger.debug(f"[Lifecycle] Dedup L2: evolved {s.id[:8]} (content match)")
                         return
             except Exception as e:
                 logger.debug(f"[Lifecycle] Dedup search failed: {e}")
@@ -441,10 +447,13 @@ class LifecycleManager:
                 self.store.delete_semantic(mem.id)
                 decayed += 1
             elif effective_score < 0.3:
-                self.store.update_semantic(mem.id, {
-                    "priority": MemoryPriority.TRANSIENT.value,
-                    "importance_score": effective_score,
-                })
+                self.store.update_semantic(
+                    mem.id,
+                    {
+                        "priority": MemoryPriority.TRANSIENT.value,
+                        "importance_score": effective_score,
+                    },
+                )
                 decayed += 1
 
         expired = self.store.db.cleanup_expired()
@@ -464,6 +473,7 @@ class LifecycleManager:
         if not db._conn:
             return 0
         from datetime import timedelta
+
         cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
         with db._lock:
             try:
@@ -479,7 +489,9 @@ class LifecycleManager:
                 count = cursor.rowcount
                 if count:
                     db._conn.commit()
-                    logger.info(f"[Lifecycle] Cleaned {count} stale attachments (>{max_age_days} days, no content)")
+                    logger.info(
+                        f"[Lifecycle] Cleaned {count} stale attachments (>{max_age_days} days, no content)"
+                    )
                 return count
             except Exception as e:
                 if _is_db_locked(e):
@@ -581,14 +593,16 @@ class LifecycleManager:
             batch = all_memories[i : i + batch_size]
 
             if progress_callback:
-                progress_callback({
-                    "phase": "llm_calling",
-                    "batch": batch_idx,
-                    "total_batches": total_batches,
-                    "total_memories": len(all_memories),
-                    "processed": i,
-                    "report": dict(report),
-                })
+                progress_callback(
+                    {
+                        "phase": "llm_calling",
+                        "batch": batch_idx,
+                        "total_batches": total_batches,
+                        "total_memories": len(all_memories),
+                        "processed": i,
+                        "report": dict(report),
+                    }
+                )
 
             memories_text = "\n".join(
                 f"- ID={m.id} | type={m.type.value} | score={m.importance_score:.2f} "
@@ -698,28 +712,32 @@ class LifecycleManager:
                 report["kept"] += len(batch)
 
             if progress_callback:
-                progress_callback({
-                    "phase": "batch_done",
-                    "batch": batch_idx + 1,
-                    "total_batches": total_batches,
-                    "total_memories": len(all_memories),
-                    "processed": min(i + batch_size, len(all_memories)),
-                    "report": dict(report),
-                })
+                progress_callback(
+                    {
+                        "phase": "batch_done",
+                        "batch": batch_idx + 1,
+                        "total_batches": total_batches,
+                        "total_memories": len(all_memories),
+                        "processed": min(i + batch_size, len(all_memories)),
+                        "report": dict(report),
+                    }
+                )
 
         cancelled = cancel_event.is_set() if cancel_event else False
 
         if progress_callback:
-            progress_callback({
-                "phase": "done",
-                "batch": total_batches,
-                "total_batches": total_batches,
-                "total_memories": len(all_memories),
-                "processed": len(all_memories),
-                "report": dict(report),
-                "done": True,
-                "cancelled": cancelled,
-            })
+            progress_callback(
+                {
+                    "phase": "done",
+                    "batch": total_batches,
+                    "total_batches": total_batches,
+                    "total_memories": len(all_memories),
+                    "processed": len(all_memories),
+                    "report": dict(report),
+                    "done": True,
+                    "cancelled": cancelled,
+                }
+            )
 
         # All batches failed → LLM completely unavailable, re-raise so the
         # scheduler can mark_failed() and trigger its existing notification.
@@ -727,9 +745,8 @@ class LifecycleManager:
         # take effect, failed ones keep memories as-is.
         if not cancelled and report["errors"] >= total_batches > 0:
             from ..llm.types import AllEndpointsFailedError
-            raise AllEndpointsFailedError(
-                f"LLM review failed: all {total_batches} batches errored"
-            )
+
+            raise AllEndpointsFailedError(f"LLM review failed: all {total_batches} batches errored")
 
         logger.info(
             f"[Lifecycle] Memory review complete: "
@@ -795,7 +812,8 @@ class LifecycleManager:
 
         try:
             response = await self.extractor.brain.think(
-                prompt, system="你是经验归纳专家。只输出 JSON 数组。",
+                prompt,
+                system="你是经验归纳专家。只输出 JSON 数组。",
             )
             text = (getattr(response, "content", None) or str(response)).strip()
             json_match = re.search(r"\[[\s\S]*\]", text)
@@ -831,9 +849,7 @@ class LifecycleManager:
                 if dup_target is not None:
                     for sid in source_ids:
                         self.store.update_semantic(sid, {"superseded_by": dup_target.id})
-                    logger.debug(
-                        f"[Lifecycle] Synthesis dedup: reused {dup_target.id[:8]}"
-                    )
+                    logger.debug(f"[Lifecycle] Synthesis dedup: reused {dup_target.id[:8]}")
                     continue
 
                 mem = SemanticMemory(
@@ -854,7 +870,9 @@ class LifecycleManager:
                     self.store.update_semantic(sid, {"superseded_by": mem.id})
 
             if saved:
-                logger.info(f"[Lifecycle] Synthesized {saved} experience principles from {len(experiences)} memories")
+                logger.info(
+                    f"[Lifecycle] Synthesized {saved} experience principles from {len(experiences)} memories"
+                )
             return saved
 
         except Exception as e:
@@ -926,11 +944,34 @@ class LifecycleManager:
             "projects": [],
         }
 
-        _action_words = {"打开", "关闭", "运行", "执行", "安装", "部署", "启动", "停止",
-                         "创建", "删除", "修改", "搜索", "下载", "上传", "编译", "测试",
-                         "去", "进入", "访问", "登录", "检查", "查看", "发送"}
+        _action_words = {
+            "打开",
+            "关闭",
+            "运行",
+            "执行",
+            "安装",
+            "部署",
+            "启动",
+            "停止",
+            "创建",
+            "删除",
+            "修改",
+            "搜索",
+            "下载",
+            "上传",
+            "编译",
+            "测试",
+            "去",
+            "进入",
+            "访问",
+            "登录",
+            "检查",
+            "查看",
+            "发送",
+        }
         user_facts = [
-            m for m in user_facts
+            m
+            for m in user_facts
             if not any(w in (m.predicate or "") for w in _action_words)
             and not any(w in (m.content or "")[:20] for w in _action_words)
         ]

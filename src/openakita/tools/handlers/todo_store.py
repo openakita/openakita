@@ -39,7 +39,8 @@ class TodoStore:
         try:
             if isinstance(raw, dict) and "todos" in raw:
                 self._data = {
-                    k: v for k, v in raw["todos"].items()
+                    k: v
+                    for k, v in raw["todos"].items()
                     if isinstance(v, dict) and v.get("status") == "in_progress"
                 }
                 return dict(self._data)
@@ -92,10 +93,12 @@ class TodoStore:
             content = msg.get("content", [])
             if isinstance(content, str):
                 continue
-            for block in (content if isinstance(content, list) else []):
-                if (isinstance(block, dict)
+            for block in content if isinstance(content, list) else []:
+                if (
+                    isinstance(block, dict)
                     and block.get("type") == "tool_use"
-                    and block.get("name") == "create_todo"):
+                    and block.get("name") == "create_todo"
+                ):
                     tool_input = block.get("input", {})
                     if isinstance(tool_input, dict) and "steps" in tool_input:
                         return self._rebuild_plan_from_create_todo(tool_input)
@@ -106,14 +109,18 @@ class TodoStore:
         steps = []
         for i, raw in enumerate(tool_input.get("steps", [])):
             if isinstance(raw, dict):
-                steps.append({
-                    "id": raw.get("id", f"step_{i+1}"),
-                    "description": raw.get("description", ""),
-                    "status": "pending",
-                    "result": "", "started_at": None, "completed_at": None,
-                    "depends_on": raw.get("depends_on", []),
-                    "skills": raw.get("skills", []),
-                })
+                steps.append(
+                    {
+                        "id": raw.get("id", f"step_{i + 1}"),
+                        "description": raw.get("description", ""),
+                        "status": "pending",
+                        "result": "",
+                        "started_at": None,
+                        "completed_at": None,
+                        "depends_on": raw.get("depends_on", []),
+                        "skills": raw.get("skills", []),
+                    }
+                )
         return {
             "id": f"restored_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             "task_summary": tool_input.get("task_summary", ""),

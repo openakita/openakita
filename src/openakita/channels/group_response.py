@@ -103,11 +103,13 @@ class SmartModeThrottle:
         buf = self._buffer[chat_id]
         if len(buf) >= self._MAX_BUFFER_SIZE:
             buf.pop(0)
-        buf.append({
-            "text": text,
-            "user_id": user_id,
-            "time": time.monotonic(),
-        })
+        buf.append(
+            {
+                "text": text,
+                "user_id": user_id,
+                "time": time.monotonic(),
+            }
+        )
         return len(buf)
 
     def drain_buffer(self, chat_id: str) -> list[dict]:

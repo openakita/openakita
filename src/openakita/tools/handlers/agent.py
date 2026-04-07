@@ -30,8 +30,12 @@ class AgentToolHandler:
     """Handles agent management tool calls including delegation, lifecycle, and messaging."""
 
     TOOLS = [
-        "delegate_to_agent", "delegate_parallel", "spawn_agent", "create_agent",
-        "task_stop", "send_agent_message",
+        "delegate_to_agent",
+        "delegate_parallel",
+        "spawn_agent",
+        "create_agent",
+        "task_stop",
+        "send_agent_message",
     ]
 
     def __init__(self, agent: Agent):
@@ -39,13 +43,8 @@ class AgentToolHandler:
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
         if getattr(self.agent, "_is_sub_agent_call", False):
-            logger.warning(
-                f"[AgentToolHandler] Blocked {tool_name} — sub-agents cannot delegate"
-            )
-            return (
-                f"❌ 你是子 Agent，不允许使用 {tool_name}。"
-                "请直接用你自己的工具完成任务。"
-            )
+            logger.warning(f"[AgentToolHandler] Blocked {tool_name} — sub-agents cannot delegate")
+            return f"❌ 你是子 Agent，不允许使用 {tool_name}。请直接用你自己的工具完成任务。"
         if tool_name == "task_stop":
             return await self._task_stop(params)
         elif tool_name == "send_agent_message":
@@ -83,9 +82,9 @@ class AgentToolHandler:
         if session is None:
             return "❌ No active session — delegation requires a session context"
 
-        current_agent = getattr(
-            getattr(session, "context", None), "agent_profile_id", "default"
-        ) or "default"
+        current_agent = (
+            getattr(getattr(session, "context", None), "agent_profile_id", "default") or "default"
+        )
 
         logger.info(
             f"[AgentToolHandler] Delegation: {current_agent} -> {agent_id} | reason={reason}"
@@ -145,7 +144,9 @@ class AgentToolHandler:
                 t["message"] = t.pop("task")
 
         if len(tasks_param) < 2:
-            return "❌ delegate_parallel requires at least 2 tasks (use delegate_to_agent for single)"
+            return (
+                "❌ delegate_parallel requires at least 2 tasks (use delegate_to_agent for single)"
+            )
         if len(tasks_param) > 5:
             return "❌ Maximum 5 parallel delegations allowed"
 
@@ -157,9 +158,9 @@ class AgentToolHandler:
         if session is None:
             return "❌ No active session"
 
-        current_agent = getattr(
-            getattr(session, "context", None), "agent_profile_id", "default"
-        ) or "default"
+        current_agent = (
+            getattr(getattr(session, "context", None), "agent_profile_id", "default") or "default"
+        )
 
         # Detect duplicate agent_ids — auto-spawn ephemeral clones
         # to avoid two coroutines sharing the same Agent instance.
@@ -188,6 +189,7 @@ class AgentToolHandler:
                     # ALL occurrences (including the first) get ephemeral clones
                     # to avoid sharing a pool instance with previous delegations
                     from ...agents.profile import AgentProfile, AgentType
+
                     base = store.get(agent_id)
                     if base:
                         ts = int(time.time() * 1000)
@@ -214,22 +216,26 @@ class AgentToolHandler:
                             f"[AgentToolHandler] Auto-spawned clone {eph_id} "
                             f"for parallel task (base={agent_id})"
                         )
-                        resolved_tasks.append({
-                            "agent_id": eph_id,
-                            "display_id": agent_id,
-                            "message": message,
-                            "reason": reason,
-                            "context": task_context,
-                        })
+                        resolved_tasks.append(
+                            {
+                                "agent_id": eph_id,
+                                "display_id": agent_id,
+                                "message": message,
+                                "reason": reason,
+                                "context": task_context,
+                            }
+                        )
                         continue
 
-            resolved_tasks.append({
-                "agent_id": agent_id,
-                "display_id": agent_id,
-                "message": message,
-                "reason": reason,
-                "context": task_context,
-            })
+            resolved_tasks.append(
+                {
+                    "agent_id": agent_id,
+                    "display_id": agent_id,
+                    "message": message,
+                    "reason": reason,
+                    "context": task_context,
+                }
+            )
 
         parent_browser = getattr(self.agent, "browser_manager", None)
 
@@ -308,12 +314,13 @@ class AgentToolHandler:
                     eol = result.find("\n", block_start)
                     block = result[block_start:] if eol < 0 else result[block_start:eol]
                     all_receipt_blocks.append(block)
-                    result = result[:idx] + (result[block_start + len(block):] if eol >= 0 else "")
+                    result = result[:idx] + (result[block_start + len(block) :] if eol >= 0 else "")
                 parts.append(f"## Agent: {display_id}\n{result}")
         combined = "\n\n---\n\n".join(parts)
         # Re-append all receipt blocks as a single merged JSON array at the end
         if all_receipt_blocks:
             import json as _json
+
             merged: list = []
             for block in all_receipt_blocks:
                 try:
@@ -323,7 +330,9 @@ class AgentToolHandler:
                 except (ValueError, TypeError):
                     pass
             if merged:
-                combined += _art_marker.rstrip("\n") + "\n" + _json.dumps(merged, ensure_ascii=False)
+                combined += (
+                    _art_marker.rstrip("\n") + "\n" + _json.dumps(merged, ensure_ascii=False)
+                )
         return combined
 
     @staticmethod
@@ -361,9 +370,9 @@ class AgentToolHandler:
         if session is None:
             return "❌ No active session"
 
-        current_agent = getattr(
-            getattr(session, "context", None), "agent_profile_id", "default"
-        ) or "default"
+        current_agent = (
+            getattr(getattr(session, "context", None), "agent_profile_id", "default") or "default"
+        )
 
         from ...agents.profile import AgentProfile, AgentType, SkillsMode
 
@@ -459,13 +468,17 @@ class AgentToolHandler:
 
         store = self._get_profile_store()
         force = bool(params.get("force", False))
-        suggestion = self._find_similar_profile(store, skills, description) if (store and not force) else None
+        suggestion = (
+            self._find_similar_profile(store, skills, description)
+            if (store and not force)
+            else None
+        )
         if suggestion:
             return (
                 f"⚠️ Found a similar existing agent: **{suggestion.name}** (`{suggestion.id}`).\n"
                 f"Description: {suggestion.description}\n\n"
-                f"Suggestion: use `spawn_agent(inherit_from=\"{suggestion.id}\", ...)` "
-                f"to inherit and customize it, or `delegate_to_agent(agent_id=\"{suggestion.id}\", ...)` "
+                f'Suggestion: use `spawn_agent(inherit_from="{suggestion.id}", ...)` '
+                f'to inherit and customize it, or `delegate_to_agent(agent_id="{suggestion.id}", ...)` '
                 f"to use it directly.\n\n"
                 f"If you still need a completely new agent, call `create_agent(..., force=true)` "
                 f"to bypass this check."
@@ -506,20 +519,26 @@ class AgentToolHandler:
         store.save(profile)
 
         if ctx is not None and hasattr(ctx, "agent_switch_history"):
-            ctx.agent_switch_history.append({
-                "type": "dynamic_create",
-                "agent_id": profile_id,
-                "name": name,
-                "persistent": persistent,
-                "ephemeral": is_ephemeral,
-                "at": datetime.now(UTC).isoformat(),
-            })
+            ctx.agent_switch_history.append(
+                {
+                    "type": "dynamic_create",
+                    "agent_id": profile_id,
+                    "name": name,
+                    "persistent": persistent,
+                    "ephemeral": is_ephemeral,
+                    "at": datetime.now(UTC).isoformat(),
+                }
+            )
 
         logger.info(
             f"[AgentToolHandler] Created {'persistent' if persistent else 'ephemeral'} "
             f"agent: {profile_id}"
         )
-        suffix = " (persistent — will be saved)" if persistent else " (ephemeral — auto-cleanup after task)"
+        suffix = (
+            " (persistent — will be saved)"
+            if persistent
+            else " (ephemeral — auto-cleanup after task)"
+        )
         return f"✅ Agent created: {profile_id} ({name}){suffix}"
 
     # ------------------------------------------------------------------
@@ -529,11 +548,14 @@ class AgentToolHandler:
     def _get_orchestrator(self):
         try:
             import openakita.main as _main_mod
+
             orch = _main_mod._orchestrator
             if orch is None:
                 from ...config import settings
+
                 if settings.multi_agent_enabled:
                     from openakita.agents.orchestrator import AgentOrchestrator
+
                     orch = AgentOrchestrator()
                     gw = _main_mod._message_gateway
                     if gw:
@@ -543,7 +565,9 @@ class AgentToolHandler:
                         "[AgentToolHandler] Orchestrator was None — lazily created as fallback"
                     )
                 else:
-                    logger.warning("[AgentToolHandler] _orchestrator is None (multi_agent disabled)")
+                    logger.warning(
+                        "[AgentToolHandler] _orchestrator is None (multi_agent disabled)"
+                    )
             return orch
         except (ImportError, AttributeError) as e:
             logger.warning(f"[AgentToolHandler] Cannot access _orchestrator: {e}")
@@ -575,7 +599,7 @@ class AgentToolHandler:
         for word in text.lower().split():
             if word:
                 tokens.add(word)
-        cjk = [c for c in text if '\u4e00' <= c <= '\u9fff']
+        cjk = [c for c in text if "\u4e00" <= c <= "\u9fff"]
         tokens.update(cjk)
         for i in range(len(cjk) - 1):
             tokens.add(cjk[i] + cjk[i + 1])
@@ -583,7 +607,10 @@ class AgentToolHandler:
 
     @classmethod
     def _find_similar_profile(
-        cls, store, skills: list[str], description: str,
+        cls,
+        store,
+        skills: list[str],
+        description: str,
     ):
         """Return the best-matching existing profile if skill overlap > 50%."""
         if not store:
@@ -606,6 +633,7 @@ class AgentToolHandler:
             score = 0.0
             if skills and p.skills:
                 from ...agents.factory import AgentFactory
+
                 exact_a, short_a = AgentFactory._build_skill_match_set(skills)
                 exact_b, short_b = AgentFactory._build_skill_match_set(p.skills)
                 overlap = len(short_a & short_b)

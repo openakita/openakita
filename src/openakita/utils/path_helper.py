@@ -42,8 +42,7 @@ def resolve_macos_login_shell_path() -> str | None:
         return path
 
     logger.warning(
-        "[PATH] All macOS PATH resolution methods failed. "
-        "Commands like npx/node may not be found."
+        "[PATH] All macOS PATH resolution methods failed. Commands like npx/node may not be found."
     )
     return None
 
@@ -106,25 +105,26 @@ def _resolve_via_login_shell() -> str | None:
     shell = os.environ.get("SHELL", "/bin/zsh")
     try:
         proc = subprocess.run(
-            [shell, "-l", "-c",
-             'printf "\\n__AKITA_PATH__\\n%s\\n__AKITA_PATH__\\n" "$PATH"'],
-            capture_output=True, text=True, timeout=10,
+            [shell, "-l", "-c", 'printf "\\n__AKITA_PATH__\\n%s\\n__AKITA_PATH__\\n" "$PATH"'],
+            capture_output=True,
+            text=True,
+            timeout=10,
             stdin=subprocess.DEVNULL,
         )
         if proc.returncode != 0:
             logger.warning(
-                "[PATH] macOS login shell exited with code %d (shell=%s). "
-                "stderr: %s",
-                proc.returncode, shell,
+                "[PATH] macOS login shell exited with code %d (shell=%s). stderr: %s",
+                proc.returncode,
+                shell,
                 (proc.stderr or "").strip()[:500],
             )
             return None
         parts = proc.stdout.split("__AKITA_PATH__")
         if len(parts) < 3:
             logger.warning(
-                "[PATH] macOS login shell output missing path markers "
-                "(shell=%s, stdout length=%d)",
-                shell, len(proc.stdout),
+                "[PATH] macOS login shell output missing path markers (shell=%s, stdout length=%d)",
+                shell,
+                len(proc.stdout),
             )
             return None
         path = parts[1].strip()
@@ -154,7 +154,9 @@ def _resolve_via_path_helper() -> str | None:
     try:
         proc = subprocess.run(
             ["/usr/libexec/path_helper", "-s"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
             stdin=subprocess.DEVNULL,
         )
         if proc.returncode != 0:

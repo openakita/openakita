@@ -237,7 +237,9 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
     return out
 
 
-async def _list_models_anthropic(api_key: str, base_url: str, provider_slug: str | None) -> list[dict]:
+async def _list_models_anthropic(
+    api_key: str, base_url: str, provider_slug: str | None
+) -> list[dict]:
     import httpx
 
     from openakita.llm.capabilities import infer_capabilities
@@ -409,7 +411,9 @@ async def _list_models_anthropic(api_key: str, base_url: str, provider_slug: str
     return out
 
 
-async def list_models(api_type: str, base_url: str, provider_slug: str | None, api_key: str) -> None:
+async def list_models(
+    api_type: str, base_url: str, provider_slug: str | None, api_key: str
+) -> None:
     api_type = (api_type or "").strip().lower()
     base_url = (base_url or "").strip()
     if not api_type:
@@ -448,7 +452,7 @@ async def health_check_endpoint(workspace_dir: str, endpoint_name: str | None) -
                 continue
             eq = line.find("=")
             if eq > 0:
-                val = line[eq + 1:].strip()
+                val = line[eq + 1 :].strip()
                 if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
                     val = val[1:-1]
                 os.environ.setdefault(line[:eq].strip(), val)
@@ -467,30 +471,34 @@ async def health_check_endpoint(workspace_dir: str, endpoint_name: str | None) -
         try:
             await provider.health_check()
             latency = round((time.time() - t0) * 1000)
-            results.append({
-                "name": name,
-                "status": "healthy",
-                "latency_ms": latency,
-                "error": None,
-                "error_category": None,
-                "consecutive_failures": 0,
-                "cooldown_remaining": 0,
-                "is_extended_cooldown": False,
-                "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            })
+            results.append(
+                {
+                    "name": name,
+                    "status": "healthy",
+                    "latency_ms": latency,
+                    "error": None,
+                    "error_category": None,
+                    "consecutive_failures": 0,
+                    "cooldown_remaining": 0,
+                    "is_extended_cooldown": False,
+                    "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                }
+            )
         except Exception as e:
             latency = round((time.time() - t0) * 1000)
-            results.append({
-                "name": name,
-                "status": "unhealthy" if provider.consecutive_cooldowns >= 3 else "degraded",
-                "latency_ms": latency,
-                "error": str(e)[:500],
-                "error_category": provider.error_category,
-                "consecutive_failures": provider.consecutive_cooldowns,
-                "cooldown_remaining": round(provider.cooldown_remaining),
-                "is_extended_cooldown": provider.is_extended_cooldown,
-                "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            })
+            results.append(
+                {
+                    "name": name,
+                    "status": "unhealthy" if provider.consecutive_cooldowns >= 3 else "degraded",
+                    "latency_ms": latency,
+                    "error": str(e)[:500],
+                    "error_category": provider.error_category,
+                    "consecutive_failures": provider.consecutive_cooldowns,
+                    "cooldown_remaining": round(provider.cooldown_remaining),
+                    "is_extended_cooldown": provider.is_extended_cooldown,
+                    "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                }
+            )
 
     _json_print(results)
 
@@ -510,7 +518,7 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
                 continue
             eq = line.find("=")
             if eq > 0:
-                env[line[:eq].strip()] = line[eq + 1:]
+                env[line[:eq].strip()] = line[eq + 1 :]
 
     channels_def = [
         {
@@ -575,24 +583,28 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
     for ch in targets:
         enabled = env.get(ch["enabled_key"], "").strip().lower() in ("true", "1", "yes")
         if not enabled:
-            results.append({
-                "channel": ch["id"],
-                "name": ch["name"],
-                "status": "disabled",
-                "error": None,
-                "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            })
+            results.append(
+                {
+                    "channel": ch["id"],
+                    "name": ch["name"],
+                    "status": "disabled",
+                    "error": None,
+                    "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                }
+            )
             continue
 
         missing = [k for k in ch["required_keys"] if not env.get(k, "").strip()]
         if missing:
-            results.append({
-                "channel": ch["id"],
-                "name": ch["name"],
-                "status": "unhealthy",
-                "error": f"缺少配置: {', '.join(missing)}",
-                "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            })
+            results.append(
+                {
+                    "channel": ch["id"],
+                    "name": ch["name"],
+                    "status": "unhealthy",
+                    "error": f"缺少配置: {', '.join(missing)}",
+                    "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                }
+            )
             continue
 
         # 实际连通性测试
@@ -688,21 +700,25 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
                     if not token:
                         raise Exception("缺少必填参数: WECHAT_TOKEN")
 
-            results.append({
-                "channel": ch["id"],
-                "name": ch["name"],
-                "status": "healthy",
-                "error": None,
-                "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            })
+            results.append(
+                {
+                    "channel": ch["id"],
+                    "name": ch["name"],
+                    "status": "healthy",
+                    "error": None,
+                    "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                }
+            )
         except Exception as e:
-            results.append({
-                "channel": ch["id"],
-                "name": ch["name"],
-                "status": "unhealthy",
-                "error": str(e)[:500],
-                "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            })
+            results.append(
+                {
+                    "channel": ch["id"],
+                    "name": ch["name"],
+                    "status": "unhealthy",
+                    "error": str(e)[:500],
+                    "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                }
+            )
 
     _json_print(results)
 
@@ -788,6 +804,7 @@ def ensure_channel_deps(workspace_dir: str) -> None:
                 env[line[:eq].strip()] = line[eq + 1 :].strip()
 
     from openakita.channels.deps import CHANNEL_DEPS
+
     channel_deps = CHANNEL_DEPS
 
     enabled_key_map = {
@@ -845,12 +862,14 @@ def ensure_channel_deps(workspace_dir: str) -> None:
         pip_env["PYTHONHOME"] = str(py_path.parent)
         ok, probe = _probe_python(py, pip_env, extra)
     if not ok:
-        _json_print({
-            "status": "error",
-            "installed": [],
-            "missing": missing,
-            "message": f"Python 运行时异常（无法导入 encodings/pip）: {probe}",
-        })
+        _json_print(
+            {
+                "status": "error",
+                "installed": [],
+                "missing": missing,
+                "message": f"Python 运行时异常（无法导入 encodings/pip）: {probe}",
+            }
+        )
         return
 
     # 离线优先（若安装包内置了 wheels）
@@ -883,11 +902,13 @@ def ensure_channel_deps(workspace_dir: str) -> None:
             if off.returncode == 0:
                 importlib.invalidate_caches()
                 inject_module_paths_runtime()
-                _json_print({
-                    "status": "ok",
-                    "installed": missing,
-                    "message": f"已安装(offline): {', '.join(missing)}",
-                })
+                _json_print(
+                    {
+                        "status": "ok",
+                        "installed": missing,
+                        "message": f"已安装(offline): {', '.join(missing)}",
+                    }
+                )
                 return
         except Exception:
             pass
@@ -898,11 +919,13 @@ def ensure_channel_deps(workspace_dir: str) -> None:
     if user_index:
         host = user_index.split("//")[1].split("/")[0] if "//" in user_index else ""
         mirrors.append((user_index, host))
-    mirrors.extend([
-        ("https://mirrors.aliyun.com/pypi/simple/", "mirrors.aliyun.com"),
-        ("https://pypi.tuna.tsinghua.edu.cn/simple/", "pypi.tuna.tsinghua.edu.cn"),
-        ("https://pypi.org/simple/", "pypi.org"),
-    ])
+    mirrors.extend(
+        [
+            ("https://mirrors.aliyun.com/pypi/simple/", "mirrors.aliyun.com"),
+            ("https://pypi.tuna.tsinghua.edu.cn/simple/", "pypi.tuna.tsinghua.edu.cn"),
+            ("https://pypi.org/simple/", "pypi.org"),
+        ]
+    )
 
     last_err = ""
     for index_url, trusted_host in mirrors:
@@ -936,22 +959,26 @@ def ensure_channel_deps(workspace_dir: str) -> None:
             if result.returncode == 0:
                 importlib.invalidate_caches()
                 inject_module_paths_runtime()
-                _json_print({
-                    "status": "ok",
-                    "installed": missing,
-                    "message": f"已安装: {', '.join(missing)}",
-                })
+                _json_print(
+                    {
+                        "status": "ok",
+                        "installed": missing,
+                        "message": f"已安装: {', '.join(missing)}",
+                    }
+                )
                 return
             last_err = (result.stderr or result.stdout or "").strip()[-500:]
         except Exception as e:
             last_err = str(e)
 
-    _json_print({
-        "status": "error",
-        "installed": [],
-        "missing": missing,
-        "message": f"安装失败: {last_err}",
-    })
+    _json_print(
+        {
+            "status": "error",
+            "installed": [],
+            "missing": missing,
+            "message": f"安装失败: {last_err}",
+        }
+    )
 
 
 async def feishu_onboard_start(domain: str) -> None:
@@ -1127,18 +1154,22 @@ def list_skills(workspace_dir: str) -> None:
             except Exception:
                 pass
         sid = getattr(s, "skill_id", None) or s.name
-        out.append({
-            "skill_id": sid,
-            "name": s.name,
-            "description": s.description,
-            "system": bool(getattr(s, "system", False)),
-            "enabled": bool(getattr(s, "system", False)) or (external_allowlist is None) or (sid in external_allowlist),
-            "tool_name": getattr(s, "tool_name", None),
-            "category": getattr(s, "category", None),
-            "path": skill_path,
-            "source_url": source_url,
-            "config": getattr(s, "config", None) or getattr(s, "config_schema", None),
-        })
+        out.append(
+            {
+                "skill_id": sid,
+                "name": s.name,
+                "description": s.description,
+                "system": bool(getattr(s, "system", False)),
+                "enabled": bool(getattr(s, "system", False))
+                or (external_allowlist is None)
+                or (sid in external_allowlist),
+                "tool_name": getattr(s, "tool_name", None),
+                "category": getattr(s, "category", None),
+                "path": skill_path,
+                "source_url": source_url,
+                "config": getattr(s, "config", None) or getattr(s, "config_schema", None),
+            }
+        )
     _json_print({"count": len(out), "skills": out})
 
 
@@ -1176,6 +1207,7 @@ def _resolve_skills_dir(workspace_dir: str) -> Path:
     if workspace_dir and workspace_dir.strip():
         return Path(workspace_dir).expanduser().resolve() / "skills"
     import os
+
     root = os.environ.get("OPENAKITA_ROOT", "").strip()
     if root:
         return Path(root) / "workspaces" / "default" / "skills"
@@ -1232,12 +1264,14 @@ def _try_platform_skill_download(skill_id: str, dest_dir: Path) -> bool:
             return True
         # ZIP didn't contain SKILL.md — clean up the directory we created
         import shutil
+
         shutil.rmtree(str(dest_dir), ignore_errors=True)
         return False
     except Exception:
         # Clean up partially created directory on any failure
         if dest_dir.exists():
             import shutil
+
             shutil.rmtree(str(dest_dir), ignore_errors=True)
         return False
 
@@ -1271,8 +1305,7 @@ def _download_github_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> Non
 
     if data is None:
         raise RuntimeError(
-            f"无法下载仓库 {repo_owner}/{repo_name}，请检查网络或安装 Git。"
-            f"（最后错误: {last_err}）"
+            f"无法下载仓库 {repo_owner}/{repo_name}，请检查网络或安装 Git。（最后错误: {last_err}）"
         )
 
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
@@ -1290,11 +1323,15 @@ def _download_github_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> Non
 def _validate_zip_members(zf: zipfile.ZipFile) -> None:
     """Reject ZIP archives containing path-traversal members (Zip Slip)."""
     import os
+
     for name in zf.namelist():
         normalized = os.path.normpath(name)
-        if (name.startswith("/") or name.startswith("\\")
-                or normalized.startswith("..")
-                or os.path.isabs(normalized)):
+        if (
+            name.startswith("/")
+            or name.startswith("\\")
+            or normalized.startswith("..")
+            or os.path.isabs(normalized)
+        ):
             raise RuntimeError(f"Zip Slip detected: dangerous member '{name}'")
 
 
@@ -1368,8 +1405,7 @@ def _download_gitee_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> None
 
     if data is None:
         raise RuntimeError(
-            f"无法下载 Gitee 仓库 {repo_owner}/{repo_name}，请检查网络。"
-            f"（最后错误: {last_err}）"
+            f"无法下载 Gitee 仓库 {repo_owner}/{repo_name}，请检查网络。（最后错误: {last_err}）"
         )
 
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
@@ -1400,6 +1436,7 @@ def _read_skill_source(d: Path) -> str:
 def _cleanup_broken_skill_dir(d: Path) -> None:
     """清理残留的无效技能目录（无 SKILL.md）。清理失败则抛出异常。"""
     import shutil
+
     shutil.rmtree(d)
 
 
@@ -1472,6 +1509,7 @@ def install_skill(workspace_dir: str, url: str) -> None:
                 # 有子路径：克隆到临时目录，再提取子目录
                 import shutil
                 import tempfile
+
                 tmp_parent = Path(tempfile.mkdtemp(prefix="openakita_gh_"))
                 tmp_dir = tmp_parent / "repo"
                 try:
@@ -1558,7 +1596,7 @@ def install_skill(workspace_dir: str, url: str) -> None:
             if requested_skill:
                 preferred_rel_paths.append(requested_skill)
                 if requested_skill.startswith("skills/"):
-                    stripped = requested_skill[len("skills/"):]
+                    stripped = requested_skill[len("skills/") :]
                     if stripped:
                         preferred_rel_paths.append(stripped)
                 else:
@@ -1602,6 +1640,7 @@ def install_skill(workspace_dir: str, url: str) -> None:
         if not src.exists():
             raise ValueError(f"源路径不存在: {url}")
         import shutil
+
         target = skills_dir / src.name
         _ensure_target_available(target, url)
         shutil.copytree(str(src), str(target))
@@ -1697,10 +1736,12 @@ def get_skill_config(workspace_dir: str, skill_name: str) -> None:
     if entry is None:
         raise ValueError(f"技能未找到: {skill_name}")
 
-    _json_print({
-        "name": entry.name,
-        "config": entry.config or [],
-    })
+    _json_print(
+        {
+            "name": entry.name,
+            "config": entry.config or [],
+        }
+    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -1717,7 +1758,9 @@ def main(argv: list[str] | None = None) -> None:
     pm.add_argument("--provider-slug", default="", help="可选：用于能力推断与注册表命中")
 
     ps = sub.add_parser("list-skills", help="列出技能（JSON）")
-    ps.add_argument("--workspace-dir", required=True, help="工作区目录（用于扫描 skills/.cursor/skills 等）")
+    ps.add_argument(
+        "--workspace-dir", required=True, help="工作区目录（用于扫描 skills/.cursor/skills 等）"
+    )
 
     ph = sub.add_parser("health-check-endpoint", help="检测 LLM 端点健康度（JSON）")
     ph.add_argument("--workspace-dir", required=True, help="工作区目录")
@@ -1849,11 +1892,13 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.cmd == "feishu-validate":
-        asyncio.run(feishu_validate(
-            app_id=args.app_id,
-            app_secret=args.app_secret,
-            domain=args.domain,
-        ))
+        asyncio.run(
+            feishu_validate(
+                app_id=args.app_id,
+                app_secret=args.app_secret,
+                domain=args.domain,
+            )
+        )
         return
 
     if args.cmd == "wecom-onboard-start":
@@ -1881,10 +1926,12 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.cmd == "qqbot-validate":
-        asyncio.run(qqbot_validate(
-            app_id=args.app_id,
-            app_secret=args.app_secret,
-        ))
+        asyncio.run(
+            qqbot_validate(
+                app_id=args.app_id,
+                app_secret=args.app_secret,
+            )
+        )
         return
 
     if args.cmd == "wechat-onboard-start":

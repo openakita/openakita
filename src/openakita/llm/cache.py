@@ -41,23 +41,29 @@ def build_cached_system_blocks(system_prompt: str) -> list[dict]:
 
         blocks = []
         if static_part:
-            blocks.append({
-                "type": "text",
-                "text": static_part,
-                "cache_control": {"type": "ephemeral"},
-            })
+            blocks.append(
+                {
+                    "type": "text",
+                    "text": static_part,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            )
         if dynamic_part:
-            blocks.append({
-                "type": "text",
-                "text": dynamic_part,
-            })
+            blocks.append(
+                {
+                    "type": "text",
+                    "text": dynamic_part,
+                }
+            )
         return blocks
 
-    return [{
-        "type": "text",
-        "text": system_prompt,
-        "cache_control": {"type": "ephemeral"},
-    }]
+    return [
+        {
+            "type": "text",
+            "text": system_prompt,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
 
 
 def add_tools_cache_control(tools: list[dict]) -> list[dict]:
@@ -110,11 +116,13 @@ def add_message_cache_breakpoints(
             count += 1
         elif isinstance(content, str) and content:
             result[i] = dict(msg)
-            result[i]["content"] = [{
-                "type": "text",
-                "text": content,
-                "cache_control": {"type": "ephemeral"},
-            }]
+            result[i]["content"] = [
+                {
+                    "type": "text",
+                    "text": content,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
             count += 1
 
     return result

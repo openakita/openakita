@@ -39,4 +39,3 @@ class MiniMaxInternationalRegistry(ProviderRegistry):
 
     async def list_models(self, api_key: str) -> list[ModelInfo]:
         return []
-

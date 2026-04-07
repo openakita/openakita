@@ -66,8 +66,10 @@ class StreamAccumulator:
         if evt_type == "message_stop":
             raw_reason = event.get("stop_reason", "")
             _reason_map = {
-                "stop": "end_turn", "length": "max_tokens",
-                "tool_calls": "tool_use", "function_call": "tool_use",
+                "stop": "end_turn",
+                "length": "max_tokens",
+                "tool_calls": "tool_use",
+                "function_call": "tool_use",
             }
             self.stop_reason = _reason_map.get(raw_reason, raw_reason) or self.stop_reason
             self._finalize_openai_tools()
@@ -87,9 +89,7 @@ class StreamAccumulator:
         """
         from .reasoning_engine import Decision, DecisionType
 
-        decision_type = (
-            DecisionType.TOOL_CALLS if self.tool_calls else DecisionType.FINAL_ANSWER
-        )
+        decision_type = DecisionType.TOOL_CALLS if self.tool_calls else DecisionType.FINAL_ANSWER
         return Decision(
             type=decision_type,
             text_content=self.text_content,
@@ -157,12 +157,14 @@ class StreamAccumulator:
                 "input": parsed_input,
             }
             self.tool_calls.append(tc)
-            self.assistant_content.append({
-                "type": "tool_use",
-                "id": tc["id"],
-                "name": tc["name"],
-                "input": tc["input"],
-            })
+            self.assistant_content.append(
+                {
+                    "type": "tool_use",
+                    "id": tc["id"],
+                    "name": tc["name"],
+                    "input": tc["input"],
+                }
+            )
 
         elif btype == "text":
             text = block.get("text", "")
@@ -216,8 +218,8 @@ class StreamAccumulator:
         # ── Anthropic: signature_delta ──
         if delta_type == "signature_delta":
             if idx is not None and idx in self._blocks:
-                self._blocks[idx]["signature"] = (
-                    self._blocks[idx].get("signature", "") + delta.get("signature", "")
+                self._blocks[idx]["signature"] = self._blocks[idx].get("signature", "") + delta.get(
+                    "signature", ""
                 )
             return []
 
@@ -230,10 +232,13 @@ class StreamAccumulator:
                         "creating fallback tool_use block"
                     )
                     self._blocks[idx] = {
-                        "type": "tool_use", "id": "", "name": "", "input_str": "",
+                        "type": "tool_use",
+                        "id": "",
+                        "name": "",
+                        "input_str": "",
                     }
-                self._blocks[idx]["input_str"] = (
-                    self._blocks[idx].get("input_str", "") + delta.get("partial_json", "")
+                self._blocks[idx]["input_str"] = self._blocks[idx].get("input_str", "") + delta.get(
+                    "partial_json", ""
                 )
             return []
 
@@ -290,12 +295,14 @@ class StreamAccumulator:
                 )
             tool = {"id": call_id, "name": tc["name"], "input": args}
             self.tool_calls.append(tool)
-            self.assistant_content.append({
-                "type": "tool_use",
-                "id": call_id,
-                "name": tc["name"],
-                "input": args,
-            })
+            self.assistant_content.append(
+                {
+                    "type": "tool_use",
+                    "id": call_id,
+                    "name": tc["name"],
+                    "input": args,
+                }
+            )
 
         if self._openai_tool_inputs and not self.stop_reason:
             self.stop_reason = "tool_use"
@@ -327,6 +334,7 @@ def post_process_streamed_decision(decision) -> None:
     if not decision.tool_calls and decision.thinking_content:
         try:
             from ..llm.converters.tools import has_text_tool_calls, parse_text_tool_calls
+
             if has_text_tool_calls(decision.thinking_content):
                 _, embedded = parse_text_tool_calls(decision.thinking_content)
                 if embedded:
@@ -347,6 +355,7 @@ def post_process_streamed_decision(decision) -> None:
     if not decision.tool_calls and decision.text_content:
         try:
             from ..llm.converters.tools import has_text_tool_calls, parse_text_tool_calls
+
             if has_text_tool_calls(decision.text_content):
                 clean, embedded = parse_text_tool_calls(decision.text_content)
                 if embedded:
@@ -358,9 +367,7 @@ def post_process_streamed_decision(decision) -> None:
                         decision.assistant_content.append(
                             {"type": "tool_use", "id": tc.id, "name": tc.name, "input": tc.input}
                         )
-                    logger.warning(
-                        f"[post_process] Recovered {len(embedded)} tool calls from text"
-                    )
+                    logger.warning(f"[post_process] Recovered {len(embedded)} tool calls from text")
         except Exception as e:
             logger.debug(f"[post_process] Text tool-call check failed: {e}")
 
@@ -374,6 +381,7 @@ def post_process_streamed_decision(decision) -> None:
 
     # 5) 更新 decision type
     from .reasoning_engine import DecisionType
+
     if decision.tool_calls:
         decision.type = DecisionType.TOOL_CALLS
     else:

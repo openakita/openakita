@@ -314,7 +314,9 @@ class TelegramAdapter(ChannelAdapter):
             footer_elapsed: 思考卡片显示处理耗时（默认 True，可通过 TELEGRAM_FOOTER_ELAPSED 环境变量控制）
             footer_status: 思考卡片显示处理状态（默认 True，可通过 TELEGRAM_FOOTER_STATUS 环境变量控制）
         """
-        super().__init__(channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_profile_id)
+        super().__init__(
+            channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_profile_id
+        )
 
         self.bot_token = bot_token
         self.webhook_url = webhook_url
@@ -337,6 +339,7 @@ class TelegramAdapter(ChannelAdapter):
 
         # Webhook secret_token（用于验证来源是 Telegram 的请求）
         import secrets
+
         self._webhook_secret = secrets.token_urlsafe(32)
 
         # 消息去重（防止 webhook 重试或网络抖动导致重复处理）
@@ -357,11 +360,15 @@ class TelegramAdapter(ChannelAdapter):
         # Footer 配置（耗时 / 状态显示）
         self._typing_start_time: dict[str, float] = {}
         self._typing_status: dict[str, str] = {}
-        self._footer_elapsed: bool = footer_elapsed if footer_elapsed is not None else (
-            os.environ.get("TELEGRAM_FOOTER_ELAPSED", "true").lower() in ("true", "1", "yes")
+        self._footer_elapsed: bool = (
+            footer_elapsed
+            if footer_elapsed is not None
+            else (os.environ.get("TELEGRAM_FOOTER_ELAPSED", "true").lower() in ("true", "1", "yes"))
         )
-        self._footer_status: bool = footer_status if footer_status is not None else (
-            os.environ.get("TELEGRAM_FOOTER_STATUS", "true").lower() in ("true", "1", "yes")
+        self._footer_status: bool = (
+            footer_status
+            if footer_status is not None
+            else (os.environ.get("TELEGRAM_FOOTER_STATUS", "true").lower() in ("true", "1", "yes"))
         )
 
     async def start(self) -> None:
@@ -427,6 +434,7 @@ class TelegramAdapter(ChannelAdapter):
         # Bot API 8.0+ reaction 事件（预留，当前仅记录日志）
         try:
             from telegram.ext import CallbackQueryHandler, MessageReactionHandler
+
             self._app.add_handler(MessageReactionHandler(self._handle_reaction))
             self._app.add_handler(CallbackQueryHandler(self._handle_callback_query))
         except (ImportError, AttributeError):
@@ -475,9 +483,7 @@ class TelegramAdapter(ChannelAdapter):
                 BotCommand("cancel_restart", "取消重启"),
             ]
             await self._bot.set_my_commands(bot_commands)
-            logger.info(
-                f"[Telegram] 已注册 {len(bot_commands)} 个机器人命令到菜单"
-            )
+            logger.info(f"[Telegram] 已注册 {len(bot_commands)} 个机器人命令到菜单")
         except Exception as e:
             logger.warning(f"[Telegram] 注册命令菜单失败（不影响使用）: {e}")
 
@@ -486,7 +492,8 @@ class TelegramAdapter(ChannelAdapter):
             # Webhook 模式
             await self._app.start()
             await self._bot.set_webhook(
-                self.webhook_url, secret_token=self._webhook_secret,
+                self.webhook_url,
+                secret_token=self._webhook_secret,
                 allowed_updates=["message", "edited_message", "callback_query", "message_reaction"],
             )
             logger.info(f"Telegram bot started with webhook: {self.webhook_url}")
@@ -576,7 +583,12 @@ class TelegramAdapter(ChannelAdapter):
                 try:
                     await self._app.updater.start_polling(
                         drop_pending_updates=False,
-                        allowed_updates=["message", "edited_message", "callback_query", "message_reaction"],
+                        allowed_updates=[
+                            "message",
+                            "edited_message",
+                            "callback_query",
+                            "message_reaction",
+                        ],
                         error_callback=self._on_polling_error,
                     )
                     logger.info("[Telegram] Polling restarted successfully")
@@ -676,6 +688,7 @@ class TelegramAdapter(ChannelAdapter):
                 decision = decision_map.get(decision_key, "deny")
                 try:
                     from openakita.core.policy import get_policy_engine
+
                     get_policy_engine().resolve_ui_confirm(confirm_id, decision)
                     logger.info(f"[Telegram] Security decision: {decision} for {confirm_id[:8]}")
                 except Exception as e:
@@ -1018,8 +1031,10 @@ class TelegramAdapter(ChannelAdapter):
         display = self._compose_thinking_display(sk)
         try:
             await self._bot.edit_message_text(
-                chat_id=card_ref[0], message_id=card_ref[1],
-                text=display, parse_mode=None,
+                chat_id=card_ref[0],
+                message_id=card_ref[1],
+                text=display,
+                parse_mode=None,
             )
             self._streaming_last_patch[sk] = now
         except telegram.error.RetryAfter as e:
@@ -1053,8 +1068,10 @@ class TelegramAdapter(ChannelAdapter):
         display = self._compose_thinking_display(sk)
         try:
             await self._bot.edit_message_text(
-                chat_id=card_ref[0], message_id=card_ref[1],
-                text=display, parse_mode=None,
+                chat_id=card_ref[0],
+                message_id=card_ref[1],
+                text=display,
+                parse_mode=None,
             )
             self._streaming_last_patch[sk] = now
         except telegram.error.RetryAfter as e:
@@ -1091,8 +1108,10 @@ class TelegramAdapter(ChannelAdapter):
         display = self._compose_thinking_display(sk)
         try:
             await self._bot.edit_message_text(
-                chat_id=card_ref[0], message_id=card_ref[1],
-                text=display, parse_mode=None,
+                chat_id=card_ref[0],
+                message_id=card_ref[1],
+                text=display,
+                parse_mode=None,
             )
             self._streaming_last_patch[sk] = now
         except telegram.error.RetryAfter as e:
@@ -1178,7 +1197,8 @@ class TelegramAdapter(ChannelAdapter):
             summary_html = self._build_thinking_summary_html(thinking, dur_ms, chain_lines, sk=sk)
             try:
                 await self._bot.edit_message_text(
-                    chat_id=card_ref[0], message_id=card_ref[1],
+                    chat_id=card_ref[0],
+                    message_id=card_ref[1],
                     text=summary_html,
                     parse_mode=telegram.constants.ParseMode.HTML,
                 )
@@ -1199,7 +1219,8 @@ class TelegramAdapter(ChannelAdapter):
             text_to_send = self._convert_to_telegram_html(final_text + elapsed_suffix)
             try:
                 await self._bot.edit_message_text(
-                    chat_id=card_ref[0], message_id=card_ref[1],
+                    chat_id=card_ref[0],
+                    message_id=card_ref[1],
                     text=text_to_send,
                     parse_mode=telegram.constants.ParseMode.HTML,
                 )
@@ -1209,8 +1230,10 @@ class TelegramAdapter(ChannelAdapter):
             except telegram.error.BadRequest:
                 with contextlib.suppress(Exception):
                     await self._bot.edit_message_text(
-                        chat_id=card_ref[0], message_id=card_ref[1],
-                        text=final_text + elapsed_suffix, parse_mode=None,
+                        chat_id=card_ref[0],
+                        message_id=card_ref[1],
+                        text=final_text + elapsed_suffix,
+                        parse_mode=None,
                     )
                 self._streaming_finalized.add(sk)
                 self._thinking_cards.pop(sk, None)
@@ -1225,7 +1248,10 @@ class TelegramAdapter(ChannelAdapter):
         return False
 
     def _build_thinking_summary_html(
-        self, thinking: str, dur_ms: int, chain_lines: list[str],
+        self,
+        thinking: str,
+        dur_ms: int,
+        chain_lines: list[str],
         sk: str = "",
     ) -> str:
         """构建 Expandable Blockquote HTML（思考摘要折叠展示）。"""
@@ -1371,8 +1397,10 @@ class TelegramAdapter(ChannelAdapter):
                     try:
                         t = self._convert_to_telegram_html(text + elapsed_suffix)
                         await self._bot.edit_message_text(
-                            chat_id=card_ref[0], message_id=card_ref[1],
-                            text=t, parse_mode=telegram.constants.ParseMode.HTML,
+                            chat_id=card_ref[0],
+                            message_id=card_ref[1],
+                            text=t,
+                            parse_mode=telegram.constants.ParseMode.HTML,
                         )
                         self._typing_start_time.pop(sk, None)
                         self._typing_status.pop(sk, None)
@@ -1402,7 +1430,9 @@ class TelegramAdapter(ChannelAdapter):
         # caption 只附在第一个媒体上，避免重复发送
         caption_used = False
         reply_to_id = int(message.reply_to) if message.reply_to else None
-        _thread_id = int(message.thread_id) if message.thread_id and str(message.thread_id).strip() else None
+        _thread_id = (
+            int(message.thread_id) if message.thread_id and str(message.thread_id).strip() else None
+        )
 
         def _next_caption() -> str | None:
             nonlocal caption_used
@@ -1453,17 +1483,25 @@ class TelegramAdapter(ChannelAdapter):
             if img.local_path:
                 sent_message = await _send_media_with_retry(
                     lambda _p=img.local_path, _c=cap, _pm=pm: self._bot.send_photo(
-                        chat_id=chat_id, photo=_p, caption=_c,
-                        parse_mode=_pm, reply_to_message_id=reply_to_id,
+                        chat_id=chat_id,
+                        photo=_p,
+                        caption=_c,
+                        parse_mode=_pm,
+                        reply_to_message_id=reply_to_id,
                         message_thread_id=_thread_id,
-                    ))
+                    )
+                )
             elif img.url:
                 sent_message = await _send_media_with_retry(
                     lambda _u=img.url, _c=cap, _pm=pm: self._bot.send_photo(
-                        chat_id=chat_id, photo=_u, caption=_c,
-                        parse_mode=_pm, reply_to_message_id=reply_to_id,
+                        chat_id=chat_id,
+                        photo=_u,
+                        caption=_c,
+                        parse_mode=_pm,
+                        reply_to_message_id=reply_to_id,
                         message_thread_id=_thread_id,
-                    ))
+                    )
+                )
             else:
                 logger.warning(f"Telegram: image has no local_path or url, skipped: {img.filename}")
 
@@ -1474,17 +1512,25 @@ class TelegramAdapter(ChannelAdapter):
             if vid.local_path:
                 sent_message = await _send_media_with_retry(
                     lambda _p=vid.local_path, _c=cap, _pm=pm: self._bot.send_video(
-                        chat_id=chat_id, video=_p, caption=_c,
-                        parse_mode=_pm, reply_to_message_id=reply_to_id,
+                        chat_id=chat_id,
+                        video=_p,
+                        caption=_c,
+                        parse_mode=_pm,
+                        reply_to_message_id=reply_to_id,
                         message_thread_id=_thread_id,
-                    ))
+                    )
+                )
             elif vid.url:
                 sent_message = await _send_media_with_retry(
                     lambda _u=vid.url, _c=cap, _pm=pm: self._bot.send_video(
-                        chat_id=chat_id, video=_u, caption=_c,
-                        parse_mode=_pm, reply_to_message_id=reply_to_id,
+                        chat_id=chat_id,
+                        video=_u,
+                        caption=_c,
+                        parse_mode=_pm,
+                        reply_to_message_id=reply_to_id,
                         message_thread_id=_thread_id,
-                    ))
+                    )
+                )
             else:
                 logger.warning(f"Telegram: video has no local_path or url, skipped: {vid.filename}")
 
@@ -1494,20 +1540,30 @@ class TelegramAdapter(ChannelAdapter):
             pm = parse_mode if cap else None
             if file.local_path:
                 sent_message = await _send_media_with_retry(
-                    lambda _p=file.local_path, _c=cap, _pm=pm, _fn=file.filename: self._bot.send_document(
-                        chat_id=chat_id, document=_p, filename=_fn,
-                        caption=_c, parse_mode=_pm,
-                        reply_to_message_id=reply_to_id,
-                        message_thread_id=_thread_id,
-                    ))
+                    lambda _p=file.local_path, _c=cap, _pm=pm, _fn=file.filename: (
+                        self._bot.send_document(
+                            chat_id=chat_id,
+                            document=_p,
+                            filename=_fn,
+                            caption=_c,
+                            parse_mode=_pm,
+                            reply_to_message_id=reply_to_id,
+                            message_thread_id=_thread_id,
+                        )
+                    )
+                )
             elif file.url:
                 sent_message = await _send_media_with_retry(
                     lambda _u=file.url, _c=cap, _pm=pm, _fn=file.filename: self._bot.send_document(
-                        chat_id=chat_id, document=_u, filename=_fn,
-                        caption=_c, parse_mode=_pm,
+                        chat_id=chat_id,
+                        document=_u,
+                        filename=_fn,
+                        caption=_c,
+                        parse_mode=_pm,
                         reply_to_message_id=reply_to_id,
                         message_thread_id=_thread_id,
-                    ))
+                    )
+                )
             else:
                 logger.warning(f"Telegram: file has no local_path or url, skipped: {file.filename}")
 
@@ -1518,25 +1574,37 @@ class TelegramAdapter(ChannelAdapter):
             if voice.local_path:
                 sent_message = await _send_media_with_retry(
                     lambda _p=voice.local_path, _c=cap, _pm=pm: self._bot.send_voice(
-                        chat_id=chat_id, voice=_p, caption=_c,
-                        parse_mode=_pm, reply_to_message_id=reply_to_id,
+                        chat_id=chat_id,
+                        voice=_p,
+                        caption=_c,
+                        parse_mode=_pm,
+                        reply_to_message_id=reply_to_id,
                         message_thread_id=_thread_id,
-                    ))
+                    )
+                )
             elif voice.url:
                 sent_message = await _send_media_with_retry(
                     lambda _u=voice.url, _c=cap, _pm=pm: self._bot.send_voice(
-                        chat_id=chat_id, voice=_u, caption=_c,
-                        parse_mode=_pm, reply_to_message_id=reply_to_id,
+                        chat_id=chat_id,
+                        voice=_u,
+                        caption=_c,
+                        parse_mode=_pm,
+                        reply_to_message_id=reply_to_id,
                         message_thread_id=_thread_id,
-                    ))
+                    )
+                )
             else:
-                logger.warning(f"Telegram: voice has no local_path or url, skipped: {voice.filename}")
+                logger.warning(
+                    f"Telegram: voice has no local_path or url, skipped: {voice.filename}"
+                )
 
         # text+media 场景：如果有文本但所有媒体都无法附带 caption，单独发送文本
         if text_to_send and message.content.has_media and not caption_used:
             try:
                 sent_message = await self._bot.send_message(
-                    chat_id=chat_id, text=text_to_send, parse_mode=parse_mode,
+                    chat_id=chat_id,
+                    text=text_to_send,
+                    parse_mode=parse_mode,
                     reply_to_message_id=reply_to_id,
                     message_thread_id=_thread_id,
                 )
@@ -1753,8 +1821,10 @@ class TelegramAdapter(ChannelAdapter):
                     card_ref = self._thinking_cards[sk]
                     with contextlib.suppress(Exception):
                         await self._bot.edit_message_text(
-                            chat_id=card_ref[0], message_id=card_ref[1],
-                            text=display, parse_mode=None,
+                            chat_id=card_ref[0],
+                            message_id=card_ref[1],
+                            text=display,
+                            parse_mode=None,
                         )
                         self._streaming_last_patch[sk] = now
             return
@@ -1804,8 +1874,10 @@ class TelegramAdapter(ChannelAdapter):
         try:
             await self._api_retry(
                 self._bot.edit_message_text,
-                chat_id=_chat_id, message_id=_msg_id,
-                text=text, parse_mode=None,
+                chat_id=_chat_id,
+                message_id=_msg_id,
+                text=text,
+                parse_mode=None,
             )
             return True
         except telegram.error.BadRequest as e:

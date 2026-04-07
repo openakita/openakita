@@ -31,6 +31,7 @@ class IntentType(Enum):
 @dataclass
 class ComplexitySignal:
     """复杂任务信号，用于判断是否建议切换到 Plan 模式"""
+
     multi_file_change: bool = False
     cross_module: bool = False
     ambiguous_scope: bool = False
@@ -39,17 +40,20 @@ class ComplexitySignal:
 
     @property
     def score(self) -> int:
-        return sum([
-            self.multi_file_change,
-            self.cross_module,
-            self.ambiguous_scope,
-            self.destructive_potential * 2,
-            self.multi_step_required,
-        ])
+        return sum(
+            [
+                self.multi_file_change,
+                self.cross_module,
+                self.ambiguous_scope,
+                self.destructive_potential * 2,
+                self.multi_step_required,
+            ]
+        )
 
     @property
     def should_suggest_plan(self) -> bool:
         from ..config import settings
+
         threshold = getattr(settings, "plan_suggest_threshold", 5)
         llm_flag = getattr(self, "_llm_suggest_plan", False)
         if llm_flag and self.score >= max(threshold - 2, 2):
@@ -140,37 +144,99 @@ def _strip_thinking_tags(text: str) -> str:
 
 _GREETING_PATTERNS: set[str] = {
     # Chinese greetings / confirmations / farewells
-    "你好", "您好", "你好呀", "你好啊", "嗨", "哈喽", "hello", "hi", "hey",
-    "嗯", "嗯嗯", "好", "好的", "行", "ok", "可以", "收到", "了解",
-    "谢谢", "谢了", "感谢", "thanks", "thank you", "thx",
-    "再见", "拜拜", "bye", "晚安", "早安", "早", "早上好", "下午好", "晚上好",
-    "在吗", "在不在", "你在吗",
-    "哈哈", "哈哈哈", "笑死", "666", "牛", "厉害",
-    "?", "？", "!", "！",
+    "你好",
+    "您好",
+    "你好呀",
+    "你好啊",
+    "嗨",
+    "哈喽",
+    "hello",
+    "hi",
+    "hey",
+    "嗯",
+    "嗯嗯",
+    "好",
+    "好的",
+    "行",
+    "ok",
+    "可以",
+    "收到",
+    "了解",
+    "谢谢",
+    "谢了",
+    "感谢",
+    "thanks",
+    "thank you",
+    "thx",
+    "再见",
+    "拜拜",
+    "bye",
+    "晚安",
+    "早安",
+    "早",
+    "早上好",
+    "下午好",
+    "晚上好",
+    "在吗",
+    "在不在",
+    "你在吗",
+    "哈哈",
+    "哈哈哈",
+    "笑死",
+    "666",
+    "牛",
+    "厉害",
+    "?",
+    "？",
+    "!",
+    "！",
 }
 
 # When conversation history exists, only these unambiguous strings use the fast-path;
 # punctuation and short confirmations are analyzed by the LLM (may be follow-ups).
-_SAFE_WITH_HISTORY: frozenset[str] = frozenset({
-    "你好", "您好", "你好呀", "你好啊", "嗨", "哈喽", "hello", "hi", "hey",
-    "谢谢", "谢了", "感谢", "thanks", "thank you", "thx",
-    "再见", "拜拜", "bye", "晚安", "早安", "早", "早上好", "下午好", "晚上好",
-})
+_SAFE_WITH_HISTORY: frozenset[str] = frozenset(
+    {
+        "你好",
+        "您好",
+        "你好呀",
+        "你好啊",
+        "嗨",
+        "哈喽",
+        "hello",
+        "hi",
+        "hey",
+        "谢谢",
+        "谢了",
+        "感谢",
+        "thanks",
+        "thank you",
+        "thx",
+        "再见",
+        "拜拜",
+        "bye",
+        "晚安",
+        "早安",
+        "早",
+        "早上好",
+        "下午好",
+        "晚上好",
+    }
+)
 
 _FAST_CHAT_MAX_LEN = 12
 
 # Rule-based patterns for QUERY intent (no tools needed)
 _QUERY_PATTERNS = re.compile(
     r"^(?:"
-    r"\d+\s*[+\-*/×÷]\s*\d+"           # math: 1+1, 3*4
-    r"|.*等于[几多少什么]"                # X等于几
-    r"|今天几[号日]"                      # 今天几号
-    r"|现在几[点时]"                      # 现在几点
-    r"|(?:什么|啥)(?:时间|日期|时候)"     # 什么时间
-    r"|几月几[号日]"                      # 几月几号
-    r"|今天(?:是|星期|周)[几什么]"        # 今天星期几
-    r"|什么是\S+"                         # 什么是X
-    r"|\S+是什么"                         # X是什么
+    r"\d+\s*[+\-*/×÷]\s*\d+"  # math: 1+1, 3*4
+    r"|.*等于[几多少什么]"  # X等于几
+    r"|今天几[号日]"  # 今天几号
+    r"|现在几[点时]"  # 现在几点
+    r"|(?:什么|啥)(?:时间|日期|时候)"  # 什么时间
+    r"|几月几[号日]"  # 几月几号
+    r"|今天(?:是|星期|周)[几什么]"  # 今天星期几
+    r"|什么是\S+"  # 什么是X
+    r"|\S+是什么"  # X是什么
     r").*$",
     re.IGNORECASE,
 )
@@ -235,8 +301,10 @@ def _try_fast_chat_shortcut(message: str, has_history: bool = False) -> IntentRe
             fast_reply=True,
         )
 
-    if not has_history and len(stripped) <= 6 and all(
-        not c.isalnum() or c in "0123456789" for c in stripped
+    if (
+        not has_history
+        and len(stripped) <= 6
+        and all(not c.isalnum() or c in "0123456789" for c in stripped)
     ):
         logger.info(f"[IntentAnalyzer] Fast-path: '{stripped}' is pure punctuation/emoji → CHAT")
         return IntentResult(
@@ -280,11 +348,7 @@ class IntentAnalyzer:
                 system=INTENT_ANALYZER_SYSTEM,
             )
 
-            raw_output = (
-                _strip_thinking_tags(response.content).strip()
-                if response.content
-                else ""
-            )
+            raw_output = _strip_thinking_tags(response.content).strip() if response.content else ""
             if not raw_output:
                 logger.warning("[IntentAnalyzer] Empty LLM response, using default")
                 return _make_default(message)
@@ -327,9 +391,18 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
 
         kv_match = re.match(r"^(\w[\w_]*):\s*(.*)", stripped)
         if kv_match and kv_match.group(1) in (
-            "intent", "task_type", "goal", "tool_hints", "memory_keywords",
-            "constraints", "inputs", "output_requirements", "risks_or_ambiguities",
-            "destructive", "scope", "suggest_plan",
+            "intent",
+            "task_type",
+            "goal",
+            "tool_hints",
+            "memory_keywords",
+            "constraints",
+            "inputs",
+            "output_requirements",
+            "risks_or_ambiguities",
+            "destructive",
+            "scope",
+            "suggest_plan",
         ):
             if current_key:
                 extracted[current_key] = "\n".join(current_lines).strip()
@@ -377,12 +450,8 @@ def _parse_intent_output(raw_output: str, message: str) -> IntentResult:
     # Complexity analysis — purely from LLM output, no keyword matching
     if result.intent in (IntentType.TASK,):
         signal = ComplexitySignal()
-        signal.destructive_potential = (
-            extracted.get("destructive", "").strip().lower() == "true"
-        )
-        signal.cross_module = (
-            extracted.get("scope", "").strip().lower() == "broad"
-        )
+        signal.destructive_potential = extracted.get("destructive", "").strip().lower() == "true"
+        signal.cross_module = extracted.get("scope", "").strip().lower() == "broad"
         if extracted.get("suggest_plan", "").strip().lower() == "true":
             signal._llm_suggest_plan = True  # type: ignore[attr-defined]
         signal.multi_step_required = task_type == "compound"
@@ -439,4 +508,3 @@ def _parse_list(value: str) -> list[str]:
         elif line and line not in ("[]",):
             items.append(line.strip("'\""))
     return items
-

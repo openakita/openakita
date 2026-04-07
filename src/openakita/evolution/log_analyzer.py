@@ -193,8 +193,10 @@ class LogAnalyzer:
         if since and errors:
             errors = [e for e in errors if e.timestamp >= since]
 
-        logger.info(f"Extracted {len(errors)} errors from {target_file.name}"
-                     + (f" (since {since.isoformat()})" if since else ""))
+        logger.info(
+            f"Extracted {len(errors)} errors from {target_file.name}"
+            + (f" (since {since.isoformat()})" if since else "")
+        )
         return errors
 
     def search_by_keyword(

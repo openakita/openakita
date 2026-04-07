@@ -169,9 +169,7 @@ def compile_all(identity_dir: Path, use_llm: bool = False) -> dict[str, Path]:
         else:
             fallback = source_content[: config.get("max_tokens", 500)]
             output_path.write_text(fallback, encoding="utf-8")
-            logger.info(
-                f"[Compiler] Rule extraction empty for {target}, wrote truncated source"
-            )
+            logger.info(f"[Compiler] Rule extraction empty for {target}, wrote truncated source")
         results[target] = output_path
 
     _cleanup_orphan_files(runtime_dir)

@@ -12,8 +12,13 @@ class ChatRequest(BaseModel):
 
     message: str = Field("", description="User message text")
     conversation_id: str | None = Field(None, description="Conversation ID for context")
-    mode: Literal["ask", "plan", "agent"] = Field("agent", description="Interaction mode: ask (read-only), plan (plan then execute), agent (full execution)")
-    plan_mode: bool = Field(False, description="Deprecated: use mode='plan' instead. Kept for backward compatibility.")
+    mode: Literal["ask", "plan", "agent"] = Field(
+        "agent",
+        description="Interaction mode: ask (read-only), plan (plan then execute), agent (full execution)",
+    )
+    plan_mode: bool = Field(
+        False, description="Deprecated: use mode='plan' instead. Kept for backward compatibility."
+    )
     endpoint: str | None = Field(None, description="Specific endpoint name (null=auto)")
     attachments: list[AttachmentInfo] | None = Field(None, description="Attached files/images")
     thinking_mode: str | None = Field(

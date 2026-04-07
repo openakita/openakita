@@ -128,6 +128,7 @@ def get_tool_input_schema(tool_name: str) -> dict:
     schema = tool.get("input_schema") if tool else None
     return schema if isinstance(schema, dict) else {}
 
+
 __all__ = [
     # 基础类型和工具
     "ToolDefinition",

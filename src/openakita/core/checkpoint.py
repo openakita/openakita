@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CheckpointEntry:
     """单个文件的快照记录"""
+
     original_path: str
     backup_path: str
     file_hash: str
@@ -33,6 +34,7 @@ class CheckpointEntry:
 @dataclass
 class Checkpoint:
     """一次快照"""
+
     checkpoint_id: str
     timestamp: float
     tool_name: str
@@ -64,13 +66,15 @@ class CheckpointManager:
                 data = json.loads(self._manifest_path.read_text(encoding="utf-8"))
                 for item in data:
                     entries = [CheckpointEntry(**e) for e in item.get("entries", [])]
-                    self._checkpoints.append(Checkpoint(
-                        checkpoint_id=item["checkpoint_id"],
-                        timestamp=item["timestamp"],
-                        tool_name=item.get("tool_name", ""),
-                        description=item.get("description", ""),
-                        entries=entries,
-                    ))
+                    self._checkpoints.append(
+                        Checkpoint(
+                            checkpoint_id=item["checkpoint_id"],
+                            timestamp=item["timestamp"],
+                            tool_name=item.get("tool_name", ""),
+                            description=item.get("description", ""),
+                            entries=entries,
+                        )
+                    )
             except Exception as e:
                 logger.warning(f"[Checkpoint] Failed to load manifest: {e}")
 
@@ -114,13 +118,15 @@ class CheckpointManager:
         for fp_str in file_paths:
             fp = Path(fp_str)
             if not fp.exists():
-                entries.append(CheckpointEntry(
-                    original_path=str(fp),
-                    backup_path="",
-                    file_hash="",
-                    size=0,
-                    existed=False,
-                ))
+                entries.append(
+                    CheckpointEntry(
+                        original_path=str(fp),
+                        backup_path="",
+                        file_hash="",
+                        size=0,
+                        existed=False,
+                    )
+                )
                 continue
 
             if fp.is_dir():
@@ -136,13 +142,15 @@ class CheckpointManager:
                     counter += 1
 
                 shutil.copy2(fp, backup_path)
-                entries.append(CheckpointEntry(
-                    original_path=str(fp),
-                    backup_path=str(backup_path),
-                    file_hash=file_hash,
-                    size=fp.stat().st_size,
-                    existed=True,
-                ))
+                entries.append(
+                    CheckpointEntry(
+                        original_path=str(fp),
+                        backup_path=str(backup_path),
+                        file_hash=file_hash,
+                        size=fp.stat().st_size,
+                        existed=True,
+                    )
+                )
             except Exception as e:
                 logger.warning(f"[Checkpoint] Failed to backup {fp}: {e}")
 
@@ -165,10 +173,7 @@ class CheckpointManager:
         self._enforce_limit()
         self._save_manifest()
 
-        logger.info(
-            f"[Checkpoint] Created {cp_id}: {len(entries)} file(s), "
-            f"tool={tool_name}"
-        )
+        logger.info(f"[Checkpoint] Created {cp_id}: {len(entries)} file(s), tool={tool_name}")
         return cp_id
 
     def rewind_to_checkpoint(self, checkpoint_id: str) -> bool:
@@ -204,13 +209,9 @@ class CheckpointManager:
                     shutil.copy2(backup, target)
                     restored += 1
             except Exception as e:
-                logger.warning(
-                    f"[Checkpoint] Failed to restore {entry.original_path}: {e}"
-                )
+                logger.warning(f"[Checkpoint] Failed to restore {entry.original_path}: {e}")
 
-        logger.info(
-            f"[Checkpoint] Restored {restored} file(s) from {checkpoint_id}"
-        )
+        logger.info(f"[Checkpoint] Restored {restored} file(s) from {checkpoint_id}")
         return True
 
     def list_checkpoints(self, limit: int = 20) -> list[dict[str, Any]]:
@@ -245,6 +246,7 @@ def get_checkpoint_manager() -> CheckpointManager:
     if _global_checkpoint_mgr is None:
         try:
             from .policy import get_policy_engine
+
             cfg = get_policy_engine().config.checkpoint
             _global_checkpoint_mgr = CheckpointManager(
                 snapshot_dir=cfg.snapshot_dir,

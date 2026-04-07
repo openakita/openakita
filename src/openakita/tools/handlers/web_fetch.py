@@ -43,10 +43,7 @@ class WebFetchHandler:
         try:
             import httpx
         except ImportError:
-            return (
-                "❌ web_fetch 需要 httpx 库。"
-                "请运行: pip install httpx"
-            )
+            return "❌ web_fetch 需要 httpx 库。请运行: pip install httpx"
 
         try:
             async with httpx.AsyncClient(
@@ -97,6 +94,7 @@ class WebFetchHandler:
         """Extract main content from HTML and convert to readable markdown."""
         try:
             import trafilatura
+
             result = trafilatura.extract(
                 html,
                 include_links=True,
@@ -112,6 +110,7 @@ class WebFetchHandler:
 
         try:
             from readability import Document
+
             doc = Document(html)
             title = doc.title()
             content_html = doc.summary()

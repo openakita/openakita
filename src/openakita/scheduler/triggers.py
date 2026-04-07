@@ -289,8 +289,9 @@ class CronTrigger(Trigger):
                     break
                 continue
 
-            if current.day not in self.day_spec or \
-               current.weekday() not in self._convert_weekday(self.weekday_spec):
+            if current.day not in self.day_spec or current.weekday() not in self._convert_weekday(
+                self.weekday_spec
+            ):
                 # 跳到下一天
                 current = (current + timedelta(days=1)).replace(hour=0, minute=0)
                 if current > start + timedelta(days=max_iterations):
