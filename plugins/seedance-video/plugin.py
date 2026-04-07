@@ -19,19 +19,19 @@ from pydantic import BaseModel, Field
 
 from openakita.plugins.api import PluginAPI, PluginBase
 
-from .ark_client import ArkClient
-from .long_video import (
+from ark_client import ArkClient
+from long_video import (
     ChainGenerator, concat_videos, decompose_storyboard, ffmpeg_available,
 )
-from .models import (
+from models import (
     SEEDANCE_MODELS, RESOLUTION_PIXEL_MAP, MODELS_BY_ID,
     get_model, model_to_dict,
 )
-from .prompt_optimizer import (
+from prompt_optimizer import (
     PROMPT_TEMPLATES, CAMERA_KEYWORDS, ATMOSPHERE_KEYWORDS,
     MODE_FORMULAS, optimize_prompt,
 )
-from .task_manager import TaskManager
+from task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
 

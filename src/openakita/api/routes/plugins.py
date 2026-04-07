@@ -213,7 +213,7 @@ async def _sync_new_plugins(pm, plugins_dir: Path) -> None:
     if pm is None or not plugins_dir.is_dir():
         return
     loaded_ids = {e["id"] for e in pm.list_loaded()}
-    failed_ids = {pid for pid, _ in pm.list_failed()}
+    failed_ids = set(pm.list_failed())
     state = pm.state
     for child in plugins_dir.iterdir():
         if not child.is_dir() or not (child / "plugin.json").is_file():
