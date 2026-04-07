@@ -988,7 +988,8 @@ class OrgRuntime:
         agent.file_tool.base_path = org_workspace
         agent.shell_tool.default_cwd = str(org_workspace)
 
-        self._override_system_prompt_for_org(agent, org_context_prompt, org_workspace)
+        is_root = (node.level == 0 or not org.get_parent(node.id))
+        self._override_system_prompt_for_org(agent, org_context_prompt, org_workspace, is_root=is_root)
 
         agent._org_context = {
             "org_id": org.id,
@@ -1037,6 +1038,7 @@ class OrgRuntime:
     @staticmethod
     def _override_system_prompt_for_org(
         agent: Any, org_context: str, workspace: Path | None = None,
+        *, is_root: bool = False,
     ) -> None:
         """Replace the agent's system prompt with an org-focused lean prompt.
 
@@ -1113,6 +1115,12 @@ class OrgRuntime:
             "参数带 * 为必填。用 get_tool_info(tool_name) 可查看工具完整参数。"
         )
 
+        rule_delivery = (
+            "6. **任务完成直接回复**。你是最高负责人，完成工作后在回复中总结成果即可，不要使用 org_submit_deliverable。\n"
+            if is_root else
+            "6. **任务交付流程**。收到任务后完成工作，用 org_submit_deliverable 提交给委派人验收。被打回时修改后重新提交。\n"
+        )
+
         if has_external:
             parts.append(
                 "## 行为准则\n\n"
@@ -1122,7 +1130,7 @@ class OrgRuntime:
                 "3. **简洁回复**。完成工具调用后，用 1-2 句话总结结果即可。\n"
                 "4. **先查再做**。不确定找谁时用 org_find_colleague；不确定流程时用 org_search_policy。\n"
                 "5. **不要重复写入**。写黑板前先用 org_read_blackboard 检查是否已有相似内容。\n"
-                "6. **任务交付流程**。收到任务后完成工作，用 org_submit_deliverable 提交给委派人验收。被打回时修改后重新提交。\n"
+                + rule_delivery +
                 "7. **缺少工具时申请**。如果任务需要你没有的工具，用 org_request_tools 向上级申请。"
             )
         else:
@@ -1133,7 +1141,7 @@ class OrgRuntime:
                 "3. **先查再做**。不确定找谁时用 org_find_colleague；不确定流程时用 org_search_policy。\n"
                 "4. **重要信息写黑板**。决策、方案、进度等用 org_write_blackboard 记录，方便同事查阅。\n"
                 "5. **不要重复写入**。写黑板前先用 org_read_blackboard 检查是否已有相似内容。\n"
-                "6. **任务交付流程**。收到任务后完成工作，用 org_submit_deliverable 提交给委派人验收。被打回时修改后重新提交。\n"
+                + rule_delivery +
                 "7. **缺少工具时申请**。如果任务需要你没有的工具，用 org_request_tools 向上级申请。"
             )
 

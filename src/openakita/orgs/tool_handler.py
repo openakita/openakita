@@ -982,7 +982,11 @@ class OrgToolHandler:
                 if parent:
                     to_node = parent.id
         if not to_node:
-            return "缺少 to_node 参数，无法确定提交目标（没有上级节点）"
+            return (
+                "你是组织最高负责人，没有上级节点可提交。"
+                "你的执行结果会自动返回给指挥者，无需使用 org_submit_deliverable。"
+                "请直接在回复中总结成果即可。"
+            )
 
         metadata = {
             "deliverable": deliverable[:2000],
