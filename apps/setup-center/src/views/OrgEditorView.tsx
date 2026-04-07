@@ -3477,6 +3477,35 @@ export function OrgEditorView({
         />
       )}
 
+      {/* ── Chat Panel (liveMode, desktop only) ── */}
+      {liveMode && selectedNode && showRightPanel && !isMobile && selectedOrgId && (
+        <div
+          style={{
+            width: 300, flexShrink: 0,
+            borderLeft: "1px solid var(--line)",
+            background: "var(--bg-app)",
+            display: "flex", flexDirection: "column",
+          }}
+        >
+          <div style={{
+            padding: "12px 12px 8px", borderBottom: "1px solid var(--line)",
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+          }}>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>
+              对话 · {selectedNode.role_title}
+            </div>
+          </div>
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <OrgChatPanel
+              orgId={selectedOrgId}
+              nodeId={selectedNodeId}
+              apiBaseUrl={apiBaseUrl}
+              compact
+            />
+          </div>
+        </div>
+      )}
+
       {/* ── Monitor Panel (liveMode, desktop only) ── */}
       {liveMode && selectedNode && showRightPanel && !isMobile && (
         <div
@@ -3771,35 +3800,6 @@ export function OrgEditorView({
                   )}
                 </div>
 
-          </div>
-        </div>
-      )}
-
-      {/* ── Chat Panel (liveMode, desktop only) ── */}
-      {liveMode && selectedNode && showRightPanel && !isMobile && selectedOrgId && (
-        <div
-          style={{
-            width: 300, flexShrink: 0,
-            borderLeft: "1px solid var(--line)",
-            background: "var(--bg-app)",
-            display: "flex", flexDirection: "column",
-          }}
-        >
-          <div style={{
-            padding: "12px 12px 8px", borderBottom: "1px solid var(--line)",
-            display: "flex", justifyContent: "space-between", alignItems: "center",
-          }}>
-            <div style={{ fontWeight: 600, fontSize: 13 }}>
-              对话 · {selectedNode.role_title}
-            </div>
-          </div>
-          <div style={{ flex: 1, minHeight: 0 }}>
-            <OrgChatPanel
-              orgId={selectedOrgId}
-              nodeId={selectedNodeId}
-              apiBaseUrl={apiBaseUrl}
-              compact
-            />
           </div>
         </div>
       )}
