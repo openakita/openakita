@@ -125,7 +125,22 @@ class OrgManager:
                 setattr(org, key, val)
 
         if nodes_raw is not None:
-            org.nodes = [OrgNode.from_dict(n) for n in nodes_raw]
+            _RUNTIME_KEYS = {"status", "_runtime", "current_task"}
+            _CONFIG_FIELDS = set(OrgNode.__dataclass_fields__) - _RUNTIME_KEYS
+            existing = {n.id: n for n in org.nodes}
+            updated: list[OrgNode] = []
+            for nd in nodes_raw:
+                node_id = nd.get("id")
+                old = existing.get(node_id) if node_id else None
+                if old is not None:
+                    for key in _CONFIG_FIELDS:
+                        if key in nd:
+                            setattr(old, key, nd[key])
+                    updated.append(old)
+                else:
+                    clean = {k: v for k, v in nd.items() if k not in _RUNTIME_KEYS}
+                    updated.append(OrgNode.from_dict(clean))
+            org.nodes = updated
         if edges_raw is not None:
             from .models import OrgEdge
             org.edges = [

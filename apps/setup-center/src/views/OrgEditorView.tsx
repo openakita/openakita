@@ -1343,10 +1343,10 @@ export function OrgEditorView({
 
   const buildSavePayload = useCallback(() => {
     if (!currentOrg) return null;
-    const updatedNodes = nodes.map((n) => ({
-      ...n.data,
-      position: n.position,
-    }));
+    const updatedNodes = nodes.map((n) => {
+      const { status, _runtime, current_task, ...configData } = n.data as any;
+      return { ...configData, position: n.position };
+    });
     const updatedEdges = edges.map((e) => ({
       ...(e.data || {}),
       id: e.id,
@@ -1710,23 +1710,23 @@ export function OrgEditorView({
       prev.map((n) => {
         const rt = nodeMap.get(n.id);
         if (!rt) return n;
-        return {
-          ...n,
-          data: {
-            ...n.data,
-            _runtime: {
-              idle_seconds: rt.idle_seconds,
-              pending_messages: rt.pending_messages,
-              anomaly: anomalyMap.get(n.id) || null,
-              plan_progress: rt.plan_progress,
-              delegated_summary: rt.delegated_summary,
-              external_tools: rt.external_tools,
-              running_since: rt.running_since,
-              recent_activity_ts: rt.recent_activity_ts,
-              last_watchdog_action: rt.last_watchdog_action,
-            },
+        const patch: Record<string, any> = {
+          _runtime: {
+            idle_seconds: rt.idle_seconds,
+            pending_messages: rt.pending_messages,
+            anomaly: anomalyMap.get(n.id) || null,
+            plan_progress: rt.plan_progress,
+            delegated_summary: rt.delegated_summary,
+            external_tools: rt.external_tools,
+            running_since: rt.running_since,
+            recent_activity_ts: rt.recent_activity_ts,
+            last_watchdog_action: rt.last_watchdog_action,
           },
         };
+        if (rt.status && rt.status !== n.data.status) {
+          patch.status = rt.status;
+        }
+        return { ...n, data: { ...n.data, ...patch } };
       }),
     );
   }, [orgStats, setNodes]);
