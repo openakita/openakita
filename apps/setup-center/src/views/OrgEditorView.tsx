@@ -4972,6 +4972,150 @@ export function OrgEditorView({
         </div>
       )}
 
+      {/* ── Right Panel: Org Blackboard (second-layer drawer) ── */}
+      {currentOrg && !selectedNode && !selectedEdge && !isMobile && showRightPanel && (
+        <div
+          style={{
+            width: 380, flexShrink: 0,
+            borderLeft: "1px solid var(--line)",
+            overflowY: "auto", scrollbarGutter: "stable",
+            background: "var(--bg-app)",
+            animation: "org-panel-in 0.3s cubic-bezier(0.4,0,0.2,1) 0s both",
+          }}
+        >
+          <div style={{ padding: "12px 14px 8px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>组织黑板</div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <div style={{ display: "flex", gap: 2 }}>
+                {([
+                  { key: "all", label: "全部" },
+                  { key: "org", label: "组织级" },
+                  { key: "department", label: "部门级" },
+                  { key: "node", label: "节点级" },
+                ] as const).map((s) => (
+                  <button
+                    key={s.key}
+                    className="btnSmall"
+                    style={{
+                      fontSize: 11, padding: "2px 7px",
+                      fontWeight: bbScope === s.key ? 600 : 400,
+                      background: bbScope === s.key ? "var(--primary)" : "transparent",
+                      color: bbScope === s.key ? "#fff" : "var(--muted)",
+                      borderRadius: 4,
+                    }}
+                    onClick={() => setBbScope(s.key)}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+              <button
+                className="btnSmall"
+                style={{ fontSize: 11, padding: "2px 8px" }}
+                onClick={() => fetchBlackboard(currentOrg.id, bbScope)}
+                disabled={bbLoading}
+              >
+                {bbLoading ? "..." : "刷新"}
+              </button>
+            </div>
+          </div>
+
+          <div style={{ padding: 12 }}>
+            {bbEntries.length === 0 ? (
+              <div style={{
+                fontSize: 12, color: "var(--muted)", padding: "32px 16px",
+                textAlign: "center", border: "1px dashed var(--line)", borderRadius: 8,
+              }}>
+                {bbLoading ? "加载中..." : "暂无黑板记录"}
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {bbEntries.map((entry: any) => {
+                  const bbNodeName = (id: string) => {
+                    if (!id) return "";
+                    const nd = nodes.find(n => n.id === id);
+                    return (nd?.data as any)?.role_title || id;
+                  };
+                  const scopeLabel = entry.scope === "org" ? "组织" : entry.scope === "department" ? entry.scope_owner : bbNodeName(entry.source_node) || "节点";
+                  const typeColors: Record<string, string> = {
+                    fact: "#3b82f6", decision: "#f59e0b", lesson: "#10b981",
+                    progress: "#8b5cf6", todo: "#ef4444",
+                  };
+                  const typeLabels: Record<string, string> = {
+                    fact: "事实", decision: "决策", lesson: "经验",
+                    progress: "进展", todo: "待办",
+                  };
+                  return (
+                    <div
+                      key={entry.id}
+                      style={{
+                        border: "1px solid var(--line)", borderRadius: 6,
+                        padding: "8px 10px", background: "var(--card-bg)",
+                        fontSize: 12,
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+                          <span style={{
+                            fontSize: 11, padding: "1px 6px", borderRadius: 3,
+                            background: (typeColors[entry.memory_type] || "#6b7280") + "20",
+                            color: typeColors[entry.memory_type] || "var(--muted)",
+                            fontWeight: 600,
+                          }}>
+                            {typeLabels[entry.memory_type] || entry.memory_type}
+                          </span>
+                          <span style={{ fontSize: 11, color: "var(--muted)" }}>{scopeLabel}</span>
+                        </div>
+                        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                          <span style={{ fontSize: 11, color: "var(--muted)" }}>{fmtShortDate(entry.created_at)}</span>
+                          <button
+                            className="btnSmall"
+                            style={{ fontSize: 11, padding: "0 4px", color: "var(--muted)" }}
+                            title="删除此条"
+                            onClick={async () => {
+                              try {
+                                await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/memory/${entry.id}`, { method: "DELETE" });
+                                setBbEntries((prev) => prev.filter((e: any) => e.id !== entry.id));
+                              } catch { /* ignore */ }
+                            }}
+                          >
+                            ×
+                          </button>
+                        </div>
+                      </div>
+                      <div className="bb-entry-content">
+                        {mdModules ? (
+                          <mdModules.ReactMarkdown remarkPlugins={[mdModules.remarkGfm]}>
+                            {entry.content}
+                          </mdModules.ReactMarkdown>
+                        ) : (
+                          <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{entry.content}</pre>
+                        )}
+                      </div>
+                      {Array.isArray(entry.tags) && entry.tags.length > 0 && (
+                        <div style={{ marginTop: 4, display: "flex", gap: 3, flexWrap: "wrap" }}>
+                          {entry.tags.map((t: string) => (
+                            <span key={t} style={{
+                              fontSize: 11, padding: "0 5px", borderRadius: 3,
+                              background: "var(--hover-bg, rgba(100,100,100,0.1))", color: "var(--muted)",
+                            }}>#{t}</span>
+                          ))}
+                        </div>
+                      )}
+                      {entry.source_node && (
+                        <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
+                          来自 {bbNodeName(entry.source_node)}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── Right Panel: Org Settings (when no node/edge selected) ── */}
       {currentOrg && !selectedNode && !selectedEdge && !isMobile && showRightPanel && (
         <div
@@ -4983,6 +5127,7 @@ export function OrgEditorView({
             background: "var(--bg-app)",
             flexShrink: 0,
             padding: 12,
+            animation: "org-panel-in 0.3s cubic-bezier(0.4,0,0.2,1) 0.05s both",
           }}
         >
           <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>组织设置</div>
@@ -5196,133 +5341,6 @@ export function OrgEditorView({
                 }}>触发晨会</button>
               </>)}
             </div>
-          </div>
-
-          {/* ── Blackboard ── */}
-          <div style={{ marginTop: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-              <div style={{ fontWeight: 600, fontSize: 13 }}>组织黑板</div>
-              <button
-                className="btnSmall"
-                style={{ fontSize: 11, padding: "2px 8px" }}
-                onClick={() => fetchBlackboard(currentOrg.id, bbScope)}
-                disabled={bbLoading}
-              >
-                {bbLoading ? "..." : "刷新"}
-              </button>
-            </div>
-
-            <div style={{ display: "flex", gap: 2, marginBottom: 8 }}>
-              {([
-                { key: "all", label: "全部" },
-                { key: "org", label: "组织级" },
-                { key: "department", label: "部门级" },
-                { key: "node", label: "节点级" },
-              ] as const).map((s) => (
-                <button
-                  key={s.key}
-                  className="btnSmall"
-                  style={{
-                    fontSize: 11, padding: "2px 7px",
-                    fontWeight: bbScope === s.key ? 600 : 400,
-                    background: bbScope === s.key ? "var(--primary)" : "transparent",
-                    color: bbScope === s.key ? "#fff" : "var(--muted)",
-                    borderRadius: 4,
-                  }}
-                  onClick={() => setBbScope(s.key)}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
-
-            {bbEntries.length === 0 ? (
-              <div style={{
-                fontSize: 11, color: "var(--muted)", padding: "16px 10px",
-                textAlign: "center", border: "1px dashed var(--line)", borderRadius: 8,
-              }}>
-                {bbLoading ? "加载中..." : "暂无记录"}
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                {bbEntries.map((entry: any) => {
-                  const bbNodeName = (id: string) => {
-                    if (!id) return "";
-                    const nd = nodes.find(n => n.id === id);
-                    return (nd?.data as any)?.role_title || id;
-                  };
-                  const scopeLabel = entry.scope === "org" ? "组织" : entry.scope === "department" ? entry.scope_owner : bbNodeName(entry.source_node) || "节点";
-                  const typeColors: Record<string, string> = {
-                    fact: "#3b82f6", decision: "#f59e0b", lesson: "#10b981",
-                    progress: "#8b5cf6", todo: "#ef4444",
-                  };
-                  const typeLabels: Record<string, string> = {
-                    fact: "事实", decision: "决策", lesson: "经验",
-                    progress: "进展", todo: "待办",
-                  };
-                  return (
-                    <div
-                      key={entry.id}
-                      style={{
-                        border: "1px solid var(--line)", borderRadius: 6,
-                        padding: "6px 8px", background: "var(--card-bg)",
-                        fontSize: 11,
-                      }}
-                    >
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
-                        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                          <span style={{
-                            fontSize: 11, padding: "1px 5px", borderRadius: 3,
-                            background: (typeColors[entry.memory_type] || "#6b7280") + "20",
-                            color: typeColors[entry.memory_type] || "var(--muted)",
-                            fontWeight: 600,
-                          }}>
-                            {typeLabels[entry.memory_type] || entry.memory_type}
-                          </span>
-                          <span style={{ fontSize: 11, color: "var(--muted)" }}>{scopeLabel}</span>
-                        </div>
-                        <button
-                          className="btnSmall"
-                          style={{ fontSize: 11, padding: "0 4px", color: "var(--muted)" }}
-                          title="删除此条"
-                          onClick={async () => {
-                            try {
-                              await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/memory/${entry.id}`, { method: "DELETE" });
-                              setBbEntries((prev) => prev.filter((e: any) => e.id !== entry.id));
-                            } catch { /* ignore */ }
-                          }}
-                        >
-                          ×
-                        </button>
-                      </div>
-                      <div className="bb-entry-content">
-                        {mdModules ? (
-                          <mdModules.ReactMarkdown remarkPlugins={[mdModules.remarkGfm]}>
-                            {entry.content}
-                          </mdModules.ReactMarkdown>
-                        ) : (
-                          <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{entry.content}</pre>
-                        )}
-                      </div>
-                      {Array.isArray(entry.tags) && entry.tags.length > 0 && (
-                        <div style={{ marginTop: 3, display: "flex", gap: 3, flexWrap: "wrap" }}>
-                          {entry.tags.map((t: string) => (
-                            <span key={t} style={{
-                              fontSize: 11, padding: "0 5px", borderRadius: 3,
-                              background: "var(--hover-bg, rgba(100,100,100,0.1))", color: "var(--muted)",
-                            }}>#{t}</span>
-                          ))}
-                        </div>
-                      )}
-                      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
-                        {entry.source_node && <span>来自 {bbNodeName(entry.source_node)} · </span>}
-                        {fmtShortDate(entry.created_at)}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
           </div>
         </div>
       )}
