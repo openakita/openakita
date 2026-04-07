@@ -618,6 +618,7 @@ export function OrgEditorView({
   const [layoutLocked, setLayoutLocked] = useState(false);
   const liveMode = currentOrg?.status === "active" || currentOrg?.status === "running";
   const [activeDrawer, setActiveDrawer] = useState<"chat" | "inbox" | null>(null);
+  const [showNodeChat, setShowNodeChat] = useState(false);
   const [orgStats, setOrgStats] = useState<any>(null);
   const [editingName, setEditingName] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
@@ -632,7 +633,6 @@ export function OrgEditorView({
   const [viewMode, setViewMode] = useState<"canvas" | "projects" | "dashboard">("canvas");
   const chatPanelOpen = activeDrawer === "chat";
   const inboxOpen = activeDrawer === "inbox";
-  const [chatPanelNode, setChatPanelNode] = useState<string | null>(null);
   const reactFlowRef = useRef<ReactFlowInstance<Node, Edge> | null>(null);
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -1241,6 +1241,7 @@ export function OrgEditorView({
     setPropsTab("overview");
     setFullPromptPreview(null);
     setShowRightPanel(true);
+    setShowNodeChat(false);
   }, []);
 
   const onEdgeClick = useCallback((_: any, edge: Edge) => {
@@ -2058,7 +2059,7 @@ export function OrgEditorView({
               >
                 {contextMenu.type === "node" && contextMenu.id && (<>
                   {liveMode && selectedOrgId && (
-                    <button onClick={() => { setChatPanelNode(contextMenu.id); setActiveDrawer("chat"); setContextMenu(null); }}>
+                    <button onClick={() => { setSelectedNodeId(contextMenu.id!); setSelectedEdgeId(null); setShowRightPanel(true); setShowNodeChat(true); setContextMenu(null); }}>
                       <span className="org-ctx-icon">💬</span>与该节点对话
                     </button>
                   )}
@@ -2226,7 +2227,7 @@ export function OrgEditorView({
           {/* ═══ Floating Chat FAB (always visible when org selected) ═══ */}
           {selectedOrgId && !chatPanelOpen && (
             <button
-              onClick={() => { setChatPanelNode(null); setActiveDrawer("chat"); }}
+              onClick={() => setActiveDrawer("chat")}
               className="org-chat-fab"
               title="打开组织指挥台"
             >
@@ -2248,12 +2249,10 @@ export function OrgEditorView({
               <div className="org-drawer-slide" style={{ display: chatPanelOpen ? undefined : "none" }}>
                 <OrgChatPanel
                   orgId={selectedOrgId}
-                  nodeId={chatPanelNode}
+                  nodeId={null}
                   apiBaseUrl={apiBaseUrl}
                   showHeader
-                  title={chatPanelNode
-                    ? `对话 · ${(nodes.find(n => n.id === chatPanelNode)?.data as any)?.role_title || chatPanelNode}`
-                    : `${currentOrg?.name || "组织"} · 指挥台`}
+                  title={`${currentOrg?.name || "组织"} · 指挥台`}
                   onClose={() => setActiveDrawer(null)}
                 />
               </div>
@@ -2835,8 +2834,8 @@ export function OrgEditorView({
         />
       )}
 
-      {/* ── Chat Panel (liveMode, desktop only) ── */}
-      {liveMode && selectedNode && showRightPanel && !isMobile && selectedOrgId && (
+      {/* ── Chat Panel (liveMode, desktop only, toggled by button) ── */}
+      {liveMode && selectedNode && showRightPanel && !isMobile && selectedOrgId && showNodeChat && (
         <div
           style={{
             width: 300, flexShrink: 0,
@@ -2908,13 +2907,16 @@ export function OrgEditorView({
               {liveMode && selectedOrgId && (
                 <button
                   className="btnSmall"
-                  onClick={() => { setChatPanelNode(selectedNodeId); setActiveDrawer("chat"); }}
+                  onClick={() => setShowNodeChat(prev => !prev)}
                   style={{
                     minWidth: 36, minHeight: 36, fontSize: 12,
-                    background: "linear-gradient(135deg, #3b82f6, #6366f1)",
+                    background: showNodeChat
+                      ? "linear-gradient(135deg, #2563eb, #4338ca)"
+                      : "linear-gradient(135deg, #3b82f6, #6366f1)",
                     color: "#fff", border: "none", borderRadius: 8,
+                    boxShadow: showNodeChat ? "inset 0 1px 3px rgba(0,0,0,0.3)" : undefined,
                   }}
-                  title="与该节点对话"
+                  title={showNodeChat ? "收起对话面板" : "展开对话面板"}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
