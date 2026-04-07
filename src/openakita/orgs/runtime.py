@@ -51,6 +51,16 @@ _CIRCUIT_BREAKER_COOLDOWN = 300  # 自动恢复冷却期（秒）
 _runtime_instance: OrgRuntime | None = None
 
 
+class _NodeTimeoutError(Exception):
+    """Raised when a node agent task exceeds its per-node timeout."""
+
+    def __init__(self, node_id: str, timeout_s: float, partial: str = ""):
+        self.node_id = node_id
+        self.timeout_s = timeout_s
+        self.partial = partial
+        super().__init__(f"Node {node_id} timed out after {timeout_s}s")
+
+
 def get_runtime() -> OrgRuntime | None:
     """Return the active OrgRuntime singleton (set during __init__)."""
     return _runtime_instance
@@ -113,6 +123,13 @@ class OrgRuntime:
         self._node_current_chain: dict[str, str] = {}  # org_id:node_id -> chain_id
         self.max_concurrent_per_node: int = 2
         self._idle_tasks: dict[str, asyncio.Task] = {}
+
+        # parent_chain_id -> list of {sub_chain_id, node_id, status, result}
+        self._child_chains: dict[str, list[dict]] = {}
+        # sub_chain_id -> asyncio.Event (signaled on child completion)
+        self._chain_completion_events: dict[str, asyncio.Event] = {}
+        # sub_chain_id -> result dict
+        self._chain_results: dict[str, dict] = {}
 
         # 组织级并发控制：限制每个组织同时激活的节点数
         self.max_concurrent_nodes_per_org: int = 5
@@ -515,10 +532,112 @@ class OrgRuntime:
         else:
             tagged_content = content
 
-        result = await self._activate_and_run(org, target, tagged_content, chain_id=chain_id)
-        if chain_id and isinstance(result, dict):
-            result["chain_id"] = chain_id
+        cmd_chain_id = chain_id or (_now_iso() + ":cmd:" + target_node_id[:8])
+        result = await self._activate_and_run(org, target, tagged_content, chain_id=cmd_chain_id)
+        if isinstance(result, dict):
+            result["chain_id"] = cmd_chain_id
+
+        children = self.get_child_chains(cmd_chain_id)
+        if children:
+            gather_result = await self._gather_children(
+                org, cmd_chain_id, children, target, target_node_id,
+            )
+            if gather_result:
+                result = gather_result
         return result
+
+    async def _gather_children(
+        self,
+        org: Organization,
+        parent_chain_id: str,
+        children: list[dict],
+        root_node: OrgNode,
+        root_node_id: str,
+        gather_timeout: float = 300,
+    ) -> dict | None:
+        """Wait for all direct child chains to complete, then trigger a summary round."""
+        events = []
+        for child in children:
+            evt = self._chain_completion_events.get(child["sub_chain_id"])
+            if evt:
+                events.append((child, evt))
+
+        if not events:
+            return None
+
+        await self._broadcast_ws("org:gather_started", {
+            "org_id": org.id, "parent_chain_id": parent_chain_id,
+            "child_count": len(events),
+        })
+
+        done_count = 0
+        per_node_timeout = gather_timeout / max(len(events), 1)
+        remaining = gather_timeout
+
+        for child, evt in events:
+            t0 = time.monotonic()
+            wait_time = min(per_node_timeout * 2, remaining)
+            try:
+                await asyncio.wait_for(evt.wait(), timeout=max(wait_time, 5))
+                done_count += 1
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"[OrgRuntime] Gather timeout for child chain "
+                    f"{child['sub_chain_id']} (node={child['node_id']})"
+                )
+                self._complete_child_chain(
+                    child["sub_chain_id"],
+                    status="timeout",
+                    partial_result=f"节点 {child['node_id']} 在 gather 中超时",
+                )
+            elapsed = time.monotonic() - t0
+            remaining = max(remaining - elapsed, 0)
+
+        summary_parts = []
+        for child in self.get_child_chains(parent_chain_id):
+            status = child.get("status", "unknown")
+            node_id = child.get("node_id", "?")
+            result_text = child.get("result") or child.get("partial_result") or "(无结果)"
+            if len(result_text) > 800:
+                result_text = result_text[:800] + "…(已截断)"
+            label = f"[{status.upper()}]"
+            summary_parts.append(f"### {node_id} {label}\n{result_text}")
+
+        gathered_context = "\n\n".join(summary_parts)
+
+        summary_prompt = (
+            f"[组织任务汇总] 你刚才将任务委派给了 {len(children)} 个子节点。\n"
+            f"以下是各子节点的执行结果（{done_count}/{len(children)} 已完成）：\n\n"
+            f"{gathered_context}\n\n"
+            f"请根据以上结果，为用户撰写一份完整的汇总报告。\n"
+            f"对于失败或超时的节点，请说明情况并给出建议。"
+        )
+
+        await self._broadcast_ws("org:gather_complete", {
+            "org_id": org.id, "parent_chain_id": parent_chain_id,
+            "done": done_count, "total": len(children),
+        })
+
+        org = self._active_orgs.get(org.id) or org
+        root_node = org.get_node(root_node_id) or root_node
+        summary_result = await self._activate_and_run(
+            org, root_node, summary_prompt,
+            chain_id=parent_chain_id + ":summary",
+        )
+
+        self._cleanup_chain_tracking(parent_chain_id, children)
+
+        return summary_result
+
+    def _cleanup_chain_tracking(
+        self, parent_chain_id: str, children: list[dict],
+    ) -> None:
+        """Remove completed chain tracking data to prevent unbounded memory growth."""
+        for child in children:
+            scid = child["sub_chain_id"]
+            self._chain_completion_events.pop(scid, None)
+            self._chain_results.pop(scid, None)
+        self._child_chains.pop(parent_chain_id, None)
 
     async def _auto_kickoff(self, org: Organization) -> None:
         """Auto-activate the root node with a mission briefing when org starts
@@ -572,6 +691,49 @@ class OrgRuntime:
             self._node_current_chain[key] = chain_id
         else:
             self._node_current_chain.pop(key, None)
+
+    def _register_child_chain(
+        self, org_id: str, parent_chain_id: str,
+        sub_chain_id: str, target_node: str,
+    ) -> None:
+        """Register a sub_chain under its parent for gather tracking."""
+        entry = {
+            "sub_chain_id": sub_chain_id,
+            "node_id": target_node,
+            "org_id": org_id,
+            "status": "pending",
+            "result": None,
+            "partial_result": None,
+        }
+        self._child_chains.setdefault(parent_chain_id, []).append(entry)
+        self._chain_completion_events[sub_chain_id] = asyncio.Event()
+
+    def _complete_child_chain(
+        self, sub_chain_id: str, *,
+        status: str = "completed",
+        result: str | None = None,
+        partial_result: str | None = None,
+    ) -> None:
+        """Mark a child chain as completed/failed and signal its event."""
+        self._chain_results[sub_chain_id] = {
+            "status": status,
+            "result": result,
+            "partial_result": partial_result,
+        }
+        for children in self._child_chains.values():
+            for child in children:
+                if child["sub_chain_id"] == sub_chain_id:
+                    child["status"] = status
+                    child["result"] = result
+                    child["partial_result"] = partial_result
+                    break
+        evt = self._chain_completion_events.get(sub_chain_id)
+        if evt:
+            evt.set()
+
+    def get_child_chains(self, parent_chain_id: str) -> list[dict]:
+        """Return the list of child chain entries for a parent chain."""
+        return list(self._child_chains.get(parent_chain_id, []))
 
     async def _activate_and_run(
         self, org: Organization, node: OrgNode, prompt: str,
@@ -658,9 +820,38 @@ class OrgRuntime:
                 "result_preview": result_text[:120] if result_text else "",
             })
 
+            if chain_id:
+                self._complete_child_chain(
+                    chain_id, status="completed", result=result_text,
+                )
+                await self._auto_send_result(org, node, chain_id, result_text)
+
             asyncio.ensure_future(self._post_task_hook(org, node))
 
             return {"node_id": node.id, "result": result_text}
+
+        except _NodeTimeoutError as te:
+            timeout_msg = f"节点 {node.role_title or node.id} 执行超时（{te.timeout_s}s）"
+            logger.warning(f"[OrgRuntime] {timeout_msg}")
+            self._set_node_status(org, node, NodeStatus.IDLE, "task_timeout")
+            try:
+                await self._save_org(org)
+            except Exception:
+                pass
+            self.get_event_store(org.id).emit(
+                "task_timeout", node.id,
+                {"timeout_s": te.timeout_s},
+            )
+            await self._broadcast_ws("org:node_status", {
+                "org_id": org.id, "node_id": node.id,
+                "status": "idle", "current_task": "",
+            })
+            if chain_id:
+                self._complete_child_chain(
+                    chain_id, status="timeout",
+                    partial_result=te.partial or timeout_msg,
+                )
+            return {"node_id": node.id, "error": timeout_msg, "timeout": True}
 
         except Exception as e:
             logger.error(f"[OrgRuntime] Task error on {node.id}: {e}")
@@ -706,22 +897,74 @@ class OrgRuntime:
                 })
             except Exception:
                 pass
+
+            if chain_id:
+                partial = self._extract_partial_result(e)
+                self._complete_child_chain(
+                    chain_id, status="failed",
+                    result=None, partial_result=partial,
+                )
+
             return {"node_id": node.id, "error": str(e)}
 
         finally:
             self._emit_llm_usage(agent, org, node)
 
+    async def _auto_send_result(
+        self, org: Organization, node: OrgNode,
+        chain_id: str, result_text: str,
+    ) -> None:
+        """Auto-send a TASK_RESULT message to the delegating parent."""
+        try:
+            parent = org.get_parent(node.id)
+            if not parent:
+                return
+            messenger = self.get_messenger(org.id)
+            if not messenger:
+                return
+            summary = result_text[:500] if result_text else "(无内容)"
+            await messenger.send_result(
+                from_node=node.id,
+                to_node=parent.id,
+                result=summary,
+                metadata={"task_chain_id": chain_id, "auto_result": True},
+            )
+        except Exception as exc:
+            logger.debug(f"[OrgRuntime] auto_send_result error: {exc}")
+
+    @staticmethod
+    def _extract_partial_result(exc: Exception) -> str | None:
+        """Best-effort extraction of partial work from an exception."""
+        msg = str(exc)
+        if len(msg) > 20:
+            return msg[:500]
+        return None
+
     async def _run_agent_task(
         self, agent: Any, prompt: str, session_id: str,
         org: Organization, node: OrgNode,
     ) -> str:
-        """Run a single agent task (no timeout wrapper)."""
+        """Run a single agent task with per-node timeout protection.
+
+        Raises ``_NodeTimeoutError`` on timeout so the caller can
+        distinguish it from normal completion.
+        """
+        timeout_s = getattr(node, "timeout_s", None) or 300
         try:
-            response = await agent.chat(prompt, session_id=session_id)
+            response = await asyncio.wait_for(
+                agent.chat(prompt, session_id=session_id),
+                timeout=timeout_s,
+            )
             return response or ""
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[OrgRuntime] Agent task timed out for {node.id} "
+                f"after {timeout_s}s"
+            )
+            raise _NodeTimeoutError(node.id, timeout_s)
         except asyncio.CancelledError:
             logger.info(f"[OrgRuntime] Task cancelled for {node.id}")
-            return "(任务已取消)"
+            raise _NodeTimeoutError(node.id, timeout_s, partial="(任务已取消)")
         except Exception as e:
             logger.error(f"[OrgRuntime] Agent task error: {e}")
             raise
@@ -1564,13 +1807,15 @@ class OrgRuntime:
         return dispatched
 
     async def _post_task_hook(self, org: Organization, node: OrgNode) -> None:
-        """After a node finishes, process pending messages or notify parent.
+        """Auxiliary hook: drain pending messages after a node frees a slot.
 
-        Priority order:
-        1. Drain THIS node's own pending messages (it just freed a slot).
-        2. If parent has pending messages (e.g. deliverables from children),
-           drain those instead of creating a new "completion notification".
-        3. Only when parent has NO pending messages, send the notification.
+        This hook is intentionally *not* responsible for primary task
+        result gathering — that is handled by ``_gather_children`` inside
+        ``send_command``.  The hook only:
+        1. Drains the node's own pending mailbox (it just freed a slot).
+        2. Drains the parent's pending mailbox if the parent is idle.
+        It does NOT send completion notifications to the parent (that
+        could cause duplicate summarisation when gather is active).
         """
         try:
             await asyncio.sleep(2)
@@ -1598,16 +1843,6 @@ class OrgRuntime:
                     await self._drain_node_pending(org, parent)
                 return
 
-            if parent.status == NodeStatus.BUSY:
-                return
-
-            role_title = node.role_title or node.id
-            prompt = (
-                f"[任务完成通知] {role_title} 刚完成了一项任务并回到空闲状态。\n"
-                f"请检查当前进展，看是否有新任务需要分配给 {role_title} 或其他成员。\n"
-                f"如果所有工作已完成，请更新黑板上的进度记录。"
-            )
-            await self._activate_and_run(org, parent, prompt)
         except Exception as e:
             logger.debug(f"[OrgRuntime] Post-task hook error: {e}")
 

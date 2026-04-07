@@ -42,14 +42,14 @@ class ComplexitySignal:
         return sum([
             self.multi_file_change,
             self.cross_module,
-            self.ambiguous_scope * 2,
+            self.ambiguous_scope,
             self.destructive_potential * 2,
             self.multi_step_required,
         ])
 
     @property
     def should_suggest_plan(self) -> bool:
-        return self.score >= 4
+        return self.score >= 5
 
 
 @dataclass

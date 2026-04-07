@@ -1924,6 +1924,7 @@ class Agent:
         if session:
             try:
                 sub_records = getattr(session.context, "sub_agent_records", None) or []
+                session_config = getattr(session, "config", None)
                 session_context = {
                     "session_id": session.id,
                     "channel": getattr(session, "channel", "unknown"),
@@ -1931,6 +1932,7 @@ class Agent:
                     "message_count": len(session.context.messages) if session.context else 0,
                     "has_sub_agents": bool(sub_records),
                     "sub_agent_count": len(sub_records),
+                    "language": getattr(session_config, "language", "zh") if session_config else "zh",
                 }
             except Exception:
                 pass
@@ -4292,7 +4294,7 @@ class Agent:
             # LLM-classified CHAT (non-fast_reply) falls through to reason_stream
             # with force_tool_retries=0, so tools are available but not forced.
 
-            # Complexity detection: force ask_user for complex tasks
+            # Complexity detection: soft suggestion instead of hard interruption
             if (
                 mode == "agent"
                 and hasattr(self, "_current_intent")
@@ -4304,22 +4306,17 @@ class Agent:
                 )
                 logger.info(
                     f"[ComplexityDetection] Complex task detected (score={_score}), "
-                    "forcing ask_user before execution"
+                    "adding soft plan suggestion to context"
                 )
-                yield {
-                    "type": "ask_user",
-                    "question": (
-                        "⚠️ 这个任务比较复杂\n\n"
-                        "涉及多个步骤，"
-                        "建议先制定计划再动手，避免遗漏。"
-                    ),
-                    "options": [
-                        {"id": "plan", "label": "先制定计划再执行（推荐）"},
-                        {"id": "execute", "label": "直接执行"},
-                    ],
-                }
-                yield {"type": "done"}
-                return
+                soft_hint = (
+                    "\n\n[系统提示：此任务较复杂，建议在回复中先给出简要计划再执行。"
+                    "但无需中断用户确认，直接继续。]"
+                )
+                if messages and isinstance(messages[-1], dict):
+                    messages = list(messages)
+                    last = dict(messages[-1])
+                    last["content"] = (last.get("content") or "") + soft_hint
+                    messages[-1] = last
 
             async for event in self.reasoning_engine.reason_stream(
                 messages=messages,

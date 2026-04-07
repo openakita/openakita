@@ -134,6 +134,8 @@ _HIGH_RISK_SHELL_PATTERNS: list[str] = [
     r"del\s+/[sS]",
     r"rd\s+/[sS]",
     r"rmdir\s+/[sS]\s*/[qQ]",
+    # Write operations targeting system directories
+    r"(?:copy|move|del|rd|rmdir|echo|Set-Content|Add-Content|New-Item).*(?:System32|Windows|Program Files)",
     r"Get-ChildItem.*\|\s*Remove-Item",
     r"Clear-RecycleBin",
     r"wmic\s+product.*uninstall",
@@ -1046,6 +1048,13 @@ class PolicyEngine:
                 )
                 self._on_deny(tool_name, params, result)
                 return result
+
+            if getattr(rule, "require_confirmation", False):
+                return PolicyResult(
+                    decision=PolicyDecision.CONFIRM,
+                    reason=f"工具 '{tool_name}' 的安全策略要求用户确认后执行",
+                    policy_name="ToolPolicy",
+                )
 
         return None
 

@@ -198,6 +198,26 @@ class MemoryHandler:
         if content_key in self._recent_add_contents:
             return "✅ 该内容已记录过，无需重复保存。请继续执行其他任务。"
 
+        try:
+            store = self.agent.memory_manager.store
+            existing_hits = store.search_semantic(content.strip(), limit=3)
+            for hit in existing_hits:
+                if hit.content and content.strip()[:80].lower() in hit.content.lower():
+                    return "✅ 记忆已存在（FTS5 预检命中），无需重复记录。请继续执行其他任务。"
+        except Exception:
+            pass
+
+        try:
+            profile = getattr(self.agent, "user_profile", None)
+            if profile:
+                profile_data = profile.to_dict() if hasattr(profile, "to_dict") else {}
+                profile_text = str(profile_data).lower()
+                core_fact = content.strip()[:60].lower()
+                if core_fact and core_fact in profile_text:
+                    return "✅ 该信息已存在于用户画像中，无需重复添加记忆。"
+        except Exception:
+            pass
+
         type_map = {
             "fact": MemoryType.FACT,
             "preference": MemoryType.PREFERENCE,

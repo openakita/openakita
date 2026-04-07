@@ -417,12 +417,12 @@ class OrgToolHandler:
 
         org = self._runtime.get_org(org_id)
 
-        chain_id = (
+        parent_chain_id = (
             args.get("task_chain_id")
             or self._runtime.get_current_chain_id(org_id, node_id)
             or _now_iso() + ":" + node_id[:8]
         )
-        chain_depth = self._runtime._chain_delegation_depth.get(chain_id, 0)
+        chain_depth = self._runtime._chain_delegation_depth.get(parent_chain_id, 0)
         max_depth = self._effective_max_delegation_depth(org)
         if chain_depth + 1 > max_depth:
             return (
@@ -430,21 +430,21 @@ class OrgToolHandler:
                 f"请自行完成此项工作，或用 org_submit_deliverable 提交当前成果给上级重新安排。"
             )
 
+        to_node = args["to_node"]
+
+        import hashlib, time
+        sub_chain_id = (
+            parent_chain_id + ":" + to_node + ":"
+            + hashlib.md5(f"{time.time_ns()}".encode()).hexdigest()[:8]
+        )
+
         metadata = {}
         if args.get("deadline"):
             metadata["task_deadline"] = args["deadline"]
 
         metadata["_delegation_depth"] = chain_depth + 1
-        metadata["task_chain_id"] = chain_id
-
-        to_node = args["to_node"]
-
-        existing_affinity = messenger.get_task_affinity(chain_id)
-        if existing_affinity:
-            if org:
-                affinity_node = org.get_node(existing_affinity)
-                if affinity_node and affinity_node.status not in (NodeStatus.FROZEN, NodeStatus.OFFLINE):
-                    to_node = existing_affinity
+        metadata["task_chain_id"] = sub_chain_id
+        metadata["parent_chain_id"] = parent_chain_id
 
         if org:
             resolved = org.get_node(to_node)
@@ -477,34 +477,34 @@ class OrgToolHandler:
             metadata=metadata,
         )
 
-        messenger.bind_task_affinity(chain_id, to_node)
-        self._runtime._chain_delegation_depth[chain_id] = chain_depth + 1
+        messenger.bind_task_affinity(sub_chain_id, to_node)
+        self._runtime._chain_delegation_depth[sub_chain_id] = chain_depth + 1
+
+        self._runtime._register_child_chain(org_id, parent_chain_id, sub_chain_id, to_node)
 
         self._runtime.get_event_store(org_id).emit(
             "task_assigned", node_id,
-            {"to": to_node, "task": args["task"][:100], "chain_id": chain_id},
+            {"to": to_node, "task": args["task"][:100],
+             "chain_id": sub_chain_id, "parent_chain_id": parent_chain_id},
         )
         await self._runtime._broadcast_ws("org:task_delegated", {
             "org_id": org_id, "from_node": node_id, "to_node": to_node,
-            "task": args["task"][:120], "chain_id": chain_id,
+            "task": args["task"][:120], "chain_id": sub_chain_id,
+            "parent_chain_id": parent_chain_id,
         })
 
         parent_task_id = None
         depth = 0
-        parent_chain = getattr(self._runtime, "get_current_chain_id", lambda o, n: None)(
-            org_id, node_id
-        )
-        if parent_chain:
-            from openakita.orgs.project_store import ProjectStore
-            mgr = self._runtime._manager
-            store = ProjectStore(mgr._org_dir(org_id))
-            parent_task = store.find_task_by_chain(parent_chain)
-            if parent_task:
-                parent_task_id = parent_task.id
-                depth = (parent_task.depth or 0) + 1
+        from openakita.orgs.project_store import ProjectStore
+        mgr = self._runtime._manager
+        store = ProjectStore(mgr._org_dir(org_id))
+        parent_task = store.find_task_by_chain(parent_chain_id)
+        if parent_task:
+            parent_task_id = parent_task.id
+            depth = (parent_task.depth or 0) + 1
 
         self._link_project_task(
-            org_id, chain_id,
+            org_id, sub_chain_id,
             title=args["task"][:120],
             assignee=to_node,
             delegated_by=node_id,
@@ -513,12 +513,12 @@ class OrgToolHandler:
             depth=depth,
         )
         self._append_execution_log(
-            org_id, chain_id,
+            org_id, sub_chain_id,
             f"委派给 {to_node}: {args['task'][:80]}",
             node_id,
         )
         return (
-            f"任务已分配给 {to_node}（chain: {chain_id[:12]}）: {args['task'][:50]}\n"
+            f"任务已分配给 {to_node}（sub_chain: {sub_chain_id[:16]}）: {args['task'][:50]}\n"
             f"⚠️ 注意：任务已异步下发，下级尚未完成。"
             f"请勿立即汇报「已完成」，应使用 org_list_delegated_tasks 跟踪进度，"
             f"或等待下级通过 org_submit_deliverable 提交结果后再做最终汇报。"

@@ -225,6 +225,21 @@ def _find_agents_md(cwd: str, *, max_depth: int, max_chars: int) -> str | None:
     return None
 
 
+_static_prompt_cache: dict[str, tuple[float, str]] = {}
+_STATIC_CACHE_TTL = 300  # 5 min
+
+
+def _get_static_prompt(cache_key: str, builder_fn, *args) -> str:
+    """Cache static prompt segments that don't change across turns."""
+    now = time.time()
+    cached = _static_prompt_cache.get(cache_key)
+    if cached and (now - cached[0]) < _STATIC_CACHE_TTL:
+        return cached[1]
+    result = builder_fn(*args)
+    _static_prompt_cache[cache_key] = (now, result)
+    return result
+
+
 def build_system_prompt(
     identity_dir: Path,
     tools_enabled: bool = True,
@@ -294,12 +309,18 @@ def build_system_prompt(
     system_parts.append(_CORE_RULES)
     system_parts.append(_SAFETY_SECTION)
 
-    # 3. 检查并加载编译产物
-    if check_compiled_outdated(identity_dir):
-        logger.info("Compiled files outdated, recompiling...")
-        compile_all(identity_dir)
-
-    compiled = get_compiled_content(identity_dir)
+    # 3. 检查并加载编译产物（带缓存）
+    _id_dir_key = str(identity_dir)
+    _compiled_cache = _static_prompt_cache.get(f"compiled:{_id_dir_key}")
+    _now_ts = time.time()
+    if _compiled_cache and (_now_ts - _compiled_cache[0]) < _STATIC_CACHE_TTL:
+        compiled = _compiled_cache[1]
+    else:
+        if check_compiled_outdated(identity_dir):
+            logger.info("Compiled files outdated, recompiling...")
+            compile_all(identity_dir)
+        compiled = get_compiled_content(identity_dir)
+        _static_prompt_cache[f"compiled:{_id_dir_key}"] = (_now_ts, compiled)
 
     # 4. Identity 层（SOUL.md + agent.core）
     if prompt_mode == PromptMode.FULL:
@@ -410,6 +431,9 @@ def build_system_prompt(
 
     # 9. Catalogs 层（skip_catalogs=True 时完全跳过，CHAT 意图无需工具描述）
     if not skip_catalogs:
+        _msg_count = 0
+        if session_context:
+            _msg_count = session_context.get("message_count", 0)
         catalogs_section = _build_catalogs_section(
             tool_catalog=tool_catalog,
             skill_catalog=skill_catalog,
@@ -418,6 +442,7 @@ def build_system_prompt(
             budget_tokens=budget_config.catalogs_budget,
             include_tools_guide=include_tools_guide,
             mode=mode,
+            message_count=_msg_count,
         )
         if catalogs_section:
             tool_parts.append(catalogs_section)
@@ -815,6 +840,16 @@ def _build_session_metadata_section(
         lines.append(f"- **当前模型**: {model_display_name}")
 
     if session_context:
+        lang = session_context.get("language", "")
+        if lang:
+            _lang_names = {"zh": "中文", "en": "English", "ja": "日本語"}
+            lang_name = _lang_names.get(lang, lang)
+            lines.append(f"- **会话语言**: {lang_name}")
+            lines.append(
+                f"  - 所有回复、错误提示、状态文案均使用 **{lang_name}** 输出，"
+                f"除非用户在消息中明确切换了语言。"
+            )
+
         _channel_display = {
             "desktop": "桌面端",
             "cli": "CLI 终端",
@@ -1132,11 +1167,17 @@ def _build_catalogs_section(
     budget_tokens: int = 8000,
     include_tools_guide: bool = False,
     mode: str = "agent",
+    message_count: int = 0,
 ) -> str:
     """构建 Catalogs 层（工具/技能/插件/MCP 清单）
 
+    Supports progressive disclosure: early in a conversation (message_count < 4)
+    or in non-agent modes, skill/plugin/MCP details are trimmed to index-only
+    to reduce prompt noise for new users.
+
     每个 catalog 用 try/except 隔离，确保单个 catalog 构建失败不会击穿整个系统提示。
     """
+    progressive = mode != "agent" or message_count < 4
     parts = []
 
     if tool_catalog:
@@ -1162,14 +1203,6 @@ def _build_catalogs_section(
             skills_budget = budget_tokens * 50 // 100
             skills_index = skill_catalog.get_index_catalog()
 
-            index_tokens = estimate_tokens(skills_index)
-            remaining = max(0, skills_budget - index_tokens)
-
-            skills_detail = skill_catalog.get_catalog()
-            skills_detail_result = apply_budget(
-                skills_detail, remaining, "skills", truncate_strategy="end"
-            )
-
             skills_rule = (
                 "### 技能使用规则\n"
                 "- 执行**具体操作任务**前先检查已有技能清单，有匹配的技能时优先使用\n"
@@ -1181,11 +1214,23 @@ def _build_catalogs_section(
                 "- **重要**：当前日期时间已写在「运行环境」里，禁止为了查日期而调用技能脚本\n"
             )
 
-            parts.append(
-                "\n\n".join(
-                    [skills_index, skills_rule, skills_detail_result.content]
-                ).strip()
-            )
+            if progressive:
+                parts.append(
+                    "\n\n".join([skills_index, skills_rule]).strip()
+                    + "\n\n> 详细技能说明将在需要时提供。可使用 `list_skills` 查看完整列表。"
+                )
+            else:
+                index_tokens = estimate_tokens(skills_index)
+                remaining = max(0, skills_budget - index_tokens)
+                skills_detail = skill_catalog.get_catalog()
+                skills_detail_result = apply_budget(
+                    skills_detail, remaining, "skills", truncate_strategy="end"
+                )
+                parts.append(
+                    "\n\n".join(
+                        [skills_index, skills_rule, skills_detail_result.content]
+                    ).strip()
+                )
         except Exception as e:
             logger.error(
                 "[PromptBuilder] skill catalog build failed, skipping: %s", e,

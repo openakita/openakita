@@ -84,12 +84,28 @@ class SessionContext:
     _msg_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     def add_message(self, role: str, content: str, **metadata) -> None:
-        """添加消息（含连续重复检测）"""
+        """添加消息（含全局内容指纹去重）"""
         with self._msg_lock:
             if self.messages:
                 last = self.messages[-1]
                 if last.get("role") == role and last.get("content") == content:
                     return
+
+            import hashlib
+            fingerprint = hashlib.md5(
+                f"{role}:{content[:200]}".encode(errors="replace")
+            ).hexdigest()
+            if not hasattr(self, "_msg_fingerprints"):
+                self._msg_fingerprints: set[str] = set()
+                for msg in self.messages:
+                    fp = hashlib.md5(
+                        f"{msg.get('role','')}:{(msg.get('content','') or '')[:200]}".encode(errors="replace")
+                    ).hexdigest()
+                    self._msg_fingerprints.add(fp)
+            if fingerprint in self._msg_fingerprints:
+                return
+            self._msg_fingerprints.add(fingerprint)
+
             self.messages.append(
                 {"role": role, "content": content, "timestamp": datetime.now().isoformat(), **metadata}
             )

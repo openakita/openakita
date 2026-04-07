@@ -177,17 +177,16 @@ class PlanHandler:
             return f"❌ Unknown plan tool: {tool_name}"
 
     async def _create_todo(self, params: dict) -> str:
-        """创建任务计划"""
+        """创建任务计划（支持多计划共存）"""
         if "task_summary" not in params and "goal" in params:
             params["task_summary"] = params.pop("goal")
 
         _plan = self._get_current_todo()
         if _plan and _plan.get("status") == "in_progress":
-            plan_id = _plan["id"]
-            status = self._get_status()
-            return (
-                f"⚠️ 已有活跃计划（{plan_id}），请先完成当前计划再创建新的。\n"
-                f"如需继续，请逐步更新步骤状态。\n\n{status}"
+            existing_plan_id = _plan["id"]
+            logger.info(
+                f"[Plan] Creating new plan while existing plan {existing_plan_id} "
+                f"is still in progress (multi-plan mode)"
             )
 
         cid = self._get_conversation_id()
