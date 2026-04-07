@@ -8,6 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY pyproject.toml README.md ./
 COPY src/ src/
+COPY skills/ skills/
+COPY mcps/ mcps/
+COPY identity/ identity/
 
 RUN pip install --no-cache-dir .
 
