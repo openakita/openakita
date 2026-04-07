@@ -6,16 +6,23 @@
   <title>Seedance Video Generator</title>
   <style>
     :root {
-      --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
-      --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
-      --primary: #3b82f6; --primary-hover: #2563eb;
-      --success: #22c55e; --warning: #f59e0b; --danger: #ef4444;
-      --border: #334155; --radius: 8px;
-    }
-    [data-theme="light"] {
       --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
       --text: #1e293b; --text-muted: #64748b; --text-dim: #94a3b8;
-      --border: #e2e8f0;
+      --primary: #3b82f6; --primary-hover: #2563eb;
+      --success: #22c55e; --warning: #f59e0b; --danger: #ef4444;
+      --border: #e2e8f0; --radius: 8px;
+    }
+    [data-theme="dark"] {
+      --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+      --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
+      --border: #334155;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+        --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
+        --border: #334155;
+      }
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
@@ -75,7 +82,7 @@
     .split-layout { display: flex; gap: 20px; height: 100%; }
     .split-left { width: 42%; min-width: 380px; overflow-y: auto; flex-shrink: 0; }
     .split-right { flex: 1; overflow-y: auto; }
-    .video-player-wrap { background: #000; border-radius: var(--radius); overflow: hidden; aspect-ratio: 16/9; position: relative; display: flex; align-items: center; justify-content: center; }
+    .video-player-wrap { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; aspect-ratio: 16/9; position: relative; display: flex; align-items: center; justify-content: center; }
     .video-player-wrap video { max-width: 100%; max-height: 100%; }
     .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: var(--text-dim); }
     .empty-state svg { width: 48px; height: 48px; margin-bottom: 12px; opacity: .5; }
@@ -109,49 +116,104 @@
 </head>
 <body>
 <div id="root"></div>
-<script type="module">
-// ── Minimal Bridge SDK (inline, no build step needed) ──
+<script>
+// ── Minimal Bridge SDK with direct HTTP fallback ──
 const BRIDGE_VER = 1;
 let _ctx = null, _caps = [], _pending = {}, _handlers = {};
+let _bridgeConnected = false;
+const _inIframe = window.parent !== window;
 function uid() { return Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
-function post(msg) { window.parent.postMessage({ __akita_bridge: true, version: BRIDGE_VER, ...msg }, "*"); }
-function apiCall(method, path, body) {
-  return new Promise((resolve, reject) => {
-    const id = uid();
-    _pending[id] = { resolve, reject };
-    post({ type: "bridge:api-request", requestId: id, payload: { method, path, body } });
-    setTimeout(() => { if (_pending[id]) { delete _pending[id]; reject(new Error("timeout")); } }, 30000);
+function post(msg) { if (_inIframe) window.parent.postMessage({ __akita_bridge: true, version: BRIDGE_VER, ...msg }, "*"); }
+
+function _detectApiBase() {
+  if (_ctx && _ctx.apiBase) return _ctx.apiBase;
+  var loc = window.location;
+  if (loc.port === "5173" || loc.port === "1420") return "http://127.0.0.1:18900";
+  return loc.origin;
+}
+
+function directFetch(method, path, body) {
+  var url = path.startsWith("http") ? path : _detectApiBase() + path;
+  var opts = { method: method, headers: { "Content-Type": "application/json" } };
+  if (body && method !== "GET" && method !== "HEAD") {
+    if (body instanceof FormData) { opts.body = body; delete opts.headers["Content-Type"]; }
+    else { opts.body = JSON.stringify(body); }
+  }
+  return fetch(url, opts).then(function(resp) {
+    return resp.json().then(function(json) {
+      return { ok: resp.ok, status: resp.status, body: json };
+    });
   });
 }
+
+function apiCall(method, path, body) {
+  if (!_inIframe || !_bridgeConnected) return directFetch(method, path, body);
+  return new Promise(function(resolve, reject) {
+    var id = uid();
+    _pending[id] = { resolve: resolve, reject: reject };
+    post({ type: "bridge:api-request", requestId: id, payload: { method: method, path: path, body: body } });
+    setTimeout(function() {
+      if (_pending[id]) {
+        delete _pending[id];
+        directFetch(method, path, body).then(resolve).catch(reject);
+      }
+    }, 5000);
+  });
+}
+
 function pluginApi(method, path, body) {
-  const base = _ctx ? `/api/plugins/${_ctx.pluginId}` : "/api/plugins/seedance-video";
+  var base = _ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/seedance-video";
   return apiCall(method, base + path, body);
 }
-window.addEventListener("message", (e) => {
-  const d = e.data;
+
+window.addEventListener("message", function(e) {
+  var d = e.data;
   if (!d || !d.__akita_bridge) return;
   if (d.type === "bridge:init" && d.payload) {
     _ctx = d.payload;
-    if (_ctx.theme && _ctx.theme.includes("light")) document.documentElement.setAttribute("data-theme", "light");
+    _bridgeConnected = true;
+    if (_ctx.theme) {
+      document.documentElement.setAttribute("data-theme", _ctx.theme.includes("dark") ? "dark" : "light");
+    }
   }
-  if (d.type === "bridge:handshake-ack" && d.payload) _caps = d.payload.capabilities || [];
+  if (d.type === "bridge:handshake-ack" && d.payload) { _caps = d.payload.capabilities || []; _bridgeConnected = true; }
   if ((d.type === "bridge:api-response" || d.type === "bridge:clipboard-ack") && d.requestId && _pending[d.requestId]) {
     _pending[d.requestId].resolve(d.payload);
     delete _pending[d.requestId];
   }
   if (d.type === "bridge:theme-change" && d.payload) {
-    if (d.payload.theme && d.payload.theme.includes("light")) document.documentElement.setAttribute("data-theme", "light");
-    else document.documentElement.removeAttribute("data-theme");
+    document.documentElement.setAttribute("data-theme", (d.payload.theme || "").includes("dark") ? "dark" : "light");
   }
   if (d.type === "bridge:event" && d.payload) {
-    const h = _handlers[d.payload.eventType];
-    if (h) h.forEach(fn => fn(d.payload.data));
+    var h = _handlers[d.payload.eventType];
+    if (h) h.forEach(function(fn) { fn(d.payload.data); });
   }
 });
-post({ type: "bridge:ready" });
-post({ type: "bridge:handshake", payload: { sdkVersion: "1.0.0" } });
+// Retry bridge:ready until host acknowledges (fixes race condition where
+// regular script executes before host's useEffect sets up the listener)
+var _readyInterval = null;
+function _sendReady() {
+  post({ type: "bridge:ready" });
+  post({ type: "bridge:handshake", payload: { sdkVersion: "1.0.0" } });
+}
+_sendReady();
+if (_inIframe) {
+  _readyInterval = setInterval(function() {
+    if (_bridgeConnected) { clearInterval(_readyInterval); return; }
+    _sendReady();
+  }, 300);
+  setTimeout(function() { if (_readyInterval) clearInterval(_readyInterval); }, 20000);
+}
 function onEvent(type, fn) { (_handlers[type] = _handlers[type] || []).push(fn); }
-window.__bridge = { apiCall, pluginApi, onEvent, getCtx: () => _ctx };
+
+function uploadFile(file) {
+  var base = _detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/seedance-video");
+  var fd = new FormData();
+  fd.append("file", file);
+  return fetch(base + "/upload", { method: "POST", body: fd }).then(function(r) { return r.json(); });
+}
+
+window.__bridge = { apiCall: apiCall, pluginApi: pluginApi, onEvent: onEvent, getCtx: function() { return _ctx; }, uploadFile: uploadFile };
 
 // ── React via CDN (production build) ──
 </script>
@@ -160,7 +222,7 @@ window.__bridge = { apiCall, pluginApi, onEvent, getCtx: () => _ctx };
 <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
 <script type="text/babel" data-type="module">
 const { useState, useEffect, useCallback, useRef } = React;
-const { pluginApi, onEvent } = window.__bridge;
+const { pluginApi, onEvent, uploadFile } = window.__bridge;
 
 // ── Constants ──
 const MODES = [
@@ -201,6 +263,46 @@ function useTasks() {
 
 // ── Components ──
 
+function FileUploadZone({ id, accept, multiple, onUpload, label, hint }) {
+  const [uploading, setUploading] = useState(false);
+  const [fileName, setFileName] = useState("");
+  const [dragOver, setDragOver] = useState(false);
+
+  const handleFiles = async (files) => {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    for (const file of files) {
+      setFileName(file.name);
+      await onUpload(file);
+    }
+    setUploading(false);
+  };
+
+  return (
+    <div className={`upload-zone${dragOver ? " drag-over" : ""}`}
+      style={dragOver ? {borderColor:"var(--primary)",background:"rgba(59,130,246,.08)"} : {}}
+      onClick={() => !uploading && document.getElementById(id)?.click()}
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files); }}>
+      <input id={id} type="file" accept={accept} multiple={multiple} hidden
+        onChange={(e) => handleFiles(e.target.files)} />
+      {uploading ? (
+        <div className="flex items-center gap-2" style={{justifyContent:"center"}}>
+          <div className="spinner" style={{width:16,height:16}} />
+          <span className="text-sm">上传中: {fileName}</span>
+        </div>
+      ) : (
+        <>
+          <p style={{fontSize:13}}>{label}</p>
+          {hint && <p className="text-xs text-dim" style={{marginTop:4}}>{hint}</p>}
+          {fileName && <p className="text-xs text-success" style={{marginTop:4}}>✓ 已上传: {fileName}</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
 function VideoPlayer({ task }) {
   const videoRef = useRef(null);
   const [playing, setPlaying] = useState(false);
@@ -209,9 +311,10 @@ function VideoPlayer({ task }) {
   const [speed, setSpeed] = useState(1);
   const [loop, setLoop] = useState(true);
 
+  const apiBase = window.__bridge.getCtx()?.apiBase || window.location.origin;
   const videoSrc = task?.local_video_path
     ? null
-    : (window.__bridge.getCtx()?.apiBase || "") + `/api/plugins/seedance-video/videos/${task?.id}`;
+    : `${apiBase}/api/plugins/seedance-video/videos/${task?.id}`;
 
   const togglePlay = () => {
     if (!videoRef.current) return;
@@ -368,13 +471,51 @@ function CreateTab({ models }) {
 
         {MODE_TIPS[mode] && <div className="tip-bar">{MODE_TIPS[mode]}</div>}
 
-        {mode !== "t2v" && (
+        {mode === "i2v" && (
           <div className="card">
-            <div className="card-title">素材上传</div>
-            <div className="upload-zone">
-              <p>拖拽或点击上传素材</p>
-              <p className="text-xs text-dim" style={{marginTop:4}}>支持 jpg/png/webp/mp4/mov/wav/mp3</p>
+            <div className="card-title">首帧上传</div>
+            <FileUploadZone id="upload-first-frame" accept="image/*"
+              onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
+              label="拖拽或点击上传首帧图片"
+              hint="建议高清图片 (300-6000px)，比例与目标视频一致" />
+          </div>
+        )}
+
+        {mode === "i2v_end" && (
+          <div className="card">
+            <div className="card-title">首尾帧上传</div>
+            <div className="grid-2">
+              <FileUploadZone id="upload-start-frame" accept="image/*"
+                onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
+                label="🖼️ 首帧图片" hint="起始画面" />
+              <FileUploadZone id="upload-end-frame" accept="image/*"
+                onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
+                label="🖼️ 尾帧图片" hint="结束画面" />
             </div>
+            <p className="text-xs text-dim" style={{marginTop:6}}>首尾帧间的过渡由 AI 自动补全，差异越大效果越戏剧化</p>
+          </div>
+        )}
+
+        {mode === "multimodal" && (
+          <div className="card">
+            <div className="card-title">参考素材</div>
+            <FileUploadZone id="upload-multimodal" accept="image/*,video/*,audio/*" multiple
+              onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
+              label="拖拽或点击上传参考素材（可多选）"
+              hint="支持图片/视频/音频，提示词中用「图片1」「视频2」引用" />
+            <div className="tip-bar" style={{marginTop:8}}>
+              💡 提示词引用方式: 在提示词中写「图片1」「视频2」「音频1」，序号为同类素材的上传顺序
+            </div>
+          </div>
+        )}
+
+        {(mode === "edit" || mode === "extend") && (
+          <div className="card">
+            <div className="card-title">{mode === "edit" ? "原始视频" : "待延长视频"}</div>
+            <FileUploadZone id="upload-source-video" accept="video/*"
+              onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
+              label={`拖拽或点击上传${mode === "edit" ? "待编辑" : "待延长"}的视频`}
+              hint="支持 mp4/mov/webp 格式" />
           </div>
         )}
 
@@ -589,69 +730,145 @@ function AssetsTab() {
 }
 
 function PromptGuideTab() {
-  const [guide, setGuide] = useState(null);
+  const FALLBACK_CAMERAS = [
+    {zh:"推镜头",en:"Push in",desc:"向前靠近主体"},{zh:"拉镜头",en:"Pull out",desc:"向后远离主体"},
+    {zh:"摇镜头",en:"Pan",desc:"水平旋转拍摄"},{zh:"移镜头",en:"Dolly/Tracking",desc:"平移跟随"},
+    {zh:"跟镜头",en:"Follow",desc:"追踪主体运动"},{zh:"环绕镜头",en:"Orbit",desc:"绕主体旋转"},
+    {zh:"升降镜头",en:"Crane/Jib",desc:"垂直升降"},{zh:"希区柯克变焦",en:"Dolly Zoom",desc:"同时推拉+变焦，恐惧/不安感"},
+    {zh:"一镜到底",en:"One-take",desc:"长镜头无剪辑"},{zh:"手持晃动",en:"Handheld",desc:"手持相机的真实质感"},
+  ];
+  const FALLBACK_ATMOSPHERE = {
+    light:["逆光","侧光","丁达尔效应","伦勃朗光","体积光","柔光","硬光"],
+    color:["暖色调","冷色调","赛博朋克","复古胶片","黑白","霓虹","日落色调"],
+    texture:["电影级","纪录片风格","油画感","水墨感","CG质感","像素风","写实"],
+    mood:["温馨","紧张","悬疑","欢快","忧伤","史诗","治愈","恐怖","浪漫"],
+  };
+  const FALLBACK_FORMULAS = {
+    t2v:"主体+运动 / 背景+运动 / 镜头+运动",
+    i2v:"参考图片特征 + 画面变化描述 + 镜头运动",
+    i2v_end:"首帧到尾帧的过渡描述 + 中间画面变化 + 镜头运动",
+    multimodal:"参考「图片N」中的特征 + 参考「视频N」的运镜 + 音色→角色说:台词",
+    edit:"保持不变的部分 + 替换/增加/删除的元素 + 时机和位置",
+    extend:"延续描述 + 新内容方向 + 过渡方式",
+  };
+
+  const [guide, setGuide] = useState({ cameras: FALLBACK_CAMERAS, atmosphere: FALLBACK_ATMOSPHERE, formulas: FALLBACK_FORMULAS });
   const [templates, setTemplates] = useState([]);
   const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState({});
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
+
   useEffect(() => {
-    pluginApi("GET", "/prompt-guide").then(r => r.body && setGuide(r.body)).catch(() => {});
+    pluginApi("GET", "/prompt-guide").then(r => {
+      if (r.body?.cameras) setGuide({ cameras: r.body.cameras, atmosphere: r.body.atmosphere || FALLBACK_ATMOSPHERE, formulas: r.body.formulas || FALLBACK_FORMULAS });
+    }).catch(() => {});
     pluginApi("GET", "/prompt-templates").then(r => r.body?.templates && setTemplates(r.body.templates)).catch(() => {});
   }, []);
+
+  const toggleSection = (key) => setExpanded(prev => ({...prev, [key]: !prev[key]}));
 
   const filteredTemplates = templates.filter(t =>
     !search || t.name.includes(search) || (t.name_en||"").toLowerCase().includes(search.toLowerCase()) || t.description.includes(search)
   );
 
+  const CAT_NAMES = {light:"光影",color:"色调",texture:"质感",mood:"情绪"};
+
   return (
-    <div>
+    <div style={{maxWidth:800}}>
       <input className="input" placeholder="搜索模板或关键词..." value={search} onChange={e => setSearch(e.target.value)} style={{marginBottom:16}} />
 
-      <div className="card">
-        <div className="card-title">📝 模板库（点击查看 / 套用）</div>
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:8}}>
-          {filteredTemplates.map(t => (
-            <div key={t.id} className="template-card">
-              <h4>{t.name} <span className="text-xs text-dim">{t.name_en}</span></h4>
-              <p>{t.description}</p>
-              <div className="flex gap-2 flex-wrap" style={{marginTop:4}}>
-                {t.modes?.map(m => <span key={m} className="tag tag-blue">{m}</span>)}
-              </div>
-            </div>
-          ))}
+      <div className="card" style={{cursor:"pointer"}} onClick={() => toggleSection("templates")}>
+        <div className="card-title flex justify-between items-center">
+          <span>📝 模板库（点击查看 / 套用）</span>
+          <span className="text-dim">{expanded.templates ? "▲" : "▼"}</span>
         </div>
+        {expanded.templates && (
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:8,marginTop:8}} onClick={e => e.stopPropagation()}>
+            {filteredTemplates.length === 0 && <p className="text-sm text-dim">暂无模板数据（后端未连接或正在加载中）</p>}
+            {filteredTemplates.map(t => (
+              <div key={t.id} className="template-card" onClick={() => setSelectedTemplate(selectedTemplate?.id === t.id ? null : t)}>
+                <h4>{t.name} <span className="text-xs text-dim">{t.name_en}</span></h4>
+                <p>{t.description}</p>
+                <div className="flex gap-2 flex-wrap" style={{marginTop:4}}>
+                  {t.modes?.map(m => <span key={m} className="tag tag-blue">{m}</span>)}
+                </div>
+                {selectedTemplate?.id === t.id && t.template && (
+                  <div style={{marginTop:8,padding:8,background:"var(--bg)",borderRadius:6,fontSize:12,whiteSpace:"pre-wrap",color:"var(--text-muted)"}}>
+                    {t.template}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {guide && (
-        <>
-          <div className="card">
-            <div className="card-title">🎥 镜头语言速查</div>
-            <div className="flex gap-2 flex-wrap">
-              {guide.cameras?.map(c => (
-                <span key={c.zh} className="keyword-tag" title={c.desc}>{c.zh} ({c.en})</span>
-              ))}
-            </div>
+      <div className="card" style={{cursor:"pointer"}} onClick={() => toggleSection("cameras")}>
+        <div className="card-title flex justify-between items-center">
+          <span>🎥 镜头语言速查</span>
+          <span className="text-dim">{expanded.cameras ? "▲" : "▼"}</span>
+        </div>
+        {expanded.cameras && (
+          <div className="flex gap-2 flex-wrap" style={{marginTop:8}} onClick={e => e.stopPropagation()}>
+            {guide.cameras.map(c => (
+              <span key={c.zh} className="keyword-tag" title={c.desc} style={{cursor:"help"}}>
+                {c.zh} ({c.en})
+                <span className="text-xs text-dim" style={{display:"block",marginTop:2}}>{c.desc}</span>
+              </span>
+            ))}
           </div>
-          <div className="card">
-            <div className="card-title">🎨 氛围关键词库</div>
-            {Object.entries(guide.atmosphere || {}).map(([cat, words]) => (
-              <div key={cat} style={{marginBottom:8}}>
-                <span className="label">{{light:"光影",color:"色调",texture:"质感",mood:"情绪"}[cat] || cat}</span>
+        )}
+      </div>
+
+      <div className="card" style={{cursor:"pointer"}} onClick={() => toggleSection("atmosphere")}>
+        <div className="card-title flex justify-between items-center">
+          <span>🎨 氛围关键词库</span>
+          <span className="text-dim">{expanded.atmosphere ? "▲" : "▼"}</span>
+        </div>
+        {expanded.atmosphere && (
+          <div style={{marginTop:8}} onClick={e => e.stopPropagation()}>
+            {Object.entries(guide.atmosphere).map(([cat, words]) => (
+              <div key={cat} style={{marginBottom:10}}>
+                <span className="label" style={{marginBottom:4,display:"inline-block"}}>{CAT_NAMES[cat] || cat}</span>
                 <div className="flex gap-2 flex-wrap">
                   {words.map(w => <span key={w} className="keyword-tag">{w}</span>)}
                 </div>
               </div>
             ))}
           </div>
-          <div className="card">
-            <div className="card-title">📐 提示词公式</div>
-            {Object.entries(guide.formulas || {}).map(([mode, formula]) => (
-              <div key={mode} style={{marginBottom:6}}>
-                <span className="tag tag-blue" style={{marginRight:8}}>{mode}</span>
+        )}
+      </div>
+
+      <div className="card" style={{cursor:"pointer"}} onClick={() => toggleSection("formulas")}>
+        <div className="card-title flex justify-between items-center">
+          <span>📐 提示词公式</span>
+          <span className="text-dim">{expanded.formulas ? "▲" : "▼"}</span>
+        </div>
+        {expanded.formulas && (
+          <div style={{marginTop:8}} onClick={e => e.stopPropagation()}>
+            {Object.entries(guide.formulas).map(([mode, formula]) => (
+              <div key={mode} style={{marginBottom:8,padding:8,background:"var(--bg)",borderRadius:6}}>
+                <span className="tag tag-blue" style={{marginRight:8}}>{
+                  {t2v:"文生视频",i2v:"首帧",i2v_end:"首尾帧",multimodal:"多模态",edit:"编辑",extend:"延长"}[mode] || mode
+                }</span>
                 <span className="text-sm">{formula}</span>
               </div>
             ))}
           </div>
-        </>
-      )}
+        )}
+      </div>
+
+      <div className="card">
+        <div className="card-title">💡 提示词编写技巧</div>
+        <div style={{fontSize:13,color:"var(--text-muted)",lineHeight:2}}>
+          <p>1. 建议 80-200 字，不超过 300 字（5000字符上限）</p>
+          <p>2. 使用<strong>时间轴格式</strong>让镜头有节奏：「0-3s: 推镜头, 4-6s: 特写」</p>
+          <p>3. 加入<strong>镜头语言</strong>：推/拉/摇/移/跟/环绕/升降/希区柯克变焦</p>
+          <p>4. 加入<strong>声音设计</strong>：配乐风格 + 环境音效 + 人声</p>
+          <p>5. 避免出现<strong>人脸/真人面孔</strong>相关描述（当前模型限制）</p>
+          <p>6. 描述越具体，AI 越能精准生成你想要的视频</p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -816,11 +1033,33 @@ function StoryboardTab() {
             每段 {segDuration} 秒，总时长约 {segCountEst * segDuration} 秒
           </div>
 
-          <div className="flex gap-2 justify-between items-center">
-            <div className="flex gap-2 items-center" style={{fontSize:13,color:"var(--text-dim)"}}>
-              {ffmpegOk === true && <span style={{color:"var(--success)"}}>✓ ffmpeg 可用</span>}
-              {ffmpegOk === false && <span style={{color:"var(--warning)"}}>⚠ ffmpeg 未安装 (拼接功能不可用)</span>}
+          {ffmpegOk === false && (
+            <div style={{padding:12,background:"rgba(245,158,11,.08)",border:"1px solid rgba(245,158,11,.3)",borderRadius:6,marginBottom:14}}>
+              <div className="flex items-center gap-2" style={{marginBottom:6}}>
+                <span style={{color:"var(--warning)",fontWeight:600,fontSize:13}}>⚠ ffmpeg 未安装</span>
+                <span className="text-xs text-dim">（视频拼接功能需要 ffmpeg）</span>
+              </div>
+              <div style={{fontSize:12,color:"var(--text-muted)",lineHeight:1.8}}>
+                <p><strong>安装方式：</strong></p>
+                <p>• <strong>Windows</strong>：<code style={{background:"var(--bg)",padding:"1px 6px",borderRadius:3}}>winget install ffmpeg</code> 或从 ffmpeg.org 下载</p>
+                <p>• <strong>macOS</strong>：<code style={{background:"var(--bg)",padding:"1px 6px",borderRadius:3}}>brew install ffmpeg</code></p>
+                <p>• <strong>Linux</strong>：<code style={{background:"var(--bg)",padding:"1px 6px",borderRadius:3}}>sudo apt install ffmpeg</code></p>
+                <p style={{marginTop:4}}>安装后重启应用即可自动检测。分镜拆解和单段生成不需要 ffmpeg，仅拼接长视频时需要。</p>
+              </div>
+              <button className="btn btn-sm" style={{marginTop:8}} onClick={() => {
+                pluginApi("GET", "/long-video/ffmpeg-check").then(r => setFfmpegOk(r.body?.available ?? false)).catch(() => {});
+              }}>🔄 重新检测 ffmpeg</button>
             </div>
+          )}
+
+          {ffmpegOk === true && (
+            <div style={{padding:8,background:"rgba(34,197,94,.08)",border:"1px solid rgba(34,197,94,.2)",borderRadius:6,marginBottom:14,fontSize:13,color:"var(--success)"}}>
+              ✓ ffmpeg 已就绪，可以拼接长视频
+            </div>
+          )}
+
+          <div className="flex gap-2 justify-between items-center">
+            <div />
             <button className="btn btn-primary" disabled={!story.trim() || decomposing} onClick={decompose}>
               {decomposing ? "🤖 AI 拆解中..." : "🎬 AI 分镜拆解"}
             </button>
@@ -1057,13 +1296,24 @@ function StoryboardTab() {
         )}
 
         {step === "results" && succCount >= 2 && (
-          <div className="flex justify-between items-center" style={{marginTop:16}}>
-            <p className="text-sm text-dim">
-              {ffmpegOk ? `可拼接 ${succCount} 个视频片段` : "⚠ ffmpeg 不可用，无法拼接"}
-            </p>
-            <button className="btn btn-primary" disabled={!ffmpegOk || concatenating} onClick={doConcat}>
-              {concatenating ? "拼接中..." : `🎞️ 拼接为长视频 (${transition === "crossfade" ? "交叉淡化" : "硬切"})`}
-            </button>
+          <div style={{marginTop:16}}>
+            {!ffmpegOk && (
+              <div style={{padding:10,background:"rgba(245,158,11,.08)",border:"1px solid rgba(245,158,11,.2)",borderRadius:6,marginBottom:12,fontSize:12,color:"var(--text-muted)"}}>
+                ⚠ ffmpeg 未安装，无法拼接视频。请安装 ffmpeg 后点击
+                <button className="btn btn-sm" style={{margin:"0 4px"}} onClick={() => {
+                  pluginApi("GET", "/long-video/ffmpeg-check").then(r => setFfmpegOk(r.body?.available ?? false)).catch(() => {});
+                }}>重新检测</button>
+                （Windows: <code>winget install ffmpeg</code> / Mac: <code>brew install ffmpeg</code>）
+              </div>
+            )}
+            <div className="flex justify-between items-center">
+              <p className="text-sm text-dim">
+                {ffmpegOk ? `✓ 可拼接 ${succCount} 个视频片段` : ""}
+              </p>
+              <button className="btn btn-primary" disabled={!ffmpegOk || concatenating} onClick={doConcat}>
+                {concatenating ? "拼接中..." : `🎞️ 拼接为长视频 (${transition === "crossfade" ? "交叉淡化" : "硬切"})`}
+              </button>
+            </div>
           </div>
         )}
       </div>
