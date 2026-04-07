@@ -250,6 +250,19 @@ async def list_plugins(request: Request) -> dict[str, Any]:
         ) from e
 
 
+@router.get("/ui-apps")
+async def list_ui_plugins(request: Request) -> list[dict]:
+    """Return all enabled plugins that have a UI, for sidebar rendering."""
+    pm = _get_plugin_manager(request)
+    if pm is None:
+        return []
+    try:
+        return pm.list_ui_plugins()
+    except Exception:
+        logger.exception("Failed to list UI plugins")
+        return []
+
+
 class InstallBody(BaseModel):
     source: str = Field(..., min_length=1)
     background: bool = Field(False, description="Return immediately with install_id for SSE progress tracking")

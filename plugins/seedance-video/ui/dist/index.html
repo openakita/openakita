@@ -1,0 +1,1268 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Seedance Video Generator</title>
+  <style>
+    :root {
+      --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+      --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
+      --primary: #3b82f6; --primary-hover: #2563eb;
+      --success: #22c55e; --warning: #f59e0b; --danger: #ef4444;
+      --border: #334155; --radius: 8px;
+    }
+    [data-theme="light"] {
+      --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
+      --text: #1e293b; --text-muted: #64748b; --text-dim: #94a3b8;
+      --border: #e2e8f0;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+    .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    .header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--bg-card); }
+    .header h1 { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .header-right { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-muted); }
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--bg-card); padding: 0 16px; }
+    .tab { padding: 10px 18px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--text-muted); transition: all .15s; white-space: nowrap; }
+    .tab:hover { color: var(--text); background: var(--bg-hover); }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
+    .content { flex: 1; overflow-y: auto; padding: 20px; }
+    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+    .card-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+    .btn { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-size: 13px; cursor: pointer; transition: all .15s; display: inline-flex; align-items: center; gap: 6px; }
+    .btn:hover { background: var(--bg-hover); }
+    .btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .btn-danger { color: var(--danger); border-color: var(--danger); }
+    .input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px; outline: none; }
+    .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(59,130,246,.15); }
+    .textarea { resize: vertical; min-height: 80px; font-family: inherit; }
+    .select { appearance: none; padding-right: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
+    .label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px; color: var(--text-muted); }
+    .form-row { margin-bottom: 14px; }
+    .flex { display: flex; } .gap-2 { gap: 8px; } .gap-3 { gap: 12px; } .gap-4 { gap: 16px; }
+    .items-center { align-items: center; } .justify-between { justify-content: space-between; }
+    .flex-1 { flex: 1; } .flex-wrap { flex-wrap: wrap; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .text-sm { font-size: 13px; } .text-xs { font-size: 11px; }
+    .text-muted { color: var(--text-muted); } .text-dim { color: var(--text-dim); }
+    .text-success { color: var(--success); } .text-warning { color: var(--warning); } .text-danger { color: var(--danger); }
+    .tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+    .tag-blue { background: rgba(59,130,246,.15); color: #60a5fa; }
+    .tag-orange { background: rgba(245,158,11,.15); color: #fbbf24; }
+    .tag-green { background: rgba(34,197,94,.15); color: #4ade80; }
+    .tag-red { background: rgba(239,68,68,.15); color: #f87171; }
+    .tag-gray { background: rgba(148,163,184,.15); color: #94a3b8; }
+    .mode-btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-size: 12px; cursor: pointer; transition: all .15s; }
+    .mode-btn:hover { background: var(--bg-hover); color: var(--text); }
+    .mode-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .ratio-btn { width: 48px; height: 36px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 10px; transition: all .15s; color: var(--text-dim); }
+    .ratio-btn:hover { border-color: var(--text-muted); }
+    .ratio-btn.active { border-color: var(--primary); color: var(--primary); background: rgba(59,130,246,.08); }
+    .slider-wrap { display: flex; align-items: center; gap: 12px; }
+    .slider-wrap input[type=range] { flex: 1; accent-color: var(--primary); }
+    .slider-val { min-width: 40px; text-align: center; font-size: 14px; font-weight: 600; color: var(--primary); }
+    .switch { position: relative; width: 36px; height: 20px; border-radius: 10px; background: var(--border); cursor: pointer; transition: .2s; }
+    .switch.on { background: var(--primary); }
+    .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: .2s; }
+    .switch.on::after { left: 18px; }
+    .upload-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 24px; text-align: center; cursor: pointer; transition: .15s; color: var(--text-muted); }
+    .upload-zone:hover { border-color: var(--primary); background: rgba(59,130,246,.04); }
+    .split-layout { display: flex; gap: 20px; height: 100%; }
+    .split-left { width: 42%; min-width: 380px; overflow-y: auto; flex-shrink: 0; }
+    .split-right { flex: 1; overflow-y: auto; }
+    .video-player-wrap { background: #000; border-radius: var(--radius); overflow: hidden; aspect-ratio: 16/9; position: relative; display: flex; align-items: center; justify-content: center; }
+    .video-player-wrap video { max-width: 100%; max-height: 100%; }
+    .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: var(--text-dim); }
+    .empty-state svg { width: 48px; height: 48px; margin-bottom: 12px; opacity: .5; }
+    .task-card { display: flex; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); transition: .15s; cursor: pointer; }
+    .task-card:hover { background: var(--bg-hover); }
+    .task-thumb { width: 80px; height: 60px; border-radius: 6px; background: #000; flex-shrink: 0; overflow: hidden; }
+    .task-thumb img, .task-thumb video { width: 100%; height: 100%; object-fit: cover; }
+    .task-info { flex: 1; min-width: 0; }
+    .task-info h4 { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
+    .task-meta { font-size: 11px; color: var(--text-dim); display: flex; gap: 8px; flex-wrap: wrap; }
+    .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .tip-bar { background: rgba(59,130,246,.08); border: 1px solid rgba(59,130,246,.2); border-radius: 6px; padding: 8px 12px; font-size: 12px; color: var(--primary); margin-bottom: 12px; }
+    .keyword-tag { display: inline-block; padding: 2px 8px; margin: 2px; border-radius: 4px; font-size: 12px; background: var(--bg-hover); color: var(--text-muted); cursor: pointer; transition: .15s; border: 1px solid transparent; }
+    .keyword-tag:hover { border-color: var(--primary); color: var(--primary); }
+    .template-card { padding: 10px 14px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; transition: .15s; }
+    .template-card:hover { border-color: var(--primary); background: rgba(59,130,246,.04); }
+    .template-card h4 { font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+    .template-card p { font-size: 12px; color: var(--text-dim); }
+    .setting-section { margin-bottom: 24px; }
+    .setting-section h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    .folder-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .folder-row .input { flex: 1; }
+    .video-controls { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: rgba(0,0,0,.8); color: #fff; font-size: 12px; }
+    .video-controls button { background: none; border: none; color: #fff; cursor: pointer; padding: 4px; font-size: 12px; }
+    .video-controls button:hover { color: var(--primary); }
+    .progress-bar { height: 3px; background: var(--border); border-radius: 2px; flex: 1; position: relative; cursor: pointer; }
+    .progress-bar-fill { height: 100%; background: var(--primary); border-radius: 2px; transition: width .1s; }
+    @media (max-width: 860px) { .split-layout { flex-direction: column; } .split-left { width: 100%; min-width: unset; } }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="module">
+// ── Minimal Bridge SDK (inline, no build step needed) ──
+const BRIDGE_VER = 1;
+let _ctx = null, _caps = [], _pending = {}, _handlers = {};
+function uid() { return Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
+function post(msg) { window.parent.postMessage({ __akita_bridge: true, version: BRIDGE_VER, ...msg }, "*"); }
+function apiCall(method, path, body) {
+  return new Promise((resolve, reject) => {
+    const id = uid();
+    _pending[id] = { resolve, reject };
+    post({ type: "bridge:api-request", requestId: id, payload: { method, path, body } });
+    setTimeout(() => { if (_pending[id]) { delete _pending[id]; reject(new Error("timeout")); } }, 30000);
+  });
+}
+function pluginApi(method, path, body) {
+  const base = _ctx ? `/api/plugins/${_ctx.pluginId}` : "/api/plugins/seedance-video";
+  return apiCall(method, base + path, body);
+}
+window.addEventListener("message", (e) => {
+  const d = e.data;
+  if (!d || !d.__akita_bridge) return;
+  if (d.type === "bridge:init" && d.payload) {
+    _ctx = d.payload;
+    if (_ctx.theme && _ctx.theme.includes("light")) document.documentElement.setAttribute("data-theme", "light");
+  }
+  if (d.type === "bridge:handshake-ack" && d.payload) _caps = d.payload.capabilities || [];
+  if ((d.type === "bridge:api-response" || d.type === "bridge:clipboard-ack") && d.requestId && _pending[d.requestId]) {
+    _pending[d.requestId].resolve(d.payload);
+    delete _pending[d.requestId];
+  }
+  if (d.type === "bridge:theme-change" && d.payload) {
+    if (d.payload.theme && d.payload.theme.includes("light")) document.documentElement.setAttribute("data-theme", "light");
+    else document.documentElement.removeAttribute("data-theme");
+  }
+  if (d.type === "bridge:event" && d.payload) {
+    const h = _handlers[d.payload.eventType];
+    if (h) h.forEach(fn => fn(d.payload.data));
+  }
+});
+post({ type: "bridge:ready" });
+post({ type: "bridge:handshake", payload: { sdkVersion: "1.0.0" } });
+function onEvent(type, fn) { (_handlers[type] = _handlers[type] || []).push(fn); }
+window.__bridge = { apiCall, pluginApi, onEvent, getCtx: () => _ctx };
+
+// ── React via CDN (production build) ──
+</script>
+<script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useCallback, useRef } = React;
+const { pluginApi, onEvent } = window.__bridge;
+
+// ── Constants ──
+const MODES = [
+  { id: "t2v", label: "文生视频" },
+  { id: "i2v", label: "首帧" },
+  { id: "i2v_end", label: "首尾帧" },
+  { id: "multimodal", label: "多模态" },
+  { id: "edit", label: "编辑" },
+  { id: "extend", label: "延长" },
+];
+const RATIOS = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
+const TABS = ["创建", "任务列表", "素材库", "提示词指南", "分镜工作台", "设置"];
+
+// ── Hooks ──
+function useModels() {
+  const [models, setModels] = useState([]);
+  useEffect(() => {
+    pluginApi("GET", "/models").then(r => r.body?.models && setModels(r.body.models)).catch(() => {});
+  }, []);
+  return models;
+}
+
+function useTasks() {
+  const [tasks, setTasks] = useState([]);
+  const [total, setTotal] = useState(0);
+  const load = useCallback((params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    pluginApi("GET", `/tasks?${q}`).then(r => {
+      if (r.body?.tasks) { setTasks(r.body.tasks); setTotal(r.body.total); }
+    }).catch(() => {});
+  }, []);
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    onEvent("plugin:seedance-video:task_update", () => load());
+  }, []);
+  return { tasks, total, reload: load };
+}
+
+// ── Components ──
+
+function VideoPlayer({ task }) {
+  const videoRef = useRef(null);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCt] = useState(0);
+  const [duration, setDur] = useState(0);
+  const [speed, setSpeed] = useState(1);
+  const [loop, setLoop] = useState(true);
+
+  const videoSrc = task?.local_video_path
+    ? null
+    : (window.__bridge.getCtx()?.apiBase || "") + `/api/plugins/seedance-video/videos/${task?.id}`;
+
+  const togglePlay = () => {
+    if (!videoRef.current) return;
+    if (videoRef.current.paused) { videoRef.current.play(); setPlaying(true); }
+    else { videoRef.current.pause(); setPlaying(false); }
+  };
+
+  const changeSpeed = () => {
+    const speeds = [0.25, 0.5, 1, 1.5, 2];
+    const idx = speeds.indexOf(speed);
+    const next = speeds[(idx + 1) % speeds.length];
+    setSpeed(next);
+    if (videoRef.current) videoRef.current.playbackRate = next;
+  };
+
+  const stepFrame = (dir) => {
+    if (!videoRef.current) return;
+    videoRef.current.pause(); setPlaying(false);
+    videoRef.current.currentTime += dir * (1/24);
+  };
+
+  if (!task) return (
+    <div className="video-player-wrap">
+      <div className="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M15 10l-4 3V7l4 3z"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+        <p>AI 视频制作就绪</p>
+        <p className="text-xs text-dim" style={{marginTop:4}}>填写参数后点击生成</p>
+      </div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div className="video-player-wrap">
+        {task.status === "running" ? (
+          <div className="empty-state" style={{color:"#fff"}}>
+            <div className="spinner" style={{width:32,height:32,marginBottom:12}}/>
+            <p>正在生成...</p>
+          </div>
+        ) : task.video_url || task.local_video_path ? (
+          <video ref={videoRef} src={videoSrc} loop={loop} autoPlay muted
+            onTimeUpdate={() => setCt(videoRef.current?.currentTime || 0)}
+            onLoadedMetadata={() => setDur(videoRef.current?.duration || 0)}
+            onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
+            style={{width:"100%",height:"100%",objectFit:"contain"}} />
+        ) : (
+          <div className="empty-state" style={{color:"#fff"}}>
+            <p>{task.status === "failed" ? `❌ ${task.error_message || "生成失败"}` : "等待结果..."}</p>
+          </div>
+        )}
+      </div>
+      {(task.video_url || task.local_video_path) && (
+        <div className="video-controls">
+          <button onClick={() => stepFrame(-1)} title="逐帧后退">⏮</button>
+          <button onClick={togglePlay}>{playing ? "⏸" : "▶"}</button>
+          <button onClick={() => stepFrame(1)} title="逐帧前进">⏭</button>
+          <div className="progress-bar" onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const pct = (e.clientX - rect.left) / rect.width;
+            if (videoRef.current) videoRef.current.currentTime = pct * duration;
+          }}>
+            <div className="progress-bar-fill" style={{width: duration ? `${(currentTime/duration)*100}%` : "0%"}} />
+          </div>
+          <span>{currentTime.toFixed(1)}s / {duration.toFixed(1)}s</span>
+          <button onClick={changeSpeed}>{speed}x</button>
+          <button onClick={() => setLoop(!loop)} style={{opacity: loop?1:.5}} title="循环">🔁</button>
+        </div>
+      )}
+      {task.revised_prompt && (
+        <div style={{padding:"8px 12px",fontSize:12,color:"var(--text-dim)",fontStyle:"italic"}}>
+          修改后提示词: {task.revised_prompt}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CreateTab({ models }) {
+  const [mode, setMode] = useState("t2v");
+  const [prompt, setPrompt] = useState("");
+  const [model, setModel] = useState("2.0");
+  const [ratio, setRatio] = useState("16:9");
+  const [resolution, setResolution] = useState("720p");
+  const [duration, setDuration] = useState(5);
+  const [audio, setAudio] = useState(true);
+  const [seed, setSeed] = useState(-1);
+  const [serviceTier, setServiceTier] = useState("default");
+  const [draft, setDraft] = useState(false);
+  const [returnLastFrame, setReturnLastFrame] = useState(false);
+  const [watermark, setWatermark] = useState(false);
+  const [webSearch, setWebSearch] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [activeTask, setActiveTask] = useState(null);
+  const [optimizing, setOptimizing] = useState(false);
+
+  const currentModel = models.find(m => m.id === model);
+  const minDur = currentModel?.duration_range?.[0] || 2;
+  const maxDur = currentModel?.duration_range?.[1] || 15;
+  const canDraft = currentModel?.supports_draft || false;
+  const can1080 = currentModel?.resolutions?.includes("1080p") || false;
+  const canWebSearch = currentModel?.supports_web_search && mode === "t2v";
+
+  const MODE_TIPS = {
+    t2v: "💡 文生视频随机性较大，适合激发灵感。如有明确预期，建议先生图再图生视频",
+    i2v: "💡 建议上传高清高质量图片（300-6000px），图片比例建议与目标视频一致以避免裁切",
+    i2v_end: "💡 首尾帧间的画面由 AI 自动过渡补全，尾帧差异越大效果越戏剧化",
+    multimodal: "💡 提示词中用「图片1」「视频2」「音频1」引用素材，序号为同类素材上传顺序",
+    edit: "💡 描述要替换/增加/删除的元素、时机和位置，强调保持不变的部分",
+    extend: "💡 向前/向后延长视频，或多段串联。描述延长内容 + 过渡方式",
+  };
+
+  useEffect(() => {
+    if (duration < minDur) setDuration(minDur);
+    if (duration > maxDur) setDuration(maxDur);
+  }, [model]);
+
+  const handleCreate = async () => {
+    setLoading(true);
+    try {
+      const r = await pluginApi("POST", draft ? "/tasks/draft" : "/tasks", {
+        prompt, mode, model, ratio, duration, resolution, n: 1,
+        generate_audio: audio, seed, watermark, return_last_frame: returnLastFrame,
+        web_search: webSearch && canWebSearch, service_tier: serviceTier,
+      });
+      if (r.body?.task) setActiveTask(r.body.task);
+    } catch (e) { console.error(e); }
+    setLoading(false);
+  };
+
+  const handleOptimize = async () => {
+    if (!prompt.trim()) return;
+    setOptimizing(true);
+    try {
+      const r = await pluginApi("POST", "/prompt-optimize", { prompt, mode, duration, ratio });
+      if (r.body?.result) setPrompt(r.body.result);
+    } catch {}
+    setOptimizing(false);
+  };
+
+  return (
+    <div className="split-layout">
+      <div className="split-left">
+        <div className="card">
+          <div className="card-title">生成模式</div>
+          <div className="flex gap-2 flex-wrap">
+            {MODES.map(m => (
+              <button key={m.id} className={`mode-btn ${mode===m.id?"active":""}`}
+                onClick={() => setMode(m.id)}
+                disabled={currentModel && !currentModel.modes?.includes(m.id)}
+              >{m.label}</button>
+            ))}
+          </div>
+        </div>
+
+        {MODE_TIPS[mode] && <div className="tip-bar">{MODE_TIPS[mode]}</div>}
+
+        {mode !== "t2v" && (
+          <div className="card">
+            <div className="card-title">素材上传</div>
+            <div className="upload-zone">
+              <p>拖拽或点击上传素材</p>
+              <p className="text-xs text-dim" style={{marginTop:4}}>支持 jpg/png/webp/mp4/mov/wav/mp3</p>
+            </div>
+          </div>
+        )}
+
+        <div className="card">
+          <div className="card-title">提示词</div>
+          <textarea className="input textarea" value={prompt} onChange={e => setPrompt(e.target.value)}
+            placeholder="描述你想生成的视频内容..." rows={4} />
+          <div className="flex items-center justify-between" style={{marginTop:8}}>
+            <span className="text-xs text-dim">{prompt.length}/5000</span>
+            <button className="btn btn-sm" onClick={handleOptimize} disabled={optimizing || !prompt.trim()}>
+              {optimizing ? <span className="spinner" style={{width:12,height:12}}/> : "✨"} AI 优化提示词
+            </button>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-title">参数配置</div>
+          <div className="form-row">
+            <label className="label">模型</label>
+            <select className="input select" value={model} onChange={e => setModel(e.target.value)}>
+              {models.map(m => <option key={m.id} value={m.id}>{m.name} · RPM {m.rpm}</option>)}
+            </select>
+          </div>
+          <div className="form-row">
+            <label className="label">比例</label>
+            <div className="flex gap-2 flex-wrap">
+              {RATIOS.map(r => (
+                <div key={r} className={`ratio-btn ${ratio===r?"active":""}`} onClick={() => setRatio(r)}>{r}</div>
+              ))}
+            </div>
+          </div>
+          <div className="form-row">
+            <label className="label">分辨率</label>
+            <div className="flex gap-2">
+              {["480p","720p","1080p"].map(r => (
+                <button key={r} className={`mode-btn ${resolution===r?"active":""}`}
+                  onClick={() => setResolution(r)}
+                  disabled={r==="1080p" && !can1080}
+                >{r}</button>
+              ))}
+            </div>
+          </div>
+          <div className="form-row">
+            <label className="label">时长 ({minDur}-{maxDur}秒)</label>
+            <div className="slider-wrap">
+              <input type="range" min={minDur} max={maxDur} value={duration} onChange={e => setDuration(+e.target.value)} />
+              <span className="slider-val">{duration}s</span>
+            </div>
+          </div>
+          <div className="form-row">
+            <label className="label">推理模式</label>
+            <div className="flex gap-2">
+              <button className={`mode-btn ${serviceTier==="default"?"active":""}`} onClick={() => setServiceTier("default")}>● 在线</button>
+              <button className={`mode-btn ${serviceTier==="flex"?"active":""}`} onClick={() => setServiceTier("flex")}>○ 离线半价</button>
+            </div>
+          </div>
+          <div className="grid-2" style={{marginTop:8}}>
+            <div className="flex items-center justify-between">
+              <span className="text-sm">声音</span>
+              <div className={`switch ${audio?"on":""}`} onClick={() => setAudio(!audio)} />
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm">水印</span>
+              <div className={`switch ${watermark?"on":""}`} onClick={() => setWatermark(!watermark)} />
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm">返回尾帧</span>
+              <div className={`switch ${returnLastFrame?"on":""}`} onClick={() => setReturnLastFrame(!returnLastFrame)} />
+            </div>
+            {canDraft && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm">样片模式</span>
+                <div className={`switch ${draft?"on":""}`} onClick={() => setDraft(!draft)} />
+              </div>
+            )}
+            {canWebSearch && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm">联网搜索</span>
+                <div className={`switch ${webSearch?"on":""}`} onClick={() => setWebSearch(!webSearch)} />
+              </div>
+            )}
+          </div>
+        </div>
+
+        <button className="btn btn-primary" style={{width:"100%",padding:"12px",fontSize:14}}
+          onClick={handleCreate} disabled={loading || !prompt.trim()}>
+          {loading ? <span className="spinner" style={{width:16,height:16}}/> : null}
+          {draft ? "生成样片预览" : serviceTier==="flex" ? "提交离线任务" : "生成视频"}
+        </button>
+      </div>
+
+      <div className="split-right">
+        <VideoPlayer task={activeTask} />
+        {activeTask && (
+          <div className="flex gap-2" style={{marginTop:12}}>
+            <button className="btn btn-sm" onClick={() => pluginApi("GET", `/videos/${activeTask.id}/download`)}>⬇ 下载</button>
+            <button className="btn btn-sm" onClick={() => { setActiveTask(null); }}>🔄 新建</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TaskListTab() {
+  const { tasks, total, reload } = useTasks();
+  const [filter, setFilter] = useState("all");
+  const [selected, setSelected] = useState(null);
+
+  const filtered = tasks.filter(t => {
+    if (filter === "running") return t.status === "running" || t.status === "pending";
+    if (filter === "succeeded") return t.status === "succeeded";
+    if (filter === "failed") return t.status === "failed";
+    if (filter === "draft") return t.is_draft;
+    if (filter === "flex") return t.service_tier === "flex";
+    return true;
+  });
+
+  return (
+    <div className="split-layout">
+      <div className="split-left" style={{width:"50%"}}>
+        <div className="flex gap-2 flex-wrap" style={{marginBottom:12}}>
+          {["all","running","succeeded","failed","draft","flex"].map(f => (
+            <button key={f} className={`mode-btn ${filter===f?"active":""}`} onClick={() => setFilter(f)}>
+              {{all:"全部",running:"进行中",succeeded:"已完成",failed:"失败",draft:"样片",flex:"离线"}[f]}
+            </button>
+          ))}
+          <button className="btn btn-sm" onClick={() => reload()} style={{marginLeft:"auto"}}>刷新</button>
+        </div>
+        {filtered.length === 0 ? (
+          <div className="empty-state"><p>暂无任务</p></div>
+        ) : filtered.map(t => (
+          <div key={t.id} className="task-card" onClick={() => setSelected(t)} style={{marginBottom:8, border: selected?.id===t.id ? `1px solid var(--primary)` : undefined}}>
+            <div className="task-thumb">
+              {t.status === "running" && <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%"}}><div className="spinner"/></div>}
+            </div>
+            <div className="task-info">
+              <h4>{t.prompt || "(无提示词)"}</h4>
+              <div className="task-meta">
+                <span>{t.model}</span>
+                <span>{t.mode}</span>
+                <span>{t.params?.ratio || "16:9"}</span>
+                <span>{t.params?.duration || 5}s</span>
+                {t.service_tier === "flex" && <span className="tag tag-blue">Flex半价</span>}
+                {t.is_draft && <span className="tag tag-orange">样片</span>}
+                {t.status === "succeeded" && t.local_video_path && <span className="tag tag-green">📁已下载</span>}
+                {t.status === "failed" && <span className="tag tag-red">失败</span>}
+                {t.status === "running" && <span className="tag tag-blue">生成中</span>}
+                {t.status === "succeeded" && !t.local_video_path && <span className="tag tag-green">✓完成</span>}
+              </div>
+            </div>
+          </div>
+        ))}
+        <div className="text-xs text-dim" style={{marginTop:8}}>共 {total} 个任务</div>
+      </div>
+      <div className="split-right">
+        <VideoPlayer task={selected} />
+        {selected && (
+          <div className="flex gap-2" style={{marginTop:12}}>
+            <button className="btn btn-sm" onClick={() => pluginApi("GET", `/videos/${selected.id}/download`)}>⬇ 下载</button>
+            <button className="btn btn-sm" onClick={() => pluginApi("POST", `/tasks/${selected.id}/retry`)}>🔄 重试</button>
+            <button className="btn btn-sm btn-danger" onClick={async () => {
+              await pluginApi("DELETE", `/tasks/${selected.id}`);
+              setSelected(null); reload();
+            }}>删除</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AssetsTab() {
+  const [assets, setAssets] = useState([]);
+  const [filter, setFilter] = useState(null);
+  const load = () => {
+    const q = filter ? `?type=${filter}` : "";
+    pluginApi("GET", `/assets${q}`).then(r => r.body?.assets && setAssets(r.body.assets)).catch(() => {});
+  };
+  useEffect(load, [filter]);
+
+  return (
+    <div>
+      <div className="flex gap-2 items-center" style={{marginBottom:16}}>
+        {[null,"image","video","audio"].map(f => (
+          <button key={f||"all"} className={`mode-btn ${filter===f?"active":""}`} onClick={() => setFilter(f)}>
+            {{null:"全部",image:"图片",video:"视频",audio:"音频"}[f]}
+          </button>
+        ))}
+        <span className="text-xs text-dim" style={{marginLeft:"auto"}}>{assets.length} 个素材</span>
+      </div>
+      {assets.length === 0 ? (
+        <div className="empty-state"><p>暂无素材</p><p className="text-xs text-dim">在创建面板上传素材后会自动显示在这里</p></div>
+      ) : (
+        <div className="grid-3" style={{gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))"}}>
+          {assets.map(a => (
+            <div key={a.id} className="card" style={{padding:8,textAlign:"center"}}>
+              <div style={{width:"100%",aspectRatio:"1",background:"var(--bg)",borderRadius:4,marginBottom:6,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24}}>
+                {{image:"🖼️",video:"🎬",audio:"🎵"}[a.type] || "📁"}
+              </div>
+              <div className="text-xs" style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.original_name || a.id}</div>
+              <div className="text-xs text-dim">{a.type} · {a.size_bytes ? Math.round(a.size_bytes/1024)+"KB" : "?"}</div>
+              <button className="btn btn-sm btn-danger" style={{marginTop:6,width:"100%"}} onClick={async () => {
+                await pluginApi("DELETE", `/assets/${a.id}`); load();
+              }}>删除</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PromptGuideTab() {
+  const [guide, setGuide] = useState(null);
+  const [templates, setTemplates] = useState([]);
+  const [search, setSearch] = useState("");
+  useEffect(() => {
+    pluginApi("GET", "/prompt-guide").then(r => r.body && setGuide(r.body)).catch(() => {});
+    pluginApi("GET", "/prompt-templates").then(r => r.body?.templates && setTemplates(r.body.templates)).catch(() => {});
+  }, []);
+
+  const filteredTemplates = templates.filter(t =>
+    !search || t.name.includes(search) || (t.name_en||"").toLowerCase().includes(search.toLowerCase()) || t.description.includes(search)
+  );
+
+  return (
+    <div>
+      <input className="input" placeholder="搜索模板或关键词..." value={search} onChange={e => setSearch(e.target.value)} style={{marginBottom:16}} />
+
+      <div className="card">
+        <div className="card-title">📝 模板库（点击查看 / 套用）</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:8}}>
+          {filteredTemplates.map(t => (
+            <div key={t.id} className="template-card">
+              <h4>{t.name} <span className="text-xs text-dim">{t.name_en}</span></h4>
+              <p>{t.description}</p>
+              <div className="flex gap-2 flex-wrap" style={{marginTop:4}}>
+                {t.modes?.map(m => <span key={m} className="tag tag-blue">{m}</span>)}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {guide && (
+        <>
+          <div className="card">
+            <div className="card-title">🎥 镜头语言速查</div>
+            <div className="flex gap-2 flex-wrap">
+              {guide.cameras?.map(c => (
+                <span key={c.zh} className="keyword-tag" title={c.desc}>{c.zh} ({c.en})</span>
+              ))}
+            </div>
+          </div>
+          <div className="card">
+            <div className="card-title">🎨 氛围关键词库</div>
+            {Object.entries(guide.atmosphere || {}).map(([cat, words]) => (
+              <div key={cat} style={{marginBottom:8}}>
+                <span className="label">{{light:"光影",color:"色调",texture:"质感",mood:"情绪"}[cat] || cat}</span>
+                <div className="flex gap-2 flex-wrap">
+                  {words.map(w => <span key={w} className="keyword-tag">{w}</span>)}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="card">
+            <div className="card-title">📐 提示词公式</div>
+            {Object.entries(guide.formulas || {}).map(([mode, formula]) => (
+              <div key={mode} style={{marginBottom:6}}>
+                <span className="tag tag-blue" style={{marginRight:8}}>{mode}</span>
+                <span className="text-sm">{formula}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function StoryboardTab() {
+  const [story, setStory] = useState("");
+  const [totalDuration, setTotalDuration] = useState(60);
+  const [segDuration, setSegDuration] = useState(10);
+  const [ratio, setRatio] = useState("16:9");
+  const [style, setStyle] = useState("电影级画质");
+  const [model, setModel] = useState("2.0");
+  const [resolution, setResolution] = useState("720p");
+  const [genMode, setGenMode] = useState("serial");
+  const [transition, setTransition] = useState("none");
+  const [fadeDur, setFadeDur] = useState(0.5);
+  const [segments, setSegments] = useState([]);
+  const [decomposing, setDecomposing] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [concatenating, setConcatenating] = useState(false);
+  const [genResults, setGenResults] = useState([]);
+  const [concatPath, setConcatPath] = useState("");
+  const [ffmpegOk, setFfmpegOk] = useState(null);
+  const [step, setStep] = useState("input");
+  const [editIdx, setEditIdx] = useState(-1);
+
+  useEffect(() => {
+    pluginApi("GET", "/long-video/ffmpeg-check").then(r => {
+      setFfmpegOk(r.body?.available ?? false);
+    }).catch(() => setFfmpegOk(false));
+  }, []);
+
+  const decompose = async () => {
+    if (!story.trim()) return;
+    setDecomposing(true);
+    try {
+      const r = await pluginApi("POST", "/long-video/storyboard", {
+        story, total_duration: totalDuration, segment_duration: segDuration, ratio, style,
+      });
+      if (r.body?.ok && r.body.storyboard?.segments) {
+        setSegments(r.body.storyboard.segments);
+        setStep("edit");
+      } else {
+        alert("分镜拆解失败: " + (r.body?.error || "未知错误"));
+      }
+    } catch (e) { alert("请求失败: " + e.message); }
+    setDecomposing(false);
+  };
+
+  const updateSeg = (idx, field, val) => {
+    setSegments(prev => prev.map((s, i) => i === idx ? {...s, [field]: val} : s));
+  };
+
+  const removeSeg = (idx) => {
+    setSegments(prev => prev.filter((_, i) => i !== idx).map((s, i) => ({...s, index: i + 1})));
+  };
+
+  const addSeg = () => {
+    setSegments(prev => [...prev, {
+      index: prev.length + 1, duration: segDuration, prompt: "",
+      key_frame_description: "", end_frame_description: "",
+      transition_to_next: "cut", camera_notes: "", audio_notes: "",
+    }]);
+  };
+
+  const moveSeg = (idx, dir) => {
+    const arr = [...segments];
+    const target = idx + dir;
+    if (target < 0 || target >= arr.length) return;
+    [arr[idx], arr[target]] = [arr[target], arr[idx]];
+    setSegments(arr.map((s, i) => ({...s, index: i + 1})));
+  };
+
+  const startGeneration = async () => {
+    if (segments.length === 0) return;
+    setGenerating(true);
+    setGenResults([]);
+    setStep("generating");
+    try {
+      const r = await pluginApi("POST", "/long-video/generate", {
+        segments, model, ratio, resolution, mode: genMode, transition, fade_duration: fadeDur,
+      });
+      if (r.body?.ok) {
+        setGenResults(r.body.results || []);
+        setStep("results");
+      } else {
+        alert("生成失败: " + (r.body?.error || ""));
+        setStep("edit");
+      }
+    } catch (e) {
+      alert("请求失败: " + e.message);
+      setStep("edit");
+    }
+    setGenerating(false);
+  };
+
+  const doConcat = async () => {
+    const successIds = genResults.filter(r => r.status === "succeeded" && r.id).map(r => r.id);
+    if (successIds.length < 2) { alert("至少需要 2 个成功的视频片段"); return; }
+    setConcatenating(true);
+    try {
+      for (const tid of successIds) {
+        const t = genResults.find(r => r.id === tid);
+        if (!t?.local_video_path) {
+          await pluginApi("GET", `/videos/${tid}/download`);
+        }
+      }
+      const r = await pluginApi("POST", "/long-video/concat", {
+        task_ids: successIds, transition, fade_duration: fadeDur,
+      });
+      if (r.body?.ok) {
+        setConcatPath(r.body.output_path);
+        setStep("done");
+      } else {
+        alert("拼接失败: " + (r.body?.detail || r.body?.error || ""));
+      }
+    } catch (e) { alert("拼接失败: " + e.message); }
+    setConcatenating(false);
+  };
+
+  const segCountEst = Math.max(1, Math.round(totalDuration / segDuration));
+
+  if (step === "input") {
+    return (
+      <div style={{maxWidth:720}}>
+        <div className="card">
+          <div className="card-title">📖 故事输入</div>
+          <div className="form-row">
+            <label className="label">故事 / 脚本内容</label>
+            <textarea className="input textarea" rows={6} value={story} onChange={e => setStory(e.target.value)}
+              placeholder="请输入你的视频故事内容，AI 会自动拆解为多段分镜脚本...&#10;&#10;示例：一只小猫在阳光明媚的花园里探索，先好奇地闻花朵，然后追逐蝴蝶，最后在树荫下打盹。" />
+          </div>
+
+          <div className="grid-2">
+            <div className="form-row">
+              <label className="label">目标总时长 (秒)</label>
+              <input className="input" type="number" min={10} max={600} value={totalDuration}
+                onChange={e => setTotalDuration(+e.target.value)} />
+            </div>
+            <div className="form-row">
+              <label className="label">每段时长 (秒)</label>
+              <select className="input select" value={segDuration} onChange={e => setSegDuration(+e.target.value)}>
+                <option value={5}>5 秒</option><option value={8}>8 秒</option>
+                <option value={10}>10 秒</option><option value={15}>15 秒</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <label className="label">画面比例</label>
+              <select className="input select" value={ratio} onChange={e => setRatio(e.target.value)}>
+                <option value="16:9">16:9 横屏</option><option value="9:16">9:16 竖屏</option>
+                <option value="1:1">1:1 方形</option><option value="4:3">4:3</option>
+                <option value="3:4">3:4</option><option value="21:9">21:9 超宽</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <label className="label">视觉风格</label>
+              <input className="input" value={style} onChange={e => setStyle(e.target.value)} placeholder="电影级画质" />
+            </div>
+          </div>
+
+          <div style={{padding:"10px 12px",background:"var(--bg)",borderRadius:6,marginBottom:14,fontSize:13,color:"var(--text-muted)"}}>
+            预计将拆解为 <strong style={{color:"var(--primary)"}}>{segCountEst}</strong> 个视频片段，
+            每段 {segDuration} 秒，总时长约 {segCountEst * segDuration} 秒
+          </div>
+
+          <div className="flex gap-2 justify-between items-center">
+            <div className="flex gap-2 items-center" style={{fontSize:13,color:"var(--text-dim)"}}>
+              {ffmpegOk === true && <span style={{color:"var(--success)"}}>✓ ffmpeg 可用</span>}
+              {ffmpegOk === false && <span style={{color:"var(--warning)"}}>⚠ ffmpeg 未安装 (拼接功能不可用)</span>}
+            </div>
+            <button className="btn btn-primary" disabled={!story.trim() || decomposing} onClick={decompose}>
+              {decomposing ? "🤖 AI 拆解中..." : "🎬 AI 分镜拆解"}
+            </button>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-title">💡 使用说明</div>
+          <div style={{fontSize:13,color:"var(--text-muted)",lineHeight:1.8}}>
+            <p><strong>1.</strong> 输入你的故事或脚本，AI 会将其拆解为多段 Seedance 分镜</p>
+            <p><strong>2.</strong> 可以编辑每段分镜的提示词、时长和过渡方式</p>
+            <p><strong>3.</strong> 串行模式下，每段视频会使用上一段的尾帧作为参考，保证画面连贯</p>
+            <p><strong>4.</strong> 生成完成后可用 ffmpeg 拼接为完整长视频</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "edit") {
+    return (
+      <div style={{maxWidth:800}}>
+        <div className="flex justify-between items-center" style={{marginBottom:14}}>
+          <div>
+            <h3 style={{fontSize:16,fontWeight:600}}>分镜编辑 — {segments.length} 段</h3>
+            <p className="text-xs text-dim">点击段落展开编辑，拖动排序，自由调整</p>
+          </div>
+          <div className="flex gap-2">
+            <button className="btn btn-sm" onClick={() => setStep("input")}>← 返回</button>
+            <button className="btn btn-sm" onClick={addSeg}>+ 添加段</button>
+          </div>
+        </div>
+
+        <div className="card" style={{marginBottom:14}}>
+          <div className="card-title">⚙️ 生成参数</div>
+          <div className="grid-2">
+            <div className="form-row">
+              <label className="label">模型</label>
+              <select className="input select" value={model} onChange={e => setModel(e.target.value)}>
+                <option value="2.0">Seedance 2.0</option>
+                <option value="1.0-pro">Seedance 1.0 Pro</option>
+                <option value="1.0-lite">Seedance 1.0 Lite</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <label className="label">分辨率</label>
+              <select className="input select" value={resolution} onChange={e => setResolution(e.target.value)}>
+                <option value="720p">720p</option><option value="1080p">1080p</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <label className="label">生成模式</label>
+              <select className="input select" value={genMode} onChange={e => setGenMode(e.target.value)}>
+                <option value="serial">串行 (首尾帧接力, 画面连贯)</option>
+                <option value="parallel">并行 (独立生成, 速度快)</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <label className="label">拼接过渡</label>
+              <div className="flex gap-2">
+                <select className="input select flex-1" value={transition} onChange={e => setTransition(e.target.value)}>
+                  <option value="none">硬切 (无过渡)</option>
+                  <option value="crossfade">交叉淡化</option>
+                </select>
+                {transition === "crossfade" && (
+                  <input className="input" type="number" step={0.1} min={0.2} max={2} value={fadeDur}
+                    onChange={e => setFadeDur(+e.target.value)} style={{width:80}} title="淡化时长(秒)" />
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {segments.map((seg, idx) => (
+          <div key={idx} className="card" style={{position:"relative",borderLeft: editIdx===idx?"3px solid var(--primary)":"3px solid transparent"}}>
+            <div className="flex justify-between items-center" style={{cursor:"pointer"}} onClick={() => setEditIdx(editIdx === idx ? -1 : idx)}>
+              <div className="flex gap-2 items-center">
+                <span className="badge badge-info" style={{minWidth:28,textAlign:"center"}}>{seg.index || idx+1}</span>
+                <span style={{fontWeight:500,fontSize:14}}>{seg.prompt ? seg.prompt.slice(0, 60) + (seg.prompt.length > 60 ? "..." : "") : "(空提示词)"}</span>
+              </div>
+              <div className="flex gap-2 items-center">
+                <span className="text-xs text-dim">{seg.duration || segDuration}s</span>
+                <span className="text-xs text-dim">{seg.transition_to_next || "cut"}</span>
+                <span style={{fontSize:11,color:"var(--text-dim)"}}>{editIdx === idx ? "▲" : "▼"}</span>
+              </div>
+            </div>
+
+            {editIdx === idx && (
+              <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid var(--border)"}}>
+                <div className="form-row">
+                  <label className="label">提示词</label>
+                  <textarea className="input textarea" rows={3} value={seg.prompt || ""}
+                    onChange={e => updateSeg(idx, "prompt", e.target.value)}
+                    placeholder="这一段的 Seedance 时间轴提示词" />
+                </div>
+                <div className="grid-2">
+                  <div className="form-row">
+                    <label className="label">时长 (秒)</label>
+                    <input className="input" type="number" min={4} max={15} value={seg.duration || segDuration}
+                      onChange={e => updateSeg(idx, "duration", +e.target.value)} />
+                  </div>
+                  <div className="form-row">
+                    <label className="label">过渡方式</label>
+                    <select className="input select" value={seg.transition_to_next || "cut"}
+                      onChange={e => updateSeg(idx, "transition_to_next", e.target.value)}>
+                      <option value="cut">硬切</option>
+                      <option value="crossfade">交叉淡化</option>
+                      <option value="ai_extend">AI 延长过渡</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid-2">
+                  <div className="form-row">
+                    <label className="label">起始画面描述</label>
+                    <input className="input" value={seg.key_frame_description || ""}
+                      onChange={e => updateSeg(idx, "key_frame_description", e.target.value)}
+                      placeholder="首帧画面描述" />
+                  </div>
+                  <div className="form-row">
+                    <label className="label">结束画面描述</label>
+                    <input className="input" value={seg.end_frame_description || ""}
+                      onChange={e => updateSeg(idx, "end_frame_description", e.target.value)}
+                      placeholder="尾帧画面描述" />
+                  </div>
+                </div>
+                <div className="grid-2">
+                  <div className="form-row">
+                    <label className="label">镜头语言</label>
+                    <input className="input" value={seg.camera_notes || ""}
+                      onChange={e => updateSeg(idx, "camera_notes", e.target.value)} placeholder="如: 慢推 + 浅景深" />
+                  </div>
+                  <div className="form-row">
+                    <label className="label">声音设计</label>
+                    <input className="input" value={seg.audio_notes || ""}
+                      onChange={e => updateSeg(idx, "audio_notes", e.target.value)} placeholder="如: 轻柔背景音乐" />
+                  </div>
+                </div>
+                <div className="flex gap-2" style={{marginTop:8}}>
+                  <button className="btn btn-sm" disabled={idx===0} onClick={() => moveSeg(idx, -1)}>↑ 上移</button>
+                  <button className="btn btn-sm" disabled={idx===segments.length-1} onClick={() => moveSeg(idx, 1)}>↓ 下移</button>
+                  <div style={{flex:1}} />
+                  <button className="btn btn-sm btn-danger" onClick={() => removeSeg(idx)}>删除</button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+
+        <div className="flex justify-between" style={{marginTop:16}}>
+          <p className="text-sm text-dim">
+            共 {segments.length} 段，预计总时长 {segments.reduce((s, seg) => s + (seg.duration || segDuration), 0)} 秒
+          </p>
+          <button className="btn btn-primary" disabled={segments.length === 0 || generating} onClick={startGeneration}>
+            🚀 开始生成 ({genMode === "serial" ? "串行接力" : "并行独立"})
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "generating") {
+    return (
+      <div style={{maxWidth:640}}>
+        <div className="card" style={{textAlign:"center",padding:40}}>
+          <div className="spinner" style={{margin:"0 auto 16px"}} />
+          <p style={{fontSize:16,fontWeight:500}}>正在生成 {segments.length} 段视频...</p>
+          <p className="text-sm text-dim" style={{marginTop:8}}>
+            {genMode === "serial" ? "串行模式: 逐段生成，每段使用上一段结果作为参考" : "并行模式: 所有段落同时生成"}
+          </p>
+          <p className="text-sm text-dim" style={{marginTop:4}}>
+            预计需要 {genMode === "serial" ? segments.length * 2 + "~" + segments.length * 5 : "2~5"} 分钟，请耐心等待
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "results" || step === "done") {
+    const succCount = genResults.filter(r => r.status === "succeeded").length;
+    const failCount = genResults.filter(r => r.status === "failed" || r.error).length;
+
+    return (
+      <div style={{maxWidth:800}}>
+        <div className="flex justify-between items-center" style={{marginBottom:14}}>
+          <h3 style={{fontSize:16,fontWeight:600}}>
+            {step === "done" ? "✅ 长视频生成完成" : "生成结果"}
+          </h3>
+          <div className="flex gap-2">
+            <button className="btn btn-sm" onClick={() => { setStep("input"); setSegments([]); setGenResults([]); setConcatPath(""); }}>
+              新建项目
+            </button>
+            <button className="btn btn-sm" onClick={() => setStep("edit")}>返回编辑</button>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="flex gap-4" style={{fontSize:13}}>
+            <span>总计: <strong>{genResults.length}</strong> 段</span>
+            <span style={{color:"var(--success)"}}>成功: <strong>{succCount}</strong></span>
+            {failCount > 0 && <span style={{color:"var(--danger)"}}>失败: <strong>{failCount}</strong></span>}
+          </div>
+        </div>
+
+        {genResults.map((r, idx) => (
+          <div key={idx} className="card" style={{borderLeft:`3px solid ${r.status==="succeeded"?"var(--success)":r.error||r.status==="failed"?"var(--danger)":"var(--warning)"}`}}>
+            <div className="flex justify-between items-center">
+              <div className="flex gap-2 items-center">
+                <span className="badge" style={{minWidth:28,textAlign:"center",background:r.status==="succeeded"?"var(--success)":"var(--danger)",color:"#fff"}}>
+                  {idx + 1}
+                </span>
+                <span style={{fontSize:13}}>{r.prompt ? r.prompt.slice(0, 50) + "..." : segments[idx]?.prompt?.slice(0, 50) || ""}</span>
+              </div>
+              <span className={"badge badge-" + (r.status === "succeeded" ? "success" : "error")}>
+                {r.status === "succeeded" ? "✓ 成功" : r.error ? "✗ 失败" : r.status || "未知"}
+              </span>
+            </div>
+            {r.error && <p className="text-xs" style={{color:"var(--danger)",marginTop:6}}>{r.error}</p>}
+            {r.video_url && (
+              <div style={{marginTop:8}}>
+                <video src={r.video_url} controls style={{maxWidth:"100%",maxHeight:200,borderRadius:6}} />
+              </div>
+            )}
+          </div>
+        ))}
+
+        {step === "done" && concatPath && (
+          <div className="card" style={{borderLeft:"3px solid var(--success)",background:"rgba(34,197,94,.05)"}}>
+            <div className="card-title">🎬 拼接完成</div>
+            <p style={{fontSize:13,color:"var(--text-muted)",wordBreak:"break-all"}}>{concatPath}</p>
+            <button className="btn btn-sm" style={{marginTop:8}} onClick={() =>
+              pluginApi("POST", "/storage/open-folder", { path: concatPath.replace(/[/\\][^/\\]*$/, "") })
+            }>📂 打开所在文件夹</button>
+          </div>
+        )}
+
+        {step === "results" && succCount >= 2 && (
+          <div className="flex justify-between items-center" style={{marginTop:16}}>
+            <p className="text-sm text-dim">
+              {ffmpegOk ? `可拼接 ${succCount} 个视频片段` : "⚠ ffmpeg 不可用，无法拼接"}
+            </p>
+            <button className="btn btn-primary" disabled={!ffmpegOk || concatenating} onClick={doConcat}>
+              {concatenating ? "拼接中..." : `🎞️ 拼接为长视频 (${transition === "crossfade" ? "交叉淡化" : "硬切"})`}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function SettingsTab() {
+  const [config, setConfig] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
+
+  useEffect(() => {
+    pluginApi("GET", "/config").then(r => {
+      if (r.body?.config) {
+        setConfig(r.body.config);
+      }
+    }).catch(() => {});
+  }, []);
+
+  const save = async (updates) => {
+    setSaving(true);
+    await pluginApi("PUT", "/config", { updates });
+    setSaving(false);
+  };
+
+  const [stats, setStats] = useState(null);
+  useEffect(() => {
+    pluginApi("GET", "/storage/stats").then(r => r.body?.stats && setStats(r.body.stats)).catch(() => {});
+  }, []);
+
+  return (
+    <div style={{maxWidth:640}}>
+      <div className="setting-section">
+        <h3>🔑 API 配置</h3>
+        <div className="form-row">
+          <label className="label">ARK API Key</label>
+          <div className="flex gap-2">
+            <input className="input flex-1" type={showKey?"text":"password"}
+              value={apiKey || config.ark_api_key_masked || ""} onChange={e => setApiKey(e.target.value)}
+              placeholder="输入 Volcengine Ark API Key" />
+            <button className="btn btn-sm" onClick={() => setShowKey(!showKey)}>{showKey?"隐藏":"显示"}</button>
+            <button className="btn btn-sm btn-primary" disabled={!apiKey} onClick={() => save({ark_api_key: apiKey})}>保存</button>
+          </div>
+          <p className="text-xs text-dim" style={{marginTop:4}}>获取方式: 前往 console.volcengine.com/ark 创建 API Key</p>
+        </div>
+      </div>
+
+      <div className="setting-section">
+        <h3>⚙️ 默认参数</h3>
+        <div className="grid-2">
+          <div className="form-row">
+            <label className="label">默认推理模式</label>
+            <select className="input select" value={config.service_tier_default || "default"}
+              onChange={e => save({service_tier_default: e.target.value})}>
+              <option value="default">在线推理</option>
+              <option value="flex">离线推理 (半价)</option>
+            </select>
+          </div>
+          <div className="form-row">
+            <label className="label">轮询间隔</label>
+            <select className="input select" value={config.poll_interval || "15"}
+              onChange={e => save({poll_interval: e.target.value})}>
+              <option value="10">10 秒</option>
+              <option value="15">15 秒</option>
+              <option value="30">30 秒</option>
+              <option value="60">60 秒</option>
+            </select>
+          </div>
+          <div className="form-row">
+            <label className="label">优化级别</label>
+            <select className="input select" value={config.llm_optimize_level || "professional"}
+              onChange={e => save({llm_optimize_level: e.target.value})}>
+              <option value="light">轻度润色</option>
+              <option value="professional">专业重写</option>
+              <option value="storyboard">分镜脚本</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div className="setting-section">
+        <h3>📂 文件夹设置</h3>
+        <div className="form-row">
+          <label className="label">视频输出目录</label>
+          <div className="folder-row">
+            <input className="input" value={config.output_dir || ""} placeholder="默认: ~/seedance-output/"
+              onChange={e => setConfig({...config, output_dir: e.target.value})}
+              onBlur={e => save({output_dir: e.target.value})} />
+            <button className="btn btn-sm" onClick={() => pluginApi("POST", "/storage/open-folder", {path: config.output_dir || ""})}>打开</button>
+          </div>
+          <div className="grid-2" style={{marginTop:6}}>
+            <div>
+              <label className="label">子目录结构</label>
+              <select className="input select" value={config.output_subdir_mode || "date"}
+                onChange={e => save({output_subdir_mode: e.target.value})}>
+                <option value="date">按日期</option>
+                <option value="project">按项目</option>
+                <option value="flat">扁平</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">文件命名规则</label>
+              <select className="input select" value={config.output_naming_rule || "{date}_{prompt_prefix}"}
+                onChange={e => save({output_naming_rule: e.target.value})}>
+                <option value="{'{'}task_id{'}'}">{'{'}task_id{'}'}.mp4</option>
+                <option value="{'{'}date{'}'}_{'{'}prompt_prefix{'}'}">{'{'}date{'}'}_{'{'}提示词前20字{'}'}.mp4</option>
+                <option value="{'{'}date{'}'}_{'{'}mode{'}'}_{'{'}seq{'}'}">{'{'}date{'}'}_{'{'}mode{'}'}_{'{'}seq{'}'}.mp4</option>
+              </select>
+            </div>
+          </div>
+          <div className="flex items-center justify-between" style={{marginTop:8}}>
+            <span className="text-sm">自动下载完成的视频</span>
+            <div className={`switch ${config.auto_download==="true"?"on":""}`}
+              onClick={() => save({auto_download: config.auto_download==="true"?"false":"true"})} />
+          </div>
+        </div>
+
+        <div className="form-row">
+          <label className="label">素材文件夹</label>
+          <div className="folder-row">
+            <input className="input" value={config.assets_dir || ""} placeholder="默认: ~/seedance-assets/"
+              onChange={e => setConfig({...config, assets_dir: e.target.value})}
+              onBlur={e => save({assets_dir: e.target.value})} />
+            <button className="btn btn-sm" onClick={() => pluginApi("POST", "/storage/open-folder", {path: config.assets_dir || ""})}>打开</button>
+          </div>
+        </div>
+
+        {stats && (
+          <div className="grid-3" style={{marginTop:12}}>
+            {Object.entries(stats).map(([k, s]) => (
+              <div key={k} className="card" style={{padding:10,textAlign:"center"}}>
+                <div className="text-xs text-dim">{{output_dir:"视频输出",assets_dir:"素材",cache_dir:"缓存"}[k]||k}</div>
+                <div style={{fontSize:18,fontWeight:600,color:"var(--primary)",margin:"4px 0"}}>{s.size_mb} MB</div>
+                <div className="text-xs text-dim">{s.file_count} 个文件</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="setting-section">
+        <h3>🔗 Webhook 设置</h3>
+        <div className="form-row">
+          <label className="label">回调 URL（可选）</label>
+          <input className="input" value={config.callback_url || ""} placeholder="https://..."
+            onChange={e => setConfig({...config, callback_url: e.target.value})}
+            onBlur={e => save({callback_url: e.target.value})} />
+          <p className="text-xs text-dim" style={{marginTop:4}}>配置后任务状态变化时自动通知，减少轮询</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main App ──
+function App() {
+  const [activeTab, setActiveTab] = useState(0);
+  const models = useModels();
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [keyStatus, setKeyStatus] = useState("");
+
+  useEffect(() => {
+    pluginApi("GET", "/config").then(r => {
+      setConfigLoaded(true);
+      if (r.body?.config?.ark_api_key_masked) setKeyStatus(r.body.config.ark_api_key_masked);
+    }).catch(() => setConfigLoaded(true));
+  }, []);
+
+  return (
+    <div className="app">
+      <div className="header">
+        <h1>🎬 Seedance 视频生成</h1>
+        <div className="header-right">
+          {keyStatus && <span>API Key: {keyStatus}</span>}
+          <button className="btn btn-sm" onClick={() => setActiveTab(5)}>⚙ 设置</button>
+        </div>
+      </div>
+      <div className="tabs">
+        {TABS.map((t, i) => (
+          <div key={t} className={`tab ${activeTab===i?"active":""}`} onClick={() => setActiveTab(i)}>{t}</div>
+        ))}
+      </div>
+      <div className="content">
+        {activeTab === 0 && <CreateTab models={models} />}
+        {activeTab === 1 && <TaskListTab />}
+        {activeTab === 2 && <AssetsTab />}
+        {activeTab === 3 && <PromptGuideTab />}
+        {activeTab === 4 && <StoryboardTab />}
+        {activeTab === 5 && <SettingsTab />}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

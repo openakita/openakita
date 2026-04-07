@@ -9,7 +9,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .compat import PLUGIN_API_VERSION
+from .compat import PLUGIN_API_VERSION, PLUGIN_UI_API_VERSION
 from .manifest import (
     BASIC_PERMISSIONS,
     PluginManifest,
@@ -484,6 +484,47 @@ class PluginAPI:
             loop.create_task(_safe_send())
         except RuntimeError:
             self.log("No event loop for send_message", "warning")
+
+    # --- UI event methods (Plugin 2.0) ---
+
+    @property
+    def ui_api_version(self) -> str:
+        """Current host UI API version (safe to read even from 1.0 plugins)."""
+        return PLUGIN_UI_API_VERSION
+
+    def register_ui_event_handler(
+        self, event_type: str, handler: Callable, **kwargs: Any,
+    ) -> None:
+        """Register a handler for bridge events sent from the plugin UI."""
+        handlers: dict = self._host.get("_ui_event_handlers", {})
+        handlers.setdefault(self._plugin_id, {})[event_type] = handler
+        self._host["_ui_event_handlers"] = handlers
+        self.log(f"Registered UI event handler for '{event_type}'")
+
+    def broadcast_ui_event(self, event_type: str, data: dict, **kwargs: Any) -> None:
+        """Push an event to the plugin UI via the WebSocket bridge."""
+        import asyncio
+
+        gateway = self._host.get("gateway")
+        if gateway is None:
+            return
+
+        event_payload = {
+            "type": f"plugin:{self._plugin_id}:{event_type}",
+            "data": data,
+        }
+
+        async def _push() -> None:
+            try:
+                await gateway.broadcast(event_payload)
+            except Exception as e:
+                self.log(f"broadcast_ui_event failed: {e}", "warning")
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_push())
+        except RuntimeError:
+            self.log("No event loop for broadcast_ui_event", "warning")
 
     # --- Cleanup ---
 

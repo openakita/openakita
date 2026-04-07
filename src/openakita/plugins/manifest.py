@@ -61,6 +61,25 @@ SYSTEM_PERMISSIONS = frozenset({
 ALL_PERMISSIONS = BASIC_PERMISSIONS | ADVANCED_PERMISSIONS | SYSTEM_PERMISSIONS
 
 
+class PluginUIConfig(BaseModel):
+    """UI configuration for plugins that provide a frontend page (Plugin 2.0).
+
+    When present in a manifest, the plugin manager will serve the UI as a
+    static SPA and expose it in the desktop sidebar under the "Apps" group.
+    """
+
+    model_config = {"extra": "allow"}
+
+    entry: str = "ui/dist/index.html"
+    icon: str = ""
+    title: str = ""
+    title_i18n: dict[str, str] = Field(default_factory=dict)
+    sidebar_group: str = "apps"
+    width: int = 0
+    height: int = 0
+    permissions: list[str] = Field(default_factory=list)
+
+
 class PluginManifest(BaseModel):
     """Parsed plugin.json manifest with strict validation."""
 
@@ -91,7 +110,13 @@ class PluginManifest(BaseModel):
     load_timeout: float = 10.0
     hook_timeout: float = 5.0
     retrieve_timeout: float = 3.0
+    ui: PluginUIConfig | None = None
     raw: dict[str, Any] = Field(default_factory=dict, exclude=True)
+
+    @property
+    def has_ui(self) -> bool:
+        """True when the plugin declares a frontend UI page."""
+        return self.ui is not None
 
     @field_validator("id")
     @classmethod
@@ -244,6 +269,15 @@ def _validate_manifest_paths(raw: dict, plugin_id: str) -> None:
         for arg in mcp_config.get("args", []):
             if isinstance(arg, str) and ".." in arg:
                 _check_path_safety(arg, "mcp_config.args[]", plugin_id)
+
+    ui = raw.get("ui")
+    if isinstance(ui, dict):
+        ui_entry = ui.get("entry", "")
+        if ui_entry:
+            _check_path_safety(ui_entry, "ui.entry", plugin_id)
+        ui_icon = ui.get("icon", "")
+        if ui_icon:
+            _check_path_safety(ui_icon, "ui.icon", plugin_id)
 
 
 def parse_manifest(plugin_dir: Path) -> PluginManifest:
