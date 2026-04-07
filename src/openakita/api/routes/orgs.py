@@ -1325,7 +1325,7 @@ async def org_status_stream(request: Request, org_id: str):
                 try:
                     msg = await _asyncio.wait_for(q.get(), timeout=30.0)
                     yield f"data: {_json.dumps({'type': 'inbox', 'message': msg.to_dict()}, ensure_ascii=False)}\n\n"
-                except TimeoutError:
+                except (asyncio.TimeoutError, TimeoutError):
                     current = rt.get_org(org_id)
                     if not current:
                         break

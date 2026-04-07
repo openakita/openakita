@@ -278,7 +278,7 @@ class PowerShellHandler:
                     parts.append(f"[stderr]:\n{stderr}")
                 return "\n".join(parts)
 
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             logger.error(f"[PowerShell] Command timed out after {timeout}s")
             if process and process.returncode is None:
                 try:

@@ -160,7 +160,7 @@ async def ws_events(ws: WebSocket):
                 # Handle ping
                 if msg == "ping":
                     await ws.send_text(json.dumps({"event": "pong", "ts": time.time()}))
-            except TimeoutError:
+            except (asyncio.TimeoutError, TimeoutError):
                 # Send server-side ping to keep connection alive
                 try:
                     await ws.send_text(json.dumps({"event": "ping", "ts": time.time()}))

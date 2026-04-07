@@ -2143,7 +2143,7 @@ def serve(
                         stop_im_channels(graceful=True, drain_timeout=30.0),
                         timeout=35.0,
                     )
-                except TimeoutError:
+                except (asyncio.TimeoutError, TimeoutError):
                     logger.warning("Shutdown timeout, forcing exit")
                 except Exception as e:
                     # 忽略停止过程中的异常（常见于 Windows asyncio）

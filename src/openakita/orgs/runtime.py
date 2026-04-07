@@ -594,7 +594,7 @@ class OrgRuntime:
             try:
                 await asyncio.wait_for(evt.wait(), timeout=max(wait_time, 5))
                 done_count += 1
-            except TimeoutError:
+            except (asyncio.TimeoutError, TimeoutError):
                 logger.warning(
                     f"[OrgRuntime] Gather timeout for child chain "
                     f"{child['sub_chain_id']} (node={child['node_id']})"
@@ -1043,7 +1043,7 @@ class OrgRuntime:
                 timeout=timeout_s,
             )
             return response or ""
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             logger.warning(f"[OrgRuntime] Agent task timed out for {node.id} after {timeout_s}s")
             raise _NodeTimeoutError(node.id, timeout_s)
         except asyncio.CancelledError:

@@ -78,7 +78,7 @@ async def safe_call(
     """
     try:
         return await asyncio.wait_for(coro, timeout=timeout)
-    except TimeoutError:
+    except (asyncio.TimeoutError, TimeoutError):
         logger.warning(
             "Plugin '%s' %s timed out (%.1fs), skipped",
             plugin_id,

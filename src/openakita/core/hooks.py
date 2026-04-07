@@ -169,7 +169,7 @@ class ShellHook(HookHandler):
                 error=stderr.decode(errors="replace") if stderr else "",
                 duration_ms=duration,
             )
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             duration = (time.monotonic() - start) * 1000
             return HookResult(
                 hook_id=self.hook_id,

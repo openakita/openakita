@@ -230,7 +230,7 @@ class PluginManager:
                     timeout=manifest.load_timeout,
                 )
                 logger.info("Plugin '%s' v%s loaded", manifest.id, manifest.version)
-            except TimeoutError:
+            except (asyncio.TimeoutError, TimeoutError):
                 msg = f"load timeout ({manifest.load_timeout}s)"
                 logger.error("Plugin '%s' %s, skipped", manifest.id, msg)
                 self._failed[manifest.id] = msg

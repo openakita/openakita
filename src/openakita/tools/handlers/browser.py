@@ -16,6 +16,7 @@
 - view_image: 查看/分析本地图片
 """
 
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -144,7 +145,7 @@ class BrowserHandler:
                 timeout=_BROWSER_LOCK_TIMEOUT,
             ):
                 return await self._dispatch(tool_name, params)
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             current_holder = await _browser_lock_manager.get_holder("tool:browser")
             logger.warning(
                 f"[Browser] Lock timeout for {tool_name} (holder={current_holder}, waiter={holder})"

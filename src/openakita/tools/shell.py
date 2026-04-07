@@ -478,7 +478,7 @@ class ShellTool:
                 await self._kill_process_tree(process)
             raise  # 重新抛出，让上层三路竞速逻辑处理
 
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             logger.error(f"Command timed out after {cmd_timeout}s")
             if process and process.returncode is None:
                 await self._kill_process_tree(process)

@@ -2527,7 +2527,7 @@ class MessageGateway:
                     task = asyncio.create_task(self._session_dispatch(message))
                     self._session_tasks[session_key] = task
 
-            except TimeoutError:
+            except (asyncio.TimeoutError, TimeoutError):
                 continue
             except asyncio.CancelledError:
                 break
@@ -3162,7 +3162,7 @@ class MessageGateway:
                         logger.info(f"Voice transcribed: {transcription}")
                     else:
                         voice.transcription = "[语音识别失败]"
-            except TimeoutError:
+            except (asyncio.TimeoutError, TimeoutError):
                 logger.error(f"Voice processing timed out: {voice.filename}")
                 voice.transcription = "[语音处理超时]"
             except Exception as e:
@@ -3723,7 +3723,7 @@ class MessageGateway:
                         self.agent_handler(session, input_text),
                         timeout=_AGENT_TIMEOUT,
                     )
-                except TimeoutError:
+                except (asyncio.TimeoutError, TimeoutError):
                     logger.error(f"[Gateway] Agent handler timed out after {_AGENT_TIMEOUT}s")
                     response = f"⚠️ 处理超时（{int(_AGENT_TIMEOUT)}秒），请稍后重试或简化您的问题。"
 
@@ -3847,7 +3847,7 @@ class MessageGateway:
 
         try:
             await asyncio.wait_for(_consume_stream(), timeout=_STREAM_TIMEOUT)
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             logger.error(f"[IM] Streaming agent timed out after {_STREAM_TIMEOUT}s")
             if not reply_text:
                 reply_text = f"⚠️ 处理超时（{int(_STREAM_TIMEOUT)}秒），请稍后重试或简化您的问题。"
@@ -4446,7 +4446,7 @@ class MessageGateway:
                 timeout=float(session.get_metadata("security_timeout") or 120),
             )
             text = reply_msg.message.text.strip().lower() if reply_msg else ""
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             text = ""
 
         decision = "deny"

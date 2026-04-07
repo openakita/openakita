@@ -149,7 +149,7 @@ class AgentMailbox:
     async def receive(self, timeout: float = 300.0) -> dict | None:
         try:
             return await asyncio.wait_for(self._queue.get(), timeout=timeout)
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             return None
 
     async def drain_all(self) -> list[dict]:
@@ -465,7 +465,7 @@ class AgentOrchestrator:
 
             return result
 
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             health.failed += 1
             health.last_error = "timeout_idle"
             self._fallback.record_failure(agent_profile_id)

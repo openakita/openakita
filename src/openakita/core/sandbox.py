@@ -230,7 +230,7 @@ class SandboxExecutor:
                 stderr=stderr_bytes.decode("utf-8", errors="replace"),
                 returncode=proc.returncode or 0,
             )
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             try:
                 proc.kill()
             except Exception:

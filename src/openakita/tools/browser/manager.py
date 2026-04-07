@@ -532,7 +532,7 @@ class BrowserManager:
                     timeout=20,
                 )
                 return True
-            except TimeoutError:
+            except (asyncio.TimeoutError, TimeoutError):
                 last_err = f"Playwright driver 启动超时 (20s, attempt {attempt}/{max_attempts})"
                 logger.warning(f"[Browser] {last_err}")
                 await self._cleanup_playwright()

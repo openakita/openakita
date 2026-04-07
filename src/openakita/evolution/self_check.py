@@ -1346,7 +1346,7 @@ ID: {result.test_id}
                             timeout=self.FIX_TIMEOUT_SECONDS,
                         )
                         success = "失败" not in result_msg and "error" not in result_msg.lower()
-                except TimeoutError:
+                except (asyncio.TimeoutError, TimeoutError):
                     logger.warning(
                         f"Fix attempt {attempt + 1} timed out after {self.FIX_TIMEOUT_SECONDS}s"
                     )

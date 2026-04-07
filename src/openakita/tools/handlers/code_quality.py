@@ -114,7 +114,7 @@ class CodeQualityHandler:
                 lines.append(f"  ... and {len(issues) - 50} more")
             return "\n".join(lines)
 
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             return "[ruff] Timed out after 30s"
         except Exception as e:
             logger.warning(f"ruff failed: {e}")
@@ -172,7 +172,7 @@ class CodeQualityHandler:
                 lines.append(f"  ... and {total - 50} more")
             return header + "\n" + "\n".join(lines)
 
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             return "[eslint] Timed out after 60s"
         except Exception as e:
             logger.warning(f"eslint failed: {e}")

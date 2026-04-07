@@ -65,7 +65,7 @@ class NodeMailbox:
         try:
             _, _, _, msg = await asyncio.wait_for(self._queue.get(), timeout=timeout)
             return msg
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             return None
 
     def mark_dispatched(self) -> None:

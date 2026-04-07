@@ -466,7 +466,7 @@ class MemoryManager:
             # Reset turn buffer — new topic starts fresh
             self._session_turns.clear()
             return saved
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             logger.warning("[Memory] Topic-change extraction timed out (30s), skipping")
             self._session_turns.clear()
             return 0
@@ -545,13 +545,14 @@ class MemoryManager:
             tags=[item.get("type", "fact").lower()],
         )
         _apply_retention(mem, item.get("duration"))
-        self.store.save_semantic(self._stamp_agent_id(mem))
+        saved_id = self.store.save_semantic(self._stamp_agent_id(mem))
 
-        with self._memories_lock:
-            self._memories[mem.id] = mem
-            self._save_memories()
+        if saved_id == mem.id:
+            with self._memories_lock:
+                self._memories[mem.id] = mem
+                self._save_memories()
 
-        return mem.id
+        return saved_id
 
     @staticmethod
     def _fast_dedup_check(new: str, existing: str) -> str:
@@ -890,9 +891,10 @@ class MemoryManager:
         """Called before context compression — extract quick facts and save to queue."""
         quick_facts = self.extractor.extract_quick_facts(messages)
         for fact in quick_facts:
-            self.store.save_semantic(self._stamp_agent_id(fact))
-            with self._memories_lock:
-                self._memories[fact.id] = fact
+            saved_id = self.store.save_semantic(self._stamp_agent_id(fact))
+            if saved_id == fact.id:
+                with self._memories_lock:
+                    self._memories[fact.id] = fact
         if quick_facts:
             logger.info(f"[Memory] Quick extraction before compression: {len(quick_facts)} facts")
 

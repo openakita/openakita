@@ -4174,7 +4174,7 @@ class ReasoningEngine:
                             f"{block.text.strip()[:100]}"
                         )
                         break
-            except TimeoutError:
+            except (asyncio.TimeoutError, TimeoutError):
                 logger.warning("[ReAct-Stream][BgFarewell] LLM farewell 超时 (5s)")
             except Exception as e:
                 logger.warning(f"[ReAct-Stream][BgFarewell] LLM farewell 失败: {e}")

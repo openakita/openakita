@@ -487,7 +487,7 @@ async def _stream_chat(
                                     timeout=DISCONNECT_GRACE_SECONDS,
                                 )
                                 logger.info("[Chat API] Agent task 在宽限期内完成")
-                            except TimeoutError:
+                            except (asyncio.TimeoutError, TimeoutError):
                                 logger.warning(
                                     "[Chat API] 宽限期超时（%ds），取消任务",
                                     DISCONNECT_GRACE_SECONDS,
@@ -513,7 +513,7 @@ async def _stream_chat(
         while True:
             try:
                 event = await asyncio.wait_for(_agent_queue.get(), timeout=SSE_KEEPALIVE_INTERVAL)
-            except TimeoutError:
+            except (asyncio.TimeoutError, TimeoutError):
                 if not _client_disconnected and not await _check_disconnected():
                     yield _sse("heartbeat", {"ts": time.time()})
                 continue

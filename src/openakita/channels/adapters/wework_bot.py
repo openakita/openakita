@@ -7,6 +7,7 @@
 - 文本/图片/图文混排/语音/文件消息接收
 - 流式消息回复（stream）
 - response_url 主动回复（markdown）
+- Markdown @成员 (<@userid>) / @所有人 (<@all>)
 
 与自建应用（wework.py）的主要区别:
 - 回调消息为 JSON 格式（非 XML）
@@ -382,6 +383,7 @@ class WeWorkBotAdapter(ChannelAdapter):
         "get_chat_members": False,
         "get_recent_messages": False,
         "markdown": True,
+        "mention": True,
     }
 
     # 过期清理间隔
@@ -1310,6 +1312,8 @@ class WeWorkBotAdapter(ChannelAdapter):
 
         仅在 stream 不可用时（超时、已完成）调用。
         response_url 有效期 1 小时，只能调用一次。
+
+        Markdown 支持 ``<@userid>`` 提及成员，``<@all>`` 提及所有人。
         """
         # 按 msgid 精确匹配
         url = None

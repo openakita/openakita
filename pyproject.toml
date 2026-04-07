@@ -62,7 +62,7 @@ dependencies = [
     "uvicorn>=0.27.0",
 
     # IM Channels - Telegram (default)
-    "python-telegram-bot>=22.0",
+    "python-telegram-bot>=22.7",
 
     # Browser automation (built-in)
     "playwright>=1.40.0",
@@ -85,14 +85,14 @@ dingtalk = [
 
 # 企业微信 IM 通道
 wework = [
-    "aiohttp>=3.9.0",
+    "aiohttp>=3.11.0",
     "pycryptodome>=3.19.0",
 ]
 
 # 企业微信 WebSocket 长连接通道
 wework_ws = [
     "websockets>=15.0.1",
-    "cryptography>=42.0.0",
+    "cryptography>=46.0.5",
 ]
 
 # OneBot 协议通道 (NapCat/Lagrange 等)
@@ -104,6 +104,11 @@ onebot = [
 qqbot = [
     "qq-botpy>=1.2.1",
     "pilk>=0.2.1",              # SILK 语音编解码（QQ 语音格式）
+]
+
+# 微信个人号 (iLink Bot API)
+wechat = [
+    "pycryptodome>=3.19.0",
 ]
 
 # Windows 桌面自动化
@@ -120,10 +125,10 @@ all = [
     # -- IM 通道 --
     "lark-oapi>=1.4.0",
     "dingtalk-stream>=0.24.3",
-    "aiohttp>=3.9.0",
+    "aiohttp>=3.11.0",
     "pycryptodome>=3.19.0",
     "websockets>=15.0.1",
-    "cryptography>=42.0.0",
+    "cryptography>=46.0.5",
     "qq-botpy>=1.2.1",
     "pilk>=0.2.1",
     # -- 桌面自动化 --

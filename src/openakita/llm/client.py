@@ -296,7 +296,7 @@ class LLMClient:
                         f"Permanently disabled until config reload."
                     )
                 results[name] = "auth_failed"
-            except TimeoutError:
+            except (asyncio.TimeoutError, TimeoutError):
                 results[name] = "error: timeout (15s)"
                 logger.warning(f"[HealthCheck] endpoint={name} timed out (15s)")
             except Exception as e:
@@ -709,7 +709,7 @@ class LLMClient:
                                 reason="用户请求停止",
                                 source="llm_stream_backoff",
                             )
-                        except TimeoutError:
+                        except (asyncio.TimeoutError, TimeoutError):
                             pass
                     else:
                         await asyncio.sleep(delay)
@@ -872,7 +872,7 @@ class LLMClient:
                                     reason="用户请求停止",
                                     source="llm_cooldown_wait",
                                 )
-                            except TimeoutError:
+                            except (asyncio.TimeoutError, TimeoutError):
                                 pass
                         else:
                             await asyncio.sleep(wait_seconds)
@@ -1227,7 +1227,7 @@ class LLMClient:
                                 reason="用户请求停止",
                                 source="llm_retry_backoff",
                             )
-                        except TimeoutError:
+                        except (asyncio.TimeoutError, TimeoutError):
                             pass
                     else:
                         await asyncio.sleep(delay)

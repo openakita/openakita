@@ -73,7 +73,7 @@ class OpenCLIHandler:
                 stdout_bytes.decode("utf-8", errors="replace"),
                 stderr_bytes.decode("utf-8", errors="replace"),
             )
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             try:
                 proc.kill()  # type: ignore[possibly-undefined]
             except Exception:

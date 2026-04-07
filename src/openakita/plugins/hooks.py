@@ -131,7 +131,7 @@ class HookRegistry:
                         asyncio.to_thread(callback, **kwargs),
                         timeout=timeout,
                     )
-            except TimeoutError:
+            except (asyncio.TimeoutError, TimeoutError):
                 logger.warning(
                     "Hook '%s' callback from plugin '%s' timed out (%.1fs), skipped",
                     hook_name,

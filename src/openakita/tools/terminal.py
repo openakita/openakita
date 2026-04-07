@@ -265,7 +265,7 @@ class TerminalSession:
                 pid=pid,
             )
 
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             # Timeout — collector task continues running (protected by shield)
             self._bg_task = collector_task
             return _make_bg_result(

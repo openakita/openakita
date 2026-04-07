@@ -5413,7 +5413,7 @@ NEXT: 建议的下一步（如有）"""
                         farewell_text = block.text.strip()
                         break
                 logger.info(f"[StopTask][BgFarewell] LLM farewell 完成: {farewell_text[:100]}")
-            except TimeoutError:
+            except (asyncio.TimeoutError, TimeoutError):
                 logger.warning("[StopTask][BgFarewell] LLM farewell 超时 (5s)")
             except Exception as e:
                 logger.warning(f"[StopTask][BgFarewell] LLM farewell 失败: {e}")

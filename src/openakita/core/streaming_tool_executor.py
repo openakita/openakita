@@ -149,7 +149,7 @@ class StreamingToolExecutor:
                     asyncio.gather(*tasks, return_exceptions=True),
                     timeout=timeout,
                 )
-            except TimeoutError:
+            except (asyncio.TimeoutError, TimeoutError):
                 logger.warning("StreamingToolExecutor: timeout waiting for %d tools", len(tasks))
 
         return [self._to_result_dict(p) for p in self._queue]

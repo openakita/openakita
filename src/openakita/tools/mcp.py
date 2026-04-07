@@ -533,7 +533,7 @@ class MCPClient:
             tool_count = len(self.list_tools(server_name))
             logger.info(f"Connected to MCP server via stdio: {server_name} ({tool_count} tools)")
             return MCPConnectResult(success=True, tool_count=tool_count)
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             stderr_hint = self._try_capture_stdio_stderr(stdio_cm)
             msg = (
                 f"连接超时（{self._CONNECT_TIMEOUT}s）。"
@@ -613,7 +613,7 @@ class MCPClient:
                 f"Connected to MCP server via streamable HTTP: {server_name} ({config.url}, {tool_count} tools)"
             )
             return MCPConnectResult(success=True, tool_count=tool_count)
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             msg = f"HTTP 连接超时（{self._CONNECT_TIMEOUT}s）。URL: {config.url}"
             logger.error(f"Timeout connecting to {server_name} via streamable HTTP")
             await self._cleanup_cms(client_cm, http_cm)
@@ -674,7 +674,7 @@ class MCPClient:
                 f"Connected to MCP server via SSE: {server_name} ({config.url}, {tool_count} tools)"
             )
             return MCPConnectResult(success=True, tool_count=tool_count)
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             msg = f"SSE 连接超时（{self._CONNECT_TIMEOUT}s）。URL: {config.url}"
             logger.error(f"Timeout connecting to {server_name} via SSE")
             await self._cleanup_cms(client_cm, sse_cm)

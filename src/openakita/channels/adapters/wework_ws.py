@@ -6,6 +6,7 @@
 - 认证 / 心跳 / 指数退避重连
 - 消息接收 (text/image/mixed/voice/file/video)
 - 流式回复 (stream) / 模板卡片 / 主动推送
+- Markdown @成员 (<@userid>) / @所有人 (<@all>)
 - 文件下载 + AES-256-CBC 逐文件解密
 - WebSocket 分片上传临时素材 (upload_media)
 - response_url HTTP 回退
@@ -537,6 +538,7 @@ class WeWorkWsAdapter(ChannelAdapter):
         "get_chat_members": False,
         "get_recent_messages": False,
         "markdown": True,
+        "mention": True,
     }
 
     def __init__(
@@ -759,7 +761,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             await self._send_auth()
             try:
                 await asyncio.wait_for(self._authenticated.wait(), timeout=10.0)
-            except TimeoutError:
+            except (asyncio.TimeoutError, TimeoutError):
                 logger.error("Authentication timeout (10s)")
                 receive_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -908,7 +910,7 @@ class WeWorkWsAdapter(ChannelAdapter):
                 self._handle_msg_callback(frame),
                 timeout=MSG_PROCESS_TIMEOUT_S,
             )
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             logger.error(f"Message processing timed out ({MSG_PROCESS_TIMEOUT_S}s), msgid={msgid}")
             req_id = frame.get("headers", {}).get("req_id", "")
             if req_id:
@@ -1945,6 +1947,9 @@ class WeWorkWsAdapter(ChannelAdapter):
     async def _send_active_message(self, chat_id: str, text: str, *, chat_type: int = 0) -> str:
         """Send an active push message (markdown).
 
+        Text is sent as-is to the WeCom API. Markdown supports ``<@userid>``
+        to mention a member and ``<@all>`` to mention everyone in the group.
+
         Args:
             chat_type: 1=single chat (userid), 2=group chat, 0=auto (default).
         """
@@ -2018,7 +2023,7 @@ class WeWorkWsAdapter(ChannelAdapter):
 
             try:
                 result = await asyncio.wait_for(fut, timeout=self.config.reply_ack_timeout)
-            except TimeoutError:
+            except (asyncio.TimeoutError, TimeoutError):
                 self._pending_acks.pop(req_id, None)
                 raise TimeoutError(
                     f"Reply ack timeout ({self.config.reply_ack_timeout}s) for req_id={req_id}"
@@ -2223,7 +2228,7 @@ class WeWorkWsAdapter(ChannelAdapter):
 
         try:
             result = await asyncio.wait_for(fut, timeout=30.0)
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             self._pending_acks.pop(req_id, None)
             raise TimeoutError(f"Upload ack timeout for req_id={req_id}")
 

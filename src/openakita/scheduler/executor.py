@@ -384,7 +384,7 @@ class TaskExecutor:
                 result = await asyncio.wait_for(
                     self._run_agent(agent, prompt), timeout=task_timeout
                 )
-            except TimeoutError:
+            except (asyncio.TimeoutError, TimeoutError):
                 timeout_display = (
                     f"{task_timeout // 60} 分钟" if task_timeout >= 60 else f"{task_timeout} 秒"
                 )
@@ -601,7 +601,7 @@ class TaskExecutor:
             if timeout:
                 try:
                     return await asyncio.wait_for(coro, timeout=timeout)
-                except TimeoutError:
+                except (asyncio.TimeoutError, TimeoutError):
                     error_msg = f"System task {action} timed out after {timeout}s"
                     logger.error(f"TaskExecutor: {error_msg}")
                     return False, error_msg

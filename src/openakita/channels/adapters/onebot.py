@@ -587,7 +587,7 @@ class OneBotAdapter(ChannelAdapter):
             await ws.send(json.dumps(request))
             result = await asyncio.wait_for(future, timeout=30)
             return result
-        except TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             self._api_callbacks.pop(echo, None)
             raise RuntimeError(f"API call timeout: {action}")
         except Exception:
