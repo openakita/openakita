@@ -806,10 +806,7 @@ class MemoryHandler:
                 ts = msg.get("timestamp", "")
                 ts_display = ts[:16] if ts else ""
                 content = msg.get("content", "")
-                if isinstance(content, str):
-                    content = content[:500]
-                else:
-                    content = str(content)[:500]
+                content = content[:500] if isinstance(content, str) else str(content)[:500]
                 parts.append(f"[{ts_display}] {role}: {content}")
 
         return "\n".join(parts) if parts else "无可用会话信息"

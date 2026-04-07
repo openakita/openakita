@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 
 from openakita.memory.types import normalize_tags
 
@@ -18,7 +18,7 @@ from openakita.memory.types import normalize_tags
 # Enums
 # ---------------------------------------------------------------------------
 
-class OrgStatus(str, Enum):
+class OrgStatus(StrEnum):
     DORMANT = "dormant"
     ACTIVE = "active"
     RUNNING = "running"
@@ -26,7 +26,7 @@ class OrgStatus(str, Enum):
     ARCHIVED = "archived"
 
 
-class NodeStatus(str, Enum):
+class NodeStatus(StrEnum):
     IDLE = "idle"
     BUSY = "busy"
     WAITING = "waiting"
@@ -35,14 +35,14 @@ class NodeStatus(str, Enum):
     FROZEN = "frozen"
 
 
-class EdgeType(str, Enum):
+class EdgeType(StrEnum):
     HIERARCHY = "hierarchy"
     COLLABORATE = "collaborate"
     ESCALATE = "escalate"
     CONSULT = "consult"
 
 
-class MsgType(str, Enum):
+class MsgType(StrEnum):
     TASK_ASSIGN = "task_assign"
     TASK_RESULT = "task_result"
     TASK_DELIVERED = "task_delivered"
@@ -58,13 +58,13 @@ class MsgType(str, Enum):
     HANDSHAKE = "handshake"
 
 
-class MemoryScope(str, Enum):
+class MemoryScope(StrEnum):
     ORG = "org"
     DEPARTMENT = "department"
     NODE = "node"
 
 
-class MemoryType(str, Enum):
+class MemoryType(StrEnum):
     FACT = "fact"
     DECISION = "decision"
     RULE = "rule"
@@ -73,13 +73,13 @@ class MemoryType(str, Enum):
     RESOURCE = "resource"
 
 
-class ScheduleType(str, Enum):
+class ScheduleType(StrEnum):
     CRON = "cron"
     INTERVAL = "interval"
     ONCE = "once"
 
 
-class InboxPriority(str, Enum):
+class InboxPriority(StrEnum):
     INFO = "info"
     NOTICE = "notice"
     WARNING = "warning"
@@ -88,12 +88,12 @@ class InboxPriority(str, Enum):
     ALERT = "alert"
 
 
-class ProjectType(str, Enum):
+class ProjectType(StrEnum):
     TEMPORARY = "temporary"
     PERMANENT = "permanent"
 
 
-class ProjectStatus(str, Enum):
+class ProjectStatus(StrEnum):
     PLANNING = "planning"
     ACTIVE = "active"
     PAUSED = "paused"
@@ -101,7 +101,7 @@ class ProjectStatus(str, Enum):
     ARCHIVED = "archived"
 
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     TODO = "todo"
     IN_PROGRESS = "in_progress"
     DELIVERED = "delivered"
@@ -115,7 +115,7 @@ class TaskStatus(str, Enum):
 # ---------------------------------------------------------------------------
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _new_id(prefix: str = "") -> str:

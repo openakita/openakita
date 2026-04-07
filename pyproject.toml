@@ -233,12 +233,22 @@ target-version = "py311"
 select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
 ignore = [
     "E501",   # line length handled by formatter; keep ignored
+    "E402",   # module-level import not at top (circular-import avoidance, conditional init)
+    "B005",   # strip with multi-char strings (intentional character set removal)
+    "B008",   # function call in default argument (standard FastAPI File/Depends pattern)
+    "B027",   # empty method without abstract decorator (optional-override stubs)
     "B904",   # require `raise ... from err` inside except (too noisy for now)
     "N806",   # non-lowercase variable in function (constants in functions, third-party patterns)
+    "N814",   # CamelCase imported as constant (local alias pattern like `IntentType as _IT`)
+    "N818",   # exception name should end with Error (renaming would break existing API)
     "SIM102", # collapsible-if (style-only)
     "SIM103", # needless-bool (style-only)
     "SIM105", # prefer contextlib.suppress (style-only)
+    "SIM116", # dict-lookup instead of if-chain (less readable in some contexts)
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"src/openakita/integrations/**" = ["F401", "F821", "SIM117", "E722", "UP035"]
 
 [tool.mypy]
 python_version = "3.11"

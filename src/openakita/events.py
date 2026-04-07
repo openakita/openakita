@@ -8,12 +8,12 @@ Frontend TypeScript types should be kept in sync — see
 apps/setup-center/src/streamEvents.ts
 """
 
-from enum import Enum
+from enum import StrEnum
 
 STREAM_PROTOCOL_VERSION = 1
 
 
-class StreamEventType(str, Enum):
+class StreamEventType(StrEnum):
     """All event types that may appear in the SSE stream to clients."""
 
     # ── Lifecycle ──

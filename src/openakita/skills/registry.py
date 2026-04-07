@@ -20,6 +20,8 @@ from ..core.capabilities import (
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from .parser import ParsedSkill
 
 logger = logging.getLogger(__name__)

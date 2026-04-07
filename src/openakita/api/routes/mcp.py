@@ -35,9 +35,8 @@ def _check_config_status(
     import os
     from pathlib import Path
 
-    from openakita.tools.mcp_catalog import clear_env_file_cache, _read_nearest_env_values
-
     from openakita.config import settings
+    from openakita.tools.mcp_catalog import _read_nearest_env_values, clear_env_file_cache
 
     clear_env_file_cache()
     env_vals = _read_nearest_env_values(Path(settings.project_root))

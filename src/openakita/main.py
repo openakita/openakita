@@ -290,7 +290,7 @@ def _ensure_channel_deps() -> None:
     pkg_list = ", ".join(missing)
     logger.info(f"IM 通道依赖自动安装: {pkg_list} ...")
 
-    from openakita.runtime_env import get_channel_deps_dir, get_python_executable, IS_FROZEN
+    from openakita.runtime_env import IS_FROZEN, get_channel_deps_dir, get_python_executable
 
     py = get_python_executable()
     if not py or (IS_FROZEN and py == sys.executable):
@@ -463,7 +463,7 @@ def _ensure_channel_deps() -> None:
         per_pkg_ok: list[str] = []
         per_pkg_fail: list[str] = []
         for pkg in missing:
-            if _pip_install_via_mirrors([pkg], label_prefix=f"[逐个] "):
+            if _pip_install_via_mirrors([pkg], label_prefix="[逐个] "):
                 per_pkg_ok.append(pkg)
             else:
                 per_pkg_fail.append(pkg)
@@ -2005,7 +2005,7 @@ def serve(
         if dev:
             async def _file_watcher():
                 try:
-                    from watchfiles import awatch, Change
+                    from watchfiles import awatch
                     src_dir = Path(__file__).resolve().parent  # src/openakita/
                     console.print(f"[dim]📂 监控目录: {src_dir}[/dim]")
                     async for changes in awatch(
@@ -2207,7 +2207,7 @@ def plugin_validate(
     try:
         manifest = parse_manifest(plugin_dir)
     except ManifestError as e:
-        console.print(f"[bold red]✗[/bold red] Manifest 校验失败:")
+        console.print("[bold red]✗[/bold red] Manifest 校验失败:")
         for line in str(e).split("\n"):
             console.print(f"  {line}")
         raise typer.Exit(1)
@@ -2316,7 +2316,7 @@ def plugin_validate(
     if warnings:
         console.print(f"\n[bold green]✓ 校验通过[/bold green]（{len(warnings)} 个警告）")
     else:
-        console.print(f"\n[bold green]✓ 校验通过，一切正常！[/bold green]")
+        console.print("\n[bold green]✓ 校验通过，一切正常！[/bold green]")
 
 
 @app.command(name="run-mcp-module", hidden=True)

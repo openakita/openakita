@@ -8,7 +8,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +82,11 @@ def _create_feishu(creds: dict, *, channel_name: str, bot_id: str, agent_profile
 
 def _create_telegram(creds: dict, *, channel_name: str, bot_id: str, agent_profile_id: str):
     from .adapters import TelegramAdapter
-    kwargs: dict[str, Any] = dict(
-        bot_token=creds.get("bot_token", ""),
-        webhook_url=creds.get("webhook_url") or None,
-        channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_profile_id,
-    )
+    kwargs: dict[str, Any] = {
+        "bot_token": creds.get("bot_token", ""),
+        "webhook_url": creds.get("webhook_url") or None,
+        "channel_name": channel_name, "bot_id": bot_id, "agent_profile_id": agent_profile_id,
+    }
     if creds.get("pairing_code"):
         kwargs["pairing_code"] = creds["pairing_code"]
     if creds.get("proxy"):

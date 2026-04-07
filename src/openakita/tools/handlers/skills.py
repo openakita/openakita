@@ -286,8 +286,8 @@ class SkillsHandler:
 
         # F4: argument substitution
         if "{{" in body:
-            from openakita.skills.arguments import substitute
             from openakita.config import settings as _cfg
+            from openakita.skills.arguments import substitute
             extra = {}
             if isinstance(user_args, dict):
                 extra = {k: str(v) for k, v in user_args.items()}
@@ -682,8 +682,8 @@ class SkillsHandler:
 
         # F4: argument substitution on body
         if "{{" in body:
-            from openakita.skills.arguments import substitute
             from openakita.config import settings as _cfg
+            from openakita.skills.arguments import substitute
             body = substitute(body, project_root=_cfg.project_root)
 
         # F6: record usage
@@ -812,7 +812,7 @@ class SkillsHandler:
             skill_dir_resolved = skill_dir.resolve()
             skill_dir_resolved.relative_to(skills_root)
         except (ValueError, OSError):
-            return f"安全限制：不允许卸载 skills/ 目录之外的技能。"
+            return "安全限制：不允许卸载 skills/ 目录之外的技能。"
 
         if not skill_dir_resolved.exists():
             return f"技能目录不存在: {display_name}"

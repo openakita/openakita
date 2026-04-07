@@ -17,9 +17,9 @@ if TYPE_CHECKING:
 from .models import (
     EdgeType,
     NodeStatus,
+    Organization,
     OrgEdge,
     OrgNode,
-    Organization,
     _new_id,
     _now_iso,
 )

@@ -17,7 +17,10 @@ import logging
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .permission import PermissionDecision
 
 from ..config import settings
 from ..tools.errors import ToolError, classify_error

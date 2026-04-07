@@ -13,7 +13,6 @@ import httpx
 from ..cache import (
     add_message_cache_breakpoints,
     add_tools_cache_control,
-    build_cached_system_blocks,
     sort_tools_for_cache_stability,
 )
 from ..converters.tools import (

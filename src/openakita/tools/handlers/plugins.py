@@ -129,7 +129,7 @@ class PluginsHandler:
             f"- **类型**: {manifest.plugin_type}",
             f"- **分类**: {manifest.category}",
             f"- **作者**: {manifest.author or '未知'}",
-            f"- **状态**: 已加载",
+            "- **状态**: 已加载",
         ]
 
         if manifest.description:

@@ -1257,10 +1257,7 @@ class DingTalkAdapter(ChannelAdapter):
         self._typing_start_time.pop(sk, None)
 
         # ---- 思考卡片处理：尝试更新占位卡片为最终回复 ----
-        if sk in self._streaming_buffers:
-            card_state = None
-        else:
-            card_state = self._thinking_cards.pop(sk, None)
+        card_state = None if sk in self._streaming_buffers else self._thinking_cards.pop(sk, None)
         if card_state:
             text = message.content.text or ""
             if text and not message.content.has_media:

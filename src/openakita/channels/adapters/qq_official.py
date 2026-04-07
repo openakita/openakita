@@ -1734,10 +1734,11 @@ class QQBotAdapter(ChannelAdapter):
             silk_data = src.read_bytes()
         else:
             try:
-                import pilk
+                import io
                 import tempfile
                 import wave
-                import io
+
+                import pilk
 
                 raw_bytes = src.read_bytes()
                 pcm_data: bytes

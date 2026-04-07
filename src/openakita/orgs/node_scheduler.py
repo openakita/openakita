@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -18,8 +18,8 @@ if TYPE_CHECKING:
 from .models import (
     NodeSchedule,
     NodeStatus,
-    OrgStatus,
     Organization,
+    OrgStatus,
     ScheduleType,
     _now_iso,
 )
@@ -60,7 +60,7 @@ class OrgNodeScheduler:
                     pass
 
     async def stop_all(self) -> None:
-        for key, task in list(self._tasks.items()):
+        for _key, task in list(self._tasks.items()):
             if not task.done():
                 task.cancel()
                 try:
@@ -116,8 +116,8 @@ class OrgNodeScheduler:
                     if sched.run_at:
                         target = datetime.fromisoformat(sched.run_at)
                         if target.tzinfo is None:
-                            target = target.replace(tzinfo=timezone.utc)
-                        now = datetime.now(timezone.utc)
+                            target = target.replace(tzinfo=UTC)
+                        now = datetime.now(UTC)
                         wait = (target - now).total_seconds()
                         if wait > 0:
                             await asyncio.sleep(wait)

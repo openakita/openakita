@@ -19,7 +19,7 @@ import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import Enum, StrEnum
 
 
 def normalize_tags(val: object) -> list[str]:
@@ -61,7 +61,7 @@ class MemoryPriority(Enum):
     PERMANENT = "permanent"
 
 
-class MemoryScope(str, Enum):
+class MemoryScope(StrEnum):
     """记忆作用域"""
     GLOBAL = "global"      # 全局共享（当前行为）
     AGENT = "agent"        # Agent 私有

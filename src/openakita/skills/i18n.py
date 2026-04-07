@@ -140,7 +140,7 @@ async def auto_translate_skill(
     skill_dir: Path,
     name: str,
     description: str,
-    brain: "Brain",
+    brain: Brain,
     *,
     when_to_use: str = "",
     keywords: list[str] | None = None,

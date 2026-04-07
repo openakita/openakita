@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from openakita.memory.types import normalize_tags
 
@@ -138,8 +138,8 @@ class OrgToolHandler:
         -> first active project fallback.
         """
         try:
-            from openakita.orgs.project_store import ProjectStore
             from openakita.orgs.models import ProjectTask, TaskStatus
+            from openakita.orgs.project_store import ProjectStore
 
             mgr = self._runtime._manager
             org_dir = mgr._org_dir(org_id)
@@ -253,8 +253,8 @@ class OrgToolHandler:
         if not chain_id:
             return
         try:
-            from openakita.orgs.project_store import ProjectStore
             from openakita.orgs.models import TaskStatus
+            from openakita.orgs.project_store import ProjectStore
 
             mgr = self._runtime._manager
             org_dir = mgr._org_dir(org_id)
@@ -432,7 +432,8 @@ class OrgToolHandler:
 
         to_node = args["to_node"]
 
-        import hashlib, time
+        import hashlib
+        import time
         sub_chain_id = (
             parent_chain_id + ":" + to_node + ":"
             + hashlib.md5(f"{time.time_ns()}".encode()).hexdigest()[:8]
@@ -813,8 +814,8 @@ class OrgToolHandler:
                 try:
                     content = f.read_text(encoding="utf-8")
                     if query in content.lower() or query in f.name.lower():
-                        lines = [l for l in content.split("\n") if query in l.lower()][:3]
-                        results.append(f"📄 {f.name}\n" + "\n".join(f"  > {l.strip()}" for l in lines))
+                        lines = [ln for ln in content.split("\n") if query in ln.lower()][:3]
+                        results.append(f"📄 {f.name}\n" + "\n".join(f"  > {ln.strip()}" for ln in lines))
                 except Exception:
                     continue
         if not results:
@@ -1675,7 +1676,7 @@ class OrgToolHandler:
             status = args.get("status")
             limit = args.get("limit", 10)
             tasks = store.all_tasks(assignee=node_id, status=status)
-            return [t for t in tasks[:limit]]
+            return list(tasks[:limit])
         except Exception as e:
             logger.debug("org_list_my_tasks failed: %s", e)
             return []
@@ -1691,7 +1692,7 @@ class OrgToolHandler:
             status = args.get("status")
             limit = args.get("limit", 10)
             tasks = store.all_tasks(delegated_by=node_id, status=status)
-            return [t for t in tasks[:limit]]
+            return list(tasks[:limit])
         except Exception as e:
             logger.debug("org_list_delegated_tasks failed: %s", e)
             return []
@@ -1730,8 +1731,8 @@ class OrgToolHandler:
         if not task_id and not chain_id:
             return "需要 task_id 或 task_chain_id"
         try:
-            from openakita.orgs.project_store import ProjectStore
             from openakita.orgs.models import TaskStatus
+            from openakita.orgs.project_store import ProjectStore
 
             mgr = self._runtime._manager
             store = ProjectStore(mgr._org_dir(org_id))
@@ -1784,8 +1785,8 @@ class OrgToolHandler:
         if not project_id or not title:
             return "需要 project_id 和 title"
         try:
-            from openakita.orgs.project_store import ProjectStore
             from openakita.orgs.models import ProjectTask, TaskStatus
+            from openakita.orgs.project_store import ProjectStore
 
             mgr = self._runtime._manager
             store = ProjectStore(mgr._org_dir(org_id))

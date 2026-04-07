@@ -647,7 +647,7 @@ class ContextManager:
 
         # Phase 3: Apply compressed results back
         result = [dict(msg) for msg in messages]
-        for job, compressed in zip(compress_jobs, compressed_results):
+        for job, compressed in zip(compress_jobs, compressed_results, strict=False):
             msg_idx, item_idx, original_text, ctx_type, _ = job
             if isinstance(compressed, Exception):
                 logger.warning(f"Tool result compression failed: {compressed}")

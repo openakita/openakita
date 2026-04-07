@@ -10,7 +10,7 @@ import hashlib
 import logging
 import re
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -187,7 +187,7 @@ class AgentToolHandler:
                 if store:
                     # ALL occurrences (including the first) get ephemeral clones
                     # to avoid sharing a pool instance with previous delegations
-                    from ...agents.profile import AgentProfile, AgentType, SkillsMode
+                    from ...agents.profile import AgentProfile, AgentType
                     base = store.get(agent_id)
                     if base:
                         ts = int(time.time() * 1000)
@@ -365,8 +365,7 @@ class AgentToolHandler:
             getattr(session, "context", None), "agent_profile_id", "default"
         ) or "default"
 
-        from ...agents.profile import AgentProfile, AgentType, ProfileStore, SkillsMode
-        from ...config import settings
+        from ...agents.profile import AgentProfile, AgentType, SkillsMode
 
         store = self._get_profile_store()
         base_profile = store.get(inherit_from) if store else None
@@ -455,10 +454,8 @@ class AgentToolHandler:
         from ...agents.profile import (
             AgentProfile,
             AgentType,
-            ProfileStore,
             SkillsMode,
         )
-        from ...config import settings
 
         store = self._get_profile_store()
         force = bool(params.get("force", False))
@@ -515,7 +512,7 @@ class AgentToolHandler:
                 "name": name,
                 "persistent": persistent,
                 "ephemeral": is_ephemeral,
-                "at": datetime.now(timezone.utc).isoformat(),
+                "at": datetime.now(UTC).isoformat(),
             })
 
         logger.info(

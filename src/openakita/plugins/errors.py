@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class PluginErrorCode(str, Enum):
+class PluginErrorCode(StrEnum):
     NETWORK_ERROR = "NETWORK_ERROR"
     INVALID_MANIFEST = "INVALID_MANIFEST"
     MANIFEST_NOT_FOUND = "MANIFEST_NOT_FOUND"

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -32,7 +32,7 @@ class OrgReporter:
             raise ValueError(f"Organization not found: {org_id}")
 
         es = self._runtime.get_event_store(org_id)
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
         events = es.query(since=today, limit=500)
 
         node_summaries: dict[str, list[str]] = {}
@@ -80,7 +80,7 @@ class OrgReporter:
             raise ValueError(f"Organization not found: {org_id}")
 
         es = self._runtime.get_event_store(org_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         week_end = now - timedelta(weeks=weeks_back)
         week_start = week_end - timedelta(days=7)
 
@@ -197,7 +197,7 @@ class OrgReporter:
         es = self._runtime.get_event_store(org_id)
         log = es.get_audit_log(days=days)
 
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        date_str = datetime.now(UTC).strftime("%Y-%m-%d")
         lines = [
             f"# 审计日志 — 最近 {days} 天",
             f"\n生成时间: {date_str}",

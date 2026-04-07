@@ -39,6 +39,14 @@ class Settings(BaseSettings):
         description="Ralph 循环最大迭代次数（最小值 5，推荐 20~50）",
     )
 
+    # Plan 模式建议阈值（ComplexitySignal.score 达到此值时建议用户使用 Plan 模式）
+    plan_suggest_threshold: int = Field(
+        default=5,
+        ge=2,
+        le=10,
+        description="复杂度评分达到该阈值时建议 Plan 模式（2~10，越高越不容易触发建议）",
+    )
+
     # 自检配置
     selfcheck_autofix: bool = Field(
         default=True,

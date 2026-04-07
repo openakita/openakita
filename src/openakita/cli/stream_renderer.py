@@ -5,7 +5,7 @@ and renders them in real-time using Rich Live.
 
 from __future__ import annotations
 
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from rich.console import Console
 from rich.live import Live

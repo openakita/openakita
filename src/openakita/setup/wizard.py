@@ -31,10 +31,7 @@ def _ask_secret(prompt_text: str, *, allow_empty: bool = False) -> str:
         kwargs["default"] = ""
     value = Prompt.ask(prompt_text, **kwargs)
     if value:
-        if len(value) > 8:
-            masked = value[:3] + "*" * (len(value) - 3)
-        else:
-            masked = "*" * len(value)
+        masked = value[:3] + "*" * (len(value) - 3) if len(value) > 8 else "*" * len(value)
         console.print(f"  [dim]Received: {masked}[/dim]")
     return value
 
@@ -420,7 +417,7 @@ OpenAkita 按「现状」(AS IS) 提供，不附带任何形式的明示或暗�
 
         # Summary
         endpoints_path = self.project_dir / "data" / "llm_endpoints.json"
-        console.print(f"\n[green]LLM configuration complete![/green]")
+        console.print("\n[green]LLM configuration complete![/green]")
         console.print(
             f"[dim]Advanced endpoint settings can be edited in {endpoints_path}[/dim]\n"
         )

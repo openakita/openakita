@@ -13,7 +13,7 @@ import logging
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .blackboard import OrgBlackboard
 from .event_store import OrgEventStore
@@ -22,24 +22,24 @@ from .messenger import OrgMessenger
 from .models import (
     MsgType,
     NodeStatus,
+    Organization,
     OrgMessage,
     OrgNode,
     OrgStatus,
-    Organization,
     _now_iso,
 )
 from .tool_handler import OrgToolHandler
 from .tools import ORG_NODE_TOOLS
 
 if TYPE_CHECKING:
-    from .manager import OrgManager
     from .heartbeat import OrgHeartbeat
-    from .node_scheduler import OrgNodeScheduler
-    from .scaler import OrgScaler
     from .inbox import OrgInbox
+    from .manager import OrgManager
+    from .node_scheduler import OrgNodeScheduler
     from .notifier import OrgNotifier
     from .policies import OrgPolicies
     from .reporter import OrgReporter
+    from .scaler import OrgScaler
 
 logger = logging.getLogger(__name__)
 
@@ -96,10 +96,10 @@ class OrgRuntime:
         self._tool_handler = OrgToolHandler(self)
 
         from .heartbeat import OrgHeartbeat
-        from .node_scheduler import OrgNodeScheduler
-        from .scaler import OrgScaler
         from .inbox import OrgInbox
+        from .node_scheduler import OrgNodeScheduler
         from .notifier import OrgNotifier
+        from .scaler import OrgScaler
 
         self._heartbeat = OrgHeartbeat(self)
         self._scheduler = OrgNodeScheduler(self)
@@ -192,14 +192,14 @@ class OrgRuntime:
                 watchdog_task.cancel()
         self._watchdog_tasks.clear()
 
-        for org_id, tasks in list(self._running_tasks.items()):
-            for node_id, task in tasks.items():
+        for _org_id, tasks in list(self._running_tasks.items()):
+            for _node_id, task in tasks.items():
                 if not task.done():
                     task.cancel()
             tasks.clear()
         self._running_tasks.clear()
 
-        for key, cached in list(self._agent_cache.items()):
+        for _key, cached in list(self._agent_cache.items()):
             try:
                 if hasattr(cached.agent, "shutdown"):
                     await cached.agent.shutdown()
@@ -580,7 +580,7 @@ class OrgRuntime:
             try:
                 await asyncio.wait_for(evt.wait(), timeout=max(wait_time, 5))
                 done_count += 1
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     f"[OrgRuntime] Gather timeout for child chain "
                     f"{child['sub_chain_id']} (node={child['node_id']})"
@@ -833,19 +833,28 @@ class OrgRuntime:
         except _NodeTimeoutError as te:
             timeout_msg = f"节点 {node.role_title or node.id} 执行超时（{te.timeout_s}s）"
             logger.warning(f"[OrgRuntime] {timeout_msg}")
-            self._set_node_status(org, node, NodeStatus.IDLE, "task_timeout")
+            try:
+                self._set_node_status(org, node, NodeStatus.IDLE, "task_timeout")
+            except Exception:
+                node.status = NodeStatus.IDLE
             try:
                 await self._save_org(org)
             except Exception:
                 pass
-            self.get_event_store(org.id).emit(
-                "task_timeout", node.id,
-                {"timeout_s": te.timeout_s},
-            )
-            await self._broadcast_ws("org:node_status", {
-                "org_id": org.id, "node_id": node.id,
-                "status": "idle", "current_task": "",
-            })
+            try:
+                self.get_event_store(org.id).emit(
+                    "task_timeout", node.id,
+                    {"timeout_s": te.timeout_s},
+                )
+            except Exception:
+                pass
+            try:
+                await self._broadcast_ws("org:node_status", {
+                    "org_id": org.id, "node_id": node.id,
+                    "status": "idle", "current_task": "",
+                })
+            except Exception:
+                pass
             if chain_id:
                 self._complete_child_chain(
                     chain_id, status="timeout",
@@ -956,7 +965,7 @@ class OrgRuntime:
                 timeout=timeout_s,
             )
             return response or ""
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 f"[OrgRuntime] Agent task timed out for {node.id} "
                 f"after {timeout_s}s"
@@ -1153,8 +1162,8 @@ class OrgRuntime:
         except Exception:
             tz_name = "Asia/Shanghai"
         try:
+            from datetime import timedelta, timezone
             from zoneinfo import ZoneInfo
-            from datetime import timezone, timedelta
             try:
                 tz = ZoneInfo(tz_name)
             except Exception:
@@ -1923,14 +1932,12 @@ class OrgRuntime:
                 if not getattr(org, "watchdog_enabled", False):
                     break
 
-                stuck_threshold = getattr(org, "watchdog_stuck_threshold_s", 1800) or 1800
+                stuck_threshold = getattr(org, "watchdog_stuck_threshold_s", 600) or 600
                 silence_threshold = getattr(org, "watchdog_silence_threshold_s", 1800) or 1800
                 mode = getattr(org, "operation_mode", "command") or "command"
                 now = time.monotonic()
 
                 for node in org.nodes:
-                    if node.is_clone:
-                        continue
                     key = f"{org_id}:{node.id}"
 
                     if node.status == NodeStatus.BUSY:

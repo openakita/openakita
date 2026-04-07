@@ -176,7 +176,7 @@ class AgentPackageHandler:
         conflict = info["id_conflict"]
 
         lines = [
-            f"📦 Agent 包预览\n",
+            "📦 Agent 包预览\n",
             f"**名称**: {manifest.get('name', '?')}",
             f"**ID**: {manifest.get('id', '?')}",
             f"**版本**: {manifest.get('version', '?')}",

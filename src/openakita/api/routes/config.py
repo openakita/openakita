@@ -9,10 +9,10 @@ when connected to an already-running serve instance.
 from __future__ import annotations
 
 import json
-from typing import Any
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -88,10 +88,7 @@ def _needs_quoting(value: str) -> bool:
         return True  # leading/trailing whitespace
     if value[0] in ('"', "'"):
         return True  # starts with a quote char
-    for ch in (' ', '#', '"', "'", '\\'):
-        if ch in value:
-            return True
-    return False
+    return any(ch in value for ch in (' ', '#', '"', "'", '\\'))
 
 
 def _quote_env_value(value: str) -> str:
@@ -285,7 +282,7 @@ async def write_env(body: EnvUpdateRequest):
         "OPENAI_", "ANTHROPIC_", "LLM_", "DEFAULT_MODEL", "TEMPERATURE",
         "MAX_TOKENS", "OPENAKITA_THEME", "LANGUAGE",
     )
-    changed_keys = set(k for k, v in body.entries.items() if v) | set(body.delete_keys)
+    changed_keys = {k for k, v in body.entries.items() if v} | set(body.delete_keys)
     restart_required = any(
         any(k.upper().startswith(p) for p in _RESTART_REQUIRED_PREFIXES)
         for k in changed_keys

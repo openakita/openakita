@@ -85,10 +85,7 @@ def _needs_quoting(value: str) -> bool:
         return True
     if value[0] in ('"', "'"):
         return True
-    for ch in (" ", "#", '"', "'", "\\"):
-        if ch in value:
-            return True
-    return False
+    return any(ch in value for ch in (" ", "#", '"', "'", "\\"))
 
 
 def _quote_env_value(value: str) -> str:

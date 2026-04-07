@@ -133,7 +133,7 @@ class FeishuOnboard:
         Raises:
             FeishuOnboardError: 轮询超时或服务端拒绝
         """
-        for i in range(max_attempts):
+        for _i in range(max_attempts):
             result = await self.poll(device_code)
 
             if result.get("app_id") and result.get("app_secret"):

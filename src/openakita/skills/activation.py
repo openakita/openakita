@@ -27,7 +27,7 @@ class SkillActivationManager:
         self._dormant: dict[str, list[str]] = {}
         self._active_context_files: set[str] = set()
 
-    def register_conditional(self, skill: "SkillEntry") -> None:
+    def register_conditional(self, skill: SkillEntry) -> None:
         """Register a skill with path-based activation conditions."""
         if skill.paths:
             self._dormant[skill.skill_id] = list(skill.paths)

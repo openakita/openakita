@@ -26,7 +26,7 @@ import logging
 import time
 from collections import Counter
 from dataclasses import dataclass, field
-from enum import Enum, IntEnum
+from enum import IntEnum, StrEnum
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ class InterventionLevel(IntEnum):
     TERMINATE = 5        # 安全终止
 
 
-class PatternType(str, Enum):
+class PatternType(StrEnum):
     """检测到的问题模式类型"""
     TOOL_THRASHING = "tool_thrashing"
     EDIT_THRASHING = "edit_thrashing"
@@ -601,7 +601,7 @@ class RuntimeSupervisor:
             return Intervention(
                 level=InterventionLevel.STRATEGY_SWITCH,
                 pattern=PatternType.UNPRODUCTIVE_LOOP,
-                message=f"Last 5 tool calls are all administrative — escalating",
+                message="Last 5 tool calls are all administrative — escalating",
                 should_inject_prompt=True,
                 should_rollback=True,
                 prompt_injection=(
@@ -616,7 +616,7 @@ class RuntimeSupervisor:
             return Intervention(
                 level=InterventionLevel.NUDGE,
                 pattern=PatternType.UNPRODUCTIVE_LOOP,
-                message=f"Last 3 tool calls are all administrative",
+                message="Last 3 tool calls are all administrative",
                 should_inject_prompt=True,
                 prompt_injection=(
                     "[系统提示] 你最近连续多轮都只在调用管理/计划类工具，"

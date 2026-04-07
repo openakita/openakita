@@ -6,12 +6,11 @@ import asyncio
 import json
 import logging
 import re
+import uuid
 import zipfile
 from io import BytesIO
 from pathlib import Path
 from typing import Annotated, Any
-
-import uuid
 
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import Response
@@ -467,7 +466,8 @@ async def update_plugin_config(
     schema = _read_config_schema(plugin_dir)
     if schema is not None:
         try:
-            from jsonschema import validate, ValidationError as JsonSchemaError
+            from jsonschema import ValidationError as JsonSchemaError
+            from jsonschema import validate
 
             validate(instance=current, schema=schema)
         except JsonSchemaError as ve:
@@ -581,7 +581,7 @@ async def get_plugin_permissions(plugin_id: str, request: Request) -> dict[str, 
             detail=make_error_response(PluginErrorCode.INVALID_MANIFEST),
         ) from e
 
-    from ...plugins.manifest import BASIC_PERMISSIONS, ADVANCED_PERMISSIONS, SYSTEM_PERMISSIONS
+    from ...plugins.manifest import ADVANCED_PERMISSIONS, BASIC_PERMISSIONS, SYSTEM_PERMISSIONS
 
     state = _get_plugin_manager(request)
     if state:

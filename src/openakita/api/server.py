@@ -13,8 +13,6 @@ FastAPI HTTP API server for OpenAkita.
 
 from __future__ import annotations
 
-import openakita._ensure_utf8  # noqa: F401  # Windows UTF-8 编码保护
-
 import asyncio
 import logging
 import os
@@ -28,6 +26,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+import openakita._ensure_utf8  # noqa: F401  # Windows UTF-8 编码保护
+
 from .auth import WebAccessConfig, create_auth_middleware
 from .routes import (
     agents,
@@ -37,9 +37,6 @@ from .routes import (
     config,
     feishu_onboard,
     files,
-    qqbot_onboard,
-    wechat_onboard,
-    wecom_onboard,
     health,
     hub,
     identity,
@@ -48,13 +45,17 @@ from .routes import (
     mcp,
     memory,
     orgs,
+    qqbot_onboard,
     scheduler,
     sessions,
     skills,
     token_stats,
     upload,
+    wechat_onboard,
+    wecom_onboard,
     workspace_io,
 )
+
 try:
     from .routes import plugins as plugins_routes
 except ImportError:
@@ -257,7 +258,7 @@ def create_app(
         so the frontend never receives raw error objects."""
         msgs = []
         for err in exc.errors():
-            loc = " → ".join(str(l) for l in err.get("loc", []))
+            loc = " → ".join(str(part) for part in err.get("loc", []))
             msg = err.get("msg", "validation error")
             msgs.append(f"{loc}: {msg}" if loc else msg)
         return JSONResponse(
@@ -285,11 +286,11 @@ def create_app(
     # allow_origin_regex which matches any origin, achieving the same permissive
     # behaviour while satisfying the spec.
     cors_origins = os.environ.get("CORS_ORIGINS", "").strip()
-    cors_kwargs: dict[str, Any] = dict(
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    cors_kwargs: dict[str, Any] = {
+        "allow_credentials": True,
+        "allow_methods": ["*"],
+        "allow_headers": ["*"],
+    }
     if cors_origins:
         origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
         # Always include Capacitor mobile origins so mobile apps work
@@ -378,6 +379,7 @@ def create_app(
 
     # ── Serve uploaded avatar files ──
     from fastapi.staticfiles import StaticFiles as _StaticFiles
+
     from openakita.config import settings as _settings
     _avatar_dir = _settings.data_dir / "avatars"
     _avatar_dir.mkdir(parents=True, exist_ok=True)
@@ -388,8 +390,8 @@ def create_app(
     _docs_ver = _get_ver().split("+")[0]
     _docs_root = _deploy_docs(data_dir, _docs_ver)
     if _docs_root:
-        from fastapi.staticfiles import StaticFiles as _DocsStatic
         from fastapi.responses import RedirectResponse as _Redirect
+        from fastapi.staticfiles import StaticFiles as _DocsStatic
 
         @app.get("/user-docs", include_in_schema=False)
         @app.get("/user-docs/", include_in_schema=False)

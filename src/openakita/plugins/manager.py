@@ -137,7 +137,7 @@ class PluginManager:
         Plugins involved in cycles are excluded and their IDs returned.
         """
         by_id: dict[str, tuple[Path, PluginManifest]] = {m.id: (d, m) for d, m in manifests}
-        in_degree: dict[str, int] = {mid: 0 for mid in by_id}
+        in_degree: dict[str, int] = dict.fromkeys(by_id, 0)
         dependents: dict[str, list[str]] = {mid: [] for mid in by_id}
 
         for mid, (_, m) in by_id.items():
@@ -183,7 +183,7 @@ class PluginManager:
 
         sorted_plugins, cyclic_ids = self._topological_sort(parsed)
         for cid in cyclic_ids:
-            msg = f"cyclic dependency detected, skipped"
+            msg = "cyclic dependency detected, skipped"
             logger.error("Plugin '%s' %s", cid, msg)
             self._failed[cid] = msg
 

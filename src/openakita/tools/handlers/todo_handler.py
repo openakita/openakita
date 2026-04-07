@@ -15,10 +15,10 @@ from typing import TYPE_CHECKING, Any
 
 from .todo_state import (
     _session_handlers,
+    force_close_plan,
+    has_active_todo,
     register_active_todo,
     register_plan_handler,
-    has_active_todo,
-    force_close_plan,
     unregister_active_todo,
 )
 from .todo_store import TodoStore

@@ -11,8 +11,8 @@ Replaces rich.prompt.Prompt.ask with a full-featured input:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import Completer, Completion

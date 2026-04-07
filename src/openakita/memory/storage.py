@@ -32,11 +32,11 @@ logger = logging.getLogger(__name__)
 _SCHEMA_VERSION = 2
 
 # Process-level singleton registry: same db_path → same MemoryStorage instance
-_instance_registry: dict[str, "MemoryStorage"] = {}
+_instance_registry: dict[str, MemoryStorage] = {}
 _instance_lock = threading.Lock()
 
 
-def get_shared_storage(db_path: str | Path) -> "MemoryStorage":
+def get_shared_storage(db_path: str | Path) -> MemoryStorage:
     """Get or create a process-level shared MemoryStorage for the given db_path."""
     key = str(Path(db_path).resolve())
     with _instance_lock:

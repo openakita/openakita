@@ -4,7 +4,6 @@ Agent Hub handler — search_hub_agents, install_hub_agent, publish_agent, get_h
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -115,7 +114,7 @@ class AgentHubHandler:
         from ...agents.profile import get_profile_store
         from ...config import settings
 
-        root = Path(settings.project_root)
+        Path(settings.project_root)
         profile_store = get_profile_store()
         skills_dir = Path(settings.skills_path)
 
@@ -207,7 +206,7 @@ class AgentHubHandler:
 
         a = detail.get("agent", detail)
         lines = [
-            f"📋 Agent 详情\n",
+            "📋 Agent 详情\n",
             f"**名称**: {a.get('name', '?')}",
             f"**ID**: {a.get('id', '?')}",
             f"**版本**: {a.get('latestVersion', a.get('version', '?'))}",
@@ -223,7 +222,7 @@ class AgentHubHandler:
         if a.get("tags"):
             lines.append(f"**标签**: {', '.join(normalize_tags(a['tags']))}")
 
-        lines.append(f"\n使用 `install_hub_agent` 安装此 Agent。")
+        lines.append("\n使用 `install_hub_agent` 安装此 Agent。")
         return "\n".join(lines)
 
 

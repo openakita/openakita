@@ -115,9 +115,7 @@ class OrgSetupHandler:
 
         try:
             from ...orgs.tool_categories import TOOL_CATEGORIES
-            result["tool_categories"] = {
-                name: tools for name, tools in TOOL_CATEGORIES.items()
-            }
+            result["tool_categories"] = dict(TOOL_CATEGORIES.items())
         except Exception:
             result["tool_categories"] = {}
 
@@ -423,7 +421,7 @@ class OrgSetupHandler:
         ]
 
         # --- 3. Update / add nodes ---
-        from ...orgs.tool_categories import get_preset_for_role, get_avatar_for_role
+        from ...orgs.tool_categories import get_avatar_for_role, get_preset_for_role
 
         title_to_id: dict[str, str] = {
             nd["role_title"]: nid for nid, nd in nodes_dict.items()
@@ -714,7 +712,7 @@ class OrgSetupHandler:
 
         Returns (nodes, edges, errors).
         """
-        from ...orgs.tool_categories import get_preset_for_role, get_avatar_for_role
+        from ...orgs.tool_categories import get_avatar_for_role, get_preset_for_role
 
         nodes_raw = params.get("nodes", [])
         errors: list[str] = []
@@ -763,7 +761,7 @@ class OrgSetupHandler:
         self._calculate_positions(nodes)
 
         edges: list[dict] = []
-        for nr, node in zip(nodes_raw, nodes):
+        for nr, node in zip(nodes_raw, nodes, strict=False):
             parent_title = nr.get("parent_role_title", "").strip()
             if not parent_title:
                 continue

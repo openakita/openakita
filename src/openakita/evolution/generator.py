@@ -4,7 +4,6 @@
 使用 LLM 自动生成符合 Agent Skills 规范 (SKILL.md) 的技能。
 """
 
-import json
 import logging
 import re
 from dataclasses import dataclass

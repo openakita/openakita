@@ -15,9 +15,14 @@ import logging
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from .storage import _is_db_locked
 from .extractor import MemoryExtractor
+from .storage import _is_db_locked
+
+if TYPE_CHECKING:
+    import asyncio
+    from collections.abc import Callable
 from .types import (
     MEMORY_MD_MAX_CHARS,
     ConversationTurn,
@@ -536,8 +541,8 @@ class LifecycleManager:
 
     async def review_memories_with_llm(
         self,
-        progress_callback: "Callable[[dict], None] | None" = None,
-        cancel_event: "asyncio.Event | None" = None,
+        progress_callback: Callable[[dict], None] | None = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> dict:
         """
         使用 LLM 审查所有记忆，清理垃圾、合并重复、更新过期内容。

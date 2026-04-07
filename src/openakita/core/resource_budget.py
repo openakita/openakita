@@ -157,7 +157,7 @@ class ResourceBudget:
         if self._parent is not None:
             self._parent.record_tool_calls(count)
 
-    def allocate_sub_budget(self, ratio: float = 0.5) -> "ResourceBudget":
+    def allocate_sub_budget(self, ratio: float = 0.5) -> ResourceBudget:
         """为子任务/委派分配预算（按比例缩减）"""
         ratio = max(0.1, min(1.0, ratio))
         sub_config = BudgetConfig(

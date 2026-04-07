@@ -8,6 +8,7 @@
 - Level 3: 资源文件 - 按需加载
 """
 
+from .activation import SkillActivationManager
 from .catalog import (
     SkillCatalog,
     generate_skill_catalog,
@@ -34,7 +35,6 @@ from .registry import (
     get_skill,
     register_skill,
 )
-from .activation import SkillActivationManager
 from .skill_hooks import SkillHookRunner, create_hook_runner, validate_hooks
 from .usage import SkillUsageTracker
 from .watcher import SkillWatcher, clear_all_skill_caches

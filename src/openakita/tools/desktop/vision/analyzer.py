@@ -12,7 +12,6 @@ import sys
 from PIL import Image
 
 from ..capture import ScreenCapture, get_capture
-from ..config import get_config
 from ..types import (
     BoundingBox,
     ElementLocation,

@@ -49,8 +49,12 @@ class ComplexitySignal:
 
     @property
     def should_suggest_plan(self) -> bool:
+        from ..config import settings
+        threshold = getattr(settings, "plan_suggest_threshold", 5)
         llm_flag = getattr(self, "_llm_suggest_plan", False)
-        return llm_flag or self.score >= 3
+        if llm_flag and self.score >= max(threshold - 2, 2):
+            return True
+        return self.score >= threshold
 
 
 @dataclass

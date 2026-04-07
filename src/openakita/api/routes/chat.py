@@ -479,7 +479,7 @@ async def _stream_chat(
                                     timeout=DISCONNECT_GRACE_SECONDS,
                                 )
                                 logger.info("[Chat API] Agent task 在宽限期内完成")
-                            except asyncio.TimeoutError:
+                            except TimeoutError:
                                 logger.warning(
                                     "[Chat API] 宽限期超时（%ds），取消任务",
                                     DISCONNECT_GRACE_SECONDS,
@@ -760,7 +760,7 @@ async def _stream_chat(
         if _agent_task is not None and not _agent_done.is_set():
             try:
                 await asyncio.wait_for(_agent_done.wait(), timeout=65.0)
-            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+            except (TimeoutError, asyncio.CancelledError, Exception):
                 if _agent_task and not _agent_task.done():
                     # 长任务仍在运行 — 不立即取消，注册后台保存回调。
                     # 任务完成时回调会 drain queue 并保存 session。

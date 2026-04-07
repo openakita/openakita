@@ -28,24 +28,25 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from ..api.routes.websocket import broadcast_event
 from ..config import settings
+from ..llm.converters.tools import PARSE_ERROR_KEY
 from ..tracing.tracer import get_tracer
 from .agent_state import AgentState, TaskState, TaskStatus
 from .context_manager import ContextManager
 from .context_manager import _CancelledError as _CtxCancelledError
 from .errors import UserCancelledError
+from .resource_budget import BudgetAction, ResourceBudget, create_budget_from_settings
 from .response_handler import (
     ResponseHandler,
     clean_llm_response,
     parse_intent_tag,
     strip_thinking_tags,
 )
-from .resource_budget import BudgetAction, ResourceBudget, create_budget_from_settings
-from .supervisor import RuntimeSupervisor, UNPRODUCTIVE_ADMIN_TOOLS as _ADMIN_TOOL_NAMES
+from .supervisor import UNPRODUCTIVE_ADMIN_TOOLS as _ADMIN_TOOL_NAMES
+from .supervisor import RuntimeSupervisor
 from .token_tracking import TokenTrackingContext, reset_tracking_context, set_tracking_context
 from .tool_executor import ToolExecutor
-from ..api.routes.websocket import broadcast_event
-from ..llm.converters.tools import PARSE_ERROR_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -81,12 +82,16 @@ def _apply_tool_result_budget(
 # ---------------------------------------------------------------------------
 
 from .permission import (
-    disabled as permission_disabled,
-    PLAN_MODE_RULESET,
     ASK_MODE_RULESET,
     COORDINATOR_MODE_RULESET,
     DEFAULT_RULESET,
+    PLAN_MODE_RULESET,
+)
+from .permission import (
     Ruleset as PermissionRuleset,
+)
+from .permission import (
+    disabled as permission_disabled,
 )
 
 
@@ -126,7 +131,7 @@ def _filter_tools_by_mode(tools: list[dict], mode: str) -> list[dict]:
     disabled_set = permission_disabled(tool_names, ruleset)
 
     filtered = []
-    for tool, name in zip(tools, tool_names):
+    for tool, name in zip(tools, tool_names, strict=False):
         if name not in disabled_set:
             filtered.append(tool)
 
@@ -2012,7 +2017,7 @@ class ReasoningEngine:
             # --- 恢复的 Todo：补发 SSE 事件让前端重建 FloatingPlanBar ---
             if conversation_id:
                 try:
-                    from ..tools.handlers.plan import has_active_todo, get_todo_handler_for_session
+                    from ..tools.handlers.plan import get_todo_handler_for_session, has_active_todo
                     if has_active_todo(conversation_id):
                         _rh = get_todo_handler_for_session(conversation_id)
                         _rp = _rh.get_plan_for(conversation_id) if _rh else None

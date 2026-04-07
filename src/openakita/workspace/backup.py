@@ -16,7 +16,7 @@ import os
 import re
 import shutil
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -219,7 +219,7 @@ def create_backup(
 
     manifest = {
         "format_version": BACKUP_FORMAT_VERSION,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "workspace_id": workspace_id,
         "include_userdata": include_userdata,
         "include_media": include_media,
@@ -388,7 +388,7 @@ def list_backups(backup_path: str) -> list[dict[str, Any]]:
             "path": str(f),
             "size_bytes": stat.st_size,
             "created_at": datetime.fromtimestamp(
-                stat.st_mtime, tz=timezone.utc
+                stat.st_mtime, tz=UTC
             ).isoformat(),
         }
 

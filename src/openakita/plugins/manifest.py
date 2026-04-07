@@ -360,7 +360,7 @@ def validate_plugin(plugin_dir: Path) -> list[str]:
                     try:
                         content = skill_md.read_text(encoding="utf-8")
                         if "---" not in content[:50]:
-                            issues.append(f"SKILL.md missing YAML frontmatter")
+                            issues.append("SKILL.md missing YAML frontmatter")
                     except Exception as e:
                         issues.append(f"Cannot read SKILL.md: {e}")
 

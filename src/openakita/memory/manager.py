@@ -36,10 +36,8 @@ from .types import (
     Attachment,
     AttachmentDirection,
     ConversationTurn,
-    Episode,
     Memory,
     MemoryPriority,
-    MemoryScope,
     MemoryType,
     SemanticMemory,
 )
@@ -966,6 +964,16 @@ class MemoryManager:
                             if core_content != existing_core:
                                 continue
                             return ""
+            elif len(self._memories) > 0:
+                try:
+                    core_content = self._strip_common_prefix(memory.content)
+                    fts_hits = self.store.search_semantic(core_content, limit=5)
+                    core_lower = core_content.strip()[:80].lower()
+                    for hit in fts_hits:
+                        if hit.content and core_lower in hit.content.lower():
+                            return ""
+                except Exception:
+                    pass
 
             self._memories[memory.id] = memory
             self._save_memories()
@@ -993,7 +1001,10 @@ class MemoryManager:
         )
         if hasattr(memory, "expires_at"):
             sem.expires_at = memory.expires_at
-        self.store.save_semantic(self._stamp_agent_id(sem), scope=scope, scope_owner=scope_owner)
+        self.store.save_semantic(
+            self._stamp_agent_id(sem), scope=scope, scope_owner=scope_owner,
+            skip_dedup=True,
+        )
 
         replace = self._get_replace_backend()
         if replace is not None:

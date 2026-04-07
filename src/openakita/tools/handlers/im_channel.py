@@ -244,7 +244,7 @@ class IMChannelHandler:
             """(chat_type 不匹配排后面, 越新越靠前)"""
             return (s_chat_type != prefer_chat_type, -last_active_ts)
 
-        adapter: "ChannelAdapter | None" = None
+        adapter: ChannelAdapter | None = None
         chat_id: str | None = None
 
         # 2. 跨所有候选适配器收集内存 session，全局排序选最优

@@ -42,10 +42,10 @@ def _notify_im_event(event: str, data: dict | None = None) -> None:
 
 from ..utils.errors import format_user_friendly_error as format_user_friendly_error  # re-export
 
-
 if TYPE_CHECKING:
     from ..core.brain import Brain
     from ..llm.stt_client import STTClient
+    from .media_parser import MediaParseResult
 
 logger = logging.getLogger(__name__)
 
@@ -1442,8 +1442,8 @@ class MessageGateway:
 
     def _apply_persisted_group_policy(self) -> None:
         """Load persisted group policy from JSON and apply to adapters."""
-        from pathlib import Path
         import json
+        from pathlib import Path
         policy_path = Path("data/sessions/group_policy.json")
         if not policy_path.exists():
             return
@@ -1827,10 +1827,10 @@ class MessageGateway:
                 await cleanup_task
 
         # 取消所有活跃的 session tasks
-        for skey, task in list(self._session_tasks.items()):
+        for _skey, task in list(self._session_tasks.items()):
             if not task.done():
                 task.cancel()
-        for skey, task in list(self._session_tasks.items()):
+        for _skey, task in list(self._session_tasks.items()):
             if not task.done():
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
@@ -2481,7 +2481,7 @@ class MessageGateway:
                     return
 
                 if mode == GroupResponseMode.ALLOWLIST:
-                    from .policy import check_group_policy, GroupPolicyConfig, GroupPolicyType
+                    from .policy import GroupPolicyConfig, GroupPolicyType, check_group_policy
                     gp_config = GroupPolicyConfig(
                         policy=GroupPolicyType.ALLOWLIST,
                         allowlist=self._get_group_allowlist(message.channel),
@@ -3775,6 +3775,7 @@ class MessageGateway:
         - 先发清理后的文本，再逐个补发图片/文件
         """
         import asyncio
+
         from .media_parser import parse_media_from_text
 
         if self._plugin_hooks:
@@ -3800,7 +3801,11 @@ class MessageGateway:
         max_length = self._CHANNEL_MAX_LENGTH.get(
             base_channel, self._DEFAULT_MAX_LENGTH
         )
-        from .text_splitter import chunk_markdown_text, add_fragment_numbers, estimate_number_prefix_len
+        from .text_splitter import (
+            add_fragment_numbers,
+            chunk_markdown_text,
+            estimate_number_prefix_len,
+        )
 
         # 预留分片序号长度：先做一次粗估（假设最多 10 片），分片后再精确添加
         _est_prefix = estimate_number_prefix_len(10)
@@ -4112,10 +4117,7 @@ class MessageGateway:
         try:
             # 标记为中间消息，防止飞书思考卡片被提前消费
             _meta = kwargs.pop("metadata", None) or {}
-            if isinstance(_meta, dict):
-                _meta = dict(_meta)
-            else:
-                _meta = {}
+            _meta = dict(_meta) if isinstance(_meta, dict) else {}
             _meta.setdefault("_interim", True)
             kwargs["metadata"] = _meta
 
@@ -4245,7 +4247,7 @@ class MessageGateway:
                 timeout=float(session.get_metadata("security_timeout") or 120),
             )
             text = reply_msg.message.text.strip().lower() if reply_msg else ""
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             text = ""
 
         decision = "deny"

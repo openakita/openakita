@@ -15,12 +15,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from enum import Enum
+from enum import StrEnum
 
 logger = logging.getLogger(__name__)
 
 
-class SkillEvent(str, Enum):
+class SkillEvent(StrEnum):
     """Skill lifecycle event types."""
     LOAD = "load"
     RELOAD = "reload"

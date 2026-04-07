@@ -123,10 +123,9 @@ def _split_code_block(segment: str, max_length: int) -> list[str]:
     fence = fence_char * max(fence_len, 3)
     lang_tag = opening.lstrip()[fence_len:].strip()
 
-    closing = ""
     body_lines = lines[1:]
     if body_lines and body_lines[-1].strip().startswith(fence_char * fence_len):
-        closing = body_lines[-1]
+        body_lines[-1]
         body_lines = body_lines[:-1]
 
     body = "\n".join(body_lines)

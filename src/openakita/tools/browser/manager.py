@@ -252,7 +252,7 @@ class _IsolatedBrowserContext:
     PlaywrightTools / BrowserUseRunner can work unchanged.
     """
 
-    def __init__(self, parent: "BrowserManager", context: Any, page: Any):
+    def __init__(self, parent: BrowserManager, context: Any, page: Any):
         self._parent = parent
         self._context = context
         self._page = page
@@ -577,7 +577,7 @@ class BrowserManager:
             logger.error(f"Failed to get browser status: {e}")
             return {"is_open": True, "state": self.state.value, "error": str(e)}
 
-    async def create_isolated_context(self) -> "BrowserManager":
+    async def create_isolated_context(self) -> BrowserManager:
         """Create a lightweight isolated browser context for parallel sub-agents.
 
         Returns a new BrowserManager-like wrapper that has its own BrowserContext

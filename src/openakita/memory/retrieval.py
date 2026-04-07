@@ -289,10 +289,7 @@ class RetrievalEngine:
             if query_tokens:
                 content_lower = mem.content.lower()
                 overlap = sum(1 for t in query_tokens if t in content_lower)
-                if overlap == 0:
-                    relevance = 0.2
-                else:
-                    relevance = min(0.7, 0.3 + 0.1 * overlap)
+                relevance = 0.2 if overlap == 0 else min(0.7, 0.3 + 0.1 * overlap)
 
             candidates.append(RetrievalCandidate(
                 memory_id=mem.id,

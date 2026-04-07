@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .manager import PluginManager
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class PluginCatalog:
     """Generate the 'Installed Plugins' section for the system prompt."""
 
-    def __init__(self, plugin_manager: "PluginManager") -> None:
+    def __init__(self, plugin_manager: PluginManager) -> None:
         self._pm = plugin_manager
 
     def get_catalog(self) -> str:

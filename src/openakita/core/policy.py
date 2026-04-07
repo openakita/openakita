@@ -20,6 +20,7 @@ import logging
 import platform
 import re
 from dataclasses import dataclass, field
+from datetime import UTC
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -776,10 +777,7 @@ class PolicyEngine:
 
     def _is_skill_allowed(self, tool_name: str) -> bool:
         """Check if tool_name is temporarily allowed by any active skill."""
-        for allowed_set in self._skill_allowlists.values():
-            if tool_name in allowed_set:
-                return True
-        return False
+        return any(tool_name in allowed_set for allowed_set in self._skill_allowlists.values())
 
     def add_skill_allowlist(self, skill_id: str, tool_names: list[str]) -> None:
         """Grant temporary tool access for a skill context."""
@@ -1202,9 +1200,9 @@ class PolicyEngine:
         self, tool_name: str, params: dict[str, Any], needs_sandbox: bool,
     ) -> None:
         """Append an entry to the persistent user_allowlist in YAML."""
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        now_str = datetime.now(timezone.utc).isoformat()
+        now_str = datetime.now(UTC).isoformat()
         command = params.get("command", "")
 
         if tool_name in ("run_shell", "run_powershell") and command:
@@ -1229,6 +1227,7 @@ class PolicyEngine:
         """Write the user_allowlist section back to POLICIES.yaml."""
         try:
             import yaml
+
             from ..config import settings
             yaml_path = settings.identity_path / "POLICIES.yaml"
             if not yaml_path.exists():

@@ -11,9 +11,9 @@ to console, Desktop dispatches React state), so only metadata lives here.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Flag, auto
-from typing import Sequence
 
 
 class CommandScope(Flag):

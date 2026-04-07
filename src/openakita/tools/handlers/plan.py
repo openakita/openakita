@@ -9,14 +9,14 @@
 - todo_handler.py:     PlanHandler 类 + create_todo_handler 工厂
 """
 
-from .todo_state import *        # noqa: F401,F403
-from .todo_heuristics import *   # noqa: F401,F403
-from .todo_handler import *      # noqa: F401,F403
+from .todo_handler import *  # noqa: F401,F403
+from .todo_heuristics import *  # noqa: F401,F403
+from .todo_state import *  # noqa: F401,F403
 
 # 显式确保过渡期私有符号可被外部 import（不依赖 __all__）
-from .todo_state import (        # noqa: F401
-    _session_active_todos,
-    _session_todo_required,
-    _session_handlers,
+from .todo_state import (  # noqa: F401
     _emit_todo_lifecycle_event,
+    _session_active_todos,
+    _session_handlers,
+    _session_todo_required,
 )

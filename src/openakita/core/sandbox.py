@@ -18,7 +18,6 @@ import logging
 import os
 import re
 import shlex
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -215,7 +214,7 @@ class SandboxExecutor:
                 stderr=stderr_bytes.decode("utf-8", errors="replace"),
                 returncode=proc.returncode or 0,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             try:
                 proc.kill()
             except Exception:

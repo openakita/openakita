@@ -63,10 +63,31 @@ class UnifiedStore:
     # ======================================================================
 
     def save_semantic(
-        self, memory: SemanticMemory, scope: str = "global", scope_owner: str = ""
+        self, memory: SemanticMemory, scope: str = "global", scope_owner: str = "",
+        *, skip_dedup: bool = False,
     ) -> str:
         memory.scope = scope
         memory.scope_owner = scope_owner
+
+        if (
+            not skip_dedup
+            and memory.content
+            and len(memory.content.strip()) > 10
+        ):
+            try:
+                dup_id = self._check_semantic_duplicate(
+                    memory.content, scope, scope_owner,
+                )
+                if dup_id:
+                    logger.debug(
+                        "[UnifiedStore] Skipping duplicate memory: "
+                        "new='%s…' matches existing %s",
+                        memory.content[:40], dup_id,
+                    )
+                    return dup_id
+            except Exception:
+                pass
+
         d = memory.to_dict()
         self.db.save_memory(d)
         self.search.add(memory.id, memory.content, {
@@ -76,6 +97,27 @@ class UnifiedStore:
             "tags": memory.tags,
         })
         return memory.id
+
+    def _check_semantic_duplicate(
+        self, content: str, scope: str, scope_owner: str,
+    ) -> str | None:
+        """Return existing memory ID if *content* is near-duplicate, else None."""
+        core = content.strip()[:100].lower()
+        hits = self.search.search(core, limit=5)
+        if not hits and self._fts5_fallback is not None:
+            hits = self._fts5_fallback.search(core, limit=5)
+        for mid, _score in hits:
+            existing = self.db.get_memory(mid)
+            if not existing:
+                continue
+            if (existing.get("scope") or "global") != scope:
+                continue
+            if (existing.get("scope_owner") or "") != scope_owner:
+                continue
+            ec = (existing.get("content") or "").strip().lower()
+            if core[:80] in ec or ec[:80] in core:
+                return mid
+        return None
 
     def update_semantic(self, memory_id: str, updates: dict) -> bool:
         ok = self.db.update_memory(memory_id, updates)

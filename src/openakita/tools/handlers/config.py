@@ -600,8 +600,8 @@ class ConfigHandler:
         if endpoint_data.get("api_key_env"):
             ep_dict["api_key_env"] = endpoint_data["api_key_env"]
 
-        from ...llm.endpoint_manager import EndpointManager
         from ...config import settings
+        from ...llm.endpoint_manager import EndpointManager
 
         mgr = EndpointManager(Path(settings.project_root))
         try:
@@ -641,8 +641,8 @@ class ConfigHandler:
         endpoint_type_map = {"compiler": "compiler_endpoints", "stt": "stt_endpoints"}
         endpoint_type = endpoint_type_map.get(target, "endpoints")
 
-        from ...llm.endpoint_manager import EndpointManager
         from ...config import settings
+        from ...llm.endpoint_manager import EndpointManager
 
         mgr = EndpointManager(Path(settings.project_root))
         removed = mgr.delete_endpoint(endpoint_name, endpoint_type=endpoint_type)

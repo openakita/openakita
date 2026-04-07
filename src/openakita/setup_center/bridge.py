@@ -20,6 +20,7 @@ import json
 import os
 import re
 import sys
+import zipfile
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -1286,7 +1287,7 @@ def _download_github_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> Non
             shutil.rmtree(str(tmp_extract), ignore_errors=True)
 
 
-def _validate_zip_members(zf: "zipfile.ZipFile") -> None:
+def _validate_zip_members(zf: zipfile.ZipFile) -> None:
     """Reject ZIP archives containing path-traversal members (Zip Slip)."""
     import os
     for name in zf.namelist():

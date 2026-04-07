@@ -12,14 +12,15 @@ import json
 import logging
 import time
 from collections import defaultdict
+from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 from .models import (
     MsgType,
     NodeStatus,
-    OrgMessage,
     Organization,
+    OrgMessage,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ class NodeMailbox:
         try:
             _, _, _, msg = await asyncio.wait_for(self._queue.get(), timeout=timeout)
             return msg
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
 
     def mark_dispatched(self) -> None:

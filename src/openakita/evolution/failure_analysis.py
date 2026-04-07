@@ -17,14 +17,14 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-class RootCause(str, Enum):
+class RootCause(StrEnum):
     """失败根因分类"""
     CONTEXT_LOSS = "context_loss"
     TOOL_LIMITATION = "tool_limitation"
@@ -37,7 +37,7 @@ class RootCause(str, Enum):
     UNKNOWN = "unknown"
 
 
-class HarnessGap(str, Enum):
+class HarnessGap(StrEnum):
     """Harness 缺口类型"""
     MISSING_TOOL = "missing_tool"
     INSUFFICIENT_DOCS = "insufficient_docs"

@@ -33,7 +33,7 @@ class CompatResult:
     warnings: list[str] = field(default_factory=list)
 
 
-def check_compatibility(manifest: "PluginManifest") -> CompatResult:
+def check_compatibility(manifest: PluginManifest) -> CompatResult:
     """Run all compatibility checks for *manifest*.
 
     Returns a ``CompatResult`` — callers should skip loading when ``ok`` is

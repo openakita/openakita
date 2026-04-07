@@ -6,7 +6,6 @@ PyInstaller 打包后 sys.executable 指向 openakita-server.exe 而非 Python �
 """
 
 import logging
-import json
 import sys
 from pathlib import Path
 

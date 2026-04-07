@@ -25,7 +25,7 @@ def _invalidate_bot_agent_sessions(bot_cfg: dict) -> None:
     ``agent_profile_id`` on the next message for each affected session.
     """
     try:
-        from openakita.main import get_message_gateway, _bot_channel_name
+        from openakita.main import _bot_channel_name, get_message_gateway
         gw = get_message_gateway()
         if gw is None or gw.session_manager is None:
             return
@@ -249,7 +249,7 @@ async def delete_bot(bot_id: str):
         logger.info(f"[Agents API] Deleted bot: {bot_id}")
 
         if deleted:
-            from openakita.main import remove_im_bot, _bot_channel_name, get_message_gateway
+            from openakita.main import _bot_channel_name, get_message_gateway, remove_im_bot
             await remove_im_bot(deleted[0])
 
             channel_name = _bot_channel_name(deleted[0])
@@ -726,7 +726,6 @@ async def get_topology(request: Request):
     """
     from openakita.agents.presets import SYSTEM_PRESETS
     from openakita.agents.profile import get_profile_store
-    from openakita.config import settings
 
     pool = getattr(request.app.state, "agent_pool", None)
     session_manager = getattr(request.app.state, "session_manager", None)

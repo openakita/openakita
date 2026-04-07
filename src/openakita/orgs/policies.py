@@ -62,10 +62,7 @@ class OrgPolicies:
         self, filename: str, content: str,
         department: str | None = None,
     ) -> Path:
-        if department:
-            base = self._departments_dir / department
-        else:
-            base = self._policies_dir
+        base = self._departments_dir / department if department else self._policies_dir
         base.mkdir(parents=True, exist_ok=True)
 
         if ".." in filename or "/" in filename or "\\" in filename:

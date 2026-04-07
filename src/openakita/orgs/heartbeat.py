@@ -10,13 +10,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .runtime import OrgRuntime
 
-from .models import Organization, OrgStatus, NodeStatus, _now_iso
+from .models import NodeStatus, Organization, OrgStatus, _now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -396,7 +396,7 @@ class OrgHeartbeat:
             "result_preview": str(result.get("result", ""))[:120],
         })
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         report_path = self._runtime._manager._org_dir(org.id) / "reports" / f"standup_{now.strftime('%Y-%m-%d')}.md"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_content = (

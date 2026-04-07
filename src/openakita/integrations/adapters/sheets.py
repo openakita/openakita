@@ -3,19 +3,21 @@
 支持 Google Sheets 和腾讯文档
 """
 
-import aiohttp
-from typing import Any, Dict, List, Optional
 from datetime import datetime
-from . import BaseAPIAdapter, APIError, AuthenticationError
+from typing import Any
+
+import aiohttp
+
+from . import APIError, AuthenticationError, BaseAPIAdapter
 
 
 class GoogleSheetsAdapter(BaseAPIAdapter):
     """Google Sheets API 适配器"""
-    
-    def __init__(self, config: Dict[str, Any]):
+
+    def __init__(self, config: dict[str, Any]):
         """
         初始化 Google Sheets 适配器
-        
+
         Args:
             config: 配置信息
                 - credentials: Google OAuth 凭据（service account JSON）
@@ -24,23 +26,23 @@ class GoogleSheetsAdapter(BaseAPIAdapter):
         super().__init__(config)
         self.credentials = config.get('credentials')
         self.spreadsheet_id = config.get('spreadsheet_id')
-        self._token: Optional[str] = None
-        self._token_expiry: Optional[datetime] = None
-        self._session: Optional[aiohttp.ClientSession] = None
-    
+        self._token: str | None = None
+        self._token_expiry: datetime | None = None
+        self._session: aiohttp.ClientSession | None = None
+
     async def authenticate(self) -> bool:
         """获取访问令牌"""
         if not self.credentials:
             raise AuthenticationError("缺少 Google OAuth 凭据")
-        
+
         # 检查现有令牌是否有效
         if self._token and self._token_expiry and datetime.utcnow() < self._token_expiry:
             return True
-        
+
         try:
             # 使用 service account 获取访问令牌
             import jwt
-            
+
             now = datetime.utcnow()
             payload = {
                 'iss': self.credentials['client_email'],
@@ -49,47 +51,46 @@ class GoogleSheetsAdapter(BaseAPIAdapter):
                 'exp': int(now.timestamp()) + 3600,
                 'iat': int(now.timestamp())
             }
-            
+
             assertion = jwt.encode(
                 payload,
                 self.credentials['private_key'],
                 algorithm='RS256'
             )
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    'https://oauth2.googleapis.com/token',
-                    data={
-                        'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-                        'assertion': assertion
-                    },
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    result = await response.json()
-                    
-                    if response.status == 200:
-                        self._token = result['access_token']
-                        self._token_expiry = datetime.utcnow().replace(
-                            second=datetime.utcnow().second + result['expires_in'] - 300
-                        )
-                        return True
-                    else:
-                        raise AuthenticationError(f"Google OAuth 认证失败：{result}")
+
+            async with aiohttp.ClientSession() as session, session.post(
+                'https://oauth2.googleapis.com/token',
+                data={
+                    'grant_type': 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+                    'assertion': assertion
+                },
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                result = await response.json()
+
+                if response.status == 200:
+                    self._token = result['access_token']
+                    self._token_expiry = datetime.utcnow().replace(
+                        second=datetime.utcnow().second + result['expires_in'] - 300
+                    )
+                    return True
+                else:
+                    raise AuthenticationError(f"Google OAuth 认证失败：{result}")
         except Exception as e:
             raise APIError(f"Google Sheets 认证失败：{str(e)}")
-    
-    async def call(self, endpoint: str, method: str = "GET", **kwargs) -> Dict[str, Any]:
+
+    async def call(self, endpoint: str, method: str = "GET", **kwargs) -> dict[str, Any]:
         """调用 Google Sheets API"""
         if not self._session:
             self._session = aiohttp.ClientSession()
-        
+
         await self.authenticate()
-        
+
         headers = {
             "Authorization": f"Bearer {self._token}",
             "Content-Type": "application/json"
         }
-        
+
         try:
             async with self._session.request(
                 method,
@@ -100,35 +101,35 @@ class GoogleSheetsAdapter(BaseAPIAdapter):
                 timeout=aiohttp.ClientTimeout(total=30)
             ) as response:
                 result = await response.json()
-                
+
                 if response.status >= 400:
                     raise self._handle_error(response.status, result)
-                
+
                 return result
         except aiohttp.ClientError as e:
             raise APIError(f"Google Sheets 调用失败：{str(e)}")
-    
-    async def get_values(self, range: str) -> List[List[Any]]:
+
+    async def get_values(self, range: str) -> list[list[Any]]:
         """
         读取单元格数据
-        
+
         Args:
             range: 范围（如 'Sheet1!A1:B10'）
-            
+
         Returns:
             二维数组数据
         """
         result = await self.call(f"spreadsheets/{self.spreadsheet_id}/values/{range}")
         return result.get('values', [])
-    
-    async def update_values(self, range: str, values: List[List[Any]]) -> Dict[str, Any]:
+
+    async def update_values(self, range: str, values: list[list[Any]]) -> dict[str, Any]:
         """
         更新单元格数据
-        
+
         Args:
             range: 范围（如 'Sheet1!A1:B10'）
             values: 二维数组数据
-            
+
         Returns:
             API 响应
         """
@@ -140,15 +141,15 @@ class GoogleSheetsAdapter(BaseAPIAdapter):
                 "valueInputOption": "RAW"
             }
         )
-    
-    async def append_values(self, range: str, values: List[List[Any]]) -> Dict[str, Any]:
+
+    async def append_values(self, range: str, values: list[list[Any]]) -> dict[str, Any]:
         """
         追加数据
-        
+
         Args:
             range: 范围
             values: 二维数组数据
-            
+
         Returns:
             API 响应
         """
@@ -161,7 +162,7 @@ class GoogleSheetsAdapter(BaseAPIAdapter):
                 "insertDataOption": "INSERT_ROWS"
             }
         )
-    
+
     async def close(self):
         """关闭会话"""
         if self._session:
@@ -171,11 +172,11 @@ class GoogleSheetsAdapter(BaseAPIAdapter):
 
 class TencentDocsAdapter(BaseAPIAdapter):
     """腾讯文档 API 适配器"""
-    
-    def __init__(self, config: Dict[str, Any]):
+
+    def __init__(self, config: dict[str, Any]):
         """
         初始化腾讯文档适配器
-        
+
         Args:
             config: 配置信息
                 - app_id: 应用 ID
@@ -186,46 +187,45 @@ class TencentDocsAdapter(BaseAPIAdapter):
         self.app_id = config.get('app_id')
         self.secret_key = config.get('secret_key')
         self.spreadsheet_id = config.get('spreadsheet_id')
-        self._token: Optional[str] = None
-        self._session: Optional[aiohttp.ClientSession] = None
-    
+        self._token: str | None = None
+        self._session: aiohttp.ClientSession | None = None
+
     async def authenticate(self) -> bool:
         """获取访问令牌"""
         if not self.app_id or not self.secret_key:
             raise AuthenticationError("缺少腾讯文档认证信息")
-        
+
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    'https://docs.qq.com/api/token',
-                    json={
-                        'appId': self.app_id,
-                        'secretKey': self.secret_key
-                    },
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    result = await response.json()
-                    
-                    if response.status == 200 and 'token' in result:
-                        self._token = result['token']
-                        return True
-                    else:
-                        raise AuthenticationError(f"腾讯文档认证失败：{result}")
+            async with aiohttp.ClientSession() as session, session.post(
+                'https://docs.qq.com/api/token',
+                json={
+                    'appId': self.app_id,
+                    'secretKey': self.secret_key
+                },
+                timeout=aiohttp.ClientTimeout(total=10)
+            ) as response:
+                result = await response.json()
+
+                if response.status == 200 and 'token' in result:
+                    self._token = result['token']
+                    return True
+                else:
+                    raise AuthenticationError(f"腾讯文档认证失败：{result}")
         except Exception as e:
             raise APIError(f"腾讯文档认证失败：{str(e)}")
-    
-    async def call(self, endpoint: str, method: str = "GET", **kwargs) -> Dict[str, Any]:
+
+    async def call(self, endpoint: str, method: str = "GET", **kwargs) -> dict[str, Any]:
         """调用腾讯文档 API"""
         if not self._session:
             self._session = aiohttp.ClientSession()
-        
+
         await self.authenticate()
-        
+
         headers = {
             "Authorization": f"Bearer {self._token}",
             "Content-Type": "application/json"
         }
-        
+
         try:
             async with self._session.request(
                 method,
@@ -236,35 +236,35 @@ class TencentDocsAdapter(BaseAPIAdapter):
                 timeout=aiohttp.ClientTimeout(total=30)
             ) as response:
                 result = await response.json()
-                
+
                 if response.status >= 400:
                     raise self._handle_error(response.status, result)
-                
+
                 return result
         except aiohttp.ClientError as e:
             raise APIError(f"腾讯文档调用失败：{str(e)}")
-    
-    async def get_sheet_data(self, sheet_id: str) -> List[List[Any]]:
+
+    async def get_sheet_data(self, sheet_id: str) -> list[list[Any]]:
         """
         获取表格数据
-        
+
         Args:
             sheet_id: 工作表 ID
-            
+
         Returns:
             二维数组数据
         """
         result = await self.call(f"spreadsheet/{self.spreadsheet_id}/sheet/{sheet_id}/data")
         return result.get('data', [])
-    
-    async def update_cells(self, sheet_id: str, updates: List[Dict]) -> Dict[str, Any]:
+
+    async def update_cells(self, sheet_id: str, updates: list[dict]) -> dict[str, Any]:
         """
         更新单元格
-        
+
         Args:
             sheet_id: 工作表 ID
             updates: 更新列表 [{'row': 1, 'col': 1, 'value': 'xxx'}]
-            
+
         Returns:
             API 响应
         """
@@ -273,7 +273,7 @@ class TencentDocsAdapter(BaseAPIAdapter):
             method="PUT",
             json={"updates": updates}
         )
-    
+
     async def close(self):
         """关闭会话"""
         if self._session:
@@ -282,14 +282,14 @@ class TencentDocsAdapter(BaseAPIAdapter):
 
 
 # 工厂函数
-def create_sheets_adapter(provider: str, config: Dict[str, Any]) -> BaseAPIAdapter:
+def create_sheets_adapter(provider: str, config: dict[str, Any]) -> BaseAPIAdapter:
     """
     创建表格 API 适配器
-    
+
     Args:
         provider: 服务提供商 ('google' 或 'tencent')
         config: 配置信息
-        
+
     Returns:
         表格适配器实例
     """
@@ -297,8 +297,8 @@ def create_sheets_adapter(provider: str, config: Dict[str, Any]) -> BaseAPIAdapt
         'google': GoogleSheetsAdapter,
         'tencent': TencentDocsAdapter
     }
-    
+
     if provider not in providers:
         raise ValueError(f"不支持的表格服务提供商：{provider}")
-    
+
     return providers[provider](config)

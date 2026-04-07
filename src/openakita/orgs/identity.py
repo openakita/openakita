@@ -18,7 +18,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from .models import EdgeType, OrgNode, Organization
+from .models import EdgeType, Organization, OrgNode
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +50,7 @@ class OrgIdentity:
         level = 3
         if role:
             if self._read_file(node_identity_dir / "AGENT.md"):
-                if self._read_file(node_identity_dir / "SOUL.md"):
-                    level = 3
-                else:
-                    level = 2
+                level = 3 if self._read_file(node_identity_dir / "SOUL.md") else 2
             else:
                 level = 1
         else:
@@ -215,7 +212,7 @@ class OrgIdentity:
 
         has_external = bool(node.external_tools)
         if has_external:
-            from .tool_categories import expand_tool_categories, TOOL_CATEGORIES
+            from .tool_categories import TOOL_CATEGORIES, expand_tool_categories
             ext_names = expand_tool_categories(node.external_tools)
             cat_labels = [c for c in node.external_tools if c in TOOL_CATEGORIES]
             ext_desc = "、".join(cat_labels) if cat_labels else "、".join(sorted(ext_names)[:5])

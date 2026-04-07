@@ -83,8 +83,10 @@ class SessionContext:
     sub_agent_records: list[dict] = field(default_factory=list)
     _msg_lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
+    _DEDUP_WINDOW = 8
+
     def add_message(self, role: str, content: str, **metadata) -> None:
-        """添加消息（含全局内容指纹去重）"""
+        """添加消息（含滑动窗口去重，防止重试/重连导致的重复消息）"""
         with self._msg_lock:
             if self.messages:
                 last = self.messages[-1]
@@ -95,16 +97,15 @@ class SessionContext:
             fingerprint = hashlib.md5(
                 f"{role}:{content[:200]}".encode(errors="replace")
             ).hexdigest()
-            if not hasattr(self, "_msg_fingerprints"):
-                self._msg_fingerprints: set[str] = set()
-                for msg in self.messages:
-                    fp = hashlib.md5(
-                        f"{msg.get('role','')}:{(msg.get('content','') or '')[:200]}".encode(errors="replace")
-                    ).hexdigest()
-                    self._msg_fingerprints.add(fp)
-            if fingerprint in self._msg_fingerprints:
-                return
-            self._msg_fingerprints.add(fingerprint)
+            window = self.messages[-self._DEDUP_WINDOW:]
+            for msg in window:
+                fp = hashlib.md5(
+                    f"{msg.get('role','')}:{(msg.get('content','') or '')[:200]}".encode(
+                        errors="replace"
+                    )
+                ).hexdigest()
+                if fp == fingerprint:
+                    return
 
             self.messages.append(
                 {"role": role, "content": content, "timestamp": datetime.now().isoformat(), **metadata}

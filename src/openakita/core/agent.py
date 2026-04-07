@@ -26,7 +26,10 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..sessions import Session
 
 from ..config import settings
 
@@ -74,8 +77,8 @@ from ..tools.handlers.search import create_handler as create_search_handler
 from ..tools.handlers.skill_store import create_handler as create_skill_store_handler
 from ..tools.handlers.skills import create_handler as create_skills_handler
 from ..tools.handlers.sleep import create_handler as create_sleep_handler
-from ..tools.handlers.structured_output import create_handler as create_structured_output_handler
 from ..tools.handlers.sticker import create_handler as create_sticker_handler
+from ..tools.handlers.structured_output import create_handler as create_structured_output_handler
 from ..tools.handlers.system import create_handler as create_system_handler
 from ..tools.handlers.tool_search import create_handler as create_tool_search_handler
 from ..tools.handlers.web_fetch import create_handler as create_web_fetch_handler
@@ -131,7 +134,7 @@ def _ensure_desktop():
         _DESKTOP_AVAILABLE = False
         return False
     try:
-        from ..tools.desktop import DESKTOP_TOOLS, DesktopToolHandler  # noqa: F811
+        from ..tools.desktop import DESKTOP_TOOLS, DesktopToolHandler  # noqa: F401, F811
         _desktop_tool_handler = DesktopToolHandler()
         _DESKTOP_AVAILABLE = True
     except ImportError:
@@ -142,6 +145,7 @@ logger = logging.getLogger(__name__)
 
 # 上下文管理常量（部分迁移至 context_manager.py，压缩相关仍需就地定义）
 from .context_manager import CHARS_PER_TOKEN, CHUNK_MAX_TOKENS
+
 COMPRESSION_RATIO = 0.15
 LARGE_TOOL_RESULT_THRESHOLD = 5000
 MIN_RECENT_TURNS = 4
@@ -1315,7 +1319,7 @@ class Agent:
 
         # 通知首次加载完成，让 API/WS 层同步
         try:
-            from ..skills.events import notify_skills_changed, SkillEvent
+            from ..skills.events import SkillEvent, notify_skills_changed
             notify_skills_changed(SkillEvent.LOAD)
         except Exception:
             pass
@@ -1353,7 +1357,7 @@ class Agent:
                     if skill.paths:
                         self._skill_activation.register_conditional(skill)
 
-            from ..skills.events import notify_skills_changed, SkillEvent
+            from ..skills.events import SkillEvent, notify_skills_changed
             notify_skills_changed(SkillEvent.HOT_RELOAD)
             logger.info("Hot-reloaded %d skills after file change", loaded)
         except Exception as e:
@@ -3186,19 +3190,34 @@ class Agent:
         if history_messages and history_messages[-1].get("role") == "user":
             history_messages = history_messages[:-1]
 
-        # Dedup: remove consecutive messages with identical role+content
-        # (can occur from session persistence across retries or restarts)
+        # Dedup: remove near-duplicate messages within a sliding window.
+        # A pure global dedup would incorrectly remove legitimate repeated
+        # short messages (e.g. user saying "好的" twice in different contexts).
+        # Window-based dedup only catches retry/reconnection artifacts.
+        _DEDUP_WINDOW = 6
         if len(history_messages) >= 2:
-            deduped: list[dict] = [history_messages[0]]
-            for hm in history_messages[1:]:
-                prev = deduped[-1]
-                if hm.get("role") == prev.get("role") and hm.get("content") == prev.get("content"):
+            import hashlib as _hl
+
+            def _fp(m: dict) -> str:
+                return _hl.md5(
+                    f"{m.get('role','')}:{(m.get('content','') or '')[:200]}".encode(
+                        errors="replace"
+                    )
+                ).hexdigest()
+
+            deduped: list[dict] = []
+            deduped_fps: list[str] = []
+            for hm in history_messages:
+                fp = _fp(hm)
+                window_start = max(0, len(deduped_fps) - _DEDUP_WINDOW)
+                if fp in deduped_fps[window_start:]:
                     continue
                 deduped.append(hm)
+                deduped_fps.append(fp)
             if len(deduped) < len(history_messages):
                 logger.warning(
                     f"[Session:{session_id}] Removed {len(history_messages) - len(deduped)} "
-                    f"duplicate messages from history"
+                    f"near-duplicate messages from history (window={_DEDUP_WINDOW})"
                 )
             history_messages = deduped
 
@@ -3221,10 +3240,7 @@ class Agent:
                             pos = after.find(sep)
                             if pos != -1 and (next_section == -1 or pos < next_section):
                                 next_section = pos
-                        if next_section != -1:
-                            content = before + after[next_section:]
-                        else:
-                            content = before
+                        content = before + after[next_section:] if next_section != -1 else before
                 if content.startswith("[执行摘要]") or content.startswith("[子Agent工作总结]"):
                     content = ""
             if role in ("user", "assistant") and content:
@@ -4292,11 +4308,14 @@ class Agent:
             # with force_tool_retries=0, so tools are available but not forced.
 
             # Complexity detection: soft suggestion instead of hard interruption
+            # suppress_plan=True means the intent analyzer explicitly decided
+            # this task is too simple for plan mode — skip the suggestion.
             if (
                 mode == "agent"
                 and hasattr(self, "_current_intent")
                 and self._current_intent
                 and getattr(self._current_intent, "suggest_plan", False)
+                and not getattr(self._current_intent, "suppress_plan", False)
             ):
                 _score = getattr(
                     getattr(self._current_intent, "complexity", None), "score", 0

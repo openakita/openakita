@@ -17,13 +17,11 @@ Local routes for the Setup Center frontend to call:
 from __future__ import annotations
 
 import logging
-import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -130,6 +128,7 @@ async def export_agent(req: ExportRequest):
 async def batch_export_agents(req: BatchExportRequest):
     """Export multiple agents as a single .zip archive."""
     import zipfile
+
     from openakita.agents.packager import AgentPackager, PackageError
 
     if not req.profile_ids:
@@ -269,6 +268,7 @@ async def import_agent(
 ):
     """Import an agent from .akita-agent (ZIP) or .json file."""
     import json as _json
+
     from openakita.agents.profile import AgentProfile
 
     profile_store, skills_dir, _ = _get_stores()

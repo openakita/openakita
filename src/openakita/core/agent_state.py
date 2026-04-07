@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 def _safe_event_set(event: asyncio.Event) -> None:
     """Set an asyncio.Event safely, even from a different event loop thread."""
-    from openakita.core.engine_bridge import get_engine_loop, _current_loop
+    from openakita.core.engine_bridge import _current_loop, get_engine_loop
 
     engine = get_engine_loop()
     current = _current_loop()
@@ -33,7 +33,7 @@ def _safe_event_set(event: asyncio.Event) -> None:
 
 def _safe_event_clear(event: asyncio.Event) -> None:
     """Clear an asyncio.Event safely, even from a different event loop thread."""
-    from openakita.core.engine_bridge import get_engine_loop, _current_loop
+    from openakita.core.engine_bridge import _current_loop, get_engine_loop
 
     engine = get_engine_loop()
     current = _current_loop()

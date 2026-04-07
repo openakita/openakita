@@ -65,7 +65,6 @@ async def get_backup_settings():
 async def save_backup_settings(body: BackupSettingsRequest):
     """Save backup settings and sync the scheduler task."""
     from openakita.workspace.backup import (
-        read_backup_settings,
         write_backup_settings,
     )
 
@@ -172,6 +171,7 @@ async def get_backup_list():
 def _sync_backup_scheduler_task(settings: dict) -> None:
     """Create, update, or disable the system:workspace_backup scheduler task."""
     import asyncio
+
     from openakita.scheduler import get_active_scheduler
 
     scheduler = get_active_scheduler()

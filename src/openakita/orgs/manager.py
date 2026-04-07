@@ -12,6 +12,8 @@ import logging
 import shutil
 from pathlib import Path
 
+from openakita.memory.types import normalize_tags
+
 from .models import (
     NodeSchedule,
     Organization,
@@ -20,7 +22,6 @@ from .models import (
     _new_id,
     _now_iso,
 )
-from openakita.memory.types import normalize_tags
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +191,7 @@ class OrgManager:
             node["frozen_at"] = None
 
         id_map: dict[str, str] = {}
-        for old_n, new_n in zip(src.to_dict()["nodes"], data["nodes"]):
+        for old_n, new_n in zip(src.to_dict()["nodes"], data["nodes"], strict=False):
             id_map[old_n["id"]] = new_n["id"]
 
         for edge in data.get("edges", []):

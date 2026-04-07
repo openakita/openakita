@@ -16,13 +16,12 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any
+from enum import StrEnum
 
 logger = logging.getLogger(__name__)
 
 
-class ValidationResult(str, Enum):
+class ValidationResult(StrEnum):
     """验证结果"""
     PASS = "pass"
     WARN = "warn"

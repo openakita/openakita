@@ -749,7 +749,7 @@ class WeWorkWsAdapter(ChannelAdapter):
                 await asyncio.wait_for(
                     self._authenticated.wait(), timeout=10.0
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error("Authentication timeout (10s)")
                 receive_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -900,7 +900,7 @@ class WeWorkWsAdapter(ChannelAdapter):
                 self._handle_msg_callback(frame),
                 timeout=MSG_PROCESS_TIMEOUT_S,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(
                 f"Message processing timed out ({MSG_PROCESS_TIMEOUT_S}s), "
                 f"msgid={msgid}"
@@ -1538,6 +1538,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             return raw
         try:
             import io
+
             from PIL import Image
 
             img = Image.open(path)
@@ -1852,7 +1853,7 @@ class WeWorkWsAdapter(ChannelAdapter):
                     if i == 0:
                         ok = await self._response_url_fallback(req_id, text)
                         if ok:
-                            logger.info(f"[stream_reply] Fallback via response_url succeeded, skipping raise")
+                            logger.info("[stream_reply] Fallback via response_url succeeded, skipping raise")
                             return
                         self._enqueue_pending_reply(req_id, text, message)
                     raise RuntimeError(
@@ -1890,7 +1891,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             try:
                 await self._send_active_message(chat_id, error_text)
             except Exception:
-                logger.warning(f"[stream_reply] Failed to send media error notification")
+                logger.warning("[stream_reply] Failed to send media error notification")
 
         self._reply_locks.pop(req_id, None)
         return stream_id
@@ -2016,7 +2017,7 @@ class WeWorkWsAdapter(ChannelAdapter):
                 result = await asyncio.wait_for(
                     fut, timeout=self.config.reply_ack_timeout
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self._pending_acks.pop(req_id, None)
                 raise TimeoutError(
                     f"Reply ack timeout ({self.config.reply_ack_timeout}s) "
@@ -2229,7 +2230,7 @@ class WeWorkWsAdapter(ChannelAdapter):
 
         try:
             result = await asyncio.wait_for(fut, timeout=30.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._pending_acks.pop(req_id, None)
             raise TimeoutError(f"Upload ack timeout for req_id={req_id}")
 
@@ -2299,7 +2300,7 @@ class WeWorkWsAdapter(ChannelAdapter):
 
     def _reject_all_pending(self, reason: str) -> None:
         """Reject all pending ack futures and clear connection-scoped state."""
-        for req_id, fut in list(self._pending_acks.items()):
+        for _req_id, fut in list(self._pending_acks.items()):
             if not fut.done():
                 fut.set_exception(ConnectionError(reason))
         self._pending_acks.clear()

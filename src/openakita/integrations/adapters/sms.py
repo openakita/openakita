@@ -3,37 +3,39 @@
 支持阿里云短信和腾讯云短信
 """
 
-import aiohttp
 import hashlib
 import hmac
-import random
-from typing import Any, Dict, List
 from datetime import datetime
-from . import BaseAPIAdapter, APIError, AuthenticationError
+from typing import Any
+
+import aiohttp
+
+from . import APIError, BaseAPIAdapter
 
 
 class AliyunSMSAdapter(BaseAPIAdapter):
     """阿里云短信适配器"""
-    
-    def __init__(self, config: Dict[str, Any]):
+
+    def __init__(self, config: dict[str, Any]):
         super().__init__(config)
         self.access_key_id = config.get('access_key_id')
         self.access_key_secret = config.get('access_key_secret')
         self.sign_name = config.get('sign_name')
         self.endpoint = "http://dysmsapi.aliyuncs.com"
-    
-    def _sign(self, params: Dict) -> str:
+
+    def _sign(self, params: dict) -> str:
         sorted_params = sorted(params.items())
         canonicalized = "&".join(f"{k}={v}" for k, v in sorted_params)
         string_to_sign = f"GET&%2F&{canonicalized}"
         signature = hmac.new(f"{self.access_key_secret}&".encode(), string_to_sign.encode(), hashlib.sha1).digest()
         return base64.b64encode(signature).decode()
-    
+
     async def authenticate(self) -> bool:
         return bool(self.access_key_id and self.access_key_secret)
-    
-    async def send_sms(self, phone_numbers: str, template_code: str, template_param: Dict) -> Dict:
-        import uuid, base64
+
+    async def send_sms(self, phone_numbers: str, template_code: str, template_param: dict) -> dict:
+        import base64
+        import uuid
         params = {
             "Action": "SendSms", "Format": "JSON", "Version": "2017-05-25",
             "AccessKeyId": self.access_key_id, "PhoneNumbers": phone_numbers,
@@ -54,20 +56,24 @@ class AliyunSMSAdapter(BaseAPIAdapter):
 
 class TencentSMSAdapter(BaseAPIAdapter):
     """腾讯云短信适配器"""
-    
-    def __init__(self, config: Dict[str, Any]):
+
+    def __init__(self, config: dict[str, Any]):
         super().__init__(config)
         self.secret_id = config.get('secret_id')
         self.secret_key = config.get('secret_key')
         self.app_id = config.get('app_id')
         self.sign_name = config.get('sign_name')
         self.endpoint = "https://sms.tencentcloudapi.com"
-    
+
     async def authenticate(self) -> bool:
         return bool(self.secret_id and self.secret_key)
-    
-    async def send_sms(self, phone_numbers: List[str], template_id: str, template_param: List[str]) -> Dict:
-        import time, hashlib, hmac, base64, json
+
+    async def send_sms(self, phone_numbers: list[str], template_id: str, template_param: list[str]) -> dict:
+        import base64
+        import hashlib
+        import hmac
+        import json
+        import time
         timestamp = int(time.time())
         payload = {
             "PhoneNumberSet": phone_numbers, "TemplateID": template_id,
@@ -92,7 +98,7 @@ class TencentSMSAdapter(BaseAPIAdapter):
                 return result
 
 
-def create_sms_adapter(provider: str, config: Dict[str, Any]) -> BaseAPIAdapter:
+def create_sms_adapter(provider: str, config: dict[str, Any]) -> BaseAPIAdapter:
     providers = {'aliyun': AliyunSMSAdapter, 'tencent': TencentSMSAdapter}
     if provider not in providers:
         raise ValueError(f"不支持的短信提供商：{provider}")

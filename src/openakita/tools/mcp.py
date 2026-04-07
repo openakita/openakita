@@ -304,8 +304,6 @@ class MCPClient:
                 logger.error(msg)
                 return MCPConnectResult(success=False, error=msg)
             logger.info("[MCP] SDK became available after lazy install, re-importing...")
-            from mcp import ClientSession, StdioServerParameters  # noqa: F811
-            from mcp.client.stdio import stdio_client  # noqa: F811
 
         if server_name not in self._servers:
             msg = f"服务器未配置: {server_name}"
@@ -499,7 +497,7 @@ class MCPClient:
             tool_count = len(self.list_tools(server_name))
             logger.info(f"Connected to MCP server via stdio: {server_name} ({tool_count} tools)")
             return MCPConnectResult(success=True, tool_count=tool_count)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             stderr_hint = self._try_capture_stdio_stderr(stdio_cm)
             msg = (
                 f"连接超时（{self._CONNECT_TIMEOUT}s）。"
@@ -572,7 +570,7 @@ class MCPClient:
             tool_count = len(self.list_tools(server_name))
             logger.info(f"Connected to MCP server via streamable HTTP: {server_name} ({config.url}, {tool_count} tools)")
             return MCPConnectResult(success=True, tool_count=tool_count)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             msg = f"HTTP 连接超时（{self._CONNECT_TIMEOUT}s）。URL: {config.url}"
             logger.error(f"Timeout connecting to {server_name} via streamable HTTP")
             await self._cleanup_cms(client_cm, http_cm)
@@ -629,7 +627,7 @@ class MCPClient:
             tool_count = len(self.list_tools(server_name))
             logger.info(f"Connected to MCP server via SSE: {server_name} ({config.url}, {tool_count} tools)")
             return MCPConnectResult(success=True, tool_count=tool_count)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             msg = f"SSE 连接超时（{self._CONNECT_TIMEOUT}s）。URL: {config.url}"
             logger.error(f"Timeout connecting to {server_name} via SSE")
             await self._cleanup_cms(client_cm, sse_cm)
@@ -712,7 +710,7 @@ class MCPClient:
             )
             try:
                 await asyncio.wait_for(asyncio.shield(task), timeout=8)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+            except (TimeoutError, asyncio.CancelledError):
                 logger.debug(
                     "MCP cleanup for %s timed out or was cancelled", server_name,
                 )
@@ -766,7 +764,7 @@ class MCPClient:
                         wait_coro = proc.wait()
                         if asyncio.iscoroutine(wait_coro):
                             await asyncio.wait_for(wait_coro, timeout=2)
-                    except (asyncio.TimeoutError, ProcessLookupError):
+                    except (TimeoutError, ProcessLookupError):
                         with contextlib.suppress(Exception):
                             if hasattr(proc, "kill"):
                                 proc.kill()

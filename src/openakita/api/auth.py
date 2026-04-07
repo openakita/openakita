@@ -302,10 +302,7 @@ def _is_auth_exempt(path: str) -> bool:
     """Check if the path is exempt from authentication."""
     if path in AUTH_EXEMPT_PATHS:
         return True
-    for prefix in AUTH_EXEMPT_PREFIXES:
-        if path.startswith(prefix):
-            return True
-    return False
+    return any(path.startswith(prefix) for prefix in AUTH_EXEMPT_PREFIXES)
 
 
 def create_auth_middleware(config: WebAccessConfig):

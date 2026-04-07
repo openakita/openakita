@@ -14,9 +14,8 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +43,8 @@ class SkillWatcher:
             return
 
         try:
-            from watchdog.observers import Observer
             from watchdog.events import FileSystemEventHandler
+            from watchdog.observers import Observer
 
             class _Handler(FileSystemEventHandler):
                 def __init__(self, watcher: SkillWatcher):

@@ -64,7 +64,7 @@ class ConnectionManager:
 
         dead = [ws for ws in results if isinstance(ws, WebSocket)]
         if dead:
-            dead_set = set(id(ws) for ws in dead)
+            dead_set = {id(ws) for ws in dead}
             async with self._lock:
                 self._connections = [
                     (c, loc) for c, loc in self._connections if id(c) not in dead_set
@@ -151,7 +151,7 @@ async def ws_events(ws: WebSocket):
                 # Handle ping
                 if msg == "ping":
                     await ws.send_text(json.dumps({"event": "pong", "ts": time.time()}))
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Send server-side ping to keep connection alive
                 try:
                     await ws.send_text(json.dumps({"event": "ping", "ts": time.time()}))

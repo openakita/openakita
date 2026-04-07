@@ -11,19 +11,17 @@ SkillStoreClient — 与 OpenAkita Platform Skill Store 交互的客户端
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
+import random
 import shutil
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
-import json
-from datetime import datetime, timezone
-
-import asyncio
-import random
 
 import httpx
 
@@ -162,7 +160,7 @@ class SkillStoreClient:
             origin = {
                 "source": install_url,
                 "type": "platform_store",
-                "installed_at": datetime.now(timezone.utc).isoformat(),
+                "installed_at": datetime.now(UTC).isoformat(),
             }
             skill_md = skill_dir / "SKILL.md"
             if skill_md.exists():

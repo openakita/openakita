@@ -4,6 +4,7 @@ AgentOrg — 组织编排系统
 多层级 Agent 组织架构编排与运行引擎。
 """
 
+from .manager import OrgManager
 from .models import (
     EdgeType,
     InboxMessage,
@@ -13,15 +14,14 @@ from .models import (
     MsgType,
     NodeSchedule,
     NodeStatus,
+    Organization,
     OrgEdge,
     OrgMemoryEntry,
     OrgMessage,
     OrgNode,
     OrgStatus,
-    Organization,
     ScheduleType,
 )
-from .manager import OrgManager
 from .reporter import OrgReporter
 from .runtime import OrgRuntime
 

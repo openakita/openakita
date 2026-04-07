@@ -7,10 +7,10 @@ human-readable messages. Used by CLI, IM gateway, and API layers.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class ErrorCategory(str, Enum):
+class ErrorCategory(StrEnum):
     """Coarse error classification for UI treatment."""
 
     AUTH = "auth"
