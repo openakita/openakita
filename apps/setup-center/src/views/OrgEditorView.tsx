@@ -287,6 +287,64 @@ const DATA_KEY_LABELS: Record<string, string> = {
   message: "消息",
 };
 
+const DATA_VALUE_LABELS: Record<string, string> = {
+  idle: "空闲",
+  busy: "执行中",
+  waiting: "等待中",
+  error: "异常",
+  offline: "离线",
+  frozen: "已冻结",
+  task_started: "任务开始",
+  task_completed: "任务完成",
+  task_failed: "任务失败",
+  task_assigned: "任务分配",
+  task_delivered: "任务交付",
+  task_accepted: "任务验收",
+  task_rejected: "任务驳回",
+  org_stopped: "组织停止",
+  org_reset: "组织重置",
+  org_paused: "组织暂停",
+  org_resumed: "组织恢复",
+  restart_cleanup: "重启清理",
+  watchdog_recovery: "看门狗恢复",
+  health_check_recovery: "健康检查恢复",
+  org_quota_pause: "配额暂停",
+  quota_exhausted: "配额耗尽",
+  auto_recover_before_activate: "激活前自动恢复",
+  unfreeze: "解冻",
+  stuck_busy: "持续繁忙",
+  error_not_recovering: "错误未恢复",
+  idle_no_progress: "空闲无进展",
+  root_busy: "根节点繁忙",
+  root_has_task: "根节点有任务",
+  skip: "跳过",
+  activate: "激活",
+  do_nothing: "无操作",
+  pending: "待处理",
+  approved: "已批准",
+  rejected: "已拒绝",
+  completed: "已完成",
+  in_progress: "进行中",
+  delivered: "已交付",
+  accepted: "已验收",
+  blocked: "已阻塞",
+  healthy: "健康",
+  warning: "警告",
+  critical: "严重",
+  attention: "关注",
+};
+
+function _translateDataValue(
+  key: string, value: unknown,
+  nodeNameMap?: Map<string, string>,
+): string {
+  const s = String(value);
+  if ((key === "node_id" || key === "new_node_id") && nodeNameMap?.has(s)) {
+    return nodeNameMap.get(s)!;
+  }
+  return DATA_VALUE_LABELS[s] || s;
+}
+
 function NodeTasksTabContent({
   nodeTasks,
   nodeActivePlan,
@@ -1107,6 +1165,7 @@ export function OrgEditorView({
   const [nodeThinking, setNodeThinking] = useState<any[]>([]);
   const [orgStats, setOrgStats] = useState<any>(null);
   const [expandedThinkingIdx, setExpandedThinkingIdx] = useState<number | string | null>(null);
+  const nodeNameMap = useMemo(() => new Map(nodes.map((n) => [n.id, (n.data as any)?.role_title || n.id])), [nodes]);
   const [nodeTasks, setNodeTasks] = useState<{ assigned: any[]; delegated: any[] } | null>(null);
   const [nodeActivePlan, setNodeActivePlan] = useState<any>(null);
   const [nodeTasksLoading, setNodeTasksLoading] = useState(false);
@@ -3531,7 +3590,7 @@ export function OrgEditorView({
                       {nodeEvents.slice(0, 15).map((evt: any, i: number) => {
                         const dataEntries = Object.entries(evt.data || {});
                         const isEvtExpanded = expandedThinkingIdx === `evt-${i}`;
-                        const fullText = dataEntries.map(([k, v]) => `**${DATA_KEY_LABELS[k] || k}**: ${String(v)}`).join("\n\n");
+                        const fullText = dataEntries.map(([k, v]) => `**${DATA_KEY_LABELS[k] || k}**: ${_translateDataValue(k, v, nodeNameMap)}`).join("\n\n");
                         return (
                           <div key={evt.event_id || i}
                             onClick={() => setExpandedThinkingIdx(isEvtExpanded ? null : `evt-${i}`)}
@@ -3698,7 +3757,7 @@ export function OrgEditorView({
                               </div>
                               {item.data && Object.keys(item.data).length > 0 && (() => {
                                 const entries = Object.entries(item.data).slice(0, isExpanded ? 20 : 3);
-                                const mdText = entries.map(([k, v]) => `**${DATA_KEY_LABELS[k] || k}**: ${isExpanded ? String(v) : String(v).slice(0, 120)}`).join("\n\n");
+                                const mdText = entries.map(([k, v]) => { const tv = _translateDataValue(k, v, nodeNameMap); return `**${DATA_KEY_LABELS[k] || k}**: ${isExpanded ? tv : tv.slice(0, 120)}`; }).join("\n\n");
                                 return (
                                   <div className="bb-entry-content" style={{ fontSize: 10, marginTop: 2, marginLeft: 12 }}>
                                     {mdModules ? (
