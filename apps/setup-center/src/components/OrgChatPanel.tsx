@@ -51,6 +51,8 @@ export interface OrgChatPanelProps {
   showHeader?: boolean;
   title?: string;
   onClose?: () => void;
+  /** Map node IDs to display names so progress lines show readable names. */
+  nodeNames?: Record<string, string>;
 }
 
 function sessionId(orgId: string, nodeId?: string | null): string {
@@ -88,7 +90,7 @@ function loadFromLocalStorage(cid: string): ChatMsg[] {
   } catch { return []; }
 }
 
-export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, title, onClose }: OrgChatPanelProps) {
+export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, title, onClose, nodeNames }: OrgChatPanelProps) {
   const md = useMd();
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
@@ -97,6 +99,8 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const mountedRef = useRef(true);
+  const nodeNamesRef = useRef(nodeNames);
+  nodeNamesRef.current = nodeNames;
   const convId = sessionId(orgId, nodeId);
 
   const scrollToBottom = useCallback(() => {
@@ -179,7 +183,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     let cancelled = false;
     const phId = pending.placeholderId;
     const progress = pending.progressLines.length > 0
-      ? pending.progressLines.slice(-8).map(l => `> ${l}`).join("\n")
+      ? pending.progressLines.slice(-8).join("\n")
       : "思考中...";
 
     setMessages(prev => {
@@ -194,7 +198,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         if (cancelled || !_pendingCmds.has(convId)) break;
 
         if (mountedRef.current && pending.progressLines.length > 0) {
-          const preview = pending.progressLines.slice(-8).map(l => `> ${l}`).join("\n");
+          const preview = pending.progressLines.slice(-8).join("\n");
           setMessages(prev => prev.map(m => m.id === phId && m.streaming ? { ...m, content: preview } : m));
         }
 
@@ -206,7 +210,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
             _pendingCmds.delete(convId);
             const resultText = data.result?.result || data.result?.error || data.error || JSON.stringify(data);
             const progressSummary = pending.progressLines.length > 0
-              ? pending.progressLines.map(l => `> ${l}`).join("\n") + "\n\n---\n\n"
+              ? pending.progressLines.join("\n") + "\n\n---\n\n"
               : "";
             const content = progressSummary + resultText;
             if (mountedRef.current) {
@@ -291,11 +295,13 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     setInput("");
     setSending(true);
 
+    const nn = (id: string) => nodeNamesRef.current?.[id] || id;
+
     const progressLines: string[] = [];
     const pushProgress = (line: string) => {
       progressLines.push(line);
       if (!mountedRef.current) return;
-      const preview = progressLines.slice(-8).map(l => `> ${l}`).join("\n");
+      const preview = progressLines.slice(-8).join("\n");
       setMessages(prev => prev.map(m => m.id === placeholderId ? { ...m, content: preview } : m));
     };
 
@@ -308,15 +314,18 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         const st = d.status as string;
         if (st === "busy") {
           const task = (d.current_task || "") as string;
-          pushProgress(`[START] **${nid}** 开始处理${task ? `：${task}` : ""}`);
-        } else if (st === "idle") pushProgress(`[DONE] **${nid}** 完成`);
-        else if (st === "error") pushProgress(`[ERR] **${nid}** 出错`);
+          const taskBrief = task.length > 80 ? task.slice(0, 80) + "…" : task;
+          pushProgress(`🔄 **${nn(nid)}** 开始处理${taskBrief ? `：${taskBrief}` : ""}`);
+        } else if (st === "idle") pushProgress(`✅ **${nn(nid)}** 完成`);
+        else if (st === "error") pushProgress(`❌ **${nn(nid)}** 出错`);
       } else if (event === "org:task_delegated") {
-        pushProgress(`[TASK] **${nid}** → **${toN}** 分配任务：${(d.task || "") as string}`);
+        const task = ((d.task || "") as string);
+        const taskBrief = task.length > 80 ? task.slice(0, 80) + "…" : task;
+        pushProgress(`📋 **${nn(nid)}** → **${nn(toN)}** 分配任务：${taskBrief}`);
       } else if (event === "org:task_complete") {
-        pushProgress(`[OK] **${nid}** 任务完成`);
+        pushProgress(`✅ **${nn(nid)}** 任务完成`);
       } else if (event === "org:blackboard_update") {
-        pushProgress(`[NOTE] **${nid}** 更新黑板`);
+        pushProgress(`📝 **${nn(nid)}** 更新黑板`);
       }
     });
 
@@ -367,7 +376,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           const error = d.error as string | undefined;
           const resultText = String((result && (result.result || result.error)) || error || JSON.stringify(d));
           const progressSummary = progressLines.length > 0
-            ? progressLines.map(l => `> ${l}`).join("\n") + "\n\n---\n\n"
+            ? progressLines.join("\n") + "\n\n---\n\n"
             : "";
           finalContent = progressSummary + resultText;
           finalizeResult(finalContent);
@@ -385,7 +394,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
                 resolved = true;
                 const resultText = pd.result?.result || pd.result?.error || pd.error || JSON.stringify(pd);
                 const progressSummary = progressLines.length > 0
-                  ? progressLines.map(l => `> ${l}`).join("\n") + "\n\n---\n\n"
+                  ? progressLines.join("\n") + "\n\n---\n\n"
                   : "";
                 finalContent = progressSummary + resultText;
                 finalizeResult(finalContent);
@@ -476,13 +485,15 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         )}
         {messages.map(m => (
           <div key={m.id} className={`ocp-msg ocp-msg-${m.role} ${m.streaming ? "ocp-msg-streaming" : ""}`}>
-            <div className={`ocp-msg-bubble ${m.role !== "user" && !m.streaming ? "chatMdContent" : ""}`}>
-              {m.role === "user" || !md || m.streaming ? (
+            <div className={`ocp-msg-bubble ${m.role !== "user" ? "chatMdContent" : ""}`}>
+              {m.role === "user" ? (
                 m.content
-              ) : (
+              ) : md ? (
                 <md.ReactMarkdown remarkPlugins={[md.remarkGfm]} rehypePlugins={[md.rehypeHighlight]}>
                   {m.content}
                 </md.ReactMarkdown>
+              ) : (
+                m.content
               )}
               {m.streaming && <span className="ocp-typing">●</span>}
             </div>
@@ -604,16 +615,13 @@ const CHAT_CSS = `
   color: var(--text);
   border-bottom-left-radius: 4px;
 }
-.ocp-msg-streaming .ocp-msg-bubble {
-  white-space: pre-wrap;
-}
 .ocp-msg-system .ocp-msg-bubble {
   background: rgba(239,68,68,0.08);
   border: 1px solid rgba(239,68,68,0.2);
   color: #fca5a5;
   border-bottom-left-radius: 4px;
 }
-.ocp-msg-streaming .ocp-msg-bubble:not(.chatMdContent) {
+.ocp-msg-streaming .ocp-msg-bubble {
   border-color: rgba(99,102,241,0.3);
 }
 .ocp-msg-bubble.chatMdContent { font-size: 13px; line-height: 1.6; }

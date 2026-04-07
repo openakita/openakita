@@ -1362,6 +1362,15 @@ export function OrgEditorView({
 
   // ── Selected node data ──
 
+  const nodeNameMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const n of nodes) {
+      const title = (n.data as any)?.role_title;
+      if (title) map[n.id] = title;
+    }
+    return map;
+  }, [nodes]);
+
   const selectedNode = useMemo(() => {
     if (!selectedNodeId) return null;
     const n = nodes.find((n) => n.id === selectedNodeId);
@@ -2317,6 +2326,7 @@ export function OrgEditorView({
                   showHeader
                   title={`${currentOrg?.name || "组织"} · 指挥台`}
                   onClose={() => setActiveDrawer(null)}
+                  nodeNames={nodeNameMap}
                 />
               </div>
               <div className="org-drawer-slide" style={{ display: inboxOpen ? undefined : "none" }}>
@@ -2922,6 +2932,7 @@ export function OrgEditorView({
               nodeId={selectedNodeId}
               apiBaseUrl={apiBaseUrl}
               compact
+              nodeNames={nodeNameMap}
             />
           </div>
         </div>
