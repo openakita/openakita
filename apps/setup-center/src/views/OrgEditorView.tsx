@@ -970,7 +970,7 @@ export function OrgEditorView({
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showTemplates, setShowTemplates] = useState(false);
   const [showNewNodeForm, setShowNewNodeForm] = useState(false);
-  const [propsTab, setPropsTab] = useState<"overview" | "identity" | "capabilities" | "tasks">("overview");
+  const [propsTab, setPropsTab] = useState<"overview" | "identity" | "capabilities">("overview");
   const [fullPromptPreview, setFullPromptPreview] = useState<string | null>(null);
   const [promptPreviewLoading, setPromptPreviewLoading] = useState(false);
   const [layoutLocked, setLayoutLocked] = useState(false);
@@ -1702,9 +1702,9 @@ export function OrgEditorView({
     return () => clearInterval(interval);
   }, [visible, currentOrg, liveMode, apiBaseUrl]);
 
-  // ── Fetch node tasks when tasks tab is active ──
+  // ── Fetch node tasks when monitor panel is visible (liveMode) ──
   useEffect(() => {
-    if (!selectedNodeId || !currentOrg || propsTab !== "tasks") {
+    if (!selectedNodeId || !currentOrg || !liveMode) {
       setNodeTasks(null);
       setNodeActivePlan(null);
       return;
@@ -1736,7 +1736,7 @@ export function OrgEditorView({
       }
     };
     fetchNodeTasks();
-  }, [selectedNodeId, currentOrg, propsTab, apiBaseUrl]);
+  }, [selectedNodeId, currentOrg, liveMode, apiBaseUrl]);
 
   // ── Inject runtime metrics into nodes from orgStats ──
   useEffect(() => {
@@ -3292,107 +3292,56 @@ export function OrgEditorView({
           }}
         />
       )}
-      {selectedNode && showRightPanel && (
+
+      {/* ── Monitor Panel (liveMode, desktop only) ── */}
+      {liveMode && selectedNode && showRightPanel && !isMobile && (
         <div
           style={{
-            width: isMobile ? "85%" : 300,
-            maxWidth: isMobile ? 360 : 300,
-            borderLeft: isMobile ? "none" : "1px solid var(--line)",
-            overflowY: "auto",
-            scrollbarGutter: "stable",
+            width: 280, flexShrink: 0,
+            borderLeft: "1px solid var(--line)",
+            overflowY: "auto", scrollbarGutter: "stable",
             background: "var(--bg-app)",
-            position: isMobile ? "absolute" : "relative",
-            right: 0,
-            top: 0,
-            bottom: 0,
-            zIndex: isMobile ? 50 : "auto",
-            boxShadow: isMobile ? "-4px 0 12px rgba(0,0,0,0.15)" : "none",
-            flexShrink: 0,
           }}
         >
-          <div style={{ padding: "12px 12px 8px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{selectedNode.role_title}</div>
-              <div style={{ fontSize: 11, color: "var(--muted)" }}>{selectedNode.department || "未分配部门"}</div>
-            </div>
-            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-              {liveMode && selectedOrgId && (
-                <button
-                  className="btnSmall"
-                  onClick={() => { setChatPanelNode(selectedNodeId); setActiveDrawer("chat"); }}
-                  style={{
-                    minWidth: 36, minHeight: 36, fontSize: 12,
-                    background: "linear-gradient(135deg, #3b82f6, #6366f1)",
-                    color: "#fff", border: "none", borderRadius: 8,
-                  }}
-                  title="与该节点对话"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                  </svg>
-                </button>
-              )}
-              {isMobile && (
-                <button className="btnSmall" onClick={() => { setSelectedNodeId(null); }} style={{ minWidth: 36, minHeight: 36 }}><IconX size={14} /></button>
-              )}
+          <div style={{ padding: "12px 12px 8px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>运行监控</div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <span style={{
+                fontSize: 10, padding: "1px 6px", borderRadius: 4,
+                background: `${STATUS_COLORS[selectedNode.status] || "var(--muted)"}20`,
+                color: STATUS_COLORS[selectedNode.status] || "var(--muted)",
+                fontWeight: 500,
+              }}>
+                {STATUS_LABELS[selectedNode.status] || selectedNode.status}
+              </span>
+              {selectedNode.is_clone && <span style={{ fontSize: 9, color: "#0369a1" }}>副本</span>}
+              {selectedNode.ephemeral && <span style={{ fontSize: 9, color: "#b45309" }}>临时</span>}
             </div>
           </div>
+          <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
 
-          {/* Tabs */}
-          <div style={{ padding: "10px 12px 0", borderBottom: "1px solid var(--line)" }}>
-            <ToggleGroup
-              type="single"
-              value={propsTab}
-              onValueChange={(v) => { if (v) setPropsTab(v as typeof propsTab); }}
-              variant="outline"
-              size="sm"
-              spacing={0}
-              className="grid w-full grid-cols-4"
-            >
-              <ToggleGroupItem value="overview" className="h-8 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
-                {liveMode ? "监控" : "概览"}
-              </ToggleGroupItem>
-              <ToggleGroupItem value="identity" className="h-8 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
-                身份
-              </ToggleGroupItem>
-              <ToggleGroupItem value="capabilities" className="h-8 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
-                能力
-              </ToggleGroupItem>
-              <ToggleGroupItem value="tasks" className="h-8 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
-                任务
-              </ToggleGroupItem>
-            </ToggleGroup>
-          </div>
+                {/* Tasks (detailed) */}
+                {selectedNodeId && currentOrg && (
+                  <NodeTasksTabContent
+                    nodeTasks={nodeTasks}
+                    nodeActivePlan={nodeActivePlan}
+                    loading={nodeTasksLoading}
+                    nodes={nodes}
+                    apiBaseUrl={apiBaseUrl}
+                    orgId={currentOrg.id}
+                    fmtDateTime={fmtDateTime}
+                  />
+                )}
 
-          <div style={{ padding: 12 }}>
-            {propsTab === "overview" && liveMode && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {/* Status strip */}
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                  <span style={{
-                    fontSize: 11,
-                    padding: "2px 8px",
-                    borderRadius: 4,
-                    background: `${STATUS_COLORS[selectedNode.status] || "var(--muted)"}20`,
-                    color: STATUS_COLORS[selectedNode.status] || "var(--muted)",
-                    fontWeight: 500,
-                  }}>
-                    {STATUS_LABELS[selectedNode.status] || selectedNode.status}
-                  </span>
-                  {selectedNode.is_clone && <span style={{ fontSize: 10, color: "#0369a1" }}>副本</span>}
-                  {selectedNode.ephemeral && <span style={{ fontSize: 10, color: "#b45309" }}>临时</span>}
-                </div>
-
-                {/* Current task - prominent */}
-                {selectedNode.current_task && (
-                  <div style={{
-                    fontSize: 11, color: "#374151",
-                    whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.4,
-                    background: "#fffbeb", padding: "8px 10px", borderRadius: 6,
-                    border: "1px solid #fde68a",
-                  }}>
-                    <div style={{ fontSize: 10, fontWeight: 600, color: "#b45309", marginBottom: 4 }}>当前任务</div>
-                    {selectedNode.current_task}
+                {/* Chat */}
+                {selectedOrgId && (
+                  <div style={{ height: 360 }}>
+                    <OrgChatPanel
+                      orgId={selectedOrgId}
+                      nodeId={selectedNodeId}
+                      apiBaseUrl={apiBaseUrl}
+                      compact
+                    />
                   </div>
                 )}
 
@@ -3650,39 +3599,83 @@ export function OrgEditorView({
                   )}
                 </div>
 
-                {/* Config summary */}
-                <div style={{ borderTop: "1px dashed var(--line)", paddingTop: 10, marginTop: 2 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", marginBottom: 6 }}>节点配置</div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11 }}>
-                    <div><span style={{ color: "var(--muted)" }}>岗位: </span>{selectedNode.role_title || "—"}</div>
-                    <div><span style={{ color: "var(--muted)" }}>部门: </span>{selectedNode.department || "—"}</div>
-                    {selectedNode.role_goal && (
-                      <div style={{ lineHeight: 1.4 }}>
-                        <span style={{ color: "var(--muted)" }}>目标: </span>
-                        {selectedNode.role_goal.length > 60 ? selectedNode.role_goal.slice(0, 60) + "…" : selectedNode.role_goal}
-                      </div>
-                    )}
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 2 }}>
-                      {(selectedNode.external_tools || []).length > 0 && (
-                        <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "rgba(59,130,246,0.1)", color: "#3b82f6" }}>
-                          工具 {selectedNode.external_tools.length}
-                        </span>
-                      )}
-                      {selectedNode.skills.length > 0 && (
-                        <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "rgba(124,58,237,0.1)", color: "#7c3aed" }}>
-                          技能 {selectedNode.skills.length}
-                        </span>
-                      )}
-                      {selectedNode.mcp_servers.length > 0 && (
-                        <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "rgba(16,185,129,0.1)", color: "#10b981" }}>
-                          MCP {selectedNode.mcp_servers.length}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
+          </div>
+        </div>
+      )}
+
+      {selectedNode && showRightPanel && (
+        <div
+          style={{
+            width: isMobile ? "85%" : 300,
+            maxWidth: isMobile ? 360 : 300,
+            borderLeft: isMobile ? "none" : "1px solid var(--line)",
+            overflowY: "auto",
+            scrollbarGutter: "stable",
+            background: "var(--bg-app)",
+            position: isMobile ? "absolute" : "relative",
+            right: 0,
+            top: 0,
+            bottom: 0,
+            zIndex: isMobile ? 50 : "auto",
+            boxShadow: isMobile ? "-4px 0 12px rgba(0,0,0,0.15)" : "none",
+            flexShrink: 0,
+          }}
+        >
+          <div style={{ padding: "12px 12px 8px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{selectedNode.role_title}</div>
+              <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                {selectedNode.department || "未分配部门"}
+                {liveMode && <span style={{ marginLeft: 6, fontSize: 10, color: "#9ca3af" }}>· 配置已锁定</span>}
               </div>
-            )}
+            </div>
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              {liveMode && selectedOrgId && (
+                <button
+                  className="btnSmall"
+                  onClick={() => { setChatPanelNode(selectedNodeId); setActiveDrawer("chat"); }}
+                  style={{
+                    minWidth: 36, minHeight: 36, fontSize: 12,
+                    background: "linear-gradient(135deg, #3b82f6, #6366f1)",
+                    color: "#fff", border: "none", borderRadius: 8,
+                  }}
+                  title="与该节点对话"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                  </svg>
+                </button>
+              )}
+              {isMobile && (
+                <button className="btnSmall" onClick={() => { setSelectedNodeId(null); }} style={{ minWidth: 36, minHeight: 36 }}><IconX size={14} /></button>
+              )}
+            </div>
+          </div>
+
+          {/* Tabs */}
+          <div style={{ padding: "10px 12px 0", borderBottom: "1px solid var(--line)" }}>
+            <ToggleGroup
+              type="single"
+              value={propsTab}
+              onValueChange={(v) => { if (v) setPropsTab(v as typeof propsTab); }}
+              variant="outline"
+              size="sm"
+              spacing={0}
+              className="grid w-full grid-cols-3"
+            >
+              <ToggleGroupItem value="overview" className="h-8 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
+                概览
+              </ToggleGroupItem>
+              <ToggleGroupItem value="identity" className="h-8 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
+                身份
+              </ToggleGroupItem>
+              <ToggleGroupItem value="capabilities" className="h-8 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
+                能力
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+
+          <div style={{ padding: 12 }}>
 
             {/* ── Org-level stats dashboard (live mode, no node selected) ── */}
             {propsTab === "overview" && liveMode && !selectedNodeId && orgStats && (
@@ -3870,8 +3863,8 @@ export function OrgEditorView({
               </div>
             )}
 
-            {propsTab === "overview" && !liveMode && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {propsTab === "overview" && (
+              <fieldset disabled={!!liveMode} style={{ border: "none", margin: 0, padding: 0, minWidth: 0, opacity: liveMode ? 0.5 : 1, display: "flex", flexDirection: "column", gap: 10 }}>
                 <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>头像</label>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                   {AVATAR_PRESETS.map((av) => {
@@ -4099,22 +4092,11 @@ export function OrgEditorView({
                   onChange={(e) => updateNodeData("level", parseInt(e.target.value) || 0)}
                   style={{ fontSize: 13, width: 80 }}
                 />
-              </div>
+              </fieldset>
             )}
 
             {propsTab === "identity" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {liveMode && (
-                  <div style={{
-                    fontSize: 11, color: "#6b7280", background: "var(--bg-secondary, #f5f5f5)",
-                    padding: "8px 12px", borderRadius: 6, display: "flex", alignItems: "center", gap: 6,
-                    border: "1px solid var(--line)",
-                  }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                    编排运行中，配置已锁定。停止后可编辑。
-                  </div>
-                )}
-                <fieldset disabled={!!liveMode} style={{ border: "none", margin: 0, padding: 0, minWidth: 0, opacity: liveMode ? 0.5 : 1, display: "flex", flexDirection: "column", gap: 10 }}>
+              <fieldset disabled={!!liveMode} style={{ border: "none", margin: 0, padding: 0, minWidth: 0, opacity: liveMode ? 0.5 : 1, display: "flex", flexDirection: "column", gap: 10 }}>
                 {/* Section 1: Field relationship */}
                 <div style={{
                   border: "1px solid var(--line)", borderRadius: 8, padding: "10px 12px",
@@ -4263,22 +4245,10 @@ export function OrgEditorView({
                   </div>
                 </div>
                 </fieldset>
-              </div>
             )}
 
             {propsTab === "capabilities" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {liveMode && (
-                  <div style={{
-                    fontSize: 11, color: "#6b7280", background: "var(--bg-secondary, #f5f5f5)",
-                    padding: "8px 12px", borderRadius: 6, display: "flex", alignItems: "center", gap: 6,
-                    border: "1px solid var(--line)",
-                  }}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                    编排运行中，配置已锁定。停止后可编辑。
-                  </div>
-                )}
-                <fieldset disabled={!!liveMode} style={{ border: "none", margin: 0, padding: 0, minWidth: 0, opacity: liveMode ? 0.5 : 1, display: "flex", flexDirection: "column", gap: 10 }}>
+              <fieldset disabled={!!liveMode} style={{ border: "none", margin: 0, padding: 0, minWidth: 0, opacity: liveMode ? 0.5 : 1, display: "flex", flexDirection: "column", gap: 10 }}>
                 {/* ── Section 1: 执行工具类目 ── */}
                 <Card className="gap-0 overflow-hidden py-0">
                   <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
@@ -4526,12 +4496,10 @@ export function OrgEditorView({
                   </div>
                 )}
                 </fieldset>
-              </div>
             )}
 
             {propsTab === "capabilities" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                <fieldset disabled={!!liveMode} style={{ border: "none", margin: 0, padding: 0, minWidth: 0, opacity: liveMode ? 0.5 : 1, display: "flex", flexDirection: "column", gap: 14 }}>
+              <fieldset disabled={!!liveMode} style={{ border: "none", margin: 0, padding: 0, minWidth: 0, opacity: liveMode ? 0.5 : 1, display: "flex", flexDirection: "column", gap: 14 }}>
                 {/* Performance section */}
                 <Card className="gap-0 py-0">
                   <CardHeader className="px-4 py-3">
@@ -4665,31 +4633,8 @@ export function OrgEditorView({
                   </CardContent>
                 </Card>
                 </fieldset>
-              </div>
             )}
 
-            {propsTab === "tasks" && liveMode && selectedOrgId && (
-              <div style={{ height: 360 }}>
-                <OrgChatPanel
-                  orgId={selectedOrgId}
-                  nodeId={selectedNodeId}
-                  apiBaseUrl={apiBaseUrl}
-                  compact
-                />
-              </div>
-            )}
-
-            {propsTab === "tasks" && selectedNodeId && currentOrg && (
-              <NodeTasksTabContent
-                nodeTasks={nodeTasks}
-                nodeActivePlan={nodeActivePlan}
-                loading={nodeTasksLoading}
-                nodes={nodes}
-                apiBaseUrl={apiBaseUrl}
-                orgId={currentOrg.id}
-                fmtDateTime={fmtDateTime}
-              />
-            )}
           </div>
         </div>
       )}
