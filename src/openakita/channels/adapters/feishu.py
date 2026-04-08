@@ -657,51 +657,49 @@ class FeishuAdapter(ChannelAdapter):
             )
             .register_p2_im_message_receive_v1(self._on_message_receive)
         )
-        # 注册消息已读事件，避免 SDK 报 "processor not found" ERROR 日志
-        try:
-            builder = builder.register_p2_im_message_read_v1(self._on_message_read)
-        except AttributeError:
-            pass
-        # 注册机器人进入会话事件
-        try:
-            builder = builder.register_p2_im_chat_access_event_bot_p2p_chat_entered_v1(
-                self._on_bot_chat_entered
-            )
-        except AttributeError:
-            pass
-        # 注册群聊更新事件（群公告变更等）
-        try:
-            builder = builder.register_p2_im_chat_updated_v1(self._on_chat_updated)
-        except AttributeError:
-            pass
-        # 注册机器人入群/被踢事件
-        try:
-            builder = builder.register_p2_im_chat_member_bot_added_v1(self._on_bot_chat_added)
-        except AttributeError:
-            pass
-        try:
-            builder = builder.register_p2_im_chat_member_bot_deleted_v1(self._on_bot_chat_deleted)
-        except AttributeError:
-            pass
-        # 注册表情回复事件，避免 SDK 报 "processor not found" ERROR 日志
-        try:
-            builder = builder.register_p2_im_message_reaction_created_v1(self._on_reaction_created)
-        except AttributeError:
-            pass
-        try:
-            builder = builder.register_p2_im_message_reaction_deleted_v1(self._on_reaction_deleted)
-        except AttributeError:
-            pass
-        # 注册卡片交互回调（card.action.trigger），需要 lark-oapi >= 1.3.0
-        try:
-            builder = builder.register_p2_card_action_trigger(self._on_card_action)
-        except AttributeError:
-            logger.warning(
-                "Feishu: register_p2_card_action_trigger not available, "
-                "card button interactions will not work. "
-                "Upgrade lark-oapi to >= 1.3.0."
-            )
+        # 注册已知事件处理器。对于不需要业务处理的事件（已读、表情等），
+        # 注册空 handler 以避免 SDK 抛出 "processor not found" ERROR。
+        # 使用辅助方法统一注册，失败时记录 DEBUG 日志而非静默吞掉。
+        _optional_events = [
+            # (SDK 注册方法名, handler, 是否功能关键)
+            ("register_p2_im_message_message_read_v1", self._on_message_read, False),
+            ("register_p2_im_chat_access_event_bot_p2p_chat_entered_v1",
+             self._on_bot_chat_entered, False),
+            ("register_p2_im_chat_updated_v1", self._on_chat_updated, False),
+            ("register_p2_im_chat_member_bot_added_v1", self._on_bot_chat_added, False),
+            ("register_p2_im_chat_member_bot_deleted_v1", self._on_bot_chat_deleted, False),
+            ("register_p2_im_message_reaction_created_v1", self._on_reaction_created, False),
+            ("register_p2_im_message_reaction_deleted_v1", self._on_reaction_deleted, False),
+            ("register_p2_card_action_trigger", self._on_card_action, True),
+        ]
+        for method_name, handler, is_critical in _optional_events:
+            reg_fn = getattr(builder, method_name, None)
+            if reg_fn is not None:
+                builder = reg_fn(handler)
+            elif is_critical:
+                logger.warning(
+                    f"Feishu: {method_name} not available in lark-oapi SDK. "
+                    "Upgrade lark-oapi to >= 1.3.0."
+                )
+            else:
+                logger.debug(f"Feishu: {method_name} not available, skipped")
+
         self._event_dispatcher = builder.build()
+
+        # 包装 SDK 的事件分发方法：对未注册的事件类型降级为 DEBUG 日志，
+        # 避免每增加一种飞书平台事件都需要追加空 handler（消除打地鼠）。
+        _original_do = self._event_dispatcher.do_without_validation
+
+        def _graceful_do_without_validation(payload: bytes) -> Any:
+            try:
+                return _original_do(payload)
+            except Exception as e:
+                if "processor not found" in str(e):
+                    logger.debug(f"Feishu: ignored unregistered event — {e}")
+                    return None
+                raise
+
+        self._event_dispatcher.do_without_validation = _graceful_do_without_validation
 
     def _on_message_receive(self, data: Any) -> None:
         """
