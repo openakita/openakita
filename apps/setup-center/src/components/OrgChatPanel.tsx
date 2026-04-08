@@ -51,6 +51,8 @@ export interface OrgChatPanelProps {
   showHeader?: boolean;
   title?: string;
   onClose?: () => void;
+  /** Map node IDs to display names so progress lines show readable names. */
+  nodeNames?: Record<string, string>;
 }
 
 function sessionId(orgId: string, nodeId?: string | null): string {
@@ -61,6 +63,16 @@ let _seq = 0;
 function genId() { return `orgchat-${Date.now()}-${++_seq}`; }
 
 const LS_PREFIX = "orgchat_msgs_";
+
+// Survives component unmount so command results aren't lost when navigating away
+interface PendingCmd {
+  commandId: string;
+  orgId: string;
+  placeholderId: string;
+  progressLines: string[];
+  finalContent: string | null;
+}
+const _pendingCmds = new Map<string, PendingCmd>();
 
 function saveToLocalStorage(cid: string, msgs: ChatMsg[]): void {
   try {
@@ -78,7 +90,7 @@ function loadFromLocalStorage(cid: string): ChatMsg[] {
   } catch { return []; }
 }
 
-export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, title, onClose }: OrgChatPanelProps) {
+export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, title, onClose, nodeNames }: OrgChatPanelProps) {
   const md = useMd();
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
@@ -86,6 +98,9 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
   const [loaded, setLoaded] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const mountedRef = useRef(true);
+  const nodeNamesRef = useRef(nodeNames);
+  nodeNamesRef.current = nodeNames;
   const convId = sessionId(orgId, nodeId);
 
   const scrollToBottom = useCallback(() => {
@@ -95,6 +110,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
   }, []);
 
   useEffect(scrollToBottom, [messages, scrollToBottom]);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
   // Load history: backend first, localStorage fallback
   useEffect(() => {
@@ -146,6 +162,76 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     return () => clearTimeout(t);
   }, [messages, convId, loaded]);
 
+  // Recover pending commands that completed (or are still running) while unmounted
+  useEffect(() => {
+    if (!loaded) return;
+    const pending = _pendingCmds.get(convId);
+    if (!pending || !pending.commandId) return;
+
+    if (pending.finalContent !== null) {
+      _pendingCmds.delete(convId);
+      const content = pending.finalContent;
+      const phId = pending.placeholderId;
+      setMessages(prev => {
+        if (prev.some(m => m.id === phId && !m.streaming)) return prev;
+        return [...prev, { id: phId, role: "assistant" as const, content, timestamp: Date.now() }];
+      });
+      return;
+    }
+
+    // Command still running — show progress and resume polling
+    let cancelled = false;
+    const phId = pending.placeholderId;
+    const progress = pending.progressLines.length > 0
+      ? pending.progressLines.slice(-8).join("\n\n")
+      : "思考中...";
+
+    setMessages(prev => {
+      if (prev.some(m => m.streaming)) return prev;
+      return [...prev, { id: phId, role: "assistant" as const, content: progress, timestamp: Date.now(), streaming: true }];
+    });
+    setSending(true);
+
+    const resumePoll = async () => {
+      while (!cancelled && _pendingCmds.has(convId)) {
+        await new Promise(r => setTimeout(r, 3000));
+        if (cancelled || !_pendingCmds.has(convId)) break;
+
+        if (mountedRef.current && pending.progressLines.length > 0) {
+          const preview = pending.progressLines.slice(-8).join("\n\n");
+          setMessages(prev => prev.map(m => m.id === phId && m.streaming ? { ...m, content: preview } : m));
+        }
+
+        try {
+          const res = await safeFetch(`${apiBaseUrl}/api/orgs/${pending.orgId}/commands/${pending.commandId}`);
+          const data = await res.json();
+          if (data.status === "done" || data.status === "error") {
+            if (!_pendingCmds.has(convId)) break;
+            _pendingCmds.delete(convId);
+            const resultText = data.result?.result || data.result?.error || data.error || JSON.stringify(data);
+            const progressSummary = pending.progressLines.length > 0
+              ? pending.progressLines.join("\n\n") + "\n\n---\n\n"
+              : "";
+            const content = progressSummary + resultText;
+            if (mountedRef.current) {
+              setMessages(prev => prev.map(m => m.id === phId ? { ...m, content, streaming: false } : m));
+              setSending(false);
+            }
+            return;
+          }
+        } catch { /* poll retry */ }
+      }
+      // Original handler resolved while we were polling — reload from localStorage
+      if (!cancelled && mountedRef.current && !_pendingCmds.has(convId)) {
+        const saved = loadFromLocalStorage(convId);
+        if (saved.length > 0) setMessages(saved);
+        setSending(false);
+      }
+    };
+    resumePoll();
+    return () => { cancelled = true; };
+  }, [loaded, convId, apiBaseUrl]);
+
   // Flush localStorage immediately on page hide / close
   const messagesRef = useRef<ChatMsg[]>([]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
@@ -187,6 +273,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
 
   const handleClear = useCallback(async () => {
     setMessages([]);
+    _pendingCmds.delete(convId);
     try { localStorage.removeItem(LS_PREFIX + convId); } catch {}
     try {
       await safeFetch(`${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}`, {
@@ -208,10 +295,13 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     setInput("");
     setSending(true);
 
+    const nn = (id: string) => nodeNamesRef.current?.[id] || id;
+
     const progressLines: string[] = [];
     const pushProgress = (line: string) => {
       progressLines.push(line);
-      const preview = progressLines.slice(-8).map(l => `> ${l}`).join("\n");
+      if (!mountedRef.current) return;
+      const preview = progressLines.slice(-8).join("\n\n");
       setMessages(prev => prev.map(m => m.id === placeholderId ? { ...m, content: preview } : m));
     };
 
@@ -224,17 +314,41 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         const st = d.status as string;
         if (st === "busy") {
           const task = (d.current_task || "") as string;
-          pushProgress(`[START] **${nid}** 开始处理${task ? `：${task.slice(0, 60)}` : ""}`);
-        } else if (st === "idle") pushProgress(`[DONE] **${nid}** 完成`);
-        else if (st === "error") pushProgress(`[ERR] **${nid}** 出错`);
+          const taskBrief = task.length > 80 ? task.slice(0, 80) + "…" : task;
+          pushProgress(`🔄 **${nn(nid)}** 开始处理${taskBrief ? `：${taskBrief}` : ""}`);
+        } else if (st === "idle") pushProgress(`✅ **${nn(nid)}** 完成`);
+        else if (st === "error") pushProgress(`❌ **${nn(nid)}** 出错`);
       } else if (event === "org:task_delegated") {
-        pushProgress(`[TASK] **${nid}** → **${toN}** 分配任务：${((d.task || "") as string).slice(0, 50)}`);
+        const task = ((d.task || "") as string);
+        const taskBrief = task.length > 80 ? task.slice(0, 80) + "…" : task;
+        pushProgress(`📋 **${nn(nid)}** → **${nn(toN)}** 分配任务：${taskBrief}`);
       } else if (event === "org:task_complete") {
-        pushProgress(`[OK] **${nid}** 任务完成`);
+        pushProgress(`✅ **${nn(nid)}** 任务完成`);
       } else if (event === "org:blackboard_update") {
-        pushProgress(`[NOTE] **${nid}** 更新黑板`);
+        pushProgress(`📝 **${nn(nid)}** 更新黑板`);
       }
     });
+
+    const finalizeResult = (content: string, role: "assistant" | "system" = "assistant") => {
+      const pending = _pendingCmds.get(convId);
+      if (pending) {
+        if (pending.placeholderId !== placeholderId) return;
+        pending.finalContent = content;
+        _pendingCmds.delete(convId);
+      }
+      if (mountedRef.current) {
+        setMessages(prev => prev.map(m =>
+          m.id === placeholderId ? { ...m, content, streaming: false, role } : m
+        ));
+      } else {
+        const existing = loadFromLocalStorage(convId);
+        const msg: ChatMsg = { id: placeholderId, role, content, timestamp: Date.now() };
+        const hasUser = existing.some(m => m.id === userMsg.id);
+        const toSave = hasUser ? [...existing, msg] : [...existing, userMsg, msg];
+        saveToLocalStorage(convId, toSave);
+        persistToBackend(apiBaseUrl, convId, toSave.map(m => ({ role: m.role, content: m.content })), true);
+      }
+    };
 
     let finalContent = "";
     try {
@@ -248,25 +362,24 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
 
       if (!commandId) {
         finalContent = data.result || data.error || JSON.stringify(data);
-        setMessages(prev => prev.map(m =>
-          m.id === placeholderId ? { ...m, content: finalContent, streaming: false } : m
-        ));
+        finalizeResult(finalContent);
       } else {
+        _pendingCmds.set(convId, { commandId, orgId, placeholderId, progressLines, finalContent: null });
+
         let resolved = false;
         const unsubDone = onWsEvent((evt, raw) => {
           const d = raw as Record<string, unknown> | null;
           if (evt !== "org:command_done" || !d || d.command_id !== commandId) return;
+          if (resolved) return;
           resolved = true;
           const result = d.result as Record<string, unknown> | null;
           const error = d.error as string | undefined;
           const resultText = String((result && (result.result || result.error)) || error || JSON.stringify(d));
           const progressSummary = progressLines.length > 0
-            ? progressLines.map(l => `> ${l}`).join("\n") + "\n\n---\n\n"
+            ? progressLines.join("\n\n") + "\n\n---\n\n"
             : "";
           finalContent = progressSummary + resultText;
-          setMessages(prev => prev.map(m =>
-            m.id === placeholderId ? { ...m, content: finalContent, streaming: false } : m
-          ));
+          finalizeResult(finalContent);
         });
 
         let lastActivity = Date.now();
@@ -281,12 +394,10 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
                 resolved = true;
                 const resultText = pd.result?.result || pd.result?.error || pd.error || JSON.stringify(pd);
                 const progressSummary = progressLines.length > 0
-                  ? progressLines.map(l => `> ${l}`).join("\n") + "\n\n---\n\n"
+                  ? progressLines.join("\n\n") + "\n\n---\n\n"
                   : "";
                 finalContent = progressSummary + resultText;
-                setMessages(prev => prev.map(m =>
-                  m.id === placeholderId ? { ...m, content: finalContent, streaming: false } : m
-                ));
+                finalizeResult(finalContent);
               }
             }
           } catch { /* retry */ }
@@ -299,20 +410,18 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       }
     } catch (e: any) {
       finalContent = `发送失败: ${e.message || e}`;
-      setMessages(prev => prev.map(m =>
-        m.id === placeholderId ? { ...m, content: finalContent, streaming: false, role: "system" } : m
-      ));
+      finalizeResult(finalContent, "system");
     } finally {
       unsubProgress();
       setSending(false);
-      // Sync full conversation to backend (replace mode).
-      // Uses closure-captured apiBaseUrl/convId — immune to stale-ref bugs.
-      const all = messagesRef.current.filter(m => !m.streaming);
-      if (all.length > 0) {
-        persistToBackend(apiBaseUrl, convId, all.map(m => ({ role: m.role, content: m.content })), true);
+      if (mountedRef.current) {
+        const all = messagesRef.current.filter(m => !m.streaming);
+        if (all.length > 0) {
+          persistToBackend(apiBaseUrl, convId, all.map(m => ({ role: m.role, content: m.content })), true);
+        }
       }
     }
-  }, [input, sending, orgId, nodeId, apiBaseUrl, persistToBackend]);
+  }, [input, sending, orgId, nodeId, apiBaseUrl, convId, persistToBackend]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
@@ -376,13 +485,15 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         )}
         {messages.map(m => (
           <div key={m.id} className={`ocp-msg ocp-msg-${m.role} ${m.streaming ? "ocp-msg-streaming" : ""}`}>
-            <div className={`ocp-msg-bubble ${m.role !== "user" && !m.streaming ? "chatMdContent" : ""}`}>
-              {m.role === "user" || !md || m.streaming ? (
+            <div className={`ocp-msg-bubble ${m.role !== "user" ? "chatMdContent" : ""}`}>
+              {m.role === "user" ? (
                 m.content
-              ) : (
+              ) : md ? (
                 <md.ReactMarkdown remarkPlugins={[md.remarkGfm]} rehypePlugins={[md.rehypeHighlight]}>
                   {m.content}
                 </md.ReactMarkdown>
+              ) : (
+                m.content
               )}
               {m.streaming && <span className="ocp-typing">●</span>}
             </div>
@@ -504,16 +615,13 @@ const CHAT_CSS = `
   color: var(--text);
   border-bottom-left-radius: 4px;
 }
-.ocp-msg-streaming .ocp-msg-bubble {
-  white-space: pre-wrap;
-}
 .ocp-msg-system .ocp-msg-bubble {
   background: rgba(239,68,68,0.08);
   border: 1px solid rgba(239,68,68,0.2);
   color: #fca5a5;
   border-bottom-left-radius: 4px;
 }
-.ocp-msg-streaming .ocp-msg-bubble:not(.chatMdContent) {
+.ocp-msg-streaming .ocp-msg-bubble {
   border-color: rgba(99,102,241,0.3);
 }
 .ocp-msg-bubble.chatMdContent { font-size: 13px; line-height: 1.6; }

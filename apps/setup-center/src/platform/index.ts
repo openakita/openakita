@@ -164,6 +164,42 @@ export async function writeFile(path: string, data: Uint8Array): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Attachment save (download a file from an API URL)
+// ---------------------------------------------------------------------------
+
+/**
+ * Save an attachment from a remote API URL.
+ * - Tauri: opens a native "Save File" dialog, downloads, and writes to disk.
+ * - Web: triggers a browser download via a hidden <a> tag.
+ */
+export async function saveAttachment(opts: {
+  apiUrl: string;
+  filename: string;
+}): Promise<void> {
+  const { apiUrl, filename } = opts;
+
+  if (IS_TAURI) {
+    const dest = await saveFileDialog({
+      title: "保存附件",
+      defaultPath: filename,
+    });
+    if (!dest) return;
+    const { invoke: tauriInvoke } = await import("@tauri-apps/api/core");
+    await tauriInvoke("download_file", { url: apiUrl, filename: dest });
+    return;
+  }
+
+  const a = document.createElement("a");
+  a.href = apiUrl;
+  a.download = filename;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+// ---------------------------------------------------------------------------
 // HTTP proxy (bypass CORS in Tauri webview; direct fetch on web)
 // ---------------------------------------------------------------------------
 
