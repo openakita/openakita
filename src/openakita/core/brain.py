@@ -612,10 +612,21 @@ class Brain:
             )
             _choices = getattr(response, "choices", None) or []
             _content = getattr(response, "content", None) or []
+            _out_tokens = response.usage.output_tokens if hasattr(response, "usage") else 0
+            _reasoning = bool(getattr(response, "reasoning_content", None))
+            _ = _choices  # reserved for upcoming choice-level diagnostics
             logger.info(
                 f"[Brain] messages_create_async success: "
-                f"choices={len(_choices)}, content_blocks={len(_content)}"
+                f"content_blocks={len(_content)}, tokens_out={_out_tokens}, "
+                f"has_reasoning={_reasoning}, endpoint={getattr(response, 'endpoint_name', '?')}"
             )
+            if not _content and _out_tokens > 0:
+                logger.warning(
+                    f"[Brain] ⚠️ EMPTY CONTENT with {_out_tokens} output tokens! "
+                    f"enable_thinking={use_thinking}, model={getattr(response, 'model', '?')}, "
+                    f"reasoning_content_len={len(response.reasoning_content) if response.reasoning_content else 0}, "
+                    f"stop_reason={getattr(response, 'stop_reason', '?')}"
+                )
         except Exception as e:
             logger.error(f"[Brain] messages_create_async FAILED: {type(e).__name__}: {e}")
             raise
