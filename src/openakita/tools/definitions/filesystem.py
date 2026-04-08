@@ -27,16 +27,16 @@ FILESYSTEM_TOOLS = [
 - 如果命令连续失败，请尝试不同的命令或方法
 - 输出超过 200 行时会自动截断，完整输出保存到溢出文件，可用 read_file 分页读取
 
-**超时设置**:
+**超时设置**（上限 300 秒）:
 - 简单命令: 30-60 秒
-- 安装/下载: 300 秒
-- 长时间任务: 根据需要设置更长时间""",
+- 安装/下载: 120-300 秒
+- 连续超时通常说明网络/环境问题，请勿盲目增大 timeout，应告知用户""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "command": {"type": "string", "description": "要执行的 Shell 命令"},
                 "cwd": {"type": "string", "description": "工作目录（可选）"},
-                "timeout": {"type": "integer", "description": "超时时间（秒），默认 60 秒"},
+                "timeout": {"type": "integer", "description": "超时时间（秒），默认 60，上限 300。连续超时通常说明网络/环境问题，请勿盲目增大"},
             },
             "required": ["command"],
         },

@@ -154,7 +154,7 @@ class FilesystemHandler:
         """执行 Shell 命令（大输出自动截断 + 溢出文件）"""
         command = params["command"]
         timeout = params.get("timeout", 60)
-        timeout = max(10, min(timeout, 600))
+        timeout = max(10, min(timeout, 300))
 
         policy = self._get_fix_policy()
         if policy:
@@ -269,9 +269,19 @@ class FilesystemHandler:
             # 失败输出也可能很大，使用同样的溢出机制
             full_error = "\n".join(output_parts)
             truncated_result = self._truncate_shell_output(full_error)
-            truncated_result += (
-                "\n提示: 如果不确定原因，可以调用 get_session_logs 查看详细日志，或尝试其他命令。"
-            )
+            is_timeout = result.returncode == -1 and "timed out" in (result.stderr or "").lower()
+            if is_timeout:
+                truncated_result += (
+                    "\n⚠️ 命令超时提示: 如果已连续多次超时，通常说明存在网络/代理/环境问题，"
+                    "增加 timeout 参数通常无法解决。"
+                    "建议：1) 直接告知用户当前网络环境无法完成此操作 "
+                    "2) 提供用户可手动执行的替代方案 "
+                    "3) 不要继续尝试同类网络命令。"
+                )
+            else:
+                truncated_result += (
+                    "\n提示: 如果不确定原因，可以调用 get_session_logs 查看详细日志，或尝试其他命令。"
+                )
             return truncated_result
 
     def _truncate_shell_output(self, text: str) -> str:
