@@ -1370,6 +1370,58 @@ class LLMClient:
                 async with self._endpoint_lock:
                     self._last_success_endpoint = provider.name
                 response.endpoint_name = provider.name
+                # 标记 failover 信息供上层（reasoning_engine）发送通知
+                if i > 0 and providers:
+                    response._failover_from = providers[0].name  # type: ignore[attr-defined]
+
+                # ── 自愈: thinking 模式静默失败（HTTP 200 但内容为空） ──
+                # 部分 API 代理/中转接受 thinking 参数但在响应中剥离推理内容，
+                # 导致 output_tokens > 0 但 content 为空。
+                # 策略：仅对当前请求降级重试一次，不永久禁用 thinking。
+                # 必须在 content lost failover 块之前执行，否则 endpoint 会被切换掉。
+                if (
+                    not response.content
+                    and response.usage.output_tokens > 0
+                    and request.enable_thinking
+                    and not getattr(request, '_thinking_silent_retried', False)
+                ):
+                    logger.warning(
+                        f"[LLM] endpoint={provider.name}: thinking mode produced "
+                        f"{response.usage.output_tokens} output tokens but 0 visible content "
+                        f"(proxy may strip reasoning_content). "
+                        f"Retrying once with thinking disabled."
+                    )
+                    request._thinking_silent_retried = True  # type: ignore[attr-defined]
+                    _saved_thinking = request.enable_thinking
+                    _saved_depth = request.thinking_depth
+                    request.enable_thinking = False
+                    request.thinking_depth = None
+                    try:
+                        response = await self._try_with_retry(
+                            lambda p=provider: p.chat(request),
+                            cancel_event=cancel_event,
+                            max_attempts=max_attempts,
+                            request=request,
+                            provider_name=provider.name,
+                        )
+                        response.endpoint_name = provider.name
+                        if i > 0 and providers:
+                            response._failover_from = providers[0].name  # type: ignore[attr-defined]
+                        response._thinking_fallback = True  # type: ignore[attr-defined]
+                        logger.info(
+                            f"[LLM] endpoint={provider.name}: thinking fallback succeeded, "
+                            f"tokens_out={response.usage.output_tokens} "
+                            f"content_blocks={len(response.content)}"
+                        )
+                        return response
+                    except Exception as retry_err:
+                        logger.warning(
+                            f"[LLM] endpoint={provider.name}: thinking fallback retry "
+                            f"also failed: {retry_err}"
+                        )
+                        request.enable_thinking = _saved_thinking
+                        request.thinking_depth = _saved_depth
+                        # 落到下面 content lost failover 兜底
 
                 # ── 结构性失败: 有 token 但无内容 → 切换端点 (#418) ──
                 # 部分代理返回 content:null 但 output_tokens>0，
