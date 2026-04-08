@@ -442,6 +442,7 @@ async def _stream_chat(
             logger.info(
                 "[Chat API] Dedup: identical message within time window, skipping LLM"
             )
+
             yield _sse("done")
             return
 

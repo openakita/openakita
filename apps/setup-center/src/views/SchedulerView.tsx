@@ -827,7 +827,7 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
       {/* Header: Tabs + Search + Actions */}
       <Card className="gap-0 border-border/80 py-0 shadow-sm">
         <CardContent className="p-4">
-          <div className="flex items-center justify-between gap-4 overflow-x-auto">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <ToggleGroup
               type="single"
               value={activeTab}
@@ -851,8 +851,8 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
                 {countBadge(tabCounts.all, "all")}
               </ToggleGroupItem>
             </ToggleGroup>
-            <div className="flex min-w-max items-center gap-3">
-              <div className="relative w-[220px] min-w-[180px] md:w-[280px]">
+            <div className="flex min-w-0 flex-1 items-center justify-end gap-3">
+              <div className="relative min-w-0 flex-1 max-w-[280px]">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                 <Input
                   placeholder={t("scheduler.searchPlaceholder")}

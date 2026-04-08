@@ -213,6 +213,11 @@ scripts/apply_agent_changes.py
 scripts/refactor_agent_tools.py
 scripts/update_version.py
 
+# Local dev scripts (not for GitHub)
+scripts/clean-all.ps1
+scripts/start-backend.ps1
+scripts/start-frontend.ps1
+
 # Tauri signing keys (NEVER commit private keys)
 .tauri/
 
