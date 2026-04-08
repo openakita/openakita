@@ -250,7 +250,7 @@ fn write_root_config(config: &RootConfig) -> Result<(), String> {
 
     let p = root_config_path();
     let data = serde_json::to_string_pretty(config).map_err(|e| format!("serialize root config failed: {e}"))?;
-    fs::write(&p, data).map_err(|e| format!("write root_config.json failed: {e}"))?;
+    atomic_write_with_backup(&p, data.as_bytes())?;
 
     // 同步写入纯文本文件，供 NSIS 安装脚本简单读取（无需解析 JSON）
     // NSIS Unicode 模式的 FileRead 在无 BOM 时按 ANSI(系统代码页) 解读，
@@ -2151,10 +2151,71 @@ fn openakita_stop_all_processes() -> Vec<u32> {
 
 fn read_state_file() -> AppStateFile {
     let p = state_file_path();
-    let Ok(content) = fs::read_to_string(&p) else {
-        return AppStateFile::default();
+    if let Ok(content) = fs::read_to_string(&p) {
+        if let Ok(state) = serde_json::from_str::<AppStateFile>(&content) {
+            if !state.workspaces.is_empty() {
+                return state;
+            }
+            // workspaces is empty — could be a truncated/corrupted write.
+            // Fall through to disk recovery, but preserve other fields.
+            let recovered = rebuild_state_from_disk(Some(state));
+            if !recovered.workspaces.is_empty() {
+                eprintln!(
+                    "state.json had empty workspaces but {} workspace dir(s) found on disk — recovered",
+                    recovered.workspaces.len()
+                );
+                let _ = write_state_file(&recovered);
+            }
+            return recovered;
+        }
+        // JSON parse failed (truncated / corrupted file)
+        eprintln!("warning: state.json is corrupted, attempting disk recovery");
+    }
+    // File missing or unreadable — try to recover from workspaces/ directory
+    let recovered = rebuild_state_from_disk(None);
+    if !recovered.workspaces.is_empty() {
+        eprintln!(
+            "state.json missing but {} workspace dir(s) found on disk — recovered",
+            recovered.workspaces.len()
+        );
+        let _ = write_state_file(&recovered);
+    }
+    recovered
+}
+
+/// Scan workspaces/ directory to rebuild state when state.json is missing or corrupted.
+/// A subdirectory is considered a valid workspace only if it contains a `data/` child.
+fn rebuild_state_from_disk(partial: Option<AppStateFile>) -> AppStateFile {
+    let mut state = partial.unwrap_or_default();
+    let ws_dir = workspaces_dir();
+    let Ok(entries) = fs::read_dir(&ws_dir) else {
+        return state;
     };
-    serde_json::from_str(&content).unwrap_or_default()
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if !path.join("data").exists() {
+            continue;
+        }
+        let id = entry.file_name().to_string_lossy().to_string();
+        if state.workspaces.iter().any(|w| w.id == id) {
+            continue;
+        }
+        state.workspaces.push(WorkspaceMeta {
+            id: id.clone(),
+            name: id.clone(),
+        });
+    }
+    if state.current_workspace_id.is_none() && !state.workspaces.is_empty() {
+        // Prefer "default" if it exists, otherwise pick the first one
+        let preferred = state.workspaces.iter()
+            .find(|w| w.id == "default")
+            .unwrap_or(&state.workspaces[0]);
+        state.current_workspace_id = Some(preferred.id.clone());
+    }
+    state
 }
 
 fn write_state_file(state: &AppStateFile) -> Result<(), String> {
@@ -2162,8 +2223,42 @@ fn write_state_file(state: &AppStateFile) -> Result<(), String> {
     if let Some(parent) = p.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("create_dir_all failed: {e}"))?;
     }
-    let data = serde_json::to_string_pretty(state).map_err(|e| format!("serialize failed: {e}"))?;
-    fs::write(&p, data).map_err(|e| format!("write state.json failed: {e}"))?;
+    let data = serde_json::to_string_pretty(state)
+        .map_err(|e| format!("serialize failed: {e}"))?;
+    atomic_write_with_backup(&p, data.as_bytes())
+}
+
+/// Crash-safe file write: backup existing file, write to .tmp, then atomic rename.
+/// On Windows rename failure (file locked), retries up to 3 times before falling back
+/// to direct write.
+fn atomic_write_with_backup(path: &Path, content: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create parent dir failed: {e}"))?;
+    }
+    if path.exists() {
+        let bak = path.with_extension("json.bak");
+        let _ = fs::copy(path, &bak);
+    }
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, content).map_err(|e| format!("write tmp failed: {e}"))?;
+    for attempt in 0..3u64 {
+        match fs::rename(&tmp, path) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if attempt < 2 {
+                    std::thread::sleep(std::time::Duration::from_millis(100 * (attempt + 1)));
+                } else {
+                    eprintln!("atomic rename failed after 3 retries ({e}), falling back to direct write");
+                    if let Err(e2) = fs::write(path, content) {
+                        let _ = fs::remove_file(&tmp);
+                        return Err(format!("write failed: {e2}"));
+                    }
+                    let _ = fs::remove_file(&tmp);
+                    return Ok(());
+                }
+            }
+        }
+    }
     Ok(())
 }
 
