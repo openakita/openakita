@@ -59,6 +59,22 @@ def _is_stream_only_error(error: str) -> bool:
     )
 
 
+def _is_empty_response_error(error: str) -> bool:
+    """检测错误是否为非流式空响应（可能流式模式能正常返回内容）。
+
+    仅匹配 _chat_non_stream 产生的 "choices/output 为空" 错误，
+    不匹配流式路径的空响应错误。
+    """
+    err_lower = error.lower()
+    if "stream" in err_lower:
+        return False
+    return (
+        "empty response" in err_lower
+        or "no choices" in err_lower
+        or "no output" in err_lower
+    )
+
+
 class _BearerAuth(httpx.Auth):
     """Bearer token auth that persists across cross-origin redirects.
 
@@ -225,20 +241,27 @@ class OpenAIProvider(LLMProvider):
         )
 
     async def chat(self, request: LLMRequest) -> LLMResponse:
-        """发送聊天请求（支持 stream-only 端点自动检测 + 空响应流式回退）"""
-        await self.acquire_rate_limit()
+        """发送聊天请求（统一的非流式 → 流式自动回退）
 
-        # 每个 provider 独立判断是否需要流式回退，避免跨端点泄漏
-        request._stream_fallback_tried = False  # type: ignore[attr-defined]
+        回退策略（按优先级）：
+        1. 配置 stream_only → 直接走流式
+        2. 代理明确要求 stream → 永久切换流式
+        3. 非流式空响应异常 / 非流式成功但内容空+token>0 → 尝试流式，成功则记忆
+        """
+        await self.acquire_rate_limit()
 
         if self._stream_only:
             return await self._chat_via_stream(request)
+
+        response: LLMResponse | None = None
+        non_stream_error: LLMError | None = None
 
         try:
             response = await self._chat_non_stream(request)
         except (AuthenticationError, RateLimitError):
             raise
         except LLMError as e:
+            non_stream_error = e
             if _is_stream_only_error(str(e)):
                 logger.info(
                     f"[OpenAI] '{self.name}': detected stream-only endpoint, "
@@ -246,38 +269,44 @@ class OpenAIProvider(LLMProvider):
                 )
                 self._stream_only = True
                 return await self._chat_via_stream(request)
-            raise
 
-        # 同步响应空内容 + 有 token 消耗 → 流式回退重试（单次）
-        # 部分中转代理在同步模式下丢失内容但流式模式正常
-        if (
-            not response.content
-            and response.usage.output_tokens > 0
-            and not getattr(request, '_stream_fallback_tried', False)
-        ):
-            logger.warning(
-                f"[OpenAI] '{self.name}': sync response empty with "
-                f"{response.usage.output_tokens} output tokens, "
-                f"retrying via stream transport"
+        # 统一判断：非流式未能产出内容 → 尝试流式回退
+        _should_fallback = (
+            (non_stream_error is not None and _is_empty_response_error(str(non_stream_error)))
+            or (response is not None and not response.content
+                and response.usage.output_tokens > 0)
+        )
+
+        if _should_fallback:
+            _reason = (
+                f"non-stream error: {non_stream_error}"
+                if non_stream_error
+                else f"empty content with {response.usage.output_tokens} output tokens"  # type: ignore[union-attr]
             )
-            request._stream_fallback_tried = True  # type: ignore[attr-defined]
+            logger.warning(
+                f"[OpenAI] '{self.name}': {_reason}, attempting stream fallback"
+            )
             try:
                 stream_response = await self._chat_via_stream(request)
                 if stream_response.content:
                     logger.info(
                         f"[OpenAI] '{self.name}': stream fallback recovered content "
-                        f"({len(stream_response.content)} blocks)"
+                        f"({len(stream_response.content)} blocks), "
+                        f"switching to stream-only for this endpoint"
                     )
+                    self._stream_only = True
                     return stream_response
                 logger.warning(
                     f"[OpenAI] '{self.name}': stream fallback also returned empty content"
                 )
-            except Exception as e:
+            except Exception as stream_err:
                 logger.warning(
-                    f"[OpenAI] '{self.name}': stream fallback failed: {e}"
+                    f"[OpenAI] '{self.name}': stream fallback failed: {stream_err}"
                 )
 
-        return response
+        if non_stream_error is not None:
+            raise non_stream_error
+        return response  # type: ignore[return-value]
 
     async def _chat_non_stream(self, request: LLMRequest) -> LLMResponse:
         """非流式请求实现（原始路径，逻辑完全不变）。调用方须已获取 rate limit。"""
