@@ -410,7 +410,13 @@ class OpenAIProvider(LLMProvider):
                 )
 
             self.mark_healthy()
-            return self._parse_response(data)
+            self._last_raw_diagnostic = None
+            result = self._parse_response(data)
+            # 附加原始响应诊断（content lost 时由 _parse_response 设置）
+            _diag = self._last_raw_diagnostic
+            if _diag and not result.content:
+                result._raw_diagnostic = _diag  # type: ignore[attr-defined]
+            return result
 
         except httpx.TimeoutException as e:
             detail = f"{type(e).__name__}: {e}"
@@ -1206,6 +1212,18 @@ class OpenAIProvider(LLMProvider):
                     f"extra_data_keys={_extra_keys}, extra_choice_keys={_choice_keys}, "
                     f"token_details={_token_details}"
                 )
+                # 附加原始响应摘要供 llm_debug 保存
+                self._last_raw_diagnostic = {
+                    "endpoint": self.name,
+                    "data_keys": sorted(data.keys()),
+                    "choice_keys": sorted(choice.keys()),
+                    "message_keys": msg_keys,
+                    "message_preview": msg_preview,
+                    "extra_data_keys": _extra_keys,
+                    "extra_choice_keys": _choice_keys,
+                    "token_details": _token_details,
+                    "usage": usage_data,
+                }
 
         # 添加文本内容
         if text_content and not any(
