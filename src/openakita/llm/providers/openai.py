@@ -805,12 +805,17 @@ class OpenAIProvider(LLMProvider):
         # 文本内容 — 兼容 string 和 array 两种格式
         # 部分 OpenAI 兼容 API (如 Google Gemini OpenAI-compat) 返回 content 为数组:
         #   [{"type": "text", "text": "..."}, ...]
+        # 部分中转网关对推理模型返回 type 为 "output_text"/"reasoning" 等非标准值
         raw_content = message.get("content")
         if isinstance(raw_content, list):
             text_content = ""
             for part in raw_content:
-                if isinstance(part, dict) and part.get("type") == "text":
-                    text_content += part.get("text", "")
+                if isinstance(part, dict):
+                    ptype = part.get("type", "")
+                    if ptype == "text" or ptype == "output_text":
+                        text_content += part.get("text", "")
+                    elif "text" in part and ptype not in ("tool_use", "thinking", "image"):
+                        text_content += part.get("text", "")
                 elif isinstance(part, str):
                     text_content += part
             if not text_content and raw_content:
@@ -883,6 +888,53 @@ class OpenAIProvider(LLMProvider):
         # 添加文本内容
         if text_content:
             content_blocks.insert(0, TextBlock(text=text_content))
+
+        # 防御层：当 content_blocks 为空但 API 确实返回了 output tokens 时，
+        # 尝试从 message 的非标准字段中恢复内容（部分中转网关/推理模型
+        # 可能将输出放在 reasoning_content/reasoning/output 等字段中）
+        if not content_blocks and not has_tool_calls:
+            usage_data = data.get("usage", {})
+            _out_tokens = usage_data.get("completion_tokens", 0)
+
+            # 1. reasoning_content 作为可见文本 fallback（部分网关
+            #    将推理模型的所有输出放入此字段，而 content 为 null）
+            if not text_content and reasoning_content and _out_tokens > 0:
+                logger.warning(
+                    f"[PARSE] content empty but reasoning_content has "
+                    f"{len(reasoning_content)} chars with {_out_tokens} output tokens "
+                    f"from {self.name} — using reasoning_content as visible text fallback"
+                )
+                text_content = reasoning_content
+                reasoning_content = ""
+                content_blocks.insert(0, TextBlock(text=text_content))
+
+            # 2. 检查 message 中其他可能的文本字段
+            if not content_blocks and _out_tokens > 0:
+                for alt_key in ("reasoning", "output", "text", "refusal"):
+                    alt_val = message.get(alt_key)
+                    if alt_val and isinstance(alt_val, str) and alt_val.strip():
+                        logger.warning(
+                            f"[PARSE] Recovered {len(alt_val)} chars from message.{alt_key} "
+                            f"(content was empty, {_out_tokens} output tokens) from {self.name}"
+                        )
+                        text_content = alt_val.strip()
+                        content_blocks.insert(0, TextBlock(text=text_content))
+                        break
+
+            # 3. 仍然为空 → 记录诊断信息帮助排查
+            if not content_blocks and _out_tokens > 0:
+                msg_keys = sorted(k for k in message.keys() if k != "role")
+                msg_preview = {
+                    k: (str(v)[:200] if isinstance(v, str)
+                        else f"[{type(v).__name__}, len={len(v)}]" if isinstance(v, (list, dict))
+                        else str(v)[:100])
+                    for k, v in message.items() if k != "role"
+                }
+                logger.error(
+                    f"[PARSE] ⚠️ CONTENT LOST: {_out_tokens} output tokens but content_blocks "
+                    f"is empty from {self.name}. message keys={msg_keys}, "
+                    f"preview={msg_preview}"
+                )
 
         # 解析停止原因
         finish_reason = choice.get("finish_reason", "stop")
