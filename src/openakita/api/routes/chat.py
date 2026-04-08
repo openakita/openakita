@@ -363,9 +363,7 @@ async def _stream_chat(
                 )
             except (UnicodeEncodeError, OSError):
                 pass
-        from ...events import normalize_stream_event
-
-        payload = normalize_stream_event({"type": event_type, **(data or {})})
+        payload = {"type": event_type, **(data or {})}
         if event_type == "text_delta" and data and "content" in data:
             chunk = data["content"]
             _reply_chars += len(chunk)
