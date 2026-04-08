@@ -499,20 +499,28 @@ class OpenAIProvider(LLMProvider):
         body["stream"] = True
 
         text_parts: list[str] = []
+        reasoning_parts: list[str] = []
         tool_calls: dict[str, dict] = {}
         current_tool_id: str | None = None
         stop_reason = StopReason.END_TURN
         response_model = self.config.model
+        stream_usage: dict | None = None
 
         async for event in self._iter_sse_events(body):
             event_type = event.get("type")
+
+            if event_type == "usage":
+                stream_usage = event.get("usage")
+                continue
 
             if event_type == "content_block_delta":
                 delta = event.get("delta", {})
                 delta_type = delta.get("type")
 
                 if delta_type == "text":
-                    text_parts.append(delta.get("text", ""))
+                    text_parts.append(delta.get("text") or "")
+                elif delta_type == "reasoning":
+                    reasoning_parts.append(delta.get("text") or "")
                 elif delta_type == "tool_use":
                     call_id = delta.get("id")
                     if call_id:
@@ -562,11 +570,37 @@ class OpenAIProvider(LLMProvider):
         if tool_calls and stop_reason != StopReason.MAX_TOKENS:
             stop_reason = StopReason.TOOL_USE
 
+        _reasoning_text = "".join(reasoning_parts)
+        has_any_tool_calls = bool(tool_calls)
+
+        # 防御层：与 _parse_response 对齐 — reasoning 作为可见文本 fallback
+        if not content_blocks and not has_any_tool_calls and _reasoning_text:
+            logger.warning(
+                f"[STREAM] content empty but reasoning has {len(_reasoning_text)} chars "
+                f"from {self.name} — using reasoning as visible text fallback"
+            )
+            content_blocks.append(TextBlock(text=_reasoning_text))
+            _reasoning_text = ""
+
+        # 从流尾部 usage chunk 获取 token 统计（不再始终为零）
+        _usage = Usage()
+        if stream_usage:
+            _usage = Usage(
+                input_tokens=stream_usage.get("prompt_tokens", 0),
+                output_tokens=stream_usage.get("completion_tokens", 0),
+            )
+
+        if not content_blocks and _usage.output_tokens > 0:
+            logger.error(
+                f"[STREAM] ⚠️ CONTENT LOST: {_usage.output_tokens} output tokens "
+                f"but content is empty from {self.name} (stream_only adapter)"
+            )
+
         return LLMResponse(
             id="",
             content=content_blocks,
             stop_reason=stop_reason,
-            usage=Usage(),
+            usage=_usage,
             model=response_model,
         )
 
