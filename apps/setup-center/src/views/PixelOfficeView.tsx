@@ -68,21 +68,29 @@ export function PixelOfficeView({
   useEffect(() => {
     if (!visible) return;
     let cancelled = false;
-    (async () => {
+
+    const fetchOrgList = async () => {
       try {
         const resp = await safeFetch(`${apiBaseUrl}/api/orgs`);
-        if (resp.ok && !cancelled) {
+        if (!cancelled) {
           const data = await resp.json();
           const orgs = (data.organizations ?? data) as Array<{ id: string; name: string }>;
           setOrgList(orgs);
           const cur = selectedOrgIdRef.current;
-          if (orgs.length > 0 && !cur) {
-            setSelectedOrgId(orgs[0].id);
+          if (orgs.length > 0) {
+            if (!cur || !orgs.some(o => o.id === cur)) {
+              setSelectedOrgId(orgs[0].id);
+            }
           }
         }
-      } catch { /* ignore */ }
-    })();
-    return () => { cancelled = true; };
+      } catch (err) {
+        console.warn('[PixelOffice] Failed to fetch org list, will retry:', err);
+      }
+    };
+
+    fetchOrgList();
+    const retryTimer = setInterval(fetchOrgList, POLL_INTERVAL);
+    return () => { cancelled = true; clearInterval(retryTimer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiBaseUrl, visible]);
 
@@ -136,7 +144,9 @@ export function PixelOfficeView({
           setOrgData(data);
           setAgents(agentList);
         }
-      } catch { /* ignore */ }
+      } catch (err) {
+        console.warn('[PixelOffice] Failed to fetch org data:', err);
+      }
     };
 
     fetchOrgData();
@@ -147,7 +157,7 @@ export function PixelOfficeView({
   useEffect(() => {
     if (!visible || !selectedOrgId || isSoloMode) return;
     const wsBase = apiBaseUrl.replace(/^http/, 'ws');
-    const wsUrl = `${wsBase}/ws/org/${selectedOrgId}`;
+    const wsUrl = `${wsBase}/ws/events`;
 
     let ws: WebSocket;
     try {
@@ -162,7 +172,11 @@ export function PixelOfficeView({
         const msg = JSON.parse(ev.data);
         const eventType = msg.type ?? msg.event;
         if (eventType?.startsWith('org:')) {
-          EventBus.emit('org-event', eventType, msg.payload ?? msg.data ?? msg);
+          const payload = msg.payload ?? msg.data ?? msg;
+          const eventOrgId = payload?.org_id;
+          if (!eventOrgId || eventOrgId === selectedOrgIdRef.current) {
+            EventBus.emit('org-event', eventType, payload);
+          }
         }
       } catch { /* ignore */ }
     };
