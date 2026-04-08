@@ -419,6 +419,7 @@ class OpenAIProvider(LLMProvider):
         body["stream"] = True
 
         text_parts: list[str] = []
+        reasoning_parts: list[str] = []
         tool_calls: dict[str, dict] = {}
         current_tool_id: str | None = None
         stop_reason = StopReason.END_TURN
@@ -433,6 +434,8 @@ class OpenAIProvider(LLMProvider):
 
                 if delta_type == "text":
                     text_parts.append(delta.get("text", ""))
+                elif delta_type == "reasoning":
+                    reasoning_parts.append(delta.get("text", ""))
                 elif delta_type == "tool_use":
                     call_id = delta.get("id")
                     if call_id:
@@ -508,12 +511,14 @@ class OpenAIProvider(LLMProvider):
         if has_any_tool_calls and stop_reason != StopReason.MAX_TOKENS:
             stop_reason = StopReason.TOOL_USE
 
+        _reasoning_text = "".join(reasoning_parts)
         return LLMResponse(
             id="",
             content=content_blocks,
             stop_reason=stop_reason,
             usage=Usage(),
             model=response_model,
+            reasoning_content=_reasoning_text or None,
         )
 
     async def chat_stream(self, request: LLMRequest) -> AsyncIterator[dict]:
@@ -807,6 +812,7 @@ class OpenAIProvider(LLMProvider):
         #   [{"type": "text", "text": "..."}, ...]
         # 部分中转网关对推理模型返回 type 为 "output_text"/"reasoning" 等非标准值
         raw_content = message.get("content")
+        _thinking_from_content: list[str] = []
         if isinstance(raw_content, list):
             text_content = ""
             for part in raw_content:
@@ -814,11 +820,15 @@ class OpenAIProvider(LLMProvider):
                     ptype = part.get("type", "")
                     if ptype == "text" or ptype == "output_text":
                         text_content += part.get("text", "")
-                    elif "text" in part and ptype not in ("tool_use", "thinking", "image"):
+                    elif ptype == "thinking":
+                        _tval = part.get("thinking", "") or part.get("text", "")
+                        if _tval:
+                            _thinking_from_content.append(_tval)
+                    elif "text" in part and ptype not in ("tool_use", "image"):
                         text_content += part.get("text", "")
                 elif isinstance(part, str):
                     text_content += part
-            if not text_content and raw_content:
+            if not text_content and raw_content and not _thinking_from_content:
                 logger.warning(
                     f"[PARSE] content is list but no text parts extracted: "
                     f"types={[p.get('type') if isinstance(p, dict) else type(p).__name__ for p in raw_content[:3]]}"
@@ -856,6 +866,16 @@ class OpenAIProvider(LLMProvider):
         _tool_calls_from_reasoning = False
         combined_for_check = text_content
         reasoning_content = message.get("reasoning_content") or ""
+        if _thinking_from_content:
+            _joined = "\n".join(_thinking_from_content)
+            if reasoning_content:
+                reasoning_content = reasoning_content + "\n" + _joined
+            else:
+                reasoning_content = _joined
+            logger.info(
+                f"[PARSE] Extracted {len(_thinking_from_content)} thinking block(s) "
+                f"({len(_joined)} chars) from content array into reasoning_content"
+            )
         if not has_tool_calls and not text_content and reasoning_content:
             if has_text_tool_calls(reasoning_content):
                 combined_for_check = reasoning_content
@@ -910,7 +930,7 @@ class OpenAIProvider(LLMProvider):
 
             # 2. 检查 message 中其他可能的文本字段
             if not content_blocks and _out_tokens > 0:
-                for alt_key in ("reasoning", "output", "text", "refusal"):
+                for alt_key in ("reasoning", "output", "text", "thinking", "refusal"):
                     alt_val = message.get(alt_key)
                     if alt_val and isinstance(alt_val, str) and alt_val.strip():
                         logger.warning(
@@ -981,6 +1001,8 @@ class OpenAIProvider(LLMProvider):
 
         if "content" in delta:
             result["delta"] = {"type": "text", "text": delta["content"]}
+        elif "reasoning_content" in delta:
+            result["delta"] = {"type": "reasoning", "text": delta["reasoning_content"]}
         elif "tool_calls" in delta:
             tool_calls = delta["tool_calls"]
             if tool_calls:

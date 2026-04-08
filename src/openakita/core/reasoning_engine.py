@@ -1650,6 +1650,7 @@ class ReasoningEngine:
 
             # ==================== 端点通知（首轮预检） ====================
             _endpoint_notice_emitted = False
+            _thinking_notice_emitted = False
 
             def _check_proactive_endpoint_notice() -> dict | None:
                 """在 LLM 调用前检测 vision/capability 降级情况，返回通知事件或 None。"""
@@ -1896,6 +1897,18 @@ class ReasoningEngine:
                                 "from_endpoint": _resp._failover_from,
                                 "to_endpoint": getattr(_resp, 'endpoint_name', ''),
                                 "reason_code": "failover",
+                            }
+
+                    # --- Thinking 降级通知 ---
+                    if not _thinking_notice_emitted and decision:
+                        _resp = getattr(decision, 'raw_response', None)
+                        if _resp and getattr(_resp, '_thinking_fallback', False):
+                            _thinking_notice_emitted = True
+                            yield {
+                                "type": "endpoint_notice",
+                                "notice_type": "degraded",
+                                "endpoint": getattr(_resp, 'endpoint_name', ''),
+                                "reason_code": "thinking_degraded",
                             }
 
                     if task_monitor:

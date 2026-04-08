@@ -789,11 +789,13 @@ class Brain:
                 output_tokens=response.usage.output_tokens,
             ),
         )
-        # 透传端点信息供 reasoning_engine 检测 failover
+        # 透传端点信息供 reasoning_engine 检测 failover / thinking 降级
         if hasattr(response, 'endpoint_name'):
             msg.endpoint_name = response.endpoint_name  # type: ignore[attr-defined]
         if hasattr(response, '_failover_from'):
             msg._failover_from = response._failover_from  # type: ignore[attr-defined]
+        if hasattr(response, '_thinking_fallback'):
+            msg._thinking_fallback = response._thinking_fallback  # type: ignore[attr-defined]
         return msg
 
     # ========================================================================
