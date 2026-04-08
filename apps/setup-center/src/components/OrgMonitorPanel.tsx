@@ -15,7 +15,7 @@ import {
 
 type MdModules = {
   ReactMarkdown: ComponentType<{ children: string; remarkPlugins?: any[] }>;
-  remarkGfm: any;
+  remarkGfm?: any;
 } | null;
 
 export interface OrgMonitorPanelProps {

@@ -28,7 +28,7 @@ function getFileIcon(filename: string): string {
 
 type MdModules = {
   ReactMarkdown: ComponentType<{ children: string; remarkPlugins?: any[] }>;
-  remarkGfm: any;
+  remarkGfm?: any;
 } | null;
 
 export interface OrgBlackboardPanelProps {
