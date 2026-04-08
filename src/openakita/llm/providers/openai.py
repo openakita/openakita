@@ -675,6 +675,7 @@ class OpenAIProvider(LLMProvider):
             stop_reason=stop_reason,
             usage=_usage,
             model=response_model,
+            reasoning_content=_reasoning_text or None,
         )
 
     async def chat_stream(self, request: LLMRequest) -> AsyncIterator[dict]:
@@ -1068,14 +1069,23 @@ class OpenAIProvider(LLMProvider):
         # 部分 OpenAI 兼容 API (如 Google Gemini OpenAI-compat) 返回 content 为数组:
         #   [{"type": "text", "text": "..."}, ...]
         raw_content = message.get("content")
+        _thinking_from_content: list[str] = []
         if isinstance(raw_content, list):
             text_content = ""
             for part in raw_content:
-                if isinstance(part, dict) and part.get("type") == "text":
-                    text_content += part.get("text", "")
+                if isinstance(part, dict):
+                    ptype = part.get("type", "")
+                    if ptype == "text" or ptype == "output_text":
+                        text_content += part.get("text", "")
+                    elif ptype == "thinking":
+                        _tval = part.get("thinking", "") or part.get("text", "")
+                        if _tval:
+                            _thinking_from_content.append(_tval)
+                    elif "text" in part and ptype not in ("tool_use", "image"):
+                        text_content += part.get("text", "")
                 elif isinstance(part, str):
                     text_content += part
-            if not text_content and raw_content:
+            if not text_content and raw_content and not _thinking_from_content:
                 logger.warning(
                     f"[PARSE] content is list but no text parts extracted: "
                     f"types={[p.get('type') if isinstance(p, dict) else type(p).__name__ for p in raw_content[:3]]}"
@@ -1121,6 +1131,17 @@ class OpenAIProvider(LLMProvider):
                 reasoning_content = _or_reasoning
             elif isinstance(_or_reasoning, dict):
                 reasoning_content = _or_reasoning.get("content", "") or ""
+        # 收集 content 数组中的 thinking 块到 reasoning_content (#415)
+        if _thinking_from_content:
+            _joined = "\n".join(_thinking_from_content)
+            if reasoning_content:
+                reasoning_content = reasoning_content + "\n" + _joined
+            else:
+                reasoning_content = _joined
+            logger.info(
+                f"[PARSE] Extracted {len(_thinking_from_content)} thinking block(s) "
+                f"({len(_joined)} chars) from content array into reasoning_content"
+            )
         if not has_tool_calls and not text_content and reasoning_content:
             if has_text_tool_calls(reasoning_content):
                 combined_for_check = reasoning_content

@@ -2349,6 +2349,9 @@ class ReasoningEngine:
                 param_hash = hashlib.md5(param_str.encode()).hexdigest()[:8]
                 return f"{name}({param_hash})"
 
+            # --- Thinking 静默失败降级通知节流 (#415 #416 #403) ---
+            _thinking_notice_emitted = False
+
             # --- 恢复的 Todo：补发 SSE 事件让前端重建 FloatingPlanBar ---
             if conversation_id:
                 try:
@@ -2589,6 +2592,18 @@ class ReasoningEngine:
                             _raw_streamed_text = stream_event.get("raw_streamed_text", "")
                     if decision is None:
                         raise RuntimeError("_reason_stream returned no decision")
+
+                    # --- Thinking 降级通知 ---
+                    if not _thinking_notice_emitted and decision:
+                        _resp = getattr(decision, 'raw_response', None)
+                        if _resp and getattr(_resp, '_thinking_fallback', False):
+                            _thinking_notice_emitted = True
+                            yield {
+                                "type": "endpoint_notice",
+                                "notice_type": "degraded",
+                                "endpoint": getattr(_resp, 'endpoint_name', ''),
+                                "reason_code": "thinking_degraded",
+                            }
 
                     if task_monitor:
                         task_monitor.reset_retry_count()
