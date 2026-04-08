@@ -1,0 +1,36 @@
+{
+    "name": "smartsheet_add_fields",
+    "description": "Add new fields (columns) to a WeCom smartsheet sub-sheet.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "docid": {
+                "type": "string",
+                "description": "Document ID of the smartsheet"
+            },
+            "sheet_id": {
+                "type": "string",
+                "description": "Sub-sheet ID within the smartsheet"
+            },
+            "fields": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "field_title": {
+                            "type": "string",
+                            "description": "Field display name"
+                        },
+                        "field_type": {
+                            "type": "string",
+                            "description": "Field type (e.g. text, number, date, select)"
+                        }
+                    },
+                    "required": ["field_title", "field_type"]
+                },
+                "description": "Array of field definitions to add"
+            }
+        },
+        "required": ["docid", "sheet_id", "fields"]
+    }
+}

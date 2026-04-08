@@ -1,0 +1,18 @@
+{
+    "name": "smartsheet_get_fields",
+    "description": "Get the field (column) definitions of a WeCom smartsheet sub-sheet.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "docid": {
+                "type": "string",
+                "description": "Document ID of the smartsheet"
+            },
+            "sheet_id": {
+                "type": "string",
+                "description": "Sub-sheet ID within the smartsheet"
+            }
+        },
+        "required": ["docid", "sheet_id"]
+    }
+}

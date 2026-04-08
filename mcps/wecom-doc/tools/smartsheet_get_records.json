@@ -1,0 +1,28 @@
+{
+    "name": "smartsheet_get_records",
+    "description": "Query records from a WeCom smartsheet sub-sheet.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "docid": {
+                "type": "string",
+                "description": "Document ID of the smartsheet"
+            },
+            "sheet_id": {
+                "type": "string",
+                "description": "Sub-sheet ID within the smartsheet"
+            },
+            "offset": {
+                "type": "integer",
+                "description": "Pagination offset",
+                "default": 0
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Maximum number of records to return",
+                "default": 100
+            }
+        },
+        "required": ["docid", "sheet_id"]
+    }
+}

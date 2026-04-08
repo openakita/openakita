@@ -1,0 +1,23 @@
+{
+    "name": "edit_doc_content",
+    "description": "Edit the content of an existing WeCom document using Markdown format.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "docid": {
+                "type": "string",
+                "description": "Document ID returned by create_doc"
+            },
+            "content": {
+                "type": "string",
+                "description": "Document content in Markdown format (e.g. '# Title\\nBody text')"
+            },
+            "content_type": {
+                "type": "integer",
+                "description": "Content format: 1 = Markdown",
+                "default": 1
+            }
+        },
+        "required": ["docid", "content"]
+    }
+}

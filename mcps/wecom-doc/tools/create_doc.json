@@ -1,0 +1,20 @@
+{
+    "name": "create_doc",
+    "description": "Create a new WeCom document or smartsheet. Returns the document URL and docid on success.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "doc_name": {
+                "type": "string",
+                "description": "Document name (max 255 characters)"
+            },
+            "doc_type": {
+                "type": "integer",
+                "description": "Document type: 3 = document, 10 = smartsheet",
+                "enum": [3, 10],
+                "default": 3
+            }
+        },
+        "required": ["doc_name"]
+    }
+}

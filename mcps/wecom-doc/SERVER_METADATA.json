@@ -1,0 +1,18 @@
+{
+  "serverIdentifier": "wecom-doc",
+  "serverName": "企业微信文档与协作 (WeCom Doc & Collaboration)",
+  "serverDescription": "企业微信 MCP 服务，支持文档创建编辑、智能表格管理、待办/日程/会议操作、通讯录查询、消息发送等",
+  "transport": "streamable_http",
+  "url": "${WECOM_MCP_SERVER_URL}",
+  "autoConnect": false,
+  "configSchema": [
+    {
+      "key": "WECOM_MCP_SERVER_URL",
+      "label": "WeCom MCP Server URL",
+      "type": "string",
+      "required": true,
+      "placeholder": "http://localhost:8787/mcp",
+      "help": "企业微信 MCP 服务地址。可自建部署 wecom-mcp-server (https://github.com/Crain99/wecom-mcp-server)"
+    }
+  ]
+}

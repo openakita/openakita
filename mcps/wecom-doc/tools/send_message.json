@@ -1,0 +1,25 @@
+{
+    "name": "send_message",
+    "description": "Send a text or Markdown message to a WeCom group via webhook. Supports @mention with mentioned_list parameter.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "content": {
+                "type": "string",
+                "description": "Message content (text or Markdown)"
+            },
+            "msg_type": {
+                "type": "string",
+                "description": "Message type: text or markdown",
+                "enum": ["text", "markdown"],
+                "default": "markdown"
+            },
+            "mentioned_list": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of user IDs to @mention. Use '@all' to mention everyone."
+            }
+        },
+        "required": ["content"]
+    }
+}

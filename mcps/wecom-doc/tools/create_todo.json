@@ -1,0 +1,27 @@
+{
+    "name": "create_todo",
+    "description": "Create a new to-do item in WeCom for the specified user(s).",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "description": "To-do title"
+            },
+            "description": {
+                "type": "string",
+                "description": "To-do description"
+            },
+            "assignees": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of user IDs to assign the to-do to"
+            },
+            "due_date": {
+                "type": "string",
+                "description": "Due date in ISO 8601 format (e.g. 2026-04-30T18:00:00+08:00)"
+            }
+        },
+        "required": ["title"]
+    }
+}

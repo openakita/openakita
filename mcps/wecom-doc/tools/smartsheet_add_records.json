@@ -1,0 +1,26 @@
+{
+    "name": "smartsheet_add_records",
+    "description": "Add records (rows) to a WeCom smartsheet. Each record is a mapping of field_id to value.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "docid": {
+                "type": "string",
+                "description": "Document ID of the smartsheet"
+            },
+            "sheet_id": {
+                "type": "string",
+                "description": "Sub-sheet ID within the smartsheet"
+            },
+            "records": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "description": "Record object mapping field_id to value"
+                },
+                "description": "Array of records to add"
+            }
+        },
+        "required": ["docid", "sheet_id", "records"]
+    }
+}
