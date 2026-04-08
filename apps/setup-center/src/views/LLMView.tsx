@@ -91,6 +91,7 @@ export function LLMView(props: LLMViewProps) {
     [providers, providerSlug],
   );
   const [apiType, setApiType] = useState<"openai" | "openai_responses" | "anthropic">("openai");
+  const [streamOnly, setStreamOnly] = useState(false);
   const [baseUrl, setBaseUrl] = useState<string>("");
   const [apiKeyValue, setApiKeyValue] = useState<string>("");
   const [models, setModels] = useState<ListedModel[]>([]);
@@ -137,6 +138,7 @@ export function LLMView(props: LLMViewProps) {
   const [editDraft, setEditDraft] = useState<{
     name: string; priority: number; providerSlug: string;
     apiType: "openai" | "openai_responses" | "anthropic";
+    streamOnly: boolean;
     baseUrl: string; apiKeyEnv: string; apiKeyValue: string;
     modelId: string; caps: string[]; maxTokens: number;
     contextWindow: number; timeout: number; rpmLimit: number;
@@ -676,6 +678,7 @@ export function LLMView(props: LLMViewProps) {
       priority: Number.isFinite(ep.priority) && ep.priority > 0 ? ep.priority : 10,
       providerSlug: ep.provider || "",
       apiType: (ep.api_type as any) || "openai",
+      streamOnly: !!(ep as any).stream_only,
       baseUrl: ep.base_url || "",
       apiKeyEnv: ep.api_key_env || "",
       apiKeyValue: envDraft[ep.api_key_env || ""] || "",
@@ -710,6 +713,7 @@ export function LLMView(props: LLMViewProps) {
       priority: 1,
       providerSlug: ep.provider || "",
       apiType: (ep.api_type as any) || "openai",
+      streamOnly: !!(ep as any).stream_only,
       baseUrl: ep.base_url || "",
       apiKeyEnv: ep.api_key_env || "",
       apiKeyValue: envDraft[ep.api_key_env || ""] || "",
@@ -740,6 +744,7 @@ export function LLMView(props: LLMViewProps) {
       priority: 1,
       providerSlug: ep.provider || "",
       apiType: (ep.api_type as any) || "openai",
+      streamOnly: !!(ep as any).stream_only,
       baseUrl: ep.base_url || "",
       apiKeyEnv: ep.api_key_env || "",
       apiKeyValue: envDraft[ep.api_key_env || ""] || "",
@@ -838,6 +843,7 @@ export function LLMView(props: LLMViewProps) {
         model: editDraft.modelId.trim(),
         capabilities: ["text"],
       };
+      if (editDraft.streamOnly) endpoint.stream_only = true;
 
       if (epType === "endpoints") {
         const validTiers = (editDraft.pricingTiers || []).filter(
@@ -946,6 +952,7 @@ export function LLMView(props: LLMViewProps) {
         rpm_limit: addEpRpmLimit,
         capabilities: capList,
       };
+      if (streamOnly) endpoint.stream_only = true;
       if (capList.includes("thinking") && (providerSlug || selectedProvider?.slug) === "dashscope") {
         endpoint.extra_params = { enable_thinking: true };
       }
@@ -1026,6 +1033,7 @@ export function LLMView(props: LLMViewProps) {
     setConnTestResult(null);
     setProviderSlug(providers.find(p => p.slug === "openai")?.slug ?? providers[0]?.slug ?? "");
     setApiType("openai");
+    setStreamOnly(false);
     setBaseUrl("");
     setBaseUrlTouched(false);
     setApiKeyValue("");
@@ -1318,6 +1326,10 @@ export function LLMView(props: LLMViewProps) {
                     </SelectContent>
                   </Select>
                 </div>
+                <div className="flex items-center justify-between">
+                  <Label className="flex items-center gap-1.5">Stream Only <span className="text-[11px] font-normal text-muted-foreground/70">强制使用流式传输</span></Label>
+                  <Switch checked={streamOnly} onCheckedChange={setStreamOnly} />
+                </div>
                 <div className="space-y-1.5">
                   <Label>{t("llm.advMaxTokens")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advMaxTokensHint")}</span></Label>
                   <Input type="number" min={0} value={addEpMaxTokens} onChange={(e) => setAddEpMaxTokens(Math.max(0, parseInt(e.target.value) || 0))} />
@@ -1502,6 +1514,10 @@ export function LLMView(props: LLMViewProps) {
                       <SelectItem value="anthropic">anthropic</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="flex items-center justify-between">
+                  <Label className="flex items-center gap-1.5">Stream Only <span className="text-[11px] font-normal text-muted-foreground/70">强制使用流式传输</span></Label>
+                  <Switch checked={editDraft.streamOnly} onCheckedChange={(v) => setEditDraft({ ...editDraft, streamOnly: v })} />
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t("llm.advMaxTokens")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advMaxTokensHint")}</span></Label>

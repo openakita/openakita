@@ -82,32 +82,48 @@ ${StrRep}
   ${EndIf}
 !macroend
 
-; 生成合并清理 PowerShell 脚本（环境组件 + 可选用户数据），单次调用替代逐目录多次调用
+; Cleanup PowerShell script — resolves BOTH default and custom data roots internally
+; (bypasses NSIS encoding limitations for non-ASCII custom paths).
+; Architecture matches _oa_kill.ps1 which also self-resolves custom root via PS.
 !macro _OpenAkita_WriteCleanupScript
   InitPluginsDir
   FileOpen $R8 "$PLUGINSDIR\_oa_cleanup.ps1" w
-  FileWrite $R8 "param([string]$$Root, [switch]$$CleanUserData)$\r$\n"
+  FileWrite $R8 "param([switch]$$CleanUserData)$\r$\n"
   FileWrite $R8 "$$ErrorActionPreference = 'SilentlyContinue'$\r$\n"
-  FileWrite $R8 "foreach ($$d in @('run','venv','runtime','modules','python','embedded_python')) {$\r$\n"
-  FileWrite $R8 "    $$p = Join-Path $$Root $$d$\r$\n"
-  FileWrite $R8 "    if (Test-Path $$p) {$\r$\n"
-  FileWrite $R8 "        if ($$d -in @('venv','runtime')) {$\r$\n"
-  FileWrite $R8 "            Get-ChildItem -Path $$p -Recurse -Force -File -EA SilentlyContinue | ForEach-Object { $$_.IsReadOnly = $$false }$\r$\n"
-  FileWrite $R8 "        }$\r$\n"
-  FileWrite $R8 '        Remove-Item -LiteralPath $$p -Recurse -Force -EA SilentlyContinue$\r$\n'
-  FileWrite $R8 '        if (Test-Path $$p) { cmd /c rd /s /q "$$p" 2>$$null }$\r$\n'
+  ; ── Resolve all data roots (default + custom) ──
+  FileWrite $R8 "$$defaultRoot = Join-Path $$env:USERPROFILE '.openakita'$\r$\n"
+  FileWrite $R8 "$$roots = @($$defaultRoot)$\r$\n"
+  FileWrite $R8 "$$crf = Join-Path $$defaultRoot 'custom_root.txt'$\r$\n"
+  FileWrite $R8 "if (Test-Path $$crf) {$\r$\n"
+  ; ReadAllText auto-detects BOM; falls back to UTF-8 for old no-BOM files
+  FileWrite $R8 "    try { $$cr = [System.IO.File]::ReadAllText($$crf).Trim() } catch { $$cr = '' }$\r$\n"
+  FileWrite $R8 "    if ($$cr -and $$cr -ne $$defaultRoot -and (Test-Path $$cr)) {$\r$\n"
+  FileWrite $R8 "        $$roots += $$cr$\r$\n"
   FileWrite $R8 "    }$\r$\n"
   FileWrite $R8 "}$\r$\n"
-  FileWrite $R8 "if ($$CleanUserData) {$\r$\n"
-  FileWrite $R8 "    foreach ($$d in @('workspaces','uploads','logs')) {$\r$\n"
+  ; ── Clean each root ──
+  FileWrite $R8 "foreach ($$Root in $$roots) {$\r$\n"
+  FileWrite $R8 "    foreach ($$d in @('run','venv','runtime','modules','python','embedded_python')) {$\r$\n"
   FileWrite $R8 "        $$p = Join-Path $$Root $$d$\r$\n"
   FileWrite $R8 "        if (Test-Path $$p) {$\r$\n"
+  FileWrite $R8 "            if ($$d -in @('venv','runtime')) {$\r$\n"
+  FileWrite $R8 "                Get-ChildItem -Path $$p -Recurse -Force -File -EA SilentlyContinue | ForEach-Object { $$_.IsReadOnly = $$false }$\r$\n"
+  FileWrite $R8 "            }$\r$\n"
   FileWrite $R8 '            Remove-Item -LiteralPath $$p -Recurse -Force -EA SilentlyContinue$\r$\n'
   FileWrite $R8 '            if (Test-Path $$p) { cmd /c rd /s /q "$$p" 2>$$null }$\r$\n'
   FileWrite $R8 "        }$\r$\n"
   FileWrite $R8 "    }$\r$\n"
-  FileWrite $R8 "    foreach ($$f in @('state.json','config.json','.env','cli.json')) {$\r$\n"
-  FileWrite $R8 "        Remove-Item -LiteralPath (Join-Path $$Root $$f) -Force -EA SilentlyContinue$\r$\n"
+  FileWrite $R8 "    if ($$CleanUserData) {$\r$\n"
+  FileWrite $R8 "        foreach ($$d in @('workspaces','uploads','logs')) {$\r$\n"
+  FileWrite $R8 "            $$p = Join-Path $$Root $$d$\r$\n"
+  FileWrite $R8 "            if (Test-Path $$p) {$\r$\n"
+  FileWrite $R8 '                Remove-Item -LiteralPath $$p -Recurse -Force -EA SilentlyContinue$\r$\n'
+  FileWrite $R8 '                if (Test-Path $$p) { cmd /c rd /s /q "$$p" 2>$$null }$\r$\n'
+  FileWrite $R8 "            }$\r$\n"
+  FileWrite $R8 "        }$\r$\n"
+  FileWrite $R8 "        foreach ($$f in @('state.json','config.json','.env','cli.json')) {$\r$\n"
+  FileWrite $R8 "            Remove-Item -LiteralPath (Join-Path $$Root $$f) -Force -EA SilentlyContinue$\r$\n"
+  FileWrite $R8 "        }$\r$\n"
   FileWrite $R8 "    }$\r$\n"
   FileWrite $R8 "}$\r$\n"
   FileClose $R8
@@ -137,8 +153,7 @@ ${StrRep}
   FileWrite $R9 "    $$crf = Join-Path $$root 'custom_root.txt'$\r$\n"
   FileWrite $R9 "    $$customRoot = $$null$\r$\n"
   FileWrite $R9 "    if (Test-Path $$crf) {$\r$\n"
-  FileWrite $R9 "        $$cr = (Get-Content $$crf -First 1 -EA $$EA)$\r$\n"
-  FileWrite $R9 "        if ($$cr) { $$cr = $$cr.Trim() }$\r$\n"
+  FileWrite $R9 "        try { $$cr = [System.IO.File]::ReadAllText($$crf).Trim() } catch { $$cr = '' }$\r$\n"
   FileWrite $R9 "        if ($$cr) { $$customRoot = $$cr }$\r$\n"
   FileWrite $R9 "    }$\r$\n"
   FileWrite $R9 "    foreach ($$rd in @($$root, $$customRoot)) {$\r$\n"
@@ -195,39 +210,25 @@ ${StrRep}
   DetailPrint "Stopping OpenAkita processes..."
   !insertmacro NSIS_HOOK_PREINSTALL_KILLPROCS
 
-  ; 解析自定义数据根目录和默认根目录
-  !insertmacro _OpenAkita_ResolveRoot
-  StrCpy $R1 $R9
+  ; Skip cleanup entirely when no data dir exists (fresh install).
+  ; If default root doesn't exist, custom_root.txt can't exist either.
   ExpandEnvStrings $R0 "%USERPROFILE%\.openakita"
-
-  !insertmacro _OpenAkita_WriteCleanupScript
-
-  ; 清理自定义数据根目录（如果与默认路径不同）
-  ${If} $R1 != $R0
-  ${AndIf} ${FileExists} "$R1\*"
-    DetailPrint "Cleaning custom data root components..."
-    ${If} $EnvCleanUserDataConfirmed = 1
-      nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_cleanup.ps1" -Root "$R1" -CleanUserData'
-      Pop $0
-    ${Else}
-      nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_cleanup.ps1" -Root "$R1"'
-      Pop $0
-    ${EndIf}
-  ${EndIf}
-
-  ; 始终清理默认根目录
   ${If} ${FileExists} "$R0\*"
+    ; The cleanup PS script self-resolves both default and custom data roots,
+    ; so NSIS no longer needs to parse custom_root.txt (avoids encoding issues).
+    !insertmacro _OpenAkita_WriteCleanupScript
+
     DetailPrint "Cleaning previous installation components..."
     ${If} $EnvCleanUserDataConfirmed = 1
       DetailPrint "Cleaning user data (as requested)..."
-      nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_cleanup.ps1" -Root "$R0" -CleanUserData'
+      nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_cleanup.ps1" -CleanUserData'
       Pop $0
       ; Tauri 应用数据目录（WebView 缓存、localStorage 等前端数据）
       SetShellVarContext current
       RmDir /r "$APPDATA\${BUNDLEID}"
       RmDir /r "$LOCALAPPDATA\${BUNDLEID}"
     ${Else}
-      nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_cleanup.ps1" -Root "$R0"'
+      nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_cleanup.ps1"'
       Pop $0
     ${EndIf}
   ${EndIf}
@@ -280,28 +281,37 @@ ${StrRep}
   ; 无需再以用户身份单独启动应用执行 --clean-env。
 !macroend
 
-!macro _OpenAkita_ForceRemoveDir dir
-  System::Call 'kernel32::SetEnvironmentVariable(t "NSIS_DEL_PATH", t "${dir}")'
-  nsExec::ExecToLog 'powershell -NoProfile -Command "Remove-Item -LiteralPath $$env:NSIS_DEL_PATH -Recurse -Force -ErrorAction SilentlyContinue"'
-  Pop $0
-  ${If} $0 != 0
-    nsExec::ExecToLog 'cmd /c rd /s /q "${dir}"'
-    Pop $0
-  ${EndIf}
+; Generates a PowerShell script that resolves BOTH data roots and force-removes them.
+; Used by NSIS_HOOK_POSTUNINSTALL — same self-resolving pattern as _oa_cleanup.ps1.
+!macro _OpenAkita_WriteUninstDataScript
+  InitPluginsDir
+  FileOpen $R8 "$PLUGINSDIR\_oa_uninst_data.ps1" w
+  FileWrite $R8 "$$EA = 'SilentlyContinue'$\r$\n"
+  FileWrite $R8 "$$def = Join-Path $$env:USERPROFILE '.openakita'$\r$\n"
+  FileWrite $R8 "$$roots = @($$def)$\r$\n"
+  FileWrite $R8 "$$crf = Join-Path $$def 'custom_root.txt'$\r$\n"
+  FileWrite $R8 "if (Test-Path $$crf) {$\r$\n"
+  FileWrite $R8 "    try { $$cr = [System.IO.File]::ReadAllText($$crf).Trim() } catch { $$cr = '' }$\r$\n"
+  FileWrite $R8 "    if ($$cr -and $$cr -ne $$def) { $$roots += $$cr }$\r$\n"
+  FileWrite $R8 "}$\r$\n"
+  FileWrite $R8 "foreach ($$r in $$roots) {$\r$\n"
+  FileWrite $R8 "    if (Test-Path $$r) {$\r$\n"
+  FileWrite $R8 '        Remove-Item -LiteralPath $$r -Recurse -Force -EA $$EA$\r$\n'
+  FileWrite $R8 '        if (Test-Path $$r) { cmd /c rd /s /q "$$r" 2>$$null }$\r$\n'
+  FileWrite $R8 "    }$\r$\n"
+  FileWrite $R8 "}$\r$\n"
+  FileClose $R8
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
-  ; 勾选"清理用户数据"时：删除数据目录
-  ; 同时清理自定义路径和默认路径（重复删除无害）
-  ; 仅在非更新模式下清理
+  ; Delete all data directories when user checked "remove data" and not updating.
+  ; Uses a PS script to resolve custom root (same encoding-safe approach as cleanup).
+  ; Note: Tauri app data ($APPDATA/$LOCALAPPDATA) is already removed by installer.nsi
+  ; before this hook runs, so we only handle ~/.openakita + custom root here.
   ${If} $DeleteAppDataCheckboxState = 1
   ${AndIf} $UpdateMode <> 1
-    ; 先读取自定义路径（在删除默认目录之前，因为 custom_root.txt 在默认目录里）
-    !insertmacro _OpenAkita_ResolveRoot
-    ; 清理自定义路径（如果有）
-    !insertmacro _OpenAkita_ForceRemoveDir $R9
-    ; 始终清理默认路径（包含 root_config.json 和 custom_root.txt）
-    ExpandEnvStrings $R0 "%USERPROFILE%\.openakita"
-    !insertmacro _OpenAkita_ForceRemoveDir $R0
+    !insertmacro _OpenAkita_WriteUninstDataScript
+    nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\_oa_uninst_data.ps1"'
+    Pop $0
   ${EndIf}
 !macroend
