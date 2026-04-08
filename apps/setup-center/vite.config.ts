@@ -50,6 +50,16 @@ export default defineConfig({
         "../../src/openakita/llm/registries/providers.json",
       ),
     },
+    dedupe: ["three"],
+  },
+  optimizeDeps: {
+    include: [
+      "react-force-graph-3d",
+      "3d-force-graph",
+      "three-forcegraph",
+      "three-render-objects",
+      "three",
+    ],
   },
   base: isWebBuild ? "/web/" : isCapBuild ? "./" : undefined,
   build: isRemoteBuild
