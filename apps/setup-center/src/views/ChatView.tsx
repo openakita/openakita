@@ -1645,6 +1645,7 @@ export function ChatView({
   apiBaseUrl = "http://127.0.0.1:18900",
   visible = true,
   multiAgentEnabled = false,
+  currentWorkspaceId,
 }: {
   serviceRunning: boolean;
   endpoints: EndpointSummary[];
@@ -1652,31 +1653,39 @@ export function ChatView({
   apiBaseUrl?: string;
   visible?: boolean;
   multiAgentEnabled?: boolean;
+  currentWorkspaceId?: string | null;
 }) {
   const { t, i18n } = useTranslation();
   const mdModules = useMdModules();
 
-  // ── 持久化 Key 常量 ──
-  const STORAGE_KEY_CONVS = "chat_conversations";
-  const STORAGE_KEY_ACTIVE = "chat_activeConvId";
-  const STORAGE_KEY_MSGS_PREFIX = "chat_msgs_";
+  // ── Workspace-scoped localStorage keys ──
+  const wsTag = currentWorkspaceId || "_default";
+  const STORAGE_KEY_CONVS = `chat_conversations_${wsTag}`;
+  const STORAGE_KEY_ACTIVE = `chat_activeConvId_${wsTag}`;
+  const STORAGE_KEY_MSGS_PREFIX = `chat_msgs_${wsTag}_`;
 
   // ── State（从 localStorage 恢复） ──
   const [conversations, setConversations] = useState<ChatConversation[]>(() => {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY_CONVS);
+      const raw = localStorage.getItem(STORAGE_KEY_CONVS)
+        || localStorage.getItem("chat_conversations");
       return raw ? JSON.parse(raw) : [];
     } catch { return []; }
   });
   const [activeConvId, setActiveConvId] = useState<string | null>(() => {
-    try { return localStorage.getItem(STORAGE_KEY_ACTIVE) || null; }
-    catch { return null; }
+    try {
+      return localStorage.getItem(STORAGE_KEY_ACTIVE)
+        || localStorage.getItem("chat_activeConvId")
+        || null;
+    } catch { return null; }
   });
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     try {
-      const convId = localStorage.getItem(STORAGE_KEY_ACTIVE);
+      const convId = localStorage.getItem(STORAGE_KEY_ACTIVE)
+        || localStorage.getItem("chat_activeConvId");
       if (!convId) return [];
-      const raw = localStorage.getItem(STORAGE_KEY_MSGS_PREFIX + convId);
+      const raw = localStorage.getItem(STORAGE_KEY_MSGS_PREFIX + convId)
+        || localStorage.getItem("chat_msgs_" + convId);
       return raw ? JSON.parse(raw) : [];
     } catch { return []; }
   });
@@ -1685,6 +1694,29 @@ export function ChatView({
   const [selectedEndpoint, setSelectedEndpoint] = useState("auto");
   const [planMode, setPlanMode] = useState(false);
   const [streamingTick, setStreamingTick] = useState(0);
+
+  // Reload chat state when workspace changes (keys are workspace-scoped)
+  const prevWsRef = useRef(wsTag);
+  useEffect(() => {
+    if (wsTag === prevWsRef.current) return;
+    prevWsRef.current = wsTag;
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY_CONVS);
+      setConversations(raw ? JSON.parse(raw) : []);
+    } catch { setConversations([]); }
+    try {
+      const convId = localStorage.getItem(STORAGE_KEY_ACTIVE) || null;
+      setActiveConvId(convId);
+      if (convId) {
+        const rawMsgs = localStorage.getItem(STORAGE_KEY_MSGS_PREFIX + convId);
+        setMessages(rawMsgs ? JSON.parse(rawMsgs) : []);
+      } else {
+        setMessages([]);
+      }
+    } catch { setActiveConvId(null); setMessages([]); }
+    setSelectedEndpoint("auto");
+  }, [wsTag, STORAGE_KEY_CONVS, STORAGE_KEY_ACTIVE, STORAGE_KEY_MSGS_PREFIX]);
+
   const [sidebarOpen, setSidebarOpen] = useState(() => typeof window !== "undefined" && window.innerWidth > 768);
   const [sidebarPinned, setSidebarPinned] = useState(() => {
     try { return localStorage.getItem("openakita_convSidebarPinned") === "true"; } catch { return false; }
@@ -2111,10 +2143,10 @@ export function ChatView({
     });
   }, [selectedEndpoint]);
 
-  // Validate selectedEndpoint against current endpoints list
+  // Validate selectedEndpoint against current endpoints list.
+  // When endpoints is empty (new workspace / no config), also reset to "auto".
   useEffect(() => {
     if (selectedEndpoint === "auto") return;
-    if (endpoints.length === 0) return;
     if (!endpoints.some((ep) => ep.name === selectedEndpoint)) {
       setSelectedEndpoint("auto");
     }

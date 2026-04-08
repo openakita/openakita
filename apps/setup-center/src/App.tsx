@@ -5075,6 +5075,7 @@ export function App() {
               endpoints={chatEndpoints}
               visible={view === "chat"}
               multiAgentEnabled={multiAgentEnabled}
+              currentWorkspaceId={currentWorkspaceId}
               onStartService={async () => {
                 const effectiveWsId = currentWorkspaceId || workspaces[0]?.id || null;
                 if (!effectiveWsId) {
