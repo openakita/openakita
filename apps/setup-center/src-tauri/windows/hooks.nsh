@@ -153,8 +153,7 @@ ${StrRep}
   FileWrite $R9 "    $$crf = Join-Path $$root 'custom_root.txt'$\r$\n"
   FileWrite $R9 "    $$customRoot = $$null$\r$\n"
   FileWrite $R9 "    if (Test-Path $$crf) {$\r$\n"
-  FileWrite $R9 "        $$cr = (Get-Content $$crf -First 1 -EA $$EA)$\r$\n"
-  FileWrite $R9 "        if ($$cr) { $$cr = $$cr.Trim() }$\r$\n"
+  FileWrite $R9 "        try { $$cr = [System.IO.File]::ReadAllText($$crf).Trim() } catch { $$cr = '' }$\r$\n"
   FileWrite $R9 "        if ($$cr) { $$customRoot = $$cr }$\r$\n"
   FileWrite $R9 "    }$\r$\n"
   FileWrite $R9 "    foreach ($$rd in @($$root, $$customRoot)) {$\r$\n"
@@ -280,16 +279,6 @@ ${StrRep}
 
   ; venv/runtime 清理已统一在 NSIS_HOOK_PREINSTALL 中通过 PowerShell 脚本完成，
   ; 无需再以用户身份单独启动应用执行 --clean-env。
-!macroend
-
-!macro _OpenAkita_ForceRemoveDir dir
-  System::Call 'kernel32::SetEnvironmentVariable(t "NSIS_DEL_PATH", t "${dir}")'
-  nsExec::ExecToLog 'powershell -NoProfile -Command "Remove-Item -LiteralPath $$env:NSIS_DEL_PATH -Recurse -Force -ErrorAction SilentlyContinue"'
-  Pop $0
-  ${If} $0 != 0
-    nsExec::ExecToLog 'cmd /c rd /s /q "${dir}"'
-    Pop $0
-  ${EndIf}
 !macroend
 
 ; Generates a PowerShell script that resolves BOTH data roots and force-removes them.
