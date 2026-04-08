@@ -1363,6 +1363,10 @@ class Brain:
             }
             if self._trace_context:
                 debug_data["context"] = dict(self._trace_context)
+            # 原始响应诊断（CONTENT LOST 时由 provider 附加）
+            _raw_diag = getattr(response, "_raw_diagnostic", None)
+            if _raw_diag:
+                debug_data["raw_diagnostic"] = _raw_diag
 
             with open(debug_file, "w", encoding="utf-8") as f:
                 json.dump(debug_data, f, ensure_ascii=False, indent=2, default=str)
