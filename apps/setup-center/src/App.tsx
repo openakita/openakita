@@ -3893,7 +3893,6 @@ function MainApp() {
         if (earlyProbe) {
           log("[OK] 后端已在运行（由 ob-welcome 提前启动）");
           setServiceStatus({ running: true, pid: null, pidFile: "" });
-          setDataMode("remote");
           httpReady = true;
           updateTask("service-start", { status: "done", detail: "已在运行" });
           logTask("启动后端服务", "done", "已在运行");
@@ -4336,7 +4335,6 @@ function MainApp() {
                             const res = await fetch("http://127.0.0.1:18900/api/health", { signal: AbortSignal.timeout(3000) });
                             if (res.ok) {
                               setServiceStatus({ running: true, pid: null, pidFile: "" });
-                              setDataMode("remote");
                               break;
                             }
                           } catch { /* not ready yet */ }
