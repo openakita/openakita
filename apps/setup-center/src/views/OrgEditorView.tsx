@@ -8,7 +8,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { useMdModules } from "../hooks/useMdModules";
+import { useMdModules } from "./chat/hooks/useMdModules";
 import {
   ReactFlow,
   Background,
@@ -75,7 +75,6 @@ import { Switch } from "../components/ui/switch";
 import { Badge } from "../components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "../components/ui/tooltip";
 import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
-import agentOrgImg from "../assets/agent_org.png";
 import {
   fmtTime, fmtDateTime, fmtShortDate, stripMd,
   STATUS_LABELS, STATUS_COLORS, ORG_STATUS_LABELS,
@@ -84,6 +83,7 @@ import {
   type OrgNodeData, type OrgEdgeData, type OrgSummary,
   type OrgFull, type TemplateSummary,
 } from "./orgEditorConstants";
+import agentOrgImg from "../assets/agent_org.png";
 
 // ── Task text helpers ──
 
@@ -1739,7 +1739,7 @@ export function OrgEditorView({
             }}>
               <img
                 src={agentOrgImg}
-                alt="组织编排示意图"
+                alt="组织编排示意"
                 style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }}
               />
             </div>
