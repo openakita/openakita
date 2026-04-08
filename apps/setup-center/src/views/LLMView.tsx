@@ -82,6 +82,7 @@ export function LLMView(props: LLMViewProps) {
     [providers, providerSlug],
   );
   const [apiType, setApiType] = useState<"openai" | "openai_responses" | "anthropic">("openai");
+  const [streamOnly, setStreamOnly] = useState(false);
   const [baseUrl, setBaseUrl] = useState<string>("");
   const [apiKeyValue, setApiKeyValue] = useState<string>("");
   const [models, setModels] = useState<ListedModel[]>([]);
@@ -128,6 +129,7 @@ export function LLMView(props: LLMViewProps) {
   const [editDraft, setEditDraft] = useState<{
     name: string; priority: number; providerSlug: string;
     apiType: "openai" | "openai_responses" | "anthropic";
+    streamOnly: boolean;
     baseUrl: string; apiKeyEnv: string; apiKeyValue: string;
     apiKeyDirty: boolean;
     modelId: string; caps: string[]; maxTokens: number;
@@ -845,6 +847,7 @@ export function LLMView(props: LLMViewProps) {
       priority: normalizePriority(ep.priority, 1),
       providerSlug: ep.provider || "",
       apiType: (ep.api_type as any) || "openai",
+      streamOnly: !!(ep as any).stream_only,
       baseUrl: ep.base_url || "",
       apiKeyEnv: ep.api_key_env || "",
       apiKeyValue: envDraft[ep.api_key_env || ""] || "",
@@ -960,6 +963,7 @@ export function LLMView(props: LLMViewProps) {
       if (validTiers.length > 0) {
         endpoint.pricing_tiers = validTiers;
       }
+      if (editDraft.streamOnly) endpoint.stream_only = true;
 
       if (shouldUseHttpApi()) {
         if (nameChanged) {
@@ -1050,6 +1054,7 @@ export function LLMView(props: LLMViewProps) {
         rpm_limit: addEpRpmLimit,
         capabilities: capList,
       };
+      if (streamOnly) endpoint.stream_only = true;
       if (capList.includes("thinking") && (providerSlug || selectedProvider?.slug) === "dashscope") {
         endpoint.extra_params = { enable_thinking: true };
       }
@@ -1143,6 +1148,7 @@ export function LLMView(props: LLMViewProps) {
     setConnTestResult(null);
     setProviderSlug(providers.find(p => p.slug === "openai")?.slug ?? providers[0]?.slug ?? "");
     setApiType("openai");
+    setStreamOnly(false);
     setBaseUrl("");
     setBaseUrlTouched(false);
     setApiKeyValue("");
@@ -1436,6 +1442,10 @@ export function LLMView(props: LLMViewProps) {
                     <Input type="number" value={String(endpointPriority)} onChange={(e) => setEndpointPriority(Number(e.target.value))} />
                   </div>
                 </div>
+                <div className="flex items-center justify-between">
+                  <Label className="flex items-center gap-1.5">Stream Only <span className="text-[11px] font-normal text-muted-foreground/70">强制使用流式传输</span></Label>
+                  <Switch checked={streamOnly} onCheckedChange={setStreamOnly} />
+                </div>
                 <div className="space-y-1.5">
                   <Label>{t("llm.advMaxTokens")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advMaxTokensHint")}</span></Label>
                   <Input type="number" min={0} value={addEpMaxTokens} onChange={(e) => setAddEpMaxTokens(Math.max(0, parseInt(e.target.value) || 0))} />
@@ -1625,6 +1635,10 @@ export function LLMView(props: LLMViewProps) {
                     <Label>{t("llm.advPriority")}</Label>
                     <Input type="number" value={editDraft.priority} onChange={(e) => setEditDraft({ ...editDraft, priority: Number(e.target.value) || 1 })} />
                   </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <Label className="flex items-center gap-1.5">Stream Only <span className="text-[11px] font-normal text-muted-foreground/70">强制使用流式传输</span></Label>
+                  <Switch checked={editDraft.streamOnly} onCheckedChange={(v) => setEditDraft({ ...editDraft, streamOnly: v })} />
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t("llm.advMaxTokens")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advMaxTokensHint")}</span></Label>
