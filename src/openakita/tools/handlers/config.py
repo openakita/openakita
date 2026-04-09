@@ -141,6 +141,14 @@ def _unique_env_key(base: str, used: set[str]) -> str:
     return f"{base}_{int(__import__('time').time())}"
 
 
+def _serialize_env_value(value: Any) -> str:
+    """Serialize a config value for .env storage. Uses json.dumps for complex
+    types (list/dict) to produce valid JSON instead of Python repr."""
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
 def _update_env_content(existing: str, entries: dict[str, str]) -> str:
     """合并 entries 到现有 .env 内容（保留注释和顺序）"""
     lines = existing.splitlines()
@@ -366,37 +374,36 @@ class ConfigHandler:
     # set: 修改配置
     # ------------------------------------------------------------------
     def _set_config(self, params: dict) -> str:
-        from ...config import Settings, runtime_state, settings
+        from ...config import Settings, _PERSISTABLE_KEYS, runtime_state, settings
 
         updates = params.get("updates")
         if not updates or not isinstance(updates, dict):
             return "❌ updates 参数缺失或格式错误，应为 {\"KEY\": \"value\"} 字典"
 
-        # 项目根目录
         project_root = Path(settings.project_root)
         env_path = project_root / ".env"
 
         changes: list[str] = []
         env_entries: dict[str, str] = {}
+        persist_dirty = False
         restart_needed: list[str] = []
         errors: list[str] = []
+
+        _persistable_set = set(_PERSISTABLE_KEYS)
 
         for env_key, new_value in updates.items():
             field_name = env_key.lower()
 
-            # 黑名单检查
             if field_name in _READONLY_FIELDS:
                 errors.append(f"`{env_key}`: 只读字段，不允许修改")
                 continue
 
-            # 检查字段是否存在
             if field_name not in Settings.model_fields:
                 errors.append(f"`{env_key}`: 未知配置项。可用 action=discover 查看可配置项")
                 continue
 
             field_info = Settings.model_fields[field_name]
 
-            # 类型校验和转换
             _, err = self._validate_value(field_name, field_info, new_value)
             if err:
                 errors.append(f"`{env_key}`: {err}")
@@ -410,7 +417,12 @@ class ConfigHandler:
 
             new_display = _mask_value(new_value) if _is_sensitive(field_name) else str(new_value)
 
-            env_entries[env_key.upper()] = str(new_value)
+            if field_name in _persistable_set:
+                setattr(settings, field_name, new_value)
+                persist_dirty = True
+            else:
+                env_entries[env_key.upper()] = _serialize_env_value(new_value)
+
             changes.append(f"- `{env_key.upper()}`: {old_display} → {new_display}")
 
             if _needs_restart(field_name, field_info):
@@ -421,7 +433,6 @@ class ConfigHandler:
             if not changes:
                 return f"❌ 所有修改都被拒绝:\n{error_lines}"
 
-        # 写入 .env（原子写入 + 备份）
         if env_entries:
             from openakita.utils.atomic_io import safe_write
             existing = ""
@@ -430,28 +441,24 @@ class ConfigHandler:
             new_content = _update_env_content(existing, env_entries)
             safe_write(env_path, new_content)
 
-            # 同步到 os.environ
             for key, value in env_entries.items():
                 if value:
                     os.environ[key] = value
                 elif key in os.environ:
                     del os.environ[key]
 
-            # 热重载 settings（reload 已跳过 _PERSISTABLE_KEYS 字段）
             changed_fields = settings.reload()
-            logger.info(f"[ConfigHandler] set: updated {len(env_entries)} entries, reloaded fields: {changed_fields}")
+            logger.info(f"[ConfigHandler] set: updated {len(env_entries)} .env entries, reloaded: {changed_fields}")
 
-            # 双重保险：恢复运行时持久化字段（防止旧版 reload 或异常路径覆盖）
             try:
                 runtime_state.load()
             except Exception as e:
                 logger.warning(f"[ConfigHandler] runtime_state.load failed: {e}")
 
-            # 持久化 runtime_state（如果修改了可持久化的字段）
+        if persist_dirty:
             try:
-                from ...config import _PERSISTABLE_KEYS
-                if any(k.lower() in _PERSISTABLE_KEYS for k in env_entries):
-                    runtime_state.save()
+                runtime_state.save()
+                logger.info("[ConfigHandler] set: runtime_state saved (persistable keys updated)")
             except Exception as e:
                 logger.warning(f"[ConfigHandler] runtime_state save failed: {e}")
 
