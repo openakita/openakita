@@ -3239,13 +3239,16 @@ class Agent:
         self._current_task_definition = compiler_summary
         self._current_task_query = compiler_summary or message
 
-        # 9.5 话题切换检测 — 检测当前消息是否是新话题
+        # 9.5 话题切换检测 — 仅 IM 通道（telegram/wechat/feishu 等）
+        # Desktop/CLI 不做话题检测，完整保留对话历史让 LLM 自行处理上下文。
         # 防御性浅拷贝：_detect_topic_change 可能通过 insert() 注入边界标记，
         # 如果直接操作 session.context.messages 的活引用，边界消息会永久积累导致
         # 连续 user 角色消息 → API 报错 / 模型混乱 / 工具重复执行
         session_messages = list(session_messages)
         topic_changed = False
-        if session and len(session_messages) >= 4:
+        _channel = getattr(session, "channel", None) if session else None
+        _is_im = _channel and _channel not in ("cli", "desktop")
+        if _is_im and session and len(session_messages) >= 4:
             try:
                 topic_changed = await asyncio.wait_for(
                     self._detect_topic_change(session_messages, message, session),
@@ -3258,9 +3261,7 @@ class Agent:
             if topic_changed:
                 _boundary_msg = {
                     "role": "user",
-                    "content": (
-                        "[上下文边界] 检测到话题切换，以下是新话题。请优先关注边界之后的内容。"
-                    ),
+                    "content": "[上下文边界]",
                     "timestamp": datetime.now().isoformat(),
                 }
                 # 将边界标记插入到 session_messages 的倒数第二位（当前消息之前）

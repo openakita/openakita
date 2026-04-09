@@ -543,10 +543,7 @@ class ContextManager:
             result.append(
                 {
                     "role": "user",
-                    "content": (
-                        f"[旧话题摘要（已结束）]\n{summary}\n\n"
-                        "---\n以上是之前话题的简要背景，当前已切换到新话题。"
-                    ),
+                    "content": f"[旧话题摘要]\n{summary}",
                 }
             )
 

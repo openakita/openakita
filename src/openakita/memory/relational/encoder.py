@@ -57,9 +57,12 @@ class MemoryEncoder:
       3. encode_session — batch LLM encoding at session end
     """
 
-    def __init__(self, brain: Brain | None = None, session_id: str = "") -> None:
+    def __init__(
+        self, brain: Brain | None = None, session_id: str = "", language: str = "zh"
+    ) -> None:
         self.brain = brain
         self.session_id = session_id
+        self.language = language
 
     # ------------------------------------------------------------------
     # Layer 1: Quick rule-based encoding (pre-compression)
@@ -226,10 +229,16 @@ class MemoryEncoder:
 
         prompt = self._build_encoding_prompt(conversation_text)
 
+        system = (
+            "你是记忆图谱编码器。只输出合法的 JSON。"
+            if self.language == "zh"
+            else "You are a memory graph encoder. Output valid JSON only."
+        )
+
         try:
             resp = await self.brain.compiler_think(
                 prompt=prompt,
-                system="You are a memory graph encoder. Output valid JSON only.",
+                system=system,
                 max_tokens=2048,
             )
             response_text = resp.content if hasattr(resp, "content") else str(resp)
@@ -318,6 +327,33 @@ class MemoryEncoder:
         return "\n".join(parts)
 
     def _build_encoding_prompt(self, conversation: str) -> str:
+        if self.language == "zh":
+            return f"""分析以下对话，提取结构化的记忆图谱。
+
+对于每个值得记录的事件/事实/决策/目标，输出一个节点。输出 JSON 数组：
+[
+  {{
+    "content": "用自然语言描述（使用中文）",
+    "node_type": "event|fact|decision|goal",
+    "entities": [{{"name": "实体名称（保留原文语言）", "type": "person|tool|file|concept", "role": "agent|patient|instrument"}}],
+    "action_verb": "核心动词",
+    "action_category": "create|modify|analyze|communicate|decide",
+    "importance": 0.0-1.0,
+    "causal_refs": ["因果事件描述"]
+  }}
+]
+
+重点提取：
+- 跨轮次的因果链（A 导致 B，B 导致 C）
+- 决策及其理由
+- 学到的关键事实
+- 确立的目标
+
+对话内容：
+{conversation}
+
+仅输出合法的 JSON 数组："""
+
         return f"""Analyze the following conversation and extract a structured memory graph.
 
 For each noteworthy event/fact/decision/goal, output a node. Output JSON array:
