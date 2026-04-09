@@ -635,12 +635,23 @@ class MemoryManager:
             conn = self.store.db._conn
             if conn is None:
                 return False
+
+            try:
+                from openakita.config import settings as _cfg
+                ui_lang = getattr(_cfg, "ui_language", "zh")
+            except Exception:
+                ui_lang = "zh"
+
             self.relational_store = RelationalMemoryStore(conn)
             self.relational_encoder = MemoryEncoder(
-                brain=self.brain, session_id=self._current_session_id or ""
+                brain=self.brain,
+                session_id=self._current_session_id or "",
+                language=ui_lang,
             )
             self.relational_graph = GraphEngine(self.relational_store)
-            resolver = EntityResolver(self.relational_store, brain=self.brain)
+            resolver = EntityResolver(
+                self.relational_store, brain=self.brain, language=ui_lang
+            )
             self.relational_consolidator = RelationalConsolidator(
                 self.relational_store, entity_resolver=resolver
             )

@@ -121,11 +121,22 @@ class ProjectStore:
             return None
         for t in proj.tasks:
             if t.id == task_id:
+                new_status = updates.get("status")
+                if isinstance(new_status, str):
+                    new_status = TaskStatus(new_status)
                 for key, val in updates.items():
                     if hasattr(t, key):
                         if key == "status" and isinstance(val, str):
                             val = TaskStatus(val)
                         setattr(t, key, val)
+                if new_status is not None:
+                    now = _now_iso()
+                    if new_status == TaskStatus.IN_PROGRESS and not t.started_at:
+                        t.started_at = now
+                    elif new_status == TaskStatus.DELIVERED and not t.delivered_at:
+                        t.delivered_at = now
+                    elif new_status in (TaskStatus.ACCEPTED,) and not t.completed_at:
+                        t.completed_at = now
                 proj.updated_at = _now_iso()
                 self._save()
                 return t

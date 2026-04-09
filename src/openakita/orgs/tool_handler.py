@@ -876,12 +876,13 @@ class OrgToolHandler:
         if not target:
             return f"节点未找到: {target_id}"
         org.get_parent(target_id)
-        caller = org.get_node(node_id)
-        if not caller:
-            return "你不在此组织中"
-        roots = org.get_root_nodes()
-        if caller.level >= target.level and (not roots or node_id != roots[0].id):
-            return "只能冻结比你层级低的节点"
+        if node_id != "user":
+            caller = org.get_node(node_id)
+            if not caller:
+                return "你不在此组织中"
+            roots = org.get_root_nodes()
+            if caller.level >= target.level and (not roots or node_id != roots[0].id):
+                return "只能冻结比你层级低的节点"
         target.status = NodeStatus.FROZEN
         target.frozen_by = node_id
         target.frozen_reason = args.get("reason", "")
@@ -1639,9 +1640,15 @@ class OrgToolHandler:
                 log_entry = {"at": _now_iso(), "by": node_id, "entry": args["log_entry"][:_LIM_EXEC_LOG]}
                 new_log = list(existing.execution_log or []) + [log_entry]
                 updates["execution_log"] = new_log
+            if updates.get("progress_pct", 0) >= 100 and str(existing.status) == "in_progress":
+                from openakita.orgs.models import TaskStatus
+                updates["status"] = TaskStatus.DELIVERED
             if updates:
                 store.update_task(existing.project_id, existing.id, updates)
-            return f"已汇报进度: {updates.get('progress_pct', '')}%"
+            msg = f"已汇报进度: {updates.get('progress_pct', '')}%"
+            if "status" in updates:
+                msg += f" (状态已自动更新为 {updates['status'].value})"
+            return msg
         except Exception as e:
             logger.debug("org_report_progress failed: %s", e)
             return f"汇报失败: {e}"

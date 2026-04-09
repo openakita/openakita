@@ -42,17 +42,23 @@ _ZH_EN_MAP: dict[str, str] = {
 class EntityResolver:
     """Resolves entity names to canonical forms using rules and alias table."""
 
-    def __init__(self, store: RelationalMemoryStore, brain: Brain | None = None) -> None:
+    def __init__(
+        self,
+        store: RelationalMemoryStore,
+        brain: Brain | None = None,
+        language: str = "zh",
+    ) -> None:
         self.store = store
         self.brain = brain
+        self.language = language
 
     def normalize(self, name: str) -> str:
-        """Rule-based normalization: lowercase, strip, Chinese→English common terms."""
+        """Rule-based normalization: lowercase, strip, and optionally map common terms."""
         name = name.strip().lower()
         name = re.sub(r"\s+", "_", name)
         name = re.sub(r"['\"]", "", name)
 
-        if name in _ZH_EN_MAP:
+        if self.language != "zh" and name in _ZH_EN_MAP:
             name = _ZH_EN_MAP[name]
 
         return name
@@ -82,19 +88,31 @@ class EntityResolver:
         if len(unique) < 2:
             return dict.fromkeys(entities, unique[0])
 
-        prompt = (
-            "Given these entity names extracted from conversations, "
-            "group them by whether they refer to the same concept.\n\n"
-            f"Entities: {unique}\n\n"
-            'Output JSON: {"groups": [["canonical", "alias1", "alias2"], ...]}\n'
-            "Each group's first element is the canonical name. "
-            "Single-member groups need not be listed."
-        )
+        if self.language == "zh":
+            prompt = (
+                "以下是从对话中提取的实体名称，"
+                "请将指代相同概念的名称归为一组。\n\n"
+                f"实体列表: {unique}\n\n"
+                '输出 JSON: {{"groups": [["规范名", "别名1", "别名2"], ...]}}\n'
+                "每组第一个元素是规范名称（保留原文语言）。"
+                "只有一个成员的组不需要列出。"
+            )
+            system = "你是实体消歧专家。只输出合法的 JSON。"
+        else:
+            prompt = (
+                "Given these entity names extracted from conversations, "
+                "group them by whether they refer to the same concept.\n\n"
+                f"Entities: {unique}\n\n"
+                'Output JSON: {{"groups": [["canonical", "alias1", "alias2"], ...]}}\n'
+                "Each group's first element is the canonical name. "
+                "Single-member groups need not be listed."
+            )
+            system = "You are an entity resolution expert. Output valid JSON only."
 
         try:
             resp = await self.brain.compiler_think(
                 prompt=prompt,
-                system="You are an entity resolution expert. Output valid JSON only.",
+                system=system,
                 max_tokens=1024,
             )
             response_text = resp.content if hasattr(resp, "content") else str(resp)
