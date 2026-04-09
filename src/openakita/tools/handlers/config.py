@@ -514,10 +514,11 @@ class ConfigHandler:
                 f"[ConfigHandler] set: updated {len(env_entries)} .env entries, reloaded fields: {changed_fields}"
             )
 
-            try:
-                runtime_state.load()
-            except Exception as e:
-                logger.warning(f"[ConfigHandler] runtime_state.load failed: {e}")
+            if not persist_dirty:
+                try:
+                    runtime_state.load()
+                except Exception as e:
+                    logger.warning(f"[ConfigHandler] runtime_state.load failed: {e}")
 
         if persist_dirty:
             try:
