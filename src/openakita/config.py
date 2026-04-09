@@ -947,35 +947,43 @@ def _create_settings_safe() -> Settings:
     """
     import re
 
-    try:
-        return Settings()
-    except Exception as first_err:
-        err_msg = str(first_err)
-        logger.error(f"[Config] Settings init failed: {err_msg}")
+    max_retries = 3
+    last_err: Exception | None = None
 
-        env_path = Path.cwd() / ".env"
-        if not env_path.exists():
-            raise
-
-        field_match = re.search(r'field "(\w+)"', err_msg)
-        if not field_match:
-            raise
-
-        bad_field = field_match.group(1).upper()
-        logger.warning(f"[Config] Removing poisoned key '{bad_field}' from .env and retrying")
-
+    for attempt in range(max_retries + 1):
         try:
-            lines = env_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            cleaned = [
-                ln for ln in lines
-                if not ln.strip().startswith(f"{bad_field}=")
-            ]
-            env_path.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
-        except Exception as io_err:
-            logger.error(f"[Config] Failed to repair .env: {io_err}")
-            raise first_err from io_err
+            return Settings()
+        except Exception as e:
+            last_err = e
+            if attempt == max_retries:
+                break
 
-        return Settings()
+            err_msg = str(e)
+            logger.error(f"[Config] Settings init failed (attempt {attempt + 1}): {err_msg}")
+
+            env_path = Path.cwd() / ".env"
+            if not env_path.exists():
+                break
+
+            field_match = re.search(r'field "(\w+)"', err_msg)
+            if not field_match:
+                break
+
+            bad_field = field_match.group(1).upper()
+            logger.warning(f"[Config] Removing poisoned key '{bad_field}' from .env and retrying")
+
+            try:
+                lines = env_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                cleaned = [
+                    ln for ln in lines
+                    if not ln.strip().startswith(f"{bad_field}=")
+                ]
+                env_path.write_text("\n".join(cleaned) + "\n", encoding="utf-8")
+            except Exception as io_err:
+                logger.error(f"[Config] Failed to repair .env: {io_err}")
+                break
+
+    raise last_err  # type: ignore[misc]
 
 
 # 全局配置实例
