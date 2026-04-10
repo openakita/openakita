@@ -54,8 +54,9 @@ class WebTool:
     async def _get_client(self) -> httpx.AsyncClient:
         """获取 HTTP 客户端"""
         if self._client is None:
+            from ..llm.providers.proxy_utils import get_httpx_client_kwargs
             self._client = httpx.AsyncClient(
-                timeout=self.timeout,
+                **get_httpx_client_kwargs(timeout=self.timeout),
                 headers={"User-Agent": self.user_agent},
                 follow_redirects=True,
             )

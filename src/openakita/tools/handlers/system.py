@@ -231,10 +231,24 @@ class SystemHandler:
             "Authorization": f"Bearer {api_key}",
         }
 
+        from ...channels.retry import async_with_retry
+        from ...llm.providers.proxy_utils import extract_connection_error, get_httpx_client_kwargs
+
+        async def _download_image(url: str) -> bytes:
+            """每次调用创建全新客户端，避免连接池复用坏连接。"""
+            async with httpx.AsyncClient(
+                **get_httpx_client_kwargs(timeout=60), follow_redirects=True
+            ) as dl_client:
+                resp = await dl_client.get(url)
+                resp.raise_for_status()
+                return resp.content
+
         # 1) 生成图片（返回临时 URL）
         t0 = time.time()
         try:
-            async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
+            async with httpx.AsyncClient(
+                **get_httpx_client_kwargs(timeout=180), follow_redirects=True
+            ) as client:
                 resp = await client.post(api_url, headers=headers, json=body)
                 if resp.status_code >= 400:
                     return f"❌ 图片生成失败: HTTP {resp.status_code}\n{(resp.text or '')[:800]}"
@@ -260,32 +274,34 @@ class SystemHandler:
                 request_id = data.get("request_id") or data.get("requestId")
 
                 if not image_url:
-                    # 失败结构：code/message
                     code = data.get("code")
                     msg = data.get("message")
                     return f"❌ 图片生成返回异常：未找到 image 字段（code={code}, message={msg}）"
 
-                # 2) 下载并落盘
-                if output_path:
-                    out_path = Path(output_path)
-                else:
-                    out_dir = Path("data") / "generated_images"
-                    out_dir.mkdir(parents=True, exist_ok=True)
-                    suffix = request_id or str(int(time.time()))
-                    out_path = out_dir / f"{model}_{suffix}.png"
+            # 2) 下载并落盘（独立客户端，每次重试全新连接）
+            if output_path:
+                out_path = Path(output_path)
+            else:
+                out_dir = Path("data") / "generated_images"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                suffix = request_id or str(int(time.time()))
+                out_path = out_dir / f"{model}_{suffix}.png"
 
-                out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
 
-                try:
-                    img_resp = await client.get(image_url)
-                    if img_resp.status_code >= 400:
-                        return f"❌ 图片下载失败: HTTP {img_resp.status_code}"
-                    out_path.write_bytes(img_resp.content)
-                except httpx.HTTPError as e:
-                    return f"❌ 图片下载失败（网络错误）：{type(e).__name__}: {e}"
+            try:
+                img_bytes = await async_with_retry(
+                    _download_image, image_url,
+                    max_retries=2, operation_name="download_generated_image",
+                )
+                out_path.write_bytes(img_bytes)
+            except Exception as e:
+                detail = extract_connection_error(e)
+                return f"❌ 图片下载失败（网络错误）: {detail}"
 
         except httpx.HTTPError as e:
-            return f"❌ 图片生成请求失败（网络错误）：{type(e).__name__}: {e}"
+            detail = extract_connection_error(e)
+            return f"❌ 图片生成请求失败（网络错误）: {detail}"
         except Exception as e:
             return f"❌ 图片生成失败（异常）：{type(e).__name__}: {e}"
 

@@ -45,10 +45,12 @@ class WebFetchHandler:
         except ImportError:
             return "❌ web_fetch 需要 httpx 库。请运行: pip install httpx"
 
+        from ...llm.providers.proxy_utils import get_httpx_client_kwargs
+
         try:
             async with httpx.AsyncClient(
+                **get_httpx_client_kwargs(timeout=30),
                 follow_redirects=True,
-                timeout=30.0,
                 headers={
                     "User-Agent": (
                         "Mozilla/5.0 (compatible; OpenAkita/1.0; "

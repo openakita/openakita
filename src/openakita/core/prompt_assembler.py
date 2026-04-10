@@ -140,6 +140,7 @@ class PromptAssembler:
         mode: str = "agent",
         model_id: str = "",
         skip_catalogs: bool = False,
+        user_input_tokens: int = 0,
     ) -> str:
         """
         使用编译管线构建系统提示词 (v2) - 异步版本。
@@ -191,6 +192,8 @@ class PromptAssembler:
             mode=mode,
             model_id=model_id,
             skip_catalogs=skip_catalogs,
+            user_input_tokens=user_input_tokens,
+            context_window=context_window,
         )
 
     def _build_compiled_sync(

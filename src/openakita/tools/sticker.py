@@ -315,8 +315,12 @@ class StickerEngine:
                         return await resp.read()
             except ImportError:
                 import httpx
+                from ..llm.providers.proxy_utils import get_httpx_client_kwargs
 
-                async with httpx.AsyncClient(timeout=timeout) as client:
+                async with httpx.AsyncClient(
+                    **get_httpx_client_kwargs(timeout=timeout),
+                    follow_redirects=True,
+                ) as client:
                     resp = await client.get(url)
                     if resp.status_code == 200:
                         return resp.content

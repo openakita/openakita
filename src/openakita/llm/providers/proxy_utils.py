@@ -325,6 +325,27 @@ def get_httpx_client_kwargs(*, timeout: float = 30.0, is_local: bool = False) ->
     return kwargs
 
 
+def extract_connection_error(exc: BaseException, max_depth: int = 5) -> str:
+    """遍历异常 __cause__ 链，提取底层错误信息。
+
+    httpx 的 ConnectError 经常包装了真正的 OSError/SSL 错误，
+    直接 str(e) 只得到空字符串。此函数走到链底提取有用信息。
+
+    设计参考: claude-code errorUtils.ts extractConnectionErrorDetails()
+    """
+    current: BaseException | None = exc
+    depth = 0
+    while current and depth < max_depth:
+        if isinstance(current, OSError) and current.args:
+            return f"{type(current).__name__}: {current}"
+        cause = getattr(current, "__cause__", None)
+        if cause is current or cause is None:
+            break
+        current = cause
+        depth += 1
+    return f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+
+
 def format_proxy_hint() -> str:
     """生成代理诊断提示（用于错误信息）
 

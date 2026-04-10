@@ -464,7 +464,7 @@ NEXT: 建议的下一步"""
             # 如果发现重复错误模式，记录到记忆
             if self._memory_manager and any(kw in result for kw in ("重复", "无效", "弯路")):
                 try:
-                    from ..memory.types import Memory, MemoryPriority, MemoryType
+                    from ..memory.types import Memory, MemoryPriority, MemoryScope, MemoryType
 
                     memory = Memory(
                         type=MemoryType.ERROR,
@@ -472,8 +472,11 @@ NEXT: 建议的下一步"""
                         content=f"任务执行复盘发现问题：{result}",
                         source="retrospect",
                         importance_score=0.7,
+                        scope=MemoryScope.AGENT,
                     )
-                    self._memory_manager.add_memory(memory)
+                    self._memory_manager.add_memory(
+                        memory, scope=MemoryScope.AGENT
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to save retrospect to memory: {e}")
 

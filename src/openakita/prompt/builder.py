@@ -24,7 +24,7 @@ from collections.abc import Callable
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from .budget import BudgetConfig, apply_budget, estimate_tokens
 from .compiler import check_compiled_outdated, compile_all, get_compiled_content
@@ -362,6 +362,8 @@ def build_system_prompt(
     model_display_name: str = "",
     session_context: dict | None = None,
     skip_catalogs: bool = False,
+    user_input_tokens: int = 0,
+    context_window: int = 0,
 ) -> str:
     """
     组装系统提示词
@@ -574,11 +576,20 @@ def build_system_prompt(
         if precomputed_memory is not None:
             memory_section = precomputed_memory
         else:
+            effective_memory_budget, skip_experience, skip_relational = (
+                _adaptive_memory_budget(
+                    budget_config.memory_budget,
+                    user_input_tokens,
+                    context_window,
+                )
+            )
             memory_section = _build_memory_section(
                 memory_manager=memory_manager,
                 task_description=task_description,
-                budget_tokens=budget_config.memory_budget,
+                budget_tokens=effective_memory_budget,
                 memory_keywords=memory_keywords,
+                skip_experience=skip_experience,
+                skip_relational=skip_relational,
             )
         if memory_section:
             developer_parts.append(memory_section)
@@ -1584,19 +1595,49 @@ _MEMORY_SYSTEM_GUIDE = """## 你的记忆系统
 下方是用户核心档案、当前任务状态和高权重历史经验。"""
 
 
+def _adaptive_memory_budget(
+    base_budget: int,
+    user_input_tokens: int,
+    context_window: int,
+) -> tuple[int, bool, bool]:
+    """Compute effective memory budget based on user input pressure.
+
+    When user input is large relative to the context window, soft content
+    (experience hints, relational retrieval) is progressively shed to leave
+    more room for the LLM to reason about the user's actual request.
+
+    Returns:
+        (effective_budget, skip_experience, skip_relational)
+    """
+    if context_window <= 0 or user_input_tokens <= 0:
+        return base_budget, False, False
+
+    ratio = user_input_tokens / context_window
+
+    if ratio > 0.5:
+        return max(300, base_budget // 5), True, True
+    elif ratio > 0.3:
+        scale = 1.0 - (ratio - 0.3) / 0.2
+        return max(300, int(base_budget * scale)), False, True
+    return base_budget, False, False
+
+
 def _build_memory_section(
     memory_manager: Optional["MemoryManager"],
     task_description: str,
     budget_tokens: int,
     memory_keywords: list[str] | None = None,
+    skip_experience: bool = False,
+    skip_relational: bool = False,
 ) -> str:
     """
     构建 Memory 层 — 渐进式披露:
     0. 记忆系统自描述 (告知 LLM 记忆系统的运作方式)
     1. Scratchpad (当前任务 + 近期完成)
     2. Core Memory (MEMORY.md 用户基本信息 + 永久规则)
-    3. Experience Hints (高权重经验记忆)
+    3. Experience Hints (高权重经验记忆) — skipped under high input pressure
     4. Active Retrieval (if memory_keywords provided by IntentAnalyzer)
+    5. Relational graph retrieval — skipped under medium+ input pressure
     """
     if not memory_manager:
         return ""
@@ -1625,9 +1666,12 @@ def _build_memory_section(
         parts.append(f"## 核心记忆\n\n{core_memory}")
 
     # Layer 3: Experience Hints (高权重经验/教训/技能记忆)
-    experience_text = _build_experience_section(memory_manager, max_items=5)
-    if experience_text:
-        parts.append(experience_text)
+    if not skip_experience:
+        experience_text = _build_experience_section(
+            memory_manager, max_items=5, task_description=task_description
+        )
+        if experience_text:
+            parts.append(experience_text)
 
     # Layer 4: Active Retrieval (driven by IntentAnalyzer memory_keywords)
     if memory_keywords:
@@ -1636,7 +1680,7 @@ def _build_memory_section(
             parts.append(f"## 相关记忆（自动检索）\n\n{retrieved}")
 
     # Layer 5: Relational graph retrieval (Mode 2 / auto)
-    if memory_keywords:
+    if memory_keywords and not skip_relational:
         relational = _retrieve_relational(memory_manager, " ".join(memory_keywords), max_tokens=500)
         if relational:
             parts.append(f"## 关系型记忆（图检索）\n\n{relational}")
@@ -1818,42 +1862,100 @@ def _get_core_memory(memory_manager: Optional["MemoryManager"], max_chars: int =
     return truncate_memory_md(content, max_chars)
 
 
+_EXPERIENCE_ITEM_MAX_CHARS = 200
+_EXPERIENCE_SECTION_MAX_CHARS = 1200
+
+
 def _build_experience_section(
     memory_manager: Optional["MemoryManager"],
     max_items: int = 5,
+    task_description: str = "",
 ) -> str:
-    """Inject top experience/lesson/skill memories as proactive hints."""
+    """Inject experience/lesson/skill memories relevant to the current task.
+
+    Two retrieval strategies:
+    - With task_description: semantic search for relevant experiences
+    - Without: fall back to global top-N by importance (original behaviour)
+
+    Only includes user-facing (scope=global) memories; agent-private data
+    such as task retrospects (scope=agent) is excluded.
+    """
     store = getattr(memory_manager, "store", None)
     if store is None:
         return ""
     try:
-        exp_types = ("experience", "skill", "error")
-        all_exp = []
-        for t in exp_types:
-            try:
-                results = store.query_semantic(memory_type=t, limit=10)
-                all_exp.extend(results)
-            except Exception:
-                continue
-        if not all_exp:
-            return ""
+        top: list = []
 
-        # Rank by (access_count * importance) descending, take top N
-        all_exp.sort(
-            key=lambda m: m.access_count * m.importance_score + m.importance_score,
-            reverse=True,
-        )
-        top = [m for m in all_exp[:max_items] if m.importance_score >= 0.6 and not m.superseded_by]
+        if task_description and task_description.strip():
+            top = _retrieve_relevant_experiences(store, task_description, max_items)
+
+        if not top:
+            top = _retrieve_top_experiences(store, max_items)
+
         if not top:
             return ""
 
         lines = ["## 历史经验（执行任务前请参考）\n"]
+        total_chars = 0
         for m in top:
             icon = {"error": "⚠️", "skill": "💡", "experience": "📝"}.get(m.type.value, "📝")
-            lines.append(f"- {icon} {m.content}")
-        return "\n".join(lines)
+            content = m.content
+            if len(content) > _EXPERIENCE_ITEM_MAX_CHARS:
+                content = content[:_EXPERIENCE_ITEM_MAX_CHARS] + "…"
+            line = f"- {icon} {content}"
+            if total_chars + len(line) > _EXPERIENCE_SECTION_MAX_CHARS:
+                break
+            lines.append(line)
+            total_chars += len(line)
+        return "\n".join(lines) if len(lines) > 1 else ""
     except Exception:
         return ""
+
+
+def _retrieve_relevant_experiences(
+    store: Any, task_description: str, max_items: int
+) -> list:
+    """Semantic search for experiences relevant to the current task."""
+    try:
+        scored = store.search_semantic_scored(
+            task_description,
+            limit=max_items * 2,
+            scope="global",
+        )
+        results = []
+        for mem, _score in scored:
+            if mem.type.value not in ("experience", "skill", "error"):
+                continue
+            if mem.superseded_by:
+                continue
+            if mem.importance_score < 0.5:
+                continue
+            results.append(mem)
+            if len(results) >= max_items:
+                break
+        return results
+    except Exception:
+        return []
+
+
+def _retrieve_top_experiences(store: Any, max_items: int) -> list:
+    """Fallback: global top-N by importance (no task context available)."""
+    exp_types = ("experience", "skill", "error")
+    all_exp = []
+    for t in exp_types:
+        try:
+            results = store.query_semantic(memory_type=t, scope="global", limit=10)
+            all_exp.extend(results)
+        except Exception:
+            continue
+    if not all_exp:
+        return []
+
+    all_exp.sort(
+        key=lambda m: m.access_count * m.importance_score + m.importance_score,
+        reverse=True,
+    )
+    return [m for m in all_exp[:max_items] if m.importance_score >= 0.6 and not m.superseded_by]
 
 
 def _clean_user_content(raw: str) -> str:
