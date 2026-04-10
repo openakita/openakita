@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { PluginBridgeHost } from "../lib/plugin-bridge-host";
 import { getThemePref, THEME_CHANGE_EVENT } from "../theme";
 import type { ViewId } from "../types";
@@ -29,7 +30,6 @@ export default function PluginAppHost({ pluginId, apiBase, onViewChange }: Plugi
   const [error, setError] = useState<string | null>(null);
 
   const handleNotification = useCallback((opts: { title: string; body: string; type?: string }) => {
-    const { toast } = require("sonner") as typeof import("sonner");
     if (opts.type === "error") toast.error(opts.body);
     else if (opts.type === "warning") toast.warning(opts.body);
     else toast.success(opts.body);

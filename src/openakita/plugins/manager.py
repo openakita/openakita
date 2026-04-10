@@ -298,6 +298,14 @@ class PluginManager:
             sys_path_entry=sys_path_entry,
         )
 
+        plugin_pending = api._host.pop("_pending_plugin_routers", [])
+        if plugin_pending:
+            shared_pending = self._host_refs.setdefault("_pending_plugin_routers", [])
+            if plugin_pending is not shared_pending:
+                for entry in plugin_pending:
+                    if entry not in shared_pending:
+                        shared_pending.append(entry)
+
         if manifest.has_ui:
             self._mount_plugin_ui(manifest, plugin_dir)
 
