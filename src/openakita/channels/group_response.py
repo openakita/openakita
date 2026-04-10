@@ -12,12 +12,12 @@
 import logging
 import time
 from collections import defaultdict
-from enum import Enum
+from enum import StrEnum
 
 logger = logging.getLogger(__name__)
 
 
-class GroupResponseMode(str, Enum):
+class GroupResponseMode(StrEnum):
     ALWAYS = "always"
     MENTION_ONLY = "mention_only"
     SMART = "smart"

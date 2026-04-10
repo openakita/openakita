@@ -268,6 +268,8 @@ class ChannelAdapter(ABC):
 
     async def _emit_message(self, message: UnifiedMessage) -> None:
         """触发消息回调"""
+        if not self._running:
+            return
         if self._message_callback:
             try:
                 await self._message_callback(message)
