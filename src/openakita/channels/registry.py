@@ -16,12 +16,39 @@ logger = logging.getLogger(__name__)
 AdapterFactory = Callable[..., Any]
 
 ADAPTER_REGISTRY: dict[str, AdapterFactory] = {}
+_ADAPTER_OWNERS: dict[str, str] = {}
 
 
-def register_adapter(bot_type: str, factory: AdapterFactory) -> None:
-    if bot_type in ADAPTER_REGISTRY:
-        logger.warning(f"Overwriting adapter registration for '{bot_type}'")
+def register_adapter(bot_type: str, factory: AdapterFactory, *, owner: str = "builtin") -> None:
+    existing_owner = _ADAPTER_OWNERS.get(bot_type)
+    if existing_owner and existing_owner != owner:
+        logger.warning(
+            "Adapter '%s' already registered by '%s', rejecting registration from '%s'",
+            bot_type,
+            existing_owner,
+            owner,
+        )
+        return
     ADAPTER_REGISTRY[bot_type] = factory
+    _ADAPTER_OWNERS[bot_type] = owner
+
+
+def unregister_adapter(bot_type: str, *, owner: str = "") -> bool:
+    """Remove a registered adapter factory. Only the original owner may unregister."""
+    current_owner = _ADAPTER_OWNERS.get(bot_type, "")
+    if owner and current_owner and current_owner != owner:
+        logger.warning(
+            "Cannot unregister adapter '%s': owned by '%s', requested by '%s'",
+            bot_type,
+            current_owner,
+            owner,
+        )
+        return False
+    removed = ADAPTER_REGISTRY.pop(bot_type, None)
+    _ADAPTER_OWNERS.pop(bot_type, None)
+    if removed is not None:
+        logger.info("Unregistered adapter type '%s'", bot_type)
+    return removed is not None
 
 
 def _cred_bool(val: Any) -> bool | None:
@@ -60,6 +87,7 @@ def _create_feishu(
         agent_profile_id=agent_profile_id,
         streaming_enabled=_cred_bool(creds.get("streaming_enabled")),
         group_streaming=_cred_bool(creds.get("group_streaming")),
+        streaming_throttle_ms=_safe_int(creds.get("streaming_throttle_ms"), None),
         group_response_mode=creds.get("group_response_mode") or None,
         footer_elapsed=_cred_bool(creds.get("footer_elapsed")),
         footer_status=_cred_bool(creds.get("footer_status")),
@@ -69,13 +97,13 @@ def _create_feishu(
 def _create_telegram(creds: dict, *, channel_name: str, bot_id: str, agent_profile_id: str):
     from .adapters import TelegramAdapter
 
-    kwargs: dict[str, Any] = dict(
-        bot_token=creds.get("bot_token", ""),
-        webhook_url=creds.get("webhook_url") or None,
-        channel_name=channel_name,
-        bot_id=bot_id,
-        agent_profile_id=agent_profile_id,
-    )
+    kwargs: dict[str, Any] = {
+        "bot_token": creds.get("bot_token", ""),
+        "webhook_url": creds.get("webhook_url") or None,
+        "channel_name": channel_name,
+        "bot_id": bot_id,
+        "agent_profile_id": agent_profile_id,
+    }
     if creds.get("pairing_code"):
         kwargs["pairing_code"] = creds["pairing_code"]
     if creds.get("proxy"):
@@ -190,6 +218,7 @@ def _create_wechat(creds: dict, *, channel_name: str, bot_id: str, agent_profile
         bot_id=bot_id,
         agent_profile_id=agent_profile_id,
         footer_elapsed=_cred_bool(creds.get("footer_elapsed")),
+        route_tag=creds.get("route_tag", ""),
     )
 
 
