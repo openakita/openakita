@@ -485,6 +485,64 @@ class PluginAPI:
         except RuntimeError:
             self.log("No event loop for send_message", "warning")
 
+    # --- File serving utilities (Plugin 2.0) ---
+
+    def create_file_response(
+        self,
+        source: str | Path,
+        *,
+        filename: str | None = None,
+        media_type: str = "application/octet-stream",
+        as_download: bool = False,
+    ):
+        """Create a FastAPI response for serving a file, handling encoding correctly.
+
+        Works with both local file paths and remote URLs. Automatically handles:
+        - Content-Disposition with RFC 5987 encoding for non-ASCII filenames
+        - Local file serving via FileResponse
+        - Remote URL streaming via StreamingResponse
+
+        Args:
+            source: Local file path (str/Path) or remote URL (http/https).
+            filename: Download filename. If None, derived from source.
+            media_type: MIME type. Default: application/octet-stream.
+            as_download: If True, adds Content-Disposition: attachment header.
+
+        Returns:
+            A FileResponse or StreamingResponse ready to return from a route.
+        """
+        from urllib.parse import quote
+        from fastapi.responses import FileResponse, StreamingResponse
+
+        headers: dict[str, str] = {}
+        source_str = str(source)
+
+        if as_download:
+            raw_name = filename or Path(source_str).name or "download"
+            ascii_safe = raw_name.encode("ascii", "replace").decode("ascii")
+            headers["Content-Disposition"] = (
+                f'attachment; filename="{ascii_safe}"; '
+                f"filename*=UTF-8''{quote(raw_name)}"
+            )
+
+        if source_str.startswith("http://") or source_str.startswith("https://"):
+            import httpx
+
+            async def _stream():
+                async with httpx.AsyncClient(timeout=120.0) as client:
+                    async with client.stream("GET", source_str) as resp:
+                        async for chunk in resp.aiter_bytes(8192):
+                            yield chunk
+
+            return StreamingResponse(_stream(), media_type=media_type, headers=headers)
+
+        local_path = Path(source_str)
+        if not local_path.is_file():
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="File not found")
+
+        return FileResponse(str(local_path), media_type=media_type, headers=headers)
+
     # --- UI event methods (Plugin 2.0) ---
 
     @property
@@ -551,6 +609,11 @@ class PluginAPI:
             pass
 
         try:
+            self._cleanup_routes()
+        except Exception as e:
+            logger.debug("Plugin '%s' route cleanup error: %s", self._plugin_id, e)
+
+        try:
             self._cleanup_tools()
         except Exception as e:
             logger.debug("Plugin '%s' tool cleanup error: %s", self._plugin_id, e)
@@ -605,6 +668,26 @@ class PluginAPI:
                 PLUGIN_REGISTRY_MAP.pop(slug, None)
         except Exception:
             pass
+
+    def _cleanup_routes(self) -> None:
+        """Remove API routes registered by this plugin from the FastAPI app."""
+        api_server = self._host.get("api_app")
+        if api_server is None:
+            return
+        prefix = f"/api/plugins/{self._plugin_id}"
+        original_routes = api_server.routes[:]
+        removed = 0
+        for route in original_routes:
+            route_path = getattr(route, "path", "")
+            route_prefix = getattr(route, "prefix", "")
+            if route_path.startswith(prefix) or route_prefix.startswith(prefix):
+                try:
+                    api_server.routes.remove(route)
+                    removed += 1
+                except ValueError:
+                    pass
+        if removed:
+            self.log(f"Removed {removed} API routes under {prefix}")
 
     def _cleanup_tools(self) -> None:
         """Remove plugin-registered tools from all host registries."""

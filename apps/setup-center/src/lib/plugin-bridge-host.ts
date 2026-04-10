@@ -32,6 +32,9 @@ const HOST_CAPABILITIES = [
   "notification",
   "upload",
   "download",
+  "file-download",
+  "show-in-folder",
+  "pick-folder",
   "clipboard",
   "navigate",
   "api-proxy",
@@ -151,15 +154,20 @@ export class PluginBridgeHost {
         }
         break;
 
+      case "bridge:download":
+        this.handleDownload(data);
+        break;
+
+      case "bridge:show-in-folder":
+        this.handleShowInFolder(data);
+        break;
+
+      case "bridge:pick-folder":
+        this.handlePickFolder(data);
+        break;
+
       case "bridge:clipboard":
-        if (data.payload?.text) {
-          navigator.clipboard.writeText(data.payload.text as string).catch(() => {});
-          this.post({
-            type: "bridge:clipboard-ack",
-            requestId: data.requestId,
-            payload: { ok: true },
-          });
-        }
+        this.handleClipboard(data);
         break;
 
       default:
@@ -170,6 +178,77 @@ export class PluginBridgeHost {
         });
         break;
     }
+  }
+
+  /**
+   * Handle file download requests from plugin iframes.
+   *
+   * Uses Tauri's native `download_file` command (reqwest → disk) which
+   * reliably works in WebView2/WKWebView without blob-URL limitations.
+   * Falls back to <a download> for web mode.
+   */
+  private async handleDownload(msg: BridgeMessage) {
+    const { url: rawUrl, filename } = (msg.payload || {}) as {
+      url?: string;
+      filename?: string;
+    };
+    if (!rawUrl) {
+      this.post({
+        type: "bridge:download-ack",
+        requestId: msg.requestId,
+        payload: { ok: false, error: "Missing url" },
+      });
+      return;
+    }
+
+    const resolvedUrl = rawUrl.startsWith("http") ? rawUrl : `${this.apiBase}${rawUrl}`;
+    const fname = filename || "download";
+
+    try {
+      const { downloadFile } = await import("../platform");
+      const savedPath = await downloadFile(resolvedUrl, fname);
+      this.post({
+        type: "bridge:download-ack",
+        requestId: msg.requestId,
+        payload: { ok: true, path: savedPath },
+      });
+    } catch (e) {
+      this.post({
+        type: "bridge:download-ack",
+        requestId: msg.requestId,
+        payload: { ok: false, error: String(e) },
+      });
+    }
+  }
+
+  private async handleShowInFolder(msg: BridgeMessage) {
+    const { path } = (msg.payload || {}) as { path?: string };
+    if (!path) return;
+    try {
+      const { showInFolder } = await import("../platform");
+      await showInFolder(path);
+      this.post({ type: "bridge:show-in-folder-ack", requestId: msg.requestId, payload: { ok: true } });
+    } catch (e) {
+      this.post({ type: "bridge:show-in-folder-ack", requestId: msg.requestId, payload: { ok: false, error: String(e) } });
+    }
+  }
+
+  private async handlePickFolder(msg: BridgeMessage) {
+    const { title } = (msg.payload || {}) as { title?: string };
+    try {
+      const { openFileDialog } = await import("../platform");
+      const selected = await openFileDialog({ directory: true, title: title || "选择文件夹" });
+      this.post({ type: "bridge:pick-folder-ack", requestId: msg.requestId, payload: { ok: true, path: selected } });
+    } catch (e) {
+      this.post({ type: "bridge:pick-folder-ack", requestId: msg.requestId, payload: { ok: false, error: String(e) } });
+    }
+  }
+
+  private handleClipboard(msg: BridgeMessage) {
+    const text = (msg.payload?.text as string) || "";
+    if (!text) return;
+    navigator.clipboard.writeText(text).catch(() => {});
+    this.post({ type: "bridge:clipboard-ack", requestId: msg.requestId, payload: { ok: true } });
   }
 
   private async handleApiRequest(msg: BridgeMessage) {

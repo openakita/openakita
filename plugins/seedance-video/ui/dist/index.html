@@ -94,6 +94,7 @@
     .task-info h4 { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
     .task-meta { font-size: 11px; color: var(--text-dim); display: flex; gap: 8px; flex-wrap: wrap; }
     .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; }
+    .spinner-sm { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; display: inline-block; }
     @keyframes spin { to { transform: rotate(360deg); } }
     .tip-bar { background: rgba(59,130,246,.08); border: 1px solid rgba(59,130,246,.2); border-radius: 6px; padding: 8px 12px; font-size: 12px; color: var(--primary); margin-bottom: 12px; }
     .keyword-tag { display: inline-block; padding: 2px 8px; margin: 2px; border-radius: 4px; font-size: 12px; background: var(--bg-hover); color: var(--text-muted); cursor: pointer; transition: .15s; border: 1px solid transparent; }
@@ -180,7 +181,8 @@ window.addEventListener("message", function(e) {
     }
   }
   if (d.type === "bridge:handshake-ack" && d.payload) { _caps = d.payload.capabilities || []; _bridgeConnected = true; }
-  if ((d.type === "bridge:api-response" || d.type === "bridge:clipboard-ack") && d.requestId && _pending[d.requestId]) {
+  var _ackTypes = ["bridge:api-response","bridge:clipboard-ack","bridge:download-ack","bridge:show-in-folder-ack","bridge:pick-folder-ack"];
+  if (_ackTypes.indexOf(d.type) !== -1 && d.requestId && _pending[d.requestId]) {
     _pending[d.requestId].resolve(d.payload);
     delete _pending[d.requestId];
   }
@@ -216,7 +218,94 @@ function uploadFile(file) {
   return fetch(base + "/upload", { method: "POST", body: fd }).then(function(r) { return r.json(); });
 }
 
-window.__bridge = { apiCall: apiCall, pluginApi: pluginApi, onEvent: onEvent, getCtx: function() { return _ctx; }, uploadFile: uploadFile };
+// ── Standard SDK: showToast ──
+function showToast(body, type) {
+  type = type || "success";
+  if (_inIframe && _bridgeConnected) {
+    post({ type: "bridge:notification", payload: { title: "", body: body, type: type } });
+    return;
+  }
+  console.log("[Toast]", type, body);
+}
+
+// ── Standard SDK: downloadFile ──
+function downloadFile(url, filename) {
+  var resolvedUrl = url.startsWith("http") ? url : _detectApiBase() + url;
+  var fname = filename || "download";
+
+  if (_inIframe && _bridgeConnected) {
+    var id = uid();
+    _pending[id] = {
+      resolve: function(payload) {
+        if (payload && payload.ok) {
+          showToast("已保存到: " + (payload.path || "Downloads 文件夹"), "success");
+        } else {
+          showToast("下载失败: " + (payload && payload.error || "未知错误"), "error");
+        }
+      },
+      reject: function(err) { showToast("下载失败: " + err, "error"); },
+    };
+    post({ type: "bridge:download", requestId: id, payload: { url: resolvedUrl, filename: fname } });
+    return;
+  }
+
+  if (window.__TAURI_INTERNALS__) {
+    window.__TAURI_INTERNALS__.invoke("download_file", { url: resolvedUrl, filename: fname })
+      .then(function(path) { showToast("已保存到: " + path, "success"); })
+      .catch(function(err) { showToast("下载失败: " + err, "error"); });
+    return;
+  }
+
+  var a = document.createElement("a");
+  a.href = resolvedUrl;
+  a.download = fname;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function() { document.body.removeChild(a); }, 300);
+  showToast("下载已开始", "success");
+}
+
+// ── Standard SDK: showInFolder ──
+function showInFolder(path) {
+  if (_inIframe && _bridgeConnected) {
+    post({ type: "bridge:show-in-folder", payload: { path: path } });
+    return Promise.resolve();
+  }
+  return Promise.resolve();
+}
+
+// ── Standard SDK: pickFolder ──
+function pickFolder(title) {
+  if (_inIframe && _bridgeConnected) {
+    return new Promise(function(resolve) {
+      var id = uid();
+      _pending[id] = { resolve: function(payload) { resolve(payload && payload.path || null); }, reject: function() { resolve(null); } };
+      post({ type: "bridge:pick-folder", requestId: id, payload: { title: title || "选择文件夹" } });
+      setTimeout(function() { if (_pending[id]) { delete _pending[id]; resolve(null); } }, 60000);
+    });
+  }
+  return Promise.resolve(null);
+}
+
+// ── Standard SDK: copyToClipboard ──
+function copyToClipboard(text) {
+  if (_inIframe && _bridgeConnected) {
+    var id = uid();
+    _pending[id] = { resolve: function() { showToast("已复制到剪贴板"); }, reject: function() {} };
+    post({ type: "bridge:clipboard", requestId: id, payload: { text: text } });
+    return;
+  }
+  if (navigator.clipboard) { navigator.clipboard.writeText(text).then(function() { showToast("已复制到剪贴板"); }); }
+}
+
+window.__bridge = {
+  apiCall: apiCall, pluginApi: pluginApi, onEvent: onEvent,
+  getCtx: function() { return _ctx; },
+  uploadFile: uploadFile, downloadFile: downloadFile,
+  showToast: showToast, showInFolder: showInFolder,
+  pickFolder: pickFolder, copyToClipboard: copyToClipboard,
+};
 
 // ── React via CDN (production build) ──
 </script>
@@ -225,7 +314,7 @@ window.__bridge = { apiCall: apiCall, pluginApi: pluginApi, onEvent: onEvent, ge
 <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
 <script type="text/babel" data-type="module">
 const { useState, useEffect, useCallback, useRef } = React;
-const { pluginApi, onEvent, uploadFile } = window.__bridge;
+const { pluginApi, onEvent, uploadFile, downloadFile, showToast, showInFolder, pickFolder, copyToClipboard } = window.__bridge;
 
 // SVG Icon system — replaces all emoji
 const I = {
@@ -302,6 +391,12 @@ function useTasks() {
   useEffect(() => {
     onEvent("plugin:seedance-video:task_update", () => load());
   }, []);
+  useEffect(() => {
+    var hasRunning = tasks.some(t => t.status === "running" || t.status === "pending");
+    if (!hasRunning) return;
+    var timer = setInterval(() => load(), 10000);
+    return () => clearInterval(timer);
+  }, [tasks]);
   return { tasks, total, reload: load };
 }
 
@@ -355,10 +450,9 @@ function VideoPlayer({ task }) {
   const [speed, setSpeed] = useState(1);
   const [loop, setLoop] = useState(true);
 
-  const apiBase = window.__bridge.getCtx()?.apiBase || window.location.origin;
-  const videoSrc = task?.local_video_path
-    ? null
-    : `${apiBase}/api/plugins/seedance-video/videos/${task?.id}`;
+  const videoSrc = task?.id
+    ? `${_detectApiBase()}/api/plugins/seedance-video/videos/${task.id}`
+    : null;
 
   const togglePlay = () => {
     if (!videoRef.current) return;
@@ -393,24 +487,29 @@ function VideoPlayer({ task }) {
   return (
     <div>
       <div className="video-player-wrap">
-        {task.status === "running" ? (
-          <div className="empty-state" style={{color:"#fff"}}>
+        {task.status === "running" || task.status === "pending" ? (
+          <div className="empty-state">
             <div className="spinner" style={{width:32,height:32,marginBottom:12}}/>
-            <p>正在生成...</p>
+            <p>正在生成中...</p>
+            <p className="text-xs text-dim" style={{marginTop:6}}>通常需要 1~3 分钟，请耐心等待</p>
           </div>
-        ) : task.video_url || task.local_video_path ? (
+        ) : task.status === "succeeded" && videoSrc ? (
           <video ref={videoRef} src={videoSrc} loop={loop} autoPlay muted
             onTimeUpdate={() => setCt(videoRef.current?.currentTime || 0)}
             onLoadedMetadata={() => setDur(videoRef.current?.duration || 0)}
             onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
             style={{width:"100%",height:"100%",objectFit:"contain"}} />
+        ) : task.status === "failed" ? (
+          <div className="empty-state">
+            <p style={{color:"var(--text-danger,#dc2626)"}}>{task.error_message || "生成失败"}</p>
+          </div>
         ) : (
-          <div className="empty-state" style={{color:"#fff"}}>
-            <p>{task.status === "failed" ? `${task.error_message || "生成失败"}` : "等待结果..."}</p>
+          <div className="empty-state">
+            <p>等待结果...</p>
           </div>
         )}
       </div>
-      {(task.video_url || task.local_video_path) && (
+      {task.status === "succeeded" && videoSrc && (
         <div className="video-controls">
           <button onClick={() => stepFrame(-1)} title="逐帧后退"><Ico name="skipBack"/></button>
           <button onClick={togglePlay}>{playing ? <Ico name="pause"/> : <Ico name="play"/>}</button>
@@ -436,7 +535,7 @@ function VideoPlayer({ task }) {
   );
 }
 
-function CreateTab({ models }) {
+function CreateTab({ models, onGoToTasks }) {
   const [mode, setMode] = useState("t2v");
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState("2.0");
@@ -453,6 +552,16 @@ function CreateTab({ models }) {
   const [loading, setLoading] = useState(false);
   const [activeTask, setActiveTask] = useState(null);
   const [optimizing, setOptimizing] = useState(false);
+
+  useEffect(() => {
+    if (!activeTask || (activeTask.status !== "running" && activeTask.status !== "pending")) return;
+    var timer = setInterval(() => {
+      pluginApi("GET", `/tasks/${activeTask.id}`).then(r => {
+        if (r.body?.task) setActiveTask(r.body.task);
+      }).catch(() => {});
+    }, 8000);
+    return () => clearInterval(timer);
+  }, [activeTask?.id, activeTask?.status]);
 
   const currentModel = models.find(m => m.id === model);
   const minDur = currentModel?.duration_range?.[0] || 2;
@@ -475,16 +584,26 @@ function CreateTab({ models }) {
     if (duration > maxDur) setDuration(maxDur);
   }, [model]);
 
+  const [createError, setCreateError] = useState("");
+  const [createSuccess, setCreateSuccess] = useState(null);
   const handleCreate = async () => {
     setLoading(true);
+    setCreateError("");
+    setCreateSuccess(null);
     try {
       const r = await pluginApi("POST", draft ? "/tasks/draft" : "/tasks", {
         prompt, mode, model, ratio, duration, resolution, n: 1,
         generate_audio: audio, seed, watermark, return_last_frame: returnLastFrame,
         web_search: webSearch && canWebSearch, service_tier: serviceTier,
       });
-      if (r.body?.task) setActiveTask(r.body.task);
-    } catch (e) { console.error(e); }
+      if (r.ok && r.body?.task) {
+        setActiveTask(r.body.task);
+        setCreateSuccess(r.body.task);
+      } else {
+        var msg = r.body?.detail || r.body?.error || "请求失败 (HTTP " + r.status + ")";
+        setCreateError(msg);
+      }
+    } catch (e) { setCreateError("网络错误: " + e.message); }
     setLoading(false);
   };
 
@@ -644,18 +763,39 @@ function CreateTab({ models }) {
           </div>
         </div>
 
+        {createError && (
+          <div style={{padding:"10px 12px",background:"var(--bg-danger,#fef2f2)",border:"1px solid var(--border-danger,#fca5a5)",borderRadius:8,color:"var(--text-danger,#dc2626)",fontSize:13,marginBottom:8,wordBreak:"break-all"}}>
+            {createError}
+          </div>
+        )}
         <button className="btn btn-primary" style={{width:"100%",padding:"12px",fontSize:14}}
           onClick={handleCreate} disabled={loading || !prompt.trim()}>
           {loading ? <span className="spinner" style={{width:16,height:16}}/> : null}
           {draft ? "生成样片预览" : serviceTier==="flex" ? "提交离线任务" : "生成视频"}
         </button>
+        {createSuccess && (
+          <div style={{marginTop:10,padding:"12px 14px",background:"var(--bg-success,#f0fdf4)",border:"1px solid var(--border-success,#86efac)",borderRadius:8,color:"var(--text-success,#16a34a)",fontSize:13}}>
+            <div style={{fontWeight:600,marginBottom:4}}>
+              <Ico name="check"/> 任务已提交
+            </div>
+            <div style={{color:"var(--text-dim)",fontSize:12,lineHeight:"1.6"}}>
+              视频正在云端异步生成，通常需要 1~3 分钟。
+              请前往
+              <a href="#" onClick={(e) => { e.preventDefault(); onGoToTasks && onGoToTasks(); }}
+                style={{color:"var(--primary)",fontWeight:500,textDecoration:"underline",margin:"0 3px"}}>
+                任务列表
+              </a>
+              查看生成进度和结果。
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="split-right">
         <VideoPlayer task={activeTask} />
         {activeTask && (
           <div className="flex gap-2" style={{marginTop:12}}>
-            <button className="btn btn-sm" onClick={() => pluginApi("GET", `/videos/${activeTask.id}/download`)}><Ico name="download"/> 下载</button>
+            <button className="btn btn-sm" onClick={() => downloadFile(`/api/plugins/seedance-video/videos/${activeTask.id}?download=1`, `seedance_${activeTask.prompt?.slice(0,20) || activeTask.id}.mp4`)}><Ico name="download"/> 下载</button>
             <button className="btn btn-sm" onClick={() => { setActiveTask(null); }}><Ico name="refresh"/> 新建</button>
           </div>
         )}
@@ -719,7 +859,7 @@ function TaskListTab() {
         <VideoPlayer task={selected} />
         {selected && (
           <div className="flex gap-2" style={{marginTop:12}}>
-            <button className="btn btn-sm" onClick={() => pluginApi("GET", `/videos/${selected.id}/download`)}><Ico name="download"/> 下载</button>
+            <button className="btn btn-sm" onClick={() => downloadFile(`/api/plugins/seedance-video/videos/${selected.id}?download=1`, `seedance_${selected.prompt?.slice(0,20) || selected.id}.mp4`)}><Ico name="download"/> 下载</button>
             <button className="btn btn-sm" onClick={() => pluginApi("POST", `/tasks/${selected.id}/retry`)}><Ico name="refresh"/> 重试</button>
             <button className="btn btn-sm btn-danger" onClick={async () => {
               await pluginApi("DELETE", `/tasks/${selected.id}`);
@@ -944,9 +1084,14 @@ function StoryboardTab() {
     }).catch(() => setFfmpegOk(false));
   }, []);
 
+  const [decomposeProgress, setDecomposeProgress] = useState("");
   const decompose = async () => {
     if (!story.trim()) return;
     setDecomposing(true);
+    setDecomposeProgress("正在连接 AI 模型...");
+    var timer = setTimeout(() => setDecomposeProgress("AI 正在分析故事结构，生成分镜脚本..."), 3000);
+    var timer2 = setTimeout(() => setDecomposeProgress("正在生成 " + Math.max(1, Math.round(totalDuration / segDuration)) + " 段分镜，请耐心等待..."), 10000);
+    var timer3 = setTimeout(() => setDecomposeProgress("LLM 推理中，较长的故事可能需要 20-40 秒..."), 20000);
     try {
       const r = await pluginApi("POST", "/long-video/storyboard", {
         story, total_duration: totalDuration, segment_duration: segDuration, ratio, style,
@@ -954,11 +1099,14 @@ function StoryboardTab() {
       if (r.body?.ok && r.body.storyboard?.segments) {
         setSegments(r.body.storyboard.segments);
         setStep("edit");
+        showToast("分镜拆解完成，共 " + r.body.storyboard.segments.length + " 段");
       } else {
-        alert("分镜拆解失败: " + (r.body?.error || "未知错误"));
+        showToast("分镜拆解失败: " + (r.body?.error || "未知错误"), "error");
       }
-    } catch (e) { alert("请求失败: " + e.message); }
+    } catch (e) { showToast("请求失败: " + e.message, "error"); }
+    clearTimeout(timer); clearTimeout(timer2); clearTimeout(timer3);
     setDecomposing(false);
+    setDecomposeProgress("");
   };
 
   const updateSeg = (idx, field, val) => {
@@ -998,11 +1146,11 @@ function StoryboardTab() {
         setGenResults(r.body.results || []);
         setStep("results");
       } else {
-        alert("生成失败: " + (r.body?.error || ""));
+        showToast("生成失败: " + (r.body?.error || ""), "error");
         setStep("edit");
       }
     } catch (e) {
-      alert("请求失败: " + e.message);
+      showToast("请求失败: " + e.message, "error");
       setStep("edit");
     }
     setGenerating(false);
@@ -1010,7 +1158,7 @@ function StoryboardTab() {
 
   const doConcat = async () => {
     const successIds = genResults.filter(r => r.status === "succeeded" && r.id).map(r => r.id);
-    if (successIds.length < 2) { alert("至少需要 2 个成功的视频片段"); return; }
+    if (successIds.length < 2) { showToast("至少需要 2 个成功的视频片段", "warning"); return; }
     setConcatenating(true);
     try {
       for (const tid of successIds) {
@@ -1026,9 +1174,9 @@ function StoryboardTab() {
         setConcatPath(r.body.output_path);
         setStep("done");
       } else {
-        alert("拼接失败: " + (r.body?.detail || r.body?.error || ""));
+        showToast("拼接失败: " + (r.body?.detail || r.body?.error || ""), "error");
       }
-    } catch (e) { alert("拼接失败: " + e.message); }
+    } catch (e) { showToast("拼接失败: " + e.message, "error"); }
     setConcatenating(false);
   };
 
@@ -1103,7 +1251,12 @@ function StoryboardTab() {
           )}
 
           <div className="flex gap-2 justify-between items-center">
-            <div />
+            {decomposing && decomposeProgress ? (
+              <div style={{fontSize:13,color:"var(--primary)",display:"flex",alignItems:"center",gap:8}}>
+                <span className="spinner-sm" />
+                {decomposeProgress}
+              </div>
+            ) : <div />}
             <button className="btn btn-primary" disabled={!story.trim() || decomposing} onClick={decompose}>
               {decomposing ? "AI 拆解中..." : <><Ico name="film"/> AI 分镜拆解</>}
             </button>
@@ -1117,6 +1270,7 @@ function StoryboardTab() {
             <p><strong>2.</strong> 可以编辑每段分镜的提示词、时长和过渡方式</p>
             <p><strong>3.</strong> 串行模式下，每段视频会使用上一段的尾帧作为参考，保证画面连贯</p>
             <p><strong>4.</strong> 生成完成后可用 ffmpeg 拼接为完整长视频</p>
+            <p style={{color:"var(--warning)",marginTop:6}}><strong>注意：</strong>Seedance 2.0 不支持含真人面部的参考图。串行链接如遇人脸审核，系统会自动降级为纯文本生成，画面连贯性可能降低。建议使用虚拟人物、动物、风景等主题。</p>
           </div>
         </div>
       </div>
@@ -1334,7 +1488,7 @@ function StoryboardTab() {
             <div className="card-title"><Ico name="film"/> 拼接完成</div>
             <p style={{fontSize:13,color:"var(--text-muted)",wordBreak:"break-all"}}>{concatPath}</p>
             <button className="btn btn-sm" style={{marginTop:8}} onClick={() =>
-              pluginApi("POST", "/storage/open-folder", { path: concatPath.replace(/[/\\][^/\\]*$/, "") })
+              showInFolder(concatPath)
             }><Ico name="folderOpen"/> 打开所在文件夹</button>
           </div>
         )}
@@ -1367,7 +1521,7 @@ function StoryboardTab() {
   return null;
 }
 
-function SettingsTab() {
+function SettingsTab({ onKeyChange }) {
   const [config, setConfig] = useState({});
   const [saving, setSaving] = useState(false);
   const [apiKey, setApiKey] = useState("");
@@ -1383,7 +1537,24 @@ function SettingsTab() {
 
   const save = async (updates) => {
     setSaving(true);
-    await pluginApi("PUT", "/settings", { updates });
+    try {
+      var r = await pluginApi("PUT", "/settings", { updates });
+      if (r.body?.config) {
+        setConfig(r.body.config);
+        if (updates.ark_api_key && r.body.config.ark_api_key !== updates.ark_api_key) {
+          showToast("API Key 保存异常，请重试", "error");
+          setSaving(false);
+          return;
+        }
+      }
+      if (updates.ark_api_key) {
+        setApiKey("");
+        if (onKeyChange && r.body?.config?.ark_api_key) onKeyChange(r.body.config.ark_api_key);
+      }
+      showToast("设置已保存");
+    } catch (e) {
+      showToast("保存失败: " + e.message, "error");
+    }
     setSaving(false);
   };
 
@@ -1400,7 +1571,7 @@ function SettingsTab() {
           <label className="label">ARK API Key</label>
           <div className="flex gap-2">
             <input className="input flex-1" type={showKey?"text":"password"}
-              value={apiKey || config.ark_api_key_masked || ""} onChange={e => setApiKey(e.target.value)}
+              value={apiKey !== "" ? apiKey : (config.ark_api_key || "")} onChange={e => setApiKey(e.target.value)}
               placeholder="输入 Volcengine Ark API Key" />
             <button className="btn btn-sm" onClick={() => setShowKey(!showKey)}>{showKey?"隐藏":"显示"}</button>
             <button className="btn btn-sm btn-primary" disabled={!apiKey} onClick={() => save({ark_api_key: apiKey})}>保存</button>
@@ -1450,7 +1621,8 @@ function SettingsTab() {
             <input className="input" value={config.output_dir || ""} placeholder="默认: ~/seedance-output/"
               onChange={e => setConfig({...config, output_dir: e.target.value})}
               onBlur={e => save({output_dir: e.target.value})} />
-            <button className="btn btn-sm" onClick={() => pluginApi("POST", "/storage/open-folder", {path: config.output_dir || ""})}>打开</button>
+            <button className="btn btn-sm" onClick={async () => { var p = await pickFolder("选择视频输出目录"); if (p) { setConfig({...config, output_dir: p}); save({output_dir: p}); } }}>浏览</button>
+            <button className="btn btn-sm" onClick={() => showInFolder(config.output_dir || "")}>打开</button>
           </div>
           <div className="grid-2" style={{marginTop:6}}>
             <div>
@@ -1485,7 +1657,8 @@ function SettingsTab() {
             <input className="input" value={config.assets_dir || ""} placeholder="默认: ~/seedance-assets/"
               onChange={e => setConfig({...config, assets_dir: e.target.value})}
               onBlur={e => save({assets_dir: e.target.value})} />
-            <button className="btn btn-sm" onClick={() => pluginApi("POST", "/storage/open-folder", {path: config.assets_dir || ""})}>打开</button>
+            <button className="btn btn-sm" onClick={async () => { var p = await pickFolder("选择素材文件夹"); if (p) { setConfig({...config, assets_dir: p}); save({assets_dir: p}); } }}>浏览</button>
+            <button className="btn btn-sm" onClick={() => showInFolder(config.assets_dir || "")}>打开</button>
           </div>
         </div>
 
@@ -1526,7 +1699,7 @@ function App() {
   useEffect(() => {
     pluginApi("GET", "/settings").then(r => {
       setConfigLoaded(true);
-      if (r.body?.config?.ark_api_key_masked) setKeyStatus(r.body.config.ark_api_key_masked);
+      if (r.body?.config?.ark_api_key) setKeyStatus(r.body.config.ark_api_key);
     }).catch(() => setConfigLoaded(true));
   }, []);
 
@@ -1535,7 +1708,7 @@ function App() {
       <div className="header">
         <h1><Ico name="video"/> Seedance 视频生成</h1>
         <div className="header-right">
-          {keyStatus && <span>API Key: {keyStatus}</span>}
+          {keyStatus && <span title={keyStatus} style={{cursor:"default"}}>API Key: {keyStatus.length > 12 ? keyStatus.slice(0,4)+"..."+keyStatus.slice(-4) : keyStatus}</span>}
           <button className="btn btn-sm" onClick={() => setActiveTab(5)}><Ico name="settings"/> 设置</button>
         </div>
       </div>
@@ -1545,12 +1718,12 @@ function App() {
         ))}
       </div>
       <div className="content">
-        {activeTab === 0 && <CreateTab models={models} />}
+        {activeTab === 0 && <CreateTab models={models} onGoToTasks={() => setActiveTab(1)} />}
         {activeTab === 1 && <TaskListTab />}
         {activeTab === 2 && <AssetsTab />}
         {activeTab === 3 && <PromptGuideTab />}
         {activeTab === 4 && <StoryboardTab />}
-        {activeTab === 5 && <SettingsTab />}
+        {activeTab === 5 && <SettingsTab onKeyChange={k => setKeyStatus(k)} />}
       </div>
     </div>
   );

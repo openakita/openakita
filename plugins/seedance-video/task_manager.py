@@ -89,6 +89,8 @@ class TaskManager:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(str(self._db_path))
         self._db.row_factory = aiosqlite.Row
+        await self._db.execute("PRAGMA journal_mode=WAL")
+        await self._db.execute("PRAGMA synchronous=NORMAL")
         await self._db.executescript(SCHEMA_SQL)
         await self._init_default_config()
         await self._db.commit()
@@ -137,6 +139,9 @@ class TaskManager:
                 "INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)", (k, v)
             )
         await self._db.commit()
+        if "ark_api_key" in updates:
+            saved = await self.get_config("ark_api_key")
+            logger.info("API key saved, verify read-back matches: %s", saved == updates["ark_api_key"])
 
     # ── Tasks ──
 

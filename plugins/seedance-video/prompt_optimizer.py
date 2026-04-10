@@ -76,11 +76,9 @@ async def optimize_prompt(
 
     try:
         if hasattr(brain, "think"):
-            result = await brain.think(
-                user_message=user_msg,
-                system_prompt=OPTIMIZE_SYSTEM_PROMPT,
-            )
-            return result.get("content", "") if isinstance(result, dict) else str(result)
+            result = await brain.think(prompt=user_msg, system=OPTIMIZE_SYSTEM_PROMPT)
+            text = getattr(result, "content", "") or (result.get("content", "") if isinstance(result, dict) else str(result))
+            return text
         elif hasattr(brain, "chat"):
             result = await brain.chat(
                 messages=[

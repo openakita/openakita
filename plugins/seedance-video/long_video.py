@@ -75,8 +75,8 @@ async def decompose_storyboard(
 
     try:
         if hasattr(brain, "think"):
-            result = await brain.think(user_message=user_msg, system_prompt=system)
-            text = result.get("content", "") if isinstance(result, dict) else str(result)
+            result = await brain.think(prompt=user_msg, system=system)
+            text = getattr(result, "content", "") or (result.get("content", "") if isinstance(result, dict) else str(result))
         elif hasattr(brain, "chat"):
             result = await brain.chat(messages=[
                 {"role": "system", "content": system},
@@ -248,6 +248,7 @@ class ChainGenerator:
             prev_task = None
             for seg in segments:
                 content = self._build_content(seg, prev_task)
+                has_frame = prev_task and prev_task.get("last_frame_url")
                 try:
                     result = await self._ark.create_task(
                         model=model_id,
@@ -257,21 +258,44 @@ class ChainGenerator:
                         resolution=resolution,
                         return_last_frame=True,
                     )
-                    task = await self._tm.create_task(
-                        ark_task_id=result.get("id", ""),
-                        status="running",
-                        prompt=seg.get("prompt", ""),
-                        mode="extend" if prev_task else "t2v",
-                        model=model_id,
-                    )
-                    results.append(task)
-
-                    task = await self._wait_for_task(task["id"])
-                    prev_task = task
                 except Exception as e:
-                    logger.error("Chain segment %d failed: %s", seg.get("index", 0), e)
-                    results.append({"error": str(e), "index": seg.get("index", 0)})
-                    break
+                    if has_frame and self._is_image_rejection(e):
+                        logger.warning(
+                            "Chain segment %d: image rejected (likely human face), "
+                            "retrying as pure text-to-video",
+                            seg.get("index", 0),
+                        )
+                        content = [{"type": "text", "text": seg.get("prompt", "")}]
+                        has_frame = False
+                        try:
+                            result = await self._ark.create_task(
+                                model=model_id,
+                                content=content,
+                                ratio=ratio,
+                                duration=seg.get("duration", 10),
+                                resolution=resolution,
+                                return_last_frame=True,
+                            )
+                        except Exception as e2:
+                            idx = seg.get("index", 0)
+                            logger.error("Chain segment %d retry also failed: %s", idx, e2)
+                            results.append(self._make_error(seg, e2))
+                            break
+                    else:
+                        results.append(self._make_error(seg, e))
+                        break
+
+                task = await self._tm.create_task(
+                    ark_task_id=result.get("id", ""),
+                    status="running",
+                    prompt=seg.get("prompt", ""),
+                    mode="i2v" if has_frame else "t2v",
+                    model=model_id,
+                )
+                results.append(task)
+
+                task = await self._wait_for_task(task["id"])
+                prev_task = task
 
         elif mode == "parallel":
             tasks = []
@@ -307,14 +331,58 @@ class ChainGenerator:
         return results
 
     def _build_content(self, segment: dict, prev_task: dict | None) -> list[dict]:
-        """Build content array for a segment, optionally referencing previous."""
+        """Build content array for a segment, optionally chaining from previous.
+
+        Uses last_frame → first_frame chaining as required by Seedance API:
+        the previous video's last frame becomes the next video's first frame image.
+        """
         content: list[dict] = [{"type": "text", "text": segment.get("prompt", "")}]
-        if prev_task and prev_task.get("video_url"):
-            content.insert(0, {
-                "type": "video_url",
-                "video_url": {"url": prev_task["video_url"]},
-            })
+        if prev_task:
+            frame_url = prev_task.get("last_frame_url") or ""
+            if frame_url:
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": frame_url},
+                })
+                logger.info(
+                    "Chain: using last_frame from segment %s as first_frame",
+                    prev_task.get("id", "?"),
+                )
+            else:
+                logger.warning(
+                    "Chain: prev segment %s has no last_frame_url, generating as standalone t2v",
+                    prev_task.get("id", "?"),
+                )
         return content
+
+    @staticmethod
+    def _is_image_rejection(exc: Exception) -> bool:
+        """Check if the exception is an image content policy rejection."""
+        msg = str(exc).lower()
+        markers = [
+            "sensitivecontent",
+            "privacyinformation",
+            "real person",
+            "inputimage",
+            "image_url",
+            "nsfw",
+        ]
+        return any(m in msg for m in markers)
+
+    @staticmethod
+    def _make_error(seg: dict, exc: Exception) -> dict:
+        idx = seg.get("index", 0)
+        detail = str(exc)
+        if hasattr(exc, "response"):
+            try:
+                detail = exc.response.text
+            except Exception:
+                pass
+        logger.error("Chain segment %d failed: %s", idx, detail)
+        return {
+            "error": detail, "index": idx,
+            "status": "failed", "prompt": seg.get("prompt", ""),
+        }
 
     async def _wait_for_task(self, task_id: str, timeout: int = 600) -> dict:
         """Poll until task completes or timeout."""

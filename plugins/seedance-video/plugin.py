@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Query
-from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from openakita.plugins.api import PluginAPI, PluginBase
@@ -270,15 +269,32 @@ class Plugin(PluginBase):
                     video_url = ""
                     revised_prompt = ""
                     last_frame_url = ""
-                    output = result.get("output", {})
-                    if isinstance(output, dict):
-                        content_list = output.get("content", [])
-                        for item in content_list:
-                            if isinstance(item, dict) and item.get("type") == "video_url":
-                                video_url = item.get("video_url", {}).get("url", "")
-                            if isinstance(item, dict) and item.get("type") == "image_url":
-                                last_frame_url = item.get("image_url", {}).get("url", "")
-                        revised_prompt = output.get("revised_prompt", "")
+
+                    content = result.get("content", {})
+                    if isinstance(content, dict):
+                        video_url = content.get("video_url", "") or ""
+                        last_frame_url = (
+                            content.get("last_frame_url", "")
+                            or content.get("image_url", "")
+                            or ""
+                        )
+                        revised_prompt = content.get("revised_prompt", "") or ""
+
+                    if not video_url:
+                        output = result.get("output", {})
+                        if isinstance(output, dict):
+                            content_list = output.get("content", [])
+                            if isinstance(content_list, list):
+                                for item in content_list:
+                                    if isinstance(item, dict) and item.get("type") == "video_url":
+                                        video_url = item.get("video_url", {}).get("url", "")
+                                    if isinstance(item, dict) and item.get("type") == "image_url":
+                                        if not last_frame_url:
+                                            last_frame_url = item.get("image_url", {}).get("url", "")
+                            if not revised_prompt:
+                                revised_prompt = output.get("revised_prompt", "")
+                            if not last_frame_url:
+                                last_frame_url = output.get("last_frame_url", "") or ""
 
                     updates: dict[str, Any] = {"status": "succeeded", "video_url": video_url}
                     if revised_prompt:
@@ -483,27 +499,26 @@ class Plugin(PluginBase):
             }
 
         @router.get("/videos/{task_id}")
-        async def proxy_video(task_id: str) -> StreamingResponse:
+        async def proxy_video(task_id: str, download: int = 0):
             task = await self._tm.get_task(task_id)
             if not task:
                 raise HTTPException(status_code=404, detail="Task not found")
 
             local_path = task.get("local_video_path")
-            if local_path and Path(local_path).is_file():
-                return FileResponse(local_path, media_type="video/mp4")
-
             video_url = task.get("video_url")
-            if not video_url:
+            source = local_path if (local_path and Path(local_path).is_file()) else video_url
+            if not source:
                 raise HTTPException(status_code=404, detail="No video available")
 
-            import httpx
-            async def stream():
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    async with client.stream("GET", video_url) as resp:
-                        async for chunk in resp.aiter_bytes(8192):
-                            yield chunk
+            prompt_prefix = (task.get("prompt", "") or "video")[:30].strip() or "video"
+            fname = f"seedance_{prompt_prefix}.mp4"
 
-            return StreamingResponse(stream(), media_type="video/mp4")
+            return self._api.create_file_response(
+                source,
+                filename=fname,
+                media_type="video/mp4",
+                as_download=bool(download),
+            )
 
         @router.get("/videos/{task_id}/download")
         async def download_video(task_id: str) -> dict:
@@ -522,11 +537,7 @@ class Plugin(PluginBase):
         @router.get("/settings")
         async def get_settings() -> dict:
             cfg = await self._tm.get_all_config()
-            if "ark_api_key" in cfg and cfg["ark_api_key"]:
-                cfg["ark_api_key_masked"] = cfg["ark_api_key"][:4] + "****" + cfg["ark_api_key"][-4:]
-            else:
-                cfg["ark_api_key_masked"] = ""
-            cfg.pop("ark_api_key", None)
+            cfg.setdefault("ark_api_key", "")
             return {"ok": True, "config": cfg}
 
         @router.put("/settings")
@@ -538,7 +549,8 @@ class Plugin(PluginBase):
                     self._ark.update_api_key(key)
                 else:
                     self._ark = ArkClient(key)
-            return {"ok": True}
+            saved = await self._tm.get_all_config()
+            return {"ok": True, "config": saved}
 
         @router.get("/models")
         async def list_models() -> dict:
@@ -580,7 +592,7 @@ class Plugin(PluginBase):
 
         @router.post("/prompt-optimize")
         async def optimize_prompt_endpoint(body: PromptOptimizeBody) -> dict:
-            brain = self._api._host.get("brain") if hasattr(self._api, "_host") else None
+            brain = self._api.get_brain()
             if not brain:
                 return {"ok": False, "error": "LLM not available", "result": body.prompt}
             result = await optimize_prompt(
@@ -707,7 +719,7 @@ class Plugin(PluginBase):
 
         @router.post("/long-video/storyboard")
         async def decompose_storyboard_ep(body: StoryboardDecomposeBody) -> dict:
-            brain = self._api._host.get("brain") if hasattr(self._api, "_host") else None
+            brain = self._api.get_brain()
             if not brain:
                 return {"ok": False, "error": "LLM not available"}
             result = await decompose_storyboard(
