@@ -758,7 +758,10 @@ class TaskExecutor:
                             try:
                                 from ..tools.sticker import StickerEngine
 
-                                sticker_engine = StickerEngine(settings.sticker_data_path)
+                                sticker_engine = StickerEngine(
+                                    settings.sticker_data_path,
+                                    mirrors=settings.sticker_mirrors or None,
+                                )
                                 await sticker_engine.initialize()
                                 sticker = await sticker_engine.get_random_by_mood(sticker_mood)
                                 if sticker:

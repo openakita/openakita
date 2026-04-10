@@ -504,6 +504,7 @@ class Agent:
         self.sticker_engine = (
             StickerEngine(
                 data_dir=settings.sticker_data_path,
+                mirrors=settings.sticker_mirrors or None,
             )
             if settings.sticker_enabled
             else None

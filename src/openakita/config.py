@@ -431,6 +431,15 @@ class Settings(BaseSettings):
     # === 表情包配置 ===
     sticker_enabled: bool = Field(default=True, description="是否启用表情包功能")
     sticker_data_dir: str = Field(default="data/sticker", description="表情包数据目录")
+    sticker_mirrors: list[str] = Field(
+        default_factory=list,
+        description=(
+            "自定义表情包镜像 URL 列表，优先于内置镜像尝试。"
+            "支持两种格式：1) CDN 镜像基址（追加相对路径），"
+            "2) GitHub 代理前缀（追加完整原始 URL）。"
+            "示例: ['https://ghp.ci/https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/']"
+        ),
+    )
 
     # === Bug Report / Feedback 配置 ===
     # 以下三个值是公开标识（类似 reCAPTCHA site key），不是密钥。

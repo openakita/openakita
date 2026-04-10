@@ -38,13 +38,18 @@ class StickerEngine:
     INDEX_URL = (
         "https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/chinesebqb_github.json"
     )
-    _MIRRORS = [
+    _GITHUB_RAW_PREFIX = "https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/"
+
+    # 内置镜像列表：GitHub 代理（国内友好）+ CDN 镜像
+    # 每个条目 + 相对路径即可得到完整 URL（代理条目中已包含原始前缀）
+    _BUILTIN_MIRRORS: list[str] = [
+        "https://ghp.ci/https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/",
+        "https://gh-proxy.com/https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/",
         "https://cdn.jsdelivr.net/gh/zhaoolee/ChineseBQB@master/",
         "https://raw.gitmirror.com/zhaoolee/ChineseBQB/master/",
     ]
-    _GITHUB_RAW_PREFIX = "https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/"
 
-    def __init__(self, data_dir: Path | str):
+    def __init__(self, data_dir: Path | str, mirrors: list[str] | None = None):
         self.data_dir = Path(data_dir) if not isinstance(data_dir, Path) else data_dir
         self.index_file = self.data_dir / "chinesebqb_index.json"
         self.cache_dir = self.data_dir / "cache"
@@ -52,6 +57,14 @@ class StickerEngine:
         self._keyword_index: dict[str, list[int]] = {}  # keyword -> [sticker indices]
         self._category_index: dict[str, list[int]] = {}  # category -> [sticker indices]
         self._initialized = False
+
+        # 用户配置的镜像优先，然后是内置镜像（去重保序）
+        seen: set[str] = set()
+        self._mirrors: list[str] = []
+        for m in list(mirrors or []) + self._BUILTIN_MIRRORS:
+            if m not in seen:
+                seen.add(m)
+                self._mirrors.append(m)
 
     async def initialize(self) -> bool:
         """
@@ -107,7 +120,7 @@ class StickerEngine:
         """下载 ChineseBQB 索引 JSON，自动尝试镜像。"""
         index_urls = [self.INDEX_URL]
         relative = "chinesebqb_github.json"
-        for mirror in self._MIRRORS:
+        for mirror in self._mirrors:
             index_urls.append(mirror + relative)
 
         for url in index_urls:
@@ -275,7 +288,7 @@ class StickerEngine:
         urls_to_try = [url]
         if url.startswith(self._GITHUB_RAW_PREFIX):
             relative = url[len(self._GITHUB_RAW_PREFIX) :]
-            for mirror in self._MIRRORS:
+            for mirror in self._mirrors:
                 urls_to_try.append(mirror + relative)
 
         for attempt_url in urls_to_try:
