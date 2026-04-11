@@ -4,7 +4,7 @@
 
 Registers a new LLM provider, enabling OpenAkita to support new model APIs (e.g., Ollama, self-hosted models).
 
-**权限级别 / Permission Level:** System（需要手动确认 / requires manual approval）
+**权限级别 / Permission Level:** Advanced（需要用户确认 / requires user approval）
 
 ---
 
@@ -171,5 +171,5 @@ def test_unload():
 - 继承 `LLMProvider` 实现 `chat()` 和 `chat_stream()` / Subclass `LLMProvider` for `chat()` and `chat_stream()`
 - 继承 `ProviderRegistry` 实现 `list_models()` / Subclass `ProviderRegistry` for `list_models()`
 - 注册时传入**类**（不是实例）给 `register_llm_provider()` / Pass a **class** (not instance) to `register_llm_provider()`
-- `llm.register` 是 System 级权限 / `llm.register` is System-level permission
+- `llm.register` 是 Advanced 级权限 / `llm.register` is Advanced-level permission
 - 卸载时宿主自动清理注册 / Host automatically cleans up registrations on unload

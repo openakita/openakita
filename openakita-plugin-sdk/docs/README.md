@@ -8,10 +8,11 @@ Build plugins for [OpenAkita](https://github.com/openakita/openakita) without in
 pip install openakita-plugin-sdk
 ```
 
-For development from source:
+For development from source (from the [main repository](https://github.com/openakita/openakita)):
 
 ```bash
-pip install -e ./openakita-plugin-sdk
+git clone https://github.com/openakita/openakita.git
+pip install -e openakita/openakita-plugin-sdk
 ```
 
 ## 30-Second Quick Start
@@ -83,7 +84,31 @@ class Plugin(PluginBase):
 | **Hook** | React to lifecycle events | `api.register_hook()` |
 | **Skill** | Inject prompt guidance (SKILL.md) | Declarative (no code) |
 | **MCP** | Wrap an MCP server as a managed plugin | JSON config only |
-| **Full-Stack UI** | Plugin with dedicated frontend page (2.0) | `api.register_api_routes()` + Bridge SDK |
+| **Full-Stack UI** 🆕 | Plugin with dedicated frontend page | `api.register_api_routes()` + Bridge SDK |
+
+### Full-Stack UI Plugin (Quick Start)
+
+```bash
+# Create a plugin with frontend UI
+my-ui-plugin/
+├── plugin.json          # Add "ui" section (see plugin-ui.md)
+├── plugin.py            # Backend: register routes + tools
+└── ui/dist/index.html   # Frontend: inline Bridge SDK + your app
+```
+
+```json
+// plugin.json — key addition
+{
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "My App",
+    "sidebar_group": "apps"
+  },
+  "requires": { "plugin_ui_api": "~1" }
+}
+```
+
+See [UI Plugin Guide](plugin-ui.md) for the full Bridge SDK template and protocol reference.
 
 ## Testing
 
@@ -100,25 +125,31 @@ def test_my_plugin():
 
 | Doc | What it covers |
 |-----|---------------|
-| [Getting Started](docs/getting-started.md) | Full walkthrough from zero to running plugin |
-| [API Reference](docs/api-reference.md) | All `PluginAPI` methods and signatures |
-| [UI Plugin Guide](docs/plugin-ui.md) | Full-stack UI plugin development (Plugin 2.0) |
-| [REST API](docs/rest-api.md) | Plugin management HTTP endpoints |
-| [Permissions](docs/permissions.md) | Three-tier permission model |
-| [Hooks](docs/hooks.md) | All 14 lifecycle hooks with callback signatures |
-| [Protocols](docs/protocols.md) | Memory, Retrieval, Search interfaces |
-| [plugin.json](docs/plugin-json.md) | Manifest schema reference |
-| [Testing](docs/testing.md) | MockPluginAPI and test patterns |
-| [Cross-Ecosystem](docs/cross-ecosystem.md) | Compatibility with Claude/Cursor/Codex |
-| [Examples](docs/examples/) | Complete examples for all 9 plugin types |
+| [Getting Started](getting-started.md) | Full walkthrough from zero to running plugin |
+| [API Reference](api-reference.md) | All `PluginAPI` methods and signatures |
+| [**UI Plugin Guide**](plugin-ui.md) | 🆕 Full-stack UI plugin development (Plugin 2.0) |
+| [Permissions](permissions.md) | Three-tier permission model |
+| [Hooks](hooks.md) | All 14 lifecycle hooks with callback signatures |
+| [Protocols](protocols.md) | Memory, Retrieval, Search interfaces |
+| [plugin.json](plugin-json.md) | Manifest schema reference |
+| [**REST API**](rest-api.md) | Plugin management HTTP endpoints |
+| [Testing](testing.md) | MockPluginAPI and test patterns |
+| [Cross-Ecosystem](cross-ecosystem.md) | Compatibility with Claude/Cursor/Codex |
+| **Examples** | |
+| [Tool Plugin](examples/tool-plugin.md) | Register AI-callable tools |
+| [Channel Plugin](examples/channel-plugin.md) | Add IM channel adapters |
+| [MCP Plugin](examples/mcp-plugin.md) | Wrap MCP server (JSON only) |
+| [Skill Plugin](examples/skill-plugin.md) | Inject prompt guidance (no code) |
+| [UI Plugin](examples/ui-plugin.md) | Full-stack UI with Bridge SDK |
+| [Hook Plugin](examples/hook-plugin.md) | React to lifecycle events |
+| [Memory Plugin](examples/memory-plugin.md) | Custom memory backend |
+| [LLM Plugin](examples/llm-plugin.md) | Custom LLM provider |
+| [RAG Plugin](examples/rag-plugin.md) | Custom retrieval source |
 
 ## SDK Modules
 
 ```python
-from openakita_plugin_sdk import (
-    PluginBase, PluginAPI, PluginManifest, tool_definition,
-    SDK_VERSION, PLUGIN_API_VERSION, PLUGIN_UI_API_VERSION,
-)
+from openakita_plugin_sdk import PluginBase, PluginAPI, tool_definition
 from openakita_plugin_sdk.decorators import tool, hook, auto_register
 from openakita_plugin_sdk.scaffold import scaffold_plugin
 from openakita_plugin_sdk.testing import MockPluginAPI, assert_plugin_loads
