@@ -12,7 +12,7 @@ See ``docs/getting-started.md`` for the full walkthrough.
 """
 
 from .core import PluginAPI, PluginBase, PluginManifest
-from .hooks import HOOK_NAMES
+from .hooks import HOOK_NAMES, HOOK_SIGNATURES
 from .protocols import MemoryBackendProtocol, RetrievalSource, SearchBackend
 from .tools import ToolHandler, tool_definition
 from .version import (
@@ -26,6 +26,7 @@ __version__ = SDK_VERSION
 
 __all__ = [
     "HOOK_NAMES",
+    "HOOK_SIGNATURES",
     "MemoryBackendProtocol",
     "MIN_OPENAKITA_VERSION",
     "PLUGIN_API_VERSION",

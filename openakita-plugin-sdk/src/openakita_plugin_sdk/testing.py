@@ -35,7 +35,8 @@ class MockPluginAPI(PluginAPI):
         self.logs.append((level, msg))
 
     def log_error(self, msg: str, exc: Exception | None = None) -> None:
-        self.logs.append(("error", msg))
+        detail = f"{msg}: {exc}" if exc else msg
+        self.logs.append(("error", detail))
 
     def log_debug(self, msg: str) -> None:
         self.logs.append(("debug", msg))
@@ -46,7 +47,7 @@ class MockPluginAPI(PluginAPI):
     def set_config(self, updates: dict) -> None:
         self.config.update(updates)
 
-    def get_data_dir(self) -> Path:
+    def get_data_dir(self) -> Path | None:
         return self._data_dir
 
     def register_tools(self, definitions: list[dict], handler: Callable) -> None:

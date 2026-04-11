@@ -29,7 +29,10 @@ The `BundleMapper` in `openakita.plugins.bundles` detects the format of a plugin
 | `commands/` 目录 | 每个子目录作为一个 Skill / Each subdirectory as a skill |
 | `.mcp.json` | 注册为 MCP 服务配置 / Registered as MCP server config |
 | `.cursor/rules/*.mdc` | 转换为 Skill 文本用于 Prompt 注入 / Converted to skill text |
-| `settings.json` | 导入为插件默认配置 / Imported as plugin config |
+
+> **注意 / Note:** `settings.json` 不会自动导入为插件配置。`map_to_manifest` 仅提取 `version`、`description`、`author` 等元数据字段。
+>
+> `settings.json` is **not** auto-imported as plugin config. `map_to_manifest` only extracts metadata fields like `version`, `description`, `author`.
 
 ---
 
@@ -114,3 +117,5 @@ my-plugin/
 
 - [plugin-json.md](plugin-json.md) — OpenAkita 原生清单格式 / Native manifest format
 - [getting-started.md](getting-started.md) — 创建 OpenAkita 原生插件 / Create native plugins
+- [rest-api.md](rest-api.md) — 安装 API（含 bundle 安装） / Install API (incl. bundle install)
+- [api-reference.md](api-reference.md) — 运行时 API 参考 / Runtime API reference
