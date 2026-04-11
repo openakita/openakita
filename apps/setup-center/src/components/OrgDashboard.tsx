@@ -213,10 +213,10 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
     <div className="db-tip-content">
       {mdModules ? (
         <mdModules.ReactMarkdown remarkPlugins={mdModules.remarkPlugins} rehypePlugins={mdModules.rehypePlugins}>
-          {text}
+          {text ?? ""}
         </mdModules.ReactMarkdown>
       ) : (
-        <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{text}</pre>
+        <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{text ?? ""}</pre>
       )}
     </div>
   );

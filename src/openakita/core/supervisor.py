@@ -81,6 +81,7 @@ class Intervention:
     should_terminate: bool = False
     should_escalate: bool = False
     should_switch_model: bool = False
+    throttled_tool_names: list[str] = field(default_factory=list)
 
 
 # -- 配置常量 --
@@ -411,12 +412,14 @@ class RuntimeSupervisor:
                 should_inject_prompt=True,
                 prompt_injection=(
                     f"[系统提示] 你已经连续 {top_count} 次调用 {top_name}，"
-                    "工具已返回结果。请立即停止调用工具，用自然语言整理结果回复用户。"
+                    "工具已返回结果。请停止重复调用该工具，用自然语言整理结果回复用户。"
                     "如果还需要其他信息，请换一个不同的工具或方法。"
                 ),
+                throttled_tool_names=[top_name],
             )
 
         if most_common_count >= self._signature_repeat_warn:
+            _sig_tool = most_common_sig.split("(")[0] if "(" in most_common_sig else top_name
             return Intervention(
                 level=InterventionLevel.NUDGE,
                 pattern=PatternType.SIGNATURE_REPEAT,
@@ -424,8 +427,9 @@ class RuntimeSupervisor:
                 should_inject_prompt=True,
                 prompt_injection=(
                     "[系统提示] 你在最近几轮中用完全相同的参数重复调用了同一个工具。"
-                    "请立即停止调用工具，用自然语言回复用户。"
+                    "请停止重复调用该工具，用自然语言回复用户，或使用其他工具。"
                 ),
+                throttled_tool_names=[_sig_tool],
             )
 
         return None

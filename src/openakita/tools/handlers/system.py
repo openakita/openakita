@@ -292,12 +292,14 @@ class SystemHandler:
             try:
                 img_bytes = await async_with_retry(
                     _download_image, image_url,
-                    max_retries=2, operation_name="download_generated_image",
+                    max_retries=3, base_delay=2.0, operation_name="download_generated_image",
                 )
                 out_path.write_bytes(img_bytes)
             except Exception as e:
                 detail = extract_connection_error(e)
-                return f"❌ 图片下载失败（网络错误）: {detail}"
+                from urllib.parse import urlparse
+                host = urlparse(image_url).hostname or image_url[:60]
+                return f"❌ 图片下载失败（网络错误，目标: {host}）: {detail}"
 
         except httpx.HTTPError as e:
             detail = extract_connection_error(e)

@@ -183,11 +183,11 @@ packages = ["src/openakita"]
 # mcps          → site-packages/openakita/builtin_mcps/
 [tool.hatch.build.targets.wheel.force-include]
 # Web frontend (built with: cd apps/setup-center && VITE_BUILD_TARGET=web npm run build:web)
-# NOTE: do not force-include generated frontend artifacts here.
-# They may be unavailable in sdist-based wheel builds and should not block default `python -m build`.
+# CI always builds the frontend before `python -m build --wheel`, so dist-web/ is present.
+# Local `pip install .` without building the frontend first will fail; run npm run build:web first.
+"apps/setup-center/dist-web" = "openakita/web"
 # User docs (built with: python scripts/build_docs.py)
-# NOTE: do not force-include docs-site/.vitepress/dist here.
-# It may be absent in sdist-based wheel builds and should not block default `python -m build`.
+"docs-site/.vitepress/dist" = "openakita/docs_dist"
 "skills/system" = "openakita/builtin_skills/system"
 "mcps" = "openakita/builtin_mcps"
 "skills/xiaohongshu-creator" = "openakita/builtin_skills/external/xiaohongshu-creator"

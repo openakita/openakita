@@ -1,3 +1,13 @@
+# ── Stage 1: Build web frontend ──
+FROM node:20-slim AS frontend
+
+WORKDIR /app/apps/setup-center
+COPY apps/setup-center/package.json apps/setup-center/package-lock.json ./
+RUN npm ci
+COPY apps/setup-center/ ./
+RUN npm run build:web
+
+# ── Stage 2: Build Python package ──
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
@@ -12,8 +22,12 @@ COPY skills/ skills/
 COPY mcps/ mcps/
 COPY identity/ identity/
 
+COPY --from=frontend /app/apps/setup-center/dist-web/ apps/setup-center/dist-web/
+RUN mkdir -p docs-site/.vitepress/dist
+
 RUN pip install --no-cache-dir .
 
+# ── Stage 3: Final runtime image ──
 FROM python:3.11-slim
 
 WORKDIR /app

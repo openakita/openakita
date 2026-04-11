@@ -2209,10 +2209,10 @@ export function OrgEditorView({
                 <div className="org-feed-tip-content">
                   {mdModules ? (
                     <mdModules.ReactMarkdown remarkPlugins={mdModules.remarkPlugins} rehypePlugins={mdModules.rehypePlugins}>
-                      {text}
+                      {text ?? ""}
                     </mdModules.ReactMarkdown>
                   ) : (
-                    <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{text}</pre>
+                    <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{text ?? ""}</pre>
                   )}
                 </div>
               );
@@ -3197,10 +3197,10 @@ export function OrgEditorView({
                             <div className="bb-entry-content" style={{ marginTop: 3 }}>
                               {mdModules ? (
                                 <mdModules.ReactMarkdown remarkPlugins={mdModules.remarkPlugins} rehypePlugins={mdModules.rehypePlugins}>
-                                  {bb.content}
+                                  {bb.content ?? ""}
                                 </mdModules.ReactMarkdown>
                               ) : (
-                                <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{bb.content}</pre>
+                                <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{bb.content ?? ""}</pre>
                               )}
                             </div>
                             {Array.isArray(bb.attachments) && bb.attachments.length > 0 && (

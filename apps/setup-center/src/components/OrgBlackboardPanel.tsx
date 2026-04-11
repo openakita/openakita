@@ -177,10 +177,10 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
                     <div className="bb-entry-content">
                       {mdModules ? (
                         <mdModules.ReactMarkdown remarkPlugins={mdModules.remarkPlugins} rehypePlugins={mdModules.rehypePlugins}>
-                          {entry.content}
+                          {entry.content ?? ""}
                         </mdModules.ReactMarkdown>
                       ) : (
-                        <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{entry.content}</pre>
+                        <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{entry.content ?? ""}</pre>
                       )}
                     </div>
                     {Array.isArray(entry.attachments) && entry.attachments.length > 0 && (

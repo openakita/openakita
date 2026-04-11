@@ -305,8 +305,9 @@ def get_httpx_proxy_mounts() -> dict | None:
 def get_httpx_client_kwargs(*, timeout: float = 30.0, is_local: bool = False) -> dict:
     """获取 httpx.AsyncClient 通用 kwargs
 
-    统一处理代理、trust_env、超时等配置，供 bridge.py 等非 Provider 代码使用。
+    统一处理代理、trust_env、超时、transport 等配置。
     始终设置 trust_env=False，避免 macOS/Windows 残留系统代理导致请求失败。
+    包含 IPv4-only transport（FORCE_IPV4=true 时），与 LLM 客户端行为一致。
 
     Args:
         timeout: 请求超时（秒）
@@ -322,28 +323,46 @@ def get_httpx_client_kwargs(*, timeout: float = 30.0, is_local: bool = False) ->
         if proxy:
             kwargs["proxy"] = proxy
 
+    transport = get_httpx_transport()
+    if transport:
+        kwargs["transport"] = transport
+
     return kwargs
 
 
 def extract_connection_error(exc: BaseException, max_depth: int = 5) -> str:
-    """遍历异常 __cause__ 链，提取底层错误信息。
+    """遍历异常链，提取底层错误信息。
 
     httpx 的 ConnectError 经常包装了真正的 OSError/SSL 错误，
     直接 str(e) 只得到空字符串。此函数走到链底提取有用信息。
+    同时检查 __cause__（显式链）和 __context__（隐式链）。
 
     设计参考: claude-code errorUtils.ts extractConnectionErrorDetails()
     """
+    best: str = ""
     current: BaseException | None = exc
+    visited: set[int] = set()
     depth = 0
     while current and depth < max_depth:
-        if isinstance(current, OSError) and current.args:
+        cid = id(current)
+        if cid in visited:
+            break
+        visited.add(cid)
+        if isinstance(current, OSError) and (current.strerror or current.args):
             return f"{type(current).__name__}: {current}"
+        s = str(current)
+        if s and not best:
+            best = f"{type(current).__name__}: {s}"
         cause = getattr(current, "__cause__", None)
-        if cause is current or cause is None:
+        if cause is None or cause is current:
+            cause = getattr(current, "__context__", None)
+        if cause is None or cause is current:
             break
         current = cause
         depth += 1
-    return f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+    if best:
+        return best
+    return type(exc).__name__
 
 
 def format_proxy_hint() -> str:
