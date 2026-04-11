@@ -83,6 +83,7 @@ class Plugin(PluginBase):
 | **Hook** | React to lifecycle events | `api.register_hook()` |
 | **Skill** | Inject prompt guidance (SKILL.md) | Declarative (no code) |
 | **MCP** | Wrap an MCP server as a managed plugin | JSON config only |
+| **Full-Stack UI** | Plugin with dedicated frontend page (2.0) | `api.register_api_routes()` + Bridge SDK |
 
 ## Testing
 
@@ -102,7 +103,7 @@ def test_my_plugin():
 | [Getting Started](docs/getting-started.md) | Full walkthrough from zero to running plugin |
 | [API Reference](docs/api-reference.md) | All `PluginAPI` methods and signatures |
 | [Permissions](docs/permissions.md) | Three-tier permission model |
-| [Hooks](docs/hooks.md) | All 10 lifecycle hooks with callback signatures |
+| [Hooks](docs/hooks.md) | All 14 lifecycle hooks with callback signatures |
 | [Protocols](docs/protocols.md) | Memory, Retrieval, Search interfaces |
 | [plugin.json](docs/plugin-json.md) | Manifest schema reference |
 | [Testing](docs/testing.md) | MockPluginAPI and test patterns |

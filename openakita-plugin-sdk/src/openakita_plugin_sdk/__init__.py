@@ -15,7 +15,12 @@ from .core import PluginAPI, PluginBase, PluginManifest
 from .hooks import HOOK_NAMES
 from .protocols import MemoryBackendProtocol, RetrievalSource, SearchBackend
 from .tools import ToolHandler, tool_definition
-from .version import MIN_OPENAKITA_VERSION, PLUGIN_API_VERSION, SDK_VERSION
+from .version import (
+    MIN_OPENAKITA_VERSION,
+    PLUGIN_API_VERSION,
+    PLUGIN_UI_API_VERSION,
+    SDK_VERSION,
+)
 
 __version__ = SDK_VERSION
 
@@ -24,6 +29,7 @@ __all__ = [
     "MemoryBackendProtocol",
     "MIN_OPENAKITA_VERSION",
     "PLUGIN_API_VERSION",
+    "PLUGIN_UI_API_VERSION",
     "PluginAPI",
     "PluginBase",
     "PluginManifest",
