@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -28,6 +29,30 @@ DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com"
 DEFAULT_ILINK_BOT_TYPE = "3"
 
 _QR_LONG_POLL_TIMEOUT_S = 35.0
+_QR_FETCH_TIMEOUT_S = 15.0
+_QR_FETCH_MAX_RETRIES = 3
+
+
+def _encode_client_version(semver: str) -> int:
+    """与 wechat 适配器一致：语义化版本编码为 uint32 (major<<16 | minor<<8 | patch)"""
+    parts = semver.split(".")
+    major = int(parts[0]) if len(parts) > 0 else 0
+    minor = int(parts[1]) if len(parts) > 1 else 0
+    patch = int(parts[2]) if len(parts) > 2 else 0
+    return (major << 16) | (minor << 8) | patch
+
+
+# 与 src/openakita/channels/adapters/wechat.py 使用相同环境变量，保证扫码与运行时头一致
+_OPENCLAW_COMPAT = os.environ.get("WECHAT_OPENCLAW_COMPAT_VERSION", "2.1.8")
+_ILINK_APP_CLIENT_VERSION = str(_encode_client_version(_OPENCLAW_COMPAT))
+_ILINK_APP_ID = os.environ.get("WECHAT_ILINK_APP_ID", "bot")
+
+
+def _ilink_onboard_headers() -> dict[str, str]:
+    return {
+        "iLink-App-Id": _ILINK_APP_ID,
+        "iLink-App-ClientVersion": _ILINK_APP_CLIENT_VERSION,
+    }
 
 
 class WeChatOnboardError(Exception):
@@ -68,9 +93,32 @@ class WeChatOnboard:
         """
         client = await self._get_client()
         url = f"{self._base_url}/ilink/bot/get_bot_qrcode"
-        resp = await client.get(url, params={"bot_type": DEFAULT_ILINK_BOT_TYPE})
-        resp.raise_for_status()
-        data = resp.json()
+        headers = _ilink_onboard_headers()
+        last_exc: BaseException | None = None
+        for attempt in range(1, _QR_FETCH_MAX_RETRIES + 1):
+            try:
+                resp = await client.get(
+                    url,
+                    params={"bot_type": DEFAULT_ILINK_BOT_TYPE},
+                    headers=headers,
+                    timeout=_QR_FETCH_TIMEOUT_S,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                break
+            except (httpx.HTTPError, ValueError) as e:
+                last_exc = e
+                logger.warning(
+                    "get_bot_qrcode attempt %s/%s failed: %s",
+                    attempt,
+                    _QR_FETCH_MAX_RETRIES,
+                    e,
+                )
+                if attempt == _QR_FETCH_MAX_RETRIES:
+                    raise WeChatOnboardError(
+                        f"获取二维码失败（已重试 {_QR_FETCH_MAX_RETRIES} 次）: {last_exc}"
+                    ) from last_exc
+                await asyncio.sleep(1.0)
 
         qrcode = data.get("qrcode", "")
         qrcode_img = data.get("qrcode_img_content", "")
@@ -99,7 +147,7 @@ class WeChatOnboard:
         """
         client = await self._get_client()
         url = f"{self._base_url}/ilink/bot/get_qrcode_status"
-        headers = {"iLink-App-ClientVersion": "1"}
+        headers = _ilink_onboard_headers()
         try:
             resp = await client.get(
                 url,

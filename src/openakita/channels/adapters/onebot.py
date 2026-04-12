@@ -145,6 +145,8 @@ class OneBotAdapter(ChannelAdapter):
                     self._reverse_ws_handler,
                     self.config.reverse_host,
                     self.config.reverse_port,
+                    ping_interval=30,
+                    ping_timeout=10,
                 )
                 logger.info(
                     f"OneBot reverse WS server listening on "
@@ -195,6 +197,8 @@ class OneBotAdapter(ChannelAdapter):
                     self._reverse_ws_handler,
                     self.config.reverse_host,
                     self.config.reverse_port,
+                    ping_interval=30,
+                    ping_timeout=10,
                 )
                 logger.info(
                     f"OneBot reverse WS server listening on "
@@ -486,6 +490,50 @@ class OneBotAdapter(ChannelAdapter):
 
         return result
 
+    async def _expand_forward_message(self, fwd_id: str) -> str | None:
+        """通过 get_forward_msg 展开合并转发文本（限前 5 条、总长 2000 字）。"""
+        if not fwd_id:
+            return None
+        try:
+            result = await self._call_api("get_forward_msg", {"id": fwd_id})
+        except Exception:
+            return None
+        if not isinstance(result, dict):
+            return None
+        messages = result.get("messages")
+        if messages is None:
+            inner = result.get("data")
+            if isinstance(inner, dict):
+                messages = inner.get("messages")
+        if not isinstance(messages, list):
+            return None
+
+        parts: list[str] = []
+        total = 0
+        max_total = 2000
+        for m in messages[:5]:
+            if not isinstance(m, dict):
+                continue
+            segs = m.get("message")
+            if segs is None:
+                segs = m.get("content")
+            if isinstance(segs, str):
+                segs = self._parse_cq_code(segs)
+            if not isinstance(segs, list):
+                continue
+            for s in segs:
+                if not isinstance(s, dict) or s.get("type") != "text":
+                    continue
+                t = (s.get("data") or {}).get("text", "") or ""
+                if total + len(t) > max_total:
+                    remain = max_total - total
+                    if remain > 0:
+                        parts.append(t[:remain])
+                    return "\n".join(parts)
+                parts.append(t)
+                total += len(t)
+        return "\n".join(parts) if parts else None
+
     # ==================== 消息解析 ====================
 
     async def _parse_message(self, message: list) -> tuple[MessageContent, str | None]:
@@ -547,7 +595,8 @@ class OneBotAdapter(ChannelAdapter):
                     reply_to_id = str(rid)
             elif seg_type == "forward":
                 fwd_id = data.get("id", "")
-                text_parts.append(f"[合并转发:{fwd_id}]")
+                expanded = await self._expand_forward_message(str(fwd_id))
+                text_parts.append(expanded if expanded else f"[合并转发:{fwd_id}]")
             elif seg_type == "share":
                 url = data.get("url", "")
                 title = data.get("title", "链接")
@@ -643,17 +692,6 @@ class OneBotAdapter(ChannelAdapter):
                 normalized = voice.local_path.replace("\\", "/")
                 msg_array.append({"type": "record", "data": {"file": f"file:///{normalized}"}})
 
-        if message.content.videos:
-            logger.info(
-                "OneBot v11: videos in OutgoingMessage are not sent via send_message; "
-                "use send_file() for individual files"
-            )
-        if message.content.files:
-            logger.info(
-                "OneBot v11: files in OutgoingMessage are not sent via send_message; "
-                "use send_file() for individual files"
-            )
-
         try:
             chat_id = int(message.chat_id)
         except (ValueError, TypeError):
@@ -670,6 +708,25 @@ class OneBotAdapter(ChannelAdapter):
 
         mid = str((result or {}).get("message_id", ""))
         self._record_bot_msg_id(mid)
+
+        _grp = self._is_group_message(message)
+        for vid in message.content.videos:
+            if not vid.local_path:
+                logger.warning("OneBot: video has no local_path, skipped")
+                continue
+            try:
+                await self.send_file(message.chat_id, vid.local_path, is_group=_grp)
+            except Exception as e:
+                logger.warning("OneBot: send video via send_file failed: %s", e)
+        for f in message.content.files:
+            if not f.local_path:
+                logger.warning("OneBot: file has no local_path, skipped")
+                continue
+            try:
+                await self.send_file(message.chat_id, f.local_path, is_group=_grp)
+            except Exception as e:
+                logger.warning("OneBot: send file via send_file failed: %s", e)
+
         return mid
 
     async def send_group_message(self, group_id: int, message: str) -> str:

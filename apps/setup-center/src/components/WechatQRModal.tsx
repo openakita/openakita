@@ -86,14 +86,14 @@ export function WechatQRModal({
   const [qrUrl, setQrUrl] = useState("");
   const [qrCode, setQrCode] = useState("");
   const [error, setError] = useState("");
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (pollRef.current) clearTimeout(pollRef.current);
     };
   }, []);
 
@@ -123,11 +123,16 @@ export function WechatQRModal({
     (qrcode: string) => {
       let attempts = 0;
       const maxAttempts = 150;
+      const pollIntervalMs = 2000;
 
-      pollRef.current = setInterval(async () => {
+      const scheduleNext = () => {
+        pollRef.current = setTimeout(runPoll, pollIntervalMs);
+      };
+
+      const runPoll = async () => {
+        pollRef.current = null;
         attempts++;
         if (attempts > maxAttempts || !mountedRef.current) {
-          if (pollRef.current) clearInterval(pollRef.current);
           if (mountedRef.current) {
             setError(t("wechat.qrTimeout"));
             setState("error");
@@ -139,7 +144,6 @@ export function WechatQRModal({
           if (!mountedRef.current) return;
 
           if (data.status === "confirmed" && data.token) {
-            if (pollRef.current) clearInterval(pollRef.current);
             setState("success");
             onSuccess(data.token);
             return;
@@ -147,24 +151,29 @@ export function WechatQRModal({
 
           if (data.status === "scaned") {
             setState("scaned");
+            scheduleNext();
             return;
           }
 
           if (data.status === "expired") {
-            if (pollRef.current) clearInterval(pollRef.current);
             setState("expired");
             return;
           }
 
           if (data.status === "error") {
-            if (pollRef.current) clearInterval(pollRef.current);
             setError(data.message || t("wechat.qrInitFailed"));
             setState("error");
+            return;
           }
+
+          // wait / unknown success path — 串行等待后再发起下一次长轮询
+          scheduleNext();
         } catch {
-          // polling error is non-fatal, keep trying
+          if (mountedRef.current) scheduleNext();
         }
-      }, 2000);
+      };
+
+      void runPoll();
     },
     [venvDir, apiBaseUrl, onSuccess, t],
   );

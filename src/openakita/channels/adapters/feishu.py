@@ -2847,19 +2847,16 @@ class FeishuAdapter(ChannelAdapter):
     async def upload_media(self, path: Path, mime_type: str) -> MediaFile:
         """上传媒体文件"""
         if mime_type.startswith("image/"):
-            image_key = await self._upload_image(str(path))
-            media = MediaFile.create(
-                filename=path.name,
-                mime_type=mime_type,
-                file_id=image_key,
-            )
-            media.status = MediaStatus.READY
-            return media
-
-        return MediaFile.create(
+            file_key = await self._upload_image(str(path))
+        else:
+            file_key = await self._upload_file(str(path))
+        media = MediaFile.create(
             filename=path.name,
             mime_type=mime_type,
+            file_id=file_key,
         )
+        media.status = MediaStatus.READY
+        return media
 
     async def send_card(
         self,
@@ -3262,6 +3259,8 @@ class FeishuAdapter(ChannelAdapter):
         title: str,
         content: str,
         buttons: list[dict] | None = None,
+        *,
+        confirm_id: str = "",
     ) -> dict:
         """构建简单卡片。
 
@@ -3288,6 +3287,8 @@ class FeishuAdapter(ChannelAdapter):
             for btn in buttons:
                 raw_value = btn.get("value", btn["text"])
                 btn_value = raw_value if isinstance(raw_value, dict) else {"action": raw_value}
+                if confirm_id:
+                    btn_value = {**btn_value, "confirm_id": confirm_id}
                 actions.append(
                     {
                         "tag": "button",

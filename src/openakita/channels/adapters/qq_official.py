@@ -1,14 +1,14 @@
 """
 QQ 官方机器人适配器
 
-基于 QQ 官方机器人 API v2 实现 (使用 botpy SDK):
+基于 QQ 官方机器人 API v2 实现（默认原生 WebSocket + httpx REST；可设置环境变量 QQBOT_USE_BOTPY=1 回退 qq-botpy）:
 - AppID + AppSecret 鉴权 (OAuth2 Access Token)
 - 支持 WebSocket 和 Webhook 两种事件接收模式
 - 支持群聊、单聊 (C2C)、频道消息
 - 文本/图片/富媒体消息收发
 
 模式说明:
-- websocket (默认): 使用 botpy SDK 建立 WebSocket 长连接，无需公网 IP
+- websocket (默认): 原生 WebSocket 网关 + httpx REST（无需 botpy）；QQBOT_USE_BOTPY=1 时回退 botpy
 - webhook: QQ 服务器主动推送事件到 HTTP 回调端点，需要公网 IP/域名
 
 官方文档: https://bot.q.qq.com/wiki/develop/api-v2/
@@ -343,11 +343,16 @@ class QQBotAdapter(ChannelAdapter):
                 f"path: {self.webhook_path})"
             )
         else:
-            _import_botpy()
+            if os.environ.get("QQBOT_USE_BOTPY", "").lower() in ("1", "true", "yes"):
+                _import_botpy()
             self._task = asyncio.create_task(self._run_client())
+            _engine = "botpy" if os.environ.get(
+                "QQBOT_USE_BOTPY", ""
+            ).lower() in ("1", "true", "yes") else "native"
             logger.info(
                 f"QQ Official Bot adapter starting in WEBSOCKET mode "
-                f"(AppID: {self.app_id}, sandbox: {self.sandbox})"
+                f"(AppID: {self.app_id}, sandbox: {self.sandbox}, "
+                f"engine={_engine})"
             )
 
     # 不可重试的配置类错误关键词（遇到后大幅延长重试间隔）
@@ -355,26 +360,30 @@ class QQBotAdapter(ChannelAdapter):
     _FATAL_GIVE_UP_THRESHOLD = 5
 
     async def _run_client(self) -> None:
-        """在后台运行 botpy 客户端 (带自动重连) — WebSocket 模式"""
+        """在后台运行 WebSocket 客户端 (带自动重连) — 默认原生网关，可选 botpy。"""
         max_delay = 120
         fatal_max_delay = 600  # 配置错误时最大等 10 分钟
         consecutive_fatal = 0
+        use_botpy = os.environ.get("QQBOT_USE_BOTPY", "").lower() in ("1", "true", "yes")
 
         while self._running:
             try:
-                # 每次循环都重新创建 client，避免旧 client 状态残留
-                _import_botpy()
-                intents = botpy.Intents(
-                    public_guild_messages=True,
-                    public_messages=True,
-                )
-                self._client = _create_botpy_client(
-                    adapter=self,
-                    is_sandbox=self.sandbox,
-                    intents=intents,
-                )
+                if use_botpy:
+                    _import_botpy()
+                    intents = botpy.Intents(
+                        public_guild_messages=True,
+                        public_messages=True,
+                    )
+                    self._client = _create_botpy_client(
+                        adapter=self,
+                        is_sandbox=self.sandbox,
+                        intents=intents,
+                    )
+                else:
+                    from .qq_gateway_native import NativeQQBotClient
 
-                # botpy Client.start() 是一个阻塞协程，会保持 WebSocket 连接
+                    self._client = NativeQQBotClient(self)
+
                 async with self._client:
                     await self._client.start(
                         appid=self.app_id,

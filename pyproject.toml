@@ -62,7 +62,7 @@ dependencies = [
     "uvicorn>=0.27.0",
 
     # IM Channels - Telegram (default)
-    "python-telegram-bot>=21.0",
+    "python-telegram-bot>=22.0",
 
     # Browser automation (built-in)
     "playwright>=1.40.0",
@@ -100,10 +100,11 @@ onebot = [
     "websockets>=15.0.1",
 ]
 
-# QQ 官方机器人
+# QQ 官方机器人（默认原生 WS+REST；设置 QQBOT_USE_BOTPY=1 时需安装 qq-botpy）
 qqbot = [
-    "qq-botpy>=1.1.5",
+    "websockets>=15.0.1",
     "pilk>=0.2.1",              # SILK 语音编解码（QQ 语音格式）
+    "qq-botpy>=1.1.5",          # 可选回退 SDK
 ]
 
 # 微信个人号 (iLink Bot API)

@@ -86,6 +86,21 @@ def _get_proxy(config_proxy: str | None = None) -> str | None:
     return None
 
 
+def _telegram_security_callback_key(action: str) -> str:
+    """Map button value to the decision segment in callback_data."""
+    if action in ("security_allow", "allow_once"):
+        return "allow"
+    if action in ("security_deny", "deny"):
+        return "deny"
+    if action in ("security_allow_session", "allow_session"):
+        return "session"
+    if action in ("security_allow_always", "allow_always"):
+        return "always"
+    if action in ("security_sandbox", "sandbox"):
+        return "sandbox"
+    return "deny"
+
+
 class TelegramPairingManager:
     """
     Telegram 配对管理器
@@ -1277,6 +1292,72 @@ class TelegramAdapter(ChannelAdapter):
             html += f"\n⏱ 完成 ({elapsed:.1f}s)"
 
         return html
+
+    def build_simple_card(
+        self,
+        title: str,
+        content: str,
+        buttons: list[dict] | None = None,
+        *,
+        confirm_id: str = "",
+    ) -> dict:
+        """构建带内联键盘的安全确认消息（供 gateway.send_security_confirm 使用）。"""
+        _import_telegram()
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        card_md = f"**{title}**\n\n{content}"
+        body_html = self._convert_to_telegram_html(card_md)
+        rows: list[list[Any]] = []
+        cid = confirm_id or ""
+        if buttons:
+            for btn in buttons:
+                label = str(btn.get("text", ""))
+                raw = btn.get("value", "")
+                if isinstance(raw, dict):
+                    raw = str(raw.get("action", ""))
+                elif not isinstance(raw, str):
+                    raw = str(raw)
+                dk = _telegram_security_callback_key(raw)
+                cb = f"sec_{dk}_{cid}"
+                if len(cb.encode()) > 64:
+                    prefix = f"sec_{dk}_".encode()
+                    max_cid = max(0, 64 - len(prefix))
+                    cid_eff = cid.encode()[:max_cid].decode(errors="ignore")
+                    cb = f"sec_{dk}_{cid_eff}"
+                    logger.warning(
+                        "Telegram callback_data exceeded 64 bytes; confirm_id truncated for button"
+                    )
+                rows.append([InlineKeyboardButton(text=label, callback_data=cb)])
+        return {
+            "text": body_html,
+            "reply_markup": InlineKeyboardMarkup(rows) if rows else None,
+            "parse_mode": telegram.constants.ParseMode.HTML,
+        }
+
+    async def send_card(
+        self,
+        chat_id: str,
+        card: dict,
+        *,
+        reply_to: str | None = None,
+    ) -> str:
+        """发送 build_simple_card 构建的内联键盘消息。"""
+        if not self._bot:
+            raise RuntimeError("Telegram bot not started")
+        _import_telegram()
+        kwargs: dict[str, Any] = {
+            "chat_id": int(chat_id),
+            "text": card["text"],
+        }
+        if card.get("reply_markup") is not None:
+            kwargs["reply_markup"] = card["reply_markup"]
+        pm = card.get("parse_mode")
+        if pm is not None:
+            kwargs["parse_mode"] = pm
+        if reply_to:
+            kwargs["reply_to_message_id"] = int(reply_to)
+        sent = await self._bot.send_message(**kwargs)
+        return str(sent.message_id)
 
     def _convert_to_telegram_html(self, text: str) -> str:
         """将标准 Markdown 转换为 Telegram HTML 格式。

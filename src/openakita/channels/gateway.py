@@ -4247,6 +4247,8 @@ class MessageGateway:
         tool_name: str,
         reason: str,
         risk_level: str = "HIGH",
+        *,
+        confirm_id: str = "",
     ) -> None:
         """Send a security confirmation request to the IM channel.
 
@@ -4269,9 +4271,13 @@ class MessageGateway:
             card = adapter.build_simple_card(
                 title=f"⚠️ 安全确认 — {risk_level}",
                 content=(f"**工具**: {tool_name}\n**原因**: {reason}"),
+                confirm_id=confirm_id,
                 buttons=[
                     {"text": "✅ 允许", "value": "security_allow"},
                     {"text": "❌ 拒绝", "value": "security_deny"},
+                    {"text": "⭐️ 本会话允许", "value": "security_allow_session"},
+                    {"text": "🔒 沙箱执行", "value": "security_sandbox"},
+                    {"text": "✋ 始终允许", "value": "security_allow_always"},
                 ],
             )
             try:
@@ -4304,7 +4310,9 @@ class MessageGateway:
         risk = event.get("risk_level", "HIGH")
         confirm_id = event.get("id", "")
 
-        await self.send_security_confirm(session, tool_name, reason, risk_level=risk)
+        await self.send_security_confirm(
+            session, tool_name, reason, risk_level=risk, confirm_id=confirm_id
+        )
 
         # Wait for user reply via interrupt queue (set by adapter callbacks or
         # plain-text keyword matching in _handle_message)

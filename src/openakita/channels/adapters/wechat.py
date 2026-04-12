@@ -11,7 +11,7 @@
 
 API Base: https://ilinkai.weixin.qq.com
 CDN Base: https://novac2c.cdn.weixin.qq.com/c2c
-协议参考: @tencent-weixin/openclaw-weixin v2.1.6 (MIT)
+协议参考: @tencent-weixin/openclaw-weixin v2.1.8 (MIT)
 """
 
 from __future__ import annotations
@@ -74,11 +74,11 @@ DEFAULT_ILINK_BOT_TYPE = "3"
 DEFAULT_CHANNEL_VERSION = "2.0.0"
 
 # ---------------------------------------------------------------------------
-# 协议兼容参数 — 对齐 @tencent-weixin/openclaw-weixin v2.1.6
+# 协议兼容参数 — 对齐 @tencent-weixin/openclaw-weixin v2.1.8
 # 可通过环境变量紧急覆盖，无需改代码
 # ---------------------------------------------------------------------------
 
-OPENCLAW_COMPAT_VERSION = os.environ.get("WECHAT_OPENCLAW_COMPAT_VERSION", "2.1.6")
+OPENCLAW_COMPAT_VERSION = os.environ.get("WECHAT_OPENCLAW_COMPAT_VERSION", "2.1.8")
 ILINK_APP_ID = os.environ.get("WECHAT_ILINK_APP_ID", "bot")
 
 
@@ -1458,6 +1458,8 @@ class WeChatAdapter(ChannelAdapter):
             media_type = UPLOAD_IMAGE
         elif mime.startswith("video/"):
             media_type = UPLOAD_VIDEO
+        elif mime.startswith("audio/"):
+            media_type = UPLOAD_VOICE
         else:
             media_type = UPLOAD_FILE
 
