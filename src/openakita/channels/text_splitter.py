@@ -254,3 +254,138 @@ def chunk_text_by_bytes(
         chunks.append(current.rstrip("\n"))
 
     return [c for c in chunks if c.strip()]
+
+
+# ---------------------------------------------------------------------------
+# 分片序号标记
+# ---------------------------------------------------------------------------
+
+_DEFAULT_NUMBER_FMT = "[{i}/{n}] "
+
+_NUMBER_FORMATS: dict[str, str] = {
+    "bracket": "[{i}/{n}] ",
+    "paren": "({i}/{n}) ",
+    "emoji": "{emoji}/{n} ",
+}
+
+_EMOJI_DIGITS = ["0️⃣", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"]
+
+
+def _emoji_number(n: int) -> str:
+    return "".join(_EMOJI_DIGITS[int(d)] for d in str(n))
+
+
+def add_fragment_numbers(
+    chunks: list[str],
+    *,
+    fmt: str = "bracket",
+) -> list[str]:
+    """为多条分片消息添加序号前缀。
+
+    仅当 ``len(chunks) > 1`` 时添加序号；单条消息原样返回。
+
+    Args:
+        chunks: 已拆分的消息列表
+        fmt: 序号格式 - ``"bracket"`` → ``[1/3]``，
+             ``"paren"`` → ``(1/3)``，``"emoji"`` → ``1️⃣/3``
+
+    Returns:
+        添加序号后的消息列表
+    """
+    if len(chunks) <= 1:
+        return chunks
+
+    total = len(chunks)
+    template = _NUMBER_FORMATS.get(fmt, _DEFAULT_NUMBER_FMT)
+
+    result: list[str] = []
+    for idx, chunk in enumerate(chunks, 1):
+        if "emoji" in fmt:
+            prefix = template.replace("{emoji}", _emoji_number(idx)).replace("{n}", str(total))
+        else:
+            prefix = template.format(i=idx, n=total)
+        result.append(prefix + chunk)
+
+    return result
+
+
+def estimate_number_prefix_len(total: int, fmt: str = "bracket") -> int:
+    """预估分片序号前缀的最大字符长度，用于分片前预留空间。"""
+    if total <= 1:
+        return 0
+    template = _NUMBER_FORMATS.get(fmt, _DEFAULT_NUMBER_FMT)
+    if "emoji" in fmt:
+        sample = template.replace("{emoji}", _emoji_number(total)).replace("{n}", str(total))
+    else:
+        sample = template.format(i=total, n=total)
+    return len(sample)
+
+
+# ---------------------------------------------------------------------------
+# Markdown → 纯文本降级（保留代码结构和链接 URL）
+# ---------------------------------------------------------------------------
+
+_RE_MD_LINK = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
+_RE_MD_IMG = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
+_RE_MD_BOLD = re.compile(r"\*\*(.+?)\*\*|__(.+?)__")
+_RE_MD_ITALIC = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)|(?<!_)_(?!_)(.+?)(?<!_)_(?!_)")
+_RE_MD_STRIKE = re.compile(r"~~(.+?)~~")
+_RE_MD_INLINE_CODE = re.compile(r"`([^`]+)`")
+_RE_MD_HEADING = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
+_RE_MD_HR = re.compile(r"^[-*_]{3,}\s*$", re.MULTILINE)
+_RE_MD_BLOCKQUOTE = re.compile(r"^>\s?", re.MULTILINE)
+
+
+def markdown_to_plaintext(text: str) -> str:
+    """将 Markdown 转为纯文本，保留代码缩进结构和链接 URL。
+
+    比简单 strip 更智能：代码块保留缩进，链接保留 URL，
+    列表保留编号/缩进结构。
+    """
+    if not text:
+        return text
+
+    lines = text.split("\n")
+    result_lines: list[str] = []
+    in_code = False
+    fence_marker = ""
+
+    for line in lines:
+        stripped = line.lstrip()
+
+        fence_match = _RE_FENCE.match(stripped)
+        if fence_match:
+            marker = fence_match.group(1)
+            if not in_code:
+                in_code = True
+                fence_marker = marker[0] * len(marker)
+                lang = stripped[len(marker) :].strip()
+                result_lines.append(f"--- {lang} ---" if lang else "---")
+                continue
+            elif marker[0] == fence_marker[0] and len(marker) >= len(fence_marker):
+                in_code = False
+                fence_marker = ""
+                result_lines.append("---")
+                continue
+
+        if in_code:
+            result_lines.append(line)
+            continue
+
+        line = _RE_MD_IMG.sub(r"[图片: \1](\2)", line)
+        line = _RE_MD_LINK.sub(r"\1 (\2)", line)
+        heading_match = _RE_MD_HEADING.match(line)
+        if heading_match:
+            level = len(heading_match.group(1))
+            title = heading_match.group(2)
+            line = f"{'=' * level} {title} {'=' * level}"
+        line = _RE_MD_BOLD.sub(lambda m: m.group(1) or m.group(2), line)
+        line = _RE_MD_ITALIC.sub(lambda m: m.group(1) or m.group(2) or "", line)
+        line = _RE_MD_STRIKE.sub(r"\1", line)
+        line = _RE_MD_INLINE_CODE.sub(r"\1", line)
+        line = _RE_MD_BLOCKQUOTE.sub("  ", line)
+        line = _RE_MD_HR.sub("────────────", line)
+
+        result_lines.append(line)
+
+    return "\n".join(result_lines)

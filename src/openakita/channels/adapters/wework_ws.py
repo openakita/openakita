@@ -6,6 +6,7 @@
 - 认证 / 心跳 / 指数退避重连
 - 消息接收 (text/image/mixed/voice/file/video)
 - 流式回复 (stream) / 模板卡片 / 主动推送
+- Markdown @成员 (<@userid>) / @所有人 (<@all>)
 - 文件下载 + AES-256-CBC 逐文件解密
 - WebSocket 分片上传临时素材 (upload_media)
 - response_url HTTP 回退
@@ -53,9 +54,11 @@ def _import_websockets():
     if websockets is None:
         try:
             import websockets as ws
+
             websockets = ws
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
+
             raise ImportError(import_or_hint("websockets"))
 
 
@@ -64,9 +67,11 @@ def _import_httpx():
     if httpx is None:
         try:
             import httpx as hx
+
             httpx = hx
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
+
             raise ImportError(import_or_hint("httpx"))
 
 
@@ -79,6 +84,10 @@ CMD_SUBSCRIBE = "aibot_subscribe"
 CMD_HEARTBEAT = "ping"
 CMD_RESPONSE = "aibot_respond_msg"
 CMD_RESPONSE_WELCOME = "aibot_respond_welcome_msg"
+# NOTE: CMD_RESPONSE_UPDATE is defined for template card update support per the
+# WeCom WS protocol, but is NOT yet wired into any send path in this adapter.
+# To use it, a future send_template_card_update() method would call
+# _send_reply_with_ack(req_id, body, CMD_RESPONSE_UPDATE).
 CMD_RESPONSE_UPDATE = "aibot_respond_update_msg"
 CMD_SEND_MSG = "aibot_send_msg"
 CMD_CALLBACK = "aibot_msg_callback"
@@ -121,9 +130,9 @@ PENDING_REPLY_TTL_S = 300  # 5 minutes
 PENDING_REPLY_MAX = 50
 
 # Rate limit tracking (aligned with OpenClaw / WeCom platform limits)
-RATE_REPLY_PER_24H = 30      # replies per 24h sliding window per chat
-RATE_ACTIVE_PER_DAY = 10     # active (bot-initiated) sends per day per chat
-RATE_WARN_THRESHOLD = 0.8    # warn at 80% of limit
+RATE_REPLY_PER_24H = 30  # replies per 24h sliding window per chat
+RATE_ACTIVE_PER_DAY = 10  # active (bot-initiated) sends per day per chat
+RATE_WARN_THRESHOLD = 0.8  # warn at 80% of limit
 
 
 # ---------------------------------------------------------------------------
@@ -145,9 +154,17 @@ async def _ensure_amr(voice_path: str) -> str:
     if Path(amr_path).exists() and Path(amr_path).stat().st_size > 0:
         return amr_path
     proc = await asyncio.create_subprocess_exec(
-        "ffmpeg", "-i", voice_path,
-        "-ar", "8000", "-ac", "1", "-ab", "12.2k",
-        "-y", amr_path,
+        "ffmpeg",
+        "-i",
+        voice_path,
+        "-ar",
+        "8000",
+        "-ac",
+        "1",
+        "-ab",
+        "12.2k",
+        "-y",
+        amr_path,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -257,19 +274,25 @@ def _parse_quote_content(body: dict) -> tuple[str | None, list[MediaFile]]:
 
     if qtype == "file" and quote.get("file", {}).get("url"):
         f = quote["file"]
-        m = MediaFile.create(filename=f.get("filename", "file"), mime_type="application/octet-stream", url=f.get("url"))
+        m = MediaFile.create(
+            filename=f.get("filename", "file"),
+            mime_type="application/octet-stream",
+            url=f.get("url"),
+        )
         m.extra = {"aeskey": f.get("aeskey")}
         media_list.append(m)
         return f"[引用文件: {m.filename}]", media_list
 
     if qtype == "mixed":
         text_parts: list[str] = []
-        for item in (quote.get("mixed", {}).get("msg_item") or []):
+        for item in quote.get("mixed", {}).get("msg_item") or []:
             if item.get("msgtype") == "text" and item.get("text", {}).get("content"):
                 text_parts.append(item["text"]["content"])
             elif item.get("msgtype") == "image" and item.get("image", {}).get("url"):
                 img = item["image"]
-                m = MediaFile.create(filename="quote_image.jpg", mime_type="image/jpeg", url=img.get("url"))
+                m = MediaFile.create(
+                    filename="quote_image.jpg", mime_type="image/jpeg", url=img.get("url")
+                )
                 m.extra = {"aeskey": img.get("aeskey")}
                 media_list.append(m)
         return "\n".join(text_parts) or "[引用图文]", media_list
@@ -309,6 +332,7 @@ def _normalize_think_tags(text: str) -> str:
 @dataclass
 class WeWorkWsConfig:
     """企业微信 WebSocket 适配器配置"""
+
     bot_id: str
     secret: str
     ws_url: str = WS_DEFAULT_URL
@@ -334,7 +358,9 @@ def _decrypt_file(encrypted: bytes, aes_key_b64: str) -> bytes:
     """解密企业微信文件 (AES-256-CBC, PKCS#7 pad to 32-byte block)."""
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
-    key = base64.b64decode(aes_key_b64)
+    # WeCom WS protocol may omit trailing '=' padding in base64 aeskey
+    padded_b64 = aes_key_b64 + "=" * (-len(aes_key_b64) % 4)
+    key = base64.b64decode(padded_b64)
     if len(key) != 32:
         raise ValueError(f"AES key must be 32 bytes, got {len(key)}")
     iv = key[:16]
@@ -468,8 +494,7 @@ class _WebhookSender:
             result = resp.json()
             if result.get("errcode", 0) != 0:
                 logger.error(
-                    f"[WebhookSender] Post failed: "
-                    f"{result.get('errcode')} {result.get('errmsg')}"
+                    f"[WebhookSender] Post failed: {result.get('errcode')} {result.get('errmsg')}"
                 )
                 return False
             return True
@@ -515,6 +540,7 @@ class WeWorkWsAdapter(ChannelAdapter):
         "get_chat_members": False,
         "get_recent_messages": False,
         "markdown": True,
+        "mention": True,
     }
 
     def __init__(
@@ -542,9 +568,7 @@ class WeWorkWsAdapter(ChannelAdapter):
         self._welcome_message: str = welcome_message
 
         # Webhook 辅助发送器（用于发送图片/语音/文件）
-        self._webhook: _WebhookSender | None = (
-            _WebhookSender(webhook_url) if webhook_url else None
-        )
+        self._webhook: _WebhookSender | None = _WebhookSender(webhook_url) if webhook_url else None
 
         # WebSocket state
         self._ws: Any = None
@@ -602,6 +626,7 @@ class WeWorkWsAdapter(ChannelAdapter):
         self._chat_to_req: dict[str, str] = {}
         self._typing_start_time: dict[str, float] = {}
         self._streaming_thinking: dict[str, str] = {}
+        self._streaming_thinking_ms: dict[str, int] = {}
         self._streaming_chain: dict[str, list[str]] = {}
         self._streaming_buffers: dict[str, str] = {}
         self._streaming_last_patch: dict[str, float] = {}
@@ -630,9 +655,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             )
         self._running = True
         self._connection_task = asyncio.create_task(self._connection_loop())
-        logger.info(
-            f"WeWork WS adapter starting, will connect to {self.config.ws_url}"
-        )
+        logger.info(f"WeWork WS adapter starting, will connect to {self.config.ws_url}")
 
     async def stop(self) -> None:
         self._running = False
@@ -694,7 +717,7 @@ class WeWorkWsAdapter(ChannelAdapter):
                 self._consecutive_auth_failures += 1
                 if self._consecutive_auth_failures >= _MAX_AUTH_FAILURES:
                     self._auth_disabled = True
-                    last_err = getattr(self, '_auth_error', '?')
+                    last_err = getattr(self, "_auth_error", "?")
                     reason = (
                         f"连续 {self._consecutive_auth_failures} 次认证失败 "
                         f"(错误: {last_err})。"
@@ -708,9 +731,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             # check max reconnect
             max_att = self.config.max_reconnect_attempts
             if max_att != -1 and attempt >= max_att:
-                logger.error(
-                    f"Max reconnect attempts ({max_att}) reached, giving up"
-                )
+                logger.error(f"Max reconnect attempts ({max_att}) reached, giving up")
                 return
 
             attempt += 1
@@ -742,17 +763,13 @@ class WeWorkWsAdapter(ChannelAdapter):
 
             await self._send_auth()
             try:
-                await asyncio.wait_for(
-                    self._authenticated.wait(), timeout=10.0
-                )
-            except asyncio.TimeoutError:
+                await asyncio.wait_for(self._authenticated.wait(), timeout=10.0)
+            except TimeoutError:
                 logger.error("Authentication timeout (10s)")
                 receive_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await receive_task
-                raise ConnectionError(
-                    self._auth_error or "Authentication timeout"
-                )
+                raise ConnectionError(self._auth_error or "Authentication timeout")
 
             logger.info("WebSocket authenticated successfully")
 
@@ -896,11 +913,8 @@ class WeWorkWsAdapter(ChannelAdapter):
                 self._handle_msg_callback(frame),
                 timeout=MSG_PROCESS_TIMEOUT_S,
             )
-        except asyncio.TimeoutError:
-            logger.error(
-                f"Message processing timed out ({MSG_PROCESS_TIMEOUT_S}s), "
-                f"msgid={msgid}"
-            )
+        except TimeoutError:
+            logger.error(f"Message processing timed out ({MSG_PROCESS_TIMEOUT_S}s), msgid={msgid}")
             req_id = frame.get("headers", {}).get("req_id", "")
             if req_id:
                 await self._send_error_finish(req_id, "处理超时，请重新发送。")
@@ -965,7 +979,8 @@ class WeWorkWsAdapter(ChannelAdapter):
         elif quote_text and not content.text:
             content = MessageContent(
                 text=quote_text,
-                images=(content.images or []) + [m for m in quote_media if m.mime_type and m.mime_type.startswith("image/")],
+                images=(content.images or [])
+                + [m for m in quote_media if m.mime_type and m.mime_type.startswith("image/")],
                 files=content.files,
             )
             media_list.extend(quote_media)
@@ -1030,9 +1045,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             self._peer_locks[chat_id] = asyncio.Lock()
         return self._peer_locks[chat_id]
 
-    def _parse_content(
-        self, body: dict, msgtype: str
-    ) -> tuple[MessageContent, list[MediaFile]]:
+    def _parse_content(self, body: dict, msgtype: str) -> tuple[MessageContent, list[MediaFile]]:
         """Parse message body into MessageContent + media list."""
         media_list: list[MediaFile] = []
 
@@ -1056,6 +1069,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             items = mixed_data.get("msg_item", [])
             text_parts: list[str] = []
             images: list[MediaFile] = []
+            files: list[MediaFile] = []
             for item in items:
                 item_type = item.get("msgtype", "")
                 if item_type == "text":
@@ -1070,8 +1084,18 @@ class WeWorkWsAdapter(ChannelAdapter):
                     media.extra = {"aeskey": img_data.get("aeskey")}
                     images.append(media)
                     media_list.append(media)
+                elif item_type == "file":
+                    file_data = item.get("file", {})
+                    media = MediaFile.create(
+                        filename=file_data.get("filename", f"file_{len(files)}"),
+                        mime_type="application/octet-stream",
+                        url=file_data.get("url"),
+                    )
+                    media.extra = {"aeskey": file_data.get("aeskey")}
+                    files.append(media)
+                    media_list.append(media)
             return (
-                MessageContent(text="\n".join(text_parts) or None, images=images),
+                MessageContent(text="\n".join(text_parts) or None, images=images, files=files),
                 media_list,
             )
 
@@ -1085,9 +1109,7 @@ class WeWorkWsAdapter(ChannelAdapter):
                 body.get("msgid"),
             )
             return (
-                MessageContent(
-                    text="[语音消息，平台未能识别，请重新发送或改用文字]"
-                ),
+                MessageContent(text="[语音消息，平台未能识别，请重新发送或改用文字]"),
                 media_list,
             )
 
@@ -1139,28 +1161,37 @@ class WeWorkWsAdapter(ChannelAdapter):
                 except Exception as e:
                     logger.warning(f"Failed to send welcome message: {e}")
 
-            await self._emit_event("enter_chat", {
-                "req_id": req_id,
-                "chatid": body.get("chatid", ""),
-                "chattype": body.get("chattype", ""),
-                "userid": body.get("from", {}).get("userid", ""),
-                "aibotid": body.get("aibotid", ""),
-            })
+            await self._emit_event(
+                "enter_chat",
+                {
+                    "req_id": req_id,
+                    "chatid": body.get("chatid", ""),
+                    "chattype": body.get("chattype", ""),
+                    "userid": body.get("from", {}).get("userid", ""),
+                    "aibotid": body.get("aibotid", ""),
+                },
+            )
         elif event_type == "template_card_event":
-            await self._emit_event("template_card_event", {
-                "req_id": req_id,
-                "event_key": event_data.get("event_key", ""),
-                "task_id": event_data.get("task_id", ""),
-                "chatid": body.get("chatid", ""),
-                "userid": body.get("from", {}).get("userid", ""),
-            })
+            await self._emit_event(
+                "template_card_event",
+                {
+                    "req_id": req_id,
+                    "event_key": event_data.get("event_key", ""),
+                    "task_id": event_data.get("task_id", ""),
+                    "chatid": body.get("chatid", ""),
+                    "userid": body.get("from", {}).get("userid", ""),
+                },
+            )
         elif event_type == "feedback_event":
-            await self._emit_event("feedback_event", {
-                "req_id": req_id,
-                "chatid": body.get("chatid", ""),
-                "userid": body.get("from", {}).get("userid", ""),
-                "raw": body,
-            })
+            await self._emit_event(
+                "feedback_event",
+                {
+                    "req_id": req_id,
+                    "chatid": body.get("chatid", ""),
+                    "userid": body.get("from", {}).get("userid", ""),
+                    "raw": body,
+                },
+            )
         elif event_type == "disconnected_event":
             # A4: mark displaced to prevent infinite reconnect loop
             self._displaced = True
@@ -1206,9 +1237,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             return
 
         # Start animated counter task (A8)
-        task = asyncio.create_task(
-            self._thinking_counter_loop(req_id, stream_id)
-        )
+        task = asyncio.create_task(self._thinking_counter_loop(req_id, stream_id))
         self._thinking_tasks[req_id] = task
 
     async def _thinking_counter_loop(self, req_id: str, stream_id: str) -> None:
@@ -1234,7 +1263,9 @@ class WeWorkWsAdapter(ChannelAdapter):
                 # D1: respect intermediate stream message limit
                 count = self._stream_msg_count.get(stream_id, 0)
                 if count >= MAX_INTERMEDIATE_STREAM_MSGS:
-                    logger.debug(f"[thinking] Stream {stream_id[:8]} hit intermediate limit, stopping counter")
+                    logger.debug(
+                        f"[thinking] Stream {stream_id[:8]} hit intermediate limit, stopping counter"
+                    )
                     break
                 content = f"<think>等待模型响应 {seconds}s</think>"
                 body: dict = {
@@ -1250,7 +1281,9 @@ class WeWorkWsAdapter(ChannelAdapter):
                     consecutive_failures += 1
                     logger.debug(f"[thinking] Counter send failed (sec={seconds}): {e}")
                     if consecutive_failures >= MAX_SEND_FAILURES:
-                        logger.debug(f"[thinking] {MAX_SEND_FAILURES} consecutive failures, stopping counter")
+                        logger.debug(
+                            f"[thinking] {MAX_SEND_FAILURES} consecutive failures, stopping counter"
+                        )
                         break
         except asyncio.CancelledError:
             pass
@@ -1274,13 +1307,15 @@ class WeWorkWsAdapter(ChannelAdapter):
         thinking = self._streaming_thinking.get(sk, "")
         chain = self._streaming_chain.get(sk, [])
         reply = self._streaming_buffers.get(sk, "")
+        dur_ms = self._streaming_thinking_ms.get(sk, 0)
 
         think_parts: list[str] = []
         if thinking:
-            preview = thinking.strip().replace("\n", " ")[:200]
-            if len(thinking) > 200:
+            dur_str = f" ({dur_ms / 1000:.1f}s)" if dur_ms else ""
+            preview = thinking.strip()[:600]
+            if len(thinking.strip()) > 600:
                 preview += "..."
-            think_parts.append(f"💭 {preview}")
+            think_parts.append(f"💭 思考过程{dur_str}\n{preview}")
         if chain:
             think_parts.extend(chain[-8:])
 
@@ -1292,7 +1327,10 @@ class WeWorkWsAdapter(ChannelAdapter):
         return content or "<think>处理中...</think>"
 
     async def _update_stream(
-        self, req_id: str, stream_id: str, content: str,
+        self,
+        req_id: str,
+        stream_id: str,
+        content: str,
     ) -> bool:
         """Send a non-final stream frame. Returns True on success."""
         count = self._stream_msg_count.get(stream_id, 0)
@@ -1325,7 +1363,7 @@ class WeWorkWsAdapter(ChannelAdapter):
     ) -> None:
         """Receive thinking content delta and update the stream display."""
         sk = self._make_session_key(chat_id, thread_id)
-        self._streaming_thinking[sk] = self._streaming_thinking.get(sk, "") + thinking_text
+        self._streaming_thinking[sk] = thinking_text
         req_id = self._chat_to_req.get(chat_id)
         if not req_id:
             return
@@ -1394,6 +1432,7 @@ class WeWorkWsAdapter(ChannelAdapter):
         """Remove all streaming state entries for a given session."""
         self._chat_to_req.pop(chat_id, None)
         self._streaming_thinking.pop(sk, None)
+        self._streaming_thinking_ms.pop(sk, None)
         self._streaming_chain.pop(sk, None)
         self._streaming_buffers.pop(sk, None)
         self._streaming_last_patch.pop(sk, None)
@@ -1420,8 +1459,8 @@ class WeWorkWsAdapter(ChannelAdapter):
         if thinking or chain:
             think_lines: list[str] = []
             if thinking:
-                preview = thinking.strip()[:500]
-                if len(preview) < len(thinking.strip()):
+                preview = thinking.strip()[:1000]
+                if len(thinking.strip()) > 1000:
                     preview += "..."
                 think_lines.append(f"💭 {preview}")
             think_lines.extend(chain)
@@ -1433,7 +1472,8 @@ class WeWorkWsAdapter(ChannelAdapter):
             final_text += f"\n\n---\n⏱ {elapsed:.1f}s"
 
         msg = OutgoingMessage.text(
-            chat_id=chat_id, text=final_text,
+            chat_id=chat_id,
+            text=final_text,
             metadata={"req_id": req_id},
         )
         try:
@@ -1523,6 +1563,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             return raw
         try:
             import io
+
             from PIL import Image
 
             img = Image.open(path)
@@ -1638,9 +1679,7 @@ class WeWorkWsAdapter(ChannelAdapter):
                     )
             except RuntimeError as e:
                 # AMR conversion failed (ffmpeg unavailable etc.) — downgrade to file (A11)
-                logger.warning(
-                    f"[send_voice] AMR conversion failed, downgrading to file: {e}"
-                )
+                logger.warning(f"[send_voice] AMR conversion failed, downgrading to file: {e}")
                 return await self.send_file(
                     chat_id, voice_path, caption=caption or path.name, **kwargs
                 )
@@ -1662,9 +1701,7 @@ class WeWorkWsAdapter(ChannelAdapter):
 
         # 3. Last resort: send as file instead of raising
         logger.warning("[send_voice] All voice methods failed, sending as file fallback")
-        return await self.send_file(
-            chat_id, voice_path, caption=caption or path.name, **kwargs
-        )
+        return await self.send_file(chat_id, voice_path, caption=caption or path.name, **kwargs)
 
     async def send_video(
         self,
@@ -1690,19 +1727,13 @@ class WeWorkWsAdapter(ChannelAdapter):
                     )
                     return f"queued:{req_id}"
                 else:
-                    return await self._send_active_media_message(
-                        chat_id, "video", media_body
-                    )
+                    return await self._send_active_media_message(chat_id, "video", media_body)
             except Exception as e:
                 logger.error(f"[send_video] WS upload failed: {e}")
 
-        raise NotImplementedError(
-            "Video send failed: WS upload unavailable"
-        )
+        raise NotImplementedError("Video send failed: WS upload unavailable")
 
-    async def _send_stream_reply(
-        self, req_id: str, text: str, message: OutgoingMessage
-    ) -> str:
+    async def _send_stream_reply(self, req_id: str, text: str, message: OutgoingMessage) -> str:
         """Send a stream reply for an incoming message.
 
         After the stream finishes, any queued media messages (images/files/voice
@@ -1713,6 +1744,7 @@ class WeWorkWsAdapter(ChannelAdapter):
         self._cancel_thinking_task(req_id)
 
         pre_stream_id = self._pre_streams.pop(req_id, None)
+        legacy_msg_items = self._pending_image_items.pop(req_id, [])
 
         # If a pre-created stream has expired (>5.5 min since last send),
         # skip stream protocol entirely and use response_url fallback.
@@ -1738,6 +1770,28 @@ class WeWorkWsAdapter(ChannelAdapter):
                 self._enqueue_pending_reply(req_id, text, message)
                 raise RuntimeError("WeWorkWS: stream expired and fallback failed")
 
+        # Legacy compatibility: if a thinking pre-stream exists and the reply
+        # must carry msg_item payloads, close the old stream and start a fresh one.
+        if pre_stream_id and legacy_msg_items:
+            try:
+                await self._send_reply_with_ack(
+                    req_id,
+                    {
+                        "msgtype": "stream",
+                        "stream": {
+                            "id": pre_stream_id,
+                            "finish": True,
+                            "content": "",
+                        },
+                    },
+                    CMD_RESPONSE,
+                )
+            except Exception as e:
+                logger.debug(f"[stream_reply] Failed to close pre-stream cleanly: {e}")
+            self._stream_msg_count.pop(pre_stream_id, None)
+            self._last_stream_sent.pop(pre_stream_id, None)
+            pre_stream_id = None
+
         stream_id = pre_stream_id or secrets.token_hex(16)
 
         # D3: normalize think tags before sending
@@ -1755,14 +1809,9 @@ class WeWorkWsAdapter(ChannelAdapter):
                     media_id = await self._ws_upload_media(
                         Path(media.local_path), media.mime_type or "image/jpeg"
                     )
-                    pending_media.append(
-                        {"msgtype": "image", "image": {"media_id": media_id}}
-                    )
+                    pending_media.append({"msgtype": "image", "image": {"media_id": media_id}})
                 except Exception as e:
                     logger.warning(f"Failed to upload image {media.local_path}: {e}")
-
-        # Legacy msg_item fallback (drain but don't use — deprecated by protocol)
-        self._pending_image_items.pop(req_id, None)
 
         # Split text into chunks
         chunks = []
@@ -1784,9 +1833,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             chunks = [""]
 
         # Start keepalive timer (A1): prevent 6-minute stream expiry
-        keepalive_task = asyncio.create_task(
-            self._stream_keepalive_loop(req_id, stream_id, text)
-        )
+        keepalive_task = asyncio.create_task(self._stream_keepalive_loop(req_id, stream_id, text))
 
         try:
             for i, chunk_text in enumerate(chunks):
@@ -1795,7 +1842,9 @@ class WeWorkWsAdapter(ChannelAdapter):
                 if not is_last:
                     count = self._stream_msg_count.get(stream_id, 0)
                     if count >= MAX_INTERMEDIATE_STREAM_MSGS:
-                        logger.warning(f"[stream_reply] Hit intermediate limit at chunk {i}, forcing finish")
+                        logger.warning(
+                            f"[stream_reply] Hit intermediate limit at chunk {i}, forcing finish"
+                        )
                         is_last = True
                 body: dict = {
                     "msgtype": "stream",
@@ -1805,22 +1854,26 @@ class WeWorkWsAdapter(ChannelAdapter):
                         "content": chunk_text,
                     },
                 }
+                if is_last and legacy_msg_items:
+                    body["stream"]["msg_item"] = legacy_msg_items
                 try:
                     await self._send_reply_with_ack(req_id, body, CMD_RESPONSE)
                     if not is_last:
-                        self._stream_msg_count[stream_id] = self._stream_msg_count.get(stream_id, 0) + 1
+                        self._stream_msg_count[stream_id] = (
+                            self._stream_msg_count.get(stream_id, 0) + 1
+                        )
                     self._last_stream_sent[stream_id] = time.time()
                 except Exception as e:
                     logger.error(f"Stream reply failed at chunk {i}: {e}")
                     if i == 0:
                         ok = await self._response_url_fallback(req_id, text)
                         if ok:
-                            logger.info(f"[stream_reply] Fallback via response_url succeeded, skipping raise")
+                            logger.info(
+                                "[stream_reply] Fallback via response_url succeeded, skipping raise"
+                            )
                             return
                         self._enqueue_pending_reply(req_id, text, message)
-                    raise RuntimeError(
-                        f"WeWorkWS: stream reply failed at chunk {i}"
-                    ) from e
+                    raise RuntimeError(f"WeWorkWS: stream reply failed at chunk {i}") from e
         finally:
             keepalive_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -1853,14 +1906,12 @@ class WeWorkWsAdapter(ChannelAdapter):
             try:
                 await self._send_active_message(chat_id, error_text)
             except Exception:
-                logger.warning(f"[stream_reply] Failed to send media error notification")
+                logger.warning("[stream_reply] Failed to send media error notification")
 
         self._reply_locks.pop(req_id, None)
         return stream_id
 
-    async def _stream_keepalive_loop(
-        self, req_id: str, stream_id: str, text: str
-    ) -> None:
+    async def _stream_keepalive_loop(self, req_id: str, stream_id: str, text: str) -> None:
         """Send keepalive updates every 4 minutes to prevent stream expiry (A1).
 
         D6: Defers keepalive if a recent stream frame was sent within the interval.
@@ -1874,7 +1925,9 @@ class WeWorkWsAdapter(ChannelAdapter):
                 # D6: skip if a stream frame was sent recently
                 last_sent = self._last_stream_sent.get(stream_id, 0)
                 if last_sent and (time.time() - last_sent) < STREAM_KEEPALIVE_INTERVAL_S:
-                    logger.debug(f"[keepalive] Deferred: recent stream activity for {stream_id[:8]}")
+                    logger.debug(
+                        f"[keepalive] Deferred: recent stream activity for {stream_id[:8]}"
+                    )
                     continue
                 # D1: check intermediate limit
                 count = self._stream_msg_count.get(stream_id, 0)
@@ -1897,10 +1950,11 @@ class WeWorkWsAdapter(ChannelAdapter):
         except asyncio.CancelledError:
             pass
 
-    async def _send_active_message(
-        self, chat_id: str, text: str, *, chat_type: int = 0
-    ) -> str:
+    async def _send_active_message(self, chat_id: str, text: str, *, chat_type: int = 0) -> str:
         """Send an active push message (markdown).
+
+        Text is sent as-is to the WeCom API. Markdown supports ``<@userid>``
+        to mention a member and ``<@all>`` to mention everyone in the group.
 
         Args:
             chat_type: 1=single chat (userid), 2=group chat, 0=auto (default).
@@ -1946,9 +2000,7 @@ class WeWorkWsAdapter(ChannelAdapter):
 
     # ==================== Reply with ack ====================
 
-    async def _send_reply_with_ack(
-        self, req_id: str, body: dict, cmd: str
-    ) -> dict:
+    async def _send_reply_with_ack(self, req_id: str, body: dict, cmd: str) -> dict:
         """Send a reply frame and wait for ack, with per-req_id serial ordering."""
         if not self._ws:
             raise ConnectionError("WebSocket not connected")
@@ -1976,14 +2028,11 @@ class WeWorkWsAdapter(ChannelAdapter):
                 raise
 
             try:
-                result = await asyncio.wait_for(
-                    fut, timeout=self.config.reply_ack_timeout
-                )
-            except asyncio.TimeoutError:
+                result = await asyncio.wait_for(fut, timeout=self.config.reply_ack_timeout)
+            except TimeoutError:
                 self._pending_acks.pop(req_id, None)
                 raise TimeoutError(
-                    f"Reply ack timeout ({self.config.reply_ack_timeout}s) "
-                    f"for req_id={req_id}"
+                    f"Reply ack timeout ({self.config.reply_ack_timeout}s) for req_id={req_id}"
                 )
 
             errcode = result.get("errcode")
@@ -2013,9 +2062,7 @@ class WeWorkWsAdapter(ChannelAdapter):
                 if resp.status_code == 200:
                     logger.info(f"response_url fallback succeeded for {req_id}")
                     return True
-                logger.warning(
-                    f"response_url fallback status={resp.status_code} for {req_id}"
-                )
+                logger.warning(f"response_url fallback status={resp.status_code} for {req_id}")
         except Exception as e:
             logger.error(f"response_url fallback failed: {e}")
         return False
@@ -2029,9 +2076,7 @@ class WeWorkWsAdapter(ChannelAdapter):
 
         _import_httpx()
 
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(300.0, connect=30.0)
-        ) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=30.0)) as client:
             resp = await client.get(media.url)
             resp.raise_for_status()
 
@@ -2044,11 +2089,13 @@ class WeWorkWsAdapter(ChannelAdapter):
                 m = re.search(r"filename\*=UTF-8''([^;\s]+)", cd, re.IGNORECASE)
                 if m:
                     from urllib.parse import unquote
+
                     filename = unquote(m.group(1))
                 else:
                     m = re.search(r'filename="?([^";\s]+)"?', cd, re.IGNORECASE)
                     if m:
                         from urllib.parse import unquote
+
                         filename = unquote(m.group(1))
 
             # decrypt if aeskey provided
@@ -2056,19 +2103,16 @@ class WeWorkWsAdapter(ChannelAdapter):
             if aeskey:
                 try:
                     loop = asyncio.get_running_loop()
-                    data = await loop.run_in_executor(
-                        None, _decrypt_file, data, aeskey
-                    )
+                    data = await loop.run_in_executor(None, _decrypt_file, data, aeskey)
                 except Exception:
                     media.status = MediaStatus.FAILED
                     raise
 
             from openakita.channels.base import sanitize_filename
+
             safe_filename = sanitize_filename(Path(filename).name or "download")
             local_path = self.media_dir / f"{media.id}_{safe_filename}"
-            await asyncio.get_running_loop().run_in_executor(
-                None, local_path.write_bytes, data
-            )
+            await asyncio.get_running_loop().run_in_executor(None, local_path.write_bytes, data)
 
             media.local_path = str(local_path)
             media.status = MediaStatus.READY
@@ -2098,15 +2142,15 @@ class WeWorkWsAdapter(ChannelAdapter):
         if not self._ws:
             raise ConnectionError("WebSocket not connected, cannot upload")
 
-        file_data = await asyncio.get_running_loop().run_in_executor(
-            None, path.read_bytes
-        )
+        file_data = await asyncio.get_running_loop().run_in_executor(None, path.read_bytes)
         total_size = len(file_data)
         if total_size < 5:
             raise ValueError("File too small (min 5 bytes)")
 
         media_type = self._mime_to_upload_type(mime_type)
-        media_type, downgraded, note = self._check_upload_size(total_size, media_type, mime_type=mime_type)
+        media_type, downgraded, note = self._check_upload_size(
+            total_size, media_type, mime_type=mime_type
+        )
         if downgraded:
             logger.info(f"[ws_upload] Media type downgraded: {note}")
 
@@ -2171,9 +2215,7 @@ class WeWorkWsAdapter(ChannelAdapter):
         if not media_id:
             raise RuntimeError(f"Upload finish failed, no media_id: {finish_resp}")
 
-        logger.info(
-            f"[ws_upload] Complete: {path.name} -> media_id={media_id[:20]}..."
-        )
+        logger.info(f"[ws_upload] Complete: {path.name} -> media_id={media_id[:20]}...")
         return media_id
 
     async def _ws_send_and_wait_ack(self, req_id: str, frame: dict) -> dict:
@@ -2192,7 +2234,7 @@ class WeWorkWsAdapter(ChannelAdapter):
 
         try:
             result = await asyncio.wait_for(fut, timeout=30.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._pending_acks.pop(req_id, None)
             raise TimeoutError(f"Upload ack timeout for req_id={req_id}")
 
@@ -2228,8 +2270,7 @@ class WeWorkWsAdapter(ChannelAdapter):
         """
         if total_size > UPLOAD_ABSOLUTE_MAX:
             raise ValueError(
-                f"File size {total_size} exceeds absolute max "
-                f"{UPLOAD_ABSOLUTE_MAX} bytes"
+                f"File size {total_size} exceeds absolute max {UPLOAD_ABSOLUTE_MAX} bytes"
             )
         # D5: non-AMR voice → downgrade to file
         if media_type == "voice" and mime_type and "amr" not in mime_type.lower():
@@ -2243,14 +2284,11 @@ class WeWorkWsAdapter(ChannelAdapter):
         file_limit = UPLOAD_SIZE_LIMITS["file"]
         if total_size <= file_limit:
             note = (
-                f"{media_type} size {total_size} exceeds {limit} bytes, "
-                f"downgraded to 'file' type"
+                f"{media_type} size {total_size} exceeds {limit} bytes, downgraded to 'file' type"
             )
             logger.info(f"[upload_size] {note}")
             return "file", True, note
-        raise ValueError(
-            f"{media_type} size {total_size} exceeds file limit {file_limit} bytes"
-        )
+        raise ValueError(f"{media_type} size {total_size} exceeds file limit {file_limit} bytes")
 
     # ==================== Helpers ====================
 
@@ -2262,7 +2300,7 @@ class WeWorkWsAdapter(ChannelAdapter):
 
     def _reject_all_pending(self, reason: str) -> None:
         """Reject all pending ack futures and clear connection-scoped state."""
-        for req_id, fut in list(self._pending_acks.items()):
+        for _req_id, fut in list(self._pending_acks.items()):
             if not fut.done():
                 fut.set_exception(ConnectionError(reason))
         self._pending_acks.clear()
@@ -2278,9 +2316,7 @@ class WeWorkWsAdapter(ChannelAdapter):
 
     # ==================== Pending reply queue (A9) ====================
 
-    def _enqueue_pending_reply(
-        self, req_id: str, text: str, message: OutgoingMessage
-    ) -> None:
+    def _enqueue_pending_reply(self, req_id: str, text: str, message: OutgoingMessage) -> None:
         """Enqueue a failed reply for retry after reconnection."""
         now = time.time()
         self._pending_replies = [
@@ -2289,13 +2325,15 @@ class WeWorkWsAdapter(ChannelAdapter):
         if len(self._pending_replies) >= PENDING_REPLY_MAX:
             logger.warning("[pending_reply] Queue full, dropping oldest entry")
             self._pending_replies.pop(0)
-        self._pending_replies.append({
-            "ts": now,
-            "req_id": req_id,
-            "text": text,
-            "chat_id": message.chat_id,
-            "is_group": message.metadata.get("is_group", False),
-        })
+        self._pending_replies.append(
+            {
+                "ts": now,
+                "req_id": req_id,
+                "text": text,
+                "chat_id": message.chat_id,
+                "is_group": message.metadata.get("is_group", False),
+            }
+        )
         logger.info(
             f"[pending_reply] Enqueued failed reply for retry: "
             f"req_id={req_id}, queue_size={len(self._pending_replies)}"
@@ -2306,9 +2344,7 @@ class WeWorkWsAdapter(ChannelAdapter):
         if not self._pending_replies:
             return
         now = time.time()
-        to_retry = [
-            r for r in self._pending_replies if now - r["ts"] < PENDING_REPLY_TTL_S
-        ]
+        to_retry = [r for r in self._pending_replies if now - r["ts"] < PENDING_REPLY_TTL_S]
         self._pending_replies.clear()
         logger.info(f"[pending_reply] Flushing {len(to_retry)} pending replies")
         for entry in to_retry:

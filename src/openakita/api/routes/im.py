@@ -39,6 +39,7 @@ def _get_chat_aliases(request: Request):
 def _notify_im_event(event: str, data: dict | None = None) -> None:
     try:
         from openakita.api.routes.websocket import broadcast_event
+
         asyncio.ensure_future(broadcast_event(event, data))
     except Exception:
         pass
@@ -55,6 +56,7 @@ async def list_channels(request: Request):
 
     # Build bot_id -> bot_name lookup from settings
     from openakita.config import settings
+
     bot_name_map: dict[str, str] = {}
     for b in getattr(settings, "im_bots", []):
         if isinstance(b, dict) and b.get("id") and b.get("name"):
@@ -66,14 +68,24 @@ async def list_channels(request: Request):
     if isinstance(adapters_dict, dict):
         adapter_items = list(adapters_dict.items())
     else:
-        adapter_items = [(getattr(a, "name", f"adapter_{i}"), a) for i, a in enumerate(adapters_list)]
+        adapter_items = [
+            (getattr(a, "name", f"adapter_{i}"), a) for i, a in enumerate(adapters_list)
+        ]
 
     session_mgr = _get_session_manager(request)
 
     for adapter_name, adapter in adapter_items:
-        name = adapter_name or getattr(adapter, "name", None) or getattr(adapter, "channel_type", "unknown")
+        name = (
+            adapter_name
+            or getattr(adapter, "name", None)
+            or getattr(adapter, "channel_type", "unknown")
+        )
         # ChannelAdapter base class has is_running property (backed by _running flag)
-        status = "online" if getattr(adapter, "is_running", False) or getattr(adapter, "_running", False) else "offline"
+        status = (
+            "online"
+            if getattr(adapter, "is_running", False) or getattr(adapter, "_running", False)
+            else "offline"
+        )
         session_count = 0
         last_active = None
         if session_mgr:
@@ -81,7 +93,10 @@ async def list_channels(request: Request):
             channel_sessions = [s for s in sessions.values() if getattr(s, "channel", None) == name]
             session_count = len(channel_sessions)
             if channel_sessions:
-                times = [getattr(s, "last_active", None) or getattr(s, "updated_at", None) for s in channel_sessions]
+                times = [
+                    getattr(s, "last_active", None) or getattr(s, "updated_at", None)
+                    for s in channel_sessions
+                ]
                 times = [t for t in times if t is not None]
                 if times:
                     last_active = str(max(times))
@@ -149,28 +164,42 @@ async def list_sessions(request: Request, channel: str = Query("")):
         _sess_id = str(sid)
 
         bot_config = _get_bot_config(request)
-        _bot_enabled = bot_config.is_enabled(sess_channel, _chat_id or "", _user_id or "") if bot_config else True
-        _response_mode = bot_config.get_response_mode(sess_channel, _chat_id or "", "*") if bot_config else None
+        _bot_enabled = (
+            bot_config.is_enabled(sess_channel, _chat_id or "", _user_id or "")
+            if bot_config
+            else True
+        )
+        _response_mode = (
+            bot_config.get_response_mode(sess_channel, _chat_id or "", "*") if bot_config else None
+        )
 
         alias_store = _get_chat_aliases(request)
-        _alias = alias_store.get_alias(sess_channel, _chat_id) if alias_store and sess_channel and _chat_id else None
+        _alias = (
+            alias_store.get_alias(sess_channel, _chat_id)
+            if alias_store and sess_channel and _chat_id
+            else None
+        )
 
-        result.append({
-            "sessionId": _sess_id,
-            "channel": sess_channel,
-            "chatId": _chat_id,
-            "userId": _user_id,
-            "chatType": _chat_type,
-            "chatName": _chat_name,
-            "displayName": _display_name or _user_id or _chat_id or _sess_id[:12],
-            "alias": _alias,
-            "state": state_str,
-            "lastActive": str(getattr(sess, "last_active", None) or getattr(sess, "updated_at", "")),
-            "messageCount": msg_count,
-            "lastMessage": last_msg,
-            "botEnabled": _bot_enabled,
-            "responseMode": _response_mode,
-        })
+        result.append(
+            {
+                "sessionId": _sess_id,
+                "channel": sess_channel,
+                "chatId": _chat_id,
+                "userId": _user_id,
+                "chatType": _chat_type,
+                "chatName": _chat_name,
+                "displayName": _display_name or _user_id or _chat_id or _sess_id[:12],
+                "alias": _alias,
+                "state": state_str,
+                "lastActive": str(
+                    getattr(sess, "last_active", None) or getattr(sess, "updated_at", "")
+                ),
+                "messageCount": msg_count,
+                "lastMessage": last_msg,
+                "botEnabled": _bot_enabled,
+                "responseMode": _response_mode,
+            }
+        )
 
     return JSONResponse(content={"sessions": result})
 
@@ -179,6 +208,7 @@ def _get_storage():
     try:
         from openakita.config import settings
         from openakita.memory.storage import get_shared_storage
+
         return get_shared_storage(settings.project_root / "data" / "memory" / "openakita.db")
     except Exception:
         return None
@@ -217,8 +247,11 @@ async def get_session_messages(
         if storage:
             safe_id = _to_safe_session_id(session_id)
             rows, total = storage.list_turns(
-                safe_id, limit, offset,
-                date_from=date_from, date_to=date_to,
+                safe_id,
+                limit,
+                offset,
+                date_from=date_from,
+                date_to=date_to,
             )
             messages = [
                 {
@@ -231,12 +264,14 @@ async def get_session_messages(
                 }
                 for r in rows
             ]
-            return JSONResponse(content={
-                "messages": messages,
-                "total": total,
-                "hasMore": offset + limit < total,
-                "source": "sqlite",
-            })
+            return JSONResponse(
+                content={
+                    "messages": messages,
+                    "total": total,
+                    "hasMore": offset + limit < total,
+                    "source": "sqlite",
+                }
+            )
 
     session_mgr = _get_session_manager(request)
     if session_mgr is None:
@@ -251,8 +286,13 @@ async def get_session_messages(
     history = getattr(ctx, "messages", []) if ctx else []
 
     if date_from or date_to:
+
         def _in_range(item: Any) -> bool:
-            ts = item.get("timestamp", "") if isinstance(item, dict) else str(getattr(item, "timestamp", ""))
+            ts = (
+                item.get("timestamp", "")
+                if isinstance(item, dict)
+                else str(getattr(item, "timestamp", ""))
+            )
             if not ts:
                 return True
             if date_from and ts < date_from:
@@ -260,12 +300,13 @@ async def get_session_messages(
             if date_to and ts > date_to + "T23:59:59.999999":
                 return False
             return True
+
         history = [m for m in history if _in_range(m)]
 
     total = len(history)
     if latest:
         offset = max(0, total - limit)
-    page = history[offset: offset + limit]
+    page = history[offset : offset + limit]
 
     def _to_str(content: Any) -> str:
         """Ensure content is a plain string for the API response.
@@ -287,28 +328,33 @@ async def get_session_messages(
     messages: list[dict[str, Any]] = []
     for item in page:
         if isinstance(item, dict):
-            messages.append({
-                "role": item.get("role", "user"),
-                "content": _to_str(item.get("content", "")),
-                "timestamp": item.get("timestamp", ""),
-                "metadata": item.get("metadata"),
-                "chain_summary": item.get("chain_summary"),
-            })
+            messages.append(
+                {
+                    "role": item.get("role", "user"),
+                    "content": _to_str(item.get("content", "")),
+                    "timestamp": item.get("timestamp", ""),
+                    "metadata": item.get("metadata"),
+                    "chain_summary": item.get("chain_summary"),
+                }
+            )
         else:
-            messages.append({
-                "role": getattr(item, "role", "user"),
-                "content": _to_str(getattr(item, "content", "")),
-                "timestamp": str(getattr(item, "timestamp", "")),
-                "metadata": getattr(item, "metadata", None),
-                "chain_summary": getattr(item, "chain_summary", None),
-            })
+            messages.append(
+                {
+                    "role": getattr(item, "role", "user"),
+                    "content": _to_str(getattr(item, "content", "")),
+                    "timestamp": str(getattr(item, "timestamp", "")),
+                    "metadata": getattr(item, "metadata", None),
+                    "chain_summary": getattr(item, "chain_summary", None),
+                }
+            )
 
     storage = _get_storage()
     if storage and messages:
         try:
             safe_id = _to_safe_session_id(session_id)
-            turns, _ = storage.list_turns(safe_id, limit=9999, offset=0,
-                                          date_from=date_from, date_to=date_to)
+            turns, _ = storage.list_turns(
+                safe_id, limit=9999, offset=0, date_from=date_from, date_to=date_to
+            )
             content_id_map: dict[tuple[str, str], int] = {}
             for t in turns:
                 if t.get("id") is not None:
@@ -322,19 +368,23 @@ async def get_session_messages(
                     matched += 1
             if messages and matched == 0:
                 logger.warning(
-                    "ID matching failed for session %s: 0/%d messages matched "
-                    "(sqlite turns=%d)", session_id, len(messages), len(turns),
+                    "ID matching failed for session %s: 0/%d messages matched (sqlite turns=%d)",
+                    session_id,
+                    len(messages),
+                    len(turns),
                 )
         except Exception as exc:
             logger.warning("ID matching error for session %s: %s", session_id, exc)
 
-    return JSONResponse(content={
-        "messages": messages,
-        "total": total,
-        "offset": offset,
-        "hasMore": offset + limit < total,
-        "source": "memory",
-    })
+    return JSONResponse(
+        content={
+            "messages": messages,
+            "total": total,
+            "offset": offset,
+            "hasMore": offset + limit < total,
+            "source": "memory",
+        }
+    )
 
 
 class DeleteMessagesRequest(BaseModel):
@@ -374,10 +424,12 @@ async def delete_session_messages(request: Request, session_id: str, body: Delet
             if ctx:
                 msgs = getattr(ctx, "messages", [])
                 if msgs:
+
                     def _msg_key(m: Any) -> tuple[str, str]:
                         if isinstance(m, dict):
                             return (m.get("role", ""), (m.get("content") or "")[:200])
                         return (getattr(m, "role", ""), str(getattr(m, "content", ""))[:200])
+
                     ctx.messages = [m for m in msgs if _msg_key(m) not in deleted_keys]
 
     return JSONResponse(content={"ok": True, "deleted": deleted})
@@ -398,6 +450,7 @@ async def delete_im_session(request: Request, session_id: str):
     try:
         from openakita.config import settings
         from openakita.memory.storage import get_shared_storage
+
         db_path = settings.project_root / "data" / "memory" / "openakita.db"
         storage = get_shared_storage(db_path)
         turns_deleted = storage.delete_turns_for_session(_to_safe_session_id(session_id))
@@ -434,15 +487,25 @@ async def set_bot_config(request: Request, body: BotConfigRequest):
     if bot_config is None:
         return JSONResponse(status_code=500, content={"error": "bot_config not available"})
     from openakita.channels.bot_config import BotConfigRule
-    bot_config.set_rule(BotConfigRule(
-        channel=body.channel, chat_id=body.chat_id,
-        user_id=body.user_id, enabled=body.enabled,
-        response_mode=body.response_mode,
-    ))
-    _notify_im_event("im:bot_config_changed", {
-        "channel": body.channel, "chat_id": body.chat_id,
-        "enabled": body.enabled, "response_mode": body.response_mode,
-    })
+
+    bot_config.set_rule(
+        BotConfigRule(
+            channel=body.channel,
+            chat_id=body.chat_id,
+            user_id=body.user_id,
+            enabled=body.enabled,
+            response_mode=body.response_mode,
+        )
+    )
+    _notify_im_event(
+        "im:bot_config_changed",
+        {
+            "channel": body.channel,
+            "chat_id": body.chat_id,
+            "enabled": body.enabled,
+            "response_mode": body.response_mode,
+        },
+    )
     return JSONResponse(content={"ok": True})
 
 
@@ -485,9 +548,14 @@ async def set_chat_alias(request: Request, body: ChatAliasRequest):
     if store is None:
         return JSONResponse(status_code=500, content={"error": "chat_aliases not available"})
     store.set_alias(body.channel, body.chat_id, body.alias)
-    _notify_im_event("im:chat_alias_changed", {
-        "channel": body.channel, "chat_id": body.chat_id, "alias": body.alias,
-    })
+    _notify_im_event(
+        "im:chat_alias_changed",
+        {
+            "channel": body.channel,
+            "chat_id": body.chat_id,
+            "alias": body.alias,
+        },
+    )
     return JSONResponse(content={"ok": True})
 
 
@@ -502,7 +570,9 @@ async def delete_chat_alias(
         return JSONResponse(status_code=500, content={"error": "chat_aliases not available"})
     removed = store.delete_alias(channel, chat_id)
     if removed:
-        _notify_im_event("im:chat_alias_changed", {"channel": channel, "chat_id": chat_id, "alias": None})
+        _notify_im_event(
+            "im:chat_alias_changed", {"channel": channel, "chat_id": chat_id, "alias": None}
+        )
     return JSONResponse(content={"ok": True, "removed": removed})
 
 
@@ -515,6 +585,7 @@ def _load_group_policy() -> dict:
     if _GROUP_POLICY_PATH.exists():
         try:
             import json
+
             return json.loads(_GROUP_POLICY_PATH.read_text(encoding="utf-8"))
         except Exception:
             pass
@@ -523,6 +594,7 @@ def _load_group_policy() -> dict:
 
 def _save_group_policy(data: dict) -> None:
     from openakita.utils.atomic_io import atomic_json_write
+
     _GROUP_POLICY_PATH.parent.mkdir(parents=True, exist_ok=True)
     atomic_json_write(_GROUP_POLICY_PATH, data)
 
@@ -551,11 +623,13 @@ async def get_group_policy(request: Request, channel: str = Query("")):
             if not cid or cid in seen:
                 continue
             seen.add(cid)
-            groups.append({
-                "chatId": cid,
-                "chatName": getattr(sess, "chat_name", "") or "",
-                "allowed": cid in allowlist,
-            })
+            groups.append(
+                {
+                    "chatId": cid,
+                    "chatName": getattr(sess, "chat_name", "") or "",
+                    "allowed": cid in allowlist,
+                }
+            )
 
     return JSONResponse(content={"mode": mode, "allowlist": allowlist, "groups": groups})
 
@@ -574,6 +648,7 @@ async def set_group_policy(request: Request, body: GroupPolicyRequest):
         return JSONResponse(status_code=500, content={"error": "gateway not available"})
 
     from openakita.channels.group_response import GroupResponseMode
+
     try:
         GroupResponseMode(body.mode)
     except ValueError:

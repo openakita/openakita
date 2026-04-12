@@ -57,7 +57,9 @@ class IMChannelHandler:
         self.agent = agent
 
     def _get_workspace_root(self) -> Path | None:
-        ws = getattr(self.agent, "workspace_dir", None) or getattr(self.agent, "_workspace_dir", None)
+        ws = getattr(self.agent, "workspace_dir", None) or getattr(
+            self.agent, "_workspace_dir", None
+        )
         return Path(ws).resolve() if ws else None
 
     @staticmethod
@@ -126,7 +128,12 @@ class IMChannelHandler:
             return self._get_voice_file(params)
         elif tool_name == "get_image_file":
             return self._get_image_file(params)
-        elif tool_name in ("get_chat_info", "get_user_info", "get_chat_members", "get_recent_messages"):
+        elif tool_name in (
+            "get_chat_info",
+            "get_user_info",
+            "get_chat_members",
+            "get_recent_messages",
+        ):
             return await self._handle_im_query_tool(tool_name, params)
         else:
             return f"❌ Unknown IM channel tool: {tool_name}"
@@ -188,12 +195,14 @@ class IMChannelHandler:
             return executor.gateway
 
         from ...core.im_context import get_im_gateway
+
         gw = get_im_gateway()
         if gw:
             return gw
 
         try:
             from openakita import main as _main_mod
+
             return getattr(_main_mod, "_message_gateway", None)
         except Exception:
             return None
@@ -229,7 +238,8 @@ class IMChannelHandler:
             for alias in _CHANNEL_ALIASES.get(target_channel, []):
                 prefixes.append(alias + ":")
             candidates = [
-                k for k in adapters
+                k
+                for k in adapters
                 if any(k.startswith(p) for p in prefixes)
                 and getattr(adapters[k], "is_running", False)
             ]
@@ -244,7 +254,7 @@ class IMChannelHandler:
             """(chat_type 不匹配排后面, 越新越靠前)"""
             return (s_chat_type != prefer_chat_type, -last_active_ts)
 
-        adapter: "ChannelAdapter | None" = None
+        adapter: ChannelAdapter | None = None
         chat_id: str | None = None
 
         # 2. 跨所有候选适配器收集内存 session，全局排序选最优
@@ -289,8 +299,7 @@ class IMChannelHandler:
                             raw = _json.load(f)
                         cand_set = set(candidates)
                         ch_sessions = [
-                            s for s in raw
-                            if s.get("channel") in cand_set and s.get("chat_id")
+                            s for s in raw if s.get("channel") in cand_set and s.get("chat_id")
                         ]
                         if ch_sessions:
                             ch_sessions.sort(
@@ -313,8 +322,7 @@ class IMChannelHandler:
                     chat_id = known[1]
                     adapter = adapters.get(cand)
                     logger.info(
-                        f"[CrossChannel] Resolved '{cand}' from channel registry: "
-                        f"chat_id={chat_id}"
+                        f"[CrossChannel] Resolved '{cand}' from channel registry: chat_id={chat_id}"
                     )
                     break
 
@@ -406,7 +414,11 @@ class IMChannelHandler:
                         receipt["error_code"] = "send_failed"
                 elif art_type == "image":
                     msg = await self._send_image(
-                        adapter, chat_id, path, caption, target_channel,
+                        adapter,
+                        chat_id,
+                        path,
+                        caption,
+                        target_channel,
                     )
                     receipt["status"] = "delivered" if msg.startswith("✅") else "failed"
                     receipt["message"] = msg
@@ -471,20 +483,24 @@ class IMChannelHandler:
             name = (art or {}).get("name", "") or ""
 
             if not path_str:
-                receipts.append({
-                    "index": idx,
-                    "status": "error",
-                    "error": "missing_path",
-                })
+                receipts.append(
+                    {
+                        "index": idx,
+                        "status": "error",
+                        "error": "missing_path",
+                    }
+                )
                 continue
 
             p = Path(path_str)
             if not p.exists() or not p.is_file():
-                receipts.append({
-                    "index": idx,
-                    "status": "error",
-                    "error": f"file_not_found: {path_str}",
-                })
+                receipts.append(
+                    {
+                        "index": idx,
+                        "status": "error",
+                        "error": f"file_not_found: {path_str}",
+                    }
+                )
                 continue
 
             resolved = p.resolve()
@@ -515,17 +531,19 @@ class IMChannelHandler:
             file_url = f"/api/files?path={urllib.parse.quote(abs_path, safe='')}"
             size = resolved.stat().st_size
 
-            receipts.append({
-                "index": idx,
-                "status": "delivered",
-                "type": art_type,
-                "path": abs_path,
-                "file_url": file_url,
-                "caption": caption,
-                "name": name or p.name,
-                "size": size,
-                "channel": "desktop",
-            })
+            receipts.append(
+                {
+                    "index": idx,
+                    "status": "delivered",
+                    "type": art_type,
+                    "path": abs_path,
+                    "file_url": file_url,
+                    "caption": caption,
+                    "name": name or p.name,
+                    "size": size,
+                    "channel": "desktop",
+                }
+            )
 
         return json.dumps(
             {
@@ -533,7 +551,7 @@ class IMChannelHandler:
                 "channel": "desktop",
                 "receipts": receipts,
                 "hint": "Desktop mode: files are served via /api/files/ endpoint. "
-                        "Frontend should display images inline using the file_url.",
+                "Frontend should display images inline using the file_url.",
             },
             ensure_ascii=False,
             indent=2,
@@ -606,7 +624,9 @@ class IMChannelHandler:
             if not dedupe_key and sha256:
                 dedupe_key = f"content:{sha256}"
             elif not dedupe_key and path:
-                dedupe_key = f"path:{hashlib.sha1(path.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
+                dedupe_key = (
+                    f"path:{hashlib.sha1(path.encode('utf-8', errors='ignore')).hexdigest()[:12]}"
+                )
             receipt = {
                 "index": idx,
                 "type": art_type,
@@ -638,8 +658,13 @@ class IMChannelHandler:
                         receipt["error_code"] = "send_failed"
                 elif art_type == "image":
                     msg = await self._send_image(
-                        adapter, chat_id, path, caption, channel,
-                        reply_to=reply_to, channel_user_id=channel_user_id,
+                        adapter,
+                        chat_id,
+                        path,
+                        caption,
+                        channel,
+                        reply_to=reply_to,
+                        channel_user_id=channel_user_id,
                     )
                     receipt["status"] = "delivered" if msg.startswith("✅") else "failed"
                     receipt["message"] = msg
@@ -723,6 +748,7 @@ class IMChannelHandler:
 
         send_kwargs: dict = {}
         from ...core.im_context import get_im_session
+
         im_session = get_im_session()
         if im_session:
             current_msg = im_session.get_metadata("_current_message")
@@ -758,6 +784,7 @@ class IMChannelHandler:
         if channel_user_id:
             metadata["channel_user_id"] = channel_user_id
         from ...core.im_context import get_im_session
+
         im_session = get_im_session()
         if im_session:
             current_msg = im_session.get_metadata("_current_message")
@@ -769,7 +796,9 @@ class IMChannelHandler:
             send_kwargs["metadata"] = metadata
         try:
             message_id = await adapter.send_image(
-                chat_id, image_path, caption,
+                chat_id,
+                image_path,
+                caption,
                 **send_kwargs,
             )
             logger.info(f"[IM] Sent image to {channel}:{chat_id}: {image_path}")
@@ -886,12 +915,16 @@ class IMChannelHandler:
             _logger.debug("[getChatHistory] fallback skipped: no safe_id resolved")
             return None
         safe_id = re.sub(r'[/\\+=%?*<>|"\x00-\x1f]', "_", safe_id)
-        _logger.info(f"[getChatHistory] Session context empty, falling back to SQLite (safe_id={safe_id})")
+        _logger.info(
+            f"[getChatHistory] Session context empty, falling back to SQLite (safe_id={safe_id})"
+        )
         db_turns = mm.store.get_recent_turns(safe_id, limit)
         if not db_turns:
             _logger.info(f"[getChatHistory] SQLite fallback: no turns found for {safe_id}")
             return None
-        _logger.info(f"[getChatHistory] SQLite fallback: recovered {len(db_turns)} turns for {safe_id}")
+        _logger.info(
+            f"[getChatHistory] SQLite fallback: recovered {len(db_turns)} turns for {safe_id}"
+        )
         MSG_LIMIT = 2000
         output = f"最近 {len(db_turns)} 条消息（从持久化存储恢复）:\n\n"
         for t in db_turns:
