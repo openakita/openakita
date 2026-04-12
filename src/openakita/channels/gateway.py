@@ -3511,12 +3511,12 @@ class MessageGateway:
                         else:
                             await self.emit_progress_event(session, content)
                 elif etype == "tool_call_start":
-                    tool_name = event.get("name", "unknown")
+                    tool_name = event.get("tool", "unknown")
                     if chain_push:
                         await self.emit_progress_event(session, f"🔧 正在调用工具: {tool_name}")
                 elif etype == "tool_call_end":
-                    tool_name = event.get("name", "unknown")
-                    tool_ok = event.get("success", True)
+                    tool_name = event.get("tool", "unknown")
+                    tool_ok = not event.get("is_error", False)
                     if chain_push:
                         status = "✅" if tool_ok else "❌"
                         await self.emit_progress_event(
