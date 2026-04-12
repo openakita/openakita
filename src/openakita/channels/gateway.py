@@ -903,8 +903,6 @@ class MessageGateway:
         self._pre_process_hooks: list[Callable[[UnifiedMessage], Awaitable[UnifiedMessage]]] = []
         self._post_process_hooks: list[Callable[[UnifiedMessage, str], Awaitable[str]]] = []
 
-        self._plugin_hooks = None  # set by start_im_channels() in main.py
-
         # ==================== 消息中断机制 ====================
         # 会话级中断队列 {session_key: asyncio.PriorityQueue[InterruptMessage]}
         self._interrupt_queues: dict[str, asyncio.PriorityQueue] = {}
@@ -1725,11 +1723,6 @@ class MessageGateway:
 
     async def stop(self) -> None:
         """停止网关（立即停止，不等待进行中任务）"""
-        if self._plugin_hooks:
-            try:
-                await self._plugin_hooks.dispatch("on_shutdown", gateway=self)
-            except Exception as e:
-                logger.debug(f"on_shutdown hook error: {e}")
         self._running = False
         self._accepting = False
 
@@ -1934,12 +1927,6 @@ class MessageGateway:
         if not self._accepting:
             logger.debug(f"[Shutdown] Message rejected (drain mode): {message.channel}/{message.user_id}")
             return
-
-        if self._plugin_hooks:
-            try:
-                await self._plugin_hooks.dispatch("on_message_received", message=message)
-            except Exception as e:
-                logger.debug(f"on_message_received hook error: {e}")
 
         session_key = self._get_session_key(message)
         _raw_text = (message.plain_text or "").strip()
@@ -3645,14 +3632,6 @@ class MessageGateway:
         """
         import asyncio
         from .media_parser import parse_media_from_text
-
-        if self._plugin_hooks:
-            try:
-                await self._plugin_hooks.dispatch(
-                    "on_message_sending", message=original, response=response
-                )
-            except Exception as e:
-                logger.debug(f"on_message_sending hook error: {e}")
 
         adapter = self._adapters.get(original.channel)
         if not adapter:
