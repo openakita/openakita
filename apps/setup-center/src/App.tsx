@@ -176,17 +176,7 @@ function MainApp() {
 
   useEffect(() => {
     if (!needsRemoteAuth) {
-      // Local web: non-blocking fetch for password-banner check only
-      if (IS_LOCAL_WEB) {
-        fetch("/api/auth/check", { signal: AbortSignal.timeout(5000) })
-          .then((r) => r.json())
-          .then((data) => {
-            if (data.password_user_set === false && !localStorage.getItem("openakita_pw_banner_dismissed")) {
-              setShowPwBanner(true);
-            }
-          })
-          .catch(() => {});
-      }
+      // Password banner disabled — the remote access dialog already shows password status.
       return;
     }
     if (IS_CAPACITOR && !getActiveServer()) {
@@ -196,9 +186,6 @@ function MainApp() {
     checkAuth(IS_CAPACITOR ? (getActiveServer()?.url || "") : "").then((ok) => {
       if (ok) {
         installFetchInterceptor();
-        if (!isPasswordUserSet() && !localStorage.getItem("openakita_pw_banner_dismissed")) {
-          setShowPwBanner(true);
-        }
       }
       setWebAuthed(ok);
       setAuthChecking(false);
@@ -4919,7 +4906,7 @@ function MainApp() {
         checkAuth(url).then((ok) => {
           if (ok) {
             installFetchInterceptor();
-            if (!isPasswordUserSet() && !localStorage.getItem("openakita_pw_banner_dismissed")) setShowPwBanner(true);
+            // Password banner disabled — remote access dialog handles this.
           }
           setWebAuthed(ok);
           setAuthChecking(false);
