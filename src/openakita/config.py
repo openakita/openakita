@@ -70,15 +70,15 @@ class Settings(BaseSettings):
     # 当模型在“可能需要工具”的任务中只给文本不调用工具时，Agent 可追问 1 次以推动工具调用。
     # 设为 0 可完全关闭该行为（推荐 IM 闲聊/客服式对话场景）。
     force_tool_call_max_retries: int = Field(
-        default=1,
+        default=2,
         description="当模型未调用工具时，最多追问要求调用工具的次数（0=禁用，信任模型自主判断）",
     )
     force_tool_call_im_floor: int = Field(
-        default=1,
+        default=2,
         description="IM 通道的 ForceToolCall 最低重试次数（0=与全局一致，不强制下限）",
     )
     confirmation_text_max_retries: int = Field(
-        default=1,
+        default=2,
         description="工具执行后无可见文本时的最大追问次数（0=禁用）",
     )
 

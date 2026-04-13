@@ -98,13 +98,14 @@ export function FieldBool({
 }
 
 export function FieldSelect({
-  k, label, options, help,
+  k, label, options, help, defaultValue,
   envDraft, onEnvChange,
 }: EnvFieldProps & {
-  k: string; label: string; options: { value: string; label: string }[]; help?: string;
+  k: string; label: string; options: { value: string; label: string }[]; help?: string; defaultValue?: string;
 }) {
   const raw = envGet(envDraft, k);
-  const value = options.some((o) => o.value === raw) ? raw : (options[0]?.value ?? "");
+  const fallback = defaultValue ?? options[0]?.value ?? "";
+  const value = options.some((o) => o.value === raw) ? raw : fallback;
   return (
     <div className="space-y-1.5">
       <FieldLabel label={label} help={help} envKey={k} />

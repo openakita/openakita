@@ -821,11 +821,11 @@ class ReasoningEngine:
                     )
 
         # ForceToolCall 配置
-        im_floor = max(0, int(getattr(settings, "force_tool_call_im_floor", 1)))
+        im_floor = max(0, int(getattr(settings, "force_tool_call_im_floor", 2)))
         _override = getattr(self, "_force_tool_override", None)
         configured = int(
             _override if _override is not None
-            else getattr(settings, "force_tool_call_max_retries", 0)
+            else getattr(settings, "force_tool_call_max_retries", 2)
         )
         if session_type == "im":
             base_force_retries = max(im_floor, configured)
@@ -841,7 +841,7 @@ class ReasoningEngine:
 
         max_verify_retries = 1
         max_confirmation_text_retries = max(
-            0, int(getattr(settings, "confirmation_text_max_retries", 1))
+            0, int(getattr(settings, "confirmation_text_max_retries", 2))
         )
 
         # 追踪变量
@@ -2120,15 +2120,15 @@ class ReasoningEngine:
 
             # Mode-specific prompt injection
             if _effective_mode == "plan":
-                from ..prompt.builder import _build_mode_rules
+                from ..prompt.builder import build_mode_rules
 
-                _plan_rules = _build_mode_rules("plan")
+                _plan_rules = build_mode_rules("plan")
                 if _plan_rules:
                     effective_prompt += f"\n\n{_plan_rules}"
             elif _effective_mode == "ask":
-                from ..prompt.builder import _build_mode_rules
+                from ..prompt.builder import build_mode_rules
 
-                _ask_rules = _build_mode_rules("ask")
+                _ask_rules = build_mode_rules("ask")
                 if _ask_rules:
                     effective_prompt += f"\n\n{_ask_rules}"
             elif _effective_mode == "coordinator":
@@ -2187,11 +2187,11 @@ class ReasoningEngine:
             working_messages = list(messages)
 
             # ForceToolCall 配置
-            im_floor = max(0, int(getattr(settings, "force_tool_call_im_floor", 1)))
+            im_floor = max(0, int(getattr(settings, "force_tool_call_im_floor", 2)))
             _override = getattr(self, "_force_tool_override", None)
             configured = int(
                 _override if _override is not None
-                else getattr(settings, "force_tool_call_max_retries", 0)
+                else getattr(settings, "force_tool_call_max_retries", 2)
             )
             if session_type == "im":
                 base_force_retries = max(im_floor, configured)
@@ -2209,7 +2209,7 @@ class ReasoningEngine:
 
             max_verify_retries = 1
             max_confirmation_text_retries = max(
-                0, int(getattr(settings, "confirmation_text_max_retries", 1))
+                0, int(getattr(settings, "confirmation_text_max_retries", 2))
             )
 
             executed_tool_names: list[str] = []

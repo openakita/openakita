@@ -55,11 +55,48 @@ def _safe_int(val: str, default: int) -> int:
         return default
 
 
+_VIRTUAL_PREFIXES = (
+    "26.",       # Radmin VPN
+    "25.",       # Hamachi
+    "100.64.",   # CGNAT / Tailscale
+    "172.17.",   # Docker default bridge
+    "172.18.",   # Docker user-defined
+    "172.19.",   # Docker user-defined
+)
+
+
+def _ip_score(ip: str) -> int:
+    """Higher score = more likely to be the real LAN IP the user wants.
+
+    - Virtual adapter prefixes (VPN, Docker, etc.)  → 0
+    - Ends in .1 in private range (likely VM host / bridge)  → 1
+    - 172.16-31.x.x (Hyper-V, Docker host range)   → 2
+    - 10.x.x.x (often corporate/real but also VPN)  → 3
+    - 192.168.x.x with DHCP-like last octet         → 4  (best guess)
+    """
+    for prefix in _VIRTUAL_PREFIXES:
+        if ip.startswith(prefix):
+            return 0
+
+    octets = ip.split(".")
+    last = int(octets[3]) if len(octets) == 4 else 0
+    second = int(octets[1]) if len(octets) >= 2 else 0
+
+    if ip.startswith("192.168."):
+        return 2 if last == 1 else 4
+    if ip.startswith("10."):
+        return 2 if last == 1 else 3
+    if ip.startswith("172.") and 16 <= second <= 31:
+        return 1 if last == 1 else 2
+    return 1
+
+
 _all_ips_cache: tuple[list[str], float] | None = None
 
 
 def _get_all_lan_ips() -> list[str]:
-    """Return all non-loopback IPv4 addresses on this host (cached 60s)."""
+    """Return all non-loopback IPv4 addresses, sorted by likelihood of being
+    the real LAN IP (highest score first). Cached 60s."""
     global _all_ips_cache
     now = time.time()
     if _all_ips_cache and (now - _all_ips_cache[1]) < _LAN_IP_TTL:
@@ -67,26 +104,25 @@ def _get_all_lan_ips() -> list[str]:
 
     import socket
 
-    ips: list[str] = []
+    raw: list[str] = []
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
             addr = info[4][0]
             if addr.startswith("127.") or addr.startswith("169.254."):
                 continue
-            if addr not in ips:
-                ips.append(addr)
+            if addr not in raw:
+                raw.append(addr)
     except Exception:
         pass
 
     primary = _get_lan_ip()
-    if primary not in ips and primary != "127.0.0.1":
-        ips.insert(0, primary)
-    elif primary in ips:
-        ips.remove(primary)
-        ips.insert(0, primary)
+    if primary not in raw and primary != "127.0.0.1":
+        raw.append(primary)
 
-    _all_ips_cache = (ips, now)
-    return ips
+    ordered = sorted(raw, key=_ip_score, reverse=True)
+
+    _all_ips_cache = (ordered, now)
+    return ordered
 
 
 @router.get("/api/health")

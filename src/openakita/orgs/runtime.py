@@ -1107,7 +1107,7 @@ class OrgRuntime:
         if hasattr(agent, "reasoning_engine"):
             from ..config import settings as _settings
             agent.reasoning_engine._force_tool_override = max(
-                1, int(getattr(_settings, "force_tool_call_max_retries", 1))
+                1, int(getattr(_settings, "force_tool_call_max_retries", 2))
             )
 
         self._register_org_tool_handler(agent, org.id, node.id)

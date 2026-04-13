@@ -2748,7 +2748,7 @@ function MainApp() {
     <FieldText key={p.k} {...p} {..._envBase} />;
   const FB = (p: { k: string; label: string; help?: string; defaultValue?: boolean }) =>
     <FieldBool key={p.k} {...p} {..._envBase} />;
-  const FS = (p: { k: string; label: string; options: { value: string; label: string }[]; help?: string }) =>
+  const FS = (p: { k: string; label: string; options: { value: string; label: string }[]; help?: string; defaultValue?: string }) =>
     <FieldSelect key={p.k} {...p} {..._envBase} />;
   const FC = (p: { k: string; label: string; options: { value: string; label: string }[]; placeholder?: string; help?: string }) =>
     <FieldCombo key={p.k} {...p} {..._envBase} />;
@@ -3002,20 +3002,20 @@ function MainApp() {
             <div className="flex flex-col gap-2.5 px-4 py-3 border-t border-border">
               <p className="text-xs text-muted-foreground">{t("config.toolsHallucinationGuardHint")}</p>
               <div className="grid2">
-                {FS({ k: "FORCE_TOOL_CALL_MAX_RETRIES", label: t("config.toolsForceRetry"), options: [
+                {FS({ k: "FORCE_TOOL_CALL_MAX_RETRIES", label: t("config.toolsForceRetry"), defaultValue: "2", options: [
                   { value: "0", label: t("config.guardOff") },
                   { value: "1", label: "1" },
                   { value: "2", label: "2" },
                   { value: "3", label: "3" },
                 ] })}
-                {FS({ k: "FORCE_TOOL_CALL_IM_FLOOR", label: t("config.toolsImFloor"), options: [
+                {FS({ k: "FORCE_TOOL_CALL_IM_FLOOR", label: t("config.toolsImFloor"), defaultValue: "2", options: [
                   { value: "0", label: t("config.guardSameAsGlobal") },
                   { value: "1", label: "1" },
                   { value: "2", label: "2" },
                 ] })}
               </div>
               <div className="grid2">
-                {FS({ k: "CONFIRMATION_TEXT_MAX_RETRIES", label: t("config.toolsConfirmTextRetry"), options: [
+                {FS({ k: "CONFIRMATION_TEXT_MAX_RETRIES", label: t("config.toolsConfirmTextRetry"), defaultValue: "2", options: [
                   { value: "0", label: t("config.guardOff") },
                   { value: "1", label: "1" },
                   { value: "2", label: "2" },
@@ -5096,6 +5096,12 @@ function MainApp() {
           onToggleMobileSidebar={isMobile ? () => setMobileSidebarOpen((v) => !v) : undefined}
           serverName={IS_CAPACITOR ? (getActiveServer()?.name || undefined) : undefined}
           onServerManager={IS_CAPACITOR ? () => setShowServerManager(true) : undefined}
+          envDraft={envDraft}
+          setEnvDraft={setEnvDraft}
+          saveEnvKeys={saveEnvKeys}
+          restartService={restartService}
+          askConfirm={askConfirm}
+          setView={setView}
         />
 
         {showPwBanner && (

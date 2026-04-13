@@ -158,11 +158,7 @@ class AgentFactory:
             or (profile.skills_mode == SkillsMode.EXCLUSIVE and profile.skills)
         )
         if needs_rebuild and hasattr(agent, "_context"):
-            base_prompt = agent.identity.get_system_prompt()
-            agent._context.system = agent._build_system_prompt(
-                base_prompt,
-                use_compiled=True,
-            )
+            agent._context.system = agent._build_system_prompt()
 
         # ── 身份隔离 ──
         if profile.identity_mode == "custom":
@@ -374,11 +370,7 @@ class AgentFactory:
         agent.identity = identity
 
         if hasattr(agent, "_context"):
-            base_prompt = identity.get_system_prompt()
-            agent._context.system = agent._build_system_prompt(
-                base_prompt,
-                use_compiled=True,
-            )
+            agent._context.system = agent._build_system_prompt()
 
         logger.info(f"Identity override applied: profile={profile.id}, dir={profile_identity_dir}")
 

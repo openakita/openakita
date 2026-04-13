@@ -1409,6 +1409,12 @@ async def run_interactive():
                                 agent_or_master._cli_session.context.clear_messages()
                         agent_or_master._conversation_history.clear()
                         agent_or_master._context.messages.clear()
+                        try:
+                            from .prompt.builder import clear_prompt_section_cache
+
+                            clear_prompt_section_cache()
+                        except Exception:
+                            pass
                         _cli_chat_id = _new_id
                         _cli_session_file.parent.mkdir(parents=True, exist_ok=True)
                         _cli_session_file.write_text(

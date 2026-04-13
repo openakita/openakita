@@ -40,8 +40,8 @@ export function RemoteAccessDialog({
   const [allIps, setAllIps] = useState<string[]>([]);
   const [selectedIp, setSelectedIp] = useState("");
   const [enabling, setEnabling] = useState(false);
-  const [stepsOpen, setStepsOpen] = useState(false);
-  const [faqOpen, setFaqOpen] = useState(false);
+  const [stepsOpen, setStepsOpen] = useState(true);
+  const [faqOpen, setFaqOpen] = useState(true);
 
   const externalEnabled = envDraft.API_HOST === "0.0.0.0";
   const webPwdSet = !!(envDraft.OPENAKITA_WEB_PASSWORD || "").trim();
@@ -103,50 +103,39 @@ export function RemoteAccessDialog({
     window.location.hash = "#/config/advanced";
   };
 
+  const allReady = serviceRunning && externalEnabled && !!activeIp;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-[480px] max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t("remoteAccess.title")}</DialogTitle>
           <DialogDescription>{t("remoteAccess.desc")}</DialogDescription>
         </DialogHeader>
 
-        {/* -- Section: Environment checks -- */}
-        <div className="space-y-2.5">
-          {/* Service status */}
+        {/* -- Upper area: status checks + URL/QR in a two-column layout -- */}
+        <div className="rounded-lg border bg-muted/30 p-3.5 space-y-2">
           <StatusRow
             ok={serviceRunning}
             label={serviceRunning ? t("remoteAccess.serviceOk") : t("remoteAccess.serviceOff")}
             detail={`${t("remoteAccess.port")}: ${port}`}
           />
-
-          {/* External access */}
           <StatusRow
             ok={externalEnabled}
             warn={!externalEnabled}
             label={externalEnabled ? t("remoteAccess.externalOn") : t("remoteAccess.externalOff")}
             action={!externalEnabled && serviceRunning ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs"
-                disabled={enabling}
-                onClick={handleEnableExternal}
-              >
+              <Button variant="outline" size="sm" className="h-6 text-xs px-2" disabled={enabling} onClick={handleEnableExternal}>
                 {enabling ? t("remoteAccess.enabling") : t("remoteAccess.enableExternal")}
               </Button>
             ) : undefined}
           />
-
-          {/* LAN IP */}
           <StatusRow
             ok={!!activeIp}
-            label={activeIp
-              ? `${t("remoteAccess.lanIp")}: ${activeIp}`
-              : t("remoteAccess.lanIpNone")}
+            label={activeIp ? `${t("remoteAccess.lanIp")}: ${activeIp}` : t("remoteAccess.lanIpNone")}
             action={allIps.length > 1 ? (
               <Select value={selectedIp} onValueChange={setSelectedIp}>
-                <SelectTrigger className="h-7 w-[150px] text-xs">
+                <SelectTrigger className="h-6 w-[140px] text-xs">
                   <SelectValue placeholder={t("remoteAccess.selectIp")} />
                 </SelectTrigger>
                 <SelectContent>
@@ -157,28 +146,21 @@ export function RemoteAccessDialog({
               </Select>
             ) : undefined}
           />
-
-          {/* Web password */}
           <StatusRow
             ok={webPwdSet}
             warn={!webPwdSet}
             label={webPwdSet ? t("remoteAccess.webPwdSet") : t("remoteAccess.webPwdNotSet")}
             action={!webPwdSet && serviceRunning ? (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs"
-                onClick={handleGoSetPassword}
-              >
+              <Button variant="outline" size="sm" className="h-6 text-xs px-2" onClick={handleGoSetPassword}>
                 {t("remoteAccess.goSetPwd")}
               </Button>
             ) : undefined}
           />
         </div>
 
-        {/* -- Section: URL + QR code -- */}
+        {/* -- URL + QR code: horizontal layout -- */}
         {activeIp && (
-          <div className="space-y-3 pt-2">
+          <div className="space-y-3">
             <div className="flex items-center gap-2">
               <Input
                 readOnly
@@ -196,34 +178,37 @@ export function RemoteAccessDialog({
               </Button>
             </div>
 
-            {/* QR code area */}
-            <div className="flex flex-col items-center">
-              <div className="relative">
-                <div className="bg-white p-3 rounded-lg inline-block">
-                  <QRCodeSVG value={accessUrl} size={160} />
+            <div className="flex flex-col items-center gap-1.5 w-full">
+              <div className="relative mx-auto">
+                <div className="bg-white p-2.5 rounded-lg">
+                  <QRCodeSVG value={accessUrl} size={140} />
                 </div>
-                {!externalEnabled && (
+                {!allReady && (
                   <div className="absolute inset-0 bg-background/80 rounded-lg flex items-center justify-center">
-                    <Badge variant="secondary" className="text-xs">
+                    <Badge variant="secondary" className="text-[10px] leading-tight px-1.5">
                       {t("remoteAccess.qrDisabledHint")}
                     </Badge>
                   </div>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                {t("remoteAccess.scanQr")}
-              </p>
+              <p className="text-xs text-muted-foreground text-center">{t("remoteAccess.scanQr")}</p>
+              {!externalEnabled && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 text-center">{t("remoteAccess.externalOff")}</p>
+              )}
+              {!webPwdSet && externalEnabled && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 text-center">{t("remoteAccess.webPwdNotSet")}</p>
+              )}
             </div>
           </div>
         )}
 
-        {/* -- Section: Steps (collapsible) -- */}
+        {/* -- Steps (default expanded) -- */}
         <CollapsibleSection
           open={stepsOpen}
           onToggle={() => setStepsOpen((v) => !v)}
           title={t("remoteAccess.stepsTitle")}
         >
-          <ol className="text-xs text-muted-foreground space-y-1.5 list-decimal list-inside">
+          <ol className="text-xs text-muted-foreground space-y-1 list-decimal list-inside leading-relaxed">
             <li>{t("remoteAccess.step1")}</li>
             <li>{t("remoteAccess.step2")}</li>
             <li>{t("remoteAccess.step3")}</li>
@@ -231,13 +216,13 @@ export function RemoteAccessDialog({
           </ol>
         </CollapsibleSection>
 
-        {/* -- Section: FAQ (collapsible) -- */}
+        {/* -- FAQ (default expanded) -- */}
         <CollapsibleSection
           open={faqOpen}
           onToggle={() => setFaqOpen((v) => !v)}
           title={t("remoteAccess.faqTitle")}
         >
-          <ul className="text-xs text-muted-foreground space-y-1.5">
+          <ul className="text-xs text-muted-foreground space-y-1 leading-relaxed">
             <li>{t("remoteAccess.faq1")}</li>
             <li>{t("remoteAccess.faq2")}</li>
             <li>{t("remoteAccess.faq3")}</li>
@@ -259,12 +244,12 @@ function StatusRow({ ok, warn, label, detail, action }: {
   const color = ok ? "text-emerald-500" : warn ? "text-amber-500" : "text-destructive";
 
   return (
-    <div className="flex items-center justify-between gap-2 min-h-[28px]">
-      <div className="flex items-center gap-2 min-w-0">
-        <Icon className={`h-4 w-4 shrink-0 ${color}`} />
-        <span className="text-sm truncate">{label}</span>
+    <div className="flex items-center justify-between gap-2 min-h-[26px]">
+      <div className="flex items-center gap-1.5 min-w-0">
+        <Icon className={`h-3.5 w-3.5 shrink-0 ${color}`} />
+        <span className="text-[13px] truncate">{label}</span>
         {detail && (
-          <span className="text-xs text-muted-foreground shrink-0">{detail}</span>
+          <span className="text-xs text-muted-foreground/70 shrink-0">{detail}</span>
         )}
       </div>
       {action && <div className="shrink-0">{action}</div>}
@@ -280,10 +265,10 @@ function CollapsibleSection({ open, onToggle, title, children }: {
 }) {
   const Icon = open ? ChevronDown : ChevronRight;
   return (
-    <div className="border-t pt-2">
+    <div className="border-t pt-2.5">
       <button
         type="button"
-        className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors w-full text-left"
+        className="flex items-center gap-1.5 text-[13px] font-medium text-foreground/80 hover:text-foreground transition-colors w-full text-left"
         onClick={onToggle}
       >
         <Icon className="h-3.5 w-3.5" />

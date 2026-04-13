@@ -109,6 +109,13 @@ def _cleanup_chat_runtime_state(request: Request, conversation_id: str) -> None:
         pass
 
     try:
+        from ...prompt.builder import clear_prompt_section_cache
+
+        clear_prompt_section_cache()
+    except Exception:
+        pass
+
+    try:
         orchestrators = []
 
         app_orchestrator = getattr(request.app.state, "orchestrator", None)

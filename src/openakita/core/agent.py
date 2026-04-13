@@ -1091,8 +1091,7 @@ class Agent:
             await self._start_scheduler()
 
         # 设置系统提示词 (包含技能清单、MCP 清单和相关记忆)
-        base_prompt = self.identity.get_system_prompt()
-        self._context.system = self._build_system_prompt(base_prompt, use_compiled=True)
+        self._context.system = self._build_system_prompt()
 
         if lightweight:
             self._initialized = True
@@ -1975,19 +1974,10 @@ class Agent:
 
     def _build_system_prompt(
         self,
-        base_prompt: str,
         task_description: str = "",
-        use_compiled: bool = False,
         session_type: str = "cli",
     ) -> str:
-        """
-        构建系统提示词。
-
-        .. deprecated::
-            非编译路径已废弃，所有路径现统一使用编译管线 (v2)。
-            工具指引已迁移至 prompt.builder._get_tools_guide_short()。
-            核心原则已迁移至 AGENT.md + SOUL.md + prompt.builder._CORE_RULES。
-        """
+        """构建系统提示词（统一使用编译管线 v2）。"""
         return self._build_system_prompt_compiled_sync(task_description, session_type=session_type)
 
     def _build_system_prompt_compiled_sync(
@@ -2082,6 +2072,13 @@ class Agent:
             elif intent.intent == IntentType.QUERY:
                 _skip_catalogs = True
 
+        from ..prompt.budget import estimate_tokens
+        from ..prompt.builder import PromptProfile, PromptTier, resolve_tier
+
+        _user_input_tokens = estimate_tokens(task_description) if task_description else 0
+        _prompt_profile = self._resolve_prompt_profile(intent, session_type)
+        _prompt_tier = resolve_tier(ctx_window)
+
         prompt = await self.prompt_assembler.build_system_prompt_compiled(
             task_description,
             session_type=session_type,
@@ -2094,11 +2091,27 @@ class Agent:
             mode=_effective_mode,
             model_id=_model_id,
             skip_catalogs=_skip_catalogs,
+            user_input_tokens=_user_input_tokens,
+            prompt_profile=_prompt_profile,
+            prompt_tier=_prompt_tier,
         )
         if self._custom_prompt_suffix:
             prompt += f"\n\n{self._custom_prompt_suffix}"
         prompt += self._build_multi_agent_prompt_section()
         return prompt
+
+    def _resolve_prompt_profile(self, intent: Any, session_type: str) -> "PromptProfile":
+        """Determine PromptProfile from intent and session type."""
+        from ..prompt.builder import PromptProfile
+
+        if session_type == "im":
+            return PromptProfile.IM_ASSISTANT
+        if intent:
+            from .intent_analyzer import IntentType
+
+            if intent.intent in (IntentType.CHAT, IntentType.QUERY):
+                return PromptProfile.CONSUMER_CHAT
+        return PromptProfile.LOCAL_AGENT
 
     def _build_multi_agent_prompt_section(self) -> str:
         """Generate a system prompt section describing the multi-agent system.
@@ -4441,7 +4454,7 @@ class Agent:
                     pass
                 else:
                     _force_tool_retries = max(
-                        0, getattr(settings, "force_tool_call_max_retries", 1) - 1
+                        0, getattr(settings, "force_tool_call_max_retries", 2) - 1
                     )
 
             _agent_profile_id = "default"
@@ -5481,7 +5494,7 @@ class Agent:
             elif intent_result.force_tool:
                 pass  # None = use default from settings
             else:
-                force_tool_retries = max(0, getattr(settings, "force_tool_call_max_retries", 1) - 1)
+                force_tool_retries = max(0, getattr(settings, "force_tool_call_max_retries", 2) - 1)
 
         # === 委托给 ReasoningEngine ===
         return await self.reasoning_engine.run(
@@ -6132,7 +6145,7 @@ class Agent:
 
         # 追问计数器：当 LLM 没有调用工具时，最多追问几次
         no_tool_call_count = 0
-        max_no_tool_retries = max(0, int(getattr(settings, "force_tool_call_max_retries", 1)))
+        max_no_tool_retries = max(0, int(getattr(settings, "force_tool_call_max_retries", 2)))
 
         # 获取 cancel_event（用于 LLM 调用竞速取消）
         _cancel_event = (

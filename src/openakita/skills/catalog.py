@@ -73,31 +73,45 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
         self._cached_index: str | None = None
         self._cached_compact: str | None = None
 
-    def _list_model_visible(self) -> list:
+    def _list_model_visible(self, exposure_filter: str | None = None) -> list:
         """Return enabled skills that are also visible to the model, sorted by usage.
 
-        Respects catalog_hidden: INCLUSIVE 模式下未勾选的技能不出现在 L1 目录中，
-        但仍保留在注册表中供 list_skills / get_skill_info 按需发现。
+        Args:
+            exposure_filter: If provided, only return skills with exposure_level
+                in the specified set. Use "core" to get only core skills,
+                "core+recommended" to get core and recommended skills.
+                None returns all non-hidden skills (backward compatible).
         """
-        skills = [
-            s
-            for s in self.registry.list_enabled()
-            if not s.disable_model_invocation and not s.catalog_hidden
-        ]
+        _allowed_levels = None
+        if exposure_filter == "core":
+            _allowed_levels = {"core"}
+        elif exposure_filter == "core+recommended":
+            _allowed_levels = {"core", "recommended"}
+
+        skills = []
+        for s in self.registry.list_enabled():
+            if s.disable_model_invocation or s.catalog_hidden:
+                continue
+            if _allowed_levels and getattr(s, "exposure_level", "recommended") not in _allowed_levels:
+                continue
+            skills.append(s)
+
         if self._usage_tracker:
             scores = self._usage_tracker.get_all_scores()
             skills.sort(key=lambda s: scores.get(s.skill_id, 0), reverse=True)
         return skills
 
-    def generate_catalog(self) -> str:
+    def generate_catalog(self, *, exposure_filter: str | None = None) -> str:
         """
         生成已启用技能清单（disabled 和 disable_model_invocation 技能不出现在系统提示中）
 
-        INCLUSIVE 模式下 catalog_hidden 的技能不出现在 L1 目录中，
-        但会附加发现提示，引导 LLM 通过 list_skills 按需加载。
+        Args:
+            exposure_filter: "core" | "core+recommended" | None
+                控制按 exposure_level 过滤。CONSUMER_CHAT 场景传 "core"，
+                IM_ASSISTANT 传 "core+recommended"，LOCAL_AGENT 传 None。
         """
         with self._lock:
-            skills = self._list_model_visible()
+            skills = self._list_model_visible(exposure_filter=exposure_filter)
             hidden_count = self.registry.count_catalog_hidden()
 
             if not skills:
@@ -114,7 +128,8 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
                         "\n## Available Skills\n\n"
                         "No skills installed. Use the skill creation workflow to add new skills.\n"
                     )
-                self._cached_catalog = empty_catalog
+                if exposure_filter is None:
+                    self._cached_catalog = empty_catalog
                 return empty_catalog
 
             skill_entries = []
@@ -147,6 +162,9 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
                 )
 
             catalog = self._safe_format(self.CATALOG_TEMPLATE, skill_list=skill_list)
+            # Only cache unfiltered results (exposure_filter=None)
+            if exposure_filter is not None:
+                return catalog
             self._cached_catalog = catalog
 
             logger.info(
@@ -179,15 +197,15 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
             self._cached_compact = result
             return result
 
-    def get_index_catalog(self) -> str:
+    def get_index_catalog(self, *, exposure_filter: str | None = None) -> str:
         """
         获取已启用技能的"全量索引"（仅名称，尽量短，但完整）。
 
-        disabled、disable_model_invocation 和 catalog_hidden 技能不会出现在索引中。
-        按 system / external / plugin 三组输出。
+        Args:
+            exposure_filter: "core" | "core+recommended" | None
         """
         with self._lock:
-            skills = self._list_model_visible()
+            skills = self._list_model_visible(exposure_filter=exposure_filter)
             hidden_count = self.registry.count_catalog_hidden()
             if not skills:
                 if hidden_count > 0:
@@ -198,7 +216,8 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
                     )
                 else:
                     result = "## Skills Index (complete)\n\nNo skills installed."
-                self._cached_index = result
+                if exposure_filter is None:
+                    self._cached_index = result
                 return result
 
             system_names: list[str] = []
@@ -241,7 +260,8 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
                 ]
 
             result = "\n".join(lines)
-            self._cached_index = result
+            if exposure_filter is None:
+                self._cached_index = result
             return result
 
     def generate_catalog_budgeted(self, budget_chars: int = 0) -> str:
@@ -287,6 +307,72 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
         if not skill:
             return None
         return f"**{skill.name}**: {skill.description}"
+
+    def generate_recommendation_hint(
+        self,
+        task_description: str,
+        *,
+        max_hints: int = 3,
+        max_chars: int = 250,
+        exposure_filter: str | None = None,
+    ) -> str:
+        """根据用户输入生成轻量技能推荐 hint。
+
+        基于 when_to_use 和 keywords 做简单关键词匹配，不调用 LLM。
+        返回格式如: "💡 可能有用的技能: web-search (搜索网页), ..."
+
+        Args:
+            task_description: 用户的任务描述/输入
+            max_hints: 最多推荐几个技能
+            max_chars: hint 总长度上限
+            exposure_filter: "core" / "core+recommended" / None(all except hidden)
+        """
+        if not task_description:
+            return ""
+
+        _allowed: set[str] | None = None
+        if exposure_filter == "core":
+            _allowed = {"core"}
+        elif exposure_filter == "core+recommended":
+            _allowed = {"core", "recommended"}
+        query_lower = task_description.lower()
+        candidates: list[tuple[float, str, str]] = []
+
+        for s in self.registry.list_enabled():
+            if s.disable_model_invocation or s.catalog_hidden:
+                continue
+            _exp = getattr(s, "exposure_level", "recommended")
+            if _allowed and _exp not in _allowed:
+                continue
+
+            score = 0.0
+            when = getattr(s, "when_to_use", "") or ""
+            kws = getattr(s, "keywords", []) or []
+
+            for kw in kws:
+                if kw.lower() in query_lower:
+                    score += 2.0
+            if when:
+                when_words = when.lower().split()
+                for w in when_words:
+                    if len(w) > 2 and w in query_lower:
+                        score += 0.5
+
+            if score > 0:
+                short_desc = (s.description or "")[:40]
+                candidates.append((score, s.name, short_desc))
+
+        if not candidates:
+            return ""
+
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        top = candidates[:max_hints]
+        parts = [f"{name} ({desc})" for _, name, desc in top]
+        hint = "💡 可能有用的技能: " + ", ".join(parts)
+
+        if len(hint) > max_chars:
+            hint = hint[:max_chars - 3] + "..."
+        return hint
 
     def invalidate_cache(self) -> None:
         """使所有缓存失效"""

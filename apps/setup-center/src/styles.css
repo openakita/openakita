@@ -3551,8 +3551,8 @@ button.btnApplyRestart:hover {
 
 .chatModeMenuItem {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
   padding: 8px 14px;
   font-size: 13px;
   cursor: pointer;

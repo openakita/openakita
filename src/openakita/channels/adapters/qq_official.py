@@ -1739,22 +1739,14 @@ class QQBotAdapter(ChannelAdapter):
     async def clear_typing(self, chat_id: str, thread_id: str | None = None) -> None:
         """清除输入状态提示。
 
-        C2C/群聊/频道: 撤回之前发送的"正在思考中..."占位消息（2 分钟内有效）。
-        C2C 的 msg_type=6 输入状态通知自动过期，此处仅清理内部标记。
+        仅清理内部状态标记，不撤回"正在思考中..."占位消息。
+        QQ IM 不支持折叠思考过程，撤回反而会显示"对方撤回了一条消息"，
+        保留占位消息作为思考过程的可见指示更合理。
+        C2C 的 msg_type=6 输入状态通知自动过期。
         """
         self._typing_c2c_active.discard(chat_id)
         self._typing_start_time.pop(chat_id, None)
-
-        sent_id = self._typing_msg_ids.pop(chat_id, None)
-        if not sent_id:
-            return
-
-        chat_type = self._resolve_chat_type(chat_id)
-
-        try:
-            await self._recall_message_via_http(chat_id, chat_type, sent_id)
-        except Exception as e:
-            logger.debug(f"QQ Official Bot: clear_typing (recall) failed: {e}")
+        self._typing_msg_ids.pop(chat_id, None)
 
     async def _recall_message_via_http(
         self,

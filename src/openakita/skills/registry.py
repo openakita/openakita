@@ -140,6 +140,9 @@ class SkillEntry:
     # 技能配置 schema（从 SKILL.md frontmatter 传递）
     config: list[dict] = field(default_factory=list)
 
+    # Exposure level for profile-aware filtering
+    exposure_level: str = "recommended"  # "core" | "recommended" | "hidden"
+
     # F1: 扩展 frontmatter 字段
     when_to_use: str = ""
     keywords: list[str] = field(default_factory=list)
@@ -238,7 +241,16 @@ class SkillEntry:
             "trusted" if trust_level in ("builtin", "local", "marketplace") else "restricted"
         )
 
+        # Infer exposure_level from metadata or trust level
+        _exposure = getattr(meta, "exposure_level", "") or ""
+        if not _exposure:
+            if meta.system or trust_level == "builtin":
+                _exposure = "core"
+            else:
+                _exposure = "recommended"
+
         return cls(
+            exposure_level=_exposure,
             skill_id=effective_skill_id,
             name=meta.name,
             description=meta.description,

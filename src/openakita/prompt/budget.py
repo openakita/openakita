@@ -102,6 +102,37 @@ class BudgetConfig:
                 total_budget=min(prompt_budget, 2000),
             )
 
+    @classmethod
+    def for_tier(cls, tier: "PromptTier", context_window: int = 0) -> "BudgetConfig":
+        """根据 PromptTier 分配预算（推荐使用，取代 for_context_window）。
+
+        PromptTier 由 resolve_tier() 判定，与此方法配合使用：
+            tier = resolve_tier(context_window)
+            budget = BudgetConfig.for_tier(tier, context_window)
+        """
+        from .builder import PromptTier
+
+        prompt_budget = int(context_window * 0.40) if context_window > 0 else 18000
+
+        if tier == PromptTier.SMALL:
+            return cls(
+                identity_budget=600,
+                catalogs_budget=800,
+                user_budget=100,
+                memory_budget=300,
+                total_budget=min(prompt_budget, 2000),
+            )
+        elif tier == PromptTier.MEDIUM:
+            return cls(
+                identity_budget=3000,
+                catalogs_budget=5000,
+                user_budget=250,
+                memory_budget=1500,
+                total_budget=min(prompt_budget, 10000),
+            )
+        else:
+            return cls()
+
 
 @dataclass
 class BudgetResult:

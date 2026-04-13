@@ -3645,10 +3645,12 @@ export function ChatView({
               </div>
               <div className="grid w-full max-w-[520px] grid-cols-1 gap-3 sm:grid-cols-2">
                 {[
-                  { id: "research", icon: <IconBarChart size={20} />, text: t("chat.quickStart.research", "做一份 XX 领域的市场调研报告") },
+                  { id: "research", icon: <IconBarChart size={20} />, text: t("chat.quickStart.research", "帮我调研一下 OpenAkita 的竞品分析") },
                   { id: "ppt", icon: <IconPlan size={20} />, text: t("chat.quickStart.ppt", "帮我做一个项目汇报 PPT 大纲") },
-                  { id: "search", icon: <IconGlobe size={20} />, text: t("chat.quickStart.search", "打开百度搜索 XX") },
+                  { id: "search", icon: <IconGlobe size={20} />, text: t("chat.quickStart.search", "搜索 OpenAkita 最新动态") },
                   { id: "email", icon: <IconMail size={20} />, text: t("chat.quickStart.email", "帮我写一封商务邮件") },
+                  { id: "summary", icon: <IconClipboard size={20} />, text: t("chat.quickStart.summary", "帮我总结一下今天的工作内容") },
+                  { id: "translate", icon: <IconGlobe size={20} />, text: t("chat.quickStart.translate", "把这段话翻译成英文") },
                 ].map((item) => (
                   <button
                     key={item.id}
@@ -4295,11 +4297,11 @@ export function ChatView({
                           className={`chatModeMenuItem ${chatMode === m.key ? (m.key === "ask" ? "chatModeMenuItemActiveAsk" : m.key === "plan" ? "chatModeMenuItemActive" : "chatModeMenuItemActiveAgent") : ""}`}
                           onClick={() => { setChatMode(m.key); setModeMenuOpen(false); }}
                         >
-                          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            {m.icon}
-                            <span style={{ fontWeight: 600 }}>{m.label}</span>
-                          </span>
-                          <span style={{ fontSize: 10, opacity: 0.5 }}>{m.desc}</span>
+                          <span style={{ marginTop: 2, flexShrink: 0 }}>{m.icon}</span>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 600 }}>{m.label}</div>
+                            <div style={{ fontSize: 11, opacity: 0.5, lineHeight: 1.3 }}>{m.desc}</div>
+                          </div>
                         </div>
                       ))}
                     </div>
