@@ -7,9 +7,15 @@ import { getAccessToken, isTokenExpiringSoon, refreshAccessToken, isTauriRemoteM
 import { getActiveServer } from "./servers";
 import { logger } from "./logger";
 
-/** True when WS should be skipped (Tauri local mode — events go via IPC instead). */
+const DEFAULT_TAURI_LOCAL_API_BASE = "http://127.0.0.1:18900";
+
+/**
+ * Whether WS should be skipped entirely.
+ * Org/IM/chat real-time updates also rely on the local backend WebSocket in
+ * Tauri desktop mode, so local desktop must not be skipped here.
+ */
 function _skipWs(): boolean {
-  return IS_TAURI && !isTauriRemoteMode();
+  return false;
 }
 
 export type WsEventHandler = (event: string, data: unknown) => void;
@@ -22,20 +28,39 @@ let _reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 120;
 let _connected = false;
 let _intentionallyClosed = false;
+let _apiBaseUrlOverride = "";
+
+function _normalizeApiBaseUrl(apiBaseUrl: string | null | undefined): string {
+  const raw = (apiBaseUrl || "").trim();
+  if (!raw) return "";
+  try {
+    return new URL(raw).toString().replace(/\/$/, "");
+  } catch {
+    logger.warn("WS", "Ignoring invalid API base URL override", { apiBaseUrl: raw });
+    return "";
+  }
+}
+
+export function setWsApiBaseUrl(apiBaseUrl: string | null | undefined): void {
+  _apiBaseUrlOverride = _normalizeApiBaseUrl(apiBaseUrl);
+}
 
 function getWsUrl(): string {
   let host: string;
   let proto: string;
 
-  if (IS_CAPACITOR || (IS_TAURI && isTauriRemoteMode())) {
-    const server = getActiveServer();
-    if (!server) return "";
-    const url = new URL(server.url);
+  if (IS_CAPACITOR) {
+    const serverUrl = _apiBaseUrlOverride || getActiveServer()?.url || "";
+    if (!serverUrl) return "";
+    const url = new URL(serverUrl);
     host = url.host;
     proto = url.protocol === "https:" ? "wss:" : "ws:";
   } else if (IS_TAURI) {
-    host = "127.0.0.1:8000";
-    proto = "ws:";
+    const baseUrl = _apiBaseUrlOverride || (isTauriRemoteMode() ? "" : DEFAULT_TAURI_LOCAL_API_BASE);
+    if (!baseUrl) return "";
+    const url = new URL(baseUrl);
+    host = url.host;
+    proto = url.protocol === "https:" ? "wss:" : "ws:";
   } else {
     const loc = window.location;
     host = loc.host;

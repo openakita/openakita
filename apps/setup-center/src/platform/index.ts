@@ -496,7 +496,7 @@ export async function sendNotification(options: {
 // ---------------------------------------------------------------------------
 
 export { authFetch, login, logout, checkAuth } from "./auth";
-export { onWsEvent, disconnectWs, isWsConnected, reconnectWsNow } from "./websocket";
+export { onWsEvent, disconnectWs, isWsConnected, reconnectWsNow, setWsApiBaseUrl } from "./websocket";
 export type { WsEventHandler } from "./websocket";
 export {
   getServers, getActiveServer, getActiveServerId,

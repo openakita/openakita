@@ -73,7 +73,7 @@ Var WixMode
 Var OldMainBinaryName
 
 Name "${PRODUCTNAME}"
-BrandingText "${COPYRIGHT}"
+BrandingText "${PRODUCTNAME} v${VERSION}"
 OutFile "${OUTFILE}"
 
 ; We don't actually use this value as default install path,
@@ -218,14 +218,26 @@ Function PageReinstall
  StrCpy $R2 "$(addOrReinstall)"
  StrCpy $R3 "$(uninstallApp)"
  !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(chooseMaintenanceOption)"
- ; Upgrading
+ ; Upgrading or downgrading — skip reinstall page and overwrite directly,
+ ; UNLESS migrating from WiX (MSI must be uninstalled first).
+ ; NSIS_HOOK_PREINSTALL already handles process killing and old env cleanup;
+ ; running the old uninstaller is unnecessary and unreliable (file locks,
+ ; _?= path issues with spaces, etc.).
  ${ElseIf} $R0 = 1
+ ${If} $WixMode <> 1
+ Abort
+ ${EndIf}
  StrCpy $R1 "$(olderOrUnknownVersionInstalled)"
  StrCpy $R2 "$(uninstallBeforeInstalling)"
  StrCpy $R3 "$(dontUninstall)"
  !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(choowHowToInstall)"
- ; Downgrading
+ ; Downgrading — same as upgrading: skip page and overwrite directly
  ${ElseIf} $R0 = -1
+ !if "${ALLOWDOWNGRADES}" == "true"
+ ${If} $WixMode <> 1
+ Abort
+ ${EndIf}
+ !endif
  StrCpy $R1 "$(newerVersionInstalled)"
  StrCpy $R2 "$(uninstallBeforeInstalling)"
  !if "${ALLOWDOWNGRADES}" == "true"
@@ -329,9 +341,8 @@ Function PageLeaveReinstall
 
   ; Kill all OpenAkita processes BEFORE running old uninstaller,
   ; because the old uninstaller may lack robust process-killing logic.
-  ; Save $R6 first — _OpenAkita_KillServicePidsIn clobbers $R1/$R2/$R6,
-  ; and $R6 holds the WiX registry key path when WixMode=1.
-  ; (Push/Pop is safe here: all nsExec Push/Pop pairs inside the macro are balanced.)
+  ; Push/Pop $R6 preserved for safety — the consolidated kill script only
+  ; clobbers $0, but $R6 holds the WiX registry key path when WixMode=1.
   Push $R6
   !ifmacrodef NSIS_HOOK_PREINSTALL_KILLPROCS
     !insertmacro NSIS_HOOK_PREINSTALL_KILLPROCS
@@ -456,30 +467,30 @@ Function PageEnvCheck
  ; 重置确认状态
  StrCpy $EnvCleanUserDataConfirmed 0
 
- !insertmacro MUI_HEADER_TEXT "数据管理" "选择是否清除已有数据"
+ !insertmacro MUI_HEADER_TEXT "$(envHeaderTitle)" "$(envHeaderSubtitle)"
 
  nsDialogs::Create 1018
  Pop $0
  ${IfThen} $0 == "error" ${|} Abort ${|}
  ${IfThen} $(^RTL) = 1 ${|} nsDialogs::SetRTL $(^RTL) ${|}
 
- ${NSD_CreateLabel} 0 0 100% 20u "检测到已有的 OpenAkita 数据，旧版环境组件将在安装过程中自动清理。"
+ ${NSD_CreateLabel} 0 0 100% 20u "$(envDetectedLabel)"
  Pop $0
 
  ${NSD_CreateHLine} 0 24u 100% 1u
  Pop $0
 
  ; ── 用户数据清理选项 (默认不勾选) ──
- ${NSD_CreateCheckbox} 14u 36u -14u 12u "清除所有用户数据（聊天记录、工作区、个人设置等）"
+ ${NSD_CreateCheckbox} 14u 36u -14u 12u "$(envCleanCheckbox)"
  Pop $EnvCleanUserData
  ${NSD_SetState} $EnvCleanUserData ${BST_UNCHECKED}
 
- ${NSD_CreateLabel} 22u 54u -22u 26u "⚠ 警告：清除用户数据将永久删除所有聊天记录、工作区配置$\n和个人设置，此操作不可撤销！"
+ ${NSD_CreateLabel} 22u 54u -22u 26u "$(envCleanWarning)"
  Pop $0
  SetCtlColors $0 "CC0000" "transparent"
 
  ; ── 底部提示 ──
- ${NSD_CreateLabel} 0 88u 100% 12u "提示：如果只是升级软件，无需勾选此项。用户数据清除需要二次确认。"
+ ${NSD_CreateLabel} 0 88u 100% 12u "$(envCleanHint)"
  Pop $0
  SetCtlColors $0 "888888" "transparent"
 
@@ -494,13 +505,13 @@ Function PageLeaveEnvCheck
   ${NSD_GetState} $EnvCleanUserData $0
   ${If} $0 = ${BST_CHECKED}
    MessageBox MB_YESNO|MB_ICONEXCLAMATION \
-     "您选择了清除用户数据，这将永久删除所有聊天记录、工作区和个人设置！$\n$\n此操作不可撤销，是否继续？" \
+     "$(envConfirmFirst)" \
      IDYES env_userdata_confirm_input
    Abort
 
    env_userdata_confirm_input:
    MessageBox MB_OKCANCEL|MB_ICONEXCLAMATION \
-     "最终确认：请点击「确定」以确认清除全部用户数据。$\n$\n点击「取消」可返回重新选择。" \
+     "$(envConfirmFinal)" \
      IDOK env_userdata_final_confirm
    Abort
 
@@ -520,31 +531,33 @@ Function PageCliSetup
   Abort
  ${EndIf}
 
+ !insertmacro MUI_HEADER_TEXT "$(cliHeaderTitle)" "$(cliHeaderSubtitle)"
+
  nsDialogs::Create 1018
  Pop $0
  ${IfThen} $0 == "error" ${|} Abort ${|}
  ${IfThen} $(^RTL) = 1 ${|} nsDialogs::SetRTL $(^RTL) ${|}
 
- ${NSD_CreateLabel} 0 0 100% 26u "选择要注册的终端命令，安装后可在 CMD / PowerShell / Windows Terminal 中直接使用。"
+ ${NSD_CreateLabel} 0 0 100% 26u "$(cliHeaderLabel)"
  Pop $0
 
- ${NSD_CreateCheckbox} 14u 34u -14u 12u "注册 openakita 命令"
+ ${NSD_CreateCheckbox} 14u 34u -14u 12u "$(cliCheckOpenakitaLabel)"
  Pop $CliCheckOpenakita
  ${NSD_SetState} $CliCheckOpenakita ${BST_CHECKED}
 
- ${NSD_CreateCheckbox} 14u 50u -14u 12u "注册 oa 命令（简短别名）"
+ ${NSD_CreateCheckbox} 14u 50u -14u 12u "$(cliCheckOaLabel)"
  Pop $CliCheckOa
  ${NSD_SetState} $CliCheckOa ${BST_CHECKED}
 
- ${NSD_CreateCheckbox} 14u 74u -14u 12u "添加到系统 PATH 环境变量"
+ ${NSD_CreateCheckbox} 14u 74u -14u 12u "$(cliCheckPathLabel)"
  Pop $CliCheckPath
  ${NSD_SetState} $CliCheckPath ${BST_CHECKED}
 
- ${NSD_CreateLabel} 22u 90u -22u 20u "提示：添加到 PATH 后，新打开的终端中可直接输入 oa 或 openakita 运行命令。"
+ ${NSD_CreateLabel} 22u 90u -22u 20u "$(cliPathHint)"
  Pop $0
  SetCtlColors $0 "888888" "transparent"
 
- ${NSD_CreateLabel} 14u 116u -14u 32u "命令示例：$\n  oa serve    — 启动后端服务$\n  oa status   — 查看运行状态$\n  openakita run — 单次执行"
+ ${NSD_CreateLabel} 14u 116u -14u 32u "$(cliExamples)"
  Pop $0
 
  nsDialogs::Show
@@ -616,6 +629,44 @@ FunctionEnd
 {{#each language_files}}
  !include "{{this}}"
 {{/each}}
+
+; ── Custom page i18n strings ──
+
+; PageEnvCheck — Data Management
+LangString envHeaderTitle ${LANG_SIMPCHINESE} "数据管理"
+LangString envHeaderTitle ${LANG_ENGLISH} "Data Management"
+LangString envHeaderSubtitle ${LANG_SIMPCHINESE} "选择是否清除已有数据"
+LangString envHeaderSubtitle ${LANG_ENGLISH} "Choose whether to clean existing data"
+LangString envDetectedLabel ${LANG_SIMPCHINESE} "检测到已有的 OpenAkita 数据，旧版环境组件将在安装过程中自动清理。"
+LangString envDetectedLabel ${LANG_ENGLISH} "Existing OpenAkita data detected. Legacy environment components will be cleaned up automatically during installation."
+LangString envCleanCheckbox ${LANG_SIMPCHINESE} "清除所有用户数据（聊天记录、工作区、个人设置等）"
+LangString envCleanCheckbox ${LANG_ENGLISH} "Remove all user data (chat history, workspaces, personal settings, etc.)"
+LangString envCleanWarning ${LANG_SIMPCHINESE} "⚠ 警告：清除用户数据将永久删除所有聊天记录、工作区配置$\n和个人设置，此操作不可撤销！"
+LangString envCleanWarning ${LANG_ENGLISH} "⚠ Warning: This will permanently delete all chat history, workspace$\nconfigurations and personal settings. This action cannot be undone!"
+LangString envCleanHint ${LANG_SIMPCHINESE} "提示：如果只是升级软件，无需勾选此项。用户数据清除需要二次确认。"
+LangString envCleanHint ${LANG_ENGLISH} "Tip: If you are just upgrading, you do not need to check this box. Data removal requires double confirmation."
+LangString envConfirmFirst ${LANG_SIMPCHINESE} "您选择了清除用户数据，这将永久删除所有聊天记录、工作区和个人设置！$\n$\n此操作不可撤销，是否继续？"
+LangString envConfirmFirst ${LANG_ENGLISH} "You chose to remove user data. This will permanently delete all chat history, workspaces and personal settings!$\n$\nThis action cannot be undone. Continue?"
+LangString envConfirmFinal ${LANG_SIMPCHINESE} "最终确认：请点击「确定」以确认清除全部用户数据。$\n$\n点击「取消」可返回重新选择。"
+LangString envConfirmFinal ${LANG_ENGLISH} "Final confirmation: Click OK to confirm removal of all user data.$\n$\nClick Cancel to go back."
+
+; PageCliSetup — CLI Tools
+LangString cliHeaderTitle ${LANG_SIMPCHINESE} "命令行工具"
+LangString cliHeaderTitle ${LANG_ENGLISH} "Command Line Tools"
+LangString cliHeaderSubtitle ${LANG_SIMPCHINESE} "选择要注册的终端命令"
+LangString cliHeaderSubtitle ${LANG_ENGLISH} "Choose which terminal commands to register"
+LangString cliHeaderLabel ${LANG_SIMPCHINESE} "选择要注册的终端命令，安装后可在 CMD / PowerShell / Windows Terminal 中直接使用。"
+LangString cliHeaderLabel ${LANG_ENGLISH} "Select terminal commands to register. After installation you can use them directly in CMD / PowerShell / Windows Terminal."
+LangString cliCheckOpenakitaLabel ${LANG_SIMPCHINESE} "注册 openakita 命令"
+LangString cliCheckOpenakitaLabel ${LANG_ENGLISH} "Register openakita command"
+LangString cliCheckOaLabel ${LANG_SIMPCHINESE} "注册 oa 命令（简短别名）"
+LangString cliCheckOaLabel ${LANG_ENGLISH} "Register oa command (short alias)"
+LangString cliCheckPathLabel ${LANG_SIMPCHINESE} "添加到系统 PATH 环境变量"
+LangString cliCheckPathLabel ${LANG_ENGLISH} "Add to system PATH environment variable"
+LangString cliPathHint ${LANG_SIMPCHINESE} "提示：添加到 PATH 后，新打开的终端中可直接输入 oa 或 openakita 运行命令。"
+LangString cliPathHint ${LANG_ENGLISH} "Tip: After adding to PATH, you can type oa or openakita directly in any new terminal window."
+LangString cliExamples ${LANG_SIMPCHINESE} "命令示例：$\n  oa serve    — 启动后端服务$\n  oa status   — 查看运行状态$\n  openakita run — 单次执行"
+LangString cliExamples ${LANG_ENGLISH} "Examples:$\n  oa serve    — Start backend service$\n  oa status   — Check running status$\n  openakita run — Run a single task"
 
 Function .onInit
  ${GetOptions} $CMDLINE "/P" $PassiveMode

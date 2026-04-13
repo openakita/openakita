@@ -1,6 +1,6 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke, listen, IS_TAURI, IS_WEB, IS_CAPACITOR, IS_LOCAL_WEB, getAppVersion, onWsEvent, reconnectWsNow, logger, registerGlobalShortcut } from "./platform";
+import { invoke, listen, IS_TAURI, IS_WEB, IS_CAPACITOR, IS_LOCAL_WEB, getAppVersion, onWsEvent, reconnectWsNow, setWsApiBaseUrl, logger, registerGlobalShortcut } from "./platform";
 import { getActiveServer, getActiveServerId } from "./platform/servers";
 import { checkAuth, installFetchInterceptor, AUTH_EXPIRED_EVENT, isPasswordUserSet, clearAccessToken, setTauriRemoteMode, isTauriRemoteMode } from "./platform/auth";
 import { LoginView } from "./views/LoginView";
@@ -99,6 +99,7 @@ const THEME_I18N_KEYS: Record<Theme, string> = {
  *  Startup/one-shot probes keep their own shorter timeouts.
  *  5s accommodates slow devices where the event loop may be busy. */
 const HEALTH_POLL_TIMEOUT_MS = 5_000;
+const DEFAULT_LOCAL_API_BASE = "http://127.0.0.1:18900";
 
 interface EnvFieldCtx {
   envDraft: EnvMap;
@@ -338,7 +339,7 @@ function MainApp() {
   const [apiBaseUrl, setApiBaseUrl] = useState(() =>
     IS_CAPACITOR ? (getActiveServer()?.url || "")
     : IS_WEB ? ""
-    : (localStorage.getItem("openakita_apiBaseUrl") || "http://127.0.0.1:18900"),
+    : (localStorage.getItem("openakita_apiBaseUrl") || DEFAULT_LOCAL_API_BASE),
   );
   const [connectDialogOpen, setConnectDialogOpen] = useState(false);
   const [connectAddress, setConnectAddress] = useState("");
@@ -354,6 +355,12 @@ function MainApp() {
     window.addEventListener(AUTH_EXPIRED_EVENT, onExpired);
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired);
   }, [apiBaseUrl]);
+
+  useEffect(() => {
+    if (!IS_TAURI) return;
+    setWsApiBaseUrl(dataMode === "remote" ? apiBaseUrl : DEFAULT_LOCAL_API_BASE);
+    reconnectWsNow();
+  }, [apiBaseUrl, dataMode]);
 
   const [stepId, setStepId] = useState<StepId>(() => {
     const parsed = _parseHashRoute(window.location.hash);
@@ -4789,12 +4796,7 @@ function MainApp() {
       );
     }
     if (view === "org_editor") {
-      return (
-        <OrgEditorView
-          apiBaseUrl={apiBaseUrl}
-          visible={view === "org_editor"}
-        />
-      );
+      return null;
     }
     if (view === "pixel_office") {
       return (
@@ -4953,6 +4955,8 @@ function MainApp() {
       }}
       onSwitchServer={() => {
         setTauriRemoteMode(false);
+        setDataMode("local");
+        setApiBaseUrl(DEFAULT_LOCAL_API_BASE);
         setTauriRemoteLoginUrl(null);
       }}
     />;
@@ -5056,6 +5060,7 @@ function MainApp() {
           onDisconnect={() => {
             setTauriRemoteMode(false);
             setDataMode("local");
+            setApiBaseUrl(DEFAULT_LOCAL_API_BASE);
             setServiceStatus({ running: false, pid: null, pidFile: "" });
             resetEnvLoaded();
             notifySuccess(t("topbar.disconnected"));
@@ -5137,7 +5142,17 @@ function MainApp() {
               }}
             />
           </div>
-          <div className="content" style={{ display: view !== "chat" ? undefined : "none", flex: 1, minHeight: 0 }}>
+          <div style={{ display: view === "org_editor" ? undefined : "none", flex: 1, minHeight: 0 }}>
+            <OrgEditorView apiBaseUrl={apiBaseUrl} visible={view === "org_editor"} />
+          </div>
+          <div
+            className="content"
+            style={{
+              display: view !== "chat" && view !== "org_editor" ? undefined : "none",
+              flex: 1,
+              minHeight: 0,
+            }}
+          >
             <Suspense fallback={<div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", opacity: 0.5 }}><div className="spinner" style={{ width: 24, height: 24 }} /></div>}>
             {renderStepContent()}
             </Suspense>
