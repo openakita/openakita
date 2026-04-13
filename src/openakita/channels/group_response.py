@@ -12,12 +12,12 @@
 import logging
 import time
 from collections import defaultdict
-from enum import Enum
+from enum import StrEnum
 
 logger = logging.getLogger(__name__)
 
 
-class GroupResponseMode(str, Enum):
+class GroupResponseMode(StrEnum):
     ALWAYS = "always"
     MENTION_ONLY = "mention_only"
     SMART = "smart"
@@ -103,11 +103,13 @@ class SmartModeThrottle:
         buf = self._buffer[chat_id]
         if len(buf) >= self._MAX_BUFFER_SIZE:
             buf.pop(0)
-        buf.append({
-            "text": text,
-            "user_id": user_id,
-            "time": time.monotonic(),
-        })
+        buf.append(
+            {
+                "text": text,
+                "user_id": user_id,
+                "time": time.monotonic(),
+            }
+        )
         return len(buf)
 
     def drain_buffer(self, chat_id: str) -> list[dict]:

@@ -19,9 +19,9 @@ DM 策略 (DmPolicy):
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Callable
+from enum import StrEnum
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # ==================== DM 策略 ====================
 
 
-class DmPolicyType(str, Enum):
+class DmPolicyType(StrEnum):
     OPEN = "open"
     PAIRING = "pairing"
     ALLOWLIST = "allowlist"
@@ -83,7 +83,7 @@ def check_dm_policy(user_id: str, config: DmPolicyConfig) -> PolicyResult:
 # ==================== 群聊策略 ====================
 
 
-class GroupPolicyType(str, Enum):
+class GroupPolicyType(StrEnum):
     OPEN = "open"
     ALLOWLIST = "allowlist"
     DISABLED = "disabled"

@@ -2364,6 +2364,17 @@ export function App() {
     }
   }
 
+  async function handleEndpointConfigChanged(
+    endpointType: "endpoints" | "compiler_endpoints" | "stt_endpoints" = "endpoints",
+  ) {
+    await loadSavedEndpoints();
+    if (endpointType !== "endpoints") return;
+    await refreshStatus(undefined, undefined, true);
+    if (dataMode === "remote" || serviceStatus?.running) {
+      autoCheckEndpoints(httpApiBase());
+    }
+  }
+
   // 进入聊天页时，如果端点列表为空，触发一次受控自愈刷新。
   // 这能覆盖启动竞态（服务已起但端点摘要尚未装载）的偶发场景。
   useEffect(() => {
@@ -2837,6 +2848,7 @@ export function App() {
         providers={providers}
         doLoadProviders={doLoadProviders}
         loadSavedEndpoints={loadSavedEndpoints}
+        onEndpointConfigChanged={handleEndpointConfigChanged}
         readWorkspaceFile={readWorkspaceFile}
         writeWorkspaceFile={writeWorkspaceFile}
         venvDir={venvDir}

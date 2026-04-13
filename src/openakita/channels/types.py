@@ -8,6 +8,8 @@
 - MediaFile: 媒体文件
 """
 
+from __future__ import annotations
+
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -28,6 +30,20 @@ class MessageType(Enum):
     MIXED = "mixed"  # 图文混合
     COMMAND = "command"  # 命令（/xxx）
     UNKNOWN = "unknown"  # 未知类型
+
+
+VOICE_STT_FAILURES = frozenset(
+    {
+        "[语音识别失败]",
+        "[语音处理超时]",
+        "[语音处理失败]",
+    }
+)
+
+
+def is_voice_stt_failed(transcription: str | None) -> bool:
+    """判断语音转写结果是否为失败标记"""
+    return not transcription or transcription in VOICE_STT_FAILURES
 
 
 class MediaStatus(Enum):
@@ -253,9 +269,8 @@ class MessageContent:
             else:
                 parts.append(f"[图片: {img.filename}]")
 
-        _stt_failed = ("[语音识别失败]", "[语音处理超时]")
         for voice in self.voices:
-            if voice.transcription and voice.transcription not in _stt_failed:
+            if not is_voice_stt_failed(voice.transcription):
                 parts.append(f"[语音转文字: {voice.transcription}]")
             else:
                 dur = f"{voice.duration}秒" if voice.duration else "未知时长"

@@ -3259,6 +3259,8 @@ class FeishuAdapter(ChannelAdapter):
         title: str,
         content: str,
         buttons: list[dict] | None = None,
+        *,
+        confirm_id: str = "",
     ) -> dict:
         """构建简单卡片。
 
@@ -3285,6 +3287,8 @@ class FeishuAdapter(ChannelAdapter):
             for btn in buttons:
                 raw_value = btn.get("value", btn["text"])
                 btn_value = raw_value if isinstance(raw_value, dict) else {"action": raw_value}
+                if confirm_id:
+                    btn_value = {**btn_value, "confirm_id": confirm_id}
                 actions.append(
                     {
                         "tag": "button",

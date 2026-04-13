@@ -10,7 +10,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from typing import Any, Awaitable, Callable, TypeVar
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,7 @@ async def async_with_retry(
             last_exc = exc
             if attempt >= max_retries or not should_retry(exc):
                 raise
-            delay = min(base_delay * (backoff_factor ** attempt), max_delay)
+            delay = min(base_delay * (backoff_factor**attempt), max_delay)
             jitter = random.uniform(0, delay * 0.25)
             delay += jitter
             retry_after = _extract_retry_after(exc)

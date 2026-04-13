@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +59,11 @@ class BotConfigStore:
 
     def set_rule(self, rule: BotConfigRule) -> None:
         for i, r in enumerate(self._rules):
-            if r.channel == rule.channel and r.chat_id == rule.chat_id and r.user_id == rule.user_id:
+            if (
+                r.channel == rule.channel
+                and r.chat_id == rule.chat_id
+                and r.user_id == rule.user_id
+            ):
                 self._rules[i] = rule
                 self._save()
                 return
@@ -69,7 +73,8 @@ class BotConfigStore:
     def delete_rule(self, channel: str, chat_id: str, user_id: str) -> bool:
         before = len(self._rules)
         self._rules = [
-            r for r in self._rules
+            r
+            for r in self._rules
             if not (r.channel == channel and r.chat_id == chat_id and r.user_id == user_id)
         ]
         changed = len(self._rules) != before

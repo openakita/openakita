@@ -46,6 +46,7 @@ def _silk_to_wav_pilk(silk_path: str, wav_path: str) -> bool:
         import pilk  # type: ignore[import-untyped]
     except ImportError as e:
         from openakita.tools._import_helper import import_or_hint
+
         hint = import_or_hint("pilk")
         logger.warning(f"SILK 解码不可用: {hint}")
         logger.warning(f"pilk ImportError 详情: {e}", exc_info=True)
@@ -59,8 +60,7 @@ def _silk_to_wav_pilk(silk_path: str, wav_path: str) -> bool:
         # pilk.decode(silk_input, pcm_output, sample_rate) -> duration_ms
         duration_ms = pilk.decode(silk_path, pcm_path, _SILK_SAMPLE_RATE)
         logger.info(
-            f"SILK decoded: {Path(silk_path).name} → PCM "
-            f"({duration_ms}ms, {_SILK_SAMPLE_RATE}Hz)"
+            f"SILK decoded: {Path(silk_path).name} → PCM ({duration_ms}ms, {_SILK_SAMPLE_RATE}Hz)"
         )
 
         # PCM → WAV (16-bit LE mono)
@@ -98,9 +98,17 @@ def _ffmpeg_to_wav(src_path: str, wav_path: str) -> bool:
         return False
 
     cmd = [
-        "ffmpeg", "-i", src_path,
-        "-ar", "16000", "-ac", "1", "-sample_fmt", "s16",
-        "-y", wav_path,
+        "ffmpeg",
+        "-i",
+        src_path,
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        "-sample_fmt",
+        "s16",
+        "-y",
+        wav_path,
     ]
     try:
         extra: dict = {}
@@ -113,7 +121,9 @@ def _ffmpeg_to_wav(src_path: str, wav_path: str) -> bool:
         logger.error(f"ffmpeg conversion timed out for {Path(src_path).name}")
         return False
     except subprocess.CalledProcessError as e:
-        logger.error(f"ffmpeg conversion failed for {Path(src_path).name}: {e.stderr[:300] if e.stderr else e}")
+        logger.error(
+            f"ffmpeg conversion failed for {Path(src_path).name}: {e.stderr[:300] if e.stderr else e}"
+        )
         return False
     except Exception as e:
         logger.error(f"ffmpeg conversion error: {e}")
@@ -226,11 +236,17 @@ def ensure_llm_compatible(audio_path: str, target_format: str = "wav") -> str:
         return audio_path
 
     cmd = [
-        "ffmpeg", "-i", str(src),
-        "-ar", "16000",
-        "-ac", "1",
-        "-sample_fmt", "s16",
-        "-y", out_path,
+        "ffmpeg",
+        "-i",
+        str(src),
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        "-sample_fmt",
+        "s16",
+        "-y",
+        out_path,
     ]
     try:
         extra: dict = {}

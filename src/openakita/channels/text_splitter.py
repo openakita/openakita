@@ -6,6 +6,8 @@ Markdown 感知的文本分块工具
 - 优先在段落（空行）边界切分
 - 超长单段落 / 代码块做二次拆分并补齐围栏
 - 提供 UTF-8 字节安全切分（企微等按字节计算长度的平台）
+- 分片序号标记 ([1/N]) 帮助用户识别消息顺序
+- 微信等纯文本平台的 Markdown 降级（保留结构）
 """
 
 from __future__ import annotations
@@ -121,10 +123,9 @@ def _split_code_block(segment: str, max_length: int) -> list[str]:
     fence = fence_char * max(fence_len, 3)
     lang_tag = opening.lstrip()[fence_len:].strip()
 
-    closing = ""
     body_lines = lines[1:]
     if body_lines and body_lines[-1].strip().startswith(fence_char * fence_len):
-        closing = body_lines[-1]
+        body_lines[-1]
         body_lines = body_lines[:-1]
 
     body = "\n".join(body_lines)
@@ -246,7 +247,7 @@ def chunk_text_by_bytes(
                 if not piece:
                     break
                 chunks.append(piece)
-                line = line[len(piece):]
+                line = line[len(piece) :]
         else:
             current = line + "\n"
 

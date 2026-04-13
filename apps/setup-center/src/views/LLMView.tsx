@@ -62,6 +62,7 @@ export interface LLMViewProps {
   providers: ProviderInfo[];
   doLoadProviders: () => Promise<void>;
   loadSavedEndpoints: () => Promise<void>;
+  onEndpointConfigChanged: (endpointType?: "endpoints" | "compiler_endpoints" | "stt_endpoints") => Promise<void>;
   readWorkspaceFile: (path: string) => Promise<string>;
   writeWorkspaceFile: (path: string, content: string) => Promise<void>;
   venvDir: string;
@@ -77,7 +78,7 @@ export function LLMView(props: LLMViewProps) {
     secretShown, setSecretShown,
     busy, currentWorkspaceId, dataMode,
     shouldUseHttpApi, httpApiBase, askConfirm,
-    providers, doLoadProviders, loadSavedEndpoints,
+    providers, doLoadProviders, loadSavedEndpoints, onEndpointConfigChanged,
     readWorkspaceFile, writeWorkspaceFile,
     venvDir, ensureEnvLoaded, serviceRunning,
   } = props;
@@ -549,7 +550,7 @@ export function LLMView(props: LLMViewProps) {
       setCompilerEndpointName("");
       setCompilerBaseUrl("");
       notifySuccess(`编译端点 ${epName} 已保存`);
-      await loadSavedEndpoints();
+      await onEndpointConfigChanged("compiler_endpoints");
       return true;
     } catch (e) {
       notifyError(friendlyConfigError(e));
@@ -624,7 +625,7 @@ export function LLMView(props: LLMViewProps) {
       setSttBaseUrl("");
       setSttModels([]);
       notifySuccess(`STT 端点 ${epName} 已保存`);
-      await loadSavedEndpoints();
+      await onEndpointConfigChanged("stt_endpoints");
       return true;
     } catch (e) {
       notifyError(friendlyConfigError(e));
@@ -647,7 +648,7 @@ export function LLMView(props: LLMViewProps) {
       const json = await res.json();
       if (json.status !== "ok") throw new Error(json.error || "reorder failed");
       notifySuccess(t("llm.reorderSaved"));
-      await loadSavedEndpoints();
+      await onEndpointConfigChanged(endpointType);
     } catch (e) {
       notifyError(String(e));
     } finally {
@@ -985,7 +986,7 @@ export function LLMView(props: LLMViewProps) {
           : "端点已保存（同时已写入 API Key 到 .env）。你可以继续添加备份端点。",
       );
       if (isEditingEndpoint) resetEndpointEditor();
-      await loadSavedEndpoints();
+      await onEndpointConfigChanged("endpoints");
       return true;
     } catch (e) {
       notifyError(friendlyConfigError(e));
@@ -1004,7 +1005,7 @@ export function LLMView(props: LLMViewProps) {
         { method: "DELETE" },
       );
       notifySuccess(`已删除端点：${name}`);
-      loadSavedEndpoints().catch(() => {});
+      await onEndpointConfigChanged(endpointType);
     } catch (e) {
       notifyError(friendlyConfigError(e));
     } finally {
@@ -1022,7 +1023,7 @@ export function LLMView(props: LLMViewProps) {
       });
       const json = await res.json();
       if (json.status !== "ok") throw new Error(json.error || "toggle failed");
-      loadSavedEndpoints().catch(() => {});
+      await onEndpointConfigChanged(endpointType);
     } catch (e) {
       notifyError(String(e));
     }
