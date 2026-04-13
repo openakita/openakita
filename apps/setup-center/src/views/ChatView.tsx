@@ -168,7 +168,7 @@ export function ChatView({
   type SecurityConfirmData = {
     tool: string; args: Record<string, unknown>; reason: string;
     riskLevel: string; needsSandbox: boolean; toolId?: string;
-    countdown: number;
+    countdown: number; defaultOnTimeout?: string;
   };
   const [securityConfirm, setSecurityConfirm] = useState<SecurityConfirmData | null>(null);
   const securityQueueRef = useRef<SecurityConfirmData[]>([]);
@@ -969,6 +969,36 @@ export function ChatView({
       if (d && typeof d.active === "boolean") setDeathSwitchActive(d.active);
     });
   }, [apiBaseUrl]);
+
+  // ── Sub-agent real-time updates via WebSocket (reduces polling dependency) ──
+  useEffect(() => {
+    return onWsEvent((event, raw) => {
+      if (event !== "agents:sub_state") return;
+      const d = raw as Record<string, unknown> | null;
+      if (!d || !d.agent_id) return;
+
+      const convId = activeConvIdRef.current;
+      if (!convId) return;
+      const chatId = (d.chat_id || d.session_id || "") as string;
+      if (chatId && chatId !== convId) return;
+
+      const patch = d as unknown as SubAgentTask;
+      const ctx = streamContexts.current.get(convId);
+      if (!ctx) return;
+
+      const idx = ctx.subAgentTasks.findIndex((t) => t.agent_id === patch.agent_id);
+      if (idx >= 0) {
+        ctx.subAgentTasks = ctx.subAgentTasks.map((t, i) =>
+          i === idx ? { ...t, ...patch } : t,
+        );
+      } else if (patch.status === "starting" || patch.status === "running") {
+        ctx.subAgentTasks = [...ctx.subAgentTasks, patch];
+      }
+      if (activeConvIdRef.current === convId) {
+        setDisplaySubAgentTasks([...ctx.subAgentTasks]);
+      }
+    });
+  }, []);
 
   // ── IM 通道掉线主动告警：监听 im:channel_status 事件 ──
   useEffect(() => {
@@ -2202,7 +2232,7 @@ export function ChatView({
                       });
                   };
                   setTimeout(doFetch, 500);
-                  sctx.pollingTimer = setInterval(doFetch, 2000);
+                  sctx.pollingTimer = setInterval(doFetch, 5000);
                 }
 
                 currentToolCalls = [...currentToolCalls, { tool: toolName, args: event.args, status: "running", id: callId }];
@@ -2359,7 +2389,8 @@ export function ChatView({
                   riskLevel: scEvt.risk_level,
                   needsSandbox: scEvt.needs_sandbox,
                   toolId: scEvt.id,
-                  countdown: 120,
+                  countdown: (event.timeout_seconds as number) || 120,
+                  defaultOnTimeout: (event.default_on_timeout as string) || "deny",
                 };
                 setSecurityConfirm((prev) => {
                   if (prev) {
@@ -2659,7 +2690,7 @@ export function ChatView({
               })
               .catch(() => {});
           };
-          let finalPollingTimer: ReturnType<typeof setInterval> | null = setInterval(doFetch, 2000);
+          let finalPollingTimer: ReturnType<typeof setInterval> | null = setInterval(doFetch, 5000);
           doFetch();
           setTimeout(() => {
             if (finalPollingTimer) { clearInterval(finalPollingTimer); finalPollingTimer = null; }

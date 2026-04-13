@@ -1084,8 +1084,8 @@ class PolicyEngine:
                     metadata={"risk_level": risk.value},
                 )
             if mode == "smart":
-                # smart mode: auto-allow MEDIUM (backend side).
-                # Session trust escalation handled by frontend checkAutoAllow.
+                # smart mode: MEDIUM returns CONFIRM; frontend checkAutoAllow
+                # handles auto-allow based on session trust escalation.
                 pass
             result = PolicyResult(
                 decision=PolicyDecision.CONFIRM,

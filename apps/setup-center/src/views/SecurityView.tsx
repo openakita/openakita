@@ -114,7 +114,7 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [checkpoints, setCheckpoints] = useState<CheckpointEntry[]>([]);
   const [confirmConfig, setConfirmConfig] = useState<ConfirmConfig>({ mode: "smart", timeout_seconds: 60, default_on_timeout: "deny", confirm_ttl: 120 });
-  const [selfProtect, setSelfProtect] = useState<SelfProtectConfig>({ enabled: true, protected_dirs: [], death_switch_threshold: 3, death_switch_total_multiplier: 3, audit_to_file: true, audit_path: "", readonly_mode: false });
+  const [selfProtect, setSelfProtect] = useState<SelfProtectConfig>({ enabled: true, protected_dirs: ["data/", "identity/", "logs/", "src/"], death_switch_threshold: 3, death_switch_total_multiplier: 3, audit_to_file: true, audit_path: "", readonly_mode: false });
   const [allowlist, setAllowlist] = useState<AllowlistData>({ commands: [], tools: [] });
   const [saving, setSaving] = useState(false);
 
@@ -122,7 +122,10 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
     const opts: RequestInit = { method, headers: { "Content-Type": "application/json" } };
     if (body) opts.body = JSON.stringify(body);
     const res = await fetch(`${apiBaseUrl}${path}`, opts);
-    return res.json();
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+    if (method !== "GET" && json && json.status === "error") throw new Error(json.message || "Server error");
+    return json;
   }, [apiBaseUrl]);
 
   const load = useCallback(async () => {
@@ -136,12 +139,12 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
         api("/api/config/security/self-protection"),
         api("/api/config/security/allowlist"),
       ]);
-      setZones(zRes);
-      setCommands(cRes);
-      setSandbox(sRes);
-      if (cfRes.mode) setConfirmConfig(cfRes);
-      if (spRes.enabled !== undefined) setSelfProtect(spRes);
-      if (alRes.commands || alRes.tools) setAllowlist(alRes);
+      if (zRes && Array.isArray(zRes.workspace)) setZones(zRes);
+      if (cRes && Array.isArray(cRes.blocked_commands)) setCommands(cRes);
+      if (sRes && typeof sRes.enabled === "boolean") setSandbox(sRes);
+      if (cfRes && cfRes.mode) setConfirmConfig(cfRes);
+      if (spRes && spRes.enabled !== undefined) setSelfProtect(spRes);
+      if (alRes && (alRes.commands || alRes.tools)) setAllowlist(alRes);
     } catch { /* ignore */ }
   }, [api, serviceRunning]);
 
@@ -160,6 +163,14 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
     try {
       const res = await api("/api/config/security/checkpoints");
       setCheckpoints(res.checkpoints || []);
+    } catch { /* ignore */ }
+  }, [api, serviceRunning]);
+
+  const loadAllowlist = useCallback(async () => {
+    if (!serviceRunning) return;
+    try {
+      const res = await api("/api/config/security/allowlist");
+      if (res.commands || res.tools) setAllowlist(res);
     } catch { /* ignore */ }
   }, [api, serviceRunning]);
 
@@ -196,14 +207,6 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
       </div>
     );
   }
-
-  const loadAllowlist = useCallback(async () => {
-    if (!serviceRunning) return;
-    try {
-      const res = await api("/api/config/security/allowlist");
-      if (res.commands || res.tools) setAllowlist(res);
-    } catch { /* ignore */ }
-  }, [api, serviceRunning]);
 
   const deleteAllowlistEntry = async (entryType: string, index: number) => {
     try {

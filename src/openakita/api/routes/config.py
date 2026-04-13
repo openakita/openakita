@@ -904,13 +904,15 @@ async def write_security_config(body: SecurityConfigUpdate):
 @router.get("/api/config/security/zones")
 async def read_security_zones():
     """Read zone path configuration."""
+    from openakita.core.policy import _default_protected_paths, _default_forbidden_paths
+
     data = _read_policies_yaml() or {}
     zones = data.get("security", {}).get("zones", {})
     return {
         "workspace": zones.get("workspace", []),
         "controlled": zones.get("controlled", []),
-        "protected": zones.get("protected", []),
-        "forbidden": zones.get("forbidden", []),
+        "protected": zones.get("protected") if zones.get("protected") is not None else _default_protected_paths(),
+        "forbidden": zones.get("forbidden") if zones.get("forbidden") is not None else _default_forbidden_paths(),
         "default_zone": zones.get("default_zone", "protected"),
     }
 
@@ -944,13 +946,15 @@ async def write_security_zones(body: SecurityZonesUpdate):
 @router.get("/api/config/security/commands")
 async def read_security_commands():
     """Read command pattern configuration."""
+    from openakita.core.policy import _DEFAULT_BLOCKED_COMMANDS
+
     data = _read_policies_yaml() or {}
     cp = data.get("security", {}).get("command_patterns", {})
     return {
         "custom_critical": cp.get("custom_critical", []),
         "custom_high": cp.get("custom_high", []),
         "excluded_patterns": cp.get("excluded_patterns", []),
-        "blocked_commands": cp.get("blocked_commands", []),
+        "blocked_commands": cp.get("blocked_commands") if cp.get("blocked_commands") is not None else list(_DEFAULT_BLOCKED_COMMANDS),
     }
 
 
@@ -1217,9 +1221,18 @@ async def write_security_confirmation(body: _ConfirmationUpdate):
 @router.get("/api/config/security/self-protection")
 async def read_self_protection():
     """Read self-protection config."""
+    _default_protected_dirs = ["data/", "identity/", "logs/", "src/"]
     data = _read_policies_yaml()
     if data is None:
-        return {}
+        return {
+            "enabled": True,
+            "protected_dirs": _default_protected_dirs,
+            "death_switch_threshold": 3,
+            "death_switch_total_multiplier": 3,
+            "audit_to_file": True,
+            "audit_path": "",
+            "readonly_mode": False,
+        }
     sp = data.get("security", {}).get("self_protection", {})
     try:
         from openakita.core.policy import get_policy_engine
@@ -1230,7 +1243,7 @@ async def read_self_protection():
         readonly = False
     return {
         "enabled": sp.get("enabled", True),
-        "protected_dirs": sp.get("protected_dirs", []),
+        "protected_dirs": sp.get("protected_dirs") if sp.get("protected_dirs") is not None else _default_protected_dirs,
         "death_switch_threshold": sp.get("death_switch_threshold", 3),
         "death_switch_total_multiplier": sp.get("death_switch_total_multiplier", 3),
         "audit_to_file": sp.get("audit_to_file", True),

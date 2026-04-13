@@ -41,11 +41,8 @@ function shouldAutoAllow(
 export function useSecurityPolicy(apiBase: string) {
   const [permissionMode, setPermissionModeLocal] = useState<PermissionMode>("smart");
   const sessionTrustRef = useRef(new Map<string, SessionTrustEntry>());
-  const fetchedRef = useRef(false);
 
-  useEffect(() => {
-    if (fetchedRef.current) return;
-    fetchedRef.current = true;
+  const fetchMode = useCallback(() => {
     fetch(`${apiBase}/api/config/permission-mode`)
       .then((r) => r.json())
       .then((d) => {
@@ -56,6 +53,13 @@ export function useSecurityPolicy(apiBase: string) {
       })
       .catch((e) => logger.warn?.("[useSecurityPolicy] fetch mode failed", e));
   }, [apiBase]);
+
+  useEffect(() => {
+    fetchMode();
+    const onVisible = () => { if (document.visibilityState === "visible") fetchMode(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [fetchMode]);
 
   const setPermissionMode = useCallback(
     (mode: PermissionMode) => {

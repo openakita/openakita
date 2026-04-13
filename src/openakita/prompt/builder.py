@@ -750,9 +750,14 @@ def _select_base_prompt(model_id: str) -> str:
 def build_mode_rules(mode: str) -> str:
     """根据当前模式返回专属提示词段落。
 
-    mode 值: "ask", "plan", "agent"（默认）
+    mode 值: "ask", "plan", "coordinator", "agent"（默认）
     """
     modes_dir = Path(__file__).parent / "modes"
+
+    if mode == "coordinator":
+        from ..agents.coordinator_prompt import get_coordinator_mode_rules
+
+        return get_coordinator_mode_rules()
 
     if mode == "plan":
         plan_file = modes_dir / "plan.txt"

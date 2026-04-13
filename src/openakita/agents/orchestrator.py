@@ -127,13 +127,32 @@ class DelegationResult:
     exit_reason: str = "completed"  # "completed" | "max_turns" | "timeout" | "error" | "cancelled"
 
     def to_tool_response(self) -> str:
-        """Serialize for tool response, preserving backward compatibility."""
-        parts = [self.text]
+        """Serialize for tool response with structured metadata header.
+
+        Prepends a 2-line summary (agent id, exit reason, elapsed time,
+        tools used) before the raw text so that a coordinator-mode LLM
+        can make informed follow-up decisions.  The ``__ARTIFACT_RECEIPTS__``
+        sentinel format is unchanged for backward compatibility.
+        """
+        header = (
+            f"[任务完成通知] Agent: {self.agent_id}"
+            f" | 状态: {self.exit_reason}"
+            f" | 耗时: {self.elapsed_s}s"
+        )
+        if self.tools_used:
+            tools_line = (
+                f"工具调用: {len(self.tools_used)} 次"
+                f" ({', '.join(self.tools_used[:8])})"
+            )
+        else:
+            tools_line = "工具调用: 0 次"
+
+        parts = [header, tools_line, "", self.text]
         if self.artifacts:
             parts.append(
                 f"\n__ARTIFACT_RECEIPTS__{json.dumps(self.artifacts)}__ARTIFACT_RECEIPTS__"
             )
-        return "".join(parts)
+        return "\n".join(parts)
 
 
 class AgentMailbox:
@@ -684,6 +703,19 @@ class AgentOrchestrator:
                 # Update live sub-agent state for frontend polling
                 tools_list = self._get_tools_executed(agent, session.id, session)
                 idle_s = time.monotonic() - last_progress_time
+
+                _current_tool = tools_list[-1] if tools_list else ""
+
+                _tokens_used = 0
+                try:
+                    _re = getattr(agent, "reasoning_engine", None)
+                    if _re is not None:
+                        _tokens_used = getattr(
+                            getattr(_re, "_budget", None), "tokens_used", 0
+                        )
+                except Exception:
+                    pass
+
                 self._sub_agent_states[state_key] = {
                     **self._sub_agent_states.get(state_key, {}),
                     "status": "running",
@@ -692,7 +724,13 @@ class AgentOrchestrator:
                     "tools_total": len(tools_list),
                     "elapsed_s": round(elapsed),
                     "last_progress_s": round(idle_s),
+                    "current_tool_summary": _current_tool,
+                    "tokens_used": _tokens_used,
                 }
+
+                self._broadcast_sub_state_change(
+                    state_key, "running", self._sub_agent_states[state_key]
+                )
 
                 if idle_s >= idle_timeout:
                     logger.warning(
@@ -783,25 +821,35 @@ class AgentOrchestrator:
         status: str,
         state_entry: dict | None,
     ) -> None:
-        """Best-effort broadcast of sub-agent state via WebSocket."""
+        """Best-effort broadcast of sub-agent state via WebSocket.
+
+        The payload mirrors the ``SubAgentTask`` type on the frontend so
+        that WebSocket listeners can update progress cards directly without
+        needing to poll ``/api/agents/sub-tasks``.
+        """
         try:
             from openakita.api.routes.websocket import broadcast_event
 
-            parts = key.split(":", 1)
-            session_id = (
-                state_entry.get("session_id")
-                if state_entry and state_entry.get("session_id")
-                else (parts[0] if parts else key)
-            )
+            if not state_entry:
+                return
+
             payload: dict[str, Any] = {
-                "session_id": session_id,
+                "session_id": state_entry.get("session_id", ""),
+                "chat_id": state_entry.get("chat_id", ""),
+                "agent_id": state_entry.get("agent_id", ""),
+                "profile_id": state_entry.get("profile_id", ""),
+                "name": state_entry.get("name", ""),
+                "icon": state_entry.get("icon", ""),
                 "status": status,
+                "iteration": state_entry.get("iteration", 0),
+                "tools_executed": state_entry.get("tools_executed", []),
+                "tools_total": state_entry.get("tools_total", 0),
+                "elapsed_s": state_entry.get("elapsed_s", 0),
+                "last_progress_s": state_entry.get("last_progress_s", 0),
+                "started_at": state_entry.get("started_at", 0),
+                "current_tool_summary": state_entry.get("current_tool_summary", ""),
+                "tokens_used": state_entry.get("tokens_used", 0),
             }
-            if state_entry:
-                payload["agent_id"] = state_entry.get("agent_id", "")
-                payload["name"] = state_entry.get("name", "")
-                payload["elapsed_s"] = state_entry.get("elapsed_s", 0)
-                payload["chat_id"] = state_entry.get("chat_id", "")
 
             asyncio.ensure_future(broadcast_event("agents:sub_state", payload))
         except Exception:

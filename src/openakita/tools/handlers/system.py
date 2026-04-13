@@ -241,6 +241,8 @@ class SystemHandler:
         from ...channels.retry import async_with_retry
         from ...llm.providers.proxy_utils import extract_connection_error, get_httpx_client_kwargs
 
+        _dl_headers = {"User-Agent": "OpenAkita/1.0 (image-download)"}
+
         async def _download_image(url: str) -> bytes:
             """先直连后代理下载：国内 CDN 通常无需代理，直连更快更稳定。"""
             # 第一次：不使用代理直连下载
@@ -248,16 +250,16 @@ class SystemHandler:
                 async with httpx.AsyncClient(
                     timeout=60, trust_env=False, follow_redirects=True
                 ) as dl_client:
-                    resp = await dl_client.get(url)
+                    resp = await dl_client.get(url, headers=_dl_headers)
                     resp.raise_for_status()
                     return resp.content
-            except Exception:
-                pass
+            except Exception as direct_err:
+                logger.debug("generate_image: direct download failed: %s", direct_err)
             # 第二次：使用全局代理配置重试
             async with httpx.AsyncClient(
                 **get_httpx_client_kwargs(timeout=60), follow_redirects=True
             ) as dl_client:
-                resp = await dl_client.get(url)
+                resp = await dl_client.get(url, headers=_dl_headers)
                 resp.raise_for_status()
                 return resp.content
 

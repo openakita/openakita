@@ -645,8 +645,8 @@ class ToolExecutor:
                             "content": (
                                 f"⚠️ 需要用户确认: {perm_decision.reason}"
                                 f"{sandbox_hint}\n"
-                                "请使用 ask_user 工具询问用户是否允许此操作，"
-                                "得到用户同意后再重新调用此工具。"
+                                "已向用户发送确认请求，请等待用户通过界面做出决定后再继续。"
+                                "不要使用 ask_user 工具重复询问。"
                             ),
                             "is_error": True,
                             "_security_confirm": {
@@ -1043,7 +1043,7 @@ class ToolExecutor:
         if decision.behavior == "confirm":
             return (
                 f"⚠️ 需要用户确认: {decision.reason}\n"
-                "请使用 ask_user 工具询问用户是否允许此操作，"
-                "得到用户同意后再重新调用此工具。"
+                "已向用户发送确认请求，请等待用户通过界面做出决定后再继续。"
+                "不要使用 ask_user 工具重复询问。"
             )
         return decision.reason

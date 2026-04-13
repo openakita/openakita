@@ -613,6 +613,11 @@ class ReasoningEngine:
             elif isinstance(result, str):
                 content = result
 
+            # 工具自带行为指引时，跳过回滚——让工具返回的约束直接作用于模型，
+            # 避免回滚注入"请尝试完全不同的方法"覆盖工具的"禁止替代"指引
+            if "[行为指引]" in content:
+                return False, ""
+
             # 兜底: 字符串标记匹配（handler 返回的错误字符串）
             has_error = is_error_flag or any(
                 marker in content
@@ -978,6 +983,7 @@ class ReasoningEngine:
 
             _ctx_compressed_info: dict | None = None
             if len(working_messages) > 2:
+                working_messages = self._context_manager.pre_request_cleanup(working_messages)
                 _before_tokens = self._context_manager.estimate_messages_tokens(working_messages)
                 try:
                     working_messages = await self._context_manager.compress_if_needed(
@@ -1100,7 +1106,7 @@ class ReasoningEngine:
                 raise
             except Exception as e:
                 logger.error(f"[LLM] Brain call failed: {e}")
-                retry_result = self._handle_llm_error(
+                retry_result = await self._handle_llm_error(
                     e, task_monitor, state, working_messages, current_model
                 )
                 if retry_result == "retry":
@@ -1252,6 +1258,38 @@ class ReasoningEngine:
                 logger.info(
                     f'[ReAct] Iter {iteration + 1} — FINAL_ANSWER: "{(decision.text_content or "").replace(chr(10), " ")}"'
                 )
+
+                # FINAL_ANSWER 被 max_tokens 截断时自动续接（最多 2 次）
+                if (
+                    decision.stop_reason == "max_tokens"
+                    and getattr(state, "_text_continuation_count", 0) < 2
+                ):
+                    state._text_continuation_count = getattr(state, "_text_continuation_count", 0) + 1
+                    if not hasattr(state, "_accumulated_text_parts"):
+                        state._accumulated_text_parts = []
+                    state._accumulated_text_parts.append(decision.text_content or "")
+                    logger.info(
+                        f"[ReAct] FINAL_ANSWER truncated by max_tokens, "
+                        f"auto-continuation #{state._text_continuation_count}"
+                    )
+                    working_messages.append({
+                        "role": "assistant",
+                        "content": decision.assistant_content or [{"type": "text", "text": decision.text_content or ""}],
+                        **({"reasoning_content": decision.thinking_content} if decision.thinking_content else {}),
+                    })
+                    working_messages.append({
+                        "role": "user",
+                        "content": "你的回答被截断了。请直接从断点处继续输出，不要重复已说过的内容，不要道歉。",
+                    })
+                    react_trace.append(_iter_trace)
+                    continue
+
+                # 如果之前有续接，拼接完整文本
+                if hasattr(state, "_accumulated_text_parts") and state._accumulated_text_parts:
+                    state._accumulated_text_parts.append(decision.text_content or "")
+                    decision.text_content = "".join(state._accumulated_text_parts)
+                    del state._accumulated_text_parts
+
                 consecutive_tool_rounds = 0
 
                 result = await self._handle_final_answer(
@@ -2132,14 +2170,11 @@ class ReasoningEngine:
                 if _ask_rules:
                     effective_prompt += f"\n\n{_ask_rules}"
             elif _effective_mode == "coordinator":
-                effective_prompt += (
-                    "\n\n## Coordinator Mode\n"
-                    "你当前处于 **协调者模式**。你的职责是规划、委派和监督，而非直接执行。\n"
-                    "- 使用 delegate_to_agent / delegate_parallel / spawn_agent 将具体任务委派给下属 Agent\n"
-                    "- 使用 create_todo / update_todo_step 跟踪任务进度\n"
-                    "- 使用 ask_user 向用户确认重要决策\n"
-                    "- 你不能直接编辑文件、执行命令或进行文件操作——这些由你委派的 Agent 完成\n"
-                )
+                from ..prompt.builder import build_mode_rules
+
+                _coordinator_rules = build_mode_rules("coordinator")
+                if _coordinator_rules:
+                    effective_prompt += f"\n\n{_coordinator_rules}"
 
             # Tool filtering by mode — restrict available tools based on current mode
             tools = _filter_tools_by_mode(tools, _effective_mode)
@@ -2355,6 +2390,7 @@ class ReasoningEngine:
 
                 _ctx_compressed_info: dict | None = None
                 if len(working_messages) > 2:
+                    working_messages = self._context_manager.pre_request_cleanup(working_messages)
                     effective_prompt = _build_effective_prompt()
                     _before_tokens = self._context_manager.estimate_messages_tokens(
                         working_messages
@@ -2504,7 +2540,7 @@ class ReasoningEngine:
 
                 except Exception as e:
                     # --- LLM Error Handling（与 run() 一致） ---
-                    retry_result = self._handle_llm_error(
+                    retry_result = await self._handle_llm_error(
                         e, task_monitor, state, working_messages, current_model
                     )
                     _thinking_duration = int((time.time() - _thinking_t0) * 1000)
@@ -2681,6 +2717,28 @@ class ReasoningEngine:
 
                 # ==================== FINAL_ANSWER ====================
                 if decision.type == DecisionType.FINAL_ANSWER:
+                    # FINAL_ANSWER 被 max_tokens 截断时自动续接（最多 2 次）
+                    if (
+                        decision.stop_reason == "max_tokens"
+                        and getattr(state, "_text_continuation_count", 0) < 2
+                    ):
+                        state._text_continuation_count = getattr(state, "_text_continuation_count", 0) + 1
+                        logger.info(
+                            f"[ReAct-Stream] FINAL_ANSWER truncated by max_tokens, "
+                            f"auto-continuation #{state._text_continuation_count}"
+                        )
+                        working_messages.append({
+                            "role": "assistant",
+                            "content": decision.assistant_content or [{"type": "text", "text": decision.text_content or ""}],
+                            **({"reasoning_content": decision.thinking_content} if decision.thinking_content else {}),
+                        })
+                        working_messages.append({
+                            "role": "user",
+                            "content": "你的回答被截断了。请直接从断点处继续输出，不要重复已说过的内容，不要道歉。",
+                        })
+                        react_trace.append(_iter_trace)
+                        continue
+
                     consecutive_tool_rounds = 0
 
                     # 任务完成度验证（与 run() 一致）
@@ -2813,6 +2871,7 @@ class ReasoningEngine:
                                 "name": t_name,
                                 "args": t_args,
                                 "id": t_id,
+                                "friendly_message": self._describe_tool_call(t_name, t_args),
                             }
                             await broadcast_event(
                                 "pet-status-update",
@@ -2846,6 +2905,8 @@ class ReasoningEngine:
                                     "reason": _pr.reason,
                                     "risk_level": _risk,
                                     "needs_sandbox": _needs_sb,
+                                    "timeout_seconds": _pe._config.confirmation.timeout_seconds,
+                                    "default_on_timeout": _pe._config.confirmation.default_on_timeout,
                                     "options": [
                                         "allow_once",
                                         "allow_session",
@@ -2856,8 +2917,8 @@ class ReasoningEngine:
                                 }
                                 r = (
                                     f"⚠️ 需要用户确认: {_pr.reason}\n"
-                                    "请使用 ask_user 工具询问用户是否允许此操作，"
-                                    "得到用户同意后再重新调用此工具。"
+                                    "已向用户发送确认请求，请等待用户通过界面做出决定后再继续。"
+                                    "不要使用 ask_user 工具重复询问。"
                                 )
                                 _tool_is_error = True
                             else:
@@ -2873,15 +2934,16 @@ class ReasoningEngine:
                                 except Exception as exc:
                                     r = f"Tool error: {exc}"
                                     _tool_is_error = True
+                            _ask_result_summary = self._summarize_tool_result(t_name, r)
                             yield {
                                 "type": "tool_call_end",
                                 "tool": t_name,
                                 "result": r[:_SSE_RESULT_PREVIEW_CHARS],
                                 "id": t_id,
                                 "is_error": _tool_is_error,
+                                "result_summary": _ask_result_summary or "",
                             }
                             # chain_text: 结果摘要
-                            _ask_result_summary = self._summarize_tool_result(t_name, r)
                             if _ask_result_summary:
                                 yield {"type": "chain_text", "content": _ask_result_summary}
                             tool_results_for_msg.append(
@@ -3007,6 +3069,7 @@ class ReasoningEngine:
                                 "name": tool_name,
                                 "args": tool_args,
                                 "id": tool_id,
+                                "friendly_message": self._describe_tool_call(tool_name, tool_args),
                             }
                             yield {
                                 "type": "tool_call_end",
@@ -3014,6 +3077,7 @@ class ReasoningEngine:
                                 "result": _rl_msg[:_SSE_RESULT_PREVIEW_CHARS],
                                 "id": tool_id,
                                 "is_error": False,
+                                "result_summary": _rl_msg,
                             }
                             tool_results_for_msg.append(
                                 {
@@ -3053,6 +3117,7 @@ class ReasoningEngine:
                             "name": tool_name,
                             "args": tool_args,
                             "id": tool_id,
+                            "friendly_message": _tool_desc,
                         }
                         await broadcast_event(
                             "pet-status-update",
@@ -3067,14 +3132,15 @@ class ReasoningEngine:
                         _pr = _pe.assert_tool_allowed(tool_name, _tool_args_dict)
                         if _pr.decision == PolicyDecision.DENY:
                             result_text = f"⚠️ 策略拒绝: {_pr.reason}"
+                            _deny_summary = self._summarize_tool_result(tool_name, result_text)
                             yield {
                                 "type": "tool_call_end",
                                 "tool": tool_name,
                                 "result": result_text[:_SSE_RESULT_PREVIEW_CHARS],
                                 "id": tool_id,
                                 "is_error": True,
+                                "result_summary": _deny_summary or "",
                             }
-                            _deny_summary = self._summarize_tool_result(tool_name, result_text)
                             if _deny_summary:
                                 yield {"type": "chain_text", "content": _deny_summary}
                             if _pe.readonly_mode and not _death_switch_notified:
@@ -3115,13 +3181,15 @@ class ReasoningEngine:
                                 "reason": _pr.reason,
                                 "risk_level": _risk,
                                 "needs_sandbox": _needs_sb,
+                                "timeout_seconds": _pe._config.confirmation.timeout_seconds,
+                                "default_on_timeout": _pe._config.confirmation.default_on_timeout,
                                 "options": ["allow_once", "allow_session", "allow_always", "deny"]
                                 + (["sandbox"] if _needs_sb else []),
                             }
                             result_text = (
                                 f"⚠️ 需要用户确认: {_pr.reason}\n"
-                                "请使用 ask_user 工具询问用户是否允许此操作，"
-                                "得到用户同意后再重新调用此工具。"
+                                "已向用户发送确认请求，请等待用户通过界面做出决定后再继续。"
+                                "不要使用 ask_user 工具重复询问。"
                             )
                             yield {
                                 "type": "tool_call_end",
@@ -3129,6 +3197,7 @@ class ReasoningEngine:
                                 "result": result_text[:_SSE_RESULT_PREVIEW_CHARS],
                                 "id": tool_id,
                                 "is_error": True,
+                                "result_summary": self._summarize_tool_result(tool_name, result_text) or "",
                             }
                             tool_results_for_msg.append(
                                 {
@@ -3210,6 +3279,7 @@ class ReasoningEngine:
                                     "reason": h.get("reason", ""),
                                 }
                             session.context.handoff_events.clear()
+                        _end_result_summary = self._summarize_tool_result(tool_name, result_text) or ""
                         # 跳过时发送 tool_call_skipped 事件通知前端
                         if _stream_skipped:
                             yield {
@@ -3219,6 +3289,7 @@ class ReasoningEngine:
                                 "id": tool_id,
                                 "skipped": True,
                                 "is_error": False,
+                                "result_summary": _end_result_summary,
                             }
                         else:
                             yield {
@@ -3227,6 +3298,7 @@ class ReasoningEngine:
                                 "result": result_text[:_SSE_RESULT_PREVIEW_CHARS],
                                 "id": tool_id,
                                 "is_error": _tool_is_error,
+                                "result_summary": _end_result_summary,
                             }
 
                         if _stream_cancelled:
@@ -5325,7 +5397,7 @@ class ReasoningEngine:
         )
         return True
 
-    def _handle_llm_error(
+    async def _handle_llm_error(
         self,
         error: Exception,
         task_monitor: Any,
@@ -5406,15 +5478,17 @@ class ReasoningEngine:
                 if is_ctx_overflow:
                     # Layer 2: Reactive compact (三层压缩策略的第三层)
                     try:
-                        import asyncio as _aio
-
-                        loop = _aio.get_running_loop()
-                        loop.create_task(
-                            self._context_manager.reactive_compact(
-                                working_messages,
-                                system_prompt=getattr(state, "_system_prompt", ""),
-                            )
+                        compacted = await self._context_manager.reactive_compact(
+                            working_messages,
+                            system_prompt=getattr(state, "_system_prompt", ""),
                         )
+                        if compacted is not working_messages:
+                            working_messages.clear()
+                            working_messages.extend(compacted)
+                        llm_client = getattr(self._brain, "_llm_client", None)
+                        if llm_client:
+                            llm_client.reset_all_cooldowns(include_structural=True)
+                        return "retry"
                     except Exception:
                         pass
 

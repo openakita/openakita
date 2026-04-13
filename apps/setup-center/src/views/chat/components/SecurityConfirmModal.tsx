@@ -33,6 +33,7 @@ export function SecurityConfirmModal({
   data: {
     tool: string; args: Record<string, unknown>; reason: string;
     riskLevel: string; needsSandbox: boolean; toolId?: string; countdown: number;
+    defaultOnTimeout?: string;
   };
   apiBase: string;
   onClose: (info?: SecurityCloseInfo) => void;
@@ -46,6 +47,7 @@ export function SecurityConfirmModal({
 
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current);
+    const timeoutDecision = data.defaultOnTimeout === "allow" ? "allow_once" : "deny";
     timerRef.current = setInterval(() => {
       if (pausedRef.current) return;
       setData((prev) => {
@@ -53,7 +55,7 @@ export function SecurityConfirmModal({
         if (prev.countdown <= 1) {
           clearInterval(timerRef.current!);
           timerRef.current = null;
-          handleDecision("deny");
+          handleDecision(timeoutDecision as Decision);
           return null;
         }
         return { ...prev, countdown: prev.countdown - 1 };

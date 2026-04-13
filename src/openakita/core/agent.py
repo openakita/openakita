@@ -3835,6 +3835,7 @@ class Agent:
         # 仅真正的 IM 通道（telegram/wechat/feishu 等）使用 im 模式
         _channel = getattr(session, "channel", None) if session else None
         session_type = "im" if _channel and _channel not in ("cli", "desktop") else "cli"
+        self._current_session_type = session_type
 
         return messages, session_type, task_monitor, conversation_id, im_tokens
 
@@ -3946,6 +3947,7 @@ class Agent:
         """
         self._current_task_definition = ""
         self._current_task_query = ""
+        self._current_session_type = "cli"
         if im_tokens is not None:
             with contextlib.suppress(Exception):
                 from .im_context import reset_im_context
