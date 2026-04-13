@@ -3549,6 +3549,7 @@ class MessageGateway:
                             "transcription": voice.transcription
                             if voice.transcription not in (None, "", "[语音识别失败]")
                             else None,
+                            "_media_ref": voice,
                         }
                     )
 
@@ -4045,8 +4046,11 @@ class MessageGateway:
     _DEFAULT_SPLIT_INTERVAL = 0.15
 
     # 进度消息节流间隔（秒）— 不支持卡片更新的平台需要更高的节流间隔
+    # QQ/OneBot 设置较高节流：减少刷屏，降低 msg_id 被动回复窗口的消耗速度
     _CHANNEL_PROGRESS_THROTTLE: dict[str, float] = {
         "wechat": 12.0,
+        "qqbot": 10.0,
+        "onebot": 10.0,
     }
 
     @staticmethod
