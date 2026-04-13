@@ -264,6 +264,7 @@ class SaveEndpointRequest(BaseModel):
     api_key: str | None = None
     endpoint_type: str = "endpoints"
     expected_version: str | None = None
+    original_name: str | None = None
 
 
 class DeleteEndpointRequest(BaseModel):
@@ -287,6 +288,7 @@ async def save_endpoint(body: SaveEndpointRequest, request: Request):
             api_key=body.api_key,
             endpoint_type=body.endpoint_type,
             expected_version=body.expected_version,
+            original_name=body.original_name,
         )
     except ConflictError as e:
         return {"status": "conflict", "error": str(e), "current_version": e.current_version}

@@ -70,6 +70,8 @@ export interface LLMViewProps {
   serviceRunning?: boolean;
 }
 
+type EndpointType = "endpoints" | "compiler_endpoints" | "stt_endpoints";
+
 export function LLMView(props: LLMViewProps) {
   const {
     savedEndpoints, savedCompilerEndpoints, savedSttEndpoints,
@@ -199,6 +201,36 @@ export function LLMView(props: LLMViewProps) {
   }
 
   const providerApplyUrl = useMemo(() => getProviderApplyUrl(selectedProvider?.slug || ""), [selectedProvider?.slug]);
+
+  async function saveEndpointConfig(params: {
+    endpoint: Record<string, unknown>;
+    apiKey?: string | null;
+    endpointType: EndpointType;
+    originalName?: string | null;
+  }): Promise<void> {
+    const res = await safeFetch(`${httpApiBase()}/api/config/save-endpoint`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        endpoint: params.endpoint,
+        api_key: params.apiKey ?? null,
+        endpoint_type: params.endpointType,
+        original_name: params.originalName ?? null,
+      }),
+    });
+    const data = await res.json();
+    if (data.status === "conflict" || data.status === "error") {
+      throw new Error(data.error || "保存失败");
+    }
+    const normalizedKey = (params.apiKey ?? "").trim();
+    if (normalizedKey && data.endpoint?.api_key_env) {
+      setEnvDraft((e) => envSet(e, data.endpoint.api_key_env, normalizedKey));
+    }
+  }
+
+  async function syncEndpointConfigChange(endpointType: EndpointType): Promise<void> {
+    await onEndpointConfigChanged(endpointType);
+  }
 
   // ── Effects ──
 
@@ -527,30 +559,18 @@ export function LLMView(props: LLMViewProps) {
         capabilities: ["text"],
       };
 
-      const res = await safeFetch(`${httpApiBase()}/api/config/save-endpoint`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          endpoint,
-          api_key: effectiveCompApiKeyValue || null,
-          endpoint_type: "compiler_endpoints",
-        }),
+      await saveEndpointConfig({
+        endpoint,
+        apiKey: effectiveCompApiKeyValue || null,
+        endpointType: "compiler_endpoints",
       });
-      const data = await res.json();
-      if (data.status === "error" || data.status === "conflict") {
-        notifyError(data.error || "保存失败");
-        return false;
-      }
-      if (effectiveCompApiKeyValue && data.endpoint?.api_key_env) {
-        setEnvDraft((e) => envSet(e, data.endpoint.api_key_env, effectiveCompApiKeyValue));
-      }
 
       setCompilerModel("");
       setCompilerApiKeyValue("");
       setCompilerEndpointName("");
       setCompilerBaseUrl("");
+      await syncEndpointConfigChange("compiler_endpoints");
       notifySuccess(`编译端点 ${epName} 已保存`);
-      await onEndpointConfigChanged("compiler_endpoints");
       return true;
     } catch (e) {
       notifyError(friendlyConfigError(e));
@@ -601,31 +621,19 @@ export function LLMView(props: LLMViewProps) {
         capabilities: ["text"],
       };
 
-      const res = await safeFetch(`${httpApiBase()}/api/config/save-endpoint`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          endpoint,
-          api_key: effectiveSttApiKeyValue || null,
-          endpoint_type: "stt_endpoints",
-        }),
+      await saveEndpointConfig({
+        endpoint,
+        apiKey: effectiveSttApiKeyValue || null,
+        endpointType: "stt_endpoints",
       });
-      const data = await res.json();
-      if (data.status === "error" || data.status === "conflict") {
-        notifyError(data.error || "保存失败");
-        return false;
-      }
-      if (effectiveSttApiKeyValue && data.endpoint?.api_key_env) {
-        setEnvDraft((e) => envSet(e, data.endpoint.api_key_env, effectiveSttApiKeyValue));
-      }
 
       setSttModel("");
       setSttApiKeyValue("");
       setSttEndpointName("");
       setSttBaseUrl("");
       setSttModels([]);
+      await syncEndpointConfigChange("stt_endpoints");
       notifySuccess(`STT 端点 ${epName} 已保存`);
-      await onEndpointConfigChanged("stt_endpoints");
       return true;
     } catch (e) {
       notifyError(friendlyConfigError(e));
@@ -636,7 +644,7 @@ export function LLMView(props: LLMViewProps) {
   }
 
 
-  async function doReorderByNames(orderedNames: string[], endpointType: "endpoints" | "compiler_endpoints" | "stt_endpoints" = "endpoints") {
+  async function doReorderByNames(orderedNames: string[], endpointType: EndpointType = "endpoints") {
     if (!currentWorkspaceId && dataMode !== "remote") return;
     const _busyId = notifyLoading("保存排序...");
     try {
@@ -647,8 +655,8 @@ export function LLMView(props: LLMViewProps) {
       });
       const json = await res.json();
       if (json.status !== "ok") throw new Error(json.error || "reorder failed");
+      await syncEndpointConfigChange(endpointType);
       notifySuccess(t("llm.reorderSaved"));
-      await onEndpointConfigChanged(endpointType);
     } catch (e) {
       notifyError(String(e));
     } finally {
@@ -872,34 +880,16 @@ export function LLMView(props: LLMViewProps) {
         endpoint.timeout = editDraft.timeout ?? 60;
       }
 
-      if (nameChanged) {
-        await safeFetch(
-          `${httpApiBase()}/api/config/endpoint/${encodeURIComponent(editingOriginalName)}?endpoint_type=${epType}`,
-          { method: "DELETE" },
-        );
-      }
       const keyToSave = editDraft.apiKeyValue.trim() || null;
-      const res = await safeFetch(`${httpApiBase()}/api/config/save-endpoint`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          endpoint,
-          api_key: keyToSave,
-          endpoint_type: epType,
-        }),
+      await saveEndpointConfig({
+        endpoint,
+        apiKey: keyToSave,
+        endpointType: epType,
+        originalName: nameChanged ? editingOriginalName : null,
       });
-      const data = await res.json();
-      if (data.status === "conflict" || data.status === "error") {
-        notifyError(data.error || "保存失败");
-        return;
-      }
-      if (keyToSave && data.endpoint?.api_key_env) {
-        setEnvDraft((e) => envSet(e, data.endpoint.api_key_env, keyToSave));
-      }
-
+      await syncEndpointConfigChange(epType);
+      resetEndpointEditor();
       notifySuccess("端点已更新");
-      setEditModalOpen(false);
-      await loadSavedEndpoints();
     } catch (e) {
       notifyError(friendlyConfigError(e));
     } finally {
@@ -958,35 +948,19 @@ export function LLMView(props: LLMViewProps) {
         endpoint.extra_params = { enable_thinking: true };
       }
 
-      const res = await safeFetch(`${httpApiBase()}/api/config/save-endpoint`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          endpoint,
-          api_key: effectiveApiKeyValue || null,
-          endpoint_type: "endpoints",
-        }),
+      await saveEndpointConfig({
+        endpoint,
+        apiKey: effectiveApiKeyValue || null,
+        endpointType: "endpoints",
       });
-      const data = await res.json();
-      if (data.status === "conflict") {
-        notifyError(data.error || t("llm.configConflict"));
-        return false;
-      }
-      if (data.status === "error") {
-        notifyError(data.error || "保存失败");
-        return false;
-      }
-      if (effectiveApiKeyValue && data.endpoint?.api_key_env) {
-        setEnvDraft((e) => envSet(e, data.endpoint.api_key_env, effectiveApiKeyValue));
-      }
 
+      await syncEndpointConfigChange("endpoints");
       notifySuccess(
         isEditingEndpoint
           ? "端点已更新（同时已写入 API Key 到 .env）。"
           : "端点已保存（同时已写入 API Key 到 .env）。你可以继续添加备份端点。",
       );
       if (isEditingEndpoint) resetEndpointEditor();
-      await onEndpointConfigChanged("endpoints");
       return true;
     } catch (e) {
       notifyError(friendlyConfigError(e));
@@ -996,7 +970,7 @@ export function LLMView(props: LLMViewProps) {
     }
   }
 
-  async function doDeleteEndpoint(name: string, endpointType: "endpoints" | "compiler_endpoints" | "stt_endpoints" = "endpoints") {
+  async function doDeleteEndpoint(name: string, endpointType: EndpointType = "endpoints") {
     if (!currentWorkspaceId && dataMode !== "remote") return;
     const _busyId = notifyLoading("删除端点...");
     try {
@@ -1004,8 +978,8 @@ export function LLMView(props: LLMViewProps) {
         `${httpApiBase()}/api/config/endpoint/${encodeURIComponent(name)}?endpoint_type=${endpointType}`,
         { method: "DELETE" },
       );
+      await syncEndpointConfigChange(endpointType);
       notifySuccess(`已删除端点：${name}`);
-      await onEndpointConfigChanged(endpointType);
     } catch (e) {
       notifyError(friendlyConfigError(e));
     } finally {
@@ -1013,7 +987,7 @@ export function LLMView(props: LLMViewProps) {
     }
   }
 
-  async function doToggleEndpointEnabled(name: string, endpointType: "endpoints" | "compiler_endpoints" | "stt_endpoints" = "endpoints") {
+  async function doToggleEndpointEnabled(name: string, endpointType: EndpointType = "endpoints") {
     if (!currentWorkspaceId && dataMode !== "remote") return;
     try {
       const res = await safeFetch(`${httpApiBase()}/api/config/toggle-endpoint`, {
@@ -1023,7 +997,7 @@ export function LLMView(props: LLMViewProps) {
       });
       const json = await res.json();
       if (json.status !== "ok") throw new Error(json.error || "toggle failed");
-      await onEndpointConfigChanged(endpointType);
+      await syncEndpointConfigChange(endpointType);
     } catch (e) {
       notifyError(String(e));
     }
@@ -1410,7 +1384,7 @@ export function LLMView(props: LLMViewProps) {
       </Dialog>
 
       {/* ── Edit endpoint modal ── */}
-      <Dialog open={editModalOpen && !!editDraft} onOpenChange={(open) => { if (!open) setEditModalOpen(false); }}>
+      <Dialog open={editModalOpen && !!editDraft} onOpenChange={(open) => { if (!open) resetEndpointEditor(); }}>
         <DialogContent className="sm:max-w-[480px] max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden" onOpenAutoFocus={(e) => e.preventDefault()} onCloseAnimationEnd={() => { resetEndpointEditor(); setConnTestResult(null); }}>
           <DialogHeader className="px-6 pt-5 pb-3 shrink-0">
             <DialogTitle>{editEndpointType === "compiler_endpoints" ? t("llm.editCompiler") : editEndpointType === "stt_endpoints" ? t("llm.editStt") : t("llm.editEndpoint")}: {editDraft?.name}</DialogTitle>
@@ -1613,7 +1587,7 @@ export function LLMView(props: LLMViewProps) {
           )}
 
           <DialogFooter className="px-6 py-2.5 shrink-0 flex-row justify-between sm:justify-between">
-            <Button variant="ghost" onClick={() => setEditModalOpen(false)}>{t("common.cancel")}</Button>
+            <Button variant="ghost" onClick={resetEndpointEditor}>{t("common.cancel")}</Button>
             <div className="flex gap-2 items-center">
               <Button variant="secondary"
                 disabled={(!isLocalProvider(providers.find((p) => p.slug === editDraft?.providerSlug)) && !(editDraft?.apiKeyValue || "").trim()) || !(editDraft?.baseUrl || "").trim() || connTesting}
