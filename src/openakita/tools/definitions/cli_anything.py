@@ -83,6 +83,7 @@ CLI_ANYTHING_TOOLS = [
                 "先用 cli_anything_discover 查看已安装的工具",
                 "先用 cli_anything_help 查看可用子命令和参数",
                 "目标软件必须安装在系统上",
+                "生成的文件保存在服务器本地，IM 场景下需通过 `deliver_artifacts` 交付给用户",
             ],
         ),
         "triggers": [

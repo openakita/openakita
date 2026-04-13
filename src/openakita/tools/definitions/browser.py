@@ -250,6 +250,7 @@ BROWSER_TOOLS = [
                 "仅截取浏览器页面内容",
                 "如需截取桌面或其他应用，请使用 desktop_screenshot",
                 "full_page=True 会截取页面的完整内容（包含需要滚动才能看到的部分）",
+                "IM 场景下截图保存在服务器本地，需通过 `deliver_artifacts` 交付给用户才可见",
             ],
         ),
         "triggers": [

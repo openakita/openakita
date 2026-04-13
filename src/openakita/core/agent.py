@@ -3586,11 +3586,13 @@ class Agent:
                             try:
                                 stt_result = await stt_client.transcribe(local_path)
                                 if stt_result:
-                                    # 用在线 STT 结果替换输入
                                     if not compiled_message.strip() or "[语音:" in compiled_message:
                                         compiled_message = stt_result
                                     else:
                                         compiled_message = f"{compiled_message}\n\n[语音内容(在线识别): {stt_result}]"
+                                    media_ref = aud.get("_media_ref")
+                                    if media_ref is not None:
+                                        media_ref.transcription = stt_result
                                     logger.info(
                                         f"[Session:{session_id}] Audio → online STT: {stt_result[:50]}..."
                                     )

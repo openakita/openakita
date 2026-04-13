@@ -809,7 +809,7 @@ class IMChannelHandler:
             logger.warning(f"[IM] send_image failed for {channel}: {e}")
             _is_timeout = "timed out" in str(e).lower() or "timeout" in type(e).__name__.lower()
             if _is_timeout:
-                return f"⚠️ 图片发送超时（可能已发送成功）: {image_path}"
+                return f"⚠️ 图片发送超时（已提交请求，可能已成功）: {image_path}（请勿重发，告知用户稍候查看）"
             _img_reason = ""
 
         # 降级：以文件形式发送图片（仅非超时错误才走此路径）
@@ -819,10 +819,12 @@ class IMChannelHandler:
             return f"✅ 已发送图片(作为文件): {image_path} (message_id={message_id})"
         except NotImplementedError:
             pass
+        except Exception as fallback_exc:
+            logger.warning(f"[IM] send_file fallback also failed for {channel}: {fallback_exc}")
 
         if _img_reason:
             return f"❌ {_img_reason}"
-        return f"❌ 当前平台 ({channel}) 不支持发送图片"
+        return f"❌ 当前平台 ({channel}) 图片发送失败，可能是消息回复窗口已过期"
 
     async def _send_voice(
         self, adapter: "ChannelAdapter", chat_id: str, voice_path: str, caption: str, channel: str

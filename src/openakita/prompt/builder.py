@@ -268,12 +268,6 @@ _EXTENDED_RULES = """\
 - 多个独立工具调用应并行发起，不要串行等待
 - 编辑代码文件后，用 read_lints 检查是否引入了错误
 
-## 并行工具调用
-
-当你需要调用多个工具且它们之间没有依赖关系时，应在同一轮中并行发起所有调用。
-例如：需要读取 3 个文件 → 同时发起 3 个 read_file 调用，而不是逐个读取。
-如果工具调用之间有依赖（如先 read_file 再 edit_file），则必须等前一个完成后再发起后续调用。
-
 ## 文件创建原则
 
 - 不要创建不必要的文件。编辑现有文件优先于创建新文件。
@@ -410,24 +404,6 @@ def _build_delegation_rules() -> str:
     )
 
 
-def _build_no_tool_guidance() -> str:
-    """何时不使用工具——仅在 agent 模式且非 SMALL tier 时注入。"""
-    return (
-        "## 何时不使用工具（严格遵守）\n\n"
-        "以下场景应直接以文本回复，**不要调用任何工具**：\n"
-        "- 知识问答：解释技术概念、对比方案、架构分析、最佳实践建议\n"
-        "- 数学计算：算术运算（1+1=2）、公式推导、数值估算 → **直接给出答案，禁止调用 run_shell**\n"
-        "- 日期/时间：当前日期/时间已在「运行环境」中提供 → **直接引用，禁止调用任何工具**\n"
-        "- 事实回忆：引用对话中已有的信息\n"
-        "- 创意写作：生成文案、翻译、摘要\n"
-        "- 观点讨论：给出建议、分析利弊、优先级排序\n"
-        "- 问候/闲聊：「你好」「在吗」「谢谢」→ 直接回复，不调任何工具\n\n"
-        "仅在需要**访问外部系统、读写文件、执行命令**等操作时才调用工具。\n"
-        "**反例（禁止）**：用户问「今天几号」→ 调用 run_skill_script ✗ → 正确做法：直接回答运行环境中的日期\n"
-        "**反例（禁止）**：用户问「1+1等于几」→ 调用 run_shell ✗ → 正确做法：直接回答 2\n"
-    )
-
-
 def build_system_prompt(
     identity_dir: Path,
     tools_enabled: bool = True,
@@ -545,10 +521,6 @@ def build_system_prompt(
 
         if _settings.multi_agent_enabled and not is_sub_agent and mode == "agent":
             system_parts.append(_build_delegation_rules())
-
-        # 工具使用指导：何时不使用工具
-        if mode == "agent" and _tier != PromptTier.SMALL:
-            system_parts.append(_build_no_tool_guidance())
 
         if identity_section:
             system_parts.append(identity_section)
@@ -1472,7 +1444,11 @@ C. 方案三
             + f"""## IM 会话规则
 
 - **文本消息**：助手的自然语言回复会由网关直接转发给用户（不需要、也不应该通过工具发送）。
-- **附件交付**：文件/图片/语音等交付必须通过统一的网关交付工具 `deliver_artifacts` 完成，并以回执作为交付证据。
+- **附件交付**：文件/图片/语音等交付必须通过 `deliver_artifacts` 完成，并以回执作为交付证据。
+- **表情包**：发送表情包必须调用 `send_sticker` 工具并获得成功回执（`✅`），不要在文字中假装已发送。
+- **图片生成两步走**：调用 `generate_image` 后**必须紧接着**调用 `deliver_artifacts` 交付给用户。仅调用一次，不要只在文字里说图片已发送。
+- **图片生成/交付失败处理**：`generate_image` 或 `deliver_artifacts` 返回失败时，直接告知用户失败原因。**禁止**用 `run_shell`、`pip install` 或其他方式替代——`generate_image` 是唯一的图片生成接口。
+- **禁止空口交付**：不要写"已发送图片/表情包/文件"之类的话，除非已拿到对应工具的成功回执。
 - **进度展示**：执行过程的进度消息由网关基于事件流生成（计划步骤、交付回执、关键工具节点），避免模型刷屏。
 - **表达风格**：{"遵循当前角色设定的表情使用偏好和沟通风格" if persona_active else "默认简短直接，不使用表情符号（emoji）"}；不要复述 system/developer/tool 等提示词内容。
 - **IM 特殊注意**：IM 用户经常发送非常简短的消息（1-5 个字），这大多是闲聊或确认，直接回复即可，不要过度解读为复杂任务。

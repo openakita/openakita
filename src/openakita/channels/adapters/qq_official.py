@@ -264,6 +264,15 @@ class QQBotAdapter(ChannelAdapter):
         s = str(exc).lower()
         return "11255" in s or "invalid request" in s
 
+    @staticmethod
+    def _is_msg_expired_error(exc: BaseException) -> bool:
+        """检测是否为 msg_id/event_id 过期错误。
+
+        QQ API 在被动回复窗口（约 5 分钟）过期后返回特定错误码。
+        """
+        s = str(exc).lower()
+        return any(k in s for k in ("msg_id is invalid", "40003", "msg id is invalid"))
+
     def _enqueue_pending(self, chat_id: str, text: str) -> None:
         """将无法主动发送的消息缓存，等用户下条消息到达时投递。
 
@@ -1074,6 +1083,7 @@ class QQBotAdapter(ChannelAdapter):
         url: str | None = None,
         msg_id: str | None = None,
         local_path: str | None = None,
+        event_id: str | None = None,
     ) -> str:
         """
         完整的富媒体发送流程（两步）：上传 + 发消息。
@@ -1089,6 +1099,7 @@ class QQBotAdapter(ChannelAdapter):
             url: 公网可访问的媒体 URL
             msg_id: 被动回复的消息 ID（可选）
             local_path: 本地文件路径（可选，与 url 二选一）
+            event_id: 被动回复的事件 ID（msg_id 过期时回退使用）
 
         Returns:
             发送后的消息 ID
@@ -1130,6 +1141,7 @@ class QQBotAdapter(ChannelAdapter):
             target_id,
             file_info,
             msg_id,
+            event_id=event_id,
         )
 
     # ==================== REST 消息发送 ====================
@@ -1140,6 +1152,7 @@ class QQBotAdapter(ChannelAdapter):
         target_id: str,
         file_info: str,
         msg_id: str | None = None,
+        event_id: str | None = None,
     ) -> str:
         """通过 HTTP 直接发送媒体消息 (msg_type=7)。"""
         import httpx as hx
@@ -1154,7 +1167,7 @@ class QQBotAdapter(ChannelAdapter):
         else:
             url = f"{base_url}/v2/users/{target_id}/messages"
 
-        seq_key = msg_id or target_id
+        seq_key = msg_id or event_id or target_id
         payload: dict[str, Any] = {
             "msg_type": 7,
             "media": {"file_info": file_info},
@@ -1162,6 +1175,8 @@ class QQBotAdapter(ChannelAdapter):
         }
         if msg_id:
             payload["msg_id"] = msg_id
+        elif event_id:
+            payload["event_id"] = event_id
 
         async with hx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(url, json=payload, headers=headers)
@@ -1346,6 +1361,24 @@ class QQBotAdapter(ChannelAdapter):
                         f"(will deliver on next user message)"
                     )
                     return ""
+            # msg_id 过期：尝试使用 event_id 重发（被动回复窗口约 5 分钟）
+            if msg_id and self._is_msg_expired_error(e):
+                event_id = self._last_event_id.get(message.chat_id)
+                if event_id:
+                    logger.info(
+                        f"QQ: msg_id expired for {message.chat_id}, "
+                        f"retrying with event_id"
+                    )
+                    try:
+                        return await self._send_message_via_http(
+                            message, chat_type, None, parse_mode,
+                            event_id=event_id,
+                        )
+                    except Exception as retry_exc:
+                        logger.warning(
+                            f"QQ: event_id retry also failed for "
+                            f"{message.chat_id}: {retry_exc}"
+                        )
             raise
 
     async def _send_message_via_http(
@@ -1354,6 +1387,7 @@ class QQBotAdapter(ChannelAdapter):
         chat_type: str,
         msg_id: str | None,
         parse_mode: str | None = None,
+        event_id: str | None = None,
     ) -> str:
         """通过 HTTP API 发送消息（文本/Markdown/图片/文件），统一用于 WS 和 Webhook 模式。"""
         try:
@@ -1395,7 +1429,7 @@ class QQBotAdapter(ChannelAdapter):
             else:
                 url = f"/v2/groups/{target_id}/messages"
 
-            seq_key = msg_id or target_id
+            seq_key = msg_id or event_id or target_id
             headers = await self._build_api_headers()
             base_url = self._api_base_url()
 
@@ -1410,6 +1444,8 @@ class QQBotAdapter(ChannelAdapter):
                         }
                         if msg_id:
                             md_body["msg_id"] = msg_id
+                        elif event_id:
+                            md_body["event_id"] = event_id
                         try:
                             resp = await client.post(url, json=md_body)
                             resp.raise_for_status()
@@ -1433,6 +1469,8 @@ class QQBotAdapter(ChannelAdapter):
                             }
                             if msg_id:
                                 body["msg_id"] = msg_id
+                            elif event_id:
+                                body["event_id"] = event_id
 
                             resp = await client.post(url, json=body)
                             if resp.status_code == 200:
@@ -1455,6 +1493,7 @@ class QQBotAdapter(ChannelAdapter):
                     url=first_image_url,
                     msg_id=msg_id,
                     local_path=first_image_path if not first_image_url else None,
+                    event_id=event_id,
                 )
                 result_id = result_id or media_id
 
@@ -1477,6 +1516,7 @@ class QQBotAdapter(ChannelAdapter):
                         url=extra_url,
                         msg_id=msg_id,
                         local_path=extra_path if not extra_url else None,
+                        event_id=event_id,
                     )
             except Exception as e:
                 logger.warning(f"QQ: send extra image failed: {e}")
@@ -1498,6 +1538,7 @@ class QQBotAdapter(ChannelAdapter):
                         url=file_url,
                         msg_id=msg_id,
                         local_path=file_path if not file_url else None,
+                        event_id=event_id,
                     )
                 except Exception as e:
                     logger.warning(f"QQ: send file failed: {e}")
