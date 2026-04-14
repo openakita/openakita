@@ -36,6 +36,14 @@ function getSkillDisplayDesc(skill: SkillInfo, lang: string): string {
   return skill.description_i18n?.[key] || skill.description;
 }
 
+function stripMarkdownFrontmatter(content: string): string {
+  if (!content.startsWith("---")) return content;
+  const normalized = content.replace(/\r\n/g, "\n");
+  const closingIdx = normalized.indexOf("\n---\n", 4);
+  if (closingIdx === -1) return content;
+  return normalized.slice(closingIdx + 5).replace(/^\n+/, "");
+}
+
 // ─── 错误消息友好化 ───
 
 type ErrorContext = "load" | "save" | "install" | "uninstall" | "reload" | "general";
@@ -348,6 +356,8 @@ function SkillDetailModal({
 }) {
   const { t, i18n } = useTranslation();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const mdModules = useMdModules();
+  const previewContent = useMemo(() => stripMarkdownFrontmatter(content), [content]);
 
   useEffect(() => {
     if (isEditing && textareaRef.current) {
@@ -438,23 +448,39 @@ function SkillDetailModal({
               }}
             />
           ) : (
-            <pre style={{
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              fontFamily: "monospace",
-              fontSize: 13,
-              lineHeight: 1.6,
-              margin: 0,
-              padding: 12,
-              background: "var(--panel2)",
-              borderRadius: 8,
-              border: "1px solid var(--line)",
-              minHeight: 200,
-              maxHeight: "none",
-              overflow: "visible",
-            }}>
-              {content}
-            </pre>
+            <div
+              className="skillMdContent"
+              style={{
+                padding: 12,
+                background: "var(--panel2)",
+                borderRadius: 8,
+                border: "1px solid var(--line)",
+                minHeight: 200,
+              }}
+            >
+              {mdModules ? (
+                <mdModules.ReactMarkdown
+                  remarkPlugins={[mdModules.remarkGfm]}
+                  rehypePlugins={[mdModules.rehypeHighlight]}
+                >
+                  {previewContent}
+                </mdModules.ReactMarkdown>
+              ) : (
+                <pre style={{
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "monospace",
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                  margin: 0,
+                  minHeight: 200,
+                  maxHeight: "none",
+                  overflow: "visible",
+                }}>
+                  {previewContent}
+                </pre>
+              )}
+            </div>
           )}
         </div>
 
