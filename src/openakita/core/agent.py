@@ -1227,6 +1227,8 @@ class Agent:
 
         if hasattr(self, "reasoning_engine") and self.reasoning_engine:
             self.reasoning_engine._plugin_hooks = self._plugin_manager.hook_registry
+        if hasattr(self, "tool_executor") and self.tool_executor:
+            self.tool_executor._plugin_hooks = self._plugin_manager.hook_registry
 
         from ..plugins.catalog import PluginCatalog
 
@@ -4161,6 +4163,8 @@ class Agent:
             from .intent_analyzer import IntentType as _IT
 
             _intent = getattr(self, "_current_intent", None)
+            _fast_usage = None
+            _fast_handled = False
 
             if _intent and _intent.intent == _IT.CHAT and getattr(_intent, "fast_reply", False):
                 # Ultra-fast path: rule-based greeting only, use lightweight model
@@ -4181,13 +4185,17 @@ class Agent:
                         prompt=message,
                         system=_fast_system,
                     )
+                    _fast_usage = _fast_resp.usage
                     response_text = (
                         clean_llm_response(_fast_resp.content if _fast_resp.content else "")
                         or "你好！有什么我可以帮你的吗？"
                     )
+                    _fast_handled = True
                 except Exception as e:
                     logger.error(f"[FastReply] Failed: {e}")
                     response_text = "你好！有什么我可以帮你的吗？"
+                    _fast_handled = True
+
             elif _intent and _intent.intent == _IT.QUERY and getattr(_intent, "fast_reply", False):
                 # Fast-path for simple factual queries (math, date, definitions)
                 # No tools passed → LLM answers directly
@@ -4219,15 +4227,19 @@ class Agent:
                         prompt=message,
                         system=_fast_system,
                     )
-                    response_text = (
-                        clean_llm_response(_fast_resp.content if _fast_resp.content else "")
-                        or "抱歉，我无法回答这个问题。"
+                    _fast_usage = _fast_resp.usage
+                    response_text = clean_llm_response(
+                        _fast_resp.content if _fast_resp.content else ""
                     )
+                    if response_text:
+                        _fast_handled = True
+                    else:
+                        logger.warning("[FastQuery] Empty response, falling back to full agent")
                 except Exception as e:
-                    logger.error(f"[FastQuery] Failed: {e}")
-                    response_text = "抱歉，我无法回答这个问题。"
-            else:
-                # All non-fast paths (CHAT/TASK/QUERY/COMMAND/FOLLOW_UP) → ReasoningEngine
+                    logger.warning(f"[FastQuery] Failed ({e}), falling back to full agent")
+
+            if not _fast_handled:
+                # All non-fast paths, or fast_reply fallback → ReasoningEngine
                 response_text = await self._chat_with_tools_and_context(
                     messages,
                     task_monitor=task_monitor,
@@ -4254,6 +4266,15 @@ class Agent:
                 session_id=session_id,
                 task_monitor=task_monitor,
             )
+
+            # fast_reply 不经过 ReasoningEngine，trace 为空导致 _last_usage_summary = {}。
+            # 从 Response.usage 补充。
+            if _fast_handled and not self._last_usage_summary and isinstance(_fast_usage, dict):
+                self._last_usage_summary = {
+                    "input_tokens": _fast_usage.get("input_tokens", 0),
+                    "output_tokens": _fast_usage.get("output_tokens", 0),
+                    "total_tokens": _fast_usage.get("input_tokens", 0) + _fast_usage.get("output_tokens", 0),
+                }
 
             return response_text
         finally:
@@ -4467,6 +4488,8 @@ class Agent:
                     getattr(session.context, "agent_profile_id", "default") or "default"
                 )
 
+            _fast_usage = None
+
             if _intent and _intent.intent == _IT.CHAT and getattr(_intent, "fast_reply", False):
                 # Ultra-fast path: rule-based greeting only, use lightweight model
                 try:
@@ -4486,6 +4509,7 @@ class Agent:
                         prompt=message,
                         system=_fast_system,
                     )
+                    _fast_usage = _fast_response.usage
                     _reply_text = clean_llm_response(
                         _fast_response.content if _fast_response.content else ""
                     )
@@ -4506,11 +4530,19 @@ class Agent:
                     session_id=session_id,
                     task_monitor=task_monitor,
                 )
+                if not self._last_usage_summary and isinstance(_fast_usage, dict):
+                    self._last_usage_summary = {
+                        "input_tokens": _fast_usage.get("input_tokens", 0),
+                        "output_tokens": _fast_usage.get("output_tokens", 0),
+                        "total_tokens": _fast_usage.get("input_tokens", 0) + _fast_usage.get("output_tokens", 0),
+                    }
                 return
 
             if _intent and _intent.intent == _IT.QUERY and getattr(_intent, "fast_reply", False):
                 # Fast-path for simple factual queries (math, date, definitions)
-                # No tools passed → LLM answers directly
+                # No tools passed → LLM answers directly; empty response falls through
+                # to full agent path below.
+                _query_ok = False
                 try:
                     _runtime_info = ""
                     try:
@@ -4539,27 +4571,33 @@ class Agent:
                         prompt=message,
                         system=_fast_system,
                     )
+                    _fast_usage = _fast_response.usage
                     _reply_text = clean_llm_response(
                         _fast_response.content if _fast_response.content else ""
                     )
                     if _reply_text:
                         yield {"type": "text_delta", "content": _reply_text}
+                        _query_ok = True
                     else:
-                        yield {"type": "text_delta", "content": "抱歉，我无法回答这个问题。"}
-                        _reply_text = "抱歉，我无法回答这个问题。"
+                        logger.warning("[FastQuery-Stream] Empty response, falling back to full agent")
                 except Exception as e:
-                    logger.error(f"[FastQuery-Stream] Failed: {e}")
-                    yield {"type": "text_delta", "content": "抱歉，我无法回答这个问题。"}
-                    _reply_text = "抱歉，我无法回答这个问题。"
-                yield {"type": "done"}
+                    logger.warning(f"[FastQuery-Stream] Failed ({e}), falling back to full agent")
 
-                await self._finalize_session(
-                    response_text=_reply_text,
-                    session=session,
-                    session_id=session_id,
-                    task_monitor=task_monitor,
-                )
-                return
+                if _query_ok:
+                    yield {"type": "done"}
+                    await self._finalize_session(
+                        response_text=_reply_text,
+                        session=session,
+                        session_id=session_id,
+                        task_monitor=task_monitor,
+                    )
+                    if not self._last_usage_summary and isinstance(_fast_usage, dict):
+                        self._last_usage_summary = {
+                            "input_tokens": _fast_usage.get("input_tokens", 0),
+                            "output_tokens": _fast_usage.get("output_tokens", 0),
+                            "total_tokens": _fast_usage.get("input_tokens", 0) + _fast_usage.get("output_tokens", 0),
+                        }
+                    return
 
             # LLM-classified CHAT (non-fast_reply) falls through to reason_stream
             # with force_tool_retries=0, so tools are available but not forced.

@@ -31,7 +31,8 @@
         "template": "./windows/installer.nsi",
         "displayLanguageSelector": false,
         "languages": [
-          "SimpChinese"
+          "SimpChinese",
+          "English"
         ]
       }
     }

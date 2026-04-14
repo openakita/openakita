@@ -66,7 +66,7 @@ export type StreamEvent =
   | { type: "thinking_start" }
   | { type: "thinking_delta"; content: string }
   | { type: "thinking_end"; duration_ms?: number; has_thinking?: boolean }
-  | { type: "chain_text"; content: string }
+  | { type: "chain_text"; content: string; icon?: string }
   | { type: "text_delta"; content: string }
   | { type: "text_replace"; content: string }
   | { type: "tool_call_start"; tool: string; tool_name?: string; args: Record<string, unknown>; id?: string; call_id?: string; protocol_version?: number }

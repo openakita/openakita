@@ -39,10 +39,16 @@ class SystemHandlerRegistry:
     ```
     """
 
+    # Type for handler-level concurrency safety callbacks:
+    #   (tool_name, tool_input) -> bool | None
+    # Return True/False to override, None to fall back to default.
+    ConcurrencyCheck = Callable[[str, dict], bool | None]
+
     def __init__(self):
         self._handlers: dict[str, HandlerFunc] = {}
         self._tool_to_handler: dict[str, str] = {}  # tool_name -> handler_name
         self._permission_checks: dict[str, ToolPermissionCheck] = {}  # tool_name -> check fn
+        self._concurrency_checks: dict[str, "SystemHandlerRegistry.ConcurrencyCheck"] = {}
 
     def register(
         self,
@@ -239,6 +245,35 @@ class SystemHandlerRegistry:
     def get_handler_name_for_tool(self, tool_name: str) -> str | None:
         """获取工具对应的处理器名称（用于并发/互斥策略等）"""
         return self._tool_to_handler.get(tool_name)
+
+    def set_concurrency_check(
+        self, handler_name: str, check: "SystemHandlerRegistry.ConcurrencyCheck"
+    ) -> None:
+        """Register a per-handler concurrency safety callback.
+
+        The callback ``(tool_name, tool_input) -> bool | None`` lets a
+        handler override the static ``_CONCURRENCY_SAFE_TOOLS`` set in
+        ``ToolExecutor``.  Return *None* to fall back to the default.
+        """
+        self._concurrency_checks[handler_name] = check
+
+    def check_concurrency_safe(self, tool_name: str, tool_input: dict) -> bool | None:
+        """Query the handler-level concurrency callback for *tool_name*.
+
+        Returns ``True`` / ``False`` if the handler explicitly overrides,
+        or ``None`` when there is no registered check (caller should use
+        its own default logic).
+        """
+        handler_name = self._tool_to_handler.get(tool_name)
+        if handler_name is None:
+            return None
+        check = self._concurrency_checks.get(handler_name)
+        if check is None:
+            return None
+        try:
+            return check(tool_name, tool_input)
+        except Exception:
+            return None
 
     @property
     def handler_count(self) -> int:

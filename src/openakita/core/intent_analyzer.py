@@ -225,20 +225,33 @@ _SAFE_WITH_HISTORY: frozenset[str] = frozenset(
 
 _FAST_CHAT_MAX_LEN = 12
 
-# Rule-based patterns for QUERY intent (no tools needed)
+# Rule-based patterns for QUERY intent (no tools needed).
+# IMPORTANT: Chinese text has no whitespace, so \S+ greedily matches
+# entire strings.  All patterns must be tightly bounded to avoid
+# false-positives on context-dependent questions like
+# "说回我的情况，我的猫是什么品种？".
 _QUERY_PATTERNS = re.compile(
     r"^(?:"
     r"\d+\s*[+\-*/×÷]\s*\d+"  # math: 1+1, 3*4
-    r"|.*等于[几多少什么]"  # X等于几
+    r"|\S{1,12}等于[几多少什么]"  # X等于几 (bounded prefix)
     r"|今天几[号日]"  # 今天几号
     r"|现在几[点时]"  # 现在几点
     r"|(?:什么|啥)(?:时间|日期|时候)"  # 什么时间
     r"|几月几[号日]"  # 几月几号
     r"|今天(?:是|星期|周)[几什么]"  # 今天星期几
-    r"|什么是\S+"  # 什么是X
-    r"|\S+是什么"  # X是什么
-    r").*$",
+    r"|什么是\S{1,10}"  # 什么是X (short term only)
+    r"|\S{1,10}是什么"  # X是什么 (short term only)
+    r")$",
     re.IGNORECASE,
+)
+
+# Context-dependent markers: when present the user is referencing prior
+# conversation turns, so the fast (history-free) path MUST be skipped.
+_CONTEXT_DEPENDENT_RE = re.compile(
+    r"(?:说回|回到|刚才|之前|前面|上面|你说的|我说的|"
+    r"我们讨论的|你提到的|我告诉你的|你记得|还记得|"
+    r"来着|我的.{0,6}叫什么|"
+    r"^[我你他她它](?:的|们的))"
 )
 
 
@@ -247,6 +260,8 @@ def _try_fast_query_shortcut(message: str) -> IntentResult | None:
     Returns QUERY intent immediately without LLM call."""
     stripped = message.strip().rstrip("？?。.!！")
     if len(stripped) > 50:
+        return None
+    if _CONTEXT_DEPENDENT_RE.search(stripped):
         return None
     if _QUERY_PATTERNS.match(stripped):
         logger.info(f"[IntentAnalyzer] Fast-path: '{stripped}' matched as QUERY (rule-based)")

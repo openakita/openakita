@@ -1627,18 +1627,12 @@ def install_skill(workspace_dir: str, url: str) -> None:
         finally:
             shutil.rmtree(str(tmp_parent), ignore_errors=True)
     else:
-        # Local path — only allowed from within the workspace
+        # Local path — copy into workspace skills directory
         src = Path(url).expanduser().resolve()
-        ws = Path(workspace_dir).resolve()
-        try:
-            src.relative_to(ws)
-        except ValueError:
-            raise ValueError(
-                f"安全限制: 本地路径必须位于工作区目录内 ({ws})。"
-                f"如需从外部安装，请使用 Git URL 或 GitHub 简写。"
-            )
         if not src.exists():
             raise ValueError(f"源路径不存在: {url}")
+        if not src.is_dir():
+            raise ValueError(f"源路径不是目录: {url}")
         import shutil
 
         target = skills_dir / src.name

@@ -323,15 +323,17 @@ class LLMProvider(ABC):
 
     @staticmethod
     def _classify_error(error: str) -> str:
-        """根据错误信息自动分类
+        """根据错误信息自动分类。
 
-        分类优先级：quota > auth > structural > transient > unknown
+        分类优先级: quota > auth > structural > transient > unknown
         quota 必须在 auth 之前检测，因为 403 配额耗尽也包含 "403" 关键字。
 
+        返回 ``FailoverReason`` 枚举成员 (StrEnum, 与字符串互兼容)。
         """
+        from ..error_types import FailoverReason
+
         err_lower = error.lower()
 
-        # 配额耗尽类（必须在 auth 之前，因为也是 403 状态码）
         if any(
             kw in err_lower
             for kw in [
@@ -346,9 +348,8 @@ class LLMProvider(ABC):
                 "exceeded your current",
             ]
         ):
-            return "quota"
+            return FailoverReason.QUOTA
 
-        # 认证类
         if any(
             kw in err_lower
             for kw in [
@@ -360,9 +361,8 @@ class LLMProvider(ABC):
                 "permission",
             ]
         ):
-            return "auth"
+            return FailoverReason.AUTH
 
-        # 结构性/格式类
         # 注意: 用 "(400)" 而非 "400"，避免匹配 HTML 中的 CSS 类名等内容
         if any(
             kw in err_lower
@@ -380,9 +380,8 @@ class LLMProvider(ABC):
                 "larger than allowed",
             ]
         ):
-            return "structural"
+            return FailoverReason.STRUCTURAL
 
-        # 瞬时类（网络/超时）
         if any(
             kw in err_lower
             for kw in [
@@ -401,9 +400,9 @@ class LLMProvider(ABC):
                 "529",
             ]
         ):
-            return "transient"
+            return FailoverReason.TRANSIENT
 
-        return "unknown"
+        return FailoverReason.UNKNOWN
 
     @abstractmethod
     async def chat(self, request: LLMRequest) -> LLMResponse:

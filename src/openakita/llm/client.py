@@ -56,6 +56,8 @@ def _friendly_error_hint(failed_providers: list | None = None, last_error: str =
 
     返回一段面向用户的中文提示，帮助用户理解问题并采取行动。
     """
+    from .error_types import FailoverReason
+
     hints: list[str] = []
     categories: set[str] = set()
 
@@ -65,14 +67,13 @@ def _friendly_error_hint(failed_providers: list | None = None, last_error: str =
             if cat:
                 categories.add(cat)
 
-    # 根据错误类型给出具体建议
-    if "quota" in categories:
+    if FailoverReason.QUOTA in categories:
         hints.append("💳 检测到 API 配额耗尽，请前往对应平台充值或升级套餐，充值后会自动恢复。")
-    if "auth" in categories:
+    if FailoverReason.AUTH in categories:
         hints.append("🔑 检测到 API 认证失败，请检查 API Key 是否正确、是否过期。")
-    if "transient" in categories:
+    if FailoverReason.TRANSIENT in categories:
         hints.append("🌐 检测到网络超时/连接失败，请检查网络连接和代理设置。")
-    if "structural" in categories:
+    if FailoverReason.STRUCTURAL in categories:
         hints.append("⚙️ 检测到请求格式错误，这通常是模型兼容性问题，请尝试切换其他模型。")
 
     if not hints:

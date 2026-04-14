@@ -1111,6 +1111,10 @@ class ReasoningEngine:
                 )
                 if retry_result == "retry":
                     _total_r = getattr(state, "_total_llm_retries", 1)
+                    await _emit_progress(
+                        f"AI 服务响应异常，正在重试"
+                        f"（{_total_r}/{self.MAX_TOTAL_LLM_RETRIES}）..."
+                    )
                     _retry_sleep = min(2 * _total_r, 15)
                     _sleep = asyncio.create_task(asyncio.sleep(_retry_sleep))
                     _cw = asyncio.create_task(state.cancel_event.wait())
@@ -1130,6 +1134,9 @@ class ReasoningEngine:
                     continue
                 elif isinstance(retry_result, tuple):
                     current_model, working_messages = retry_result
+                    await _emit_progress(
+                        "当前模型不可用，正在切换到备用模型..."
+                    )
                     no_tool_call_count = 0
                     tools_executed_in_task = False
                     _supervisor_intervened = False
@@ -2250,6 +2257,7 @@ class ReasoningEngine:
             executed_tool_names: list[str] = []
             delivery_receipts: list[dict] = []
             _last_browser_url = ""
+            _last_chain_text: str = ""
             consecutive_tool_rounds = 0
             no_tool_call_count = 0
             verify_incomplete_count = 0
@@ -2548,6 +2556,14 @@ class ReasoningEngine:
 
                     if retry_result == "retry":
                         _total_r = getattr(state, "_total_llm_retries", 1)
+                        yield {
+                            "type": "chain_text",
+                            "content": (
+                                f"AI 服务响应异常，正在重试"
+                                f"（{_total_r}/{self.MAX_TOTAL_LLM_RETRIES}）..."
+                            ),
+                            "icon": "alert",
+                        }
                         _retry_sleep = min(2 * _total_r, 15)
                         _sleep = asyncio.create_task(asyncio.sleep(_retry_sleep))
                         _cw = asyncio.create_task(state.cancel_event.wait())
@@ -2570,6 +2586,11 @@ class ReasoningEngine:
                         continue
                     elif isinstance(retry_result, tuple):
                         current_model, working_messages = retry_result
+                        yield {
+                            "type": "chain_text",
+                            "content": "当前模型不可用，正在切换到备用模型...",
+                            "icon": "refresh",
+                        }
                         no_tool_call_count = 0
                         tools_executed_in_task = False
                         _supervisor_intervened = False
@@ -2619,12 +2640,26 @@ class ReasoningEngine:
                 if not _streamed_text:
                     _decision_text = (decision.text_content or "").strip()
                     if _decision_text and decision.type == DecisionType.TOOL_CALLS:
-                        yield {"type": "chain_text", "content": _decision_text[:2000]}
+                        if _decision_text != _last_chain_text:
+                            yield {"type": "chain_text", "content": _decision_text[:2000]}
+                            _last_chain_text = _decision_text
+                        else:
+                            logger.info(
+                                f"[ReAct-Stream] Iter {_iteration+1} — suppressed duplicate chain_text "
+                                f"({len(_decision_text)} chars)"
+                            )
                 elif decision.type == DecisionType.TOOL_CALLS:
                     yield {"type": "text_replace", "content": ""}
                     _decision_text = (decision.text_content or "").strip()
                     if _decision_text:
-                        yield {"type": "chain_text", "content": _decision_text[:2000]}
+                        if _decision_text != _last_chain_text:
+                            yield {"type": "chain_text", "content": _decision_text[:2000]}
+                            _last_chain_text = _decision_text
+                        else:
+                            logger.info(
+                                f"[ReAct-Stream] Iter {_iteration+1} — suppressed duplicate chain_text "
+                                f"({len(_decision_text)} chars)"
+                            )
                 elif _raw_streamed_text != (decision.text_content or ""):
                     yield {
                         "type": "text_replace",
@@ -4391,6 +4426,26 @@ class ReasoningEngine:
             use_thinking = True
         elif thinking_mode == "off":
             use_thinking = False
+
+        # on_before_llm_call: 允许插件向最后一条 user 消息注入上下文
+        # 注入到 user 消息侧（而非 system prompt）以保护 Anthropic prompt cache
+        if self._plugin_hooks:
+            try:
+                hook_results = await self._plugin_hooks.dispatch(
+                    "on_before_llm_call", messages=messages, tools=tools
+                )
+                extra_parts = [r for r in hook_results if isinstance(r, str) and r.strip()]
+                if extra_parts and messages:
+                    for i in range(len(messages) - 1, -1, -1):
+                        if messages[i].get("role") == "user":
+                            content = messages[i].get("content", "")
+                            if isinstance(content, str):
+                                messages[i]["content"] = (
+                                    content + "\n\n[Plugin Context]\n" + "\n".join(extra_parts)
+                                )
+                            break
+            except Exception as _hook_err:
+                logger.debug(f"on_before_llm_call hook error (ignored): {_hook_err}")
 
         tracer = get_tracer()
         with tracer.llm_span(model=current_model) as span:

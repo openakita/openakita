@@ -508,6 +508,7 @@ class OpenAIProvider(LLMProvider):
         await self.acquire_rate_limit()
         body = self._build_request_body(request)
         body["stream"] = True
+        body["stream_options"] = {"include_usage": True}
         async for event in self._iter_sse_events(body):
             yield event
 
@@ -966,6 +967,16 @@ class OpenAIProvider(LLMProvider):
         """
         choices = event.get("choices", [])
         if not choices:
+            usage = event.get("usage")
+            if usage:
+                return {
+                    "type": "message_delta",
+                    "delta": {},
+                    "usage": {
+                        "input_tokens": usage.get("prompt_tokens", 0),
+                        "output_tokens": usage.get("completion_tokens", 0),
+                    },
+                }
             return {"type": "ping"}
 
         choice = choices[0]
@@ -1016,12 +1027,17 @@ class OpenAIProvider(LLMProvider):
 
         # 4) Finish reason → message_stop
         if choice.get("finish_reason"):
-            events.append(
-                {
-                    "type": "message_stop",
-                    "stop_reason": choice["finish_reason"],
+            stop_evt = {
+                "type": "message_stop",
+                "stop_reason": choice["finish_reason"],
+            }
+            chunk_usage = event.get("usage")
+            if chunk_usage:
+                stop_evt["usage"] = {
+                    "input_tokens": chunk_usage.get("prompt_tokens", 0),
+                    "output_tokens": chunk_usage.get("completion_tokens", 0),
                 }
-            )
+            events.append(stop_evt)
 
         if not events:
             return {"type": "ping"}

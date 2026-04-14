@@ -2136,9 +2136,12 @@ export function ChatView({
                 }
                 if (event.content) {
                   const grp: ChainGroup = currentChainGroup;
+                  const entry: ChainEntry = event.icon
+                    ? { kind: "text" as const, content: event.content, icon: event.icon }
+                    : { kind: "text" as const, content: event.content };
                   currentChainGroup = {
                     ...grp,
-                    entries: [...grp.entries, { kind: "text" as const, content: event.content }],
+                    entries: [...grp.entries, entry],
                   };
                   chainGroups = chainGroups.map((g, i) => i === chainGroups.length - 1 ? currentChainGroup! : g);
                 }

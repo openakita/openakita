@@ -240,15 +240,45 @@ def _sanitize_path(full_path: Path, workspace_root: Path) -> str:
         return full_path.name
 
 
+_SENSITIVE_KEY_PATTERNS = ("KEY", "SECRET", "TOKEN", "PASSWORD", "CREDENTIAL")
+
+
+def _mask_value(key: str, value: str) -> str:
+    """Redact values whose key name suggests a secret (API keys, tokens, etc.)."""
+    if any(p in key.upper() for p in _SENSITIVE_KEY_PATTERNS):
+        if len(value) <= 8:
+            return "****"
+        return value[:4] + "****" + value[-4:]
+    return value
+
+
+def _mask_raw_env(raw: str) -> str:
+    """Mask sensitive values inside the raw .env text."""
+    import re
+
+    def _replace(m: re.Match) -> str:
+        key, sep, val = m.group("key"), m.group("sep"), m.group("val")
+        return f"{key}{sep}{_mask_value(key, val)}"
+
+    return re.sub(
+        r"^(?P<key>[A-Za-z_]\w*)(?P<sep>\s*=\s*)(?P<val>.+)$",
+        _replace,
+        raw,
+        flags=re.MULTILINE,
+    )
+
+
 @router.get("/api/config/env")
 async def read_env():
-    """Read .env file content as key-value pairs (plaintext)."""
+    """Read .env file content as key-value pairs (sensitive values masked)."""
     env_path = _project_root() / ".env"
     if not env_path.exists():
         return {"env": {}, "raw": ""}
     content = env_path.read_bytes().decode("utf-8", errors="replace")
     env = _parse_env(content)
-    return {"env": env, "raw": content}
+    masked_env = {k: _mask_value(k, v) for k, v in env.items()}
+    masked_raw = _mask_raw_env(content)
+    return {"env": masked_env, "raw": masked_raw}
 
 
 @router.post("/api/config/env")

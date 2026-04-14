@@ -485,12 +485,12 @@ Function PageEnvCheck
  Pop $EnvCleanUserData
  ${NSD_SetState} $EnvCleanUserData ${BST_UNCHECKED}
 
- ${NSD_CreateLabel} 22u 54u -22u 26u "$(envCleanWarning)"
+ ${NSD_CreateLabel} 22u 54u -22u 30u "$(envCleanWarning)"
  Pop $0
  SetCtlColors $0 "CC0000" "transparent"
 
  ; ── 底部提示 ──
- ${NSD_CreateLabel} 0 88u 100% 12u "$(envCleanHint)"
+ ${NSD_CreateLabel} 0 88u 100% 20u "$(envCleanHint)"
  Pop $0
  SetCtlColors $0 "888888" "transparent"
 
@@ -686,6 +686,17 @@ Function .onInit
 
  !if "${DISPLAYLANGUAGESELECTOR}" == "true"
  !insertmacro MUI_LANGDLL_DISPLAY
+ !endif
+
+ !if "${DISPLAYLANGUAGESELECTOR}" != "true"
+  System::Call 'kernel32::GetUserDefaultUILanguage() i .r0'
+  IntOp $1 $0 & 0x3FF
+  ${If} $1 = 0x04
+   StrCpy $LANGUAGE ${LANG_SIMPCHINESE}
+  ${Else}
+   StrCpy $LANGUAGE ${LANG_ENGLISH}
+  ${EndIf}
+  WriteRegStr HKCU "${MANUPRODUCTKEY}" "Installer Language" $LANGUAGE
  !endif
 
  !insertmacro SetContext

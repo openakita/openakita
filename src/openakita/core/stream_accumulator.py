@@ -73,6 +73,9 @@ class StreamAccumulator:
             }
             self.stop_reason = _reason_map.get(raw_reason, raw_reason) or self.stop_reason
             self._finalize_openai_tools()
+            u = event.get("usage")
+            if u:
+                self.usage = u
             return []
 
         # ── 共用: content_block_delta（Anthropic 原始 / OpenAI 归一化） ──

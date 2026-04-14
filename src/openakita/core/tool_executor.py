@@ -145,6 +145,7 @@ class ToolExecutor:
     ) -> None:
         self._handler_registry = handler_registry
         self._agent_ref: Any = None  # set by Agent after construction
+        self._plugin_hooks: Any = None  # HookRegistry, set by Agent after construction
 
         # 并行控制
         self._semaphore = asyncio.Semaphore(max(1, max_parallel))
@@ -243,9 +244,12 @@ class ToolExecutor:
     def _is_concurrency_safe(self, tool_name: str, tool_input: dict) -> bool:
         """判断工具在给定输入下是否并发安全。
 
-        参考 Claude Code 的 isConcurrencySafe(input) 设计:
-        按工具名 + 输入内容判断，而非全局开关。
+        优先询问 handler 级回调（可根据 tool_input 细粒度判断），
+        回调返回 None 时回退到静态 ``_CONCURRENCY_SAFE_TOOLS`` 集合。
         """
+        override = self._handler_registry.check_concurrency_safe(tool_name, tool_input)
+        if override is not None:
+            return override
         if tool_name in self._CONCURRENCY_SAFE_TOOLS:
             return True
         handler_name = self.get_handler_name(tool_name)
@@ -404,6 +408,16 @@ class ToolExecutor:
 
         return await self._execute_tool_impl(tool_name, tool_input)
 
+    async def _dispatch_hook(self, hook_name: str, **kwargs) -> None:
+        """Fire a plugin hook if a HookRegistry is attached. Never raises."""
+        hooks = self._plugin_hooks
+        if hooks is None:
+            return
+        try:
+            await hooks.dispatch(hook_name, **kwargs)
+        except Exception as e:
+            logger.debug(f"[ToolExecutor] {hook_name} hook error (ignored): {e}")
+
     async def _execute_tool_impl(
         self,
         tool_name: str,
@@ -423,6 +437,10 @@ class ToolExecutor:
             )
             return err_msg
 
+        await self._dispatch_hook(
+            "on_before_tool_use", tool_name=tool_name, tool_input=tool_input
+        )
+
         # 导入日志缓存
         from ..logging import get_session_log_buffer
 
@@ -439,6 +457,13 @@ class ToolExecutor:
                 else:
                     span.set_attribute("error", f"unknown_tool: {tool_name}")
                     suggestion = self._suggest_similar_tool(tool_name)
+                    await self._dispatch_hook(
+                        "on_after_tool_use",
+                        tool_name=tool_name,
+                        tool_input=tool_input,
+                        tool_result=suggestion,
+                        error="unknown_tool",
+                    )
                     return suggestion
 
                 # 获取执行期间产生的新日志（WARNING/ERROR/CRITICAL）
@@ -459,25 +484,46 @@ class ToolExecutor:
                 result = self._guard_truncate(tool_name, result)
 
                 span.set_attribute("result_length", len(result))
+
+                await self._dispatch_hook(
+                    "on_after_tool_use",
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    tool_result=result,
+                )
                 return result
 
             except ToolError as e:
-                # 结构化工具错误，直接序列化返回给 LLM
                 logger.warning(f"Tool error ({e.error_type.value}): {tool_name} - {e.message}")
                 span.set_attribute("error_type", e.error_type.value)
                 span.set_attribute("error_message", e.message)
-                return e.to_tool_result()
+                error_result = e.to_tool_result()
+                await self._dispatch_hook(
+                    "on_after_tool_use",
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    tool_result=error_result,
+                    error=str(e),
+                )
+                return error_result
 
             except ToolSkipped:
                 raise
 
             except Exception as e:
-                # 将通用异常分类为结构化 ToolError
                 tool_error = classify_error(e, tool_name=tool_name)
                 logger.error(f"Tool execution error: {e}", exc_info=True)
                 span.set_attribute("error_type", tool_error.error_type.value)
                 span.set_attribute("error_message", str(e))
-                return tool_error.to_tool_result()
+                error_result = tool_error.to_tool_result()
+                await self._dispatch_hook(
+                    "on_after_tool_use",
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    tool_result=error_result,
+                    error=str(e),
+                )
+                return error_result
 
     async def execute_tool_with_policy(
         self,

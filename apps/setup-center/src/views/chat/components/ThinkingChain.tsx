@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import type { ChainGroup, ChainEntry, ChatToolCall } from "../utils/chatTypes";
 import {
   IconChevronRight, IconCheck, IconX, IconLoader, IconCircle,
+  IconAlertCircle, IconRefresh,
 } from "../../../icons";
 
 // ── ThinkingBlock: legacy bubble mode ──
@@ -149,8 +150,18 @@ function ChainEntryLine({ entry, onSkipStep }: { entry: ChainEntry; onSkipStep?:
           <span className="chainNarrThinkingText">{entry.content}</span>
         </div>
       );
-    case "text":
-      return <div className="chainNarrText">{entry.content}</div>;
+    case "text": {
+      const svgIcon = entry.icon === "alert"
+        ? <IconAlertCircle size={12} className="chainNarrStatusIcon chainNarrIconWarn" />
+        : entry.icon === "refresh"
+          ? <IconRefresh size={12} className="chainNarrStatusIcon chainNarrIconInfo" />
+          : null;
+      return (
+        <div className={`chainNarrText${svgIcon ? " chainNarrStatus" : ""}`}>
+          {svgIcon}{entry.content}
+        </div>
+      );
+    }
     case "tool_start": {
       const isRunning = entry.status === "running";
       const tsIcon = entry.status === "error"

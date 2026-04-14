@@ -909,6 +909,12 @@ async def chat(request: Request, body: ChatRequest):
     conversation_id = body.conversation_id
     client_id = body.client_id or ""
 
+    if not (body.message or "").strip() and not body.attachments:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "empty_message", "message": "消息内容不能为空"},
+        )
+
     # ── Busy-lock check (via lifecycle manager) ──
     lifecycle = get_lifecycle_manager()
     busy_gen = 0

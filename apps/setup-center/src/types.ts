@@ -181,7 +181,7 @@ export type ChatMessage = {
 /** 叙事流条目类型 */
 export type ChainEntry =
   | { kind: "thinking"; content: string }       // LLM extended thinking 内容
-  | { kind: "text"; content: string }            // LLM 推理意图 / chain_text
+  | { kind: "text"; content: string; icon?: string }  // LLM 推理意图 / chain_text / 状态通知
   | { kind: "tool_start"; toolId: string; tool: string; args: Record<string, unknown>; description: string; status?: "running" | "done" | "error" }
   | { kind: "tool_end"; toolId: string; tool: string; result: string; status: "done" | "error" }
   | { kind: "compressed"; beforeTokens: number; afterTokens: number };

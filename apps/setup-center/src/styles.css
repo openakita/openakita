@@ -3288,6 +3288,23 @@ button.btnApplyRestart:hover {
   animation: chainFadeIn 0.18s ease;
 }
 
+/* chain_text 带 SVG icon 的状态通知行 */
+.chainNarrStatus {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  opacity: 0.82;
+}
+.chainNarrStatusIcon {
+  flex-shrink: 0;
+}
+.chainNarrIconWarn {
+  color: var(--warning, #f59e0b);
+}
+.chainNarrIconInfo {
+  color: var(--info, #3b82f6);
+}
+
 /* 工具开始行: spinner + 描述 */
 .chainNarrToolStart {
   display: flex;

@@ -1,4 +1,4 @@
-"""Hook registry — 14 lifecycle hooks with per-callback isolation."""
+"""Hook registry — 15 lifecycle hooks with per-callback isolation."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ HOOK_NAMES = frozenset(
         "on_schedule",
         "on_before_tool_use",
         "on_after_tool_use",
+        "on_before_llm_call",
         "on_config_change",
         "on_error",
     }
