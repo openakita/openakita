@@ -1,0 +1,4 @@
+i18n:
+  zh:
+    name: 网页产物
+    description: 生成复杂的 React、Tailwind、shadcn 网页产物，适合展示与交付。

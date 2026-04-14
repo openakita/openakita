@@ -1,0 +1,4 @@
+i18n:
+  zh:
+    name: Worktree开发
+    description: 利用 Git worktree 隔离并行开发任务，减少分支切换和环境互相污染。

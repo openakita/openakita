@@ -1,0 +1,4 @@
+i18n:
+  zh:
+    name: PDF翻译
+    description: 在尽量保留原版式的前提下翻译 PDF 文档，适合阅读与交付。

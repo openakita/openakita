@@ -1,0 +1,4 @@
+i18n:
+  zh:
+    name: Word文档
+    description: 创建、读取和编辑 Word `.docx` 文档，适合办公文稿自动化处理。

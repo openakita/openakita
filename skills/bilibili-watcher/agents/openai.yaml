@@ -1,0 +1,4 @@
+i18n:
+  zh:
+    name: 视频观察
+    description: 获取 B 站或 YouTube 视频字幕与转写内容，用于总结、分析与再创作。

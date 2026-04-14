@@ -1,0 +1,4 @@
+i18n:
+  zh:
+    name: 网页抓取
+    description: 调用 Apify Actors 抓取网页与结构化数据，适合采集列表页、详情页与公开站点内容。

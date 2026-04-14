@@ -1,0 +1,4 @@
+i18n:
+  zh:
+    name: 网页转文
+    description: 抓取任意网页内容并转换为结构化 Markdown，便于整理、归档与二次创作。

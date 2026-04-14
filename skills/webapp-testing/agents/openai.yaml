@@ -1,0 +1,4 @@
+i18n:
+  zh:
+    name: Web测试
+    description: 使用 Playwright 测试本地 Web 应用，覆盖交互流程、断言与回归检查。

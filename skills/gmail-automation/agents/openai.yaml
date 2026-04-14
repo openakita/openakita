@@ -1,0 +1,4 @@
+i18n:
+  zh:
+    name: Gmail自动化
+    description: 自动化处理 Gmail 邮件的读取、整理、生成回复与日常收发操作。

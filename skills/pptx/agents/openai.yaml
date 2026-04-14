@@ -1,0 +1,4 @@
+i18n:
+  zh:
+    name: 幻灯文档
+    description: 创建、编辑与处理 `.pptx` 文件，适合办公演示自动化场景。

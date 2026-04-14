@@ -1,0 +1,4 @@
+i18n:
+  zh:
+    name: 语雀助手
+    description: 通过语雀 API 协助管理知识库内容、文档协作与发布流程。

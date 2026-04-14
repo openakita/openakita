@@ -1,0 +1,4 @@
+i18n:
+  zh:
+    name: 日历自动化
+    description: 自动管理 Google Calendar 事件，支持创建、调整、查询与日程编排。

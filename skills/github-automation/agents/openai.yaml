@@ -1,0 +1,4 @@
+i18n:
+  zh:
+    name: GitHub自动化
+    description: 通过 GitHub 相关工具自动处理仓库、Issue、PR 与协作流程。

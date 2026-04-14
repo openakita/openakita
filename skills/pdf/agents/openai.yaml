@@ -1,0 +1,4 @@
+i18n:
+  zh:
+    name: PDF助手
+    description: 处理 PDF 的读取、提取、合并、拆分与 OCR 等常见任务。

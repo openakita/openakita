@@ -1,0 +1,4 @@
+i18n:
+  zh:
+    name: Todoist任务
+    description: 通过 Todoist REST API 管理任务、项目与个人待办流程。
