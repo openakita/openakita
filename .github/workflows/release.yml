@@ -248,6 +248,13 @@ jobs:
           npm ci
           npm run build:web
 
+      - name: Build user docs (VitePress)
+        working-directory: docs-site
+        run: |
+          npm ci
+          npx vitepress build
+        continue-on-error: true
+
       - name: Install Python project and PyInstaller
         shell: bash
         run: |

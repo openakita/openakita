@@ -92,10 +92,10 @@ def _apply_allowlist_and_rebuild_catalog(request: Request) -> int:
     loader = getattr(actual_agent, "skill_loader", None)
     removed = 0
     if loader:
-        from openakita.core.agent import _collect_preset_referenced_skills
+        from openakita.skills.preset_utils import collect_preset_referenced_skills
 
         effective = loader.compute_effective_allowlist(external_allowlist)
-        agent_skills = _collect_preset_referenced_skills()
+        agent_skills = collect_preset_referenced_skills()
         removed = loader.prune_external_by_allowlist(
             effective, agent_referenced_skills=agent_skills
         )

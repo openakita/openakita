@@ -146,6 +146,38 @@ class ProfileVisibilityRequest(BaseModel):
     hidden: bool
 
 
+# ─── Bot credential helpers ──────────────────────────────────────────────
+
+
+def _mask_credential_value(value: str) -> str:
+    if not isinstance(value, str) or len(value) <= 12:
+        return "****"
+    return value[:4] + "****" + value[-4:]
+
+
+def _mask_bot_credentials(bot: dict) -> dict:
+    result = dict(bot)
+    creds = result.get("credentials")
+    if isinstance(creds, dict):
+        result["credentials"] = {
+            k: _mask_credential_value(v) if isinstance(v, str) else v
+            for k, v in creds.items()
+        }
+    return result
+
+
+def _unmask_credentials(submitted: dict, stored: dict) -> dict:
+    """Restore original values when the submitted value matches its masked form."""
+    result = dict(submitted)
+    for key, new_val in submitted.items():
+        if not isinstance(new_val, str) or key not in stored:
+            continue
+        stored_val = stored.get(key)
+        if isinstance(stored_val, str) and new_val == _mask_credential_value(stored_val):
+            result[key] = stored_val
+    return result
+
+
 # ─── Bot CRUD routes ─────────────────────────────────────────────────────
 
 
@@ -154,7 +186,7 @@ async def list_bots():
     """List all configured bots from settings.im_bots."""
     from openakita.config import settings
 
-    return {"bots": list(settings.im_bots)}
+    return {"bots": [_mask_bot_credentials(b) for b in settings.im_bots if isinstance(b, dict)]}
 
 
 @router.post("/api/agents/bots")
@@ -193,7 +225,7 @@ async def create_bot(body: BotCreateRequest):
 
         await apply_im_bot(bot)
 
-    return {"status": "ok", "bot": bot}
+    return {"status": "ok", "bot": _mask_bot_credentials(bot)}
 
 
 @router.put("/api/agents/bots/{bot_id}")
@@ -225,7 +257,8 @@ async def update_bot(bot_id: str, body: BotUpdateRequest):
     if body.enabled is not None:
         bot["enabled"] = body.enabled
     if body.credentials is not None:
-        bot["credentials"] = body.credentials
+        stored_creds = bot.get("credentials", {})
+        bot["credentials"] = _unmask_credentials(body.credentials, stored_creds)
 
     bots[idx] = bot
     settings.im_bots = bots
@@ -243,7 +276,7 @@ async def update_bot(bot_id: str, body: BotUpdateRequest):
     else:
         await remove_im_bot(bot)
 
-    return {"status": "ok", "bot": bot}
+    return {"status": "ok", "bot": _mask_bot_credentials(bot)}
 
 
 @router.delete("/api/agents/bots/{bot_id}")
@@ -313,7 +346,7 @@ async def toggle_bot(bot_id: str, body: BotToggleRequest):
     else:
         await remove_im_bot(bot)
 
-    return {"status": "ok", "bot": bot}
+    return {"status": "ok", "bot": _mask_bot_credentials(bot)}
 
 
 # ─── Agent category routes ───────────────────────────────────────────────

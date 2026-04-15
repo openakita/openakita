@@ -70,9 +70,12 @@ def _parse_range(
     We must query with the same format and timezone to get correct string comparisons.
     """
     if start and end:
-        s = datetime.fromisoformat(start)
-        e = datetime.fromisoformat(end)
-        return s.strftime("%Y-%m-%d %H:%M:%S"), e.strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            s = datetime.fromisoformat(start)
+            e = datetime.fromisoformat(end)
+            return s.strftime("%Y-%m-%d %H:%M:%S"), e.strftime("%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            logger.warning(f"[TokenStats] Invalid time range: start={start!r}, end={end!r}, falling back to default")
 
     now_utc = datetime.now(UTC).replace(tzinfo=None)
 
