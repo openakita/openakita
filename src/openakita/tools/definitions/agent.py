@@ -1,7 +1,7 @@
 """
 Multi-agent tools — delegate, spawn and create.
 
-Only injected when settings.multi_agent_enabled is True.
+Always injected (multi-agent mode is always on).
 
 Tool priority (LLM should follow this order):
 1. delegate_to_agent — use existing agent directly

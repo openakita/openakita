@@ -6,7 +6,7 @@ Validates:
 3. preview returns structured text without creating
 4. create_from_template delegates to OrgManager
 5. agent_profile_id mapping and agent_source auto-set
-6. Tool registered only when multi_agent_enabled
+6. Tool always registered (multi-agent mode always on)
 7. list_orgs / get_org / update_org / delete_org (CRUD)
 """
 

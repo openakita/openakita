@@ -1,7 +1,7 @@
 """
 Multi-agent handler — delegate_to_agent, spawn_agent and create_agent.
 
-Only registered when settings.multi_agent_enabled is True.
+Always registered (multi-agent mode is always on).
 """
 
 from __future__ import annotations
@@ -551,19 +551,16 @@ class AgentToolHandler:
 
             orch = _main_mod._orchestrator
             if orch is None:
-                from ...config import settings
+                from openakita.agents.orchestrator import AgentOrchestrator
 
-                if settings.multi_agent_enabled:
-                    from openakita.agents.orchestrator import AgentOrchestrator
-
-                    orch = AgentOrchestrator()
-                    gw = _main_mod._message_gateway
-                    if gw:
-                        orch.set_gateway(gw)
-                    _main_mod._orchestrator = orch
-                    logger.warning(
-                        "[AgentToolHandler] Orchestrator was None — lazily created as fallback"
-                    )
+                orch = AgentOrchestrator()
+                gw = _main_mod._message_gateway
+                if gw:
+                    orch.set_gateway(gw)
+                _main_mod._orchestrator = orch
+                logger.warning(
+                    "[AgentToolHandler] Orchestrator was None — lazily created as fallback"
+                )
                 else:
                     logger.warning(
                         "[AgentToolHandler] _orchestrator is None (multi_agent disabled)"

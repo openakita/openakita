@@ -31,7 +31,7 @@ class ChatRequest(BaseModel):
     )
     agent_profile_id: str | None = Field(
         None,
-        description="Agent profile to use for this message. Only effective when multi_agent_enabled is True.",
+        description="Agent profile to use for this message.",
     )
     client_id: str | None = Field(
         None,

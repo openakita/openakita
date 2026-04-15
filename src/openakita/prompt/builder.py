@@ -371,7 +371,7 @@ _STATIC_CACHE_TTL = 300  # 5 min
 
 
 def _build_delegation_rules() -> str:
-    """协作优先原则（多 Agent 委派），仅在 multi_agent_enabled + 非子 Agent 时注入。"""
+    """协作优先原则（多 Agent 委派），仅在非子 Agent 的 agent 模式下注入。"""
     return (
         "## 协作优先原则\n\n"
         "你拥有一支专业 Agent 团队。执行任务前，先判断是否有更合适的专业 Agent：\n"
@@ -516,10 +516,7 @@ def build_system_prompt(
             ),
         )
 
-        # 多 Agent 委派优先声明（仅 Agent 模式 — Plan/Ask 模式不注入，因为这些工具不可用）
-        from ..config import settings as _settings
-
-        if _settings.multi_agent_enabled and not is_sub_agent and mode == "agent":
+        if not is_sub_agent and mode == "agent":
             system_parts.append(_build_delegation_rules())
 
         if identity_section:
@@ -557,7 +554,7 @@ def build_system_prompt(
     arch_section = _build_arch_section(
         model_display_name=model_display_name,
         is_sub_agent=is_sub_agent,
-        multi_agent_enabled=_arch_settings.multi_agent_enabled,
+        multi_agent_enabled=True,
     )
     if arch_section:
         system_parts.append(arch_section)
@@ -1173,7 +1170,7 @@ def _build_session_metadata_section(
 def _build_arch_section(
     model_display_name: str = "",
     is_sub_agent: bool = False,
-    multi_agent_enabled: bool = False,
+    multi_agent_enabled: bool = True,
 ) -> str:
     """构建系统架构概况段落。
 

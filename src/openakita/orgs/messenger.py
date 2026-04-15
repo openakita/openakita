@@ -166,6 +166,13 @@ class OrgMessenger:
         self._edge_msg_counts.clear()
         self._task_affinity.clear()
 
+    def clear_node_pending(self, node_id: str) -> int:
+        """Clear all pending messages for a specific node."""
+        old = self._mailboxes.get(node_id)
+        cleared = old.pending_count if old else 0
+        self._mailboxes[node_id] = NodeMailbox(node_id)
+        return cleared
+
     def update_org(self, org: Organization) -> None:
         self._org = org
         for node in org.nodes:

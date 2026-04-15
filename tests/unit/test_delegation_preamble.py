@@ -1,18 +1,16 @@
 """Tests for delegation preamble injection and preset skill fixes.
 
 Validates:
-1. Delegation preamble injected when multi_agent_enabled=True and is_sub_agent=False
-2. Delegation preamble NOT injected when multi_agent_enabled=False
-3. Delegation preamble NOT injected for sub-agents
-4. Org mode agents unaffected (still use lean prompt)
-5. agent.core.md contains delegation exception
-6. Preset skills: code-reviewer fixed, brand-guidelines removed
+1. Delegation preamble injected for main agent (is_sub_agent=False)
+2. Delegation preamble NOT injected for sub-agents
+3. Org mode agents unaffected (still use lean prompt)
+4. agent.core.md contains delegation exception
+5. Preset skills: code-reviewer fixed, brand-guidelines removed
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -20,39 +18,33 @@ import pytest
 class TestDelegationPreambleInjection:
     """Test that the delegation preamble is correctly injected/omitted."""
 
-    def _build_prompt(self, multi_agent: bool, is_sub_agent: bool) -> str:
-        """Build a system prompt with given multi_agent and sub_agent settings."""
+    def _build_prompt(self, is_sub_agent: bool) -> str:
+        """Build a system prompt with given sub_agent settings."""
         from openakita.prompt.builder import build_system_prompt
         from openakita.config import settings
 
         identity_dir = settings.identity_path
 
-        with patch.object(settings, "multi_agent_enabled", multi_agent):
-            return build_system_prompt(
-                identity_dir=identity_dir,
-                tools_enabled=True,
-                is_sub_agent=is_sub_agent,
-            )
+        return build_system_prompt(
+            identity_dir=identity_dir,
+            tools_enabled=True,
+            is_sub_agent=is_sub_agent,
+        )
 
-    def test_preamble_present_when_multi_agent_enabled(self):
-        """Main agent with multi_agent=True should get delegation preamble."""
-        prompt = self._build_prompt(multi_agent=True, is_sub_agent=False)
+    def test_preamble_present_for_main_agent(self):
+        """Main agent should get delegation preamble (multi-agent always on)."""
+        prompt = self._build_prompt(is_sub_agent=False)
         assert "协作优先原则" in prompt
         assert "delegate_to_agent" in prompt
 
-    def test_preamble_absent_when_multi_agent_disabled(self):
-        """Single agent mode should NOT get delegation preamble."""
-        prompt = self._build_prompt(multi_agent=False, is_sub_agent=False)
-        assert "协作优先原则" not in prompt
-
     def test_preamble_absent_for_sub_agent(self):
         """Sub-agents should NOT get delegation preamble."""
-        prompt = self._build_prompt(multi_agent=True, is_sub_agent=True)
+        prompt = self._build_prompt(is_sub_agent=True)
         assert "协作优先原则" not in prompt
 
     def test_preamble_before_identity(self):
         """Delegation preamble should appear BEFORE identity content."""
-        prompt = self._build_prompt(multi_agent=True, is_sub_agent=False)
+        prompt = self._build_prompt(is_sub_agent=False)
         preamble_pos = prompt.find("协作优先原则")
         identity_markers = ["Ralph Wiggum", "核心执行原则", "三条铁律"]
         for marker in identity_markers:
@@ -64,13 +56,13 @@ class TestDelegationPreambleInjection:
 
     def test_preamble_contains_priority_override(self):
         """Preamble must explicitly override solo-agent philosophy."""
-        prompt = self._build_prompt(multi_agent=True, is_sub_agent=False)
+        prompt = self._build_prompt(is_sub_agent=False)
         assert "立即委派" in prompt
         assert "才自己处理" in prompt
 
     def test_identity_still_present(self):
         """Identity layer should still be present even with preamble."""
-        prompt = self._build_prompt(multi_agent=True, is_sub_agent=False)
+        prompt = self._build_prompt(is_sub_agent=False)
         assert "协作优先原则" in prompt
         assert len(prompt) > 500
 

@@ -129,6 +129,10 @@ class OrgRuntime:
         self._node_consecutive_failures: dict[str, int] = {}
         self._org_quota_failures: dict[str, int] = {}
 
+        self._post_hook_cooldown: dict[str, float] = {}
+        self._suppress_post_hook: dict[str, bool] = {}
+        self._latest_root_result: dict[str, dict] = {}
+
         self._started = False
 
         global _runtime_instance
@@ -552,7 +556,21 @@ class OrgRuntime:
         else:
             tagged_content = content
 
+        self._suppress_post_hook.pop(org_id, None)
+
         result = await self._activate_and_run(org, target, tagged_content, chain_id=chain_id)
+
+        if self._is_stop_intent(content):
+            await self._soft_stop_org(org_id)
+            if chain_id and isinstance(result, dict):
+                result["chain_id"] = chain_id
+            return result
+
+        if self._has_active_delegations(org_id, target.id):
+            final = await self._wait_delegation_completion(org_id, target.id, timeout=300)
+            if final:
+                result = final
+
         if chain_id and isinstance(result, dict):
             result["chain_id"] = chain_id
         return result
@@ -769,6 +787,10 @@ class OrgRuntime:
                 "org_id": org.id, "node_id": node.id,
                 "result_preview": result_text[:_LIM_WS] if result_text else "",
             })
+
+            is_root = (node.level == 0 or not org.get_parent(node.id))
+            if is_root:
+                self._latest_root_result[org.id] = {"node_id": node.id, "result": result_text}
 
             asyncio.ensure_future(self._post_task_hook(org, node))
 
@@ -1813,10 +1835,15 @@ class OrgRuntime:
         1. Drain THIS node's own pending messages (it just freed a slot).
         2. If parent has pending messages (e.g. deliverables from children),
            drain those instead of creating a new "completion notification".
-        3. Only when parent has NO pending messages, send the notification.
+        3. Only when parent has NO pending messages, send the notification
+           (rate-limited by cooldown to prevent cascade).
         """
         try:
             await asyncio.sleep(2)
+
+            if self._suppress_post_hook.get(org.id):
+                return
+
             org = self.get_org(org.id)
             if not org or org.status not in (OrgStatus.ACTIVE, OrgStatus.RUNNING):
                 return
@@ -1844,15 +1871,80 @@ class OrgRuntime:
             if parent.status == NodeStatus.BUSY:
                 return
 
+            cooldown_key = f"{org.id}:{parent.id}"
+            now = time.monotonic()
+            last = self._post_hook_cooldown.get(cooldown_key, 0)
+            if now - last < 15:
+                return
+            self._post_hook_cooldown[cooldown_key] = now
+
             role_title = node.role_title or node.id
             prompt = (
-                f"[任务完成通知] {role_title} 刚完成了一项任务并回到空闲状态。\n"
-                f"请检查当前进展，看是否有新任务需要分配给 {role_title} 或其他成员。\n"
-                f"如果所有工作已完成，请更新黑板上的进度记录。"
+                f"[任务完成通知] {role_title} 刚完成了一项任务。\n"
+                f"请查看是否有待处理的交付物需要验收。\n"
+                f"如果没有待验收的内容，无需任何操作。\n"
+                f"⚠️ 不要主动发起新任务或扩展工作范围。"
             )
             await self._activate_and_run(org, parent, prompt)
         except Exception as e:
             logger.debug(f"[OrgRuntime] Post-task hook error: {e}")
+
+    _STOP_KEYWORDS = frozenset({
+        "暂停", "停止", "取消", "别做了", "先不做", "到此为止",
+        "不要继续", "停下来", "先暂停", "不用做了", "够了",
+    })
+
+    def _is_stop_intent(self, content: str) -> bool:
+        return any(kw in content for kw in self._STOP_KEYWORDS)
+
+    async def _soft_stop_org(self, org_id: str) -> None:
+        self._suppress_post_hook[org_id] = True
+        messenger = self.get_messenger(org_id)
+        org = self.get_org(org_id)
+        if not org:
+            return
+        for node in org.nodes:
+            if node.level > 0 and node.status == NodeStatus.BUSY:
+                try:
+                    await self.cancel_node_task(org_id, node.id)
+                except Exception:
+                    pass
+            if messenger:
+                messenger.clear_node_pending(node.id)
+        self.get_event_store(org_id).emit("soft_stop", "user", {})
+
+    def _has_active_delegations(self, org_id: str, root_node_id: str) -> bool:
+        org = self.get_org(org_id)
+        if not org:
+            return False
+        for node in org.nodes:
+            if node.id != root_node_id and node.status in (NodeStatus.BUSY, NodeStatus.WAITING):
+                return True
+        messenger = self.get_messenger(org_id)
+        if messenger:
+            for node in org.nodes:
+                if node.id != root_node_id and messenger.get_pending_count(node.id) > 0:
+                    return True
+        return False
+
+    async def _wait_delegation_completion(
+        self, org_id: str, root_node_id: str, timeout: int = 300,
+    ) -> dict | None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            await asyncio.sleep(5)
+            org = self.get_org(org_id)
+            if not org or org.status not in (OrgStatus.ACTIVE, OrgStatus.RUNNING):
+                break
+            root = org.get_node(root_node_id)
+            if not root:
+                break
+            if root.status == NodeStatus.IDLE and not self._has_active_delegations(org_id, root_node_id):
+                messenger = self.get_messenger(org_id)
+                root_pending = messenger.get_pending_count(root_node_id) if messenger else 0
+                if root_pending == 0:
+                    return self._latest_root_result.pop(org_id, None)
+        return self._latest_root_result.pop(org_id, None)
 
     async def _health_check_loop(self, org_id: str) -> None:
         """Command mode: only check node health, recover ERROR nodes to IDLE.

@@ -216,7 +216,11 @@ class OrgIdentity:
                 "2. 完成后直接在回复中总结成果，结果会自动返回给指挥者\n"
                 "3. 重要成果同时写入 org_write_blackboard 供团队查阅\n"
                 "4. **不要**使用 org_submit_deliverable，你没有上级节点可提交\n\n"
-                "验收下属交付物时，用 org_accept_deliverable（通过）或 org_reject_deliverable（打回）。"
+                "验收下属交付物时，用 org_accept_deliverable（通过）或 org_reject_deliverable（打回）。\n\n"
+                "⚠️ 严格约束：\n"
+                "- 只执行指挥者明确下达的指令，不要自行扩展工作范围\n"
+                "- 指令完成后停止，不要主动发起新的项目或任务\n"
+                "- 如果认为有后续工作需要做，在回复中建议即可，等指挥者确认后再行动"
             )
         else:
             delivery_flow = (

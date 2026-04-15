@@ -655,8 +655,7 @@ async def init_core_services(agent_or_master):
         await _desktop_pool.start()
         logger.info("[Main] Desktop AgentInstancePool initialized (idle_timeout=600s)")
 
-    if settings.multi_agent_enabled:
-        await _init_orchestrator()
+    await _init_orchestrator()
 
     _setup_session_backfill(agent_or_master)
 
@@ -974,7 +973,7 @@ async def start_im_channels(agent_or_master):
         """通过 Agent 处理消息（运行时检查多Agent模式开关）"""
         from .utils.errors import format_user_friendly_error
 
-        if settings.multi_agent_enabled and _orchestrator is not None:
+        if _orchestrator is not None:
             try:
                 return await _orchestrator.handle_message(session, message)
             except Exception as e:

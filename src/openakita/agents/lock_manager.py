@@ -1,9 +1,8 @@
 """
 LockManager — fine-grained per-resource async locks for multi-agent mode.
 
-In single-agent mode, these locks have no practical effect as there's only
-one agent per session. In multi-agent mode, they prevent concurrent access
-to shared resources by multiple agent instances.
+These locks prevent concurrent access to shared resources by multiple
+agent instances in the always-on multi-agent system.
 """
 
 import asyncio

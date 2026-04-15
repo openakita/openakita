@@ -20,6 +20,7 @@ export interface OrgBlackboardPanelProps {
   orgId: string;
   apiBaseUrl: string;
   nodes: Node[];
+  fullWidth?: boolean;
 }
 
 export interface OrgBlackboardPanelHandle {
@@ -27,7 +28,7 @@ export interface OrgBlackboardPanelHandle {
 }
 
 export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackboardPanelProps>(
-  function OrgBlackboardPanel({ orgId, apiBaseUrl, nodes }, ref) {
+  function OrgBlackboardPanel({ orgId, apiBaseUrl, nodes, fullWidth }, ref) {
     const mdModules = useMdModules();
     const [entries, setEntries] = useState<any[]>([]);
     const [scope, setScope] = useState<"all" | "org" | "department" | "node">("all");
@@ -79,11 +80,11 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
     return (
       <div
         style={{
-          width: 380, flexShrink: 0,
-          borderLeft: "1px solid var(--line)",
+          width: fullWidth ? "100%" : 380, flexShrink: 0, flex: fullWidth ? 1 : undefined,
+          borderLeft: fullWidth ? "none" : "1px solid var(--line)",
           overflowY: "auto", scrollbarGutter: "stable",
           background: "var(--bg-app)",
-          animation: "org-panel-in 0.3s cubic-bezier(0.4,0,0.2,1) 0s both",
+          animation: fullWidth ? "none" : "org-panel-in 0.3s cubic-bezier(0.4,0,0.2,1) 0s both",
         }}
       >
         <div style={{ padding: "12px 14px 8px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -124,7 +125,9 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
               fontSize: 12, color: "var(--muted)", padding: "32px 16px",
               textAlign: "center", border: "1px dashed var(--line)", borderRadius: 8,
             }}>
-              {loading ? "加载中..." : "暂无黑板记录"}
+              {loading ? "加载中..." : scope === "node"
+                ? "节点级黑板用于存储各 Agent 的私有记录，当前暂无节点级数据。"
+                : "暂无黑板记录"}
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

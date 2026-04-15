@@ -1,7 +1,7 @@
 """
 Organization setup tool — create and manage organizations through natural language.
 
-Only injected when settings.multi_agent_enabled is True, alongside AGENT_TOOLS.
+Always injected alongside AGENT_TOOLS.
 """
 
 _EDGE_SCHEMA = {

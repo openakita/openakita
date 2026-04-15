@@ -190,11 +190,9 @@ function getEmojiCanvas(emoji: string, size: number): HTMLCanvasElement {
 export function AgentDashboardView({
   apiBaseUrl = "http://127.0.0.1:18900",
   visible = true,
-  multiAgentEnabled = false,
 }: {
   apiBaseUrl?: string;
   visible?: boolean;
-  multiAgentEnabled?: boolean;
 }) {
   const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -232,7 +230,7 @@ export function AgentDashboardView({
   }, [apiBaseUrl]);
 
   useEffect(() => {
-    if (!visible || !multiAgentEnabled) return;
+    if (!visible) return;
     fetchTopo();
     let timer: ReturnType<typeof setTimeout>;
     const schedule = () => {
@@ -243,7 +241,7 @@ export function AgentDashboardView({
     };
     schedule();
     return () => clearTimeout(timer);
-  }, [visible, multiAgentEnabled, fetchTopo]);
+  }, [visible, fetchTopo]);
 
   // ── Sync topo data → sim nodes ────────────────────────────────
 
@@ -406,7 +404,7 @@ export function AgentDashboardView({
   // ── Animation loop ────────────────────────────────────────────
 
   useEffect(() => {
-    if (!visible || !multiAgentEnabled) return;
+    if (!visible) return;
     darkRef.current = isDark();
     const themeObs = setInterval(() => { darkRef.current = isDark(); }, 2000);
 
@@ -1030,7 +1028,7 @@ export function AgentDashboardView({
       clearInterval(themeObs);
       document.removeEventListener("visibilitychange", onVisChange);
     };
-  }, [visible, multiAgentEnabled]);
+  }, [visible]);
 
   // ── ESC to close detail panel ─────────────────────────────────
 
@@ -1150,18 +1148,6 @@ export function AgentDashboardView({
     return Array.from(map.values()).filter((n) => n.opacity > 0 && n.r > 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topoData, selected, hovered, overlayTick]);
-
-  // ── Disabled state ────────────────────────────────────────────
-
-  if (!multiAgentEnabled) {
-    return (
-      <div style={{ padding: 40, textAlign: "center", opacity: 0.5 }}>
-        <div style={{ fontSize: 48 }}><IconBrain size={48} /></div>
-        <div style={{ marginTop: 12, fontWeight: 700 }}>{t("dashboard.disabled")}</div>
-        <div style={{ fontSize: 13, marginTop: 4 }}>{t("dashboard.enableHint")}</div>
-      </div>
-    );
-  }
 
   const stats = topoData?.stats;
   const selectedNode = selected ? simNodesRef.current.get(selected) || null : null;

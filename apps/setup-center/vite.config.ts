@@ -66,8 +66,7 @@ export default defineConfig({
     ? { outDir: "dist-web" }
     : undefined,
   server: {
-    host: "127.0.0.1",
-    port: 5273,
+    port: 5173,
     strictPort: true,
     ...(isWebBuild
       ? {

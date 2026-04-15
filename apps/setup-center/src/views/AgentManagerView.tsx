@@ -169,11 +169,9 @@ const EMOJI_PRESETS = Object.values(ICON_CATEGORIES).flatMap((c) => c.icons);
 export function AgentManagerView({
   apiBaseUrl = "http://127.0.0.1:18900",
   visible = true,
-  multiAgentEnabled = false,
 }: {
   apiBaseUrl?: string;
   visible?: boolean;
-  multiAgentEnabled?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const [profiles, setProfiles] = useState<AgentProfile[]>([]);
@@ -282,7 +280,6 @@ export function AgentManagerView({
   }, [apiBaseUrl]);
 
   const fetchProfiles = useCallback(async () => {
-    if (!multiAgentEnabled) return;
     setLoading(true);
     try {
       const res = await safeFetch(`${apiBaseUrl}/api/agents/profiles?include_hidden=true`);
@@ -292,7 +289,7 @@ export function AgentManagerView({
       logger.warn("AgentManager", "Failed to fetch profiles", { error: String(e) });
     }
     setLoading(false);
-  }, [apiBaseUrl, multiAgentEnabled]);
+  }, [apiBaseUrl]);
 
   const fetchSkills = useCallback(async () => {
     try {
@@ -423,13 +420,13 @@ export function AgentManagerView({
   }, [batchSelected, apiBaseUrl, showToast, t, browserDownloadJson]);
 
   useEffect(() => {
-    if (visible && multiAgentEnabled) {
+    if (visible) {
       fetchProfiles();
       fetchSkills();
       fetchCategories();
       fetchModels();
     }
-  }, [visible, multiAgentEnabled, fetchProfiles, fetchSkills, fetchCategories, fetchModels]);
+  }, [visible, fetchProfiles, fetchSkills, fetchCategories, fetchModels]);
 
   const openCreateEditor = () => {
     setEditingProfile({ ...EMPTY_PROFILE });
@@ -610,15 +607,6 @@ export function AgentManagerView({
   const filteredProfiles = activeCategory
     ? visibleProfiles.filter((p) => p.category === activeCategory)
     : visibleProfiles;
-
-  if (!multiAgentEnabled) {
-    return (
-      <div style={{ padding: 40, textAlign: "center", opacity: 0.5 }}>
-        <IconBot size={48} />
-        <div style={{ marginTop: 12, fontWeight: 700 }}>{t("agentManager.disabled")}</div>
-      </div>
-    );
-  }
 
   return (
     <div style={{ padding: 20, position: "relative", overflow: "auto", height: "100%" }}>

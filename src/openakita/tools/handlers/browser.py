@@ -32,9 +32,8 @@ logger = logging.getLogger(__name__)
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
 # Cross-agent browser lock — shared by all BrowserHandler instances in this
-# process.  In single-agent mode the lock is never contended (zero overhead).
-# In multi-agent mode it serialises page-mutating operations so agents do not
-# overwrite each other's page navigation.
+# process. Serialises page-mutating operations so agents do not overwrite
+# each other's page navigation.
 _browser_lock_manager = LockManager()
 _BROWSER_LOCK_TIMEOUT = 300.0  # seconds
 

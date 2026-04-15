@@ -414,10 +414,6 @@ async def list_agent_profiles(include_hidden: bool = False):
     """
     from openakita.agents.presets import SYSTEM_PRESETS
     from openakita.agents.profile import get_profile_store
-    from openakita.config import settings
-
-    if not settings.multi_agent_enabled:
-        return {"profiles": [], "multi_agent_enabled": False}
 
     store = get_profile_store()
     stored_map = {p.id: p for p in store.list_all(include_hidden=True)}
@@ -451,10 +447,6 @@ async def list_agent_profiles(include_hidden: bool = False):
 async def create_agent_profile(body: ProfileCreateRequest):
     """Create a new custom agent profile."""
     from openakita.agents.profile import AgentProfile, AgentType, SkillsMode, get_profile_store
-    from openakita.config import settings
-
-    if not settings.multi_agent_enabled:
-        raise HTTPException(status_code=400, detail="Multi-agent mode is not enabled")
 
     valid_modes = {"all", "inclusive", "exclusive"}
     if body.skills_mode not in valid_modes:
@@ -509,10 +501,6 @@ async def create_agent_profile(body: ProfileCreateRequest):
 async def update_agent_profile(profile_id: str, body: ProfileUpdateRequest, request: Request):
     """Update a custom agent profile (system profiles have restricted updates)."""
     from openakita.agents.profile import get_profile_store
-    from openakita.config import settings
-
-    if not settings.multi_agent_enabled:
-        raise HTTPException(status_code=400, detail="Multi-agent mode is not enabled")
 
     if body.skills_mode is not None:
         valid_modes = {"all", "inclusive", "exclusive"}
@@ -540,10 +528,6 @@ async def update_agent_profile(profile_id: str, body: ProfileUpdateRequest, requ
 async def delete_agent_profile(profile_id: str):
     """Delete a custom agent profile."""
     from openakita.agents.profile import get_profile_store
-    from openakita.config import settings
-
-    if not settings.multi_agent_enabled:
-        raise HTTPException(status_code=400, detail="Multi-agent mode is not enabled")
 
     store = get_profile_store()
 
@@ -564,10 +548,6 @@ async def reset_agent_profile(profile_id: str, request: Request):
     """Reset a system agent profile to its factory defaults."""
     from openakita.agents.presets import get_preset_by_id
     from openakita.agents.profile import get_profile_store
-    from openakita.config import settings
-
-    if not settings.multi_agent_enabled:
-        raise HTTPException(status_code=400, detail="Multi-agent mode is not enabled")
 
     preset = get_preset_by_id(profile_id)
     if preset is None:
@@ -599,10 +579,6 @@ async def reset_agent_profile(profile_id: str, request: Request):
 async def update_profile_visibility(profile_id: str, body: ProfileVisibilityRequest):
     """Show or hide an agent profile (works for both SYSTEM and CUSTOM)."""
     from openakita.agents.profile import get_profile_store
-    from openakita.config import settings
-
-    if not settings.multi_agent_enabled:
-        raise HTTPException(status_code=400, detail="Multi-agent mode is not enabled")
 
     store = get_profile_store()
     try:

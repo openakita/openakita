@@ -725,6 +725,8 @@ class ProjectTask:
     started_at: str | None = None
     delivered_at: str | None = None
     completed_at: str | None = None
+    deliverable_content: str = ""
+    delivery_summary: str = ""
 
     def to_dict(self) -> dict:
         if hasattr(self.status, "value"):
@@ -752,6 +754,8 @@ class ProjectTask:
             "started_at": self.started_at,
             "delivered_at": self.delivered_at,
             "completed_at": self.completed_at,
+            "deliverable_content": self.deliverable_content,
+            "delivery_summary": self.delivery_summary,
         }
 
     @classmethod

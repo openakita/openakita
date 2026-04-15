@@ -379,7 +379,7 @@ class Settings(BaseSettings):
 
     # === 多 Agent 模式 (Beta) ===
     multi_agent_enabled: bool = Field(
-        default=False,
+        default=True,
         description="多Agent模式 (Beta)，开启后支持多Agent协作、专用Agent、IM多Bot等",
     )
     coordinator_mode_enabled: bool = Field(
@@ -617,7 +617,7 @@ class Settings(BaseSettings):
         然后把所有字段值拷贝回当前单例。
 
         运行时持久化字段（``_PERSISTABLE_KEYS``）由 RuntimeState 管理，
-        不从 .env 覆盖，避免 im_bots / multi_agent_enabled 等被重置。
+        不从 .env 覆盖，避免 im_bots 等被重置。
         """
         _skip = set(_PERSISTABLE_KEYS)
         fresh = Settings()
@@ -786,7 +786,6 @@ _PERSISTABLE_KEYS: list[str] = [
     "proactive_quiet_hours_end",
     "ui_theme",
     "ui_language",
-    "multi_agent_enabled",
     "im_bots",
     "force_tool_call_max_retries",
     "force_tool_call_im_floor",

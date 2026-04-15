@@ -130,10 +130,10 @@ const FIELD_CLASS_NAME = "flex h-9 w-full rounded-md border border-input bg-back
 function TypeIcon({ type }: { type: string }) {
   const style = { flexShrink: 0, color: "var(--muted)" } as const;
   switch (type) {
-    case "python": return <IconCode size={18} style={style} />;
-    case "mcp":    return <IconPlug size={18} style={style} />;
-    case "skill":  return <IconFileText2 size={18} style={style} />;
-    default:       return <IconPackage size={18} style={style} />;
+    case "python": return <IconCode size={22} style={style} />;
+    case "mcp":    return <IconPlug size={22} style={style} />;
+    case "skill":  return <IconFileText2 size={22} style={style} />;
+    default:       return <IconPackage size={22} style={style} />;
   }
 }
 
@@ -642,7 +642,6 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
           {filteredPlugins.map((p) => {
             const hasPending = (p.pending_permissions?.length ?? 0) > 0;
             const showBody =
-              (p.tags?.length ?? 0) > 0 ||
               (!!p.error && !hasPending) ||
               permDialog === p.id ||
               expandedId === p.id ||
@@ -659,16 +658,16 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                   "gap-0 overflow-hidden border-border/80 py-0 shadow-sm transition-shadow hover:shadow-md",
                   hasPending && "border-amber-500/50"
                 )}>
-                  <CardHeader className="gap-3 px-6 py-4">
+                  <CardHeader className="gap-2 px-5 py-3">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex min-w-0 gap-4">
                         <div className={cn(
-                          "flex size-12 shrink-0 items-center justify-center rounded-2xl border bg-muted/40",
+                          "flex size-10 shrink-0 items-center justify-center rounded-xl border bg-muted/40",
                           hasPending && "border-amber-500/40 bg-amber-500/10"
                         )}>
                           <PluginIcon plugin={p} apiBase={apiBaseRef.current()} />
                         </div>
-                        <div className="min-w-0 flex-1 space-y-3">
+                        <div className="min-w-0 flex-1 space-y-1.5">
                           <div className="flex min-w-0 items-center gap-2">
                             <CardTitle className="min-w-0 truncate text-base leading-none" title={p.name}>{p.name}</CardTitle>
                             {p.permission_level && (
@@ -714,11 +713,21 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                           </div>
 
                           {p.description && (
-                            <CardDescription className="max-w-3xl text-sm leading-6">
-                              <span className="block truncate" title={p.description}>
+                            <CardDescription className="max-w-3xl text-sm leading-5">
+                              <span className="block line-clamp-2" title={p.description}>
                                 {p.description}
                               </span>
                             </CardDescription>
+                          )}
+
+                          {(p.tags?.length ?? 0) > 0 && (
+                            <div className="flex flex-wrap gap-1.5">
+                              {(p.tags || []).map((tag) => (
+                                <Badge key={tag} variant="outline" className="text-xs text-muted-foreground">
+                                  {tag}
+                                </Badge>
+                              ))}
+                            </div>
                           )}
                         </div>
                       </div>
@@ -796,16 +805,6 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
 
                   {showBody && (
                     <CardContent className="space-y-4 border-t px-6 py-4">
-                      {(p.tags?.length ?? 0) > 0 && (
-                        <div className="flex flex-wrap gap-2">
-                          {(p.tags || []).map((tag) => (
-                            <Badge key={tag} variant="outline" className="text-xs text-muted-foreground">
-                              {tag}
-                            </Badge>
-                          ))}
-                        </div>
-                      )}
-
                       {p.error && !hasPending && (
                         <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
                           {p.error}
@@ -1033,18 +1032,20 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                     </CardContent>
                   )}
 
-                  <CardFooter className="flex items-center justify-between gap-3 border-t pt-4">
+                  <CardFooter className="flex items-center justify-between gap-3 border-t px-6 py-3">
                     <div className="min-w-0 truncate text-xs text-muted-foreground" title={p.id}>
                       {p.id}
                     </div>
                     <div className="flex shrink-0 gap-2">
                       <Button
+                        size="sm"
                         variant={p.enabled === false ? "default" : "outline"}
                         onClick={() => handleAction(p.id, p.enabled === false ? "enable" : "disable")}
                       >
                         {p.enabled === false ? t("plugins.enable") : t("plugins.disable")}
                       </Button>
                       <Button
+                        size="sm"
                         variant="destructive"
                         onClick={() => handleAction(p.id, "delete")}
                       >

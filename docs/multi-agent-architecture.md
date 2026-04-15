@@ -1,11 +1,11 @@
 # Multi-Agent Architecture
 
-本文档描述 OpenAkita 的多 Agent 架构设计。该架构通过 `multi_agent_enabled` 开关与单 Agent 模式完全隔离，标记为 **Beta**。
+本文档描述 OpenAkita 的多 Agent 架构设计。多 Agent 模式已默认常开，标记为 **Beta**。
 
 ## 设计原则
 
-1. **模式隔离** — 多 Agent 功能通过 `multi_agent_enabled` 配置项守护，关闭时所有多 Agent 组件不加载、不影响现有行为
-2. **渐进增强** — 数据结构改动向后兼容（新字段有默认值），单 Agent 模式无感知
+1. **默认常开** — 多 Agent 功能始终加载，不再需要手动开启
+2. **渐进增强** — 数据结构改动向后兼容（新字段有默认值）
 3. **轻量通信** — 废弃旧 ZMQ 方案，使用 `asyncio.Queue` + JSON 进行进程内通信
 4. **安全沙箱** — AI 动态创建的 Agent 受权限继承、深度限制、生命周期约束
 
@@ -25,13 +25,10 @@
 │  • /模式 /切换 /help      • 多 Bot 实例管理                        │
 └────────────────────────────┬──────────────────────────────────────┘
                              │
-              ┌──────────────┴──────────────┐
-              │    multi_agent_enabled?      │
-              └──────┬──────────────┬────────┘
-                     │ False        │ True
-                     ▼              ▼
-           ┌──────────────┐  ┌──────────────────────┐
-           │  单 Agent     │  │  AgentOrchestrator    │
+              │
+              ▼
+           ┌──────────────────────┐
+           │  AgentOrchestrator    │
            │  (现有流程)   │  │  ┌──────────────────┐ │
            │              │  │  │ ProfileStore     │ │
            │              │  │  │ AgentFactory     │ │
@@ -246,7 +243,7 @@ GET /api/stats/tokens/by-agent?period=24h
 | Agent 管理器 | AgentManagerView.tsx | CRUD Agent + 自定义编辑器 |
 | 委派气泡 | ChatView.tsx | SSE `agent_handoff` 事件展示 |
 
-所有多 Agent UI 组件通过 `multiAgentEnabled` prop 守护，关闭时不渲染。
+多 Agent UI 组件始终渲染（多 Agent 模式已默认常开）。
 
 ## 数据存储路径
 
@@ -259,7 +256,7 @@ GET /api/stats/tokens/by-agent?period=24h
 │       └── ...
 ├── sessions/                  # 会话数据 (含 agent_profile_id)
 ├── memory/                    # 记忆存储 (含 scope/scope_owner)
-├── runtime_state.json         # 运行时状态 (含 im_bots, multi_agent_enabled)
+├── runtime_state.json         # 运行时状态 (含 im_bots)
 └── agent.db                   # SQLite (含 token_usage.agent_profile_id)
 ```
 
@@ -269,8 +266,7 @@ GET /api/stats/tokens/by-agent?period=24h
 
 - `project_root` 变更 → `data_dir` 随之变更 → Agent profiles、sessions、memory 自然隔离
 - 各工作区有独立的 Agent 配置和会话状态
-- `multi_agent_enabled` 存储在 `runtime_state.json` 中，跟随工作区
-- IM Bot 凭证（`im_bots`）也存储在 `runtime_state.json`，跟随工作区
+- IM Bot 凭证（`im_bots`）存储在 `runtime_state.json`，跟随工作区
 
 **注意事项：**
 - `OPENAKITA_ROOT` 环境变量可覆盖 `openakita_home`，不影响 `data_dir`

@@ -156,12 +156,6 @@ def _resolve_agent(agent: object):
     return None
 
 
-def _is_multi_agent_enabled() -> bool:
-    from openakita.config import settings
-
-    return settings.multi_agent_enabled
-
-
 def _resolve_profile(agent_profile_id: str | None):
     """Resolve an AgentProfile by id, falling back to 'default'."""
     from openakita.agents.presets import SYSTEM_PRESETS
@@ -429,8 +423,7 @@ async def _stream_chat(
                     create_if_missing=True,
                 )
                 if session:
-                    # Apply agent_profile_id if multi-agent mode is enabled
-                    if chat_request.agent_profile_id and _is_multi_agent_enabled():
+                    if chat_request.agent_profile_id:
                         _apply_agent_profile(session, chat_request.agent_profile_id)
 
                     # 先添加用户消息，再获取完整历史（含当前消息）

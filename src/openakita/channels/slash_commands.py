@@ -87,7 +87,7 @@ COMMAND_REGISTRY: list[SlashCommand] = [
     SlashCommand(
         name="/mode",
         aliases=["/模式"],
-        description="查看或切换单/多Agent模式",
+        description="查看当前多Agent模式说明",
         category="agent",
         scope=CommandScope.IM,
     ),

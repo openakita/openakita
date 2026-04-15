@@ -23,8 +23,6 @@ export type SidebarProps = {
   stepId: StepId;
   onStepChange: (id: StepId) => void;
   disabledViews: string[];
-  multiAgentEnabled: boolean;
-  onToggleMultiAgent: () => void;
   storeVisible: boolean;
   desktopVersion: string;
   backendVersion: string | null;
@@ -90,7 +88,7 @@ export function Sidebar({
   view, onViewChange,
   configExpanded, onToggleConfig,
   steps, stepId, onStepChange,
-  disabledViews, multiAgentEnabled, onToggleMultiAgent,
+  disabledViews,
   storeVisible,
   desktopVersion, backendVersion, serviceRunning,
   onBugReport, onRefreshStatus, isWeb, mobileOpen,
@@ -207,26 +205,22 @@ export function Sidebar({
         )}
 
         {/* ── Group: Multi-Agent ── */}
-        {multiAgentEnabled && (
-          <>
-            <NavGroupHeader collapsed={collapsed} icon={<IconBot size={GROUP_ICON_SIZE} />} label={t("sidebar.groupMultiAgent")} expanded={maExpanded} onToggle={() => toggleGroup("multiAgent")} />
-            {(collapsed || maExpanded) && (
-              <div className="navGroupItems">
-                <div className={`navItem ${view === "dashboard" ? "navItemActive" : ""}`} onClick={() => onViewChange("dashboard")} role="button" tabIndex={0} title={t("sidebar.dashboard")}>
-                  <IconUsers size={16} /> {!collapsed && <span>{t("sidebar.dashboard")} {BETA_SUP}</span>}
-                </div>
-                <div className={`navItem ${view === "org_editor" ? "navItemActive" : ""}`} onClick={() => onViewChange("org_editor")} role="button" tabIndex={0} title={t("sidebar.orgEditor")}>
-                  <IconLayoutGrid size={16} /> {!collapsed && <span>{t("sidebar.orgEditor")} {BETA_SUP}</span>}
-                </div>
-                <div className={`navItem ${view === "pixel_office" ? "navItemActive" : ""}`} onClick={() => onViewChange("pixel_office")} role="button" tabIndex={0} title={t("sidebar.pixelOffice")}>
-                  <IconBuilding size={16} /> {!collapsed && <span>{t("sidebar.pixelOffice")} {BETA_SUP}</span>}
-                </div>
-                <div className={`navItem ${view === "agent_manager" ? "navItemActive" : ""}`} onClick={() => onViewChange("agent_manager")} role="button" tabIndex={0} title={t("sidebar.agentManager")}>
-                  <IconBot size={16} /> {!collapsed && <span>{t("sidebar.agentManager")}</span>}
-                </div>
-              </div>
-            )}
-          </>
+        <NavGroupHeader collapsed={collapsed} icon={<IconBot size={GROUP_ICON_SIZE} />} label={t("sidebar.groupMultiAgent")} expanded={maExpanded} onToggle={() => toggleGroup("multiAgent")} />
+        {(collapsed || maExpanded) && (
+          <div className="navGroupItems">
+            <div className={`navItem ${view === "dashboard" ? "navItemActive" : ""}`} onClick={() => onViewChange("dashboard")} role="button" tabIndex={0} title={t("sidebar.dashboard")}>
+              <IconUsers size={16} /> {!collapsed && <span>{t("sidebar.dashboard")} {BETA_SUP}</span>}
+            </div>
+            <div className={`navItem ${view === "org_editor" ? "navItemActive" : ""}`} onClick={() => onViewChange("org_editor")} role="button" tabIndex={0} title={t("sidebar.orgEditor")}>
+              <IconLayoutGrid size={16} /> {!collapsed && <span>{t("sidebar.orgEditor")} {BETA_SUP}</span>}
+            </div>
+            <div className={`navItem ${view === "pixel_office" ? "navItemActive" : ""}`} onClick={() => onViewChange("pixel_office")} role="button" tabIndex={0} title={t("sidebar.pixelOffice")}>
+              <IconBuilding size={16} /> {!collapsed && <span>{t("sidebar.pixelOffice")} {BETA_SUP}</span>}
+            </div>
+            <div className={`navItem ${view === "agent_manager" ? "navItemActive" : ""}`} onClick={() => onViewChange("agent_manager")} role="button" tabIndex={0} title={t("sidebar.agentManager")}>
+              <IconBot size={16} /> {!collapsed && <span>{t("sidebar.agentManager")}</span>}
+            </div>
+          </div>
         )}
 
         {/* ── Group: Store ── */}
@@ -291,50 +285,6 @@ export function Sidebar({
           </div>
         )}
       </div>
-
-      {/* Multi-Agent Mode Toggle */}
-      {!collapsed && (
-        <div style={{
-          padding: "12px 18px",
-          borderTop: "1px solid var(--line)",
-          flexShrink: 0,
-        }}>
-          <div style={{
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 13, color: "var(--fg)" }}>
-                {t("config.multiAgentMode")}
-              </span>
-              <span style={{
-                fontSize: 10, padding: "1px 5px", borderRadius: 4,
-                background: "var(--accent)", color: "#fff",
-                fontWeight: 600, letterSpacing: 0.5,
-              }}>
-                {t("config.multiAgentBeta")}
-              </span>
-            </div>
-            <div
-              onClick={onToggleMultiAgent}
-              style={{
-                width: 40, height: 22, borderRadius: 11, cursor: "pointer",
-                background: multiAgentEnabled ? "var(--ok)" : "var(--line)",
-                position: "relative", transition: "background 0.2s",
-              }}
-            >
-              <div style={{
-                width: 18, height: 18, borderRadius: 9, background: "#fff",
-                position: "absolute", top: 2,
-                left: multiAgentEnabled ? 20 : 2,
-                transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
-              }} />
-            </div>
-          </div>
-          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
-            {multiAgentEnabled ? t("config.multiAgentOn") : t("config.multiAgentOff")}
-          </div>
-        </div>
-      )}
 
       {/* Version info + website link + bug report at sidebar bottom */}
       {!collapsed && (

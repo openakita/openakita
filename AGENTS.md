@@ -105,4 +105,4 @@ tests/                  # Test suite
 - `identity/AGENT.md` is OpenAkita's own behavior spec, NOT the industry-standard `AGENTS.md` file — don't confuse them.
 - The `prompt/compiler.py` must be re-run when identity files change; `builder.py` auto-detects staleness via `check_compiled_outdated()`.
 - Skill loading order: `__builtin__` → workspace → `.cursor/skills` → `.claude/skills` → `skills/` → global home dirs.
-- `multi_agent_enabled` is a runtime toggle stored in `data/runtime_state.json`, not a static config.
+- `multi_agent_enabled` defaults to `True` and is always on; the toggle has been removed.

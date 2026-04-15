@@ -1,7 +1,7 @@
 """
 Organization setup handler — create and manage organizations through natural language.
 
-Only registered when settings.multi_agent_enabled is True.
+Always registered (multi-agent mode is always on).
 """
 
 from __future__ import annotations
