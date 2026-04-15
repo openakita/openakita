@@ -22,6 +22,7 @@ from .providers.anthropic import AnthropicProvider
 from .providers.base import LLMProvider
 from .providers.openai import OpenAIProvider
 from .providers.openai_responses import OpenAIResponsesProvider
+from .runtime_context import ResolvedModelContext
 from .types import (
     AllEndpointsFailedError,
     AudioBlock,
@@ -297,6 +298,95 @@ class LLMClient:
     def providers(self) -> dict[str, LLMProvider]:
         """获取所有 Provider"""
         return self._providers
+
+    def _build_capability_matched_candidates(
+        self,
+        *,
+        require_tools: bool = False,
+        require_vision: bool = False,
+        require_video: bool = False,
+        require_thinking: bool = False,
+        require_audio: bool = False,
+        require_pdf: bool = False,
+        prefer_endpoint: str | None = None,
+        include_unhealthy: bool = False,
+    ) -> list[LLMProvider]:
+        providers = sorted(self._providers.values(), key=lambda p: p.config.priority)
+        candidates: list[LLMProvider] = []
+        for provider in providers:
+            if not include_unhealthy and not provider.is_healthy:
+                continue
+            config = provider.config
+            if require_tools and not config.has_capability("tools"):
+                continue
+            if require_vision and not config.has_capability("vision"):
+                continue
+            if require_video and not config.has_capability("video"):
+                continue
+            if require_thinking and not config.has_capability("thinking"):
+                continue
+            if require_audio and not config.has_capability("audio"):
+                continue
+            if require_pdf and not config.has_capability("pdf"):
+                continue
+            candidates.append(provider)
+
+        if prefer_endpoint:
+            preferred = next((p for p in candidates if p.name == prefer_endpoint), None)
+            if preferred:
+                candidates.remove(preferred)
+                candidates.insert(0, preferred)
+        return candidates
+
+    def resolve_model_context(
+        self,
+        *,
+        require_tools: bool = False,
+        require_vision: bool = False,
+        require_video: bool = False,
+        require_thinking: bool = False,
+        require_audio: bool = False,
+        require_pdf: bool = False,
+        conversation_id: str | None = None,
+        prefer_endpoint: str | None = None,
+    ) -> ResolvedModelContext:
+        """解析本轮请求最可能绑定的模型上下文，用于预算与附件适配。"""
+        candidates = self._filter_eligible_endpoints(
+            require_tools=require_tools,
+            require_vision=require_vision,
+            require_video=require_video,
+            require_thinking=require_thinking,
+            require_audio=require_audio,
+            require_pdf=require_pdf,
+            conversation_id=conversation_id,
+            prefer_endpoint=prefer_endpoint,
+        )
+        selected_by = "eligible"
+        if not candidates:
+            candidates = self._build_capability_matched_candidates(
+                require_tools=require_tools,
+                require_vision=require_vision,
+                require_video=require_video,
+                require_thinking=require_thinking,
+                require_audio=require_audio,
+                require_pdf=require_pdf,
+                prefer_endpoint=prefer_endpoint,
+                include_unhealthy=True,
+            )
+            selected_by = "capability_fallback"
+
+        if not candidates:
+            candidates = sorted(self._providers.values(), key=lambda p: p.config.priority)
+            selected_by = "priority_fallback"
+
+        if not candidates:
+            return ResolvedModelContext()
+
+        return ResolvedModelContext.from_endpoint(
+            candidates[0].config,
+            selected_by=selected_by,
+            fallback_chain=[provider.name for provider in candidates],
+        )
 
     async def chat(
         self,
@@ -673,15 +763,15 @@ class LLMClient:
 
         # ── 降级 2+3+4: 所有端点都在冷静期 ──
         # 构建基础能力匹配列表（不含 thinking 要求，忽略健康状态）
-        base_capability_matched = [
-            p
-            for p in providers_sorted
-            if (not require_tools or p.config.has_capability("tools"))
-            and (not require_vision or p.config.has_capability("vision"))
-            and (not require_video or p.config.has_capability("video"))
-            and (not require_audio or p.config.has_capability("audio"))
-            and (not require_pdf or p.config.has_capability("pdf"))
-        ]
+        base_capability_matched = self._build_capability_matched_candidates(
+            require_tools=require_tools,
+            require_vision=require_vision,
+            require_video=require_video,
+            require_audio=require_audio,
+            require_pdf=require_pdf,
+            prefer_endpoint=prefer_endpoint,
+            include_unhealthy=True,
+        )
 
         # 多模态软降级: 视频/音频/PDF/Vision 端点不匹配时不硬失败
         if not base_capability_matched:

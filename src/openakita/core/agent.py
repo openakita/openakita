@@ -29,6 +29,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from ..attachments.adapter import (
+    build_attachment_content_blocks,
+    get_attachment_adaptation_policy,
+    resolve_attachment_model_context,
+)
 from ..api.attachment_store import get_attachment_store
 from ..config import settings
 
@@ -933,8 +938,19 @@ class Agent:
         self.handler_registry.register(
             "filesystem",
             create_filesystem_handler(self),
-            ["run_shell", "write_file", "read_file", "edit_file",
-             "list_directory", "grep", "glob", "delete_file"],
+            [
+                "run_shell",
+                "write_file",
+                "read_file",
+                "read_attachment_summary",
+                "read_attachment_chunk",
+                "search_attachment",
+                "edit_file",
+                "list_directory",
+                "grep",
+                "glob",
+                "delete_file",
+            ],
         )
 
         # 记忆系统
@@ -1685,6 +1701,12 @@ class Agent:
 
 **工具类别**：文件系统、浏览器、记忆、定时任务、用户档案等
 
+**上传附件特殊规则**：
+- 工作区文件/服务器文件 → 使用 `read_file` / `write_file`
+- 用户在聊天里上传的附件 → 优先直接使用消息里给出的正文/节选/预览
+- 上传附件若还需要继续阅读 → 使用 `read_attachment_summary` / `read_attachment_chunk` / `search_attachment`
+- **不要**把“已上传文档/附件”误当成工作区路径去调用 `read_file`
+
 ### 2. Skills 技能（渐进式披露）
 
 可扩展的能力模块，采用渐进式披露：
@@ -1749,7 +1771,8 @@ MCP (Model Context Protocol) 连接外部服务，**工具定义已全量展示*
 |------|--------|--------|
 | 用户要提醒 | "好的我会提醒你" | 调用 schedule_task |
 | 用户要查信息 | 凭记忆回答 | 调用 web_search |
-| 用户要操作文件 | 描述怎么操作 | 调用 write_file/read_file |
+| 用户要操作工作区文件 | 描述怎么操作 | 调用 write_file/read_file |
+| 用户上传了附件 | 把附件当本地路径再次 read_file | 直接使用附件内容，或调用 read_attachment_* |
 
 **对话型请求**：直接回复即可，不需要调用工具。
 
@@ -2501,71 +2524,32 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             "text_preview": normalized.get("text_preview") or record.get("text_preview", ""),
         }
 
+    @staticmethod
+    def _get_attachment_adaptation_policy(llm_client: object | None = None) -> dict:
+        model_context = resolve_attachment_model_context(None, llm_client=llm_client)
+        return get_attachment_adaptation_policy(model_context)
+
     @classmethod
     def _build_desktop_attachment_content_blocks(
         cls,
         attachments: list[object] | None,
         text: str = "",
+        llm_client: object | None = None,
+        conversation_id: str | None = None,
+        require_tools: bool = False,
     ) -> list[dict]:
         """Build multimodal content blocks from desktop chat attachments."""
-        content_blocks: list[dict] = []
-        if text:
-            content_blocks.append({"type": "text", "text": text})
-
-        for raw_att in attachments or []:
-            att = cls._resolve_desktop_attachment_record(raw_att)
-            att_type = att["type"]
-            att_url = str(att.get("url", "") or "")
-            att_name = att["name"]
-            att_mime = att["mime_type"]
-            display_path = str(att.get("display_path", "") or att.get("source_path", "") or att_name)
-            text_preview = str(att.get("text_preview", "") or "")
-            entries = att.get("entries") or []
-
-            is_image = (
-                att_type == "image"
-                or att_mime.startswith("image/")
-                or att_url.startswith("data:image/")
-            )
-            is_video = (
-                att_type == "video"
-                or att_mime.startswith("video/")
-                or att_url.startswith("data:video/")
-            )
-            if att.get("id") and att_url and not att_url.startswith("data:"):
-                data_url = get_attachment_store().to_data_url(att)
-                if data_url:
-                    att_url = data_url
-
-            if is_image and att_url:
-                content_blocks.append({"type": "image_url", "image_url": {"url": att_url}})
-            elif is_video and att_url:
-                content_blocks.append({"type": "video_url", "video_url": {"url": att_url}})
-            elif att_type == "document" and att_url:
-                path_text = f" 路径: {display_path}" if display_path else ""
-                preview_text = f"\n{text_preview}" if text_preview else ""
-                content_blocks.append({
-                    "type": "text",
-                    "text": f"[文档: {att_name} ({att_mime})]{path_text}{preview_text}",
-                })
-            elif att_type == "directory":
-                listing = "\n".join(str(item) for item in entries[:50])
-                content_blocks.append({
-                    "type": "text",
-                    "text": (
-                        f"[目录引用: {att_name}] 路径: {display_path}"
-                        + (f"\n目录内容:\n{listing}" if listing else "")
-                    ),
-                })
-            elif att_url:
-                path_text = f" 路径: {display_path}" if display_path else ""
-                preview_text = f"\n{text_preview}" if text_preview else ""
-                content_blocks.append({
-                    "type": "text",
-                    "text": f"[附件: {att_name} ({att_mime})]{path_text}{preview_text}",
-                })
-
-        return content_blocks
+        resolved_attachments = [
+            cls._resolve_desktop_attachment_record(raw_att)
+            for raw_att in (attachments or [])
+        ]
+        return build_attachment_content_blocks(
+            resolved_attachments,
+            text=text,
+            llm_client=llm_client,
+            conversation_id=conversation_id,
+            require_tools=require_tools,
+        )
 
     @staticmethod
     def _merge_llm_message_content(existing: object, incoming: object) -> str | list[dict] | None:
@@ -3501,6 +3485,9 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
                 llm_content = self._build_desktop_attachment_content_blocks(
                     attachments_meta,
                     content if isinstance(content, str) else "",
+                    llm_client=getattr(self.brain, "_llm_client", None),
+                    conversation_id=getattr(self, "_current_session_id", None),
+                    require_tools=bool(getattr(self, "_tools", None)),
                 )
             if role in ("user", "assistant") and llm_content:
                 if messages and messages[-1]["role"] == role:
@@ -3668,6 +3655,9 @@ create_agent(name="名称", description="描述", skills=["技能"], custom_prom
             content_blocks = self._build_desktop_attachment_content_blocks(
                 attachments,
                 compiled_message,
+                llm_client=getattr(self.brain, "_llm_client", None),
+                conversation_id=getattr(self, "_current_session_id", None),
+                require_tools=bool(getattr(self, "_tools", None)),
             )
             if content_blocks:
                 messages.append({"role": "user", "content": content_blocks})

@@ -109,6 +109,83 @@ FILESYSTEM_TOOLS = [
         },
     },
     {
+        "name": "read_attachment_summary",
+        "category": "Attachment",
+        "description": "Read a summary of an uploaded attachment by attachment_id. Use this for user-uploaded files, not workspace paths.",
+        "detail": """读取已上传附件的摘要信息。
+
+**适用场景**:
+- 用户在聊天里上传了文档/文件
+- 已知 `attachment_id`，想先快速了解附件内容
+- 需要区分“上传附件”与“工作区文件”
+
+**注意事项**:
+- 只接受 `attachment_id`
+- 不接受本地路径
+- 如果附件是大文本，摘要会告诉你继续用 `read_attachment_chunk` / `search_attachment`""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "attachment_id": {"type": "string", "description": "附件 ID"},
+                "max_chars": {"type": "integer", "description": "摘要最大字符数，默认 1600"},
+            },
+            "required": ["attachment_id"],
+        },
+    },
+    {
+        "name": "read_attachment_chunk",
+        "category": "Attachment",
+        "description": "Read a paginated text chunk from an uploaded attachment by attachment_id.",
+        "detail": """分页读取已上传文本附件的内容片段。
+
+**适用场景**:
+- 大文本附件不能一次性全部塞进上下文
+- 需要按段继续阅读上传附件
+
+**分页参数**:
+- offset: 起始行号（1-based），默认 1
+- limit: 读取行数，默认 200
+
+**注意事项**:
+- 只接受 `attachment_id`
+- 非文本附件会返回不可读取提示""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "attachment_id": {"type": "string", "description": "附件 ID"},
+                "offset": {"type": "integer", "description": "起始行号（1-based）", "default": 1},
+                "limit": {"type": "integer", "description": "读取行数，默认 200", "default": 200},
+            },
+            "required": ["attachment_id"],
+        },
+    },
+    {
+        "name": "search_attachment",
+        "category": "Attachment",
+        "description": "Search keyword matches inside an uploaded text attachment by attachment_id.",
+        "detail": """在已上传文本附件中搜索关键词。
+
+**适用场景**:
+- 用户上传了长文档，只想定位某个关键词
+- 先搜索命中，再按行号读取片段
+
+**注意事项**:
+- 只接受 `attachment_id`
+- 搜索范围是上传附件文本，不是工作区文件
+- 默认忽略大小写""",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "attachment_id": {"type": "string", "description": "附件 ID"},
+                "query": {"type": "string", "description": "要搜索的关键词"},
+                "context_lines": {"type": "integer", "description": "前后文行数，默认 1", "default": 1},
+                "max_results": {"type": "integer", "description": "最大返回结果数，默认 20", "default": 20},
+                "case_insensitive": {"type": "boolean", "description": "是否忽略大小写，默认 true", "default": True},
+            },
+            "required": ["attachment_id", "query"],
+        },
+    },
+    {
         "name": "edit_file",
         "category": "File System",
         "description": "Edit file by exact string replacement. Finds old_string in the file and replaces it with new_string. The old_string must uniquely match one location unless replace_all=true. ALWAYS prefer this over write_file when modifying existing files — it's safer and more token-efficient.",

@@ -110,8 +110,11 @@ export function LLMView(props: LLMViewProps) {
   const [sttBaseUrlExpanded, setSttBaseUrlExpanded] = useState(false);
   const [addEpMaxTokens, setAddEpMaxTokens] = useState(0);
   const [addEpContextWindow, setAddEpContextWindow] = useState(200000);
+  const [addEpEffectiveContextWindow, setAddEpEffectiveContextWindow] = useState(0);
   const [addEpTimeout, setAddEpTimeout] = useState(180);
   const [addEpRpmLimit, setAddEpRpmLimit] = useState(0);
+  const [addEpThinkingParamStyle, setAddEpThinkingParamStyle] = useState("none");
+  const [addEpPriceCurrency, setAddEpPriceCurrency] = useState("CNY");
   const [codingPlanMode, setCodingPlanMode] = useState(false);
 
   // Compiler form
@@ -145,6 +148,9 @@ export function LLMView(props: LLMViewProps) {
     baseUrl: string; apiKeyEnv: string; apiKeyValue: string;
     modelId: string; caps: string[]; maxTokens: number;
     contextWindow: number; timeout: number; rpmLimit: number;
+    effectiveContextWindow: number;
+    thinkingParamStyle: string;
+    priceCurrency: string;
     pricingTiers: { max_input: number; input_price: number; output_price: number }[];
   } | null>(null);
   const [editModels, setEditModels] = useState<ListedModel[]>([]);
@@ -695,8 +701,11 @@ export function LLMView(props: LLMViewProps) {
       caps: Array.isArray(ep.capabilities) && ep.capabilities.length ? ep.capabilities : ["text"],
       maxTokens: typeof ep.max_tokens === "number" ? ep.max_tokens : 0,
       contextWindow: typeof ep.context_window === "number" ? ep.context_window : 200000,
+      effectiveContextWindow: typeof (ep as any).effective_context_window === "number" ? (ep as any).effective_context_window : 0,
       timeout: typeof ep.timeout === "number" ? ep.timeout : 180,
       rpmLimit: typeof ep.rpm_limit === "number" ? ep.rpm_limit : 0,
+      thinkingParamStyle: typeof (ep as any).thinking_param_style === "string" ? (ep as any).thinking_param_style : "none",
+      priceCurrency: typeof (ep as any).price_currency === "string" ? (ep as any).price_currency : "CNY",
       pricingTiers: Array.isArray(ep.pricing_tiers) ? ep.pricing_tiers.map((tier: any) => ({
         max_input: Number.isFinite(Number(tier?.max_input)) ? Number(tier.max_input) : 0,
         input_price: Number.isFinite(Number(tier?.input_price)) ? Number(tier.input_price) : 0,
@@ -730,8 +739,11 @@ export function LLMView(props: LLMViewProps) {
       caps: ["text"],
       maxTokens: typeof ep.max_tokens === "number" ? ep.max_tokens : 2048,
       contextWindow: typeof ep.context_window === "number" ? ep.context_window : 200000,
+      effectiveContextWindow: typeof (ep as any).effective_context_window === "number" ? (ep as any).effective_context_window : 0,
       timeout: typeof ep.timeout === "number" ? ep.timeout : 30,
       rpmLimit: 0,
+      thinkingParamStyle: typeof (ep as any).thinking_param_style === "string" ? (ep as any).thinking_param_style : "none",
+      priceCurrency: typeof (ep as any).price_currency === "string" ? (ep as any).price_currency : "CNY",
       pricingTiers: [],
     });
     setEditModalOpen(true);
@@ -761,8 +773,11 @@ export function LLMView(props: LLMViewProps) {
       caps: ["text"],
       maxTokens: 0,
       contextWindow: 0,
+      effectiveContextWindow: typeof (ep as any).effective_context_window === "number" ? (ep as any).effective_context_window : 0,
       timeout: typeof ep.timeout === "number" ? ep.timeout : 60,
       rpmLimit: 0,
+      thinkingParamStyle: typeof (ep as any).thinking_param_style === "string" ? (ep as any).thinking_param_style : "none",
+      priceCurrency: typeof (ep as any).price_currency === "string" ? (ep as any).price_currency : "CNY",
       pricingTiers: [],
     });
     setEditModalOpen(true);
@@ -861,9 +876,12 @@ export function LLMView(props: LLMViewProps) {
         endpoint.priority = Number.isFinite(editDraft.priority) && editDraft.priority > 0 ? editDraft.priority : 10;
         endpoint.max_tokens = editDraft.maxTokens ?? 0;
         endpoint.context_window = editDraft.contextWindow ?? 200000;
+        endpoint.effective_context_window = editDraft.effectiveContextWindow > 0 ? editDraft.effectiveContextWindow : null;
         endpoint.timeout = editDraft.timeout ?? 180;
         endpoint.rpm_limit = editDraft.rpmLimit ?? 0;
         endpoint.capabilities = editDraft.caps?.length ? editDraft.caps : ["text"];
+        endpoint.thinking_param_style = editDraft.thinkingParamStyle || "none";
+        endpoint.price_currency = editDraft.priceCurrency || "CNY";
         if ((editDraft.caps || []).includes("thinking") && editDraft.providerSlug === "dashscope") {
           endpoint.extra_params = { enable_thinking: true };
         }
@@ -939,9 +957,12 @@ export function LLMView(props: LLMViewProps) {
         priority: autoP,
         max_tokens: addEpMaxTokens,
         context_window: addEpContextWindow,
+        effective_context_window: addEpEffectiveContextWindow > 0 ? addEpEffectiveContextWindow : null,
         timeout: addEpTimeout,
         rpm_limit: addEpRpmLimit,
         capabilities: capList,
+        thinking_param_style: addEpThinkingParamStyle || "none",
+        price_currency: addEpPriceCurrency || "CNY",
       };
       if (streamOnly) endpoint.stream_only = true;
       if (capList.includes("thinking") && (providerSlug || selectedProvider?.slug) === "dashscope") {
@@ -1021,8 +1042,11 @@ export function LLMView(props: LLMViewProps) {
     setCodingPlanMode(false);
     setAddEpMaxTokens(0);
     setAddEpContextWindow(200000);
+    setAddEpEffectiveContextWindow(0);
     setAddEpTimeout(180);
     setAddEpRpmLimit(0);
+    setAddEpThinkingParamStyle("none");
+    setAddEpPriceCurrency("CNY");
     if (providers.length === 0) doLoadProviders();
     setAddEpDialogOpen(true);
   }
@@ -1320,12 +1344,32 @@ export function LLMView(props: LLMViewProps) {
                   )}
                 </div>
                 <div className="space-y-1.5">
+                  <Label>{t("llm.advEffectiveContextWindow")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advEffectiveContextWindowHint")}</span></Label>
+                  <Input type="number" min={0} value={addEpEffectiveContextWindow ? Math.round(addEpEffectiveContextWindow / 1000) : ""} onChange={(e) => setAddEpEffectiveContextWindow((parseInt(e.target.value) || 0) * 1000)} placeholder={addEpContextWindow ? String(Math.round(addEpContextWindow / 1000)) : "0"} />
+                </div>
+                <div className="space-y-1.5">
                   <Label>{t("llm.advTimeout")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advTimeoutHint")}</span></Label>
                   <Input type="number" min={10} value={addEpTimeout} onChange={(e) => setAddEpTimeout(Math.max(10, parseInt(e.target.value) || 180))} />
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t("llm.advRpmLimit")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advRpmLimitHint")}</span></Label>
                   <Input type="number" min={0} value={addEpRpmLimit} onChange={(e) => setAddEpRpmLimit(Math.max(0, parseInt(e.target.value) || 0))} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>{t("llm.advThinkingParamStyle")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advThinkingParamStyleHint")}</span></Label>
+                  <Select value={addEpThinkingParamStyle} onValueChange={setAddEpThinkingParamStyle}>
+                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">{t("llm.thinkingStyleNone")}</SelectItem>
+                      <SelectItem value="anthropic">{t("llm.thinkingStyleAnthropic")}</SelectItem>
+                      <SelectItem value="openai_reasoning">{t("llm.thinkingStyleOpenAI")}</SelectItem>
+                      <SelectItem value="qwen">{t("llm.thinkingStyleQwen")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>{t("llm.priceCurrency")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.priceCurrencyHint")}</span></Label>
+                  <Input value={addEpPriceCurrency} onChange={(e) => setAddEpPriceCurrency((e.target.value || "CNY").toUpperCase())} placeholder="CNY" maxLength={8} />
                 </div>
               </div>
             </details>
@@ -1509,12 +1553,32 @@ export function LLMView(props: LLMViewProps) {
                   )}
                 </div>
                 <div className="space-y-1.5">
+                  <Label>{t("llm.advEffectiveContextWindow")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advEffectiveContextWindowHint")}</span></Label>
+                  <Input type="number" min={0} value={editDraft.effectiveContextWindow ? Math.round(editDraft.effectiveContextWindow / 1000) : ""} onChange={(e) => setEditDraft({ ...editDraft, effectiveContextWindow: (parseInt(e.target.value) || 0) * 1000 })} placeholder={editDraft.contextWindow ? String(Math.round(editDraft.contextWindow / 1000)) : "0"} />
+                </div>
+                <div className="space-y-1.5">
                   <Label>{t("llm.advTimeout")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advTimeoutHint")}</span></Label>
                   <Input type="number" min={10} value={editDraft.timeout} onChange={(e) => setEditDraft({ ...editDraft, timeout: Math.max(10, parseInt(e.target.value) || 180) })} />
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t("llm.advRpmLimit")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advRpmLimitHint")}</span></Label>
                   <Input type="number" min={0} value={editDraft.rpmLimit} onChange={(e) => setEditDraft({ ...editDraft, rpmLimit: Math.max(0, parseInt(e.target.value) || 0) })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>{t("llm.advThinkingParamStyle")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.advThinkingParamStyleHint")}</span></Label>
+                  <Select value={editDraft.thinkingParamStyle} onValueChange={(v) => setEditDraft({ ...editDraft, thinkingParamStyle: v })}>
+                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">{t("llm.thinkingStyleNone")}</SelectItem>
+                      <SelectItem value="anthropic">{t("llm.thinkingStyleAnthropic")}</SelectItem>
+                      <SelectItem value="openai_reasoning">{t("llm.thinkingStyleOpenAI")}</SelectItem>
+                      <SelectItem value="qwen">{t("llm.thinkingStyleQwen")}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>{t("llm.priceCurrency")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.priceCurrencyHint")}</span></Label>
+                  <Input value={editDraft.priceCurrency} onChange={(e) => setEditDraft({ ...editDraft, priceCurrency: (e.target.value || "CNY").toUpperCase() })} placeholder="CNY" maxLength={8} />
                 </div>
               </div>
             </details>

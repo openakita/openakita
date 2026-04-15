@@ -276,7 +276,11 @@ class AnthropicProvider(LLMProvider):
         # Anthropic API 强制要求 max_tokens（不传会 400 报错），
         # 与 OpenAI 兼容 API 不同（可选参数，不传则用模型默认上限）。
         # 因此这里必须传一个值。使用端点配置的 max_tokens 或请求指定的值。
-        thinking_enabled = request.enable_thinking and self.config.has_capability("thinking")
+        thinking_enabled = (
+            request.enable_thinking
+            and self.config.has_capability("thinking")
+            and self.config.get_thinking_param_style() == "anthropic"
+        )
         messages = self._serialize_messages(request.messages, thinking_enabled)
         body = {
             "model": self.config.model,

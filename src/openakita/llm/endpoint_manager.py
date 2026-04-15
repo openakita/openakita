@@ -243,7 +243,7 @@ class EndpointManager:
             # Upsert into endpoint list
             if existing:
                 idx = ep_list.index(existing)
-                ep_list[idx] = {**existing, **endpoint}
+                ep_list[idx] = self._merge_endpoint_dict(existing, endpoint)
             else:
                 ep_list.append(endpoint)
 
@@ -254,6 +254,17 @@ class EndpointManager:
             self._write_json(config)
 
             return endpoint
+
+    @staticmethod
+    def _merge_endpoint_dict(existing: dict, updates: dict) -> dict:
+        """合并端点字典；显式传入 None 表示删除对应字段。"""
+        merged = dict(existing)
+        for key, value in updates.items():
+            if value is None:
+                merged.pop(key, None)
+            else:
+                merged[key] = value
+        return merged
 
     def delete_endpoint(
         self,

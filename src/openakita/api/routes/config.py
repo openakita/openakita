@@ -33,6 +33,18 @@ def _project_root() -> Path:
         return Path.cwd()
 
 
+def _workspace_root() -> Path:
+    """Return the canonical workspace root associated with the current config."""
+    from openakita.llm.config import get_workspace_dir
+    return get_workspace_dir(_endpoints_config_path())
+
+
+def _workspace_env_path() -> Path:
+    """Return the canonical workspace .env path associated with the current config."""
+    from openakita.llm.config import get_workspace_env_path
+    return get_workspace_env_path(_endpoints_config_path())
+
+
 def _read_endpoints_safe(ep_path: Path) -> dict | None:
     """Read llm_endpoints.json with .bak fallback."""
     from openakita.utils.atomic_io import read_json_safe
@@ -187,12 +199,14 @@ class ListModelsRequest(BaseModel):
 @router.get("/api/config/workspace-info")
 async def workspace_info():
     """Return current workspace path and basic info."""
-    root = _project_root()
+    root = _workspace_root()
     ep_path = _endpoints_config_path()
+    env_path = _workspace_env_path()
     return {
         "workspace_path": str(root),
         "workspace_name": root.name,
-        "env_exists": (root / ".env").exists(),
+        "env_exists": env_path.exists(),
+        "env_path": str(env_path),
         "endpoints_exists": ep_path.exists(),
         "endpoints_path": str(ep_path),
     }
@@ -201,7 +215,7 @@ async def workspace_info():
 @router.get("/api/config/env")
 async def read_env():
     """Read .env file content as key-value pairs (plaintext)."""
-    env_path = _project_root() / ".env"
+    env_path = _workspace_env_path()
     if not env_path.exists():
         return {"env": {}, "raw": ""}
     content = env_path.read_bytes().decode("utf-8", errors="replace")
@@ -220,7 +234,7 @@ async def write_env(body: EnvUpdateRequest):
     """
     from openakita.utils.atomic_io import safe_write
 
-    env_path = _project_root() / ".env"
+    env_path = _workspace_env_path()
     existing = ""
     if env_path.exists():
         existing = env_path.read_bytes().decode("utf-8", errors="replace")
@@ -251,7 +265,7 @@ async def read_endpoints():
 def _get_endpoint_manager():
     """Get or create the EndpointManager singleton for the current workspace."""
     from openakita.llm.endpoint_manager import EndpointManager
-    root = _project_root()
+    root = _workspace_root()
     _mgr = getattr(_get_endpoint_manager, "_instance", None)
     if _mgr is None or _mgr._ws_dir != root:
         _mgr = EndpointManager(root, config_path=_endpoints_config_path())

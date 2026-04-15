@@ -690,7 +690,12 @@ class OpenAIProvider(LLMProvider):
     def _build_request_body(self, request: LLMRequest) -> dict:
         """构建请求体"""
         # 转换消息格式（传递 provider 以正确处理视频等多媒体内容）
-        thinking_enabled = request.enable_thinking and self.config.has_capability("thinking")
+        thinking_style = self.config.get_thinking_param_style()
+        thinking_enabled = (
+            request.enable_thinking
+            and self.config.has_capability("thinking")
+            and thinking_style != "none"
+        )
 
         # thinking-only 模型（deepseek-reasoner、QwQ 等）无法关闭思考，
         # 即使 fallback 降级了 enable_thinking=False，
@@ -765,7 +770,7 @@ class OpenAIProvider(LLMProvider):
         is_local = self._is_local_endpoint()
 
         # DashScope 思考模式 — 必须在 extra_params 之后，以覆盖其中的 enable_thinking
-        if self.config.provider == "dashscope" and self.config.has_capability("thinking"):
+        if thinking_style == "qwen" and self.config.has_capability("thinking"):
             ds_thinking = bool(request.enable_thinking)
             if not ds_thinking and is_always_thinking:
                 ds_thinking = True
@@ -845,6 +850,7 @@ class OpenAIProvider(LLMProvider):
         elif (
             self.config.has_capability("thinking")
             and not is_local
+            and thinking_style == "openai_reasoning"
         ):
             # 清理 DashScope 风格参数（可能由 extra_params 泄漏）
             # 此分支使用 OpenAI 风格 thinking: {"type": "enabled"}，不使用 enable_thinking

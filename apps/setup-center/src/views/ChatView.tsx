@@ -3288,10 +3288,9 @@ export function ChatView({
           url: a.url,
           mime_type: a.mimeType,
           size: a.size,
-          source_path: a.sourcePath,
-          display_path: a.displayPath,
-          entries: a.entries,
-          text_preview: a.textPreview,
+          display_path: a.type === "directory" ? a.displayPath : undefined,
+          entries: a.type === "directory" ? a.entries : undefined,
+          text_preview: a.type === "directory" ? a.textPreview : undefined,
         }));
       }
 
@@ -4244,35 +4243,43 @@ export function ChatView({
     e.target.value = "";
   }, [uploadFile]);
 
-  // ── 粘贴图片 ──
+  // ── 粘贴图片 / 文件 ──
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items;
     if (!items) return;
     for (const item of Array.from(items)) {
-      if (item.type.startsWith("image/")) {
-        e.preventDefault();
-        const file = item.getAsFile();
-        if (!file) continue;
+      if (item.kind !== "file") continue;
+      const file = item.getAsFile();
+      if (!file) continue;
+      e.preventDefault();
+      const fallbackName = `粘贴文件-${Date.now()}`;
+      const rawName = typeof file.name === "string" && file.name.trim() ? file.name : fallbackName;
+      const ext = (rawName.split(".").pop() || "").toLowerCase();
+      const isImage = item.type.startsWith("image/") || ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(ext);
+      const attType: ChatAttachment["type"] =
+        isImage ? "image"
+          : item.type.startsWith("video/") ? "video"
+            : item.type.startsWith("audio/") ? "voice"
+              : item.type === "application/pdf" ? "document"
+                : "file";
+      const tempId = `temp-${genId()}`;
+      const tempAtt: ChatAttachment = {
+        id: tempId,
+        type: attType,
+        status: "uploading",
+        name: rawName,
+        size: file.size,
+        mimeType: file.type,
+      };
+      if (isImage) {
         const reader = new FileReader();
         reader.onload = () => {
-          const name = `粘贴图片-${Date.now()}.png`;
-          const tempId = `temp-${genId()}`;
           const previewUrl = reader.result as string;
-          const tempAtt: ChatAttachment = {
-            id: tempId,
-            type: "image",
-            status: "uploading",
-            name,
-            previewUrl,
-            size: file.size,
-            mimeType: file.type,
-          };
-          setPendingAttachments((prev) => [...prev, tempAtt]);
-          uploadFile(file, name, "image")
+          setPendingAttachments((prev) => [...prev, { ...tempAtt, previewUrl }]);
+          uploadFile(file, rawName, "image")
             .then((uploaded) => {
               setPendingAttachments((prev) =>
-                prev.map((a) => a.id === tempId
-                  ? { ...uploaded, previewUrl } : a)
+                prev.map((a) => a.id === tempId ? { ...uploaded, previewUrl } : a)
               );
             })
             .catch(() => {
@@ -4281,7 +4288,19 @@ export function ChatView({
             });
         };
         reader.readAsDataURL(file);
+        continue;
       }
+      setPendingAttachments((prev) => [...prev, tempAtt]);
+      uploadFile(file, rawName, attType)
+        .then((uploaded) => {
+          setPendingAttachments((prev) =>
+            prev.map((a) => a.id === tempId ? { ...uploaded } : a)
+          );
+        })
+        .catch(() => {
+          setPendingAttachments((prev) =>
+            prev.map((a) => a.id === tempId ? { ...a, status: "failed", error: "upload_failed" } : a));
+        });
     }
   }, [uploadFile]);
 

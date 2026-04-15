@@ -229,44 +229,30 @@ function basenameFromPath(path: string): string {
 export async function inspectLocalPath(path: string): Promise<LocalPathInfo> {
   if (!IS_TAURI)
     throw new Error("inspectLocalPath is only available in Tauri");
-  const fsMod = await import("@tauri-apps/plugin-fs");
-  const fsAny = fsMod as any;
-  const statResult = await fsAny.stat(path);
-  const name = basenameFromPath(path);
-  if (!statResult) return { kind: "missing", name, path };
-  if (statResult.isDirectory) {
-    const rawEntries = await fsAny.readDir(path);
-    const names = (Array.isArray(rawEntries) ? rawEntries : []).map((entry: any) =>
-      String(entry?.name || basenameFromPath(String(entry?.path || ""))),
-    ).filter(Boolean);
-    const entries = names.length > LOCAL_DIR_ENTRY_LIMIT
-      ? [...names.slice(0, LOCAL_DIR_ENTRY_LIMIT), `... and ${names.length - LOCAL_DIR_ENTRY_LIMIT} more entries`]
-      : names;
-    return { kind: "directory", name, path, entries };
-  }
-  if (statResult.isFile) {
+  const info = await invoke<LocalPathInfo>("inspect_local_path", { path });
+  if (info.kind === "directory" && Array.isArray(info.entries) && info.entries.length > LOCAL_DIR_ENTRY_LIMIT) {
     return {
-      kind: "file",
-      name,
-      path,
-      size: typeof statResult.size === "number" ? statResult.size : undefined,
+      ...info,
+      entries: [...info.entries.slice(0, LOCAL_DIR_ENTRY_LIMIT), `... and ${info.entries.length - LOCAL_DIR_ENTRY_LIMIT} more entries`],
     };
   }
-  return { kind: "other", name, path };
+  return info;
 }
 
 export async function readLocalFile(path: string): Promise<{ name: string; data: Uint8Array; mimeType: string }> {
   if (!IS_TAURI)
     throw new Error("readLocalFile is only available in Tauri");
-  const fsMod = await import("@tauri-apps/plugin-fs");
-  const fsAny = fsMod as any;
-  const name = basenameFromPath(path);
-  const raw = await fsAny.readFile(path);
-  const data = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+  const payload = await invoke<{ name: string; mimeType?: string; mime_type?: string; dataBase64?: string; data_base64?: string }>("read_local_file", { path });
+  const b64 = payload.dataBase64 || payload.data_base64 || "";
+  const atobFn = typeof globalThis.atob === "function" ? globalThis.atob.bind(globalThis) : null;
+  if (!atobFn) throw new Error("base64_decoder_unavailable");
+  const binary = atobFn(b64);
+  const data = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) data[i] = binary.charCodeAt(i);
   return {
-    name,
+    name: payload.name || basenameFromPath(path),
     data,
-    mimeType: guessMimeTypeFromName(name),
+    mimeType: payload.mimeType || payload.mime_type || guessMimeTypeFromName(payload.name || basenameFromPath(path)),
   };
 }
 

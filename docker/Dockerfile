@@ -20,12 +20,14 @@ RUN npm run build:web
 # ------------------------------
 FROM python:3.11-slim
 
-# 设置工作目录
-WORKDIR /app
-
 # 设置环境变量
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PROJECT_ROOT=/workspace
+
+# 代码安装与打包在 /app 下完成；运行时工作区使用独立的 /workspace，
+# 避免把不可变镜像层和可写配置/数据混在一起。
+WORKDIR /app
 
 # 安装系统依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -54,10 +56,12 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 # 创建非 root 用户并设置目录权限
 RUN useradd --create-home --shell /bin/bash openakita \
-    && mkdir -p /app/data /app/identity /app/logs \
-    && chown -R openakita:openakita /app/data /app/identity /app/logs
+    && mkdir -p /workspace/data /workspace/identity /workspace/logs \
+    && chown -R openakita:openakita /workspace
 
 USER openakita
+
+WORKDIR /workspace
 
 # 暴露端口（OpenAkita 默认端口 18900）
 EXPOSE 18900

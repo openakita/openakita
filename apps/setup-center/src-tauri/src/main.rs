@@ -2810,6 +2810,8 @@ fn main() {
             http_proxy_request,
             backend_fetch,
             read_file_base64,
+            inspect_local_path,
+            read_local_file,
             download_file,
             show_item_in_folder,
             open_file_with_default,
@@ -5827,6 +5829,140 @@ async fn read_file_base64(path: String) -> Result<String, String> {
     };
     let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
     Ok(format!("data:{};base64,{}", mime, b64))
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct LocalPathInfo {
+    kind: String,
+    name: String,
+    path: String,
+    size: Option<u64>,
+    entries: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct LocalFilePayload {
+    name: String,
+    mime_type: String,
+    data_base64: String,
+}
+
+fn guess_mime_from_path(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "avi" => "video/x-msvideo",
+        "mov" => "video/quicktime",
+        "mkv" => "video/x-matroska",
+        "pdf" => "application/pdf",
+        "txt" | "md" => "text/plain",
+        "json" => "application/json",
+        "csv" => "text/csv",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        _ => "application/octet-stream",
+    }
+}
+
+#[tauri::command]
+async fn inspect_local_path(path: String) -> Result<LocalPathInfo, String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Ok(LocalPathInfo {
+            kind: "missing".into(),
+            name: p
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&path)
+                .to_string(),
+            path,
+            size: None,
+            entries: None,
+        });
+    }
+
+    let name = p
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&path)
+        .to_string();
+    let meta = fs::metadata(p).map_err(|e| format!("Failed to stat {}: {}", path, e))?;
+
+    if meta.is_dir() {
+        let mut entries: Vec<String> = fs::read_dir(p)
+            .map_err(|e| format!("Failed to read dir {}: {}", path, e))?
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| entry.file_name().to_str().map(|s| s.to_string()))
+            .collect();
+        entries.sort();
+        const LIMIT: usize = 200;
+        if entries.len() > LIMIT {
+            let remain = entries.len() - LIMIT;
+            entries.truncate(LIMIT);
+            entries.push(format!("... and {} more entries", remain));
+        }
+        return Ok(LocalPathInfo {
+            kind: "directory".into(),
+            name,
+            path,
+            size: None,
+            entries: Some(entries),
+        });
+    }
+
+    if meta.is_file() {
+        return Ok(LocalPathInfo {
+            kind: "file".into(),
+            name,
+            path,
+            size: Some(meta.len()),
+            entries: None,
+        });
+    }
+
+    Ok(LocalPathInfo {
+        kind: "other".into(),
+        name,
+        path,
+        size: None,
+        entries: None,
+    })
+}
+
+#[tauri::command]
+async fn read_local_file(path: String) -> Result<LocalFilePayload, String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("File not found: {}", path));
+    }
+    if !p.is_file() {
+        return Err(format!("Path is not a file: {}", path));
+    }
+    let data = fs::read(p).map_err(|e| format!("Failed to read {}: {}", path, e))?;
+    Ok(LocalFilePayload {
+        name: p
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&path)
+            .to_string(),
+        mime_type: guess_mime_from_path(p).to_string(),
+        data_base64: base64::engine::general_purpose::STANDARD.encode(&data),
+    })
 }
 
 /// Download a file from a URL and save it.

@@ -482,8 +482,10 @@ class EndpointConfig:
     priority: int = 1  # 优先级 (越小越优先)
     max_tokens: int = 0  # 最大输出 tokens (0=不限制，使用模型默认上限)
     context_window: int = 200000  # 上下文窗口大小 (输入+输出总 token 上限)，配置缺失时的兜底值
+    effective_context_window: int | None = None  # 预算计算使用的实际可用上下文窗口
     timeout: int = 180  # 超时时间 (秒)
     capabilities: list[str] | None = None  # 能力列表
+    thinking_param_style: str = "none"  # thinking 参数翻译风格
     extra_params: dict | None = None  # 额外参数
     note: str | None = None  # 备注
     rpm_limit: int = 0  # 每分钟请求数限制 (0=不限流)
@@ -530,6 +532,28 @@ class EndpointConfig:
                 return True
 
         return False
+
+    def get_effective_context_window(self) -> int:
+        """获取预算计算使用的实际上下文窗口。"""
+        ctx = int(self.effective_context_window or 0)
+        if ctx > 0:
+            return ctx
+        return int(self.context_window or 0)
+
+    def get_thinking_param_style(self) -> str:
+        """获取 thinking 参数翻译风格，缺失时按已知 provider 做兼容推断。"""
+        explicit = (self.thinking_param_style or "").strip().lower()
+        if explicit in {"anthropic", "openai_reasoning", "qwen"}:
+            return explicit
+        if not self.has_capability("thinking"):
+            return "none"
+        if self.api_type == "anthropic":
+            return "anthropic"
+        if self.provider == "dashscope":
+            return "qwen"
+        if self.api_type in {"openai", "openai_responses"}:
+            return "openai_reasoning"
+        return "none"
 
     def get_api_key(self) -> str | None:
         """获取 API Key (优先使用直接存储的 key，然后从环境变量获取)"""
@@ -584,8 +608,10 @@ class EndpointConfig:
             priority=data.get("priority", 1),
             max_tokens=data.get("max_tokens", 0),
             context_window=data.get("context_window", 200000),
+            effective_context_window=data.get("effective_context_window"),
             timeout=data.get("timeout", 180),
             capabilities=data.get("capabilities"),
+            thinking_param_style=data.get("thinking_param_style", "none"),
             extra_params=data.get("extra_params"),
             note=data.get("note"),
             rpm_limit=int(data.get("rpm_limit") or 0),
@@ -607,6 +633,10 @@ class EndpointConfig:
             "context_window": self.context_window,
             "timeout": self.timeout,
         }
+        if self.effective_context_window and self.effective_context_window > 0:
+            result["effective_context_window"] = self.effective_context_window
+        if self.thinking_param_style and self.thinking_param_style != "none":
+            result["thinking_param_style"] = self.thinking_param_style
         # API Key: 优先使用环境变量名，不保存明文 key 到配置
         if self.api_key_env:
             result["api_key_env"] = self.api_key_env

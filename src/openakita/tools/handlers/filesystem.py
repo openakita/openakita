@@ -17,6 +17,8 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...api.attachment_store import get_attachment_store
+
 if TYPE_CHECKING:
     from ...core.agent import Agent
 
@@ -35,6 +37,9 @@ class FilesystemHandler:
         "run_shell",
         "write_file",
         "read_file",
+        "read_attachment_summary",
+        "read_attachment_chunk",
+        "search_attachment",
         "edit_file",
         "list_directory",
         "grep",
@@ -96,6 +101,12 @@ class FilesystemHandler:
             return await self._write_file(params)
         elif tool_name == "read_file":
             return await self._read_file(params)
+        elif tool_name == "read_attachment_summary":
+            return await self._read_attachment_summary(params)
+        elif tool_name == "read_attachment_chunk":
+            return await self._read_attachment_chunk(params)
+        elif tool_name == "search_attachment":
+            return await self._search_attachment(params)
         elif tool_name == "edit_file":
             return await self._edit_file(params)
         elif tool_name == "list_directory":
@@ -421,6 +432,128 @@ class FilesystemHandler:
             )
 
         return result
+
+    async def _read_attachment_summary(self, params: dict) -> str:
+        """读取已上传附件摘要"""
+        attachment_id = str(params.get("attachment_id", "") or "").strip()
+        if not attachment_id:
+            return "❌ read_attachment_summary 缺少必要参数 'attachment_id'。"
+
+        max_chars = params.get("max_chars", 1600)
+        try:
+            max_chars = max(200, min(int(max_chars), 12000))
+        except (TypeError, ValueError):
+            max_chars = 1600
+
+        summary = get_attachment_store().describe_attachment(
+            attachment_id,
+            preview_chars=max_chars,
+        )
+        if not summary:
+            return f"❌ 未找到附件: {attachment_id}"
+
+        lines = [
+            f"附件摘要: {summary['name']}",
+            f"- attachment_id: {summary['id'] or attachment_id}",
+            f"- 类型: {summary['type']}",
+            f"- MIME: {summary['mime_type']}",
+            f"- 大小: {summary['size']} 字节",
+        ]
+        if summary.get("display_path"):
+            lines.append(f"- 显示路径: {summary['display_path']}")
+        if summary.get("text_extractable"):
+            lines.append(f"- 文本长度: {summary['text_length']} 字符 / {summary['line_count']} 行")
+        else:
+            lines.append("- 文本能力: 当前仅有元数据或短预览，不能按正文读取")
+        if summary.get("chunk_count"):
+            lines.append(f"- 预计分块数: {summary['chunk_count']}")
+
+        preview = summary.get("preview", "")
+        if preview:
+            lines.append("\n预览:\n" + preview)
+        if summary.get("tool_hint"):
+            lines.append("\n继续阅读可用:\n" + summary["tool_hint"])
+        return "\n".join(lines)
+
+    async def _read_attachment_chunk(self, params: dict) -> str:
+        """分页读取已上传附件正文"""
+        attachment_id = str(params.get("attachment_id", "") or "").strip()
+        if not attachment_id:
+            return "❌ read_attachment_chunk 缺少必要参数 'attachment_id'。"
+
+        result = get_attachment_store().read_text_chunk(
+            attachment_id,
+            offset=params.get("offset", 1),
+            limit=params.get("limit", 200),
+        )
+        if result.get("error"):
+            return f"❌ {result['error']}"
+
+        text = (
+            f"附件内容 {result['name']} "
+            f"(第 {result['start_line']}-{result['end_line']} 行，共 {result['total_lines']} 行):\n"
+            f"{result['content']}"
+        )
+        if result.get("has_more") and result.get("next_offset"):
+            text += (
+                f"\n\n[OUTPUT_TRUNCATED] 仍有后续内容。\n"
+                f'使用 read_attachment_chunk(attachment_id="{attachment_id}", '
+                f"offset={result['next_offset']}, limit={params.get('limit', 200)}) 查看后续内容。"
+            )
+        return text
+
+    async def _search_attachment(self, params: dict) -> str:
+        """搜索已上传附件正文"""
+        attachment_id = str(params.get("attachment_id", "") or "").strip()
+        query = str(params.get("query", "") or "")
+        if not attachment_id:
+            return "❌ search_attachment 缺少必要参数 'attachment_id'。"
+        if not query:
+            return "❌ search_attachment 缺少必要参数 'query'。"
+
+        context_lines = params.get("context_lines", 1)
+        max_results = params.get("max_results", 20)
+        case_insensitive = params.get("case_insensitive", True)
+        if isinstance(case_insensitive, str):
+            case_insensitive = case_insensitive.strip().lower() not in {"0", "false", "no"}
+        try:
+            context_lines = max(0, int(context_lines))
+        except (TypeError, ValueError):
+            context_lines = 1
+        try:
+            max_results = max(1, min(int(max_results), 100))
+        except (TypeError, ValueError):
+            max_results = 20
+
+        result = get_attachment_store().search_text(
+            attachment_id,
+            query=query,
+            context_lines=context_lines,
+            max_results=max_results,
+            case_insensitive=bool(case_insensitive),
+        )
+        if result.get("error"):
+            return f"❌ {result['error']}"
+
+        matches = result.get("matches") or []
+        if not matches:
+            return f"未在附件 {result['name']} 中找到 '{query}'。"
+
+        lines: list[str] = [f"附件搜索结果: {result['name']} | query={query}"]
+        for match in matches:
+            for ctx in match.get("context_before", []):
+                lines.append(f"-{ctx}")
+            lines.append(f"{result['name']}:{match['line']}:{match['text']}")
+            for ctx in match.get("context_after", []):
+                lines.append(f"-{ctx}")
+            lines.append("")
+
+        if result.get("truncated"):
+            lines.append(
+                f"[OUTPUT_TRUNCATED] 结果已截断。可提高 max_results，"
+                f"或用 read_attachment_chunk(attachment_id=\"{attachment_id}\", offset=行号附近) 继续阅读。"
+            )
+        return "\n".join(lines).rstrip()
 
     # list_directory 默认最大条目数
     LIST_DIR_DEFAULT_MAX = 200

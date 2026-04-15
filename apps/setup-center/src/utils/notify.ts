@@ -10,7 +10,11 @@ export function notifyError(msg: string) {
     duration: 8000,
     action: {
       label: "复制",
-      onClick: () => copyToClipboard(msg),
+      onClick: async () => {
+        const ok = await copyToClipboard(msg);
+        if (ok) toast.success("已复制到剪贴板", { duration: 2000 });
+        else toast.error("复制失败，请手动选择文本复制", { duration: 3000 });
+      },
     },
   });
 }

@@ -137,3 +137,34 @@ def test_save_endpoint_rejects_rename_when_target_name_exists(tmp_path):
         assert "already exists" in str(exc)
     else:
         raise AssertionError("Expected duplicate rename to raise ValueError")
+
+
+def test_save_endpoint_none_value_removes_old_optional_field(tmp_path):
+    manager = EndpointManager(tmp_path)
+
+    manager.save_endpoint(
+        endpoint={
+            "name": "custom-one",
+            "provider": "custom",
+            "api_type": "openai",
+            "base_url": "https://api.example.com/v1",
+            "model": "demo-1",
+            "effective_context_window": 64000,
+        },
+        api_key="secret-1",
+    )
+
+    manager.save_endpoint(
+        endpoint={
+            "name": "custom-one",
+            "provider": "custom",
+            "api_type": "openai",
+            "base_url": "https://api.example.com/v1",
+            "model": "demo-1",
+            "effective_context_window": None,
+        },
+        api_key="secret-1",
+    )
+
+    saved = manager.list_endpoints()[0]
+    assert "effective_context_window" not in saved

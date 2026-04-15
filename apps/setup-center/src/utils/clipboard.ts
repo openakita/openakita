@@ -35,16 +35,16 @@ export async function copyToClipboard(text: string | null | undefined): Promise<
     textarea.style.left = "-9999px";
     textarea.style.top = "0";
     document.body.appendChild(textarea);
+    const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
-    const selection = window.getSelection();
-    const range = document.createRange();
-    range.selectNodeContents(textarea);
-    selection?.removeAllRanges();
-    selection?.addRange(range);
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
 
     const ok = document.execCommand("copy");
-    selection?.removeAllRanges();
+
     document.body.removeChild(textarea);
+    active?.focus();
     return ok;
   } catch {
     return false;

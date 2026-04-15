@@ -47,11 +47,14 @@ export type EndpointDraft = {
   priority: number;
   max_tokens: number;
   context_window: number;
+  effective_context_window?: number | null;
   timeout: number;
   capabilities: string[];
+  thinking_param_style?: string;
   rpm_limit?: number;
   note?: string | null;
   pricing_tiers?: { max_input: number; input_price: number; output_price: number }[];
+  price_currency?: string;
   enabled?: boolean;
 };
 

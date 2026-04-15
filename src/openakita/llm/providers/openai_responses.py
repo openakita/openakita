@@ -217,7 +217,11 @@ class OpenAIResponsesProvider(OpenAIProvider):
         body["store"] = False
 
         # 思考模式 (reasoning)
-        if request.enable_thinking and self.config.has_capability("thinking"):
+        if (
+            request.enable_thinking
+            and self.config.has_capability("thinking")
+            and self.config.get_thinking_param_style() == "openai_reasoning"
+        ):
             if request.thinking_depth:
                 body["reasoning"] = {"effort": request.thinking_depth}
             else:

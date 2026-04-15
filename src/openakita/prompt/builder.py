@@ -766,7 +766,9 @@ C. 方案三
         return common_rules + """## CLI 会话规则
 
 - **直接输出**: 结果会直接显示在终端
-- **无需主动汇报**: CLI 模式下不需要频繁发送进度消息"""
+- **无需主动汇报**: CLI 模式下不需要频繁发送进度消息
+- **上传附件与工作区文件要分开理解**: 如果消息中已经出现“已上传文档/附件”或 `attachment_id`，那是独立的附件通道，不等于当前工作区里的真实路径。
+- **处理上传附件的正确方式**: 优先使用消息中已提供的正文/节选/预览；若还不够，再用 `read_attachment_summary`、`read_attachment_chunk`、`search_attachment`。不要对上传附件调用 `read_file`，除非用户明确要求操作工作区中的真实文件。"""
 
 
 def _build_catalogs_section(

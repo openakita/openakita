@@ -50,6 +50,29 @@ def get_raw_context_window(brain: Any) -> int:
     return 0
 
 
+def get_effective_context_window(
+    brain: Any,
+    conversation_id: str | None = None,
+) -> int:
+    """获取当前请求应使用的有效上下文窗口。"""
+    try:
+        llm_client = getattr(brain, "_llm_client", None)
+        if llm_client is not None:
+            ctx = llm_client.resolve_model_context(conversation_id=conversation_id)
+            if ctx.effective_context_window > 0:
+                return ctx.effective_context_window
+        info = brain.get_current_model_info(conversation_id=conversation_id)
+        ep_name = info.get("name", "")
+        for ep in brain._llm_client.endpoints:
+            if ep.name == ep_name:
+                return getattr(ep, "get_effective_context_window", lambda: 0)() or getattr(
+                    ep, "context_window", 0
+                )
+    except Exception:
+        pass
+    return 0
+
+
 def get_max_context_tokens(
     brain: Any,
     conversation_id: str | None = None,
@@ -70,7 +93,9 @@ def get_max_context_tokens(
         ep_name = info.get("name", "")
         for ep in brain._llm_client.endpoints:
             if ep.name == ep_name:
-                ctx = getattr(ep, "context_window", 0) or 0
+                ctx = getattr(ep, "get_effective_context_window", lambda: 0)() or getattr(
+                    ep, "context_window", 0
+                )
                 if ctx <= 0:
                     ctx = FALLBACK_CONTEXT_WINDOW
                 if settings.context_max_window > 0:

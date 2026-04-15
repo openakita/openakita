@@ -580,7 +580,10 @@ class ConfigHandler:
             "priority": int(endpoint_data.get("priority", 10)),
             "max_tokens": int(endpoint_data.get("max_tokens", 0)),
             "context_window": int(endpoint_data.get("context_window", 200000)),
+            "effective_context_window": int(endpoint_data.get("effective_context_window", 0)) or None,
             "timeout": int(endpoint_data.get("timeout", 180)),
+            "thinking_param_style": str(endpoint_data.get("thinking_param_style", "none") or "none"),
+            "price_currency": str(endpoint_data.get("price_currency", "CNY") or "CNY"),
         }
         if endpoint_data.get("capabilities"):
             ep_dict["capabilities"] = endpoint_data["capabilities"]
