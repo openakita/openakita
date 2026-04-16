@@ -65,7 +65,11 @@ function saveToLocalStorage(cid: string, msgs: ChatMsg[]): void {
   try {
     const slim = msgs
       .filter(m => !m.streaming)
-      .map(({ id, role, content, timestamp }) => ({ id, role, content, timestamp }));
+      .map(({ id, role, content, timestamp, attachments }) => {
+        const o: Record<string, unknown> = { id, role, content, timestamp };
+        if (attachments && attachments.length > 0) o.attachments = attachments;
+        return o;
+      });
     localStorage.setItem(LS_PREFIX + cid, JSON.stringify(slim));
   } catch { /* quota exceeded */ }
 }
@@ -439,8 +443,10 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           const result = d.result as Record<string, unknown> | null;
           const error = d.error as string | undefined;
           const resultText = String((result && (result.result || result.error)) || error || JSON.stringify(d));
-          finalContent = wrapWithProcess(resultText);
-          finalizeResult(finalContent, collectAllFiles());
+          setTimeout(() => {
+            finalContent = wrapWithProcess(resultText);
+            finalizeResult(finalContent, collectAllFiles());
+          }, 500);
         });
 
         while (!resolved) {

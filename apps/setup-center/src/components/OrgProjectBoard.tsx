@@ -1096,20 +1096,20 @@ function GanttView({
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <OrgAvatar avatarId={(assignee as any)?.avatar || null} size={24} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                      <span style={{ fontWeight: 600, fontSize: 13, color: "var(--text)" }}>{task.title}</span>
-                      <span className="opb-status-badge" style={{ background: meta.color + "18", color: meta.color, fontSize: 10, padding: "1px 6px" }}>
-                        {meta.label}
-                      </span>
-                      {pct > 0 && <span style={{ fontSize: 10, fontWeight: 600, color: meta.color }}>{pct}%</span>}
-                    </div>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.title}</div>
                     <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 1 }}>
                       {assignee ? (assignee.role_title || assignee.id) : "未分配"}
                       <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 500, opacity: 0.68 }}>#{task.id.slice(0, 8)}</span>
                     </div>
                   </div>
-                  <div style={{ flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-                    <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      <span className="opb-status-badge" style={{ background: meta.color + "18", color: meta.color, fontSize: 10, padding: "1px 6px" }}>
+                        {meta.label}
+                      </span>
+                      {pct > 0 && <span style={{ fontSize: 10, fontWeight: 600, color: meta.color }}>{pct}%</span>}
+                    </div>
+                    <div style={{ display: "flex", gap: 4, alignItems: "center" }} onClick={e => e.stopPropagation()}>
                       {task.status === "todo" && (
                         <Button variant="outline" size="xs" className="h-6 px-2"
                           onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}>
