@@ -502,6 +502,7 @@ class OrgRuntime:
         org.updated_at = _now_iso()
         self._manager.update(org_id, {"status": org.status.value})
         self._org_quota_failures.pop(org_id, None)
+        self._suppress_post_hook.pop(org_id, None)
         if org_id not in self._active_orgs:
             self._activate_org(org)
         self.get_event_store(org_id).emit("org_resumed", "system")
@@ -1621,6 +1622,11 @@ class OrgRuntime:
         self._identities.pop(org_id, None)
         self._policies.pop(org_id, None)
         self._org_quota_failures.pop(org_id, None)
+        self._suppress_post_hook.pop(org_id, None)
+        self._post_hook_cooldown = {
+            k: v for k, v in self._post_hook_cooldown.items()
+            if not k.startswith(f"{org_id}:")
+        }
 
         keys_to_remove = [k for k in self._agent_cache if k.startswith(f"{org_id}:")]
         for k in keys_to_remove:
@@ -1948,10 +1954,7 @@ class OrgRuntime:
             if not root:
                 break
             if root.status == NodeStatus.IDLE and not self._has_active_delegations(org_id, root_node_id):
-                messenger = self.get_messenger(org_id)
-                root_pending = messenger.get_pending_count(root_node_id) if messenger else 0
-                if root_pending == 0:
-                    return self._latest_root_result.pop(org_id, None)
+                return self._latest_root_result.pop(org_id, None)
         return self._latest_root_result.pop(org_id, None)
 
     async def _health_check_loop(self, org_id: str) -> None:
@@ -2348,7 +2351,7 @@ class OrgRuntime:
             return
 
         entry = bb.write_org(
-            content=f"📎 产出{ext_label}：**{filename}**",
+            content=f"📎 产出{ext_label}：**{filename}**\n📂 路径：`{str(p)}`",
             source_node=node_id,
             memory_type=MemoryType.RESOURCE,
             tags=["file_output", ext.lstrip(".")],
@@ -2360,4 +2363,37 @@ class OrgRuntime:
             asyncio.ensure_future(self._broadcast_ws("org:blackboard_update", {
                 "org_id": org_id, "scope": "org", "node_id": node_id,
                 "memory_type": "resource",
+                "filename": filename,
+                "file_path": str(p),
+                "file_size": size_bytes,
             }))
+
+        _TEXT_EXTS = {".md", ".txt", ".html", ".json", ".yaml", ".yml", ".csv", ".xml"}
+        text_preview = ""
+        if ext.lower() in _TEXT_EXTS and size_bytes < 50_000:
+            try:
+                text_preview = p.read_text(encoding="utf-8", errors="replace")[:3000]
+            except Exception:
+                pass
+
+        content_for_task = f"📎 产出文件：**{filename}**\n📂 路径：`{str(p)}`"
+        if text_preview:
+            content_for_task += (
+                f"\n\n<details><summary>文件内容预览</summary>\n\n"
+                f"{text_preview}\n\n</details>"
+            )
+
+        chain_id = self.get_current_chain_id(org_id, node_id)
+        if chain_id:
+            try:
+                self._tool_handler._link_project_task(
+                    org_id, chain_id,
+                    deliverable_content=content_for_task,
+                    file_attachment={
+                        "filename": filename,
+                        "file_path": str(p),
+                        "file_size": size_bytes,
+                    },
+                )
+            except Exception:
+                pass

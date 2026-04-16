@@ -2424,7 +2424,7 @@ export function OrgEditorView({
 
             .org-drawer-slide {
               position: absolute; top: 0; right: 0; bottom: 0; z-index: 90;
-              width: min(420px, 85%);
+              width: min(560px, 85%);
               background: var(--bg-app);
               border-left: 1px solid var(--line, rgba(51,65,85,0.5));
               box-shadow: -8px 0 30px rgba(0,0,0,0.3);

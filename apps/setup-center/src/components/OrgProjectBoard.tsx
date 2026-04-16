@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Check, CornerUpLeft, Pencil, Play, RefreshCw, Trash2, X } from "lucide-react";
 
 import { safeFetch } from "../providers";
+import { useMdModules } from "../views/chat/hooks/useMdModules";
 import { OrgAvatar } from "./OrgAvatars";
 import {
   AlertDialog,
@@ -26,6 +27,8 @@ import { Label } from "./ui/label";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Badge } from "./ui/badge";
+import { FileAttachmentCard } from "./FileAttachmentCard";
+import type { FileAttachment } from "./FileAttachmentCard";
 
 interface ProjectTask {
   id: string;
@@ -40,6 +43,9 @@ interface ProjectTask {
   started_at: string | null;
   delivered_at: string | null;
   completed_at: string | null;
+  deliverable_content?: string;
+  delivery_summary?: string;
+  file_attachments?: FileAttachment[];
 }
 
 interface Project {
@@ -983,6 +989,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
               ) : taskDetail ? (
                 <TaskDetailContent
                   task={taskDetail} timeline={taskTimeline} nodeMap={nodeMap}
+                  apiBaseUrl={apiBaseUrl}
                   subtasksExpanded={subtasksExpanded} setSubtasksExpanded={setSubtasksExpanded}
                   onAncestorClick={(t: any) => { setSelectedTask(t); fetchTaskDetail(t.id); }}
                   statusLabel={(s: string) => STATUS_META[s]?.label || s}
@@ -1285,7 +1292,7 @@ function KanbanView({
 
 function TaskDetailContent({
   task, timeline, nodeMap, subtasksExpanded, setSubtasksExpanded, onAncestorClick, statusLabel,
-  onStatusChange, onDispatch, onCancel, dispatchingTaskId, cancellingTaskId,
+  onStatusChange, onDispatch, onCancel, dispatchingTaskId, cancellingTaskId, apiBaseUrl,
 }: {
   task: any; timeline: any[];
   nodeMap: Map<string, { id: string; role_title?: string; avatar?: string | null }>;
@@ -1296,7 +1303,9 @@ function TaskDetailContent({
   onCancel: () => void;
   dispatchingTaskId: string | null;
   cancellingTaskId: string | null;
+  apiBaseUrl: string;
 }) {
+  const md = useMdModules();
   const assignee = task.assignee_node_id ? nodeMap.get(task.assignee_node_id) : null;
   const delegatedBy = task.delegated_by ? nodeMap.get(task.delegated_by) : null;
   const fmt = (s: string | null | undefined) => s ? new Date(s).toLocaleString("zh-CN") : "-";
@@ -1333,11 +1342,24 @@ function TaskDetailContent({
               <div className="text-xs text-muted-foreground">{task.delivery_summary}</div>
             )}
             {task.deliverable_content ? (
-              <div className="bg-muted/50 rounded p-2 text-xs whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
-                {task.deliverable_content}
+              <div className="bg-muted/50 rounded p-2 text-xs max-h-40 overflow-y-auto chatMdContent">
+                {md ? (
+                  <md.ReactMarkdown remarkPlugins={md.remarkPlugins} rehypePlugins={md.rehypePlugins}>
+                    {task.deliverable_content}
+                  </md.ReactMarkdown>
+                ) : (
+                  <div className="whitespace-pre-wrap break-all">{task.deliverable_content}</div>
+                )}
               </div>
             ) : (
               <div className="text-muted-foreground text-xs italic">交付内容未记录</div>
+            )}
+            {task.file_attachments && task.file_attachments.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+                {task.file_attachments.map((f: FileAttachment, i: number) => (
+                  <FileAttachmentCard key={f.file_path || i} file={f} apiBaseUrl={apiBaseUrl} />
+                ))}
+              </div>
             )}
             <div className="flex gap-2 justify-end">
               <Button variant="outline" size="sm" className={actionBtn} onClick={() => onStatusChange("accepted")}>
@@ -1354,12 +1376,25 @@ function TaskDetailContent({
           <div className="rounded-lg border border-green-500/50 bg-green-50/30 dark:bg-green-950/20 p-3 space-y-2">
             <div className="text-xs font-medium text-green-700 dark:text-green-400">已验收通过</div>
             {task.deliverable_content ? (
-              <div className="bg-muted/50 rounded p-2 text-xs whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
-                {task.deliverable_content}
+              <div className="bg-muted/50 rounded p-2 text-xs max-h-40 overflow-y-auto chatMdContent">
+                {md ? (
+                  <md.ReactMarkdown remarkPlugins={md.remarkPlugins} rehypePlugins={md.rehypePlugins}>
+                    {task.deliverable_content}
+                  </md.ReactMarkdown>
+                ) : (
+                  <div className="whitespace-pre-wrap break-all">{task.deliverable_content}</div>
+                )}
               </div>
             ) : task.delivery_summary ? (
               <div className="text-xs text-muted-foreground">{task.delivery_summary}</div>
             ) : null}
+            {task.file_attachments && task.file_attachments.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+                {task.file_attachments.map((f: FileAttachment, i: number) => (
+                  <FileAttachmentCard key={f.file_path || i} file={f} apiBaseUrl={apiBaseUrl} />
+                ))}
+              </div>
+            )}
           </div>
         );
       case "rejected":

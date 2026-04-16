@@ -53,6 +53,7 @@
     "react-markdown": "^10.1.0",
     "react-virtuoso": "^4.18.4",
     "rehype-highlight": "^7.0.2",
+    "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",

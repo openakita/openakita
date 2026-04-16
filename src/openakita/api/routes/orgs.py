@@ -544,7 +544,8 @@ def _purge_old_commands() -> None:
     stale = [
         cid
         for cid, cmd in _command_store.items()
-        if cmd["status"] in ("done", "error") and now - cmd["created_at"] > _CMD_TTL
+        if (cmd["status"] in ("done", "error") and now - cmd["created_at"] > _CMD_TTL)
+        or (cmd["status"] == "running" and now - cmd["created_at"] > _CMD_TTL * 2)
     ]
     for cid in stale:
         _command_store.pop(cid, None)
@@ -643,36 +644,44 @@ async def send_command(request: Request, org_id: str):
             )
             _bridge_persist_result(sm, org_id, target_node, result)
             try:
-                inbox = rt.get_inbox(org_id)
-                result_text = (result or {}).get("result", "")
-                inbox.push_task_complete(
-                    org_id, target_node or "root",
-                    content[:60],
-                    result_text[:300] if result_text else "命令已完成",
-                )
+                root_id = target_node or "root"
+                if not rt._has_active_delegations(org_id, root_id):
+                    inbox = rt.get_inbox(org_id)
+                    result_text = (result or {}).get("result", "")
+                    inbox.push_task_complete(
+                        org_id, root_id,
+                        content[:60],
+                        result_text[:300] if result_text else "命令已完成",
+                    )
             except Exception:
                 pass
-            await broadcast_event(
-                "org:command_done",
-                {
-                    "org_id": org_id,
-                    "command_id": command_id,
-                    "result": result,
-                },
-            )
+            try:
+                await broadcast_event(
+                    "org:command_done",
+                    {
+                        "org_id": org_id,
+                        "command_id": command_id,
+                        "result": result,
+                    },
+                )
+            except Exception:
+                logger.warning("[OrgCmd] broadcast org:command_done failed", exc_info=True)
         except Exception as exc:
             _command_store[command_id].update(
                 status="error", error=str(exc), updated_at=time.time(),
             )
             _bridge_persist_result(sm, org_id, target_node, {"error": str(exc)})
-            await broadcast_event(
-                "org:command_done",
-                {
-                    "org_id": org_id,
-                    "command_id": command_id,
-                    "error": str(exc),
-                },
-            )
+            try:
+                await broadcast_event(
+                    "org:command_done",
+                    {
+                        "org_id": org_id,
+                        "command_id": command_id,
+                        "error": str(exc),
+                    },
+                )
+            except Exception:
+                logger.warning("[OrgCmd] broadcast error event failed", exc_info=True)
 
     from openakita.core.engine_bridge import get_engine_loop
 

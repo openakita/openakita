@@ -727,6 +727,7 @@ class ProjectTask:
     completed_at: str | None = None
     deliverable_content: str = ""
     delivery_summary: str = ""
+    file_attachments: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         if hasattr(self.status, "value"):
@@ -756,6 +757,7 @@ class ProjectTask:
             "completed_at": self.completed_at,
             "deliverable_content": self.deliverable_content,
             "delivery_summary": self.delivery_summary,
+            **({"file_attachments": list(self.file_attachments)} if self.file_attachments else {}),
         }
 
     @classmethod

@@ -163,6 +163,7 @@ class OrgToolHandler:
         depth: int = 0,
         deliverable_content: str = "",
         delivery_summary: str = "",
+        file_attachment: dict | None = None,
     ) -> None:
         """Auto-link a task chain to an active project's ProjectTask.
 
@@ -192,15 +193,27 @@ class OrgToolHandler:
                     updates["status"] = TaskStatus(status)
                     if status == "in_progress" and not existing.started_at:
                         updates["started_at"] = _now_iso()
+                        if (existing.progress_pct or 0) < 5:
+                            updates["progress_pct"] = 5
                     elif status == "delivered":
                         updates["delivered_at"] = _now_iso()
+                        updates["progress_pct"] = max(existing.progress_pct or 0, 80)
                     elif status == "accepted":
                         updates["completed_at"] = _now_iso()
                         updates["progress_pct"] = 100
                 if deliverable_content:
-                    updates["deliverable_content"] = deliverable_content
+                    old = existing.deliverable_content or ""
+                    if old and deliverable_content not in old:
+                        updates["deliverable_content"] = old + "\n\n---\n\n" + deliverable_content
+                    else:
+                        updates["deliverable_content"] = deliverable_content or old
                 if delivery_summary:
                     updates["delivery_summary"] = delivery_summary
+                if file_attachment:
+                    old_attachments = list(existing.file_attachments or [])
+                    if file_attachment not in old_attachments:
+                        old_attachments.append(file_attachment)
+                    updates["file_attachments"] = old_attachments
                 if updates:
                     store.update_task(existing.project_id, existing.id, updates)
                 return
@@ -838,6 +851,46 @@ class OrgToolHandler:
         return f"已写入 {dept} 部门记忆"
 
     # ------------------------------------------------------------------
+    # Node-level memory tools
+    # ------------------------------------------------------------------
+
+    async def _handle_org_read_node_memory(
+        self, args: dict, org_id: str, node_id: str
+    ) -> str:
+        bb = self._runtime.get_blackboard(org_id)
+        if not bb:
+            return "黑板不可用"
+        entries = bb.read_node(node_id, limit=args.get("limit", 10))
+        if not entries:
+            return "(暂无私有记忆)"
+        return "\n".join(f"[{e.memory_type.value}] {e.content}" for e in entries)
+
+    async def _handle_org_write_node_memory(
+        self, args: dict, org_id: str, node_id: str
+    ) -> str:
+        bb = self._runtime.get_blackboard(org_id)
+        if not bb:
+            return "黑板不可用"
+        raw_mt = args.get("memory_type", "fact")
+        try:
+            mt = MemoryType(raw_mt)
+        except ValueError:
+            mt = MemoryType.FACT
+        entry = bb.write_node(
+            node_id,
+            content=args["content"],
+            memory_type=mt,
+            tags=args.get("tags", []),
+            importance=args.get("importance", 0.5),
+        )
+        await self._runtime._broadcast_ws("org:blackboard_update", {
+            "org_id": org_id, "scope": "node", "node_id": node_id,
+            "memory_type": raw_mt,
+            "content": args["content"][:_LIM_WS],
+        })
+        return f"已写入私有记忆: {args['content'][:50]}"
+
+    # ------------------------------------------------------------------
     # Policy tools
     # ------------------------------------------------------------------
 
@@ -1052,6 +1105,7 @@ class OrgToolHandler:
                 deliverable_content=deliverable[:2000],
                 delivery_summary=summary[:500],
             )
+            self._recalc_parent_progress(org_id, chain_id)
             self._append_execution_log(
                 org_id, chain_id,
                 f"提交交付物给 {to_node}: {summary[:_LIM_EXEC_LOG]}",
@@ -1117,6 +1171,26 @@ class OrgToolHandler:
                 org_id, chain_id, f"验收通过: {feedback[:_LIM_EXEC_LOG]}", node_id,
             )
             self._recalc_parent_progress(org_id, chain_id)
+
+            try:
+                from openakita.orgs.project_store import ProjectStore as _PS
+                _store = _PS(self._runtime._manager._org_dir(org_id))
+                _child = _store.find_task_by_chain(chain_id)
+                if _child and _child.parent_task_id:
+                    _child_files = getattr(_child, "file_attachments", None) or []
+                    if _child_files:
+                        _parent, _ = _store.get_task(_child.parent_task_id)
+                        if _parent:
+                            _merged = list(getattr(_parent, "file_attachments", None) or [])
+                            for _fa in _child_files:
+                                if _fa not in _merged:
+                                    _merged.append(_fa)
+                            _store.update_task(
+                                _parent.project_id, _parent.id,
+                                {"file_attachments": _merged},
+                            )
+            except Exception:
+                pass
 
         bb = self._runtime.get_blackboard(org_id)
         if bb:

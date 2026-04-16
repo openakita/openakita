@@ -166,6 +166,35 @@ ORG_NODE_TOOLS: list[dict] = [
             "required": ["content"],
         },
     },
+    # ── 节点级私有记忆 ──
+    {
+        "name": "org_read_node_memory",
+        "description": "读取你自己的私有记忆（节点级），仅自己可见",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "default": 10},
+            },
+        },
+    },
+    {
+        "name": "org_write_node_memory",
+        "description": "写入你自己的私有记忆（节点级）。用于记录个人工作笔记、经验教训、待办事项等，仅自己可见",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "记忆内容"},
+                "memory_type": {
+                    "type": "string",
+                    "enum": ["fact", "decision", "rule", "progress", "lesson", "resource"],
+                    "default": "fact",
+                },
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "标签"},
+                "importance": {"type": "number", "default": 0.5},
+            },
+            "required": ["content"],
+        },
+    },
     # ── 制度流程 ──
     {
         "name": "org_list_policies",
@@ -327,7 +356,16 @@ ORG_NODE_TOOLS: list[dict] = [
             "properties": {
                 "to_node": {"type": "string", "description": "委派人节点 ID（可省略，系统自动提交给直属上级）"},
                 "task_chain_id": {"type": "string", "description": "任务链 ID（从收到的任务消息中获取）"},
-                "deliverable": {"type": "string", "description": "交付内容/成果说明"},
+                "deliverable": {
+                    "type": "string",
+                    "description": (
+                        "交付内容（必须包含实质成果）。要求：\n"
+                        "- 如果产出了文档/模板/方案等文本文件，请包含完整文本内容\n"
+                        "- 如果产出了代码/配置，请包含关键代码片段\n"
+                        "- 如果委托下级完成，请汇总下级的交付内容和文件信息\n"
+                        "- 禁止只写'已完成'等空洞简述，必须让接收方能理解具体成果"
+                    ),
+                },
                 "summary": {"type": "string", "description": "工作过程简述"},
             },
             "required": ["deliverable"],

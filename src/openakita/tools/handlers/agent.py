@@ -561,10 +561,10 @@ class AgentToolHandler:
                 logger.warning(
                     "[AgentToolHandler] Orchestrator was None — lazily created as fallback"
                 )
-                else:
-                    logger.warning(
-                        "[AgentToolHandler] _orchestrator is None (multi_agent disabled)"
-                    )
+            else:
+                logger.warning(
+                    "[AgentToolHandler] _orchestrator is None (multi_agent disabled)"
+                )
             return orch
         except (ImportError, AttributeError) as e:
             logger.warning(f"[AgentToolHandler] Cannot access _orchestrator: {e}")

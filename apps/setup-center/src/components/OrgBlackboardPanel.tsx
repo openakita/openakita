@@ -4,17 +4,11 @@
  */
 import { useState, useEffect, useCallback, useImperativeHandle, forwardRef } from "react";
 import { safeFetch } from "../providers";
-import { saveAttachment } from "../platform";
-import { getFileTypeIcon } from "../icons";
+import { onWsEvent } from "../platform";
 import type { Node } from "@xyflow/react";
 import { fmtShortDate, BB_TYPE_COLORS, BB_TYPE_LABELS } from "../views/orgEditorConstants";
 import { useMdModules } from "../views/chat/hooks/useMdModules";
-
-function fmtFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+import { FileAttachmentCard } from "./FileAttachmentCard";
 
 export interface OrgBlackboardPanelProps {
   orgId: string;
@@ -52,6 +46,16 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
 
     useEffect(() => {
       fetchData(scope);
+    }, [orgId, scope, fetchData]);
+
+    useEffect(() => {
+      const unsub = onWsEvent((event: string, raw: unknown) => {
+        const d = raw as Record<string, unknown> | null;
+        if (event === "org:blackboard_update" && d?.org_id === orgId) {
+          fetchData(scope);
+        }
+      });
+      return unsub;
     }, [orgId, scope, fetchData]);
 
     useImperativeHandle(ref, () => ({
@@ -188,47 +192,11 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
                     {Array.isArray(entry.attachments) && entry.attachments.length > 0 && (
                       <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
                         {entry.attachments.map((att: any, idx: number) => (
-                          <button
+                          <FileAttachmentCard
                             key={att.path || idx}
-                            className="btnSmall"
-                            style={{
-                              display: "flex", alignItems: "center", gap: 6,
-                              padding: "6px 10px", borderRadius: 5,
-                              background: "rgba(8,145,178,0.08)",
-                              border: "1px solid rgba(8,145,178,0.2)",
-                              cursor: "pointer", width: "100%",
-                              textAlign: "left", fontSize: 12,
-                              transition: "background 0.15s",
-                            }}
-                            title={`另存为：${att.filename}`}
-                            onMouseEnter={e => { e.currentTarget.style.background = "rgba(8,145,178,0.16)"; }}
-                            onMouseLeave={e => { e.currentTarget.style.background = "rgba(8,145,178,0.08)"; }}
-                            onClick={async () => {
-                              try {
-                                await saveAttachment({
-                                  apiUrl: `${apiBaseUrl}/api/files?path=${encodeURIComponent(att.path)}`,
-                                  filename: att.filename,
-                                });
-                              } catch (e) {
-                                console.error("File save failed:", e);
-                              }
-                            }}
-                          >
-                            <span style={{ fontSize: 16, lineHeight: 1, flexShrink: 0 }}>
-                              {(() => { const Icon = getFileTypeIcon(att.filename); return <Icon size={16} />; })()}
-                            </span>
-                            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text)" }}>
-                              {att.filename}
-                            </span>
-                            {att.size_bytes != null && (
-                              <span style={{ fontSize: 11, color: "var(--muted)", flexShrink: 0 }}>
-                                {fmtFileSize(att.size_bytes)}
-                              </span>
-                            )}
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "#0891b2" }}>
-                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                            </svg>
-                          </button>
+                            file={{ filename: att.filename, file_path: att.path, file_size: att.size_bytes }}
+                            apiBaseUrl={apiBaseUrl}
+                          />
                         ))}
                       </div>
                     )}

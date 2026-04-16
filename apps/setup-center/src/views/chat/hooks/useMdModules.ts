@@ -12,11 +12,12 @@ function loadMdModules(): Promise<MdModules | null> {
     import("react-markdown"),
     import("remark-gfm"),
     import("rehype-highlight"),
-  ]).then(([md, gfm, hl]) => {
+    import("rehype-raw"),
+  ]).then(([md, gfm, hl, raw]) => {
     _cached = {
       ReactMarkdown: md.default,
       remarkPlugins: [gfm.default],
-      rehypePlugins: [hl.default],
+      rehypePlugins: [raw.default, hl.default],
     };
     return _cached;
   }).catch((err) => {
