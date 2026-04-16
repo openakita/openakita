@@ -183,6 +183,7 @@ class ScheduledHandler:
 
         return (
             f"✅ 已创建{type_display}\n- ID: {task_id}\n- 名称: {task.name}\n- 下次执行: {next_run}"
+            "\n\n[系统提示] 任务已成功创建，请直接告知用户结果，不要再次调用 schedule_task。"
         )
 
     def _list_tasks(self, params: dict) -> str:

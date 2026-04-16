@@ -1110,27 +1110,19 @@ function GanttView({
                           {dispatchingTaskId === task.id ? "…" : "派发"}
                         </Button>
                       )}
-                      {task.status === "in_progress" && (<>
-                        <Button
-                          variant="destructive"
-                          size="xs"
-                          className="h-6 px-2"
-                          onClick={() => onCancel(task.id)}
-                          disabled={cancellingTaskId === task.id}
-                          title="终止正在执行的任务"
-                        >
+                      {task.status === "in_progress" && (
+                        <Button variant="outline" size="xs" className="h-6 px-2 text-destructive border-destructive/40 hover:bg-destructive/10"
+                          onClick={() => onCancel(task.id)} disabled={cancellingTaskId === task.id} title="终止正在执行的任务">
                           <X className="h-3 w-3" />
                           {cancellingTaskId === task.id ? "终止中…" : "终止"}
                         </Button>
-                      </>)}
+                      )}
                       {task.status === "delivered" && (<>
-                        <Button size="xs" className="h-6 px-2" onClick={() => onStatusChange(task.id, "accepted")}>
-                          <Check className="h-3 w-3" />
-                          验收
+                        <Button variant="outline" size="xs" className="h-6 px-2" onClick={() => onStatusChange(task.id, "accepted")}>
+                          <Check className="h-3 w-3" />验收
                         </Button>
-                        <Button variant="destructive" size="xs" className="h-6 px-2" onClick={() => onStatusChange(task.id, "rejected")}>
-                          <CornerUpLeft className="h-3 w-3" />
-                          打回
+                        <Button variant="outline" size="xs" className="h-6 px-2 text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => onStatusChange(task.id, "rejected")}>
+                          <CornerUpLeft className="h-3 w-3" />打回
                         </Button>
                       </>)}
                       {(task.status === "rejected" || task.status === "blocked" || task.status === "cancelled") && (
@@ -1140,9 +1132,9 @@ function GanttView({
                           {dispatchingTaskId === task.id ? "…" : "重新派发"}
                         </Button>
                       )}
-                      <Button variant="ghost" size="xs" className="h-6 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      <Button variant="outline" size="xs" className="h-6 px-2 text-muted-foreground hover:text-destructive hover:border-destructive/40 hover:bg-destructive/10"
                         onClick={() => onDelete(task)}
-                        title="删除任务"><Trash2 className="h-3 w-3" />删除</Button>
+                        title="删除任务"><Trash2 className="h-3 w-3" /></Button>
                     </div>
                   </div>
                 </div>
@@ -1235,27 +1227,19 @@ function KanbanView({
                             {dispatchingTaskId === task.id ? "…" : "派发"}
                           </Button>
                         )}
-                        {col.key === "in_progress" && (<>
-                          <Button
-                            variant="destructive"
-                            size="xs"
-                            className="h-6 px-2"
-                            onClick={() => onCancel(task.id)}
-                            disabled={cancellingTaskId === task.id}
-                            title="终止正在执行的任务"
-                          >
+                        {col.key === "in_progress" && (
+                          <Button variant="outline" size="xs" className="h-6 px-2 text-destructive border-destructive/40 hover:bg-destructive/10"
+                            onClick={() => onCancel(task.id)} disabled={cancellingTaskId === task.id} title="终止正在执行的任务">
                             <X className="h-3 w-3" />
                             {cancellingTaskId === task.id ? "…" : "终止"}
                           </Button>
-                        </>)}
+                        )}
                         {col.key === "delivered" && (<>
-                          <Button size="xs" className="h-6 px-2" onClick={() => onStatusChange(task.id, "accepted")} title="验收">
-                            <Check className="h-3 w-3" />
-                            验收
+                          <Button variant="outline" size="xs" className="h-6 px-2" onClick={() => onStatusChange(task.id, "accepted")} title="验收">
+                            <Check className="h-3 w-3" />验收
                           </Button>
-                          <Button variant="destructive" size="xs" className="h-6 px-2" onClick={() => onStatusChange(task.id, "rejected")} title="打回">
-                            <CornerUpLeft className="h-3 w-3" />
-                            打回
+                          <Button variant="outline" size="xs" className="h-6 px-2 text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => onStatusChange(task.id, "rejected")} title="打回">
+                            <CornerUpLeft className="h-3 w-3" />打回
                           </Button>
                         </>)}
                         {(col.key === "rejected" || col.key === "blocked" || col.key === "cancelled") && (
@@ -1265,8 +1249,8 @@ function KanbanView({
                             {dispatchingTaskId === task.id ? "…" : "重新派发"}
                           </Button>
                         )}
-                        <Button variant="ghost" size="xs" className="h-6 px-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                          onClick={() => onDelete(task)}><Trash2 className="h-3 w-3" />删除</Button>
+                        <Button variant="outline" size="xs" className="h-6 px-2 text-muted-foreground hover:text-destructive hover:border-destructive/40 hover:bg-destructive/10"
+                          onClick={() => onDelete(task)}><Trash2 className="h-3 w-3" /></Button>
                       </div>
                     </div>
                     {(task.progress_pct ?? 0) > 0 && (task.progress_pct ?? 0) < 100 && (
@@ -1321,94 +1305,81 @@ function TaskDetailContent({
 
   const statusContext = (() => {
     const assigneeName = assignee ? (assignee.role_title || assignee.id) : "未分配";
+    const actionBtn = "h-7 px-2.5 text-xs shrink-0";
     switch (task.status) {
       case "todo":
         return (
-          <Card className="border-dashed">
-            <CardContent className="p-3 flex items-center justify-between gap-2">
-              <span className="min-w-0 flex-1 text-muted-foreground">此任务尚未派发</span>
-              <Button variant="outline" size="sm" onClick={onDispatch} disabled={dispatchingTaskId === task.id}>
-                <Play className="h-3 w-3 mr-1" />{dispatchingTaskId === task.id ? "派发中…" : "派发"}
-              </Button>
-            </CardContent>
-          </Card>
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed px-3 py-2">
+            <span className="min-w-0 flex-1 text-xs text-muted-foreground">此任务尚未派发</span>
+            <Button variant="outline" size="sm" className={actionBtn} onClick={onDispatch} disabled={dispatchingTaskId === task.id}>
+              <Play className="h-3 w-3 mr-1" />{dispatchingTaskId === task.id ? "派发中…" : "派发"}
+            </Button>
+          </div>
         );
       case "in_progress":
         return (
-          <Card>
-            <CardContent className="p-3 flex items-center justify-between gap-2">
-              <span className="min-w-0 flex-1">正在由 <strong>{assigneeName}</strong> 执行中</span>
-              <Button variant="destructive" size="sm" onClick={onCancel} disabled={cancellingTaskId === task.id}>
-                <X className="h-3 w-3 mr-1" />{cancellingTaskId === task.id ? "终止中…" : "终止"}
-              </Button>
-            </CardContent>
-          </Card>
+          <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
+            <span className="min-w-0 flex-1 text-xs">正在由 <strong>{assigneeName}</strong> 执行中</span>
+            <Button variant="outline" size="sm" className={`${actionBtn} text-destructive border-destructive/40 hover:bg-destructive/10`} onClick={onCancel} disabled={cancellingTaskId === task.id}>
+              <X className="h-3 w-3 mr-1" />{cancellingTaskId === task.id ? "终止中…" : "终止"}
+            </Button>
+          </div>
         );
       case "delivered":
         return (
-          <Card className="border-amber-500/50 bg-amber-50/30 dark:bg-amber-950/20">
-            <CardHeader className="p-3 pb-1">
-              <CardTitle className="text-sm font-medium text-amber-700 dark:text-amber-400">待审阅</CardTitle>
-              {task.delivery_summary && (
-                <CardDescription className="text-xs">{task.delivery_summary}</CardDescription>
-              )}
-            </CardHeader>
-            <CardContent className="p-3 pt-1 flex flex-col gap-2">
-              {task.deliverable_content ? (
-                <div className="bg-muted/50 rounded p-2 text-xs whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
-                  {task.deliverable_content}
-                </div>
-              ) : (
-                <div className="text-muted-foreground text-xs italic">交付内容未记录</div>
-              )}
-              <div className="flex gap-2 justify-end">
-                <Button size="sm" onClick={() => onStatusChange("accepted")}>
-                  <Check className="h-3 w-3 mr-1" />验收
-                </Button>
-                <Button variant="destructive" size="sm" onClick={() => onStatusChange("rejected")}>
-                  <CornerUpLeft className="h-3 w-3 mr-1" />打回
-                </Button>
+          <div className="rounded-lg border border-amber-500/50 bg-amber-50/30 dark:bg-amber-950/20 p-3 space-y-2">
+            <div className="text-xs font-medium text-amber-700 dark:text-amber-400">待审阅</div>
+            {task.delivery_summary && (
+              <div className="text-xs text-muted-foreground">{task.delivery_summary}</div>
+            )}
+            {task.deliverable_content ? (
+              <div className="bg-muted/50 rounded p-2 text-xs whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+                {task.deliverable_content}
               </div>
-            </CardContent>
-          </Card>
+            ) : (
+              <div className="text-muted-foreground text-xs italic">交付内容未记录</div>
+            )}
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" size="sm" className={actionBtn} onClick={() => onStatusChange("accepted")}>
+                <Check className="h-3 w-3 mr-1" />验收
+              </Button>
+              <Button variant="outline" size="sm" className={`${actionBtn} text-destructive border-destructive/40 hover:bg-destructive/10`} onClick={() => onStatusChange("rejected")}>
+                <CornerUpLeft className="h-3 w-3 mr-1" />打回
+              </Button>
+            </div>
+          </div>
         );
       case "accepted":
         return (
-          <Card className="border-green-500/50 bg-green-50/30 dark:bg-green-950/20">
-            <CardContent className="p-3 flex flex-col gap-2">
-              <span className="text-green-700 dark:text-green-400 font-medium">已验收通过</span>
-              {task.deliverable_content ? (
-                <div className="bg-muted/50 rounded p-2 text-xs whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
-                  {task.deliverable_content}
-                </div>
-              ) : task.delivery_summary ? (
-                <div className="text-muted-foreground text-xs">{task.delivery_summary}</div>
-              ) : null}
-            </CardContent>
-          </Card>
+          <div className="rounded-lg border border-green-500/50 bg-green-50/30 dark:bg-green-950/20 p-3 space-y-2">
+            <div className="text-xs font-medium text-green-700 dark:text-green-400">已验收通过</div>
+            {task.deliverable_content ? (
+              <div className="bg-muted/50 rounded p-2 text-xs whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+                {task.deliverable_content}
+              </div>
+            ) : task.delivery_summary ? (
+              <div className="text-xs text-muted-foreground">{task.delivery_summary}</div>
+            ) : null}
+          </div>
         );
       case "rejected":
         return (
-          <Card className="border-red-500/50">
-            <CardContent className="p-3 flex items-center justify-between gap-2">
-              <span className="min-w-0 flex-1 text-red-600 dark:text-red-400">已打回</span>
-              <Button variant="outline" size="sm" onClick={onDispatch} disabled={dispatchingTaskId === task.id}>
-                <RefreshCw className="h-3 w-3 mr-1" />{dispatchingTaskId === task.id ? "…" : "重新派发"}
-              </Button>
-            </CardContent>
-          </Card>
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-red-500/50 px-3 py-2">
+            <span className="min-w-0 flex-1 text-xs text-red-600 dark:text-red-400">已打回</span>
+            <Button variant="outline" size="sm" className={actionBtn} onClick={onDispatch} disabled={dispatchingTaskId === task.id}>
+              <RefreshCw className="h-3 w-3 mr-1" />{dispatchingTaskId === task.id ? "…" : "重新派发"}
+            </Button>
+          </div>
         );
       case "blocked":
       case "cancelled":
         return (
-          <Card className="border-dashed">
-            <CardContent className="p-3 flex items-center justify-between gap-2">
-              <span className="min-w-0 flex-1 text-muted-foreground">{task.status === "blocked" ? "任务已阻塞" : "任务已取消"}</span>
-              <Button variant="outline" size="sm" onClick={onDispatch} disabled={dispatchingTaskId === task.id}>
-                <RefreshCw className="h-3 w-3 mr-1" />{dispatchingTaskId === task.id ? "…" : "重新派发"}
-              </Button>
-            </CardContent>
-          </Card>
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed px-3 py-2">
+            <span className="min-w-0 flex-1 text-xs text-muted-foreground">{task.status === "blocked" ? "任务已阻塞" : "任务已取消"}</span>
+            <Button variant="outline" size="sm" className={actionBtn} onClick={onDispatch} disabled={dispatchingTaskId === task.id}>
+              <RefreshCw className="h-3 w-3 mr-1" />{dispatchingTaskId === task.id ? "…" : "重新派发"}
+            </Button>
+          </div>
         );
       default:
         return null;

@@ -41,10 +41,25 @@ class ProfileHandler:
 
     def _update_profile(self, params: dict) -> str:
         """更新用户档案"""
-        key = params["key"]
-        value = params["value"]
-
         available_keys = self.agent.profile_manager.get_available_keys()
+
+        # LLM 可能传 {name: "小明", age: "28"} 而非 {key: "name", value: "小明"}
+        if "key" not in params:
+            updated = []
+            for k, v in params.items():
+                if k in available_keys:
+                    self.agent.profile_manager.update_profile(k, str(v))
+                    updated.append(f"{k} = {v}")
+            if updated:
+                return f"✅ 已更新档案: {', '.join(updated)}"
+            return (
+                f"❌ 参数格式错误，正确用法: {{\"key\": \"name\", \"value\": \"小明\"}}\n"
+                f"可用的键: {', '.join(available_keys)}"
+            )
+
+        key = params["key"]
+        value = params.get("value", "")
+
         if key not in available_keys:
             return f"❌ 未知的档案项: {key}\n可用的键: {', '.join(available_keys)}"
 

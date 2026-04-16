@@ -284,8 +284,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         const st = d.status as string;
         if (st === "busy") {
           const task = (d.current_task || "") as string;
-          const taskBrief = task.length > 80 ? task.slice(0, 80) + "…" : task;
-          pushProgress(`● **${nn(nid)}** 开始处理${taskBrief ? `：${taskBrief}` : ""}`);
+          pushProgress(`● **${nn(nid)}** 开始处理${task ? `：${task}` : ""}`);
         } else if (st === "idle") {
           const label = `✓ **${nn(nid)}** 完成`;
           const startIdx = progressLines.findIndex(l => l.startsWith(`● **${nn(nid)}**`));
@@ -302,8 +301,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         else if (st === "error") pushProgress(`✗ **${nn(nid)}** 出错`);
       } else if (event === "org:task_delegated") {
         const task = ((d.task || "") as string);
-        const taskBrief = task.length > 80 ? task.slice(0, 80) + "…" : task;
-        pushProgress(`→ **${nn(nid)}** → **${nn(toN)}** 分配任务：${taskBrief}`);
+        pushProgress(`→ **${nn(nid)}** → **${nn(toN)}** 分配任务：${task}`);
       } else if (event === "org:blackboard_update") {
         pushProgress(`~ **${nn(nid)}** 更新黑板`);
       }

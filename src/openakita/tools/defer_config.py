@@ -92,6 +92,14 @@ DEFER_INDIVIDUAL_TOOLS: frozenset[str] = frozenset(
         "structured_output",
         "enter_worktree",
         "exit_worktree",
+        # 低频管理工具：技能管理 & 图片生成（按需通过 tool_search 发现）
+        "generate_image",
+        "install_skill",
+        "uninstall_skill",
+        "reload_skill",
+        "manage_skill_enabled",
+        "load_skill",
+        "get_skill_reference",
     }
 )
 

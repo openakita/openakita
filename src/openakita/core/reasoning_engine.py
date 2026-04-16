@@ -1768,21 +1768,25 @@ class ReasoningEngine:
                     pass
 
                 # 收集工具结果到 trace（保存完整内容，不截断）
-                _iter_trace["tool_results"] = [
-                    {
-                        "tool_use_id": tr.get("tool_use_id", ""),
-                        "result_content": str(tr.get("content", "")),
-                    }
-                    for tr in tool_results
-                    if isinstance(tr, dict)
-                ]
+                _error_markers = ("❌", "⚠️ 工具执行错误", "错误类型:", "⚠️ 策略拒绝:")
+                _trace_results = []
                 for tr in tool_results:
-                    if isinstance(tr, dict):
-                        t_id = tr.get("tool_use_id", "")
-                        r_len = len(str(tr.get("content", "")))
-                        logger.info(
-                            f"[ReAct] Iter {iteration + 1} — tool_result id={t_id} len={r_len}"
-                        )
+                    if not isinstance(tr, dict):
+                        continue
+                    _rc = str(tr.get("content", ""))
+                    _is_err = tr.get("is_error", False) or any(
+                        m in _rc for m in _error_markers
+                    )
+                    _trace_results.append({
+                        "tool_use_id": tr.get("tool_use_id", ""),
+                        "result_content": _rc,
+                        "is_error": _is_err,
+                    })
+                    logger.info(
+                        f"[ReAct] Iter {iteration + 1} — tool_result "
+                        f"id={tr.get('tool_use_id', '')} len={len(_rc)}"
+                    )
+                _iter_trace["tool_results"] = _trace_results
                 react_trace.append(_iter_trace)
 
                 # 持久性失败检测：跨 rollback 累计同一工具失败达上限时，
@@ -3539,13 +3543,18 @@ class ReasoningEngine:
                             self._record_tool_result(_tc_name, success=not is_error)
 
                     # 收集工具结果到 trace（保存完整内容，不截断）
-                    _iter_trace["tool_results"] = [
-                        {
+                    _s_error_markers = ("❌", "⚠️ 工具执行错误", "错误类型:", "⚠️ 策略拒绝:")
+                    _iter_trace["tool_results"] = []
+                    for tr in tool_results_for_msg:
+                        _rc = str(tr.get("content", ""))
+                        _is_err = tr.get("is_error", False) or any(
+                            m in _rc for m in _s_error_markers
+                        )
+                        _iter_trace["tool_results"].append({
                             "tool_use_id": tr.get("tool_use_id", ""),
-                            "result_content": str(tr.get("content", "")),
-                        }
-                        for tr in tool_results_for_msg
-                    ]
+                            "result_content": _rc,
+                            "is_error": _is_err,
+                        })
                     react_trace.append(_iter_trace)
 
                     try:

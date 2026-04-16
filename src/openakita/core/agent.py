@@ -4841,9 +4841,11 @@ class Agent:
                     param_hint = str(kv) if kv else ""
 
                 result_hint = ""
+                is_error = False
                 for tr in it.get("tool_results", []):
                     if tr.get("tool_use_id") == tc.get("id", ""):
                         raw = str(tr.get("result_content", tr.get("result_preview", "")))
+                        is_error = tr.get("is_error", False)
                         max_len = 800 if name in self._DELEGATION_TOOLS else per_tool_budget
                         if len(raw) > max_len:
                             result_hint = raw[:max_len].replace("\n", " ") + "..."
@@ -4854,7 +4856,8 @@ class Agent:
                             result_hint = raw.replace("\n", " ")
                         break
 
-                line = f"- {name}"
+                status_mark = "❌ " if is_error else ""
+                line = f"- {status_mark}{name}"
                 if param_hint:
                     line += f"({param_hint})"
                 if result_hint:
