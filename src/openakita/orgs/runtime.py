@@ -30,7 +30,7 @@ from .models import (
     _now_iso,
 )
 from .tool_handler import OrgToolHandler
-from .tools import ORG_NODE_TOOLS
+from .tools import ORG_NODE_TOOLS, build_org_node_tools
 
 if TYPE_CHECKING:
     from .heartbeat import OrgHeartbeat
@@ -1072,9 +1072,14 @@ class OrgRuntime:
 
         allowed_external = expand_tool_categories(node.external_tools) - _ORG_CONFLICT_TOOLS
 
+        per_node_tools = build_org_node_tools(org, node)
+        per_node_by_name: dict[str, dict] = {t["name"]: t for t in per_node_tools}
+
         if hasattr(agent, "tool_catalog"):
-            for tool_def in ORG_NODE_TOOLS:
+            for tool_def in per_node_tools:
                 agent.tool_catalog.add_tool(tool_def)
+            if "org_delegate_task" not in per_node_by_name:
+                agent.tool_catalog.remove_tool("org_delegate_task")
             non_org = [
                 n for n in agent.tool_catalog.list_tools()
                 if not n.startswith("org_") and n not in _KEEP
@@ -1088,15 +1093,22 @@ class OrgRuntime:
             filtered: list[dict] = []
             for t in agent._tools:
                 name = t.get("name", "")
-                if (name.startswith("org_") or name in _KEEP
-                        or name in allowed_external) and name not in seen:
+                if not name:
+                    continue
+                if name in per_node_by_name:
+                    if name not in seen:
+                        seen.add(name)
+                        filtered.append(per_node_by_name[name])
+                    continue
+                if name.startswith("org_"):
+                    continue
+                if (name in _KEEP or name in allowed_external) and name not in seen:
                     seen.add(name)
                     filtered.append(t)
-            for t in ORG_NODE_TOOLS:
-                name = t["name"]
+            for name, tool in per_node_by_name.items():
                 if name not in seen:
                     seen.add(name)
-                    filtered.append(t)
+                    filtered.append(tool)
             agent._tools = filtered
 
         _MCP_TOOL_NAMES = {"call_mcp_tool", "list_mcp_servers", "get_mcp_instructions"}
