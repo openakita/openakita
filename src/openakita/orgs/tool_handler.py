@@ -39,6 +39,23 @@ class OrgToolHandler:
     def __init__(self, runtime: OrgRuntime) -> None:
         self._runtime = runtime
 
+    def _org_not_running_error(self, org_id: str) -> str:
+        """根据组织是否刚被显式 stop/delete 返回不同的错误消息。
+
+        - 若组织在近期被显式停止/删除：返回"组织已停止，任务被取消"，
+          让 LLM 知道这是一次终态，不应再重试。
+        - 否则（组织未激活、id 不存在等）：返回原来的"组织未运行"。
+        """
+        try:
+            if self._runtime.is_org_recently_stopped(org_id):
+                return (
+                    "[组织已停止] 组织已被停止或删除，当前任务已被取消。"
+                    "请停止继续调用任何 org_* 工具，直接给用户一个文字总结说明任务已终止。"
+                )
+        except Exception:
+            pass
+        return "组织未运行"
+
     _INT_DEFAULTS: dict[str, int] = {
         "priority": 0,
         "bandwidth_limit": 60,
@@ -410,7 +427,7 @@ class OrgToolHandler:
     ) -> str:
         messenger = self._runtime.get_messenger(org_id)
         if not messenger:
-            return "组织未运行"
+            return self._org_not_running_error(org_id)
 
         metadata: dict = {}
 
@@ -454,7 +471,7 @@ class OrgToolHandler:
     ) -> str:
         messenger = self._runtime.get_messenger(org_id)
         if not messenger:
-            return "组织未运行"
+            return self._org_not_running_error(org_id)
         original = messenger._pending_messages.get(args["reply_to"])
         to_node = original.from_node if original else ""
         if not to_node:
@@ -475,7 +492,7 @@ class OrgToolHandler:
     ) -> str:
         messenger = self._runtime.get_messenger(org_id)
         if not messenger:
-            return "组织未运行"
+            return self._org_not_running_error(org_id)
 
         org = self._runtime.get_org(org_id)
 
@@ -509,27 +526,53 @@ class OrgToolHandler:
                     to_node = existing_affinity
 
         if org:
+            # 便于错误消息里明确告诉 LLM 它自己是谁，避免 LLM 误以为"再试一次"就行
+            caller_node = org.get_node(node_id)
+            caller_label = (
+                f"`{caller_node.id}`({caller_node.role_title})"
+                if caller_node else f"`{node_id}`"
+            )
+
             resolved = org.get_node(to_node)
             if resolved:
                 to_node = resolved.id
             else:
                 avail = ", ".join(f"{n.id}({n.role_title})" for n in org.nodes)
-                return f"节点 '{to_node}' 不存在。可用节点: {avail}"
+                return (
+                    f"[org_delegate_task 失败] 你是 {caller_label}，目标节点 '{to_node}' 不存在。"
+                    f"可用节点: {avail}。请检查 to_node 参数，或改用 org_submit_deliverable 自行完成。"
+                )
 
             # Validate hierarchy: only direct children can receive delegated tasks
             children = org.get_children(node_id)
             child_ids = {c.id for c in children}
             if to_node not in child_ids:
                 if to_node == node_id:
-                    hint = "不能给自己委派任务。"
+                    hint = (
+                        f"[org_delegate_task 失败] 你就是 {caller_label}，不能把任务委派给自己。"
+                    )
                 else:
                     target_node = org.get_node(to_node)
-                    target_label = f"'{target_node.role_title}'" if target_node else f"'{to_node}'"
-                    hint = f"{target_label} 不是你的直属下级，无法委派。"
+                    target_label = (
+                        f"`{target_node.id}`({target_node.role_title})"
+                        if target_node else f"`{to_node}`"
+                    )
+                    hint = (
+                        f"[org_delegate_task 失败] 你是 {caller_label}，"
+                        f"{target_label} 不是你的直属下级，无法委派给它。"
+                    )
                 if children:
                     child_list = ", ".join(f"{c.role_title}(`{c.id}`)" for c in children)
-                    return f"{hint}你的直属下级: {child_list}"
-                return f"{hint}你没有直属下级，无法使用 org_delegate_task。请自行完成任务，或用 org_send_message 与同事协作。"
+                    return (
+                        f"{hint} 你的直属下级只有：{child_list}。"
+                        f"如果任务本就该由你自己完成，请改用 org_submit_deliverable 交付成果；"
+                        f"不要反复调用 org_delegate_task，否则会被 Supervisor 判定死循环并终止。"
+                    )
+                return (
+                    f"{hint} 你是叶子节点，没有直属下级，根本无法使用 org_delegate_task。"
+                    f"请直接调用 org_submit_deliverable 把任务结果交付给你的上级；"
+                    f"若需协作可用 org_send_message。禁止继续重试 org_delegate_task。"
+                )
 
         try:
             from openakita.orgs.project_store import ProjectStore
@@ -606,7 +649,7 @@ class OrgToolHandler:
     ) -> str:
         messenger = self._runtime.get_messenger(org_id)
         if not messenger:
-            return "组织未运行"
+            return self._org_not_running_error(org_id)
 
         result = await messenger.escalate(
             node_id, args["content"], priority=args.get("priority", 1),
@@ -626,7 +669,7 @@ class OrgToolHandler:
     ) -> str:
         messenger = self._runtime.get_messenger(org_id)
         if not messenger:
-            return "组织未运行"
+            return self._org_not_running_error(org_id)
         scope = args.get("scope", "department")
         msg_type = MsgType.DEPT_BROADCAST if scope == "department" else MsgType.BROADCAST
         org = self._runtime.get_org(org_id)
@@ -1054,7 +1097,7 @@ class OrgToolHandler:
     ) -> str:
         messenger = self._runtime.get_messenger(org_id)
         if not messenger:
-            return "组织未运行"
+            return self._org_not_running_error(org_id)
 
         to_node = args.get("to_node", "")
         deliverable = args.get("deliverable", "")
@@ -1119,7 +1162,7 @@ class OrgToolHandler:
     ) -> str:
         messenger = self._runtime.get_messenger(org_id)
         if not messenger:
-            return "组织未运行"
+            return self._org_not_running_error(org_id)
 
         from_node = args.get("from_node", "")
         if not from_node:
@@ -1208,7 +1251,7 @@ class OrgToolHandler:
     ) -> str:
         messenger = self._runtime.get_messenger(org_id)
         if not messenger:
-            return "组织未运行"
+            return self._org_not_running_error(org_id)
 
         from_node = args.get("from_node", "")
         if not from_node:

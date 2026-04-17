@@ -1,0 +1,338 @@
+"""
+Failure diagnoser —— 把 ReAct trace + exit_reason 翻译成"给用户看的根因 + 建议"。
+
+职责边界：
+- 纯函数分析：不写文件、不发事件、不依赖 I/O
+- 只产出 dict，是否发给前端由 runtime.py 决定
+- 与 openakita.evolution.failure_analysis 分离：后者是给 harness/训练用的结构化落盘，
+  本模块只关心"人话摘要 + 证据片段 + 下一步建议"，两者职责互不耦合
+
+输出形状:
+    {
+        "root_cause": str,        # 分类码（稳定字符串，供前端切样式/打点）
+        "headline": str,          # 一句话人话标题
+        "evidence": list[dict],   # [{iter, tool, args_summary, error}, ...]
+        "suggestion": str,        # 给用户的下一步建议（多行文本，markdown 兼容）
+        "exit_reason": str,       # 透传 reasoning_engine._last_exit_reason
+    }
+
+永不抛异常：分析失败时回退到 root_cause="unknown"。
+"""
+
+from __future__ import annotations
+
+import logging
+from collections import Counter
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+MAX_EVIDENCE_ITEMS = 6
+EVIDENCE_ERROR_MAX = 200
+
+_SELF_DELEGATE_MARKERS = (
+    "不能把任务委派给自己",
+    "不能给自己委派任务",
+)
+_NON_DIRECT_MARKERS = (
+    "不是你的直属下级",
+)
+_TARGET_NOT_EXIST_MARKERS = (
+    "目标节点",
+    "可用节点",
+)
+_GENERIC_FAIL_MARKERS = (
+    "[失败]",
+    "[org_delegate_task 失败]",
+    "❌",
+    "⚠️ 工具执行错误",
+    "⚠️ 策略拒绝",
+    "错误类型:",
+)
+
+
+def _is_error_entry(is_error_flag: bool, result_content: str) -> bool:
+    """字段 `is_error` 有时会漏打；再扫一遍文本兜底识别失败。"""
+    if is_error_flag:
+        return True
+    if not result_content:
+        return False
+    return any(m in result_content for m in _GENERIC_FAIL_MARKERS)
+
+
+def _summarize_args(args: Any) -> str:
+    """把 tool args 压成一行摘要，优先显示与组织编排相关的关键字段。"""
+    if not isinstance(args, dict):
+        return ""
+    priority_keys = ("to_node", "from_node", "node_id", "tool_name", "command", "path")
+    parts: list[str] = []
+    for key in priority_keys:
+        if key in args:
+            value = args[key]
+            if isinstance(value, str) and len(value) > 40:
+                value = value[:40] + "…"
+            parts.append(f"{key}={value!r}")
+    if not parts:
+        for key, value in list(args.items())[:2]:
+            if isinstance(value, str) and len(value) > 40:
+                value = value[:40] + "…"
+            elif isinstance(value, (dict, list)):
+                value = f"<{type(value).__name__} len={len(value)}>"
+            parts.append(f"{key}={value!r}")
+    return ", ".join(parts)
+
+
+def _extract_evidence(react_trace: list[dict]) -> list[dict]:
+    """从 trace 中抽取所有失败的工具调用作为证据条目。"""
+    evidence: list[dict] = []
+    for iter_trace in react_trace:
+        if not isinstance(iter_trace, dict):
+            continue
+        iteration = int(iter_trace.get("iteration", 0) or 0)
+        calls = iter_trace.get("tool_calls") or []
+        results_by_id: dict[str, dict] = {}
+        for result in (iter_trace.get("tool_results") or []):
+            if isinstance(result, dict):
+                rid = result.get("tool_use_id") or result.get("id") or ""
+                if rid:
+                    results_by_id[rid] = result
+        for call in calls:
+            if not isinstance(call, dict):
+                continue
+            tool_id = call.get("id") or ""
+            result = results_by_id.get(tool_id, {}) if tool_id else {}
+            is_error = bool(result.get("is_error"))
+            result_content = str(result.get("result_content") or "")
+            if not _is_error_entry(is_error, result_content):
+                continue
+            args = call.get("input") or {}
+            evidence.append({
+                "iter": iteration,
+                "tool": str(call.get("name") or ""),
+                "args_summary": _summarize_args(args),
+                "error": result_content[:EVIDENCE_ERROR_MAX],
+            })
+    return evidence
+
+
+def _classify_delegate_subtype(evidence: list[dict]) -> str | None:
+    """死循环场景里，再细分 org_delegate_task 的失败子类型。"""
+    delegate_fails = [e for e in evidence if e.get("tool") == "org_delegate_task"]
+    if len(delegate_fails) < 3:
+        return None
+    self_delegation = sum(
+        1 for e in delegate_fails
+        if any(m in e["error"] for m in _SELF_DELEGATE_MARKERS)
+    )
+    if self_delegation >= 3:
+        return "org_delegate_self"
+    non_direct = sum(
+        1 for e in delegate_fails
+        if any(m in e["error"] for m in _NON_DIRECT_MARKERS)
+    )
+    if non_direct >= 3:
+        return "non_direct_subordinate"
+    target_miss = sum(
+        1 for e in delegate_fails
+        if all(m in e["error"] for m in _TARGET_NOT_EXIST_MARKERS)
+    )
+    if target_miss >= 3:
+        return "delegate_target_not_exist"
+    return "org_delegate_loop"
+
+
+# root_cause -> (headline 模板, suggestion 文案)
+# headline 使用 str.format()；预设占位符: tool / iterations / exit_reason
+_DIAGNOSIS_TEMPLATES: dict[str, dict[str, str]] = {
+    "org_delegate_self": {
+        "headline": "节点连续 {iterations} 次把任务委派给了自己，被系统判定为死循环并强制终止",
+        "suggestion": (
+            "最常见原因是 LLM 把'自己的角色'（例如 CPO=产品总监）和"
+            "'下级角色名'（例如 产品经理=pm）搞混。\n\n"
+            "**建议**：\n"
+            "1. 在指令里直接使用下级的节点 id（例如 `pm`）而不是中文职位名；\n"
+            "2. 或者让当前节点使用 `org_submit_deliverable` 亲自完成并交付；\n"
+            "3. 长期可调整该节点的 prompt，明确区分'我是谁'和'我的下级是谁'。"
+        ),
+    },
+    "non_direct_subordinate": {
+        "headline": "节点连续 {iterations} 次尝试委派给非直属下级，被系统强制终止",
+        "suggestion": (
+            "`org_delegate_task` 只能把任务委派给**直属下级**。\n\n"
+            "**建议**：\n"
+            "1. 改由目标节点的直属上司来下派任务；\n"
+            "2. 或者用 `org_send_message` 做横向协作提醒。"
+        ),
+    },
+    "delegate_target_not_exist": {
+        "headline": "节点连续 {iterations} 次委派到不存在的节点，被系统强制终止",
+        "suggestion": (
+            "目标 `to_node` 在当前组织中找不到。\n\n"
+            "**建议**：\n"
+            "1. 调用 `org_get_org_chart` 查看当前所有可用节点 id；\n"
+            "2. 检查参数是否拼写错误或混用了中文角色名。"
+        ),
+    },
+    "org_delegate_loop": {
+        "headline": "org_delegate_task 陷入死循环（{iterations} 次失败尝试），被系统强制终止",
+        "suggestion": (
+            "**建议**：\n"
+            "1. 确认任务是否应该由当前节点自行完成；\n"
+            "2. 若是，改用 `org_submit_deliverable` 交付结果；\n"
+            "3. 若需要外部协作，用 `org_send_message` 代替。"
+        ),
+    },
+    "loop_detected_generic": {
+        "headline": "工具 `{tool}` 被连续调用陷入死循环，被系统强制终止",
+        "suggestion": (
+            "**建议**：\n"
+            "1. 检查该工具的参数是否反复相同；\n"
+            "2. 换一个工具或调整策略；\n"
+            "3. 若任务已无法继续，直接用自然语言回复用户当前进展。"
+        ),
+    },
+    "max_iterations": {
+        "headline": "节点达到最大迭代次数仍未完成任务",
+        "suggestion": (
+            "**建议**：\n"
+            "1. 把目标拆分成更小的子任务分批下发；\n"
+            "2. 检查是否有工具反复失败导致迭代被浪费；\n"
+            "3. 如确需长任务，可在配置里放宽 `max_iterations` 上限。"
+        ),
+    },
+    "verify_incomplete": {
+        "headline": "节点多轮尝试后，任务验证仍判定为未完成",
+        "suggestion": (
+            "常见原因是只发送了文字回复，没有真正产出要求的文件 / 交付物。\n\n"
+            "**建议**：\n"
+            "1. 在指令里明确指定输出方式（如 `write_file` / `deliver_artifacts`）；\n"
+            "2. 复查 verify 规则是否过于严格。"
+        ),
+    },
+    "unknown": {
+        "headline": "任务非正常结束（exit_reason={exit_reason}）",
+        "suggestion": (
+            "未匹配到典型根因模式。\n\n"
+            "**建议**：查看对应的 react_trace JSON 文件（`data/react_traces/<date>/…`）"
+            "了解完整推理过程，或把任务描述改得更明确后重试。"
+        ),
+    },
+}
+
+
+def _pick_root_cause(
+    exit_reason: str,
+    evidence: list[dict],
+    total_iterations: int,
+) -> tuple[str, dict[str, Any]]:
+    """根据 exit_reason + evidence 决定 root_cause 及模板占位参数。"""
+    if exit_reason == "loop_terminated":
+        subtype = _classify_delegate_subtype(evidence)
+        if subtype:
+            delegate_fails_n = sum(1 for e in evidence if e.get("tool") == "org_delegate_task")
+            return subtype, {
+                "iterations": delegate_fails_n,
+                "exit_reason": exit_reason,
+                "tool": "org_delegate_task",
+            }
+        top_tool = ""
+        if evidence:
+            top_tool = Counter(e.get("tool") or "" for e in evidence).most_common(1)[0][0]
+        return "loop_detected_generic", {
+            "iterations": total_iterations,
+            "exit_reason": exit_reason,
+            "tool": top_tool or "?",
+        }
+    if exit_reason == "max_iterations":
+        return "max_iterations", {
+            "iterations": total_iterations,
+            "exit_reason": exit_reason,
+            "tool": "",
+        }
+    if exit_reason == "verify_incomplete":
+        return "verify_incomplete", {
+            "iterations": total_iterations,
+            "exit_reason": exit_reason,
+            "tool": "",
+        }
+    return "unknown", {
+        "iterations": total_iterations,
+        "exit_reason": exit_reason,
+        "tool": "",
+    }
+
+
+def summarize(
+    react_trace: list[dict] | None,
+    exit_reason: str,
+) -> dict[str, Any]:
+    """把 ReAct trace + exit_reason 转成给用户看的诊断 payload。"""
+    safe_reason = exit_reason or "unknown"
+    trace = react_trace or []
+    try:
+        evidence = _extract_evidence(trace)
+        total_iterations = len(trace)
+        root_cause, fmt = _pick_root_cause(safe_reason, evidence, total_iterations)
+        template = _DIAGNOSIS_TEMPLATES.get(root_cause) or _DIAGNOSIS_TEMPLATES["unknown"]
+        headline = template["headline"].format(**fmt)
+        suggestion = template["suggestion"]
+
+        if len(evidence) > MAX_EVIDENCE_ITEMS:
+            trimmed = evidence[:MAX_EVIDENCE_ITEMS]
+            omitted = len(evidence) - MAX_EVIDENCE_ITEMS
+            trimmed.append({
+                "iter": 0,
+                "tool": "…",
+                "args_summary": "",
+                "error": f"（还有 {omitted} 条失败记录未展示，请查看完整 react_trace）",
+            })
+            evidence = trimmed
+
+        return {
+            "root_cause": root_cause,
+            "headline": headline,
+            "evidence": evidence,
+            "suggestion": suggestion,
+            "exit_reason": safe_reason,
+        }
+    except Exception as exc:
+        logger.debug("[FailureDiagnoser] summarize failed: %s", exc)
+        return {
+            "root_cause": "unknown",
+            "headline": f"任务非正常结束（exit_reason={safe_reason}）",
+            "evidence": [],
+            "suggestion": "诊断模块遇到异常，建议查看 `data/react_traces/` 下的完整 trace。",
+            "exit_reason": safe_reason,
+        }
+
+
+def format_human_summary(diagnosis: dict[str, Any]) -> str:
+    """把 diagnosis dict 格式化成一段可塞进 assistant message 的 markdown 文本。
+
+    runtime 在发 WebSocket 事件时可同步把这段写到最终 assistant 气泡，
+    保证用户即使收起时间线也能看到结论。
+    """
+    if not isinstance(diagnosis, dict):
+        return ""
+    headline = diagnosis.get("headline") or "任务未正常完成"
+    suggestion = diagnosis.get("suggestion") or ""
+    evidence = diagnosis.get("evidence") or []
+
+    lines = [f"> **为什么失败**：{headline}"]
+    if evidence:
+        lines.append(">")
+        lines.append("> **关键动作**：")
+        for item in evidence[:MAX_EVIDENCE_ITEMS]:
+            iter_n = item.get("iter") or "?"
+            tool = item.get("tool") or "?"
+            args = item.get("args_summary") or ""
+            err = (item.get("error") or "").replace("\n", " ").strip()
+            if len(err) > 120:
+                err = err[:120] + "…"
+            args_part = f"({args})" if args else ""
+            lines.append(f"> - 第 {iter_n} 轮 `{tool}`{args_part} → {err}")
+    if suggestion:
+        lines.append(">")
+        for sline in suggestion.splitlines():
+            lines.append(f"> {sline}" if sline else ">")
+    return "\n".join(lines)

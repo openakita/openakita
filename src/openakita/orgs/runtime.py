@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from .blackboard import OrgBlackboard
 from .event_store import OrgEventStore
+from .failure_diagnoser import format_human_summary, summarize as _diagnose_failure
 from .identity import OrgIdentity
 from .messenger import OrgMessenger
 from .models import (
@@ -132,6 +133,10 @@ class OrgRuntime:
         self._post_hook_cooldown: dict[str, float] = {}
         self._suppress_post_hook: dict[str, bool] = {}
         self._latest_root_result: dict[str, dict] = {}
+
+        # 最近被显式停止/删除的组织 id（短期集合，用于让 in-flight tool 调用
+        # 返回"组织已停止，任务被取消"这样的语义化错误而不是"组织未运行"）
+        self._recently_stopped_orgs: dict[str, float] = {}
 
         self._started = False
 
@@ -335,6 +340,45 @@ class OrgRuntime:
             except (asyncio.CancelledError, Exception):
                 pass
 
+    def mark_org_stopped(self, org_id: str) -> None:
+        """把组织标记为"刚被停止"，让 in-flight 工具调用返回更友好的错误。
+
+        记录一个时间戳；15 分钟后被认为已过期，此时仍找不到 messenger
+        可回到"组织未运行"的语义（说明是未激活，不是被停）。
+        """
+        self._recently_stopped_orgs[org_id] = time.monotonic()
+        # 限制集合大小，避免长时间运行后内存泄漏
+        if len(self._recently_stopped_orgs) > 256:
+            cutoff = time.monotonic() - 900
+            self._recently_stopped_orgs = {
+                k: v for k, v in self._recently_stopped_orgs.items() if v >= cutoff
+            }
+
+    def is_org_recently_stopped(self, org_id: str) -> bool:
+        """返回组织是否在近期（15 分钟内）被显式 stop/delete。"""
+        ts = self._recently_stopped_orgs.get(org_id)
+        if ts is None:
+            return False
+        if time.monotonic() - ts > 900:
+            self._recently_stopped_orgs.pop(org_id, None)
+            return False
+        return True
+
+    async def _cancel_busy_nodes(self, org: Organization, reason: str) -> None:
+        """在组织停止/删除前，主动取消所有 busy 节点的任务。
+
+        先走 cancel_node_task 触发协作式取消，让 _activate_and_run 有机会
+        退出并清理 node 状态；随后 _cancel_org_tasks 再做兜底强制取消。
+        """
+        for node in list(org.nodes):
+            if node.status == NodeStatus.BUSY:
+                try:
+                    await self.cancel_node_task(org.id, node.id, reason=reason)
+                except Exception as e:
+                    logger.debug(
+                        f"[OrgRuntime] cancel_node_task failed for {node.id}: {e}"
+                    )
+
     async def stop_org(self, org_id: str) -> Organization:
         """Stop an organization."""
         org = self._active_orgs.get(org_id) or self._manager.get(org_id)
@@ -343,6 +387,12 @@ class OrgRuntime:
 
         self._check_transition(org, OrgStatus.DORMANT)
 
+        # 先标记停止状态，让后续 in-flight tool call 能区分"停止"与"未运行"
+        self.mark_org_stopped(org_id)
+
+        # 先协作取消各节点任务，再关闭服务 / 强制取消 asyncio tasks，
+        # 这样日志里不会再出现"组织未运行"的误导性错误
+        await self._cancel_busy_nodes(org, reason="org_stopped")
         await self._stop_org_services(org_id)
         await self._cancel_org_tasks(org_id)
 
@@ -378,12 +428,21 @@ class OrgRuntime:
         if not org:
             raise ValueError(f"Organization not found: {org_id}")
 
-        # 1. Graceful stop (best-effort)
+        # 立即标记停止，避免删除期间 in-flight 工具调用看到"组织未运行"
+        self.mark_org_stopped(org_id)
+
+        # 1. Graceful stop (best-effort) —— 会先 cancel_busy_nodes 再清理服务
         if org.status in (OrgStatus.ACTIVE, OrgStatus.RUNNING, OrgStatus.PAUSED):
             try:
                 await self.stop_org(org_id)
             except Exception as e:
                 logger.warning(f"[OrgRuntime] stop_org before delete failed for {org_id}: {e}")
+        else:
+            # Dormant 组织也应取消任何遗留的 busy 节点 / 后台任务
+            try:
+                await self._cancel_busy_nodes(org, reason="org_deleted")
+            except Exception as e:
+                logger.debug(f"[OrgRuntime] cancel_busy_nodes before delete failed: {e}")
 
         # 2. Force-stop all background tasks regardless of stop_org result.
         #    Each call is idempotent — safe even if stop_org already cleaned them.
@@ -767,36 +826,113 @@ class OrgRuntime:
             if org.id not in self._active_orgs:
                 return {"node_id": node.id, "result": result_text}
 
-            self._set_node_status(org, node, NodeStatus.IDLE, "task_completed")
-            org.total_tasks_completed += 1
-            self._node_consecutive_failures.pop(f"{org.id}:{node.id}", None)
-            self._org_quota_failures.pop(org.id, None)
+            # 区分 task 真实退出原因：normal/ask_user -> 完成；
+            # loop_terminated -> 被 Supervisor 强制终止；
+            # max_iterations -> 超过最大迭代；
+            # verify_incomplete -> TaskVerify 判定未完成但重试耗尽
+            exit_reason = "normal"
+            re_engine = None
+            try:
+                re_engine = getattr(agent, "reasoning_engine", None)
+                if re_engine is not None:
+                    exit_reason = getattr(re_engine, "_last_exit_reason", "normal") or "normal"
+            except Exception:
+                exit_reason = "normal"
+                re_engine = None
+
+            is_normal = exit_reason in ("normal", "ask_user")
+            is_terminated = exit_reason == "loop_terminated"
+            is_failed = exit_reason in ("max_iterations", "verify_incomplete")
+
+            status_reason = "task_completed" if is_normal else (
+                "task_terminated" if is_terminated else "task_failed"
+            )
+            self._set_node_status(org, node, NodeStatus.IDLE, status_reason)
+            if is_normal:
+                org.total_tasks_completed += 1
+                self._node_consecutive_failures.pop(f"{org.id}:{node.id}", None)
+                self._org_quota_failures.pop(org.id, None)
             await self._save_org(org)
             self._heartbeat.record_activity(org.id)
 
             if org.id not in self._active_orgs:
                 return {"node_id": node.id, "result": result_text}
 
-            self.get_event_store(org.id).emit(
-                "task_completed", node.id,
-                {"result_preview": result_text[:_LIM_EVENT] if result_text else ""},
-            )
+            # 非正常退出时调用 failure_diagnoser 生成"为什么失败 + 建议"人话 payload；
+            # 正常退出路径跳过以避免在热路径上做无用功。
+            diagnosis: dict | None = None
+            if not is_normal:
+                try:
+                    react_trace = getattr(re_engine, "_last_react_trace", None) if re_engine else None
+                    diagnosis = _diagnose_failure(react_trace, exit_reason)
+                except Exception as diag_err:
+                    logger.debug(f"[OrgRuntime] failure diagnosis failed on {node.id}: {diag_err}")
+                    diagnosis = None
+                # 把人话摘要追加到 result_text 末尾，这样即使前端只读 chat bubble 也能看到结论
+                if diagnosis:
+                    try:
+                        human_summary = format_human_summary(diagnosis)
+                        if human_summary and human_summary not in (result_text or ""):
+                            separator = "\n\n" if result_text else ""
+                            result_text = (result_text or "") + separator + human_summary
+                    except Exception as fmt_err:
+                        logger.debug(f"[OrgRuntime] format_human_summary failed: {fmt_err}")
+
+            # 选择与 exit_reason 匹配的事件名，供前端区分 UI 样式
+            if is_normal:
+                event_name = "task_completed"
+                ws_event = "org:task_complete"
+            elif is_terminated:
+                event_name = "task_terminated"
+                ws_event = "org:task_terminated"
+            else:
+                event_name = "task_failed"
+                ws_event = "org:task_failed"
+
+            event_payload: dict = {
+                "result_preview": result_text[:_LIM_EVENT] if result_text else "",
+                "exit_reason": exit_reason,
+            }
+            if diagnosis:
+                event_payload["diagnosis"] = diagnosis
+            self.get_event_store(org.id).emit(event_name, node.id, event_payload)
+
             await self._broadcast_ws("org:node_status", {
                 "org_id": org.id, "node_id": node.id, "status": "idle",
                 "current_task": "",
+                "exit_reason": exit_reason,
             })
-            await self._broadcast_ws("org:task_complete", {
+            ws_payload: dict = {
                 "org_id": org.id, "node_id": node.id,
                 "result_preview": result_text[:_LIM_WS] if result_text else "",
-            })
+                "exit_reason": exit_reason,
+            }
+            if diagnosis:
+                ws_payload["diagnosis"] = diagnosis
+            await self._broadcast_ws(ws_event, ws_payload)
+            if not is_normal:
+                root_cause_tag = (diagnosis or {}).get("root_cause", "unknown")
+                logger.warning(
+                    f"[OrgRuntime] Node {node.id} ended with exit_reason={exit_reason}, "
+                    f"root_cause={root_cause_tag}, emitting {event_name} (NOT task_completed)"
+                )
 
             is_root = (node.level == 0 or not org.get_parent(node.id))
             if is_root:
                 self._latest_root_result[org.id] = {"node_id": node.id, "result": result_text}
 
-            asyncio.ensure_future(self._post_task_hook(org, node))
+            # 非正常结束时不触发 post-task hook（避免把"部分/失败结果"再次下发下游）
+            if is_normal:
+                asyncio.ensure_future(self._post_task_hook(org, node))
 
-            return {"node_id": node.id, "result": result_text}
+            return_payload: dict = {
+                "node_id": node.id,
+                "result": result_text,
+                "exit_reason": exit_reason,
+            }
+            if diagnosis:
+                return_payload["diagnosis"] = diagnosis
+            return return_payload
 
         except Exception as e:
             logger.error(f"[OrgRuntime] Task error on {node.id}: {e}")
@@ -1590,6 +1726,9 @@ class OrgRuntime:
 
     def _activate_org(self, org: Organization) -> None:
         """Set up runtime infrastructure for an organization."""
+        # 重新激活同一 org 时，清理"最近被停止"标记，避免新 session 的
+        # 工具调用被误判成"组织已停止"
+        self._recently_stopped_orgs.pop(org.id, None)
         org_dir = self._manager._org_dir(org.id)
         self._active_orgs[org.id] = org
         self._messengers[org.id] = OrgMessenger(org, org_dir)
