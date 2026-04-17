@@ -554,3 +554,49 @@ ORG_NODE_TOOLS: list[dict] = [
         },
     },
 ]
+
+
+def build_org_node_tools(org: "object", node: "object") -> list[dict]:
+    """Return a per-node customized copy of ORG_NODE_TOOLS.
+
+    Customizations applied:
+
+    - ``org_delegate_task.to_node`` gets an ``enum`` limited to the node's
+      direct subordinate ids, physically preventing the LLM from selecting
+      an invalid target (self, peers, grand-children, or non-existing ids).
+    - If the node has no direct subordinates (leaf node), ``org_delegate_task``
+      is dropped from the returned list entirely. Leaf nodes should use
+      ``org_submit_deliverable`` to hand results back upwards.
+    - All other tools are returned by reference without mutation, so there
+      is zero shared-state risk for them.
+
+    Args:
+        org: The owning :class:`Organization` instance. Must expose
+            ``get_children(node_id) -> list[OrgNode]``.
+        node: The :class:`OrgNode` to build tools for. Must expose ``id``.
+
+    Returns:
+        A list of tool definition dicts suitable for injecting into the
+        node's agent tool catalog / ``_tools`` list.
+    """
+    import copy
+
+    children = org.get_children(node.id)
+    child_ids = [c.id for c in children]
+
+    out: list[dict] = []
+    for tpl in ORG_NODE_TOOLS:
+        name = tpl.get("name", "")
+        if name == "org_delegate_task":
+            if not child_ids:
+                continue
+            tool = copy.deepcopy(tpl)
+            props = tool["input_schema"]["properties"]
+            props["to_node"]["enum"] = list(child_ids)
+            hint_ids = ", ".join(f"`{cid}`" for cid in child_ids)
+            base_desc = props["to_node"].get("description", "")
+            props["to_node"]["description"] = f"{base_desc}（只能是：{hint_ids}）"
+            out.append(tool)
+        else:
+            out.append(tpl)
+    return out
