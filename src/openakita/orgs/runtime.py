@@ -2665,7 +2665,7 @@ class OrgRuntime:
                     tool_handler._bridge_plan_to_task(
                         org_id, node_id, tool_name, tool_input, result, chain_id=chain_id
                     )
-            if tool_name in ("write_file", "generate_image"):
+            if tool_name in ("write_file", "generate_image", "deliver_artifacts"):
                 try:
                     ws = getattr(agent, "_org_context", {}).get("workspace")
                     self._record_file_output(
@@ -2704,37 +2704,34 @@ class OrgRuntime:
         ".zip": "压缩包",
     }
 
-    def _record_file_output(
+    def _register_file_output(
         self,
         org_id: str,
         node_id: str,
-        tool_name: str,
-        tool_input: dict,
-        result: str,
         *,
+        chain_id: str | None,
+        filename: str | None,
+        file_path: str | None,
         workspace: Path | None = None,
-    ) -> None:
-        """After write_file / generate_image succeeds, write a RESOURCE
-        entry to the org blackboard so users can see and download files."""
-        import json as _json
+    ) -> dict | None:
+        """Canonical entry for recording a file produced by an org node.
 
-        file_path: str | None = None
+        This is the single place that:
+          1. resolves a (possibly relative) file path against the org workspace
+          2. writes a RESOURCE entry to the org blackboard
+          3. broadcasts org:blackboard_update so the frontend shows the
+             attachment chip in the chat panel
+          4. links the attachment onto the current ProjectTask
 
-        if tool_name == "write_file":
-            if "❌" in result:
-                return
-            file_path = tool_input.get("path", "")
-        elif tool_name == "generate_image":
-            try:
-                data = _json.loads(result)
-                if not data.get("ok"):
-                    return
-                file_path = data.get("saved_to", "")
-            except Exception:
-                return
+        All other call sites (write_file / generate_image hook,
+        org_submit_deliverable, deliver_artifacts hook) must funnel through
+        this function — do NOT introduce a parallel registration path.
 
+        Returns the registered attachment dict on success, or None if the
+        file could not be resolved / does not exist / no blackboard available.
+        """
         if not file_path:
-            return
+            return None
 
         p = Path(file_path)
         if not p.is_absolute():
@@ -2744,25 +2741,25 @@ class OrgRuntime:
             p = p.resolve()
 
         if not p.exists() or not p.is_file():
-            return
+            return None
 
         size_bytes = p.stat().st_size
-        filename = p.name
+        resolved_name = filename or p.name
         ext = p.suffix.lower()
         ext_label = self._FILE_EXT_LABELS.get(ext, "文件")
 
         attachment = {
-            "filename": filename,
+            "filename": resolved_name,
             "path": str(p),
             "size_bytes": size_bytes,
         }
 
         bb = self.get_blackboard(org_id)
         if not bb:
-            return
+            return None
 
         entry = bb.write_org(
-            content=f"📎 产出{ext_label}：**{filename}**\n📂 路径：`{str(p)}`",
+            content=f"📎 产出{ext_label}：**{resolved_name}**\n📂 路径：`{str(p)}`",
             source_node=node_id,
             memory_type=MemoryType.RESOURCE,
             tags=["file_output", ext.lstrip(".")],
@@ -2774,37 +2771,144 @@ class OrgRuntime:
             asyncio.ensure_future(self._broadcast_ws("org:blackboard_update", {
                 "org_id": org_id, "scope": "org", "node_id": node_id,
                 "memory_type": "resource",
-                "filename": filename,
+                "filename": resolved_name,
                 "file_path": str(p),
                 "file_size": size_bytes,
             }))
 
         _TEXT_EXTS = {".md", ".txt", ".html", ".json", ".yaml", ".yml", ".csv", ".xml"}
         text_preview = ""
-        if ext.lower() in _TEXT_EXTS and size_bytes < 50_000:
+        if ext in _TEXT_EXTS and size_bytes < 50_000:
             try:
                 text_preview = p.read_text(encoding="utf-8", errors="replace")[:3000]
             except Exception:
                 pass
 
-        content_for_task = f"📎 产出文件：**{filename}**\n📂 路径：`{str(p)}`"
+        content_for_task = f"📎 产出文件：**{resolved_name}**\n📂 路径：`{str(p)}`"
         if text_preview:
             content_for_task += (
                 f"\n\n<details><summary>文件内容预览</summary>\n\n"
                 f"{text_preview}\n\n</details>"
             )
 
-        chain_id = self.get_current_chain_id(org_id, node_id)
         if chain_id:
             try:
                 self._tool_handler._link_project_task(
                     org_id, chain_id,
                     deliverable_content=content_for_task,
                     file_attachment={
-                        "filename": filename,
+                        "filename": resolved_name,
                         "file_path": str(p),
                         "file_size": size_bytes,
                     },
                 )
             except Exception:
                 pass
+
+        return {
+            "filename": resolved_name,
+            "file_path": str(p),
+            "file_size": size_bytes,
+        }
+
+    def _record_file_output(
+        self,
+        org_id: str,
+        node_id: str,
+        tool_name: str,
+        tool_input: dict,
+        result: str,
+        *,
+        workspace: Path | None = None,
+    ) -> None:
+        """Thin wrapper that extracts (filename, file_path) from a tool
+        invocation and funnels into _register_file_output.
+
+        Supports write_file / generate_image / deliver_artifacts. Any future
+        producer should also go through this wrapper, not call
+        _register_file_output directly with ad-hoc arguments.
+        """
+        import json as _json
+
+        if tool_name == "write_file":
+            if "❌" in result:
+                return
+            # LLMs frequently emit write_file with filename / filepath /
+            # file_path instead of the canonical path. The tool implementation
+            # (tools/handlers/filesystem.py::_write_file) also falls back to
+            # these aliases, so we honour the same set here to keep the hook
+            # aligned with whatever actually got written.
+            file_path = (
+                tool_input.get("path")
+                or tool_input.get("filepath")
+                or tool_input.get("file_path")
+                or tool_input.get("filename")
+                or ""
+            )
+            if not file_path:
+                return
+            chain_id = self.get_current_chain_id(org_id, node_id)
+            self._register_file_output(
+                org_id, node_id,
+                chain_id=chain_id,
+                filename=None,
+                file_path=file_path,
+                workspace=workspace,
+            )
+            return
+
+        if tool_name == "generate_image":
+            try:
+                data = _json.loads(result)
+                if not data.get("ok"):
+                    return
+                file_path = data.get("saved_to", "")
+            except Exception:
+                return
+            if not file_path:
+                return
+            chain_id = self.get_current_chain_id(org_id, node_id)
+            self._register_file_output(
+                org_id, node_id,
+                chain_id=chain_id,
+                filename=None,
+                file_path=file_path,
+                workspace=workspace,
+            )
+            return
+
+        if tool_name == "deliver_artifacts":
+            # deliver_artifacts returns a JSON envelope with receipts. Desktop
+            # mode receipts use status == "delivered" and include an absolute
+            # "path". Register each delivered file so the chat UI shows the
+            # attachment chip just like it does for write_file outputs.
+            try:
+                text = result or ""
+                # Some code paths append "\n\n[执行日志]..." after the JSON.
+                if "\n\n[执行日志]" in text:
+                    text = text[: text.index("\n\n[执行日志]")]
+                data = _json.loads(text)
+            except Exception:
+                return
+            if not isinstance(data, dict):
+                return
+            receipts = data.get("receipts") or []
+            if not isinstance(receipts, list):
+                return
+            chain_id = self.get_current_chain_id(org_id, node_id)
+            for r in receipts:
+                if not isinstance(r, dict):
+                    continue
+                if r.get("status") != "delivered":
+                    continue
+                path = r.get("path") or r.get("file_path")
+                if not path:
+                    continue
+                self._register_file_output(
+                    org_id, node_id,
+                    chain_id=chain_id,
+                    filename=r.get("name") or r.get("filename"),
+                    file_path=path,
+                    workspace=workspace,
+                )
+            return

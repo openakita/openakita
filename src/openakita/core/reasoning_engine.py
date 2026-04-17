@@ -3371,7 +3371,14 @@ class ReasoningEngine:
                             yield {"type": "chain_text", "content": _result_summary}
 
                         # deliver_artifacts 回执收集（与 run() 一致）
-                        if tool_name == "deliver_artifacts" and result_text:
+                        # 与 run() 路径对齐：deliver_artifacts 为直接交付，
+                        # org_accept_deliverable 为"中继交付"（父节点验收子节点
+                        # 带文件的交付物，receipts.status == "relayed"），
+                        # 两种都算 TaskVerify 眼里的有效交付证据。
+                        if (
+                            tool_name in ("deliver_artifacts", "org_accept_deliverable")
+                            and result_text
+                        ):
                             try:
                                 _rt = result_text
                                 _lm = "\n\n[执行日志]"
@@ -3381,6 +3388,8 @@ class ReasoningEngine:
                                 if (
                                     isinstance(_receipts_data, dict)
                                     and "receipts" in _receipts_data
+                                    and isinstance(_receipts_data["receipts"], list)
+                                    and _receipts_data["receipts"]
                                 ):
                                     delivery_receipts = _receipts_data["receipts"]
                                     self._last_delivery_receipts = delivery_receipts

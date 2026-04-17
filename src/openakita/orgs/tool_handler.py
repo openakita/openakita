@@ -32,6 +32,22 @@ _LIM_EXEC_LOG = 2000
 _LIM_TOOL_RETURN = 200
 _LIM_TITLE = 200
 
+# Tools whose ``to_node`` / ``node_id`` / ``target_node_id`` parameters must
+# resolve to a **specific** node before the handler runs. Used by
+# ``OrgToolHandler._resolve_node_refs`` to switch from lenient fuzzy matching
+# (which is the historical behaviour for search tools like
+# ``org_find_colleague``) to strict exact-only matching (so that ambiguous
+# role titles surface as structured errors instead of silently binding to
+# the wrong node — typically the caller itself).
+_STRICT_REF_TOOLS: set[str] = {
+    "org_delegate_task",
+    "org_send_message",
+    "org_reply_message",
+    "org_submit_deliverable",
+    "org_accept_deliverable",
+    "org_reject_deliverable",
+}
+
 
 class OrgToolHandler:
     """Dispatch and execute org_* tool calls."""
@@ -110,20 +126,62 @@ class OrgToolHandler:
         explicit = org.max_delegation_depth
         return max(explicit, org_depth + 3)
 
-    def _resolve_node_refs(self, args: dict, org_id: str) -> None:
-        """Resolve node references: LLM may pass role titles or wrong-cased IDs."""
+    def _resolve_node_refs(
+        self, args: dict, org_id: str, tool_name: str | None = None
+    ) -> None:
+        """Resolve node references: LLM may pass role titles or wrong-cased IDs.
+
+        Behaviour depends on *tool_name*:
+
+        - If ``tool_name`` is in ``_STRICT_REF_TOOLS`` (write-effect tools
+          like delegate / send_message / reply_message), we only rewrite
+          ``args[key]`` to the canonical node id when ``resolve_reference``
+          returns ``exact_id`` or ``exact_title``. Ambiguous or fuzzy
+          matches are **kept as-is** so the downstream handler can surface
+          a structured error listing the candidate IDs — this is what
+          prevents the "产品总监" ↔ "产品经理" substring collision from
+          silently resolving the caller to itself.
+        - If ``tool_name`` is outside that set (search / read tools such
+          as org_find_colleague, org_get_memory_of_node, org_pause_node,
+          …), we keep the historical lenient behaviour: any hit — exact
+          or fuzzy — wins, matching pre-existing caller expectations and
+          avoiding regressions in search flows.
+
+        ``tool_name=None`` defaults to the lenient path for backward
+        compatibility with any direct test harness.
+        """
         org = self._runtime.get_org(org_id)
         if not org:
             return
+
+        strict = tool_name in _STRICT_REF_TOOLS
+
         for key in ("to_node", "node_id", "target_node_id"):
             val = args.get(key, "")
             if not val:
                 continue
+
+            if strict:
+                node, _candidates, status = org.resolve_reference(val)
+                # Exact hits are safe to rewrite; everything else (ambiguous
+                # title, fuzzy, not_found) must be passed through untouched
+                # so the handler can emit an informative error including
+                # the candidate list.
+                if status in ("exact_id", "exact_title") and node is not None:
+                    args[key] = node.id
+                continue
+
+            # Lenient path (search / read tools): first try exact hits,
+            # then fall back to the legacy substring / title / id matching.
             if org.get_node(val):
                 continue
             val_lower = val.lower().replace(" ", "_").replace("-", "_")
             for n in org.nodes:
-                if n.id == val_lower or n.role_title == val or n.role_title.lower() == val.lower():
+                if (
+                    n.id == val_lower
+                    or n.role_title == val
+                    or n.role_title.lower() == val.lower()
+                ):
                     args[key] = n.id
                     break
 
@@ -466,7 +524,7 @@ class OrgToolHandler:
 
         arguments = self._resolve_aliases(arguments)
         arguments = self._coerce_types(arguments)
-        self._resolve_node_refs(arguments, org_id)
+        self._resolve_node_refs(arguments, org_id, tool_name=tool_name)
 
         try:
             result = await handler(arguments, org_id, node_id)
@@ -507,15 +565,55 @@ class OrgToolHandler:
             msg_type = MsgType.QUESTION
             logger.warning(f"[OrgToolHandler] Invalid msg_type '{raw_type}', falling back to 'question'")
 
-        to_node = args["to_node"]
+        to_node = args.get("to_node", "")
         org = self._runtime.get_org(org_id)
         if org:
-            resolved = org.get_node(to_node)
-            if resolved:
-                to_node = resolved.id
-            else:
+            caller_node = org.get_node(node_id)
+            caller_label = (
+                f"`{caller_node.id}`({caller_node.role_title})"
+                if caller_node else f"`{node_id}`"
+            )
+            # 和 org_delegate_task 用同一套 resolve_reference 协议，确保
+            # to_node 必须是 node_xxxxxxxx 或完全相同的唯一 role_title；
+            # 名字相近的模糊命中一律退到"请用精确 id"错误，避免把消息
+            # 错发给同名同事（例如"产品总监"/"产品经理"的 substring 歧义）。
+            resolved, candidates, status = org.resolve_reference(to_node)
+            if status == "ambiguous_title":
+                cand_list = ", ".join(
+                    f"`{c.id}`({c.role_title})" for c in candidates
+                )
+                return (
+                    f"[org_send_message 失败] 你是 {caller_label}，to_node='{to_node}' "
+                    f"对应多个节点：{cand_list}。请改用 node_xxxxxxxx 形式的精确 id。"
+                )
+            if status == "fuzzy":
+                cand = candidates[0] if candidates else None
+                cand_label = (
+                    f"`{cand.id}`({cand.role_title})" if cand else f"'{to_node}'"
+                )
+                if cand and cand.id == node_id:
+                    return (
+                        f"[org_send_message 失败] 你是 {caller_label}，"
+                        f"to_node='{to_node}' 模糊匹配到的是你自己（{cand_label}），不能给自己发消息。"
+                        "请使用准确的目标节点 id。"
+                    )
+                return (
+                    f"[org_send_message 失败] 你是 {caller_label}，to_node='{to_node}' "
+                    f"不是精确匹配，最接近的是 {cand_label}。为避免误发，请把 to_node 改为 "
+                    "`node_xxxxxxxx` 形式的精确 id 再试。"
+                )
+            if status == "not_found":
                 avail = ", ".join(f"{n.id}({n.role_title})" for n in org.nodes)
-                return f"节点 '{to_node}' 不存在。可用节点: {avail}"
+                return (
+                    f"[org_send_message 失败] 你是 {caller_label}，节点 '{to_node}' 不存在。"
+                    f"可用节点: {avail}"
+                )
+
+            to_node = resolved.id
+            if to_node == node_id:
+                return (
+                    f"[org_send_message 失败] 你是 {caller_label}，不能给自己发消息。"
+                )
 
         msg = OrgMessage(
             org_id=org_id,
@@ -622,18 +720,58 @@ class OrgToolHandler:
                 if caller_node else f"`{node_id}`"
             )
 
-            resolved = org.get_node(to_node)
-            if resolved:
-                to_node = resolved.id
-            else:
+            # _resolve_node_refs 在 strict 模式下只对 exact_id/exact_title 做了
+            # 改写；fuzzy/ambiguous/not_found 都原样保留在 to_node 里，必须在
+            # 这里用 resolve_reference 再跑一次严格解析，产出结构化错误，
+            # 否则 LLM 根本不知道该用哪个 node_xxxxxxxx。
+            resolved, candidates, status = org.resolve_reference(to_node)
+            children = org.get_children(node_id)
+            children_hint = (
+                "你的直属下级：" + ", ".join(
+                    f"{c.role_title}(`{c.id}`)" for c in children
+                )
+                if children
+                else "你是叶子节点，没有直属下级，无法使用 org_delegate_task。"
+            )
+
+            if status == "ambiguous_title":
+                cand_list = ", ".join(
+                    f"`{c.id}`({c.role_title})" for c in candidates
+                )
+                return (
+                    f"[org_delegate_task 失败] 你是 {caller_label}，to_node='{to_node}' "
+                    f"对应多个节点：{cand_list}。请改用 node_xxxxxxxx 形式的精确 id 再试一次。"
+                    f"{children_hint}"
+                )
+            if status == "fuzzy":
+                cand = candidates[0] if candidates else None
+                cand_label = (
+                    f"`{cand.id}`({cand.role_title})" if cand else f"'{to_node}'"
+                )
+                # 对自指（模糊匹配恰好命中调用者自己）单独提示，堵上最常见的
+                # "产品总监把任务派给自己"死循环。
+                if cand and cand.id == node_id:
+                    return (
+                        f"[org_delegate_task 失败] 你是 {caller_label}，"
+                        f"to_node='{to_node}' 模糊匹配到的是你自己（{cand_label}），不能委派给自己。"
+                        f"请用 node_xxxxxxxx 形式的精确下级 id。{children_hint}"
+                    )
+                return (
+                    f"[org_delegate_task 失败] 你是 {caller_label}，to_node='{to_node}' "
+                    f"不是精确匹配，最接近的是 {cand_label}。为避免误派，请把 to_node 改为 "
+                    f"`node_xxxxxxxx` 形式的精确 id 再试。{children_hint}"
+                )
+            if status == "not_found":
                 avail = ", ".join(f"{n.id}({n.role_title})" for n in org.nodes)
                 return (
                     f"[org_delegate_task 失败] 你是 {caller_label}，目标节点 '{to_node}' 不存在。"
                     f"可用节点: {avail}。请检查 to_node 参数，或改用 org_submit_deliverable 自行完成。"
                 )
 
+            # exact_id / exact_title
+            to_node = resolved.id
+
             # Validate hierarchy: only direct children can receive delegated tasks
-            children = org.get_children(node_id)
             child_ids = {c.id for c in children}
             if to_node not in child_ids:
                 if to_node == node_id:
@@ -1192,6 +1330,7 @@ class OrgToolHandler:
         deliverable = args.get("deliverable", "")
         summary = args.get("summary", "")
         chain_id = args.get("task_chain_id") or _now_iso()
+        raw_file_attachments = args.get("file_attachments") or []
 
         if not to_node:
             org = self._runtime.get_org(org_id)
@@ -1234,11 +1373,56 @@ class OrgToolHandler:
         except Exception as exc:
             logger.debug("submit-idempotency check skipped: %s", exc)
 
-        metadata = {
+        # 把显式声明的 file_attachments 全部登记到黑板 + ProjectTask。
+        # 使用 runtime._register_file_output 作为唯一登记入口，确保和
+        # write_file / generate_image / deliver_artifacts 共用一条路径
+        # （避免双写黑板条目）。registered_attachments 里只保留登记成功
+        # 的条目（路径存在 + 黑板可写），随 TASK_DELIVERED 送到父节点。
+        registered_attachments: list[dict] = []
+        if isinstance(raw_file_attachments, list) and raw_file_attachments:
+            try:
+                org_for_ws = self._runtime.get_org(org_id)
+                workspace = (
+                    self._runtime._resolve_org_workspace(org_for_ws)
+                    if org_for_ws else None
+                )
+            except Exception:
+                workspace = None
+            for att in raw_file_attachments:
+                if not isinstance(att, dict):
+                    continue
+                fp = att.get("file_path") or att.get("path")
+                if not fp:
+                    continue
+                try:
+                    registered = self._runtime._register_file_output(
+                        org_id, node_id,
+                        chain_id=chain_id or None,
+                        filename=att.get("filename"),
+                        file_path=fp,
+                        workspace=workspace,
+                    )
+                except Exception:
+                    logger.debug(
+                        "submit-deliverable register_file_output failed",
+                        exc_info=True,
+                    )
+                    registered = None
+                if registered:
+                    registered_attachments.append(registered)
+                else:
+                    logger.info(
+                        "[ToolHandler] submit_deliverable skipped unregistrable "
+                        "attachment: %s (file missing?)", fp,
+                    )
+
+        metadata: dict = {
             "deliverable": deliverable[:2000],
             "summary": summary[:500],
             "task_chain_id": chain_id,
         }
+        if registered_attachments:
+            metadata["file_attachments"] = registered_attachments
 
         msg = OrgMessage(
             org_id=org_id,
@@ -1252,7 +1436,11 @@ class OrgToolHandler:
 
         self._runtime.get_event_store(org_id).emit(
             "task_delivered", node_id,
-            {"to": to_node, "chain_id": chain_id, "deliverable_preview": deliverable[:_LIM_EVENT]},
+            {
+                "to": to_node, "chain_id": chain_id,
+                "deliverable_preview": deliverable[:_LIM_EVENT],
+                "file_count": len(registered_attachments),
+            },
         )
 
         if ok:
@@ -1271,7 +1459,11 @@ class OrgToolHandler:
                 f"提交交付物给 {to_node}: {summary[:_LIM_EXEC_LOG]}",
                 node_id,
             )
-            return f"交付物已提交给 {to_node}，等待验收。"
+            tail = (
+                f"（附带 {len(registered_attachments)} 个文件附件）"
+                if registered_attachments else ""
+            )
+            return f"交付物已提交给 {to_node}{tail}，等待验收。"
         return "提交失败"
 
     async def _handle_org_accept_deliverable(
@@ -1334,6 +1526,7 @@ class OrgToolHandler:
             "org_id": org_id, "from_node": from_node, "accepted_by": node_id,
             "chain_id": chain_id, "feedback": feedback[:_LIM_WS],
         })
+        relayed_files: list[dict] = []
         if chain_id:
             self._link_project_task(org_id, chain_id, status="accepted")
             self._append_execution_log(
@@ -1345,9 +1538,11 @@ class OrgToolHandler:
                 from openakita.orgs.project_store import ProjectStore as _PS
                 _store = _PS(self._runtime._manager._org_dir(org_id))
                 _child = _store.find_task_by_chain(chain_id)
-                if _child and _child.parent_task_id:
+                if _child:
                     _child_files = getattr(_child, "file_attachments", None) or []
                     if _child_files:
+                        relayed_files = [dict(f) for f in _child_files]
+                    if _child.parent_task_id and _child_files:
                         _parent, _ = _store.get_task(_child.parent_task_id)
                         if _parent:
                             _merged = self._merge_file_attachments(
@@ -1370,7 +1565,28 @@ class OrgToolHandler:
                 tags=["acceptance", "completed"],
             )
 
-        return f"已验收 {from_node} 的交付物。"
+        # 返回结构化 JSON，对齐 deliver_artifacts 的 receipts 协议。
+        # reasoning_engine 会解析 receipts 进 delivery_receipts，让
+        # TaskVerify 认可"中继交付"——即父节点自己没调用 deliver_artifacts，
+        # 但子节点已经把文件交上来并被父节点 accept 的场景。
+        receipts = [
+            {
+                "status": "relayed",
+                "filename": f.get("filename", ""),
+                "file_path": f.get("file_path", ""),
+                "file_size": f.get("file_size"),
+                "source_node": from_node,
+            }
+            for f in relayed_files
+        ]
+        payload = {
+            "ok": True,
+            "accepted_from": from_node,
+            "chain_id": chain_id,
+            "receipts": receipts,
+            "message": f"已验收 {from_node} 的交付物。",
+        }
+        return json.dumps(payload, ensure_ascii=False)
 
     async def _handle_org_reject_deliverable(
         self, args: dict, org_id: str, node_id: str

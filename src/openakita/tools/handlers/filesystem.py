@@ -398,7 +398,17 @@ class FilesystemHandler:
 
     async def _write_file(self, params: dict) -> str:
         """写入文件"""
-        path = params.get("path")
+        # 规范 path 名是 "path"；但 LLM 经常写成 filename/filepath/file_path。
+        # 这里做一次保守兜底——只当权威的 path 缺失时才回退到别名，
+        # 并且和 runtime._record_file_output 使用同一组别名，确保写盘成功后
+        # 附件登记链路也能识别到同一个文件。schema 仍只声明 "path" 为主键
+        # （见 tools/definitions/filesystem.py），tool description 会明确要求。
+        path = (
+            params.get("path")
+            or params.get("filepath")
+            or params.get("file_path")
+            or params.get("filename")
+        )
         unc_err = self._check_unc(path)
         if unc_err:
             return f"❌ {unc_err}"

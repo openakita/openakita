@@ -965,13 +965,21 @@ class Agent:
 
                 logger.info(f"[Tool] {tool_name} → {result_str}")
 
-                if capture_delivery_receipts and tool_name == "deliver_artifacts" and result_str:
+                # 与 tool_executor 对齐：deliver_artifacts 为直接交付，
+                # org_accept_deliverable 为"中继交付"（父节点验收子节点带文件
+                # 的交付物，receipts.status == "relayed"）。两种场景都让
+                # TaskVerify 看到真实的交付证据。
+                if (
+                    capture_delivery_receipts
+                    and tool_name in ("deliver_artifacts", "org_accept_deliverable")
+                    and result_str
+                ):
                     try:
                         import json as _json
 
                         parsed = _json.loads(result_str)
                         rs = parsed.get("receipts") if isinstance(parsed, dict) else None
-                        if isinstance(rs, list):
+                        if isinstance(rs, list) and rs:
                             receipts = rs
                     except Exception:
                         receipts = None

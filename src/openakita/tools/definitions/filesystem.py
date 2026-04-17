@@ -130,7 +130,14 @@ FILESYSTEM_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "文件路径"},
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "文件路径。**参数名必须是 `path`**，不要写成 "
+                        "`filename` / `filepath` / `file_path`——虽然实现层会做别名兜底，"
+                        "但 schema 只认 `path`；别名兜底是最后防线，别依赖。"
+                    ),
+                },
                 "content": {"type": "string", "description": "文件内容"},
             },
             "required": ["path", "content"],

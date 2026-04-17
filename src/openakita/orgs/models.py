@@ -509,6 +509,94 @@ class Organization:
                     return n
         return None
 
+    # ------------------------------------------------------------------
+    # Strict reference resolution
+    # ------------------------------------------------------------------
+    #
+    # ``get_node`` above is intentionally lenient — it is the backbone of
+    # search-style callers (org_find_colleague, UI reference rendering,
+    # historical log reconstruction) where "resolve whatever the user might
+    # have typed" is the correct behaviour.
+    #
+    # For *write-effect* tool parameters (``to_node`` on delegate /
+    # send_message / reply_message etc.) the same leniency is actively
+    # harmful: if role_titles share a prefix — e.g. "产品总监" vs "产品经理"
+    # — the substring branches ``title in query`` / ``query in title`` on
+    # L496 can silently resolve the caller's own title to itself or to the
+    # wrong sibling, which then triggers the self-delegation guard and
+    # spins the ReAct loop until Supervisor terminates it.
+    #
+    # ``resolve_reference`` is the strict counterpart: it returns a 3-tuple
+    #
+    #   (exact_match_or_none, candidates, status)
+    #
+    # where *status* is one of:
+    #
+    #   "exact_id"         – matched by node id (literal or normalized)
+    #   "exact_title"      – exactly one node has this role_title (strict)
+    #   "ambiguous_title"  – ≥ 2 nodes share this role_title
+    #   "fuzzy"            – no exact match; legacy lenient matching found
+    #                        one-or-more candidates (caller decides what
+    #                        to do — delegate handler rejects; search
+    #                        handler may accept the first candidate)
+    #   "not_found"        – nothing matched at all
+    #
+    # Callers that need the old "any hit wins" behaviour should keep using
+    # ``get_node``. Callers that need the strict contract (delegate,
+    # send_message, reply_message) should consume ``resolve_reference``
+    # directly and surface the candidate list in their error messages.
+    def resolve_reference(
+        self, query: str
+    ) -> tuple["OrgNode | None", list["OrgNode"], str]:
+        if not query:
+            return None, [], "not_found"
+
+        for n in self.nodes:
+            if n.id == query:
+                return n, [], "exact_id"
+
+        q_lower = query.lower().replace(" ", "").replace("-", "")
+        if q_lower:
+            for n in self.nodes:
+                if n.id.lower().replace("-", "") == q_lower:
+                    return n, [], "exact_id"
+
+        q_title = query.strip()
+        if q_title:
+            # Case-sensitive exact title wins first; if that also yields
+            # multiple hits we still have to report ambiguity (e.g. two
+            # nodes literally named "产品经理" across departments).
+            exact_title_hits = [
+                n for n in self.nodes if (n.role_title or "").strip() == q_title
+            ]
+            if len(exact_title_hits) == 1:
+                return exact_title_hits[0], [], "exact_title"
+            if len(exact_title_hits) >= 2:
+                return None, exact_title_hits, "ambiguous_title"
+
+            # Case-insensitive exact title is still considered an exact
+            # match (safe — not a substring collision) so that legitimate
+            # shorthands like "cto" → role_title "CTO" keep working without
+            # being downgraded to fuzzy. Still gate on strict equality after
+            # normalizing case + whitespace only (no substring).
+            q_norm = q_title.lower().replace(" ", "").replace("　", "")
+            if q_norm:
+                ci_hits = [
+                    n for n in self.nodes
+                    if (n.role_title or "").strip().lower()
+                    .replace(" ", "").replace("　", "") == q_norm
+                ]
+                if len(ci_hits) == 1:
+                    return ci_hits[0], [], "exact_title"
+                if len(ci_hits) >= 2:
+                    return None, ci_hits, "ambiguous_title"
+
+        fuzzy_hit = self.get_node(query)
+        if fuzzy_hit is not None:
+            return None, [fuzzy_hit], "fuzzy"
+
+        return None, [], "not_found"
+
     def get_root_nodes(self) -> list[OrgNode]:
         return [n for n in self.nodes if n.level == 0]
 

@@ -104,8 +104,10 @@ class OrgIdentity:
         # Compact identity declaration (replaces full SOUL.md + AGENT.md)
         parts.append(
             f"# OpenAkita 组织 Agent\n\n"
-            f"你是「{org.name}」中的 **{node.role_title}**。"
+            f"你是「{org.name}」中的 **{node.role_title}**（你的节点 id：`{node.id}`）。"
             f"你是 AI Agent，由 OpenAkita 驱动。\n\n"
+            f"**关键：凡是需要指定目标节点的工具参数（`to_node` / `node_id` / `target_node_id`），"
+            f"必须填写 `node_xxxxxxxx` 这样的节点 id，而不是角色名；填错或写成自己的 id 会被直接拦截。**\n\n"
             f"## 核心原则\n"
             f"- 诚实：不编造信息，不确定时明确说明\n"
             f"- 安全：不执行可能造成伤害的操作\n"
@@ -155,6 +157,12 @@ class OrgIdentity:
         # Relationships with enhanced delegation guidance
         rel_parts = []
         persona = org.user_persona
+        # Always surface the caller's own identity first so the LLM can never
+        # delegate/send to itself by mistake — pairs with the strict
+        # resolve_reference guard in OrgToolHandler._resolve_node_refs.
+        rel_parts.append(
+            f"- 你自己：**{node.role_title}** (id: `{node.id}`) ← 不要把消息或任务发给这个 id"
+        )
         if parent:
             rel_parts.append(f"- 直属上级：**{parent.role_title}** (id: `{parent.id}`)")
         elif persona and persona.label:
