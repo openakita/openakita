@@ -332,6 +332,24 @@ class RuntimeSupervisor:
 
     # ==================== 检测器 ====================
 
+    @staticmethod
+    def _extra_hint_for_tool(tool_name: str) -> str:
+        """对特定工具的死循环附加任务语义级引导。
+
+        目前针对 org_delegate_task：LLM 在没有合法直属下级时会陷入自我委派死循环，
+        需要明确引导它改调 org_submit_deliverable 把当前成果交付给上级。
+        """
+        if not tool_name:
+            return ""
+        if tool_name == "org_delegate_task":
+            return (
+                " [组织编排提示] 你反复调用 org_delegate_task 但目标不合法。"
+                "这通常意味着你就是任务的实际执行者——请立刻停止委派，"
+                "改用 org_submit_deliverable 把当前已完成的工作交付给你的上级；"
+                "若需横向协作可用 org_send_message。不要再尝试 org_delegate_task。"
+            )
+        return ""
+
     def _check_signature_repeat(self, iteration: int) -> Intervention | None:
         """签名重复检测：工具名维度优先于精确签名。
 
@@ -351,6 +369,11 @@ class RuntimeSupervisor:
 
         sig_counts = Counter(recent)
         most_common_sig, most_common_count = sig_counts.most_common(1)[0]
+
+        # 提取 most_common_sig 对应的工具名，用于 STRATEGY_SWITCH 场景
+        _most_common_tool = (
+            most_common_sig.split("(")[0] if "(" in most_common_sig else most_common_sig
+        )
 
         # --- TERMINATE checks first (highest severity) ---
         if top_count >= self._signature_repeat_terminate:
@@ -384,6 +407,7 @@ class RuntimeSupervisor:
                     "如果任务已完成，请直接回复用户最终结果，不要再调用任何工具。"
                     "如果确实需要继续，必须使用完全不同的工具或参数。"
                     "禁止再次调用与之前相同的工具+参数组合。"
+                    + self._extra_hint_for_tool(_most_common_tool)
                 ),
             )
 
@@ -414,6 +438,7 @@ class RuntimeSupervisor:
                     f"[系统提示] 你已经连续 {top_count} 次调用 {top_name}，"
                     "工具已返回结果。请停止重复调用该工具，用自然语言整理结果回复用户。"
                     "如果还需要其他信息，请换一个不同的工具或方法。"
+                    + self._extra_hint_for_tool(top_name)
                 ),
                 throttled_tool_names=[top_name],
             )
@@ -428,6 +453,7 @@ class RuntimeSupervisor:
                 prompt_injection=(
                     "[系统提示] 你在最近几轮中用完全相同的参数重复调用了同一个工具。"
                     "请停止重复调用该工具，用自然语言回复用户，或使用其他工具。"
+                    + self._extra_hint_for_tool(_sig_tool)
                 ),
                 throttled_tool_names=[_sig_tool],
             )

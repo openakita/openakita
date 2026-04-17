@@ -344,8 +344,9 @@ class ReasoningEngine:
         # 暂存最近一次推理结束时的 working_messages，供 token 统计读取
         self._last_working_messages: list[dict] = []
 
-        # 上一次推理的退出原因：normal / ask_user
-        # _finalize_session 据此决定是否自动关闭 Plan
+        # 上一次推理的退出原因：normal / ask_user / loop_terminated / max_iterations / verify_incomplete
+        # _finalize_session 据此决定是否自动关闭 Plan；OrgRuntime 据此区分
+        # task_completed / task_failed / task_terminated 三种事件
         self._last_exit_reason: str = "normal"
 
         # 上一次推理中 deliver_artifacts 的交付回执
@@ -1994,6 +1995,7 @@ class ReasoningEngine:
                             task_description=task_description,
                             task_id=state.task_id,
                         )
+                        self._last_exit_reason = "loop_terminated"
                         return (
                             cleaned
                             or "⚠️ 检测到工具调用陷入死循环，任务已自动终止。请重新描述您的需求。"
@@ -2054,6 +2056,7 @@ class ReasoningEngine:
             task_id=state.task_id,
         )
         await broadcast_event("pet-status-update", {"status": "error"})
+        self._last_exit_reason = "max_iterations"
         if max_iterations < 30:
             return (
                 f"已达到最大迭代次数（{max_iterations}）。"
@@ -3753,6 +3756,7 @@ class ReasoningEngine:
                                 cleaned
                                 or "⚠️ 检测到工具调用陷入死循环，任务已自动终止。请重新描述您的需求。"
                             )
+                            self._last_exit_reason = "loop_terminated"
                             yield {"type": "text_delta", "content": msg}
                             yield {"type": "done"}
                             return
@@ -3811,6 +3815,7 @@ class ReasoningEngine:
                 )
             else:
                 hint = "\n\n（已达到最大迭代次数）"
+            self._last_exit_reason = "max_iterations"
             yield {"type": "text_delta", "content": hint}
             yield {"type": "done"}
 
@@ -4925,6 +4930,7 @@ class ReasoningEngine:
                             no_confirmation_text_count,
                             max_no_tool_retries,
                         )
+                    self._last_exit_reason = "verify_incomplete"
                     return cleaned_text
 
                 # 继续循环

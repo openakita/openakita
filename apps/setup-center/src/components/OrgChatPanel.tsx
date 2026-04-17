@@ -19,6 +19,20 @@ interface ChatMsg {
   attachments?: FileAttachment[];
 }
 
+/** 后端 failure_diagnoser 生成的结构化诊断 payload */
+interface FailureDiagnosis {
+  root_cause?: string;
+  headline?: string;
+  evidence?: Array<{
+    iter?: number;
+    tool?: string;
+    args_summary?: string;
+    error?: string;
+  }>;
+  suggestion?: string;
+  exit_reason?: string;
+}
+
 interface TimelineSegment {
   nodeId: string;
   nodeName: string;
@@ -26,6 +40,18 @@ interface TimelineSegment {
   files: FileAttachment[];
   done: boolean;
   resultPreview?: string;
+  /**
+   * 节点退出原因：
+   * - undefined/"normal"/"ask_user": 正常完成
+   * - "loop_terminated": Supervisor 强制终止死循环
+   * - "max_iterations": 达到最大迭代次数
+   * - "verify_incomplete": 任务验证未通过
+   */
+  exitReason?: string;
+  /** 是否非正常结束，用于 UI 明确区分"完成" vs "终止/失败" */
+  failed?: boolean;
+  /** 后端 failure_diagnoser 生成的结构化诊断 */
+  diagnosis?: FailureDiagnosis;
 }
 
 export interface OrgChatPanelProps {
@@ -298,11 +324,47 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       return seg;
     }
 
+    function segSummaryIcon(seg: TimelineSegment): string {
+      if (!seg.failed) return "✓";
+      if (seg.exitReason === "loop_terminated") return "⏹";
+      return "⚠";
+    }
+
+    /** 把后端返回的结构化诊断 payload 渲染成一段 markdown，追加到 seg.lines 末尾 */
+    function formatDiagnosisMarkdown(d: FailureDiagnosis): string {
+      const parts: string[] = [];
+      const headline = d.headline || "任务未正常完成";
+      parts.push(`**🔍 为什么失败**：${headline}`);
+      const evidence = d.evidence || [];
+      if (evidence.length > 0) {
+        parts.push("");
+        parts.push(`**关键动作**（共 ${evidence.length} 条）：`);
+        for (const item of evidence) {
+          const iterN = item.iter ?? "?";
+          const tool = item.tool || "?";
+          const args = item.args_summary ? `(${item.args_summary})` : "";
+          const err = (item.error || "").replace(/\s+/g, " ").trim();
+          const errShort = err.length > 140 ? err.slice(0, 140) + "…" : err;
+          parts.push(`- 第 ${iterN} 轮 \`${tool}\`${args} → ${errShort}`);
+        }
+      }
+      const suggestion = d.suggestion || "";
+      if (suggestion) {
+        parts.push("");
+        parts.push("**建议**：");
+        parts.push(suggestion);
+      }
+      return parts.join("\n");
+    }
+
     function renderTimeline(): string {
       return segments.map(seg => {
         const body = seg.lines.join("\n\n");
         if (seg.done) {
-          return `<details>\n<summary>✓ ${seg.nodeName}</summary>\n\n${body}\n\n</details>`;
+          const icon = segSummaryIcon(seg);
+          // 非正常结束时默认展开，让用户立刻看到诊断；正常完成保持折叠
+          const detailsTag = seg.failed ? "<details open>" : "<details>";
+          return `${detailsTag}\n<summary>${icon} ${seg.nodeName}</summary>\n\n${body}\n\n</details>`;
         }
         return `**● ${seg.nodeName} 处理中...**\n\n${body}`;
       }).join("\n\n");
@@ -336,10 +398,17 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           seg.lines.push(`● **${nn(nid)}** 开始处理${task ? `：${task}` : ""}`);
           updatePreview();
         } else if (st === "idle") {
+          const exitReason = (d.exit_reason as string) || "normal";
           const idx = activeSegIdx.get(nid);
           if (idx != null && segments[idx]) {
             segments[idx].done = true;
-            segments[idx].lines.push(`✓ **${nn(nid)}** 完成`);
+            segments[idx].exitReason = exitReason;
+            // 正常完成才打 ✓；非正常退出交给后续 task_terminated/task_failed 事件打"⏹/⚠"
+            if (exitReason === "normal" || exitReason === "ask_user") {
+              segments[idx].lines.push(`✓ **${nn(nid)}** 完成`);
+            } else {
+              segments[idx].failed = true;
+            }
           }
           updatePreview();
         } else if (st === "error") {
@@ -363,7 +432,46 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         const idx = activeSegIdx.get(nid);
         if (idx != null && segments[idx]) {
           segments[idx].resultPreview = preview;
+          segments[idx].exitReason = (d.exit_reason as string) || "normal";
         }
+      } else if (event === "org:task_terminated") {
+        const preview = ((d.result_preview || "") as string);
+        const reason = (d.exit_reason as string) || "loop_terminated";
+        const diagnosis = (d.diagnosis as FailureDiagnosis | undefined) || undefined;
+        const idx = activeSegIdx.get(nid);
+        if (idx != null && segments[idx]) {
+          segments[idx].done = true;
+          segments[idx].resultPreview = preview;
+          segments[idx].exitReason = reason;
+          segments[idx].failed = true;
+          segments[idx].diagnosis = diagnosis;
+          segments[idx].lines.push(`⏹ **${nn(nid)}** 被强制终止（检测到死循环）`);
+          if (diagnosis) {
+            segments[idx].lines.push(formatDiagnosisMarkdown(diagnosis));
+          }
+        }
+        updatePreview();
+      } else if (event === "org:task_failed") {
+        const preview = ((d.result_preview || "") as string);
+        const reason = (d.exit_reason as string) || "max_iterations";
+        const diagnosis = (d.diagnosis as FailureDiagnosis | undefined) || undefined;
+        const idx = activeSegIdx.get(nid);
+        if (idx != null && segments[idx]) {
+          segments[idx].done = true;
+          segments[idx].resultPreview = preview;
+          segments[idx].exitReason = reason;
+          segments[idx].failed = true;
+          segments[idx].diagnosis = diagnosis;
+          const reasonLabel =
+            reason === "max_iterations" ? "达到最大迭代次数" :
+            reason === "verify_incomplete" ? "任务验证未通过" :
+            "执行失败";
+          segments[idx].lines.push(`⚠ **${nn(nid)}** 未完成：${reasonLabel}`);
+          if (diagnosis) {
+            segments[idx].lines.push(formatDiagnosisMarkdown(diagnosis));
+          }
+        }
+        updatePreview();
       } else if (event === "org:blackboard_update") {
         const mt = d.memory_type as string;
         const fname = d.filename as string | undefined;
