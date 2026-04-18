@@ -18,9 +18,9 @@ ORG_NODE_TOOLS: list[dict] = [
                 "to_node": {
                     "type": "string",
                     "description": (
-                        "目标节点的 id（`node_xxxxxxxx` 形式）。必须使用精确 id，"
-                        "不要填角色名；如果不确定，先用 org_find_colleague 或 "
-                        "org_get_org_chart 查询。不能写自己的 id。"
+                        "目标节点的精确 id（与系统提示里组织结构展示的反引号 id 一致）。"
+                        "必须使用精确 id，不要填角色名；如果不确定，先用 "
+                        "org_find_colleague 或 org_get_org_chart 查询。不能写自己的 id。"
                     ),
                 },
                 "content": {"type": "string", "description": "消息内容"},
@@ -60,8 +60,8 @@ ORG_NODE_TOOLS: list[dict] = [
                 "to_node": {
                     "type": "string",
                     "description": (
-                        "目标直属下级的节点 id（`node_xxxxxxxx` 形式）。必须是你的直接下属，"
-                        "禁止填角色名或自己的 id；名字接近的同事要用精确 id 区分。"
+                        "目标直属下级的精确节点 id（与系统提示里组织结构展示的反引号 id 一致）。"
+                        "必须是你的直接下属，禁止填角色名或自己的 id；名字接近的同事要用精确 id 区分。"
                     ),
                 },
                 "task": {"type": "string", "description": "任务描述"},

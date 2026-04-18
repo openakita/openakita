@@ -277,6 +277,98 @@ class OrgToolHandler:
                 result.append(att)
         return result
 
+    # 文件名清洗：去掉路径分隔符 / 控制字符 / 平台保留字符，避免 LLM
+    # 给的标题里包含 ../ 或 :*?"<>| 这种东西穿越到 workspace 之外。
+    _DELIVERABLE_NAME_FORBIDDEN = set('\\/:*?"<>|\r\n\t')
+
+    # 自动落盘 deliverable 的最小字符数。低于这个长度通常是聊天式回复
+    # （"我已完成"），落盘成附件反而噪音。LLM 写出的真实文档（带 markdown
+    # 标题或列表）通常 ≥300 字符；用户实测 case ~ 476 字符。
+    _DELIVERABLE_AUTO_PERSIST_MIN_CHARS = 300
+
+    @classmethod
+    def _slugify_deliverable_title(cls, title: str) -> str:
+        cleaned = "".join(
+            ch for ch in (title or "") if ch not in cls._DELIVERABLE_NAME_FORBIDDEN
+        ).strip()
+        cleaned = cleaned.replace(" ", "_")
+        if len(cleaned) > 60:
+            cleaned = cleaned[:60].rstrip("_- ")
+        return cleaned or "deliverable"
+
+    @staticmethod
+    def _looks_like_structured_document(body: str) -> bool:
+        """Heuristic to decide whether a deliverable string is a 'document'
+        worth materialising as an attachment.
+
+        True if ANY of:
+          - Has at least one ATX markdown heading (`#`..`######`) at line start
+          - Has at least 3 bullet list items (`- ` or `* `) at line start
+          - Contains a fenced code block (```)
+
+        Designed to be conservative so plain conversational replies like
+        "我已完成" do not trigger auto-persist.
+        """
+        if not body:
+            return False
+        import re
+        if re.search(r"(?m)^\s{0,3}#{1,6}\s", body):
+            return True
+        bullet_lines = re.findall(r"(?m)^\s{0,3}[-*]\s+\S", body)
+        if len(bullet_lines) >= 3:
+            return True
+        if "```" in body:
+            return True
+        return False
+
+    def _auto_persist_deliverable(
+        self,
+        *,
+        workspace,
+        chain_id: str,
+        title: str,
+        body: str,
+    ):
+        """Persist a long inline deliverable to ``<workspace>/deliverables/``.
+
+        Returns the absolute Path on success, or None on any failure (caller
+        only logs a warning and continues; this is a best-effort fallback).
+        Resolved path is verified to stay strictly inside the workspace
+        ``deliverables`` folder so that a malicious / careless LLM-supplied
+        title cannot escape via path-traversal.
+        """
+        from pathlib import Path
+        from datetime import datetime
+
+        try:
+            base_ws = Path(workspace).resolve()
+        except Exception:
+            return None
+        deliverables_dir = (base_ws / "deliverables").resolve()
+        try:
+            deliverables_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            return None
+
+        slug = self._slugify_deliverable_title(title)
+        chain_short = (chain_id or "chain").split(":")[-1][:12] or "chain"
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        candidate = (deliverables_dir / f"{chain_short}_{slug}_{ts}.md").resolve()
+
+        try:
+            deliverables_dir_str = str(deliverables_dir)
+            if not str(candidate).startswith(deliverables_dir_str):
+                return None
+        except Exception:
+            return None
+
+        header = f"# {title.strip() or '交付物'}\n\n" if title else ""
+        try:
+            candidate.write_text(header + (body or ""), encoding="utf-8")
+        except Exception:
+            return None
+        return candidate
+
     def _link_project_task(
         self, org_id: str, chain_id: str, *,
         title: str = "",
@@ -647,7 +739,7 @@ class OrgToolHandler:
                 if caller_node else f"`{node_id}`"
             )
             # 和 org_delegate_task 用同一套 resolve_reference 协议，确保
-            # to_node 必须是 node_xxxxxxxx 或完全相同的唯一 role_title；
+            # to_node 必须是反引号包住的精确节点 id 或完全相同的唯一 role_title；
             # 名字相近的模糊命中一律退到"请用精确 id"错误，避免把消息
             # 错发给同名同事（例如"产品总监"/"产品经理"的 substring 歧义）。
             resolved, candidates, status = org.resolve_reference(to_node)
@@ -657,7 +749,7 @@ class OrgToolHandler:
                 )
                 return (
                     f"[org_send_message 失败] 你是 {caller_label}，to_node='{to_node}' "
-                    f"对应多个节点：{cand_list}。请改用 node_xxxxxxxx 形式的精确 id。"
+                    f"对应多个节点：{cand_list}。请改用上面列出的精确节点 id（反引号包住的那一个）。"
                 )
             if status == "fuzzy":
                 cand = candidates[0] if candidates else None
@@ -673,7 +765,7 @@ class OrgToolHandler:
                 return (
                     f"[org_send_message 失败] 你是 {caller_label}，to_node='{to_node}' "
                     f"不是精确匹配，最接近的是 {cand_label}。为避免误发，请把 to_node 改为 "
-                    "`node_xxxxxxxx` 形式的精确 id 再试。"
+                    "上面建议的精确节点 id 再试。"
                 )
             if status == "not_found":
                 avail = ", ".join(f"{n.id}({n.role_title})" for n in org.nodes)
@@ -800,11 +892,41 @@ class OrgToolHandler:
 
         to_node = args["to_node"]
 
+        # task_affinity 的语义是"同一 chain 的后续消息路由到同一个 clone 实例"，
+        # 它是给 messenger.send 用的（参见 messenger.send 里 affinity_node !=
+        # to_node and != from_node 的反自指守卫）。在 delegate 这条路径上，
+        # 之前把 to_node 无条件覆盖成 existing_affinity 会出现一个致命的
+        # 自指：CEO 用 chain X 派给 CPO 后，affinity[X] = CPO；CPO 用同一个
+        # chain X 继续向下派给 PM 时，to_node=pm 会被改写回 cpo，紧接着
+        # 触发"不能把任务委派给自己"。
+        # 这里只在三个条件同时满足时才走 affinity 改写：
+        #   1) existing_affinity 不是 caller 自己（避免自指）
+        #   2) existing_affinity 不是当前显式 to_node（无需改写）
+        #   3) existing_affinity 与 to_node 同属一个 clone 组
+        # 这样既保留了"clone 路由"的原意，又不会拦截上下游正常派活。
         existing_affinity = messenger.get_task_affinity(chain_id)
-        if existing_affinity:
-            if org:
-                affinity_node = org.get_node(existing_affinity)
-                if affinity_node and affinity_node.status not in (NodeStatus.FROZEN, NodeStatus.OFFLINE):
+        if (
+            existing_affinity
+            and existing_affinity != node_id
+            and existing_affinity != to_node
+            and org
+        ):
+            affinity_node = org.get_node(existing_affinity)
+            target_node = org.get_node(to_node)
+            if (
+                affinity_node
+                and target_node
+                and affinity_node.status not in (NodeStatus.FROZEN, NodeStatus.OFFLINE)
+            ):
+                same_clone_group = (
+                    affinity_node.clone_source == target_node.id
+                    or target_node.clone_source == affinity_node.id
+                    or (
+                        affinity_node.clone_source is not None
+                        and affinity_node.clone_source == target_node.clone_source
+                    )
+                )
+                if same_clone_group:
                     to_node = existing_affinity
 
         if org:
@@ -818,7 +940,7 @@ class OrgToolHandler:
             # _resolve_node_refs 在 strict 模式下只对 exact_id/exact_title 做了
             # 改写；fuzzy/ambiguous/not_found 都原样保留在 to_node 里，必须在
             # 这里用 resolve_reference 再跑一次严格解析，产出结构化错误，
-            # 否则 LLM 根本不知道该用哪个 node_xxxxxxxx。
+            # 否则 LLM 根本不知道该用哪个精确节点 id。
             resolved, candidates, status = org.resolve_reference(to_node)
             children = org.get_children(node_id)
             children_hint = (
@@ -835,7 +957,7 @@ class OrgToolHandler:
                 )
                 return (
                     f"[org_delegate_task 失败] 你是 {caller_label}，to_node='{to_node}' "
-                    f"对应多个节点：{cand_list}。请改用 node_xxxxxxxx 形式的精确 id 再试一次。"
+                    f"对应多个节点：{cand_list}。请改用上面列出的精确节点 id（反引号包住的那一个）再试一次。"
                     f"{children_hint}"
                 )
             if status == "fuzzy":
@@ -849,12 +971,12 @@ class OrgToolHandler:
                     return (
                         f"[org_delegate_task 失败] 你是 {caller_label}，"
                         f"to_node='{to_node}' 模糊匹配到的是你自己（{cand_label}），不能委派给自己。"
-                        f"请用 node_xxxxxxxx 形式的精确下级 id。{children_hint}"
+                        f"请改用下方列出的下级精确节点 id。{children_hint}"
                     )
                 return (
                     f"[org_delegate_task 失败] 你是 {caller_label}，to_node='{to_node}' "
                     f"不是精确匹配，最接近的是 {cand_label}。为避免误派，请把 to_node 改为 "
-                    f"`node_xxxxxxxx` 形式的精确 id 再试。{children_hint}"
+                    f"上面建议的精确节点 id 再试。{children_hint}"
                 )
             if status == "not_found":
                 avail = ", ".join(f"{n.id}({n.role_title})" for n in org.nodes)
@@ -1572,6 +1694,65 @@ class OrgToolHandler:
                         "[ToolHandler] submit_deliverable skipped unregistrable "
                         "attachment: %s (file missing?)", fp,
                     )
+
+        # 自动附件兜底：CPO/PM 这类不带 filesystem 工具的角色，常常把整段
+        # markdown 长文塞进 deliverable 字段，前端只能看到聊天里一段长文，
+        # 没法点附件下载，也不进黑板。这里在没有任何显式 file_attachments
+        # 且 deliverable 看起来是结构化文档（含 markdown 标题/列表/代码块）
+        # 且字符数达到下限时，自动落盘到
+        # `<workspace>/deliverables/<chain_short>_<title>.md`，再走和
+        # write_file/generate_image 一样的 _register_file_output 唯一登记入口
+        # （runtime.py），保证不出现"双写黑板"。任何异常只 warning，不影响
+        # 原 submit_deliverable 主流程。
+        deliverable_stripped = (deliverable or "").strip()
+        should_auto_persist = (
+            not registered_attachments
+            and deliverable_stripped
+            and len(deliverable_stripped) >= self._DELIVERABLE_AUTO_PERSIST_MIN_CHARS
+            and self._looks_like_structured_document(deliverable_stripped)
+        )
+        if should_auto_persist:
+            try:
+                org_for_auto = self._runtime.get_org(org_id)
+                workspace_auto = (
+                    self._runtime._resolve_org_workspace(org_for_auto)
+                    if org_for_auto else None
+                )
+                if workspace_auto is not None:
+                    auto_path = self._auto_persist_deliverable(
+                        workspace=workspace_auto,
+                        chain_id=chain_id,
+                        title=summary or args.get("task_title") or "deliverable",
+                        body=deliverable,
+                    )
+                    if auto_path is not None:
+                        try:
+                            registered = self._runtime._register_file_output(
+                                org_id, node_id,
+                                chain_id=chain_id or None,
+                                filename=auto_path.name,
+                                file_path=str(auto_path),
+                                workspace=workspace_auto,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "submit-deliverable auto-attachment register failed",
+                                exc_info=True,
+                            )
+                            registered = None
+                        if registered:
+                            registered_attachments.append(registered)
+                            logger.info(
+                                "[ToolHandler] auto-persisted deliverable to %s "
+                                "(node=%s chain=%s len=%d)",
+                                auto_path, node_id, chain_id,
+                                len(deliverable),
+                            )
+            except Exception:
+                logger.warning(
+                    "submit-deliverable auto-attachment persist failed",
+                    exc_info=True,
+                )
 
         metadata: dict = {
             "deliverable": deliverable[:2000],
