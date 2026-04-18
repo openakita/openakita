@@ -182,6 +182,7 @@ class UserManager:
         binding_key = f"{channel}:{channel_user_id}"
 
         # Check if already bound
+        if binding_key in self._binding_index:
             user_id = self._binding_index[binding_key]
             user = self._users.get(user_id)
             if user:
@@ -189,6 +190,7 @@ class UserManager:
                 return user
 
         # Create new user
+        user = User.create(channel, channel_user_id)
         self._users[user.id] = user
         self._binding_index[binding_key] = user.id
 

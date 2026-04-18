@@ -119,7 +119,7 @@ def overwrite_allowlist(allowlist: set[str] | None) -> Path:
 
 
 def upsert_skill_ids(skill_ids: set[str]) -> Path | None:
-    “””Atomically merge given skill_ids into the existing allowlist.
+    """Atomically merge given skill_ids into the existing allowlist.
 
     - If skills.json does not exist: **no** new file is created; returns ``None``
       (semantics: undeclared allowlist = all enabled; newly installed skills are
@@ -127,7 +127,7 @@ def upsert_skill_ids(skill_ids: set[str]) -> Path | None:
     - If skills.json exists but has no external_allowlist field: same as above,
       returns ``None``.
     - If skills.json already has external_allowlist: merge skill_ids and write back atomically.
-    “””
+    """
     if not skill_ids:
         return None
 

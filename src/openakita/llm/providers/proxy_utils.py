@@ -28,16 +28,16 @@ def _is_truthy_env(name: str) -> bool:
 
 
 def is_proxy_disabled() -> bool:
-    “””Whether proxy is disabled
+    """Whether proxy is disabled
 
-    Used to troubleshoot “no proxy configured but all endpoints timeout” situations:
+    Used to troubleshoot "no proxy configured but all endpoints timeout" situations:
     Some Windows environments globally inject HTTP(S)_PROXY/ALL_PROXY, forcing requests through proxy.
 
     Supported switches (any true disables proxy):
     - LLM_DISABLE_PROXY=1
     - OPENAKITA_DISABLE_PROXY=1
     - DISABLE_PROXY=1
-    “””
+    """
     return (
         _is_truthy_env("LLM_DISABLE_PROXY")
         or _is_truthy_env("OPENAKITA_DISABLE_PROXY")
@@ -63,12 +63,12 @@ def _redact_proxy_url(proxy: str) -> str:
 
 
 def build_httpx_timeout(timeout_value: object, default: float = 60.0) -> httpx.Timeout:
-    “””Construct httpx.Timeout from configuration
+    """Construct httpx.Timeout from configuration
 
     Compatible with:
-    - int/float: treated as “read timeout” (overall limit), with smaller reasonable defaults for connect/write/pool
+    - int/float: treated as "read timeout" (overall limit), with smaller reasonable defaults for connect/write/pool
     - dict: supports fields connect/read/write/pool/total (seconds)
-    “””
+    """
 
     def _to_float_or_none(v: object) -> float | None:
         if v is None:
@@ -104,14 +104,14 @@ def build_httpx_timeout(timeout_value: object, default: float = 60.0) -> httpx.T
         if write is not None:
             kwargs["write"] = write
         if pool is not None:
-            kwargs[“pool”] = pool
+            kwargs["pool"] = pool
 
         # If dict has no valid fields, fall back to default
         if not kwargs:
             return httpx.Timeout(default)
         return httpx.Timeout(**kwargs)
 
-    # Numeric form: by default set read to t, set connect/write/pool to smaller values to avoid “connection phase maxed out at t”
+    # Numeric form: by default set read to t, set connect/write/pool to smaller values to avoid "connection phase maxed out at t"
     try:
         t = float(timeout_value)  # type: ignore[arg-type]
     except Exception:

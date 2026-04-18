@@ -239,17 +239,17 @@ async def update_skill_config(request: Request):
     return {"status": "ok", "skill": skill_name, "config": config_values}
 
 
-@router.post(“/api/skills/install”)
+@router.post("/api/skills/install")
 async def install_skill(request: Request):
-    “””Install skill (remote mode replacement for Tauri openakita_install_skill command).
+    """Install skill (remote mode replacement for Tauri openakita_install_skill command).
 
-    POST body: { “url”: “github:user/repo/skill” }
+    POST body: { "url": "github:user/repo/skill" }
 
     Upon completion:
       1. Upsert newly installed skill_id into external_allowlist in data/skills.json
-         (only when field exists; preserves “undeclared=all enabled” semantics when file absent)
+         (only when field exists; preserves "undeclared=all enabled" semantics when file absent)
       2. Fully refresh runtime cache and Agent Pool via ``propagate_skill_change``.
-    “””
+    """
     from openakita.skills.allowlist_io import upsert_skill_ids
 
     body = await request.json()

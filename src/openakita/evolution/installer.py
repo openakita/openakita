@@ -66,9 +66,9 @@ class AutoInstaller:
         return InstallResult(
             success=False,
             capability=gap.name,
-            method=”none”,
-            details=”Could not auto-install. Consider creating a custom skill to cover this capability.”,
-            error=”Unable to find or install this capability”,
+            method="none",
+            details="Could not auto-install. Consider creating a custom skill to cover this capability.",
+            error="Unable to find or install this capability",
         )
 
     async def _try_pip_install(self, gap: CapabilityGap) -> InstallResult:
