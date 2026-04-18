@@ -1,9 +1,9 @@
 """
-OpenAkita CLI 入口
+OpenAkita CLI Entry Point
 
-使用 Typer 和 Rich 提供交互式命令行界面
-支持同时运行 CLI 和 IM 通道（Telegram、飞书等）
-支持多 Agent 协同模式（通过 ORCHESTRATION_ENABLED 配置）
+Provides an interactive command-line interface using Typer and Rich.
+Supports running CLI and IM channels (Telegram, Feishu, etc.) simultaneously.
+Supports multi-agent orchestration mode (via ORCHESTRATION_ENABLED configuration).
 """
 
 import openakita._ensure_utf8  # noqa: F401  # isort: skip
@@ -57,7 +57,7 @@ def _init_tracing() -> None:
         tracer.add_exporter(FileExporter(settings.tracing_export_dir))
         if settings.tracing_console_export and not _is_mcp_subprocess:
             tracer.add_exporter(ConsoleExporter())
-        logger.info("[Tracing] 追踪系统已启用")
+        logger.info("[Tracing] Agent tracing enabled")
     set_tracer(tracer)
 
 
@@ -66,7 +66,7 @@ _init_tracing()
 # Typer 应用
 app = typer.Typer(
     name="openakita",
-    help="OpenAkita - 全能自进化AI助手",
+    help="OpenAkita - All-capable, self-evolving AI assistant",
     add_completion=False,
 )
 
@@ -293,24 +293,23 @@ def _ensure_channel_deps() -> None:
         return
 
     pkg_list = ", ".join(missing)
-    logger.info(f"IM 通道依赖自动安装: {pkg_list} ...")
+    logger.info(f"IM channel dependencies auto-install: {pkg_list} ...")
 
     from openakita.runtime_env import IS_FROZEN, get_channel_deps_dir, get_python_executable
 
     py = get_python_executable()
     if not py or (IS_FROZEN and py == sys.executable):
-        logger.warning("未找到项目自带的 Python，无法自动安装依赖")
+        logger.warning("Bundled Python not found; cannot auto-install dependencies")
         console.print(
-            f"[yellow]⚠[/yellow] 未找到 Python 解释器，无法自动安装: [bold]{pkg_list}[/bold]\n"
-            f"  请前往「设置中心 → Python 环境」点击「一键修复」"
+            f"[yellow]⚠[/yellow] Python interpreter not found; cannot auto-install: [bold]{pkg_list}[/bold]\n"
+            f"  Please go to 'Setup Center → Python Environment' and click 'One-click Repair'"
         )
         return
 
     target_dir = get_channel_deps_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    # 国内镜像多源回退（与 Rust 端 pip_install 行为一致）
-    # 尊重用户已配置的 PIP_INDEX_URL 环境变量
+    # Mirror sources fallback
     _user_index = os.environ.get("PIP_INDEX_URL", "").strip()
     _mirror_sources: list[tuple[str, str]] = []
     if _user_index:
@@ -331,26 +330,25 @@ def _ensure_channel_deps() -> None:
     py_path = Path(py)
     pip_env = _build_isolated_pip_env(py_path, is_frozen=IS_FROZEN)
 
-    # _internal/python.exe 在部分用户机器上会因为 PythonHome 未稳定而报
-    # "No module named encodings"。先做探测，必要时追加 PYTHONHOME 再重试。
+    # Runtime probe
     runtime_ok, probe_err = _probe_python_runtime(py, pip_env, extra=extra)
     if not runtime_ok and IS_FROZEN and py_path.parent.name == "_internal":
         pip_env["PYTHONHOME"] = str(py_path.parent)
         runtime_ok, probe_err = _probe_python_runtime(py, pip_env, extra=extra)
         if runtime_ok:
-            logger.info("内置 Python 通过 PYTHONHOME 修正后可用: %s", py)
+            logger.info("Internal Python usable after PYTHONHOME correction: %s", py)
 
     if not runtime_ok:
-        logger.error("自动安装依赖前的 Python 运行时探测失败: %s", probe_err)
+        logger.error("Python runtime probe failed before auto-install: %s", probe_err)
         console.print(
-            "[red]✗[/red] Python 运行环境异常，无法安装 IM 依赖。\n"
-            "  建议：前往「设置中心 → Python 环境」点击「一键修复」。"
+            "[red]✗[/red] Python runtime environment error; cannot install IM dependencies.\n"
+            "  Recommendation: Go to 'Setup Center → Python Environment' and click 'One-click Repair'."
         )
         return
 
     def _on_install_success(source_label: str) -> None:
-        logger.info(f"依赖安装成功 (source={source_label}, target={target_dir}): {pkg_list}")
-        console.print(f"[green]✓[/green] 依赖安装成功: {pkg_list}")
+        logger.info(f"Dependencies installed successfully (source={source_label}, target={target_dir}): {pkg_list}")
+        console.print(f"[green]✓[/green] Dependencies installed successfully: {pkg_list}")
 
         # 清理之前失败的导入在 sys.modules 中留下的残余条目，
         # 确保后续 import 能从新安装的路径加载完整模块。
@@ -382,8 +380,8 @@ def _ensure_channel_deps() -> None:
     bundled_wheels = _find_bundled_channel_wheels() if IS_FROZEN else None
     if bundled_wheels is not None:
         console.print(
-            f"[yellow]⏳[/yellow] 自动安装 IM 通道依赖: [bold]{pkg_list}[/bold] "
-            f"(源: offline wheels)"
+            f"[yellow]⏳[/yellow] Auto-installing IM channel dependencies: [bold]{pkg_list}[/bold] "
+            f"(Source: offline wheels)"
         )
         offline_cmd = [
             py,
@@ -427,11 +425,11 @@ def _ensure_channel_deps() -> None:
             source_label = trusted_host or index_url
             if idx == 0:
                 console.print(
-                    f"[yellow]⏳[/yellow] {label_prefix}自动安装 IM 通道依赖: "
-                    f"[bold]{', '.join(packages)}[/bold] (源: {source_label}) ..."
+                    f"[yellow]⏳[/yellow] {label_prefix}Auto-installing IM channel dependencies: "
+                    f"[bold]{', '.join(packages)}[/bold] (Source: {source_label}) ..."
                 )
             else:
-                console.print(f"[yellow]⏳[/yellow] 切换镜像源重试: {source_label} ...")
+                console.print(f"[yellow]⏳[/yellow] Switching mirror source and retrying: {source_label} ...")
 
             pip_cmd = [
                 py,
@@ -480,11 +478,11 @@ def _ensure_channel_deps() -> None:
 
     # 批量安装失败且有多个包时，逐个重试——避免一个 C 扩展编译失败拖垮纯 Python 包
     if not installed and len(missing) > 1:
-        logger.info("批量安装失败，尝试逐个安装 ...")
+        logger.info("Batch installation failed; trying individual packages ...")
         per_pkg_ok: list[str] = []
         per_pkg_fail: list[str] = []
         for pkg in missing:
-            if _pip_install_via_mirrors([pkg], label_prefix="[逐个] "):
+            if _pip_install_via_mirrors([pkg], label_prefix="[Individual] "):
                 per_pkg_ok.append(pkg)
             else:
                 per_pkg_fail.append(pkg)
@@ -492,17 +490,17 @@ def _ensure_channel_deps() -> None:
             installed = True
             if per_pkg_fail:
                 fail_list = ", ".join(per_pkg_fail)
-                logger.warning(f"部分依赖安装失败（不影响已安装的包）: {fail_list}")
+                logger.warning(f"Some dependencies failed to install (already installed packages unaffected): {fail_list}")
                 console.print(
-                    f"[yellow]⚠[/yellow] 部分依赖安装失败: {fail_list}\n"
-                    f"  相关功能（如语音转码）可能不可用，核心 IM 通道不受影响"
+                    f"[yellow]⚠[/yellow] Some dependencies failed to install: {fail_list}\n"
+                    f"  Related features (e.g., audio transcoding) may be unavailable; core IM channels are unaffected."
                 )
 
     if not installed:
-        logger.error(f"所有镜像源均安装失败: {pkg_list}")
+        logger.error(f"Installation failed on all mirrors: {pkg_list}")
         console.print(
-            f"[red]✗[/red] 依赖安装失败（已尝试所有镜像源）: {pkg_list}\n"
-            f"  请检查网络连接，或前往「设置中心 → Python 环境」点击「一键修复」"
+            f"[red]✗[/red] Dependency installation failed (all mirrors tried): {pkg_list}\n"
+            f"  Please check your network connection or go to 'Setup Center → Python Environment' and click 'One-click Repair'."
         )
         return
 
@@ -1656,21 +1654,21 @@ def main(
 
 @app.command()
 def init(
-    project_dir: str | None = typer.Argument(None, help="项目目录（默认当前目录）"),
+    project_dir: str | None = typer.Argument(None, help="Project directory (default is current directory)"),
     quick: bool = typer.Option(
-        False, "--quick", "-q", help="快速模式：仅配置 Provider + API Key + Model"
+        False, "--quick", "-q", help="Quick mode: only configures Provider + API Key + Model"
     ),
 ):
     """
-    初始化 OpenAkita - 交互式配置向导
+    Initialize OpenAkita - Interactive Setup Wizard
 
-    运行此命令启动配置向导，引导您完成：
-    - LLM API 配置
-    - IM 通道配置（可选）
-    - 记忆系统配置
-    - 目录结构创建
+    Run this command to start the setup wizard, which will guide you through:
+    - LLM API configuration
+    - IM channel configuration (optional)
+    - Memory system configuration
+    - Directory structure creation
 
-    示例:
+    Example:
         openakita init
         openakita init --quick
         openakita init ./my-project
@@ -1688,30 +1686,30 @@ def init(
 
 @app.command()
 def run(
-    task: str = typer.Argument(..., help="要执行的任务"),
+    task: str = typer.Argument(..., help="Task to execute"),
 ):
-    """执行单个任务"""
+    """Execute a single task"""
 
     async def _run():
         agent = get_agent()
         await agent.initialize()
 
-        with console.status("[bold green]执行任务中...", spinner="dots"):
+        with console.status("[bold green]Executing task...", spinner="dots"):
             result = await agent.execute_task_from_message(task)
 
         if result.success:
             console.print(
                 Panel(
                     Markdown(str(result.data)),
-                    title="[green]任务完成[/green]",
+                    title="[green]Task Completed[/green]",
                     border_style="green",
                 )
             )
         else:
             console.print(
                 Panel(
-                    f"错误: {result.error}",
-                    title="[red]任务失败[/red]",
+                    f"Error: {result.error}",
+                    title="[red]Task Failed[/red]",
                     border_style="red",
                 )
             )
@@ -1733,10 +1731,10 @@ def run(
 
 @app.command()
 def selfcheck(
-    full: bool = typer.Option(False, "--full", "-f", help="运行完整自检"),
-    fix: bool = typer.Option(False, "--fix", help="自动修复发现的问题"),
+    full: bool = typer.Option(False, "--full", "-f", help="Run full self-check"),
+    fix: bool = typer.Option(False, "--fix", help="Automatically fix discovered issues"),
 ):
-    """运行自检"""
+    """Run self-check"""
 
     async def _selfcheck():
         agent = get_agent()
@@ -1748,7 +1746,7 @@ def selfcheck(
 
 @app.command()
 def status():
-    """显示 Agent 状态"""
+    """Show Agent status"""
 
     async def _status():
         agent = get_agent()
@@ -1760,58 +1758,58 @@ def status():
 
 @app.command()
 def compile(
-    force: bool = typer.Option(False, "--force", "-f", help="强制重新编译"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force recompilation"),
 ):
     """
-    编译 identity 文件
+    Compile identity files
 
-    将 AGENT.md, USER.md 编译为精简摘要（SOUL.md 已改为全文注入）。
+    Compiles AGENT.md and USER.md into concise summaries (SOUL.md remains full injection).
 
-    编译产物保存在 identity/runtime/ 目录。
+    Compiled artifacts are saved in the identity/runtime/ directory.
     """
     from .prompt.compiler import check_compiled_outdated, compile_all
 
     identity_dir = settings.identity_path
 
-    # 检查是否需要编译
+    # Check if compilation is needed
     if not force and not check_compiled_outdated(identity_dir):
-        console.print("[yellow]编译产物已是最新，使用 --force 强制重新编译[/yellow]")
+        console.print("[yellow]Compilation artifacts are up to date; use --force to recompile[/yellow]")
         return
 
-    console.print("[bold]正在编译 identity 文件...[/bold]")
+    console.print("[bold]Compiling identity files...[/bold]")
 
     try:
         results = compile_all(identity_dir)
 
-        # 显示结果
-        table = Table(title="编译结果")
-        table.add_column("源文件", style="cyan")
-        table.add_column("产物", style="green")
-        table.add_column("大小", style="yellow")
+        # Show results
+        table = Table(title="Compilation Results")
+        table.add_column("Source", style="cyan")
+        table.add_column("Artifact", style="green")
+        table.add_column("Size", style="yellow")
 
         for name, path in results.items():
             if path.exists():
                 size = len(path.read_text(encoding="utf-8"))
-                table.add_row(f"{name}.md", path.name, f"{size} 字符")
+                table.add_row(f"{name}.md", path.name, f"{size} chars")
 
         console.print(table)
-        console.print(f"\n[green]✓[/green] 编译完成，产物保存在 {identity_dir / 'runtime'}")
+        console.print(f"\n[green]✓[/green] Compilation complete; artifacts saved to {identity_dir / 'runtime'}")
 
     except Exception as e:
-        console.print(f"[red]编译失败: {e}[/red]")
+        console.print(f"[red]Compilation failed: {e}[/red]")
         raise typer.Exit(1)
 
 
 @app.command(name="prompt-debug")
 def prompt_debug(
-    task: str = typer.Argument("", help="任务描述（用于记忆检索）"),
-    compiled: bool = typer.Option(True, "--compiled/--full", help="使用编译版本或全文版本"),
+    task: str = typer.Argument("", help="Task description (for memory retrieval)"),
+    compiled: bool = typer.Option(True, "--compiled/--full", help="Use compiled or full version"),
 ):
     """
-    显示 prompt 调试信息
+    Show prompt debug information
 
-    显示系统提示词的各部分 token 统计，
-    帮助调试和优化 prompt。
+    Displays token statistics for various parts of the system prompt
+    to help with debugging and optimization.
     """
     from .prompt.budget import estimate_tokens
     from .prompt.builder import get_prompt_debug_info
@@ -1824,7 +1822,7 @@ def prompt_debug(
         console.print()
 
         if compiled:
-            # 使用编译版本
+            # Use compiled version
             info = get_prompt_debug_info(
                 identity_dir=settings.identity_path,
                 tool_catalog=agent.tool_catalog,
@@ -1834,9 +1832,9 @@ def prompt_debug(
                 task_description=task,
             )
 
-            # Runtime 产物
-            table = Table(title="Runtime 文件")
-            table.add_column("文件", style="cyan")
+            # Runtime artifacts
+            table = Table(title="Runtime Files")
+            table.add_column("File", style="cyan")
             table.add_column("Tokens", style="green")
 
             for name, tokens in info["compiled_files"].items():
@@ -1845,9 +1843,9 @@ def prompt_debug(
             console.print(table)
             console.print()
 
-            # 清单
-            table = Table(title="清单")
-            table.add_column("类型", style="cyan")
+            # Catalogs
+            table = Table(title="Catalogs")
+            table.add_column("Type", style="cyan")
             table.add_column("Tokens", style="green")
 
             for name, tokens in info["catalogs"].items():
@@ -1856,18 +1854,18 @@ def prompt_debug(
             console.print(table)
             console.print()
 
-            # 记忆
-            console.print(f"记忆: {info['memory']} tokens")
+            # Memory
+            console.print(f"Memory: {info['memory']} tokens")
             console.print()
 
-            # 总计
+            # Total
             total = info["total"]
             budget = info["budget"]["total"]
             color = "green" if total <= budget else "red"
-            console.print(f"[bold]总计: [{color}]{total}[/{color}] / {budget} tokens[/bold]")
+            console.print(f"[bold]Total: [{color}]{total}[/{color}] / {budget} tokens[/bold]")
 
         else:
-            # 使用全文版本
+            # Use full version
             from .core.identity import Identity
 
             identity = Identity()
@@ -1876,10 +1874,10 @@ def prompt_debug(
             full_prompt = identity.get_system_prompt()
             full_tokens = estimate_tokens(full_prompt)
 
-            console.print(f"全文版本: {full_tokens} tokens")
+            console.print(f"Full version: {full_tokens} tokens")
             console.print()
 
-            # 对比
+            # Comparison
             info = get_prompt_debug_info(
                 identity_dir=settings.identity_path,
                 tool_catalog=agent.tool_catalog,
@@ -1893,8 +1891,8 @@ def prompt_debug(
             savings = full_tokens - compiled_total
             savings_pct = (savings / full_tokens * 100) if full_tokens > 0 else 0
 
-            console.print(f"编译版本: {compiled_total} tokens")
-            console.print(f"[green]节省: {savings} tokens ({savings_pct:.1f}%)[/green]")
+            console.print(f"Compiled version: {compiled_total} tokens")
+            console.print(f"[green]Savings: {savings} tokens ({savings_pct:.1f}%)[/green]")
 
     asyncio.run(_debug())
 
@@ -1912,16 +1910,16 @@ def _reset_globals():
 @app.command()
 def serve(
     dev: bool = typer.Option(
-        False, "--dev", help="开发模式：监控 src/ 目录的 .py 文件变化，自动重启服务"
+        False, "--dev", help="Development mode: monitors .py file changes in src/ and automatically restarts services"
     ),
 ):
     """
-    启动服务模式 (无 CLI，只运行 IM 通道)
+    Start Service Mode (No CLI, only runs IM channels)
 
-    用于后台运行，只处理 IM 消息。
-    支持单 Agent 和多 Agent 协同模式。
-    支持通过 /api/config/restart 触发优雅重启。
-    使用 --dev 启用文件监控热加载（开发模式）。
+    Used for background operation, only processing IM messages.
+    Supports both single Agent and multi-Agent collaboration modes.
+    Supports graceful restart triggered via /api/config/restart.
+    Use --dev to enable file monitoring and hot reloading (development mode).
     """
     import json
     import signal
@@ -2025,10 +2023,10 @@ def serve(
 
         console.print(
             Panel(
-                f"[bold]OpenAkita 服务模式[/bold]\n\n"
-                f"版本: {_version_str}\n"
-                "只运行 IM 通道，不启动 CLI 交互。\n"
-                "按 Ctrl+C 停止服务。",
+                f"[bold]OpenAkita Service Mode[/bold]\n\n"
+                f"Version: {_version_str}\n"
+                "Running IM channels only; no interactive CLI.\n"
+                "Press Ctrl+C to stop the service.",
                 title="Serve Mode",
                 border_style="blue",
             )
@@ -2036,25 +2034,25 @@ def serve(
 
         agent = get_agent()
 
-        console.print("[bold green]正在初始化 Agent...[/bold green]")
+        console.print("[bold green]Initializing Agent...[/bold green]")
         await agent.initialize()
-        console.print(f"[green]✓[/green] Agent 已初始化 (技能: {agent.skill_registry.count})")
+        console.print(f"[green]✓[/green] Agent initialized (Skills: {agent.skill_registry.count})")
 
         agent_or_master = agent
 
-        # 初始化核心服务（SessionManager、Agent Pool、Orchestrator）
-        console.print("[bold green]正在初始化核心服务...[/bold green]")
+        # Initialize core services (SessionManager, Agent Pool, Orchestrator)
+        console.print("[bold green]Initializing core services...[/bold green]")
         await init_core_services(agent_or_master)
-        console.print("[green]✓[/green] 核心服务已就绪")
+        console.print("[green]✓[/green] Core services ready")
 
-        # 启动 IM 通道（可选）
-        console.print("[bold green]正在启动 IM 通道...[/bold green]")
+        # Start IM channels (optional)
+        console.print("[bold green]Starting IM channels...[/bold green]")
         im_channels = await start_im_channels(agent_or_master)
 
         if im_channels:
-            console.print(f"[green]✓[/green] IM 通道已启动: {', '.join(im_channels)}")
+            console.print(f"[green]✓[/green] IM channels started: {', '.join(im_channels)}")
         else:
-            console.print("[yellow]ℹ[/yellow] 未启用 IM 通道（HTTP API 仍可使用）")
+            console.print("[yellow]ℹ[/yellow] No IM channels enabled (HTTP API still available)")
 
         # 注入 shutdown_event 到网关（供终极重启指令使用）
         if _message_gateway is not None:
@@ -2074,32 +2072,32 @@ def serve(
                 orchestrator=_orchestrator,
                 agent_pool=_desktop_pool,
             )
-            console.print("[green]✓[/green] HTTP API 已启动: http://127.0.0.1:18900")
+            console.print("[green]✓[/green] HTTP API started: http://127.0.0.1:18900")
             _heartbeat_phase = "running"
             _heartbeat_http_ready = True
-            _write_heartbeat()  # 立即刷新心跳，标记 HTTP 就绪
+            _write_heartbeat()  # Refresh heartbeat immediately to mark HTTP ready
         except ImportError:
-            console.print("[yellow]⚠[/yellow] HTTP API 未启动（缺少 fastapi/uvicorn 依赖）")
+            console.print("[yellow]⚠[/yellow] HTTP API not started (fastapi/uvicorn dependency missing)")
         except Exception as e:
-            console.print(f"[red]✗[/red] HTTP API 启动失败: {e}")
+            console.print(f"[red]✗[/red] HTTP API startup failed: {e}")
             logger.error(f"HTTP API server failed to start: {e}", exc_info=True)
             _api_fatal = True
 
         if _api_fatal:
-            # HTTP API 是 Setup Center 的核心依赖，启动失败时应退出进程
-            # 让 Tauri 能正确检测到进程退出并报错给用户
+            # HTTP API is a core dependency of the Setup Center; exit if startup fails.
+            # This allows Tauri to detect the process exit and report the error.
             console.print(
-                "[red]HTTP API 启动失败，进程即将退出。请检查端口 18900 是否被占用。[/red]"
+                "[red]HTTP API startup failed; process exiting. Please check if port 18900 is occupied.[/red]"
             )
             shutdown_event.set()
 
         console.print()
         if dev:
             console.print(
-                "[bold]服务运行中 [cyan](dev 模式)[/cyan]...[/bold] 文件变化时自动重启，按 Ctrl+C 停止"
+                "[bold]Service running [cyan](dev mode)[/cyan]...[/bold] Auto-restarting on file changes; press Ctrl+C to stop"
             )
         else:
-            console.print("[bold]服务运行中...[/bold] 按 Ctrl+C 停止")
+            console.print("[bold]Service running...[/bold] Press Ctrl+C to stop")
 
         # ── dev 模式：文件监控自动重启 ──
         _watch_task = None
@@ -2110,7 +2108,7 @@ def serve(
                     from watchfiles import awatch
 
                     src_dir = Path(__file__).resolve().parent  # src/openakita/
-                    console.print(f"[dim]📂 监控目录: {src_dir}[/dim]")
+                    console.print(f"[dim]📂 Monitoring directory: {src_dir}[/dim]")
                     async for changes in awatch(
                         src_dir,
                         watch_filter=lambda change, path: path.endswith(".py"),
@@ -2119,13 +2117,13 @@ def serve(
                     ):
                         changed_files = [Path(p).name for _, p in changes]
                         console.print(
-                            f"\n[cyan]🔄 检测到文件变化: {', '.join(changed_files)}，正在重启...[/cyan]"
+                            f"\n[cyan]🔄 File change detected: {', '.join(changed_files)}; restarting...[/cyan]"
                         )
                         cfg._restart_requested = True
                         shutdown_event.set()
                         return
                 except ImportError:
-                    console.print("[yellow]⚠ watchfiles 未安装，dev 模式文件监控不可用[/yellow]")
+                    console.print("[yellow]⚠ watchfiles not installed; dev mode file monitoring unavailable[/yellow]")
                 except asyncio.CancelledError:
                     pass
                 except Exception as e:
@@ -2149,9 +2147,9 @@ def serve(
                 _heartbeat_http_ready = False
                 _write_heartbeat()
                 if is_restart:
-                    console.print("\n[yellow]正在重启服务...[/yellow]")
+                    console.print("\n[yellow]Restarting service...[/yellow]")
                 else:
-                    console.print("\n[yellow]正在停止服务...[/yellow]")
+                    console.print("\n[yellow]Stopping service...[/yellow]")
                 try:
                     # 停止 HTTP API 服务器
                     if api_task is not None:
@@ -2171,18 +2169,18 @@ def serve(
                     logger.debug(f"Exception during shutdown (ignored): {e}")
 
                 if is_restart:
-                    console.print("[cyan]✓[/cyan] 服务已停止，准备重启...")
+                    console.print("[cyan]✓[/cyan] Service stopped; preparing to restart...")
                 else:
-                    console.print("[green]✓[/green] 服务已停止")
+                    console.print("[green]✓[/green] Service stopped")
 
     def signal_handler(signum, frame):
         """信号处理器，用于优雅关闭"""
         nonlocal shutdown_triggered
         if shutdown_event and not shutdown_triggered:
             shutdown_triggered = True
-            # 信号触发的是真正的关闭，不是重启
+            # Signal triggers a real shutdown, not a restart
             cfg._restart_requested = False
-            console.print("\n[yellow]收到停止信号，正在优雅关闭...[/yellow]")
+            console.print("\n[yellow]Stop signal received; performing graceful shutdown...[/yellow]")
             # 使用 call_soon_threadsafe 确保线程安全
             try:
                 loop = asyncio.get_running_loop()
@@ -2203,42 +2201,42 @@ def serve(
     while first_run or cfg._restart_requested:
         first_run = False
         if cfg._restart_requested:
-            console.print("\n[bold cyan]═══ 服务重启中 ═══[/bold cyan]")
+            console.print("\n[bold cyan]═══ Service Restarting ═══[/bold cyan]")
             cfg._restart_requested = False
             _reset_globals()
-            settings.reload()  # 重新读取 .env 配置
+            settings.reload()  # Reload .env configuration
 
             # 重置心跳状态为重启中
             _heartbeat_phase = "restarting"
             _heartbeat_http_ready = False
             _write_heartbeat()
 
-            # 重新扫描并注入模块路径（模块可能在服务运行期间安装/卸载）
+            # Re-scan and inject module paths (modules may be installed/uninstalled during service run)
             try:
                 from openakita.runtime_env import inject_module_paths_runtime
 
                 n = inject_module_paths_runtime()
                 if n > 0:
-                    console.print(f"[dim]已注入 {n} 个新模块路径[/dim]")
+                    console.print(f"[dim]Injected {n} new module paths[/dim]")
             except Exception as e:
                 logger.debug(f"Module path refresh failed (non-critical): {e}")
 
-            # 等待端口释放（旧 uvicorn 关闭后 TCP socket 可能处于 TIME_WAIT）
+            # Wait for port release (uvicorn closure may leave the TCP socket in TIME_WAIT)
             try:
                 from openakita.api.server import API_HOST, API_PORT, wait_for_port_free
 
                 _api_port = int(os.environ.get("API_PORT", API_PORT))
-                console.print(f"[dim]等待端口 {_api_port} 释放...[/dim]")
+                console.print(f"[dim]Waiting for port {_api_port} to be released...[/dim]")
                 if not wait_for_port_free(API_HOST, _api_port, timeout=15.0):
-                    console.print(f"[yellow]⚠[/yellow] 端口 {_api_port} 仍被占用，继续尝试启动...")
+                    console.print(f"[yellow]⚠[/yellow] Port {_api_port} is still occupied; attempting to start anyway...[/yellow]")
                 else:
-                    console.print(f"[dim]端口 {_api_port} 已就绪[/dim]")
+                    console.print(f"[dim]Port {_api_port} ready[/dim]")
             except Exception as e:
                 logger.debug(f"Port wait check failed (non-critical): {e}")
 
-        # 检查重启准备期间是否收到 Ctrl+C（信号处理器可能在 reload 期间触发）
+        # Check if Ctrl+C was received during restart prep
         if shutdown_triggered:
-            console.print("\n[yellow]服务已停止（重启被取消）[/yellow]")
+            console.print("\n[yellow]Service stopped (restart cancelled)[/yellow]")
             break
 
         # 在进入 _serve() 前，记录当前 restart flag，
@@ -2249,14 +2247,14 @@ def serve(
             asyncio.run(_serve())
         except KeyboardInterrupt:
             if not shutdown_triggered:
-                console.print("\n[yellow]服务已停止[/yellow]")
+                console.print("\n[yellow]Service stopped[/yellow]")
             break
         except (ConnectionResetError, OSError) as e:
             # 忽略 Windows asyncio 关闭时的已知问题
             # WinError 995: 由于线程退出或应用程序请求，已中止 I/O 操作
             if "995" in str(e):
                 if not shutdown_triggered:
-                    console.print("\n[yellow]服务已停止[/yellow]")
+                    console.print("\n[yellow]Service stopped[/yellow]")
             else:
                 raise
         except asyncio.CancelledError:
@@ -2264,13 +2262,13 @@ def serve(
             # 对于重启场景，这是正常的
             if not cfg._restart_requested:
                 if not shutdown_triggered:
-                    console.print("\n[yellow]服务已停止[/yellow]")
+                    console.print("\n[yellow]Service stopped[/yellow]")
                 break
         except Exception as e:
             # 捕获其他异常，检查是否是 InvalidStateError
             if "InvalidState" in str(type(e).__name__) or "invalid state" in str(e).lower():
                 if not shutdown_triggered:
-                    console.print("\n[yellow]服务已停止[/yellow]")
+                    console.print("\n[yellow]Service stopped[/yellow]")
             else:
                 raise
 
@@ -2290,10 +2288,10 @@ def serve(
 
 @app.command(name="plugin-validate")
 def plugin_validate(
-    path: str = typer.Argument(".", help="插件目录路径（含 plugin.json）"),
-    fix: bool = typer.Option(False, "--fix", help="自动修正可修复的问题"),
+    path: str = typer.Argument(".", help="Plugin directory path (containing plugin.json)"),
+    fix: bool = typer.Option(False, "--fix", help="Automatically fix repairable issues"),
 ):
-    """校验插件 manifest 是否有效（Pydantic 校验 + 权限检查 + 入口文件检查 + config schema 校验）"""
+    """Validate plugin manifest (Pydantic validation + permission check + entry file check + config schema validation)"""
     from .plugins.manifest import ALL_PERMISSIONS, ManifestError, parse_manifest
 
     plugin_dir = Path(path).resolve()

@@ -1,11 +1,11 @@
 """
-任务监控器
+Task Monitor
 
-功能:
-- 跟踪任务执行时间
-- 记录迭代次数和工具调用
-- 超时自动切换模型
-- 任务完成后复盘分析
+Features:
+- Track task execution time
+- Record iteration counts and tool calls
+- Automatically switch models on timeout
+- Post-task retrospect analysis
 """
 
 import logging
@@ -98,20 +98,20 @@ class TaskMetrics:
     retrospect_result: str | None = None
 
     def to_summary(self) -> str:
-        """生成摘要"""
+        """Generate summary"""
         lines = [
-            f"任务: {self.description}",
-            f"耗时: {self.total_duration_seconds:.1f}秒",
-            f"迭代: {self.total_iterations}次",
-            f"结果: {'成功' if self.success else '失败'}",
+            f"Task: {self.description}",
+            f"Duration: {self.total_duration_seconds:.1f}s",
+            f"Iterations: {self.total_iterations}",
+            f"Result: {'Success' if self.success else 'Failure'}",
         ]
         if self.model_switched:
-            lines.append(f"模型切换: {self.initial_model} → {self.final_model}")
-            lines.append(f"切换前重试: {self.retry_count}次")
+            lines.append(f"Model Switched: {self.initial_model} → {self.final_model}")
+            lines.append(f"Retries before switch: {self.retry_count}")
             if self.context_reset_on_switch:
-                lines.append("上下文已重置")
+                lines.append("Context reset")
         if self.error:
-            lines.append(f"错误: {self.error}")
+            lines.append(f"Error: {self.error}")
         return "\n".join(lines)
 
 
@@ -411,8 +411,8 @@ class TaskMonitor:
             else:
                 self.switch_model(
                     self.fallback_model,
-                    f"任务执行超过 {self.timeout_seconds} 秒，已重试 {self.retry_before_switch} 次",
-                    reset_context=True,  # 重要：切换时重置上下文
+                    f"Task execution exceeded {self.timeout_seconds} seconds, retried {self.retry_before_switch} times",
+                    reset_context=True,  # IMPORTANT: Reset context on switch
                 )
 
             # 触发回调

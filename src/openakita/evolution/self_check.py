@@ -1,13 +1,13 @@
 """
-自检系统
+Self-Check System
 
-功能:
-- 运行测试用例
-- 分析 ERROR 日志
-- 区分核心组件和工具错误
-- 自动修复工具问题
-- 修复后自测验证
-- 生成每日报告
+Features:
+- Run test cases
+- Analyze ERROR logs
+- Distinguish between core component and tool errors
+- Automatically fix tool issues
+- Post-fix self-test verification
+- Generate daily reports
 """
 
 import json
@@ -147,59 +147,59 @@ class DailyReport:
         }
 
     def to_markdown(self) -> str:
-        """生成 Markdown 格式报告"""
+        """Generate report in Markdown format"""
         lines = [
-            f"# 每日系统报告 - {self.date}",
+            f"# Daily System Report - {self.date}",
             "",
-            "## 摘要",
+            "## Summary",
             "",
-            f"- 总错误数: {self.total_errors}",
-            f"- 核心组件错误: {self.core_errors} (需人工处理)",
-            f"- 工具错误: {self.tool_errors}",
-            f"- 尝试修复: {self.fix_attempted}",
-            f"- 修复成功: {self.fix_success}",
-            f"- 修复失败: {self.fix_failed}",
+            f"- Total Errors: {self.total_errors}",
+            f"- Core Component Errors: {self.core_errors} (Manual intervention required)",
+            f"- Tool Errors: {self.tool_errors}",
+            f"- Fixes Attempted: {self.fix_attempted}",
+            f"- Fixes Successful: {self.fix_success}",
+            f"- Fixes Failed: {self.fix_failed}",
             "",
         ]
 
-        # 核心组件错误
+        # Core component errors
         if self.core_error_patterns:
-            lines.append("## 核心组件错误（需人工处理）")
+            lines.append("## Core Component Errors (Manual intervention required)")
             lines.append("")
             for p in self.core_error_patterns:
-                lines.append(f"### [{p.get('count', 1)}次] {p.get('pattern', '')}")
-                lines.append(f"- 模块: `{p.get('logger', 'unknown')}`")
-                lines.append(f"- 时间: {p.get('last_seen', '')}")
+                lines.append(f"### [{p.get('count', 1)} times] {p.get('pattern', '')}")
+                lines.append(f"- Module: `{p.get('logger', 'unknown')}`")
+                lines.append(f"- Time: {p.get('last_seen', '')}")
                 if p.get("message"):
-                    lines.append(f"- 消息: `{p.get('message', '')}`")
-                lines.append("- **建议: 检查日志并考虑重启服务**")
+                    lines.append(f"- Message: `{p.get('message', '')}`")
+                lines.append("- **Recommendation: Check logs and consider restarting services**")
                 lines.append("")
 
-        # 工具修复记录
+        # Tool fix records
         if self.fix_records:
-            lines.append("## 工具修复记录")
+            lines.append("## Tool Fix Records")
             lines.append("")
             for r in self.fix_records:
-                status = "已修复" if r.success else "修复失败"
+                status = "Fixed" if r.success else "Fix Failed"
                 lines.append(f"### [{status}] {r.error_pattern}")
-                lines.append(f"- 组件: `{r.component}`")
-                lines.append(f"- 修复操作: {r.fix_action}")
-                lines.append(f"- 时间: {r.fix_time.strftime('%Y-%m-%d %H:%M:%S')}")
-                lines.append(f"- 验证: {'通过' if r.verified else '未通过'}")
+                lines.append(f"- Component: `{r.component}`")
+                lines.append(f"- Fix Action: {r.fix_action}")
+                lines.append(f"- Time: {r.fix_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                lines.append(f"- Verification: {'Passed' if r.verified else 'Failed'}")
                 if r.verification_result:
-                    lines.append(f"- 验证结果: {r.verification_result}")
+                    lines.append(f"- Verification Result: {r.verification_result}")
                 lines.append("")
 
-        # 记忆整理结果
+        # Memory consolidation results
         if self.memory_consolidation:
-            lines.append("## 记忆整理结果")
+            lines.append("## Memory Consolidation Results")
             lines.append("")
             mc = self.memory_consolidation
-            lines.append(f"- 处理会话: {mc.get('sessions_processed', 0)}")
-            lines.append(f"- 提取记忆: {mc.get('memories_extracted', 0)}")
-            lines.append(f"- 新增记忆: {mc.get('memories_added', 0)}")
-            lines.append(f"- 去重: {mc.get('duplicates_removed', 0)}")
-            lines.append(f"- MEMORY.md: {'已刷新' if mc.get('memory_md_refreshed') else '未刷新'}")
+            lines.append(f"- Sessions Processed: {mc.get('sessions_processed', 0)}")
+            lines.append(f"- Memories Extracted: {mc.get('memories_extracted', 0)}")
+            lines.append(f"- Memories Added: {mc.get('memories_added', 0)}")
+            lines.append(f"- Duplicates Removed: {mc.get('duplicates_removed', 0)}")
+            lines.append(f"- MEMORY.md: {'Refreshed' if mc.get('memory_md_refreshed') else 'Not Refreshed'}")
             lines.append("")
 
         # 任务复盘统计
@@ -331,7 +331,7 @@ class SelfChecker:
         return []
 
     def _get_builtin_tests(self) -> list[TestCase]:
-        """获取内置测试用例"""
+        """Get built-in test cases"""
         tests = []
 
         # 基础功能测试
@@ -339,9 +339,9 @@ class SelfChecker:
             TestCase(
                 id="core_brain_001",
                 category="core",
-                description="Brain 基本响应测试",
-                input="你好",
-                expected="包含响应文本",
+                description="Brain basic response test",
+                input="Hello",
+                expected="Contains response text",
             )
         )
 
@@ -349,7 +349,7 @@ class SelfChecker:
             TestCase(
                 id="core_shell_001",
                 category="tools",
-                description="Shell 命令执行测试",
+                description="Shell command execution test",
                 input="echo hello",
                 expected="hello",
             )
@@ -359,7 +359,7 @@ class SelfChecker:
             TestCase(
                 id="core_file_001",
                 category="tools",
-                description="文件读写测试",
+                description="File read/write test",
                 input={"action": "write_read", "content": "test"},
                 expected="test",
             )

@@ -1,14 +1,14 @@
 """
-失败分析管线 (Agent Harness: Failure Analysis Pipeline)
+Failure Analysis Pipeline (Agent Harness: Failure Analysis Pipeline)
 
-利用 DecisionTrace 数据和任务执行记录，对失败任务进行结构化分析，
-识别 Harness 层面的缺陷并生成改进建议。
+Leverages DecisionTrace data and task execution records to perform structured analysis
+of failed tasks, identifying Harness-level defects and generating improvement suggestions.
 
-分析维度:
-- 根因分类: context_loss / tool_limitation / plan_deficiency / loop / budget_exhaustion / external_failure
-- Harness 缺口识别: missing_tool / insufficient_docs / missing_guardrail / weak_verification / poor_context_engineering
-- 量化指标: tokens_wasted / time_wasted / iterations_before_failure
-- 改进建议: 自动生成 Harness 改进建议
+Analysis Dimensions:
+- Root Cause Classification: context_loss / tool_limitation / plan_deficiency / loop / budget_exhaustion / external_failure
+- Harness Gap Identification: missing_tool / insufficient_docs / missing_guardrail / weak_verification / poor_context_engineering
+- Quantitative Metrics: tokens_wasted / time_wasted / iterations_before_failure
+- Improvement Suggestions: Automatically generated Harness improvement suggestions
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 class RootCause(StrEnum):
-    """失败根因分类"""
+    """Failure root cause classification"""
 
     CONTEXT_LOSS = "context_loss"
     TOOL_LIMITATION = "tool_limitation"
@@ -294,40 +294,40 @@ class FailureAnalyzer:
 
     _SUGGESTION_MAP = {
         RootCause.CONTEXT_LOSS: (
-            "上下文丢失导致失败。建议：\n"
-            "1. 检查 ContextRewriter 是否正确注入 Plan 状态\n"
-            "2. 增加 Scratchpad 中的关键决策记录\n"
-            "3. 考虑降低压缩阈值保留更多上下文"
+            "Context loss caused failure. Suggestions:\n"
+            "1. Check if ContextRewriter properly injects Plan status\n"
+            "2. Increase key decision logging in the Scratchpad\n"
+            "3. Consider lowering compression thresholds to retain more context"
         ),
         RootCause.TOOL_LIMITATION: (
-            "工具能力不足。建议：\n"
-            "1. 检查是否需要新增工具或技能\n"
-            "2. 现有工具的错误处理是否充分\n"
-            "3. 工具参数验证是否完善"
+            "Insufficient tool capability. Suggestions:\n"
+            "1. Check if new tools or skills are needed\n"
+            "2. Verify if current tool error handling is sufficient\n"
+            "3. Improve tool parameter validation"
         ),
         RootCause.PLAN_DEFICIENCY: (
-            "计划不充分导致超时。建议：\n"
-            "1. 检查 Plan 步骤是否足够细粒度\n"
-            "2. 是否有未预见的依赖关系\n"
-            "3. 验证器是否在 Plan 未完成时正确拦截"
+            "Insufficient planning led to timeout. Suggestions:\n"
+            "1. Check if Plan steps are granular enough\n"
+            "2. Look for unforeseen dependencies\n"
+            "3. Verify if validators are correctly intercepting incomplete Plans"
         ),
         RootCause.LOOP_DETECTED: (
-            "推理陷入循环。建议：\n"
-            "1. 检查 Supervisor 的循环检测阈值是否合适\n"
-            "2. 回滚策略是否注入了足够的差异化提示\n"
-            "3. 是否需要更早期的干预"
+            "Reasoning stuck in a loop. Suggestions:\n"
+            "1. Check if Supervisor loop detection thresholds are appropriate\n"
+            "2. Ensure rollback strategies inject enough differentiation hints\n"
+            "3. Consider earlier intervention"
         ),
         RootCause.BUDGET_EXHAUSTION: (
-            "预算耗尽。建议：\n"
-            "1. 评估预算配置是否合理\n"
-            "2. 检查是否有 token 浪费（重复读取大文件等）\n"
-            "3. 考虑是否需要更便宜的模型降级策略"
+            "Budget exhausted. Suggestions:\n"
+            "1. Evaluate if budget configurations are reasonable\n"
+            "2. Check for token waste (e.g., redundant reading of large files)\n"
+            "3. Consider cheaper model fallback strategies"
         ),
         RootCause.EXTERNAL_FAILURE: (
-            "外部依赖失败。建议：\n"
-            "1. 添加外部 API 的重试和降级策略\n"
-            "2. 检查超时配置是否合理\n"
-            "3. 考虑添加缓存机制"
+            "External dependency failure. Suggestions:\n"
+            "1. Add retry and fallback strategies for external APIs\n"
+            "2. Check if timeout configurations are reasonable\n"
+            "3. Consider adding a caching mechanism"
         ),
     }
 
@@ -342,8 +342,8 @@ class FailureAnalyzer:
 
         if metrics.tokens_after_last_progress > 50000:
             suggestion += (
-                f"\n\n⚠️ 最后一次有效进展后浪费了 {metrics.tokens_after_last_progress} tokens。"
-                "考虑更早期的终止或策略切换。"
+                f"\n\n⚠️ Wasted {metrics.tokens_after_last_progress} tokens after the last effective progress. "
+                "Consider earlier termination or strategy switching."
             )
 
         return suggestion
@@ -364,10 +364,10 @@ class FailureAnalyzer:
             metrics.total_tokens += tokens.get("input", 0) + tokens.get("output", 0)
             metrics.total_tool_calls += len(trace.get("tool_calls", []))
 
-            # 检查错误
+            # Check for errors
             for tr in trace.get("tool_results", []):
                 content = str(tr.get("result_content", ""))
-                if any(m in content for m in ["❌", "⚠️ 工具执行错误", "错误类型:"]):
+                if any(m in content for m in ["❌", "⚠️ Tool execution error", "Error type:"]):
                     metrics.error_count += 1
 
         metrics.elapsed_seconds = budget_summary.get("elapsed_seconds", 0)
@@ -375,12 +375,12 @@ class FailureAnalyzer:
         return metrics
 
     def _count_tool_errors(self, traces: list[dict]) -> int:
-        """计算工具错误数"""
+        """Count tool errors"""
         count = 0
         for trace in traces:
             for tr in trace.get("tool_results", []):
                 content = str(tr.get("result_content", ""))
-                if any(m in content for m in ["❌", "⚠️ 工具执行错误", "错误类型:"]):
+                if any(m in content for m in ["❌", "⚠️ Tool execution error", "Error type:"]):
                     count += 1
         return count
 

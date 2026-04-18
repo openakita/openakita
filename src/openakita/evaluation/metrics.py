@@ -1,8 +1,8 @@
 """
-评估指标定义
+Evaluation Metrics Definition
 
-定义 Agent 性能评估的各项指标和聚合逻辑。
-从 Tracing 系统的 Trace 数据中提取量化指标。
+Defines various metrics and aggregation logic for Agent performance evaluation.
+Extracts quantitative metrics from Trace data in the Tracing system.
 """
 
 import logging
@@ -16,16 +16,16 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TraceMetrics:
     """
-    单次 Trace 提取的指标。
+    Metrics extracted from a single Trace.
 
-    从一个 Trace (一次完整用户请求) 中提取的量化数据。
+    Quantitative data extracted from a single Trace (one complete user request).
     """
 
     trace_id: str
     session_id: str = ""
     timestamp: float = field(default_factory=time.time)
 
-    # 基本指标
+    # Basic Metrics
     total_iterations: int = 0
     total_llm_calls: int = 0
     total_tool_calls: int = 0
@@ -33,20 +33,20 @@ class TraceMetrics:
     total_output_tokens: int = 0
     total_duration_ms: float = 0.0
 
-    # 质量指标
-    task_completed: bool = False  # 任务是否完成 (by state machine)
-    tool_errors: int = 0  # 工具调用失败次数
-    loop_detected: bool = False  # 是否触发了循环检测
-    rollback_count: int = 0  # 回滚次数
-    context_compressions: int = 0  # 上下文压缩次数
+    # Quality Metrics
+    task_completed: bool = False  # Whether the task is completed (by state machine)
+    tool_errors: int = 0  # Number of tool call failures
+    loop_detected: bool = False  # Whether loop detection was triggered
+    rollback_count: int = 0  # Number of rollbacks
+    context_compressions: int = 0  # Number of context compressions
 
-    # 工具使用
+    # Tool usage
     tools_used: list[str] = field(default_factory=list)
     unique_tools: int = 0
 
     @classmethod
     def from_trace(cls, trace: Any) -> "TraceMetrics":
-        """从 Trace 对象提取指标。"""
+        """Extract metrics from a Trace object."""
         from ..tracing.tracer import SpanStatus, SpanType
 
         metrics = cls(
@@ -77,7 +77,7 @@ class TraceMetrics:
 
         metrics.unique_tools = len(set(metrics.tools_used))
 
-        # 从 trace metadata 提取完成信息
+        # Extract completion info from trace metadata
         metadata = trace.metadata or {}
         result = metadata.get("result", "")
         metrics.task_completed = result in ("completed", "completed_end_turn")
@@ -90,80 +90,80 @@ class TraceMetrics:
 @dataclass
 class EvalResult:
     """
-    单次评估结果。
+    Result of a single evaluation.
 
-    包含量化指标 + LLM Judge 的定性评估。
+    Contains quantitative metrics + qualitative evaluation from LLM Judge.
     """
 
     trace_id: str
     metrics: TraceMetrics
-    judge_score: float = 0.0  # 0-1, 由 Judge 评分
+    judge_score: float = 0.0  # 0-1, scored by Judge
     judge_reasoning: str = ""
     judge_suggestions: list[str] = field(default_factory=list)
-    tags: list[str] = field(default_factory=list)  # 标签: "failed", "slow", "loop", etc.
+    tags: list[str] = field(default_factory=list)  # Tags: "failed", "slow", "loop", etc.
 
     def is_good(self) -> bool:
-        """是否通过评估"""
+        """Whether the evaluation passed"""
         return self.metrics.task_completed and self.judge_score >= 0.7
 
 
 @dataclass
 class EvalMetrics:
     """
-    聚合评估指标。
+    Aggregated evaluation metrics.
 
-    从多个 EvalResult 聚合得到的整体性能指标。
+    Overall performance metrics aggregated from multiple EvalResults.
     """
 
-    # 计数
+    # Count
     total_traces: int = 0
     period_start: float = 0.0
     period_end: float = 0.0
 
-    # 完成率
-    task_completion_rate: float = 0.0  # 任务完成率
+    # Completion Rate
+    task_completion_rate: float = 0.0  # Task completion rate
 
-    # 工具相关
-    tool_selection_accuracy: float = 0.0  # 工具无错率 (无错trace / 总trace)
+    # Tool Related
+    tool_selection_accuracy: float = 0.0  # Tool accuracy (trace without errors / total trace)
     avg_tool_calls_per_task: float = 0.0
     most_errored_tools: list[tuple[str, int]] = field(default_factory=list)
 
-    # 效率指标
+    # Efficiency Metrics
     avg_iterations: float = 0.0
-    avg_token_usage: int = 0  # 平均总 token
+    avg_token_usage: int = 0  # Average total tokens
     avg_latency_ms: float = 0.0
 
-    # 异常检测
-    loop_detection_rate: float = 0.0  # 触发循环检测的比例
-    error_recovery_rate: float = 0.0  # 有错误但最终完成的比例
-    rollback_rate: float = 0.0  # 触发回滚的比例
+    # Anomaly Detection
+    loop_detection_rate: float = 0.0  # Proportion that triggered loop detection
+    error_recovery_rate: float = 0.0  # Proportion with errors that ultimately completed
+    rollback_rate: float = 0.0  # Proportion that triggered rollback
 
-    # Judge 评分
+    # Judge Score
     avg_judge_score: float = 0.0
 
     @classmethod
     def aggregate(cls, results: list[EvalResult]) -> "EvalMetrics":
-        """从评估结果列表聚合指标。"""
+        """Aggregate metrics from a list of evaluation results."""
         if not results:
             return cls()
 
         total = len(results)
         now = time.time()
 
-        # 完成率
+        # Completion rate
         completed = sum(1 for r in results if r.metrics.task_completed)
 
-        # 工具准确率: 无工具错误的 trace 比例
+        # Tool accuracy: proportion of traces without tool errors
         no_tool_errors = sum(1 for r in results if r.metrics.tool_errors == 0)
 
-        # 循环检测率
+        # Loop detection rate
         loops = sum(1 for r in results if r.metrics.loop_detected)
 
-        # 错误恢复率
+        # Error recovery rate
         had_errors = [r for r in results if r.metrics.tool_errors > 0]
         recovered = sum(1 for r in had_errors if r.metrics.task_completed)
 
-        # 回滚率
+        # Rollback rate
         rollbacks = sum(1 for r in results if r.metrics.rollback_count > 0)
 
         metrics = cls(
@@ -188,7 +188,7 @@ class EvalMetrics:
         return metrics
 
     def to_dict(self) -> dict[str, Any]:
-        """序列化为字典"""
+        """Serialize to dictionary"""
         return {
             "total_traces": self.total_traces,
             "task_completion_rate": round(self.task_completion_rate, 3),
@@ -204,28 +204,28 @@ class EvalMetrics:
         }
 
     def format_report(self) -> str:
-        """格式化为可读报告"""
+        """Format as a readable report"""
         lines = [
             "=" * 50,
-            "OpenAkita Agent 评估报告",
+            "OpenAkita Agent Evaluation Report",
             "=" * 50,
-            f"评估 Trace 数: {self.total_traces}",
+            f"Traces Evaluated: {self.total_traces}",
             "",
-            "📊 核心指标:",
-            f"  任务完成率:     {self.task_completion_rate:.1%}",
-            f"  工具无错率:     {self.tool_selection_accuracy:.1%}",
-            f"  Judge 平均分:   {self.avg_judge_score:.2f}/1.0",
+            "📊 Core Metrics:",
+            f"  Completion Rate:     {self.task_completion_rate:.1%}",
+            f"  Tool Accuracy Rate:   {self.tool_selection_accuracy:.1%}",
+            f"  Avg Judge Score:      {self.avg_judge_score:.2f}/1.0",
             "",
-            "⚡ 效率指标:",
-            f"  平均迭代次数:   {self.avg_iterations:.1f}",
-            f"  平均 Token:     {self.avg_token_usage:,}",
-            f"  平均延迟:       {self.avg_latency_ms:.0f}ms",
-            f"  平均工具调用数: {self.avg_tool_calls_per_task:.1f}",
+            "⚡ Efficiency Metrics:",
+            f"  Avg Iterations:      {self.avg_iterations:.1f}",
+            f"  Avg Token Usage:     {self.avg_token_usage:,}",
+            f"  Avg Latency:         {self.avg_latency_ms:.0f}ms",
+            f"  Avg Tool Calls:      {self.avg_tool_calls_per_task:.1f}",
             "",
-            "🔍 异常指标:",
-            f"  循环检测率:     {self.loop_detection_rate:.1%}",
-            f"  错误恢复率:     {self.error_recovery_rate:.1%}",
-            f"  回滚触发率:     {self.rollback_rate:.1%}",
+            "🔍 Anomaly Metrics:",
+            f"  Loop Detection Rate: {self.loop_detection_rate:.1%}",
+            f"  Error Recovery Rate: {self.error_recovery_rate:.1%}",
+            f"  Rollback Rate:       {self.rollback_rate:.1%}",
             "=" * 50,
         ]
         return "\n".join(lines)

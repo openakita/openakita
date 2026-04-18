@@ -205,6 +205,18 @@ class ResponseHandler:
         return any(
             key in text
             for key in (
+                "image",
+                "photo",
+                "picture",
+                "file",
+                "attachment",
+                "download",
+                "send me",
+                "poster",
+                "wallpaper",
+                "screenshot",
+                "give me a",
+                "send to me",
                 "图片",
                 "照片",
                 "图像",
@@ -217,15 +229,6 @@ class ResponseHandler:
                 "下载",
                 "发我",
                 "发给我",
-                "给我一张",
-                "给我发",
-                "image",
-                "photo",
-                "picture",
-                "file",
-                "attachment",
-                "download",
-                "send me",
             )
         )
 
@@ -316,6 +319,16 @@ class ResponseHandler:
             any(
                 k in (assistant_response or "")
                 for k in (
+                    "sent",
+                    "delivered",
+                    "sent to you",
+                    "here is the image",
+                    "here is the picture",
+                    "give you a",
+                    "I sent it to you",
+                    "I generated an image for you",
+                    "the image is as follows",
+                    "the attachment is as follows",
                     "已发送",
                     "已交付",
                     "已发给你",
@@ -353,6 +366,11 @@ class ResponseHandler:
             any(
                 k in (assistant_response or "")
                 for k in (
+                    "you should be able to see",
+                    "on your screen",
+                    "on your desktop",
+                    "at your computer",
+                    "when you play the game",
                     "你应该能看到",
                     "你屏幕上",
                     "你桌面上",
@@ -378,65 +396,64 @@ class ResponseHandler:
         _plan_section = ""
         if plan_fail_reason:
             _plan_section = (
-                f"\n## Plan 状态\n"
-                f"当前 Plan 有未完成步骤: {plan_fail_reason}\n"
-                f"注意: 若用户意图是**宿主内**任务（工作区写文件、宿主 shell、宿主浏览器自动化等），"
-                f"工具已成功执行且与 Plan 一致时可判 COMPLETED。"
-                f"若用户意图是**用户本机可观测**（本机 GUI 窗口、本机软件安装、游戏内 overlay 等），"
-                f"仅宿主侧 run_shell 等成功**不足**；需有交付回执、用户可在自己机器上执行的明确步骤，"
-                f"或助手已清楚说明「效果在宿主、用户屏不可见」并给出可行替代方案。\n"
+                f"\n## Plan Status\n"
+                f"The current Plan has incomplete steps: {plan_fail_reason}\n"
+                f"Note: If the user intent is a **host-internal** task (writing files in workspace, host shell, host browser automation, etc.), "
+                f"it can be judged as COMPLETED if tools executed successfully and align with the Plan. "
+                f"If the user intent is **user-local observable** (local GUI windows, local software installation, in-game overlays, etc.), "
+                f"mere success of host-side run_shell, etc., is **insufficient**. There must be a delivery receipt, explicit steps for the user to execute on their own machine, "
+                f"or the assistant has clearly explained that 'effects are on the host and not visible on the user's screen' and provided a viable alternative.\n"
             )
+        verify_prompt = f"""Please determine if the following interaction has **successfully fulfilled** the user's intent.
 
-        verify_prompt = f"""请判断以下交互是否已经**完成**用户的意图。
-
-## 用户消息
+## User Message
 {user_display}
 
-## 助手响应
+## Assistant Response
 {response_display}
 
-## 已执行的工具
-{", ".join(executed_tools) if executed_tools else "无"}
+## Executed Tools
+{", ".join(executed_tools) if executed_tools else "None"}
 
-## 附件交付回执（如有）
-{delivery_receipts if delivery_receipts else "无"}
+## Artifact Delivery Receipts (if any)
+{delivery_receipts if delivery_receipts else "None"}
 {_plan_section}
-## 执行域前提（必读）
+## Execution Domain Context (Read Carefully)
 
-工具在 **OpenAkita 宿主**执行，与用户发消息的设备/IM 客户端**默认不同域**。宿主上命令成功 ≠ 用户本机已出现窗口或已安装软件。
+Tools are executed on the **OpenAkita Host**, which is **different by default** from the device/IM client where the user sends messages. Success on the host ≠ a window appearing or software being installed on the user's local machine.
 
-## 判断标准
+## Criteria
 
-### 非任务类消息（直接判 COMPLETED）
-- 如果用户消息是**闲聊/问候**，助手已礼貌回复 → **COMPLETED**
-- 如果用户消息是**简单确认/反馈**，助手已简短回应 → **COMPLETED**
-- 如果用户消息是**简单问答**，助手已给出回答 → **COMPLETED**
+### Non-Task Messages (Rate as COMPLETED)
+- If the user message is **Chit-chat/Greeting** and the assistant replied politely → **COMPLETED**
+- If the user message is **Simple confirmation/feedback** and the assistant gave a brief response → **COMPLETED**
+- If the user message is **Simple Q&A** and the assistant gave an answer → **COMPLETED**
 
-### 任务类消息 — 分层完成标准
+### Task-Oriented Messages — Hierarchical Standards
 
-**A. 宿主内可验证的完成**（以下任一满足且用户意图属此类 → 可 COMPLETED）
-- 已执行 write_file / edit_file 等且目标为工作区内保存文件
-- 已执行浏览器工具且意图是在**宿主侧**操作网页
-- 已有 **deliver_artifacts** 成功回执（status=delivered），且用户要的是可交付产物
-- 已调用 **complete_todo** 且 Plan 语义已闭环
-- 工具在宿主执行成功，且用户请求**未要求**在用户本人电脑屏幕/本机系统中看到效果
+**A. Host-Domain Verifiable Completion** (rate as COMPLETED if user intent falls here and any condition is met)
+- Executed `write_file` / `edit_file` etc., targeting files within the workspace.
+- Executed browser tools and the intent was to operate on a webpage on the **host side**.
+- Success receipt from **deliver_artifacts** (status=delivered), and the user requested a deliverable artifact.
+- Called **complete_todo** and the Plan semantics are closed.
+- Tools executed successfully on the host, and the user request **did not require** seeing the effect on their own screen/local system.
 
-**B. 用户本机可观测的完成**（用户明确要求在本机看到窗口、本机安装、游戏画面内效果等）
-- 仅有宿主侧 run_shell / Python 成功**不能**单独作为完成证据
-- 需至少其一：成功交付（回执）、回复中含用户可在**自己机器**上执行的明确命令/步骤并已给出、或助手明确说明边界且用户目标已调整为可达成形态
+**B. User-Local Observable Completion** (user explicitly requested seeing a window, local installation, in-game overlay effects, etc.)
+- A successful `run_shell` / Python execution on the host **cannot** alone serve as evidence of completion.
+- Requirement (at least one): Successful delivery (receipt), the response includes clear commands/steps for the user to execute on **their own machine**, or the assistant explicitly explained the boundary/limitations and the user's goal was adjusted to an achievable form.
 
-**C. 仍在进行中**
-- 响应仅为「现在开始…」「让我…」且关键工具未执行 → **INCOMPLETE**
+**C. Still In Progress**
+- The response is merely "Starting now..." or "Let me..." and key tools haven't been executed → **INCOMPLETE**
 
-**D. 上游平台硬性限制**
-- 助手已实际尝试且遇不可绕过的 API/平台限制，并已向用户解释 → **COMPLETED**
-- 若仍有其他可行路径（换命令、换文件路径等）→ **INCOMPLETE**
+**D. Upstream/Platform Hard Constraints**
+- The assistant actually attempted the task but encountered unavoidable API/platform limitations and explained them to the user → **COMPLETED**
+- If alternative viable paths still exist (different command, different path) → **INCOMPLETE**
 
-## 回答要求
-STATUS: COMPLETED 或 INCOMPLETE
-EVIDENCE: 完成的证据
-MISSING: 缺失的内容
-NEXT: 建议的下一步"""
+## Response Format
+STATUS: COMPLETED or INCOMPLETE
+EVIDENCE: Evidence of completion
+MISSING: What is missing
+NEXT: Suggested next step"""
 
         try:
             response = await self._brain.think_lightweight(
@@ -496,7 +513,7 @@ NEXT: 建议的下一步"""
 
             response = await self._brain.think_lightweight(
                 prompt=prompt,
-                system="你是一个任务执行分析专家。请简洁地分析任务执行情况，找出耗时原因和改进建议。",
+                system="You are an expert in analyzing task execution. Please concisely analyze task performance, identifying causes for delays and suggestions for improvement.",
                 max_tokens=512,
             )
 

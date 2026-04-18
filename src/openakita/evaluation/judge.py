@@ -1,14 +1,14 @@
 """
-Agent-as-a-Judge 评估器
+Agent-as-a-Judge Evaluator
 
-使用 LLM 作为评判者，对 Agent 的表现进行定性评估。
-参考 "Agent-as-a-Judge" 论文的设计思路。
+Uses LLM as a judge to qualitatively evaluate Agent performance.
+Inspired by the "Agent-as-a-Judge" paper.
 
-评估维度:
-1. 任务理解: Agent 是否正确理解了用户意图
-2. 工具使用: 工具选择和使用是否合理
-3. 效率: 是否有多余的步骤或重复操作
-4. 最终质量: 最终输出是否满足用户需求
+Evaluation Dimensions:
+1. Task Understanding: Did the Agent correctly understand user intent?
+2. Tool Usage: Was tool selection and usage reasonable?
+3. Efficiency: Were there redundant steps or repetitive operations?
+4. Final Quality: Does the final output satisfy user requirements?
 """
 
 import asyncio
@@ -21,19 +21,19 @@ from ..core.token_tracking import TokenTrackingContext, reset_tracking_context, 
 
 logger = logging.getLogger(__name__)
 
-JUDGE_PROMPT = """你是一个 AI Agent 评估专家。请根据以下 Agent 执行记录，评估该 Agent 的表现。
+JUDGE_PROMPT = """You are an AI Agent Evaluation Expert. Please evaluate the following Agent execution record.
 
-## 评估维度 (每项 0-1 分)
+## Evaluation Dimensions (Score 0-1 for each)
 
-1. **任务理解** (task_understanding): Agent 是否正确理解了用户意图？
-2. **工具使用** (tool_usage): 工具选择是否合理？是否有不必要的工具调用？
-3. **执行效率** (efficiency): 是否有多余的步骤、重复操作或循环？
-4. **最终质量** (output_quality): 最终输出是否满足用户需求？
-5. **错误处理** (error_handling): 遇到错误时的恢复策略是否合理？
+1. **Task Understanding** (task_understanding): Did the Agent correctly understand user intent?
+2. **Tool Usage** (tool_usage): Was tool selection reasonable? Were there unnecessary tool calls?
+3. **Execution Efficiency** (efficiency): Were there redundant steps, repetitive operations, or loops?
+4. **Final Quality** (output_quality): Does the final output satisfy user requirements?
+5. **Error Handling** (error_handling): Was the recovery strategy reasonable when encountering errors?
 
-## 输出格式
+## Output Format
 
-请以 JSON 格式输出评估结果:
+Please output evaluation results in JSON format:
 ```json
 {
     "scores": {
@@ -44,13 +44,13 @@ JUDGE_PROMPT = """你是一个 AI Agent 评估专家。请根据以下 Agent 执
         "error_handling": 0.0
     },
     "overall_score": 0.0,
-    "reasoning": "简要说明评估理由",
-    "suggestions": ["改进建议1", "改进建议2"],
-    "failure_patterns": ["发现的问题模式1"]
+    "reasoning": "Brief evaluation explanation",
+    "suggestions": ["Improvement suggestion 1", "Improvement suggestion 2"],
+    "failure_patterns": ["Identified problem pattern 1"]
 }
 ```
 
-## Agent 执行记录
+## Agent Execution Record
 
 {trace_summary}
 """
@@ -90,7 +90,7 @@ class JudgeResult:
 
         except (json.JSONDecodeError, KeyError, IndexError) as e:
             logger.warning(f"[Judge] Failed to parse LLM response: {e}")
-            result.reasoning = f"解析失败: {response_text[:200]}"
+            result.reasoning = f"Parsing failed: {response_text[:200]}"
 
         return result
 
@@ -145,7 +145,7 @@ class Judge:
                 self._brain.messages_create,
                 model=model,
                 max_tokens=2000,
-                system="你是一个 AI Agent 评估专家，请严格按照 JSON 格式输出评估结果。",
+                system="You are an AI Agent Evaluation Expert. Please output evaluation results in strict JSON format.",
                 messages=[{"role": "user", "content": prompt}],
             )
 
@@ -164,7 +164,7 @@ class Judge:
             logger.error(f"[Judge] Evaluation failed: {e}")
             return JudgeResult(
                 trace_id=getattr(trace, "trace_id", ""),
-                reasoning=f"评估失败: {e}",
+                reasoning=f"Evaluation failed: {e}",
             )
         finally:
             reset_tracking_context(_tt)
@@ -184,20 +184,20 @@ class Judge:
         summary = trace.get_summary()
 
         parts.append(f"Trace ID: {trace.trace_id}")
-        parts.append(f"总耗时: {summary.get('duration_ms', 0):.0f}ms")
-        parts.append(f"LLM 调用次数: {summary.get('llm_calls', 0)}")
-        parts.append(f"工具调用次数: {summary.get('tool_calls', 0)}")
-        parts.append(f"工具错误次数: {summary.get('tool_errors', 0)}")
-        parts.append(f"总 Input Tokens: {summary.get('total_input_tokens', 0)}")
-        parts.append(f"总 Output Tokens: {summary.get('total_output_tokens', 0)}")
+        parts.append(f"Total Duration: {summary.get('duration_ms', 0):.0f}ms")
+        parts.append(f"LLM Calls: {summary.get('llm_calls', 0)}")
+        parts.append(f"Tool Calls: {summary.get('tool_calls', 0)}")
+        parts.append(f"Tool Errors: {summary.get('tool_errors', 0)}")
+        parts.append(f"Total Input Tokens: {summary.get('total_input_tokens', 0)}")
+        parts.append(f"Total Output Tokens: {summary.get('total_output_tokens', 0)}")
 
         if trace.metadata:
-            parts.append("\n任务信息:")
+            parts.append("\nTask Info:")
             for k, v in trace.metadata.items():
                 parts.append(f"  {k}: {v}")
 
         # Span 详情
-        parts.append("\n执行时间线:")
+        parts.append("\nExecution Timeline:")
         for span in trace.spans[:30]:  # 限制长度
             status_icon = "✅" if span.status.value == "ok" else "❌"
             duration = f"{span.duration_ms:.0f}ms" if span.duration_ms else "?"
