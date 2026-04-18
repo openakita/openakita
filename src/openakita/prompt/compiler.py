@@ -1,14 +1,14 @@
 """
-Prompt Compiler (v2) — LLM 辅助编译 + 缓存 + 规则降级
+Prompt Compiler (v2) — LLM-assisted compilation + caching + rule-based fallback.
 
-编译流程:
-1. 检查源文件是否变更 (mtime 比较)
-2. 如果未变更, 跳过 (使用缓存)
-3. 如果变更, 用 LLM 生成高质量摘要
-4. LLM 不可用时回退到规则编译 (清理 HTML 残留)
-5. 写入 compiled/ 目录
+Compilation flow:
+1. Check whether the source file has changed (mtime comparison).
+2. If unchanged, skip (use the cache).
+3. If changed, use the LLM to generate a high-quality summary.
+4. If the LLM is unavailable, fall back to rule-based compilation (clean up HTML residue).
+5. Write to the compiled/ directory.
 
-编译目标:
+Compilation targets:
 - SOUL.md -> soul.summary.md (<=150 tokens)
 - AGENT.md -> agent.core.md (<=300 tokens)
 - USER.md -> user.summary.md (<=120 tokens)
@@ -30,37 +30,37 @@ logger = logging.getLogger(__name__)
 # =========================================================================
 
 _COMPILE_PROMPTS: dict[str, dict] = {
-    # SOUL.md — 不编译，全文直接注入 system prompt
-    # AGENT.md — 不编译，builder.py 直接注入 (v3)
-    # USER.md — 不编译，builder.py 运行时清洗 (v3)
+    # SOUL.md — not compiled; injected verbatim into the system prompt.
+    # AGENT.md — not compiled; injected directly by builder.py (v3).
+    # USER.md — not compiled; cleaned up at runtime by builder.py (v3).
     "persona_custom": {
         "target": "persona_custom",
-        "system": "你是一个文本精简专家。",
-        "user": """从以下用户自定义人格偏好中提取已归集的信息。
+        "system": "You are an expert at condensing text.",
+        "user": """Extract the consolidated information from the following user-customized persona preferences.
 
-要求:
-- 只保留有实际内容的偏好（跳过空白占位内容）
-- 保留沟通风格、情感偏好等特质
-- 输出紧凑的列表格式，不超过 {max_tokens} tokens
-- 如果没有有效内容，输出空字符串
+Requirements:
+- Keep only preferences with actual content (skip blank placeholder items).
+- Preserve traits such as communication style and emotional preferences.
+- Output a compact list, no more than {max_tokens} tokens.
+- If there is no valid content, output an empty string.
 
-原文:
+Source:
 {content}""",
         "max_tokens": 150,
     },
 }
 
 _SOURCE_MAP: dict[str, str] = {
-    # SOUL.md — 不编译，全文注入
-    # AGENT.md — 不编译，全文注入 (v3: 改为直接注入)
-    # USER.md — 不编译，builder 运行时清洗 (v3: 改为运行时清洗)
+    # SOUL.md — not compiled; injected verbatim.
+    # AGENT.md — not compiled; injected verbatim (v3: switched to direct injection).
+    # USER.md — not compiled; cleaned up at runtime by builder (v3: switched to runtime cleanup).
     "persona_custom": "personas/user_custom.md",
 }
 
 _OUTPUT_MAP: dict[str, str] = {
-    # soul.summary.md — 不再生成
-    # agent.core.md — 不再生成 (v3: AGENT.md 直接注入)
-    # user.summary.md — 不再生成 (v3: USER.md 运行时清洗)
+    # soul.summary.md — no longer generated.
+    # agent.core.md — no longer generated (v3: AGENT.md injected directly).
+    # user.summary.md — no longer generated (v3: USER.md cleaned at runtime).
     "persona_custom": "persona.custom.md",
 }
 
@@ -73,13 +73,13 @@ _ORPHAN_FILES = ["soul.summary.md", "agent.tooling.md", "agent.core.md", "user.s
 
 
 class PromptCompiler:
-    """LLM 辅助的 Prompt 编译器"""
+    """LLM-assisted prompt compiler."""
 
     def __init__(self, brain=None):
         self.brain = brain
 
     async def compile_all(self, identity_dir: Path) -> dict[str, Path]:
-        """编译所有 identity 文件, 使用 LLM 辅助 + 缓存"""
+        """Compile all identity files using LLM assistance with caching."""
         runtime_dir = identity_dir / "runtime"
         runtime_dir.mkdir(exist_ok=True)
         results: dict[str, Path] = {}
@@ -140,9 +140,9 @@ class PromptCompiler:
 
 def compile_all(identity_dir: Path, use_llm: bool = False) -> dict[str, Path]:
     """
-    同步编译所有源文件 (向后兼容)
+    Synchronously compile all source files (backward compatible).
 
-    如果需要 LLM 辅助, 使用 PromptCompiler.compile_all() 异步版本。
+    For LLM-assisted compilation, use the async PromptCompiler.compile_all() instead.
     """
     runtime_dir = identity_dir / "runtime"
     runtime_dir.mkdir(exist_ok=True)
@@ -179,7 +179,7 @@ def compile_all(identity_dir: Path, use_llm: bool = False) -> dict[str, Path]:
 
 
 def _cleanup_orphan_files(runtime_dir: Path) -> None:
-    """清理旧版编译管线遗留的孤儿文件。"""
+    """Clean up orphan files left over from the legacy compilation pipeline."""
     for filename in _ORPHAN_FILES:
         orphan = runtime_dir / filename
         if orphan.exists():
@@ -370,71 +370,71 @@ def _is_relevant_section(section: str, target: str) -> bool:
 # =========================================================================
 
 _STATIC_FALLBACKS: dict[str, str] = {
-    # NOTE: agent_core 和 agent_tooling 的 fallback 已不再使用
-    # (v3: AGENT.md 改为 builder.py 直接注入，兜底在 builder._BUILT_IN_DEFAULTS 中)
-    # 保留此处仅为向后兼容，不会被新代码路径调用。
+    # NOTE: The agent_core and agent_tooling fallbacks are no longer in use.
+    # (v3: AGENT.md is now injected directly by builder.py; the safety net lives in builder._BUILT_IN_DEFAULTS.)
+    # Kept here only for backward compatibility; not invoked by the new code paths.
     "agent_core": """\
-## 核心执行原则
+## Core execution principles
 
-### 任务执行流程
-1. 理解用户意图，分解为子任务
-2. 检查所需技能是否已有
-3. 缺少技能则搜索安装或自己编写
-4. Ralph 循环执行：执行 → 验证 → 失败则换方法重试
-5. 更新 MEMORY.md 记录进度和经验
+### Task execution flow
+1. Understand the user's intent and break it into subtasks.
+2. Check whether the required skills are already available.
+3. If a skill is missing, search and install it, or write one yourself.
+4. Ralph-loop execution: execute -> verify -> on failure, retry with a different approach.
+5. Update MEMORY.md to record progress and lessons learned.
 
-### 每轮自检
-1. 用户真正想要什么？
-2. 有没有用户可能没想到的问题/机会？
-3. 这个任务有没有更好的方式？
-4. 之前有没有处理过类似的事？
+### Self-check each turn
+1. What does the user actually want?
+2. Are there issues/opportunities the user may not have considered?
+3. Is there a better way to approach this task?
+4. Have I handled something similar before?
 
-### 成长循环
-- 模式识别：同一操作第 3 次出现 → 主动提议封装为技能
-- 经验沉淀：失败教训/高效方法/用户纠正 → 立即记录到记忆
-- 能力扩展：缺少能力 → 搜索/安装/创建 → 继续任务
+### Growth loop
+- Pattern recognition: when the same operation recurs a third time -> proactively propose packaging it as a skill.
+- Experience capture: failure lessons / effective approaches / user corrections -> record them to memory immediately.
+- Capability expansion: missing capability -> search / install / create -> continue the task.
 
-### 自我修复
-- 诊断错误 → 自修复（配置/依赖/权限）→ 验证 → 记录
-- 只有尝试修复失败后才向用户说明
+### Self-healing
+- Diagnose the error -> self-heal (config / dependencies / permissions) -> verify -> record.
+- Only explain to the user after attempts to fix have failed.
 
-### 禁止行为
-- 删除用户数据（除非明确要求）
-- 放弃任务（除非用户明确取消）
-- 只回复文字而不调用工具（任务场景下）
-- 说"做不到" — 应该搜索/安装/创建能力
+### Forbidden behaviors
+- Deleting user data (unless explicitly requested).
+- Giving up on a task (unless the user explicitly cancels it).
+- Replying only with text without calling tools (in task scenarios).
+- Saying "can't do it" — instead, search / install / create the capability.
 
-### 铁律例外
-- 例外：在多 Agent 模式下，如果任务明显更适合由专业 Agent 处理，允许主动委派
-- 委派不是放弃，而是为了更高质量完成任务；委派后仍需对最终结果负责""",
+### Iron-rule exceptions
+- Exception: in multi-agent mode, if a task is clearly better handled by a specialist agent, proactive delegation is allowed.
+- Delegation is not giving up — it is a way to achieve higher quality; you remain responsible for the final result after delegating.""",
     "agent_tooling": """\
-## 工具使用原则
+## Tool usage principles
 
-### 核心原则：任务必须通过工具或脚本完成
-不使用工具/脚本 = 没有真正执行任务
+### Core principle: tasks must be completed via tools or scripts
+Not using tools/scripts = the task was not truly executed.
 
-### 工具选择顺序
-1. **已安装技能** — 技能可能来自内置目录、用户工作区目录或项目目录；不要猜路径，使用 `list_skills` / `get_skill_info`
-2. **MCP 服务器工具** — 通过 MCP 协议调用的外部工具
-3. **Shell 命令** — 系统命令和脚本
-4. **临时脚本** — write_file 写脚本 + run_shell 执行
-5. **网络搜索 + 安装** — 搜索 GitHub 找到并安装新能力
-6. **自己编写技能** — 用 skill-creator 创建永久技能
+### Tool selection order
+1. **Installed skills** — skills may come from the built-in directory, the user workspace directory, or the project directory; do not guess paths, use `list_skills` / `get_skill_info`.
+2. **MCP server tools** — external tools invoked via the MCP protocol.
+3. **Shell commands** — system commands and scripts.
+4. **Ad-hoc scripts** — write a script with write_file and run it via run_shell.
+5. **Web search + install** — search GitHub to find and install new capabilities.
+6. **Write your own skill** — use skill-creator to create a permanent skill.
 
-### 能力扩展协议（缺少能力时）
-1. **搜索** — 先查已安装 skills，再搜索网络
-2. **安装** — 找到合适的 skill → 直接安装并加载
-3. **创建** — 没有现成的 → 用 skill-creator 创建
-4. **记录** — 新能力获取后，更新经验记忆
-缺少能力 = 需要获取能力 = 获取能力 = 继续任务。中间没有"报告给用户"这一步。
+### Capability-expansion protocol (when a capability is missing)
+1. **Search** — check installed skills first, then search the web.
+2. **Install** — when a suitable skill is found -> install and load it immediately.
+3. **Create** — if nothing existing fits -> create one with skill-creator.
+4. **Record** — after acquiring a new capability, update experience memory.
+Missing capability = needs to be acquired = acquire it = continue the task. There is no "report back to the user" step in between.
 
-### 禁止的敷衍行为
-- ❌ "这个功能我暂时没有"
-- ❌ "你需要自己去..."
-- ❌ "我建议你手动..."
-- ❌ 只回复文字而不调用任何工具
-- ✅ "让我来处理" → 立即调用工具执行
-- ✅ "这个功能我还没有，让我创建一个" → skill-creator 或临时脚本""",
+### Forbidden dismissive behaviors
+- "I don't have that feature right now"
+- "You need to do it yourself..."
+- "I suggest you manually..."
+- Replying only with text without calling any tool.
+- "Let me handle that" -> invoke a tool immediately.
+- "I don't have that capability yet, let me create one" -> skill-creator or an ad-hoc script.""",
 }
 
 

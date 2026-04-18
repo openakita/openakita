@@ -1,14 +1,14 @@
 """
-System 工具定义
+System tool definitions
 
-包含系统功能相关的工具：
-- ask_user: 向用户提问并等待回复（暂停执行）
-- enable_thinking: 控制深度思考模式
-- get_session_logs: 获取会话日志
-- get_tool_info: 获取工具详细信息
-- generate_image: AI 生成图片
-- set_task_timeout: 调整任务超时策略
-- get_workspace_map: 获取工作区目录结构和关键路径
+Contains system-related tools:
+- ask_user: Ask the user a question and wait for a reply (pauses execution)
+- enable_thinking: Control deep thinking mode
+- get_session_logs: Retrieve session logs
+- get_tool_info: Retrieve detailed tool information
+- generate_image: Generate an image via AI
+- set_task_timeout: Adjust the task timeout policy
+- get_workspace_map: Retrieve workspace directory structure and key paths
 """
 
 SYSTEM_TOOLS = [
@@ -31,53 +31,53 @@ SYSTEM_TOOLS = [
             "NEVER put questions in plain text responses — only this tool triggers a real "
             "pause and waits for user reply. Questions in text will be ignored."
         ),
-        "detail": """向用户提问并暂停执行，等待用户回复。支持单个问题和多个问题。
+        "detail": """Ask the user a question and pause execution until they reply. Supports single questions or multiple questions.
 
-**何时使用**：
-- 关键信息缺失（如：路径、账号、具体目标不明确）
-- 任务有歧义，需要用户澄清
-- 需要用户确认后才能继续（如：危险操作、多选方案）
+**When to use**:
+- Critical information is missing (e.g. path, account, unclear target)
+- The task is ambiguous and needs clarification from the user
+- User confirmation is required before proceeding (e.g. destructive operations, multi-option choices)
 
-**单个简单问题**：
-- 使用 question + options 即可
+**Single simple question**:
+- Use question + options
 
-**多个问题 / 复杂问题**：
-- 使用 questions 数组，每个问题可以独立配置选项和单选/多选
-- question 字段作为总体说明或标题
+**Multiple / complex questions**:
+- Use the questions array; each question can have its own options and single/multi-select setting
+- The question field serves as the overall description or title
 
-**选项（options）**：
-- 当问题有有限个选项时（如二选一、多选一），**必须**提供 options 参数
-- 用户可以直接点选，不需要手动输入
-- 默认是单选（allow_multiple=false），如需多选请设置 allow_multiple=true
-- 例如单选："确认还是取消？" → options: [{id:"confirm",label:"确认"},{id:"cancel",label:"取消"}]
-- 例如多选："需要安装哪些功能？" → options: [...], allow_multiple: true
-- 用户也可以选择"其他"手动输入，无需在 options 中包含"其他"选项
+**Options**:
+- When a question has a finite set of choices (e.g. binary choice, multiple choice), you **must** provide the options parameter
+- The user can click to select rather than having to type
+- Defaults to single-select (allow_multiple=false); set allow_multiple=true for multi-select
+- Example single-select: "Confirm or cancel?" → options: [{id:"confirm",label:"Confirm"},{id:"cancel",label:"Cancel"}]
+- Example multi-select: "Which features to install?" → options: [...], allow_multiple: true
+- The user can also pick "Other" and type freely — no need to include an "Other" entry in options
 
-**重要**：
-- 调用此工具后，系统会立即暂停当前任务的执行循环
-- 用户回复后，系统会在保留上下文的情况下继续执行
-- **不要**在纯文本回复中提出问题然后继续执行——文本中的问号不会触发暂停
-- 不需要提问的场景：闲聊/问候、简单确认、任务总结""",
+**Important**:
+- Calling this tool immediately pauses the current task's execution loop
+- Once the user replies, execution resumes with context preserved
+- **Do not** ask questions in plain-text replies and then continue executing — question marks in text do not trigger a pause
+- Cases where no question is needed: small talk / greetings, simple confirmations, task summaries""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "question": {
                     "type": "string",
-                    "description": "单个问题文本，或多问题时的总体说明/标题",
+                    "description": "Single question text, or the overall description/title when asking multiple questions",
                 },
                 "options": {
                     "type": "array",
-                    "description": "单个问题的选项列表（简单模式）。当使用 questions 数组时，选项放在各问题中。",
+                    "description": "Option list for a single question (simple mode). When using the questions array, place options inside each question instead.",
                     "items": {
                         "type": "object",
                         "properties": {
                             "id": {
                                 "type": "string",
-                                "description": "选项唯一标识（会作为用户回复内容）",
+                                "description": "Unique option identifier (used as the user's reply content)",
                             },
                             "label": {
                                 "type": "string",
-                                "description": "选项显示文本",
+                                "description": "Option display text",
                             },
                         },
                         "required": ["id", "label"],
@@ -85,36 +85,36 @@ SYSTEM_TOOLS = [
                 },
                 "allow_multiple": {
                     "type": "boolean",
-                    "description": "单个问题的选项是否允许多选（默认 false = 单选）。使用 questions 数组时在各问题中设置。",
+                    "description": "Whether the single-question options allow multi-select (default false = single-select). When using the questions array, set it per question.",
                     "default": False,
                 },
                 "questions": {
                     "type": "array",
-                    "description": "多个问题列表。用于一次性问多个相关问题，每个问题可以有自己的选项和单选/多选设置。",
+                    "description": "List of multiple questions. Use to ask several related questions at once; each question can have its own options and single/multi-select setting.",
                     "items": {
                         "type": "object",
                         "properties": {
                             "id": {
                                 "type": "string",
-                                "description": "问题唯一标识（用于匹配用户回复）",
+                                "description": "Unique question identifier (used to match the user's reply)",
                             },
                             "prompt": {
                                 "type": "string",
-                                "description": "问题文本",
+                                "description": "Question text",
                             },
                             "options": {
                                 "type": "array",
-                                "description": "此问题的选项列表",
+                                "description": "Option list for this question",
                                 "items": {
                                     "type": "object",
                                     "properties": {
                                         "id": {
                                             "type": "string",
-                                            "description": "选项唯一标识",
+                                            "description": "Unique option identifier",
                                         },
                                         "label": {
                                             "type": "string",
-                                            "description": "选项显示文本",
+                                            "description": "Option display text",
                                         },
                                     },
                                     "required": ["id", "label"],
@@ -122,7 +122,7 @@ SYSTEM_TOOLS = [
                             },
                             "allow_multiple": {
                                 "type": "boolean",
-                                "description": "是否允许多选（默认 false = 单选）",
+                                "description": "Whether to allow multi-select (default false = single-select)",
                                 "default": False,
                             },
                         },
@@ -137,23 +137,23 @@ SYSTEM_TOOLS = [
         "name": "enable_thinking",
         "category": "System",
         "description": "Control deep thinking mode. Default enabled. For very simple tasks (simple reminders, greetings, quick queries), can temporarily disable to speed up response. Auto-restores to enabled after completion.",
-        "detail": """控制深度思考模式。
+        "detail": """Control deep thinking mode.
 
-**默认状态**：启用
+**Default state**: enabled
 
-**可临时关闭的场景**：
-- 简单提醒
-- 简单问候
-- 快速查询
+**Cases where it can be temporarily disabled**:
+- Simple reminders
+- Simple greetings
+- Quick queries
 
-**注意**：
-- 完成后会自动恢复默认启用状态
-- 复杂任务建议保持启用""",
+**Notes**:
+- Automatically restored to the default enabled state after completion
+- Recommended to keep enabled for complex tasks""",
         "input_schema": {
             "type": "object",
             "properties": {
-                "enabled": {"type": "boolean", "description": "是否启用 thinking 模式"},
-                "reason": {"type": "string", "description": "简要说明原因"},
+                "enabled": {"type": "boolean", "description": "Whether to enable thinking mode"},
+                "reason": {"type": "string", "description": "Brief explanation of the reason"},
             },
             "required": ["enabled", "reason"],
         },
@@ -162,31 +162,31 @@ SYSTEM_TOOLS = [
         "name": "get_session_logs",
         "category": "System",
         "description": "Get current session system logs. IMPORTANT: When commands fail, encounter errors, or need to understand previous operation results, call this tool. Logs contain: command details, error info, system status.",
-        "detail": """获取当前会话的系统日志。
+        "detail": """Retrieve the current session's system logs.
 
-**重要**: 当命令执行失败、遇到错误、或需要了解之前的操作结果时，应该调用此工具查看日志。
+**Important**: Call this tool to inspect logs when a command fails, an error is encountered, or you need to understand the result of a previous operation.
 
-**日志包含**:
-- 命令执行详情
-- 错误信息
-- 系统状态
+**Logs contain**:
+- Command execution details
+- Error messages
+- System status
 
-**使用场景**:
-1. 命令返回错误码
-2. 操作没有预期效果
-3. 需要了解之前发生了什么""",
+**When to use**:
+1. A command returned an error code
+2. An operation did not have the expected effect
+3. You need to understand what happened earlier""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "count": {
                     "type": "integer",
-                    "description": "返回的日志条数（默认 20，最大 200）",
+                    "description": "Number of log entries to return (default 20, max 200)",
                     "default": 20,
                 },
                 "level": {
                     "type": "string",
                     "enum": ["DEBUG", "INFO", "WARNING", "ERROR"],
-                    "description": "过滤日志级别（可选，ERROR 可快速定位问题）",
+                    "description": "Filter by log level (optional; ERROR quickly pinpoints issues)",
                 },
             },
         },
@@ -195,18 +195,18 @@ SYSTEM_TOOLS = [
         "name": "get_tool_info",
         "category": "System",
         "description": "Get system tool detailed parameter definition (Level 2 disclosure). When you need to: (1) Understand unfamiliar tool usage, (2) Check tool parameters, (3) Learn tool examples. Call before using unfamiliar tools. NOTE: This is for system TOOLS (run_shell, browser_navigate, etc.). For external SKILL instructions (pdf, docx, etc.), use get_skill_info instead.",
-        "detail": """获取系统工具的详细参数定义（Level 2 披露）。
+        "detail": """Retrieve a system tool's detailed parameter definition (Level 2 disclosure).
 
-**适用场景**：
-- 了解不熟悉的工具用法
-- 查看工具参数
-- 学习工具示例
+**When to use**:
+- Understand how to use an unfamiliar tool
+- Inspect a tool's parameters
+- Learn from tool examples
 
-**建议**：
-在调用不熟悉的工具前，先用此工具了解其完整用法、参数说明和示例。""",
+**Recommendation**:
+Before invoking an unfamiliar tool, use this tool first to learn its full usage, parameter descriptions, and examples.""",
         "input_schema": {
             "type": "object",
-            "properties": {"tool_name": {"type": "string", "description": "工具名称"}},
+            "properties": {"tool_name": {"type": "string", "description": "Tool name"}},
             "required": ["tool_name"],
         },
     },
@@ -223,50 +223,50 @@ SYSTEM_TOOLS = [
             "Do NOT use for data visualizations (charts, plots, tables) — generate those "
             "via code instead."
         ),
-        "detail": """文生图：根据提示词生成图片并保存为本地 PNG 文件。
+        "detail": """Text-to-image: generate an image from a prompt and save it as a local PNG file.
 
-说明：
-- 默认使用通义 Qwen-Image（如 `qwen-image-max`）。
-- 需要在环境变量中配置 `DASHSCOPE_API_KEY`（与通义其它模型共用同一个 Key）。
-- 生成结果会返回一个临时 URL（通常 24 小时有效），本工具会自动下载并落盘到本地文件。
+Notes:
+- Defaults to Tongyi Qwen-Image (e.g. `qwen-image-max`).
+- Requires `DASHSCOPE_API_KEY` to be set in the environment (shared with other Tongyi models).
+- The API returns a temporary URL (typically valid for 24 hours); this tool automatically downloads and saves it to a local file.
 
-输出：
-- 返回 JSON 字符串，包含 `saved_to`（本地路径）与 `image_url`（临时链接）。
+Output:
+- Returns a JSON string containing `saved_to` (local path) and `image_url` (temporary link).
 
-交付：
-- 如需把图片发到 IM，请再调用 `deliver_artifacts`，并以回执作为交付证据。""",
+Delivery:
+- To send the image to an IM channel, call `deliver_artifacts` afterwards and use the receipt as proof of delivery.""",
         "input_schema": {
             "type": "object",
             "properties": {
-                "prompt": {"type": "string", "description": "正向提示词（期望生成的内容）"},
+                "prompt": {"type": "string", "description": "Positive prompt (what to generate)"},
                 "model": {
                     "type": "string",
-                    "description": "模型名称（默认 qwen-image-max）",
+                    "description": "Model name (default qwen-image-max)",
                     "default": "qwen-image-max",
                 },
-                "negative_prompt": {"type": "string", "description": "反向提示词（可选）"},
+                "negative_prompt": {"type": "string", "description": "Negative prompt (optional)"},
                 "size": {
                     "type": "string",
-                    "description": "输出分辨率，格式 宽*高（如 1664*928）",
+                    "description": "Output resolution, format width*height (e.g. 1664*928)",
                     "default": "1664*928",
                 },
                 "prompt_extend": {
                     "type": "boolean",
-                    "description": "是否启用提示词智能改写（默认 true）",
+                    "description": "Whether to enable smart prompt rewriting (default true)",
                     "default": True,
                 },
                 "watermark": {
                     "type": "boolean",
-                    "description": "是否添加水印（默认 false）",
+                    "description": "Whether to add a watermark (default false)",
                     "default": False,
                 },
                 "seed": {
                     "type": "integer",
-                    "description": "随机种子（0~2147483647，可选）",
+                    "description": "Random seed (0–2147483647, optional)",
                 },
                 "output_path": {
                     "type": "string",
-                    "description": "保存路径（可选）。不填则保存到 data/generated_images/ 下自动命名",
+                    "description": "Save path (optional). If omitted, saves under data/generated_images/ with an auto-generated name",
                 },
             },
             "required": ["prompt"],
@@ -276,20 +276,20 @@ SYSTEM_TOOLS = [
         "name": "set_task_timeout",
         "category": "System",
         "description": "Adjust current task timeout policy. Use when the task is expected to take long, or when the system is too aggressive switching models. Prefer increasing timeout for long-running tasks with steady progress; decrease to catch hangs sooner.",
-        "detail": """动态调整当前任务的超时策略（主要用于避免“卡死检测”误触发）。\n\n- 本项目的超时重点是：**检测无进展卡死**，而不是限制长任务。\n- 你可以在长任务开始前，或发现任务被频繁触发超时警告时，调高超时秒数。\n\n注意：该设置只影响当前会话正在执行的任务，不影响全局配置。""",
+        "detail": """Dynamically adjust the current task's timeout policy (mainly to avoid false-positive \"stuck detection\").\n\n- This project's timeout focuses on **detecting lack of progress**, not limiting long-running tasks.\n- You may raise the timeout before starting a long task, or when timeout warnings are being triggered too often.\n\nNote: this setting only affects the task currently running in this session; it does not change the global configuration.""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "progress_timeout_seconds": {
                     "type": "integer",
-                    "description": "无进展超时阈值（秒）。连续超过该时间没有任何进展则触发超时处理。建议 600~3600。",
+                    "description": "No-progress timeout threshold (seconds). If no progress is made for this long, timeout handling is triggered. Recommended 600–3600.",
                 },
                 "hard_timeout_seconds": {
                     "type": "integer",
-                    "description": "硬超时上限（秒，0=禁用）。仅最终兜底。",
+                    "description": "Hard timeout upper bound (seconds, 0 = disabled). Final backstop only.",
                     "default": 0,
                 },
-                "reason": {"type": "string", "description": "简要说明调整原因"},
+                "reason": {"type": "string", "description": "Brief explanation of the adjustment"},
             },
             "required": ["progress_timeout_seconds", "reason"],
         },
@@ -297,24 +297,24 @@ SYSTEM_TOOLS = [
     {
         "name": "get_workspace_map",
         "category": "System",
-        "description": "获取工作区目录结构和关键路径说明。涉及系统文件（日志/配置/会话/媒体/截图等）时先调用此工具了解目录布局。",
-        "detail": """获取工作区的完整目录结构和关键路径说明。
+        "description": "Get the workspace directory structure and key path descriptions. Call this tool first whenever system files (logs/configs/sessions/media/screenshots/etc.) are involved, to understand the directory layout.",
+        "detail": """Retrieve the full workspace directory structure and key path descriptions.
 
-**返回内容**：
-- 工作区根目录下的核心目录结构（data/, logs/, skills/, mcps/ 等）
-- 各目录的用途说明
-- 关键文件路径（配置文件、日志文件、会话文件、媒体文件等）
+**Returns**:
+- Core directory structure under the workspace root (data/, logs/, skills/, mcps/, etc.)
+- The purpose of each directory
+- Key file paths (config files, log files, session files, media files, etc.)
 
-**适用场景**：
-- 需要查找日志文件位置（如 data/logs/）
-- 需要了解配置文件在哪里（如 .env, data/mcp/）
-- 需要定位截图/媒体文件（如 data/screenshots/）
-- 需要了解会话历史存储位置
-- 用户问"XX文件在哪"时
+**When to use**:
+- Looking for the log file location (e.g. data/logs/)
+- Locating configuration files (e.g. .env, data/mcp/)
+- Finding screenshots or media files (e.g. data/screenshots/)
+- Finding where session history is stored
+- When the user asks "where is the XX file?"
 
-**建议**：
-- 涉及文件系统操作前先调用此工具，避免盲目搜索
-- 返回结果会根据实际存在的目录动态生成""",
+**Recommendation**:
+- Call this tool before any filesystem operation to avoid blind searching
+- The returned result is generated dynamically based on which directories actually exist""",
         "input_schema": {
             "type": "object",
             "properties": {},

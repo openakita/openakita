@@ -1,19 +1,19 @@
 """
-浏览器处理器
+Browser handler
 
-处理浏览器相关的系统技能（全部基于 Playwright）：
-- browser_open: 启动浏览器 + 状态查询
-- browser_navigate: 导航到 URL
-- browser_click: 点击页面元素
-- browser_type: 输入文本
-- browser_scroll: 滚动页面
-- browser_wait: 等待元素出现
-- browser_execute_js: 执行 JavaScript
-- browser_get_content: 获取页面内容（支持 max_length 截断）
-- browser_screenshot: 截取页面截图
-- browser_list_tabs / browser_switch_tab / browser_new_tab: 标签页管理
-- browser_close: 关闭浏览器
-- view_image: 查看/分析本地图片
+Handles browser-related system skills (all based on Playwright):
+- browser_open: Start browser + status query
+- browser_navigate: Navigate to URL
+- browser_click: Click page element
+- browser_type: Type text
+- browser_scroll: Scroll page
+- browser_wait: Wait for element to appear
+- browser_execute_js: Execute JavaScript
+- browser_get_content: Get page content (supports max_length truncation)
+- browser_screenshot: Capture page screenshot
+- browser_list_tabs / browser_switch_tab / browser_new_tab: Tab management
+- browser_close: Close browser
+- view_image: View/analyze local image
 """
 
 import asyncio
@@ -56,9 +56,9 @@ _LOCKED_BROWSER_OPS = frozenset(
 
 class BrowserHandler:
     """
-    浏览器处理器
+    Browser handler
 
-    通过 BrowserManager / PlaywrightTools 路由浏览器工具调用
+    Routes browser tool calls through BrowserManager / PlaywrightTools
     """
 
     TOOLS = [
@@ -78,28 +78,28 @@ class BrowserHandler:
         "view_image",
     ]
 
-    # browser_get_content 默认最大字符数
+    # Default maximum character count for browser_get_content
     CONTENT_DEFAULT_MAX_LENGTH = 32000
 
     def __init__(self, agent: "Agent"):
         self.agent = agent
 
     def _check_ready(self) -> str | None:
-        """检查浏览器组件是否已初始化，返回错误消息或 None。"""
+        """Check if browser components are initialized. Returns error message or None."""
         has_manager = hasattr(self.agent, "browser_manager") and self.agent.browser_manager
         if not has_manager:
             from openakita.runtime_env import IS_FROZEN
 
             if IS_FROZEN:
-                return "❌ 浏览器服务未启动。请尝试重启应用，如仍有问题请查看日志排查原因。"
+                return "❌ Browser service not started. Please try restarting the app; if the issue persists, check the logs."
             else:
-                return "❌ 浏览器模块未启动。请安装: pip install playwright && playwright install chromium"
+                return "❌ Browser module not started. Please install: pip install playwright && playwright install chromium"
         return None
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str | list:
-        """处理工具调用，返回 str 或多模态 list（view_image/browser_screenshot）。"""
+        """Handle tool calls; returns str or multimodal list (view_image/browser_screenshot)."""
 
-        # view_image 不依赖浏览器，直接处理
+        # view_image does not depend on the browser; handle it directly
         if tool_name == "view_image":
             return await self._handle_view_image(params)
 
@@ -118,12 +118,12 @@ class BrowserHandler:
         if result.get("success"):
             output = f"✅ {result.get('result', 'OK')}"
         else:
-            output = f"❌ {result.get('error', '未知错误')}"
+            output = f"❌ {result.get('error', 'Unknown error')}"
 
         if actual_tool_name == "browser_get_content":
             output = self._maybe_truncate(output, params)
 
-        # browser_screenshot: 自动附带图片内容（如果模型支持 vision）
+        # browser_screenshot: automatically attach image content (if the model supports vision)
         if actual_tool_name == "browser_screenshot" and result.get("success"):
             multimodal = self._try_embed_screenshot(result)
             if multimodal is not None:
@@ -152,13 +152,13 @@ class BrowserHandler:
             return {
                 "success": False,
                 "error": (
-                    f"浏览器被其他 Agent 占用（{current_holder or '未知'}），"
-                    f"等待 {int(_BROWSER_LOCK_TIMEOUT)}秒后超时。请稍后重试。"
+                    f"Browser is being used by another Agent ({current_holder or 'unknown'}); "
+                    f"waited {int(_BROWSER_LOCK_TIMEOUT)}s and timed out. Please try again later."
                 ),
             }
 
     async def _dispatch(self, tool_name: str, params: dict[str, Any]) -> dict:
-        """将工具调用路由到对应的组件。"""
+        """Route the tool call to the corresponding component."""
         manager = self.agent.browser_manager
         pw = self.agent.pw_tools
 
@@ -223,14 +223,14 @@ class BrowserHandler:
                 await manager.reset_state()
                 return {
                     "success": False,
-                    "error": "浏览器连接已断开（可能被用户关闭）。\n"
-                    "【重要】状态已重置，请直接调用 browser_open 重新启动浏览器，无需先调用 browser_close。",
+                    "error": "Browser connection lost (may have been closed by the user).\n"
+                    "[IMPORTANT] State has been reset; call browser_open directly to restart the browser — no need to call browser_close first.",
                 }
 
             return {"success": False, "error": error_str}
 
     async def _handle_open(self, manager: Any, params: dict) -> dict:
-        """处理 browser_open（合并了状态查询功能）。"""
+        """Handle browser_open (combined with status-query functionality)."""
         visible = params.get("visible", True)
 
         if manager.is_ready and manager.context and manager.page:
@@ -252,8 +252,8 @@ class BrowserHandler:
                             "tab_count": len(all_pages),
                             "current_tab": {"url": current_url, "title": current_title},
                             "using_user_chrome": manager.using_user_chrome,
-                            "message": f"浏览器已在{'可见' if manager.visible else '后台'}模式运行，"
-                            f"共 {len(all_pages)} 个标签页",
+                            "message": f"Browser already running in {'visible' if manager.visible else 'background'} mode, "
+                            f"with {len(all_pages)} tabs",
                         },
                     }
             except Exception as e:
@@ -284,7 +284,7 @@ class BrowserHandler:
                 "tab_count": tab_count,
                 "current_tab": {"url": current_url, "title": current_title},
                 "using_user_chrome": manager.using_user_chrome,
-                "message": f"浏览器已启动 ({'可见模式' if manager.visible else '后台模式'})",
+                "message": f"Browser started ({'visible mode' if manager.visible else 'background mode'})",
             }
 
             try:
@@ -293,8 +293,8 @@ class BrowserHandler:
                 devtools_info = detect_chrome_devtools_mcp()
                 if devtools_info["available"] and not manager.using_user_chrome:
                     result_data["hint"] = (
-                        "提示：检测到 Chrome DevTools MCP 可用。如需保留登录状态，"
-                        "可使用 call_mcp_tool('chrome-devtools', ...) 调用。"
+                        "Hint: Chrome DevTools MCP detected and available. To preserve login state, "
+                        "you can use call_mcp_tool('chrome-devtools', ...)."
                     )
             except Exception:
                 pass
@@ -311,14 +311,14 @@ class BrowserHandler:
                 devtools_info = detect_chrome_devtools_mcp()
                 if devtools_info["available"]:
                     hints.append(
-                        "备选方案：Chrome DevTools MCP 可用，可通过 "
-                        "call_mcp_tool('chrome-devtools', 'navigate_page', {url: '...'}) 操作浏览器。"
+                        "Alternative: Chrome DevTools MCP is available; you can control the browser via "
+                        "call_mcp_tool('chrome-devtools', 'navigate_page', {url: '...'})."
                     )
                 mcp_chrome_available = await check_mcp_chrome_extension()
                 if mcp_chrome_available:
                     hints.append(
-                        "备选方案：mcp-chrome 扩展已运行，可通过 "
-                        "call_mcp_tool('chrome-browser', ...) 操作浏览器。"
+                        "Alternative: mcp-chrome extension is running; you can control the browser via "
+                        "call_mcp_tool('chrome-browser', ...)."
                     )
             except Exception:
                 pass
@@ -332,19 +332,19 @@ class BrowserHandler:
 
                     if BrowserManager._is_chrome_process_running():
                         chrome_running_hint = (
-                            "检测到 Chrome 浏览器正在运行，这可能导致配置文件冲突。"
-                            "请尝试关闭 Chrome 后重试，或直接使用内置浏览器。"
+                            "Chrome browser is currently running, which may cause profile conflicts. "
+                            "Please try closing Chrome and retrying, or use the built-in browser directly."
                         )
                 except Exception:
                     pass
-                error_msg = "❌ 无法启动浏览器。" + (
+                error_msg = "❌ Failed to start the browser. " + (
                     chrome_running_hint
-                    or "浏览器组件已内置，请尝试重启应用。"
-                    "如仍有问题，请检查杀毒软件是否拦截 Chromium 启动。"
+                    or "Browser components are bundled; please try restarting the app. "
+                    "If the issue persists, check whether antivirus software is blocking Chromium from starting."
                 )
             else:
                 error_msg = (
-                    "无法启动浏览器。请安装: pip install playwright && playwright install chromium"
+                    "Failed to start the browser. Please install: pip install playwright && playwright install chromium"
                 )
             if hints:
                 error_msg += "\n\n" + "\n".join(hints)
@@ -356,7 +356,7 @@ class BrowserHandler:
             }
 
     def _maybe_truncate(self, output: str, params: dict) -> str:
-        """browser_get_content 的智能截断。"""
+        """Smart truncation for browser_get_content."""
         max_length = params.get("max_length", self.CONTENT_DEFAULT_MAX_LENGTH)
         try:
             max_length = max(1000, int(max_length))
@@ -370,20 +370,20 @@ class BrowserHandler:
             overflow_path = save_overflow("browser_get_content", output)
             output = output[:max_length]
             output += (
-                f"\n\n[OUTPUT_TRUNCATED] 页面内容共 {total_chars} 字符，"
-                f"已显示前 {max_length} 字符。\n"
-                f"完整内容已保存到: {overflow_path}\n"
-                f'使用 read_file(path="{overflow_path}", offset=1, limit=300) '
-                f"查看完整内容。\n"
-                f'也可以用 browser_get_content(selector="...") 缩小查询范围。'
+                f"\n\n[OUTPUT_TRUNCATED] Page content is {total_chars} characters total; "
+                f"showing first {max_length} characters.\n"
+                f"Full content saved to: {overflow_path}\n"
+                f'Use read_file(path="{overflow_path}", offset=1, limit=300) '
+                f"to view the full content.\n"
+                f'You can also use browser_get_content(selector="...") to narrow the query scope.'
             )
 
         return output
 
-    # ── view_image / screenshot 多模态支持 ────────────
+    # ── view_image / screenshot multimodal support ────────────
 
     def _model_supports_vision(self) -> bool:
-        """检查当前 LLM 是否支持 vision（图片输入）。"""
+        """Check whether the current LLM supports vision (image input)."""
         try:
             from ...llm.capabilities import get_provider_slug_from_base_url, infer_capabilities
 
@@ -403,13 +403,13 @@ class BrowserHandler:
 
     @staticmethod
     def _load_image_as_base64(path_str: str) -> tuple[str, str, int, int] | None:
-        """读取图片文件，压缩到安全大小后编码为 base64。
+        """Read an image file, compress it to a safe size, and encode as base64.
 
-        委托给 channels.media.image_prep 的共享预处理函数，
-        确保 base64 产出不超过 API payload 限制。
+        Delegates to the shared preprocessing function in channels.media.image_prep
+        to ensure the base64 output does not exceed the API payload limit.
 
         Returns:
-            (base64_data, media_type, width, height) 或 None（失败时）
+            (base64_data, media_type, width, height), or None on failure.
         """
         p = Path(path_str)
         if not p.is_file():
@@ -422,18 +422,18 @@ class BrowserHandler:
         return prepare_image_file_for_context(p)
 
     async def _handle_view_image(self, params: dict[str, Any]) -> str | list:
-        """view_image 工具处理：读取图片并返回多模态 tool result。支持本地路径和 HTTP(S) URL。"""
+        """view_image tool handler: load an image and return a multimodal tool result. Supports local paths and HTTP(S) URLs."""
         path_str = params.get("path", "")
         question = params.get("question", "")
 
         if not path_str:
-            return "❌ view_image 缺少必要参数 'path'。"
+            return "❌ view_image is missing required parameter 'path'."
 
-        # HTTP(S) URL → 下载到临时文件后按本地文件处理
+        # HTTP(S) URL → download to a temp file and handle as a local file
         if path_str.startswith(("http://", "https://")):
             loaded = await self._download_and_load_image(path_str)
             if loaded is None:
-                return f"❌ 无法读取图片: {path_str}（文件不存在或格式不支持）"
+                return f"❌ Unable to load image: {path_str} (file does not exist or format is not supported)"
             b64_data, media_type, w, h = loaded
             return await self._build_view_image_result(
                 path_str,
@@ -446,19 +446,19 @@ class BrowserHandler:
 
         p = Path(path_str)
         if not p.is_file():
-            return f"❌ 无法读取图片: {path_str}（文件不存在）"
+            return f"❌ Unable to read image: {path_str} (file does not exist)"
         if p.suffix.lower() not in _IMAGE_EXTENSIONS:
             return (
-                f"❌ 不支持的图片格式: {p.suffix}\n"
-                f"支持的格式: {', '.join(sorted(_IMAGE_EXTENSIONS))}"
+                f"❌ Unsupported image format: {p.suffix}\n"
+                f"Supported formats: {', '.join(sorted(_IMAGE_EXTENSIONS))}"
             )
         loaded = self._load_image_as_base64(path_str)
         if loaded is None:
             return (
-                f"❌ 图片过大无法嵌入上下文: {path_str}\n"
-                f"文件大小: {p.stat().st_size / 1024:.0f}KB。"
-                f"请安装 Pillow (pip install Pillow) 以启用自动压缩，"
-                f"或使用更小的图片。"
+                f"❌ Image too large to embed in context: {path_str}\n"
+                f"File size: {p.stat().st_size / 1024:.0f}KB. "
+                f"Please install Pillow (pip install Pillow) to enable automatic compression, "
+                f"or use a smaller image."
             )
 
         b64_data, media_type, w, h = loaded
@@ -480,25 +480,25 @@ class BrowserHandler:
         h: int,
         question: str,
     ) -> str | list:
-        """根据模型 vision 能力构建 view_image 结果。"""
+        """Build the view_image result based on the model's vision capability."""
         if self._model_supports_vision():
             content: list[dict] = [
-                {"type": "text", "text": f"✅ 已加载图片: {path_str} ({w}x{h})"},
+                {"type": "text", "text": f"✅ Image loaded: {path_str} ({w}x{h})"},
                 {
                     "type": "image_url",
                     "image_url": {"url": f"data:{media_type};base64,{b64_data}"},
                 },
             ]
             if question:
-                content.append({"type": "text", "text": f"请回答: {question}"})
+                content.append({"type": "text", "text": f"Please answer: {question}"})
             return content
 
         description = await self._describe_image_with_vl(b64_data, media_type, question)
-        return f"✅ 图片: {path_str} ({w}x{h})\n\n{description}"
+        return f"✅ Image: {path_str} ({w}x{h})\n\n{description}"
 
     @staticmethod
     async def _download_and_load_image(url: str) -> tuple[str, str, int, int] | None:
-        """下载 HTTP(S) 图片到临时文件并加载为 base64。"""
+        """Download an HTTP(S) image to a temp file and load it as base64."""
         import tempfile
 
         try:
@@ -550,12 +550,12 @@ class BrowserHandler:
         media_type: str,
         question: str = "",
     ) -> str:
-        """使用 VL 模型对图片进行文字描述（当主模型不支持 vision 时的降级方案）。"""
+        """Use a VL model to generate a textual description of the image (fallback when the primary model lacks vision)."""
         try:
             from ...llm.client import get_default_client
             from ...llm.types import ImageBlock, ImageContent, Message, TextBlock
 
-            prompt = question or "请描述这张图片的内容，包括关键元素、文字、布局等。"
+            prompt = question or "Please describe the contents of this image, including key elements, text, layout, etc."
             messages = [
                 Message(
                     role="user",
@@ -571,17 +571,17 @@ class BrowserHandler:
             if response.content:
                 for block in response.content:
                     if hasattr(block, "text"):
-                        return f"[图片分析结果]\n{block.text}"
+                        return f"[Image analysis result]\n{block.text}"
 
-            return "[图片分析] 无法获取描述"
+            return "[Image analysis] Unable to obtain description"
         except Exception as e:
             logger.warning(f"[view_image] VL fallback failed: {e}")
-            return f"[图片分析失败: {e}]\n提示: 当前模型不支持图片输入，建议切换到支持 vision 的模型（如 qwen-vl-plus）。"
+            return f"[Image analysis failed: {e}]\nHint: The current model does not support image input; consider switching to a vision-capable model (e.g., qwen-vl-plus)."
 
     def _try_embed_screenshot(self, result: dict) -> list | None:
-        """尝试将 browser_screenshot 的结果嵌入图片内容。
+        """Try to embed the image content of a browser_screenshot result.
 
-        仅在模型支持 vision 时生效，否则返回 None（走普通文本路径）。
+        Only takes effect when the model supports vision; otherwise returns None (falls back to the plain-text path).
         """
         if not self._model_supports_vision():
             return None
@@ -606,9 +606,9 @@ class BrowserHandler:
             {
                 "type": "text",
                 "text": (
-                    f"✅ 截图已保存: {saved_to} ({w}x{h})\n"
-                    f"页面: {page_title}\nURL: {page_url}\n"
-                    f"提示: 如需将截图交付给用户，请使用 deliver_artifacts 工具"
+                    f"✅ Screenshot saved: {saved_to} ({w}x{h})\n"
+                    f"Page: {page_title}\nURL: {page_url}\n"
+                    f"Hint: to deliver the screenshot to the user, use the deliver_artifacts tool"
                 ),
             },
             {
@@ -619,6 +619,6 @@ class BrowserHandler:
 
 
 def create_handler(agent: "Agent"):
-    """创建浏览器处理器"""
+    """Create the browser handler"""
     handler = BrowserHandler(agent)
     return handler.handle

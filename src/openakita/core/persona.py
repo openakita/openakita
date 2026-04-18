@@ -1,11 +1,11 @@
 """
-三层分层人格管理模块
+Three-layer hierarchical persona management module
 
-Layer 1: 基础预设层 (identity/personas/*.md)
-Layer 2: 用户自定义叠加层 (identity/personas/user_custom.md + PERSONA_TRAIT 记忆)
-Layer 3: 上下文自适应层 (时间/任务/情绪)
+Layer 1: Base preset layer (identity/personas/*.md)
+Layer 2: User customization overlay (identity/personas/user_custom.md + PERSONA_TRAIT memories)
+Layer 3: Context adaptation layer (time/task/mood)
 
-合并算法: 预设 -> 用户自定义覆盖 -> 上下文自适应调整
+Merge algorithm: preset -> user customization override -> context-adaptive adjustment
 """
 
 import logging
@@ -21,78 +21,78 @@ from openakita.memory.types import normalize_tags
 logger = logging.getLogger(__name__)
 
 
-# ── 偏好维度定义 ──────────────────────────────────────────────────
+# ── Preference dimension definitions ──────────────────────────────
 
 PERSONA_DIMENSIONS = {
     "formality": {
         "range": ["very_formal", "formal", "neutral", "casual", "very_casual"],
-        "question": "你喜欢我说话正式一点还是随意一点？",
+        "question": "Do you prefer me to speak more formally or casually?",
         "priority": 1,
     },
     "humor": {
         "range": ["none", "occasional", "frequent"],
-        "question": "你希望我偶尔开个玩笑吗？",
+        "question": "Would you like me to crack a joke now and then?",
         "priority": 2,
     },
     "emoji_usage": {
         "range": ["never", "rare", "moderate", "frequent"],
-        "question": "你喜欢我在回复中使用 emoji 吗？",
+        "question": "Do you like me using emoji in replies?",
         "priority": 3,
     },
     "reply_length": {
         "range": ["very_short", "short", "moderate", "detailed", "very_detailed"],
-        "question": "你喜欢简洁的回复还是详细的回复？",
+        "question": "Do you prefer concise replies or detailed ones?",
         "priority": 4,
     },
     "proactiveness": {
         "range": ["silent", "low", "moderate", "high"],
-        "question": "你希望我主动给你发消息吗？比如问候、提醒之类的？",
+        "question": "Would you like me to message you proactively, e.g., greetings or reminders?",
         "priority": 2,
     },
     "emotional_distance": {
         "range": ["professional", "friendly", "close", "intimate"],
-        "question": "你希望我们之间保持什么样的关系？专业的还是更亲近的？",
+        "question": "What kind of relationship would you like us to have? Professional or closer?",
         "priority": 3,
     },
     "address_style": {
         "range": "free_text",
-        "question": "你希望我怎么称呼你？",
+        "question": "How would you like me to address you?",
         "priority": 1,
     },
     "encouragement": {
         "range": ["none", "occasional", "frequent"],
-        "question": "你喜欢我在你完成任务时给你鼓励吗？",
+        "question": "Do you like me to encourage you when you complete tasks?",
         "priority": 4,
     },
     "care_topics": {
         "range": "free_text_list",
-        "question": "有什么话题你希望我特别关注或提醒你的吗？",
+        "question": "Are there any topics you'd like me to pay special attention to or remind you about?",
         "priority": 3,
     },
     "sticker_preference": {
         "range": ["never", "rare", "moderate", "frequent"],
-        "question": "你喜欢我发表情包吗？",
+        "question": "Do you like me to send stickers?",
         "priority": 4,
     },
 }
 
 
-# ── 数据结构 ──────────────────────────────────────────────────────
+# ── Data structures ───────────────────────────────────────────────
 
 
 @dataclass
 class PersonaTrait:
-    """用户人格偏好特质"""
+    """User persona preference trait"""
 
     id: str
-    dimension: str  # 维度名（formality/humor/...）
-    preference: str  # 偏好值
-    confidence: float  # 置信度 0-1
-    source: str  # 来源（explicit/mined/feedback/correction）
-    evidence: str  # 证据描述
+    dimension: str  # Dimension name (formality/humor/...)
+    preference: str  # Preference value
+    confidence: float  # Confidence 0-1
+    source: str  # Source (explicit/mined/feedback/correction)
+    evidence: str  # Evidence description
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
-    reinforcement_count: int = 0  # 被强化次数
+    reinforcement_count: int = 0  # Reinforcement count
 
     def to_dict(self) -> dict:
         return {
@@ -128,7 +128,7 @@ class PersonaTrait:
 
 @dataclass
 class MergedPersona:
-    """合并后的最终人格描述"""
+    """Final merged persona description"""
 
     preset_name: str = "default"
     personality: str = ""
@@ -138,7 +138,7 @@ class MergedPersona:
     context_adaptations: str = ""
     sticker_config: str = ""
 
-    # 合并后的具体维度值
+    # Merged dimension values
     formality: str = "neutral"
     humor: str = "occasional"
     emoji_usage: str = "rare"
@@ -151,19 +151,20 @@ class MergedPersona:
     sticker_preference: str = "rare"
 
 
-# ── 预设解析 ──────────────────────────────────────────────────────
+# ── Preset parsing ────────────────────────────────────────────────
 
 
 def _parse_preset_field(content: str, section_name: str) -> str:
-    """从 Markdown 预设文件中提取指定 section 的内容"""
+    """Extract the content of a specified section from a Markdown preset file"""
     pattern = rf"## {re.escape(section_name)}\s*\n(.*?)(?=\n## |\Z)"
     match = re.search(pattern, content, re.DOTALL)
     return match.group(1).strip() if match else ""
 
 
 def _parse_dimension_from_style(style_text: str, dimension: str) -> str | None:
-    """从沟通风格文本中提取维度值"""
-    # 匹配 "- 正式程度: formal" 或 "- 幽默感: occasional" 等
+    """Extract dimension value from communication style text"""
+    # Matches "- 正式程度: formal" or "- 幽默感: occasional" etc.
+    # NOTE: Chinese labels kept — these match Chinese section headings in preset .md files.
     dim_map = {
         "formality": "正式程度",
         "humor": "幽默感",
@@ -177,7 +178,7 @@ def _parse_dimension_from_style(style_text: str, dimension: str) -> str | None:
     pattern = rf"-\s*{re.escape(label)}:\s*(\w+)"
     match = re.search(pattern, style_text)
     if match:
-        # 提取括号前的英文值
+        # Extract the English value before parentheses
         val = match.group(1).strip()
         return val
     return None
@@ -187,7 +188,7 @@ def _parse_dimension_from_style(style_text: str, dimension: str) -> str | None:
 
 
 class PersonaManager:
-    """三层人格管理器"""
+    """Three-layer persona manager"""
 
     def __init__(self, personas_dir: Path | str, active_preset: str = "default"):
         self.personas_dir = (
@@ -196,13 +197,13 @@ class PersonaManager:
         self.active_preset_name = active_preset
         self.user_traits: list[PersonaTrait] = []
         self._preset_cache: dict[str, str] = {}
-        self._traits_lock = threading.Lock()  # 保护 user_traits 的并发访问
+        self._traits_lock = threading.Lock()  # Protects concurrent access to user_traits
 
-    # ── 预设管理 ──
+    # ── Preset management ──
 
     @property
     def available_presets(self) -> list[str]:
-        """列出所有可用的预设名"""
+        """List all available preset names"""
         presets = []
         if self.personas_dir.exists():
             for f in self.personas_dir.glob("*.md"):
@@ -212,7 +213,7 @@ class PersonaManager:
         return sorted(presets)
 
     def switch_preset(self, preset_name: str) -> bool:
-        """切换预设角色"""
+        """Switch preset role"""
         if preset_name not in self.available_presets:
             logger.warning(f"Preset '{preset_name}' not found, available: {self.available_presets}")
             return False
@@ -221,7 +222,7 @@ class PersonaManager:
         return True
 
     def load_preset(self, preset_name: str) -> MergedPersona:
-        """加载并解析预设文件"""
+        """Load and parse a preset file"""
         preset_file = self.personas_dir / f"{preset_name}.md"
         if not preset_file.exists():
             logger.warning(f"Preset file not found: {preset_file}, falling back to default")
@@ -233,19 +234,21 @@ class PersonaManager:
         self._preset_cache[preset_name] = content
 
         persona = MergedPersona(preset_name=preset_name)
+        # NOTE: Chinese section names kept — they match section headings in preset .md files.
         persona.personality = _parse_preset_field(content, "性格特征")
         persona.communication_style = _parse_preset_field(content, "沟通风格")
         persona.prompt_snippet = _parse_preset_field(content, "提示词片段")
         persona.sticker_config = _parse_preset_field(content, "表情包配置")
 
-        # 解析具体维度值
+        # Parse specific dimension values
         style_text = persona.communication_style
         for dim_key in ["formality", "humor", "reply_length", "emotional_distance", "emoji_usage"]:
             val = _parse_dimension_from_style(style_text, dim_key)
             if val:
                 setattr(persona, dim_key, val)
 
-        # 解析表情包频率
+        # Parse sticker frequency
+        # NOTE: Chinese pattern kept — matches field label in preset .md files.
         sticker_text = persona.sticker_config
         freq_match = re.search(r"使用频率:\s*(\w+)", sticker_text)
         if freq_match:
@@ -253,15 +256,15 @@ class PersonaManager:
 
         return persona
 
-    # ── 用户特质管理 ──
+    # ── User trait management ──
 
     def add_trait(self, trait: PersonaTrait) -> None:
-        """添加或更新用户偏好特质（线程安全）"""
+        """Add or update a user preference trait (thread-safe)"""
         with self._traits_lock:
-            # 检查是否已存在同维度的 trait
+            # Check whether a trait for the same dimension already exists
             for i, existing in enumerate(self.user_traits):
                 if existing.dimension == trait.dimension:
-                    # 如果新值相同，增加强化计数
+                    # If the new value matches, bump the reinforcement count
                     if existing.preference == trait.preference:
                         existing.reinforcement_count += 1
                         existing.confidence = min(1.0, existing.confidence + 0.1)
@@ -271,7 +274,7 @@ class PersonaManager:
                             f"(count={existing.reinforcement_count}, conf={existing.confidence:.2f})"
                         )
                         return
-                    # 如果新值不同且置信度更高，替换
+                    # If the new value differs and has higher confidence, replace
                     elif trait.confidence > existing.confidence:
                         self.user_traits[i] = trait
                         logger.info(
@@ -285,18 +288,18 @@ class PersonaManager:
                             f"{trait.preference} ({trait.confidence:.2f} < {existing.confidence:.2f})"
                         )
                         return
-            # 新增
+            # Append new
             self.user_traits.append(trait)
             logger.info(
                 f"Trait added: {trait.dimension}={trait.preference} (conf={trait.confidence:.2f})"
             )
 
     def load_traits_from_memories(self, memories: list[dict]) -> None:
-        """从记忆系统加载 PERSONA_TRAIT 类型的记忆"""
+        """Load PERSONA_TRAIT-type memories from the memory system"""
         for mem in memories:
             if mem.get("type") != "persona_trait":
                 continue
-            # 解析 content 格式: "dimension:value (confidence:X, source:Y, evidence:Z)"
+            # Parse content format: "dimension:value (confidence:X, source:Y, evidence:Z)"
             try:
                 trait = self._parse_trait_from_memory(mem)
                 if trait:
@@ -305,11 +308,11 @@ class PersonaManager:
                 logger.warning(f"Failed to parse persona trait from memory: {e}")
 
     def _parse_trait_from_memory(self, mem: dict) -> PersonaTrait | None:
-        """从记忆字典中解析 PersonaTrait"""
+        """Parse a PersonaTrait from a memory dict"""
         content = mem.get("content", "")
         tags = normalize_tags(mem.get("tags"))
 
-        # 尝试从 tags 中获取维度信息
+        # Try to extract dimension info from tags
         dimension = None
         preference = None
         for tag in tags:
@@ -319,7 +322,7 @@ class PersonaManager:
                 preference = tag.split(":", 1)[1]
 
         if not dimension or not preference:
-            # 尝试从 content 解析 "dimension=value" 格式
+            # Try to parse "dimension=value" format from content
             match = re.match(r"(\w+)\s*[=:]\s*(.+?)(?:\s*\(|$)", content)
             if match:
                 dimension = match.group(1)
@@ -342,10 +345,10 @@ class PersonaManager:
             else datetime.now(),
         )
 
-    # ── 上下文自适应 ──
+    # ── Context adaptation ──
 
     def get_current_context(self) -> dict[str, Any]:
-        """获取当前上下文信息"""
+        """Get current context info"""
         try:
             from zoneinfo import ZoneInfo
 
@@ -357,7 +360,7 @@ class PersonaManager:
             now = datetime.now()
         hour = now.hour
 
-        # 时间段判断
+        # Time-of-day classification
         if 5 <= hour < 9:
             time_period = "morning"
         elif 9 <= hour < 12:
@@ -374,106 +377,107 @@ class PersonaManager:
         return {
             "time_period": time_period,
             "hour": hour,
-            "weekday": now.weekday(),  # 0=周一
+            "weekday": now.weekday(),  # 0=Monday
             "is_weekend": now.weekday() >= 5,
         }
 
     def _apply_context_adaptations(self, persona: MergedPersona) -> str:
-        """根据上下文生成自适应说明"""
+        """Generate adaptive notes based on context"""
         ctx = self.get_current_context()
         adaptations = []
 
         if ctx["time_period"] == "night":
-            adaptations.append("当前是深夜时段，语气应更温柔安静，回复简洁")
+            adaptations.append("It is late at night; tone should be gentler and quieter, replies concise")
         elif ctx["time_period"] == "morning":
-            adaptations.append("当前是早晨，语气可以活泼一些")
+            adaptations.append("It is morning; tone can be a bit more lively")
 
         if ctx["is_weekend"]:
-            adaptations.append("今天是周末，可以更轻松随意")
+            adaptations.append("Today is the weekend; tone can be more relaxed and casual")
 
         return "\n".join(f"- {a}" for a in adaptations) if adaptations else ""
 
-    # ── 核心合并算法 ──
+    # ── Core merge algorithm ──
 
     def get_merged_persona(self) -> MergedPersona:
-        """合并三层人格，输出最终人格描述"""
-        # 1. 加载基础预设
+        """Merge the three persona layers into a final description"""
+        # 1. Load base preset
         base = self.load_preset(self.active_preset_name)
 
-        # 2. 叠加用户自定义层（覆盖同维度的基础值）
+        # 2. Apply user customization layer (overrides base values for the same dimension)
         customizations = []
         with self._traits_lock:
-            traits_snapshot = list(self.user_traits)  # 快照，避免持锁时间过长
+            traits_snapshot = list(self.user_traits)  # Snapshot to minimize lock hold time
         for trait in traits_snapshot:
             if trait.confidence >= 0.5:
                 if hasattr(base, trait.dimension):
                     old_val = getattr(base, trait.dimension)
-                    # 特殊处理列表类型字段（如 care_topics）
+                    # Special handling for list-type fields (e.g., care_topics)
                     if isinstance(old_val, list):
-                        # 追加到列表而非覆盖
+                        # Append to list rather than overwrite
                         if trait.preference not in old_val:
                             old_val.append(trait.preference)
                         customizations.append(
                             f"- {trait.dimension}: +{trait.preference}"
-                            f"（来源: {trait.source}，置信度: {trait.confidence:.2f}）"
+                            f" (source: {trait.source}, confidence: {trait.confidence:.2f})"
                         )
                     else:
                         setattr(base, trait.dimension, trait.preference)
                         customizations.append(
                             f"- {trait.dimension}: {old_val} → {trait.preference}"
-                            f"（来源: {trait.source}，置信度: {trait.confidence:.2f}）"
+                            f" (source: {trait.source}, confidence: {trait.confidence:.2f})"
                         )
         base.user_customizations = "\n".join(customizations) if customizations else ""
 
-        # 3. 加载 user_custom.md 的内容
+        # 3. Load contents of user_custom.md
         user_custom_file = self.personas_dir / "user_custom.md"
         if user_custom_file.exists():
             custom_content = user_custom_file.read_text(encoding="utf-8")
-            # 跳过空白/占位内容
+            # Skip empty/placeholder content
+            # NOTE: Chinese token kept — matches placeholder text in user_custom.md template.
             if "尚未收集" not in custom_content and len(custom_content.strip()) > 100:
                 if base.user_customizations:
                     base.user_customizations += "\n\n--- user_custom.md ---\n" + custom_content
                 else:
                     base.user_customizations = custom_content
 
-        # 4. 应用上下文自适应
+        # 4. Apply context adaptation
         base.context_adaptations = self._apply_context_adaptations(base)
 
         return base
 
-    # ── 用于 Prompt 注入 ──
+    # ── For prompt injection ──
 
     def get_persona_prompt_section(self) -> str:
-        """生成用于注入 system prompt 的人格描述段"""
+        """Generate the persona description section for injection into the system prompt"""
         merged = self.get_merged_persona()
 
         parts = []
-        parts.append(f"## 当前人格: {merged.preset_name}")
+        parts.append(f"## Current persona: {merged.preset_name}")
 
         if merged.prompt_snippet:
-            parts.append(f"\n### 角色设定\n{merged.prompt_snippet}")
+            parts.append(f"\n### Role setting\n{merged.prompt_snippet}")
 
         if merged.communication_style:
-            parts.append(f"\n### 沟通风格\n{merged.communication_style}")
+            parts.append(f"\n### Communication style\n{merged.communication_style}")
 
         if merged.user_customizations:
-            parts.append(f"\n### 用户偏好叠加\n{merged.user_customizations}")
+            parts.append(f"\n### User preference overlay\n{merged.user_customizations}")
 
         if merged.context_adaptations:
-            parts.append(f"\n### 当前上下文适配\n{merged.context_adaptations}")
+            parts.append(f"\n### Current context adaptation\n{merged.context_adaptations}")
 
         if merged.sticker_config:
-            parts.append(f"\n### 表情包配置\n{merged.sticker_config}")
+            parts.append(f"\n### Sticker configuration\n{merged.sticker_config}")
 
         return "\n".join(parts)
 
     def is_persona_active(self) -> bool:
-        """是否激活了非默认人格"""
+        """Whether a non-default persona is active"""
         return self.active_preset_name != "default" or len(self.user_traits) > 0
 
     def get_next_question_dimension(self, asked_dimensions: set[str]) -> str | None:
-        """获取下一个待询问的偏好维度"""
-        # 按优先级排序
+        """Get the next preference dimension to ask about"""
+        # Sort by priority
         sorted_dims = sorted(
             PERSONA_DIMENSIONS.items(),
             key=lambda x: x[1]["priority"],
@@ -481,7 +485,7 @@ class PersonaManager:
         for dim_key, _dim_info in sorted_dims:
             if dim_key in asked_dimensions:
                 continue
-            # 检查是否已有高置信度的数据
+            # Check whether we already have high-confidence data
             has_high_conf = any(
                 t.dimension == dim_key and t.confidence >= 0.7 for t in self.user_traits
             )
@@ -490,6 +494,6 @@ class PersonaManager:
         return None
 
     def get_question_for_dimension(self, dimension: str) -> str | None:
-        """获取指定维度的询问问题"""
+        """Get the question for the specified dimension"""
         dim_info = PERSONA_DIMENSIONS.get(dimension)
         return dim_info["question"] if dim_info else None

@@ -1,12 +1,12 @@
 """
-技能管理器
+Skill manager
 
-从 agent.py 提取的技能安装/加载/更新逻辑，负责:
-- 加载已安装的技能
-- 从 Git 仓库安装技能
-- 从 URL 安装技能
-- 技能工具描述更新
-- 外部技能 allowlist 管理
+Skill install/load/update logic extracted from agent.py, responsible for:
+- Loading installed skills
+- Installing skills from Git repositories
+- Installing skills from URLs
+- Updating skill tool descriptions
+- Managing the external skill allowlist
 """
 
 import asyncio
@@ -39,9 +39,9 @@ SKILL_INSTALL_CIRCUIT_COOLDOWN_SECONDS = 300
 
 class SkillManager:
     """
-    技能管理器。
+    Skill manager.
 
-    管理 Agent Skills (SKILL.md 规范) 的加载、安装和更新。
+    Manages loading, installation, and updating of Agent Skills (SKILL.md spec).
     """
 
     def __init__(
@@ -53,23 +53,25 @@ class SkillManager:
     ) -> None:
         """
         Args:
-            skill_registry: SkillRegistry 实例
-            skill_loader: SkillLoader 实例
-            skill_catalog: SkillCatalog 实例
-            shell_tool: ShellTool 实例（用于 git 操作）
+            skill_registry: SkillRegistry instance
+            skill_loader: SkillLoader instance
+            skill_catalog: SkillCatalog instance
+            shell_tool: ShellTool instance (used for git operations)
 
         Note:
-            ``install_skill`` / ``load_installed_skills`` 仅负责把技能落盘并首次注册到
-            loader/registry；**不**负责后续的 catalog 刷新、Pool 通知、事件广播 ——
-            这些由 ``Agent.propagate_skill_change`` 统一完成。工具层 / API 层在调用
-            本管理器之后必须再走 ``propagate_skill_change`` 一次。
+            ``install_skill`` / ``load_installed_skills`` are only responsible for
+            persisting the skill to disk and performing first-time registration with the
+            loader/registry; they do **not** handle subsequent catalog refresh, Pool
+            notifications, or event broadcast — those are handled uniformly by
+            ``Agent.propagate_skill_change``. After calling this manager, tool-layer /
+            API-layer code must also invoke ``propagate_skill_change`` once.
         """
         self._registry = skill_registry
         self._loader = skill_loader
         self._catalog = skill_catalog
         self._shell_tool = shell_tool
 
-        # 缓存
+        # Cache
         self._catalog_text: str = ""
         self._failure_class_streaks: dict[str, int] = {}
         self._failure_class_last_seen: dict[str, float] = {}
@@ -77,21 +79,21 @@ class SkillManager:
 
     @property
     def catalog_text(self) -> str:
-        """获取技能清单文本"""
+        """Get the skill catalog text"""
         return self._catalog_text
 
     async def load_installed_skills(self) -> None:
         """
-        加载已安装的技能。
+        Load installed skills.
 
-        技能从以下目录加载:
-        - skills/ (项目级别)
-        - .cursor/skills/ (Cursor 兼容)
+        Skills are loaded from the following directories:
+        - skills/ (project level)
+        - .cursor/skills/ (Cursor compatibility)
         """
         loaded = self._loader.load_all(settings.project_root)
         logger.info(f"Loaded {loaded} skills from standard directories")
 
-        # 外部技能 allowlist 过滤（支持 DEFAULT_DISABLED_SKILLS 默认禁用）
+        # External skill allowlist filtering (supports DEFAULT_DISABLED_SKILLS default-disable)
         try:
             cfg_path = settings.project_root / "data" / "skills.json"
             external_allowlist: set[str] | None = None
@@ -125,23 +127,23 @@ class SkillManager:
         extra_files: list[str] | None = None,
     ) -> str:
         """
-        安装技能到当前工作区的技能目录。
+        Install a skill into the current workspace's skills directory.
 
-        URL 解析优先级:
-        1. GitHub blob/tree/repo URL → git clone + subdir 提取
-        2. playbooks.com 市场页面 → 转换为 GitHub 源
-        3. raw.githubusercontent.com → 直接下载文件
-        4. 其他 Git 托管平台 URL → git clone
-        5. 其他 HTTP URL → 作为文件 URL 下载
+        URL resolution priority:
+        1. GitHub blob/tree/repo URL → git clone + subdir extraction
+        2. playbooks.com marketplace page → converted to a GitHub source
+        3. raw.githubusercontent.com → direct file download
+        4. Other Git hosting platform URLs → git clone
+        5. Other HTTP URLs → downloaded as a file URL
 
         Args:
-            source: Git 仓库 URL、SKILL.md 文件 URL 或技能市场 URL
-            name: 技能名称
-            subdir: Git 仓库中技能所在的子目录 (会被 URL 中解析出的路径覆盖)
-            extra_files: 额外文件 URL 列表
+            source: Git repository URL, SKILL.md file URL, or skill marketplace URL
+            name: skill name
+            subdir: subdirectory within the Git repo where the skill resides (overridden by the path parsed from the URL)
+            extra_files: list of additional file URLs
 
         Returns:
-            安装结果消息
+            installation result message
         """
         if self._install_lock is None:
             self._install_lock = asyncio.Lock()
@@ -158,14 +160,14 @@ class SkillManager:
         skills_dir = settings.skills_path
         skills_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. GitHub URL（含 blob/tree 路径的精确解析）
+        # 1. GitHub URL (precise parsing including blob/tree paths)
         gh = parse_github_source(source)
         if gh:
             clone_url = f"https://github.com/{gh.owner}/{gh.repo}.git"
             effective_subdir = subdir or gh.subdir
             return await self._install_from_git(clone_url, name, effective_subdir, skills_dir)
 
-        # 2. playbooks.com 技能市场页面 → 转为 GitHub 源
+        # 2. playbooks.com skill marketplace page → convert to a GitHub source
         pb = parse_playbooks_source(source)
         if pb:
             clone_url = f"https://github.com/{pb.owner}/{pb.repo}.git"
@@ -177,45 +179,46 @@ class SkillManager:
                 skills_dir,
             )
 
-        # 3. raw.githubusercontent.com → 作为文件 URL 直接下载
+        # 3. raw.githubusercontent.com → download directly as a file URL
         if RAW_GITHUB_RE.match(source):
             return await self._install_from_url(source, name, extra_files, skills_dir)
 
-        # 4. 其他 Git 托管平台
+        # 4. Other Git hosting platforms
         if self._is_git_platform_url(source):
             return await self._install_from_git(source, name, subdir, skills_dir)
 
-        # 5. 兜底：普通 HTTP URL
+        # 5. Fallback: generic HTTP URL
         return await self._install_from_url(source, name, extra_files, skills_dir)
 
     def update_shell_tool_description(self, tools: list[dict]) -> None:
-        """动态更新 shell 工具描述，包含当前操作系统信息"""
+        """Dynamically update the shell tool description, including current OS info"""
         import platform
 
         if os.name == "nt":
             os_info = (
                 f"Windows {platform.release()} "
-                "(使用 PowerShell/cmd 命令，如: dir, type, tasklist, Get-Process, findstr)"
+                "(use PowerShell/cmd commands, e.g.: dir, type, tasklist, Get-Process, findstr)"
             )
         else:
-            os_info = f"{platform.system()} (使用 bash 命令，如: ls, cat, ps aux, grep)"
+            os_info = f"{platform.system()} (use bash commands, e.g.: ls, cat, ps aux, grep)"
 
         for tool in tools:
             if tool.get("name") == "run_shell":
                 tool["description"] = (
-                    f"执行Shell命令。当前操作系统: {os_info}。"
-                    "注意：请使用当前操作系统支持的命令；如果命令连续失败，请尝试不同的命令或放弃该方法。"
+                    f"Execute a shell command. Current OS: {os_info}. "
+                    "Note: use commands supported by the current OS; if a command fails repeatedly, "
+                    "try a different command or abandon the approach."
                 )
                 tool["input_schema"]["properties"]["command"]["description"] = (
-                    f"要执行的Shell命令（当前系统: {os.name}）"
+                    f"The shell command to execute (current system: {os.name})"
                 )
                 break
 
-    # ==================== 私有方法 ====================
+    # ==================== Private methods ====================
 
     @staticmethod
     def _is_git_platform_url(url: str) -> bool:
-        """判断是否为非 GitHub 的 Git 托管平台 URL（GitHub 由 _parse_github_source 处理）。"""
+        """Determine whether the URL is a non-GitHub Git hosting platform URL (GitHub is handled by _parse_github_source)."""
         patterns = [
             r"^git@",
             r"\.git$",
@@ -307,7 +310,7 @@ class SkillManager:
     async def _install_from_git(
         self, git_url: str, name: str | None, subdir: str | None, skills_dir: Path
     ) -> str:
-        """从 Git 仓库安装技能"""
+        """Install a skill from a Git repository"""
         import shutil
         import tempfile
 
@@ -376,8 +379,8 @@ class SkillManager:
                 possible = self._list_skill_candidates(temp_dir)
                 hint = ""
                 if possible:
-                    hint = "\n\n可能的技能目录:\n" + "\n".join(f"- {p}" for p in possible[:5])
-                return f"❌ 未找到 SKILL.md 文件{hint}"
+                    hint = "\n\nPossible skill directories:\n" + "\n".join(f"- {p}" for p in possible[:5])
+                return f"SKILL.md not found{hint}"
 
             skill_source_dir = skill_md_path.parent
             skill_content = skill_md_path.read_text(encoding="utf-8")

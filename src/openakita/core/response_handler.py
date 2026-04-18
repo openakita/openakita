@@ -1,11 +1,11 @@
 """
-响应处理器
+Response handler
 
-从 agent.py 提取的响应处理逻辑，负责:
-- LLM 响应文本清理（思考标签、模拟工具调用）
-- 任务完成度验证
-- 任务复盘分析
-- 辅助判断函数
+Response-handling logic extracted from agent.py, responsible for:
+- Cleaning LLM response text (thinking tags, simulated tool calls)
+- Task completion verification
+- Task retrospective analysis
+- Helper predicate functions
 """
 
 import logging
@@ -15,19 +15,19 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-# ==================== 文本清理函数 ====================
+# ==================== Text cleaning functions ====================
 
 
 def strip_thinking_tags(text: str) -> str:
     """
-    移除响应中的内部标签内容。
+    Remove internal-tag content from the response.
 
-    需要清理的标签包括：
+    Tags to clean include:
     - <thinking>...</thinking> - Claude extended thinking
-    - <think>...</think> - MiniMax/Qwen thinking 格式
+    - <think>...</think> - MiniMax/Qwen thinking format
     - <minimax:tool_call>...</minimax:tool_call>
     - <<|tool_calls_section_begin|>>...<<|tool_calls_section_end|>> - Kimi K2
-    - </thinking> - 残留的闭合标签
+    - </thinking> - stray closing tags
     """
     if not text:
         return text
@@ -55,14 +55,14 @@ def strip_thinking_tags(text: str) -> str:
         flags=re.DOTALL | re.IGNORECASE,
     )
 
-    # 移除残留的闭合标签
+    # Remove any stray closing tags
     cleaned = re.sub(r"</thinking>\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"</think>\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"</minimax:tool_call>\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"<<\|tool_calls_section_begin\|>>.*$", "", cleaned, flags=re.DOTALL)
     cleaned = re.sub(r"<\?xml[^>]*\?>\s*", "", cleaned)
 
-    # 兜底：清理孤立的开标签（无闭合，从标签到字符串末尾）
+    # Fallback: clean up orphan opening tags (no closing tag, from the tag to the end of the string)
     cleaned = re.sub(r"<thinking>\s*.*$", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
     cleaned = re.sub(r"<think>\s*.*$", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
 
@@ -71,18 +71,18 @@ def strip_thinking_tags(text: str) -> str:
 
 def strip_tool_simulation_text(text: str) -> str:
     """
-    移除 LLM 在文本中模拟工具调用的内容。
+    Remove text where the LLM is simulating tool calls.
 
-    当使用不支持原生工具调用的备用模型时，LLM 可能在文本中
-    "模拟"工具调用。支持三种情况：
-    1. 整行都是工具调用（直接移除）
-    2. 行内嵌入的 .tool_name(args)（从行尾剥离，保留前面的正文）
-    3. <tool_call>...</tool_call> XML 块（Ask 模式下 LLM 常泄漏此格式）
+    When using fallback models that do not support native tool calling, the LLM
+    may "simulate" tool calls in text. Three cases are handled:
+    1. Entire line is a tool call (removed outright)
+    2. Inline .tool_name(args) embedded at line end (stripped from the end, keeping preceding prose)
+    3. <tool_call>...</tool_call> XML block (commonly leaked by LLMs in Ask mode)
     """
     if not text:
         return text
 
-    # 先移除 <tool_call>...</tool_call> 块（可能跨行）
+    # First, remove <tool_call>...</tool_call> blocks (may span multiple lines)
     text = re.sub(
         r"<tool_call>\s*.*?\s*</tool_call>",
         "",
@@ -95,7 +95,7 @@ def strip_tool_simulation_text(text: str) -> str:
     pattern3 = r'^\{["\']?(tool|function|name)["\']?\s*:'
     pattern4 = r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$"
 
-    # 行内 .tool_name(args) 剥离：匹配行尾的 .tool_name(args) 部分
+    # Inline .tool_name(args) stripping: match the trailing .tool_name(args) part of a line
     inline_dot_pattern = re.compile(r"\s*\.[a-z][a-z0-9_]{2,}\s*\(.*\)\s*$", re.IGNORECASE)
 
     lines = text.split("\n")
@@ -123,7 +123,7 @@ def strip_tool_simulation_text(text: str) -> str:
         if is_tool_sim:
             continue
 
-        # 检查行尾是否嵌入了 .tool_name(args)（如混合文本+工具调用）
+        # Check whether the end of the line embeds .tool_name(args) (e.g., mixed text + tool call)
         m = inline_dot_pattern.search(stripped)
         if m and m.start() > 0:
             cleaned_lines.append(stripped[: m.start()].rstrip())
@@ -138,12 +138,12 @@ _LEADING_TIMESTAMP_RE = re.compile(r"^\s*\[\d{1,2}:\d{2}\]\s*")
 
 def clean_llm_response(text: str) -> str:
     """
-    清理 LLM 响应文本。
+    Clean LLM response text.
 
-    依次应用:
-    1. strip_thinking_tags - 移除思考标签
-    2. strip_tool_simulation_text - 移除模拟工具调用
-    3. strip_intent_tag - 移除意图声明标记
+    Applies, in order:
+    1. strip_thinking_tags - remove thinking tags
+    2. strip_tool_simulation_text - remove simulated tool calls
+    3. strip_intent_tag - remove intent-declaration markers
     4. strip leading [HH:MM] timestamp leaked from historical message formatting
     """
     if not text:
@@ -157,23 +157,23 @@ def clean_llm_response(text: str) -> str:
     return cleaned.strip()
 
 
-# ==================== 意图声明解析 ====================
+# ==================== Intent-declaration parsing ====================
 
 _INTENT_TAG_RE = re.compile(r"^\s*\[(ACTION|REPLY)\]\s*\n?", re.IGNORECASE)
 
 
 def parse_intent_tag(text: str) -> tuple[str | None, str]:
     """
-    解析并剥离响应文本开头的意图声明标记。
+    Parse and strip the intent-declaration marker at the start of a response.
 
-    模型在纯文本回复时应在第一行声明 [ACTION] 或 [REPLY]：
-    - [ACTION]: 声明需要调用工具（若实际未调用则为幻觉）
-    - [REPLY]: 声明纯对话回复，不需要工具
+    In plain-text replies the model should declare [ACTION] or [REPLY] on the first line:
+    - [ACTION]: declares that a tool call is needed (a hallucination if none is actually made)
+    - [REPLY]: declares a pure conversational reply, no tools needed
 
     Returns:
         (intent, stripped_text):
-        - intent: "ACTION" / "REPLY" / None（无标记）
-        - stripped_text: 移除标记后的文本
+        - intent: "ACTION" / "REPLY" / None (no marker)
+        - stripped_text: text with the marker removed
     """
     if not text:
         return None, text or ""
@@ -185,16 +185,17 @@ def parse_intent_tag(text: str) -> tuple[str | None, str]:
 
 class ResponseHandler:
     """
-    响应处理器。
+    Response handler.
 
-    负责 LLM 响应的后处理，包括任务完成度验证和复盘分析。
+    Handles post-processing of LLM responses, including task completion verification
+    and retrospective analysis.
     """
 
     def __init__(self, brain: Any, memory_manager: Any = None) -> None:
         """
         Args:
-            brain: Brain 实例，用于 LLM 调用
-            memory_manager: MemoryManager 实例（可选，用于保存复盘结果）
+            brain: Brain instance, used for LLM calls
+            memory_manager: MemoryManager instance (optional, used to save retrospective results)
         """
         self._brain = brain
         self._memory_manager = memory_manager
@@ -243,21 +244,21 @@ class ResponseHandler:
         bypass: bool = False,
     ) -> bool:
         """
-        任务完成度复核。
+        Task completion re-check.
 
-        让 LLM 判断当前响应是否真正完成了用户的意图。
+        Ask the LLM to judge whether the current response truly fulfills the user's intent.
 
         Args:
-            user_request: 用户原始请求
-            assistant_response: 助手当前响应
-            executed_tools: 已执行的工具列表
-            delivery_receipts: 交付回执
-            tool_results: 累积的工具执行结果（含 is_error 标记）
-            conversation_id: 对话 ID（用于 Plan 检查）
-            bypass: 当 Supervisor 已介入时跳过验证
+            user_request: original user request
+            assistant_response: current assistant response
+            executed_tools: list of tools that have been executed
+            delivery_receipts: delivery receipts
+            tool_results: accumulated tool execution results (including is_error flag)
+            conversation_id: conversation ID (used for Plan check)
+            bypass: skip verification when the Supervisor has already intervened
 
         Returns:
-            True 如果任务已完成
+            True if the task is completed.
         """
         if bypass:
             logger.info("[TaskVerify] Bypassed (supervisor intervention active)")
@@ -314,7 +315,7 @@ class ResponseHandler:
 
         expects_artifact = self._request_expects_artifact(user_request)
 
-        # 宣称已交付但无证据
+        # Claims delivery but has no evidence
         if (
             any(
                 k in (assistant_response or "")
@@ -361,7 +362,7 @@ class ResponseHandler:
             return False
 
         _delivered_ok = any(r.get("status") == "delivered" for r in delivery_receipts)
-        # 宣称用户在本机已看到界面/窗口，但无交付回执等可证实路径（与「空口交付」同构）
+        # Claims the user already sees a UI/window on their own machine but has no delivery receipt or other verifiable path (isomorphic to "empty-promise delivery")
         if (
             any(
                 k in (assistant_response or "")
@@ -385,7 +386,7 @@ class ResponseHandler:
             logger.info("[TaskVerify] user-visible UI claim without delivery/evidence, INCOMPLETE")
             return False
 
-        # LLM 判断
+        # LLM judgment
         from .tool_executor import smart_truncate
 
         user_display, _ = smart_truncate(user_request, 3000, save_full=False, label="verify_user")
@@ -459,8 +460,10 @@ NEXT: Suggested next step"""
             response = await self._brain.think_lightweight(
                 prompt=verify_prompt,
                 system=(
-                    "你是任务完成度判断助手。OpenAkita 工具在宿主环境执行，与用户聊天设备通常不是同一台机器；"
-                    "必须区分「宿主内已验证完成」与「用户本机可观测完成」，不要仅凭宿主命令退出成功判定后者已完成。"
+                    "You are a task-completion judgment assistant. OpenAkita tools execute on the host environment, "
+                    "which is typically not the same machine as the user's chat device; "
+                    "you must distinguish 'verified completion on the host' from 'user-local observable completion', "
+                    "and must not judge the latter as completed solely because a host command exited successfully."
                 ),
                 max_tokens=512,
             )
@@ -474,7 +477,7 @@ NEXT: Suggested next step"""
                 f"[TaskVerify] request={user_request[:50]}... result={'COMPLETED' if is_completed else 'INCOMPLETE'}"
             )
 
-            # Decision Trace: 记录验证决策
+            # Decision Trace: record the verification decision
             try:
                 from ..tracing.tracer import get_tracer
 
@@ -495,15 +498,15 @@ NEXT: Suggested next step"""
 
     async def do_task_retrospect(self, task_monitor: Any) -> str:
         """
-        执行任务复盘分析。
+        Perform task retrospective analysis.
 
-        当任务耗时过长时，让 LLM 分析原因。
+        When a task takes too long, have the LLM analyze the cause.
 
         Args:
-            task_monitor: TaskMonitor 实例
+            task_monitor: TaskMonitor instance
 
         Returns:
-            复盘分析结果
+            Retrospective analysis result.
         """
         try:
             from .task_monitor import RETROSPECT_PROMPT
@@ -521,15 +524,17 @@ NEXT: Suggested next step"""
 
             task_monitor.metrics.retrospect_result = result
 
-            # 如果发现重复错误模式，记录到记忆
-            if self._memory_manager and any(kw in result for kw in ("重复", "无效", "弯路")):
+            # If a repeated-error pattern is found, record it to memory
+            if self._memory_manager and any(
+                kw in result.lower() for kw in ("repeat", "redundant", "useless", "detour")
+            ):
                 try:
                     from ..memory.types import Memory, MemoryPriority, MemoryScope, MemoryType
 
                     memory = Memory(
                         type=MemoryType.ERROR,
                         priority=MemoryPriority.LONG_TERM,
-                        content=f"任务执行复盘发现问题：{result}",
+                        content=f"Task execution retrospective found issue: {result}",
                         source="retrospect",
                         importance_score=0.7,
                         scope=MemoryScope.AGENT,
@@ -548,7 +553,7 @@ NEXT: Suggested next step"""
 
     async def do_task_retrospect_background(self, task_monitor: Any, session_id: str) -> None:
         """
-        后台执行任务复盘分析（不阻塞主响应）。
+        Perform task retrospective analysis in the background (does not block the main response).
         """
         try:
             retrospect_result = await self.do_task_retrospect(task_monitor)

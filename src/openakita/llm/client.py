@@ -1658,18 +1658,18 @@ class LLMClient:
         return False
 
     def has_any_endpoint_with_capability(self, capability: str) -> bool:
-        """检查是否有任何端点支持指定能力（供 Agent 查询）"""
+        """Check whether any endpoint supports the given capability (for Agent queries)"""
         return any(p.config.has_capability(capability) for p in self._providers.values())
 
     def _has_tool_context(self, messages: list[Message]) -> bool:
-        """检查消息中是否包含工具调用上下文（tool_use 或 tool_result）
+        """Check whether any message contains tool-call context (tool_use or tool_result)
 
-        用于判断是否允许 failover：
-        - 无工具上下文：可以安全 failover 到其他端点
-        - 有工具上下文：禁止 failover，因为不同模型对工具调用格式可能不兼容
+        Used to decide whether failover is allowed:
+        - No tool context: can safely fail over to another endpoint
+        - Has tool context: disallow failover, since tool-call formats may be incompatible across models
 
         Returns:
-            True 表示包含工具上下文，应禁止 failover
+            True if tool context is present, meaning failover should be disabled
         """
         from .types import ToolResultBlock, ToolUseBlock
 
@@ -1678,7 +1678,7 @@ class LLMClient:
                 for block in msg.content:
                     if isinstance(block, (ToolUseBlock, ToolResultBlock)):
                         return True
-                    # 兼容字典格式（某些转换后的消息可能是字典）
+                    # Support dict format (some post-conversion messages may be dicts)
                     if isinstance(block, dict):
                         block_type = block.get("type", "")
                         if block_type in ("tool_use", "tool_result"):
@@ -1686,14 +1686,13 @@ class LLMClient:
         return False
 
     def reset_endpoint_cooldown(self, endpoint_name: str) -> bool:
-        """重置指定端点的冷静期
+        """Reset cooldown for the given endpoint
 
-        用于模型切换前确保目标端点可用。不重置连续失败计数
-        （reset_cooldown 保留 _consecutive_cooldowns，如果端点仍有问题
-        下次失败会继续递增退避）。
+        Used before model switching to ensure the target endpoint is available. Does not reset the consecutive failure count
+        (reset_cooldown preserves _consecutive_cooldowns; if the endpoint still has problems, backoff continues to grow on the next failure).
 
         Returns:
-            True 如果成功重置，False 如果端点不存在
+            True if reset succeeded, False if the endpoint does not exist
         """
         provider = self._providers.get(endpoint_name)
         if not provider:
@@ -1708,11 +1707,11 @@ class LLMClient:
         return True
 
     def reset_all_cooldowns(self, *, include_structural: bool = False, force_all: bool = False):
-        """重置端点冷静期
+        """Reset endpoint cooldowns
 
         Args:
-            include_structural: 同时重置结构性错误的冷静期。
-            force_all: 无条件重置所有端点冷静期（用户主动重试时使用）。
+            include_structural: Also reset cooldowns for structural errors.
+            force_all: Unconditionally reset all endpoint cooldowns (used when the user actively retries).
         """
         reset_count = 0
         for name, provider in self._providers.items():
@@ -1730,7 +1729,7 @@ class LLMClient:
 
     async def health_check(self) -> dict[str, bool]:
         """
-        检查所有端点健康状态
+        Check the health status of all endpoints
 
         Returns:
             {endpoint_name: is_healthy}
@@ -1749,11 +1748,11 @@ class LLMClient:
         return results
 
     def get_provider(self, name: str) -> LLMProvider | None:
-        """获取指定名称的 Provider"""
+        """Get the Provider with the given name"""
         return self._providers.get(name)
 
     def add_endpoint(self, config: EndpointConfig):
-        """动态添加端点"""
+        """Dynamically add an endpoint"""
         provider = self._create_provider(config)
         if provider:
             self._endpoints.append(config)
@@ -1761,12 +1760,12 @@ class LLMClient:
             self._providers[config.name] = provider
 
     def remove_endpoint(self, name: str):
-        """动态移除端点"""
+        """Dynamically remove an endpoint"""
         if name in self._providers:
             del self._providers[name]
         self._endpoints = [ep for ep in self._endpoints if ep.name != name]
 
-    # ==================== 动态模型切换 ====================
+    # ==================== Dynamic model switching ====================
 
     def switch_model(
         self,
@@ -1776,24 +1775,24 @@ class LLMClient:
         conversation_id: str | None = None,
     ) -> tuple[bool, str]:
         """
-        临时切换到指定模型
+        Temporarily switch to the specified model
 
         Args:
-            endpoint_name: 端点名称
-            hours: 有效时间（小时），默认 12 小时
-            reason: 切换原因
+            endpoint_name: Endpoint name
+            hours: Validity time (hours), defaults to 12
+            reason: Switch reason
 
         Returns:
-            (成功, 消息)
+            (success, message)
         """
-        # 检查端点是否存在
+        # Check whether the endpoint exists
         if endpoint_name not in self._providers:
             available = list(self._providers.keys())
-            return False, f"端点 '{endpoint_name}' 不存在。可用端点: {', '.join(available)}"
+            return False, f"Endpoint '{endpoint_name}' does not exist. Available endpoints: {', '.join(available)}"
 
-        # switch_model 是显式的意图声明（用户选模型 / 系统 failover），
-        # 不应被冷静期阻断。如果端点确实有问题，实际请求时 _try_endpoints
-        # 会 mark_unhealthy 并触发 failover，那里才是正确的健康感知层。
+        # switch_model is an explicit intent declaration (user-selected model / system failover),
+        # and must not be blocked by cooldown. If the endpoint actually has issues, _try_endpoints
+        # at request time will mark_unhealthy and trigger failover — that's the correct health-aware layer.
         provider = self._providers[endpoint_name]
         if not provider.is_healthy:
             logger.info(
@@ -1803,7 +1802,7 @@ class LLMClient:
             )
             provider.reset_cooldown()
 
-        # 创建覆盖配置
+        # Create the override configuration
         expires_at = datetime.now() + timedelta(hours=hours)
         override = EndpointOverride(
             endpoint_name=endpoint_name,
@@ -1819,47 +1818,47 @@ class LLMClient:
         expires_str = expires_at.strftime("%Y-%m-%d %H:%M:%S")
         logger.info(f"[LLM] Model switched to {endpoint_name} ({model}), expires at {expires_str}")
 
-        return True, f"已切换到模型: {model}\n有效期至: {expires_str}"
+        return True, f"Switched to model: {model}\nValid until: {expires_str}"
 
     def restore_default(self, conversation_id: str | None = None) -> tuple[bool, str]:
         """
-        恢复默认模型（清除临时覆盖）
+        Restore default model (clear temporary override)
 
         Returns:
-            (成功, 消息)
+            (success, message)
         """
         if conversation_id:
             if conversation_id not in self._conversation_overrides:
-                return False, "当前会话没有临时切换，已在使用默认模型"
+                return False, "No temporary switch for the current session; already using the default model"
             self._conversation_overrides.pop(conversation_id, None)
         else:
             if not self._endpoint_override:
-                return False, "当前没有临时切换，已在使用默认模型"
+                return False, "No temporary switch currently active; already using the default model"
             self._endpoint_override = None
 
-        # 获取当前默认模型
+        # Get the current default model
         default = self.get_current_model()
-        default_model = default.model if default else "未知"
+        default_model = default.model if default else "unknown"
 
         logger.info(f"[LLM] Restored to default model: {default_model}")
-        return True, f"已恢复默认模型: {default_model}"
+        return True, f"Restored to default model: {default_model}"
 
     def get_current_model(self, conversation_id: str | None = None) -> ModelInfo | None:
         """
-        获取当前使用的模型信息
+        Get information about the currently used model
 
         Args:
-            conversation_id: 对话 ID（传入时会检查 per-conversation override）
+            conversation_id: Conversation ID (checks the per-conversation override when provided)
 
         Returns:
-            当前模型信息，无可用模型时返回 None
+            Current model info, or None if no model is available
         """
-        # 检查并清理过期的 override
+        # Check for and clean up expired overrides
         if self._endpoint_override and self._endpoint_override.is_expired:
             logger.info("[LLM] Override expired, restoring default")
             self._endpoint_override = None
 
-        # 确定生效的 override（conversation > global）
+        # Determine the effective override (conversation > global)
         effective_override = None
         if conversation_id and conversation_id in self._conversation_overrides:
             ov = self._conversation_overrides[conversation_id]
@@ -1870,7 +1869,7 @@ class LLMClient:
         if not effective_override and self._endpoint_override:
             effective_override = self._endpoint_override
 
-        # 如果有生效的覆盖，返回覆盖的端点
+        # If an override is effective, return the overridden endpoint
         if effective_override:
             name = effective_override.endpoint_name
             if name in self._providers:
@@ -1888,7 +1887,7 @@ class LLMClient:
                     note=config.note,
                 )
 
-        # 否则返回优先级最高的健康端点
+        # Otherwise, return the highest-priority healthy endpoint
         for provider in sorted(self._providers.values(), key=lambda p: p.config.priority):
             if provider.is_healthy:
                 config = provider.config
@@ -1908,16 +1907,16 @@ class LLMClient:
 
     def get_next_endpoint(self, conversation_id: str | None = None) -> str | None:
         """
-        获取下一优先级的健康端点名称（用于 fallback）
+        Get the next-priority healthy endpoint name (for fallback)
 
-        逻辑：找到当前生效端点，按 priority 排序后返回它之后的第一个健康端点。
-        如果当前端点已是最低优先级或无可用端点，返回 None。
+        Logic: find the current effective endpoint, sort by priority, and return the first healthy endpoint after it.
+        If the current endpoint is already the lowest priority or there are no available endpoints, return None.
 
         Args:
-            conversation_id: 可选的会话 ID（用于识别 per-conversation override）
+            conversation_id: Optional conversation ID (used to identify per-conversation override)
 
         Returns:
-            下一个端点名称，或 None
+            Next endpoint name, or None
         """
         current = self.get_current_model()
         if not current:
@@ -1940,12 +1939,12 @@ class LLMClient:
 
     def list_available_models(self) -> list[ModelInfo]:
         """
-        列出所有可用模型
+        List all available models
 
         Returns:
-            模型信息列表（按优先级排序）
+            List of model info (priority sorted)
         """
-        # 检查并清理过期的 override
+        # Check for and clean up expired overrides
         if self._endpoint_override and self._endpoint_override.is_expired:
             self._endpoint_override = None
 
@@ -1963,7 +1962,7 @@ class LLMClient:
                 is_current = config.name == current_name
                 is_override = is_current
             elif provider.is_healthy and not models:
-                # 第一个健康的端点是当前默认
+                # The first healthy endpoint is the current default
                 is_current = True
 
             models.append(
@@ -1984,10 +1983,10 @@ class LLMClient:
 
     def get_override_status(self) -> dict | None:
         """
-        获取当前覆盖状态
+        Get the current override status
 
         Returns:
-            覆盖状态信息，无覆盖时返回 None
+            Override status info, or None if no override is active
         """
         if not self._endpoint_override:
             return None
@@ -2005,43 +2004,43 @@ class LLMClient:
 
     def update_priority(self, priority_order: list[str]) -> tuple[bool, str]:
         """
-        更新端点优先级顺序
+        Update endpoint priority order
 
         Args:
-            priority_order: 端点名称列表，按优先级从高到低排序
+            priority_order: List of endpoint names sorted from highest to lowest priority
 
         Returns:
-            (成功, 消息)
+            (success, message)
         """
-        # 验证所有端点都存在
+        # Verify all endpoints exist
         unknown = [name for name in priority_order if name not in self._providers]
         if unknown:
-            return False, f"未知端点: {', '.join(unknown)}"
+            return False, f"Unknown endpoints: {', '.join(unknown)}"
 
-        # 更新优先级
+        # Update priorities
         for i, name in enumerate(priority_order):
             for ep in self._endpoints:
                 if ep.name == name:
                     ep.priority = i
                     break
 
-        # 重新排序
+        # Re-sort
         self._endpoints.sort(key=lambda x: x.priority)
 
-        # 保存到配置文件
+        # Save to config file
         if self._config_path and self._config_path.exists():
             try:
                 self._save_config()
                 logger.info(f"[LLM] Priority updated and saved: {priority_order}")
-                return True, f"优先级已更新并保存: {' > '.join(priority_order)}"
+                return True, f"Priority updated and saved: {' > '.join(priority_order)}"
             except Exception as e:
                 logger.error(f"[LLM] Failed to save config: {e}")
-                return True, f"优先级已更新（内存），但保存配置文件失败: {e}"
+                return True, f"Priority updated (in memory), but failed to save config file: {e}"
 
-        return True, f"优先级已更新: {' > '.join(priority_order)}"
+        return True, f"Priority updated: {' > '.join(priority_order)}"
 
     def _save_config(self):
-        """保存配置到文件"""
+        """Save configuration to file"""
         if not self._config_path:
             return
 
@@ -2061,18 +2060,18 @@ class LLMClient:
         safe_json_write(self._config_path, config_data)
 
     async def close(self):
-        """关闭所有 Provider"""
+        """Close all Providers"""
         for provider in self._providers.values():
             if hasattr(provider, "close"):
                 await provider.close()
 
 
-# 全局单例
+# Global singleton
 _default_client: LLMClient | None = None
 
 
 def get_default_client() -> LLMClient:
-    """获取默认客户端实例"""
+    """Get the default client instance"""
     global _default_client
     if _default_client is None:
         _default_client = LLMClient()
@@ -2080,7 +2079,7 @@ def get_default_client() -> LLMClient:
 
 
 def set_default_client(client: LLMClient):
-    """设置默认客户端实例"""
+    """Set the default client instance"""
     global _default_client
     _default_client = client
 
@@ -2091,6 +2090,6 @@ async def chat(
     tools: list[Tool] | None = None,
     **kwargs,
 ) -> LLMResponse:
-    """便捷函数：使用默认客户端聊天"""
+    """Convenience function: chat using the default client"""
     client = get_default_client()
     return await client.chat(messages, system=system, tools=tools, **kwargs)

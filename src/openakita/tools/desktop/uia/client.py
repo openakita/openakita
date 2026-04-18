@@ -1,7 +1,7 @@
 """
-Windows 桌面自动化 - UIAutomation 客户端
+Windows desktop automation - UIAutomation client.
 
-封装 pywinauto 的 Desktop 和 Application 类
+Wraps pywinauto's Desktop and Application classes.
 """
 
 import logging
@@ -14,7 +14,7 @@ from ..config import get_config
 from ..types import WindowInfo
 from .elements import UIAElementWrapper
 
-# 平台检查
+# Platform check
 if sys.platform != "win32":
     raise ImportError(
         f"Desktop automation module is Windows-only. Current platform: {sys.platform}"
@@ -34,36 +34,36 @@ logger = logging.getLogger(__name__)
 
 class UIAClient:
     """
-    UIAutomation 客户端
+    UIAutomation client.
 
-    提供桌面元素和窗口管理功能
+    Provides desktop element and window management functionality.
     """
 
     def __init__(self, backend: str = "uia"):
         """
         Args:
-            backend: pywinauto 后端，"uia" 或 "win32"
+            backend: pywinauto backend, "uia" or "win32"
         """
         self._backend = backend
         self._desktop: Desktop | None = None
 
     @property
     def desktop(self) -> Desktop:
-        """获取桌面对象（懒加载）"""
+        """Get the desktop object (lazy-loaded)."""
         if self._desktop is None:
             self._desktop = Desktop(backend=self._backend)
         return self._desktop
 
     def get_desktop_element(self) -> UIAElementWrapper:
         """
-        获取桌面根元素
+        Get the desktop root element.
 
         Returns:
-            桌面元素包装器
+            Desktop element wrapper
         """
         return UIAElementWrapper(self.desktop.window(class_name="Progman"))
 
-    # ==================== 窗口管理 ====================
+    # ==================== Window management ====================
 
     def list_windows(
         self,
@@ -71,14 +71,14 @@ class UIAClient:
         with_title_only: bool = True,
     ) -> list[WindowInfo]:
         """
-        列出所有顶层窗口
+        List all top-level windows.
 
         Args:
-            visible_only: 只返回可见窗口
-            with_title_only: 只返回有标题的窗口
+            visible_only: return only visible windows
+            with_title_only: return only windows that have a title
 
         Returns:
-            窗口信息列表
+            List of window info
         """
         windows = []
 
@@ -87,7 +87,7 @@ class UIAClient:
                 try:
                     wrapper = UIAElementWrapper(win)
 
-                    # 过滤条件
+                    # Filter conditions
                     if visible_only and not wrapper.is_visible:
                         continue
                     if with_title_only and not wrapper.name:
@@ -112,18 +112,18 @@ class UIAClient:
         timeout: float | None = None,
     ) -> UIAElementWrapper | None:
         """
-        查找窗口
+        Find a window.
 
         Args:
-            title: 窗口标题（精确匹配）
-            title_re: 窗口标题（正则匹配）
-            class_name: 窗口类名
-            process: 进程 ID
-            handle: 窗口句柄
-            timeout: 超时时间，None 使用配置
+            title: window title (exact match)
+            title_re: window title (regex match)
+            class_name: window class name
+            process: process ID
+            handle: window handle
+            timeout: timeout; None uses the config value
 
         Returns:
-            找到的窗口，未找到返回 None
+            The found window, or None if not found
         """
         config = get_config().uia
         wait_timeout = timeout if timeout is not None else config.timeout
@@ -145,7 +145,7 @@ class UIAClient:
             return None
 
         try:
-            # 使用 pywinauto 的等待机制
+            # Use pywinauto's wait mechanism
             win = self.desktop.window(**criteria)
             win.wait("exists", timeout=wait_timeout)
             return UIAElementWrapper(win)
@@ -153,7 +153,7 @@ class UIAClient:
             logger.debug(f"Window not found: {criteria} - {e}")
             return None
         except ElementAmbiguousError:
-            # 如果找到多个，返回第一个
+            # If multiple matches are found, return the first one
             logger.warning(f"Multiple windows match criteria: {criteria}")
             try:
                 wins = self.desktop.windows(**criteria)
@@ -172,30 +172,30 @@ class UIAClient:
         timeout: float | None = None,
     ) -> UIAElementWrapper | None:
         """
-        模糊查找窗口
+        Fuzzy window lookup.
 
-        支持部分匹配标题
+        Supports partial title matching.
 
         Args:
-            title_pattern: 标题模式（部分匹配）
-            timeout: 超时时间
+            title_pattern: title pattern (partial match)
+            timeout: timeout
 
         Returns:
-            找到的窗口
+            The found window
         """
-        # 转换为正则表达式（忽略大小写，部分匹配）
+        # Convert to a regex (case-insensitive, partial match)
         pattern = re.escape(title_pattern)
         return self.find_window(title_re=f".*{pattern}.*", timeout=timeout)
 
     def get_active_window(self) -> UIAElementWrapper | None:
         """
-        获取当前活动窗口
+        Get the currently active window.
 
         Returns:
-            活动窗口，如果没有返回 None
+            The active window, or None if there is none
         """
         try:
-            # 方法1：使用 pywinauto
+            # Method 1: use pywinauto
             import ctypes
 
             hwnd = ctypes.windll.user32.GetForegroundWindow()
@@ -206,7 +206,7 @@ class UIAClient:
         except Exception as e:
             logger.debug(f"Failed to get active window via handle: {e}")
 
-        # 方法2：遍历窗口查找有焦点的
+        # Method 2: iterate windows to find the one with focus
         try:
             for win in self.desktop.windows():
                 try:
@@ -222,22 +222,22 @@ class UIAClient:
 
     def activate_window(self, window: UIAElementWrapper) -> bool:
         """
-        激活窗口（设为前台）
+        Activate a window (bring to foreground).
 
         Args:
-            window: 窗口元素
+            window: window element
 
         Returns:
-            是否成功
+            Whether successful
         """
         try:
             control = window.control
 
-            # 如果窗口最小化，先恢复
+            # If the window is minimized, restore it first
             if hasattr(control, "is_minimized") and control.is_minimized():
                 control.restore()
 
-            # 设置为前台窗口
+            # Set as foreground window
             control.set_focus()
             return True
         except Exception as e:
@@ -245,7 +245,7 @@ class UIAClient:
             return False
 
     def minimize_window(self, window: UIAElementWrapper) -> bool:
-        """最小化窗口"""
+        """Minimize window."""
         try:
             window.control.minimize()
             return True
@@ -254,7 +254,7 @@ class UIAClient:
             return False
 
     def maximize_window(self, window: UIAElementWrapper) -> bool:
-        """最大化窗口"""
+        """Maximize window."""
         try:
             window.control.maximize()
             return True
@@ -263,7 +263,7 @@ class UIAClient:
             return False
 
     def restore_window(self, window: UIAElementWrapper) -> bool:
-        """恢复窗口"""
+        """Restore window."""
         try:
             window.control.restore()
             return True
@@ -272,7 +272,7 @@ class UIAClient:
             return False
 
     def close_window(self, window: UIAElementWrapper) -> bool:
-        """关闭窗口"""
+        """Close window."""
         try:
             window.control.close()
             return True
@@ -286,7 +286,7 @@ class UIAClient:
         x: int,
         y: int,
     ) -> bool:
-        """移动窗口"""
+        """Move window."""
         try:
             window.control.move_window(x, y)
             return True
@@ -300,7 +300,7 @@ class UIAClient:
         width: int,
         height: int,
     ) -> bool:
-        """调整窗口大小"""
+        """Resize window."""
         try:
             bbox = window.bbox
             if bbox:
@@ -315,7 +315,7 @@ class UIAClient:
             logger.error(f"Failed to resize window: {e}")
         return False
 
-    # ==================== 元素查找 ====================
+    # ==================== Element lookup ====================
 
     def find_element(
         self,
@@ -328,24 +328,24 @@ class UIAClient:
         timeout: float | None = None,
     ) -> UIAElementWrapper | None:
         """
-        查找元素
+        Find an element.
 
         Args:
-            root: 搜索根元素，None 表示在整个桌面搜索
-            name: 元素名称（精确匹配）
-            name_re: 元素名称（正则匹配）
-            control_type: 控件类型
-            automation_id: 自动化 ID
-            class_name: 类名
-            timeout: 超时时间
+            root: search root element; None searches the entire desktop
+            name: element name (exact match)
+            name_re: element name (regex match)
+            control_type: control type
+            automation_id: automation ID
+            class_name: class name
+            timeout: timeout
 
         Returns:
-            找到的元素，未找到返回 None
+            The found element, or None if not found
         """
         config = get_config().uia
         wait_timeout = timeout if timeout is not None else config.timeout
 
-        # 构建搜索条件
+        # Build search criteria
         criteria: dict[str, Any] = {}
         if name:
             criteria["title"] = name
@@ -362,7 +362,7 @@ class UIAClient:
             logger.warning("No search criteria provided for find_element")
             return None
 
-        # 确定搜索根
+        # Determine the search root
         search_root = root.control if root else self.desktop
 
         try:
@@ -388,19 +388,19 @@ class UIAClient:
         depth: int = 10,
     ) -> list[UIAElementWrapper]:
         """
-        查找所有匹配的元素
+        Find all matching elements.
 
         Args:
-            root: 搜索根元素
-            name: 元素名称（精确匹配）
-            name_re: 元素名称（正则匹配）
-            control_type: 控件类型
-            automation_id: 自动化 ID
-            class_name: 类名
-            depth: 搜索深度
+            root: search root element
+            name: element name (exact match)
+            name_re: element name (regex match)
+            control_type: control type
+            automation_id: automation ID
+            class_name: class name
+            depth: search depth
 
         Returns:
-            匹配的元素列表
+            List of matching elements
         """
         criteria: dict[str, Any] = {"depth": depth}
         if name:
@@ -441,18 +441,18 @@ class UIAClient:
         root: UIAElementWrapper | None = None,
     ) -> UIAElementWrapper | None:
         """
-        按路径查找元素
+        Find an element by path.
 
         Args:
-            path: 路径列表，每个元素是搜索条件字典
-            root: 搜索根元素
+            path: list of steps, each a dict of search criteria
+            root: search root element
 
         Returns:
-            找到的元素
+            The found element
 
-        示例:
+        Example:
             find_element_by_path([
-                {"control_type": "Window", "title": "记事本"},
+                {"control_type": "Window", "title": "Notepad"},
                 {"control_type": "Edit"},
             ])
         """
@@ -467,7 +467,7 @@ class UIAClient:
 
         return current
 
-    # ==================== 等待功能 ====================
+    # ==================== Waiting ====================
 
     def wait_for_window(
         self,
@@ -477,16 +477,16 @@ class UIAClient:
         interval: float = 0.5,
     ) -> UIAElementWrapper | None:
         """
-        等待窗口出现
+        Wait for a window to appear.
 
         Args:
-            title: 窗口标题
-            title_re: 窗口标题正则
-            timeout: 超时时间
-            interval: 检查间隔
+            title: window title
+            title_re: window title regex
+            timeout: timeout
+            interval: check interval
 
         Returns:
-            找到的窗口，超时返回 None
+            The found window, or None on timeout
         """
         start_time = time.time()
 
@@ -509,15 +509,15 @@ class UIAClient:
         interval: float = 0.5,
     ) -> bool:
         """
-        等待窗口关闭
+        Wait for a window to close.
 
         Args:
-            window: 窗口元素
-            timeout: 超时时间
-            interval: 检查间隔
+            window: window element
+            timeout: timeout
+            interval: check interval
 
         Returns:
-            窗口是否已关闭
+            Whether the window has closed
         """
         start_time = time.time()
 
@@ -542,19 +542,19 @@ class UIAClient:
         interval: float = 0.5,
     ) -> UIAElementWrapper | None:
         """
-        等待元素出现
+        Wait for an element to appear.
 
         Args:
-            root: 搜索根元素
-            name: 元素名称
-            name_re: 元素名称正则
-            control_type: 控件类型
-            automation_id: 自动化 ID
-            timeout: 超时时间
-            interval: 检查间隔
+            root: search root element
+            name: element name
+            name_re: element name regex
+            control_type: control type
+            automation_id: automation ID
+            timeout: timeout
+            interval: check interval
 
         Returns:
-            找到的元素，超时返回 None
+            The found element, or None on timeout
         """
         start_time = time.time()
 
@@ -573,7 +573,7 @@ class UIAClient:
 
         return None
 
-    # ==================== 应用程序管理 ====================
+    # ==================== Application management ====================
 
     def start_application(
         self,
@@ -583,16 +583,16 @@ class UIAClient:
         timeout: float = 10,
     ) -> UIAElementWrapper | None:
         """
-        启动应用程序
+        Start an application.
 
         Args:
-            path: 应用程序路径
-            args: 命令行参数
-            work_dir: 工作目录
-            timeout: 等待窗口超时
+            path: application path
+            args: command-line arguments
+            work_dir: working directory
+            timeout: window-wait timeout
 
         Returns:
-            应用程序主窗口
+            Application main window
         """
         try:
             app = Application(backend=self._backend).start(
@@ -601,11 +601,11 @@ class UIAClient:
                 timeout=timeout,
             )
 
-            # 等待主窗口
+            # Wait for the main window
             time.sleep(0.5)
 
             try:
-                # 尝试获取顶层窗口
+                # Try to get the top-level window
                 win = app.top_window()
                 win.wait("ready", timeout=timeout)
                 return UIAElementWrapper(win)
@@ -626,16 +626,16 @@ class UIAClient:
         title: str | None = None,
     ) -> UIAElementWrapper | None:
         """
-        连接到已运行的应用程序
+        Connect to a running application.
 
         Args:
-            process: 进程 ID
-            handle: 窗口句柄
-            path: 可执行文件路径
-            title: 窗口标题
+            process: process ID
+            handle: window handle
+            path: executable path
+            title: window title
 
         Returns:
-            应用程序主窗口
+            Application main window
         """
         try:
             connect_args = {}
@@ -660,12 +660,12 @@ class UIAClient:
             return None
 
 
-# 全局实例
+# Global instance
 _uia_client: UIAClient | None = None
 
 
 def get_uia_client() -> UIAClient:
-    """获取全局 UIA 客户端"""
+    """Get the global UIA client."""
     global _uia_client
     if _uia_client is None:
         _uia_client = UIAClient()

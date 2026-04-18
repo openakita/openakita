@@ -1,17 +1,17 @@
 """
-File System 工具定义
+File System tool definitions
 
-包含文件系统操作相关的工具：
-- run_shell: 执行 Shell 命令（持久会话 + 后台进程）
-- write_file: 写入文件
-- read_file: 读取文件
-- edit_file: 精确字符串替换编辑
-- list_directory: 列出目录
-- grep: 内容搜索
-- glob: 文件名模式搜索
-- delete_file: 删除文件
+Contains tools related to file system operations:
+- run_shell: Execute shell commands (persistent sessions + background processes)
+- write_file: Write files
+- read_file: Read files
+- edit_file: Exact string replacement editing
+- list_directory: List directory
+- grep: Content search
+- glob: Filename pattern search
+- delete_file: Delete files
 
-Description 质量对齐 Cursor Agent Mode — 所有行为约束前置到 description。
+Description quality aligned with Cursor Agent Mode — all behavioral constraints are pushed into description.
 """
 
 FILESYSTEM_TOOLS = [
@@ -45,54 +45,54 @@ FILESYSTEM_TOOLS = [
             "- Output >200 lines is truncated; full output saved to overflow file, "
             "readable with read_file"
         ),
-        "detail": """执行 Shell 命令，用于运行系统命令、创建目录、执行脚本等。
+        "detail": """Execute shell commands to run system commands, create directories, execute scripts, etc.
 
-**持久会话**:
-- 同一 session_id 的命令共享工作目录和环境变量
-- 用 working_directory 参数切换目录（而非 cd &&）
-- 默认 session_id=1
+**Persistent session**:
+- Commands with the same session_id share working directory and environment variables
+- Use working_directory parameter to switch directories (instead of cd &&)
+- Default session_id=1
 
-**后台进程**:
-- block_timeout_ms 控制阻塞等待时间，默认 30000ms (30 秒)
-- 超时后命令自动转后台，输出流式写入 data/terminals/{session_id}.txt
-- 设为 0 可立即后台化（用于 dev server 等长驻进程）
+**Background processes**:
+- block_timeout_ms controls blocking wait time, default 30000ms (30 seconds)
+- On timeout, the command is moved to background and output streams to data/terminals/{session_id}.txt
+- Set to 0 to background immediately (for dev servers and other long-running processes)
 
-**Windows 特殊处理**:
-- PowerShell cmdlet 自动编码（EncodedCommand）
-- UTF-8 代码页自动设置（chcp 65001）
-- 多行 python -c 自动修复""",
+**Windows-specific handling**:
+- PowerShell cmdlets are automatically encoded (EncodedCommand)
+- UTF-8 code page is automatically set (chcp 65001)
+- Multi-line python -c is automatically fixed""",
         "input_schema": {
             "type": "object",
             "properties": {
-                "command": {"type": "string", "description": "要执行的 Shell 命令"},
+                "command": {"type": "string", "description": "The shell command to execute"},
                 "working_directory": {
                     "type": "string",
-                    "description": "工作目录（可选，持久生效于本会话）",
+                    "description": "Working directory (optional, persists for this session)",
                 },
                 "description": {
                     "type": "string",
-                    "description": "命令的 5-10 字简要描述",
+                    "description": "5-10 word brief description of the command",
                 },
                 "block_timeout_ms": {
                     "type": "integer",
                     "description": (
-                        "阻塞等待毫秒数。默认 30000（30秒）。"
-                        "设为 0 立即后台化（用于 dev server 等长驻进程）。"
+                        "Blocking wait in milliseconds. Default 30000 (30 seconds). "
+                        "Set to 0 to background immediately (for dev servers and other long-running processes)."
                     ),
                     "default": 30000,
                 },
                 "session_id": {
                     "type": "integer",
-                    "description": "终端会话 ID。同一会话的命令共享工作目录和环境变量。默认 1。",
+                    "description": "Terminal session ID. Commands in the same session share working directory and environment variables. Default 1.",
                     "default": 1,
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "（兼容旧参数）超时时间（秒），优先使用 block_timeout_ms",
+                    "description": "(Legacy parameter) Timeout in seconds; prefer block_timeout_ms",
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "（兼容旧参数）工作目录，优先使用 working_directory",
+                    "description": "(Legacy parameter) Working directory; prefer working_directory",
                 },
             },
             "required": ["command"],
@@ -117,28 +117,28 @@ FILESYSTEM_TOOLS = [
             "- write_file: Creating entirely new files, or replacing entire file content\n"
             "- edit_file: Modifying specific parts of an existing file (preferred)"
         ),
-        "detail": """写入文件内容，可以创建新文件或覆盖已有文件。
+        "detail": """Write file content; can create a new file or overwrite an existing one.
 
-**适用场景**:
-- 创建新文件
-- 整体替换文件内容（比如重新生成）
+**Use cases**:
+- Create new files
+- Fully replace file content (e.g., regenerate)
 
-**注意事项**:
-- 会覆盖已存在的文件，确保这是有意的
-- 自动创建父目录（如果不存在）
-- 使用 UTF-8 编码""",
+**Notes**:
+- Overwrites existing files — make sure this is intentional
+- Auto-creates parent directories (if they don't exist)
+- Uses UTF-8 encoding""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
                     "description": (
-                        "文件路径。**参数名必须是 `path`**，不要写成 "
-                        "`filename` / `filepath` / `file_path`——虽然实现层会做别名兜底，"
-                        "但 schema 只认 `path`；别名兜底是最后防线，别依赖。"
+                        "File path. **The parameter name must be `path`**, not "
+                        "`filename` / `filepath` / `file_path` — although the implementation "
+                        "has alias fallbacks, the schema only accepts `path`; aliases are a last resort, don't rely on them."
                     ),
                 },
-                "content": {"type": "string", "description": "文件内容"},
+                "content": {"type": "string", "description": "File content"},
             },
             "required": ["path", "content"],
         },
@@ -163,28 +163,28 @@ FILESYSTEM_TOOLS = [
             "- If the file is empty, returns 'File is empty.'\n"
             "- Binary files (other than images/PDF) are not supported"
         ),
-        "detail": """读取文件内容（支持分页）。
+        "detail": """Read file content (with pagination support).
 
-**分页参数**:
-- offset: 起始行号（1-based），默认 1
-- limit: 读取行数，默认 300
-- 如果文件超过 limit 行，结果末尾会包含 [OUTPUT_TRUNCATED] 提示和下一页参数
+**Pagination parameters**:
+- offset: Start line number (1-based), default 1
+- limit: Number of lines to read, default 300
+- If the file exceeds limit lines, the result ends with an [OUTPUT_TRUNCATED] hint and next-page parameters
 
-**注意事项**:
-- 大文件自动分页，根据提示用 offset/limit 翻页
-- 二进制文件需要特殊处理""",
+**Notes**:
+- Large files are paginated automatically; use offset/limit to page through based on hints
+- Binary files require special handling""",
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "文件路径"},
+                "path": {"type": "string", "description": "File path"},
                 "offset": {
                     "type": "integer",
-                    "description": "起始行号（1-based），默认从第 1 行开始",
+                    "description": "Start line number (1-based), defaults to line 1",
                     "default": 1,
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "读取的最大行数，默认 300 行",
+                    "description": "Maximum number of lines to read, default 300",
                     "default": 300,
                 },
             },
@@ -210,31 +210,31 @@ FILESYSTEM_TOOLS = [
             "- Read the file again to see the full context\n"
             "- Include more lines before/after the change point to make old_string unique"
         ),
-        "detail": """精确字符串替换式编辑文件。
+        "detail": """Edit a file via exact string replacement.
 
-**使用方法**:
-1. 先用 read_file 查看文件内容
-2. 提供要替换的原文本 (old_string) 和新文本 (new_string)
-3. old_string 必须精确匹配文件中的内容（包括缩进和空格）
-4. 如果 old_string 匹配到多处且未设 replace_all=true，会报错并提示提供更多上下文
+**Usage**:
+1. First use read_file to inspect file content
+2. Provide the original text to replace (old_string) and the new text (new_string)
+3. old_string must exactly match content in the file (including indentation and whitespace)
+4. If old_string matches multiple places and replace_all=true is not set, an error is returned asking for more context
 
-**注意事项**:
-- 自动兼容 Windows CRLF 和 Unix LF 换行符""",
+**Notes**:
+- Automatically handles Windows CRLF and Unix LF line endings""",
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "文件路径"},
+                "path": {"type": "string", "description": "File path"},
                 "old_string": {
                     "type": "string",
-                    "description": "要替换的原文本（须精确匹配文件中的内容）",
+                    "description": "Original text to replace (must exactly match content in the file)",
                 },
                 "new_string": {
                     "type": "string",
-                    "description": "替换后的新文本",
+                    "description": "New text to replace with",
                 },
                 "replace_all": {
                     "type": "boolean",
-                    "description": "是否替换所有匹配项，默认 false（仅替换第一处，要求唯一匹配）",
+                    "description": "Whether to replace all matches, default false (replaces only the first match, requires unique match)",
                     "default": False,
                 },
             },
@@ -250,34 +250,34 @@ FILESYSTEM_TOOLS = [
             "(3) Check what exists in a folder. Default returns up to 200 items. "
             "Supports optional pattern filtering and recursive listing."
         ),
-        "detail": """列出目录内容，包括文件和子目录。
+        "detail": """List directory contents, including files and subdirectories.
 
-**返回信息**:
-- 文件名和类型
-- 文件大小
-- 修改时间
+**Returned info**:
+- File name and type
+- File size
+- Modification time
 
-**注意事项**:
-- 默认最多返回 200 条目
-- 使用 pattern 过滤特定类型文件（如 "*.py"）
-- 使用 recursive=true 递归列出子目录""",
+**Notes**:
+- Returns at most 200 entries by default
+- Use pattern to filter by file type (e.g., "*.py")
+- Use recursive=true to list subdirectories recursively""",
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "目录路径"},
+                "path": {"type": "string", "description": "Directory path"},
                 "pattern": {
                     "type": "string",
-                    "description": "文件名过滤模式（如 '*.py'、'*.ts'），默认 '*'",
+                    "description": "Filename filter pattern (e.g., '*.py', '*.ts'), default '*'",
                     "default": "*",
                 },
                 "recursive": {
                     "type": "boolean",
-                    "description": "是否递归列出子目录内容，默认 false",
+                    "description": "Whether to recursively list subdirectory contents, default false",
                     "default": False,
                 },
                 "max_items": {
                     "type": "integer",
-                    "description": "最大返回条目数，默认 200",
+                    "description": "Maximum number of entries to return, default 200",
                     "default": 200,
                 },
             },
@@ -306,44 +306,44 @@ FILESYSTEM_TOOLS = [
             "- Returns format: file:line_number:content\n"
             "- Prefer grep over run_shell('grep ...') — this tool is optimized and cross-platform"
         ),
-        "detail": """跨平台内容搜索工具（纯 Python 实现，无需 ripgrep/grep/findstr）。
+        "detail": """Cross-platform content search tool (pure Python, no ripgrep/grep/findstr needed).
 
-**参数说明**:
-- pattern: 正则表达式（如 "def test_"、"class.*Error"、"TODO"）
-- path: 搜索目录，默认当前目录
-- include: 文件名 glob 过滤（如 "*.py" 只搜 Python 文件）
-- context_lines: 显示匹配行前后的上下文行数
-- max_results: 最大返回匹配数，默认 50
-- case_insensitive: 是否忽略大小写""",
+**Parameters**:
+- pattern: Regular expression (e.g., "def test_", "class.*Error", "TODO")
+- path: Search directory, default current directory
+- include: Filename glob filter (e.g., "*.py" to search only Python files)
+- context_lines: Number of context lines before and after each match
+- max_results: Maximum number of matches returned, default 50
+- case_insensitive: Whether to ignore case""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "正则表达式搜索模式",
+                    "description": "Regular expression search pattern",
                 },
                 "path": {
                     "type": "string",
-                    "description": "搜索目录，默认当前工作目录",
+                    "description": "Search directory, default is current working directory",
                     "default": ".",
                 },
                 "include": {
                     "type": "string",
-                    "description": "文件名 glob 过滤（如 '*.py'、'*.ts'），不填则搜索所有文本文件",
+                    "description": "Filename glob filter (e.g., '*.py', '*.ts'); if omitted, searches all text files",
                 },
                 "context_lines": {
                     "type": "integer",
-                    "description": "匹配行前后的上下文行数，默认 0",
+                    "description": "Number of context lines before and after each match, default 0",
                     "default": 0,
                 },
                 "max_results": {
                     "type": "integer",
-                    "description": "最大返回匹配数，默认 50",
+                    "description": "Maximum number of matches to return, default 50",
                     "default": 50,
                 },
                 "case_insensitive": {
                     "type": "boolean",
-                    "description": "是否忽略大小写，默认 false",
+                    "description": "Whether to ignore case, default false",
                     "default": False,
                 },
             },
@@ -369,27 +369,27 @@ FILESYSTEM_TOOLS = [
             "- Automatically skips .git, node_modules, __pycache__ directories\n"
             "- Returns relative path list"
         ),
-        "detail": """按文件名模式递归搜索文件。
+        "detail": """Recursively search for files by filename pattern.
 
-**模式说明**:
-- "*.py" → 自动变为 "**/*.py"（递归搜索）
-- "**/*.test.ts" → 递归搜索所有 .test.ts 文件
-- "*config*" → 自动变为 "**/*config*"
+**Pattern notes**:
+- "*.py" → automatically becomes "**/*.py" (recursive search)
+- "**/*.test.ts" → recursively search all .test.ts files
+- "*config*" → automatically becomes "**/*config*"
 
-**注意事项**:
-- 自动跳过 .git、node_modules、__pycache__ 等目录
-- 结果按修改时间降序排序（最新的在前）
-- 返回相对路径列表""",
+**Notes**:
+- Automatically skips .git, node_modules, __pycache__, and similar directories
+- Results sorted by modification time descending (newest first)
+- Returns a list of relative paths""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "Glob 模式（如 '*.py'、'**/test_*.ts'、'*config*'）",
+                    "description": "Glob pattern (e.g., '*.py', '**/test_*.ts', '*config*')",
                 },
                 "path": {
                     "type": "string",
-                    "description": "搜索根目录，默认当前工作目录",
+                    "description": "Search root directory, default current working directory",
                     "default": ".",
                 },
             },
@@ -406,23 +406,23 @@ FILESYSTEM_TOOLS = [
             "- The directory is not empty (use run_shell for recursive deletion)\n"
             "- The file cannot be deleted"
         ),
-        "detail": """删除文件或空目录。
+        "detail": """Delete a file or empty directory.
 
-**适用场景**:
-- 删除生成的文件
-- 清理临时文件
-- 删除空目录
+**Use cases**:
+- Delete generated files
+- Clean up temporary files
+- Delete empty directories
 
-**注意事项**:
-- 仅删除文件或空目录
-- 非空目录会被拒绝，需使用 run_shell 执行 rm -rf 等命令
-- 路径受安全策略保护""",
+**Notes**:
+- Only deletes files or empty directories
+- Non-empty directories are rejected; use run_shell with rm -rf or similar
+- Paths are protected by security policy""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "要删除的文件或空目录路径",
+                    "description": "Path of the file or empty directory to delete",
                 },
             },
             "required": ["path"],

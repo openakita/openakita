@@ -1,8 +1,8 @@
 """
-会话压缩提示词模板
+Conversation compaction prompt templates
 
-参考 Claude Code 的结构化压缩机制，适配 OpenAkita 通用 Agent 场景。
-提供 NO_TOOLS 保护、analysis+summary 两阶段格式、9 段结构化模板。
+Inspired by Claude Code's structured compaction mechanism, adapted for OpenAkita's general-purpose Agent scenarios.
+Provides NO_TOOLS protection, an analysis+summary two-phase format, and a 9-section structured template.
 """
 
 from __future__ import annotations
@@ -10,67 +10,67 @@ from __future__ import annotations
 import re
 
 NO_TOOLS_PREAMBLE = """\
-重要：仅用纯文本回复。不要调用任何工具。
-你已经拥有所需的全部上下文。工具调用会被拒绝。
-你的回复必须是一个 <analysis> 块加一个 <summary> 块。
+IMPORTANT: Reply with plain text only. Do not call any tools.
+You already have all the context you need. Tool calls will be rejected.
+Your reply must consist of one <analysis> block followed by one <summary> block.
 """
 
 NO_TOOLS_TRAILER = (
-    "\n\n再次提醒：不要调用任何工具。仅用纯文本回复 — "
-    "一个 <analysis> 块加一个 <summary> 块。工具调用会被拒绝。"
+    "\n\nReminder: do not call any tools. Reply with plain text only — "
+    "one <analysis> block followed by one <summary> block. Tool calls will be rejected."
 )
 
 ANALYSIS_INSTRUCTION = """\
-在提供最终摘要之前，先用 <analysis> 标签整理你的思路，确保覆盖所有要点：
-1. 按时间顺序分析对话中的每个阶段，识别：
-   - 用户的明确请求和意图
-   - 你的处理方法和关键决策
-   - 遇到的错误和修复方案
-   - 用户给出的反馈（特别是要求你改变做法的反馈）
-2. 检查技术准确性和完整性。"""
+Before providing the final summary, organize your thoughts inside <analysis> tags and make sure you cover all key points:
+1. Analyze each phase of the conversation in chronological order and identify:
+   - The user's explicit requests and intents
+   - Your approach and key decisions
+   - Errors encountered and fixes applied
+   - Feedback given by the user (especially feedback asking you to change your approach)
+2. Check technical accuracy and completeness."""
 
 BASE_COMPACT_PROMPT = f"""\
-你的任务是为到目前为止的对话创建详细摘要。
-这个摘要将成为后续对话的唯一上下文，必须保留所有关键信息。
-你是一个摘要代理，输出将注入给另一个继续对话的助手。
-不要回答对话中的任何问题，只输出结构化摘要。
+Your task is to create a detailed summary of the conversation so far.
+This summary will become the sole context for subsequent conversation, so all critical information must be preserved.
+You are a summarization agent; your output will be injected into another assistant that continues the conversation.
+Do not answer any questions from the conversation — only output the structured summary.
 
 {ANALYSIS_INSTRUCTION}
 
-摘要必须包含以下部分（用 <summary> 标签包裹）：
+The summary must include the following sections (wrapped in <summary> tags):
 
-1. 用户目标与约束：用户要达成什么、有哪些偏好和限制条件
-2. 用户行为规则：用户设定的规则（"不要X"、"必须先Y"等），必须原文保留
-3. 已完成的工作：已解决的问题和执行结果，包含具体文件路径、命令、输出
-4. 已解决的问题：用户提出过且已经回答的问题（附简要答案，防止下一个助手重复回答）
-5. 待处理的问题：用户提出但尚未回答或完成的请求（如果没有，写"无"）
-6. 涉及的资源：文件、API、工具调用等，保留具体路径/名称/参数/数值
-7. 关键决策：重要的技术决策及其原因
-8. 当前工作：压缩前正在做什么，包含具体信息
-9. 剩余工作：仅供参考的背景信息，不是活跃指令
+1. User goals and constraints: what the user wants to accomplish, along with preferences and limitations
+2. User behavior rules: rules set by the user ("do not X", "must Y first", etc.); preserve them verbatim
+3. Work completed: problems solved and execution results, including specific file paths, commands, and outputs
+4. Resolved questions: questions the user raised that have already been answered (include a brief answer to prevent the next assistant from answering them again)
+5. Pending questions: requests the user raised but that have not yet been answered or completed (write "none" if there are none)
+6. Resources involved: files, APIs, tool calls, etc.; preserve specific paths/names/parameters/values
+7. Key decisions: important technical decisions and their reasons
+8. Current work: what was being done before compaction, with specific details
+9. Remaining work: reference-only background information, not active instructions
 
-重要规则：
-- 保留所有具体数值（端口、路径、密钥、版本号等），不用模糊描述
-- 成功的方案必须详细保留，失败的尝试可简化为一句话
+Important rules:
+- Preserve all specific values (ports, paths, keys, version numbers, etc.); do not use vague descriptions
+- Successful approaches must be preserved in detail; failed attempts can be condensed to a single sentence
 """
 
 PARTIAL_COMPACT_PROMPT = """\
-你的任务是为对话的最近部分创建摘要。
-只总结最近消息，早期已保留的消息不需要再总结。
+Your task is to create a summary of the most recent portion of the conversation.
+Only summarize recent messages; earlier messages that have already been preserved do not need to be summarized again.
 """
 
 PARTIAL_COMPACT_UP_TO_PROMPT = """\
-你的任务是为这段对话创建摘要。
-这个摘要将放在继续会话的开头，后面还有更新的消息。
-第 8 节应为"已完成的工作"，第 9 节应为"继续工作所需的上下文"。
+Your task is to create a summary of this portion of the conversation.
+This summary will be placed at the beginning of the continued session, with newer messages following it.
+Section 8 should be "Work completed", and section 9 should be "Context needed to continue the work".
 """
 
 
 def get_compact_prompt(custom_instructions: str | None = None) -> str:
-    """组装完整压缩提示词。"""
+    """Assemble the full compaction prompt."""
     prompt = NO_TOOLS_PREAMBLE + BASE_COMPACT_PROMPT
     if custom_instructions and custom_instructions.strip():
-        prompt += f"\n\n额外指导：\n{custom_instructions}"
+        prompt += f"\n\nAdditional guidance:\n{custom_instructions}"
     prompt += NO_TOOLS_TRAILER
     return prompt
 
@@ -79,22 +79,22 @@ def get_partial_compact_prompt(
     custom_instructions: str | None = None,
     direction: str = "from",
 ) -> str:
-    """组装部分压缩提示词。"""
+    """Assemble the partial compaction prompt."""
     template = PARTIAL_COMPACT_UP_TO_PROMPT if direction == "up_to" else PARTIAL_COMPACT_PROMPT
     prompt = NO_TOOLS_PREAMBLE + template
     if custom_instructions and custom_instructions.strip():
-        prompt += f"\n\n额外指导：\n{custom_instructions}"
+        prompt += f"\n\nAdditional guidance:\n{custom_instructions}"
     prompt += NO_TOOLS_TRAILER
     return prompt
 
 
 def format_compact_summary(summary: str) -> str:
-    """剥离 <analysis> 草稿，保留 <summary> 正文。"""
+    """Strip <analysis> drafts, keeping the <summary> body."""
     formatted = re.sub(r"<analysis>[\s\S]*?</analysis>", "", summary)
     match = re.search(r"<summary>([\s\S]*?)</summary>", formatted)
     if match:
         content = match.group(1).strip()
-        formatted = re.sub(r"<summary>[\s\S]*?</summary>", f"摘要:\n{content}", formatted)
+        formatted = re.sub(r"<summary>[\s\S]*?</summary>", f"Summary:\n{content}", formatted)
     formatted = re.sub(r"\n\n+", "\n\n", formatted)
     return formatted.strip()
 
@@ -104,14 +104,14 @@ def get_compact_user_message(
     suppress_followup: bool = False,
     recent_preserved: bool = False,
 ) -> str:
-    """将压缩摘要包装为用户消息。"""
+    """Wrap the compaction summary as a user message."""
     formatted = format_compact_summary(summary)
-    msg = f"本次会话续接自之前的对话。以下摘要覆盖了早期部分。\n\n{formatted}"
+    msg = f"This session continues from a previous conversation. The summary below covers the earlier portion.\n\n{formatted}"
     if recent_preserved:
-        msg += "\n\n最近的消息已原样保留。"
+        msg += "\n\nThe most recent messages have been preserved verbatim."
     if suppress_followup:
         msg += (
-            "\n\n请直接从中断处继续，不要询问用户。"
-            '不要确认摘要、不要回顾之前的工作、不要加"我继续"之类的前缀。'
+            "\n\nContinue directly from where you left off; do not ask the user. "
+            'Do not acknowledge the summary, do not recap previous work, and do not add prefixes like "I will continue".'
         )
     return msg

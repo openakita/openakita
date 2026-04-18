@@ -1,8 +1,8 @@
 """
-技能注册中心
+Skill registry.
 
-遵循 Agent Skills 规范 (agentskills.io/specification)
-存储和管理技能元数据，支持渐进式披露
+Follows the Agent Skills specification (agentskills.io/specification).
+Stores and manages skill metadata, supporting progressive disclosure.
 """
 
 import logging
@@ -81,23 +81,23 @@ def _infer_origin(
 @dataclass
 class SkillEntry:
     """
-    技能注册条目
+    Skill registry entry.
 
-    存储技能的元数据和引用
-    支持渐进式披露:
-    - Level 1: 元数据 (name, description) - 总是可用
-    - Level 2: body (完整指令) - 激活时加载
-    - Level 3: scripts/references/assets - 按需加载
+    Stores skill metadata and references.
+    Supports progressive disclosure:
+    - Level 1: metadata (name, description) — always available
+    - Level 2: body (full instructions) — loaded on activation
+    - Level 3: scripts/references/assets — loaded on demand
 
-    系统技能额外字段:
-    - system: 是否为系统技能
-    - handler: 处理器模块名
-    - tool_name: 原工具名称
-    - category: 工具分类
+    Extra fields for system skills:
+    - system: whether this is a system skill
+    - handler: handler module name
+    - tool_name: original tool name
+    - category: tool category
     """
 
-    skill_id: str  # 唯一标识（= 目录名），用作注册 key、allowlist key、tool name key
-    name: str  # SKILL.md 声明的显示名（可重复），仅用于展示和搜索
+    skill_id: str  # Unique identifier (= directory name); used as registry key, allowlist key, and tool name key
+    name: str  # Display name declared in SKILL.md (may repeat); used only for display and search
     description: str
     version: str | None = None
     license: str | None = None
@@ -106,7 +106,7 @@ class SkillEntry:
     allowed_tools: list[str] = field(default_factory=list)
     disable_model_invocation: bool = False
 
-    # 系统技能专用字段
+    # System-skill-specific fields
     system: bool = False
     handler: str | None = None
     tool_name: str | None = None
@@ -117,33 +117,33 @@ class SkillEntry:
     required_bins: list[str] = field(default_factory=list)
     required_env: list[str] = field(default_factory=list)
 
-    # 技能路径 (用于延迟加载)
+    # Skill path (used for lazy loading)
     skill_path: str | None = None
 
-    # 技能来源 URL（来自 .openakita-source 文件，用于区分同名技能）
+    # Skill source URL (from .openakita-source file; used to disambiguate skills with the same name)
     source_url: str | None = None
 
-    # 插件来源标识（如 "plugin:translate-skill"），非插件技能为 None
+    # Plugin source identifier (e.g. "plugin:translate-skill"); None for non-plugin skills
     plugin_source: str | None = None
 
-    # 统一 capability 元数据
+    # Unified capability metadata
     origin: str = CapabilityOrigin.PROJECT.value
     namespace: str = CapabilityOrigin.PROJECT.value
     visibility: str = CapabilityVisibility.PUBLIC.value
     permission_profile: str = ""
     capability_id: str = ""
 
-    # 国际化（由 agents/openai.yaml i18n 字段注入，兼容旧的 .openakita-i18n.json）
+    # Internationalization (injected via the agents/openai.yaml i18n field; backward compatible with legacy .openakita-i18n.json)
     name_i18n: dict[str, str] = field(default_factory=dict)
     description_i18n: dict[str, str] = field(default_factory=dict)
 
-    # 技能配置 schema（从 SKILL.md frontmatter 传递）
+    # Skill configuration schema (passed through from SKILL.md frontmatter)
     config: list[dict] = field(default_factory=list)
 
     # Exposure level for profile-aware filtering
     exposure_level: str = "recommended"  # "core" | "recommended" | "hidden"
 
-    # F1: 扩展 frontmatter 字段
+    # F1: extended frontmatter fields
     when_to_use: str = ""
     keywords: list[str] = field(default_factory=list)
     arguments: list[dict] = field(default_factory=list)
@@ -155,34 +155,34 @@ class SkillEntry:
     model: str | None = None
     fallback_for_toolsets: list[str] = field(default_factory=list)
 
-    # F12: 信任等级 ("builtin" | "local" | "marketplace" | "remote")
-    # builtin: 随安装包分发的内置技能
-    # local: 用户本地创建的技能
-    # marketplace: 从官方市场安装的技能
-    # remote: 从第三方 URL/Git 安装的技能（不可信）
+    # F12: trust level ("builtin" | "local" | "marketplace" | "remote")
+    # builtin: built-in skills shipped with the install package
+    # local: skills created locally by the user
+    # marketplace: skills installed from the official marketplace
+    # remote: skills installed from third-party URL/Git sources (untrusted)
     trust_level: str = "local"
 
-    # 全局启用 / 禁用标记
-    # 用户通过 UI / skills.json 禁用的技能在注册表中保留但标记 disabled=True，
-    # 这样 SkillCatalog 和 list_skills 工具会过滤它们，
-    # 而子 Agent INCLUSIVE 模式仍可通过 profile.skills 显式引用并重新启用。
+    # Global enable / disable flag
+    # Skills disabled by the user via the UI / skills.json stay in the registry but are marked disabled=True,
+    # so SkillCatalog and the list_skills tool filter them out,
+    # while sub-agent INCLUSIVE mode can still reference and re-enable them explicitly via profile.skills.
     disabled: bool = False
 
-    # L1 目录隐藏标记（渐进式披露控制）
-    # INCLUSIVE 模式下未勾选的技能标记 catalog_hidden=True，
-    # 不出现在系统提示词目录（L1）中，但仍保留在注册表中，
-    # LLM 可通过 list_skills / get_skill_info 发现并按需加载（L2+）。
+    # L1 catalog-hidden flag (progressive disclosure control)
+    # Skills not checked in INCLUSIVE mode are marked catalog_hidden=True,
+    # so they do not appear in the system-prompt catalog (L1) but remain in the registry,
+    # and the LLM can still discover and load them on demand (L2+) via list_skills / get_skill_info.
     catalog_hidden: bool = False
 
-    # 完整技能对象引用 (延迟加载)
+    # Full skill object reference (lazy loading)
     _parsed_skill: Optional["ParsedSkill"] = field(default=None, repr=False)
 
     def get_display_name(self, lang: str = "zh") -> str:
-        """按语言返回显示名称，找不到则回退到 name"""
+        """Return the display name for the given language, falling back to name."""
         return self.name_i18n.get(lang, self.name)
 
     def get_display_description(self, lang: str = "zh") -> str:
-        """按语言返回显示描述，找不到则回退到 description"""
+        """Return the display description for the given language, falling back to description."""
         return self.description_i18n.get(lang, self.description)
 
     @property
@@ -214,11 +214,11 @@ class SkillEntry:
         *,
         plugin_source: str | None = None,
     ) -> "SkillEntry":
-        """从 ParsedSkill 创建条目
+        """Create an entry from a ParsedSkill.
 
         Args:
-            skill: 解析后的技能对象
-            skill_id: 唯一标识（通常为目录名）。未提供时回退到 metadata.name。
+            skill: the parsed skill object.
+            skill_id: unique identifier (usually the directory name). Falls back to metadata.name when not provided.
         """
         meta = skill.metadata
 
@@ -298,7 +298,7 @@ class SkillEntry:
         )
 
     def get_body(self) -> str | None:
-        """获取技能 body (Level 2)"""
+        """Return the skill body (Level 2)."""
         if self._parsed_skill:
             return self._parsed_skill.body
         return None
@@ -336,10 +336,10 @@ class SkillEntry:
 
     def to_tool_schema(self) -> dict:
         """
-        转换为 LLM 工具调用 schema
+        Convert to an LLM tool-call schema.
 
-        用于将技能作为工具提供给 LLM
-        系统技能使用原 tool_name，外部技能使用 skill_ 前缀
+        Used to expose a skill as a tool to the LLM.
+        System skills use the original tool_name; external skills use the skill_ prefix.
         """
         if self.system and self.tool_name:
             return {
@@ -363,11 +363,11 @@ class SkillEntry:
                 "properties": {
                     "action": {
                         "type": "string",
-                        "description": "要执行的操作",
+                        "description": "The action to perform",
                     },
                     "params": {
                         "type": "object",
-                        "description": "操作参数",
+                        "description": "Action parameters",
                     },
                 },
                 "required": ["action"],
@@ -417,12 +417,12 @@ class SkillEntry:
 
     def _get_input_schema(self) -> dict:
         """
-        获取系统技能的 input_schema
+        Return the input_schema for a system skill.
 
-        从 SKILL.md 的 body 中解析参数定义，或使用默认 schema
+        Parses parameter definitions from the SKILL.md body, or falls back to the default schema.
         """
-        # 默认返回空 object schema
-        # 实际参数定义应该在 SKILL.md 的 body 中或单独的元数据中
+        # By default, return an empty object schema.
+        # Actual parameter definitions should live in the SKILL.md body or in separate metadata.
         return {
             "type": "object",
             "properties": {},
@@ -431,22 +431,22 @@ class SkillEntry:
 
 class SkillRegistry:
     """
-    技能注册中心
+    Skill registry.
 
-    管理所有已注册的技能，提供:
-    - 注册/注销
-    - 搜索/查找
-    - 渐进式加载
+    Manages all registered skills, providing:
+    - registration / unregistration
+    - search / lookup
+    - progressive loading
 
-    内部以 skill_id（目录名）做唯一 key，对外查找方法同时接受
-    skill_id 和 name（向后兼容：先匹配 skill_id，未命中则回退到 name）。
+    Internally keyed by skill_id (directory name). Lookup methods accept
+    both skill_id and name (backward compatible: match skill_id first, fall back to name).
     """
 
     def __init__(self):
         self._skills: dict[str, SkillEntry] = {}  # key = skill_id
 
     def _resolve(self, key: str) -> SkillEntry | None:
-        """按 skill_id 查找，未命中时回退到 name 匹配（向后兼容）。"""
+        """Look up by skill_id, falling back to name matching (backward compatible)."""
         entry = self._skills.get(key)
         if entry is not None:
             return entry
@@ -462,7 +462,7 @@ class SkillRegistry:
         return matches[0] if matches else None
 
     def _resolve_id(self, key: str) -> str | None:
-        """将 key 解析为实际的 skill_id。"""
+        """Resolve a key to its actual skill_id."""
         if key in self._skills:
             return key
         matches = [sid for sid, e in self._skills.items() if e.name == key]
@@ -487,13 +487,13 @@ class SkillRegistry:
         force: bool = False,
     ) -> bool:
         """
-        注册技能
+        Register a skill.
 
         Args:
-            skill: 解析后的技能对象
-            skill_id: 唯一标识（通常为目录名）。未提供时回退到 metadata.name。
-            plugin_source: 插件来源标识
-            force: 允许覆盖已有条目（仅 reload 场景使用）
+            skill: the parsed skill object.
+            skill_id: unique identifier (usually the directory name). Falls back to metadata.name when not provided.
+            plugin_source: plugin source identifier.
+            force: allow overwriting an existing entry (reload scenarios only).
 
         Returns:
             True if registered, False if rejected due to conflict.
@@ -523,13 +523,13 @@ class SkillRegistry:
 
     def unregister(self, key: str) -> bool:
         """
-        注销技能
+        Unregister a skill.
 
         Args:
-            key: skill_id 或 name（向后兼容）
+            key: skill_id or name (backward compatible).
 
         Returns:
-            是否成功
+            Whether the operation succeeded.
         """
         sid = self._resolve_id(key)
         if sid is not None:
@@ -540,22 +540,22 @@ class SkillRegistry:
 
     def get(self, key: str) -> SkillEntry | None:
         """
-        获取技能
+        Get a skill.
 
         Args:
-            key: skill_id 或 name（向后兼容）
+            key: skill_id or name (backward compatible).
 
         Returns:
-            SkillEntry 或 None
+            SkillEntry or None.
         """
         return self._resolve(key)
 
     def has(self, key: str) -> bool:
-        """检查技能是否存在（接受 skill_id 或 name）"""
+        """Check whether a skill exists (accepts skill_id or name)."""
         return self._resolve(key) is not None
 
     def set_disabled(self, key: str, disabled: bool = True) -> bool:
-        """设置技能的 disabled 标记。接受 skill_id 或 name。"""
+        """Set a skill's disabled flag. Accepts skill_id or name."""
         skill = self._resolve(key)
         if skill is not None:
             skill.disabled = disabled
@@ -563,10 +563,10 @@ class SkillRegistry:
         return False
 
     def set_catalog_hidden(self, key: str, hidden: bool = True) -> bool:
-        """设置技能的 catalog_hidden 标记（L1 渐进式披露控制）。
+        """Set a skill's catalog_hidden flag (L1 progressive disclosure control).
 
-        catalog_hidden 的技能不出现在系统提示词目录中，
-        但仍可通过 list_skills / get_skill_info 按需发现和加载。
+        catalog_hidden skills do not appear in the system-prompt catalog
+        but can still be discovered and loaded on demand via list_skills / get_skill_info.
         """
         skill = self._resolve(key)
         if skill is not None:
@@ -575,28 +575,28 @@ class SkillRegistry:
         return False
 
     def count_catalog_hidden(self) -> int:
-        """统计被 catalog_hidden 但仍启用的技能数量。"""
+        """Count skills that are catalog_hidden but still enabled."""
         return sum(1 for s in self._skills.values() if not s.disabled and s.catalog_hidden)
 
     def list_all(self, include_disabled: bool = True) -> list[SkillEntry]:
-        """列出所有技能。
+        """List all skills.
 
         Args:
-            include_disabled: 是否包含被用户禁用的技能，默认 True 保持向后兼容。
+            include_disabled: whether to include skills disabled by the user. Defaults to True for backward compatibility.
         """
         if include_disabled:
             return list(self._skills.values())
         return [s for s in self._skills.values() if not s.disabled]
 
     def list_enabled(self) -> list[SkillEntry]:
-        """列出所有已启用的技能（排除 disabled=True）。"""
+        """List all enabled skills (excludes disabled=True)."""
         return [s for s in self._skills.values() if not s.disabled]
 
     def list_metadata(self) -> list[dict]:
         """
-        列出已启用技能元数据 (Level 1)
+        List metadata for enabled skills (Level 1).
 
-        用于启动时向 LLM 展示可用技能
+        Used at startup to present the available skills to the LLM.
         """
         return [
             {
@@ -618,14 +618,14 @@ class SkillRegistry:
         include_disabled: bool = False,
     ) -> list[SkillEntry]:
         """
-        搜索技能
+        Search skills.
 
         Args:
-            query: 搜索词 (匹配 skill_id、名称或描述)
-            include_disabled: 是否包含禁用自动调用的技能
+            query: search term (matches skill_id, name, or description).
+            include_disabled: whether to include skills that disable auto-invocation.
 
         Returns:
-            匹配的技能列表
+            List of matching skills.
         """
         query_lower = query.strip().lower()
         if not query_lower:
@@ -788,15 +788,15 @@ class SkillRegistry:
 
     def find_relevant(self, context: str) -> list[SkillEntry]:
         """
-        根据上下文查找相关技能
+        Find skills relevant to the given context.
 
-        用于 Agent 决定是否激活某个技能
+        Used by the Agent to decide whether to activate a skill.
 
         Args:
-            context: 上下文文本 (如用户输入)
+            context: context text (e.g. user input).
 
         Returns:
-            可能相关的技能列表，按相关度降序
+            Skills that may be relevant, sorted by relevance (descending).
         """
         if not context or not context.strip():
             return []
@@ -839,29 +839,29 @@ class SkillRegistry:
 
     def get_tool_schemas(self) -> list[dict]:
         """
-        获取已启用技能的工具 schema
+        Return tool schemas for enabled skills.
 
-        用于将技能作为工具提供给 LLM（排除 disabled 技能）
+        Used to expose skills as tools to the LLM (excluding disabled ones).
         """
         return [skill.to_tool_schema() for skill in self._skills.values() if not skill.disabled]
 
     def list_system_skills(self) -> list[SkillEntry]:
-        """列出所有系统技能"""
+        """List all system skills."""
         return [s for s in self._skills.values() if s.system]
 
     def list_external_skills(self) -> list[SkillEntry]:
-        """列出所有外部技能（非系统技能）"""
+        """List all external (non-system) skills."""
         return [s for s in self._skills.values() if not s.system]
 
     def get_by_tool_name(self, tool_name: str) -> SkillEntry | None:
         """
-        根据原工具名称查找技能
+        Find a skill by its original tool name.
 
         Args:
-            tool_name: 原工具名称（如 'browser_navigate'）
+            tool_name: original tool name (e.g. 'browser_navigate').
 
         Returns:
-            SkillEntry 或 None
+            SkillEntry or None.
         """
         for skill in self._skills.values():
             if skill.tool_name == tool_name:
@@ -870,29 +870,29 @@ class SkillRegistry:
 
     def get_by_handler(self, handler: str) -> list[SkillEntry]:
         """
-        根据处理器名称获取所有相关技能
+        Get all skills associated with the given handler.
 
         Args:
-            handler: 处理器名称（如 'browser'）
+            handler: handler name (e.g. 'browser').
 
         Returns:
-            技能列表
+            List of skills.
         """
         return [s for s in self._skills.values() if s.handler == handler]
 
     @property
     def count(self) -> int:
-        """技能数量"""
+        """Total skill count."""
         return len(self._skills)
 
     @property
     def system_count(self) -> int:
-        """系统技能数量"""
+        """System skill count."""
         return len(self.list_system_skills())
 
     @property
     def external_count(self) -> int:
-        """外部技能数量"""
+        """External skill count."""
         return len(self.list_external_skills())
 
     def __contains__(self, key: str) -> bool:
@@ -905,7 +905,7 @@ class SkillRegistry:
         return iter(self._skills.values())
 
     def __bool__(self) -> bool:
-        """确保空 registry 不被误判为 falsy"""
+        """Ensure an empty registry is not mistakenly treated as falsy."""
         return True
 
     def items(self):
@@ -915,15 +915,15 @@ class SkillRegistry:
         return self._skills.pop(key, default)
 
 
-# 全局注册中心
+# Global registry
 default_registry = SkillRegistry()
 
 
 def register_skill(skill: "ParsedSkill", skill_id: str | None = None) -> None:
-    """注册技能到默认注册中心"""
+    """Register a skill with the default registry."""
     default_registry.register(skill, skill_id=skill_id)
 
 
 def get_skill(key: str) -> SkillEntry | None:
-    """从默认注册中心获取技能（接受 skill_id 或 name）"""
+    """Get a skill from the default registry (accepts skill_id or name)."""
     return default_registry.get(key)

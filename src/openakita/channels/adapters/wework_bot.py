@@ -1401,25 +1401,24 @@ class WeWorkBotAdapter(ChannelAdapter):
         **kwargs,
     ) -> str:
         """
-        发送图片消息（通过 stream msg_item，base64+md5）
+        Send an image message (via stream msg_item, base64+md5).
 
-        图片会被队列到关联的 StreamSession，在 stream finish=true 时
-        随文本一起发送。
+        Images are queued on the associated StreamSession and sent together with text when finish=true.
 
-        限制:
-        - 仅支持 JPG/PNG 格式，其他格式自动转为 JPG
-        - 单张 ≤ 10MB
-        - 单条消息最多 10 张图片
-        - 图片仅在 finish=true 时随 msg_item 发出
+        Limits:
+        - Only JPG/PNG are supported; other formats are auto-converted to JPG
+        - <= 10MB per image
+        - Up to 10 images per message
+        - Images are sent via msg_item only when finish=true
 
-        如果 stream session 不存在，降级为 markdown 描述。
+        If no stream session exists, raises an error so the handler can fall back.
         """
-        # 查找关联的 stream session
+        # Look up the associated stream session
         stream_id = None
         if reply_to:
             stream_id = self._msgid_to_stream.get(reply_to)
         if not stream_id:
-            # 群聊中需要 user_id 精确匹配
+            # Group chats need exact user_id matching
             user_id = kwargs.get("channel_user_id") or (
                 kwargs.get("metadata", {}).get("channel_user_id")
                 if isinstance(kwargs.get("metadata"), dict)
@@ -1430,8 +1429,8 @@ class WeWorkBotAdapter(ChannelAdapter):
         session = self._stream_sessions.get(stream_id) if stream_id else None
 
         if not session:
-            # 无活跃 stream → raise 让 im_channel handler 回退到 send_file
-            # 不能调 send_markdown，否则会消耗 response_url 导致 Agent 最终文字被丢弃
+            # No active stream -> raise so im_channel handler falls back to send_file.
+            # We must not call send_markdown; that would consume response_url and cause the Agent's final text to be dropped.
             filename = Path(image_path).name
             logger.warning(
                 f"WeWorkBot: No active stream for image: {filename}. "
@@ -1443,22 +1442,22 @@ class WeWorkBotAdapter(ChannelAdapter):
                 f"Image sending requires an active stream session."
             )
 
-        # 读取图片 → 转格式(如需) → base64 + md5
+        # Read image -> convert format if needed -> base64 + md5
         try:
             b64_data, md5_hash = await self._prepare_image_for_stream(image_path)
         except Exception as e:
-            # 图片处理失败 → raise 让 handler 处理，不消耗 stream/response_url
+            # Image processing failed -> raise so the handler can handle it without consuming stream/response_url
             logger.error(f"WeWorkBot: Failed to prepare image {image_path}: {e}")
             raise RuntimeError(f"Failed to prepare image for stream: {e}") from e
 
-        # 检查限制
+        # Check limits
         if len(session.pending_images) >= 10:
             logger.warning(
                 f"WeWorkBot: Stream {stream_id} already has 10 images, skipping {image_path}"
             )
             return f"stream:{stream_id}:image_limit"
 
-        # 入队 + 重置 settle 计时器
+        # Enqueue + reset settle timer
         session.pending_images.append((b64_data, md5_hash))
         session.last_updated_at = time.time()
 
@@ -1478,26 +1477,26 @@ class WeWorkBotAdapter(ChannelAdapter):
         **kwargs,
     ) -> str:
         """
-        发送文件
+        Send a file.
 
-        企业微信智能机器人的流式回复仅支持图片（JPG/PNG），
-        不支持文件类型。raise 让 handler 返回错误给 Agent。
+        WeCom Smart Bot streaming reply only supports images (JPG/PNG),
+        not file types. Raises so the handler can surface an error to the Agent.
         """
         raise NotImplementedError(
             "WeWork Smart Robot (Bot mode) does not support sending files. "
             "Stream only supports JPG/PNG images via msg_item."
         )
 
-    # ── 图片处理 ──
+    # ── Image handling ──
 
     async def _prepare_image_for_stream(self, image_path: str) -> tuple[str, str]:
         """
-        准备图片用于 stream msg_item
+        Prepare an image for stream msg_item.
 
-        1. 读取文件
-        2. 检查/转换格式（仅支持 JPG/PNG，其他格式转 JPG）
-        3. 检查大小（≤ 10MB）
-        4. 返回 (base64_str, md5_hex)
+        1. Read the file
+        2. Check/convert format (only JPG/PNG supported; others converted to JPG)
+        3. Check size (<= 10MB)
+        4. Return (base64_str, md5_hex)
         """
         path = Path(image_path)
         if not path.exists():
@@ -1506,16 +1505,16 @@ class WeWorkBotAdapter(ChannelAdapter):
         raw_data = path.read_bytes()
         file_ext = path.suffix.lower()
 
-        # 判断是否需要格式转换
+        # Determine whether format conversion is needed
         is_jpg = file_ext in (".jpg", ".jpeg") or raw_data[:2] == b"\xff\xd8"
         is_png = file_ext == ".png" or raw_data[:4] == b"\x89PNG"
 
         if not is_jpg and not is_png:
-            # 需要转换为 JPG
+            # Needs conversion to JPG
             raw_data = await self._convert_image_to_jpg(raw_data, path.name)
             logger.info(f"WeWorkBot: Converted {path.name} to JPG ({len(raw_data)} bytes)")
 
-        # 检查大小 (10MB)
+        # Check size (10MB)
         if len(raw_data) > 10 * 1024 * 1024:
             raise ValueError(f"Image too large: {len(raw_data)} bytes (max 10MB)")
 
@@ -1526,9 +1525,9 @@ class WeWorkBotAdapter(ChannelAdapter):
 
     async def _convert_image_to_jpg(self, raw_data: bytes, filename: str) -> bytes:
         """
-        将图片转换为 JPG 格式
+        Convert an image to JPG format.
 
-        优先使用 Pillow，不可用时尝试直接使用原始数据。
+        Uses Pillow if available; otherwise tries to send the raw data.
         """
         try:
             import io
@@ -1536,7 +1535,7 @@ class WeWorkBotAdapter(ChannelAdapter):
             from PIL import Image
 
             img = Image.open(io.BytesIO(raw_data))
-            # 转换为 RGB（移除 alpha 通道）
+            # Convert to RGB (strip alpha channel)
             if img.mode in ("RGBA", "LA", "P"):
                 img = img.convert("RGB")
             output = io.BytesIO()
@@ -1546,20 +1545,20 @@ class WeWorkBotAdapter(ChannelAdapter):
             from openakita.tools._import_helper import import_or_hint
 
             hint = import_or_hint("PIL")
-            logger.warning(f"WeWorkBot: {hint}，无法转换 {filename}，尝试发送原始数据")
+            logger.warning(f"WeWorkBot: {hint}; cannot convert {filename}, attempting to send raw data")
             return raw_data
         except Exception as e:
             logger.error(f"WeWorkBot: Image conversion failed for {filename}: {e}")
             raise
 
-    # ==================== 媒体处理 ====================
+    # ==================== Media handling ====================
 
     async def download_media(self, media: MediaFile) -> Path:
         """
-        下载媒体文件
+        Download a media file.
 
-        智能机器人的图片/文件 URL 内容经 AES 加密，
-        下载后需用 EncodingAESKey 解密。URL 有效期 5 分钟。
+        Smart Bot image/file URL content is AES-encrypted;
+        after download, decrypt with EncodingAESKey. URLs are valid for 5 minutes.
         """
         if media.local_path and Path(media.local_path).exists():
             return Path(media.local_path)
@@ -1567,12 +1566,12 @@ class WeWorkBotAdapter(ChannelAdapter):
         if not media.url:
             raise ValueError("Media has no URL to download")
 
-        # 下载
+        # Download
         response = await self._http_client.get(media.url, timeout=60.0)
         response.raise_for_status()
         raw_data = response.content
 
-        # 如果标记了 AES 加密，解密内容
+        # If marked as AES-encrypted, decrypt the content
         if media.extra and media.extra.get("aes_encrypted") and self._crypt:
             try:
                 raw_data = self._crypt.decrypt_media(raw_data)
@@ -1582,7 +1581,7 @@ class WeWorkBotAdapter(ChannelAdapter):
                 media.status = MediaStatus.FAILED
                 raise ValueError(f"Media decryption failed for {media.filename}") from e
 
-        # 保存到本地
+        # Save locally
         from openakita.channels.base import sanitize_filename
 
         safe_name = sanitize_filename(Path(media.filename).name or "download")
@@ -1598,33 +1597,33 @@ class WeWorkBotAdapter(ChannelAdapter):
 
     async def upload_media(self, path: Path, mime_type: str) -> MediaFile:
         """
-        上传媒体文件
+        Upload a media file.
 
-        智能机器人模式不需要预上传媒体。
-        图片通过 stream msg_item 的 base64+md5 直接内联发送。
+        Smart Bot mode does not require media pre-upload.
+        Images are sent inline via base64+md5 through stream msg_item.
         """
         raise NotImplementedError(
             "WeWork Smart Robot sends images inline via stream msg_item (base64+md5). "
             "No separate upload API is needed. Use send_image() instead."
         )
 
-    # ==================== 清理 ====================
+    # ==================== Cleanup ====================
 
     async def _cleanup_expired_urls(self) -> None:
-        """定期清理过期的 stream session 和 response_url 缓存"""
+        """Periodically clean up expired stream sessions and response_url caches."""
         while self._running:
             try:
                 await asyncio.sleep(self.CLEANUP_INTERVAL)
 
                 now = time.time()
 
-                # ── 清理超时的 stream session ──
+                # ── Clean up timed-out stream sessions ──
                 expired_streams = []
                 async with self._stream_lock:
                     for sid, session in list(self._stream_sessions.items()):
                         age = now - session.created_at
                         if age > STREAM_TIMEOUT + 60:
-                            # 超过超时 + 1 分钟缓冲，强制清理
+                            # Past timeout + 1 minute buffer, force cleanup
                             expired_streams.append(sid)
 
                 for sid in expired_streams:
@@ -1635,13 +1634,13 @@ class WeWorkBotAdapter(ChannelAdapter):
                         f"WeWorkBot: Cleaned {len(expired_streams)} expired stream sessions"
                     )
 
-                # ── 清理 response_url 缓存 ──
+                # ── Clean up response_url caches ──
                 if len(self._msgid_response_urls) > 200:
                     excess = len(self._msgid_response_urls) - 100
                     keys = list(self._msgid_response_urls.keys())[:excess]
                     for k in keys:
                         self._msgid_response_urls.pop(k, None)
-                    logger.info(f"WeWorkBot: Cleaned {excess} expired msgid→url entries")
+                    logger.info(f"WeWorkBot: Cleaned {excess} expired msgid->url entries")
 
                 if len(self._response_urls) > 100:
                     excess = len(self._response_urls) - 50

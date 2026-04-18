@@ -1866,7 +1866,7 @@ class DingTalkAdapter(ChannelAdapter):
             else:
                 split_pos += 1
 
-            # 检查是否会截断代码块
+            # Check whether this would truncate a code block
             open_fences = chunk[:split_pos].count("```")
             if open_fences % 2 != 0:
                 fence_pos = chunk[:split_pos].rfind("```")
@@ -1878,7 +1878,7 @@ class DingTalkAdapter(ChannelAdapter):
 
         return chunks
 
-    # ==================== Markdown / 卡片 ====================
+    # ==================== Markdown / card ====================
 
     async def send_markdown(
         self,
@@ -1886,7 +1886,7 @@ class DingTalkAdapter(ChannelAdapter):
         title: str,
         text: str,
     ) -> str:
-        """发送 Markdown 消息"""
+        """Send a Markdown message."""
         await self._refresh_token()
 
         url = f"{self.API_NEW}/robot/oToMessages/batchSend"
@@ -1911,7 +1911,7 @@ class DingTalkAdapter(ChannelAdapter):
         single_title: str,
         single_url: str,
     ) -> str:
-        """发送卡片消息"""
+        """Send an action card message."""
         await self._refresh_token()
 
         url = f"{self.API_NEW}/robot/oToMessages/batchSend"
@@ -1935,17 +1935,17 @@ class DingTalkAdapter(ChannelAdapter):
         result = response.json()
         return result.get("processQueryKey", "")
 
-    # ==================== 媒体处理 ====================
+    # ==================== Media handling ====================
 
     async def download_media(self, media: MediaFile) -> Path:
-        """下载媒体文件"""
+        """Download a media file."""
         if media.local_path and Path(media.local_path).exists():
             return Path(media.local_path)
 
         if not media.file_id:
             raise ValueError("Media has no file_id (downloadCode)")
 
-        # 使用钉钉新版文件下载 API（POST 方法，新版 token）
+        # Use DingTalk's new-style file download API (POST, new-style token)
         token = await self._refresh_token()
         url = f"{self.API_NEW}/robot/messageFiles/download"
         headers = {"x-acs-dingtalk-access-token": token}
@@ -1962,7 +1962,7 @@ class DingTalkAdapter(ChannelAdapter):
             )
             raise RuntimeError(f"Failed to get download URL: {result.get('message', 'Unknown')}")
 
-        # 下载文件
+        # Download the file
         response = await self._http_client.get(download_url, timeout=60.0)
         response.raise_for_status()
 
@@ -1981,17 +1981,17 @@ class DingTalkAdapter(ChannelAdapter):
 
     async def upload_media(self, path: Path, mime_type: str) -> MediaFile:
         """
-        上传媒体文件到钉钉
+        Upload a media file to DingTalk.
 
-        使用钉钉旧版 media/upload API 上传文件，获取 media_id。
-        注意: 此接口在 oapi.dingtalk.com 上，需要旧版 access_token。
+        Uses DingTalk's legacy media/upload API to upload files and obtain a media_id.
+        Note: this endpoint is on oapi.dingtalk.com and requires the legacy access_token.
         """
         old_token = await self._refresh_old_token()
 
         url = f"{self.API_BASE}/media/upload"
         params = {"access_token": old_token}
 
-        # 根据 mime_type 确定类型
+        # Determine the type from mime_type
         if mime_type.startswith("image/"):
             media_type = "image"
         elif mime_type.startswith("audio/"):
@@ -2032,23 +2032,22 @@ class DingTalkAdapter(ChannelAdapter):
 
         except Exception as e:
             logger.error(f"Failed to upload media {path.name}: {e}")
-            # 返回基础 MediaFile（无 media_id）
+            # Return a basic MediaFile (without media_id)
             return MediaFile.create(
                 filename=path.name,
                 mime_type=mime_type,
             )
 
-    # ==================== Token 管理 ====================
+    # ==================== Token management ====================
 
     async def _refresh_token(self) -> str:
         """
-        刷新新版 access token (用于 api.dingtalk.com/v1.0 接口)
+        Refresh the new-style access token (used for api.dingtalk.com/v1.0 APIs).
 
-        新版 API (robot/groupMessages/send, robot/oToMessages/batchSend 等)
-        需要通过 OAuth2 接口获取的 accessToken，
-        放在请求头 x-acs-dingtalk-access-token 中。
+        The new-style APIs (robot/groupMessages/send, robot/oToMessages/batchSend, etc.) require
+        an accessToken obtained via the OAuth2 endpoint, placed in the x-acs-dingtalk-access-token header.
 
-        使用 asyncio.Lock 进行 double-check locking，避免并发重复刷新。
+        Uses asyncio.Lock with double-check locking to avoid redundant concurrent refreshes.
         """
         if self._access_token and time.time() < self._token_expires_at:
             return self._access_token
@@ -2088,11 +2087,11 @@ class DingTalkAdapter(ChannelAdapter):
 
     async def _refresh_old_token(self) -> str:
         """
-        刷新旧版 access token (用于 oapi.dingtalk.com 接口)
+        Refresh the legacy access token (used for oapi.dingtalk.com APIs).
 
-        旧版 API (media/upload, gettoken 等) 使用 access_token 查询参数。
+        The legacy APIs (media/upload, gettoken, etc.) use an access_token query parameter.
 
-        使用 asyncio.Lock 进行 double-check locking，避免并发重复刷新。
+        Uses asyncio.Lock with double-check locking to avoid redundant concurrent refreshes.
         """
         if self._old_access_token and time.time() < self._old_token_expires_at:
             return self._old_access_token

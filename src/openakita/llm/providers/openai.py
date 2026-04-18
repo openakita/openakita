@@ -1,14 +1,14 @@
 """
 OpenAI Provider
 
-支持 OpenAI API 格式的调用，包括：
-- OpenAI 官方 API
-- DashScope（通义千问）
-- Kimi（Moonshot AI）
+Supports calls using the OpenAI API format, including:
+- OpenAI official API
+- DashScope (Tongyi Qianwen)
+- Kimi (Moonshot AI)
 - OpenRouter
-- 硅基流动
-- 云雾 API
-- 其他 OpenAI 兼容 API
+- SiliconFlow
+- Yunwu API
+- Other OpenAI-compatible APIs
 """
 
 import json
@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 def _is_stream_only_error(error: str) -> bool:
-    """检测错误是否表明端点仅支持流式请求（stream-only relay/中转站）。"""
+    """Detect whether an error indicates the endpoint only supports streaming requests (stream-only relay)."""
     err_lower = error.lower()
     return (
         "stream must be set to true" in err_lower
@@ -72,34 +72,34 @@ class _BearerAuth(httpx.Auth):
 
 
 class OpenAIProvider(LLMProvider):
-    """OpenAI 兼容 API Provider"""
+    """OpenAI-compatible API Provider"""
 
     def __init__(self, config: EndpointConfig):
         super().__init__(config)
         self._client: httpx.AsyncClient | None = None
-        self._client_loop_id: int | None = None  # 记录创建客户端时的事件循环 ID
+        self._client_loop_id: int | None = None  # Records the event loop ID used when the client was created
         self._stream_only: bool = config.stream_only
 
     @property
     def api_key(self) -> str:
-        """获取 API Key"""
+        """Get the API Key"""
         return self.config.get_api_key() or ""
 
     @property
     def base_url(self) -> str:
-        """获取 base URL，自动剥离用户误粘贴的 OpenAI 兼容端点路径后缀。"""
+        """Get the base URL, automatically stripping OpenAI-compatible endpoint path suffixes the user may have accidentally pasted."""
         return normalize_base_url(self.config.base_url)
 
     @property
     def _api_url(self) -> str:
-        """完整 API 端点 URL，子类可覆写以切换协议（如 Responses API）。"""
+        """Full API endpoint URL; subclasses can override to switch protocols (e.g. Responses API)."""
         return f"{self.base_url}/chat/completions"
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """获取或创建 HTTP 客户端
+        """Get or create the HTTP client.
 
-        注意：httpx.AsyncClient 绑定到创建时的事件循环。
-        如果事件循环变化（如定时任务创建新循环），需要重新创建客户端。
+        Note: httpx.AsyncClient is bound to the event loop it was created on.
+        If the event loop changes (e.g. a scheduled task creates a new loop), the client must be recreated.
         """
         import asyncio
 
@@ -109,7 +109,7 @@ class OpenAIProvider(LLMProvider):
         except RuntimeError:
             current_loop_id = None
 
-        # 检查是否需要重新创建客户端
+        # Check whether the client needs to be recreated
         need_recreate = (
             self._client is None
             or self._client.is_closed
@@ -117,21 +117,21 @@ class OpenAIProvider(LLMProvider):
         )
 
         if need_recreate:
-            # 安全关闭旧客户端
+            # Safely close the old client
             if self._client is not None and not self._client.is_closed:
                 try:
                     await self._client.aclose()
                 except Exception:
-                    pass  # 忽略关闭错误
+                    pass  # Ignore close errors
 
-            # 获取代理和网络配置
+            # Get proxy and network configuration
             proxy = get_proxy_config()
-            transport = get_httpx_transport()  # IPv4-only 支持
+            transport = get_httpx_transport()  # IPv4-only support
             is_local = self._is_local_endpoint()
 
-            # 本地端点（Ollama 等）自动放大 read timeout
-            # 本地推理受 CPU/GPU 资源限制，推理时间远大于云端 API
-            # 默认 read timeout 可能导致频繁超时被误判为故障
+            # Automatically extend read timeout for local endpoints (Ollama, etc.)
+            # Local inference is bound by CPU/GPU resources, making inference much slower than cloud APIs.
+            # The default read timeout can cause frequent timeouts that are misclassified as failures.
             timeout_value = self.config.timeout
             if is_local:
                 base_timeout = build_httpx_timeout(timeout_value, default=60.0)
@@ -157,9 +157,9 @@ class OpenAIProvider(LLMProvider):
                 if api_key_for_hook and "Authorization" not in request.headers:
                     request.headers["Authorization"] = f"Bearer {api_key_for_hook}"
 
-            # trust_env=False: 代理由 get_proxy_config() 显式管理（含可达性验证）。
-            # 避免 macOS/Windows 残留系统代理（Clash/V2Ray 等）导致请求被路由到
-            # 不存在的代理端口而失败。
+            # trust_env=False: proxies are managed explicitly by get_proxy_config() (with reachability checks).
+            # This avoids lingering system proxies on macOS/Windows (Clash/V2Ray, etc.) from routing
+            # requests to nonexistent proxy ports and causing failures.
             client_kwargs = {
                 "timeout": build_httpx_timeout(timeout_value, default=60.0),
                 "follow_redirects": True,
@@ -180,13 +180,14 @@ class OpenAIProvider(LLMProvider):
         return self._client
 
     def _estimate_request_timeout(self, body: dict) -> httpx.Timeout | None:
-        """根据请求体大小动态计算超时
+        """Dynamically compute the timeout based on request body size.
 
-        大上下文（>60K tokens 估算）场景下，默认 read timeout 可能不够，
-        需按比例放大以避免频繁 ReadTimeout 导致的无效重试。
+        For large-context scenarios (~>60K estimated tokens), the default read timeout
+        may not be enough and must be scaled up to avoid futile retries caused by
+        frequent ReadTimeouts.
 
         Returns:
-            httpx.Timeout 或 None（不需要覆盖时）
+            An httpx.Timeout or None (when no override is needed).
         """
         messages = body.get("messages", [])
         body_chars = sum(
@@ -196,14 +197,14 @@ class OpenAIProvider(LLMProvider):
         if tools:
             body_chars += sum(len(str(t)) for t in tools)
 
-        est_tokens = body_chars // 2  # 中文约 2 字符/token
+        est_tokens = body_chars // 2  # Chinese is roughly 2 chars/token
         if est_tokens < 30_000:
             return None
 
         base_timeout = self.config.timeout or 180
-        scale = min(est_tokens / 30_000, 3.0)  # 最多 3 倍
+        scale = min(est_tokens / 30_000, 3.0)  # Up to 3x
         new_read = base_timeout * scale
-        new_read = min(new_read, 540.0)  # 上限 9 分钟
+        new_read = min(new_read, 540.0)  # Cap at 9 minutes
         if new_read <= base_timeout * 1.1:
             return None
 
@@ -219,7 +220,7 @@ class OpenAIProvider(LLMProvider):
         )
 
     async def chat(self, request: LLMRequest) -> LLMResponse:
-        """发送聊天请求（支持 stream-only 端点自动检测）"""
+        """Send a chat request (with automatic detection of stream-only endpoints)."""
         await self.acquire_rate_limit()
 
         if self._stream_only:
@@ -240,7 +241,7 @@ class OpenAIProvider(LLMProvider):
             raise
 
     async def _chat_non_stream(self, request: LLMRequest) -> LLMResponse:
-        """非流式请求实现（原始路径，逻辑完全不变）。调用方须已获取 rate limit。"""
+        """Non-streaming request implementation (original path, logic unchanged). The caller must have already acquired the rate limit."""
         client = await self._get_client()
 
         body = self._build_request_body(request)
@@ -278,7 +279,7 @@ class OpenAIProvider(LLMProvider):
                     f"body_preview={body_preview!r})"
                 )
 
-            # 某些 OpenAI 兼容 API 在 HTTP 200 响应体内返回错误（不走标准 HTTP 状态码）
+            # Some OpenAI-compatible APIs return errors inside an HTTP 200 response body (not via standard HTTP status codes)
             if "error" in data and data["error"]:
                 err_obj = (
                     data["error"]
@@ -293,7 +294,7 @@ class OpenAIProvider(LLMProvider):
                 )
                 raise LLMError(f"API error in response body: {err_msg}")
 
-            # HTTP 200 但 choices 为空 —— 某些中转/兼容 API 的异常行为
+            # HTTP 200 but empty choices — anomalous behavior from some relay/compatible APIs
             choices = data.get("choices")
             if not choices:
                 body_preview = json.dumps(data, ensure_ascii=False)[:500]
@@ -324,10 +325,10 @@ class OpenAIProvider(LLMProvider):
             raise LLMError(f"Request failed: {detail}")
 
     async def _iter_sse_events(self, body: dict) -> AsyncIterator[dict]:
-        """SSE 传输层：发送流式请求，解析 SSE 行，yield 转换后的事件。
+        """SSE transport layer: sends a streaming request, parses SSE lines, yields converted events.
 
-        body 须已包含 "stream": True。调用方须已获取 rate limit。
-        子类可覆写以适配不同 SSE 格式（如 Responses API 的 named events）。
+        ``body`` must already include ``"stream": True``. The caller must have already acquired the rate limit.
+        Subclasses can override this to adapt to different SSE formats (e.g. named events in the Responses API).
         """
         client = await self._get_client()
         req_timeout = self._estimate_request_timeout(body)
@@ -424,9 +425,9 @@ class OpenAIProvider(LLMProvider):
             raise LLMError(f"Stream request failed: {detail}")
 
     async def _chat_via_stream(self, request: LLMRequest) -> LLMResponse:
-        """流式传输 → 同步响应适配器：收集流式事件，组装为 LLMResponse。
+        """Streaming-to-synchronous response adapter: collects streaming events and assembles them into an LLMResponse.
 
-        用于 stream-only 端点（如 Codex relay）。调用方须已获取 rate limit。
+        Used for stream-only endpoints (e.g. Codex relay). The caller must have already acquired the rate limit.
         """
         body = self._build_request_body(request)
         body["stream"] = True
@@ -504,7 +505,7 @@ class OpenAIProvider(LLMProvider):
         )
 
     async def chat_stream(self, request: LLMRequest) -> AsyncIterator[dict]:
-        """流式聊天请求"""
+        """Streaming chat request."""
         await self.acquire_rate_limit()
         body = self._build_request_body(request)
         body["stream"] = True
@@ -513,7 +514,7 @@ class OpenAIProvider(LLMProvider):
             yield event
 
     def _is_local_endpoint(self) -> bool:
-        """检查是否为本地端点（Ollama/LM Studio 等）"""
+        """Check whether this is a local endpoint (Ollama, LM Studio, etc.)."""
         url = self.base_url.lower()
         return any(
             host in url
@@ -526,7 +527,7 @@ class OpenAIProvider(LLMProvider):
         )
 
     def _get_auth(self) -> _BearerAuth:
-        """获取认证信息（通过 httpx Auth 机制，确保重定向时不丢失凭据）"""
+        """Get authentication info (via httpx's Auth mechanism to ensure credentials are not lost on redirects)."""
         api_key = (self.api_key or "").strip()
         if not api_key:
             if self._is_local_endpoint():
@@ -542,7 +543,7 @@ class OpenAIProvider(LLMProvider):
         return _BearerAuth(api_key)
 
     def _build_headers(self) -> dict:
-        """构建请求头（含 Authorization，不依赖 httpx auth 机制）"""
+        """Build request headers (including Authorization, without relying on httpx's auth mechanism)."""
         api_key = (self.api_key or "").strip()
         if not api_key:
             if self._is_local_endpoint():
@@ -568,13 +569,13 @@ class OpenAIProvider(LLMProvider):
         return headers
 
     def _build_request_body(self, request: LLMRequest) -> dict:
-        """构建请求体"""
-        # 转换消息格式（传递 provider 以正确处理视频等多媒体内容）
+        """Build the request body."""
+        # Convert message format (pass provider so video and other multimedia content is handled correctly)
         thinking_enabled = request.enable_thinking and self.config.has_capability("thinking")
 
-        # thinking-only 模型（deepseek-reasoner、QwQ 等）无法关闭思考，
-        # 即使 fallback 降级了 enable_thinking=False，
-        # 仍必须注入 reasoning_content 并保持 thinking 启用，否则 API 返回 400
+        # Thinking-only models (deepseek-reasoner, QwQ, etc.) cannot disable thinking.
+        # Even if fallback downgraded enable_thinking to False,
+        # we still must inject reasoning_content and keep thinking enabled, otherwise the API returns 400.
         is_always_thinking = False
         if not thinking_enabled and self.config.has_capability("thinking"):
             from ..capabilities import is_thinking_only
@@ -598,15 +599,17 @@ class OpenAIProvider(LLMProvider):
             "messages": messages,
         }
 
-        # max_tokens 处理策略：
-        # 理想情况下不传 max_tokens 可让 API 使用模型默认上限，但实际上部分 OpenAI 兼容
-        # API（如 NVIDIA NIM）默认 max_tokens 极低（~200），开启 thinking 后所有输出预算
-        # 被思考内容耗尽，导致无可见文本返回。
-        # 因此：调用方传了 max_tokens > 0 时直接使用，否则用端点配置值或兜底 16384。
+        # max_tokens handling strategy:
+        # Ideally, omitting max_tokens would let the API use the model's default cap, but in practice
+        # some OpenAI-compatible APIs (e.g. NVIDIA NIM) default max_tokens to an extremely low value
+        # (~200). With thinking enabled, the entire output budget is consumed by thinking content,
+        # leaving no visible text in the response.
+        # Therefore: if the caller passes max_tokens > 0, use it directly; otherwise use the endpoint
+        # configuration value, falling back to 16384.
         #
-        # 特殊情况 — OpenAI o1/o3/o4 推理模型：
-        # 这些模型拒绝 max_tokens 参数，要求使用 max_completion_tokens。
-        # 检测方式：模型名含 "o1-"/"o3-"/"o4-" 且 provider 为 openai。
+        # Special case — OpenAI o1/o3/o4 reasoning models:
+        # These models reject the max_tokens parameter and require max_completion_tokens.
+        # Detection: model name contains "o1-"/"o3-"/"o4-" and provider is openai.
         _model_lower = self.config.model.lower()
         _is_openai_reasoning = self.config.provider == "openai" and any(
             tag in _model_lower for tag in ("o1-", "o3-", "o4-", "/o1", "/o3", "/o4")
@@ -620,32 +623,32 @@ class OpenAIProvider(LLMProvider):
             _fallback = self.config.max_tokens or 16384
             body[_token_key] = _fallback
 
-        # 工具
+        # Tools
         if request.tools:
             body["tools"] = convert_tools_to_openai(request.tools)
             body["tool_choice"] = "auto"
 
-        # 温度
+        # Temperature
         if request.temperature != 1.0:
             body["temperature"] = request.temperature
 
-        # 停止序列
+        # Stop sequences
         if request.stop_sequences:
             body["stop"] = request.stop_sequences
 
-        # 额外参数（服务商特定）
+        # Extra parameters (provider-specific)
         if self.config.extra_params:
             body.update(self.config.extra_params)
         if request.extra_params:
             body.update(request.extra_params)
 
-        # ── 本地端点检测 ──
-        # Ollama / LM Studio 等本地推理引擎不支持 OpenAI 风格的
-        # thinking: {"type": "enabled"} 嵌套参数，但 Ollama 0.9+ 支持
-        # enable_thinking (bool) 来控制双模模型（如 qwen3.5）的思考模式。
+        # ── Local endpoint detection ──
+        # Local inference engines such as Ollama / LM Studio do not support the OpenAI-style
+        # nested thinking: {"type": "enabled"} parameter, but Ollama 0.9+ supports
+        # enable_thinking (bool) to control the thinking mode of dual-mode models (e.g. qwen3.5).
         is_local = self._is_local_endpoint()
 
-        # DashScope 思考模式 — 必须在 extra_params 之后，以覆盖其中的 enable_thinking
+        # DashScope thinking mode — must come after extra_params to override any enable_thinking set there
         if self.config.provider == "dashscope" and self.config.has_capability("thinking"):
             ds_thinking = bool(request.enable_thinking)
             if not ds_thinking and is_always_thinking:
@@ -659,21 +662,21 @@ class OpenAIProvider(LLMProvider):
             elif not ds_thinking:
                 body.pop("thinking_budget", None)
 
-        # SiliconFlow 思考模式
+        # SiliconFlow thinking mode
         #
-        # SiliconFlow API 有两类思考模型（参考官方文档）：
+        # The SiliconFlow API has two classes of thinking models (see official docs):
         #
-        # A 类 - 双模模型（支持 enable_thinking 切换）：
-        #   Qwen3 系列, Hunyuan-A13B, GLM-4.6V/4.5V, DeepSeek-V3.1/V3.2 系列
-        #   → 发送 enable_thinking (bool) + thinking_budget
+        # Class A - Dual-mode models (support toggling via enable_thinking):
+        #   Qwen3 series, Hunyuan-A13B, GLM-4.6V/4.5V, DeepSeek-V3.1/V3.2 series
+        #   → send enable_thinking (bool) + thinking_budget
         #
-        # B 类 - 天然思考模型（始终思考，不接受 enable_thinking）：
-        #   Kimi-K2-Thinking, DeepSeek-R1, QwQ-32B, GLM-Z1 系列
-        #   → 只发送 thinking_budget 控制深度，不发送 enable_thinking
-        #   → 向这些模型发送 enable_thinking 会导致 400:
+        # Class B - Always-thinking models (always think, do not accept enable_thinking):
+        #   Kimi-K2-Thinking, DeepSeek-R1, QwQ-32B, GLM-Z1 series
+        #   → only send thinking_budget to control depth; do not send enable_thinking
+        #   → sending enable_thinking to these models causes a 400:
         #     "Value error, current model does not support parameter enable_thinking"
         #
-        # 两类模型都不支持 OpenAI 风格的 thinking: {"type": "enabled"} + reasoning_effort
+        # Neither class supports the OpenAI-style thinking: {"type": "enabled"} + reasoning_effort
         elif self.config.provider in (
             "siliconflow",
             "siliconflow-intl",
@@ -685,8 +688,8 @@ class OpenAIProvider(LLMProvider):
             )
 
             if sf_thinking_only:
-                # B 类：天然思考模型 — 只允许 thinking_budget 控制深度
-                # 必须清理 extra_params 可能泄漏的 enable_thinking
+                # Class B: always-thinking models — only thinking_budget is allowed to control depth.
+                # Must strip any enable_thinking that may have leaked through extra_params.
                 body.pop("enable_thinking", None)
                 if request.thinking_depth:
                     budget_map = {"low": 1024, "medium": 4096, "high": 16384}
@@ -694,7 +697,7 @@ class OpenAIProvider(LLMProvider):
                     if budget:
                         body["thinking_budget"] = budget
             else:
-                # A 类：双模模型 — enable_thinking 切换 + thinking_budget
+                # Class A: dual-mode models — toggle via enable_thinking + thinking_budget
                 body["enable_thinking"] = bool(request.enable_thinking)
                 if request.enable_thinking:
                     if request.thinking_depth:
@@ -705,26 +708,26 @@ class OpenAIProvider(LLMProvider):
                 else:
                     body.pop("thinking_budget", None)
 
-            # 清理不适用于 SiliconFlow 的 OpenAI 风格参数（可能由 extra_params 引入）
+            # Strip OpenAI-style parameters not applicable to SiliconFlow (may have been introduced via extra_params)
             body.pop("thinking", None)
             body.pop("reasoning_effort", None)
 
-        # 本地端点思考模式（Ollama 0.9+ 等）
+        # Local endpoint thinking mode (Ollama 0.9+, etc.)
         #
-        # Ollama 0.9+ 的 OpenAI 兼容 API 支持 enable_thinking (bool) 来切换
-        # 双模模型（如 qwen3.5）的思考模式。Thinking-only 模型（如 qwen3）
-        # 通过 <think> 标签自行输出思考内容，无需 API 参数控制。
-        # 不使用 OpenAI 风格的 thinking: {"type": "enabled"} 或 reasoning_effort。
+        # Ollama 0.9+'s OpenAI-compatible API supports enable_thinking (bool) to toggle
+        # the thinking mode of dual-mode models (e.g. qwen3.5). Thinking-only models (e.g. qwen3)
+        # emit their thinking content via <think> tags and need no API-level parameter control.
+        # Does not use the OpenAI-style thinking: {"type": "enabled"} or reasoning_effort.
         elif is_local and self.config.has_capability("thinking"):
             if request.enable_thinking:
                 body["enable_thinking"] = True
 
-        # OpenRouter 思考模式
+        # OpenRouter thinking mode
         #
-        # OpenRouter 使用独立的 reasoning API（不兼容 OpenAI thinking / DashScope enable_thinking）：
-        #   请求: reasoning: {"effort": "high"} 或 {"enabled": true}
-        #   响应: message.reasoning (str) 包含推理过程
-        # 文档: https://openrouter.ai/docs/use-cases/reasoning-tokens
+        # OpenRouter uses its own reasoning API (incompatible with OpenAI thinking / DashScope enable_thinking):
+        #   Request: reasoning: {"effort": "high"} or {"enabled": true}
+        #   Response: message.reasoning (str) contains the reasoning trace
+        # Docs: https://openrouter.ai/docs/use-cases/reasoning-tokens
         elif self.config.provider == "openrouter" and self.config.has_capability("thinking"):
             body.pop("enable_thinking", None)
             body.pop("thinking", None)
@@ -737,16 +740,16 @@ class OpenAIProvider(LLMProvider):
             else:
                 body.pop("reasoning", None)
 
-        # OpenAI 兼容端点思考模式（火山引擎/DeepSeek/vLLM 等）
+        # OpenAI-compatible endpoint thinking mode (Volcengine/DeepSeek/vLLM, etc.)
         #
-        # 背景：
-        # - 原生 OpenAI o1/o3 系列天然就是思考模型，只需 reasoning_effort 控制深度
-        # - 但其他 OpenAI-compatible 端点（火山引擎/DeepSeek/vLLM 等）需要显式传
-        #   thinking: {"type": "enabled"} 来启用思考模式，reasoning_effort 只是可选的深度控制
-        # - 如果只传 reasoning_effort 而不启用 thinking，火山引擎等 API 会返回 400:
+        # Background:
+        # - Native OpenAI o1/o3 series are inherently thinking models, so only reasoning_effort is needed to control depth.
+        # - Other OpenAI-compatible endpoints (Volcengine/DeepSeek/vLLM, etc.) require explicitly passing
+        #   thinking: {"type": "enabled"} to enable thinking mode; reasoning_effort is only an optional depth control.
+        # - Sending only reasoning_effort without enabling thinking causes Volcengine and similar APIs to return 400:
         #   "Invalid combination of reasoning_effort and thinking type: medium + disabled"
         #
-        # 排除: DashScope、SiliconFlow、本地端点、OpenRouter（上面已各自处理）
+        # Excludes: DashScope, SiliconFlow, local endpoints, OpenRouter (each handled above)
         elif self.config.has_capability("thinking") and not is_local:
             body.pop("enable_thinking", None)
 
@@ -763,10 +766,10 @@ class OpenAIProvider(LLMProvider):
                 if "thinking" in body:
                     body["thinking"] = {"type": "disabled"}
 
-        # ── 本地端点清理 ──
-        # 移除可能通过 extra_params 泄漏的、本地引擎不支持的思考参数。
-        # enable_thinking (bool) 不在此列：Ollama 0.9+ 原生支持，
-        # 其他本地引擎（LM Studio / 旧版 Ollama）对未知简单字段静默忽略。
+        # ── Local endpoint cleanup ──
+        # Remove thinking-related parameters that may have leaked via extra_params and are unsupported by local engines.
+        # enable_thinking (bool) is not on this list: Ollama 0.9+ supports it natively,
+        # and other local engines (LM Studio / older Ollama) silently ignore unknown simple fields.
         if is_local:
             _stripped = [
                 k for k in ("thinking", "thinking_budget", "reasoning_effort") if k in body
@@ -778,17 +781,18 @@ class OpenAIProvider(LLMProvider):
                     f"[OpenAI] Local endpoint '{self.name}': stripped thinking params {_stripped}"
                 )
 
-        # ── 端点级 thinking 参数剥离 ──
-        # 若端点曾因 thinking/reasoning_effort 返回 400，
-        # 客户端自愈逻辑已在 provider 上标记 _thinking_params_unsupported，
-        # 此处作为最终安全网，确保不再发送任何 thinking 相关参数。
+        # ── Endpoint-level thinking parameter stripping ──
+        # If the endpoint has previously returned 400 due to thinking/reasoning_effort,
+        # the client's self-healing logic marks _thinking_params_unsupported on the provider.
+        # This serves as a final safety net ensuring no thinking-related parameters are sent.
         if getattr(self, "_thinking_params_unsupported", False):
             for _tp in ("thinking", "reasoning_effort", "enable_thinking", "thinking_budget"):
                 body.pop(_tp, None)
 
-        # ── 请求体卫生检查 ──
-        # extra_params 的 body.update() 是盲覆盖，可能将精心计算的参数（如 max_tokens）
-        # 替换为无效值。在 return 前做最终校验，确保发出的请求体始终合法。
+        # ── Request body sanity check ──
+        # body.update() from extra_params is a blind overwrite and may replace carefully computed
+        # parameters (such as max_tokens) with invalid values. Do a final validation before return
+        # to ensure the outgoing request body is always valid.
         for _tk in ("max_tokens", "max_completion_tokens"):
             _tv = body.get(_tk)
             if _tv is not None and (not isinstance(_tv, int) or _tv <= 0):
@@ -797,7 +801,7 @@ class OpenAIProvider(LLMProvider):
         return body
 
     def _parse_response(self, data: dict) -> LLMResponse:
-        """解析响应"""
+        """Parse the response."""
         choices = data.get("choices", [])
         if not choices:
             return LLMResponse(
@@ -813,8 +817,8 @@ class OpenAIProvider(LLMProvider):
         content_blocks = []
         has_tool_calls = False
 
-        # 文本内容 — 兼容 string 和 array 两种格式
-        # 部分 OpenAI 兼容 API (如 Google Gemini OpenAI-compat) 返回 content 为数组:
+        # Text content — accept both string and array formats
+        # Some OpenAI-compatible APIs (e.g. Google Gemini OpenAI-compat) return content as an array:
         #   [{"type": "text", "text": "..."}, ...]
         raw_content = message.get("content")
         if isinstance(raw_content, list):
@@ -832,7 +836,7 @@ class OpenAIProvider(LLMProvider):
         else:
             text_content = raw_content or ""
 
-        # 原生工具调用
+        # Native tool calls
         tool_calls = message.get("tool_calls", [])
         if tool_calls:
             converted = convert_tool_calls_from_openai(tool_calls)
@@ -842,7 +846,7 @@ class OpenAIProvider(LLMProvider):
             logger.info(
                 f"[TOOL_CALLS] Received {len(tool_calls)} native tool calls from {self.name}"
             )
-            # 容错日志：有 tool_calls 但未能转换（通常是兼容网关字段不规范）
+            # Fault-tolerance log: tool_calls present but none converted (usually due to non-standard fields from compatibility gateways)
             if not converted:
                 try:
                     first = tool_calls[0] if isinstance(tool_calls, list) and tool_calls else {}
@@ -856,13 +860,13 @@ class OpenAIProvider(LLMProvider):
                 except Exception:
                     pass
 
-        # 文本格式工具调用解析（降级方案）
-        # 当模型不支持原生工具调用时，解析文本中的 <function_calls> 格式
-        # 同时检查 reasoning_content 中是否嵌入了工具调用
+        # Text-format tool call parsing (fallback)
+        # When the model does not support native tool calls, parse the <function_calls> format embedded in text.
+        # Also check whether reasoning_content contains embedded tool calls.
         _tool_calls_from_reasoning = False
         combined_for_check = text_content
-        # reasoning_content: DeepSeek/Kimi 等使用 reasoning_content 字段
-        # reasoning: OpenRouter 使用 reasoning 字段（字符串或包含 content 的对象）
+        # reasoning_content: DeepSeek/Kimi etc. use the reasoning_content field
+        # reasoning: OpenRouter uses the reasoning field (a string, or an object containing content)
         reasoning_content = message.get("reasoning_content") or ""
         if not reasoning_content:
             _or_reasoning = message.get("reasoning")
@@ -899,9 +903,9 @@ class OpenAIProvider(LLMProvider):
                     f"from {'reasoning_content' if _tool_calls_from_reasoning else 'text'}"
                 )
 
-        # Reasoning 模型容错：content 为空但 reasoning 有内容
-        # 当 reasoning 模型被 max_tokens 截断时，所有输出可能都在 reasoning 字段，
-        # content 为空。此时尝试从 reasoning 中提取结构化内容作为兜底。
+        # Reasoning model fallback: content is empty but reasoning has content.
+        # When a reasoning model is truncated by max_tokens, all output may live in the reasoning field
+        # while content is empty. As a fallback, try to extract structured content from reasoning.
         if not text_content and not has_tool_calls and reasoning_content:
             import re
 
@@ -923,14 +927,14 @@ class OpenAIProvider(LLMProvider):
                     f"(model exhausted max_tokens on reasoning before producing content)."
                 )
 
-        # 添加文本内容
+        # Add text content
         if text_content:
             content_blocks.insert(0, TextBlock(text=text_content))
 
-        # 解析停止原因
+        # Parse stop reason
         finish_reason = choice.get("finish_reason", "stop")
         if has_tool_calls and finish_reason == "length":
-            # finish_reason=length + tool_calls = 输出被截断，工具参数可能不完整
+            # finish_reason=length + tool_calls = output truncated, tool arguments may be incomplete
             stop_reason = StopReason.MAX_TOKENS
         elif has_tool_calls:
             stop_reason = StopReason.TOOL_USE
@@ -943,7 +947,7 @@ class OpenAIProvider(LLMProvider):
             }
             stop_reason = stop_reason_map.get(finish_reason, StopReason.END_TURN)
 
-        # 解析使用统计
+        # Parse usage statistics
         usage_data = data.get("usage", {})
         usage = Usage(
             input_tokens=usage_data.get("prompt_tokens", 0),
@@ -960,10 +964,10 @@ class OpenAIProvider(LLMProvider):
         )
 
     def _convert_stream_event(self, event: dict) -> dict | list[dict]:
-        """转换流式事件为统一格式。
+        """Convert a streaming event into the unified format.
 
-        同一个 chunk 可能同时携带 reasoning_content + content + finish_reason
-        （DeepSeek 等模型的特殊行为），因此返回 dict 或 list[dict]。
+        A single chunk may carry reasoning_content + content + finish_reason simultaneously
+        (special behavior of models like DeepSeek), so returns either a dict or list[dict].
         """
         choices = event.get("choices", [])
         if not choices:
@@ -1044,7 +1048,7 @@ class OpenAIProvider(LLMProvider):
         return events[0] if len(events) == 1 else events
 
     async def close(self):
-        """关闭客户端"""
+        """Close the client."""
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             self._client = None

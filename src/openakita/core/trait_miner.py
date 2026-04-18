@@ -1,12 +1,14 @@
 """
-人格偏好挖掘引擎 (Trait Miner)
+Persona preference mining engine (Trait Miner)
 
-负责从多种来源发现和提取用户的人格偏好:
-1. 对话内容中的显式/隐式偏好信号（由 LLM 分析）
-2. 用户反馈的信号分析
-3. 主动提问的触发管理
+Responsible for discovering and extracting user persona preferences from
+multiple sources:
+1. Explicit/implicit preference signals in conversation content (analyzed by LLM)
+2. Signal analysis from user feedback
+3. Proactive-question trigger management
 
-核心原则：所有偏好分析交由 LLM（编译模型）完成，不做关键词匹配。
+Core principle: all preference analysis is delegated to the LLM (compiler model);
+no keyword matching is used.
 """
 
 import json
@@ -22,103 +24,104 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# ── LLM 分析 Prompt ──────────────────────────────────────────────────
+# ── LLM analysis prompts ──────────────────────────────────────────────
 
-TRAIT_MINING_SYSTEM = """你是一个用户偏好分析专家。你的任务是从用户消息中识别关于**沟通风格和互动偏好**的信号。
+TRAIT_MINING_SYSTEM = """You are a user-preference analysis expert. Your task is to identify signals about **communication style and interaction preferences** from user messages.
 
-## 可识别的维度
+## Recognizable dimensions
 
-| 维度 | 说明 | 可选值 |
+| Dimension | Description | Allowed values |
 |------|------|--------|
-| formality | 说话的正式程度 | very_formal, formal, neutral, casual, very_casual |
-| humor | 幽默感偏好 | none, occasional, frequent |
-| emoji_usage | 表情符号使用 | never, rare, moderate, frequent |
-| reply_length | 回复长度偏好 | very_short, short, moderate, detailed, very_detailed |
-| proactiveness | 主动消息偏好 | silent, low, moderate, high |
-| emotional_distance | 情感距离 | professional, friendly, close, intimate |
-| encouragement | 鼓励程度 | none, occasional, frequent |
-| sticker_preference | 表情包偏好 | never, rare, moderate, frequent |
-| address_style | 称呼方式 | (任意文本) |
-| care_topics | 关心的话题 | (任意文本) |
+| formality | How formal the user's speech is | very_formal, formal, neutral, casual, very_casual |
+| humor | Humor preference | none, occasional, frequent |
+| emoji_usage | Emoji usage | never, rare, moderate, frequent |
+| reply_length | Reply-length preference | very_short, short, moderate, detailed, very_detailed |
+| proactiveness | Proactive-message preference | silent, low, moderate, high |
+| emotional_distance | Emotional distance | professional, friendly, close, intimate |
+| encouragement | Encouragement level | none, occasional, frequent |
+| sticker_preference | Sticker preference | never, rare, moderate, frequent |
+| address_style | Form of address | (free text) |
+| care_topics | Topics the user cares about | (free text) |
 
-## 信号类型
+## Signal types
 
-1. **直接修正** (confidence: 0.85-0.95): 用户明确要求改变风格
-   - 例: "你说话太正式了" → formality=casual
-   - 例: "别发表情包了" → sticker_preference=never
-   - 例: "多幽默一点" → humor=frequent
+1. **Direct correction** (confidence: 0.85-0.95): user explicitly asks for a style change
+   - Example: "You sound too formal" → formality=casual
+   - Example: "Stop sending stickers" → sticker_preference=never
+   - Example: "Be more humorous" → humor=frequent
 
-2. **隐式信号** (confidence: 0.4-0.6): 用户行为暗示的偏好
-   - 用户自己用了很多 emoji → emoji_usage=moderate
-   - 用户语气很随意/用网络用语 → formality=casual
-   - 用户深夜活跃 → care_topics=健康提醒:用户经常熬夜
+2. **Implicit signals** (confidence: 0.4-0.6): preferences hinted at by user behavior
+   - User uses many emojis themselves → emoji_usage=moderate
+   - User's tone is very casual / uses internet slang → formality=casual
+   - User is active late at night → care_topics=health reminder:user often stays up late
 
-3. **无信号**: 纯粹的任务指令、简单确认、闲聊内容不包含偏好信号
+3. **No signal**: plain task instructions, simple confirmations, and small talk carry no preference signals
 
-## 重要规则
+## Important rules
 
-- **宁缺毋滥**：没有明确信号就返回空数组，不要强行解读
-- **任务指令不是偏好信号**：如 "帮我查天气" "打开文件" 等不包含任何偏好
-- **简短≠偏好简洁**：用户说 "好的" "嗯" 只是确认，不代表偏好简短回复
-- **同一维度只取最明确的一个**
-- **关注用户的措辞和语气本身**，而不是消息的内容话题"""
+- **Quality over quantity**: if there is no clear signal, return an empty array; do not over-interpret
+- **Task instructions are not preference signals**: e.g., "check the weather", "open a file" contain no preferences
+- **Short != prefers brevity**: "ok" or "mm" is just acknowledgment, not a short-reply preference
+- **Only take the most explicit value per dimension**
+- **Focus on the user's wording and tone itself**, not the topic of the message"""
 
-TRAIT_MINING_PROMPT = """分析以下用户消息，提取人格偏好信号。
+TRAIT_MINING_PROMPT = """Analyze the following user message and extract persona preference signals.
 
-用户消息：
+User message:
 ```
 {message}
 ```
 
-如果发现偏好信号，返回 JSON 数组：
+If preference signals are found, return a JSON array:
 ```json
-[{{"dimension": "维度名", "preference": "偏好值", "confidence": 0.5, "source": "correction或mined", "evidence": "识别依据"}}]
+[{{"dimension": "dimension name", "preference": "preference value", "confidence": 0.5, "source": "correction or mined", "evidence": "reasoning"}}]
 ```
 
-如果没有偏好信号，返回：
+If there are no preference signals, return:
 ```json
 []
 ```
 
-只输出 JSON，不要其他内容。"""
+Output only JSON, nothing else."""
 
 
-ANSWER_ANALYSIS_SYSTEM = """你是一个用户偏好分析专家。用户回答了一个关于个人偏好的问题，请分析回答内容并映射到对应的维度值。"""
+ANSWER_ANALYSIS_SYSTEM = """You are a user-preference analysis expert. The user has answered a question about a personal preference; analyze the answer and map it to the corresponding dimension value."""
 
-ANSWER_ANALYSIS_PROMPT = """用户被问到以下问题（关于 {dimension} 维度）：
+ANSWER_ANALYSIS_PROMPT = """The user was asked the following question (regarding the {dimension} dimension):
 "{question}"
 
-用户回答：
+User's answer:
 "{answer}"
 
-维度说明：{dim_description}
-可选值：{value_range}
+Dimension description: {dim_description}
+Allowed values: {value_range}
 
-请分析用户的回答，返回 JSON：
+Analyze the user's answer and return JSON:
 ```json
-{{"preference": "最匹配的值", "confidence": 0.9, "evidence": "判断依据"}}
+{{"preference": "best-matching value", "confidence": 0.9, "evidence": "reasoning"}}
 ```
 
-规则：
-- 如果用户明确拒绝回答（如"跳过""算了""不说"），返回 {{"skip": true}}
-- 对于自由文本维度（address_style, care_topics），直接提取用户的原意
-- 只输出 JSON，不要其他内容。"""
+Rules:
+- If the user explicitly declines to answer (e.g., "skip", "never mind", "don't say"), return {{"skip": true}}
+- For free-text dimensions (address_style, care_topics), extract the user's original meaning directly
+- Output only JSON, nothing else."""
 
 
 class TraitMiner:
     """
-    人格偏好挖掘引擎
+    Persona preference mining engine.
 
-    所有偏好分析交由 LLM（编译模型 compiler_think）完成，
-    不做关键词匹配，避免规则覆盖不全和误判。
+    All preference analysis is delegated to the LLM (compiler model
+    compiler_think); no keyword matching, to avoid incomplete-rule coverage
+    and false positives.
     """
 
     def __init__(self, persona_manager: "PersonaManager", brain: Any = None):
         """
         Args:
-            persona_manager: PersonaManager 实例
-            brain: Brain 实例（用于 LLM 调用）。如果不提供，
-                   mine_from_message 会退化为空操作。
+            persona_manager: PersonaManager instance
+            brain: Brain instance (used for LLM calls). If not provided,
+                   mine_from_message degrades into a no-op.
         """
         self.persona_manager = persona_manager
         self.brain = brain
@@ -128,14 +131,14 @@ class TraitMiner:
 
     async def mine_from_message(self, message: str, role: str = "user") -> list["PersonaTrait"]:
         """
-        从单条消息中挖掘偏好信号（LLM 驱动）
+        Mine preference signals from a single message (LLM-driven).
 
         Args:
-            message: 消息内容
-            role: 消息角色 (user/assistant)
+            message: message content
+            role: message role (user/assistant)
 
         Returns:
-            提取到的 PersonaTrait 列表
+            List of extracted PersonaTrait objects
         """
         if role != "user":
             return []
@@ -144,7 +147,7 @@ class TraitMiner:
             logger.debug("[TraitMiner] No brain available, skipping LLM analysis")
             return []
 
-        # 过短的消息（≤3字）跳过 LLM 调用，节省开销
+        # Skip LLM calls for very short messages (<=3 chars) to save cost
         if len(message.strip()) <= 3:
             return []
 
@@ -163,7 +166,7 @@ class TraitMiner:
 
             traits = self._parse_trait_response(response.content)
 
-            # 应用到 persona_manager
+            # Apply to persona_manager
             for trait in traits:
                 self.persona_manager.add_trait(trait)
 
@@ -180,13 +183,13 @@ class TraitMiner:
             return []
 
     def _parse_trait_response(self, content: str) -> list["PersonaTrait"]:
-        """解析 LLM 返回的 JSON 为 PersonaTrait 列表"""
+        """Parse the JSON returned by the LLM into a list of PersonaTrait objects."""
         from .persona import PERSONA_DIMENSIONS, PersonaTrait
 
         if not content:
             return []
 
-        # 提取 JSON 数组
+        # Extract JSON array
         json_match = re.search(r"\[[\s\S]*?\]", content)
         if not json_match:
             return []
@@ -216,17 +219,17 @@ class TraitMiner:
             if not dimension or not preference:
                 continue
 
-            # 同一维度去重
+            # Deduplicate on dimension
             if dimension in seen_dimensions:
                 continue
             seen_dimensions.add(dimension)
 
-            # 校验维度是否合法
+            # Validate dimension is recognized
             if dimension not in PERSONA_DIMENSIONS:
                 logger.debug(f"[TraitMiner] Unknown dimension '{dimension}', skipping")
                 continue
 
-            # 校验取值范围（非自由文本维度）
+            # Validate value range (for non-free-text dimensions)
             dim_info = PERSONA_DIMENSIONS[dimension]
             value_range = dim_info.get("range", [])
             if isinstance(value_range, list) and preference not in value_range:
@@ -236,13 +239,13 @@ class TraitMiner:
                 )
                 continue
 
-            # 过滤自由文本维度的无效值
+            # Filter out invalid values for free-text dimensions
             _INVALID_FREETEXT = {"任意文本", "unknown", "无", "null", "none", "n/a", "未知", ""}
             if preference.lower().strip() in _INVALID_FREETEXT:
                 logger.debug(f"[TraitMiner] Rejected invalid freetext: {dimension}={preference}")
                 continue
 
-            # 限制置信度范围（防御 LLM 返回非数字值）
+            # Clamp confidence range (guard against non-numeric LLM output)
             try:
                 confidence = max(0.1, min(0.95, float(raw_confidence)))
             except (ValueError, TypeError):
@@ -254,33 +257,33 @@ class TraitMiner:
                 preference=preference,
                 confidence=confidence,
                 source=source if source in ("correction", "mined") else "mined",
-                evidence=evidence[:100] if evidence else "LLM 分析消息内容",
+                evidence=evidence[:100] if evidence else "LLM analysis of message content",
             )
             traits.append(trait)
 
         return traits
 
-    # ── 主动提问管理 ──────────────────────────────────────────────────
+    # ── Proactive-question management ─────────────────────────────────
 
     def should_ask_question(self) -> bool:
-        """是否应该提出人格相关问题"""
+        """Whether a persona-related question should be asked."""
         now = datetime.now()
 
-        # 每天最多 1 个人格问题
+        # At most 1 persona question per day
         if self._last_question_date and self._last_question_date.date() == now.date():
             if self._questions_today >= 1:
                 return False
 
-        # 检查是否还有未询问的维度
+        # Check if there are still un-asked dimensions
         next_dim = self.persona_manager.get_next_question_dimension(self._asked_dimensions)
         return next_dim is not None
 
     def get_next_question(self) -> tuple[str, str] | None:
         """
-        获取下一个要问的人格问题
+        Get the next persona question to ask.
 
         Returns:
-            (dimension, question) 或 None
+            (dimension, question) or None
         """
         dim = self.persona_manager.get_next_question_dimension(self._asked_dimensions)
         if not dim:
@@ -293,21 +296,21 @@ class TraitMiner:
         return (dim, question)
 
     def mark_question_asked(self, dimension: str) -> None:
-        """标记已经问过的维度"""
+        """Mark a dimension as already asked."""
         self._asked_dimensions.add(dimension)
         self._last_question_date = datetime.now()
         self._questions_today += 1
 
     async def process_answer(self, dimension: str, answer: str) -> Optional["PersonaTrait"]:
         """
-        处理用户对人格问题的回答（LLM 驱动）
+        Process the user's answer to a persona question (LLM-driven).
 
         Args:
-            dimension: 维度名
-            answer: 用户回答
+            dimension: dimension name
+            answer: user's answer
 
         Returns:
-            提取的 PersonaTrait 或 None（如果用户跳过）
+            Extracted PersonaTrait, or None if the user skipped
         """
         from .persona import PERSONA_DIMENSIONS, PersonaTrait
 
@@ -315,18 +318,18 @@ class TraitMiner:
         if not dim_info:
             return None
 
-        # 如果有 brain，用 LLM 分析回答
+        # If brain is available, use the LLM to analyze the answer
         if self.brain:
             try:
                 preference = await self._analyze_answer_with_llm(dimension, answer, dim_info)
                 if preference is None:
-                    # 用户跳过
+                    # User skipped
                     self._asked_dimensions.add(dimension)
                     logger.info(f"User skipped question for dimension: {dimension}")
                     return None
             except Exception as e:
                 logger.debug(f"[TraitMiner] LLM answer analysis failed: {e}")
-                # 回退：直接用原文
+                # Fallback: use the raw answer directly
                 preference = answer.strip()
         else:
             preference = answer.strip()
@@ -335,9 +338,9 @@ class TraitMiner:
             id=str(uuid.uuid4())[:8],
             dimension=dimension,
             preference=preference,
-            confidence=0.9,  # 显式回答置信度高
+            confidence=0.9,  # Explicit answers get high confidence
             source="explicit",
-            evidence=f"用户明确回答: '{answer[:50]}'",
+            evidence=f"User explicitly answered: '{answer[:50]}'",
         )
 
         self.persona_manager.add_trait(trait)
@@ -348,16 +351,16 @@ class TraitMiner:
         self, dimension: str, answer: str, dim_info: dict
     ) -> str | None:
         """
-        用 LLM 分析用户对偏好问题的回答
+        Use the LLM to analyze the user's answer to a preference question.
 
         Returns:
-            偏好值字符串，或 None 表示用户跳过
+            The preference-value string, or None if the user skipped.
         """
         value_range = dim_info.get("range", [])
         if isinstance(value_range, list):
             range_desc = ", ".join(value_range)
         else:
-            range_desc = f"自由文本 ({value_range})"
+            range_desc = f"free text ({value_range})"
 
         prompt = ANSWER_ANALYSIS_PROMPT.format(
             dimension=dimension,
@@ -375,7 +378,7 @@ class TraitMiner:
         if not response or not getattr(response, "content", None):
             return answer.strip()
 
-        # 解析 JSON
+        # Parse JSON
         json_match = re.search(r"\{[\s\S]*?\}", response.content)
         if not json_match:
             return answer.strip()

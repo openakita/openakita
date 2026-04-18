@@ -1,22 +1,22 @@
 """
-运行时监督器 (Runtime Supervisor)
+Runtime Supervisor.
 
-基于 Agent Harness 设计理论，提供运行时行为模式检测与分级干预。
-整合并增强 ReasoningEngine._detect_loops() 和 TaskMonitor 的监督能力。
+Based on Agent Harness design principles, provides runtime behavior pattern detection and tiered intervention.
+Consolidates and enhances the supervision capabilities of ReasoningEngine._detect_loops() and TaskMonitor.
 
-检测能力:
-- 工具抖动: 同一工具连续多次失败（不同参数但持续失败）
-- 编辑抖动: 对同一文件反复读写循环
-- 推理死循环: LLM 连续返回相似内容
-- Token 消耗速率异常: 单轮 token 消耗超阈值
-- Plan 偏离: 当前操作与 Plan 步骤不相关
+Detection capabilities:
+- Tool thrashing: same tool fails repeatedly (varying arguments but continued failures).
+- Edit thrashing: repeated read-write cycles on the same file.
+- Reasoning loop: LLM returns similar content in consecutive turns.
+- Token consumption anomaly: single-turn token usage exceeds threshold.
+- Plan drift: current operation is unrelated to the Plan step.
 
-干预策略（分级）:
-1. Nudge: 注入提示消息引导换策略
-2. StrategySwitch: 强制回滚到检查点 + 注入新策略提示
-3. ModelSwitch: 切换到不同模型
-4. Escalate: 暂停执行，请求用户介入
-5. Terminate: 安全终止并保存进度
+Intervention strategies (tiered):
+1. Nudge: inject a prompt message to nudge a strategy change.
+2. StrategySwitch: force a rollback to a checkpoint + inject a new-strategy prompt.
+3. ModelSwitch: switch to a different model.
+4. Escalate: pause execution and request user intervention.
+5. Terminate: safely terminate and save progress.
 """
 
 from __future__ import annotations
@@ -33,18 +33,18 @@ logger = logging.getLogger(__name__)
 
 
 class InterventionLevel(IntEnum):
-    """干预级别（递增严重程度）"""
+    """Intervention level (increasing severity)."""
 
     NONE = 0
-    NUDGE = 1  # 注入提示消息
-    STRATEGY_SWITCH = 2  # 回滚 + 换策略
-    MODEL_SWITCH = 3  # 切换模型
-    ESCALATE = 4  # 请求用户介入
-    TERMINATE = 5  # 安全终止
+    NUDGE = 1  # Inject a prompt message
+    STRATEGY_SWITCH = 2  # Rollback + change strategy
+    MODEL_SWITCH = 3  # Switch model
+    ESCALATE = 4  # Request user intervention
+    TERMINATE = 5  # Safe termination
 
 
 class PatternType(StrEnum):
-    """检测到的问题模式类型"""
+    """Detected problem pattern types."""
 
     TOOL_THRASHING = "tool_thrashing"
     EDIT_THRASHING = "edit_thrashing"
@@ -58,7 +58,7 @@ class PatternType(StrEnum):
 
 @dataclass
 class SupervisionEvent:
-    """监督事件记录"""
+    """Supervision event record."""
 
     timestamp: float
     pattern: PatternType
@@ -70,7 +70,7 @@ class SupervisionEvent:
 
 @dataclass
 class Intervention:
-    """干预指令"""
+    """Intervention directive."""
 
     level: InterventionLevel
     pattern: PatternType
@@ -84,7 +84,7 @@ class Intervention:
     throttled_tool_names: list[str] = field(default_factory=list)
 
 
-# -- 配置常量 --
+# -- Configuration constants --
 TOOL_THRASH_WINDOW = 8
 TOOL_THRASH_FAIL_THRESHOLD = 3
 EDIT_THRASH_WINDOW = 10
@@ -114,10 +114,10 @@ UNPRODUCTIVE_ADMIN_TOOLS = frozenset(
 
 class RuntimeSupervisor:
     """
-    运行时监督器。
+    Runtime supervisor.
 
-    作为 ReasoningEngine 的观察者，每轮迭代后调用 evaluate()
-    返回干预指令。不直接修改 Agent 状态——干预由调用方执行。
+    Acts as an observer of ReasoningEngine: after each iteration, evaluate() is called
+    and returns an intervention directive. Does not modify Agent state directly — interventions are executed by the caller.
     """
 
     def __init__(
@@ -142,7 +142,7 @@ class RuntimeSupervisor:
         self._extreme_iteration_threshold = extreme_iteration_threshold
         self._self_check_interval = self_check_interval
 
-        # 观测状态（每次 reset() 清空）
+        # Observation state (cleared on each reset())
         self._tool_call_history: list[dict[str, Any]] = []
         self._file_access_history: list[dict[str, str]] = []
         self._response_hashes: list[str] = []
@@ -160,7 +160,7 @@ class RuntimeSupervisor:
         return list(self._events)
 
     def reset(self) -> None:
-        """重置所有观测状态（新任务开始时调用）"""
+        """Reset all observation state (called when a new task starts)."""
         self._tool_call_history.clear()
         self._file_access_history.clear()
         self._response_hashes.clear()
@@ -169,7 +169,7 @@ class RuntimeSupervisor:
         self._events.clear()
         self._consecutive_tool_rounds = 0
 
-    # ==================== 数据记录 ====================
+    # ==================== Data recording ====================
 
     def record_tool_call(
         self,
@@ -178,7 +178,7 @@ class RuntimeSupervisor:
         success: bool = True,
         iteration: int = 0,
     ) -> None:
-        """记录一次工具调用"""
+        """Record a tool call."""
         if not self._enabled:
             return
         self._tool_call_history.append(
@@ -190,7 +190,7 @@ class RuntimeSupervisor:
                 "timestamp": time.time(),
             }
         )
-        # 文件操作追踪
+        # File operation tracking
         if tool_name in ("read_file", "write_file", "edit_file", "search_replace"):
             path = ""
             if params:
@@ -206,7 +206,7 @@ class RuntimeSupervisor:
                 )
 
     def record_tool_signature(self, signature: str) -> None:
-        """记录工具调用签名（用于签名重复检测）"""
+        """Record a tool call signature (used for signature-repeat detection)."""
         if not self._enabled:
             return
         self._signature_history.append(signature)
@@ -214,7 +214,7 @@ class RuntimeSupervisor:
             self._signature_history = self._signature_history[-TOOL_THRASH_WINDOW * 3 :]
 
     def record_response(self, text_content: str) -> None:
-        """记录 LLM 响应文本（用于推理死循环检测）"""
+        """Record LLM response text (used for reasoning-loop detection)."""
         if not self._enabled or not text_content:
             return
         h = hashlib.md5(text_content.strip()[:2000].encode("utf-8", errors="ignore")).hexdigest()
@@ -223,16 +223,16 @@ class RuntimeSupervisor:
             self._response_hashes = self._response_hashes[-REASONING_SIMILARITY_WINDOW * 2 :]
 
     def record_token_usage(self, tokens: int) -> None:
-        """记录单轮 token 消耗"""
+        """Record single-turn token consumption."""
         if not self._enabled:
             return
         self._token_per_iteration.append(tokens)
 
     def record_consecutive_tool_rounds(self, count: int) -> None:
-        """更新连续工具调用轮数"""
+        """Update the count of consecutive tool-call rounds."""
         self._consecutive_tool_rounds = count
 
-    # ==================== 评估入口 ====================
+    # ==================== Evaluation entry point ====================
 
     def evaluate(
         self,
@@ -242,10 +242,10 @@ class RuntimeSupervisor:
         plan_current_step: str = "",
     ) -> Intervention | None:
         """
-        综合评估当前状态，返回最严重的干预指令。
+        Comprehensively evaluate the current state and return the most severe intervention directive.
 
-        在 ReasoningEngine 每轮迭代的 OBSERVE 阶段结束后调用。
-        返回 None 表示无需干预。
+        Called at the end of the OBSERVE phase in each ReasoningEngine iteration.
+        Returns None when no intervention is required.
         """
         if not self._enabled:
             return None
@@ -294,7 +294,7 @@ class RuntimeSupervisor:
         if not interventions:
             return None
 
-        # 返回最严重的干预
+        # Return the most severe intervention
         interventions.sort(key=lambda i: i.level, reverse=True)
         chosen = interventions[0]
 
@@ -313,7 +313,7 @@ class RuntimeSupervisor:
             f"level={chosen.level.name}: {chosen.message}"
         )
 
-        # Decision Trace: 记录监督事件
+        # Decision Trace: record the supervision event
         try:
             from ..tracing.tracer import get_tracer
 
@@ -330,31 +330,32 @@ class RuntimeSupervisor:
 
         return chosen
 
-    # ==================== 检测器 ====================
+    # ==================== Detectors ====================
 
     @staticmethod
     def _extra_hint_for_tool(tool_name: str) -> str:
-        """对特定工具的死循环附加任务语义级引导。
+        """Add task-semantic guidance when specific tools are in a dead loop.
 
-        目前针对 org_delegate_task：LLM 在没有合法直属下级时会陷入自我委派死循环，
-        需要明确引导它改调 org_submit_deliverable 把当前成果交付给上级。
+        Currently targets org_delegate_task: the LLM falls into a self-delegation dead loop when there
+        is no legitimate direct subordinate, so it must be explicitly guided to call
+        org_submit_deliverable to hand off its current work to its superior.
         """
         if not tool_name:
             return ""
         if tool_name == "org_delegate_task":
             return (
-                " [组织编排提示] 你反复调用 org_delegate_task 但目标不合法。"
-                "这通常意味着你就是任务的实际执行者——请立刻停止委派，"
-                "改用 org_submit_deliverable 把当前已完成的工作交付给你的上级；"
-                "若需横向协作可用 org_send_message。不要再尝试 org_delegate_task。"
+                " [Org orchestration hint] You are repeatedly calling org_delegate_task with an invalid target. "
+                "This usually means you are the actual executor of the task — stop delegating immediately "
+                "and use org_submit_deliverable to hand the completed work to your superior. "
+                "If lateral collaboration is needed, use org_send_message. Do not try org_delegate_task again."
             )
         return ""
 
     def _check_signature_repeat(self, iteration: int) -> Intervention | None:
-        """签名重复检测：工具名维度优先于精确签名。
+        """Signature-repeat detection: tool-name granularity takes precedence over exact signature.
 
-        三级干预：WARN(2次) -> STRATEGY_SWITCH(3次) -> TERMINATE(4次)
-        TERMINATE 级别的检测优先执行，避免低级别干预抢先 return。
+        Three-tier intervention: WARN (2x) -> STRATEGY_SWITCH (3x) -> TERMINATE (4x).
+        TERMINATE-level checks run first to prevent lower-tier interventions from returning early.
         """
         recent = self._signature_history[-TOOL_THRASH_WINDOW:]
         if len(recent) < self._signature_repeat_warn:
@@ -370,7 +371,7 @@ class RuntimeSupervisor:
         sig_counts = Counter(recent)
         most_common_sig, most_common_count = sig_counts.most_common(1)[0]
 
-        # 提取 most_common_sig 对应的工具名，用于 STRATEGY_SWITCH 场景
+        # Extract the tool name corresponding to most_common_sig, used in the STRATEGY_SWITCH case
         _most_common_tool = (
             most_common_sig.split("(")[0] if "(" in most_common_sig else most_common_sig
         )
@@ -403,15 +404,15 @@ class RuntimeSupervisor:
                 should_inject_prompt=True,
                 should_rollback=True,
                 prompt_injection=(
-                    "[系统提示] 检测到连续相同工具调用已达 3 次，系统已回滚。"
-                    "如果任务已完成，请直接回复用户最终结果，不要再调用任何工具。"
-                    "如果确实需要继续，必须使用完全不同的工具或参数。"
-                    "禁止再次调用与之前相同的工具+参数组合。"
+                    "[System notice] Detected 3 consecutive identical tool calls; the system has rolled back. "
+                    "If the task is complete, reply to the user with the final result directly and do not call any more tools. "
+                    "If you truly need to continue, you must use a completely different tool or arguments. "
+                    "Do not call the same tool+arguments combination again."
                     + self._extra_hint_for_tool(_most_common_tool)
                 ),
             )
 
-        # 交替模式检测：窗口内仅 1-2 种签名以 ping-pong 方式反复切换
+        # Alternating pattern detection: only 1-2 signatures within the window cycle in ping-pong fashion
         if len(set(recent)) <= 2 and len(recent) >= 6:
             transitions = sum(1 for i in range(len(recent) - 1) if recent[i] != recent[i + 1])
             if transitions >= len(recent) // 2:
@@ -422,8 +423,8 @@ class RuntimeSupervisor:
                     should_inject_prompt=True,
                     should_rollback=True,
                     prompt_injection=(
-                        "[系统提示] 检测到工具调用在两个操作间交替循环。"
-                        "请停止当前模式，直接回复用户结果。"
+                        "[System notice] Detected tool calls alternating between two operations in a loop. "
+                        "Stop the current pattern and reply to the user with the result directly."
                     ),
                 )
 
@@ -435,9 +436,9 @@ class RuntimeSupervisor:
                 message=f"Tool '{top_name}' called {top_count} times with varying args",
                 should_inject_prompt=True,
                 prompt_injection=(
-                    f"[系统提示] 你已经连续 {top_count} 次调用 {top_name}，"
-                    "工具已返回结果。请停止重复调用该工具，用自然语言整理结果回复用户。"
-                    "如果还需要其他信息，请换一个不同的工具或方法。"
+                    f"[System notice] You have called {top_name} {top_count} times in a row, "
+                    "and the tool has already returned results. Stop calling it repeatedly and reply to the user in natural language with the collated results. "
+                    "If you need more information, use a different tool or method."
                     + self._extra_hint_for_tool(top_name)
                 ),
                 throttled_tool_names=[top_name],
@@ -451,8 +452,8 @@ class RuntimeSupervisor:
                 message=f"Repeated signature '{most_common_sig[:60]}' ({most_common_count} times)",
                 should_inject_prompt=True,
                 prompt_injection=(
-                    "[系统提示] 你在最近几轮中用完全相同的参数重复调用了同一个工具。"
-                    "请停止重复调用该工具，用自然语言回复用户，或使用其他工具。"
+                    "[System notice] In recent turns you have called the same tool repeatedly with identical arguments. "
+                    "Stop calling it and reply to the user in natural language, or use a different tool."
                     + self._extra_hint_for_tool(_sig_tool)
                 ),
                 throttled_tool_names=[_sig_tool],
@@ -461,7 +462,7 @@ class RuntimeSupervisor:
         return None
 
     def _check_tool_thrashing(self, iteration: int) -> Intervention | None:
-        """工具抖动检测：同一工具连续多次失败（不同参数）"""
+        """Tool-thrashing detection: the same tool failed multiple times in a row (with varying arguments)."""
         recent = self._tool_call_history[-TOOL_THRASH_WINDOW:]
         if len(recent) < self._tool_thrash_fail_threshold:
             return None
@@ -484,18 +485,18 @@ class RuntimeSupervisor:
                     should_inject_prompt=True,
                     should_rollback=True,
                     prompt_injection=(
-                        f"[系统提示] 工具 '{tool_name}' 在最近的调用中连续失败了 {fail_count} 次。"
-                        "这表明当前策略不可行。请：\n"
-                        "1. 分析失败原因\n"
-                        "2. 选择完全不同的方法或工具\n"
-                        "3. 如果确实无法完成，请告知用户原因"
+                        f"[System notice] Tool '{tool_name}' has failed {fail_count} times in recent calls. "
+                        "This indicates the current strategy is not viable. Please:\n"
+                        "1. Analyze the cause of failure\n"
+                        "2. Pick a completely different approach or tool\n"
+                        "3. If the task truly cannot be completed, inform the user of the reason"
                     ),
                 )
 
         return None
 
     def _check_edit_thrashing(self, iteration: int) -> Intervention | None:
-        """编辑抖动检测：对同一文件反复读写"""
+        """Edit-thrashing detection: repeated read-write cycles on the same file."""
         recent = self._file_access_history[-EDIT_THRASH_WINDOW:]
         if len(recent) < self._edit_thrash_threshold * 2:
             return None
@@ -521,23 +522,23 @@ class RuntimeSupervisor:
                     message=f"File '{short_path}' has {cycle_count} read-write cycles",
                     should_inject_prompt=True,
                     prompt_injection=(
-                        f"[系统提示] 检测到你对文件 '{short_path}' 进行了多次读写循环。"
-                        "请：\n"
-                        "1. 先确认文件的完整内容和需要修改的部分\n"
-                        "2. 一次性完成所有修改，避免反复读写\n"
-                        "3. 如果修改不生效，分析根本原因而不是重复尝试"
+                        f"[System notice] Detected multiple read-write cycles on file '{short_path}'. "
+                        "Please:\n"
+                        "1. Confirm the file's full content and the parts that need changing first\n"
+                        "2. Make all edits in one pass to avoid repeated reads/writes\n"
+                        "3. If edits are not taking effect, analyze the root cause instead of retrying repeatedly"
                     ),
                 )
 
         return None
 
     def _check_reasoning_loop(self, iteration: int) -> Intervention | None:
-        """推理死循环检测：LLM 连续返回相似内容"""
+        """Reasoning-loop detection: LLM returns similar content across consecutive turns."""
         window = self._response_hashes[-REASONING_SIMILARITY_WINDOW:]
         if len(window) < REASONING_SIMILARITY_WINDOW:
             return None
 
-        # 检查最近 N 个响应是否完全相同（hash 匹配）
+        # Check whether the last N responses are identical (hash match)
         if len(set(window)) == 1:
             return Intervention(
                 level=InterventionLevel.STRATEGY_SWITCH,
@@ -546,18 +547,18 @@ class RuntimeSupervisor:
                 should_inject_prompt=True,
                 should_rollback=True,
                 prompt_injection=(
-                    "[系统提示] 你的回复内容与之前几轮完全相同，表明推理已陷入循环。"
-                    "请：\n"
-                    "1. 重新审视任务需求\n"
-                    "2. 尝试完全不同的思路和方法\n"
-                    "3. 如果确实无法继续，请向用户说明情况"
+                    "[System notice] Your reply is identical to the previous few turns, indicating the reasoning is stuck in a loop. "
+                    "Please:\n"
+                    "1. Revisit the task requirements\n"
+                    "2. Try a completely different line of thought and approach\n"
+                    "3. If you truly cannot proceed, explain the situation to the user"
                 ),
             )
 
         return None
 
     def _check_token_anomaly(self, iteration: int) -> Intervention | None:
-        """Token 消耗速率异常检测（仅记录日志，不注入对话）"""
+        """Token-consumption anomaly detection (log only, not injected into the conversation)."""
         if not self._token_per_iteration:
             return None
 
@@ -584,9 +585,9 @@ class RuntimeSupervisor:
         *,
         has_active_todo: bool = False,
     ) -> Intervention | None:
-        """极端迭代阈值检测。
+        """Extreme iteration threshold detection.
 
-        无 Plan/Todo 的简单任务直接 TERMINATE；有 Plan 时仍 ESCALATE 给用户。
+        Simple tasks without a Plan/Todo terminate directly; with a Plan in place, escalate to the user instead.
         """
         if self._consecutive_tool_rounds < self._extreme_iteration_threshold:
             return None
@@ -600,8 +601,8 @@ class RuntimeSupervisor:
                     should_inject_prompt=True,
                     should_escalate=True,
                     prompt_injection=(
-                        f"[系统提示] 当前任务已连续执行了 {self._extreme_iteration_threshold} 轮。"
-                        "请向用户汇报进度并询问是否继续。"
+                        f"[System notice] The current task has run for {self._extreme_iteration_threshold} consecutive rounds. "
+                        "Report progress to the user and ask whether to continue."
                     ),
                 )
             else:
@@ -623,7 +624,7 @@ class RuntimeSupervisor:
         has_active_todo: bool,
         plan_current_step: str,
     ) -> Intervention | None:
-        """定期自检提醒"""
+        """Periodic self-check reminder."""
         if self._consecutive_tool_rounds <= 0:
             return None
         if self._consecutive_tool_rounds % self._self_check_interval != 0:
@@ -633,15 +634,15 @@ class RuntimeSupervisor:
 
         if has_active_todo:
             msg = (
-                f"[系统提示] 已连续执行 {rounds} 轮，Plan 仍有未完成步骤。"
-                "如果遇到困难，请换一种方法继续推进。"
+                f"[System notice] {rounds} consecutive rounds have run and the Plan still has incomplete steps. "
+                "If you are stuck, try a different approach to keep making progress."
             )
         else:
             msg = (
-                f"[系统提示] 你已连续执行了 {rounds} 轮工具调用。请自我评估：\n"
-                "1. 当前任务进度如何？\n"
-                "2. 是否陷入了循环？\n"
-                "3. 如果任务已完成，请停止工具调用，直接回复用户。"
+                f"[System notice] You have run {rounds} consecutive rounds of tool calls. Please self-assess:\n"
+                "1. How is the task progressing?\n"
+                "2. Are you stuck in a loop?\n"
+                "3. If the task is complete, stop calling tools and reply to the user directly."
             )
 
         return Intervention(
@@ -653,7 +654,7 @@ class RuntimeSupervisor:
         )
 
     def _check_unproductive_loop(self, iteration: int) -> Intervention | None:
-        """检测连续多轮只调用行政/元工具的空转。3轮NUDGE，5轮STRATEGY_SWITCH。"""
+        """Detect idle runs that only invoke administrative/meta tools across consecutive rounds. 3 rounds -> NUDGE, 5 rounds -> STRATEGY_SWITCH."""
         if iteration < 3:
             return None
 
@@ -670,8 +671,8 @@ class RuntimeSupervisor:
                 should_inject_prompt=True,
                 should_rollback=True,
                 prompt_injection=(
-                    "[系统提示] 连续 5 轮仅调用管理类工具，系统已回滚。"
-                    "请直接回复用户结果，或执行实质操作（读取文件、编写代码、调用 API 等）。"
+                    "[System notice] 5 consecutive rounds have only called administrative tools; the system has rolled back. "
+                    "Reply to the user with the result directly, or perform substantive actions (read files, write code, call APIs, etc.)."
                 ),
             )
 
@@ -684,17 +685,17 @@ class RuntimeSupervisor:
                 message="Last 3 tool calls are all administrative",
                 should_inject_prompt=True,
                 prompt_injection=(
-                    "[系统提示] 你最近连续多轮都只在调用管理/计划类工具，"
-                    "没有执行任何实质性操作。"
-                    "请立即开始执行具体工作，或直接回复结果。"
+                    "[System notice] You have spent several recent rounds calling only administrative/planning tools "
+                    "without performing any substantive action. "
+                    "Start doing concrete work immediately, or reply with the result directly."
                 ),
             )
         return None
 
-    # ==================== 辅助方法 ====================
+    # ==================== Helper methods ====================
 
     def get_summary(self) -> dict[str, Any]:
-        """获取监督器摘要统计"""
+        """Return supervisor summary statistics."""
         pattern_counts: dict[str, int] = {}
         for evt in self._events:
             pattern_counts[evt.pattern.value] = pattern_counts.get(evt.pattern.value, 0) + 1

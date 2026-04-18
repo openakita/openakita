@@ -1,7 +1,8 @@
 """
-OrgPolicies — 制度管理 + 索引生成 + 关键词搜索
+OrgPolicies — policy management + index generation + keyword search.
 
-管理组织的制度文件（Markdown），自动维护索引，提供关键词搜索。
+Manages an organization's policy documents (Markdown), automatically maintains
+an index, and provides keyword search.
 """
 
 from __future__ import annotations
@@ -130,9 +131,9 @@ class OrgPolicies:
     def _rebuild_index(self) -> None:
         """Rebuild the policies/README.md index file."""
         lines = [
-            "# 制度索引\n",
-            "> 此文件由系统自动维护，请勿手动编辑。\n",
-            "| 文件 | 标题 | 适用范围 | 大小 |",
+            "# Policy Index\n",
+            "> This file is automatically maintained by the system; do not edit manually.\n",
+            "| File | Title | Scope | Size |",
             "|------|------|---------|------|",
         ]
 

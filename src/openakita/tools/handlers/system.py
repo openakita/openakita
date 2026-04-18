@@ -1,10 +1,10 @@
 """
-系统功能处理器
+System feature handler
 
-处理系统功能相关的系统技能：
-- enable_thinking: 控制深度思考
-- get_session_logs: 获取会话日志
-- get_tool_info: 获取工具信息
+Handles system skills related to core system features:
+- enable_thinking: Toggle deep thinking
+- get_session_logs: Retrieve session logs
+- get_tool_info: Retrieve tool information
 """
 
 import logging
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class SystemHandler:
-    """系统功能处理器"""
+    """System feature handler"""
 
     TOOLS = [
         "ask_user",
@@ -36,15 +36,15 @@ class SystemHandler:
         self.agent = agent
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
-        """处理工具调用"""
+        """Handle tool call"""
         if tool_name == "ask_user":
-            # ask_user 正常由 ReasoningEngine 在 ACT 阶段拦截，不会到达此处
-            # 此为防御性兜底：若意外到达，返回问题文本而不是报错
+            # ask_user is normally intercepted by ReasoningEngine during the ACT phase and should not reach here.
+            # This is a defensive fallback: if it does arrive, return the question text instead of raising an error.
             question = params.get("question", "")
             logger.warning(
                 f"[SystemHandler] ask_user reached handler (should be intercepted): {question[:80]}"
             )
-            return question or "（等待用户回复）"
+            return question or "(waiting for user reply)"
         elif tool_name == "enable_thinking":
             return self._enable_thinking(params)
         elif tool_name == "get_session_logs":
@@ -61,7 +61,7 @@ class SystemHandler:
             return f"❌ Unknown system tool: {tool_name}"
 
     def _enable_thinking(self, params: dict) -> str:
-        """控制深度思考模式"""
+        """Toggle deep thinking mode"""
         enabled = params["enabled"]
         reason = params.get("reason", "")
 
@@ -69,58 +69,58 @@ class SystemHandler:
 
         if enabled:
             logger.info(f"Thinking mode enabled by LLM: {reason}")
-            return f"✅ 已启用深度思考模式。原因: {reason}\n后续回复将使用更强的推理能力。"
+            return f"✅ Deep thinking mode enabled. Reason: {reason}\nSubsequent replies will use stronger reasoning."
         else:
             logger.info(f"Thinking mode disabled by LLM: {reason}")
-            return f"✅ 已关闭深度思考模式。原因: {reason}\n将使用快速响应模式。"
+            return f"✅ Deep thinking mode disabled. Reason: {reason}\nFast response mode will be used."
 
     def _get_session_logs(self, params: dict) -> str:
-        """获取会话日志"""
+        """Retrieve session logs"""
         from ...logging import get_session_log_buffer
 
         count = params.get("count", 20)
-        # level 参数改为 level_filter（修复参数名不匹配问题）
+        # The `level` parameter was renamed to `level_filter` (fixes parameter name mismatch)
         level_filter = params.get("level_filter") or params.get("level")
 
         log_buffer = get_session_log_buffer()
         logs = log_buffer.get_logs(count=count, level_filter=level_filter)
 
         if not logs:
-            return "没有会话日志"
+            return "No session logs"
 
-        output = f"最近 {len(logs)} 条日志:\n\n"
+        output = f"Most recent {len(logs)} log entries:\n\n"
         for log in logs:
             output += f"[{log['level']}] {log['module']}: {log['message']}\n"
 
         return output
 
     def _get_tool_info(self, params: dict) -> str:
-        """获取工具信息"""
+        """Retrieve tool information"""
         tool_name_to_query = params["tool_name"]
         return self.agent.tool_catalog.get_tool_info_formatted(tool_name_to_query)
 
     def _set_task_timeout(self, params: dict) -> str:
-        """动态调整当前任务的超时策略"""
+        """Dynamically adjust the timeout policy for the current task"""
         pt = int(params.get("progress_timeout_seconds") or 0)
         ht = int(params.get("hard_timeout_seconds") or 0)
         reason = params.get("reason", "")
 
         if pt <= 0:
-            return "❌ progress_timeout_seconds 必须为正整数（秒）"
+            return "❌ progress_timeout_seconds must be a positive integer (seconds)"
         if ht < 0:
-            return "❌ hard_timeout_seconds 不能为负数"
+            return "❌ hard_timeout_seconds cannot be negative"
 
         monitor = getattr(self.agent, "_current_task_monitor", None)
         if not monitor:
-            return "⚠️ 当前没有正在执行的任务，无法调整超时策略"
+            return "⚠️ No task is currently executing; cannot adjust timeout policy"
 
         monitor.timeout_seconds = pt
         monitor.hard_timeout_seconds = ht
         logger.info(f"[TaskTimeout] Updated by LLM: progress={pt}s hard={ht}s reason={reason}")
-        return f"✅ 已更新当前任务超时策略：无进展超时={pt}s，硬超时={ht if ht else 0}s（0=禁用）。原因：{reason}"
+        return f"✅ Updated current task timeout policy: no-progress timeout={pt}s, hard timeout={ht if ht else 0}s (0=disabled). Reason: {reason}"
 
     def _get_workspace_map(self) -> str:
-        """返回工作区目录结构和关键路径说明"""
+        """Return the workspace directory structure and key path descriptions"""
         from ...config import settings
 
         root = settings.project_root
@@ -135,29 +135,29 @@ class SystemHandler:
             logs_rel = settings.log_dir_path
 
         lines = [
-            "## 工作区路径地图",
+            "## Workspace path map",
             "",
-            f"- **项目根目录**: {root}",
-            f"- **用户数据目录**: {settings.openakita_home}",
-            f"- **Identity**: {identity_rel}/ — 身份文档 (SOUL.md, AGENT.md, USER.md, MEMORY.md)",
-            "- **Skills**: 技能系统是多源的，可能来自 builtin、用户工作区或项目目录。",
-            "- **Skills Rule**: 不要根据 workspace map 猜测 skill 文件路径；请使用 list_skills / get_skill_info 查看真实来源与路径。",
-            "- **Data**: data/ — 运行数据根目录",
-            "  - sessions/ — 会话持久化",
-            "  - memory/ — 记忆存储",
-            "  - plans/ — 计划文件",
-            "  - media/ — IM 媒体文件",
-            "  - temp/ — 临时文件（可安全读写）",
-            "  - llm_debug/ — LLM 调试日志",
-            "  - scheduler/ — 定时任务",
-            "  - screenshots/ — 桌面/浏览器截图",
-            "  - generated_images/ — AI 生成的图片",
-            "  - tool_overflow/ — 工具大输出溢出文件",
-            "  - llm_endpoints.json — LLM 端点配置",
-            "  - agent.db — SQLite 数据库（记忆/会话）",
+            f"- **Project root**: {root}",
+            f"- **User data dir**: {settings.openakita_home}",
+            f"- **Identity**: {identity_rel}/ — identity documents (SOUL.md, AGENT.md, USER.md, MEMORY.md)",
+            "- **Skills**: The skill system is multi-source; skills may come from builtin, user workspace, or project directories.",
+            "- **Skills Rule**: Do not guess skill file paths from the workspace map; use list_skills / get_skill_info to view the actual source and path.",
+            "- **Data**: data/ — runtime data root",
+            "  - sessions/ — session persistence",
+            "  - memory/ — memory storage",
+            "  - plans/ — plan files",
+            "  - media/ — IM media files",
+            "  - temp/ — temporary files (safe to read/write)",
+            "  - llm_debug/ — LLM debug logs",
+            "  - scheduler/ — scheduled tasks",
+            "  - screenshots/ — desktop/browser screenshots",
+            "  - generated_images/ — AI-generated images",
+            "  - tool_overflow/ — overflow files for large tool outputs",
+            "  - llm_endpoints.json — LLM endpoint configuration",
+            "  - agent.db — SQLite database (memory/sessions)",
             f"- **Logs**: {logs_rel}/",
-            f"  - {settings.log_file_prefix}.log — 主日志（滚动，最新）",
-            "  - error.log — 错误日志（按天滚动）",
+            f"  - {settings.log_file_prefix}.log — main log (rolling, latest)",
+            "  - error.log — error log (rolls daily)",
         ]
 
         skill_roots = [
@@ -172,15 +172,16 @@ class SystemHandler:
         return "\n".join(line for line in lines if line is not None)
 
     _GENERATE_IMAGE_FAIL_HINT = (
-        "\n[行为指引] 图片生成接口暂时不可用，请直接将上述失败原因告知用户。"
-        "不要尝试用 run_shell、pip install 或任何其他方式替代生成图片。"
+        "\n[Behavior guidance] The image generation endpoint is temporarily unavailable; "
+        "please inform the user of the failure reason above directly. "
+        "Do not attempt to substitute image generation via run_shell, pip install, or any other means."
     )
 
     async def _generate_image(self, params: dict) -> str:
         """
-        文生图：调用 Qwen-Image 同步接口，下载图片并落盘。
+        Text-to-image: call the Qwen-Image sync endpoint, download the image, and write it to disk.
 
-        API 参考（通义百炼）：https://help.aliyun.com/zh/model-studio/qwen-image-api
+        API reference (Tongyi Bailian): https://help.aliyun.com/zh/model-studio/qwen-image-api
         """
         import json
         import time
@@ -193,11 +194,11 @@ class SystemHandler:
 
         prompt = (params.get("prompt") or "").strip()
         if not prompt:
-            return "❌ prompt 不能为空"
+            return "❌ prompt cannot be empty"
 
         api_key = (getattr(settings, "dashscope_api_key", "") or "").strip()
         if not api_key:
-            return f"❌ 未配置 DASHSCOPE_API_KEY，无法生成图片{_hint}"
+            return f"❌ DASHSCOPE_API_KEY is not configured; cannot generate image{_hint}"
 
         model = (params.get("model") or "qwen-image-max").strip()
         negative_prompt = (params.get("negative_prompt") or "").strip()
@@ -207,7 +208,7 @@ class SystemHandler:
         seed = params.get("seed")
         output_path = (params.get("output_path") or "").strip()
 
-        # 允许通过配置覆盖（便于跨地域/私有网络）
+        # Allow override via config (useful for cross-region / private networks)
         api_url = (getattr(settings, "dashscope_image_api_url", "") or "").strip()
         if not api_url:
             api_url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
@@ -244,8 +245,8 @@ class SystemHandler:
         _dl_headers = {"User-Agent": "OpenAkita/1.0 (image-download)"}
 
         async def _download_image(url: str) -> bytes:
-            """先直连后代理下载：国内 CDN 通常无需代理，直连更快更稳定。"""
-            # 第一次：不使用代理直连下载
+            """Try direct download first, then proxy: domestic CDNs usually don't need a proxy, and direct is faster and more reliable."""
+            # First attempt: direct download without proxy
             try:
                 async with httpx.AsyncClient(
                     timeout=60, trust_env=False, follow_redirects=True
@@ -255,7 +256,7 @@ class SystemHandler:
                     return resp.content
             except Exception as direct_err:
                 logger.debug("generate_image: direct download failed: %s", direct_err)
-            # 第二次：使用全局代理配置重试
+            # Second attempt: retry using global proxy configuration
             async with httpx.AsyncClient(
                 **get_httpx_client_kwargs(timeout=60), follow_redirects=True
             ) as dl_client:
@@ -263,7 +264,7 @@ class SystemHandler:
                 resp.raise_for_status()
                 return resp.content
 
-        # 1) 生成图片（返回临时 URL）
+        # 1) Generate image (returns a temporary URL)
         t0 = time.time()
         try:
             async with httpx.AsyncClient(
@@ -271,14 +272,14 @@ class SystemHandler:
             ) as client:
                 resp = await client.post(api_url, headers=headers, json=body)
                 if resp.status_code >= 400:
-                    return f"❌ 图片生成失败: HTTP {resp.status_code}\n{(resp.text or '')[:800]}{_hint}"
+                    return f"❌ Image generation failed: HTTP {resp.status_code}\n{(resp.text or '')[:800]}{_hint}"
                 try:
                     data = resp.json()
                 except Exception as e:
                     preview = (resp.text or "")[:800]
-                    return f"❌ 图片生成返回非 JSON（{type(e).__name__}: {e}）\n{preview}{_hint}"
+                    return f"❌ Image generation returned non-JSON ({type(e).__name__}: {e})\n{preview}{_hint}"
 
-                # 兼容响应结构：output.choices[0].message.content[0].image
+                # Response shape: output.choices[0].message.content[0].image
                 image_url = None
                 try:
                     image_url = (
@@ -296,9 +297,9 @@ class SystemHandler:
                 if not image_url:
                     code = data.get("code")
                     msg = data.get("message")
-                    return f"❌ 图片生成返回异常：未找到 image 字段（code={code}, message={msg}）{_hint}"
+                    return f"❌ Image generation returned unexpected response: image field missing (code={code}, message={msg}){_hint}"
 
-            # 2) 下载并落盘（独立客户端，每次重试全新连接）
+            # 2) Download and write to disk (dedicated client, fresh connection per retry)
             if output_path:
                 out_path = Path(output_path)
             else:
@@ -319,13 +320,13 @@ class SystemHandler:
                 detail = extract_connection_error(e)
                 from urllib.parse import urlparse
                 host = urlparse(image_url).hostname or image_url[:60]
-                return f"❌ 图片下载失败（网络错误，目标: {host}）: {detail}{_hint}"
+                return f"❌ Image download failed (network error, target: {host}): {detail}{_hint}"
 
         except httpx.HTTPError as e:
             detail = extract_connection_error(e)
-            return f"❌ 图片生成请求失败（网络错误）: {detail}{_hint}"
+            return f"❌ Image generation request failed (network error): {detail}{_hint}"
         except Exception as e:
-            return f"❌ 图片生成失败（异常）：{type(e).__name__}: {e}{_hint}"
+            return f"❌ Image generation failed (exception): {type(e).__name__}: {e}{_hint}"
 
         elapsed_ms = int((time.time() - t0) * 1000)
         return json.dumps(
@@ -336,7 +337,7 @@ class SystemHandler:
                 "saved_to": str(out_path),
                 "request_id": request_id,
                 "elapsed_ms": elapsed_ms,
-                "hint": "如需把图片真正交付给用户，请继续调用 deliver_artifacts(artifacts=[{type:'image', path:saved_to}])。仅调用一次，不要只在文字里说图片已发送。",
+                "hint": "To actually deliver the image to the user, call deliver_artifacts(artifacts=[{type:'image', path:saved_to}]). Call only once — do not merely state in text that the image has been sent.",
             },
             ensure_ascii=False,
             indent=2,
@@ -344,6 +345,6 @@ class SystemHandler:
 
 
 def create_handler(agent: "Agent"):
-    """创建系统功能处理器"""
+    """Create system feature handler"""
     handler = SystemHandler(agent)
     return handler.handle

@@ -1,238 +1,238 @@
 """
-Windows 桌面自动化 - 视觉分析提示词
+Windows desktop automation - vision analysis prompts
 
-定义用于 Qwen-VL 的各种提示词模板
+Defines various prompt templates used with Qwen-VL
 """
 
 
 class PromptTemplates:
-    """提示词模板集合"""
+    """Collection of prompt templates"""
 
-    # 查找元素
-    FIND_ELEMENT = """你是一个 Windows 桌面 UI 分析专家。请分析这张截图，找到用户描述的元素。
+    # Find an element
+    FIND_ELEMENT = """You are a Windows desktop UI analysis expert. Analyze this screenshot and find the element described by the user.
 
-用户描述: {description}
+User description: {description}
 
-请仔细查看截图，找到与描述最匹配的 UI 元素，并返回其位置信息。
+Examine the screenshot carefully, locate the UI element that best matches the description, and return its position information.
 
-要求：
-1. 仔细分析截图中的所有可见元素
-2. 找到与用户描述最匹配的元素
-3. 返回元素的边界框坐标（像素）
+Requirements:
+1. Carefully analyze all visible elements in the screenshot
+2. Find the element that best matches the user's description
+3. Return the element's bounding box coordinates (in pixels)
 
-请以 JSON 格式返回结果:
+Return the result in JSON format:
 ```json
 {{
-    "found": true或false,
+    "found": true or false,
     "element": {{
-        "description": "元素的简短描述",
-        "bbox": [左上角x, 左上角y, 右下角x, 右下角y],
-        "center": [中心点x, 中心点y],
-        "confidence": 0.0到1.0的置信度
+        "description": "brief description of the element",
+        "bbox": [top-left x, top-left y, bottom-right x, bottom-right y],
+        "center": [center x, center y],
+        "confidence": confidence between 0.0 and 1.0
     }},
-    "reasoning": "找到该元素的原因，或未找到的原因"
+    "reasoning": "why the element was found, or why it was not"
 }}
 ```
 
-注意：
-- bbox 坐标是相对于截图左上角的像素坐标
-- 如果找不到匹配的元素，设置 found 为 false
-- confidence 表示匹配的确信程度"""
+Notes:
+- bbox coordinates are pixel coordinates relative to the top-left corner of the screenshot
+- If no matching element is found, set found to false
+- confidence represents the certainty of the match"""
 
-    # 列出所有可点击元素
-    LIST_CLICKABLE = """你是一个 Windows 桌面 UI 分析专家。请分析这张截图，找出所有可以点击的 UI 元素。
+    # List all clickable elements
+    LIST_CLICKABLE = """You are a Windows desktop UI analysis expert. Analyze this screenshot and find all clickable UI elements.
 
-可点击元素包括：
-- 按钮（普通按钮、图标按钮）
-- 链接
-- 菜单项
-- 标签页
-- 列表项
-- 复选框
-- 单选按钮
-- 下拉框
-- 可点击的图标
+Clickable elements include:
+- Buttons (regular buttons, icon buttons)
+- Links
+- Menu items
+- Tabs
+- List items
+- Checkboxes
+- Radio buttons
+- Dropdowns
+- Clickable icons
 
-请以 JSON 格式返回结果:
+Return the result in JSON format:
 ```json
 {{
     "elements": [
         {{
-            "description": "元素描述",
-            "type": "元素类型（button/link/menuitem/tab/listitem/checkbox/icon等）",
-            "bbox": [左上角x, 左上角y, 右下角x, 右下角y],
-            "center": [中心点x, 中心点y]
+            "description": "element description",
+            "type": "element type (button/link/menuitem/tab/listitem/checkbox/icon, etc.)",
+            "bbox": [top-left x, top-left y, bottom-right x, bottom-right y],
+            "center": [center x, center y]
         }}
     ],
-    "total_count": 元素总数
+    "total_count": total number of elements
 }}
 ```
 
-注意：
-- 只返回可见且可交互的元素
-- bbox 是相对于截图左上角的像素坐标
-- 按照从上到下、从左到右的顺序排列"""
+Notes:
+- Only return elements that are visible and interactive
+- bbox is in pixel coordinates relative to the top-left corner of the screenshot
+- Order elements from top to bottom, left to right"""
 
-    # 列出所有输入元素
-    LIST_INPUT = """你是一个 Windows 桌面 UI 分析专家。请分析这张截图，找出所有可以输入的 UI 元素。
+    # List all input elements
+    LIST_INPUT = """You are a Windows desktop UI analysis expert. Analyze this screenshot and find all UI elements that accept input.
 
-输入元素包括：
-- 文本框
-- 密码框
-- 搜索框
-- 多行文本区域
-- 下拉选择框
-- 数字输入框
+Input elements include:
+- Text boxes
+- Password fields
+- Search boxes
+- Multi-line text areas
+- Dropdown combo boxes
+- Numeric input fields
 
-请以 JSON 格式返回结果:
+Return the result in JSON format:
 ```json
 {{
     "elements": [
         {{
-            "description": "元素描述（如'用户名输入框'）",
-            "type": "元素类型（textbox/password/search/textarea/combobox等）",
-            "bbox": [左上角x, 左上角y, 右下角x, 右下角y],
-            "center": [中心点x, 中心点y],
-            "current_value": "当前显示的值（如果可见）"
+            "description": "element description (e.g. 'username input')",
+            "type": "element type (textbox/password/search/textarea/combobox, etc.)",
+            "bbox": [top-left x, top-left y, bottom-right x, bottom-right y],
+            "center": [center x, center y],
+            "current_value": "currently displayed value (if visible)"
         }}
     ],
-    "total_count": 元素总数
+    "total_count": total number of elements
 }}
 ```"""
 
-    # 分析页面内容
-    ANALYZE_PAGE = """你是一个 Windows 桌面 UI 分析专家。请分析这张截图，描述当前页面的内容和布局。
+    # Analyze page content
+    ANALYZE_PAGE = """You are a Windows desktop UI analysis expert. Analyze this screenshot and describe the current page's content and layout.
 
-请回答以下问题：
-1. 这是什么应用程序或窗口？
-2. 当前页面的主要内容是什么？
-3. 页面有哪些主要区域？
-4. 有哪些重要的按钮或操作入口？
-5. 是否有任何弹窗、对话框或错误提示？
+Answer the following questions:
+1. What application or window is this?
+2. What is the main content of the current page?
+3. What are the main regions of the page?
+4. What important buttons or action entry points are there?
+5. Are there any popups, dialogs, or error messages?
 
-请以 JSON 格式返回结果:
+Return the result in JSON format:
 ```json
 {{
-    "application": "应用程序名称",
-    "window_title": "窗口标题",
-    "page_type": "页面类型（如主页、设置页、对话框等）",
-    "main_content": "主要内容描述",
+    "application": "application name",
+    "window_title": "window title",
+    "page_type": "page type (e.g. home, settings, dialog)",
+    "main_content": "description of the main content",
     "regions": [
         {{
-            "name": "区域名称",
-            "description": "区域描述",
-            "bbox": [左, 上, 右, 下]
+            "name": "region name",
+            "description": "region description",
+            "bbox": [left, top, right, bottom]
         }}
     ],
-    "key_actions": ["主要操作1", "主要操作2"],
-    "alerts": ["弹窗或提示信息"],
-    "summary": "页面整体摘要"
+    "key_actions": ["main action 1", "main action 2"],
+    "alerts": ["popup or notification text"],
+    "summary": "overall summary of the page"
 }}
 ```"""
 
-    # 回答关于截图的问题
-    ANSWER_QUESTION = """你是一个 Windows 桌面 UI 分析专家。请根据这张截图回答用户的问题。
+    # Answer a question about the screenshot
+    ANSWER_QUESTION = """You are a Windows desktop UI analysis expert. Answer the user's question based on this screenshot.
 
-用户问题: {question}
+User question: {question}
 
-请仔细观察截图，给出准确的回答。如果问题涉及到元素位置，请提供坐标信息。
+Observe the screenshot carefully and give an accurate answer. If the question involves element positions, provide coordinate information.
 
-回答格式：
+Answer format:
 ```json
 {{
-    "answer": "你的回答",
+    "answer": "your answer",
     "relevant_elements": [
         {{
-            "description": "相关元素描述",
-            "bbox": [左, 上, 右, 下],
+            "description": "description of the relevant element",
+            "bbox": [left, top, right, bottom],
             "center": [x, y]
         }}
     ],
-    "confidence": 0.0到1.0的置信度
+    "confidence": confidence between 0.0 and 1.0
 }}
 ```"""
 
-    # 验证操作结果
-    VERIFY_ACTION = """你是一个 Windows 桌面 UI 分析专家。请对比这两张截图，验证操作是否成功执行。
+    # Verify an action result
+    VERIFY_ACTION = """You are a Windows desktop UI analysis expert. Compare these two screenshots and verify whether the action was executed successfully.
 
-操作描述: {action_description}
-预期结果: {expected_result}
+Action description: {action_description}
+Expected result: {expected_result}
 
-第一张是操作前的截图，第二张是操作后的截图。
+The first image is the screenshot before the action; the second is after the action.
 
-请分析：
-1. 界面发生了什么变化？
-2. 操作是否成功执行？
-3. 结果是否符合预期？
+Analyze:
+1. What changes happened in the UI?
+2. Was the action executed successfully?
+3. Does the result match the expectation?
 
-请以 JSON 格式返回结果:
+Return the result in JSON format:
 ```json
 {{
-    "success": true或false,
-    "changes": ["变化1", "变化2"],
-    "matches_expectation": true或false,
-    "reasoning": "判断依据",
-    "current_state": "当前状态描述"
+    "success": true or false,
+    "changes": ["change 1", "change 2"],
+    "matches_expectation": true or false,
+    "reasoning": "basis for the judgment",
+    "current_state": "description of the current state"
 }}
 ```"""
 
-    # OCR 文本提取
-    EXTRACT_TEXT = """你是一个 Windows 桌面 UI 分析专家。请从这张截图中提取所有可见的文本内容。
+    # OCR text extraction
+    EXTRACT_TEXT = """You are a Windows desktop UI analysis expert. Extract all visible text content from this screenshot.
 
-请以 JSON 格式返回结果:
+Return the result in JSON format:
 ```json
 {{
     "texts": [
         {{
-            "content": "文本内容",
-            "bbox": [左, 上, 右, 下],
-            "type": "文本类型（title/label/button/input/content等）"
+            "content": "text content",
+            "bbox": [left, top, right, bottom],
+            "type": "text type (title/label/button/input/content, etc.)"
         }}
     ],
-    "main_text": "主要文本内容摘要"
+    "main_text": "summary of the main text content"
 }}
 ```
 
-注意：
-- 按照从上到下、从左到右的顺序
-- 区分标题、标签、按钮文字、输入内容等"""
+Notes:
+- Order from top to bottom, left to right
+- Distinguish between titles, labels, button text, input content, etc."""
 
-    # 比较两张截图
-    COMPARE_SCREENSHOTS = """你是一个 Windows 桌面 UI 分析专家。请对比这两张截图，找出它们之间的差异。
+    # Compare two screenshots
+    COMPARE_SCREENSHOTS = """You are a Windows desktop UI analysis expert. Compare these two screenshots and identify the differences between them.
 
-第一张是之前的截图，第二张是当前的截图。
+The first image is the previous screenshot; the second is the current screenshot.
 
-请分析：
-1. 有哪些元素新增了？
-2. 有哪些元素消失了？
-3. 有哪些元素发生了变化？
-4. 整体布局有什么变化？
+Analyze:
+1. Which elements have been added?
+2. Which elements have disappeared?
+3. Which elements have changed?
+4. How has the overall layout changed?
 
-请以 JSON 格式返回结果:
+Return the result in JSON format:
 ```json
 {{
-    "added": ["新增的元素"],
-    "removed": ["消失的元素"],
+    "added": ["added elements"],
+    "removed": ["removed elements"],
     "changed": [
         {{
-            "element": "变化的元素",
-            "before": "之前状态",
-            "after": "之后状态"
+            "element": "changed element",
+            "before": "previous state",
+            "after": "current state"
         }}
     ],
-    "layout_changes": "布局变化描述",
-    "summary": "变化摘要"
+    "layout_changes": "description of layout changes",
+    "summary": "summary of the changes"
 }}
 ```"""
 
     @classmethod
     def get_find_element_prompt(cls, description: str) -> str:
-        """获取查找元素的提示词"""
+        """Get the find-element prompt"""
         return cls.FIND_ELEMENT.format(description=description)
 
     @classmethod
     def get_answer_question_prompt(cls, question: str) -> str:
-        """获取回答问题的提示词"""
+        """Get the answer-question prompt"""
         return cls.ANSWER_QUESTION.format(question=question)
 
     @classmethod
@@ -241,7 +241,7 @@ class PromptTemplates:
         action_description: str,
         expected_result: str,
     ) -> str:
-        """获取验证操作的提示词"""
+        """Get the verify-action prompt"""
         return cls.VERIFY_ACTION.format(
             action_description=action_description,
             expected_result=expected_result,

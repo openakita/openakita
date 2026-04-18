@@ -3486,9 +3486,9 @@ class OrgRuntime:
             # attachment chip just like it does for write_file outputs.
             try:
                 text = result or ""
-                # Some code paths append "\n\n[Execution log]..." after the JSON.
-                if "\n\n[Execution log]" in text:
-                    text = text[: text.index("\n\n[Execution log]")]
+                # Some code paths append "\n\n[执行日志]..." (execution log) after the JSON.
+                if "\n\n[执行日志]" in text:
+                    text = text[: text.index("\n\n[执行日志]")]
                 data = _json.loads(text)
             except Exception:
                 return

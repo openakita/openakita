@@ -1,12 +1,12 @@
 """
-记忆生命周期管理
+Memory lifecycle management.
 
-统一归纳 + 衰减 + 去重逻辑:
-- 处理未归纳的原文 → 生成 Episode → 提取语义记忆
-- O(n log n) 聚类去重 (替代 O(n²))
-- 衰减计算与归档
-- 刷新 MEMORY.md / USER.md
-- 晋升 PERSONA_TRAIT
+Unified consolidation + decay + deduplication:
+- Process un-consolidated raw turns → generate Episode → extract semantic memories
+- O(n log n) clustering-based dedup (replaces O(n^2))
+- Decay computation and archival
+- Refresh MEMORY.md / USER.md
+- Promote PERSONA_TRAIT
 """
 
 from __future__ import annotations
@@ -97,7 +97,7 @@ def _fast_content_dedup(new: str, existing: str) -> str:
 
 
 def _safe_write_with_backup(path: Path, content: str) -> None:
-    """安全写入文件：先备份再写入，写失败则恢复"""
+    """Safely write a file: back it up first, then write; restore on failure."""
     backup = path.with_suffix(path.suffix + ".bak")
     try:
         if path.exists():
@@ -123,7 +123,7 @@ def _safe_write_with_backup(path: Path, content: str) -> None:
 
 
 class LifecycleManager:
-    """记忆生命周期管理器"""
+    """Memory lifecycle manager."""
 
     def __init__(
         self,
@@ -136,12 +136,12 @@ class LifecycleManager:
         self.identity_dir = identity_dir
 
     # ==================================================================
-    # Daily Consolidation (凌晨任务编排)
+    # Daily Consolidation (early-morning task orchestration)
     # ==================================================================
 
     async def consolidate_daily(self) -> dict:
         """
-        凌晨归纳主流程, 返回统计报告
+        Main early-morning consolidation flow; returns a statistics report.
         """
         report: dict = {"started_at": datetime.now().isoformat()}
 
@@ -198,7 +198,7 @@ class LifecycleManager:
     # ==================================================================
 
     async def process_unextracted_turns(self) -> int:
-        """处理未归纳的原文 → 生成 Episode → 提取语义记忆"""
+        """Process un-consolidated raw turns → generate Episode → extract semantic memories."""
         unextracted = self.store.get_unextracted_turns(limit=200)
         if not unextracted:
             return 0
@@ -339,7 +339,7 @@ class LifecycleManager:
     # ==================================================================
 
     async def deduplicate_batch(self) -> int:
-        """基于聚类的批量去重"""
+        """Clustering-based batch deduplication."""
         all_memories = self.store.load_all_memories()
         if len(all_memories) < 2:
             return 0
@@ -468,7 +468,7 @@ class LifecycleManager:
     # ==================================================================
 
     def cleanup_stale_attachments(self, max_age_days: int = 90) -> int:
-        """清理过期的空白附件 (无描述+无关联+超龄)"""
+        """Clean up stale blank attachments (no description + no links + past age limit)."""
         db = self.store.db
         if not db._conn:
             return 0
@@ -507,49 +507,49 @@ class LifecycleManager:
     # LLM-driven Memory Review
     # ==================================================================
 
-    MEMORY_REVIEW_PROMPT = """你是记忆质量审查专家。请逐条审查以下记忆，判断每条是否值得长期保留。
+    MEMORY_REVIEW_PROMPT = """You are a memory quality reviewer. Review each of the memories below and decide whether it is worth keeping long-term.
 
-## 审查标准
+## Review criteria
 
-**保留**（真正的长期信息）：
-- 用户身份：名字、称呼、职业
-- 用户长期偏好：沟通风格、语言习惯、通知渠道偏好
-- 持久行为规则：用户对 AI 行为的长期要求
-- 技术环境：OS、常用工具、技术栈
-- 可复用经验：特定类型问题的通用解决方法
-- 有价值的教训：需要长期避免的操作模式
-- **高引用记忆**（cited>=5 次）：说明实际使用中多次被证实有用，除非明显过期否则应保留
+**Keep** (truly long-term information):
+- User identity: name, how they like to be addressed, profession
+- Long-term user preferences: communication style, language habits, preferred notification channels
+- Persistent behavioral rules: long-standing user requirements for AI behavior
+- Technical environment: OS, commonly used tools, tech stack
+- Reusable experience: general solutions for specific kinds of problems
+- Valuable lessons: operational patterns that should be avoided long-term
+- **Highly cited memories** (cited>=5): proven useful through repeated real-world use; keep unless obviously stale
 
-**删除**（不应存在的垃圾）：
-- 一次性任务请求：「需要XX照片」「下载XX」「帮我搜索XX」「整理XX新闻」
-- 任务产物细节：文件大小、分辨率、下载链接、具体文件路径
-- 任务执行报告：「成功完成: ...」「搞定老板...」等 AI 回复摘要
-- 过期的临时信息：特定时间点、一次性定时任务参数
-- 重复/冗余：与其他记忆语义重复的
-- 无上下文的碎片：缺乏主语、无法独立理解的短句
-- **零引用+低分记忆**（cited=0 且 score<0.5）：从未被证实有用，优先清理
+**Delete** (garbage that should not exist):
+- One-off task requests: "need an XX photo", "download XX", "search for XX", "compile XX news"
+- Task-artifact details: file sizes, resolutions, download links, specific file paths
+- Task-execution reports: AI reply summaries like "Successfully completed: ..." or "Done, boss..."
+- Expired transient info: specific timestamps, one-off scheduled-task parameters
+- Duplicates / redundant: semantically overlap with other memories
+- Context-free fragments: short phrases that lack a subject and cannot stand alone
+- **Zero-citation + low-score memories** (cited=0 and score<0.5): never proven useful; clean up first
 
-**合并**：如果两条记忆说的是同一件事，标记为 merge 并给出合并后的内容。
+**Merge**: if two memories describe the same thing, mark the action as merge and provide the merged content.
 
-## 待审查记忆
+## Memories to review
 
 {memories_text}
 
-## 输出格式
+## Output format
 
-对每条记忆输出 JSON 数组：
+Return a JSON array, one entry per memory:
 [
   {{
-    "id": "记忆ID",
+    "id": "memory ID",
     "action": "keep|delete|merge|update",
-    "reason": "简要理由（10字内）",
-    "merged_with": "合并目标ID（仅 merge 时）",
-    "new_content": "更新后的内容（仅 update/merge 时）",
+    "reason": "short justification (<=10 words)",
+    "merged_with": "merge-target ID (only when action is merge)",
+    "new_content": "updated content (only for update/merge)",
     "new_importance": 0.5-1.0
   }}
 ]
 
-只输出 JSON 数组，不要其他内容。"""
+Output only the JSON array, nothing else."""
 
     async def review_memories_with_llm(
         self,
@@ -557,14 +557,14 @@ class LifecycleManager:
         cancel_event: asyncio.Event | None = None,
     ) -> dict:
         """
-        使用 LLM 审查所有记忆，清理垃圾、合并重复、更新过期内容。
+        Use the LLM to review all memories: clean up garbage, merge duplicates, update stale content.
 
         Args:
-            progress_callback: 每完成一个 batch 后调用，传入当前进度 dict
-            cancel_event: 如果 set，则在下一个 batch 前中止
+            progress_callback: called after each batch completes, receives the current progress dict
+            cancel_event: if set, abort before the next batch
 
         Returns:
-            审查报告 {deleted, updated, merged, kept, errors}
+            Review report {deleted, updated, merged, kept, errors}
         """
         import json
         import math
@@ -615,7 +615,7 @@ class LifecycleManager:
             try:
                 response = await self.extractor.brain.think(
                     prompt,
-                    system="你是记忆质量审查专家。只输出 JSON 数组。",
+                    system="You are a memory quality reviewer. Output only a JSON array.",
                 )
                 text = (getattr(response, "content", None) or str(response)).strip()
 
@@ -757,36 +757,36 @@ class LifecycleManager:
         return report
 
     # ==================================================================
-    # Experience Synthesis (归纳经验记忆为通用原则)
+    # Experience Synthesis (synthesize experience memories into general principles)
     # ==================================================================
 
-    EXPERIENCE_SYNTHESIS_PROMPT = """你是经验归纳专家。以下是近期积累的具体经验/教训/技能记忆。
-请判断其中是否有多条经验可以归纳为一条**更通用的原则**。
+    EXPERIENCE_SYNTHESIS_PROMPT = """You are an experience-synthesis expert. Below are specific experience / lesson / skill memories accumulated recently.
+Decide whether multiple of them can be synthesized into a **more general principle**.
 
-## 经验记忆列表
+## Experience memory list
 
 {experience_memories}
 
-## 归纳规则
+## Synthesis rules
 
-- 如果 2+ 条经验描述的是同一类问题的不同方面，归纳为一条通用原则
-- 归纳后的原则应该比原始经验更抽象、更具指导性
-- 不要强行归纳不相关的经验
-- 如果没有可归纳的，输出空数组
+- If 2+ experiences describe different facets of the same kind of problem, synthesize them into one general principle
+- The synthesized principle should be more abstract and more instructive than the originals
+- Do not force-synthesize unrelated experiences
+- If nothing can be synthesized, output an empty array
 
-## 输出格式
+## Output format
 
 [
   {{
-    "synthesized_from": ["源记忆ID1", "源记忆ID2"],
-    "content": "归纳后的通用原则",
-    "subject": "主题",
-    "predicate": "经验类型",
+    "synthesized_from": ["source memory ID 1", "source memory ID 2"],
+    "content": "the synthesized general principle",
+    "subject": "subject",
+    "predicate": "experience type",
     "importance": 0.8-1.0
   }}
 ]
 
-只输出 JSON 数组。如果没有可归纳的经验，输出 []。"""
+Output only the JSON array. If nothing can be synthesized, output []."""
 
     async def synthesize_experiences(self) -> int:
         """Synthesize specific experience memories into general principles."""
@@ -813,7 +813,7 @@ class LifecycleManager:
         try:
             response = await self.extractor.brain.think(
                 prompt,
-                system="你是经验归纳专家。只输出 JSON 数组。",
+                system="You are an experience-synthesis expert. Output only a JSON array.",
             )
             text = (getattr(response, "content", None) or str(response)).strip()
             json_match = re.search(r"\[[\s\S]*\]", text)
@@ -884,21 +884,21 @@ class LifecycleManager:
     # ==================================================================
 
     def refresh_memory_md(self, identity_dir: Path) -> None:
-        """刷新 MEMORY.md — LLM 审查后直接选取 top-K（无需关键词过滤）"""
+        """Refresh MEMORY.md — after LLM review, simply pick the top-K (no keyword filter needed)."""
         memories = self.store.query_semantic(min_importance=0.5, limit=100)
 
         by_type: dict[str, list[SemanticMemory]] = defaultdict(list)
         for mem in memories:
             by_type[mem.type.value].append(mem)
 
-        lines: list[str] = ["# 核心记忆\n"]
+        lines: list[str] = ["# Core Memories\n"]
         type_labels = {
-            "preference": "偏好",
-            "rule": "规则",
-            "fact": "事实",
-            "error": "教训",
-            "skill": "技能",
-            "experience": "经验",
+            "preference": "Preferences",
+            "rule": "Rules",
+            "fact": "Facts",
+            "error": "Lessons",
+            "skill": "Skills",
+            "experience": "Experience",
         }
 
         total_chars = 0
@@ -932,7 +932,7 @@ class LifecycleManager:
     # ==================================================================
 
     async def refresh_user_md(self, identity_dir: Path) -> None:
-        """从语义记忆自动填充 USER.md"""
+        """Auto-populate USER.md from semantic memories."""
         user_facts = self.store.query_semantic(subject="用户", limit=50)
         if not user_facts:
             return
@@ -993,13 +993,13 @@ class LifecycleManager:
             elif mem.type == MemoryType.FACT:
                 categories["basic"].append(content)
 
-        lines = ["# 用户档案\n", "> 由记忆系统自动生成\n"]
+        lines = ["# User Profile\n", "> Auto-generated by the memory system\n"]
 
         section_map = {
-            "basic": "基本信息",
-            "tech": "技术栈",
-            "preferences": "偏好",
-            "projects": "项目",
+            "basic": "Basic Info",
+            "tech": "Tech Stack",
+            "preferences": "Preferences",
+            "projects": "Projects",
         }
 
         has_content = False

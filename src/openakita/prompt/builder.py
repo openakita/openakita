@@ -2169,7 +2169,7 @@ def get_prompt_debug_info(
         mcp_text = mcp_catalog.get_catalog()
         info["catalogs"]["mcp"] = estimate_tokens(mcp_text) if mcp_text else 0
 
-    # 记忆统计
+    # Memory statistics
     if memory_manager:
         memory_context = retrieve_memory(
             query=task_description,
@@ -2178,7 +2178,7 @@ def get_prompt_debug_info(
         )
         info["memory"] = estimate_tokens(memory_context)
 
-    # 总计
+    # Total
     info["total"] = (
         sum(info["compiled_files"].values()) + sum(info["catalogs"].values()) + info["memory"]
     )

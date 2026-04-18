@@ -29,59 +29,60 @@ AGENT_TOOLS = [
             "- Use 'capable' only when the task requires deep reasoning"
         ),
         "detail": (
-            "将任务委派给已有的专业 Agent。这是多 Agent 协作的**首选**方式。\n\n"
-            "**适用场景**：\n"
-            "- 当前任务需要另一个 Agent 的专长（如代码、数据分析、浏览器操作）\n"
-            "- 拆分复杂任务到多个 Agent 协作完成\n"
-            "- 需要特定技能集的 Agent 处理子任务\n\n"
-            "**注意事项**：\n"
-            "- 目标 Agent 必须已注册（预设或动态创建）\n"
-            "- 委派深度上限为 5 层，防止无限递归\n"
-            "- 同一个 agent_id 可以被多次委派（池自动管理并行实例）"
+            "Delegate a task to an existing specialized agent. This is the **preferred** way to use multi-agent collaboration.\n\n"
+            "**Use cases**:\n"
+            "- The current task requires another agent's expertise (e.g. code, data analysis, browser operations)\n"
+            "- Break down a complex task across multiple collaborating agents\n"
+            "- Route a sub-task to an agent with a specific skill set\n\n"
+            "**Notes**:\n"
+            "- The target agent must already be registered (built-in or dynamically created)\n"
+            "- Delegation depth is capped at 5 levels to prevent infinite recursion\n"
+            "- The same agent_id can be delegated to multiple times (the pool manages parallel instances automatically)"
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "agent_id": {
                     "type": "string",
-                    "description": "目标 Agent Profile ID（如 'code-assistant', 'data-analyst', 'browser-agent'）",
+                    "description": "Target agent profile ID (e.g. 'code-assistant', 'data-analyst', 'browser-agent')",
                 },
                 "message": {
                     "type": "string",
-                    "description": "发送给目标 Agent 的任务描述",
+                    "description": "Task description to send to the target agent",
                 },
                 "reason": {
                     "type": "string",
-                    "description": "委派原因（可选，用于日志和追踪）",
+                    "description": "Reason for delegation (optional, used for logging and tracing)",
                 },
                 "model": {
                     "type": "string",
                     "enum": ["fast", "default", "capable"],
                     "description": (
-                        "子代理使用的模型。fast=便宜快速（适合简单任务），"
-                        "default=与主代理相同，capable=更强模型（适合复杂推理）"
+                        "Model used by the sub-agent. fast=cheap and fast (for simple tasks), "
+                        "default=same as the main agent, capable=stronger model (for complex reasoning)"
                     ),
                     "default": "default",
                 },
                 "context": {
                     "type": "string",
                     "description": (
-                        "为子Agent提供的背景上下文（可选）。"
-                        "子Agent可能看不到完整对话历史，请提供完成任务所需的关键信息"
-                        "（已知结论、相关约束、期望输出格式等）。"
+                        "Background context provided to the sub-agent (optional). "
+                        "The sub-agent may not see the full conversation history, so include the key "
+                        "information needed to complete the task (known conclusions, relevant constraints, "
+                        "expected output format, etc.)."
                     ),
                 },
                 "run_in_background": {
                     "type": "boolean",
-                    "description": "是否后台运行。后台子代理不阻塞主代理，结果稍后可查。",
+                    "description": "Whether to run in the background. Background sub-agents do not block the main agent; results can be checked later.",
                     "default": False,
                 },
                 "fork": {
                     "type": "boolean",
                     "description": (
-                        "Fork 模式：子代理继承当前完整对话上下文和 prompt cache。"
-                        "省略 agent_id 时自动开启 fork 模式，创建自身的克隆体。"
-                        "适用场景：需要子代理理解完整对话背景来处理子任务。"
+                        "Fork mode: the sub-agent inherits the full current conversation context and prompt cache. "
+                        "Omitting agent_id automatically enables fork mode, creating a clone of the current agent. "
+                        "Use case: when the sub-agent needs to understand the full conversation context to handle the sub-task."
                     ),
                     "default": False,
                 },
@@ -90,13 +91,13 @@ AGENT_TOOLS = [
         },
         "examples": [
             {
-                "scenario": "将代码任务委派给代码助手",
+                "scenario": "Delegate a coding task to the code assistant",
                 "params": {
                     "agent_id": "code-assistant",
-                    "message": "请帮我重构 utils.py 中的日期处理函数",
-                    "reason": "需要代码专长",
+                    "message": "Please help me refactor the date handling functions in utils.py",
+                    "reason": "Need coding expertise",
                 },
-                "expected": "代码助手的回复",
+                "expected": "Reply from the code assistant",
             },
         ],
     },
@@ -111,64 +112,64 @@ AGENT_TOOLS = [
             "The spawned agent is ephemeral — automatically destroyed after the task completes."
         ),
         "detail": (
-            "继承已有 Agent 创建临时工作 Agent，任务结束后自动销毁。\n\n"
-            "**适用场景**：\n"
-            "- 已有 Agent 接近需求但需要微调（追加技能或提示词）\n"
-            "- 需要同一个 Agent 的多个独立分身并行执行不同任务\n"
-            "- 一次性任务不需要持久化 Agent\n\n"
-            "**工作原理**：\n"
-            "1. 从 inherit_from 指定的基础 Profile 复制技能和提示词\n"
-            "2. 合并 extra_skills 和 custom_prompt_overlay\n"
-            "3. 创建临时 Profile（仅存内存，不写磁盘）\n"
-            "4. 立即委派 message 给临时 Agent 执行\n"
-            "5. 任务完成后自动清理临时 Profile"
+            "Create a temporary working agent by inheriting from an existing agent; it is destroyed automatically after the task finishes.\n\n"
+            "**Use cases**:\n"
+            "- An existing agent is close to what's needed but requires minor tweaks (extra skills or prompt additions)\n"
+            "- You need multiple independent clones of the same agent to run different tasks in parallel\n"
+            "- One-off tasks that don't need a persistent agent\n\n"
+            "**How it works**:\n"
+            "1. Copy skills and prompt from the base profile specified by inherit_from\n"
+            "2. Merge in extra_skills and custom_prompt_overlay\n"
+            "3. Create a temporary profile (in memory only, not written to disk)\n"
+            "4. Immediately delegate the message to the temporary agent\n"
+            "5. Automatically clean up the temporary profile once the task completes"
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "inherit_from": {
                     "type": "string",
-                    "description": "基础 Agent Profile ID（如 'browser-agent', 'code-assistant'）",
+                    "description": "Base agent profile ID (e.g. 'browser-agent', 'code-assistant')",
                 },
                 "message": {
                     "type": "string",
-                    "description": "要执行的任务描述",
+                    "description": "Description of the task to execute",
                 },
                 "extra_skills": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "在基础 Agent 技能之上追加的额外技能（可选）",
+                    "description": "Additional skills added on top of the base agent's skills (optional)",
                 },
                 "custom_prompt_overlay": {
                     "type": "string",
-                    "description": "追加到基础 Agent 提示词之上的定制提示（可选）",
+                    "description": "Custom prompt appended on top of the base agent's prompt (optional)",
                 },
                 "reason": {
                     "type": "string",
-                    "description": "为什么需要定制（可选，用于日志）",
+                    "description": "Why customization is needed (optional, used for logging)",
                 },
             },
             "required": ["inherit_from", "message"],
         },
         "examples": [
             {
-                "scenario": "继承浏览器 Agent，定制为网页调研专员",
+                "scenario": "Inherit from the browser agent to customize a web research specialist",
                 "params": {
                     "inherit_from": "browser-agent",
-                    "message": "调研 React 19 的新特性并整理报告",
-                    "custom_prompt_overlay": "重点关注性能优化和并发特性",
-                    "reason": "需要浏览器能力 + 调研专长",
+                    "message": "Research the new features in React 19 and produce a report",
+                    "custom_prompt_overlay": "Focus on performance optimizations and concurrency features",
+                    "reason": "Needs browser capabilities plus research expertise",
                 },
-                "expected": "临时 Agent 执行调研后返回结果",
+                "expected": "The temporary agent completes the research and returns results",
             },
             {
-                "scenario": "创建两个独立分身并行调研",
+                "scenario": "Create two independent clones for parallel research",
                 "params": {
                     "inherit_from": "browser-agent",
-                    "message": "调研 Vue 4 的最新动态",
-                    "reason": "并行调研第二个框架",
+                    "message": "Research the latest developments in Vue 4",
+                    "reason": "Parallel research on a second framework",
                 },
-                "expected": "每次 spawn 生成唯一临时 ID，可并行运行多个",
+                "expected": "Each spawn produces a unique temporary ID; multiple can run in parallel",
             },
         ],
     },
@@ -183,16 +184,16 @@ AGENT_TOOLS = [
             "specialized for."
         ),
         "detail": (
-            "同时委派任务给多个 Agent 并行执行。\n\n"
-            "**核心规则**：\n"
-            "- 同类任务（如多个调研任务）→ 用**同一个最合适的 agent_id**，"
-            "系统自动为每个任务创建独立副本\n"
-            "- 异类任务（如调研+编码+数据分析）→ 才分配给不同专业 Agent\n"
-            "- **严禁**为了凑并行把任务分给不对口的 Agent\n\n"
-            "**注意事项**：\n"
-            "- 所有任务并行执行，结果一起返回\n"
-            "- 各任务之间不能有依赖关系（有依赖请用 delegate_to_agent 串行委派）\n"
-            "- 对同一个 agent_id 发多个任务时，系统自动创建独立实例"
+            "Delegate tasks to multiple agents for parallel execution.\n\n"
+            "**Core rules**:\n"
+            "- Similar tasks (e.g. multiple research tasks) → use the **same best-fit agent_id**; "
+            "the system will automatically create an independent copy for each task\n"
+            "- Different kinds of tasks (e.g. research + coding + data analysis) → assign to different specialized agents\n"
+            "- **Never** assign tasks to mismatched agents just to fan out in parallel\n\n"
+            "**Notes**:\n"
+            "- All tasks execute in parallel and results are returned together\n"
+            "- Tasks must not depend on each other (for dependencies, delegate sequentially using delegate_to_agent)\n"
+            "- When sending multiple tasks to the same agent_id, the system automatically creates independent instances"
         ),
         "input_schema": {
             "type": "object",
@@ -200,10 +201,11 @@ AGENT_TOOLS = [
                 "context": {
                     "type": "string",
                     "description": (
-                        "所有子任务共享的背景上下文（可选）。"
-                        "子Agent可能看不到完整对话历史，请提供完成任务所需的关键信息"
-                        "（已知结论、相关约束、期望输出格式等）。"
-                        "此字段会自动添加到每个子任务的 context 前面。"
+                        "Background context shared across all sub-tasks (optional). "
+                        "Sub-agents may not see the full conversation history, so include the key "
+                        "information needed to complete the task (known conclusions, relevant constraints, "
+                        "expected output format, etc.). "
+                        "This field is automatically prepended to each sub-task's context."
                     ),
                 },
                 "tasks": {
@@ -213,74 +215,74 @@ AGENT_TOOLS = [
                         "properties": {
                             "agent_id": {
                                 "type": "string",
-                                "description": "目标 Agent Profile ID",
+                                "description": "Target agent profile ID",
                             },
                             "message": {
                                 "type": "string",
-                                "description": "发送给该 Agent 的任务描述",
+                                "description": "Task description to send to this agent",
                             },
                             "reason": {
                                 "type": "string",
-                                "description": "委派原因（可选）",
+                                "description": "Reason for delegation (optional)",
                             },
                             "context": {
                                 "type": "string",
-                                "description": "为该子Agent提供的额外背景上下文（可选，与顶层context合并）",
+                                "description": "Extra background context for this sub-agent (optional, merged with the top-level context)",
                             },
                         },
                         "required": ["agent_id", "message"],
                     },
-                    "description": "要并行执行的任务列表（2-5个）",
+                    "description": "List of tasks to execute in parallel (2-5 items)",
                 },
             },
             "required": ["tasks"],
         },
         "examples": [
             {
-                "scenario": "✅ 正确：同时调研多个项目（同类任务 → 同一 Agent 多副本）",
+                "scenario": "Correct: researching multiple projects at once (similar tasks -> same agent, multiple copies)",
                 "params": {
                     "tasks": [
                         {
                             "agent_id": "browser-agent",
-                            "message": "深入调研 OpenAkita 项目的架构、功能和社区活跃度",
-                            "reason": "调研项目A",
+                            "message": "Do an in-depth investigation of the OpenAkita project's architecture, features, and community activity",
+                            "reason": "Research project A",
                         },
                         {
                             "agent_id": "browser-agent",
-                            "message": "深入调研 OpenClaw 项目的架构、功能和社区活跃度",
-                            "reason": "调研项目B",
+                            "message": "Do an in-depth investigation of the OpenClaw project's architecture, features, and community activity",
+                            "reason": "Research project B",
                         },
                     ],
                 },
-                "expected": "系统自动为 browser-agent 创建2个独立副本，并行执行后合并返回",
+                "expected": "The system creates 2 independent copies of browser-agent, runs them in parallel, and returns merged results",
             },
             {
-                "scenario": "✅ 正确：不同类型任务并行（异类任务 → 不同专业 Agent）",
+                "scenario": "Correct: parallel execution of different kinds of tasks (different tasks -> different specialized agents)",
                 "params": {
                     "tasks": [
                         {
                             "agent_id": "browser-agent",
-                            "message": "在网上调研 React 19 的新特性",
-                            "reason": "网络调研",
+                            "message": "Research the new features of React 19 online",
+                            "reason": "Online research",
                         },
                         {
                             "agent_id": "code-assistant",
-                            "message": "分析当前项目的 React 版本升级兼容性",
-                            "reason": "代码分析",
+                            "message": "Analyze React version upgrade compatibility for the current project",
+                            "reason": "Code analysis",
                         },
                     ],
                 },
-                "expected": "调研和代码分析并行执行",
+                "expected": "Research and code analysis run in parallel",
             },
             {
-                "scenario": "❌ 错误：把调研任务分给不对口的 Agent",
+                "scenario": "Wrong: assigning research tasks to a mismatched agent",
                 "params": {
                     "tasks": [
-                        {"agent_id": "browser-agent", "message": "调研项目A"},
-                        {"agent_id": "code-assistant", "message": "调研项目B"},
+                        {"agent_id": "browser-agent", "message": "Research project A"},
+                        {"agent_id": "code-assistant", "message": "Research project B"},
                     ],
                 },
-                "expected": "严禁！code-assistant 是代码助手，不擅长网络调研。应该让两个调研任务都用 browser-agent",
+                "expected": "Not allowed! code-assistant is a coding assistant and is not good at web research. Both research tasks should use browser-agent.",
             },
         ],
     },
@@ -296,60 +298,60 @@ AGENT_TOOLS = [
             "Set persistent=true only if the user explicitly wants to keep the agent."
         ),
         "detail": (
-            "创建全新 Agent。⚠️ 这是**最后手段**。\n\n"
-            "**使用前请确认**：\n"
-            "1. ✅ 已检查所有现有 Agent，没有一个能直接使用（delegate_to_agent）\n"
-            "2. ✅ 已检查所有现有 Agent，没有一个能继承定制（spawn_agent）\n"
-            "3. ✅ 确实需要一个全新角色\n\n"
-            "**默认行为**：\n"
-            "- 创建的 Agent 默认是临时的（ephemeral），任务结束后自动销毁\n"
-            "- 不会污染系统 Agent 列表\n"
-            "- 设置 persistent=true 可永久保存（仅在用户明确要求时使用）\n\n"
-            "**限制**：\n"
-            "- 每个会话最多创建 5 个动态 Agent\n"
-            "- 动态 Agent 不能再创建新 Agent\n"
-            "- 如果系统检测到已有类似 Agent，会建议使用 spawn_agent 代替"
+            "Create a brand-new agent. This is the **last resort**.\n\n"
+            "**Confirm before using**:\n"
+            "1. All existing agents have been reviewed and none can be used directly (delegate_to_agent)\n"
+            "2. All existing agents have been reviewed and none can be customized by inheritance (spawn_agent)\n"
+            "3. A truly new role is required\n\n"
+            "**Default behavior**:\n"
+            "- Created agents are ephemeral by default and are destroyed automatically after the task\n"
+            "- They do not pollute the system agent list\n"
+            "- Set persistent=true to save permanently (only when the user explicitly requests it)\n\n"
+            "**Limits**:\n"
+            "- At most 5 dynamic agents can be created per session\n"
+            "- Dynamic agents cannot create further new agents\n"
+            "- If the system detects a similar existing agent, it suggests using spawn_agent instead"
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Agent 名称",
+                    "description": "Agent name",
                 },
                 "description": {
                     "type": "string",
-                    "description": "Agent 功能描述",
+                    "description": "Description of the agent's capabilities",
                 },
                 "skills": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "要分配的技能 ID 列表（可选）",
+                    "description": "List of skill IDs to assign (optional)",
                 },
                 "custom_prompt": {
                     "type": "string",
-                    "description": "自定义系统提示词（可选）",
+                    "description": "Custom system prompt (optional)",
                 },
                 "persistent": {
                     "type": "boolean",
-                    "description": "是否永久保存此 Agent（默认 false = 临时，任务结束后自动清理）",
+                    "description": "Whether to save this agent permanently (default false = ephemeral, cleaned up after the task)",
                 },
                 "force": {
                     "type": "boolean",
-                    "description": "跳过相似度检查强制创建（默认 false，当系统建议使用已有 Agent 但你确实需要全新的时使用）",
+                    "description": "Skip the similarity check and force creation (default false; use when the system suggests an existing agent but you truly need a new one)",
                 },
             },
             "required": ["name", "description"],
         },
         "examples": [
             {
-                "scenario": "创建临时 SQL 专家（默认行为）",
+                "scenario": "Create an ephemeral SQL expert (default behavior)",
                 "params": {
                     "name": "SQL Expert",
-                    "description": "专门处理 SQL 查询优化和数据库设计",
-                    "custom_prompt": "你是一个 SQL 优化专家。",
+                    "description": "Specializes in SQL query optimization and database design",
+                    "custom_prompt": "You are a SQL optimization expert.",
                 },
-                "expected": "✅ Agent created: ephemeral_sql_expert_xxx (ephemeral)",
+                "expected": "Agent created: ephemeral_sql_expert_xxx (ephemeral)",
             },
         ],
     },

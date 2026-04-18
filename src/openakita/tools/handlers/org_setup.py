@@ -76,7 +76,7 @@ class OrgSetupHandler:
                     "name": p.name,
                     "description": p.description,
                     "category": getattr(p, "category", "general"),
-                    "skills_summary": p.skills[:5] if p.skills else ["all (全能)"],
+                    "skills_summary": p.skills[:5] if p.skills else ["all (universal)"],
                 })
                 preset_ids.add(p.id)
             result["agents"] = agents
@@ -96,7 +96,7 @@ class OrgSetupHandler:
                     "name": p.name,
                     "description": p.description or "",
                     "category": "custom",
-                    "skills_summary": p.skills[:5] if p.skills else ["all (全能)"],
+                    "skills_summary": p.skills[:5] if p.skills else ["all (universal)"],
                 })
             if custom_agents:
                 result["custom_agents"] = custom_agents
@@ -120,14 +120,14 @@ class OrgSetupHandler:
             result["tool_categories"] = {}
 
         result["usage_hint"] = (
-            "请根据以上信息为用户设计组织架构。\n"
-            "为每个节点指定角色，有以下方式（按推荐顺序）：\n"
-            "1. 从 agents 或 custom_agents 中选择合适的 agent_profile_id\n"
-            "2. 直接填写 custom_prompt 创建全新角色（无需 agent_profile_id）\n"
-            "   — 适用于没有现成 Agent 匹配的场景\n"
-            "3. 同时设置 agent_profile_id 和 custom_prompt，"
-            "以预设 Agent 为基础并追加自定义指令\n"
-            "配置合适的工具类目（external_tools）。信息不足时请向用户询问。"
+            "Use the information above to design an organization structure for the user.\n"
+            "To assign a role to each node, use one of these approaches (in order of preference):\n"
+            "1. Pick a suitable agent_profile_id from agents or custom_agents\n"
+            "2. Fill in custom_prompt directly to create a brand-new role (no agent_profile_id needed)\n"
+            "   — for cases where no existing Agent is a good match\n"
+            "3. Set both agent_profile_id and custom_prompt to use a preset Agent "
+            "as the base and append custom instructions\n"
+            "Configure appropriate tool categories (external_tools). Ask the user if information is insufficient."
         )
 
         return json.dumps(result, ensure_ascii=False, indent=2)
@@ -139,28 +139,28 @@ class OrgSetupHandler:
     def _list_orgs(self) -> str:
         manager = self._get_org_manager()
         if manager is None:
-            return "❌ 组织管理器未初始化"
+            return "❌ Organization manager is not initialized"
 
         try:
             orgs = manager.list_orgs(include_archived=True)
         except Exception as e:
             logger.error(f"[OrgSetup] list_orgs failed: {e}", exc_info=True)
-            return f"❌ 获取组织列表失败: {e}"
+            return f"❌ Failed to list organizations: {e}"
 
         if not orgs:
-            return "当前没有任何组织。可以使用 create 或 create_from_template 创建。"
+            return "There are no organizations yet. Use create or create_from_template to create one."
 
-        lines = [f"现有组织共 {len(orgs)} 个：\n"]
+        lines = [f"Existing organizations: {len(orgs)} total\n"]
         for o in orgs:
             status = o.get("status", "unknown")
             lines.append(
                 f"- **{o.get('name', '')}** (ID: {o.get('id', '')})\n"
-                f"  状态: {status} | 节点: {o.get('node_count', 0)} | "
-                f"边: {o.get('edge_count', 0)}"
+                f"  Status: {status} | Nodes: {o.get('node_count', 0)} | "
+                f"Edges: {o.get('edge_count', 0)}"
             )
         lines.append(
-            "\n使用 get_org 查看某个组织的完整结构，"
-            "使用 update_org 修改，使用 delete_org 删除。"
+            "\nUse get_org to view an organization's full structure, "
+            "update_org to modify, and delete_org to delete."
         )
         return "\n".join(lines)
 
@@ -171,24 +171,24 @@ class OrgSetupHandler:
     def _get_org(self, params: dict[str, Any]) -> str:
         org_id = params.get("org_id", "")
         if not org_id:
-            return "❌ get_org 需要提供 org_id"
+            return "❌ get_org requires org_id"
 
         manager = self._get_org_manager()
         if manager is None:
-            return "❌ 组织管理器未初始化"
+            return "❌ Organization manager is not initialized"
 
         org = manager.get(org_id)
         if org is None:
-            return f"❌ 组织 '{org_id}' 不存在"
+            return f"❌ Organization '{org_id}' does not exist"
 
         lines = [
-            f"## 组织：{org.name}",
+            f"## Organization: {org.name}",
             f"- ID: {org.id}",
-            f"- 状态: {org.status.value if hasattr(org.status, 'value') else org.status}",
-            f"- 描述: {org.description or '(无)'}",
-            f"- 核心业务: {org.core_business or '(无)'}",
+            f"- Status: {org.status.value if hasattr(org.status, 'value') else org.status}",
+            f"- Description: {org.description or '(none)'}",
+            f"- Core business: {org.core_business or '(none)'}",
             "",
-            f"### 节点 ({len(org.nodes)} 个)\n",
+            f"### Nodes ({len(org.nodes)})\n",
         ]
 
         for n in sorted(org.nodes, key=lambda x: (x.level, x.department)):
@@ -196,14 +196,14 @@ class OrgSetupHandler:
             agent_label = self._get_agent_label(n.agent_profile_id)
             dept = f" [{n.department}]" if n.department else ""
             tools = n.external_tools or []
-            tools_str = f" | 工具: {', '.join(tools)}" if tools else ""
+            tools_str = f" | Tools: {', '.join(tools)}" if tools else ""
 
             lines.append(
                 f"{indent}- **{n.role_title}**{dept}\n"
                 f"{indent}  ID: `{n.id}` | Agent: {agent_label}{tools_str}"
             )
             if n.role_goal:
-                lines.append(f"{indent}  目标: {n.role_goal}")
+                lines.append(f"{indent}  Goal: {n.role_goal}")
 
         hierarchy_edges = []
         other_edges = []
@@ -214,17 +214,17 @@ class OrgSetupHandler:
             else:
                 other_edges.append(e)
 
-        lines.append(f"\n### 连线关系 ({len(org.edges)} 条)\n")
+        lines.append(f"\n### Edges ({len(org.edges)})\n")
 
         if hierarchy_edges:
-            lines.append("**层级（hierarchy）：**")
+            lines.append("**Hierarchy:**")
             for e in hierarchy_edges:
                 src = self._find_title_by_node_id(org.nodes, e.source)
                 tgt = self._find_title_by_node_id(org.nodes, e.target)
                 lines.append(f"- {src} → {tgt}")
 
         if other_edges:
-            lines.append("\n**协作/咨询/上报：**")
+            lines.append("\n**Collaborate / consult / escalate:**")
             for e in other_edges:
                 src = self._find_title_by_node_id(org.nodes, e.source)
                 tgt = self._find_title_by_node_id(org.nodes, e.target)
@@ -237,8 +237,8 @@ class OrgSetupHandler:
 
         lines.append(
             "\n---\n"
-            "使用 update_org 修改此组织。修改节点时请提供 node_id 以精确匹配。\n"
-            "添加协作连线用 add_edges，删除连线用 remove_edges（传 edge ID）。"
+            "Use update_org to modify this organization. When editing a node, provide its node_id for exact matching.\n"
+            "Use add_edges to add collaboration edges and remove_edges (pass edge ID) to remove them."
         )
         return "\n".join(lines)
 
@@ -249,22 +249,22 @@ class OrgSetupHandler:
     def _preview(self, params: dict[str, Any]) -> str:
         name = params.get("name", "")
         if not name:
-            return "❌ preview 需要提供 name（组织名称）"
+            return "❌ preview requires name (organization name)"
 
         nodes_raw = params.get("nodes", [])
         if not nodes_raw:
-            return "❌ preview 需要提供 nodes（节点列表）"
+            return "❌ preview requires nodes (node list)"
 
         nodes, edges, errors = self._build_org_structure(params)
         if errors:
-            return "⚠️ 结构校验发现问题：\n" + "\n".join(f"- {e}" for e in errors)
+            return "⚠️ Structure validation found issues:\n" + "\n".join(f"- {e}" for e in errors)
 
-        lines = [f"## 组织架构预览：{name}\n"]
+        lines = [f"## Organization preview: {name}\n"]
         if params.get("core_business"):
-            lines.append(f"核心业务：{params['core_business']}\n")
+            lines.append(f"Core business: {params['core_business']}\n")
 
-        lines.append(f"节点数：{len(nodes)}，连线：{len(edges)} 条\n")
-        lines.append("### 节点明细\n")
+        lines.append(f"Nodes: {len(nodes)}, Edges: {len(edges)}\n")
+        lines.append("### Node details\n")
 
         for n in sorted(nodes, key=lambda x: (x.get("level", 0), x.get("department", ""))):
             indent = "  " * n.get("level", 0)
@@ -273,7 +273,7 @@ class OrgSetupHandler:
             dept = n.get("department", "")
             dept_str = f" [{dept}]" if dept else ""
             tools = n.get("external_tools", [])
-            tools_str = f" 工具: {', '.join(tools)}" if tools else ""
+            tools_str = f" Tools: {', '.join(tools)}" if tools else ""
 
             lines.append(
                 f"{indent}- **{n['role_title']}**{dept_str} → Agent: {agent_label}"
@@ -283,15 +283,15 @@ class OrgSetupHandler:
         h_edges = [e for e in edges if e.get("edge_type") == "hierarchy"]
         o_edges = [e for e in edges if e.get("edge_type") != "hierarchy"]
 
-        lines.append(f"\n### 连线关系 ({len(edges)} 条)\n")
+        lines.append(f"\n### Edges ({len(edges)})\n")
         if h_edges:
-            lines.append("**层级：**")
+            lines.append("**Hierarchy:**")
             for e in h_edges:
                 src = self._find_title_by_id(nodes, e["source"])
                 tgt = self._find_title_by_id(nodes, e["target"])
                 lines.append(f"- {src} → {tgt}")
         if o_edges:
-            lines.append("\n**协作/咨询/上报：**")
+            lines.append("\n**Collaborate / consult / escalate:**")
             for e in o_edges:
                 src = self._find_title_by_id(nodes, e["source"])
                 tgt = self._find_title_by_id(nodes, e["target"])
@@ -300,7 +300,7 @@ class OrgSetupHandler:
                 bidir = "↔" if e.get("bidirectional", True) else "→"
                 lines.append(f"- {src} {bidir} {tgt} ({etype}{label})")
 
-        lines.append("\n---\n确认无误后请调用 create 正式创建。")
+        lines.append("\n---\nOnce confirmed, call create to create it.")
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
@@ -310,19 +310,19 @@ class OrgSetupHandler:
     async def _create(self, params: dict[str, Any]) -> str:
         name = params.get("name", "")
         if not name:
-            return "❌ create 需要提供 name（组织名称）"
+            return "❌ create requires name (organization name)"
 
         nodes_raw = params.get("nodes", [])
         if not nodes_raw:
-            return "❌ create 需要提供 nodes（节点列表）"
+            return "❌ create requires nodes (node list)"
 
         nodes, edges, errors = self._build_org_structure(params)
         if errors:
-            return "⚠️ 结构有问题，请修正后重试：\n" + "\n".join(f"- {e}" for e in errors)
+            return "⚠️ Structure has issues; please fix and retry:\n" + "\n".join(f"- {e}" for e in errors)
 
         manager = self._get_org_manager()
         if manager is None:
-            return "❌ 组织管理器未初始化，请确认服务已启动"
+            return "❌ Organization manager is not initialized; please ensure the service is running"
 
         org_data = {
             "name": name,
@@ -336,16 +336,16 @@ class OrgSetupHandler:
             org = manager.create(org_data)
             edge_summary = self._format_edge_summary(org.edges)
             return (
-                f"✅ 组织「{org.name}」创建成功！\n"
+                f"✅ Organization \"{org.name}\" created successfully!\n"
                 f"- ID: {org.id}\n"
-                f"- 节点数: {len(org.nodes)}\n"
-                f"- 连线: {edge_summary}\n"
-                f"- 状态: dormant（需在前端启动）\n\n"
-                f"用户可在组织编排页面查看和微调架构。"
+                f"- Nodes: {len(org.nodes)}\n"
+                f"- Edges: {edge_summary}\n"
+                f"- Status: dormant (needs to be started in the frontend)\n\n"
+                f"The user can view and fine-tune the structure on the organization editor page."
             )
         except Exception as e:
             logger.error(f"[OrgSetup] Failed to create org: {e}", exc_info=True)
-            return f"❌ 创建失败: {e}"
+            return f"❌ Creation failed: {e}"
 
     # ------------------------------------------------------------------
     # create_from_template
@@ -354,28 +354,28 @@ class OrgSetupHandler:
     async def _create_from_template(self, params: dict[str, Any]) -> str:
         template_id = params.get("template_id", "")
         if not template_id:
-            return "❌ create_from_template 需要提供 template_id"
+            return "❌ create_from_template requires template_id"
 
         manager = self._get_org_manager()
         if manager is None:
-            return "❌ 组织管理器未初始化，请确认服务已启动"
+            return "❌ Organization manager is not initialized; please ensure the service is running"
 
         overrides = params.get("overrides") or {}
 
         try:
             org = manager.create_from_template(template_id, overrides)
             return (
-                f"✅ 从模板「{template_id}」创建组织成功！\n"
-                f"- 名称: {org.name}\n"
+                f"✅ Organization created from template \"{template_id}\"!\n"
+                f"- Name: {org.name}\n"
                 f"- ID: {org.id}\n"
-                f"- 节点数: {len(org.nodes)}\n"
-                f"- 状态: dormant（需在前端启动）"
+                f"- Nodes: {len(org.nodes)}\n"
+                f"- Status: dormant (needs to be started in the frontend)"
             )
         except FileNotFoundError:
-            return f"❌ 模板 '{template_id}' 不存在。请先调用 get_resources 查看可用模板。"
+            return f"❌ Template '{template_id}' does not exist. Call get_resources first to see available templates."
         except Exception as e:
             logger.error(f"[OrgSetup] Failed to create from template: {e}", exc_info=True)
-            return f"❌ 创建失败: {e}"
+            return f"❌ Creation failed: {e}"
 
     # ------------------------------------------------------------------
     # update_org — incremental update preserving node IDs
@@ -384,15 +384,15 @@ class OrgSetupHandler:
     async def _update_org(self, params: dict[str, Any]) -> str:
         org_id = params.get("org_id", "")
         if not org_id:
-            return "❌ update_org 需要提供 org_id"
+            return "❌ update_org requires org_id"
 
         manager = self._get_org_manager()
         if manager is None:
-            return "❌ 组织管理器未初始化"
+            return "❌ Organization manager is not initialized"
 
         org = manager.get(org_id)
         if org is None:
-            return f"❌ 组织 '{org_id}' 不存在。请先调用 list_orgs 查看现有组织。"
+            return f"❌ Organization '{org_id}' does not exist. Call list_orgs first to see existing organizations."
 
         changes: list[str] = []
 
@@ -409,9 +409,9 @@ class OrgSetupHandler:
             matched = self._resolve_node(org.nodes, ref)
             if matched:
                 remove_ids.add(matched.id)
-                changes.append(f"删除节点「{matched.role_title}」({matched.id})")
+                changes.append(f"Removed node \"{matched.role_title}\" ({matched.id})")
             else:
-                changes.append(f"⚠️ 未找到要删除的节点: {ref}")
+                changes.append(f"⚠️ Node to remove not found: {ref}")
 
         nodes_dict: dict[str, dict] = {}
         for n in org.nodes:
@@ -466,7 +466,7 @@ class OrgSetupHandler:
 
                 if updated_fields:
                     changes.append(
-                        f"修改节点「{existing['role_title']}」: "
+                        f"Updated node \"{existing['role_title']}\": "
                         f"{', '.join(updated_fields)}"
                     )
 
@@ -488,7 +488,7 @@ class OrgSetupHandler:
                             "bidirectional": True,
                         })
                         changes.append(
-                            f"更新层级：{existing['role_title']} 的上级改为 {parent_title}"
+                            f"Updated hierarchy: {existing['role_title']}'s parent changed to {parent_title}"
                         )
             else:
                 # New node
@@ -520,7 +520,7 @@ class OrgSetupHandler:
                 nodes_dict[new_id] = new_node
                 title_to_id[role_title] = new_id
 
-                changes.append(f"新增节点「{role_title}」(Agent: {agent_profile_id or 'default'})")
+                changes.append(f"Added node \"{role_title}\" (Agent: {agent_profile_id or 'default'})")
 
                 # Create hierarchy edge for new node
                 parent_title = upd.get("parent_role_title", "").strip()
@@ -544,8 +544,8 @@ class OrgSetupHandler:
                 if e.get("id") == edge_id_ref:
                     if e.get("edge_type") == "hierarchy":
                         changes.append(
-                            f"⚠️ 不能通过 remove_edges 删除层级连线 {edge_id_ref}，"
-                            f"请通过修改节点的 parent_role_title 调整层级"
+                            f"⚠️ Cannot remove hierarchy edge {edge_id_ref} via remove_edges; "
+                            f"adjust the hierarchy by modifying a node's parent_role_title instead"
                         )
                     else:
                         src_title = self._find_title_by_id(
@@ -558,12 +558,12 @@ class OrgSetupHandler:
                             ex for ex in edges_list if ex.get("id") != edge_id_ref
                         ]
                         changes.append(
-                            f"删除连线 {src_title} → {tgt_title} ({e.get('edge_type')})"
+                            f"Removed edge {src_title} → {tgt_title} ({e.get('edge_type')})"
                         )
                     found = True
                     break
             if not found:
-                changes.append(f"⚠️ 未找到要删除的连线: {edge_id_ref}")
+                changes.append(f"⚠️ Edge to remove not found: {edge_id_ref}")
 
         # --- 5. Add edges ---
         allowed_edge_types = ("collaborate", "escalate", "consult")
@@ -571,8 +571,8 @@ class OrgSetupHandler:
             etype = er.get("edge_type", "")
             if etype not in allowed_edge_types:
                 changes.append(
-                    f"⚠️ add_edges 不支持 edge_type='{etype}'，"
-                    f"层级关系请用 parent_role_title"
+                    f"⚠️ add_edges does not support edge_type='{etype}'; "
+                    f"use parent_role_title for hierarchy relationships"
                 )
                 continue
 
@@ -582,13 +582,13 @@ class OrgSetupHandler:
             tgt_id = title_to_id.get(tgt_ref, tgt_ref)
 
             if src_id not in nodes_dict:
-                changes.append(f"⚠️ add_edges 中 source='{src_ref}' 未找到对应节点")
+                changes.append(f"⚠️ add_edges: no node found for source='{src_ref}'")
                 continue
             if tgt_id not in nodes_dict:
-                changes.append(f"⚠️ add_edges 中 target='{tgt_ref}' 未找到对应节点")
+                changes.append(f"⚠️ add_edges: no node found for target='{tgt_ref}'")
                 continue
             if src_id == tgt_id:
-                changes.append("⚠️ add_edges 中 source 和 target 不能是同一节点")
+                changes.append("⚠️ add_edges: source and target cannot be the same node")
                 continue
 
             duplicate = any(
@@ -600,7 +600,7 @@ class OrgSetupHandler:
                 src_title = nodes_dict[src_id].get("role_title", src_id)
                 tgt_title = nodes_dict[tgt_id].get("role_title", tgt_id)
                 changes.append(
-                    f"⚠️ 连线已存在: {src_title} → {tgt_title} ({etype})，跳过"
+                    f"⚠️ Edge already exists: {src_title} → {tgt_title} ({etype}); skipping"
                 )
                 continue
 
@@ -617,7 +617,7 @@ class OrgSetupHandler:
             src_title = nodes_dict[src_id].get("role_title", src_id)
             tgt_title = nodes_dict[tgt_id].get("role_title", tgt_id)
             label_str = f" \"{er.get('label')}\"" if er.get("label") else ""
-            changes.append(f"添加连线 {src_title} ↔ {tgt_title} ({etype}{label_str})")
+            changes.append(f"Added edge {src_title} ↔ {tgt_title} ({etype}{label_str})")
 
         # --- 6. Recalculate positions ---
         final_nodes = list(nodes_dict.values())
@@ -634,21 +634,21 @@ class OrgSetupHandler:
             org = manager.update(org_id, update_data)
 
             if safe_fields:
-                changes.append(f"更新组织字段: {', '.join(safe_fields.keys())}")
+                changes.append(f"Updated organization fields: {', '.join(safe_fields.keys())}")
 
             if not changes:
-                return "ℹ️ 未检测到任何变更。请提供要修改的内容。"
+                return "ℹ️ No changes detected. Please provide what you want to modify."
 
             summary = "\n".join(f"  {i+1}. {c}" for i, c in enumerate(changes))
             edge_summary = self._format_edge_summary(org.edges)
             return (
-                f"✅ 组织「{org.name}」修改成功！\n\n"
-                f"变更摘要：\n{summary}\n\n"
-                f"当前节点数: {len(org.nodes)} | 连线: {edge_summary}"
+                f"✅ Organization \"{org.name}\" updated successfully!\n\n"
+                f"Change summary:\n{summary}\n\n"
+                f"Current nodes: {len(org.nodes)} | Edges: {edge_summary}"
             )
         except Exception as e:
             logger.error(f"[OrgSetup] Failed to update org: {e}", exc_info=True)
-            return f"❌ 修改失败: {e}"
+            return f"❌ Update failed: {e}"
 
     # ------------------------------------------------------------------
     # delete_org
@@ -657,35 +657,35 @@ class OrgSetupHandler:
     async def _delete_org(self, params: dict[str, Any]) -> str:
         org_id = params.get("org_id", "")
         if not org_id:
-            return "❌ delete_org 需要提供 org_id"
+            return "❌ delete_org requires org_id"
 
         from ...orgs.runtime import get_runtime
         rt = get_runtime()
         if rt is not None:
             try:
                 await rt.delete_org(org_id)
-                return f"✅ 组织({org_id}) 已永久删除。"
+                return f"✅ Organization ({org_id}) has been permanently deleted."
             except ValueError:
-                return f"❌ 组织 '{org_id}' 不存在"
+                return f"❌ Organization '{org_id}' does not exist"
             except Exception as e:
                 logger.error(f"[OrgSetup] Failed to delete org: {e}", exc_info=True)
-                return f"❌ 删除失败: {e}"
+                return f"❌ Delete failed: {e}"
 
         manager = self._get_org_manager()
         if manager is None:
-            return "❌ 组织管理器未初始化"
+            return "❌ Organization manager is not initialized"
 
         org = manager.get(org_id)
         if org is None:
-            return f"❌ 组织 '{org_id}' 不存在"
+            return f"❌ Organization '{org_id}' does not exist"
 
         org_name = org.name
         try:
             manager.delete(org_id)
-            return f"✅ 组织「{org_name}」({org_id}) 已永久删除。"
+            return f"✅ Organization \"{org_name}\" ({org_id}) has been permanently deleted."
         except Exception as e:
             logger.error(f"[OrgSetup] Failed to delete org: {e}", exc_info=True)
-            return f"❌ 删除失败: {e}"
+            return f"❌ Delete failed: {e}"
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -726,7 +726,7 @@ class OrgSetupHandler:
         for i, nr in enumerate(nodes_raw):
             title = nr.get("role_title", "").strip()
             if not title:
-                errors.append(f"节点 #{i + 1} 缺少 role_title")
+                errors.append(f"Node #{i + 1} is missing role_title")
                 continue
 
             node_id = f"node_{uuid.uuid4().hex[:12]}"
@@ -772,7 +772,7 @@ class OrgSetupHandler:
             parent_id = title_to_id.get(parent_title)
             if parent_id is None:
                 errors.append(
-                    f"节点「{node['role_title']}」的上级「{parent_title}」未找到"
+                    f"Parent \"{parent_title}\" of node \"{node['role_title']}\" not found"
                 )
                 continue
             edge_id = f"edge_{uuid.uuid4().hex[:12]}"
@@ -789,9 +789,9 @@ class OrgSetupHandler:
             etype = er.get("edge_type", "")
             if etype not in allowed_edge_types:
                 errors.append(
-                    f"edges 中不支持 edge_type='{etype}'，"
-                    f"层级关系请用 parent_role_title，"
-                    f"此处仅支持: {', '.join(allowed_edge_types)}"
+                    f"edges does not support edge_type='{etype}'; "
+                    f"use parent_role_title for hierarchy relationships; "
+                    f"only these are supported here: {', '.join(allowed_edge_types)}"
                 )
                 continue
             src_ref = er.get("source", "").strip()
@@ -799,13 +799,13 @@ class OrgSetupHandler:
             src_id = title_to_id.get(src_ref)
             tgt_id = title_to_id.get(tgt_ref)
             if not src_id:
-                errors.append(f"edges 中 source='{src_ref}' 未找到对应节点")
+                errors.append(f"edges: no node found for source='{src_ref}'")
                 continue
             if not tgt_id:
-                errors.append(f"edges 中 target='{tgt_ref}' 未找到对应节点")
+                errors.append(f"edges: no node found for target='{tgt_ref}'")
                 continue
             if src_id == tgt_id:
-                errors.append(f"edges 中 source 和 target 不能是同一节点: '{src_ref}'")
+                errors.append(f"edges: source and target cannot be the same node: '{src_ref}'")
                 continue
             edges.append({
                 "id": f"edge_{uuid.uuid4().hex[:12]}",
@@ -818,7 +818,7 @@ class OrgSetupHandler:
 
         root_nodes = [n for n in nodes if n["level"] == 0]
         if not root_nodes:
-            errors.append("至少需要一个 level=0 的根节点")
+            errors.append("At least one root node with level=0 is required")
 
         return nodes, edges, errors
 
@@ -882,18 +882,18 @@ class OrgSetupHandler:
 
         total = sum(counts.values())
         if total == 0:
-            return "0 条"
+            return "0"
         parts = []
         type_labels = {
-            "hierarchy": "层级",
-            "collaborate": "协作",
-            "escalate": "上报",
-            "consult": "咨询",
+            "hierarchy": "hierarchy",
+            "collaborate": "collaborate",
+            "escalate": "escalate",
+            "consult": "consult",
         }
         for t, label in type_labels.items():
             if t in counts:
                 parts.append(f"{label} {counts[t]}")
-        return f"{total} 条（{' / '.join(parts)}）"
+        return f"{total} ({' / '.join(parts)})"
 
     @staticmethod
     def _find_title_by_node_id(nodes, node_id: str) -> str:
