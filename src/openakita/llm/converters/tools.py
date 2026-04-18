@@ -1,8 +1,8 @@
 """
-工具调用格式转换器
+Tool call format converters.
 
-负责在内部格式（Anthropic-like）和 OpenAI 格式之间转换工具定义和调用。
-支持文本格式工具调用解析（降级方案）。
+Converts tool definitions and calls between the internal format (Anthropic-like)
+and the OpenAI format. Also supports parsing tool calls from text (fallback).
 """
 
 from __future__ import annotations
@@ -19,18 +19,18 @@ from ..types import Tool, ToolUseBlock
 
 logger = logging.getLogger(__name__)
 
-# JSON 解析失败时写入 input 的标记键，供 ToolExecutor 拦截
+# Marker key written into input when JSON parsing fails, intercepted by ToolExecutor
 PARSE_ERROR_KEY = "__parse_error__"
 
 
 def _try_repair_json(s: str) -> dict | None:
-    """尝试修复被截断的 JSON 字符串。
+    """Attempt to repair a truncated JSON string.
 
-    LLM 生成超长 tool_call arguments 时，API 可能截断 JSON，
-    导致 json.loads 失败。此函数尝试简单修复：
-    - 补齐缺少的引号
-    - 补齐缺少的花括号
-    返回 None 表示修复失败。
+    When LLMs generate very long tool_call arguments, the API may truncate
+    the JSON, causing json.loads to fail. This function attempts simple fixes:
+    - Close missing quotes
+    - Close missing braces
+    Returns None if repair fails.
     """
     s = s.strip()
     if not s:
@@ -55,7 +55,7 @@ def _try_repair_json(s: str) -> dict | None:
 
 
 def _dump_raw_arguments(tool_name: str, arguments: str) -> None:
-    """将解析失败的原始 arguments 写入诊断文件，方便排查截断问题。"""
+    """Write the raw unparseable arguments to a diagnostic file for debugging truncation."""
     try:
         from datetime import datetime
 
@@ -71,17 +71,17 @@ def _dump_raw_arguments(tool_name: str, arguments: str) -> None:
         logger.warning(f"[TOOL_CALL] Failed to dump raw arguments: {exc}")
 
 
-# ── OpenAI Chat Completions 格式转换 ──────────────────────
+# ── OpenAI Chat Completions format conversion ────────────
 
 
 def convert_tools_to_anthropic(tools: list[Tool]) -> list[dict]:
-    """将内部工具定义转换为 Anthropic 格式（内部格式本身即 Anthropic-like）。"""
+    """Convert internal tool definitions to Anthropic format (internal is already Anthropic-like)."""
     _KNOWN_TOOL_NAMES.update(t.name for t in tools)
     return [tool.to_dict() for tool in tools]
 
 
 def convert_tools_to_openai(tools: list[Tool]) -> list[dict]:
-    """将内部工具定义转换为 OpenAI 格式。"""
+    """Convert internal tool definitions to OpenAI format."""
     _KNOWN_TOOL_NAMES.update(t.name for t in tools)
     return [
         {
@@ -97,7 +97,7 @@ def convert_tools_to_openai(tools: list[Tool]) -> list[dict]:
 
 
 def convert_tools_from_openai(tools: list[dict]) -> list[Tool]:
-    """将 OpenAI 工具定义转换为内部格式。"""
+    """Convert OpenAI tool definitions to the internal format."""
     result = []
     for tool in tools:
         if tool.get("type") == "function":
@@ -113,29 +113,29 @@ def convert_tools_from_openai(tools: list[dict]) -> list[Tool]:
 
 
 def convert_tool_calls_from_openai(tool_calls: list[dict]) -> list[ToolUseBlock]:
-    """将 OpenAI 工具调用转换为内部格式。
+    """Convert OpenAI tool calls to the internal format.
 
-    OpenAI 格式:
+    OpenAI format:
     {
         "id": "call_xxx",
         "type": "function",
         "function": {
             "name": "get_weather",
-            "arguments": "{\"location\": \"Beijing\"}"  # JSON 字符串
+            "arguments": "{\"location\": \"Beijing\"}"  # JSON string
         }
     }
 
-    内部格式:
+    Internal format:
     {
         "type": "tool_use",
         "id": "call_xxx",
         "name": "get_weather",
-        "input": {"location": "Beijing"}  # JSON 对象
+        "input": {"location": "Beijing"}  # JSON object
     }
     """
     result = []
     for tc in tool_calls:
-        # 兼容：部分 OpenAI 兼容网关可能缺失 tc.type 字段，但仍提供 function{name,arguments}
+        # Compatibility: some OpenAI-compatible gateways omit tc.type but still provide function{name,arguments}
         func = tc.get("function") or {}
         tc_type = tc.get("type")
         if tc_type == "function" or (not tc_type and isinstance(func, dict) and func.get("name")):
@@ -156,12 +156,12 @@ def convert_tool_calls_from_openai(tool_calls: list[dict]) -> list[ToolUseBlock]
                     if input_dict is not None:
                         recovered_keys = sorted(input_dict.keys())
                         err_msg = (
-                            f"❌ 工具 '{tool_name}' 的参数 JSON 被 API 截断后自动修复，"
-                            f"但内容可能不完整（恢复的键: {recovered_keys}）。\n"
-                            f"原始参数长度: {arg_len} 字符。\n"
-                            "请缩短参数后重试：\n"
-                            "- write_file / edit_file：将大文件拆分为多次小写入\n"
-                            "- 其他工具：精简参数，避免嵌入超长文本"
+                            f"❌ The argument JSON for tool '{tool_name}' was auto-repaired after API truncation, "
+                            f"but content may be incomplete (recovered keys: {recovered_keys}).\n"
+                            f"Original argument length: {arg_len} characters.\n"
+                            "Please shorten the arguments and retry:\n"
+                            "- write_file / edit_file: split large files into multiple smaller writes\n"
+                            "- Other tools: trim arguments, avoid embedding very long text"
                         )
                         input_dict = {PARSE_ERROR_KEY: err_msg}
                         logger.warning(
@@ -169,7 +169,7 @@ def convert_tool_calls_from_openai(tool_calls: list[dict]) -> list[ToolUseBlock]
                             f"(recovered keys: {recovered_keys}), treating as truncation "
                             f"error. Raw args ({arg_len} chars) dumped to data/llm_debug/."
                         )
-                        # write_file 截断修复后若 path 丢失，注入截断提示而非传入不完整参数
+                        # After write_file truncation repair, if 'path' is missing, inject a truncation hint instead of passing incomplete args
                         if (
                             tool_name == "write_file"
                             and "content" in input_dict
@@ -182,20 +182,20 @@ def convert_tool_calls_from_openai(tool_calls: list[dict]) -> list[ToolUseBlock]
                             )
                             input_dict = {
                                 PARSE_ERROR_KEY: (
-                                    f"⚠️ 你的 write_file 调用因内容过长（{content_len} 字符）被 API 截断，"
-                                    f"'path' 参数丢失。请用以下方法解决：\n"
-                                    "1. 将大文件内容拆分为多次小写入（每次 < 8000 字符）\n"
-                                    "2. 或使用 run_shell + Python 脚本生成大文件\n"
-                                    "3. 先写骨架文件，再用多次追加写入填充内容"
+                                    f"⚠️ Your write_file call was truncated by the API because the content was too long ({content_len} characters), "
+                                    f"and the 'path' argument was lost. Try one of the following:\n"
+                                    "1. Split the large content into multiple smaller writes (each < 8000 characters)\n"
+                                    "2. Or use run_shell + a Python script to generate the large file\n"
+                                    "3. Write a skeleton file first, then fill in the content with multiple appends"
                                 )
                             }
                     else:
                         err_msg = (
-                            f"❌ 工具 '{tool_name}' 的参数 JSON 被 API 截断且无法修复"
-                            f"（共 {arg_len} 字符）。\n"
-                            "请缩短参数后重试：\n"
-                            "- write_file / edit_file：将大文件拆分为多次小写入\n"
-                            "- 其他工具：精简参数，避免嵌入超长文本"
+                            f"❌ The argument JSON for tool '{tool_name}' was truncated by the API and could not be repaired"
+                            f" (total {arg_len} characters).\n"
+                            "Please shorten the arguments and retry:\n"
+                            "- write_file / edit_file: split large files into multiple smaller writes\n"
+                            "- Other tools: trim arguments, avoid embedding very long text"
                         )
                         input_dict = {PARSE_ERROR_KEY: err_msg}
                         logger.error(
@@ -220,7 +220,7 @@ def convert_tool_calls_from_openai(tool_calls: list[dict]) -> list[ToolUseBlock]
 
 
 def convert_tool_calls_to_openai(tool_uses: list[ToolUseBlock]) -> list[dict]:
-    """将内部工具调用转换为 OpenAI 格式。"""
+    """Convert internal tool calls to OpenAI format."""
     result = []
     for tu in tool_uses:
         tc: dict = {
@@ -238,7 +238,7 @@ def convert_tool_calls_to_openai(tool_uses: list[ToolUseBlock]) -> list[dict]:
 
 
 def convert_tool_result_to_openai(tool_use_id: str, content: str, is_error: bool = False) -> dict:
-    """将工具结果转换为 OpenAI 格式消息。"""
+    """Convert a tool result to an OpenAI-format message."""
     return {
         "role": "tool",
         "tool_call_id": tool_use_id,
@@ -247,7 +247,7 @@ def convert_tool_result_to_openai(tool_use_id: str, content: str, is_error: bool
 
 
 def convert_tool_result_from_openai(msg: dict) -> dict | None:
-    """将 OpenAI 工具结果消息转换为内部格式。"""
+    """Convert an OpenAI tool result message to the internal format."""
     if msg.get("role") != "tool":
         return None
 
@@ -258,17 +258,17 @@ def convert_tool_result_from_openai(msg: dict) -> dict | None:
     }
 
 
-# ── 文本格式工具调用解析（降级方案）───────────────────────
+# ── Text-format tool call parsing (fallback) ────────────
 #
-# 注册表驱动：每种格式由 _TextToolFormat(name, detect_re, parse) 描述。
-# parse 函数接收完整文本，返回 (清理后文本, 工具调用列表)，
-# 解析与清理在同一函数内完成，消除不同步风险。
-# 新增格式只需添加一条注册 + 编写 parse 函数。
+# Registry-driven: each format is described by _TextToolFormat(name, detect_re, parse).
+# The parse function receives the full text and returns (cleaned_text, tool_call_list).
+# Parsing and cleanup happen in the same function, eliminating sync risks.
+# To add a new format, register an entry and provide a parse function.
 
 
 @dataclass(frozen=True)
 class _TextToolFormat:
-    """一种文本工具调用格式的描述。"""
+    """Describes a single text-format tool call spec."""
 
     name: str
     detect_re: re.Pattern
@@ -276,11 +276,11 @@ class _TextToolFormat:
     fallback: bool = False
 
 
-# ── 共享: <invoke> 块解析器 ────────────────────────────
+# ── Shared: <invoke> block parser ────────────────────────
 
 
 def _parse_invoke_blocks(content: str) -> list[ToolUseBlock]:
-    """解析 <invoke> 块中的工具调用（被多种 XML 包装格式共享）。"""
+    """Parse tool calls from <invoke> blocks (shared by several XML wrapper formats)."""
     tool_calls = []
 
     invoke_pattern = r'<invoke\s+name=["\']?([^"\'>\s]+)["\']?\s*>(.*?)</invoke>'
@@ -321,10 +321,10 @@ def _make_invoke_wrapper_parser(
     open_tag: str,
     close_tag: str,
 ) -> Callable[[str], tuple[str, list[ToolUseBlock]]]:
-    """为使用 <invoke> 内部结构的 XML 包装格式创建解析器。
+    """Create a parser for XML wrapper formats built around <invoke> blocks.
 
-    function_calls 和 minimax:tool_call 结构相同（都包裹 <invoke> 块），
-    仅外层标签不同，通过此工厂函数统一生成。
+    function_calls and minimax:tool_call share the same structure (both wrap
+    <invoke> blocks); only the outer tag differs, so this factory generates them.
     """
     _open_esc = re.escape(open_tag)
     _close_esc = re.escape(close_tag)
@@ -351,13 +351,13 @@ def _make_invoke_wrapper_parser(
     return parser
 
 
-# ── Kimi K2 格式 ──────────────────────────────────────
+# ── Kimi K2 format ────────────────────────────────────
 
 
 def _parse_kimi_k2(text: str) -> tuple[str, list[ToolUseBlock]]:
-    """解析 Kimi K2 格式的工具调用。
+    """Parse tool calls in the Kimi K2 format.
 
-    格式：
+    Format:
     <<|tool_calls_section_begin|>>
     <<|tool_call_begin|>>functions.get_weather:0
     <<|tool_call_argument_begin|>>{"city": "Beijing"}<<|tool_call_end|>>
@@ -424,9 +424,9 @@ def _parse_kimi_k2(text: str) -> tuple[str, list[ToolUseBlock]]:
     return clean, tool_calls
 
 
-# ── <tool_call><function=...> 格式 ─────────────────────────
+# ── <tool_call><function=...> format ──────────────────────
 #
-# 部分模型以如下格式输出工具调用：
+# Some models output tool calls in this format:
 # <tool_call>
 # <function=tool_name>
 # <parameter=key>value</parameter>
@@ -452,7 +452,7 @@ _FUNC_PARAM_RE = re.compile(
 
 
 def _parse_function_param(text: str) -> tuple[str, list[ToolUseBlock]]:
-    """解析 <tool_call><function=name><parameter=key>value</parameter></function></tool_call> 格式。"""
+    """Parse the <tool_call><function=name><parameter=key>value</parameter></function></tool_call> format."""
     blocks = _FUNC_PARAM_COMPLETE_RE.findall(text) or _FUNC_PARAM_INCOMPLETE_RE.findall(text)
     if not blocks:
         return text, []
@@ -494,7 +494,7 @@ def _parse_function_param(text: str) -> tuple[str, list[ToolUseBlock]]:
     return clean, tool_calls
 
 
-# ── GLM 格式 ──────────────────────────────────────────
+# ── GLM format ────────────────────────────────────────
 
 _GLM_COMPLETE_RE = re.compile(
     r"<tool_call>\s*(.*?)\s*</tool_call>",
@@ -511,9 +511,9 @@ _GLM_KV_RE = re.compile(
 
 
 def _parse_glm(text: str) -> tuple[str, list[ToolUseBlock]]:
-    """解析 GLM 模型的 <tool_call> 格式。
+    """Parse the <tool_call> format used by GLM models.
 
-    格式:
+    Format:
     <tool_call>run_shell<arg_key>command</arg_key><arg_value>...</arg_value></tool_call>
     """
     matches = _GLM_COMPLETE_RE.findall(text) or _GLM_INCOMPLETE_RE.findall(text)
@@ -544,27 +544,27 @@ def _parse_glm(text: str) -> tuple[str, list[ToolUseBlock]]:
             f"[GLM_TOOL_PARSE] Extracted tool call: {tool_name} with params: {list(params.keys())}"
         )
 
-    # 即使未提取到工具也清理标签，防止原始标签泄漏到用户界面
+    # Strip the tags even if no tool was extracted, to prevent raw tags leaking into the UI
     clean = _GLM_COMPLETE_RE.sub("", text).strip()
     clean = _GLM_INCOMPLETE_RE.sub("", clean).strip()
     return clean, tool_calls
 
 
-# ── [TOOL_CALL] 标签格式 ──────────────────────────────────
+# ── [TOOL_CALL] tag format ────────────────────────────────
 #
-# kimi-k2-thinking 等模型将工具调用包裹在 [TOOL_CALL]...[/TOOL_CALL] 标签中。
-# 内部格式不固定，已观察到以下变体：
+# Models such as kimi-k2-thinking wrap tool calls in [TOOL_CALL]...[/TOOL_CALL] tags.
+# The inner format is not fixed; the following variants have been observed:
 #
 # A. arrow + --keys:
 #    [TOOL_CALL] {tool => "web_search", "args": {--query "test", --max_results 10}}[/TOOL_CALL]
-# B. 标准 JSON:
+# B. standard JSON:
 #    [TOOL_CALL] { "tool": "get_org", "args": { "id": "abc" } } [/TOOL_CALL]
-# C. 等号语法:
+# C. equals syntax:
 #    [TOOL_CALL] {tool = "setup_organization", args = {"action": "get_org"}}[/TOOL_CALL]
-# D. 紧凑多行 JSON:
+# D. compact multi-line JSON:
 #    [TOOL_CALL]{ "tool": "name", "args": {...} }[/TOOL_CALL]
 #
-# 结束标签可以是 [/TOOL_CALL] 或 </invoke>，也可能缺失。
+# The closing tag may be [/TOOL_CALL], </invoke>, or missing entirely.
 
 _TOOL_CALL_TAG_DETECT_RE = re.compile(r"\[TOOL_CALL\]", re.IGNORECASE)
 
@@ -588,7 +588,7 @@ _TAG_ARGS_START_RE = re.compile(
 
 
 def _find_matching_brace(text: str, start: int) -> int:
-    """找到与 start 处 '{' 匹配的 '}' 位置，正确跳过引号内的花括号。"""
+    """Find the '}' that matches the '{' at start, correctly skipping braces inside quoted strings."""
     if start >= len(text) or text[start] != "{":
         return -1
     depth = 0
@@ -617,7 +617,7 @@ def _find_matching_brace(text: str, start: int) -> int:
 
 
 def _extract_tool_from_obj(obj: dict) -> tuple[str, dict] | None:
-    """从已解析的 dict 中提取工具名和参数。"""
+    """Extract tool name and arguments from an already-parsed dict."""
     name = obj.get("tool") or obj.get("name") or obj.get("function")
     if not name or not isinstance(name, str):
         return None
@@ -628,7 +628,7 @@ def _extract_tool_from_obj(obj: dict) -> tuple[str, dict] | None:
 
 
 def _normalize_tag_body(body: str) -> str:
-    """将 arrow/equals/--key 语法标准化为 JSON 兼容格式。"""
+    """Normalize arrow/equals/--key syntax into a JSON-compatible form."""
     s = body
     s = re.sub(r"(\w+)\s*=>\s*", r'"\1": ', s)
     s = re.sub(r"(\w+)\s*=\s*(?=[\"'{[\d])", r'"\1": ', s)
@@ -637,7 +637,7 @@ def _normalize_tag_body(body: str) -> str:
 
 
 def _parse_tag_args_block(body: str) -> dict:
-    """从 [TOOL_CALL] 体中提取 args 部分并尝试解析为 dict。"""
+    """Extract the args section from a [TOOL_CALL] body and try to parse it as a dict."""
     m = _TAG_ARGS_START_RE.search(body)
     if not m:
         return {}
@@ -657,7 +657,7 @@ def _parse_tag_args_block(body: str) -> dict:
 
 
 def _parse_tool_call_tag_body(body: str) -> tuple[str, dict] | None:
-    """解析 [TOOL_CALL] 标签内的内容，提取工具名和参数。"""
+    """Parse the contents inside a [TOOL_CALL] tag and extract tool name and arguments."""
     body = body.strip()
     if not body:
         return None
@@ -681,7 +681,7 @@ def _parse_tool_call_tag_body(body: str) -> tuple[str, dict] | None:
 
 
 def _parse_tool_call_tags(text: str) -> tuple[str, list[ToolUseBlock]]:
-    """解析 [TOOL_CALL]...[/TOOL_CALL] 格式的工具调用。"""
+    """Parse tool calls in the [TOOL_CALL]...[/TOOL_CALL] format."""
     tool_calls: list[ToolUseBlock] = []
     spans_to_remove: list[tuple[int, int]] = []
 
@@ -727,9 +727,10 @@ def _parse_tool_call_tags(text: str) -> tuple[str, list[ToolUseBlock]]:
     return clean, tool_calls
 
 
-# ── JSON 格式工具调用检测与解析 ──────────────────────────
-# 部分模型（如 Qwen 2.5）在 failover 时会把工具调用以原始 JSON
-# 写入文本响应，而非走结构化 tool_use。典型格式：
+# ── JSON tool call detection and parsing ────────────────
+# Some models (e.g., Qwen 2.5) emit tool calls as raw JSON in the text
+# response during failover rather than going through structured tool_use.
+# Typical formats:
 #   {{"name": "browser_open", "arguments": {"visible": true}}}
 #   {"name": "web_search", "arguments": {"query": "test"}}
 
@@ -739,7 +740,7 @@ _JSON_TOOL_CALL_HEADER_RE = re.compile(
 
 
 def _extract_balanced_braces(text: str, start: int) -> str | None:
-    """从 start 位置的 ``{`` 开始提取一个括号平衡的 JSON 对象。"""
+    """Extract a brace-balanced JSON object starting from the ``{`` at position start."""
     if start >= len(text) or text[start] != "{":
         return None
     depth = 0
@@ -768,11 +769,11 @@ def _extract_balanced_braces(text: str, start: int) -> str | None:
 
 
 def _parse_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
-    """从文本中提取 JSON 格式工具调用。
+    """Extract JSON-format tool calls from text.
 
-    匹配 {"name": "xxx", "arguments": {...}} 或双花括号变体。
-    使用括号计数法正确处理深度嵌套的参数 JSON。
-    返回 (清理后文本, 工具调用列表)。
+    Matches {"name": "xxx", "arguments": {...}} or double-braced variants.
+    Uses brace counting to correctly handle deeply nested argument JSON.
+    Returns (cleaned_text, tool_call_list).
     """
     tool_calls: list[ToolUseBlock] = []
     spans_to_remove: list[tuple[int, int]] = []
@@ -802,12 +803,12 @@ def _parse_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
             if repaired is not None:
                 recovered_keys = sorted(repaired.keys())
                 err_msg = (
-                    f"❌ 工具 '{tool_name}' 的参数 JSON 被截断后自动修复，"
-                    f"但内容可能不完整（恢复的键: {recovered_keys}）。\n"
-                    f"原始参数长度: {arg_len} 字符。\n"
-                    "请缩短参数后重试：\n"
-                    "- write_file / edit_file：将大文件拆分为多次小写入\n"
-                    "- 其他工具：精简参数，避免嵌入超长文本"
+                    f"❌ The argument JSON for tool '{tool_name}' was auto-repaired after truncation, "
+                    f"but content may be incomplete (recovered keys: {recovered_keys}).\n"
+                    f"Original argument length: {arg_len} characters.\n"
+                    "Please shorten the arguments and retry:\n"
+                    "- write_file / edit_file: split large files into multiple smaller writes\n"
+                    "- Other tools: trim arguments, avoid embedding very long text"
                 )
                 arguments = {PARSE_ERROR_KEY: err_msg}
                 logger.warning(
@@ -817,11 +818,11 @@ def _parse_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
                 )
             else:
                 err_msg = (
-                    f"❌ 工具 '{tool_name}' 的参数 JSON 被截断且无法修复"
-                    f"（共 {arg_len} 字符）。\n"
-                    "请缩短参数后重试：\n"
-                    "- write_file / edit_file：将大文件拆分为多次小写入\n"
-                    "- 其他工具：精简参数，避免嵌入超长文本"
+                    f"❌ The argument JSON for tool '{tool_name}' was truncated and could not be repaired"
+                    f" (total {arg_len} characters).\n"
+                    "Please shorten the arguments and retry:\n"
+                    "- write_file / edit_file: split large files into multiple smaller writes\n"
+                    "- Other tools: trim arguments, avoid embedding very long text"
                 )
                 arguments = {PARSE_ERROR_KEY: err_msg}
                 logger.warning(
@@ -855,19 +856,19 @@ def _parse_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
     return clean_text, tool_calls
 
 
-# ── Dot-style 格式 (.tool_name(kwargs)) ──────────────────
+# ── Dot-style format (.tool_name(kwargs)) ────────────────
 
 _KNOWN_TOOL_NAMES: set[str] = set()
-"""由 convert_tools_to_openai / convert_tools_to_responses 自动填充。
+"""Auto-populated by convert_tools_to_openai / convert_tools_to_responses.
 
-每次发起 LLM 请求时，传入的工具定义会自动注册到此集合。
-解析 LLM 回复中的文本工具调用时，只接受集合内的工具名。
-如果需要手动注册，请调用 register_tool_names()。
+Tool definitions passed to each LLM request are auto-registered into this set.
+When parsing text-format tool calls from LLM responses, only names in this set
+are accepted. To register manually, call register_tool_names().
 """
 
 
 def register_tool_names(names: Iterable[str]) -> None:
-    """手动注册工具名到文本工具调用解析的白名单中。"""
+    """Manually register tool names into the text-tool-call parsing allowlist."""
     _KNOWN_TOOL_NAMES.update(names)
 
 
@@ -875,7 +876,7 @@ _DOT_STYLE_RE = re.compile(r"\.([a-z][a-z0-9_]{2,})\s*\(")
 
 
 def _find_matching_paren(text: str, start: int) -> int:
-    """找到与 start 位置的 '(' 匹配的 ')' 位置，考虑引号内的括号。"""
+    """Find the ')' that matches the '(' at position start, accounting for parens inside quoted strings."""
     if start >= len(text) or text[start] != "(":
         return -1
     depth = 0
@@ -905,7 +906,7 @@ def _find_matching_paren(text: str, start: int) -> int:
 
 
 def _parse_python_kwargs(args_str: str) -> dict:
-    """将 Python 风格的 kwargs 字符串解析为 dict。"""
+    """Parse a Python-style kwargs string into a dict."""
     import ast
 
     args_str = args_str.strip()
@@ -930,7 +931,7 @@ def _parse_python_kwargs(args_str: str) -> dict:
 
 
 def _parse_dot_style(text: str) -> tuple[str, list[ToolUseBlock]]:
-    """解析 .tool_name(kwargs) 格式的工具调用（Qwen 等模型常见）。"""
+    """Parse tool calls in the .tool_name(kwargs) format (common for Qwen and similar models)."""
     tool_calls: list[ToolUseBlock] = []
     spans_to_remove: list[tuple[int, int]] = []
 
@@ -968,22 +969,22 @@ def _parse_dot_style(text: str) -> tuple[str, list[ToolUseBlock]]:
     return "".join(parts).strip(), tool_calls
 
 
-# ── 方括号格式 [tool_name(kwargs)] ──────────────────────
+# ── Bracket format [tool_name(kwargs)] ──────────────────
 #
-# 部分模型（如 Qwen3-coder-plus）在不支持原生 function calling 时
-# 会将工具调用包裹在方括号中输出：
+# Some models (e.g., Qwen3-coder-plus), when native function calling is unavailable,
+# wrap tool calls in square brackets:
 #   [create_plan(id="my-plan", description="...", steps=[...])]
 #   [delegate_to_agent(agent_id="office-doc", message="...")]
 #   [list_skills()]
 #
-# 与 dot_style (.tool_name) 类似，但使用 [ ] 包裹而非 . 前缀。
-# 安全保障：必须匹配 _KNOWN_TOOL_NAMES 以避免误识别 Markdown 链接等。
+# Similar to dot_style (.tool_name), but wrapped in [ ] rather than prefixed with ".".
+# Safety: must match _KNOWN_TOOL_NAMES to avoid misidentifying Markdown links, etc.
 
 _BRACKET_CALL_RE = re.compile(r"\[([a-z_][a-z0-9_]{2,})\s*\(")
 
 
 def _parse_bracket_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
-    """解析 [tool_name(kwargs)] 格式的工具调用。"""
+    """Parse tool calls in the [tool_name(kwargs)] format."""
     tool_calls: list[ToolUseBlock] = []
     spans_to_remove: list[tuple[int, int]] = []
 
@@ -997,7 +998,7 @@ def _parse_bracket_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
         if paren_end < 0:
             continue
 
-        # ')' 后必须紧跟 ']'（允许空白），否则不是工具调用
+        # ')' must be followed immediately by ']' (whitespace allowed); otherwise it's not a tool call
         closing_bracket = -1
         for i in range(paren_end + 1, min(paren_end + 6, len(text))):
             if text[i] == "]":
@@ -1008,7 +1009,7 @@ def _parse_bracket_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
         if closing_bracket < 0:
             continue
 
-        # 排除 Markdown 链接 [text](url)：']' 后紧跟 '(' 说明是链接而非工具调用
+        # Exclude Markdown links [text](url): ']' immediately followed by '(' means it's a link, not a tool call
         after_bracket = closing_bracket + 1
         if after_bracket < len(text) and text[after_bracket] == "(":
             continue
@@ -1041,24 +1042,24 @@ def _parse_bracket_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
     return "".join(parts).strip(), tool_calls
 
 
-# ── 围栏代码块格式 ```json { function_call } ``` ─────────
+# ── Fenced code block format ```json { function_call } ``` ──
 #
-# 部分模型将工具调用放入 Markdown 围栏代码块中，常见两种变体：
+# Some models emit tool calls inside Markdown fenced code blocks. Two common variants:
 #
-# 变体 1（OpenAI 风格）:
+# Variant 1 (OpenAI style):
 #   ```json
 #   {"type": "function_call", "function_call": {"name": "xxx", "arguments": "..."}}
 #   ```
 #
-# 变体 2（简化风格）:
+# Variant 2 (simplified style):
 #   ```json
 #   {"function": "xxx", "params": {"key": "value"}}
 #   ```
 #
-# 安全保障：
-# - 必须在围栏代码块内
-# - JSON 必须包含特征字段组合（type+function_call / function+params）
-# - 工具名必须在 _KNOWN_TOOL_NAMES 中
+# Safety:
+# - Must be inside a fenced code block
+# - JSON must contain the characteristic field combination (type+function_call / function+params)
+# - Tool name must be in _KNOWN_TOOL_NAMES
 
 _FENCED_FUNC_DETECT_RE = re.compile(
     r"```(?:json)?\s*\n\s*\{.*?\"(?:function_call|function)\"\s*:",
@@ -1071,7 +1072,7 @@ _FENCED_CODE_BLOCK_RE = re.compile(
 
 
 def _parse_fenced_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
-    """解析围栏代码块中的 JSON 格式工具调用。"""
+    """Parse JSON-format tool calls inside fenced code blocks."""
     tool_calls: list[ToolUseBlock] = []
     spans_to_remove: list[tuple[int, int]] = []
 
@@ -1089,8 +1090,8 @@ def _parse_fenced_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
         tool_name: str | None = None
         arguments: dict | None = None
 
-        # 变体 1: {"type": "function_call", "function_call": {"name": ..., "arguments": ...}}
-        # 也兼容 "function" 作为内层键名
+        # Variant 1: {"type": "function_call", "function_call": {"name": ..., "arguments": ...}}
+        # Also accepts "function" as the inner key name
         if obj.get("type") == "function_call":
             fc = obj.get("function_call") or obj.get("function")
             if isinstance(fc, dict) and fc.get("name"):
@@ -1106,7 +1107,7 @@ def _parse_fenced_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
                 else:
                     arguments = {}
 
-        # 变体 2: {"function": "xxx", "params": {...}}
+        # Variant 2: {"function": "xxx", "params": {...}}
         if tool_name is None and isinstance(obj.get("function"), str) and "params" in obj:
             tool_name = obj["function"]
             params = obj["params"]
@@ -1148,10 +1149,10 @@ def _parse_fenced_json_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
     return "".join(parts).strip(), tool_calls
 
 
-# ── 格式注册表 + 公开 API ─────────────────────────────
+# ── Format registry + public API ─────────────────────────
 #
-# 顺序有意义：JSON 放最后，因为其检测 pattern 最宽泛。
-# 前面的格式使用精确的 XML 标签匹配，不会误报。
+# Order matters: JSON comes last because its detection pattern is the broadest.
+# Preceding formats use exact XML tag matching and won't produce false positives.
 
 _TEXT_TOOL_FORMATS: list[_TextToolFormat] = [
     _TextToolFormat(
@@ -1184,7 +1185,7 @@ _TEXT_TOOL_FORMATS: list[_TextToolFormat] = [
         _TOOL_CALL_TAG_DETECT_RE,
         _parse_tool_call_tags,
     ),
-    # ↓ 以下为 fallback 格式，仅当上方精确格式未匹配时才尝试
+    # ↓ The following are fallback formats, tried only when the precise formats above didn't match
     _TextToolFormat(
         "fenced_json",
         _FENCED_FUNC_DETECT_RE,
@@ -1213,21 +1214,22 @@ _TEXT_TOOL_FORMATS: list[_TextToolFormat] = [
 
 
 def has_text_tool_calls(text: str) -> bool:
-    """检查文本中是否包含文本格式的工具调用。"""
+    """Check whether the text contains any text-format tool calls."""
     return any(fmt.detect_re.search(text) for fmt in _TEXT_TOOL_FORMATS)
 
 
 def parse_text_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
-    """从文本中解析工具调用（降级方案）。
+    """Parse tool calls from text (fallback path).
 
-    当 LLM 不支持原生工具调用或偶尔退化为文本格式时，
-    遍历所有已注册的格式解析器，提取工具调用并清理残留标记。
+    When the LLM doesn't support native tool calls or occasionally falls back
+    to text format, iterate over all registered format parsers, extracting
+    tool calls and cleaning up residual markers.
 
     Args:
-        text: LLM 返回的文本内容
+        text: The text content returned by the LLM.
 
     Returns:
-        (clean_text, tool_calls): 清理后的文本和解析出的工具调用列表
+        (clean_text, tool_calls): the cleaned text and the list of parsed tool calls.
     """
     all_tools: list[ToolUseBlock] = []
     clean = text
@@ -1242,15 +1244,16 @@ def parse_text_tool_calls(text: str) -> tuple[str, list[ToolUseBlock]]:
     return clean, all_tools
 
 
-# ── Responses API 格式转换 ──────────────────────────────────
+# ── Responses API format conversion ─────────────────────────
 #
-# OpenAI Responses API 使用 internally-tagged 格式，与 Chat Completions
-# 的 externally-tagged 格式不同。以下函数仅在 api_type="openai_responses"
-# 的端点中使用，不影响现有 Chat Completions 路径。
+# The OpenAI Responses API uses an internally-tagged format, different from
+# the externally-tagged format used by Chat Completions. The functions below
+# are only used by endpoints with api_type="openai_responses" and do not
+# affect the existing Chat Completions path.
 
 
 def convert_tools_to_responses(tools: list[Tool]) -> list[dict]:
-    """将内部工具定义转换为 Responses API 格式。
+    """Convert internal tool definitions to the Responses API format.
 
     Chat Completions: {"type": "function", "function": {"name", "description", "parameters"}}
     Responses API:    {"type": "function", "name", "description", "parameters", "strict": true}
@@ -1268,9 +1271,9 @@ def convert_tools_to_responses(tools: list[Tool]) -> list[dict]:
 
 
 def convert_tool_calls_from_responses(items: list[dict]) -> list[ToolUseBlock]:
-    """从 Responses API output items 中提取工具调用。
+    """Extract tool calls from Responses API output items.
 
-    Responses 格式:
+    Responses format:
     {"type": "function_call", "id": ..., "call_id": ..., "name": ..., "arguments": "..."}
     """
     result = []
@@ -1287,14 +1290,14 @@ def convert_tool_calls_from_responses(items: list[dict]) -> list[ToolUseBlock]:
                 _dump_raw_arguments(tool_name, arguments)
                 if repaired is not None:
                     err_msg = (
-                        f"❌ 工具 '{tool_name}' 的参数 JSON 被 API 截断后自动修复，"
-                        f"但内容可能不完整。请缩短参数后重试。"
+                        f"❌ The argument JSON for tool '{tool_name}' was auto-repaired after API truncation, "
+                        f"but content may be incomplete. Please shorten the arguments and retry."
                     )
                     input_dict = {PARSE_ERROR_KEY: err_msg}
                 else:
                     err_msg = (
-                        f"❌ 工具 '{tool_name}' 的参数 JSON 被 API 截断且无法修复。"
-                        "请缩短参数后重试。"
+                        f"❌ The argument JSON for tool '{tool_name}' was truncated by the API and could not be repaired. "
+                        "Please shorten the arguments and retry."
                     )
                     input_dict = {PARSE_ERROR_KEY: err_msg}
         else:
@@ -1311,7 +1314,7 @@ def convert_tool_calls_from_responses(items: list[dict]) -> list[ToolUseBlock]:
 
 
 def convert_tool_result_to_responses(call_id: str, content: str) -> dict:
-    """将工具执行结果转换为 Responses API 的 function_call_output item。
+    """Convert a tool execution result into a Responses API function_call_output item.
 
     Chat Completions: {"role": "tool", "tool_call_id": ..., "content": ...}
     Responses API:    {"type": "function_call_output", "call_id": ..., "output": ...}

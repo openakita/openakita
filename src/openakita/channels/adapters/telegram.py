@@ -1,12 +1,12 @@
 """
-Telegram 适配器
+Telegram adapter
 
-基于 python-telegram-bot 库实现:
-- Webhook / Long Polling 模式
-- 文本/图片/语音/文件收发
-- Markdown 格式支持
-- 配对验证（防止未授权访问）
-- 自动代理检测（支持配置、环境变量、Windows 系统代理）
+Built on the python-telegram-bot library:
+- Webhook / Long Polling modes
+- Text/image/voice/file send and receive
+- Markdown format support
+- Pairing verification (prevents unauthorized access)
+- Automatic proxy detection (supports config, environment variables, Windows system proxy)
 """
 
 import asyncio
@@ -33,7 +33,7 @@ from ..types import (
 
 logger = logging.getLogger(__name__)
 
-# 延迟导入 telegram 库
+# Lazy import of telegram library
 telegram = None
 Application = None
 Update = None
@@ -41,7 +41,7 @@ ContextTypes = None
 
 
 def _import_telegram():
-    """延迟导入 telegram 库"""
+    """Lazy import of the telegram library"""
     global telegram, Application, Update, ContextTypes
     if telegram is None:
         try:
@@ -62,42 +62,42 @@ def _import_telegram():
 
 def _get_proxy(config_proxy: str | None = None) -> str | None:
     """
-    获取代理设置（仅从配置文件或环境变量）
+    Get proxy settings (from config file or environment variables only)
 
     Args:
-        config_proxy: 配置文件中指定的代理地址
+        config_proxy: Proxy address specified in the config file
 
     Returns:
-        代理 URL 或 None
+        Proxy URL or None
     """
-    # 1. 优先使用配置文件中的代理
+    # 1. Prefer the proxy from the config file
     if config_proxy:
         logger.info(f"[Telegram] Using proxy from config: {config_proxy}")
         return config_proxy
 
-    # 2. 检查环境变量（仅当用户明确设置时才使用）
+    # 2. Check environment variables (only used when explicitly set by the user)
     for env_var in ["TELEGRAM_PROXY", "ALL_PROXY", "HTTPS_PROXY", "HTTP_PROXY"]:
         proxy = os.environ.get(env_var)
         if proxy:
             logger.info(f"[Telegram] Using proxy from environment variable {env_var}: {proxy}")
             return proxy
 
-    # 不自动读取系统代理，支持 TUN 透传模式
+    # Do not auto-detect system proxy; supports TUN passthrough mode
     return None
 
 
 class TelegramPairingManager:
     """
-    Telegram 配对管理器
+    Telegram pairing manager
 
-    管理已配对的用户/聊天，防止未授权访问
+    Manages paired users/chats to prevent unauthorized access
     """
 
     def __init__(self, data_dir: Path, pairing_code: str | None = None):
         """
         Args:
-            data_dir: 数据存储目录
-            pairing_code: 配对码（如果为空，自动生成）
+            data_dir: Data storage directory
+            pairing_code: Pairing code (auto-generated if empty)
         """
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -105,13 +105,13 @@ class TelegramPairingManager:
         self.paired_file = self.data_dir / "paired_users.json"
         self.code_file = self.data_dir / "pairing_code.txt"
 
-        # 加载已配对用户
+        # Load paired users
         self.paired_users: dict = self._load_paired_users()
 
-        # 设置配对码
+        # Set pairing code
         if pairing_code:
             self.pairing_code = pairing_code
-            # 同步写入文件，保证文件内容与实际使用的配对码一致
+            # Write to file to keep file contents in sync with the active pairing code
             try:
                 self.code_file.write_text(pairing_code, encoding="utf-8")
                 logger.info(f"Pairing code from config saved to {self.code_file}")
@@ -120,14 +120,14 @@ class TelegramPairingManager:
         else:
             self.pairing_code = self._load_or_generate_code()
 
-        # 等待配对的用户 {chat_id: timestamp}
+        # Users waiting for pairing {chat_id: timestamp}
         self._pending_pairing: dict[str, float] = {}
 
         logger.info(f"TelegramPairingManager initialized, {len(self.paired_users)} paired users")
         logger.info(f"Pairing code file: {self.code_file}")
 
     def _load_paired_users(self) -> dict:
-        """加载已配对用户"""
+        """Load paired users"""
         if self.paired_file.exists():
             try:
                 with open(self.paired_file, encoding="utf-8") as f:
@@ -137,7 +137,7 @@ class TelegramPairingManager:
         return {}
 
     def _save_paired_users(self) -> None:
-        """保存已配对用户"""
+        """Save paired users"""
         try:
             with open(self.paired_file, "w", encoding="utf-8") as f:
                 json.dump(self.paired_users, f, ensure_ascii=False, indent=2)
@@ -145,7 +145,7 @@ class TelegramPairingManager:
             logger.error(f"Failed to save paired users: {e}")
 
     def _load_or_generate_code(self) -> str:
-        """加载或生成配对码"""
+        """Load or generate a pairing code"""
         if self.code_file.exists():
             try:
                 code = self.code_file.read_text(encoding="utf-8").strip()
@@ -154,7 +154,7 @@ class TelegramPairingManager:
             except Exception:
                 pass
 
-        # 生成新的配对码（6位数字）
+        # Generate a new pairing code (6 digits)
         code = str(secrets.randbelow(900000) + 100000)
 
         try:
@@ -166,7 +166,7 @@ class TelegramPairingManager:
         return code
 
     def regenerate_code(self) -> str:
-        """重新生成配对码"""
+        """Regenerate the pairing code"""
         code = str(secrets.randbelow(900000) + 100000)
 
         try:
@@ -179,11 +179,11 @@ class TelegramPairingManager:
         return code
 
     def is_paired(self, chat_id: str) -> bool:
-        """检查聊天是否已配对"""
+        """Check whether the chat is paired"""
         return chat_id in self.paired_users
 
     def start_pairing(self, chat_id: str) -> None:
-        """开始配对流程"""
+        """Start the pairing flow"""
         import time
 
         now = time.time()
@@ -193,13 +193,13 @@ class TelegramPairingManager:
         self._pending_pairing[chat_id] = now
 
     def is_pending_pairing(self, chat_id: str) -> bool:
-        """检查是否在等待配对"""
+        """Check whether pairing is pending"""
         import time
 
         if chat_id not in self._pending_pairing:
             return False
 
-        # 5分钟超时
+        # 5-minute timeout
         if time.time() - self._pending_pairing[chat_id] > 300:
             del self._pending_pairing[chat_id]
             return False
@@ -208,25 +208,25 @@ class TelegramPairingManager:
 
     def verify_code(self, chat_id: str, code: str, user_info: dict = None) -> bool:
         """
-        验证配对码
+        Verify a pairing code
 
         Args:
-            chat_id: 聊天 ID
-            code: 用户输入的配对码
-            user_info: 用户信息（用于记录）
+            chat_id: Chat ID
+            code: Pairing code entered by the user
+            user_info: User information (for recording)
 
         Returns:
-            配对是否成功
+            Whether pairing succeeded
         """
         if code.strip() == self.pairing_code:
-            # 配对成功
+            # Pairing successful
             self.paired_users[chat_id] = {
                 "paired_at": datetime.now().isoformat(),
                 "user_info": user_info or {},
             }
             self._save_paired_users()
 
-            # 清除等待状态
+            # Clear pending state
             if chat_id in self._pending_pairing:
                 del self._pending_pairing[chat_id]
 
@@ -236,7 +236,7 @@ class TelegramPairingManager:
         return False
 
     def unpair(self, chat_id: str) -> bool:
-        """取消配对"""
+        """Unpair"""
         if chat_id in self.paired_users:
             del self.paired_users[chat_id]
             self._save_paired_users()
@@ -245,7 +245,7 @@ class TelegramPairingManager:
         return False
 
     def get_paired_list(self) -> list[dict]:
-        """获取已配对用户列表"""
+        """Get the list of paired users"""
         result = []
         for chat_id, info in self.paired_users.items():
             result.append(
@@ -259,14 +259,14 @@ class TelegramPairingManager:
 
 class TelegramAdapter(ChannelAdapter):
     """
-    Telegram 适配器
+    Telegram adapter
 
-    支持:
-    - Long Polling 模式
-    - Webhook 模式（需要公网 URL）
-    - 文本/图片/语音/文件收发
-    - Markdown 格式
-    - 配对验证（防止未授权访问）
+    Supports:
+    - Long Polling mode
+    - Webhook mode (requires a public URL)
+    - Text/image/voice/file send and receive
+    - Markdown format
+    - Pairing verification (prevents unauthorized access)
     """
 
     channel_name = "telegram"
@@ -303,16 +303,16 @@ class TelegramAdapter(ChannelAdapter):
         """
         Args:
             bot_token: Telegram Bot Token
-            webhook_url: Webhook URL（可选，不提供则使用 Long Polling）
-            media_dir: 媒体文件存储目录
-            pairing_code: 配对码（可选，不提供则自动生成）
-            require_pairing: 是否需要配对验证（默认 True）
-            proxy: 代理地址（可选，不提供则自动检测）
-            channel_name: 通道名称（多Bot时用于区分实例）
-            bot_id: Bot 实例唯一标识
-            agent_profile_id: 绑定的 agent profile ID
-            footer_elapsed: 思考卡片显示处理耗时（默认 True，可通过 TELEGRAM_FOOTER_ELAPSED 环境变量控制）
-            footer_status: 思考卡片显示处理状态（默认 True，可通过 TELEGRAM_FOOTER_STATUS 环境变量控制）
+            webhook_url: Webhook URL (optional; uses Long Polling if not provided)
+            media_dir: Directory for storing media files
+            pairing_code: Pairing code (optional; auto-generated if not provided)
+            require_pairing: Whether pairing verification is required (default True)
+            proxy: Proxy address (optional; auto-detected if not provided)
+            channel_name: Channel name (used to distinguish instances when running multiple bots)
+            bot_id: Unique identifier for the bot instance
+            agent_profile_id: Bound agent profile ID
+            footer_elapsed: Show processing time on thinking cards (default True, can be controlled via TELEGRAM_FOOTER_ELAPSED env var)
+            footer_status: Show processing status on thinking cards (default True, can be controlled via TELEGRAM_FOOTER_STATUS env var)
         """
         super().__init__(
             channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_profile_id
@@ -323,32 +323,32 @@ class TelegramAdapter(ChannelAdapter):
         self.media_dir = Path(media_dir) if media_dir else Path("data/media/telegram")
         self.media_dir.mkdir(parents=True, exist_ok=True)
 
-        # 代理设置（仅从配置或环境变量获取，不自动检测系统代理）
+        # Proxy settings (from config or environment variables only; system proxy is not auto-detected)
         self.proxy = _get_proxy(proxy)
 
         self._app: Any | None = None
         self._bot: Any | None = None
         self._watchdog_task: asyncio.Task | None = None
 
-        # 配对管理
+        # Pairing management
         self.require_pairing = require_pairing
         self.pairing_manager = TelegramPairingManager(
             data_dir=Path("data/telegram/pairing"),
             pairing_code=pairing_code,
         )
 
-        # Webhook secret_token（用于验证来源是 Telegram 的请求）
+        # Webhook secret_token (used to verify that requests come from Telegram)
         import secrets
 
         self._webhook_secret = secrets.token_urlsafe(32)
 
-        # 消息去重（防止 webhook 重试或网络抖动导致重复处理）
+        # Message deduplication (prevents duplicate processing from webhook retries or network jitter)
         self._seen_update_ids: OrderedDict[int, None] = OrderedDict()
         self._seen_update_ids_max = 500
 
-        # 思考占位消息：session_key -> (chat_id_int, message_id)
+        # Thinking placeholder messages: session_key -> (chat_id_int, message_id)
         self._thinking_cards: dict[str, tuple[int, int]] = {}
-        # 流式输出状态
+        # Streaming output state
         self._streaming_buffers: dict[str, str] = {}
         self._streaming_thinking: dict[str, str] = {}
         self._streaming_thinking_ms: dict[str, int] = {}
@@ -357,7 +357,7 @@ class TelegramAdapter(ChannelAdapter):
         self._streaming_finalized: set[str] = set()
         self._streaming_throttle_ms: int = 1500
 
-        # Footer 配置（耗时 / 状态显示）
+        # Footer config (elapsed time / status display)
         self._typing_start_time: dict[str, float] = {}
         self._typing_status: dict[str, str] = {}
         self._footer_elapsed: bool = (
@@ -372,13 +372,13 @@ class TelegramAdapter(ChannelAdapter):
         )
 
     async def start(self) -> None:
-        """启动 Telegram Bot"""
+        """Start the Telegram bot"""
         _import_telegram()
 
         from telegram.request import HTTPXRequest
 
-        # 配置更长的超时时间（默认 5 秒太短）
-        # 如果检测到代理，自动使用
+        # Configure a longer timeout (the default 5 seconds is too short)
+        # Use a proxy automatically if one is detected
         request_kwargs = {
             "connection_pool_size": 8,
             "connect_timeout": 30.0,
@@ -402,7 +402,7 @@ class TelegramAdapter(ChannelAdapter):
 
         request = HTTPXRequest(**request_kwargs)
 
-        # 创建 Application
+        # Create Application
         self._app = (
             Application.builder()
             .token(self.bot_token)
@@ -412,26 +412,26 @@ class TelegramAdapter(ChannelAdapter):
         )
         self._bot = self._app.bot
 
-        # 注册错误处理器（捕获 update 处理过程中的所有异常，防止静默丢失）
+        # Register error handler (catches all exceptions during update processing to prevent silent losses)
         self._app.add_error_handler(self._on_error)
 
-        # 注册命令处理器（Telegram 内置命令，优先处理）
+        # Register command handlers (built-in Telegram commands, handled with priority)
         from telegram.ext import CommandHandler, MessageHandler, filters
 
         self._app.add_handler(CommandHandler("start", self._handle_start))
         self._app.add_handler(CommandHandler("unpair", self._handle_unpair))
         self._app.add_handler(CommandHandler("status", self._handle_status))
 
-        # 注册消息处理器（处理所有消息，包括系统命令如 /model）
-        # 注意：已注册的 CommandHandler 会优先匹配，其他命令和普通消息由此处理
+        # Register message handler (handles all messages, including system commands like /model)
+        # Note: registered CommandHandlers match first; this handles other commands and regular messages
         self._app.add_handler(
             MessageHandler(
-                filters.ALL,  # 接受所有消息，让 Gateway 处理系统命令
+                filters.ALL,  # Accept all messages; let the Gateway handle system commands
                 self._handle_message,
             )
         )
 
-        # Bot API 8.0+ reaction 事件（预留，当前仅记录日志）
+        # Bot API 8.0+ reaction events (reserved; currently only logged)
         try:
             from telegram.ext import CallbackQueryHandler, MessageReactionHandler
 
@@ -440,7 +440,7 @@ class TelegramAdapter(ChannelAdapter):
         except (ImportError, AttributeError):
             pass
 
-        # 初始化（连接 Telegram API）
+        # Initialize (connect to Telegram API)
         try:
             await self._app.initialize()
         except Exception as e:
@@ -448,22 +448,22 @@ class TelegramAdapter(ChannelAdapter):
             err_type = type(e).__name__
             if "ConnectError" in err_type or "ConnectError" in err_str:
                 proxy_hint = (
-                    "Telegram API (api.telegram.org) 无法连接。"
-                    "如果你在中国大陆，需要配置代理才能使用 Telegram Bot。\n"
-                    "配置方式（任选其一）：\n"
-                    "  1. 在 IM 通道配置中添加 proxy 字段，如 socks5://127.0.0.1:7890\n"
-                    "  2. 设置环境变量 TELEGRAM_PROXY=socks5://127.0.0.1:7890\n"
-                    "  3. 使用支持 TUN 模式的代理工具（如 Clash TUN）"
+                    "Unable to connect to the Telegram API (api.telegram.org). "
+                    "In regions where Telegram is restricted, a proxy is required to use the Telegram Bot.\n"
+                    "Configuration options (choose one):\n"
+                    "  1. Add a proxy field in the IM channel config, e.g. socks5://127.0.0.1:7890\n"
+                    "  2. Set the environment variable TELEGRAM_PROXY=socks5://127.0.0.1:7890\n"
+                    "  3. Use a proxy tool that supports TUN mode (e.g. Clash TUN)"
                 )
                 logger.error(f"[Telegram] {proxy_hint}")
                 raise ConnectionError(proxy_hint) from e
             if "InvalidToken" in err_type or "Not Found" in err_str or "Unauthorized" in err_str:
                 raise ConnectionError(
-                    "Telegram Bot Token 无效或已过期，请在 @BotFather 检查 Token 是否正确。"
+                    "Telegram Bot Token is invalid or expired. Please check the Token in @BotFather."
                 ) from e
             raise
 
-        # 自动注册机器人命令菜单（Telegram 的 / 命令提示）
+        # Automatically register the bot command menu (Telegram's / command hints)
         try:
             from telegram import BotCommand
 
@@ -483,13 +483,13 @@ class TelegramAdapter(ChannelAdapter):
                 BotCommand("cancel_restart", "Cancel restart"),
             ]
             await self._bot.set_my_commands(bot_commands)
-            logger.info(f"[Telegram] 已注册 {len(bot_commands)} 个机器人命令到菜单")
+            logger.info(f"[Telegram] Registered {len(bot_commands)} bot commands to the menu")
         except Exception as e:
-            logger.warning(f"[Telegram] 注册命令菜单失败（不影响使用）: {e}")
+            logger.warning(f"[Telegram] Failed to register command menu (does not affect usage): {e}")
 
-        # 启动
+        # Start
         if self.webhook_url:
-            # Webhook 模式
+            # Webhook mode
             await self._app.start()
             await self._bot.set_webhook(
                 self.webhook_url,
@@ -498,8 +498,8 @@ class TelegramAdapter(ChannelAdapter):
             )
             logger.info(f"Telegram bot started with webhook: {self.webhook_url}")
         else:
-            # Long Polling 模式 - 使用 updater.start_polling
-            # 先清除可能残留的旧 webhook/polling 连接，避免 Conflict 错误
+            # Long Polling mode - use updater.start_polling
+            # Clear any leftover webhook/polling connections first to avoid Conflict errors
             try:
                 await self._bot.delete_webhook(drop_pending_updates=True)
                 logger.info("Cleared previous webhook/polling connections before starting")
@@ -516,11 +516,11 @@ class TelegramAdapter(ChannelAdapter):
 
         self._running = True
 
-        # 启动 polling 健康监测 watchdog
+        # Start polling health-check watchdog
         if not self.webhook_url:
             self._watchdog_task = asyncio.create_task(self._polling_watchdog())
 
-        # 打印配对信息（使用 logger 代替 print 避免 GBK 编码问题）
+        # Print pairing info (using logger instead of print to avoid GBK encoding issues)
         if self.require_pairing:
             paired_count = len(self.pairing_manager.paired_users)
             logger.info("=" * 50)
@@ -531,7 +531,7 @@ class TelegramAdapter(ChannelAdapter):
             logger.info("=" * 50)
 
     async def stop(self) -> None:
-        """停止 Telegram Bot"""
+        """Stop the Telegram bot"""
         self._running = False
 
         if self._watchdog_task and not self._watchdog_task.done():
@@ -541,38 +541,38 @@ class TelegramAdapter(ChannelAdapter):
             self._watchdog_task = None
 
         if self._app:
-            # Webhook 模式下先删除 webhook
+            # In webhook mode, delete the webhook first
             if self.webhook_url and self._bot:
                 with contextlib.suppress(Exception):
                     await self._bot.delete_webhook()
 
-            # 先停止 updater
+            # Stop the updater first
             if self._app.updater and self._app.updater.running:
                 await self._app.updater.stop()
-            # 再停止 application
+            # Then stop the application
             await self._app.stop()
             await self._app.shutdown()
 
         logger.info("Telegram bot stopped")
 
-    # ==================== 错误处理与健康监测 ====================
+    # ==================== Error Handling and Health Monitoring ====================
 
     async def _on_error(self, update: Any, context: Any) -> None:
-        """处理 update 处理过程中的异常，防止消息静默丢失"""
+        """Handle exceptions during update processing to prevent silent message loss"""
         logger.error(
             f"[Telegram] Error handling update: {context.error}",
             exc_info=context.error,
         )
 
     def _on_polling_error(self, error: Exception) -> None:
-        """处理 polling 网络错误（连接断开、超时等），库会自动重试。
+        """Handle polling network errors (disconnects, timeouts, etc.); the library will auto-retry.
 
-        注意：python-telegram-bot 要求 error_callback 必须是同步函数，不能是 coroutine。
+        Note: python-telegram-bot requires error_callback to be a synchronous function, not a coroutine.
         """
         logger.warning(f"[Telegram] Polling network error (will auto-retry): {error}")
 
     async def _polling_watchdog(self) -> None:
-        """监测 polling 是否存活，停止则自动重启"""
+        """Monitor whether polling is alive; automatically restart if it stops"""
         await asyncio.sleep(60)
         while self._running:
             await asyncio.sleep(120)
@@ -595,16 +595,16 @@ class TelegramAdapter(ChannelAdapter):
                 except Exception as e:
                     logger.error(f"[Telegram] Failed to restart polling: {e}")
 
-    # ==================== 命令处理 ====================
+    # ==================== Command Handling ====================
 
     async def _handle_start(self, update: Any, context: Any) -> None:
-        """处理 /start 命令"""
+        """Handle the /start command"""
         message = update.message
         chat_id = str(message.chat.id)
 
-        # 检查配对状态
+        # Check pairing status
         if self.require_pairing and not self.pairing_manager.is_paired(chat_id):
-            # 未配对，开始配对流程
+            # Not paired: begin pairing flow
             self.pairing_manager.start_pairing(chat_id)
             code_file = self.pairing_manager.code_file.absolute()
             await message.reply_text(
@@ -615,7 +615,7 @@ class TelegramAdapter(ChannelAdapter):
             )
             return
 
-        # 已配对或不需要配对
+        # Already paired or pairing not required
         await message.reply_text(
             "👋 Hi! I'm OpenAkita, your all-in-one AI assistant.\n\n"
             "Send a message to start. I can help you:\n"
@@ -628,7 +628,7 @@ class TelegramAdapter(ChannelAdapter):
         )
 
     async def _handle_unpair(self, update: Any, context: Any) -> None:
-        """处理 /unpair 命令 - 取消配对"""
+        """Handle the /unpair command - unpair"""
         message = update.message
         chat_id = str(message.chat.id)
 
@@ -640,7 +640,7 @@ class TelegramAdapter(ChannelAdapter):
             await message.reply_text("This chat is not paired.")
 
     async def _handle_status(self, update: Any, context: Any) -> None:
-        """处理 /status 命令 - 查看配对状态"""
+        """Handle the /status command - view pairing status"""
         message = update.message
         chat_id = str(message.chat.id)
 
@@ -654,7 +654,7 @@ class TelegramAdapter(ChannelAdapter):
             await message.reply_text("❌ Not paired\n\nSend /start to begin pairing")
 
     async def _handle_reaction(self, update: Any, context: Any) -> None:
-        """Bot API 8.0+ 反应事件（预留，仅记录日志）"""
+        """Bot API 8.0+ reaction events (reserved; logged only)"""
         reaction = getattr(update, "message_reaction", None)
         if reaction:
             logger.debug(
@@ -664,7 +664,7 @@ class TelegramAdapter(ChannelAdapter):
             )
 
     async def _handle_callback_query(self, update: Any, context: Any) -> None:
-        """内联键盘回调，处理安全确认按钮等。"""
+        """Inline keyboard callback; handles security confirmation buttons and similar."""
         query = update.callback_query
         if not query:
             return
@@ -698,9 +698,9 @@ class TelegramAdapter(ChannelAdapter):
         logger.debug(f"Telegram callback_query: data={data}")
 
     async def _handle_message(self, update: Any, context: Any) -> None:
-        """处理收到的消息"""
+        """Handle incoming messages"""
         try:
-            # 去重：防止 webhook 重试 / 网络抖动导致同一 update 被处理多次
+            # Deduplicate: prevents the same update being processed multiple times due to webhook retries / network jitter
             uid = update.update_id
             if uid in self._seen_update_ids:
                 logger.debug(f"Duplicate update_id={uid}, skipping")

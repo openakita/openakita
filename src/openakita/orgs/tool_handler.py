@@ -1,8 +1,8 @@
 """
-OrgToolHandler — 组织工具执行器
+OrgToolHandler — Organization tool executor
 
-处理组织节点 Agent 调用的 org_* 系列工具。
-每个 handler 方法接收 tool_name, arguments, context(org_id, node_id) 并返回结果。
+Handles the org_* tools invoked by organization-node Agents.
+Each handler method receives tool_name, arguments, context(org_id, node_id) and returns a result.
 """
 
 from __future__ import annotations
@@ -56,21 +56,21 @@ class OrgToolHandler:
         self._runtime = runtime
 
     def _org_not_running_error(self, org_id: str) -> str:
-        """根据组织是否刚被显式 stop/delete 返回不同的错误消息。
+        """Return different error messages based on whether the org was recently explicitly stopped/deleted.
 
-        - 若组织在近期被显式停止/删除：返回"组织已停止，任务被取消"，
-          让 LLM 知道这是一次终态，不应再重试。
-        - 否则（组织未激活、id 不存在等）：返回原来的"组织未运行"。
+        - If the org was recently explicitly stopped/deleted: return "organization stopped, task cancelled"
+          so the LLM knows this is a terminal state and should not retry.
+        - Otherwise (org inactive, id not found, etc.): return the original "organization not running".
         """
         try:
             if self._runtime.is_org_recently_stopped(org_id):
                 return (
-                    "[组织已停止] 组织已被停止或删除，当前任务已被取消。"
-                    "请停止继续调用任何 org_* 工具，直接给用户一个文字总结说明任务已终止。"
+                    "[Organization stopped] The organization has been stopped or deleted, and the current task has been cancelled. "
+                    "Stop calling any org_* tools and reply directly to the user with a textual summary stating the task has been terminated."
                 )
         except Exception:
             pass
-        return "组织未运行"
+        return "Organization not running"
 
     _INT_DEFAULTS: dict[str, int] = {
         "priority": 0,
@@ -362,7 +362,7 @@ class OrgToolHandler:
                 from openakita.orgs.models import OrgProject, ProjectStatus
                 default_proj = OrgProject(
                     org_id=org_id,
-                    name="任务追踪",
+                    name="Task Tracking",
                     status=ProjectStatus.ACTIVE,
                 )
                 store.create_project(default_proj)
@@ -477,7 +477,7 @@ class OrgToolHandler:
                 store.update_task(existing.project_id, existing.id, {"plan_steps": plan_steps})
                 self._append_execution_log(
                     org_id, chain_id,
-                    f"计划创建: {tool_input.get('task_summary', '')[:_LIM_EXEC_LOG]}",
+                    f"Plan created: {tool_input.get('task_summary', '')[:_LIM_EXEC_LOG]}",
                     node_id,
                 )
             elif tool_name == "update_plan_step":
@@ -496,7 +496,7 @@ class OrgToolHandler:
                 store.update_task(existing.project_id, existing.id, {"progress_pct": progress_pct})
                 self._append_execution_log(
                     org_id, chain_id,
-                    f"步骤 {step_id}: {status} - {result_text[:_LIM_EXEC_LOG]}",
+                    f"Step {step_id}: {status} - {result_text[:_LIM_EXEC_LOG]}",
                     node_id,
                 )
             elif tool_name == "complete_plan":
@@ -508,7 +508,7 @@ class OrgToolHandler:
                 })
                 self._append_execution_log(
                     org_id, chain_id,
-                    f"计划完成: {summary[:_LIM_EXEC_LOG]}",
+                    f"Plan completed: {summary[:_LIM_EXEC_LOG]}",
                     node_id,
                 )
         except Exception as exc:
@@ -522,8 +522,9 @@ class OrgToolHandler:
         if handler is None:
             return f"Unknown org tool: {tool_name}"
 
-        # 每次 org_* 工具调用都是一次"组织在活动"的进度信号，用来阻止命令
-        # 看门狗误判卡死。对没有进行中 UserCommandTracker 的 org 是 O(0)。
+        # Each org_* tool call is a progress signal indicating "organization is active",
+        # used to prevent the command watchdog from falsely flagging it as stuck.
+        # O(0) for orgs without an active UserCommandTracker.
         try:
             touch = getattr(self._runtime, "_touch_trackers_for_org", None)
             if callable(touch):
@@ -557,11 +558,12 @@ class OrgToolHandler:
 
         metadata: dict = {}
 
-        # 若调用方当前绑定的 chain 已关闭，把 chain_closed 标记放进 metadata，
-        # 供接收端 `_on_node_message` 做软门禁。不拦截发送本身，因为回复/总结
-        # 这类对话性消息仍然有价值，只是不应再重新激活 ReAct。
-        # 注意：仅在 chain 已关闭时才打 metadata，不对"开放中"的 chain 外泄 chain_id，
-        # 以免把 sender 的 chain 语义传染给 receiver 的下一次 ReAct 调用。
+        # If the caller's currently bound chain is closed, tag chain_closed in metadata,
+        # so the receiver's `_on_node_message` can apply a soft gate. We don't block the send itself,
+        # since conversational messages like replies/summaries still have value — they just shouldn't
+        # re-activate ReAct.
+        # Note: only tag metadata when the chain is closed; do not leak chain_id for "open" chains,
+        # to avoid contaminating the receiver's next ReAct call with the sender's chain semantics.
         current_chain = self._runtime.get_current_chain_id(org_id, node_id)
         if current_chain and self._runtime.is_chain_closed(org_id, current_chain):
             metadata["task_chain_id"] = current_chain
@@ -582,18 +584,19 @@ class OrgToolHandler:
                 f"`{caller_node.id}`({caller_node.role_title})"
                 if caller_node else f"`{node_id}`"
             )
-            # 和 org_delegate_task 用同一套 resolve_reference 协议，确保
-            # to_node 必须是 node_xxxxxxxx 或完全相同的唯一 role_title；
-            # 名字相近的模糊命中一律退到"请用精确 id"错误，避免把消息
-            # 错发给同名同事（例如"产品总监"/"产品经理"的 substring 歧义）。
+            # Use the same resolve_reference protocol as org_delegate_task to ensure
+            # to_node must be node_xxxxxxxx or an exactly matching unique role_title;
+            # any name-similar fuzzy match falls back to a "please use exact id" error
+            # to prevent sending messages to the wrong same-named colleague
+            # (e.g. substring ambiguity between "Product Director" and "Product Manager").
             resolved, candidates, status = org.resolve_reference(to_node)
             if status == "ambiguous_title":
                 cand_list = ", ".join(
                     f"`{c.id}`({c.role_title})" for c in candidates
                 )
                 return (
-                    f"[org_send_message 失败] 你是 {caller_label}，to_node='{to_node}' "
-                    f"对应多个节点：{cand_list}。请改用 node_xxxxxxxx 形式的精确 id。"
+                    f"[org_send_message failed] You are {caller_label}, to_node='{to_node}' "
+                    f"matches multiple nodes: {cand_list}. Please use the exact id in node_xxxxxxxx form."
                 )
             if status == "fuzzy":
                 cand = candidates[0] if candidates else None
@@ -602,26 +605,26 @@ class OrgToolHandler:
                 )
                 if cand and cand.id == node_id:
                     return (
-                        f"[org_send_message 失败] 你是 {caller_label}，"
-                        f"to_node='{to_node}' 模糊匹配到的是你自己（{cand_label}），不能给自己发消息。"
-                        "请使用准确的目标节点 id。"
+                        f"[org_send_message failed] You are {caller_label}, "
+                        f"to_node='{to_node}' fuzzy-matched to yourself ({cand_label}); you cannot send messages to yourself. "
+                        "Please use an accurate target node id."
                     )
                 return (
-                    f"[org_send_message 失败] 你是 {caller_label}，to_node='{to_node}' "
-                    f"不是精确匹配，最接近的是 {cand_label}。为避免误发，请把 to_node 改为 "
-                    "`node_xxxxxxxx` 形式的精确 id 再试。"
+                    f"[org_send_message failed] You are {caller_label}, to_node='{to_node}' "
+                    f"is not an exact match; the closest is {cand_label}. To avoid misrouting, change to_node to "
+                    "the exact id in `node_xxxxxxxx` form and try again."
                 )
             if status == "not_found":
                 avail = ", ".join(f"{n.id}({n.role_title})" for n in org.nodes)
                 return (
-                    f"[org_send_message 失败] 你是 {caller_label}，节点 '{to_node}' 不存在。"
-                    f"可用节点: {avail}"
+                    f"[org_send_message failed] You are {caller_label}, node '{to_node}' does not exist. "
+                    f"Available nodes: {avail}"
                 )
 
             to_node = resolved.id
             if to_node == node_id:
                 return (
-                    f"[org_send_message 失败] 你是 {caller_label}，不能给自己发消息。"
+                    f"[org_send_message failed] You are {caller_label}; you cannot send messages to yourself."
                 )
 
         msg = OrgMessage(
@@ -640,7 +643,7 @@ class OrgToolHandler:
                 "msg_type": args.get("msg_type", "question"),
                 "content": args["content"][:_LIM_WS],
             })
-        return f"消息已发送给 {to_node}" if ok else "发送失败"
+        return f"Message sent to {to_node}" if ok else "Send failed"
 
     async def _handle_org_reply_message(
         self, args: dict, org_id: str, node_id: str
@@ -651,7 +654,7 @@ class OrgToolHandler:
         original = messenger._pending_messages.get(args["reply_to"])
         to_node = original.from_node if original else ""
         if not to_node:
-            return f"原始消息 {args['reply_to']} 未找到，无法确定回复目标"
+            return f"Original message {args['reply_to']} not found; cannot determine reply target"
         msg = OrgMessage(
             org_id=org_id,
             from_node=node_id,
@@ -661,7 +664,7 @@ class OrgToolHandler:
             reply_to=args["reply_to"],
         )
         await messenger.send(msg)
-        return "已回复"
+        return "Reply sent"
 
     async def _handle_org_delegate_task(
         self, args: dict, org_id: str, node_id: str
@@ -678,8 +681,8 @@ class OrgToolHandler:
             or _now_iso() + ":" + node_id[:8]
         )
 
-        # 软屏障：如果当前 chain 已被验收/打回/取消，禁止继续 delegate。
-        # 这是防止"任务完成后组织继续自主派活"的核心拦截点之一。
+        # Soft barrier: if the current chain has been accepted/rejected/cancelled, block further delegation.
+        # This is one of the core interception points preventing "the org continues to self-dispatch work after task completion".
         try:
             from openakita.config import settings as _settings
             if (getattr(_settings, "org_suppress_closed_chain_reactivation", True)
@@ -689,10 +692,10 @@ class OrgToolHandler:
                     chain_id, node_id, args.get("to_node", ""),
                 )
                 return (
-                    f"[已关闭] 任务链 {chain_id} 已结束（验收/打回/取消），"
-                    "禁止基于该 chain 继续 org_delegate_task。"
-                    "如确有新工作需要，请由上级重新发起独立任务；"
-                    "当前请直接用文字总结回复，不要再调用任何 org_* 工具。"
+                    f"[Closed] Task chain {chain_id} has ended (accepted/rejected/cancelled). "
+                    "Further org_delegate_task based on this chain is forbidden. "
+                    "If new work is truly needed, the supervisor should initiate a new independent task. "
+                    "For now, reply with a textual summary and do not call any org_* tools."
                 )
         except Exception as exc:
             logger.debug("delegate closed-chain check skipped: %s", exc)
@@ -701,8 +704,8 @@ class OrgToolHandler:
         max_depth = self._effective_max_delegation_depth(org)
         if chain_depth + 1 > max_depth:
             return (
-                f"此任务链的委派层级已达上限（{max_depth}层），无法继续向下委派。"
-                f"请自行完成此项工作，或用 org_submit_deliverable 提交当前成果给上级重新安排。"
+                f"The delegation depth of this task chain has reached its limit ({max_depth} levels); cannot delegate further down. "
+                f"Please complete this work yourself, or use org_submit_deliverable to submit the current deliverable to your supervisor for reassignment."
             )
 
         metadata = {}
@@ -722,25 +725,25 @@ class OrgToolHandler:
                     to_node = existing_affinity
 
         if org:
-            # 便于错误消息里明确告诉 LLM 它自己是谁，避免 LLM 误以为"再试一次"就行
+            # Makes error messages explicit about who the caller is, so the LLM doesn't assume "just retry" is enough.
             caller_node = org.get_node(node_id)
             caller_label = (
                 f"`{caller_node.id}`({caller_node.role_title})"
                 if caller_node else f"`{node_id}`"
             )
 
-            # _resolve_node_refs 在 strict 模式下只对 exact_id/exact_title 做了
-            # 改写；fuzzy/ambiguous/not_found 都原样保留在 to_node 里，必须在
-            # 这里用 resolve_reference 再跑一次严格解析，产出结构化错误，
-            # 否则 LLM 根本不知道该用哪个 node_xxxxxxxx。
+            # In strict mode, _resolve_node_refs only rewrites exact_id/exact_title;
+            # fuzzy/ambiguous/not_found values are kept as-is in to_node. We must
+            # re-run strict resolution via resolve_reference here to emit structured errors;
+            # otherwise the LLM has no idea which node_xxxxxxxx to use.
             resolved, candidates, status = org.resolve_reference(to_node)
             children = org.get_children(node_id)
             children_hint = (
-                "你的直属下级：" + ", ".join(
+                "Your direct reports: " + ", ".join(
                     f"{c.role_title}(`{c.id}`)" for c in children
                 )
                 if children
-                else "你是叶子节点，没有直属下级，无法使用 org_delegate_task。"
+                else "You are a leaf node with no direct reports; you cannot use org_delegate_task."
             )
 
             if status == "ambiguous_title":
@@ -748,8 +751,8 @@ class OrgToolHandler:
                     f"`{c.id}`({c.role_title})" for c in candidates
                 )
                 return (
-                    f"[org_delegate_task 失败] 你是 {caller_label}，to_node='{to_node}' "
-                    f"对应多个节点：{cand_list}。请改用 node_xxxxxxxx 形式的精确 id 再试一次。"
+                    f"[org_delegate_task failed] You are {caller_label}, to_node='{to_node}' "
+                    f"matches multiple nodes: {cand_list}. Please use the exact id in node_xxxxxxxx form and try again. "
                     f"{children_hint}"
                 )
             if status == "fuzzy":
@@ -757,24 +760,24 @@ class OrgToolHandler:
                 cand_label = (
                     f"`{cand.id}`({cand.role_title})" if cand else f"'{to_node}'"
                 )
-                # 对自指（模糊匹配恰好命中调用者自己）单独提示，堵上最常见的
-                # "产品总监把任务派给自己"死循环。
+                # Special-case self-reference (fuzzy match happens to hit the caller itself) to block the most common
+                # "Product Director delegates to itself" infinite loop.
                 if cand and cand.id == node_id:
                     return (
-                        f"[org_delegate_task 失败] 你是 {caller_label}，"
-                        f"to_node='{to_node}' 模糊匹配到的是你自己（{cand_label}），不能委派给自己。"
-                        f"请用 node_xxxxxxxx 形式的精确下级 id。{children_hint}"
+                        f"[org_delegate_task failed] You are {caller_label}, "
+                        f"to_node='{to_node}' fuzzy-matched to yourself ({cand_label}); you cannot delegate to yourself. "
+                        f"Please use the exact subordinate id in node_xxxxxxxx form. {children_hint}"
                     )
                 return (
-                    f"[org_delegate_task 失败] 你是 {caller_label}，to_node='{to_node}' "
-                    f"不是精确匹配，最接近的是 {cand_label}。为避免误派，请把 to_node 改为 "
-                    f"`node_xxxxxxxx` 形式的精确 id 再试。{children_hint}"
+                    f"[org_delegate_task failed] You are {caller_label}, to_node='{to_node}' "
+                    f"is not an exact match; the closest is {cand_label}. To avoid misrouting, change to_node to "
+                    f"the exact id in `node_xxxxxxxx` form and try again. {children_hint}"
                 )
             if status == "not_found":
                 avail = ", ".join(f"{n.id}({n.role_title})" for n in org.nodes)
                 return (
-                    f"[org_delegate_task 失败] 你是 {caller_label}，目标节点 '{to_node}' 不存在。"
-                    f"可用节点: {avail}。请检查 to_node 参数，或改用 org_submit_deliverable 自行完成。"
+                    f"[org_delegate_task failed] You are {caller_label}, target node '{to_node}' does not exist. "
+                    f"Available nodes: {avail}. Check the to_node parameter, or use org_submit_deliverable to complete it yourself."
                 )
 
             # exact_id / exact_title
@@ -785,7 +788,7 @@ class OrgToolHandler:
             if to_node not in child_ids:
                 if to_node == node_id:
                     hint = (
-                        f"[org_delegate_task 失败] 你就是 {caller_label}，不能把任务委派给自己。"
+                        f"[org_delegate_task failed] You are {caller_label}; you cannot delegate a task to yourself."
                     )
                 else:
                     target_node = org.get_node(to_node)
@@ -794,20 +797,20 @@ class OrgToolHandler:
                         if target_node else f"`{to_node}`"
                     )
                     hint = (
-                        f"[org_delegate_task 失败] 你是 {caller_label}，"
-                        f"{target_label} 不是你的直属下级，无法委派给它。"
+                        f"[org_delegate_task failed] You are {caller_label}, "
+                        f"{target_label} is not your direct report, so you cannot delegate to it."
                     )
                 if children:
                     child_list = ", ".join(f"{c.role_title}(`{c.id}`)" for c in children)
                     return (
-                        f"{hint} 你的直属下级只有：{child_list}。"
-                        f"如果任务本就该由你自己完成，请改用 org_submit_deliverable 交付成果；"
-                        f"不要反复调用 org_delegate_task，否则会被 Supervisor 判定死循环并终止。"
+                        f"{hint} Your direct reports are: {child_list}. "
+                        f"If the task is supposed to be done by you, use org_submit_deliverable to deliver the results instead; "
+                        f"do not repeatedly call org_delegate_task — the Supervisor will flag it as an infinite loop and terminate."
                     )
                 return (
-                    f"{hint} 你是叶子节点，没有直属下级，根本无法使用 org_delegate_task。"
-                    f"请直接调用 org_submit_deliverable 把任务结果交付给你的上级；"
-                    f"若需协作可用 org_send_message。禁止继续重试 org_delegate_task。"
+                    f"{hint} You are a leaf node with no direct reports; you cannot use org_delegate_task at all. "
+                    f"Call org_submit_deliverable directly to deliver the task result to your supervisor; "
+                    f"use org_send_message for collaboration. Do not keep retrying org_delegate_task."
                 )
 
         try:
@@ -819,8 +822,8 @@ class OrgToolHandler:
                     and _existing.assignee_node_id == to_node
                     and _existing.status in (_TS.IN_PROGRESS, _TS.DELIVERED)):
                 return (
-                    f"{to_node} 已在处理此任务链（{chain_id[:12]}），无需重复委派。"
-                    f"请用 org_list_delegated_tasks 查看进度。"
+                    f"{to_node} is already working on this task chain ({chain_id[:12]}); no need to re-delegate. "
+                    f"Use org_list_delegated_tasks to check progress."
                 )
         except Exception:
             pass
@@ -836,9 +839,10 @@ class OrgToolHandler:
         messenger.bind_task_affinity(chain_id, to_node)
         self._runtime._chain_delegation_depth[chain_id] = chain_depth + 1
 
-        # 用户命令生命周期追踪：如果当前 org 上存在进行中的 UserCommandTracker
-        # 且本次派工源自 tracker 的 root 或其后代，则把新 chain 登记进 tracker，
-        # 作为"该命令尚未完成"的信号之一。关闭时由 _mark_chain_closed 反向解注册。
+        # User command lifecycle tracking: if an active UserCommandTracker exists on this org
+        # and this delegation originates from the tracker's root or descendants, register the new chain
+        # into the tracker as a signal that "this command is not yet complete".
+        # Unregistration on close is handled by _mark_chain_closed.
         try:
             register = getattr(self._runtime, "_tracker_register_chain", None)
             if callable(register):
@@ -883,14 +887,14 @@ class OrgToolHandler:
         )
         self._append_execution_log(
             org_id, chain_id,
-            f"委派给 {to_node}: {args['task'][:_LIM_EXEC_LOG]}",
+            f"Delegated to {to_node}: {args['task'][:_LIM_EXEC_LOG]}",
             node_id,
         )
         return (
-            f"任务已分配给 {to_node}（chain: {chain_id[:12]}）: {args['task'][:50]}\n"
-            f"⚠️ 注意：任务已异步下发，下级尚未完成。"
-            f"请勿立即汇报「已完成」，应使用 org_list_delegated_tasks 跟踪进度，"
-            f"或等待下级通过 org_submit_deliverable 提交结果后再做最终汇报。"
+            f"Task assigned to {to_node} (chain: {chain_id[:12]}): {args['task'][:50]}\n"
+            f"Note: the task has been dispatched asynchronously; the subordinate has not yet completed it. "
+            f"Do not immediately report 'completed' — use org_list_delegated_tasks to track progress, "
+            f"or wait for the subordinate to submit results via org_submit_deliverable before issuing a final report."
         )
 
     async def _handle_org_escalate(
@@ -910,8 +914,8 @@ class OrgToolHandler:
                 "to_node": result.to_node if hasattr(result, "to_node") else "",
                 "content": args["content"][:_LIM_WS],
             })
-            return "已上报给上级"
-        return "无法上报（没有上级节点）"
+            return "Escalated to supervisor"
+        return "Cannot escalate (no supervisor node)"
 
     async def _handle_org_broadcast(
         self, args: dict, org_id: str, node_id: str
@@ -924,7 +928,7 @@ class OrgToolHandler:
         org = self._runtime.get_org(org_id)
         node = org.get_node(node_id) if org else None
         if msg_type == MsgType.BROADCAST and node and node.level > 0:
-            return "只有顶层节点可以全组织广播，你可以使用部门广播"
+            return "Only the top-level node can broadcast org-wide; you can use a department broadcast instead"
 
         msg = OrgMessage(
             org_id=org_id,
@@ -934,7 +938,7 @@ class OrgToolHandler:
             metadata={},
         )
         await messenger.send(msg)
-        scope_label = "部门" if scope == "department" else "全组织"
+        scope_label = "department" if scope == "department" else "org-wide"
         await self._runtime._broadcast_ws("org:broadcast", {
             "org_id": org_id, "from_node": node_id, "scope": scope,
             "content": args["content"][:_LIM_WS],
@@ -943,7 +947,7 @@ class OrgToolHandler:
             "broadcast", node_id,
             {"scope": scope, "content": args["content"][:_LIM_EVENT]},
         )
-        return f"已{scope_label}广播"
+        return f"Broadcast sent ({scope_label})"
 
     # ------------------------------------------------------------------
     # Organization awareness tools
@@ -954,10 +958,10 @@ class OrgToolHandler:
     ) -> dict:
         org = self._runtime.get_org(org_id)
         if not org:
-            return {"error": "组织未找到"}
+            return {"error": "Organization not found"}
         departments: dict[str, list] = {}
         for n in org.nodes:
-            dept = n.department or "未分配"
+            dept = n.department or "Unassigned"
             departments.setdefault(dept, []).append({
                 "id": n.id,
                 "title": n.role_title,
@@ -1011,11 +1015,11 @@ class OrgToolHandler:
     ) -> dict:
         org = self._runtime.get_org(org_id)
         if not org:
-            return {"error": "组织未找到"}
+            return {"error": "Organization not found"}
         target_id = args.get("node_id") or args.get("target_node") or ""
         target = org.get_node(target_id)
         if not target:
-            return {"error": f"节点未找到: {target_id}"}
+            return {"error": f"Node not found: {target_id}"}
         messenger = self._runtime.get_messenger(org_id)
         pending = messenger.get_pending_count(target.id) if messenger else 0
         return {
@@ -1031,7 +1035,7 @@ class OrgToolHandler:
     ) -> dict:
         org = self._runtime.get_org(org_id)
         if not org:
-            return {"error": "组织未找到"}
+            return {"error": "Organization not found"}
         node_stats: dict[str, int] = {}
         for n in org.nodes:
             s = n.status.value
@@ -1054,13 +1058,13 @@ class OrgToolHandler:
     ) -> str:
         bb = self._runtime.get_blackboard(org_id)
         if not bb:
-            return "黑板不可用"
+            return "Blackboard unavailable"
         entries = bb.read_org(
             limit=args.get("limit", 10),
             tag=args.get("tag"),
         )
         if not entries:
-            return "(黑板暂无内容)"
+            return "(Blackboard is empty)"
         lines = []
         for e in entries:
             tags = f" [{', '.join(e.tags)}]" if e.tags else ""
@@ -1072,7 +1076,7 @@ class OrgToolHandler:
     ) -> str:
         bb = self._runtime.get_blackboard(org_id)
         if not bb:
-            return "黑板不可用"
+            return "Blackboard unavailable"
         raw_mt = args.get("memory_type", "fact")
         try:
             mt = MemoryType(raw_mt)
@@ -1087,13 +1091,13 @@ class OrgToolHandler:
             importance=args.get("importance", 0.5),
         )
         if entry is None:
-            return f"黑板已有相似内容，跳过重复写入: {args['content'][:50]}"
+            return f"Blackboard already has similar content; skipping duplicate write: {args['content'][:50]}"
         await self._runtime._broadcast_ws("org:blackboard_update", {
             "org_id": org_id, "scope": "org", "node_id": node_id,
             "memory_type": args.get("memory_type", "fact"),
             "content": args["content"][:_LIM_WS],
         })
-        return f"已写入组织黑板: {args['content'][:50]}"
+        return f"Written to org blackboard: {args['content'][:50]}"
 
     async def _handle_org_read_dept_memory(
         self, args: dict, org_id: str, node_id: str
@@ -1101,14 +1105,14 @@ class OrgToolHandler:
         bb = self._runtime.get_blackboard(org_id)
         org = self._runtime.get_org(org_id)
         if not bb or not org:
-            return "不可用"
+            return "Unavailable"
         node = org.get_node(node_id)
         dept = node.department if node else ""
         if not dept:
-            return "你未分配部门"
+            return "You have not been assigned a department"
         entries = bb.read_department(dept, limit=args.get("limit", 10))
         if not entries:
-            return f"({dept} 暂无部门记忆)"
+            return f"(No department memory for {dept})"
         return "\n".join(f"[{e.memory_type.value}] {e.content}" for e in entries)
 
     async def _handle_org_write_dept_memory(
@@ -1117,11 +1121,11 @@ class OrgToolHandler:
         bb = self._runtime.get_blackboard(org_id)
         org = self._runtime.get_org(org_id)
         if not bb or not org:
-            return "不可用"
+            return "Unavailable"
         node = org.get_node(node_id)
         dept = node.department if node else ""
         if not dept:
-            return "你未分配部门"
+            return "You have not been assigned a department"
         raw_mt = args.get("memory_type", "fact")
         try:
             mt = MemoryType(raw_mt)
@@ -1134,13 +1138,13 @@ class OrgToolHandler:
             importance=args.get("importance", 0.5),
         )
         if entry is None:
-            return "部门记忆已有相似内容，跳过重复写入"
+            return "Department memory already has similar content; skipping duplicate write"
         await self._runtime._broadcast_ws("org:blackboard_update", {
             "org_id": org_id, "scope": "department", "department": dept,
             "node_id": node_id, "memory_type": args.get("memory_type", "fact"),
             "content": args["content"][:_LIM_WS],
         })
-        return f"已写入 {dept} 部门记忆"
+        return f"Written to {dept} department memory"
 
     # ------------------------------------------------------------------
     # Node-level memory tools
@@ -1151,10 +1155,10 @@ class OrgToolHandler:
     ) -> str:
         bb = self._runtime.get_blackboard(org_id)
         if not bb:
-            return "黑板不可用"
+            return "Blackboard unavailable"
         entries = bb.read_node(node_id, limit=args.get("limit", 10))
         if not entries:
-            return "(暂无私有记忆)"
+            return "(No private memory)"
         return "\n".join(f"[{e.memory_type.value}] {e.content}" for e in entries)
 
     async def _handle_org_write_node_memory(
@@ -1162,7 +1166,7 @@ class OrgToolHandler:
     ) -> str:
         bb = self._runtime.get_blackboard(org_id)
         if not bb:
-            return "黑板不可用"
+            return "Blackboard unavailable"
         raw_mt = args.get("memory_type", "fact")
         try:
             mt = MemoryType(raw_mt)
@@ -1180,7 +1184,7 @@ class OrgToolHandler:
             "memory_type": raw_mt,
             "content": args["content"][:_LIM_WS],
         })
-        return f"已写入私有记忆: {args['content'][:50]}"
+        return f"Written to private memory: {args['content'][:50]}"
 
     # ------------------------------------------------------------------
     # Policy tools
@@ -1192,10 +1196,10 @@ class OrgToolHandler:
         org_dir = self._runtime._manager._org_dir(org_id)
         policies_dir = org_dir / "policies"
         if not policies_dir.exists():
-            return "(暂无制度文件)"
+            return "(No policy files)"
         files = sorted(policies_dir.glob("*.md"))
         if not files:
-            return "(暂无制度文件)"
+            return "(No policy files)"
         return "\n".join(f"- {f.name}" for f in files)
 
     async def _handle_org_read_policy(
@@ -1204,10 +1208,10 @@ class OrgToolHandler:
         org_dir = self._runtime._manager._org_dir(org_id)
         fname = args["filename"]
         if ".." in fname or "/" in fname or "\\" in fname:
-            return "非法文件名"
+            return "Illegal filename"
         p = org_dir / "policies" / fname
         if not p.is_file():
-            return f"制度文件不存在: {fname}"
+            return f"Policy file does not exist: {fname}"
         return p.read_text(encoding="utf-8")
 
     async def _handle_org_search_policy(
@@ -1227,7 +1231,7 @@ class OrgToolHandler:
                 except Exception:
                     continue
         if not results:
-            return f"未找到与「{args['query']}」相关的制度"
+            return f"No policy found related to '{args['query']}'"
         return "\n\n".join(results)
 
     # ------------------------------------------------------------------
@@ -1239,19 +1243,19 @@ class OrgToolHandler:
     ) -> str:
         org = self._runtime.get_org(org_id)
         if not org:
-            return "组织未找到"
+            return "Organization not found"
         target_id = args.get("node_id") or args.get("target_node") or ""
         target = org.get_node(target_id)
         if not target:
-            return f"节点未找到: {target_id}"
+            return f"Node not found: {target_id}"
         org.get_parent(target_id)
         if node_id != "user":
             caller = org.get_node(node_id)
             if not caller:
-                return "你不在此组织中"
+                return "You are not in this organization"
             roots = org.get_root_nodes()
             if caller.level >= target.level and (not roots or node_id != roots[0].id):
-                return "只能冻结比你层级低的节点"
+                return "You can only freeze nodes at levels below yours"
         target.status = NodeStatus.FROZEN
         target.frozen_by = node_id
         target.frozen_reason = args.get("reason", "")
@@ -1264,20 +1268,20 @@ class OrgToolHandler:
             "node_frozen", node_id,
             {"target": target.id, "reason": args.get("reason", "")},
         )
-        return f"已冻结 {target.role_title}，原因：{args.get('reason', '')}"
+        return f"Froze {target.role_title}, reason: {args.get('reason', '')}"
 
     async def _handle_org_unfreeze_node(
         self, args: dict, org_id: str, node_id: str
     ) -> str:
         org = self._runtime.get_org(org_id)
         if not org:
-            return "组织未找到"
+            return "Organization not found"
         target_id = args.get("node_id") or args.get("target_node") or ""
         target = org.get_node(target_id)
         if not target:
-            return f"节点未找到: {target_id}"
+            return f"Node not found: {target_id}"
         if target.status != NodeStatus.FROZEN:
-            return f"{target.role_title} 未处于冻结状态"
+            return f"{target.role_title} is not in frozen state"
         target.status = NodeStatus.IDLE
         target.frozen_by = None
         target.frozen_reason = None
@@ -1290,7 +1294,7 @@ class OrgToolHandler:
         self._runtime.get_event_store(org_id).emit(
             "node_unfrozen", node_id, {"target": target.id},
         )
-        return f"已解冻 {target.role_title}"
+        return f"Unfroze {target.role_title}"
 
     async def _handle_org_request_clone(
         self, args: dict, org_id: str, node_id: str
@@ -1305,8 +1309,8 @@ class OrgToolHandler:
                 ephemeral=args.get("ephemeral", True),
             )
             if req.status == "approved":
-                return f"克隆申请已自动批准。新节点: {req.result_node_id}"
-            return f"克隆申请已提交（ID: {req.id}），等待审批。"
+                return f"Clone request auto-approved. New node: {req.result_node_id}"
+            return f"Clone request submitted (ID: {req.id}), awaiting approval."
         except ValueError as e:
             return str(e)
 
@@ -1324,7 +1328,7 @@ class OrgToolHandler:
                 parent_node_id=args["parent_node_id"],
                 reason=args["reason"],
             )
-            return f"招募申请已提交（ID: {req.id}，岗位: {args['role_title']}），等待审批。"
+            return f"Recruit request submitted (ID: {req.id}, role: {args['role_title']}), awaiting approval."
         except ValueError as e:
             return str(e)
 
@@ -1334,8 +1338,8 @@ class OrgToolHandler:
         scaler = self._runtime.get_scaler()
         ok = await scaler.dismiss_node(org_id, args["node_id"], by=node_id)
         if ok:
-            return f"已裁撤节点 {args['node_id']}"
-        return "裁撤失败（节点不存在或非临时节点）"
+            return f"Dismissed node {args['node_id']}"
+        return "Dismiss failed (node does not exist or is not ephemeral)"
 
     # ------------------------------------------------------------------
     # Task delivery & acceptance
@@ -1362,14 +1366,16 @@ class OrgToolHandler:
                     to_node = parent.id
         if not to_node:
             return (
-                "你是组织最高负责人，没有上级节点可提交。"
-                "你的执行结果会自动返回给指挥者，无需使用 org_submit_deliverable。"
-                "请直接在回复中总结成果即可。"
+                "You are the top-level owner of the organization; there is no supervisor to submit to. "
+                "Your execution results are automatically returned to the commander — no need to use org_submit_deliverable. "
+                "Just summarize the results directly in your reply."
             )
 
-        # 幂等性拦截：同一 chain 已被验收(accepted) / 已被打回(rejected)时，
-        # 拒绝再次提交，避免出现"两份一模一样的交付物/附件"以及父级被再次唤醒。
-        # 注意：已 delivered 但未验收不拦截（允许 agent 补交修订版，由下游去重兜底）。
+        # Idempotency barrier: when the same chain has already been accepted/rejected,
+        # refuse re-submission to avoid duplicate deliverables/attachments and prevent
+        # the parent from being re-awakened.
+        # Note: delivered-but-not-yet-accepted is not blocked (revised versions are allowed;
+        # downstream dedup covers the case).
         try:
             from openakita.config import settings as _settings
             if getattr(_settings, "org_reject_resubmit_after_accept", True) and chain_id:
@@ -1383,23 +1389,23 @@ class OrgToolHandler:
                                 chain_id, node_id,
                             )
                             return (
-                                f"[已关闭] 任务链 {chain_id} 已被验收通过，不能再次提交交付物。"
-                                "如有新的增量成果，请作为独立任务重新发起或直接在回复中总结，"
-                                "不要再调用 org_submit_deliverable/org_delegate_task。"
+                                f"[Closed] Task chain {chain_id} has already been accepted; cannot submit a deliverable again. "
+                                "If there is new incremental work, raise it as a separate task or summarize it directly in a reply; "
+                                "do not call org_submit_deliverable/org_delegate_task again."
                             )
                     recent_rej = events.query(event_type="task_rejected", limit=50)
                     for ev in recent_rej:
                         if ev.get("data", {}).get("chain_id") == chain_id:
-                            # rejected 仍允许重新 submit 修正版本（这正是 rejected 的语义）
+                            # Rejected still allows resubmitting a corrected version (that's the semantics of rejected)
                             break
         except Exception as exc:
             logger.debug("submit-idempotency check skipped: %s", exc)
 
-        # 把显式声明的 file_attachments 全部登记到黑板 + ProjectTask。
-        # 使用 runtime._register_file_output 作为唯一登记入口，确保和
-        # write_file / generate_image / deliver_artifacts 共用一条路径
-        # （避免双写黑板条目）。registered_attachments 里只保留登记成功
-        # 的条目（路径存在 + 黑板可写），随 TASK_DELIVERED 送到父节点。
+        # Register all explicitly-declared file_attachments to the blackboard + ProjectTask.
+        # Use runtime._register_file_output as the single registration entry point, shared with
+        # write_file / generate_image / deliver_artifacts (avoiding duplicate blackboard entries).
+        # registered_attachments only keeps successfully registered entries (path exists + blackboard writable),
+        # which are sent to the parent node via TASK_DELIVERED.
         registered_attachments: list[dict] = []
         if isinstance(raw_file_attachments, list) and raw_file_attachments:
             try:
@@ -1451,7 +1457,7 @@ class OrgToolHandler:
             from_node=node_id,
             to_node=to_node,
             msg_type=MsgType.TASK_DELIVERED,
-            content=f"任务交付: {deliverable[:_LIM_EVENT]}",
+            content=f"Task delivered: {deliverable[:_LIM_EVENT]}",
             metadata=metadata,
         )
         ok = await messenger.send(msg)
@@ -1478,15 +1484,15 @@ class OrgToolHandler:
             self._recalc_parent_progress(org_id, chain_id)
             self._append_execution_log(
                 org_id, chain_id,
-                f"提交交付物给 {to_node}: {summary[:_LIM_EXEC_LOG]}",
+                f"Submitted deliverable to {to_node}: {summary[:_LIM_EXEC_LOG]}",
                 node_id,
             )
             tail = (
-                f"（附带 {len(registered_attachments)} 个文件附件）"
+                f" (with {len(registered_attachments)} file attachment(s))"
                 if registered_attachments else ""
             )
-            return f"交付物已提交给 {to_node}{tail}，等待验收。"
-        return "提交失败"
+            return f"Deliverable submitted to {to_node}{tail}, awaiting acceptance."
+        return "Submission failed"
 
     async def _handle_org_accept_deliverable(
         self, args: dict, org_id: str, node_id: str
@@ -1497,9 +1503,9 @@ class OrgToolHandler:
 
         from_node = args.get("from_node", "")
         if not from_node:
-            return "缺少 from_node 参数"
+            return "Missing from_node parameter"
         if node_id == from_node:
-            return "不能验收自己的交付物"
+            return "You cannot accept your own deliverable"
 
         chain_id = args.get("task_chain_id", "")
         if chain_id:
@@ -1510,7 +1516,7 @@ class OrgToolHandler:
                     if ev.get("data", {}).get("chain_id") == chain_id:
                         return f"Deliverable for chain {chain_id} has already been accepted"
 
-        feedback = args.get("feedback", "验收通过")
+        feedback = args.get("feedback", "Accepted")
 
         metadata = {
             "task_chain_id": chain_id,
@@ -1522,7 +1528,7 @@ class OrgToolHandler:
             from_node=node_id,
             to_node=from_node,
             msg_type=MsgType.TASK_ACCEPTED,
-            content=f"验收通过: {feedback[:_LIM_EVENT]}",
+            content=f"Accepted: {feedback[:_LIM_EVENT]}",
             metadata=metadata,
         )
         await messenger.send(msg)
@@ -1688,7 +1694,7 @@ class OrgToolHandler:
 
         org = self._runtime.get_org(org_id)
         if not org:
-            return "组织未找到"
+            return "Organization not found"
         participants = args.get("participants", [])
         topic = args.get("topic", "")
         max_rounds = min(args.get("max_rounds", 3), 5)
@@ -1920,11 +1926,11 @@ class OrgToolHandler:
     ) -> str:
         org = self._runtime.get_org(org_id)
         if not org:
-            return "组织未找到"
+            return "Organization not found"
         target_id = args["target_node_id"]
         target = org.get_node(target_id)
         if not target:
-            return f"节点未找到: {target_id}"
+            return f"Node not found: {target_id}"
 
         caller = org.get_node(node_id)
         if caller and caller.level >= target.level:
@@ -1985,7 +1991,7 @@ class OrgToolHandler:
     ) -> str:
         org = self._runtime.get_org(org_id)
         if not org:
-            return "组织未找到"
+            return "Organization not found"
         parent = org.get_parent(node_id)
         if not parent:
             return "你是最高级节点，无法向上级申请。请直接配置 external_tools。"
@@ -2035,7 +2041,7 @@ class OrgToolHandler:
     ) -> str:
         org = self._runtime.get_org(org_id)
         if not org:
-            return "组织未找到"
+            return "Organization not found"
 
         target_id = args.get("node_id", "")
         tools = args.get("tools", [])
@@ -2044,7 +2050,7 @@ class OrgToolHandler:
 
         target = org.get_node(target_id)
         if not target:
-            return f"节点未找到: {target_id}"
+            return f"Node not found: {target_id}"
 
         children = org.get_children(node_id)
         child_ids = {c.id for c in children}
@@ -2083,7 +2089,7 @@ class OrgToolHandler:
     ) -> str:
         org = self._runtime.get_org(org_id)
         if not org:
-            return "组织未找到"
+            return "Organization not found"
 
         target_id = args.get("node_id", "")
         tools = args.get("tools", [])
@@ -2092,7 +2098,7 @@ class OrgToolHandler:
 
         target = org.get_node(target_id)
         if not target:
-            return f"节点未找到: {target_id}"
+            return f"Node not found: {target_id}"
 
         children = org.get_children(node_id)
         child_ids = {c.id for c in children}

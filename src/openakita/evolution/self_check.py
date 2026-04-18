@@ -29,19 +29,19 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TestCase:
-    """测试用例"""
+    """Test case"""
 
     id: str
     category: str  # qa, tools, search
     description: str
     input: Any
     expected: Any
-    validator: str | None = None  # 验证函数名
+    validator: str | None = None  # Validator function name
 
 
 @dataclass
 class TestResult:
-    """测试结果"""
+    """Test result"""
 
     test_id: str
     passed: bool
@@ -52,7 +52,7 @@ class TestResult:
 
 @dataclass
 class CheckReport:
-    """自检报告"""
+    """Self-check report"""
 
     timestamp: datetime
     total_tests: int
@@ -71,7 +71,7 @@ class CheckReport:
 
 @dataclass
 class FixRecord:
-    """修复记录"""
+    """Fix record"""
 
     error_pattern: str
     component: str
@@ -84,36 +84,36 @@ class FixRecord:
 
 @dataclass
 class DailyReport:
-    """每日系统报告"""
+    """Daily system report"""
 
     date: str
     timestamp: datetime
 
-    # 错误统计
+    # Error statistics
     total_errors: int = 0
     core_errors: int = 0
     tool_errors: int = 0
 
-    # 修复统计
+    # Fix statistics
     fix_attempted: int = 0
     fix_success: int = 0
     fix_failed: int = 0
 
-    # 详细内容
+    # Detailed content
     core_error_patterns: list[dict] = field(default_factory=list)
     tool_error_patterns: list[dict] = field(default_factory=list)
     fix_records: list[FixRecord] = field(default_factory=list)
 
-    # 记忆整理结果（如果有）
+    # Memory consolidation results (if any)
     memory_consolidation: dict | None = None
 
-    # 任务复盘统计
-    retrospect_summary: dict | None = None  # 复盘汇总
+    # Task retrospect statistics
+    retrospect_summary: dict | None = None  # Retrospect summary
 
-    # 记忆系统优化建议
-    memory_insights: dict | None = None  # 从记忆中提取的优化建议
+    # Memory system optimization suggestions
+    memory_insights: dict | None = None  # Optimization suggestions extracted from memory
 
-    # 报告状态
+    # Report status
     reported: bool = False
 
     def to_dict(self) -> dict:
@@ -202,92 +202,92 @@ class DailyReport:
             lines.append(f"- MEMORY.md: {'Refreshed' if mc.get('memory_md_refreshed') else 'Not Refreshed'}")
             lines.append("")
 
-        # 任务复盘统计
+        # Task retrospect statistics
         if self.retrospect_summary:
-            lines.append("## 任务复盘统计")
+            lines.append("## Task Retrospect Statistics")
             lines.append("")
             rs = self.retrospect_summary
-            lines.append(f"- 复盘任务数: {rs.get('total_tasks', 0)}")
-            lines.append(f"- 总耗时: {rs.get('total_duration', 0):.0f}秒")
-            lines.append(f"- 平均耗时: {rs.get('avg_duration', 0):.1f}秒")
-            lines.append(f"- 模型切换次数: {rs.get('model_switches', 0)}")
+            lines.append(f"- Retrospect Task Count: {rs.get('total_tasks', 0)}")
+            lines.append(f"- Total Duration: {rs.get('total_duration', 0):.0f}s")
+            lines.append(f"- Average Duration: {rs.get('avg_duration', 0):.1f}s")
+            lines.append(f"- Model Switches: {rs.get('model_switches', 0)}")
 
-            # 常见问题
+            # Common issues
             common_issues = rs.get("common_issues", [])
             if common_issues:
                 lines.append("")
-                lines.append("### 常见问题")
+                lines.append("### Common Issues")
                 for issue in common_issues:
-                    lines.append(f"- {issue.get('issue', '')}: {issue.get('count', 0)}次")
+                    lines.append(f"- {issue.get('issue', '')}: {issue.get('count', 0)} times")
 
-            # 复盘详情
+            # Retrospect details
             records = rs.get("records", [])
             if records:
                 lines.append("")
-                lines.append("### 复盘详情")
+                lines.append("### Retrospect Details")
                 for r in records:
                     duration = r.get("duration_seconds", 0)
                     desc = r.get("description", "")
                     result = r.get("retrospect_result", "")
-                    lines.append(f"- **{desc}** ({duration:.0f}秒)")
+                    lines.append(f"- **{desc}** ({duration:.0f}s)")
                     if result:
-                        lines.append(f"  - 分析: {result}")
+                        lines.append(f"  - Analysis: {result}")
 
             lines.append("")
 
-        # 记忆系统优化建议
+        # Memory system optimization suggestions
         if self.memory_insights:
-            lines.append("## 记忆系统优化建议")
+            lines.append("## Memory System Optimization Suggestions")
             lines.append("")
             mi = self.memory_insights
 
-            # 错误教训
+            # Error lessons
             error_memories = mi.get("error_memories", [])
             if error_memories:
-                lines.append("### 错误教训（需关注）")
+                lines.append("### Error Lessons (needs attention)")
                 for m in error_memories:
                     source = m.get("source", "")
                     source_label = f" [{source}]" if source else ""
                     lines.append(f"- {m.get('content', '')}{source_label}")
                 lines.append("")
 
-            # 规则约束
+            # Rule constraints
             rule_memories = mi.get("rule_memories", [])
             if rule_memories:
-                lines.append("### 规则约束（需遵守）")
+                lines.append("### Rule Constraints (must follow)")
                 for m in rule_memories:
                     lines.append(f"- {m.get('content', '')}")
                 lines.append("")
 
-            # 优化建议汇总
+            # Optimization suggestions summary
             optimization_suggestions = mi.get("optimization_suggestions", [])
             if optimization_suggestions:
-                lines.append("### 优化建议汇总")
+                lines.append("### Optimization Suggestions Summary")
                 for s in optimization_suggestions:
                     lines.append(f"- {s}")
                 lines.append("")
 
-            # 统计
+            # Statistics
             lines.append(
-                f"*共提取 {mi.get('total_errors', 0)} 条错误教训, "
-                f"{mi.get('total_rules', 0)} 条规则约束*"
+                f"*Extracted {mi.get('total_errors', 0)} error lessons, "
+                f"{mi.get('total_rules', 0)} rule constraints*"
             )
             lines.append("")
 
         lines.append("---")
-        lines.append(f"*报告生成时间: {self.timestamp.strftime('%Y-%m-%d %H:%M:%S')}*")
+        lines.append(f"*Report generated at: {self.timestamp.strftime('%Y-%m-%d %H:%M:%S')}*")
 
         return "\n".join(lines)
 
 
 class SelfChecker:
     """
-    自检系统
+    Self-check system
 
-    - 运行测试用例
-    - 分析失败原因
-    - 自动修复代码
-    - 记录学习经验
+    - Run test cases
+    - Analyze failure causes
+    - Auto-fix code
+    - Record learning experience
     """
 
     def __init__(
@@ -307,10 +307,10 @@ class SelfChecker:
         self._test_cases: list[TestCase] = []
 
     def load_test_cases(self) -> int:
-        """加载测试用例"""
+        """Load test cases"""
         self._test_cases = []
 
-        # 从测试目录加载
+        # Load from test directory
         if self.test_dir.exists():
             for category_dir in self.test_dir.iterdir():
                 if category_dir.is_dir():
@@ -319,22 +319,22 @@ class SelfChecker:
                         cases = self._load_test_file(test_file, category)
                         self._test_cases.extend(cases)
 
-        # 添加内置测试用例
+        # Add built-in test cases
         self._test_cases.extend(self._get_builtin_tests())
 
         logger.info(f"Loaded {len(self._test_cases)} test cases")
         return len(self._test_cases)
 
     def _load_test_file(self, path: Path, category: str) -> list[TestCase]:
-        """从文件加载测试用例"""
-        # TODO: 实现从 Python 文件加载测试用例
+        """Load test cases from file"""
+        # TODO: Implement loading test cases from Python files
         return []
 
     def _get_builtin_tests(self) -> list[TestCase]:
         """Get built-in test cases"""
         tests = []
 
-        # 基础功能测试
+        # Basic functionality tests
         tests.append(
             TestCase(
                 id="core_brain_001",
@@ -373,11 +373,11 @@ class SelfChecker:
         quick: bool = False,
     ) -> CheckReport:
         """
-        运行自检
+        Run self-check
 
         Args:
-            categories: 要测试的类别
-            quick: 是否快速检查（只运行核心测试）
+            categories: Categories to test
+            quick: Whether to do a quick check (only run core tests)
 
         Returns:
             CheckReport
@@ -387,7 +387,7 @@ class SelfChecker:
         if not self._test_cases:
             self.load_test_cases()
 
-        # 筛选测试用例
+        # Filter test cases
         tests = self._test_cases
         if categories:
             tests = [t for t in tests if t.category in categories]
@@ -408,7 +408,7 @@ class SelfChecker:
                 failed += 1
                 logger.warning(f"Test failed: {test.id} - {result.error}")
 
-        # 确定状态
+        # Determine status
         pass_rate = passed / len(results) * 100 if results else 0
         if pass_rate >= 95:
             status = "healthy"
@@ -431,7 +431,7 @@ class SelfChecker:
         return report
 
     async def _run_test(self, test: TestCase) -> TestResult:
-        """运行单个测试"""
+        """Run a single test"""
         import time
 
         start = time.time()
@@ -444,7 +444,7 @@ class SelfChecker:
             else:
                 actual = await self._run_generic_test(test)
 
-            # 验证结果
+            # Validate result
             passed = self._validate(actual, test.expected)
 
             duration = (time.time() - start) * 1000
@@ -466,14 +466,14 @@ class SelfChecker:
             )
 
     async def _run_core_test(self, test: TestCase) -> Any:
-        """运行核心测试"""
+        """Run core test"""
         if "brain" in test.id:
             response = await self.brain.think(test.input)
             return response.content
         return None
 
     async def _run_tool_test(self, test: TestCase) -> Any:
-        """运行工具测试"""
+        """Run tool test"""
         if "shell" in test.id:
             result = await self.shell.run(test.input)
             return result.stdout.strip()
@@ -486,12 +486,12 @@ class SelfChecker:
         return None
 
     async def _run_generic_test(self, test: TestCase) -> Any:
-        """运行通用测试"""
-        # TODO: 实现更多测试类型
+        """Run generic test"""
+        # TODO: Implement more test types
         return None
 
     def _validate(self, actual: Any, expected: Any) -> bool:
-        """验证结果"""
+        """Validate result"""
         if expected is None:
             return actual is not None
 
@@ -504,13 +504,13 @@ class SelfChecker:
 
     async def fix_failures(self, report: CheckReport) -> int:
         """
-        尝试修复失败的测试
+        Attempt to fix failed tests
 
         Args:
-            report: 自检报告
+            report: Self-check report
 
         Returns:
-            修复数量
+            Number of fixes
         """
         fixed = 0
 
@@ -526,66 +526,66 @@ class SelfChecker:
         return fixed
 
     async def _try_fix(self, result: TestResult) -> bool:
-        """尝试修复单个失败"""
+        """Attempt to fix a single failure"""
         logger.info(f"Attempting to fix: {result.test_id}")
 
-        # 使用 LLM 分析错误并提供修复建议
-        prompt = f"""测试失败:
+        # Use LLM to analyze the error and provide fix suggestions
+        prompt = f"""Test failed:
 ID: {result.test_id}
-错误: {result.error}
-实际结果: {result.actual}
+Error: {result.error}
+Actual result: {result.actual}
 
-请分析可能的原因并提供修复建议。"""
+Please analyze possible causes and provide fix suggestions."""
 
         response = await self.brain.think(prompt)
 
         logger.info(f"Fix suggestion: {response.content}")
 
-        # TODO: 实现自动修复逻辑
-        # 这需要根据具体错误类型采取不同的修复策略
+        # TODO: Implement automatic fix logic
+        # This requires different fix strategies for different error types
 
         return False
 
     async def learn_from_check(self, report: CheckReport) -> None:
-        """从自检中学习"""
+        """Learn from self-check"""
         if report.failed > 0:
-            # 记录失败模式
+            # Record failure patterns
             failures = [r for r in report.results if not r.passed]
 
             for failure in failures:
                 logger.info(f"Learning from failure: {failure.test_id}")
 
-                # TODO: 将失败模式记录到记忆系统
-                # 这样下次遇到类似问题时可以避免
+                # TODO: Record failure patterns to memory system
+                # So similar issues can be avoided next time
 
-    # ==================== 日志分析与自动修复 ====================
+    # ==================== Log Analysis and Auto-fix ====================
 
-    # 默认的自检提示词（当文件不存在时使用）
-    DEFAULT_SELFCHECK_PROMPT = """你是系统自检 Agent，负责分析错误日志并决定修复策略。
+    # Default self-check prompt (used when the file does not exist)
+    DEFAULT_SELFCHECK_PROMPT = """You are the system self-check Agent, responsible for analyzing error logs and deciding fix strategies.
 
-针对每个错误，输出 JSON 数组：
+For each error, output a JSON array:
 [
   {
-    "error_id": "模块名_消息前缀",
-    "module": "模块名",
+    "error_id": "module_name_message_prefix",
+    "module": "module name",
     "error_type": "core|tool|channel|config|network|skill|task",
-    "analysis": "错误原因分析",
+    "analysis": "error cause analysis",
     "severity": "critical|high|medium|low",
     "can_fix": true|false,
-    "fix_instruction": "具体的修复指令（给修复 Agent 的任务描述）",
-    "fix_reason": "选择策略的原因",
+    "fix_instruction": "specific fix instructions (task description for the fix Agent)",
+    "fix_reason": "reason for choosing the strategy",
     "requires_restart": false,
-    "note_to_user": "给用户的提示（如需人工处理）"
+    "note_to_user": "note to user (if manual handling is needed)"
   }
 ]
 
-规则：
-- 核心组件（Brain/Agent/Memory/Scheduler/LLM/Database）错误：can_fix=false
-- 工具/通道/配置错误：可以尝试修复，在 fix_instruction 中写清楚具体操作
-- Skill 相关错误：排查 skill 本身的问题（文件、格式、依赖），不要纠结于任务
-- 任务持续失败：建议用户优化任务配置，可能是任务设计不合理
-- fix_instruction 要写清楚使用什么工具（shell/file），执行什么命令
-- 只输出 JSON 数组"""
+Rules:
+- Core component (Brain/Agent/Memory/Scheduler/LLM/Database) errors: can_fix=false
+- Tool/channel/config errors: can attempt to fix, clearly state the specific operation in fix_instruction
+- Skill-related errors: investigate issues with the skill itself (files, format, dependencies), don't dwell on the task
+- Persistent task failures: suggest the user optimize task configuration, it may be a poorly designed task
+- fix_instruction must clearly state which tool to use (shell/file) and what command to execute
+- Only output a JSON array"""
 
     async def run_daily_check(self, since: datetime | None = None) -> DailyReport:
         """

@@ -1,17 +1,17 @@
 """
-QQ 官方机器人适配器
+QQ Official Bot adapter
 
-基于 QQ 官方机器人 API v2 实现:
-- AppID + AppSecret 鉴权 (OAuth2 Access Token)
-- 支持 WebSocket 和 Webhook 两种事件接收模式
-- 支持群聊、单聊 (C2C)、频道消息
-- 文本/图片/富媒体消息收发
+Based on QQ Official Bot API v2:
+- AppID + AppSecret authentication (OAuth2 Access Token)
+- Supports both WebSocket and Webhook event delivery modes
+- Supports group, direct (C2C), and channel messages
+- Text/image/rich media message send and receive
 
-模式说明:
-- websocket (默认): 自建 WebSocket 连接到 QQ Gateway，无需公网 IP
-- webhook: QQ 服务器主动推送事件到 HTTP 回调端点，需要公网 IP/域名
+Mode notes:
+- websocket (default): self-initiated WebSocket connection to the QQ Gateway, no public IP needed
+- webhook: QQ server pushes events to an HTTP callback endpoint, requires a public IP/domain
 
-官方文档: https://bot.q.qq.com/wiki/develop/api-v2/
+Official docs: https://bot.q.qq.com/wiki/develop/api-v2/
 """
 
 import asyncio
@@ -40,7 +40,7 @@ from ..types import (
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# 延迟导入 websockets（仅 WebSocket 模式使用）
+# Lazy-import websockets (only used in WebSocket mode)
 # ---------------------------------------------------------------------------
 websockets: Any = None
 
@@ -60,15 +60,15 @@ def _import_websockets():
 
 class QQBotAdapter(ChannelAdapter):
     """
-    QQ 官方机器人适配器
+    QQ Official Bot adapter
 
-    通过 QQ 开放平台官方 API 接入。
+    Integrates via the QQ Open Platform official API.
 
-    支持:
-    - 群聊 @机器人消息 (GROUP_AT_MESSAGE_CREATE)
-    - 单聊消息 (C2C_MESSAGE_CREATE)
-    - 频道 @消息 (AT_MESSAGE_CREATE)
-    - 文本消息收发
+    Supports:
+    - Group @bot messages (GROUP_AT_MESSAGE_CREATE)
+    - Direct messages (C2C_MESSAGE_CREATE)
+    - Channel @messages (AT_MESSAGE_CREATE)
+    - Text message send and receive
     """
 
     channel_name = "qqbot"
@@ -106,19 +106,21 @@ class QQBotAdapter(ChannelAdapter):
     ):
         """
         Args:
-            app_id: QQ 机器人 AppID (在 q.qq.com 开发设置中获取)
-            app_secret: QQ 机器人 AppSecret
-            sandbox: 是否使用沙箱环境
-            mode: 接入模式 "websocket" 或 "webhook"
-            webhook_port: Webhook 回调服务端口（仅 webhook 模式）
-            webhook_path: Webhook 回调路径（仅 webhook 模式）
-            media_dir: 媒体文件存储目录
-            channel_name: 通道名称（多Bot时用于区分实例）
-            bot_id: Bot 实例唯一标识
-            agent_profile_id: 绑定的 agent profile ID
-            public_api_url: OpenAkita API 的公网 URL（如 https://example.com），
-                用于将本地图片转为 QQ 可访问的公网 URL。不配置则群/C2C 无法发送本地图片。
-            footer_elapsed: 回复末尾显示处理耗时（默认 True，可通过 QQBOT_FOOTER_ELAPSED 环境变量控制）
+            app_id: QQ Bot AppID (obtained from developer settings on q.qq.com)
+            app_secret: QQ Bot AppSecret
+            sandbox: whether to use the sandbox environment
+            mode: access mode, "websocket" or "webhook"
+            webhook_port: webhook callback server port (webhook mode only)
+            webhook_path: webhook callback path (webhook mode only)
+            media_dir: media file storage directory
+            channel_name: channel name (used to distinguish instances when running multiple bots)
+            bot_id: unique identifier for this bot instance
+            agent_profile_id: bound agent profile ID
+            public_api_url: public URL of the OpenAkita API (e.g. https://example.com),
+                used to convert local images into public URLs that QQ can access. Without it,
+                local images cannot be sent to groups/C2C.
+            footer_elapsed: append processing elapsed time at the end of replies (default True,
+                can be controlled via the QQBOT_FOOTER_ELAPSED env var)
         """
         super().__init__(
             channel_name=channel_name, bot_id=bot_id, agent_profile_id=agent_profile_id
@@ -135,7 +137,7 @@ class QQBotAdapter(ChannelAdapter):
         self.media_dir.mkdir(parents=True, exist_ok=True)
 
         self._task: asyncio.Task | None = None
-        self._retry_delay: int = 5  # 重连延迟（秒），on_ready 时重置
+        self._retry_delay: int = 5  # reconnect delay in seconds, reset on on_ready
         self._webhook_runner: Any | None = None  # aiohttp web runner
         self._access_token: str | None = None  # OAuth2 access token
         self._token_expires: float = 0
@@ -145,37 +147,37 @@ class QQBotAdapter(ChannelAdapter):
         self._ws_last_seq: int | None = None
         self._ws_heartbeat_ack: bool = True
 
-        # ---- chat_id 路由表 ----
+        # ---- chat_id routing tables ----
         # {chat_id: "group" | "c2c" | "channel"}
         self._chat_type_map: dict[str, str] = {}
-        # {chat_id: 最近一条收到的 msg_id}（被动回复需要）
+        # {chat_id: most recent msg_id received} (required for passive replies)
         self._last_msg_id: dict[str, str] = {}
-        # {chat_id: 最近一条收到的 event_id}（msg_id 过期时回退使用）
+        # {chat_id: most recent event_id received} (fallback when msg_id has expired)
         self._last_event_id: dict[str, str] = {}
-        # {msg_id: msg_seq} — QQ API 要求同一 msg_id 的多条回复递增 msg_seq 避免去重
+        # {msg_id: msg_seq} — QQ API requires incrementing msg_seq for each reply sharing a msg_id to avoid deduplication
         self._msg_seq: dict[str, int] = {}
         self._msg_seq_max_entries = 500
-        # {chat_id: message_id} — "正在思考中..."提示消息 ID（send_typing 发出，clear_typing 撤回）
+        # {chat_id: message_id} — "Thinking..." hint message ID (sent by send_typing, recalled by clear_typing)
         self._typing_msg_ids: dict[str, str] = {}
-        # C2C 使用 msg_type=6 输入状态通知，无需撤回，用此集合标记
+        # C2C uses msg_type=6 input-status notifications that don't need to be recalled; tracked via this set
         self._typing_c2c_active: set[str] = set()
-        # {chat_id: start_time} — typing 开始时间，用于计算耗时 footer
+        # {chat_id: start_time} — typing start time, used to compute the elapsed footer
         self._typing_start_time: dict[str, float] = {}
         self._footer_elapsed = (
             footer_elapsed
             if footer_elapsed is not None
             else (os.environ.get("QQBOT_FOOTER_ELAPSED", "true").lower() in ("true", "1", "yes"))
         )
-        # Markdown 能力是否可用（自定义 markdown 需内邀开通，首次失败后自动降级）
+        # Whether Markdown is available (custom markdown requires invite-based approval; auto-downgrade after first failure)
         self._markdown_available: bool = True
-        # 沙箱环境 2026/03/05 起不受消息频控限制
+        # As of 2026/03/05 the sandbox environment is exempt from message rate limits
         self._sandbox_rate_exempt: bool = sandbox
 
-        # 待投递消息队列：QQ 群聊不支持主动发送，缓存后等用户下条消息时投递
+        # Pending message queue: QQ groups don't allow proactive sending, buffer messages and deliver on the next user message
         self._pending_messages: dict[str, list[tuple[float, str]]] = {}
         self._pending_max_per_chat = 5
 
-        # 消息去重：Webhook/WebSocket 可能重复投递
+        # Message deduplication: Webhook/WebSocket may deliver duplicates
         self._seen_message_ids: collections.OrderedDict[str, None] = collections.OrderedDict()
         self._seen_message_ids_max = 500
 
@@ -186,7 +188,7 @@ class QQBotAdapter(ChannelAdapter):
         msg_id: str = "",
         event_id: str = "",
     ) -> None:
-        """记录 chat_id 的路由信息（收到消息时调用）"""
+        """Record routing info for a chat_id (called when a message is received)."""
         self._chat_type_map[chat_id] = chat_type
         if msg_id:
             self._last_msg_id[chat_id] = msg_id
@@ -194,9 +196,9 @@ class QQBotAdapter(ChannelAdapter):
             self._last_event_id[chat_id] = event_id
 
     def _next_msg_seq(self, seq_key: str) -> int:
-        """获取并递增 msg_seq（QQ API 去重需要）。
+        """Fetch and increment msg_seq (required by QQ API dedup).
 
-        seq_key 应为被回复的 msg_id（被动回复场景）或 chat_id（主动发送场景）。
+        seq_key should be the msg_id being replied to (passive reply) or chat_id (proactive send).
         """
         seq = self._msg_seq.get(seq_key, 0) + 1
         self._msg_seq[seq_key] = seq
@@ -208,10 +210,10 @@ class QQBotAdapter(ChannelAdapter):
 
     def _resolve_chat_type(self, chat_id: str, metadata: dict | None = None) -> str:
         """
-        解析 chat_type，优先级:
-        1. OutgoingMessage.metadata 中的 chat_type
-        2. 路由表 _chat_type_map（收消息时记录的）
-        3. 默认 "group"
+        Resolve chat_type, in priority order:
+        1. chat_type in OutgoingMessage.metadata
+        2. Routing table _chat_type_map (recorded on receive)
+        3. Default "group"
         """
         if metadata:
             ct = metadata.get("chat_type")
@@ -221,9 +223,9 @@ class QQBotAdapter(ChannelAdapter):
 
     def _resolve_msg_id(self, chat_id: str, metadata: dict | None = None) -> str | None:
         """
-        解析 msg_id（被动回复需要），优先级:
-        1. OutgoingMessage.metadata 中的 msg_id
-        2. 路由表 _last_msg_id（最近收到的消息 ID）
+        Resolve msg_id (required for passive replies), in priority order:
+        1. msg_id in OutgoingMessage.metadata
+        2. Routing table _last_msg_id (most recently received message ID)
         """
         if metadata:
             mid = metadata.get("msg_id")
@@ -232,9 +234,9 @@ class QQBotAdapter(ChannelAdapter):
         return self._last_msg_id.get(chat_id)
 
     def _local_path_to_public_url(self, local_path: str) -> str | None:
-        """将本地文件复制到 uploads 目录，返回公网可访问的 URL。
+        """Copy a local file to the uploads directory and return a publicly accessible URL.
 
-        需要配置 public_api_url 才能生效。
+        Requires public_api_url to be configured.
         """
         if not self.public_api_url:
             return None
@@ -260,23 +262,23 @@ class QQBotAdapter(ChannelAdapter):
 
     @staticmethod
     def _is_proactive_limit_error(exc: BaseException) -> bool:
-        """检测是否为 QQ 群聊主动消息限制错误（11255 invalid request）。"""
+        """Detect QQ group proactive-message limit errors (11255 invalid request)."""
         s = str(exc).lower()
         return "11255" in s or "invalid request" in s
 
     @staticmethod
     def _is_msg_expired_error(exc: BaseException) -> bool:
-        """检测是否为 msg_id/event_id 过期错误。
+        """Detect msg_id/event_id expiration errors.
 
-        QQ API 在被动回复窗口（约 5 分钟）过期后返回特定错误码。
+        QQ API returns specific error codes once the passive reply window (roughly 5 minutes) has expired.
         """
         s = str(exc).lower()
         return any(k in s for k in ("msg_id is invalid", "40003", "msg id is invalid"))
 
     def _enqueue_pending(self, chat_id: str, text: str) -> None:
-        """将无法主动发送的消息缓存，等用户下条消息到达时投递。
+        """Buffer messages that cannot be sent proactively and deliver them on the next user message.
 
-        QQ 群聊主动推送已于 2025/04/21 废弃，消息必须在被动回复窗口内发送。
+        QQ group proactive push has been deprecated since 2025/04/21; messages must be sent within the passive reply window.
         """
         pending = self._pending_messages.setdefault(chat_id, [])
         if len(pending) >= self._pending_max_per_chat:
@@ -285,19 +287,19 @@ class QQBotAdapter(ChannelAdapter):
 
     @staticmethod
     def _format_pending_delay(queued_at: float) -> str:
-        """将入队到投递的时间差格式化为可读文本。"""
+        """Format the delay between queue time and delivery as human-readable text."""
         delta = int(time.time() - queued_at)
         if delta < 60:
-            return "刚刚"
+            return "just now"
         if delta < 3600:
-            return f"{delta // 60} 分钟前"
+            return f"{delta // 60} min ago"
         if delta < 86400:
             h, m = divmod(delta, 3600)
-            return f"{h} 小时{f' {m // 60} 分钟' if m // 60 else ''}前"
-        return f"{delta // 86400} 天前"
+            return f"{h}h{f' {m // 60}m' if m // 60 else ''} ago"
+        return f"{delta // 86400}d ago"
 
     async def _flush_pending_messages(self, chat_id: str) -> None:
-        """当收到用户新消息时，投递该 chat_id 下缓存的待发消息。"""
+        """When a new user message arrives, deliver the pending messages queued for that chat_id."""
         pending = self._pending_messages.pop(chat_id, [])
         if not pending:
             return
@@ -311,7 +313,7 @@ class QQBotAdapter(ChannelAdapter):
             delay = self._format_pending_delay(queued_at)
             parts.append(f"[⏰ {delay}] {text}")
 
-        header = "📬 以下消息因 QQ 群聊限制未能及时发送，现在补发给你：\n"
+        header = "📬 The following messages could not be delivered in time due to QQ group restrictions, resending now:\n"
         combined = header + "\n\n".join(parts)
 
         chat_type = self._chat_type_map.get(chat_id, "group")
@@ -322,9 +324,9 @@ class QQBotAdapter(ChannelAdapter):
             logger.warning(f"QQ: failed to deliver pending messages to {chat_id}: {e}")
 
     async def start(self) -> None:
-        """启动 QQ 官方机器人"""
+        """Start the QQ Official Bot."""
         if not self.app_id or not self.app_secret:
-            raise ValueError("QQ 机器人 AppID 或 AppSecret 未配置，请在 q.qq.com 开发设置中获取。")
+            raise ValueError("QQ Bot AppID or AppSecret is not configured; obtain them from the developer settings on q.qq.com.")
 
         self._running = True
 
@@ -348,14 +350,14 @@ class QQBotAdapter(ChannelAdapter):
                 f"(AppID: {self.app_id}, sandbox: {self.sandbox})"
             )
 
-    # 不可重试的配置类错误关键词（遇到后大幅延长重试间隔）
+    # Non-retryable configuration-error keywords (dramatically extend retry interval when seen)
     _FATAL_KEYWORDS = ("不在白名单", "invalid appid", "invalid secret", "鉴权失败")
     _FATAL_GIVE_UP_THRESHOLD = 5
 
     # ==================== WebSocket Gateway ====================
 
     async def _get_gateway_url(self) -> str:
-        """通过 REST API 获取 WebSocket Gateway 连接地址。"""
+        """Fetch the WebSocket Gateway connection URL via the REST API."""
         import httpx as hx
 
         headers = await self._build_api_headers()
@@ -372,7 +374,7 @@ class QQBotAdapter(ChannelAdapter):
             return url
 
     async def _ws_heartbeat_loop(self, ws: Any, interval: float) -> None:
-        """定时发送心跳 (op 1)，检测 ACK 超时则关闭连接。"""
+        """Send periodic heartbeats (op 1); close the connection on ACK timeout."""
         try:
             while True:
                 await asyncio.sleep(interval)
@@ -388,7 +390,7 @@ class QQBotAdapter(ChannelAdapter):
             logger.warning(f"QQ WS heartbeat error: {e}")
 
     async def _run_ws_client(self) -> None:
-        """WebSocket 模式：自建 Gateway 连接，带自动重连/Resume。"""
+        """WebSocket mode: self-managed Gateway connection with automatic reconnect/Resume."""
         _import_websockets()
 
         max_delay = 120
@@ -536,19 +538,19 @@ class QQBotAdapter(ChannelAdapter):
                     cap = fatal_max_delay
                     if consecutive_fatal == 1:
                         logger.error(
-                            f"QQ Official Bot 配置错误: {err_msg}\n"
-                            f"  → 请检查 QQ 开放平台配置（IP 白名单 / AppID / AppSecret）\n"
-                            f"  → 将持续后台重试，修复配置后自动恢复"
+                            f"QQ Official Bot configuration error: {err_msg}\n"
+                            f"  -> Check your QQ Open Platform configuration (IP allowlist / AppID / AppSecret)\n"
+                            f"  -> Will keep retrying in the background and recover automatically after the config is fixed"
                         )
                     elif consecutive_fatal % 5 == 0:
                         logger.warning(
-                            f"QQ Official Bot 仍无法连接 (已重试 {consecutive_fatal} 次): {err_msg}"
+                            f"QQ Official Bot still cannot connect (retried {consecutive_fatal} times): {err_msg}"
                         )
 
                     if consecutive_fatal >= self._FATAL_GIVE_UP_THRESHOLD:
                         reason = (
-                            f"连续 {consecutive_fatal} 次认证失败: {err_msg}。"
-                            "请检查 QQ 开放平台 AppID / AppSecret / IP 白名单配置"
+                            f"{consecutive_fatal} consecutive authentication failures: {err_msg}. "
+                            "Check the QQ Open Platform AppID / AppSecret / IP allowlist configuration"
                         )
                         logger.error(f"QQ Official Bot: {reason}")
                         self._running = False
@@ -563,10 +565,10 @@ class QQBotAdapter(ChannelAdapter):
                 await asyncio.sleep(self._retry_delay)
                 self._retry_delay = min(self._retry_delay * 2, cap)
 
-    # ==================== Webhook 模式 ====================
+    # ==================== Webhook mode ====================
 
     async def _get_access_token(self) -> str:
-        """获取 QQ 官方 API 的 OAuth2 access_token"""
+        """Fetch the OAuth2 access_token for the QQ Official API."""
         now = time.time()
         if self._access_token and now < self._token_expires - 300:
             return self._access_token
@@ -603,15 +605,15 @@ class QQBotAdapter(ChannelAdapter):
 
     def _verify_signature(self, body: bytes, signature: str, timestamp: str) -> bool:
         """
-        验证 QQ Webhook 回调签名 (ed25519)。
+        Verify the QQ Webhook callback signature (ed25519).
 
-        QQ 官方 Webhook 使用 ed25519 签名验证：
-        - 签名内容: timestamp + body
-        - 密钥: 由 app_secret + bot_secret seed 派生的 ed25519 密钥
-        - 签名值: 在 X-Signature-Ed25519 header 中
+        QQ Official Webhook uses ed25519 signature verification:
+        - Signed content: timestamp + body
+        - Key: an ed25519 key derived from the app_secret + bot_secret seed
+        - Signature value: in the X-Signature-Ed25519 header
 
-        简化实现：使用 HMAC-SHA256 作为备选验签方式（部分旧版本 API 支持）。
-        如需完整 ed25519 验签，需安装 PyNaCl。
+        Simplified implementation: HMAC-SHA256 is used as a fallback verification (supported by some older API versions).
+        For full ed25519 verification, install PyNaCl.
         """
         try:
             from nacl.exceptions import BadSignatureError
@@ -635,14 +637,14 @@ class QQBotAdapter(ChannelAdapter):
         return hmac.compare_digest(expected, signature)
 
     async def _run_webhook_server(self) -> None:
-        """启动 Webhook HTTP 回调服务器"""
+        """Start the Webhook HTTP callback server."""
         try:
             from aiohttp import web
         except ImportError:
             raise ImportError("aiohttp not installed. Run: pip install aiohttp")
 
         async def handle_callback(request: web.Request) -> web.Response:
-            """处理 QQ Webhook 回调"""
+            """Handle QQ Webhook callbacks."""
             body = await request.read()
 
             signature = request.headers.get("X-Signature-Ed25519", "")
@@ -659,7 +661,7 @@ class QQBotAdapter(ChannelAdapter):
 
             op = payload.get("op")
 
-            # op=13: 验证回调 URL (Validation)
+            # op=13: callback URL validation
             if op == 13:
                 d = payload.get("d", {})
                 plain_token = d.get("plain_token", "")
@@ -673,7 +675,7 @@ class QQBotAdapter(ChannelAdapter):
                     }
                 )
 
-            # op=0: 事件分发 (Dispatch)
+            # op=0: event dispatch
             if op == 0:
                 event_type = payload.get("t", "")
                 event_data = payload.get("d", {})
@@ -706,7 +708,7 @@ class QQBotAdapter(ChannelAdapter):
             await runner.cleanup()
 
     def _is_duplicate(self, msg_id: str) -> bool:
-        """检查消息是否重复，并记录到 LRU 缓存"""
+        """Check whether a message is a duplicate and record it in the LRU cache."""
         if not msg_id:
             return False
         if msg_id in self._seen_message_ids:
@@ -718,7 +720,7 @@ class QQBotAdapter(ChannelAdapter):
         return False
 
     async def _handle_webhook_event(self, event_type: str, data: dict) -> None:
-        """处理 Webhook/WS 推送的事件"""
+        """Handle events pushed by Webhook/WS."""
         try:
             import time as _time
             from datetime import datetime
@@ -758,7 +760,7 @@ class QQBotAdapter(ChannelAdapter):
             logger.error(f"Error handling QQ event {event_type}: {e}")
 
     def _convert_webhook_group_message(self, data: dict) -> UnifiedMessage:
-        """将 Webhook 群聊消息转换为 UnifiedMessage"""
+        """Convert a Webhook group message to a UnifiedMessage."""
         content = MessageContent()
         content.text = (data.get("content") or "").strip()
 
@@ -797,7 +799,7 @@ class QQBotAdapter(ChannelAdapter):
         )
 
     def _convert_webhook_c2c_message(self, data: dict) -> UnifiedMessage:
-        """将 Webhook 单聊消息转换为 UnifiedMessage"""
+        """Convert a Webhook direct (C2C) message to a UnifiedMessage."""
         content = MessageContent()
         content.text = (data.get("content") or "").strip()
 
@@ -835,7 +837,7 @@ class QQBotAdapter(ChannelAdapter):
         )
 
     def _convert_webhook_channel_message(self, data: dict) -> UnifiedMessage:
-        """将 Webhook 频道消息转换为 UnifiedMessage"""
+        """Convert a Webhook channel message to a UnifiedMessage."""
         content = MessageContent()
         content.text = (data.get("content") or "").strip()
 
@@ -877,7 +879,7 @@ class QQBotAdapter(ChannelAdapter):
 
     @staticmethod
     def _parse_webhook_attachments(attachments: list | None, content: MessageContent) -> None:
-        """解析 Webhook 回调中的附件（使用 _guess_media_type 做扩展名兜底）"""
+        """Parse attachments from a Webhook callback (falling back to _guess_media_type via extension)."""
         if not attachments:
             return
         for att in attachments:
@@ -907,7 +909,7 @@ class QQBotAdapter(ChannelAdapter):
                 content.files.append(media)
 
     async def stop(self) -> None:
-        """停止 QQ 官方机器人"""
+        """Stop the QQ Official Bot."""
         self._running = False
 
         if self._webhook_runner:
@@ -921,7 +923,7 @@ class QQBotAdapter(ChannelAdapter):
 
         logger.info(f"QQ Official Bot adapter stopped (mode: {self.mode})")
 
-    # 文件扩展名 → 媒体类型的回退映射（QQ 附件 content_type 经常为空）
+    # File extension -> media type fallback mapping (QQ attachment content_type is often empty)
     _EXT_AUDIO = {".amr", ".silk", ".slk", ".ogg", ".opus", ".mp3", ".wav", ".m4a", ".aac", ".flac"}
     _EXT_IMAGE = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
     _EXT_VIDEO = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv"}
@@ -929,10 +931,10 @@ class QQBotAdapter(ChannelAdapter):
     @staticmethod
     def _guess_media_type(content_type: str, filename: str) -> str:
         """
-        根据 content_type 和文件扩展名推断媒体类别。
+        Infer media category from content_type and file extension.
 
-        QQ 附件的 content_type 经常为空或不标准，需要用扩展名兜底。
-        返回: "image" | "audio" | "video" | "file"
+        QQ attachment content_type is frequently empty or non-standard, so the extension is used as fallback.
+        Returns: "image" | "audio" | "video" | "file"
         """
         ct = content_type.lower()
         if ct.startswith("image/"):
@@ -954,11 +956,11 @@ class QQBotAdapter(ChannelAdapter):
 
     @staticmethod
     def _enrich_voice_media(att: dict, media: "MediaFile") -> None:
-        """从 QQ 语音附件中提取平台特有字段。
+        """Extract platform-specific fields from a QQ voice attachment.
 
-        QQ 语音附件提供:
-        - voice_wav_url: WAV 格式下载链接（比默认 SILK 更通用）
-        - asr_refer_text: QQ 平台侧的 ASR 转写结果
+        QQ voice attachments provide:
+        - voice_wav_url: WAV download link (more broadly compatible than the default SILK)
+        - asr_refer_text: server-side ASR transcription from the QQ platform
         """
         wav_url = att.get("voice_wav_url")
         if wav_url:
@@ -973,10 +975,10 @@ class QQBotAdapter(ChannelAdapter):
         if size:
             media.extra["size"] = size
 
-    # ==================== REST API 基础设施 ====================
+    # ==================== REST API infrastructure ====================
 
     async def _build_api_headers(self, content_type: str = "application/json") -> dict:
-        """构建 QQ API V2 请求头，使用正确的 QQBot {access_token} 格式。"""
+        """Build QQ API V2 request headers using the correct QQBot {access_token} format."""
         token = await self._get_access_token()
         headers = {"Authorization": f"QQBot {token}"}
         if content_type:
@@ -986,7 +988,7 @@ class QQBotAdapter(ChannelAdapter):
     def _api_base_url(self) -> str:
         return "https://sandbox.api.sgroup.qq.com" if self.sandbox else "https://api.sgroup.qq.com"
 
-    # ==================== 富媒体上传 ====================
+    # ==================== Rich media upload ====================
 
     async def _upload_rich_media_url(
         self,
@@ -996,17 +998,17 @@ class QQBotAdapter(ChannelAdapter):
         url: str,
         srv_send_msg: bool = False,
     ) -> dict:
-        """通过公网 URL 上传富媒体到 QQ 服务器 (REST API)。
+        """Upload rich media to the QQ server via a public URL (REST API).
 
         Args:
-            chat_type: "group" 或 "c2c"
-            target_id: group_openid 或 user openid
-            file_type: 1=图片, 2=视频, 3=语音, 4=文件
-            url: 公网可访问的媒体 URL
-            srv_send_msg: True 则服务端直接发送（占主动消息频次）
+            chat_type: "group" or "c2c"
+            target_id: group_openid or user openid
+            file_type: 1=image, 2=video, 3=voice, 4=file
+            url: publicly accessible media URL
+            srv_send_msg: if True, the server sends the message directly (consumes the proactive-message quota)
 
         Returns:
-            API 响应 dict，包含 file_info / file_uuid / ttl 等字段
+            API response dict containing file_info / file_uuid / ttl, etc.
         """
         import httpx as hx
 
@@ -1043,9 +1045,9 @@ class QQBotAdapter(ChannelAdapter):
         srv_send_msg: bool = False,
         file_name: str | None = None,
     ) -> dict:
-        """通过 file_data (base64) 直接上传富媒体到 QQ 服务器。
+        """Upload rich media directly to the QQ server using file_data (base64).
 
-        QQ 官方 API 支持 file_data（base64 编码的二进制内容）方式上传。
+        The QQ Official API supports uploading via file_data (base64-encoded binary content).
         """
         import httpx as hx
 
@@ -1086,28 +1088,28 @@ class QQBotAdapter(ChannelAdapter):
         event_id: str | None = None,
     ) -> str:
         """
-        完整的富媒体发送流程（两步）：上传 + 发消息。
+        Complete two-step rich-media send flow: upload + send message.
 
-        支持两种上传方式（二选一）：
-        - url: 公网可访问的媒体 URL（走 REST API）
-        - local_path: 本地文件路径（读取后 base64 编码）
+        Two upload modes (choose one):
+        - url: publicly accessible media URL (via REST API)
+        - local_path: local file path (read and base64-encoded)
 
         Args:
-            chat_type: "group" 或 "c2c"
-            target_id: 目标 openid
-            file_type: 1=图片, 2=视频, 3=语音, 4=文件
-            url: 公网可访问的媒体 URL
-            msg_id: 被动回复的消息 ID（可选）
-            local_path: 本地文件路径（可选，与 url 二选一）
-            event_id: 被动回复的事件 ID（msg_id 过期时回退使用）
+            chat_type: "group" or "c2c"
+            target_id: target openid
+            file_type: 1=image, 2=video, 3=voice, 4=file
+            url: publicly accessible media URL
+            msg_id: message ID to passively reply to (optional)
+            local_path: local file path (optional, mutually exclusive with url)
+            event_id: event ID to passively reply to (fallback when msg_id has expired)
 
         Returns:
-            发送后的消息 ID
+            The ID of the sent message.
         """
         import base64 as b64
         from pathlib import Path as _P
 
-        # Step 1: 上传富媒体资源获取 file_info
+        # Step 1: upload the rich media resource to obtain file_info
         if local_path:
             with open(local_path, "rb") as f:
                 file_data = b64.standard_b64encode(f.read()).decode("ascii")
@@ -1135,7 +1137,7 @@ class QQBotAdapter(ChannelAdapter):
         if not file_info:
             raise RuntimeError(f"Rich media upload did not return file_info: {upload_result}")
 
-        # Step 2: 发送消息 msg_type=7 (media)
+        # Step 2: send the message with msg_type=7 (media)
         return await self._send_media_message_via_http(
             chat_type,
             target_id,
@@ -1144,7 +1146,7 @@ class QQBotAdapter(ChannelAdapter):
             event_id=event_id,
         )
 
-    # ==================== REST 消息发送 ====================
+    # ==================== REST message send ====================
 
     async def _send_media_message_via_http(
         self,
@@ -1154,7 +1156,7 @@ class QQBotAdapter(ChannelAdapter):
         msg_id: str | None = None,
         event_id: str | None = None,
     ) -> str:
-        """通过 HTTP 直接发送媒体消息 (msg_type=7)。"""
+        """Send a media message directly over HTTP (msg_type=7)."""
         import httpx as hx
 
         headers = await self._build_api_headers()
@@ -1192,7 +1194,7 @@ class QQBotAdapter(ChannelAdapter):
         msg_id: str | None = None,
         is_wakeup: bool = False,
     ) -> str:
-        """通过 HTTP 发送纯文本消息。"""
+        """Send a plain text message over HTTP."""
         import httpx as hx
 
         headers = await self._build_api_headers()
@@ -1231,18 +1233,18 @@ class QQBotAdapter(ChannelAdapter):
         msg_id: str | None,
         parse_mode: str | None = None,
     ) -> str:
-        """频道消息发送：支持 content + image 在同一条消息中，支持 Markdown。
+        """Send a channel message: supports content + image in the same message, and Markdown.
 
-        QQ 频道 API 与群/C2C 不同，支持文本和图片在同一条 POST 中发送。
-        - image_url 使用 JSON body 的 image 字段
-        - image_path 使用 multipart form 的 file_image 字段
+        Unlike the group/C2C APIs, the QQ channel API allows text and image to be sent in a single POST.
+        - image_url uses the JSON body's image field
+        - image_path uses the multipart form's file_image field
         """
         import httpx as hx
 
         base_url = self._api_base_url()
         url = f"{base_url}/channels/{channel_id}/messages"
 
-        # 尝试 Markdown（仅纯文本无图片时）
+        # Try Markdown (plain text without images only)
         if self._should_try_markdown(parse_mode, text) and not image_url and not image_path:
             headers = await self._build_api_headers()
             md_body: dict[str, Any] = {
@@ -1258,9 +1260,9 @@ class QQBotAdapter(ChannelAdapter):
                     return str(resp.json().get("id", ""))
             except Exception as e:
                 self._markdown_available = False
-                logger.warning("QQ 频道 Markdown 发送失败，已降级为纯文本: %s", e)
+                logger.warning("QQ channel Markdown send failed, falling back to plain text: %s", e)
 
-        # 本地图片：multipart form
+        # Local image: multipart form
         if image_path and not image_url:
             auth_headers = await self._build_api_headers(content_type="")
             form_data: dict[str, str] = {}
@@ -1278,7 +1280,7 @@ class QQBotAdapter(ChannelAdapter):
                 resp.raise_for_status()
                 return str(resp.json().get("id", ""))
 
-        # JSON body（纯文本 / 文本+图片URL / 纯图片URL）
+        # JSON body (plain text / text + image URL / image URL only)
         headers = await self._build_api_headers()
         body: dict[str, Any] = {}
         if text:
@@ -1296,16 +1298,16 @@ class QQBotAdapter(ChannelAdapter):
             resp.raise_for_status()
             return str(resp.json().get("id", ""))
 
-    # ==================== 消息发送 ====================
+    # ==================== Message send ====================
 
     @staticmethod
     def _has_markdown_features(text: str) -> bool:
-        """检测文本是否包含 Markdown 格式特征"""
+        """Detect whether the text contains Markdown formatting features."""
         markers = ("**", "##", "- ", "```", "~~", "[", "](", "> ", "---")
         return any(m in text for m in markers)
 
     def _should_try_markdown(self, parse_mode: str | None, text: str) -> bool:
-        """判断是否应尝试以 Markdown 格式发送"""
+        """Decide whether to attempt sending in Markdown format."""
         if not self._markdown_available:
             return False
         if not text:
@@ -1313,7 +1315,7 @@ class QQBotAdapter(ChannelAdapter):
         return parse_mode == "markdown" and self._has_markdown_features(text)
 
     def _append_elapsed_footer(self, text: str, chat_id: str) -> str:
-        """若开启 footer_elapsed，在文本末尾追加耗时信息。"""
+        """When footer_elapsed is enabled, append elapsed-time info to the end of the text."""
         if not self._footer_elapsed or not text:
             return text
         start = self._typing_start_time.pop(chat_id, None)
@@ -1322,17 +1324,17 @@ class QQBotAdapter(ChannelAdapter):
         elapsed = time.time() - start
         if elapsed < 1.0:
             return text
-        return f"{text}\n\n⏱ 完成 ({elapsed:.1f}s)"
+        return f"{text}\n\n⏱ done ({elapsed:.1f}s)"
 
     async def send_message(self, message: OutgoingMessage) -> str:
         """
-        发送消息
+        Send a message.
 
-        支持:
-        - 文本消息 (msg_type=0)
-        - Markdown 消息 (msg_type=2, 需内邀开通，失败自动降级)
-        - 图片消息 (频道: content+image/file_image; 群/C2C: 两步富媒体上传)
-        - 文件消息 (群/C2C: file_type=4 两步富媒体上传)
+        Supports:
+        - Text messages (msg_type=0)
+        - Markdown messages (msg_type=2, requires invite-based approval, auto-downgrades on failure)
+        - Image messages (channel: content+image/file_image; group/C2C: two-step rich media upload)
+        - File messages (group/C2C: file_type=4 two-step rich media upload)
         """
         chat_type = self._resolve_chat_type(message.chat_id, message.metadata)
         msg_id = self._resolve_msg_id(message.chat_id, message.metadata)
@@ -1361,7 +1363,7 @@ class QQBotAdapter(ChannelAdapter):
                         f"(will deliver on next user message)"
                     )
                     return ""
-            # msg_id 过期：尝试使用 event_id 重发（被动回复窗口约 5 分钟）
+            # msg_id expired: try resending with event_id (passive reply window is about 5 minutes)
             if msg_id and self._is_msg_expired_error(e):
                 event_id = self._last_event_id.get(message.chat_id)
                 if event_id:
@@ -1389,7 +1391,7 @@ class QQBotAdapter(ChannelAdapter):
         parse_mode: str | None = None,
         event_id: str | None = None,
     ) -> str:
-        """通过 HTTP API 发送消息（文本/Markdown/图片/文件），统一用于 WS 和 Webhook 模式。"""
+        """Send a message via the HTTP API (text/Markdown/image/file); used for both WS and Webhook modes."""
         try:
             import httpx as hx
         except ImportError:
@@ -1398,7 +1400,7 @@ class QQBotAdapter(ChannelAdapter):
         text = message.content.text or ""
         target_id = message.chat_id
 
-        # 提取首张图片
+        # Extract the first image
         first_image_url: str | None = None
         first_image_path: str | None = None
         if message.content.images:
@@ -1411,7 +1413,7 @@ class QQBotAdapter(ChannelAdapter):
         result_id = ""
 
         if chat_type == "channel":
-            # 频道支持 text+image 在同一条消息中
+            # Channels support text + image in the same message
             result_id = await self._send_channel_message_via_http(
                 target_id,
                 text,
@@ -1421,7 +1423,7 @@ class QQBotAdapter(ChannelAdapter):
                 parse_mode,
             )
         else:
-            # 群聊/C2C: 文本和图片必须分两条消息
+            # Group/C2C: text and image must be sent as two separate messages
             if chat_type == "group":
                 url = f"/v2/groups/{target_id}/messages"
             elif chat_type == "c2c":
@@ -1455,11 +1457,11 @@ class QQBotAdapter(ChannelAdapter):
                         except Exception as e:
                             self._markdown_available = False
                             logger.warning(
-                                "QQ Markdown 发送失败，已降级为纯文本（后续消息将跳过 Markdown）: %s",
+                                "QQ Markdown send failed, falling back to plain text (Markdown will be skipped for subsequent messages): %s",
                                 e,
                             )
 
-                    # 纯文本发送（含 40054005 去重重试，最多 2 次）
+                    # Plain text send (with 40054005 dedup retry, up to 2 attempts)
                     if not sent_as_md:
                         for attempt in range(2):
                             body: dict[str, Any] = {
@@ -1484,7 +1486,7 @@ class QQBotAdapter(ChannelAdapter):
                                 continue
                             resp.raise_for_status()
 
-            # 发送首张图片（群/C2C 两步富媒体上传）
+            # Send the first image (group/C2C two-step rich media upload)
             if first_image_url or first_image_path:
                 media_id = await self._send_rich_media(
                     chat_type,

@@ -1,14 +1,14 @@
 """
-OrgIdentity — 节点身份解析与 MCP 配置管理
+OrgIdentity — node identity resolution and MCP configuration management.
 
-四级身份继承：
-  Level 0: 零配置引用（全局 SOUL + AGENT + AgentProfile.custom_prompt）
-  Level 1: 有 ROLE.md（全局 SOUL + AGENT + ROLE.md）
-  Level 2: ROLE.md + 覆盖 AGENT.md
-  Level 3: 完全独立身份（SOUL + AGENT + ROLE）
+Four-level identity inheritance:
+  Level 0: Zero-config reference (global SOUL + AGENT + AgentProfile.custom_prompt)
+  Level 1: Has ROLE.md (global SOUL + AGENT + ROLE.md)
+  Level 2: ROLE.md + overriding AGENT.md
+  Level 3: Fully independent identity (SOUL + AGENT + ROLE)
 
-MCP 叠加继承：
-  最终 MCP = 全局已启用 + AgentProfile 关联 + 节点额外 - 节点排除
+MCP overlay inheritance:
+  Final MCP = globally enabled + AgentProfile associations + node extras - node exclusions
 """
 
 from __future__ import annotations
@@ -103,15 +103,15 @@ class OrgIdentity:
 
         # Compact identity declaration (replaces full SOUL.md + AGENT.md)
         parts.append(
-            f"# OpenAkita 组织 Agent\n\n"
-            f"你是「{org.name}」中的 **{node.role_title}**（你的节点 id：`{node.id}`）。"
-            f"你是 AI Agent，由 OpenAkita 驱动。\n\n"
-            f"**关键：凡是需要指定目标节点的工具参数（`to_node` / `node_id` / `target_node_id`），"
-            f"必须填写 `node_xxxxxxxx` 这样的节点 id，而不是角色名；填错或写成自己的 id 会被直接拦截。**\n\n"
-            f"## 核心原则\n"
-            f"- 诚实：不编造信息，不确定时明确说明\n"
-            f"- 安全：不执行可能造成伤害的操作\n"
-            f"- 协作：你是组织的一员，通过团队协作完成目标，而非单打独斗"
+            f"# OpenAkita Organization Agent\n\n"
+            f"You are the **{node.role_title}** in \"{org.name}\" (your node id: `{node.id}`). "
+            f"You are an AI Agent powered by OpenAkita.\n\n"
+            f"**Important: whenever a tool parameter requires a target node (`to_node` / `node_id` / `target_node_id`), "
+            f"you must pass a node id like `node_xxxxxxxx`, not a role name. Wrong ids or using your own id will be rejected outright.**\n\n"
+            f"## Core principles\n"
+            f"- Honesty: do not fabricate information; state clearly when you're unsure.\n"
+            f"- Safety: do not perform operations that could cause harm.\n"
+            f"- Collaboration: you are part of an organization and achieve goals through teamwork, not by going it alone."
         )
 
         # Role description

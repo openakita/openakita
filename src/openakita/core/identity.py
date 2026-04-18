@@ -1,22 +1,22 @@
 """
-Identity 模块 - 加载和管理核心文档
+Identity module - Load and manage core documents
 
-负责:
-- 加载核心文档 (SOUL.md, AGENT.md, USER.md, MEMORY.md)
-- 生成系统提示词 (渐进式披露)
-- 提取精简版本用于系统提示
+Responsibilities:
+- Load core documents (SOUL.md, AGENT.md, USER.md, MEMORY.md)
+- Generate system prompts (progressive disclosure)
+- Extract concise versions for the system prompt
 
-注入策略 (v2 - 编译管线):
-- 编译产物: soul.summary + agent.core + user.summary
-- 硬规则: policies.md
-- 记忆: 语义检索相关片段
-- 向后兼容: get_system_prompt() 保留全文注入模式
+Injection strategy (v2 - compile pipeline):
+- Compiled artifacts: soul.summary + agent.core + user.summary
+- Hard rules: policies.md
+- Memory: semantically retrieved relevant fragments
+- Backward compatible: get_system_prompt() keeps full-text injection mode
 
-旧策略 (v1 - 全文注入，已废弃但保留兼容):
-- SOUL.md: 每次注入 (精简核心原则)
-- AGENT.md: 每次注入 (精简行为规范)
-- USER.md: 每次注入 (已填充的偏好)
-- MEMORY.md: 按需加载 (当前任务部分)
+Legacy strategy (v1 - full-text injection, deprecated but kept for compatibility):
+- SOUL.md: injected every time (concise core principles)
+- AGENT.md: injected every time (concise behavior rules)
+- USER.md: injected every time (populated preferences)
+- MEMORY.md: loaded on demand (current task section)
 """
 
 import hashlib
@@ -61,7 +61,7 @@ def _file_hash(path: Path) -> str:
 
 
 class Identity:
-    """Agent 身份管理器"""
+    """Agent identity manager"""
 
     def __init__(
         self,
@@ -82,7 +82,7 @@ class Identity:
         self._pending_upgrades: list[dict] = []
 
     def load(self) -> None:
-        """加载所有核心文档，支持系统升级检测。"""
+        """Load all core documents, with system upgrade detection support."""
         self._pending_upgrades = []
         self._soul = self._sync_identity_file(self.soul_path, "SOUL.md")
         self._agent = self._sync_identity_file(self.agent_path, "AGENT.md")
@@ -91,7 +91,7 @@ class Identity:
         logger.info("Identity loaded: SOUL.md, AGENT.md, USER.md, MEMORY.md")
 
     def reload(self) -> None:
-        """热重载所有核心文档，清除缓存后重新读取磁盘文件"""
+        """Hot-reload all core documents: clear caches and re-read from disk."""
         self._soul = None
         self._agent = None
         self._user = None
@@ -100,11 +100,11 @@ class Identity:
         logger.info("Identity hot-reloaded from disk")
 
     def get_pending_upgrades(self) -> list[dict]:
-        """获取待用户确认的升级列表（CLI/API 层调用后展示给用户）。"""
+        """Return the list of upgrades awaiting user confirmation (CLI/API displays this to the user)."""
         return self._pending_upgrades
 
     def apply_upgrade(self, name: str, accept: bool) -> None:
-        """用户决定是否接受某个文件的升级。"""
+        """Apply the user's decision on whether to accept a file upgrade."""
         identity_dir = self.soul_path.parent
         hashes = _load_hashes(identity_dir)
 
@@ -125,20 +125,20 @@ class Identity:
         self._pending_upgrades = [u for u in self._pending_upgrades if u["name"] != name]
 
     def _sync_identity_file(self, path: Path, name: str) -> str:
-        """加载 identity 文件，支持系统升级覆盖检测。
+        """Load an identity file with system upgrade overwrite detection.
 
-        决策矩阵：
-        1. 文件不存在 → 从 .example 创建 + 记录 hash
-        2. 有 hash + hash 匹配 + .example 变了 → 静默覆盖（用户没改过）
-        3. 有 hash + hash 不匹配 → 不覆盖（用户改过）
-        4. 无 hash + .example 有更新 → 加入待提示列表
+        Decision matrix:
+        1. File does not exist -> create from .example + record hash
+        2. Has hash + hash matches + .example changed -> silently overwrite (user hasn't modified)
+        3. Has hash + hash mismatch -> do not overwrite (user has modified)
+        4. No hash + .example has updates -> add to the pending-prompt list
         """
         identity_dir = path.parent
         example_path = identity_dir / f"{path.name}.example"
         hashes = _load_hashes(identity_dir)
         hash_key = path.name
 
-        # 场景 1：文件不存在 → 从 .example 创建
+        # Case 1: File does not exist -> create from .example
         if not path.exists():
             if example_path.exists():
                 content = example_path.read_text(encoding="utf-8")
@@ -167,26 +167,26 @@ class Identity:
         except Exception:
             return current_content
 
-        # .example 没变或 hash 已记录且匹配
+        # .example unchanged, or hash already recorded and matches
         if recorded_hash is not None:
             if current_hash == recorded_hash and example_hash != recorded_hash:
-                # 场景 2：用户没改过 + .example 变了 → 静默覆盖
+                # Case 2: user hasn't modified + .example changed -> silently overwrite
                 content = example_path.read_text(encoding="utf-8")
                 path.write_text(content, encoding="utf-8")
                 hashes[hash_key] = _file_hash(path)
                 _save_hashes(identity_dir, hashes)
                 logger.info(f"System updated {name} (user had not modified)")
                 return content
-            # 场景 3：用户改过 → 不覆盖
+            # Case 3: user has modified -> do not overwrite
             return current_content
         else:
-            # 无 hash 记录（老用户或首次追踪）
+            # No hash recorded (legacy user or first-time tracking)
             if current_hash == example_hash:
                 hashes[hash_key] = current_hash
                 _save_hashes(identity_dir, hashes)
                 return current_content
             else:
-                # 场景 4：不一致 → 加入待提示列表
+                # Case 4: mismatch -> add to pending-prompt list
                 self._pending_upgrades.append(
                     {
                         "name": name,
@@ -200,7 +200,7 @@ class Identity:
                 return current_content
 
     def _load_file(self, path: Path, name: str) -> str:
-        """加载单个文件，如果不存在则尝试从模板创建（非追踪文件用）。"""
+        """Load a single file; if missing, try to create it from the template (for non-tracked files)."""
         try:
             if path.exists():
                 return path.read_text(encoding="utf-8")
@@ -221,86 +221,86 @@ class Identity:
 
     @property
     def soul(self) -> str:
-        """获取 SOUL.md 内容"""
+        """Get SOUL.md content"""
         if self._soul is None:
             self.load()
         return self._soul or ""
 
     @property
     def agent(self) -> str:
-        """获取 AGENT.md 内容"""
+        """Get AGENT.md content"""
         if self._agent is None:
             self.load()
         return self._agent or ""
 
     @property
     def user(self) -> str:
-        """获取 USER.md 内容"""
+        """Get USER.md content"""
         if self._user is None:
             self.load()
         return self._user or ""
 
     @property
     def memory(self) -> str:
-        """获取 MEMORY.md 内容"""
+        """Get MEMORY.md content"""
         if self._memory is None:
             self.load()
         return self._memory or ""
 
     def get_soul_summary(self) -> str:
         """
-        获取 SOUL.md 完整内容
+        Get full SOUL.md content.
 
-        动态读取文件内容，用户修改后立即生效
+        Dynamically reads the file, so user edits take effect immediately.
         """
         soul = self.soul
         if not soul:
             return ""
 
-        return f"## Soul (核心哲学)\n\n{soul}\n"
+        return f"## Soul (Core Philosophy)\n\n{soul}\n"
 
     def get_agent_summary(self) -> str:
         """
-        获取 AGENT.md 完整内容
+        Get full AGENT.md content.
 
-        动态读取文件内容，用户修改后立即生效
+        Dynamically reads the file, so user edits take effect immediately.
         """
         agent = self.agent
         if not agent:
             return ""
 
-        return f"## Agent (行为规范)\n\n{agent}\n"
+        return f"## Agent (Behavior Rules)\n\n{agent}\n"
 
     def get_user_summary(self) -> str:
         """
-        获取 USER.md 完整内容
+        Get full USER.md content.
 
-        动态读取文件内容，用户修改后立即生效
+        Dynamically reads the file, so user edits take effect immediately.
         """
         user = self.user
         if not user:
-            return "## User (用户偏好)\n\n(用户偏好将在交互中学习)\n"
+            return "## User (User Preferences)\n\n(User preferences will be learned through interaction)\n"
 
-        return f"## User (用户偏好)\n\n{user}\n"
+        return f"## User (User Preferences)\n\n{user}\n"
 
     def get_memory_summary(self, include_active_task: bool = True) -> str:
         """
-        获取 MEMORY.md 完整内容
+        Get full MEMORY.md content.
 
-        动态读取文件内容，用户修改后立即生效
+        Dynamically reads the file, so user edits take effect immediately.
 
         Args:
-            include_active_task: 保留参数以兼容现有调用（不再使用）
+            include_active_task: kept for backward compatibility with existing callers (no longer used)
         """
         memory = self.memory
         if not memory:
             return ""
 
-        return f"## Memory (核心记忆)\n\n{memory}\n"
+        return f"## Memory (Core Memory)\n\n{memory}\n"
 
     @staticmethod
     def _get_configured_timezone() -> str:
-        """从 settings 获取配置的时区"""
+        """Get the configured timezone from settings"""
         try:
             return settings.scheduler_timezone
         except Exception:
@@ -308,12 +308,12 @@ class Identity:
 
     def get_system_prompt(self, include_active_task: bool = True) -> str:
         """
-        生成系统提示词
+        Build the system prompt.
 
-        包含所有核心文档的精简版本
+        Includes concise versions of all core documents.
 
         Args:
-            include_active_task: 是否包含活跃任务（IM Session 应设为 False）
+            include_active_task: whether to include the active task (IM Session should set this to False)
         """
         from datetime import datetime, timedelta, timezone
 
@@ -324,98 +324,98 @@ class Identity:
         except Exception:
             tz = timezone(timedelta(hours=8))
         now = datetime.now(tz)
-        weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+        weekday_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         current_time = now.strftime("%Y-%m-%d %H:%M:%S")
         current_weekday = weekday_names[now.weekday()]
 
         return f"""# OpenAkita System
 
-你是 OpenAkita，一个全能自进化AI助手。
+You are OpenAkita, an all-capable, self-evolving AI assistant.
 
-**当前时间: {current_time} {current_weekday}**
+**Current time: {current_time} {current_weekday}**
 
-## ⚠️ 响应质量要求（最高优先级，严格执行）
+## ⚠️ Response Quality Requirements (highest priority, strictly enforced)
 
-### ⚡ 多步骤任务必须先创建计划！（最重要！）
+### ⚡ Multi-step tasks MUST create a plan first! (Most important!)
 
-**在执行任何工具之前，先判断任务是否需要 2 步以上：**
+**Before invoking any tool, decide whether the task needs 2 or more steps:**
 
-| 用户请求 | 步骤数 | 正确做法 |
+| User request | Step count | Correct approach |
 |---------|--------|---------|
-| "打开百度" | 1步 | 直接 browser_navigate |
-| "打开百度，搜索天气" | 2步 | 直接执行 |
-| "打开百度，搜索天气，截图发我" | 3步+ | ⚠️ **先 create_todo！** |
+| "Open Baidu" | 1 step | Directly call browser_navigate |
+| "Open Baidu, search for weather" | 2 steps | Execute directly |
+| "Open Baidu, search for weather, screenshot and send it to me" | 3+ steps | ⚠️ **Call create_todo first!** |
 
-**触发 Plan 模式的信号词**：
-- "然后"、"接着"、"之后"、"并且"、逗号分隔的多个动作
-- 包含多个动作：打开+搜索+截图+发送
+**Signal words that trigger Plan mode**:
+- "then", "after that", "next", "and", multiple actions separated by commas
+- Contains multiple actions: open + search + screenshot + send
 
-**正确流程**：
+**Correct flow**:
 ```
-用户: "打开百度搜索天气截图发我"
-→ 1. create_todo(steps=[打开百度搜索天气并截图, 发送])
-→ 2. browser_navigate("https://www.baidu.com/s?wd=天气") + browser_screenshot + update_todo_step
+User: "Open Baidu, search weather, screenshot and send it to me"
+→ 1. create_todo(steps=[Open Baidu, search weather and screenshot, send])
+→ 2. browser_navigate("https://www.baidu.com/s?wd=weather") + browser_screenshot + update_todo_step
 → 3. deliver_artifacts + update_todo_step
 → 4. complete_todo
 ```
-⚠️ 搜索类任务直接用 browser_navigate 拼 URL 参数
+⚠️ For search tasks, build URL parameters directly with browser_navigate
 
-### 请求类型判断（重要！先判断再行动）
+### Request-type classification (Important! Classify before acting)
 
-| 类型 | 特征 | 处理方式 |
+| Type | Characteristics | How to handle |
 |------|------|----------|
-| **任务型请求** | 要求执行操作：打开、创建、查询、提醒、修改、删除 | ✅ **必须调用工具** |
-| **对话型请求** | 简单问候、知识问答、礼貌用语 | ✅ **可以直接回复** |
+| **Task request** | Asks for an action: open, create, query, remind, modify, delete | ✅ **Must call a tool** |
+| **Conversational request** | Simple greeting, knowledge question, pleasantry | ✅ **May reply directly** |
 
-**对话型请求示例**（可以直接回复，不需要调用工具）：
-- "你好"、"hi"、"早上好" → 友好问候回复
-- "什么是机器学习"、"Python是什么" → 直接解释概念
-- "谢谢"、"再见" → 礼貌回复
-- "明白了"、"好的" → 简单确认
+**Conversational request examples** (reply directly, no tool call needed):
+- "hello", "hi", "good morning" → Friendly greeting
+- "What is machine learning", "What is Python" → Explain the concept directly
+- "thanks", "bye" → Polite reply
+- "got it", "ok" → Simple acknowledgment
 
-### 意图声明（每次纯文本回复必须遵守）
-当你的回复**不包含工具调用**时，第一行必须是以下标记之一：
-- `[ACTION]` — 你需要调用工具来完成用户的请求
-- `[REPLY]` — 这是纯对话回复，不需要调用任何工具
+### Intent declaration (must be followed for every plain-text reply)
+When your reply **does not contain a tool call**, the first line must be one of the following markers:
+- `[ACTION]` — You need to call a tool to complete the user's request
+- `[REPLY]` — This is a pure conversational reply; no tool call is needed
 
-此标记由系统自动移除，用户不会看到。调用工具时不需要此标记。
+The marker is stripped automatically by the system; the user will not see it. No marker is needed when calling tools.
 
-### 第一铁律：任务型请求必须立即使用工具
+### First iron rule: task requests must immediately use a tool
 
-**⚠️ 用户发送任务型请求时，必须立即调用工具执行！**
+**⚠️ When the user sends a task request, you must immediately call a tool to execute it!**
 
-| 用户请求（任务型） | ❌ 绝对禁止 | ✅ 正确做法 |
+| User request (task) | ❌ Absolutely forbidden | ✅ Correct approach |
 |---------|-----------|-----------|
-| "帮我打开百度" | "我理解了您的请求" | 立即调用 browser 工具打开 |
-| "查一下天气" | "好的，我来查询" | 用 browser 工具打开天气网站 |
-| "创建一个文件" | "我明白了" | 立即调用 write_file |
-| "提醒我开会" | "我会提醒你" | **立即调用 schedule_task** |
+| "Help me open Baidu" | "I understand your request" | Immediately call the browser tool to open it |
+| "Check the weather" | "OK, I'll check" | Use the browser tool to open a weather site |
+| "Create a file" | "I see" | Immediately call write_file |
+| "Remind me about the meeting" | "I'll remind you" | **Immediately call schedule_task** |
 
-**绝对禁止的敷衍响应**（仅针对任务型请求）:
-- ❌ "我理解了您的请求" 但没有工具调用 - **禁止！**
-- ❌ "我明白了" 但没有工具调用 - **禁止！**
-- ❌ "好的，我会提醒你" 但没有调用 schedule_task - **禁止！**
-- ❌ 只描述会做什么，但不实际执行 - **禁止！**
+**Absolutely forbidden lip-service responses** (for task requests only):
+- ❌ "I understand your request" with no tool call - **forbidden!**
+- ❌ "I see" with no tool call - **forbidden!**
+- ❌ "OK, I'll remind you" without calling schedule_task - **forbidden!**
+- ❌ Only describing what you will do, without actually doing it - **forbidden!**
 
-**任务型请求的响应必须包含**:
-- ✅ 工具调用（browser、schedule_task、write_file、run_shell 等）
-- ✅ 或具体的输出内容（代码、方案、分析结果）
-- ✅ 或明确需要澄清的问题（列出具体选项）
+**Task request responses must include**:
+- ✅ A tool call (browser, schedule_task, write_file, run_shell, etc.)
+- ✅ Or concrete output (code, a proposal, analysis results)
+- ✅ Or an explicit clarification question (with specific options listed)
 
-**判断标准**：
-- 任务型请求：如果响应里没有工具调用，就是在敷衍用户！
-- 对话型请求：直接回复文字是正确做法，不需要调用工具。
+**Criterion**:
+- Task request: if the response has no tool call, you are stalling the user!
+- Conversational request: replying with plain text is correct; no tool call is needed.
 
-### ⚠️ 定时任务/提醒（特别重要！）
+### ⚠️ Scheduled tasks / reminders (especially important!)
 
-**当用户说"提醒我"、"X分钟后"、"每天X点"时，必须立即调用 schedule_task 工具！**
+**When the user says "remind me", "in X minutes", or "every day at X", you must immediately call the schedule_task tool!**
 
-❌ **绝对禁止**：回复"好的，我会提醒你" - 这样不会创建任务！
-✅ **正确做法**：立即调用 schedule_task 工具创建任务
+❌ **Absolutely forbidden**: replying "OK, I'll remind you" - that does NOT create a task!
+✅ **Correct approach**: immediately call schedule_task to create the task
 
-**task_type 选择**：
-- `reminder`（90%情况）：只需到时间发消息提醒，如"提醒我喝水"
-- `task`（10%情况）：需要 AI 执行操作，如"每天查天气告诉我"
+**task_type selection**:
+- `reminder` (90% of cases): just send a message at the scheduled time, e.g. "remind me to drink water"
+- `task` (10% of cases): the AI needs to perform an action, e.g. "check the weather every day and tell me"
 
 ---
 
@@ -430,9 +430,9 @@ class Identity:
 
     def get_session_system_prompt(self) -> str:
         """
-        生成用于 IM Session 的系统提示词
+        Build the system prompt for an IM Session.
 
-        不包含全局 Active Task，避免与 Session 上下文冲突
+        Omits the global Active Task to avoid conflicts with session context.
         """
         return self.get_system_prompt(include_active_task=False)
 
@@ -446,23 +446,23 @@ class Identity:
         task_description: str = "",
     ) -> str:
         """
-        使用新的编译管线生成系统提示词 (v2)
+        Build the system prompt using the new compile pipeline (v2).
 
-        相比 get_system_prompt()（全文注入），这个方法:
-        - 使用编译后的摘要，而非全文
-        - Token 消耗降低约 55%
-        - 保留所有核心规则
+        Compared to get_system_prompt() (full-text injection), this method:
+        - Uses compiled summaries instead of full text
+        - Reduces token usage by about 55%
+        - Preserves all core rules
 
         Args:
-            tools_enabled: 是否启用工具
-            tool_catalog: ToolCatalog 实例
-            skill_catalog: SkillCatalog 实例
-            mcp_catalog: MCPCatalog 实例
-            memory_manager: MemoryManager 实例
-            task_description: 任务描述（用于记忆检索）
+            tools_enabled: whether tools are enabled
+            tool_catalog: ToolCatalog instance
+            skill_catalog: SkillCatalog instance
+            mcp_catalog: MCPCatalog instance
+            memory_manager: MemoryManager instance
+            task_description: task description (used for memory retrieval)
 
         Returns:
-            编译后的系统提示词
+            The compiled system prompt
         """
         from ..prompt.builder import build_system_prompt
 
@@ -480,10 +480,10 @@ class Identity:
 
     def ensure_compiled(self) -> bool:
         """
-        确保 runtime 产物存在且不过期
+        Ensure the runtime artifacts exist and are not stale.
 
         Returns:
-            True 如果 runtime 产物可用
+            True if the runtime artifacts are available
         """
         from ..prompt.compiler import check_compiled_outdated, compile_all
 
@@ -498,15 +498,15 @@ class Identity:
 
     def get_full_document(self, doc_name: str) -> str:
         """
-        获取完整文档内容 (Level 2)
+        Get full document content (Level 2).
 
-        当需要详细信息时调用
+        Call when detailed information is needed.
 
         Args:
-            doc_name: 文档名称 (soul/agent/user/memory)
+            doc_name: document name (soul/agent/user/memory)
 
         Returns:
-            完整文档内容
+            full document content
         """
         docs = {
             "soul": self.soul,
@@ -517,45 +517,45 @@ class Identity:
         return docs.get(doc_name.lower(), "")
 
     def get_behavior_rules(self) -> list[str]:
-        """提取行为规则"""
+        """Return behavior rules."""
         rules = [
-            "任务未完成，绝不退出",
-            "遇到错误，分析并重试",
-            "缺少能力，自动获取",
-            "每次迭代保存进度到 MEMORY.md",
-            "不删除用户数据（除非明确要求）",
-            "不访问敏感系统路径",
-            "不在未告知的情况下安装收费软件",
-            "不放弃任务（除非用户明确取消）",
+            "Never exit until the task is complete",
+            "On errors, analyze and retry",
+            "If a capability is missing, acquire it automatically",
+            "Save progress to MEMORY.md on every iteration",
+            "Do not delete user data (unless explicitly requested)",
+            "Do not access sensitive system paths",
+            "Do not install paid software without informing the user",
+            "Do not abandon the task (unless the user explicitly cancels)",
         ]
         return rules
 
     def get_prohibited_actions(self) -> list[str]:
-        """获取禁止的行为"""
+        """Return prohibited actions."""
         return [
-            "提供创建大规模杀伤性武器的详细说明",
-            "生成涉及未成年人的不当内容",
-            "生成可能直接促进攻击关键基础设施的内容",
-            "创建旨在造成重大损害的恶意代码",
-            "破坏AI监督机制",
-            "对用户撒谎或隐瞒重要信息",
+            "Provide detailed instructions for creating weapons of mass destruction",
+            "Generate inappropriate content involving minors",
+            "Generate content that could directly facilitate attacks on critical infrastructure",
+            "Create malicious code intended to cause significant damage",
+            "Undermine AI oversight mechanisms",
+            "Lie to the user or withhold important information",
         ]
 
     def update_memory(self, section: str, content: str) -> bool:
         """
-        更新 MEMORY.md 的特定部分
+        Update a specific section of MEMORY.md.
 
         Args:
-            section: 要更新的部分名称
-            content: 新内容
+            section: name of the section to update
+            content: new content
 
         Returns:
-            是否成功
+            whether the update succeeded
         """
         try:
             memory = self.memory
 
-            # 查找并替换指定部分
+            # Find and replace the specified section
             pattern = rf"(### {section}\s*)(.*?)(?=###|\Z)"
             replacement = f"\\1\n{content}\n\n"
 
@@ -583,19 +583,19 @@ class Identity:
 
     def update_user_preference(self, key: str, value: str) -> bool:
         """
-        更新 USER.md 中的用户偏好
+        Update a user preference in USER.md.
 
         Args:
-            key: 偏好键名
-            value: 偏好值
+            key: preference key
+            value: preference value
 
         Returns:
-            是否成功
+            whether the update succeeded
         """
         try:
             user = self.user
 
-            # 替换 [待学习] 为实际值
+            # Replace [to-be-learned] with the actual value
             pattern = rf"(\*\*{key}\*\*:\s*)\[待学习\]"
             replacement = f"\\1{value}"
 

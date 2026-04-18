@@ -1,17 +1,17 @@
 """
-技能管理处理器
+Skill management handler
 
-处理技能管理相关的系统技能（共 10 个工具）：
-- list_skills: 列出技能
-- get_skill_info: 获取技能信息
-- run_skill_script: 运行技能脚本
-- get_skill_reference: 获取参考文档
-- install_skill: 安装技能
-- load_skill: 加载新创建的技能
-- reload_skill: 重新加载已修改的技能
-- manage_skill_enabled: 启用/禁用技能
-- execute_skill: 在隔离上下文中执行技能 (F10)
-- uninstall_skill: 卸载外部技能 (F14)
+Handles system skills related to skill management (10 tools total):
+- list_skills: List skills
+- get_skill_info: Get skill information
+- run_skill_script: Run a skill script
+- get_skill_reference: Get reference documentation
+- install_skill: Install a skill
+- load_skill: Load a newly created skill
+- reload_skill: Reload a modified skill
+- manage_skill_enabled: Enable/disable skills
+- execute_skill: Execute a skill in an isolated context (F10)
+- uninstall_skill: Uninstall an external skill (F14)
 """
 
 import logging
@@ -28,14 +28,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Skill 内容专用阈值（~32000 tokens），高于通用的 MAX_TOOL_RESULT_CHARS (16000 chars)。
-# Skill body 是高质量结构化指令，截断会严重影响 LLM 执行效果。
-# 部分技能（如 docx）的 SKILL.md 引用了多个同目录子文件，内联后总量可达 50K+。
+# Skill-specific content threshold (~32000 tokens), higher than the general MAX_TOOL_RESULT_CHARS (16000 chars).
+# Skill bodies are high-quality structured instructions; truncating them severely affects LLM execution quality.
+# Some skills (e.g. docx) have SKILL.md referencing multiple sibling files, which can total 50K+ when inlined.
 SKILL_MAX_CHARS = 64000
 
 
 class SkillsHandler:
-    """技能管理处理器"""
+    """Skill management handler"""
 
     TOOLS = [
         "list_skills",
@@ -54,7 +54,7 @@ class SkillsHandler:
         self.agent = agent
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
-        """处理工具调用"""
+        """Handle tool invocation"""
         try:
             if tool_name == "list_skills":
                 return self._list_skills(params)
@@ -80,19 +80,19 @@ class SkillsHandler:
                 return f"❌ Unknown skills tool: {tool_name}"
         except KeyError as e:
             logger.error("Missing required parameter in %s: %s", tool_name, e)
-            return f"❌ 缺少必需参数: {e}"
+            return f"❌ Missing required parameter: {e}"
         except Exception as e:
             logger.error("Unexpected error in skills handler %s: %s", tool_name, e, exc_info=True)
-            return f"❌ 技能操作失败: {e}"
+            return f"❌ Skill operation failed: {e}"
 
     def _list_skills(self, params: dict) -> str:
-        """列出所有技能，区分启用/禁用/可发现状态"""
+        """List all skills, distinguishing enabled/disabled/discoverable states"""
         all_skills = self.agent.skill_registry.list_all(include_disabled=True)
         if not all_skills:
             return (
-                "当前没有已安装的技能\n\n"
-                "提示: 技能可能来自内置目录、用户工作区目录或项目目录。"
-                "每个技能都应包含 SKILL.md；需要准确路径时请使用 get_skill_info。"
+                "No skills are currently installed\n\n"
+                "Hint: Skills may come from the built-in directory, the user workspace directory, or the project directory. "
+                "Each skill should contain a SKILL.md; use get_skill_info when you need an exact path."
             )
 
         system_skills = [s for s in all_skills if s.system]
@@ -106,17 +106,17 @@ class SkillsHandler:
 
         enabled_total = len(system_skills) + len(enabled_external)
         output = (
-            f"已安装 {len(all_skills)} 个技能 "
-            f"({enabled_total} 预加载, "
-            f"{len(discoverable_external)} 可发现, "
-            f"{len(disabled_external)} 禁用):\n\n"
+            f"{len(all_skills)} skills installed "
+            f"({enabled_total} preloaded, "
+            f"{len(discoverable_external)} discoverable, "
+            f"{len(disabled_external)} disabled):\n\n"
         )
 
         if system_skills:
-            output += f"**系统技能 ({len(system_skills)})** [全部启用]:\n"
+            output += f"**System skills ({len(system_skills)})** [all enabled]:\n"
             for skill in system_skills:
                 exposed = build_skill_exposure(skill)
-                auto = "自动" if not skill.disable_model_invocation else "手动"
+                auto = "automatic" if not skill.disable_model_invocation else "manual"
                 zh_name = skill.name_i18n.get("zh", "")
                 name_part = f"{skill.name} ({zh_name})" if zh_name else skill.name
                 output += f"- {name_part} [{auto}] - {skill.description}\n"
@@ -130,10 +130,10 @@ class SkillsHandler:
             output += "\n"
 
         if enabled_external:
-            output += f"**已启用外部技能 ({len(enabled_external)})**:\n"
+            output += f"**Enabled external skills ({len(enabled_external)})**:\n"
             for skill in enabled_external:
                 exposed = build_skill_exposure(skill)
-                auto = "自动" if not skill.disable_model_invocation else "手动"
+                auto = "automatic" if not skill.disable_model_invocation else "manual"
                 zh_name = skill.name_i18n.get("zh", "")
                 name_part = f"{skill.name} ({zh_name})" if zh_name else skill.name
                 output += f"- {name_part} [{auto}]\n"
@@ -146,14 +146,14 @@ class SkillsHandler:
 
         if discoverable_external:
             output += (
-                f"**可发现技能 ({len(discoverable_external)})** "
-                "[未预加载 — 使用 get_skill_info(skill_name) 加载指令后即可使用]:\n"
+                f"**Discoverable skills ({len(discoverable_external)})** "
+                "[not preloaded — use get_skill_info(skill_name) to load instructions before use]:\n"
             )
             for skill in discoverable_external:
                 exposed = build_skill_exposure(skill)
                 zh_name = skill.name_i18n.get("zh", "")
                 name_part = f"{skill.name} ({zh_name})" if zh_name else skill.name
-                output += f"- {name_part} [可发现]\n"
+                output += f"- {name_part} [discoverable]\n"
                 output += f"  {skill.description}\n"
                 output += (
                     f"  source={exposed.origin_label}"
@@ -163,13 +163,13 @@ class SkillsHandler:
 
         if disabled_external:
             output += (
-                f"**已禁用外部技能 ({len(disabled_external)})** [需在技能面板启用后才可使用]:\n"
+                f"**Disabled external skills ({len(disabled_external)})** [must be enabled in the skills panel before use]:\n"
             )
             for skill in disabled_external:
                 exposed = build_skill_exposure(skill)
                 zh_name = skill.name_i18n.get("zh", "")
                 name_part = f"{skill.name} ({zh_name})" if zh_name else skill.name
-                output += f"- {name_part} [已禁用]\n"
+                output += f"- {name_part} [disabled]\n"
                 output += f"  {skill.description}\n"
                 output += (
                     f"  source={exposed.origin_label}"
@@ -179,18 +179,18 @@ class SkillsHandler:
 
         return self._truncate_skill_content("list_skills", output)
 
-    # Markdown 链接中引用同目录 .md 文件的正则：
-    #   [`filename.md`](filename.md)  或  [filename.md](filename.md)
+    # Regex for matching sibling .md file references in Markdown links:
+    #   [`filename.md`](filename.md)  or  [filename.md](filename.md)
     _MD_LINK_RE = re.compile(r"\[`?([a-zA-Z0-9_-]+\.md)`?\]\(([a-zA-Z0-9_-]+\.md)\)")
 
     @staticmethod
     def _inline_referenced_files(body: str, skill_dir: Path) -> str:
-        """解析 body 中引用的同目录 .md 文件并追加到末尾。
+        """Parse sibling .md files referenced in body and append them to the end.
 
-        许多 Anthropic 技能（docx, pptx 等）在 SKILL.md 中用 Markdown 链接
-        引用同目录下的参考文件（如 docx-js.md, ooxml.md），并标注
-        "MANDATORY - READ ENTIRE FILE"。此方法自动将这些文件内联，
-        使 get_skill_info 一次返回完整的技能知识。
+        Many Anthropic skills (docx, pptx, etc.) use Markdown links in SKILL.md
+        to reference sibling reference files (e.g. docx-js.md, ooxml.md) annotated
+        with "MANDATORY - READ ENTIRE FILE". This method auto-inlines those files,
+        so get_skill_info returns the complete skill knowledge in a single call.
         """
         if not skill_dir or not skill_dir.is_dir():
             return body
@@ -225,11 +225,11 @@ class SkillsHandler:
 
     @staticmethod
     def _truncate_skill_content(tool_name: str, content: str) -> str:
-        """Skill 专用截断：阈值高于通用守卫，超长时自行截断并带标记跳过守卫。
+        """Skill-specific truncation: threshold higher than the general guard; self-truncates when oversized and marks content to bypass the guard.
 
-        - <= MAX_TOOL_RESULT_CHARS (16000)：原样返回，通用守卫也不会截断
-        - 16000 < len <= SKILL_MAX_CHARS (64000)：全量返回 + OVERFLOW_MARKER 跳过守卫
-        - > SKILL_MAX_CHARS：截断到 64000 + 溢出文件 + 分段读取指引
+        - <= MAX_TOOL_RESULT_CHARS (16000): returned as-is; the general guard will not truncate either
+        - 16000 < len <= SKILL_MAX_CHARS (64000): full content + OVERFLOW_MARKER to bypass the guard
+        - > SKILL_MAX_CHARS: truncate to 64000 + overflow file + guidance for paginated reading
         """
         if not content or len(content) <= MAX_TOOL_RESULT_CHARS:
             return content
@@ -241,9 +241,9 @@ class SkillsHandler:
         overflow_path = save_overflow(tool_name, content)
         truncated = content[:SKILL_MAX_CHARS]
         hint = (
-            f"\n\n{OVERFLOW_MARKER} 技能内容共 {total_chars} 字符，"
-            f"已截断到前 {SKILL_MAX_CHARS} 字符。\n"
-            f"完整内容已保存，使用以下命令查看后续内容:\n"
+            f"\n\n{OVERFLOW_MARKER} Skill content is {total_chars} characters in total, "
+            f"truncated to the first {SKILL_MAX_CHARS} characters.\n"
+            f"The full content has been saved; use the following command to view the rest:\n"
             f'read_file(path="{overflow_path}", offset=1, limit=500)'
         )
         logger.info(
@@ -253,17 +253,17 @@ class SkillsHandler:
         return truncated + hint
 
     def _get_skill_info(self, params: dict) -> str:
-        """获取技能详细信息（自动内联引用的子文件）"""
+        """Get detailed skill information (automatically inlines referenced sub-files)"""
         skill_name = params["skill_name"]
         user_args = params.get("args", {})
         skill = self.agent.skill_registry.get(skill_name)
 
         if not skill or skill.disabled:
             available = [s.name for s in self.agent.skill_registry.list_all()[:10]]
-            hint = f"，当前可用技能: {', '.join(available)}" if available else ""
+            hint = f". Currently available skills: {', '.join(available)}" if available else ""
             return (
-                f"未找到技能 '{skill_name}'{hint}。"
-                f"请检查技能名称是否正确，或使用 list_skills 查看所有可用技能。"
+                f"Skill '{skill_name}' not found{hint}. "
+                f"Please verify the skill name, or use list_skills to view all available skills."
             )
 
         # F6: usage tracking
@@ -281,7 +281,7 @@ class SkillsHandler:
                 logger.warning("Failed to inject skill allowlist for %s: %s", skill.skill_id, e)
 
         exposed = build_skill_exposure(skill)
-        body = skill.get_body() or "(无详细指令)"
+        body = skill.get_body() or "(no detailed instructions)"
 
         # F4: argument substitution
         if "{{" in body:
@@ -293,45 +293,45 @@ class SkillsHandler:
                 extra = {k: str(v) for k, v in user_args.items()}
             body = substitute(body, extra, project_root=_cfg.project_root)
 
-        # 自动内联 SKILL.md body 中引用的同目录 .md 文件
+        # Auto-inline sibling .md files referenced in the SKILL.md body
         if exposed.skill_path:
             skill_dir = Path(exposed.skill_path).parent
             body = self._inline_referenced_files(body, skill_dir)
 
-        output = f"# 技能: {skill.name}\n\n"
+        output = f"# Skill: {skill.name}\n\n"
         output += f"**ID**: {skill.skill_id}\n"
-        output += f"**描述**: {skill.description}\n"
+        output += f"**Description**: {skill.description}\n"
         if skill.when_to_use:
-            output += f"**适用场景**: {skill.when_to_use}\n"
-        output += f"**来源**: {exposed.origin_label}\n"
+            output += f"**When to use**: {skill.when_to_use}\n"
+        output += f"**Source**: {exposed.origin_label}\n"
         if exposed.skill_dir:
-            output += f"**路径**: {exposed.skill_dir}\n"
+            output += f"**Path**: {exposed.skill_dir}\n"
         if exposed.root_dir:
-            output += f"**根目录**: {exposed.root_dir}\n"
+            output += f"**Root directory**: {exposed.root_dir}\n"
         if skill.system:
-            output += "**类型**: 系统技能\n"
-            output += f"**工具名**: {skill.tool_name}\n"
-            output += f"**处理器**: {skill.handler}\n"
+            output += "**Type**: System skill\n"
+            output += f"**Tool name**: {skill.tool_name}\n"
+            output += f"**Handler**: {skill.handler}\n"
         else:
-            output += "**类型**: 外部技能\n"
+            output += "**Type**: External skill\n"
         if exposed.instruction_only:
-            output += "**脚本**: instruction-only (no executable scripts)\n"
+            output += "**Scripts**: instruction-only (no executable scripts)\n"
         else:
-            output += f"**可执行脚本**: {', '.join(exposed.scripts)}\n"
+            output += f"**Executable scripts**: {', '.join(exposed.scripts)}\n"
         if exposed.references:
-            output += f"**参考文档**: {', '.join(exposed.references)}\n"
+            output += f"**Reference docs**: {', '.join(exposed.references)}\n"
         output += (
-            "**路径规则**: 技能可能来自多个目录，不要根据 workspace map 猜测 skill 文件位置；"
-            "以上面的来源和路径为准。\n"
+            "**Path rules**: Skills may come from multiple directories; do not guess the skill file location from the workspace map. "
+            "Rely on the source and path shown above.\n"
         )
         if skill.license:
-            output += f"**许可证**: {skill.license}\n"
+            output += f"**License**: {skill.license}\n"
         if skill.compatibility:
-            output += f"**兼容性**: {skill.compatibility}\n"
+            output += f"**Compatibility**: {skill.compatibility}\n"
         if skill.model:
-            output += f"**推荐模型**: {skill.model}\n"
+            output += f"**Recommended model**: {skill.model}\n"
         if skill.execution_context and skill.execution_context != "inline":
-            output += f"**执行模式**: {skill.execution_context}\n"
+            output += f"**Execution mode**: {skill.execution_context}\n"
 
         # F4: display argument schema
         if skill.arguments:
@@ -350,7 +350,7 @@ class SkillsHandler:
         return self._truncate_skill_content("get_skill_info", output)
 
     def _run_skill_script(self, params: dict) -> str:
-        """运行技能脚本"""
+        """Run a skill script"""
         skill_name = params["skill_name"]
         script_name = params["script_name"]
         args = params.get("args", [])
@@ -382,20 +382,20 @@ class SkillsHandler:
                 except ValueError:
                     pass
             if not allowed:
-                return f"❌ 工作目录被拒绝: {cwd_raw}\ncwd 只能位于项目工作区或技能目录内。"
+                return f"❌ Working directory rejected: {cwd_raw}\ncwd must be inside the project workspace or the skill directory."
 
         success, output = self.agent.skill_loader.run_script(
             skill_name, script_name, args, cwd=resolved_cwd
         )
 
         if success:
-            return f"✅ 脚本执行成功:\n{output}"
+            return f"✅ Script executed successfully:\n{output}"
         else:
             output_lower = output.lower()
 
             if "no executable scripts" in output_lower or "instruction-only" in output_lower:
                 return (
-                    f"❌ 脚本执行失败:\n{output}\n\n"
+                    f"❌ Script execution failed:\n{output}\n\n"
                     f"**This skill is instruction-only (no scripts).** "
                     f"DO NOT retry run_skill_script.\n"
                     f'Use `get_skill_info("{skill_name}")` to read instructions, '
@@ -403,51 +403,51 @@ class SkillsHandler:
                 )
             elif "not found" in output_lower and "available scripts:" in output_lower:
                 return (
-                    f"❌ 脚本执行失败:\n{output}\n\n"
-                    f"**建议**: Use one of the available scripts listed above."
+                    f"❌ Script execution failed:\n{output}\n\n"
+                    f"**Suggestion**: Use one of the available scripts listed above."
                 )
-            elif "not found" in output_lower or "未找到" in output_lower:
+            elif "not found" in output_lower:
                 return (
-                    f"❌ 脚本执行失败:\n{output}\n\n"
-                    f'**建议**: 如果不确定用法，使用 `get_skill_info("{skill_name}")` 查看技能完整指令。\n'
-                    f"对于指令型技能，应改用 write_file + run_shell 方式执行代码。"
+                    f"❌ Script execution failed:\n{output}\n\n"
+                    f'**Suggestion**: If you are unsure how to use it, run `get_skill_info("{skill_name}")` to view the full skill instructions.\n'
+                    f"For instruction-only skills, use write_file + run_shell to execute code instead."
                 )
-            elif "timed out" in output_lower or "超时" in output:
+            elif "timed out" in output_lower:
                 return (
-                    f"❌ 脚本执行失败:\n{output}\n\n"
-                    f"**建议**: 脚本执行超时。可以尝试:\n"
-                    f"1. 检查脚本是否有死循环或长时间阻塞操作\n"
-                    f"2. 使用 `get_skill_info` 查看技能详情确认用法\n"
-                    f"3. 尝试使用其他方法完成任务"
+                    f"❌ Script execution failed:\n{output}\n\n"
+                    f"**Suggestion**: Script execution timed out. You can try:\n"
+                    f"1. Checking for infinite loops or long-blocking operations in the script\n"
+                    f"2. Using `get_skill_info` to review the skill details and confirm usage\n"
+                    f"3. Trying a different approach to complete the task"
                 )
-            elif "permission" in output_lower or "权限" in output:
+            elif "permission" in output_lower:
                 return (
-                    f"❌ 脚本执行失败:\n{output}\n\n"
-                    f"**建议**: 权限不足。可以尝试:\n"
-                    f"1. 检查文件/目录权限\n"
-                    f"2. 使用管理员权限运行"
+                    f"❌ Script execution failed:\n{output}\n\n"
+                    f"**Suggestion**: Insufficient permissions. You can try:\n"
+                    f"1. Checking file/directory permissions\n"
+                    f"2. Running with administrator privileges"
                 )
             else:
                 return (
-                    f"❌ 脚本执行失败:\n{output}\n\n"
-                    f"**建议**: 请检查脚本参数是否正确，或使用 `get_skill_info` 查看技能使用说明"
+                    f"❌ Script execution failed:\n{output}\n\n"
+                    f"**Suggestion**: Please verify the script arguments, or use `get_skill_info` to view the skill's usage instructions"
                 )
 
     def _get_skill_reference(self, params: dict) -> str:
-        """获取技能参考文档"""
+        """Get skill reference documentation"""
         skill_name = params["skill_name"]
         ref_name = params.get("ref_name", "REFERENCE.md")
 
         content = self.agent.skill_loader.get_reference(skill_name, ref_name)
 
         if content:
-            output = f"# 参考文档: {ref_name}\n\n{content}"
+            output = f"# Reference: {ref_name}\n\n{content}"
             return self._truncate_skill_content("get_skill_reference", output)
         else:
-            return f"❌ 未找到参考文档: {skill_name}/{ref_name}"
+            return f"❌ Reference not found: {skill_name}/{ref_name}"
 
     async def _install_skill(self, params: dict) -> str:
-        """安装技能"""
+        """Install a skill"""
         source = params["source"]
         name = params.get("name")
         subdir = params.get("subdir")
@@ -458,10 +458,10 @@ class SkillsHandler:
         return result
 
     def _load_skill(self, params: dict) -> str:
-        """加载新创建的技能"""
+        """Load a newly created skill"""
         skill_name = params["skill_name"]
 
-        # 查找技能目录（使用项目根目录，避免依赖 CWD）
+        # Locate the skill directory (use project root, avoid depending on CWD)
         try:
             from openakita.config import settings
 
@@ -471,92 +471,93 @@ class SkillsHandler:
         skill_dir = skills_dir / skill_name
 
         if not skill_dir.exists():
-            return f"❌ 技能目录不存在: {skill_dir}\n\n请确保技能已保存到 skills/{skill_name}/ 目录"
+            return f"❌ Skill directory does not exist: {skill_dir}\n\nMake sure the skill has been saved to skills/{skill_name}/"
 
         skill_md = skill_dir / "SKILL.md"
         if not skill_md.exists():
-            return f"❌ 技能定义文件不存在: {skill_md}\n\n请确保目录中包含 SKILL.md 文件"
+            return f"❌ Skill definition file does not exist: {skill_md}\n\nMake sure the directory contains a SKILL.md file"
 
-        # 检查是否已加载
+        # Check whether already loaded
         existing = self.agent.skill_registry.get(skill_name)
         if existing:
-            return f"⚠️ 技能 '{skill_name}' 已存在。如需更新，请使用 reload_skill"
+            return f"⚠️ Skill '{skill_name}' already exists. To update it, use reload_skill"
 
         try:
             loaded = self.agent.skill_loader.load_skill(skill_dir, force=True)
 
             if loaded:
-                # 所有刷新（catalog / tool 映射 / activation / pool / system prompt / event）
-                # 都在 propagate_skill_change 里完成，工具处理器层不要再手工调用任何子步骤。
+                # All refreshes (catalog / tool mapping / activation / pool / system prompt / event)
+                # are done inside propagate_skill_change; do not manually call any sub-steps
+                # from the tool handler layer.
                 self.agent.propagate_skill_change(SkillEvent.LOAD, rescan=False)
                 logger.info(f"Skill loaded: {skill_name}")
 
-                return f"""✅ 技能加载成功！
+                return f"""✅ Skill loaded successfully!
 
-**技能名称**: {loaded.metadata.name}
-**描述**: {loaded.metadata.description}
-**类型**: {"系统技能" if loaded.metadata.system else "外部技能"}
-**路径**: {skill_dir}
+**Skill name**: {loaded.metadata.name}
+**Description**: {loaded.metadata.description}
+**Type**: {"System skill" if loaded.metadata.system else "External skill"}
+**Path**: {skill_dir}
 
-技能已可用，可以通过 `get_skill_info("{skill_name}")` 查看详情。"""
+The skill is now available; use `get_skill_info("{skill_name}")` to view details."""
             else:
-                return "❌ 技能加载失败，请检查 SKILL.md 格式是否正确"
+                return "❌ Failed to load skill. Please check whether SKILL.md has the correct format"
 
         except Exception as e:
             logger.error(f"Failed to load skill {skill_name}: {e}")
-            return f"❌ 加载技能时出错: {e}"
+            return f"❌ Error while loading skill: {e}"
 
     def _reload_skill(self, params: dict) -> str:
-        """重新加载已存在的技能"""
+        """Reload an already loaded skill"""
         skill_name = params["skill_name"]
 
-        # 检查技能是否已加载
+        # Check whether the skill is already loaded
         existing = self.agent.skill_loader.get_skill(skill_name)
         if not existing:
-            return f"❌ 技能 '{skill_name}' 未加载。如需加载新技能，请使用 load_skill"
+            return f"❌ Skill '{skill_name}' is not loaded. To load a new skill, use load_skill"
 
         try:
             reloaded = self.agent.skill_loader.reload_skill(skill_name)
 
             if reloaded:
-                # loader.reload_skill 已经重新注册单个 skill，rescan=False 避免二次全量扫描。
+                # loader.reload_skill has already re-registered the single skill; rescan=False avoids a full re-scan.
                 self.agent.propagate_skill_change(SkillEvent.RELOAD, rescan=False)
                 logger.info(f"Skill reloaded: {skill_name}")
 
-                return f"""✅ 技能重新加载成功！
+                return f"""✅ Skill reloaded successfully!
 
-**技能名称**: {reloaded.metadata.name}
-**描述**: {reloaded.metadata.description}
-**类型**: {"系统技能" if reloaded.metadata.system else "外部技能"}
+**Skill name**: {reloaded.metadata.name}
+**Description**: {reloaded.metadata.description}
+**Type**: {"System skill" if reloaded.metadata.system else "External skill"}
 
-修改已生效。"""
+Changes are now in effect."""
             else:
-                return "❌ 技能重新加载失败"
+                return "❌ Failed to reload skill"
 
         except Exception as e:
             logger.error(f"Failed to reload skill {skill_name}: {e}")
-            return f"❌ 重新加载技能时出错: {e}"
+            return f"❌ Error while reloading skill: {e}"
 
     def _manage_skill_enabled(self, params: dict) -> str:
-        """批量启用/禁用外部技能"""
+        """Batch enable/disable external skills"""
         from openakita.skills.allowlist_io import overwrite_allowlist, read_allowlist
 
         changes: list[dict] = params.get("changes", [])
         reason: str = params.get("reason", "")
 
         if not changes:
-            return "❌ 未指定要变更的技能"
+            return "❌ No skills specified for change"
 
         _, existing_allowlist = read_allowlist()
 
-        # 若文件尚不存在：用当前所有已启用外部技能作为初始集合
+        # If the file does not yet exist: seed with all currently enabled external skills
         if existing_allowlist is None:
             all_skills = self.agent.skill_registry.list_all()
             existing_allowlist = {s.skill_id for s in all_skills if not s.system}
         else:
             existing_allowlist = set(existing_allowlist)
 
-        # 收集所有已知外部技能 skill_id（包括被 prune 掉、仅在 loader 缓存里的）
+        # Collect all known external skill_ids (including ones pruned away and only in the loader cache)
         all_external_ids = set(existing_allowlist)
         loader = getattr(self.agent, "skill_loader", None)
         if loader:
@@ -574,16 +575,16 @@ class SkillsHandler:
             if not name:
                 continue
 
-            # 支持 skill_id 或显示名
+            # Support either skill_id or display name
             skill = self.agent.skill_registry.get(name)
             sid = skill.skill_id if skill else name
 
             if skill and skill.system:
-                skipped.append(f"{sid}（系统技能，不可禁用）")
+                skipped.append(f"{sid} (system skill, cannot be disabled)")
                 continue
 
             if sid not in all_external_ids:
-                skipped.append(f"{sid}（未找到）")
+                skipped.append(f"{sid} (not found)")
                 continue
 
             if enabled:
@@ -591,38 +592,38 @@ class SkillsHandler:
             else:
                 existing_allowlist.discard(sid)
                 any_disabled = True
-            applied.append(f"{sid} → {'启用' if enabled else '禁用'}")
+            applied.append(f"{sid} → {'enabled' if enabled else 'disabled'}")
 
         if not applied:
-            msg = "未执行任何变更。"
+            msg = "No changes were applied."
             if skipped:
-                msg += f"\n跳过: {', '.join(skipped)}"
+                msg += f"\nSkipped: {', '.join(skipped)}"
             return msg
 
-        # 原子写入 data/skills.json（唯一写入点：allowlist_io.overwrite_allowlist）
+        # Atomically write data/skills.json (single write site: allowlist_io.overwrite_allowlist)
         try:
             overwrite_allowlist(existing_allowlist)
         except Exception as e:
             logger.error("Failed to persist skills allowlist: %s", e)
-            return f"❌ 写入 data/skills.json 失败: {e}"
+            return f"❌ Failed to write data/skills.json: {e}"
 
-        # 统一刷新入口：rescan=False，仅重跑 allowlist→catalog→pool 链
+        # Unified refresh entrypoint: rescan=False, only re-run the allowlist→catalog→pool chain
         action = SkillEvent.DISABLE if any_disabled else SkillEvent.ENABLE
         self.agent.propagate_skill_change(action, rescan=False)
 
-        output = f"✅ 技能状态已更新（{len(applied)} 项变更）\n\n"
+        output = f"✅ Skill states updated ({len(applied)} changes)\n\n"
         if reason:
-            output += f"**原因**: {reason}\n\n"
-        output += "**变更详情**:\n"
+            output += f"**Reason**: {reason}\n\n"
+        output += "**Change details**:\n"
         for item in applied:
             output += f"- {item}\n"
         if skipped:
-            output += f"\n**跳过**: {', '.join(skipped)}\n"
+            output += f"\n**Skipped**: {', '.join(skipped)}\n"
 
         return output
 
     async def _execute_skill(self, params: dict) -> str:
-        """F10: 在隔离的 fork 上下文中执行技能"""
+        """F10: Execute a skill in an isolated fork context"""
         import uuid
 
         skill_name = params["skill_name"]
@@ -632,12 +633,12 @@ class SkillsHandler:
         skill = self.agent.skill_registry.get(skill_name)
         if not skill or skill.disabled:
             available = [s.name for s in self.agent.skill_registry.list_all()[:10]]
-            hint = f"，可用技能: {', '.join(available)}" if available else ""
-            return f"未找到或已禁用技能 '{skill_name}'{hint}。"
+            hint = f". Available skills: {', '.join(available)}" if available else ""
+            return f"Skill '{skill_name}' not found or is disabled{hint}."
 
         body = skill.get_body() or ""
         if not body:
-            return f"技能 '{skill_name}' 无可执行内容（SKILL.md body 为空）。"
+            return f"Skill '{skill_name}' has no executable content (SKILL.md body is empty)."
 
         # F4: argument substitution on body
         if "{{" in body:
@@ -664,10 +665,10 @@ class SkillsHandler:
 
         # Build fork system prompt
         fork_system = (
-            f"你是一个专注于 [{skill.name}] 技能的执行助手。\n"
-            f"请严格按照以下技能指令完成用户任务。\n\n"
+            f"You are an execution assistant focused on the [{skill.name}] skill.\n"
+            f"Please strictly follow the skill instructions below to complete the user's task.\n\n"
             f"---\n{body}\n---\n\n"
-            f"限制：最多执行 {max_turns} 轮操作。"
+            f"Constraint: at most {max_turns} turns of operations."
         )
 
         fork_messages = [{"role": "user", "content": task}]
@@ -684,7 +685,7 @@ class SkillsHandler:
                 if not hook_result["ok"]:
                     # Clean up allowlist before early return
                     self._cleanup_fork_allowlist(skill)
-                    return f"技能 before_execute 钩子失败: {hook_result['output']}"
+                    return f"Skill before_execute hook failed: {hook_result['output']}"
 
         # Determine tools: prefer skill's allowed_tools, fallback to agent's full toolset
         tools = self.agent._effective_tools
@@ -724,7 +725,7 @@ class SkillsHandler:
             )
         except Exception as e:
             logger.error("Fork execution of skill '%s' failed: %s", skill_name, e, exc_info=True)
-            result = f"技能执行失败: {e}"
+            result = f"Skill execution failed: {e}"
         finally:
             self._cleanup_fork_allowlist(skill)
 
@@ -749,7 +750,7 @@ class SkillsHandler:
                 pass
 
     def _uninstall_skill(self, params: dict) -> str:
-        """F14: 卸载外部技能"""
+        """F14: Uninstall an external skill"""
         import shutil
 
         skill_name = params["skill_name"]
@@ -761,7 +762,7 @@ class SkillsHandler:
 
         if skill:
             if skill.system:
-                return f"系统技能 '{skill.name}' 不可卸载。"
+                return f"System skill '{skill.name}' cannot be uninstalled."
             skill_dir = skill.skill_dir
             display_name = skill.name
             skill_id = skill.skill_id
@@ -769,7 +770,7 @@ class SkillsHandler:
             # Fallback: try to find in skills/ directory
             skill_dir = _cfg.skills_path / skill_name
             if not skill_dir.exists():
-                return f"未找到技能 '{skill_name}'，无法卸载。"
+                return f"Skill '{skill_name}' not found; cannot uninstall."
             display_name = skill_name
             skill_id = skill_name
 
@@ -779,10 +780,10 @@ class SkillsHandler:
             skill_dir_resolved = skill_dir.resolve()
             skill_dir_resolved.relative_to(skills_root)
         except (ValueError, OSError):
-            return "安全限制：不允许卸载 skills/ 目录之外的技能。"
+            return "Security restriction: uninstalling skills outside the skills/ directory is not allowed."
 
         if not skill_dir_resolved.exists():
-            return f"技能目录不存在: {display_name}"
+            return f"Skill directory does not exist: {display_name}"
 
         # Check for system skill marker in SKILL.md
         skill_md = skill_dir_resolved / "SKILL.md"
@@ -790,7 +791,7 @@ class SkillsHandler:
             try:
                 content = skill_md.read_text(encoding="utf-8", errors="replace")[:500]
                 if "system: true" in content.lower():
-                    return f"系统技能 '{display_name}' 不可卸载。"
+                    return f"System skill '{display_name}' cannot be uninstalled."
             except Exception:
                 pass
 
@@ -799,13 +800,13 @@ class SkillsHandler:
             shutil.rmtree(str(skill_dir_resolved))
         except Exception as e:
             logger.error("Failed to uninstall skill '%s': %s", skill_name, e)
-            return f"卸载失败: {e}"
+            return f"Uninstall failed: {e}"
 
         # Unregister from registry
         if self.agent.skill_registry.get(skill_id):
             self.agent.skill_registry.unregister(skill_id)
 
-        # 从 external_allowlist 中移除（若存在）；失败不影响卸载主流程。
+        # Remove from external_allowlist (if present); failure does not affect the main uninstall flow.
         try:
             from openakita.skills.allowlist_io import remove_skill_ids
 
@@ -813,7 +814,7 @@ class SkillsHandler:
         except Exception as e:
             logger.warning("Failed to update allowlist after uninstall of %s: %s", skill_id, e)
 
-        # Clean up activation manager（必须在 propagate 之前，因为 propagate 会重建激活表）
+        # Clean up activation manager (must happen before propagate, since propagate rebuilds the activation table)
         activation = getattr(self.agent, "_skill_activation", None)
         if activation:
             activation.unregister(skill_id)
@@ -826,13 +827,13 @@ class SkillsHandler:
         except Exception:
             pass
 
-        # 统一刷新入口（catalog / tools / pool / event）
+        # Unified refresh entrypoint (catalog / tools / pool / event)
         self.agent.propagate_skill_change(SkillEvent.UNINSTALL, rescan=False)
 
-        return f"✅ 技能 '{display_name}' 已卸载。\n\n已删除目录及所有文件，并从系统中注销。"
+        return f"✅ Skill '{display_name}' has been uninstalled.\n\nThe directory and all its files have been removed, and the skill has been deregistered from the system."
 
 
 def create_handler(agent: "Agent"):
-    """创建技能管理处理器"""
+    """Create the skill management handler"""
     handler = SkillsHandler(agent)
     return handler.handle

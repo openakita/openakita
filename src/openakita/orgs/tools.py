@@ -1,48 +1,49 @@
 """
-组织节点专属工具定义
+Organization node tool definitions.
 
-每个组织内的 Agent 节点自动获得这些工具，用于组织内通信、
-记忆读写、组织感知、制度查询、人事管理等。
+Every Agent node inside an organization automatically gets these tools for
+in-org communication, memory reads/writes, org awareness, policy queries,
+personnel management, etc.
 """
 
 from __future__ import annotations
 
 ORG_NODE_TOOLS: list[dict] = [
-    # ── 通信 ──
+    # -- Communication --
     {
         "name": "org_send_message",
-        "description": "向指定同事发送消息。优先通过已有连线关系沟通。",
+        "description": "Send a message to a specific colleague. Prefer existing connections where available.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "to_node": {
                     "type": "string",
                     "description": (
-                        "目标节点的 id（`node_xxxxxxxx` 形式）。必须使用精确 id，"
-                        "不要填角色名；如果不确定，先用 org_find_colleague 或 "
-                        "org_get_org_chart 查询。不能写自己的 id。"
+                        "The target node's id (form: `node_xxxxxxxx`). Must be an exact id; "
+                        "do not supply a role name. If unsure, look it up first via org_find_colleague "
+                        "or org_get_org_chart. Your own id is not allowed."
                     ),
                 },
-                "content": {"type": "string", "description": "消息内容"},
+                "content": {"type": "string", "description": "Message content"},
                 "msg_type": {
                     "type": "string",
                     "enum": ["question", "answer", "feedback", "handshake"],
-                    "description": "消息类型",
+                    "description": "Message type",
                     "default": "question",
                 },
-                "priority": {"type": "integer", "description": "优先级 0=普通 1=紧急 2=最高", "default": 0},
+                "priority": {"type": "integer", "description": "Priority: 0=normal, 1=urgent, 2=highest", "default": 0},
             },
             "required": ["to_node", "content"],
         },
     },
     {
         "name": "org_reply_message",
-        "description": "回复某条已收到的消息",
+        "description": "Reply to a previously received message",
         "input_schema": {
             "type": "object",
             "properties": {
-                "reply_to": {"type": "string", "description": "要回复的消息 ID"},
-                "content": {"type": "string", "description": "回复内容"},
+                "reply_to": {"type": "string", "description": "ID of the message being replied to"},
+                "content": {"type": "string", "description": "Reply content"},
             },
             "required": ["reply_to", "content"],
         },
@@ -50,9 +51,9 @@ ORG_NODE_TOOLS: list[dict] = [
     {
         "name": "org_delegate_task",
         "description": (
-            "向直属下级分配任务。只能分配给你的直接下属，不能委派给平级同事或自己。"
-            "与平级协作请用 org_send_message。"
-            "不确定下属 id 时先用 org_get_org_chart 或 org_find_colleague 查询。"
+            "Assign a task to a direct subordinate. Only direct reports may be assigned to; "
+            "peers and yourself are not allowed. For peer collaboration use org_send_message. "
+            "If unsure of a subordinate's id, look it up first with org_get_org_chart or org_find_colleague."
         ),
         "input_schema": {
             "type": "object",
@@ -60,12 +61,12 @@ ORG_NODE_TOOLS: list[dict] = [
                 "to_node": {
                     "type": "string",
                     "description": (
-                        "目标直属下级的节点 id（`node_xxxxxxxx` 形式）。必须是你的直接下属，"
-                        "禁止填角色名或自己的 id；名字接近的同事要用精确 id 区分。"
+                        "Target direct subordinate node id (form: `node_xxxxxxxx`). Must be a direct report; "
+                        "role names and your own id are forbidden. Use exact ids to disambiguate similarly-named colleagues."
                     ),
                 },
-                "task": {"type": "string", "description": "任务描述"},
-                "deadline": {"type": "string", "description": "截止时间（ISO 格式，可选）。AI 节点通常在分钟内完成任务，建议设置 5-30 分钟的 deadline"},
+                "task": {"type": "string", "description": "Task description"},
+                "deadline": {"type": "string", "description": "Deadline (ISO format, optional). AI nodes usually finish tasks within minutes; a 5-30 minute deadline is recommended."},
                 "priority": {"type": "integer", "default": 0},
             },
             "required": ["to_node", "task"],
@@ -73,11 +74,11 @@ ORG_NODE_TOOLS: list[dict] = [
     },
     {
         "name": "org_escalate",
-        "description": "向上级上报问题或请求决策",
+        "description": "Escalate a problem to a superior or request a decision",
         "input_schema": {
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "上报内容"},
+                "content": {"type": "string", "description": "Escalation content"},
                 "priority": {"type": "integer", "default": 1},
             },
             "required": ["content"],
@@ -85,83 +86,83 @@ ORG_NODE_TOOLS: list[dict] = [
     },
     {
         "name": "org_broadcast",
-        "description": "广播单向通知消息（不需要回复的公告）。level=0 可全组织广播，其他仅部门广播。注意：如果需要开会讨论，请使用 org_request_meeting。",
+        "description": "Broadcast a one-way notification (an announcement that does not expect replies). level=0 broadcasts org-wide; otherwise department-only. Note: if a discussion/meeting is needed, use org_request_meeting instead.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "广播内容"},
+                "content": {"type": "string", "description": "Broadcast content"},
                 "scope": {"type": "string", "enum": ["department", "organization"], "default": "department"},
             },
             "required": ["content"],
         },
     },
-    # ── 组织感知 ──
+    # -- Organization awareness --
     {
         "name": "org_get_org_chart",
-        "description": "查看完整组织架构（所有部门/岗位/职责/汇报关系/当前状态）",
+        "description": "View the full org chart (all departments/positions/responsibilities/reporting relations/current status)",
         "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "org_find_colleague",
-        "description": "按能力/技能/部门搜索合适的同事",
+        "description": "Search for a suitable colleague by capability/skill/department",
         "input_schema": {
             "type": "object",
             "properties": {
-                "need": {"type": "string", "description": "需要的能力或技能描述"},
-                "prefer_department": {"type": "string", "description": "偏好部门（可选）"},
+                "need": {"type": "string", "description": "Description of the required capability or skill"},
+                "prefer_department": {"type": "string", "description": "Preferred department (optional)"},
             },
             "required": ["need"],
         },
     },
     {
         "name": "org_get_node_status",
-        "description": "查看某位同事的当前状态（忙/闲/任务队列）",
+        "description": "View a colleague's current status (busy/idle/task queue)",
         "input_schema": {
             "type": "object",
             "properties": {
-                "node_id": {"type": "string", "description": "节点 ID"},
+                "node_id": {"type": "string", "description": "Node ID"},
             },
             "required": ["node_id"],
         },
     },
     {
         "name": "org_get_org_status",
-        "description": "查看组织整体运行状态摘要",
+        "description": "View a summary of the organization's overall runtime status",
         "input_schema": {"type": "object", "properties": {}},
     },
-    # ── 记忆 ──
+    # -- Memory --
     {
         "name": "org_read_blackboard",
-        "description": "读取组织共享黑板（组织级共享记忆）的最新内容",
+        "description": "Read the latest content from the organization's shared blackboard (org-level shared memory)",
         "input_schema": {
             "type": "object",
             "properties": {
-                "limit": {"type": "integer", "default": 10, "description": "返回条数"},
-                "tag": {"type": "string", "description": "按标签过滤（可选）"},
+                "limit": {"type": "integer", "default": 10, "description": "Number of entries to return"},
+                "tag": {"type": "string", "description": "Filter by tag (optional)"},
             },
         },
     },
     {
         "name": "org_write_blackboard",
-        "description": "写入组织共享黑板。记录重要事实、决策、进度等。",
+        "description": "Write to the organization's shared blackboard. Record important facts, decisions, progress, etc.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "记忆内容"},
+                "content": {"type": "string", "description": "Memory content"},
                 "memory_type": {
                     "type": "string",
                     "enum": ["fact", "decision", "rule", "progress", "lesson", "resource"],
                     "default": "fact",
                 },
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "标签"},
-                "importance": {"type": "number", "description": "重要程度 0.0~1.0", "default": 0.5},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags"},
+                "importance": {"type": "number", "description": "Importance 0.0~1.0", "default": 0.5},
             },
             "required": ["content"],
         },
     },
     {
         "name": "org_read_dept_memory",
-        "description": "读取所属部门的共享记忆",
+        "description": "Read shared memory for your department",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -171,7 +172,7 @@ ORG_NODE_TOOLS: list[dict] = [
     },
     {
         "name": "org_write_dept_memory",
-        "description": "写入部门共享记忆",
+        "description": "Write to shared department memory",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -183,10 +184,10 @@ ORG_NODE_TOOLS: list[dict] = [
             "required": ["content"],
         },
     },
-    # ── 节点级私有记忆 ──
+    # -- Node-level private memory --
     {
         "name": "org_read_node_memory",
-        "description": "读取你自己的私有记忆（节点级），仅自己可见",
+        "description": "Read your own private (node-level) memory; visible only to you",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -196,54 +197,54 @@ ORG_NODE_TOOLS: list[dict] = [
     },
     {
         "name": "org_write_node_memory",
-        "description": "写入你自己的私有记忆（节点级）。用于记录个人工作笔记、经验教训、待办事项等，仅自己可见",
+        "description": "Write to your own private (node-level) memory. Use this for personal work notes, lessons learned, to-dos, etc.; visible only to you.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "记忆内容"},
+                "content": {"type": "string", "description": "Memory content"},
                 "memory_type": {
                     "type": "string",
                     "enum": ["fact", "decision", "rule", "progress", "lesson", "resource"],
                     "default": "fact",
                 },
-                "tags": {"type": "array", "items": {"type": "string"}, "description": "标签"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags"},
                 "importance": {"type": "number", "default": 0.5},
             },
             "required": ["content"],
         },
     },
-    # ── 制度流程 ──
+    # -- Policies and procedures --
     {
         "name": "org_list_policies",
-        "description": "列出所有组织制度和流程文件（返回索引）",
+        "description": "List all organization policy/procedure files (returns an index)",
         "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "org_read_policy",
-        "description": "读取某个制度文件的完整内容",
+        "description": "Read the full content of a policy file",
         "input_schema": {
             "type": "object",
             "properties": {
-                "filename": {"type": "string", "description": "制度文件名（如 org-handbook.md）"},
+                "filename": {"type": "string", "description": "Policy file name (e.g. org-handbook.md)"},
             },
             "required": ["filename"],
         },
     },
     {
         "name": "org_search_policy",
-        "description": "按关键词搜索相关制度内容",
+        "description": "Search policy content by keyword",
         "input_schema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "搜索关键词"},
+                "query": {"type": "string", "description": "Search keyword"},
             },
             "required": ["query"],
         },
     },
-    # ── 人事管理 ──
+    # -- Personnel management --
     {
         "name": "org_freeze_node",
-        "description": "冻结一个下级节点（保留数据，暂停活动）",
+        "description": "Freeze a subordinate node (retains data, pauses activity)",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -255,7 +256,7 @@ ORG_NODE_TOOLS: list[dict] = [
     },
     {
         "name": "org_unfreeze_node",
-        "description": "解冻一个被冻结的下级节点",
+        "description": "Unfreeze a previously frozen subordinate node",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -266,58 +267,58 @@ ORG_NODE_TOOLS: list[dict] = [
     },
     {
         "name": "org_request_clone",
-        "description": "申请克隆某岗位（加人手），需审批",
+        "description": "Request to clone a position (add headcount); requires approval",
         "input_schema": {
             "type": "object",
             "properties": {
-                "source_node_id": {"type": "string", "description": "要克隆的岗位节点 ID"},
-                "reason": {"type": "string", "description": "申请原因"},
-                "ephemeral": {"type": "boolean", "default": True, "description": "是否为临时节点"},
+                "source_node_id": {"type": "string", "description": "Node ID of the position to clone"},
+                "reason": {"type": "string", "description": "Reason for the request"},
+                "ephemeral": {"type": "boolean", "default": True, "description": "Whether this is an ephemeral node"},
             },
             "required": ["source_node_id", "reason"],
         },
     },
     {
         "name": "org_request_recruit",
-        "description": "申请新增岗位（新技能），需审批",
+        "description": "Request a new position (new skill); requires approval",
         "input_schema": {
             "type": "object",
             "properties": {
-                "role_title": {"type": "string", "description": "岗位名称"},
-                "role_goal": {"type": "string", "description": "岗位目标"},
-                "department": {"type": "string", "description": "所属部门"},
-                "reason": {"type": "string", "description": "申请原因"},
-                "parent_node_id": {"type": "string", "description": "挂载在哪个上级下面"},
+                "role_title": {"type": "string", "description": "Role title"},
+                "role_goal": {"type": "string", "description": "Role goal"},
+                "department": {"type": "string", "description": "Department"},
+                "reason": {"type": "string", "description": "Reason for the request"},
+                "parent_node_id": {"type": "string", "description": "The superior node to attach under"},
             },
             "required": ["role_title", "role_goal", "reason", "parent_node_id"],
         },
     },
     {
         "name": "org_dismiss_node",
-        "description": "申请裁撤临时节点（仅 ephemeral 节点可裁撤）",
+        "description": "Request dismissal of an ephemeral node (only ephemeral nodes can be dismissed)",
         "input_schema": {
             "type": "object",
             "properties": {
-                "node_id": {"type": "string", "description": "要裁撤的节点 ID"},
-                "reason": {"type": "string", "description": "裁撤原因"},
+                "node_id": {"type": "string", "description": "Node ID to dismiss"},
+                "reason": {"type": "string", "description": "Reason for dismissal"},
             },
             "required": ["node_id"],
         },
     },
-    # ── 会议 ──
+    # -- Meetings --
     {
         "name": "org_request_meeting",
-        "description": "发起并召开多方实时会议。参与者轮流发言讨论，自动生成会议结论并写入组织黑板。当需要「开会」「讨论」「汇报」时，必须使用此工具而非 org_broadcast。",
+        "description": "Initiate and hold a real-time multi-party meeting. Participants take turns speaking; conclusions are generated automatically and written to the org blackboard. When a 'meeting', 'discussion', or 'report' is needed, use this tool rather than org_broadcast.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "participants": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "参与会议的节点 ID 列表（不含发起者自己）",
+                    "description": "List of node IDs participating in the meeting (excluding the initiator)",
                 },
-                "topic": {"type": "string", "description": "会议主题"},
-                "max_rounds": {"type": "integer", "default": 3, "description": "最大讨论轮次"},
+                "topic": {"type": "string", "description": "Meeting topic"},
+                "max_rounds": {"type": "integer", "default": 3, "description": "Maximum discussion rounds"},
             },
             "required": ["participants", "topic"],
         },
