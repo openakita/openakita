@@ -1,0 +1,33 @@
+networks:
+  bcredits-core:
+    external: true
+    name: bcredits-core
+services:
+  # ── OpenAkita Frontend (React/Vite) ────────────────────────────────────────
+  frontend:
+    build:
+      context: .                              # repo root (needed for src/ alias)
+      dockerfile: apps/setup-center/Dockerfile
+    image: openakita-frontend:latest
+    container_name: openakita-frontend
+    ports:
+      - "3000:80"                             # http://localhost:3000/web/
+    environment:
+      # Point to the OpenAkita backend.
+      # Change to the host's LAN IP if the backend runs outside Docker.
+      BACKEND_HOST: host.docker.internal      # Linux: use host-gateway below
+      BACKEND_PORT: 18900
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # lets container reach host ports
+    restart: unless-stopped
+    networks:
+      - bcredits-core
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.openakita-frontend.rule=Host(`exp-ui-nvu.bitcoincredit.services`)"
+      - "traefik.http.routers.openakita-frontend.entrypoints=websecure"
+      - "traefik.http.routers.openakita-frontend.tls=true"
+      - "traefik.http.routers.openakita-frontend.tls.certresolver=cloudflare"
+      - "traefik.http.services.openakita-frontend.loadbalancer.server.port=80"
+      # - "traefik.http.routers.openakita-frontend.middlewares=openakita-frontend-auth"
+      # - "traefik.http.middlewares.openakita-frontend-auth.basicauth.users=devops:$$apr1$$Y27NaM5B$$Z4.P8p8f8384qzlLdWnRM0"       
