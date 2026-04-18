@@ -1,16 +1,16 @@
 """
-文件工具测试用例 (30个)
+File tool test cases (30)
 """
 
 from openakita.testing.runner import TestCase
 
 FILE_TESTS = [
-    # 读写测试
+    # Read/write tests
     TestCase(
         id="tool_file_001",
         category="tools",
         subcategory="file",
-        description="写入并读取文件",
+        description="Write and read a file",
         input={
             "action": "write_read",
             "path": "/tmp/openakita_test_001.txt",
@@ -23,7 +23,7 @@ FILE_TESTS = [
         id="tool_file_002",
         category="tools",
         subcategory="file",
-        description="追加内容",
+        description="Append content",
         input={
             "action": "append_read",
             "path": "/tmp/openakita_test_002.txt",
@@ -37,7 +37,7 @@ FILE_TESTS = [
         id="tool_file_003",
         category="tools",
         subcategory="file",
-        description="检查文件存在",
+        description="Check file existence",
         input={
             "action": "exists",
             "path": "/tmp/openakita_test_001.txt",
@@ -49,7 +49,7 @@ FILE_TESTS = [
         id="tool_file_004",
         category="tools",
         subcategory="file",
-        description="列出目录",
+        description="List directory",
         input={
             "action": "list_dir",
             "path": "/tmp",
@@ -61,7 +61,7 @@ FILE_TESTS = [
         id="tool_file_005",
         category="tools",
         subcategory="file",
-        description="创建目录",
+        description="Create directory",
         input={
             "action": "mkdir",
             "path": "/tmp/openakita_test_dir",
@@ -73,7 +73,7 @@ FILE_TESTS = [
         id="tool_file_006",
         category="tools",
         subcategory="file",
-        description="复制文件",
+        description="Copy file",
         input={
             "action": "copy",
             "src": "/tmp/openakita_test_001.txt",
@@ -86,7 +86,7 @@ FILE_TESTS = [
         id="tool_file_007",
         category="tools",
         subcategory="file",
-        description="搜索文件",
+        description="Search files",
         input={
             "action": "search",
             "path": "/tmp",
@@ -99,7 +99,7 @@ FILE_TESTS = [
         id="tool_file_008",
         category="tools",
         subcategory="file",
-        description="读取大文件部分内容",
+        description="Read partial content of a large file",
         input={
             "action": "read_lines",
             "path": "/tmp/openakita_test_001.txt",
@@ -113,7 +113,7 @@ FILE_TESTS = [
         id="tool_file_009",
         category="tools",
         subcategory="file",
-        description="获取文件信息",
+        description="Get file info",
         input={
             "action": "stat",
             "path": "/tmp/openakita_test_001.txt",
@@ -125,7 +125,7 @@ FILE_TESTS = [
         id="tool_file_010",
         category="tools",
         subcategory="file",
-        description="删除文件",
+        description="Delete file",
         input={
             "action": "delete",
             "path": "/tmp/openakita_test_delete.txt",

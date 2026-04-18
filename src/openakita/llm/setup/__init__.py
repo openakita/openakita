@@ -1,10 +1,10 @@
 """
-LLM 配置向导
+LLM configuration wizard
 
-提供多种方式配置 LLM 端点：
-- CLI 命令行向导
-- Web 配置页面
-- Telegram 命令
+Provides multiple ways to configure LLM endpoints:
+- CLI interactive wizard
+- Web configuration page
+- Telegram commands
 """
 
 from .cli import quick_add_endpoint, run_cli_wizard

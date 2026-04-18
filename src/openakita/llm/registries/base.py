@@ -1,7 +1,7 @@
 """
-服务商注册表基类
+Provider registry base class.
 
-定义所有服务商注册表必须实现的接口。
+Defines the interface that all provider registries must implement.
 """
 
 from abc import ABC, abstractmethod
@@ -13,7 +13,7 @@ _shared_registry_client: httpx.AsyncClient | None = None
 
 
 def get_registry_client() -> httpx.AsyncClient:
-    """获取 registry 共享 httpx 客户端（连接池复用，避免每次请求新建/销毁）。"""
+    """Get the shared registry httpx client (connection pool reuse, avoids creating/destroying per request)."""
     global _shared_registry_client
     if _shared_registry_client is None or _shared_registry_client.is_closed:
         _shared_registry_client = httpx.AsyncClient(
@@ -28,60 +28,60 @@ def get_registry_client() -> httpx.AsyncClient:
 
 @dataclass
 class ProviderInfo:
-    """服务商信息"""
+    """Provider information."""
 
-    name: str  # 显示名称
-    slug: str  # 标识符 (anthropic, dashscope, ...)
+    name: str  # Display name
+    slug: str  # Identifier (anthropic, dashscope, ...)
     api_type: str  # "anthropic" | "openai"
-    default_base_url: str  # 默认 API 地址
-    api_key_env_suggestion: str  # 建议的环境变量名
-    supports_model_list: bool  # 是否支持模型列表 API
-    supports_capability_api: bool  # API 是否返回能力信息
-    requires_api_key: bool = True  # 是否需要 API Key（本地服务如 Ollama 为 False）
-    is_local: bool = False  # 是否为本地服务商
-    coding_plan_base_url: str | None = None  # Coding Plan 专用 API 地址（为 None 则不支持）
+    default_base_url: str  # Default API endpoint
+    api_key_env_suggestion: str  # Suggested environment variable name
+    supports_model_list: bool  # Whether the model list API is supported
+    supports_capability_api: bool  # Whether the API returns capability info
+    requires_api_key: bool = True  # Whether an API key is required (False for local services like Ollama)
+    is_local: bool = False  # Whether this is a local provider
+    coding_plan_base_url: str | None = None  # Dedicated API endpoint for Coding Plan (None means unsupported)
     coding_plan_api_type: str | None = (
-        None  # Coding Plan 模式下的协议类型（为 None 则与 api_type 相同）
+        None  # Protocol type under Coding Plan mode (None means same as api_type)
     )
-    note: str | None = None  # 前端 i18n key — 服务商提示信息（如"NVIDIA 免费模型限制输出"）
+    note: str | None = None  # Frontend i18n key — provider note (e.g., "NVIDIA free model output limits")
 
 
 @dataclass
 class ModelInfo:
-    """模型信息"""
+    """Model information."""
 
-    id: str  # 模型 ID (qwen-max, claude-3-opus, ...)
-    name: str  # 显示名称
+    id: str  # Model ID (qwen-max, claude-3-opus, ...)
+    name: str  # Display name
     capabilities: dict = field(default_factory=dict)  # {"text": True, "vision": True, ...}
-    context_window: int | None = None  # 上下文窗口
+    context_window: int | None = None  # Context window
     max_output_tokens: int | None = None
-    pricing: dict | None = None  # 定价信息
-    thinking_only: bool = False  # 是否仅支持思考模式
+    pricing: dict | None = None  # Pricing information
+    thinking_only: bool = False  # Whether only thinking mode is supported
 
 
 class ProviderRegistry(ABC):
-    """服务商注册表基类"""
+    """Provider registry base class."""
 
     info: ProviderInfo
 
     @abstractmethod
     async def list_models(self, api_key: str) -> list[ModelInfo]:
         """
-        获取可用模型列表
+        Get the list of available models.
 
         Args:
             api_key: API Key
 
         Returns:
-            模型列表
+            List of models
         """
         pass
 
     def get_model_capabilities(self, model_id: str) -> dict:
         """
-        获取模型能力
+        Get model capabilities.
 
-        优先级: API 返回 > 预置能力表 > 默认值
+        Priority: API response > built-in capability table > defaults
         """
         from ..capabilities import infer_capabilities
 

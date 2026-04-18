@@ -1,7 +1,7 @@
 """
-Agent 包 manifest.json 数据模型与校验逻辑
+Data model and validation logic for agent package manifest.json
 
-遵循 Open Agent Sharing Specification v1.0
+Follows the Open Agent Sharing Specification v1.0
 """
 
 from __future__ import annotations
@@ -109,7 +109,7 @@ class AgentManifest:
         self.tags = normalize_tags(self.tags)
 
     def validate(self) -> list[str]:
-        """返回所有校验错误。空列表表示有效。"""
+        """Return all validation errors. An empty list means valid."""
         errors: list[str] = []
 
         if self.spec_version not in SUPPORTED_SPEC_VERSIONS:
@@ -199,7 +199,7 @@ class AgentManifest:
 
 
 def validate_file_safety(filepath: str) -> list[str]:
-    """校验文件路径安全性"""
+    """Validate file path safety."""
     errors = []
     normalized = filepath.replace("\\", "/")
 

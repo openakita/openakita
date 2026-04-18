@@ -1,8 +1,9 @@
 """
-统一导入辅助 — 可选依赖的 import 与友好提示
+Unified import helper — lazy imports with friendly hints for optional dependencies
 
-所有做延迟导入的模块统一使用本模块提供的 import_or_hint() 函数，
-在 ImportError 时返回上下文相关的安装提示（打包环境→设置中心；开发环境→pip install）。
+All modules that perform lazy imports use the import_or_hint() function provided
+by this module. On ImportError it returns context-aware installation guidance
+(packaged environment -> setup center; dev environment -> pip install).
 
 Usage:
     from openakita.tools._import_helper import import_or_hint
@@ -11,7 +12,7 @@ Usage:
     if hint:
         return {"error": hint}
 
-    # 此时 playwright 已可用，可以安全导入
+    # playwright is now available and safe to import
     from playwright.async_api import async_playwright
 """
 
@@ -23,12 +24,12 @@ from openakita.runtime_env import IS_FROZEN
 
 logger = logging.getLogger(__name__)
 
-# ===== Import Name → (module_id, setup_center_display_name, pip_package) =====
-# module_id=None 表示该包已打包进 core bundle，理论上不会缺失
-# pip_package 为空串时使用 import name 作为 pip 包名
+# ===== Import Name -> (module_id, setup_center_display_name, pip_package) =====
+# module_id=None means the package is bundled into the core bundle and should not be missing
+# When pip_package is empty, the import name is used as the pip package name
 
 _PACKAGE_MODULE_MAP: dict[str, tuple[str | None, str | None, str]] = {
-    # -- 已直接打包的包 (module_id=None，正常不应缺失) --
+    # -- Directly bundled packages (module_id=None, normally should not be missing) --
     "ddgs": (None, None, "ddgs"),
     "psutil": (None, None, "psutil"),
     "pyperclip": (None, None, "pyperclip"),
@@ -37,35 +38,35 @@ _PACKAGE_MODULE_MAP: dict[str, tuple[str | None, str | None, str]] = {
     "httpx": (None, None, "httpx"),
     "yaml": (None, None, "pyyaml"),
     "mcp": (None, None, "mcp"),
-    # 文档处理 (已直接打包)
+    # Document processing (directly bundled)
     "docx": (None, None, "python-docx"),
     "openpyxl": (None, None, "openpyxl"),
     "pptx": (None, None, "python-pptx"),
     "fitz": (None, None, "PyMuPDF"),
     "pypdf": (None, None, "pypdf"),
-    # 图像处理 (已直接打包)
+    # Image processing (directly bundled)
     "PIL": (None, None, "Pillow"),
     "Pillow": (None, None, "Pillow"),
-    # 桌面自动化 (已直接打包)
+    # Desktop automation (directly bundled)
     "pyautogui": (None, None, "pyautogui"),
     "pywinauto": (None, None, "pywinauto"),
     "mss": (None, None, "mss"),
-    # -- 浏览器自动化 (已直接打包) --
+    # -- Browser automation (directly bundled) --
     "playwright": (None, None, "playwright"),
     "playwright.async_api": (None, None, "playwright"),
-    # -- 向量记忆 --
-    "sentence_transformers": ("vector-memory", "向量记忆增强", "sentence-transformers"),
-    "chromadb": ("vector-memory", "向量记忆增强", "chromadb"),
-    # -- 语音识别 --
-    "whisper": ("whisper", "语音识别", "openai-whisper"),
-    "static_ffmpeg": ("whisper", "语音识别", "static-ffmpeg"),
-    # -- IM 通道适配器 (已直接打包) --
+    # -- Vector memory --
+    "sentence_transformers": ("vector-memory", "Vector Memory Enhancement", "sentence-transformers"),
+    "chromadb": ("vector-memory", "Vector Memory Enhancement", "chromadb"),
+    # -- Speech recognition --
+    "whisper": ("whisper", "Speech Recognition", "openai-whisper"),
+    "static_ffmpeg": ("whisper", "Speech Recognition", "static-ffmpeg"),
+    # -- IM channel adapters (directly bundled) --
     "lark_oapi": (None, None, "lark-oapi"),
     "dingtalk_stream": (None, None, "dingtalk-stream"),
     "Crypto": (None, None, "pycryptodome"),
     "Cryptodome": (None, None, "pycryptodome"),
     "pilk": (None, None, "pilk"),
-    # -- 其他 --
+    # -- Other --
     "telegram": (None, None, "python-telegram-bot"),
     "pytesseract": (None, None, "pytesseract"),
     "nacl": (None, None, "PyNaCl"),
@@ -74,13 +75,13 @@ _PACKAGE_MODULE_MAP: dict[str, tuple[str | None, str | None, str]] = {
 
 
 def import_or_hint(package: str) -> str | None:
-    """尝试导入包，成功返回 None，失败返回用户友好的安装提示。
+    """Try to import a package; returns None on success, or a user-friendly installation hint on failure.
 
     Args:
-        package: Python 导入名（如 "playwright"、"ddgs"、"lark_oapi"）
+        package: Python import name (e.g. "playwright", "ddgs", "lark_oapi")
 
     Returns:
-        None 如果导入成功；否则返回安装提示字符串。
+        None if import succeeded; otherwise an installation hint string.
     """
     try:
         importlib.import_module(package)
@@ -91,34 +92,34 @@ def import_or_hint(package: str) -> str | None:
 
 
 def _build_hint(package: str) -> str:
-    """根据包名和运行环境构建安装提示。"""
+    """Build an installation hint based on the package name and runtime environment."""
     info = _PACKAGE_MODULE_MAP.get(package)
 
     if info is None:
-        # 未知包，返回通用 pip 提示
-        return f"缺少依赖: pip install {package}"
+        # Unknown package, return generic pip hint
+        return f"Missing dependency: pip install {package}"
 
     module_id, display_name, pip_name = info
 
     if IS_FROZEN and module_id:
-        return f"请在设置中心安装「{display_name}」模块后重启服务"
+        return f"Please install the \"{display_name}\" module in the setup center and restart the service"
     elif IS_FROZEN and not module_id:
-        # 已打包但仍缺失（异常情况）
-        return f"核心依赖 {pip_name} 缺失，请尝试重新安装应用"
+        # Bundled but still missing (unusual situation)
+        return f"Core dependency {pip_name} is missing, please try reinstalling the application"
     else:
-        # 开发环境
-        return f"缺少依赖: pip install {pip_name}"
+        # Development environment
+        return f"Missing dependency: pip install {pip_name}"
 
 
 def try_import(package: str) -> tuple[Any | None, str | None]:
-    """尝试导入包，返回 (module, None) 或 (None, hint)。
+    """Try to import a package, returning (module, None) or (None, hint).
 
-    便于在一行内完成导入检查：
+    Convenient for completing an import check in a single line:
 
         mod, hint = try_import("playwright")
         if hint:
             return {"error": hint}
-        # 使用 mod ...
+        # Use mod ...
     """
     try:
         mod = importlib.import_module(package)
@@ -128,7 +129,7 @@ def try_import(package: str) -> tuple[Any | None, str | None]:
 
 
 def check_imports(*packages: str) -> str | None:
-    """检查多个包是否可导入，返回第一个缺失包的提示，或 None（全部可用）。
+    """Check whether multiple packages are importable; returns a hint for the first missing package, or None if all are available.
 
     Usage:
         hint = check_imports("pyautogui", "pywinauto", "mss")

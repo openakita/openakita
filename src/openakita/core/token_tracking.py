@@ -1,12 +1,14 @@
 """
-Token 用量追踪：contextvars 上下文 + 后台写入线程。
+Token usage tracking: contextvars context + background writer thread.
 
-架构：
-- 上层调用方（ReasoningEngine / Agent / ContextManager 等）在发起 LLM 调用前
-  通过 set_tracking_context() 设置本次调用的元数据（session_id / operation_type …）。
-- Brain.messages_create / messages_create_async 在拿到响应后调用 record_usage()，
-  该函数读取 contextvars 中的元数据并投递到写入队列。
-- 后台守护线程 (_writer_loop) 持有独立的 sqlite3 同步连接，批量 flush 队列中的记录。
+Architecture:
+- Upper-layer callers (ReasoningEngine / Agent / ContextManager etc.) call
+  set_tracking_context() before making an LLM request to set metadata
+  (session_id / operation_type …).
+- Brain.messages_create / messages_create_async call record_usage() after receiving
+  a response; this reads contextvars metadata and enqueues a write.
+- A background daemon thread (_writer_loop) holds an independent sqlite3 sync
+  connection and batch-flushes queued records.
 """
 
 from __future__ import annotations
@@ -52,14 +54,14 @@ def reset_tracking_context(token: contextvars.Token) -> None:
     _tracking_ctx.reset(token)
 
 
-# ──────────────────────── 写入队列 & 后台线程 ────────────────────────
+# ──────────────────────── Write queue & background thread ────────────────────────
 
 _write_queue: queue.Queue = queue.Queue()
 _initialized = False
 
 
 def init_token_tracking(db_path: str) -> None:
-    """启动后台写入线程。在应用启动时调用一次。"""
+    """Start the background writer thread. Call once at application startup."""
     global _initialized
     if _initialized:
         return
@@ -85,7 +87,7 @@ def record_usage(
     context_tokens: int = 0,
     estimated_cost: float = 0.0,
 ) -> None:
-    """将一次 LLM 调用的 token 用量投递到写入队列（非阻塞）。"""
+    """Enqueue token usage from one LLM call into the write queue (non-blocking)."""
     if not _initialized:
         return
     ctx = _tracking_ctx.get()
@@ -110,7 +112,7 @@ def record_usage(
     )
 
 
-# ──────────────────────── 后台写入实现 ────────────────────────
+# ──────────────────────── Background writer implementation ────────────────────────
 
 _INSERT_SQL = """
 INSERT INTO token_usage (
@@ -140,7 +142,7 @@ _COLUMN_ORDER = (
 
 
 def _writer_loop(db_path: str) -> None:
-    """后台守护线程主循环：批量写入 token_usage 记录。"""
+    """Background daemon thread main loop: batch-write token_usage records."""
     try:
         conn = sqlite3.connect(db_path, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL")
@@ -169,20 +171,20 @@ def _writer_loop(db_path: str) -> None:
             CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id);
             CREATE INDEX IF NOT EXISTS idx_token_usage_endpoint ON token_usage(endpoint_name);
         """)
-        # Migration: 为旧数据库添加 estimated_cost 列
+        # Migration: add estimated_cost column for legacy databases
         try:
             conn.execute("ALTER TABLE token_usage ADD COLUMN estimated_cost REAL DEFAULT 0")
             conn.commit()
         except Exception:
-            pass  # 列已存在则忽略
-        # Migration: 为旧数据库添加 agent_profile_id 列
+            pass  # Column already exists; ignore
+        # Migration: add agent_profile_id column for legacy databases
         try:
             conn.execute(
                 "ALTER TABLE token_usage ADD COLUMN agent_profile_id TEXT DEFAULT 'default'"
             )
             conn.commit()
         except Exception:
-            pass  # 列已存在则忽略
+            pass  # Column already exists; ignore
     except Exception as e:
         logger.error(f"[TokenTracking] Failed to open database: {e}")
         return

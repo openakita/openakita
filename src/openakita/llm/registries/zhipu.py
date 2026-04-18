@@ -1,16 +1,16 @@
 """
-智谱 AI (Zhipu / GLM) 服务商注册表（OpenAI 兼容）
+Zhipu AI (Zhipu / GLM) provider registry (OpenAI-compatible)
 
-说明：
-- 国内区：open.bigmodel.cn  → https://open.bigmodel.cn/api/paas/v4
-- 国际区：z.ai / api.z.ai   → https://api.z.ai/api/paas/v4
+Notes:
+- China region:   open.bigmodel.cn  -> https://open.bigmodel.cn/api/paas/v4
+- International:  z.ai / api.z.ai   -> https://api.z.ai/api/paas/v4
 
-两个区域 API 完全 OpenAI 兼容，支持 /v4/chat/completions、/v4/models 等。
-模型通用：GLM-5、GLM-4.7、GLM-4.6V、GLM-4.5、GLM-4 等。
+Both regions are fully OpenAI-compatible, supporting /v4/chat/completions,
+/v4/models, etc.  Common models: GLM-5, GLM-4.7, GLM-4.6V, GLM-4.5, GLM-4, etc.
 
-API 文档:
-  国内: https://open.bigmodel.cn/dev/api
-  国际: https://docs.z.ai/
+API documentation:
+  China:   https://open.bigmodel.cn/dev/api
+  International: https://docs.z.ai/
 """
 
 from ..capabilities import infer_capabilities
@@ -18,10 +18,10 @@ from .base import ModelInfo, ProviderInfo, ProviderRegistry, get_registry_client
 
 
 class ZhipuChinaRegistry(ProviderRegistry):
-    """智谱 AI 中国区注册表"""
+    """Zhipu AI China region registry."""
 
     info = ProviderInfo(
-        name="智谱 AI (Zhipu·中国区)",
+        name="Zhipu AI (Zhipu - China)",
         slug="zhipu-cn",
         api_type="openai",
         default_base_url="https://open.bigmodel.cn/api/paas/v4",
@@ -32,10 +32,10 @@ class ZhipuChinaRegistry(ProviderRegistry):
 
     async def list_models(self, api_key: str) -> list[ModelInfo]:
         """
-        获取智谱 AI 中国区模型列表。
+        Fetch the model list for Zhipu AI China region.
 
-        智谱兼容 OpenAI /models 接口。
-        如果 API 调用失败，返回预置的常用模型列表。
+        Zhipu is compatible with the OpenAI /models endpoint.
+        If the API call fails, a preset list of common models is returned.
         """
         client = get_registry_client()
         try:
@@ -68,7 +68,7 @@ class ZhipuChinaRegistry(ProviderRegistry):
             return self._get_preset_models()
 
     def _get_preset_models(self) -> list[ModelInfo]:
-        """返回预置模型列表"""
+        """Return the preset model list."""
         preset = [
             "glm-5",
             "glm-5-plus",
@@ -97,7 +97,7 @@ class ZhipuChinaRegistry(ProviderRegistry):
 
 
 class ZhipuInternationalRegistry(ProviderRegistry):
-    """智谱 AI 国际区 (Z.AI) 注册表"""
+    """Zhipu AI International region (Z.AI) registry."""
 
     info = ProviderInfo(
         name="Zhipu AI (Z.AI·International)",
@@ -110,7 +110,7 @@ class ZhipuInternationalRegistry(ProviderRegistry):
     )
 
     async def list_models(self, api_key: str) -> list[ModelInfo]:
-        """获取智谱 AI 国际区模型列表。"""
+        """Fetch the model list for Zhipu AI International region."""
         client = get_registry_client()
         try:
             resp = await client.get(
@@ -142,7 +142,7 @@ class ZhipuInternationalRegistry(ProviderRegistry):
             return self._get_preset_models()
 
     def _get_preset_models(self) -> list[ModelInfo]:
-        """返回预置模型列表（与国内区共享模型）"""
+        """Return the preset model list (shared with the China region)."""
         preset = [
             "glm-5",
             "glm-5-plus",

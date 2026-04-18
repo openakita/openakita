@@ -1,5 +1,5 @@
 """
-OpenAkita 安装向导模块
+OpenAkita Setup Wizard Module
 """
 
 __all__ = ["SetupWizard"]

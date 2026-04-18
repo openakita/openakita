@@ -1,16 +1,19 @@
 """
-外部技能 allowlist (data/skills.json) 的唯一读写入口。
+Single read/write entry point for the external skill allowlist (data/skills.json).
 
-目标：
-- 所有 API/工具/后台模块读写 skills.json 必须经过此模块，避免多路径写入导致的竞争或格式漂移。
-- 写入保证原子性（写临时文件 + os.replace），避免崩溃导致半写文件。
-- 进程内并发写入互斥（``_WRITE_LOCK``）。
+Goals:
+- All API/tool/background modules must read/write skills.json through this module
+  to avoid races or format drift from multiple write paths.
+- Writes are atomic (write to temp file + os.replace), preventing half-written files on crash.
+- In-process concurrent writes are serialized via ``_WRITE_LOCK``.
 
-返回约定：
-- ``external_allowlist is None`` 表示 ``data/skills.json`` 不存在或未声明 allowlist（业务语义：全部启用）。
-- ``external_allowlist is set()`` 表示用户显式禁用所有外部技能。
+Return conventions:
+- ``external_allowlist is None`` means ``data/skills.json`` does not exist or has no
+  allowlist declared (business semantics: all skills enabled).
+- ``external_allowlist is set()`` means the user explicitly disabled all external skills.
 
-该模块本身**不**触发缓存失效或 agent 通知，调用方需在写入后调用 ``Agent.propagate_skill_change``。
+This module itself does **not** trigger cache invalidation or agent notifications;
+callers must invoke ``Agent.propagate_skill_change`` after writing.
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ _WRITE_LOCK = threading.RLock()
 
 
 def _skills_json_path() -> Path:
-    """解析当前工作区的 data/skills.json 路径。"""
+    """Resolve the path to data/skills.json for the current workspace."""
     try:
         from ..config import settings
 
@@ -39,12 +42,13 @@ def _skills_json_path() -> Path:
 
 
 def read_allowlist() -> tuple[Path, set[str] | None]:
-    """读取 ``data/skills.json`` 中的 ``external_allowlist``。
+    """Read ``external_allowlist`` from ``data/skills.json``.
 
     Returns:
-        (path, allowlist) 元组：
-        - path: 当前工作区的 skills.json 绝对路径
-        - allowlist: 从文件中读到的显式 allowlist；当文件不存在/损坏/未声明时为 ``None``
+        A (path, allowlist) tuple:
+        - path: absolute path to the workspace skills.json
+        - allowlist: the explicit allowlist read from the file; ``None`` when
+          the file does not exist, is corrupt, or has no allowlist declared
     """
     path = _skills_json_path()
     if not path.exists():
@@ -62,7 +66,7 @@ def read_allowlist() -> tuple[Path, set[str] | None]:
 
 
 def _atomic_write_json(path: Path, content: dict) -> None:
-    """原子地把 JSON 写入 path：先写临时文件，再 os.replace 覆盖。"""
+    """Atomically write JSON to path: write to a temp file first, then os.replace to overwrite."""
     path.parent.mkdir(parents=True, exist_ok=True)
     serialized = json.dumps(content, ensure_ascii=False, indent=2) + "\n"
 
@@ -97,13 +101,14 @@ def _compose_content(allowlist: set[str]) -> dict:
 
 
 def overwrite_allowlist(allowlist: set[str] | None) -> Path:
-    """用完整 allowlist 覆盖 ``data/skills.json``。
+    """Overwrite ``data/skills.json`` with the full allowlist.
 
     Args:
-        allowlist: 目标 allowlist 集合；传入 ``None`` 视为空集合（禁用所有外部技能）。
+        allowlist: the target allowlist set; passing ``None`` is treated as
+          an empty set (disable all external skills).
 
     Returns:
-        实际写入的文件路径。
+        The actual file path written.
     """
     path = _skills_json_path()
     final = set(allowlist) if allowlist else set()
@@ -114,13 +119,15 @@ def overwrite_allowlist(allowlist: set[str] | None) -> Path:
 
 
 def upsert_skill_ids(skill_ids: set[str]) -> Path | None:
-    """原子地把给定 skill_ids 合并进现有 allowlist。
+    “””Atomically merge given skill_ids into the existing allowlist.
 
-    - 当 skills.json 不存在时：**不**创建新文件，返回 ``None``
-      （语义保持“未声明 allowlist = 全部启用”）；此时新装技能已经默认启用，无需写盘。
-    - 当 skills.json 存在但没有 external_allowlist 字段时：与上同义，返回 ``None``。
-    - 当 skills.json 已有 external_allowlist：把 skill_ids 合并后原子写回。
-    """
+    - If skills.json does not exist: **no** new file is created; returns ``None``
+      (semantics: undeclared allowlist = all enabled; newly installed skills are
+      enabled by default, no need to write to disk).
+    - If skills.json exists but has no external_allowlist field: same as above,
+      returns ``None``.
+    - If skills.json already has external_allowlist: merge skill_ids and write back atomically.
+    “””
     if not skill_ids:
         return None
 
@@ -150,9 +157,9 @@ def upsert_skill_ids(skill_ids: set[str]) -> Path | None:
 
 
 def remove_skill_ids(skill_ids: set[str]) -> Path | None:
-    """从现有 allowlist 中移除给定 skill_ids（卸载场景）。
+    """Remove given skill_ids from the existing allowlist (uninstall scenario).
 
-    skills.json 不存在或没有 allowlist 时返回 ``None`` 表示无操作。
+    Returns ``None`` (no-op) when skills.json does not exist or has no allowlist.
     """
     if not skill_ids:
         return None

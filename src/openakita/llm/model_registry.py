@@ -1,13 +1,14 @@
 """
-模型能力注册表
+Model capabilities registry
 
-集中管理模型的上下文窗口、输出限制、能力特征等元数据，
-消除代码库中散布的硬编码魔数。
+Centrally manages model metadata such as context windows, output limits,
+and capability flags, eliminating hardcoded magic numbers scattered
+throughout the codebase.
 
-支持:
-- 精确匹配 → 前缀匹配 → 默认值 三级查找
-- 运行时动态注册自定义模型
-- Thinking budget 范围查询
+Supports:
+- Exact match -> prefix match -> default fallback (three-level lookup)
+- Runtime registration of custom models
+- Thinking budget range queries
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ModelCapabilities:
-    """模型能力描述"""
+    """Model capability description."""
 
     context_window: int = 200_000
     max_output_tokens: int = 16_384
@@ -166,9 +167,9 @@ _CUSTOM_REGISTRY: dict[str, ModelCapabilities] = {}
 
 
 def get_model_capabilities(model: str) -> ModelCapabilities:
-    """查询模型能力。
+    """Look up model capabilities.
 
-    查找顺序: 自定义注册 → 精确匹配 → 前缀匹配 → 默认值
+    Lookup order: custom registration -> exact match -> prefix match -> default.
     """
     if not model:
         return _DEFAULT
@@ -204,32 +205,32 @@ def get_model_capabilities(model: str) -> ModelCapabilities:
 
 
 def register_model(model: str, capabilities: ModelCapabilities) -> None:
-    """运行时注册自定义模型能力。"""
+    """Register custom model capabilities at runtime."""
     _CUSTOM_REGISTRY[model] = capabilities
     logger.debug("Registered model capabilities for %s", model)
 
 
 def get_context_window(model: str) -> int:
-    """获取模型上下文窗口大小。"""
+    """Return the context window size for a model."""
     return get_model_capabilities(model).context_window
 
 
 def get_max_output_tokens(model: str) -> int:
-    """获取模型最大输出 token 数。"""
+    """Return the maximum output token count for a model."""
     return get_model_capabilities(model).max_output_tokens
 
 
 def get_default_output_tokens(model: str) -> int:
-    """获取模型默认输出 token 数。"""
+    """Return the default output token count for a model."""
     return get_model_capabilities(model).default_output_tokens
 
 
 def get_thinking_budget(model: str, depth: str | None = None) -> int:
-    """根据模型和深度获取 thinking budget。
+    """Return the thinking budget for a model and depth level.
 
     Args:
-        model: 模型名称
-        depth: 'low' / 'medium' / 'high' / None(使用中档)
+        model: Model name.
+        depth: 'low' / 'medium' / 'high' / None (defaults to medium).
     """
     caps = get_model_capabilities(model)
     if not caps.supports_thinking or caps.thinking_budget_range == (0, 0):

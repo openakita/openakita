@@ -1,6 +1,6 @@
 """
-CRM API 适配器
-支持 Salesforce 和纷享销客
+CRM API adapter
+Supports Salesforce and FXiaoke (纷享销客)
 """
 
 from typing import Any
@@ -11,7 +11,7 @@ from . import APIError, AuthenticationError, BaseAPIAdapter
 
 
 class SalesforceAdapter(BaseAPIAdapter):
-    """Salesforce CRM 适配器"""
+    """Salesforce CRM adapter"""
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
@@ -26,7 +26,7 @@ class SalesforceAdapter(BaseAPIAdapter):
 
     async def authenticate(self) -> bool:
         if not all([self.username, self.password, self.consumer_key, self.consumer_secret]):
-            raise AuthenticationError("缺少 Salesforce 认证信息")
+            raise AuthenticationError("Missing Salesforce credentials")
 
         try:
             async with (
@@ -49,9 +49,9 @@ class SalesforceAdapter(BaseAPIAdapter):
                     self.instance_url = result["instance_url"]
                     return True
                 else:
-                    raise AuthenticationError(f"Salesforce 认证失败：{result}")
+                    raise AuthenticationError(f"Salesforce authentication failed: {result}")
         except Exception as e:
-            raise APIError(f"Salesforce 认证失败：{str(e)}")
+            raise APIError(f"Salesforce authentication failed: {str(e)}")
 
     async def call(self, endpoint: str, method: str = "GET", **kwargs) -> dict[str, Any]:
         if not self._session:
@@ -88,7 +88,7 @@ class SalesforceAdapter(BaseAPIAdapter):
 
 
 class FXiaokeAdapter(BaseAPIAdapter):
-    """纷享销客 CRM 适配器"""
+    """FXiaoke CRM adapter"""
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
@@ -99,7 +99,7 @@ class FXiaokeAdapter(BaseAPIAdapter):
 
     async def authenticate(self) -> bool:
         if not self.app_key or not self.app_secret:
-            raise AuthenticationError("缺少纷享销客认证信息")
+            raise AuthenticationError("Missing FXiaoke credentials")
 
         try:
             async with (
@@ -118,9 +118,9 @@ class FXiaokeAdapter(BaseAPIAdapter):
                     self.access_token = result["data"]["accessToken"]
                     return True
                 else:
-                    raise AuthenticationError(f"纷享销客认证失败：{result}")
+                    raise AuthenticationError(f"FXiaoke authentication failed: {result}")
         except Exception as e:
-            raise APIError(f"纷享销客认证失败：{str(e)}")
+            raise APIError(f"FXiaoke authentication failed: {str(e)}")
 
     async def call(self, endpoint: str, method: str = "GET", **kwargs) -> dict[str, Any]:
         if not self._session:
@@ -156,5 +156,5 @@ class FXiaokeAdapter(BaseAPIAdapter):
 def create_crm_adapter(provider: str, config: dict[str, Any]) -> BaseAPIAdapter:
     providers = {"salesforce": SalesforceAdapter, "fxiaoke": FXiaokeAdapter}
     if provider not in providers:
-        raise ValueError(f"不支持的 CRM 提供商：{provider}")
+        raise ValueError(f"Unsupported CRM provider: {provider}")
     return providers[provider](config)

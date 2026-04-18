@@ -1,8 +1,8 @@
 """
-StructuredOutput 工具处理器
+StructuredOutput tool handler
 
-参考 CC SyntheticOutputTool：在 API/SDK 模式下返回结构化 JSON。
-可选通过 JSON Schema 验证输出格式。
+Modeled after CC SyntheticOutputTool: returns structured JSON in API/SDK mode.
+Optionally validates output format via JSON Schema.
 """
 
 import json

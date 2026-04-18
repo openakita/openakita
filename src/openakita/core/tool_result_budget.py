@@ -1,10 +1,10 @@
 """
-工具结果预算: 大结果截断与落盘
+Tool result budget: truncation and overflow persistence for large results
 
-参考 Claude Code 的工具结果管理:
-- 按字符数限制单次工具结果大小
-- 超限结果保存到文件，返回引用路径
-- 结构化结果 (JSON) 智能截断
+Modeled after Claude Code's tool result management:
+- Limit individual tool result size by character count
+- Save oversized results to files and return a reference path
+- Intelligently truncate structured results (JSON)
 """
 
 from __future__ import annotations
@@ -26,20 +26,20 @@ def truncate_tool_result(
     tool_name: str = "",
     session_id: str = "",
 ) -> str:
-    """截断过长的工具结果。
+    """Truncate oversized tool results.
 
-    如果结果超过 max_chars:
-    1. 落盘到 data/tool-overflow/
-    2. 返回截断版本 + 文件引用
+    If the result exceeds max_chars:
+    1. Persist to data/tool-overflow/
+    2. Return a truncated version with a file reference
 
     Args:
-        result: 原始结果字符串
-        max_chars: 最大字符数
-        tool_name: 工具名称（用于日志和文件名）
-        session_id: 会话 ID
+        result: Raw result string
+        max_chars: Maximum character count
+        tool_name: Tool name (used in logs and filenames)
+        session_id: Session ID
 
     Returns:
-        可能被截断的结果字符串
+        Potentially truncated result string
     """
     if len(result) <= max_chars:
         return result
@@ -70,10 +70,10 @@ def truncate_tool_result(
 
 
 def _smart_json_truncate(result: str, max_chars: int) -> str:
-    """JSON 结果智能截断。
+    """Intelligent JSON truncation.
 
-    对于 JSON 数组，截断元素数量。
-    对于 JSON 对象，截断值的内容。
+    For JSON arrays, truncate the number of elements.
+    For JSON objects, truncate the values.
     """
     try:
         data = json.loads(result)
@@ -97,7 +97,7 @@ def _smart_json_truncate(result: str, max_chars: int) -> str:
 
 
 def _save_overflow(result: str, tool_name: str, session_id: str) -> str:
-    """将溢出结果保存到文件。"""
+    """Save overflow result to a file."""
     try:
         overflow_dir = OVERFLOW_DIR / session_id
         overflow_dir.mkdir(parents=True, exist_ok=True)

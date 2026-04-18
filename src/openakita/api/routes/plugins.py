@@ -367,7 +367,7 @@ async def install_progress_sse(install_id: str):
     async def _event_stream():
         progress = installer.get_install_progress(install_id)
         if progress is None:
-            yield f"data: {json.dumps({'stage': 'done', 'message': '安装已完成', 'percent': 100, 'finished': True, 'error': ''})}\n\n"
+            yield f"data: {json.dumps({'stage': 'done', 'message': 'Installation complete', 'percent': 100, 'finished': True, 'error': ''})}\n\n"
             return
         while True:
             snap = progress.snapshot()
@@ -673,7 +673,7 @@ async def get_plugin_icon(plugin_id: str) -> Response:
     if icon_name is None:
         raise HTTPException(
             status_code=404,
-            detail=make_error_response(PluginErrorCode.NOT_FOUND, detail="无图标文件"),
+            detail=make_error_response(PluginErrorCode.NOT_FOUND, detail="No icon file found"),
         )
     icon_path = plugin_dir / icon_name
     data = icon_path.read_bytes()
@@ -766,7 +766,7 @@ async def hub_search(
             "category": category,
             "results": [],
             "total": 0,
-            "message": "插件市场即将上线",
+            "message": "Plugin marketplace coming soon",
         },
     }
 
@@ -825,7 +825,7 @@ async def check_updates(request: Request) -> dict[str, Any]:
         "data": {
             "installed_count": len(installed),
             "updates_available": [],
-            "message": "升级检查功能将在插件市场上线后可用",
+            "message": "Update checking will be available once the marketplace launches",
         },
     }
 
@@ -838,7 +838,7 @@ async def update_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
         "ok": False,
         "error": {
             "code": "NOT_IMPLEMENTED",
-            "message": "一键升级功能将在插件市场上线后可用",
-            "guidance": "当前请手动重新安装最新版本",
+            "message": "One-click upgrade will be available once the marketplace launches",
+            "guidance": "For now, please manually reinstall the latest version",
         },
     }

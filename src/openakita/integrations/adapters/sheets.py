@@ -1,6 +1,6 @@
 """
-表格处理 API 适配器
-支持 Google Sheets 和腾讯文档
+Spreadsheet API adapters
+Supports Google Sheets and Tencent Docs
 """
 
 from datetime import datetime
@@ -12,16 +12,16 @@ from . import APIError, AuthenticationError, BaseAPIAdapter
 
 
 class GoogleSheetsAdapter(BaseAPIAdapter):
-    """Google Sheets API 适配器"""
+    """Google Sheets API adapter"""
 
     def __init__(self, config: dict[str, Any]):
         """
-        初始化 Google Sheets 适配器
+        Initialize the Google Sheets adapter.
 
         Args:
-            config: 配置信息
-                - credentials: Google OAuth 凭据（service account JSON）
-                - spreadsheet_id: 电子表格 ID
+            config: Configuration dict
+                - credentials: Google OAuth credentials (service account JSON)
+                - spreadsheet_id: Spreadsheet ID
         """
         super().__init__(config)
         self.credentials = config.get("credentials")
@@ -31,16 +31,16 @@ class GoogleSheetsAdapter(BaseAPIAdapter):
         self._session: aiohttp.ClientSession | None = None
 
     async def authenticate(self) -> bool:
-        """获取访问令牌"""
+        """Obtain an access token."""
         if not self.credentials:
-            raise AuthenticationError("缺少 Google OAuth 凭据")
+            raise AuthenticationError("Missing Google OAuth credentials")
 
-        # 检查现有令牌是否有效
+        # Check if the existing token is still valid
         if self._token and self._token_expiry and datetime.utcnow() < self._token_expiry:
             return True
 
         try:
-            # 使用 service account 获取访问令牌
+            # Use service account to obtain an access token
             import jwt
 
             now = datetime.utcnow()
@@ -74,12 +74,12 @@ class GoogleSheetsAdapter(BaseAPIAdapter):
                     )
                     return True
                 else:
-                    raise AuthenticationError(f"Google OAuth 认证失败：{result}")
+                    raise AuthenticationError(f"Google OAuth authentication failed: {result}")
         except Exception as e:
-            raise APIError(f"Google Sheets 认证失败：{str(e)}")
+            raise APIError(f"Google Sheets authentication failed: {str(e)}")
 
     async def call(self, endpoint: str, method: str = "GET", **kwargs) -> dict[str, Any]:
-        """调用 Google Sheets API"""
+        """Call the Google Sheets API."""
         if not self._session:
             self._session = aiohttp.ClientSession()
 
@@ -103,31 +103,31 @@ class GoogleSheetsAdapter(BaseAPIAdapter):
 
                 return result
         except aiohttp.ClientError as e:
-            raise APIError(f"Google Sheets 调用失败：{str(e)}")
+            raise APIError(f"Google Sheets API call failed: {str(e)}")
 
     async def get_values(self, range: str) -> list[list[Any]]:
         """
-        读取单元格数据
+        Read cell data.
 
         Args:
-            range: 范围（如 'Sheet1!A1:B10'）
+            range: Cell range (e.g. 'Sheet1!A1:B10')
 
         Returns:
-            二维数组数据
+            2D array of cell values
         """
         result = await self.call(f"spreadsheets/{self.spreadsheet_id}/values/{range}")
         return result.get("values", [])
 
     async def update_values(self, range: str, values: list[list[Any]]) -> dict[str, Any]:
         """
-        更新单元格数据
+        Update cell data.
 
         Args:
-            range: 范围（如 'Sheet1!A1:B10'）
-            values: 二维数组数据
+            range: Cell range (e.g. 'Sheet1!A1:B10')
+            values: 2D array of cell values
 
         Returns:
-            API 响应
+            API response
         """
         return await self.call(
             f"spreadsheets/{self.spreadsheet_id}/values/{range}",
@@ -137,14 +137,14 @@ class GoogleSheetsAdapter(BaseAPIAdapter):
 
     async def append_values(self, range: str, values: list[list[Any]]) -> dict[str, Any]:
         """
-        追加数据
+        Append data.
 
         Args:
-            range: 范围
-            values: 二维数组数据
+            range: Cell range
+            values: 2D array of cell values
 
         Returns:
-            API 响应
+            API response
         """
         return await self.call(
             f"spreadsheets/{self.spreadsheet_id}/values/{range}:append",
@@ -153,24 +153,24 @@ class GoogleSheetsAdapter(BaseAPIAdapter):
         )
 
     async def close(self):
-        """关闭会话"""
+        """Close the session."""
         if self._session:
             await self._session.close()
             self._session = None
 
 
 class TencentDocsAdapter(BaseAPIAdapter):
-    """腾讯文档 API 适配器"""
+    """Tencent Docs API adapter"""
 
     def __init__(self, config: dict[str, Any]):
         """
-        初始化腾讯文档适配器
+        Initialize the Tencent Docs adapter.
 
         Args:
-            config: 配置信息
-                - app_id: 应用 ID
-                - secret_key: 密钥
-                - spreadsheet_id: 表格 ID
+            config: Configuration dict
+                - app_id: Application ID
+                - secret_key: Secret key
+                - spreadsheet_id: Spreadsheet ID
         """
         super().__init__(config)
         self.app_id = config.get("app_id")
@@ -180,9 +180,9 @@ class TencentDocsAdapter(BaseAPIAdapter):
         self._session: aiohttp.ClientSession | None = None
 
     async def authenticate(self) -> bool:
-        """获取访问令牌"""
+        """Obtain an access token."""
         if not self.app_id or not self.secret_key:
-            raise AuthenticationError("缺少腾讯文档认证信息")
+            raise AuthenticationError("Missing Tencent Docs credentials")
 
         try:
             async with (
@@ -199,12 +199,12 @@ class TencentDocsAdapter(BaseAPIAdapter):
                     self._token = result["token"]
                     return True
                 else:
-                    raise AuthenticationError(f"腾讯文档认证失败：{result}")
+                    raise AuthenticationError(f"Tencent Docs authentication failed: {result}")
         except Exception as e:
-            raise APIError(f"腾讯文档认证失败：{str(e)}")
+            raise APIError(f"Tencent Docs authentication failed: {str(e)}")
 
     async def call(self, endpoint: str, method: str = "GET", **kwargs) -> dict[str, Any]:
-        """调用腾讯文档 API"""
+        """Call the Tencent Docs API."""
         if not self._session:
             self._session = aiohttp.ClientSession()
 
@@ -228,31 +228,31 @@ class TencentDocsAdapter(BaseAPIAdapter):
 
                 return result
         except aiohttp.ClientError as e:
-            raise APIError(f"腾讯文档调用失败：{str(e)}")
+            raise APIError(f"Tencent Docs API call failed: {str(e)}")
 
     async def get_sheet_data(self, sheet_id: str) -> list[list[Any]]:
         """
-        获取表格数据
+        Get spreadsheet data.
 
         Args:
-            sheet_id: 工作表 ID
+            sheet_id: Sheet ID
 
         Returns:
-            二维数组数据
+            2D array of cell values
         """
         result = await self.call(f"spreadsheet/{self.spreadsheet_id}/sheet/{sheet_id}/data")
         return result.get("data", [])
 
     async def update_cells(self, sheet_id: str, updates: list[dict]) -> dict[str, Any]:
         """
-        更新单元格
+        Update cells.
 
         Args:
-            sheet_id: 工作表 ID
-            updates: 更新列表 [{'row': 1, 'col': 1, 'value': 'xxx'}]
+            sheet_id: Sheet ID
+            updates: List of updates [{'row': 1, 'col': 1, 'value': 'xxx'}]
 
         Returns:
-            API 响应
+            API response
         """
         return await self.call(
             f"spreadsheet/{self.spreadsheet_id}/sheet/{sheet_id}/cells",
@@ -261,27 +261,27 @@ class TencentDocsAdapter(BaseAPIAdapter):
         )
 
     async def close(self):
-        """关闭会话"""
+        """Close the session."""
         if self._session:
             await self._session.close()
             self._session = None
 
 
-# 工厂函数
+# Factory function
 def create_sheets_adapter(provider: str, config: dict[str, Any]) -> BaseAPIAdapter:
     """
-    创建表格 API 适配器
+    Create a spreadsheet API adapter.
 
     Args:
-        provider: 服务提供商 ('google' 或 'tencent')
-        config: 配置信息
+        provider: Service provider ('google' or 'tencent')
+        config: Configuration dict
 
     Returns:
-        表格适配器实例
+        Spreadsheet adapter instance
     """
     providers = {"google": GoogleSheetsAdapter, "tencent": TencentDocsAdapter}
 
     if provider not in providers:
-        raise ValueError(f"不支持的表格服务提供商：{provider}")
+        raise ValueError(f"Unsupported spreadsheet provider: {provider}")
 
     return providers[provider](config)

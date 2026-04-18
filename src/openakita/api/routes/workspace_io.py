@@ -139,7 +139,7 @@ async def import_backup(body: ImportRequest):
         }
         if skipped:
             resp["skipped_files"] = result.get("skipped_files", [])
-            resp["message"] = f"{skipped} 个文件因被占用而跳过，建议重启后重新还原"
+            resp["message"] = f"{skipped} file(s) skipped because they were in use. Consider restarting and restoring again."
         return resp
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -215,12 +215,12 @@ def _register_backup_task(scheduler: object, settings: dict) -> None:
     cron = settings.get("cron", "0 2 * * *")
     task = ScheduledTask(
         id="system_workspace_backup",
-        name="工作区备份",
+        name="Workspace Backup",
         trigger_type=TriggerType.CRON,
         trigger_config={"cron": cron},
         action="system:workspace_backup",
-        prompt="执行工作区数据备份",
-        description="定时备份工作区配置和用户数据",
+        prompt="Perform workspace data backup",
+        description="Periodically backs up workspace configuration and user data",
         task_type=TaskType.TASK,
         enabled=True,
         deletable=False,

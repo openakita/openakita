@@ -1,17 +1,17 @@
 """
-微信 iLink Bot 扫码登录
+WeChat iLink Bot QR-Code Login
 
-用于 Setup Center 和 CLI Wizard：
-- 获取登录二维码 (get_bot_qrcode)
-- 轮询扫码状态 (get_qrcode_status)
-- 扫码确认后返回 Bearer token + base_url
+Used by Setup Center and CLI Wizard:
+- Fetch login QR code (get_bot_qrcode)
+- Poll QR code scan status (get_qrcode_status)
+- Return Bearer token + base_url after scan confirmation
 
-iLink Bot API 扫码流程（对齐 @tencent-weixin/openclaw-weixin v2.1.6）：
-  1. GET get_bot_qrcode?bot_type=3 → 获取 qrcode / qrcode_img_content
-  2. GET get_qrcode_status?qrcode=... → 轮询状态 (wait → scaned → confirmed)
-  3. confirmed 时返回 bot_token / ilink_bot_id / baseurl
+iLink Bot API QR login flow (aligned with @tencent-weixin/openclaw-weixin v2.1.6):
+  1. GET get_bot_qrcode?bot_type=3 -> fetch qrcode / qrcode_img_content
+  2. GET get_qrcode_status?qrcode=... -> poll status (wait -> scaned -> confirmed)
+  3. On confirmed, returns bot_token / ilink_bot_id / baseurl
 
-所有 HTTP 调用均为 async（httpx），bridge.py 通过 asyncio.run() 驱动。
+All HTTP calls are async (httpx); bridge.py drives them via asyncio.run().
 """
 
 from __future__ import annotations
@@ -49,13 +49,13 @@ def _onboard_common_headers() -> dict[str, str]:
 
 
 class WeChatOnboardError(Exception):
-    """扫码登录过程中的业务错误"""
+    """Business error during QR code login"""
 
 
 class WeChatOnboard:
-    """微信 iLink Bot 扫码登录
+    """WeChat iLink Bot QR-Code Login
 
-    完整流程：fetch_qrcode → (用户扫码) → poll_status → 获取 token
+    Full flow: fetch_qrcode -> (user scans) -> poll_status -> obtain token
     """
 
     def __init__(self, *, base_url: str = "", timeout: float = 30.0):
@@ -75,14 +75,14 @@ class WeChatOnboard:
             self._client = None
 
     async def fetch_qrcode(self) -> dict[str, Any]:
-        """Step 1: 获取登录二维码
+        """Step 1: Fetch login QR code
 
         Calls GET /ilink/bot/get_bot_qrcode?bot_type=3
 
         Returns:
             {
-                "qrcode": "...",       # 轮询时回传的 qrcode 标识
-                "qrcode_url": "...",   # 二维码显示 URL
+                "qrcode": "...",       # QR code identifier to pass back when polling
+                "qrcode_url": "...",   # QR code display URL
             }
         """
         client = await self._get_client()
@@ -99,7 +99,7 @@ class WeChatOnboard:
         qrcode_img = data.get("qrcode_img_content", "")
 
         if not qrcode or not qrcode_img:
-            raise WeChatOnboardError(f"get_bot_qrcode 返回数据不完整: {data}")
+            raise WeChatOnboardError(f"get_bot_qrcode returned incomplete data: {data}")
 
         return {
             "qrcode": qrcode,
@@ -107,16 +107,16 @@ class WeChatOnboard:
         }
 
     async def poll_status(self, qrcode: str) -> dict[str, Any]:
-        """Step 2: 单次轮询扫码状态 (long-poll)
+        """Step 2: Single poll of QR code scan status (long-poll)
 
         Calls GET /ilink/bot/get_qrcode_status?qrcode=...
 
         Returns:
-            等待:   {"status": "wait"}
-            已扫码: {"status": "scaned"}
-            已确认: {"status": "confirmed", "token": "...", "base_url": "..."}
-            已过期: {"status": "expired"}
-            错误:   {"status": "error", "message": "..."}
+            Waiting:     {"status": "wait"}
+            Scanned:     {"status": "scaned"}
+            Confirmed:   {"status": "confirmed", "token": "...", "base_url": "..."}
+            Expired:     {"status": "expired"}
+            Error:       {"status": "error", "message": "..."}
         """
         client = await self._get_client()
         url = f"{self._poll_base_url}/ilink/bot/get_qrcode_status"
@@ -155,9 +155,9 @@ class WeChatOnboard:
             token = data.get("bot_token", "")
             bot_id = data.get("ilink_bot_id", "")
             if not token:
-                return {"status": "error", "message": "确认成功但未返回 bot_token"}
+                return {"status": "error", "message": "Confirmed but bot_token was not returned"}
             if not bot_id:
-                return {"status": "error", "message": "确认成功但未返回 ilink_bot_id"}
+                return {"status": "error", "message": "Confirmed but ilink_bot_id was not returned"}
             return {
                 "status": "confirmed",
                 "token": token,
@@ -168,7 +168,7 @@ class WeChatOnboard:
         if status == "expired":
             return {"status": "expired"}
 
-        return {"status": "error", "message": f"未知状态: {status}"}
+        return {"status": "error", "message": f"Unknown status: {status}"}
 
     async def poll_until_done(
         self,
@@ -178,16 +178,16 @@ class WeChatOnboard:
         max_attempts: int = 150,
         on_qr_refresh: Any = None,
     ) -> dict[str, Any]:
-        """持续轮询直到用户完成扫码或超时
+        """Continuously poll until the user completes scanning or times out
 
         Args:
             on_qr_refresh: optional async callback(new_qrcode_info) called when QR is auto-refreshed
 
         Returns:
-            成功: {"status": "confirmed", "token": "...", "base_url": "..."}
+            On success: {"status": "confirmed", "token": "...", "base_url": "..."}
 
         Raises:
-            WeChatOnboardError: 超时或二维码过期
+            WeChatOnboardError: On timeout or QR code expiration
         """
         current_qrcode = qrcode
         qr_refresh_count = 0
@@ -200,7 +200,7 @@ class WeChatOnboard:
                 qr_refresh_count += 1
                 if qr_refresh_count > MAX_QR_REFRESH_COUNT:
                     raise WeChatOnboardError(
-                        f"二维码已过期且已刷新 {MAX_QR_REFRESH_COUNT} 次，请重试"
+                        f"QR code expired after {MAX_QR_REFRESH_COUNT} refreshes, please try again"
                     )
                 logger.info(
                     "QR expired, auto-refreshing (%d/%d)", qr_refresh_count, MAX_QR_REFRESH_COUNT
@@ -215,14 +215,14 @@ class WeChatOnboard:
                         logger.debug("on_qr_refresh callback failed", exc_info=True)
                 continue
             if result["status"] == "error":
-                raise WeChatOnboardError(result.get("message", "轮询失败"))
+                raise WeChatOnboardError(result.get("message", "Polling failed"))
             await asyncio.sleep(interval)
 
-        raise WeChatOnboardError(f"轮询超时: {max_attempts} 次尝试后仍未完成扫码")
+        raise WeChatOnboardError(f"Polling timed out: scan not completed after {max_attempts} attempts")
 
 
 def render_qr_terminal(url: str) -> None:
-    """在终端渲染 QR 码"""
+    """Render a QR code in the terminal"""
     try:
         import qrcode
 
@@ -231,8 +231,8 @@ def render_qr_terminal(url: str) -> None:
         qr.make(fit=True)
         qr.print_ascii(invert=True)
     except ImportError:
-        logger.info("qrcode 包未安装，直接输出 URL")
-        print(f"\n请用微信扫描以下链接对应的二维码：\n  {url}\n")
+        logger.info("qrcode package not installed, outputting URL directly")
+        print(f"\nPlease scan the following URL with WeChat:\n  {url}\n")
     except Exception as e:
-        logger.warning(f"QR 渲染失败: {e}")
-        print(f"\n请用微信扫描以下链接对应的二维码：\n  {url}\n")
+        logger.warning(f"QR rendering failed: {e}")
+        print(f"\nPlease scan the following URL with WeChat:\n  {url}\n")

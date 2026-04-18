@@ -1,22 +1,22 @@
 """
-记忆管理器 (v2) — 核心协调器
+Memory Manager (v2) — Core Coordinator
 
-v2 架构:
-- UnifiedStore (SQLite + SearchBackend) 取代 memories.json + ChromaDB 直接操作
-- RetrievalEngine 多路召回取代手动向量/关键词搜索
-- 支持 v2 提取 (工具感知/实体-属性) 和 Episode/Scratchpad
-- 向后兼容 v1 接口
+v2 Architecture:
+- UnifiedStore (SQLite + SearchBackend) replaces memories.json + direct ChromaDB operations
+- RetrievalEngine multi-path recall replaces manual vector/keyword search
+- Supports v2 extraction (tool-aware/entity-attribute) and Episode/Scratchpad
+- Backward compatible with v1 interface
 
-注入策略:
-- 三层注入: Scratchpad + Core Memory + Dynamic Memories
-- 由 builder.py 调用, 不再在本模块组装
+Injection strategy:
+- Three-layer injection: Scratchpad + Core Memory + Dynamic Memories
+- Called by builder.py, no longer assembled in this module
 
-子组件:
+Sub-components:
 - store: UnifiedStore
 - extractor: MemoryExtractor
 - retrieval_engine: RetrievalEngine
-- consolidator: MemoryConsolidator (保留, JSONL 双写)
-- vector_store: VectorStore (可选, 由 SearchBackend 封装)
+- consolidator: MemoryConsolidator (retained, JSONL dual-write)
+- vector_store: VectorStore (optional, wrapped by SearchBackend)
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ _DURATION_MAP = {
 
 
 class MemoryManager:
-    """记忆管理器 (v2)"""
+    """Memory Manager (v2)"""
 
     def __init__(
         self,
@@ -173,20 +173,20 @@ class MemoryManager:
         self.memory_md_path.parent.mkdir(parents=True, exist_ok=True)
         default_content = """# Core Memory
 
-> Agent 核心记忆，每次对话都会加载。每日凌晨自动刷新。
-> 最后更新: {timestamp}
+> Agent core memory, loaded on every conversation. Auto-refreshed daily at midnight.
+> Last updated: {timestamp}
 
-## 用户偏好
+## User Preferences
 
-[待学习]
+[To be learned]
 
-## 重要规则
+## Important Rules
 
-[待添加]
+[To be added]
 
-## 关键事实
+## Key Facts
 
-[待记录]
+[To be recorded]
 """.format(timestamp=datetime.now().strftime("%Y-%m-%d %H:%M"))
         self.memory_md_path.write_text(default_content, encoding="utf-8")
         logger.info(f"Created default MEMORY.md at {self.memory_md_path}")
@@ -344,10 +344,10 @@ class MemoryManager:
         tool_results: list | None = None,
         attachments: list[dict] | None = None,
     ) -> None:
-        """记录对话轮次 (v2: 写入 SQLite + JSONL + 异步提取 + 附件)
+        """Record a conversation turn (v2: writes to SQLite + JSONL + async extraction + attachments)
 
         Args:
-            attachments: 本轮携带的文件/媒体信息列表, 每项包含:
+            attachments: List of file/media info for this turn, each containing:
                 filename, mime_type, local_path, url, description,
                 transcription, extracted_text, tags, direction, file_size
         """
@@ -434,12 +434,12 @@ class MemoryManager:
         return len(useful_ids)
 
     async def extract_on_topic_change(self) -> int:
-        """主题切换时，从已积累的对话中提取记忆，然后重置 turns 缓冲。
+        """Extract memories from accumulated turns on topic change, then reset the turn buffer.
 
-        带 30s 超时保护，防止后台提取任务挂起。
+        Includes a 30s timeout guard to prevent background extraction from hanging.
 
         Returns:
-            提取并保存的记忆条数
+            Number of memories extracted and saved
         """
         turns = list(self._session_turns)
         if len(turns) < 3:
@@ -587,11 +587,11 @@ class MemoryManager:
             return False
         try:
             resp = await brain.think(
-                f"判断这两条记忆是否表达相同的信息（语义重复）。\n"
-                f"记忆A: {new_content}\n"
-                f"记忆B: {existing_content}\n\n"
-                f"只回答 YES 或 NO。",
-                system="你是记忆去重判断器。如果两条记忆表达的核心信息相同（即使措辞不同），回答YES。否则回答NO。只输出一个词。",
+                f"Determine whether these two memories express the same information (semantic duplicate).\n"
+                f"Memory A: {new_content}\n"
+                f"Memory B: {existing_content}\n\n"
+                f"Answer only YES or NO.",
+                system="You are a memory deduplication judge. If two memories express the same core information (even with different wording), answer YES. Otherwise answer NO. Output only one word.",
             )
             text = (getattr(resp, "content", None) or str(resp)).strip().upper()
             return "YES" in text and "NO" not in text
@@ -673,7 +673,7 @@ class MemoryManager:
     def end_session(
         self, task_description: str = "", success: bool = True, errors: list | None = None
     ) -> None:
-        """结束会话: 生成 Episode + 双轨提取（用户画像 + 任务经验）+ 引用评分"""
+        """End session: generate Episode + dual-track extraction (user profile + task experience) + citation scoring"""
         if not self._current_session_id:
             return
 
@@ -818,7 +818,7 @@ class MemoryManager:
     def _enqueue_session_turns_for_extraction(
         self, session_id: str, turns: list[ConversationTurn]
     ) -> None:
-        """Fallback: 将会话 turns 入队提取（用于无 event loop 的同步场景）"""
+        """Fallback: enqueue session turns for extraction (used in synchronous scenarios without event loop)."""
         try:
             enqueued = 0
             for i, turn in enumerate(turns):
@@ -839,7 +839,7 @@ class MemoryManager:
             logger.warning(f"[Memory] Failed to enqueue session turns: {e}")
 
     async def await_pending_tasks(self, timeout: float = 30.0) -> None:
-        """等待所有挂起的异步任务完成（在 shutdown 时调用）"""
+        """Wait for all pending async tasks to complete (called during shutdown)."""
         if not self._pending_tasks:
             return
         pending = list(self._pending_tasks)
@@ -859,7 +859,7 @@ class MemoryManager:
         tool_calls: list | None = None,
         tool_results: list | None = None,
     ) -> None:
-        """安全入队提取 — 捕获所有异常，永不抛出"""
+        """Safely enqueue for extraction — catches all exceptions, never raises."""
         try:
             sid = session_id or self._current_session_id or "unknown"
             self.store.enqueue_extraction(
@@ -871,7 +871,7 @@ class MemoryManager:
             )
             logger.info(f"[Memory] Enqueued extraction for retry: session={sid}, turn={turn_index}")
         except Exception as e:
-            # 最终 fallback: 写到本地文件，防止数据永久丢失
+            # Final fallback: write to local file to prevent permanent data loss
             try:
                 fallback_dir = self.data_dir / "extraction_fallback"
                 fallback_dir.mkdir(parents=True, exist_ok=True)
@@ -993,7 +993,7 @@ class MemoryManager:
         return content
 
     def add_memory(self, memory: Memory, scope: str = "global", scope_owner: str = "") -> str:
-        """添加记忆 (v1 compat: writes to both v1 and v2 stores)"""
+        """Add memory (v1 compat: writes to both v1 and v2 stores)."""
         with self._memories_lock:
             existing = list(self._memories.values())
             unique = self.extractor.deduplicate([memory], existing)
@@ -1199,7 +1199,7 @@ class MemoryManager:
     # ==================== Daily Consolidation ====================
 
     async def consolidate_daily(self) -> dict:
-        """每日归纳 (v2: 委托给 LifecycleManager)"""
+        """Daily consolidation (v2: delegated to LifecycleManager)."""
         try:
             from ..config import settings
             from .lifecycle import LifecycleManager
@@ -1270,7 +1270,7 @@ class MemoryManager:
             logger.info(f"Cleaned up {len(expired)} expired memories")
         return len(expired)
 
-    # ==================== Attachments (文件/媒体记忆) ====================
+    # ==================== Attachments (file/media memory) ====================
 
     def record_attachment(
         self,
@@ -1286,7 +1286,7 @@ class MemoryManager:
         file_size: int = 0,
         original_filename: str = "",
     ) -> str:
-        """记录一个文件/媒体附件, 返回 attachment ID"""
+        """Record a file/media attachment, returns the attachment ID."""
         try:
             dir_enum = AttachmentDirection(direction)
         except ValueError:
@@ -1318,7 +1318,7 @@ class MemoryManager:
         session_id: str | None = None,
         limit: int = 20,
     ) -> list[Attachment]:
-        """搜索附件 — 用户问"那天发给你的猫图"时调用"""
+        """Search attachments — called when user asks e.g. 'that cat photo I sent you the other day'."""
         return self.store.search_attachments(
             query=query,
             mime_type=mime_type,

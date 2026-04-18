@@ -438,11 +438,11 @@ def _convert_single_message_to_responses(
 
             text_content = "".join(b.text for b in text_blocks) if text_blocks else ""
 
-            # Responses API: assistant 的文本输出是 message item
+            # Responses API: assistant text output is a message item
             if text_content:
                 result.append({"role": "assistant", "content": text_content})
 
-            # tool_use → function_call items
+            # tool_use -> function_call items
             import json
 
             for tu in tool_uses:
@@ -456,7 +456,7 @@ def _convert_single_message_to_responses(
                     }
                 )
         else:
-            # user 消息
+            # user message
             openai_content = convert_content_blocks_to_openai(other_blocks, provider=provider)
             result.append({"role": msg.role, "content": openai_content})
 
@@ -469,14 +469,14 @@ def convert_system_to_openai(system: str) -> dict:
 
 
 def _dict_to_json_string(d: dict) -> str:
-    """将字典转换为 JSON 字符串"""
+    """Convert a dict to a JSON string."""
     import json
 
     return json.dumps(d, ensure_ascii=False)
 
 
 def _json_string_to_dict(s: str) -> dict:
-    """将 JSON 字符串转换为字典"""
+    """Convert a JSON string to a dict."""
     import json
 
     try:

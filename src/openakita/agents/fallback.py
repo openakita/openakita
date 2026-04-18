@@ -1,10 +1,10 @@
 """
-Agent 能力边界与 Fallback 策略
+Agent capability boundaries and fallback strategy
 
-当专用 Agent 无法处理用户请求时:
-1. 检测能力边界（技能未覆盖、连续失败等）
-2. 建议切换到 fallback Agent（通常是 default 通用 Agent）
-3. 记录健康度指标用于自动降级
+When a specialized agent cannot handle a user request:
+1. Detect capability boundaries (skill not covered, consecutive failures, etc.)
+2. Suggest switching to a fallback agent (typically the default general-purpose agent)
+3. Track health metrics for automatic degradation
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ from .profile import AgentProfile, ProfileStore
 
 logger = logging.getLogger(__name__)
 
-_FAILURE_WINDOW_SECONDS = 300  # 5 分钟窗口
-_AUTO_DEGRADE_THRESHOLD = 3  # 连续失败 N 次自动降级
+_FAILURE_WINDOW_SECONDS = 300  # 5-minute window
+_AUTO_DEGRADE_THRESHOLD = 3  # Auto-degrade after N consecutive failures
 
 
 @dataclass
@@ -58,7 +58,7 @@ class _HealthEntry:
 
 class FallbackResolver:
     """
-    Fallback 解析器：根据 Agent 健康度决定是否降级到 fallback Profile。
+    Fallback resolver: decides whether to degrade to a fallback profile based on agent health.
     """
 
     def __init__(self, profile_store: ProfileStore):
@@ -68,8 +68,8 @@ class FallbackResolver:
 
     def resolve_fallback(self, profile_id: str) -> AgentProfile | None:
         """
-        查找 fallback Profile。如果当前 profile 有 fallback_profile_id
-        且该 profile 存在，返回 fallback profile；否则返回 None。
+        Look up the fallback profile. If the current profile has a fallback_profile_id
+        and that profile exists, return the fallback profile; otherwise return None.
         """
         profile = self._store.get(profile_id)
         if not profile or not profile.fallback_profile_id:
@@ -96,16 +96,16 @@ class FallbackResolver:
                 )
 
     def should_use_fallback(self, profile_id: str) -> bool:
-        """当前 agent 是否应降级到 fallback"""
+        """Whether the current agent should degrade to its fallback."""
         with self._lock:
             entry = self._health.get(profile_id)
             return entry is not None and entry.degraded
 
     def get_effective_profile(self, profile_id: str) -> str:
         """
-        获取实际应使用的 profile ID。
+        Get the profile ID that should actually be used.
 
-        如果当前 profile 已降级且有 fallback，返回 fallback ID。
+        If the current profile is degraded and has a fallback, return the fallback ID.
         """
         if not self.should_use_fallback(profile_id):
             return profile_id
@@ -131,12 +131,12 @@ class FallbackResolver:
 
     def build_fallback_hint(self, profile_id: str) -> str | None:
         """
-        为 IM/Chat 用户生成 fallback 建议文案。
-        返回 None 表示不需要建议。
+        Generate a fallback hint message for IM/Chat users.
+        Returns None if no hint is needed.
         """
         if not self.should_use_fallback(profile_id):
             return None
         fb_profile = self.resolve_fallback(profile_id)
         if not fb_profile:
             return None
-        return f"⚠️ 当前 Agent 连续处理失败，已自动切换到 **{fb_profile.get_display_name()}** 处理。"
+        return f"⚠️ The current agent has failed consecutively and has been automatically switched to **{fb_profile.get_display_name()}**."

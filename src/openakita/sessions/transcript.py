@@ -1,10 +1,10 @@
 """
-JSONL 会话持久化
+JSONL session persistence
 
-参考 Claude Code 的 sessionStorage.ts 设计:
-- 每条消息 append 为一行 JSON
-- 加载时支持从 compact 边界开始
-- 子 agent 独立 transcript 文件
+Modeled after Claude Code's sessionStorage.ts:
+- Each message is appended as a single JSON line
+- Loading supports starting from a compact boundary
+- Sub-agents have independent transcript files
 """
 
 from __future__ import annotations
@@ -21,15 +21,15 @@ TRANSCRIPT_DIR = Path("data/transcripts")
 
 
 def get_transcript_path(session_id: str) -> Path:
-    """获取 transcript 文件路径。"""
+    """Return the transcript file path."""
     TRANSCRIPT_DIR.mkdir(parents=True, exist_ok=True)
     return TRANSCRIPT_DIR / f"{session_id}.jsonl"
 
 
 def append_entry(session_id: str, entry: dict) -> None:
-    """追加一条记录到 transcript。
+    """Append an entry to the transcript.
 
-    原子性: 每次追加完整的一行 JSON + 换行符。
+    Atomicity: each append writes a complete JSON line followed by a newline.
     """
     path = get_transcript_path(session_id)
     entry_with_ts = {
@@ -49,7 +49,7 @@ def append_message(
     message_id: str = "",
     metadata: dict | None = None,
 ) -> None:
-    """追加一条消息到 transcript。"""
+    """Append a message to the transcript."""
     entry: dict[str, Any] = {
         "type": "message",
         "role": role,
@@ -69,7 +69,7 @@ def append_tool_result(
     result: str,
     is_error: bool = False,
 ) -> None:
-    """追加一条工具结果到 transcript。"""
+    """Append a tool result to the transcript."""
     append_entry(
         session_id,
         {
@@ -83,9 +83,9 @@ def append_tool_result(
 
 
 def append_compact_boundary(session_id: str, summary: str = "") -> None:
-    """追加压缩边界标记。
+    """Append a compaction boundary marker.
 
-    加载时可以从此标记后开始读取，跳过已压缩的前半部分。
+    When loading, reading can start after this marker, skipping the already-compacted prefix.
     """
     append_entry(
         session_id,
@@ -101,14 +101,14 @@ def load_transcript(
     *,
     from_compact_boundary: bool = False,
 ) -> list[dict]:
-    """加载 transcript。
+    """Load the transcript.
 
     Args:
-        session_id: 会话 ID
-        from_compact_boundary: 如果为 True，从最后一个 compact_boundary 开始读取
+        session_id: Session ID
+        from_compact_boundary: If True, start reading from the last compact_boundary
 
     Returns:
-        消息/事件记录列表
+        List of message/event records
     """
     path = get_transcript_path(session_id)
     if not path.exists():
@@ -137,12 +137,12 @@ def load_transcript(
 
 
 def transcript_exists(session_id: str) -> bool:
-    """检查 transcript 是否存在。"""
+    """Check whether a transcript exists."""
     return get_transcript_path(session_id).exists()
 
 
 def _serialize_content(content: Any) -> Any:
-    """序列化消息内容。"""
+    """Serialize message content."""
     if isinstance(content, list):
         result = []
         for block in content:

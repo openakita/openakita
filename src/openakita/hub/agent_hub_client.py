@@ -1,12 +1,12 @@
 """
-AgentHubClient — 与 OpenAkita Platform Agent Store 交互的客户端
+AgentHubClient — Client for interacting with the OpenAkita Platform Agent Store
 
-功能：
-- search: 搜索平台上的 Agent
-- get_detail: 获取 Agent 详情
-- download: 下载 .akita-agent 包并返回本地路径
-- publish: 上传本地 Agent 到平台
-- rate: 为 Agent 评分
+Features:
+- search: search agents on the platform
+- get_detail: get agent details
+- download: download .akita-agent package and return local path
+- publish: upload a local agent to the platform
+- rate: rate an agent
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ DOWNLOAD_TIMEOUT = 120.0
 
 
 class AgentHubClient:
-    """Agent Store HTTP 客户端"""
+    """Agent Store HTTP client"""
 
     def __init__(self, base_url: str | None = None):
         self.base_url = (base_url or settings.hub_api_url).rstrip("/")
@@ -89,7 +89,7 @@ class AgentHubClient:
         return resp.json()
 
     async def download(self, agent_id: str, save_dir: Path | None = None) -> Path:
-        """下载 Agent 包到本地，返回文件路径"""
+        """Download agent package locally and return the file path"""
         client = await self._get_client()
         resp = await client.get(
             f"/agents/{agent_id}/download",
@@ -120,7 +120,7 @@ class AgentHubClient:
         category: str = "general",
         tags: list[str] | None = None,
     ) -> dict[str, Any]:
-        """上传 .akita-agent 包到平台"""
+        """Upload .akita-agent package to the platform"""
         client = await self._get_client()
         with open(package_path, "rb") as f:
             files = {"package": (package_path.name, f, "application/zip")}

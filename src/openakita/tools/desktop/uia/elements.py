@@ -1,7 +1,7 @@
 """
-Windows 桌面自动化 - UIAutomation 元素
+Windows desktop automation - UIAutomation elements
 
-封装 pywinauto 的控件对象，提供统一的接口
+Wraps pywinauto control objects, providing a unified interface.
 """
 
 import logging
@@ -10,7 +10,7 @@ from typing import Optional
 
 from ..types import BoundingBox, UIElement, WindowInfo
 
-# 平台检查
+# Platform check
 if sys.platform != "win32":
     raise ImportError(
         f"Desktop automation module is Windows-only. Current platform: {sys.platform}"
@@ -28,26 +28,26 @@ logger = logging.getLogger(__name__)
 
 class UIAElementWrapper:
     """
-    UIAutomation 元素包装器
+    UIAutomation element wrapper
 
-    封装 pywinauto 的 UIAWrapper，提供更友好的接口
+    Wraps pywinauto's UIAWrapper, providing a friendlier interface.
     """
 
     def __init__(self, control: UIAWrapper):
         """
         Args:
-            control: pywinauto UIAWrapper 对象
+            control: pywinauto UIAWrapper object
         """
         self._control = control
 
     @property
     def control(self) -> UIAWrapper:
-        """获取原始 pywinauto 控件"""
+        """Get the raw pywinauto control"""
         return self._control
 
     @property
     def name(self) -> str:
-        """获取元素名称"""
+        """Get element name"""
         try:
             return self._control.element_info.name or ""
         except Exception:
@@ -55,7 +55,7 @@ class UIAElementWrapper:
 
     @property
     def control_type(self) -> str:
-        """获取控件类型"""
+        """Get control type"""
         try:
             return self._control.element_info.control_type or "Unknown"
         except Exception:
@@ -63,7 +63,7 @@ class UIAElementWrapper:
 
     @property
     def automation_id(self) -> str:
-        """获取自动化 ID"""
+        """Get automation ID"""
         try:
             return self._control.element_info.automation_id or ""
         except Exception:
@@ -71,7 +71,7 @@ class UIAElementWrapper:
 
     @property
     def class_name(self) -> str:
-        """获取类名"""
+        """Get class name"""
         try:
             return self._control.element_info.class_name or ""
         except Exception:
@@ -79,7 +79,7 @@ class UIAElementWrapper:
 
     @property
     def handle(self) -> int:
-        """获取窗口句柄"""
+        """Get window handle"""
         try:
             return self._control.element_info.handle or 0
         except Exception:
@@ -87,7 +87,7 @@ class UIAElementWrapper:
 
     @property
     def process_id(self) -> int:
-        """获取进程 ID"""
+        """Get process ID"""
         try:
             return self._control.element_info.process_id or 0
         except Exception:
@@ -95,7 +95,7 @@ class UIAElementWrapper:
 
     @property
     def bbox(self) -> BoundingBox | None:
-        """获取边界框"""
+        """Get bounding box"""
         try:
             rect = self._control.element_info.rectangle
             if rect:
@@ -111,7 +111,7 @@ class UIAElementWrapper:
 
     @property
     def center(self) -> tuple[int, int] | None:
-        """获取中心点坐标"""
+        """Get center point coordinates"""
         bbox = self.bbox
         if bbox:
             return bbox.center
@@ -119,7 +119,7 @@ class UIAElementWrapper:
 
     @property
     def is_enabled(self) -> bool:
-        """是否可用"""
+        """Whether the element is enabled"""
         try:
             return self._control.is_enabled()
         except Exception:
@@ -127,7 +127,7 @@ class UIAElementWrapper:
 
     @property
     def is_visible(self) -> bool:
-        """是否可见"""
+        """Whether the element is visible"""
         try:
             return self._control.is_visible()
         except Exception:
@@ -135,7 +135,7 @@ class UIAElementWrapper:
 
     @property
     def is_focused(self) -> bool:
-        """是否有焦点"""
+        """Whether the element has focus"""
         try:
             return self._control.has_keyboard_focus()
         except Exception:
@@ -143,9 +143,9 @@ class UIAElementWrapper:
 
     @property
     def value(self) -> str | None:
-        """获取值（如输入框内容）"""
+        """Get value (e.g., text input content)"""
         try:
-            # 尝试不同的方式获取值
+            # Try different methods to get the value
             if hasattr(self._control, "get_value"):
                 return self._control.get_value()
             if hasattr(self._control, "window_text"):
@@ -160,13 +160,13 @@ class UIAElementWrapper:
 
     def set_value(self, value: str) -> bool:
         """
-        设置值
+        Set value
 
         Args:
-            value: 要设置的值
+            value: Value to set
 
         Returns:
-            是否成功
+            Whether the operation succeeded
         """
         try:
             if hasattr(self._control, "set_edit_text"):
@@ -181,10 +181,10 @@ class UIAElementWrapper:
 
     def click(self) -> bool:
         """
-        点击元素
+        Click the element
 
         Returns:
-            是否成功
+            Whether the operation succeeded
         """
         try:
             self._control.click_input()
@@ -194,7 +194,7 @@ class UIAElementWrapper:
             return False
 
     def double_click(self) -> bool:
-        """双击元素"""
+        """Double-click the element"""
         try:
             self._control.double_click_input()
             return True
@@ -203,7 +203,7 @@ class UIAElementWrapper:
             return False
 
     def right_click(self) -> bool:
-        """右键点击元素"""
+        """Right-click the element"""
         try:
             self._control.right_click_input()
             return True
@@ -213,14 +213,14 @@ class UIAElementWrapper:
 
     def type_keys(self, keys: str, with_spaces: bool = True) -> bool:
         """
-        输入按键序列
+        Type a key sequence
 
         Args:
-            keys: 按键序列
-            with_spaces: 是否包含空格
+            keys: Key sequence
+            with_spaces: Whether to include spaces
 
         Returns:
-            是否成功
+            Whether the operation succeeded
         """
         try:
             self._control.type_keys(keys, with_spaces=with_spaces)
@@ -230,7 +230,7 @@ class UIAElementWrapper:
             return False
 
     def set_focus(self) -> bool:
-        """设置焦点"""
+        """Set focus"""
         try:
             self._control.set_focus()
             return True
@@ -240,14 +240,14 @@ class UIAElementWrapper:
 
     def scroll(self, direction: str = "down", amount: int = 3) -> bool:
         """
-        滚动
+        Scroll
 
         Args:
-            direction: 方向 (up, down, left, right)
-            amount: 滚动量
+            direction: Direction (up, down, left, right)
+            amount: Scroll amount
 
         Returns:
-            是否成功
+            Whether the operation succeeded
         """
         try:
             if direction == "down":
@@ -260,7 +260,7 @@ class UIAElementWrapper:
             return False
 
     def expand(self) -> bool:
-        """展开（如树节点）"""
+        """Expand (e.g., tree node)"""
         try:
             if hasattr(self._control, "expand"):
                 self._control.expand()
@@ -270,7 +270,7 @@ class UIAElementWrapper:
         return False
 
     def collapse(self) -> bool:
-        """折叠（如树节点）"""
+        """Collapse (e.g., tree node)"""
         try:
             if hasattr(self._control, "collapse"):
                 self._control.collapse()
@@ -280,7 +280,7 @@ class UIAElementWrapper:
         return False
 
     def select(self) -> bool:
-        """选择（如列表项）"""
+        """Select (e.g., list item)"""
         try:
             if hasattr(self._control, "select"):
                 self._control.select()
@@ -290,7 +290,7 @@ class UIAElementWrapper:
         return False
 
     def get_children(self) -> list["UIAElementWrapper"]:
-        """获取子元素"""
+        """Get child elements"""
         try:
             children = self._control.children()
             return [UIAElementWrapper(c) for c in children]
@@ -299,7 +299,7 @@ class UIAElementWrapper:
             return []
 
     def get_parent(self) -> Optional["UIAElementWrapper"]:
-        """获取父元素"""
+        """Get parent element"""
         try:
             parent = self._control.parent()
             if parent:
@@ -316,16 +316,16 @@ class UIAElementWrapper:
         class_name: str | None = None,
     ) -> Optional["UIAElementWrapper"]:
         """
-        查找子元素
+        Find a child element
 
         Args:
-            name: 元素名称
-            control_type: 控件类型
-            automation_id: 自动化 ID
-            class_name: 类名
+            name: Element name
+            control_type: Control type
+            automation_id: Automation ID
+            class_name: Class name
 
         Returns:
-            找到的元素，未找到返回 None
+            The found element, or None if not found
         """
         criteria = {}
         if name:
@@ -357,16 +357,16 @@ class UIAElementWrapper:
         class_name: str | None = None,
     ) -> list["UIAElementWrapper"]:
         """
-        查找所有匹配的子元素
+        Find all matching child elements
 
         Args:
-            name: 元素名称（支持正则）
-            control_type: 控件类型
-            automation_id: 自动化 ID
-            class_name: 类名
+            name: Element name (supports regex)
+            control_type: Control type
+            automation_id: Automation ID
+            class_name: Class name
 
         Returns:
-            匹配的元素列表
+            List of matching elements
         """
         criteria = {}
         if name:
@@ -396,7 +396,7 @@ class UIAElementWrapper:
         return results
 
     def to_ui_element(self) -> UIElement:
-        """转换为统一的 UIElement 类型"""
+        """Convert to unified UIElement type"""
         return UIElement(
             name=self.name,
             control_type=self.control_type,
@@ -412,10 +412,10 @@ class UIAElementWrapper:
         )
 
     def to_window_info(self) -> WindowInfo:
-        """转换为 WindowInfo（仅适用于窗口元素）"""
+        """Convert to WindowInfo (only applicable for window elements)"""
         bbox = self.bbox
 
-        # 尝试获取进程名
+        # Try to get process name
         process_name = ""
         try:
             import psutil
@@ -427,7 +427,7 @@ class UIAElementWrapper:
         except Exception:
             pass
 
-        # 判断窗口状态
+        # Determine window state
         is_minimized = False
         is_maximized = False
         try:
@@ -453,7 +453,7 @@ class UIAElementWrapper:
         )
 
     def to_dict(self) -> dict:
-        """转换为字典"""
+        """Convert to dictionary"""
         return {
             "name": self.name,
             "control_type": self.control_type,
@@ -478,5 +478,5 @@ class UIAElementWrapper:
         )
 
 
-# 类型别名
+# Type alias
 UIAElement = UIAElementWrapper

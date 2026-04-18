@@ -1,24 +1,24 @@
 """
-OpenAkita - 全能自进化AI Agent
+OpenAkita - Versatile Self-Evolving AI Agent
 
-基于 Ralph Wiggum 模式，永不放弃。
+Based on the Ralph Wiggum pattern — never gives up.
 """
 
 
 def _resolve_version_info() -> tuple[str, str]:
     """
-    解析版本号和 git 短哈希。
+    Resolve the version number and git short hash.
 
-    返回 (version, git_hash)。
-    打包模式下 _bundled_version.txt 格式为 "1.22.7+823f46b"。
-    开发模式下自动从 git 获取当前 HEAD 短哈希。
+    Returns (version, git_hash).
+    In packaged mode, _bundled_version.txt format is "1.22.7+823f46b".
+    In development mode, the current HEAD short hash is fetched from git.
     """
     from pathlib import Path
 
     version = "0.0.0-dev"
     git_hash = "unknown"
 
-    # 1. PyInstaller 打包模式：读取构建时写入的版本文件（格式: "1.22.7+abc1234"）
+    # 1. PyInstaller packaged mode: read version file written at build time (format: "1.22.7+abc1234")
     bundled_ver = Path(__file__).parent / "_bundled_version.txt"
     if bundled_ver.exists():
         try:
@@ -31,7 +31,7 @@ def _resolve_version_info() -> tuple[str, str]:
         except Exception:
             pass
 
-    # 2. 尝试读取源码根目录的 pyproject.toml（editable 安装时始终最新）
+    # 2. Try reading pyproject.toml from the source root (always up-to-date in editable installs)
     project_root = Path(__file__).parent.parent.parent
     pyproject_path = project_root / "pyproject.toml"
     if pyproject_path.exists():
@@ -43,7 +43,7 @@ def _resolve_version_info() -> tuple[str, str]:
         except Exception:
             pass
 
-    # 3. 回退到已安装包的元数据
+    # 3. Fall back to installed package metadata
     if version == "0.0.0-dev":
         try:
             from importlib.metadata import version as meta_version
@@ -52,7 +52,7 @@ def _resolve_version_info() -> tuple[str, str]:
         except Exception:
             pass
 
-    # 开发模式下从 git 获取当前哈希
+    # In development mode, get the current hash from git
     try:
         import subprocess
 
@@ -72,7 +72,7 @@ __version__, __git_hash__ = _resolve_version_info()
 
 
 def get_version_string() -> str:
-    """返回完整版本标识，如 '1.22.7+823f46b'"""
+    """Return the full version identifier, e.g. '1.22.7+823f46b'."""
     return f"{__version__}+{__git_hash__}"
 
 

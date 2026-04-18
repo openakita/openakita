@@ -1,16 +1,16 @@
 """
-代码搜索测试用例 (30个)
+Code search test cases (30)
 """
 
 from openakita.testing.runner import TestCase
 
 CODE_SEARCH_TESTS = [
-    # 本地代码搜索
+    # Local code search
     TestCase(
         id="search_code_001",
         category="search",
         subcategory="code",
-        description="搜索函数定义",
+        description="Search for function definitions",
         input={
             "action": "search_code",
             "pattern": "def execute",
@@ -23,7 +23,7 @@ CODE_SEARCH_TESTS = [
         id="search_code_002",
         category="search",
         subcategory="code",
-        description="搜索类定义",
+        description="Search for class definitions",
         input={
             "action": "search_code",
             "pattern": "class.*Skill",
@@ -36,7 +36,7 @@ CODE_SEARCH_TESTS = [
         id="search_code_003",
         category="search",
         subcategory="code",
-        description="搜索导入语句",
+        description="Search for import statements",
         input={
             "action": "search_code",
             "pattern": "^import|^from.*import",
@@ -49,7 +49,7 @@ CODE_SEARCH_TESTS = [
         id="search_code_004",
         category="search",
         subcategory="code",
-        description="搜索 TODO 注释",
+        description="Search for TODO comments",
         input={
             "action": "search_code",
             "pattern": "TODO|FIXME",
@@ -62,7 +62,7 @@ CODE_SEARCH_TESTS = [
         id="search_code_005",
         category="search",
         subcategory="code",
-        description="按文件类型搜索",
+        description="Search by file type",
         input={
             "action": "search_code",
             "pattern": "async def",
@@ -72,12 +72,12 @@ CODE_SEARCH_TESTS = [
         expected="length>=5",
         tags=["code", "search", "async"],
     ),
-    # 文件搜索
+    # File search
     TestCase(
         id="search_file_001",
         category="search",
         subcategory="file",
-        description="按名称搜索文件",
+        description="Search for files by name",
         input={
             "action": "search_files",
             "pattern": "*.py",
@@ -90,7 +90,7 @@ CODE_SEARCH_TESTS = [
         id="search_file_002",
         category="search",
         subcategory="file",
-        description="搜索配置文件",
+        description="Search for configuration files",
         input={
             "action": "search_files",
             "pattern": "*.toml",
@@ -103,7 +103,7 @@ CODE_SEARCH_TESTS = [
         id="search_file_003",
         category="search",
         subcategory="file",
-        description="搜索 Markdown 文件",
+        description="Search for Markdown files",
         input={
             "action": "search_files",
             "pattern": "*.md",
@@ -112,15 +112,15 @@ CODE_SEARCH_TESTS = [
         expected="length>=4",
         tags=["file", "search", "markdown"],
     ),
-    # 语义搜索（预留）
+    # Semantic search (reserved)
     TestCase(
         id="search_semantic_001",
         category="search",
         subcategory="semantic",
-        description="语义搜索函数",
+        description="Semantic search for functions",
         input={
             "action": "semantic_search",
-            "query": "执行shell命令的函数",
+            "query": "function that executes shell commands",
             "path": "src/openakita",
         },
         expected="contains:shell",
@@ -130,10 +130,10 @@ CODE_SEARCH_TESTS = [
         id="search_semantic_002",
         category="search",
         subcategory="semantic",
-        description="语义搜索类",
+        description="Semantic search for classes",
         input={
             "action": "semantic_search",
-            "query": "管理技能注册的类",
+            "query": "class that manages skill registration",
             "path": "src/openakita",
         },
         expected="contains:Registry",

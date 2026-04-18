@@ -1,14 +1,16 @@
 """
-确定性验证器 (Agent Harness: Deterministic Validators)
+Deterministic Validators (Agent Harness)
 
-在任务完成验证中混合使用确定性检查和 LLM 判断，减少对 LLM 验证的依赖。
-确定性验证器不依赖 LLM，使用规则、文件检查、退出码等确定性方法验证任务结果。
+Mixes deterministic checks with LLM judgment during task-completion validation,
+reducing reliance on LLM-based verification.
+Deterministic validators do not depend on LLM; they use rules, file checks,
+exit codes, and other deterministic methods to verify task outcomes.
 
-验证器类型:
-- PlanValidator: 验证 Plan 所有步骤状态
-- ArtifactValidator: 验证交付物是否完整（基于 delivery_receipts）
-- ToolSuccessValidator: 验证关键工具是否执行成功
-- FileValidator: 验证文件操作结果（磁盘存在性/大小校验）
+Validator types:
+- PlanValidator: Validates the status of all Plan steps
+- ArtifactValidator: Validates artifact completeness (based on delivery_receipts)
+- ToolSuccessValidator: Validates whether critical tools executed successfully
+- FileValidator: Validates file operation results (disk existence/size checks)
 """
 
 from __future__ import annotations
@@ -24,27 +26,27 @@ logger = logging.getLogger(__name__)
 
 
 class ValidationResult(StrEnum):
-    """验证结果"""
+    """Validation result"""
 
     PASS = "pass"
     WARN = "warn"
     FAIL = "fail"
-    SKIP = "skip"  # 验证器不适用于当前场景
+    SKIP = "skip"  # Validator not applicable to the current scenario
 
 
 @dataclass
 class ValidatorOutput:
-    """单个验证器的输出"""
+    """Output from a single validator"""
 
     name: str
     result: ValidationResult
     reason: str = ""
-    confidence: float = 1.0  # 确定性验证器 = 1.0
+    confidence: float = 1.0  # Deterministic validator = 1.0
 
 
 @dataclass
 class ValidationReport:
-    """综合验证报告"""
+    """Aggregate validation report"""
 
     outputs: list[ValidatorOutput] = field(default_factory=list)
 
@@ -74,7 +76,7 @@ class ValidationReport:
         return sum(1 for o in self.outputs if o.result != ValidationResult.SKIP)
 
     def get_summary(self) -> str:
-        """生成人可读摘要"""
+        """Generate a human-readable summary"""
         parts = []
         for o in self.outputs:
             if o.result == ValidationResult.SKIP:
@@ -89,7 +91,7 @@ class ValidationReport:
 
 
 class BaseValidator(ABC):
-    """验证器基类"""
+    """Base class for validators"""
 
     @property
     @abstractmethod
@@ -101,7 +103,7 @@ class BaseValidator(ABC):
 
 @dataclass
 class ValidationContext:
-    """验证上下文（传递给所有验证器的数据）"""
+    """Validation context (data passed to all validators)"""
 
     user_request: str = ""
     assistant_response: str = ""
@@ -112,7 +114,7 @@ class ValidationContext:
 
 
 class PlanValidator(BaseValidator):
-    """Plan 步骤完成度验证（确定性，不用 LLM）"""
+    """Plan step completion validator (deterministic, no LLM)"""
 
     @property
     def name(self) -> str:
@@ -179,7 +181,7 @@ class PlanValidator(BaseValidator):
 
 
 class ArtifactValidator(BaseValidator):
-    """交付物完整性验证"""
+    """Artifact completeness validator"""
 
     @property
     def name(self) -> str:
@@ -218,7 +220,7 @@ class ArtifactValidator(BaseValidator):
 
 
 class ToolSuccessValidator(BaseValidator):
-    """关键工具执行成功验证"""
+    """Critical tool execution success validator"""
 
     @property
     def name(self) -> str:
@@ -257,7 +259,7 @@ class ToolSuccessValidator(BaseValidator):
 
 
 class CompletePlanValidator(BaseValidator):
-    """验证 complete_todo 工具是否被调用"""
+    """Validates whether the complete_todo tool was called"""
 
     @property
     def name(self) -> str:
@@ -291,11 +293,12 @@ class CompletePlanValidator(BaseValidator):
 
 
 class FileValidator(BaseValidator):
-    """文件操作结果验证（磁盘级确定性校验）
+    """File operation result validator (disk-level deterministic checks)
 
-    从 tool_results 文本中提取路径，校验文件在磁盘上的实际状态：
-    - write_file / edit_file: 文件应存在且大小 > 0
-    - delete_file: 文件应已不存在
+    Extracts file paths from tool_results text and verifies their actual
+    state on disk:
+    - write_file / edit_file: file should exist and have size > 0
+    - delete_file: file should no longer exist
     """
 
     _WRITE_PATH_RE = re.compile(
@@ -326,7 +329,7 @@ class FileValidator(BaseValidator):
             if tr.get("is_error"):
                 continue
 
-            # write / edit: 文件应存在
+            # write / edit: file should exist
             m = self._WRITE_PATH_RE.search(content)
             if m:
                 fpath = m.group(1).strip()
@@ -334,21 +337,21 @@ class FileValidator(BaseValidator):
                 try:
                     p = Path(fpath)
                     if not p.exists():
-                        issues.append(f"write/edit 目标不存在: {fpath}")
+                        issues.append(f"write/edit target does not exist: {fpath}")
                     elif p.stat().st_size == 0:
-                        issues.append(f"write/edit 目标为空文件: {fpath}")
+                        issues.append(f"write/edit target is empty file: {fpath}")
                 except OSError as e:
-                    issues.append(f"无法检查 {fpath}: {e}")
+                    issues.append(f"Cannot check {fpath}: {e}")
                 continue
 
-            # delete: 文件应已不存在
+            # delete: file should no longer exist
             m = self._DELETE_PATH_RE.search(content)
             if m:
                 fpath = m.group(1).strip()
                 checked += 1
                 try:
                     if Path(fpath).exists():
-                        issues.append(f"delete 目标仍存在: {fpath}")
+                        issues.append(f"delete target still exists: {fpath}")
                 except OSError:
                     pass
                 continue
@@ -374,7 +377,7 @@ class FileValidator(BaseValidator):
         )
 
 
-# ==================== 验证器注册表 ====================
+# ==================== Validator Registry ====================
 
 _DEFAULT_VALIDATORS: list[BaseValidator] = [
     PlanValidator(),
@@ -386,7 +389,7 @@ _DEFAULT_VALIDATORS: list[BaseValidator] = [
 
 
 class ValidatorRegistry:
-    """验证器注册表"""
+    """Validator registry"""
 
     def __init__(self, validators: list[BaseValidator] | None = None) -> None:
         self._validators = validators or list(_DEFAULT_VALIDATORS)
@@ -395,7 +398,7 @@ class ValidatorRegistry:
         self._validators.append(validator)
 
     def run_all(self, context: ValidationContext) -> ValidationReport:
-        """运行所有验证器"""
+        """Run all validators"""
         report = ValidationReport()
 
         for validator in self._validators:
@@ -442,5 +445,5 @@ class ValidatorRegistry:
 
 
 def create_default_registry() -> ValidatorRegistry:
-    """创建默认验证器注册表"""
+    """Create a default validator registry"""
     return ValidatorRegistry()

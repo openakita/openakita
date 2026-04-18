@@ -1,5 +1,5 @@
 """
-Anthropic 服务商注册表
+Anthropic provider registry
 """
 
 from ..capabilities import infer_capabilities
@@ -7,7 +7,7 @@ from .base import ModelInfo, ProviderInfo, ProviderRegistry, get_registry_client
 
 
 class AnthropicRegistry(ProviderRegistry):
-    """Anthropic 注册表"""
+    """Anthropic registry"""
 
     info = ProviderInfo(
         name="Anthropic (Official / Compatible)",
@@ -16,11 +16,11 @@ class AnthropicRegistry(ProviderRegistry):
         default_base_url="https://api.anthropic.com",
         api_key_env_suggestion="ANTHROPIC_API_KEY",
         supports_model_list=True,
-        supports_capability_api=False,  # API 只返回基本信息
+        supports_capability_api=False,  # API only returns basic info
     )
 
     async def list_models(self, api_key: str) -> list[ModelInfo]:
-        """获取 Anthropic 模型列表"""
+        """Fetch the list of Anthropic models"""
         client = get_registry_client()
         try:
             resp = await client.get(
@@ -49,7 +49,7 @@ class AnthropicRegistry(ProviderRegistry):
             return self._get_preset_models()
 
     def _get_preset_models(self) -> list[ModelInfo]:
-        """返回预置模型列表"""
+        """Return the preset model list"""
         preset = [
             "claude-opus-4-20250514",
             "claude-sonnet-4-20250514",

@@ -1,8 +1,8 @@
 """
-Notebook 工具定义
+Notebook tool definitions
 
-包含 Jupyter Notebook 编辑工具：
-- edit_notebook: 编辑 Notebook cell
+Contains the Jupyter Notebook editing tool:
+- edit_notebook: edit a notebook cell
 """
 
 NOTEBOOK_TOOLS = [
@@ -26,15 +26,15 @@ NOTEBOOK_TOOLS = [
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Notebook 文件路径（.ipynb）",
+                    "description": "Path to the notebook file (.ipynb)",
                 },
                 "cell_idx": {
                     "type": "integer",
-                    "description": "Cell 索引（0-based）",
+                    "description": "Cell index (0-based)",
                 },
                 "is_new_cell": {
                     "type": "boolean",
-                    "description": "true=创建新 cell，false=编辑现有 cell",
+                    "description": "true = create a new cell, false = edit an existing cell",
                 },
                 "cell_language": {
                     "type": "string",
@@ -49,17 +49,17 @@ NOTEBOOK_TOOLS = [
                         "raw",
                         "other",
                     ],
-                    "description": "Cell 语言类型",
+                    "description": "Cell language type",
                 },
                 "old_string": {
                     "type": "string",
                     "description": (
-                        "要替换的文本（编辑现有 cell 时必填，需唯一匹配，包含 3-5 行上下文）"
+                        "Text to replace (required when editing an existing cell; must uniquely match, include 3-5 lines of context)"
                     ),
                 },
                 "new_string": {
                     "type": "string",
-                    "description": "替换后的文本或新 cell 的内容",
+                    "description": "Replacement text, or content for a new cell",
                 },
             },
             "required": ["path", "cell_idx", "is_new_cell", "cell_language", "new_string"],

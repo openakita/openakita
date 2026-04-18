@@ -1,10 +1,10 @@
 """
-依赖注入系统
+Dependency Injection System
 
-参考 Claude Code 的 QueryDeps 模式:
-- 范围刻意窄小（只暴露必要的可注入函数）
-- production_deps() 返回真实实现
-- 测试中传入 mock/fake 函数
+Modeled after Claude Code's QueryDeps pattern:
+- Scope is intentionally narrow (only exposes injectable functions that are needed)
+- production_deps() returns the real implementations
+- Pass in mock/fake functions during testing
 """
 
 from __future__ import annotations
@@ -17,10 +17,10 @@ from uuid import uuid4
 
 @dataclass
 class ReasoningDeps:
-    """ReasoningEngine 的依赖注入容器。
+    """Dependency injection container for ReasoningEngine.
 
     Scope is intentionally narrow to prove the pattern.
-    只包含需要在测试中替换的核心依赖。
+    Only includes core dependencies that need to be replaced in tests.
     """
 
     call_model: Callable[..., Coroutine]  # Brain.chat or Brain.chat_stream
@@ -34,11 +34,11 @@ def production_deps(
     brain: Any,
     context_mgr: Any = None,
 ) -> ReasoningDeps:
-    """创建生产环境的依赖实例。
+    """Create production dependency instance.
 
     Args:
-        brain: Brain 实例
-        context_mgr: ContextManager 实例（可选）
+        brain: Brain instance
+        context_mgr: ContextManager instance (optional)
     """
     from .microcompact import microcompact as mc_fn
 
@@ -58,7 +58,7 @@ def production_deps(
 
 @dataclass
 class ToolExecutorDeps:
-    """ToolExecutor 的依赖注入容器。"""
+    """Dependency injection container for ToolExecutor."""
 
     execute_handler: Callable[..., Coroutine] | None = None
     get_tool_schema: Callable[..., dict | None] | None = None
@@ -68,7 +68,7 @@ class ToolExecutorDeps:
 
 @dataclass
 class AgentDeps:
-    """Agent 级别的依赖注入容器。"""
+    """Agent-level dependency injection container."""
 
     reasoning_deps: ReasoningDeps | None = None
     tool_executor_deps: ToolExecutorDeps | None = None

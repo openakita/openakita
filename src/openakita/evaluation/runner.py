@@ -1,7 +1,7 @@
 """
-评估运行器
+Evaluation Runner
 
-从 Tracing 系统加载 Trace 数据，运行评估流水线:
+Loads trace data from the tracing system and runs the evaluation pipeline:
 Trace -> TraceMetrics -> Judge -> EvalResult -> EvalMetrics
 """
 
@@ -19,10 +19,10 @@ logger = logging.getLogger(__name__)
 
 class EvalRunner:
     """
-    评估运行器。
+    Evaluation runner.
 
-    从 Tracing 导出的文件中加载 Trace，
-    结合 Judge 评估生成完整的评估结果。
+    Loads traces from files exported by the tracing system
+    and generates evaluation results using a Judge.
     """
 
     def __init__(
@@ -34,7 +34,7 @@ class EvalRunner:
         self._judge = judge
 
     def set_judge(self, judge: Judge) -> None:
-        """设置 Judge（延迟注入）"""
+        """Set the Judge (lazy injection)."""
         self._judge = judge
 
     async def run_evaluation(
@@ -44,19 +44,19 @@ class EvalRunner:
         max_traces: int = 50,
     ) -> tuple[EvalMetrics, list[EvalResult]]:
         """
-        运行完整评估流水线。
+        Run the full evaluation pipeline.
 
         Args:
-            since: 只评估此时间戳之后的 Trace (默认过去 24 小时)
-            max_traces: 最多评估的 Trace 数量
+            since: Only evaluate traces after this timestamp (default: past 24 hours)
+            max_traces: Maximum number of traces to evaluate
 
         Returns:
-            (聚合指标, 各 trace 评估结果列表)
+            (aggregated metrics, list of per-trace evaluation results)
         """
         if since is None:
-            since = time.time() - 86400  # 过去 24 小时
+            since = time.time() - 86400  # past 24 hours
 
-        # Step 1: 加载 Trace
+        # Step 1: Load traces
         traces = self._load_traces(since=since, max_traces=max_traces)
         if not traces:
             logger.info("[Eval] No traces found for evaluation")
@@ -64,12 +64,12 @@ class EvalRunner:
 
         logger.info(f"[Eval] Loaded {len(traces)} traces for evaluation")
 
-        # Step 2: 提取指标
+        # Step 2: Extract metrics
         results: list[EvalResult] = []
         for trace in traces:
             metrics = TraceMetrics.from_trace(trace)
 
-            # Step 3: Judge 评估 (如果配置了)
+            # Step 3: Judge evaluation (if configured)
             judge_score = 0.0
             judge_reasoning = ""
             judge_suggestions: list[str] = []
@@ -81,7 +81,7 @@ class EvalRunner:
                 judge_reasoning = judge_result.reasoning
                 judge_suggestions = judge_result.suggestions
 
-                # 自动打标签
+                # Auto-tag based on metrics
                 if not metrics.task_completed:
                     tags.append("failed")
                 if metrics.loop_detected:
@@ -95,7 +95,7 @@ class EvalRunner:
                 if judge_score < 0.5:
                     tags.append("low_quality")
             else:
-                # 无 Judge 时基于指标简单评分
+                # Without a Judge, score simply based on metrics
                 judge_score = 1.0 if metrics.task_completed else 0.0
                 if not metrics.task_completed:
                     tags.append("failed")
@@ -112,7 +112,7 @@ class EvalRunner:
             )
             results.append(result)
 
-        # Step 4: 聚合指标
+        # Step 4: Aggregate metrics
         aggregated = EvalMetrics.aggregate(results)
 
         logger.info(
@@ -129,7 +129,7 @@ class EvalRunner:
         since: float = 0.0,
         max_traces: int = 50,
     ) -> list[Any]:
-        """从文件加载 Trace 对象。"""
+        """Load trace objects from files."""
         from ..tracing.tracer import Span, SpanStatus, SpanType, Trace
 
         traces_path = Path(self._traces_dir)
@@ -145,7 +145,7 @@ class EvalRunner:
                 with open(file_path, encoding="utf-8") as f:
                     data = json.load(f)
 
-                # 支持单个 trace 文件和多 trace 文件
+                # Support both single-trace and multi-trace files
                 trace_dicts = data if isinstance(data, list) else [data]
 
                 for td in trace_dicts:
@@ -153,7 +153,7 @@ class EvalRunner:
                     if start_time < since:
                         continue
 
-                    # 重建 Trace 对象
+                    # Reconstruct Trace object
                     trace = Trace(
                         trace_id=td.get("trace_id", ""),
                         session_id=td.get("session_id", ""),
@@ -162,7 +162,7 @@ class EvalRunner:
                         metadata=td.get("metadata", {}),
                     )
 
-                    # 重建 Span 对象
+                    # Reconstruct Span object
                     for sd in td.get("spans", []):
                         span_type_str = sd.get("type", "tool")
                         try:

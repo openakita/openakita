@@ -1,7 +1,7 @@
 """
 Windows Desktop Automation - Main Controller
 
-Unified interface, intelligently select UIA or Vision approach
+Unified interface that intelligently selects UIA or Vision approach
 """
 
 import asyncio
@@ -40,7 +40,7 @@ class DesktopController:
     """
     Windows Desktop Controller
 
-    Unified interface, intelligently select UIA or Vision approach:
+    Unified interface that intelligently selects UIA or Vision approach:
     - Standard Windows applications → UIAutomation (fast and accurate)
     - Non-standard UI → Vision (universal fallback)
     """
@@ -51,7 +51,7 @@ class DesktopController:
     ):
         """
         Args:
-            config: Configuration object, None uses global config
+            config: Configuration object; uses global config if None
         """
         self._config = config or get_config()
 
@@ -178,28 +178,28 @@ class DesktopController:
         config = self._config.uia
         search_timeout = timeout or config.timeout
 
-        # 解析目标
+        # Parse target
         parsed = self._parse_target(target)
 
-        # 获取搜索根
+        # Get search root
         root = None
         if window_title:
             root = self.uia.find_window_fuzzy(window_title, timeout=2.0)
             if not root:
                 logger.warning(f"Window not found: {window_title}")
 
-        # 根据方法选择策略
+        # Select strategy based on method
         if method == FindMethod.UIA:
             return await self._find_by_uia(parsed, root, search_timeout)
         elif method == FindMethod.VISION:
             return await self._find_by_vision(target, window_title)
         else:  # AUTO
-            # 先尝试 UIA
+            # Try UIA first
             element = await self._find_by_uia(parsed, root, search_timeout / 2)
             if element:
                 return element
 
-            # 回退到 Vision
+            # Fall back to Vision
             if self._config.vision.enabled:
                 logger.info(f"UIA not found, falling back to vision: {target}")
                 return await self._find_by_vision(target, window_title)
@@ -208,13 +208,13 @@ class DesktopController:
 
     def _parse_target(self, target: str) -> dict:
         """
-        解析目标字符串
+        Parse target string
 
-        支持格式：
-        - "name:保存" → 按名称查找
-        - "id:btn_save" → 按自动化 ID 查找
-        - "type:Button" → 按控件类型查找
-        - "保存按钮" → 自然语言描述
+        Supported formats:
+        - "name:Save" → find by name
+        - "id:btn_save" → find by automation ID
+        - "type:Button" → find by control type
+        - "Save button" → natural language description
         """
         result = {"description": target}
 
@@ -240,7 +240,7 @@ class DesktopController:
         root: UIAElementWrapper | None,
         timeout: float,
     ) -> UIElement | None:
-        """使用 UIAutomation 查找"""
+        """Find using UIAutomation"""
         try:
             element = self.uia.find_element(
                 root=root,
@@ -264,12 +264,12 @@ class DesktopController:
         description: str,
         window_title: str | None = None,
     ) -> UIElement | None:
-        """使用视觉识别查找"""
+        """Find using vision recognition"""
         try:
-            # 截图
+            # Take screenshot
             img = self.screenshot(window_title=window_title)
 
-            # 视觉查找
+            # Vision search
             location = await self.vision.find_element(description, img)
 
             if location:
@@ -279,7 +279,7 @@ class DesktopController:
 
         return None
 
-    # ==================== 点击操作 ====================
+    # ==================== Click Operations ====================
 
     async def click(
         self,
@@ -289,13 +289,13 @@ class DesktopController:
         method: str | FindMethod = FindMethod.AUTO,
     ) -> ActionResult:
         """
-        点击目标
+        Click on target
 
         Args:
-            target: 目标（元素描述、坐标元组或 UIElement）
-            button: 鼠标按钮
-            double: 是否双击
-            method: 元素查找方法
+            target: Target (element description, coordinate tuple, or UIElement)
+            button: Mouse button
+            double: Whether to double-click
+            method: Element finding method
 
         Returns:
             ActionResult
@@ -303,7 +303,7 @@ class DesktopController:
         start_time = time.time()
 
         try:
-            # 解析目标坐标
+            # Resolve target coordinates
             x, y = await self._resolve_click_target(target, method)
 
             if x is None or y is None:
@@ -315,7 +315,7 @@ class DesktopController:
                     duration_ms=(time.time() - start_time) * 1000,
                 )
 
-            # 执行点击
+            # Execute click
             clicks = 2 if double else 1
             result = self.mouse.click(x, y, button=button, clicks=clicks)
             result.target = str(target)
@@ -337,7 +337,7 @@ class DesktopController:
         target: str | tuple[int, int] | UIElement,
         method: FindMethod,
     ) -> tuple[int | None, int | None]:
-        """解析点击目标为坐标"""
+        """Resolve click target to coordinates"""
         if isinstance(target, tuple) and len(target) == 2:
             return target
 
@@ -347,7 +347,7 @@ class DesktopController:
             return None, None
 
         if isinstance(target, str):
-            # 尝试解析坐标字符串 "x,y"
+            # Try parsing coordinate string "x,y"
             try:
                 parts = target.split(",")
                 if len(parts) == 2:
@@ -355,7 +355,7 @@ class DesktopController:
             except (ValueError, IndexError):
                 pass
 
-            # 作为元素描述查找
+            # Find as element description
             element = await self.find_element(target, method=method)
             if element and element.center:
                 return element.center
@@ -367,7 +367,7 @@ class DesktopController:
         target: str | tuple[int, int] | UIElement,
         method: str | FindMethod = FindMethod.AUTO,
     ) -> ActionResult:
-        """双击"""
+        """Double-click"""
         return await self.click(target, double=True, method=method)
 
     async def right_click(
@@ -375,10 +375,10 @@ class DesktopController:
         target: str | tuple[int, int] | UIElement,
         method: str | FindMethod = FindMethod.AUTO,
     ) -> ActionResult:
-        """右键点击"""
+        """Right-click"""
         return await self.click(target, button=MouseButton.RIGHT, method=method)
 
-    # ==================== 输入操作 ====================
+    # ==================== Input Operations ====================
 
     def type_text(
         self,
@@ -386,11 +386,11 @@ class DesktopController:
         clear_first: bool = False,
     ) -> ActionResult:
         """
-        输入文本
+        Type text
 
         Args:
-            text: 要输入的文本
-            clear_first: 是否先清空（Ctrl+A）
+            text: Text to type
+            clear_first: Whether to clear first (Ctrl+A)
 
         Returns:
             ActionResult
@@ -415,14 +415,14 @@ class DesktopController:
             )
 
     def hotkey(self, *keys: str) -> ActionResult:
-        """执行快捷键"""
+        """Execute hotkey"""
         return self.keyboard.hotkey(*keys)
 
     def press(self, key: str) -> ActionResult:
-        """按下按键"""
+        """Press a key"""
         return self.keyboard.press(key)
 
-    # ==================== 滚动操作 ====================
+    # ==================== Scroll Operations ====================
 
     def scroll(
         self,
@@ -432,12 +432,12 @@ class DesktopController:
         y: int | None = None,
     ) -> ActionResult:
         """
-        滚动
+        Scroll
 
         Args:
-            direction: 方向 (up, down, left, right)
-            amount: 滚动量
-            x, y: 滚动位置
+            direction: Direction (up, down, left, right)
+            amount: Scroll amount
+            x, y: Scroll position
 
         Returns:
             ActionResult
@@ -454,17 +454,17 @@ class DesktopController:
 
         return ActionResult(success=False, action="scroll", error="Invalid direction")
 
-    # ==================== 窗口管理 ====================
+    # ==================== Window Management ====================
 
     def list_windows(
         self,
         visible_only: bool = True,
     ) -> list[WindowInfo]:
-        """列出所有窗口"""
+        """List all windows"""
         return self.uia.list_windows(visible_only=visible_only)
 
     def get_active_window(self) -> WindowInfo | None:
-        """获取当前活动窗口"""
+        """Get current active window"""
         window = self.uia.get_active_window()
         if window:
             return window.to_window_info()
@@ -472,10 +472,10 @@ class DesktopController:
 
     def switch_to_window(self, title: str) -> ActionResult:
         """
-        切换到指定窗口
+        Switch to the specified window
 
         Args:
-            title: 窗口标题（模糊匹配）
+            title: Window title (fuzzy match)
 
         Returns:
             ActionResult
@@ -508,11 +508,11 @@ class DesktopController:
         title: str | None = None,
     ) -> ActionResult:
         """
-        窗口操作
+        Window action
 
         Args:
-            action: 操作类型
-            title: 窗口标题
+            action: Action type
+            title: Window title
 
         Returns:
             ActionResult
@@ -529,7 +529,7 @@ class DesktopController:
                 duration_ms=(time.time() - start_time) * 1000,
             )
 
-        # 其他操作需要窗口标题
+        # Other actions require a window title
         if not title:
             return ActionResult(
                 success=False,
@@ -568,7 +568,7 @@ class DesktopController:
             duration_ms=(time.time() - start_time) * 1000,
         )
 
-    # ==================== 等待功能 ====================
+    # ==================== Wait Functions ====================
 
     async def wait_for_element(
         self,
@@ -578,16 +578,16 @@ class DesktopController:
         method: str | FindMethod = FindMethod.AUTO,
     ) -> UIElement | None:
         """
-        等待元素出现
+        Wait for element to appear
 
         Args:
-            target: 元素描述
-            timeout: 超时时间
-            interval: 检查间隔
-            method: 查找方法
+            target: Element description
+            timeout: Timeout in seconds
+            interval: Check interval
+            method: Find method
 
         Returns:
-            找到的元素，超时返回 None
+            Found element, or None on timeout
         """
         start_time = time.time()
 
@@ -606,15 +606,15 @@ class DesktopController:
         interval: float = 0.5,
     ) -> bool:
         """
-        等待窗口出现
+        Wait for window to appear
 
         Args:
-            title: 窗口标题
-            timeout: 超时时间
-            interval: 检查间隔
+            title: Window title
+            timeout: Timeout in seconds
+            interval: Check interval
 
         Returns:
-            是否找到窗口
+            Whether the window was found
         """
         window = self.uia.wait_for_window(
             title_re=f".*{title}.*",
@@ -623,7 +623,7 @@ class DesktopController:
         )
         return window is not None
 
-    # ==================== 检查功能 ====================
+    # ==================== Inspection Functions ====================
 
     def inspect(
         self,
@@ -631,14 +631,14 @@ class DesktopController:
         depth: int = 2,
     ) -> dict:
         """
-        检查窗口的 UI 元素树
+        Inspect the UI element tree of a window
 
         Args:
-            window_title: 窗口标题，None 使用活动窗口
-            depth: 遍历深度
+            window_title: Window title; uses active window if None
+            depth: Traversal depth
 
         Returns:
-            元素树字典
+            Element tree dict
         """
         root = None
         if window_title:
@@ -652,14 +652,14 @@ class DesktopController:
         depth: int = 2,
     ) -> str:
         """
-        检查窗口的 UI 元素树（文本格式）
+        Inspect the UI element tree of a window (text format)
 
         Args:
-            window_title: 窗口标题
-            depth: 遍历深度
+            window_title: Window title
+            depth: Traversal depth
 
         Returns:
-            格式化的树文本
+            Formatted tree text
         """
         root = None
         if window_title:
@@ -667,7 +667,7 @@ class DesktopController:
 
         return self.inspector.print_element_tree(root, depth=depth)
 
-    # ==================== 视觉分析 ====================
+    # ==================== Visual Analysis ====================
 
     async def analyze_screen(
         self,
@@ -675,14 +675,14 @@ class DesktopController:
         query: str | None = None,
     ) -> dict:
         """
-        分析屏幕内容
+        Analyze screen content
 
         Args:
-            window_title: 窗口标题
-            query: 自定义查询，None 则进行通用分析
+            window_title: Window title
+            query: Custom query; performs general analysis if None
 
         Returns:
-            分析结果
+            Analysis result
         """
         img = self.screenshot(window_title=window_title)
 
@@ -706,12 +706,12 @@ class DesktopController:
         }
 
 
-# 全局实例
+# Global instance
 _controller: DesktopController | None = None
 
 
 def get_controller() -> DesktopController:
-    """获取全局控制器"""
+    """Get global controller"""
     global _controller
     if _controller is None:
         _controller = DesktopController()

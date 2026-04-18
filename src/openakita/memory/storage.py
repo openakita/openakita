@@ -1,18 +1,18 @@
 """
-统一记忆存储 (v2)
+Unified Memory Storage (v2)
 
-SQLite 为唯一结构化主存储，管理所有记忆数据:
-- memories: 语义记忆 (含 FTS5 全文索引)
-- episodes: 情节记忆
-- scratchpad: 工作记忆草稿本
-- conversation_turns: 对话原文索引
-- extraction_queue: 提取重试队列
-- embedding_cache: API Embedding 缓存 (可选)
+SQLite is the sole structured primary store, managing all memory data:
+- memories: Semantic memory (with FTS5 full-text index)
+- episodes: Episodic memory
+- scratchpad: Working memory scratchpad
+- conversation_turns: Conversation raw text index
+- extraction_queue: Extraction retry queue
+- embedding_cache: API Embedding cache (optional)
 
-设计原则:
-- SQLite 是唯一真相源, 所有数据先写 SQLite
-- FTS5 全文索引通过触发器自动同步
-- 向后兼容 v1 schema, 自动迁移
+Design principles:
+- SQLite is the single source of truth; all data is written to SQLite first
+- FTS5 full-text index is auto-synced via triggers
+- Backward-compatible with v1 schema, auto-migration
 """
 
 from __future__ import annotations
@@ -54,12 +54,12 @@ def _is_db_locked(e: Exception) -> bool:
 
 class MemoryStorage:
     """
-    统一记忆存储管理器 (v2)
+    Unified Memory Storage Manager (v2)
 
     Usage:
         storage = MemoryStorage(db_path="data/memory/openakita.db")
         storage.save_memory(memory_dict)
-        results = storage.search_fts("代码风格")
+        results = storage.search_fts("code style")
     """
 
     _BUSY_TIMEOUT_MS = 30_000
@@ -205,15 +205,15 @@ class MemoryStorage:
             )
         """)
 
-        # v3: 记忆分层 — 新增 scope 列（兼容旧库）
+        # v3: Memory scoping — added scope column (backward-compatible with older DBs)
         for col, default in [("scope", "'global'"), ("scope_owner", "''")]:
             try:
                 c.execute(f"ALTER TABLE memories ADD COLUMN {col} TEXT DEFAULT {default}")
             except sqlite3.OperationalError:
-                pass  # 列已存在
+                pass  # Column already exists
         c.execute("CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope, scope_owner)")
 
-        # v4: 多 Agent 记忆隔离预留 — agent_id 标识记忆归属
+        # v4: Multi-agent memory isolation placeholder — agent_id identifies memory ownership
         try:
             c.execute("ALTER TABLE memories ADD COLUMN agent_id TEXT DEFAULT ''")
         except sqlite3.OperationalError:
@@ -1141,7 +1141,7 @@ class MemoryStorage:
             return []
 
     def get_max_turn_index(self, session_id: str) -> int:
-        """返回下一个可用的 turn_index（用于续接，避免覆盖历史数据）"""
+        """Return the next available turn_index (for resuming, avoiding overwriting historical data)"""
         if not self._conn:
             return 0
         try:
@@ -1156,7 +1156,7 @@ class MemoryStorage:
             return 0
 
     def get_recent_turns(self, session_id: str, limit: int = 20) -> list[dict]:
-        """按 turn_index 倒序获取最近 N 轮对话"""
+        """Get the most recent N conversation turns, ordered by turn_index descending"""
         if not self._conn:
             return []
         try:
@@ -1174,7 +1174,7 @@ class MemoryStorage:
             return []
 
     def get_global_recent_turns(self, limit: int = 20) -> list[dict]:
-        """跨所有 session 按时间倒序获取最近 N 轮对话（用于 Memory Nudge）"""
+        """Get the most recent N conversation turns across all sessions, ordered by timestamp descending (for Memory Nudge)"""
         if not self._conn:
             return []
         try:
@@ -1255,7 +1255,7 @@ class MemoryStorage:
                 return 0
 
     def delete_turns_for_session(self, session_id: str) -> int:
-        """删除指定 session 的所有 conversation_turns 记录（用于上下文重置）"""
+        """Delete all conversation_turns records for a given session (for context reset)"""
         if not self._conn:
             return 0
         with self._lock:
@@ -1282,7 +1282,7 @@ class MemoryStorage:
         days_back: int = 7,
         limit: int = 20,
     ) -> list[dict]:
-        """按关键词搜索 conversation_turns（content + tool_calls + tool_results）"""
+        """Search conversation_turns by keyword (content + tool_calls + tool_results)"""
         if not self._conn or not keyword:
             return []
         cutoff = (datetime.now() - timedelta(days=days_back)).isoformat()
@@ -1351,7 +1351,7 @@ class MemoryStorage:
                 logger.error(f"Failed to enqueue extraction: {e}")
 
     def _recover_stuck_extractions(self, stuck_timeout_minutes: int = 30) -> int:
-        """将卡在 'processing' 超过 stuck_timeout_minutes 的项重置为 'pending'"""
+        """Reset items stuck in 'processing' for more than stuck_timeout_minutes back to 'pending'"""
         if not self._conn:
             return 0
         try:
@@ -1379,7 +1379,7 @@ class MemoryStorage:
             return []
         with self._lock:
             try:
-                # 先恢复卡住的 processing 项
+                # First recover stuck 'processing' items
                 self._recover_stuck_extractions()
 
                 cur = self._conn.execute(
@@ -1461,7 +1461,7 @@ class MemoryStorage:
                 logger.error(f"Failed to cache embedding: {e}")
 
     # ======================================================================
-    # Attachments (文件/媒体记忆)
+    # Attachments (File/Media Memory)
     # ======================================================================
 
     def save_attachment(self, data: dict) -> None:

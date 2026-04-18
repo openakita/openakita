@@ -1,18 +1,19 @@
 """
-WebMCP 接口预留
+WebMCP interface placeholder.
 
-WebMCP 是 W3C 草案标准 (2026-02-10 Early Preview)，允许网站通过
-navigator.modelContext.registerTool() 向 AI Agent 暴露结构化工具。
+WebMCP is a W3C draft standard (2026-02-10 Early Preview) that allows websites
+to expose structured tools to AI Agents via navigator.modelContext.registerTool().
 
-例如航空网站可以暴露 searchFlights(from, to, date)，
-而不需要 Agent 猜测点击哪个按钮。
+For example, an airline website can expose searchFlights(from, to, date)
+without requiring the Agent to guess which button to click.
 
-当前状态：
-- W3C Early Preview Program (EPP)，仅限参与者
-- 由 Google + Microsoft 联合在 W3C Web Machine Learning CG 下推进
-- Chrome DevTools MCP 已支持发现页面上的 navigator.modelContext 注册的工具
+Current status:
+- W3C Early Preview Program (EPP), participants only
+- Driven by Google + Microsoft under the W3C Web Machine Learning CG
+- Chrome DevTools MCP already supports discovering navigator.modelContext registered tools on the page
 
-此模块预留了 WebMCP 工具发现和调用接口，等标准成熟后填充实现。
+This module provides placeholder WebMCP tool discovery and invocation interfaces,
+to be filled in once the standard matures.
 """
 
 import logging
@@ -25,40 +26,41 @@ logger = logging.getLogger(__name__)
 @dataclass
 class WebMCPTool:
     """
-    网站通过 WebMCP 暴露的工具
+    A tool exposed by a website via WebMCP.
 
-    对应 W3C 草案中 navigator.modelContext.registerTool() 注册的工具。
+    Corresponds to a tool registered via navigator.modelContext.registerTool()
+    in the W3C draft.
     """
 
     name: str
     description: str
     input_schema: dict = field(default_factory=dict)
-    origin: str = ""  # 注册此工具的网站源（如 "https://www.united.com"）
+    origin: str = ""  # Website origin that registered this tool (e.g., "https://www.united.com")
 
 
 @dataclass
 class WebMCPDiscoveryResult:
-    """WebMCP 工具发现结果"""
+    """WebMCP tool discovery result."""
 
-    url: str  # 当前页面 URL
+    url: str  # Current page URL
     tools: list[WebMCPTool] = field(default_factory=list)
-    supported: bool = False  # 页面是否支持 WebMCP
+    supported: bool = False  # Whether the page supports WebMCP
 
 
 async def discover_webmcp_tools(backend: Any) -> WebMCPDiscoveryResult:
     """
-    在当前页面发现 WebMCP 工具
+    Discover WebMCP tools on the current page.
 
-    通过在页面中执行 JavaScript 检测 navigator.modelContext API
-    并枚举注册的工具。
+    Detects the navigator.modelContext API by executing JavaScript in the page
+    and enumerates registered tools.
 
     Args:
-        backend: BrowserBackend 实例，需支持 execute_js
+        backend: BrowserBackend instance, must support execute_js
 
     Returns:
         WebMCPDiscoveryResult
     """
-    # 检测 navigator.modelContext 是否可用
+    # Detect whether navigator.modelContext is available
     detect_script = """
     (() => {
         if (!navigator.modelContext) {
@@ -104,7 +106,7 @@ async def discover_webmcp_tools(backend: Any) -> WebMCPDiscoveryResult:
             )
 
         return WebMCPDiscoveryResult(
-            url="",  # 调用者可以填充
+            url="",  # Caller can populate this
             tools=tools,
             supported=data.get("supported", False),
         )
@@ -120,14 +122,14 @@ async def call_webmcp_tool(
     arguments: dict,
 ) -> dict:
     """
-    调用 WebMCP 工具
+    Call a WebMCP tool.
 
-    通过在页面中执行 JavaScript 调用 navigator.modelContext.callTool()
+    Invokes navigator.modelContext.callTool() by executing JavaScript in the page.
 
     Args:
-        backend: BrowserBackend 实例
-        tool_name: 工具名称
-        arguments: 参数
+        backend: BrowserBackend instance
+        tool_name: Tool name
+        arguments: Arguments
 
     Returns:
         {"success": bool, "result": Any, "error": str | None}

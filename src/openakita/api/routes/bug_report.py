@@ -1,7 +1,7 @@
 """
 Feedback routes: GET /api/system-info, POST /api/bug-report, POST /api/feature-request
 
-用户反馈收集端点（错误报告 + 需求建议）。打包为 zip 上传到云端。
+User feedback collection endpoints (bug reports + feature requests). Packaged as a zip and uploaded to cloud storage.
 """
 
 from __future__ import annotations
@@ -633,9 +633,9 @@ async def submit_bug_report(
 ):
     """Submit a bug report with system info, logs, and LLM debug files."""
     if len(title) < 2 or len(title) > 200:
-        raise HTTPException(status_code=400, detail="标题需要 2-200 个字符")
+        raise HTTPException(status_code=400, detail="Title must be 2-200 characters")
     if len(description) < 2:
-        raise HTTPException(status_code=400, detail="请填写「错误描述」字段（标题下方的文本框）")
+        raise HTTPException(status_code=400, detail="Please fill in the 'Bug Description' field (text box below the title)")
 
     report_id = uuid.uuid4().hex[:12]
     sys_info = _collect_system_info()
@@ -805,9 +805,9 @@ async def submit_feature_request(
 ):
     """Submit a feature/requirement request with optional contact info and attachments."""
     if len(title) < 2 or len(title) > 200:
-        raise HTTPException(status_code=400, detail="需求名称需要 2-200 个字符")
+        raise HTTPException(status_code=400, detail="Title must be 2-200 characters")
     if len(description) < 2:
-        raise HTTPException(status_code=400, detail="请填写「需求描述」字段")
+        raise HTTPException(status_code=400, detail="Please fill in the 'Feature Description' field")
 
     report_id = uuid.uuid4().hex[:12]
 

@@ -1,11 +1,11 @@
 """
-Git Worktree 隔离
+Git Worktree Isolation
 
-参考 Claude Code 的 worktree.ts 设计:
-- 子 Agent 在独立 git worktree 中工作
-- 不影响主工作区
-- 完成后可合并或丢弃
-- 自动清理过期 worktree
+Modeled after Claude Code's worktree.ts design:
+- Sub-agents work in isolated git worktrees
+- Does not affect the main workspace
+- Can be merged or discarded after completion
+- Automatically cleans up stale worktrees
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ STALE_THRESHOLD_HOURS = 24
 
 @dataclass
 class WorktreeInfo:
-    """Worktree 信息"""
+    """Worktree information."""
 
     path: Path
     branch: str
@@ -34,7 +34,7 @@ class WorktreeInfo:
 
 
 async def _run_git(args: list[str], cwd: str | Path | None = None) -> tuple[int, str, str]:
-    """执行 git 命令。"""
+    """Execute a git command."""
     proc = await asyncio.create_subprocess_exec(
         "git",
         *args,
@@ -54,14 +54,14 @@ async def create_agent_worktree(
     agent_id: str,
     project_root: str | Path | None = None,
 ) -> WorktreeInfo | None:
-    """为子 Agent 创建独立的 git worktree。
+    """Create an isolated git worktree for a sub-agent.
 
     Args:
         agent_id: Agent ID
-        project_root: 项目根目录
+        project_root: Project root directory
 
     Returns:
-        WorktreeInfo，如果创建失败返回 None
+        WorktreeInfo, or None if creation failed
     """
     root = Path(project_root) if project_root else Path.cwd()
     slug = f"agent-{agent_id[:8]}"
@@ -115,15 +115,15 @@ async def cleanup_agent_worktree(
     merge: bool = False,
     project_root: str | Path | None = None,
 ) -> bool:
-    """清理 Agent worktree。
+    """Clean up an agent worktree.
 
     Args:
-        info: Worktree 信息
-        merge: 是否将 worktree 分支合并回当前分支
-        project_root: 项目根目录
+        info: Worktree information
+        merge: Whether to merge the worktree branch back into the current branch
+        project_root: Project root directory
 
     Returns:
-        是否成功
+        Whether cleanup succeeded
     """
     root = Path(project_root) if project_root else Path.cwd()
 
@@ -161,10 +161,10 @@ async def cleanup_stale_worktrees(
     project_root: str | Path | None = None,
     max_age_hours: float = STALE_THRESHOLD_HOURS,
 ) -> int:
-    """清理过期的 agent worktrees。
+    """Clean up stale agent worktrees.
 
     Returns:
-        清理的 worktree 数量
+        Number of worktrees cleaned up
     """
     root = Path(project_root) if project_root else Path.cwd()
     worktree_dir = root / WORKTREE_BASE

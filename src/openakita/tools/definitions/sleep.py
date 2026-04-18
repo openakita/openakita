@@ -1,8 +1,8 @@
 """
-Sleep 工具定义
+Sleep tool definition
 
-参考 CC SleepTool：可中断的等待，不占 shell 进程。
-优于 run_shell("sleep N") — 不持有 shell 会话。
+Modeled after CC SleepTool: interruptible wait that doesn't occupy a shell process.
+Prefer this over run_shell("sleep N") — it doesn't hold a shell session.
 """
 
 SLEEP_TOOLS: list[dict] = [

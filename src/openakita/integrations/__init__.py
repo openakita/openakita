@@ -1,6 +1,7 @@
 """
-统一 API 集成框架
-提供标准化的 API 调用接口、认证管理、错误处理和监控
+Unified API integration framework.
+Provides standardized API call interfaces, authentication management,
+error handling, and monitoring.
 """
 
 import json
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class APIError(Exception):
-    """API 调用异常"""
+    """API call error."""
 
     def __init__(self, message: str, status_code: int | None = None, response: dict | None = None):
         self.message = message
@@ -23,7 +24,7 @@ class APIError(Exception):
 
 
 class RateLimitError(APIError):
-    """API 限流异常"""
+    """API rate-limit error."""
 
     def __init__(self, message: str, retry_after: int | None = None, **kwargs):
         self.retry_after = retry_after
@@ -31,20 +32,20 @@ class RateLimitError(APIError):
 
 
 class AuthenticationError(APIError):
-    """认证失败异常"""
+    """Authentication failure error."""
 
     pass
 
 
 class BaseAPIAdapter(ABC):
-    """API 适配器基类"""
+    """Base API adapter class."""
 
     def __init__(self, config: dict[str, Any]):
         """
-        初始化 API 适配器
+        Initialize the API adapter.
 
         Args:
-            config: API 配置信息，包含认证凭据等
+            config: API configuration, including authentication credentials.
         """
         self.config = config
         self.name = self.__class__.__name__
@@ -52,64 +53,64 @@ class BaseAPIAdapter(ABC):
 
     @abstractmethod
     async def authenticate(self) -> bool:
-        """执行认证，返回是否成功"""
+        """Perform authentication; return True on success."""
         pass
 
     @abstractmethod
     async def call(self, endpoint: str, method: str = "GET", **kwargs) -> dict[str, Any]:
         """
-        调用 API
+        Call the API.
 
         Args:
-            endpoint: API 端点
-            method: HTTP 方法
-            **kwargs: 请求参数
+            endpoint: API endpoint.
+            method: HTTP method.
+            **kwargs: Request parameters.
 
         Returns:
-            API 响应数据
+            API response data.
         """
         pass
 
     async def health_check(self) -> bool:
-        """健康检查"""
+        """Health check."""
         try:
             await self.authenticate()
             return True
         except Exception as e:
-            logger.error(f"{self.name} 健康检查失败：{e}")
+            logger.error(f"{self.name} health check failed: {e}")
             return False
 
     def _log_request(self, endpoint: str, method: str, params: dict):
-        """记录请求日志"""
+        """Log request details."""
         logger.debug(
             f"[{self.name}] {method} {endpoint} - Params: {json.dumps(params, ensure_ascii=False)}"
         )
 
     def _log_response(self, endpoint: str, status: int, duration: float):
-        """记录响应日志"""
+        """Log response details."""
         logger.debug(f"[{self.name}] {endpoint} - Status: {status}, Duration: {duration:.2f}ms")
 
     def _handle_error(self, status_code: int, response: dict) -> APIError:
-        """处理错误响应"""
+        """Handle error responses."""
         if status_code == 429:
             retry_after = response.get("retry_after") or response.get("headers", {}).get(
                 "Retry-After"
             )
             return RateLimitError(
-                "API 限流", retry_after=retry_after, status_code=status_code, response=response
+                "API rate limited", retry_after=retry_after, status_code=status_code, response=response
             )
         elif status_code in [401, 403]:
             return AuthenticationError(
-                f"认证失败：{status_code}", status_code=status_code, response=response
+                f"Authentication failed: {status_code}", status_code=status_code, response=response
             )
         else:
             return APIError(
-                f"API 调用失败：{status_code}", status_code=status_code, response=response
+                f"API call failed: {status_code}", status_code=status_code, response=response
             )
 
 
 class APIGateway:
-    """API 网关 - 统一管理所有 API 适配器"""
+    """API gateway - centrally manages all API adapters."""
 
     def __init__(self):
         self.adapters: dict[str, BaseAPIAdapter] = {}
@@ -121,32 +122,32 @@ class APIGateway:
         }
 
     def register(self, name: str, adapter: BaseAPIAdapter):
-        """注册 API 适配器"""
+        """Register an API adapter."""
         self.adapters[name] = adapter
-        logger.info(f"已注册 API 适配器：{name}")
+        logger.info(f"Registered API adapter: {name}")
 
     def get(self, name: str) -> BaseAPIAdapter | None:
-        """获取 API 适配器"""
+        """Get an API adapter by name."""
         return self.adapters.get(name)
 
     async def call(
         self, api_name: str, endpoint: str, method: str = "GET", **kwargs
     ) -> dict[str, Any]:
         """
-        通过网关调用 API
+        Call an API through the gateway.
 
         Args:
-            api_name: API 名称
-            endpoint: API 端点
-            method: HTTP 方法
-            **kwargs: 请求参数
+            api_name: API name.
+            endpoint: API endpoint.
+            method: HTTP method.
+            **kwargs: Request parameters.
 
         Returns:
-            API 响应数据
+            API response data.
         """
         adapter = self.get(api_name)
         if not adapter:
-            raise APIError(f"未找到 API 适配器：{api_name}")
+            raise APIError(f"API adapter not found: {api_name}")
 
         start_time = datetime.now()
         self._metrics["total_calls"] += 1
@@ -164,15 +165,15 @@ class APIGateway:
             return result
         except APIError as e:
             self._metrics["failed_calls"] += 1
-            logger.error(f"[{api_name}] API 调用失败：{e.message}")
+            logger.error(f"[{api_name}] API call failed: {e.message}")
             raise
         except Exception as e:
             self._metrics["failed_calls"] += 1
-            logger.error(f"[{api_name}] 未知错误：{e}")
+            logger.error(f"[{api_name}] Unknown error: {e}")
             raise APIError(str(e))
 
     def _update_avg_response_time(self, duration: float):
-        """更新平均响应时间"""
+        """Update the average response time."""
         total = self._metrics["successful_calls"] + self._metrics["failed_calls"]
         if total > 0:
             self._metrics["avg_response_time"] = (
@@ -180,9 +181,9 @@ class APIGateway:
             ) / total
 
     def get_metrics(self) -> dict[str, Any]:
-        """获取网关指标"""
+        """Get gateway metrics."""
         return self._metrics.copy()
 
 
-# 全局网关实例
+# Global gateway instance
 gateway = APIGateway()

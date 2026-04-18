@@ -17,67 +17,67 @@ logger = logging.getLogger(__name__)
 
 
 class ToolExample(TypedDict, total=False):
-    """工具使用示例"""
+    """Tool usage example"""
 
-    scenario: str  # 场景描述
-    params: dict[str, Any]  # 调用参数
-    expected: str  # 预期结果
+    scenario: str  # Scenario description
+    params: dict[str, Any]  # Call parameters
+    expected: str  # Expected result
 
 
 class RelatedTool(TypedDict, total=False):
-    """相关工具"""
+    """Related tool"""
 
-    name: str  # 工具名称
-    relation: str  # 关系说明（如 "should check before", "commonly used after"）
+    name: str  # Tool name
+    relation: str  # Relationship description (e.g., "should check before", "commonly used after")
 
 
 class Prerequisite(TypedDict, total=False):
-    """前置条件"""
+    """Prerequisite"""
 
-    condition: str  # 条件描述
-    check_tool: str  # 检查工具
-    action_if_not_met: str  # 不满足时的操作
+    condition: str  # Condition description
+    check_tool: str  # Check tool
+    action_if_not_met: str  # Action if condition is not met
 
 
 class WorkflowStep(TypedDict, total=False):
-    """工作流步骤"""
+    """Workflow step"""
 
-    step: int  # 步骤编号
-    action: str  # 操作描述
-    tool: str  # 使用的工具
-    tools: list[str]  # 可选的多个工具
-    condition: str  # 条件
+    step: int  # Step number
+    action: str  # Action description
+    tool: str  # Tool to use
+    tools: list[str]  # Optional multiple tools
+    condition: str  # Condition
 
 
 class Workflow(TypedDict, total=False):
-    """工作流定义"""
+    """Workflow definition"""
 
-    name: str  # 工作流名称
-    steps: list[WorkflowStep]  # 步骤列表
+    name: str  # Workflow name
+    steps: list[WorkflowStep]  # List of steps
 
 
 class ToolDefinition(TypedDict, total=False):
-    """工具定义（完整格式）"""
+    """Tool definition (full format)"""
 
-    # 必填字段
-    name: str  # 工具名称
-    description: str  # 简短描述（Level 1）
-    input_schema: dict  # 参数 Schema
+    # Required fields
+    name: str  # Tool name
+    description: str  # Short description (Level 1)
+    input_schema: dict  # Parameter schema
 
-    # 推荐字段
-    detail: str  # 详细说明（Level 2）
-    triggers: list[str]  # 触发条件
-    prerequisites: list[str | Prerequisite]  # 前置条件
-    examples: list[ToolExample]  # 使用示例
+    # Recommended fields
+    detail: str  # Detailed description (Level 2)
+    triggers: list[str]  # Trigger conditions
+    prerequisites: list[str | Prerequisite]  # Prerequisites
+    examples: list[ToolExample]  # Usage examples
 
-    # 可选字段
-    category: str  # 工具分类
-    warnings: list[str]  # 重要警告
-    related_tools: list[RelatedTool]  # 相关工具
-    workflow: Workflow  # 工作流定义
+    # Optional fields
+    category: str  # Tool category
+    warnings: list[str]  # Important warnings
+    related_tools: list[RelatedTool]  # Related tools
+    workflow: Workflow  # Workflow definition
 
 
-# ==================== 工具分类 ====================
+# ==================== Tool Categories ====================
 
 ToolCategory = Literal[
     "Agent",
@@ -218,18 +218,18 @@ CATEGORY_PREFIXES = {
 }
 
 
-# ==================== 辅助函数 ====================
+# ==================== Helper Functions ====================
 
 
 def validate_tool_name(name: str) -> tuple[bool, str]:
     """
-    验证工具名称
+    Validate tool name
 
     Args:
-        name: 工具名称
+        name: Tool name
 
     Returns:
-        (是否有效, 错误信息)
+        (is_valid, error_message)
     """
     if not name:
         return False, "Name cannot be empty"
@@ -245,13 +245,13 @@ def validate_tool_name(name: str) -> tuple[bool, str]:
 
 def validate_description(description: str) -> tuple[bool, str]:
     """
-    验证工具描述
+    Validate tool description
 
     Args:
-        description: 描述文本
+        description: Description text
 
     Returns:
-        (是否有效, 错误信息)
+        (is_valid, error_message)
     """
     if not description:
         return False, "Description cannot be empty"
@@ -259,7 +259,7 @@ def validate_description(description: str) -> tuple[bool, str]:
     if len(description) > 500:
         return False, f"Description too long: {len(description)} > 500"
 
-    # 检查是否包含使用场景
+    # Check if usage scenarios are included
     if "When you need to" not in description and "When" not in description:
         logger.warning("Description may lack usage scenarios")
 
@@ -268,17 +268,17 @@ def validate_description(description: str) -> tuple[bool, str]:
 
 def validate_tool_definition(tool: dict) -> tuple[bool, list[str]]:
     """
-    验证完整工具定义
+    Validate complete tool definition
 
     Args:
-        tool: 工具定义字典
+        tool: Tool definition dict
 
     Returns:
-        (是否有效, 错误列表)
+        (is_valid, list_of_errors)
     """
     errors = []
 
-    # 必填字段
+    # Required fields
     if "name" not in tool:
         errors.append("Missing required field: name")
     else:
@@ -300,7 +300,7 @@ def validate_tool_definition(tool: dict) -> tuple[bool, list[str]]:
     elif tool["input_schema"].get("type") != "object":
         errors.append("input_schema.type must be 'object'")
 
-    # 验证示例（如果有）
+    # Validate examples (if present)
     if "examples" in tool:
         schema_props = tool.get("input_schema", {}).get("properties", {})
         for i, example in enumerate(tool["examples"]):
@@ -314,13 +314,13 @@ def validate_tool_definition(tool: dict) -> tuple[bool, list[str]]:
 
 def infer_category(tool_name: str) -> str | None:
     """
-    根据工具名称推断分类
+    Infer category from tool name
 
     Args:
-        tool_name: 工具名称
+        tool_name: Tool name
 
     Returns:
-        分类名称，无法推断时返回 None
+        Category name, or None if unable to infer
     """
     for category, pattern in CATEGORY_PREFIXES.items():
         if isinstance(pattern, str):
@@ -338,31 +338,31 @@ def build_description(
     prerequisites: list[str] = None,
 ) -> str:
     """
-    构建标准格式的工具描述
+    Build a standard-format tool description
 
     Args:
-        what: 工具功能描述
-        triggers: 触发条件列表
-        warnings: 警告信息
-        prerequisites: 前置条件
+        what: Tool functionality description
+        triggers: List of trigger conditions
+        warnings: Warning messages
+        prerequisites: Prerequisites
 
     Returns:
-        格式化的描述字符串
+        Formatted description string
     """
     parts = [what]
 
-    # 添加触发条件
+    # Add trigger conditions
     if triggers:
         trigger_str = " When you need to: " + ", ".join(
             f"({i + 1}) {t}" for i, t in enumerate(triggers[:3])
         )
         parts.append(trigger_str.rstrip(".") + ".")
 
-    # 添加前置条件
+    # Add prerequisites
     if prerequisites:
         parts.append(f" PREREQUISITE: {prerequisites[0]}")
 
-    # 添加警告
+    # Add warnings
     if warnings:
         parts.append(f" IMPORTANT: {warnings[0]}")
 
@@ -377,40 +377,40 @@ def build_detail(
     workflow_steps: list[str] = None,
 ) -> str:
     """
-    构建标准格式的详细说明
+    Build a standard-format detailed description
 
     Args:
-        summary: 功能简述
-        scenarios: 适用场景
-        params_desc: 参数说明
-        notes: 注意事项
-        workflow_steps: 工作流步骤
+        summary: Brief functionality summary
+        scenarios: Applicable scenarios
+        params_desc: Parameter descriptions
+        notes: Notes and caveats
+        workflow_steps: Workflow steps
 
     Returns:
-        格式化的详细说明（Markdown）
+        Formatted detailed description (Markdown)
     """
     lines = [summary, ""]
 
     if scenarios:
-        lines.append("**适用场景**：")
+        lines.append("**Applicable Scenarios**:")
         for s in scenarios:
             lines.append(f"- {s}")
         lines.append("")
 
     if params_desc:
-        lines.append("**参数说明**：")
+        lines.append("**Parameters**:")
         for param, desc in params_desc.items():
             lines.append(f"- {param}: {desc}")
         lines.append("")
 
     if workflow_steps:
-        lines.append("**使用流程**：")
+        lines.append("**Workflow**:")
         for i, step in enumerate(workflow_steps, 1):
             lines.append(f"{i}. {step}")
         lines.append("")
 
     if notes:
-        lines.append("**注意事项**：")
+        lines.append("**Notes**:")
         for n in notes:
             lines.append(f"- {n}")
         lines.append("")
@@ -418,21 +418,21 @@ def build_detail(
     return "\n".join(lines).strip()
 
 
-# ==================== 工具定义构建器 ====================
+# ==================== Tool Definition Builder ====================
 
 
 @dataclass
 class ToolBuilder:
     """
-    工具定义构建器
+    Tool definition builder
 
-    使用链式调用构建工具定义：
+    Build tool definitions using chainable calls:
 
     >>> tool = (ToolBuilder("browser_navigate")
     ...     .what("Navigate browser to specified URL")
     ...     .triggers(["Open a webpage", "Start web interaction"])
-    ...     .param("url", "string", "要访问的 URL", required=True)
-    ...     .example("打开 Google", {"url": "https://google.com"})
+    ...     .param("url", "string", "URL to visit", required=True)
+    ...     .example("Open Google", {"url": "https://google.com"})
     ...     .build())
     """
 
@@ -449,32 +449,32 @@ class ToolBuilder:
     _required_params: list[str] = field(default_factory=list)
 
     def what(self, description: str) -> "ToolBuilder":
-        """设置功能描述"""
+        """Set functionality description"""
         self._description = description
         return self
 
     def triggers(self, triggers: list[str]) -> "ToolBuilder":
-        """设置触发条件"""
+        """Set trigger conditions"""
         self._triggers = triggers
         return self
 
     def prerequisites(self, prereqs: list[str]) -> "ToolBuilder":
-        """设置前置条件"""
+        """Set prerequisites"""
         self._prerequisites = prereqs
         return self
 
     def warnings(self, warnings: list[str]) -> "ToolBuilder":
-        """设置警告信息"""
+        """Set warning messages"""
         self._warnings = warnings
         return self
 
     def detail(self, detail: str) -> "ToolBuilder":
-        """设置详细说明"""
+        """Set detailed description"""
         self._detail = detail
         return self
 
     def category(self, category: str) -> "ToolBuilder":
-        """设置工具分类"""
+        """Set tool category"""
         self._category = category
         return self
 
@@ -487,7 +487,7 @@ class ToolBuilder:
         default: Any = None,
         enum: list = None,
     ) -> "ToolBuilder":
-        """添加参数定义"""
+        """Add parameter definition"""
         param_def = {
             "type": type_,
             "description": description,
@@ -508,7 +508,7 @@ class ToolBuilder:
         params: dict,
         expected: str = None,
     ) -> "ToolBuilder":
-        """添加使用示例"""
+        """Add usage example"""
         example = {"scenario": scenario, "params": params}
         if expected:
             example["expected"] = expected
@@ -516,13 +516,13 @@ class ToolBuilder:
         return self
 
     def related(self, name: str, relation: str) -> "ToolBuilder":
-        """添加相关工具"""
+        """Add related tool"""
         self._related_tools.append({"name": name, "relation": relation})
         return self
 
     def build(self) -> dict:
-        """构建工具定义"""
-        # 构建 description
+        """Build tool definition"""
+        # Build description
         description = build_description(
             what=self._description,
             triggers=self._triggers,
@@ -540,7 +540,7 @@ class ToolBuilder:
             },
         }
 
-        # 可选字段
+        # Optional fields
         if self._detail:
             tool["detail"] = self._detail
         if self._triggers:
@@ -556,12 +556,12 @@ class ToolBuilder:
         if self._category:
             tool["category"] = self._category
         else:
-            # 自动推断分类
+            # Auto-infer category
             inferred = infer_category(self.name)
             if inferred:
                 tool["category"] = inferred
 
-        # 验证
+        # Validate
         valid, errors = validate_tool_definition(tool)
         if not valid:
             logger.warning(f"Tool {self.name} validation warnings: {errors}")
@@ -569,18 +569,18 @@ class ToolBuilder:
         return tool
 
 
-# ==================== 工具列表合并 ====================
+# ==================== Tool List Merging ====================
 
 
 def merge_tool_lists(*tool_lists: list[dict]) -> list[dict]:
     """
-    合并多个工具列表
+    Merge multiple tool lists
 
     Args:
-        tool_lists: 多个工具定义列表
+        tool_lists: Multiple tool definition lists
 
     Returns:
-        合并后的工具列表（去重）
+        Merged tool list (deduplicated)
     """
     seen = set()
     result = []
@@ -600,14 +600,14 @@ def filter_tools_by_category(
     categories: list[str],
 ) -> list[dict]:
     """
-    按分类筛选工具
+    Filter tools by category
 
     Args:
-        tools: 工具列表
-        categories: 要保留的分类
+        tools: Tool list
+        categories: Categories to keep
 
     Returns:
-        筛选后的工具列表
+        Filtered tool list
     """
     result = []
     for tool in tools:

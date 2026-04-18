@@ -92,7 +92,7 @@ class RelationalMemoryStore:
             );
         """)
 
-        # v2: 多 Agent 记忆隔离预留
+        # v2: reserved for multi-agent memory isolation
         try:
             c.execute("ALTER TABLE mdrm_nodes ADD COLUMN agent_id TEXT DEFAULT ''")
         except sqlite3.OperationalError:
@@ -192,7 +192,7 @@ class RelationalMemoryStore:
         tokenizer can index and match them. Non-CJK text (English etc.) passes
         through unchanged since unicode61 already handles space-delimited words.
 
-        Examples:
+        Examples (CJK input → bigram output):
             "记忆模块"       → "记忆 忆模 模块"
             "hello world"   → "hello world"
             "SQLite性能优化" → "SQLite 性能 能优 优化"

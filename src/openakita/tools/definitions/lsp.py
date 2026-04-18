@@ -1,8 +1,8 @@
 """
-LSP 工具定义
+LSP tool definition
 
-参考 CC LSPTool：通过 Language Server Protocol 提供代码智能功能，
-包括定义跳转、引用查找、符号列表、类型悬停等。
+Modeled after CC LSPTool: provides code intelligence via Language Server Protocol,
+including go-to-definition, find-references, symbol listing, and hover type info.
 """
 
 LSP_TOOLS: list[dict] = [
@@ -53,19 +53,19 @@ LSP_TOOLS: list[dict] = [
             "required": ["operation"],
         },
         "detail": (
-            "通过 Language Server Protocol 获取代码智能信息。\n\n"
-            "支持的操作：\n"
-            "- goToDefinition: 跳转到符号定义\n"
-            "- findReferences: 查找所有引用\n"
-            "- hover: 获取类型信息和文档\n"
-            "- documentSymbol: 列出文件中的所有符号\n"
-            "- workspaceSymbol: 在整个工作区搜索符号\n"
-            "- goToImplementation: 跳转到接口实现\n"
-            "- prepareCallHierarchy: 准备调用层次\n"
-            "- incomingCalls: 查找调用此函数的地方\n"
-            "- outgoingCalls: 查找此函数调用的地方\n\n"
-            "需要目标语言的 LSP 服务器可用（如 pyright, typescript-language-server, "
-            "gopls 等）。文件大小限制 10MB。"
+            "Get code intelligence via Language Server Protocol.\n\n"
+            "Supported operations:\n"
+            "- goToDefinition: Jump to symbol definition\n"
+            "- findReferences: Find all references\n"
+            "- hover: Get type information and documentation\n"
+            "- documentSymbol: List all symbols in a file\n"
+            "- workspaceSymbol: Search symbols across the workspace\n"
+            "- goToImplementation: Jump to interface implementations\n"
+            "- prepareCallHierarchy: Prepare call hierarchy\n"
+            "- incomingCalls: Find callers of this function\n"
+            "- outgoingCalls: Find callees of this function\n\n"
+            "Requires a language server for the target language to be available "
+            "(e.g., pyright, typescript-language-server, gopls). File size limit 10MB."
         ),
         "triggers": [
             "Need to find where a symbol is defined",

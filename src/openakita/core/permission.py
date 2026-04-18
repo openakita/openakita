@@ -211,24 +211,24 @@ def merge(*rulesets: Ruleset) -> Ruleset:
     return [rule for rs in rulesets for rule in rs]
 
 
-# check_tool_permission() 和 _is_dangerous_command() 已废弃并移除（P1-4）。
-# 内容级安全检查现由 PolicyEngine._check_shell_command() 统一处理。
+# check_tool_permission() and _is_dangerous_command() have been deprecated and removed (P1-4).
+# Content-level safety checks are now handled by PolicyEngine._check_shell_command().
 
 
-# ==================== P2: 统一权限决策 ====================
+# ==================== P2: Unified Permission Decision ====================
 
-_MODE_LABELS = {"plan": "计划", "ask": "问答", "agent": "执行", "coordinator": "协调"}
+_MODE_LABELS = {"plan": "Plan", "ask": "Ask", "agent": "Execute", "coordinator": "Coordinate"}
 
 
 @dataclass
 class PermissionDecision:
-    """统一权限检查结果（P2）。
+    """Unified permission check result (P2).
 
     behavior: "allow" / "deny" / "confirm"
-    reason: 用户可见的中文原因说明
-    reason_detail: 技术细节（仅日志）
-    policy_name: 命中的策略名称
-    decision_chain: 决策经过（审计用）
+    reason: User-visible reason description
+    reason_detail: Technical detail (log only)
+    policy_name: Name of the matched policy
+    decision_chain: Decision trace (for auditing)
     """
 
     behavior: str
@@ -251,28 +251,28 @@ def check_permission(
     mode: str = "agent",
     extra_rules: Ruleset | None = None,
 ) -> PermissionDecision:
-    """统一权限检查入口 — 先检查模式规则，再查询 PolicyEngine。
+    """Unified permission check entry point — checks mode rules first, then queries PolicyEngine.
 
     Args:
-        tool_name: 工具名称
-        tool_input: 工具参数
-        mode: 当前模式（plan / ask / agent）
-        extra_rules: 额外规则集（如 AgentProfile.permission_rules），
-                     在 mode rules 之后、PolicyEngine 之前评估。
+        tool_name: Tool name.
+        tool_input: Tool parameters.
+        mode: Current mode (plan / ask / agent).
+        extra_rules: Extra ruleset (e.g. AgentProfile.permission_rules),
+                     evaluated after mode rules but before PolicyEngine.
 
     Returns:
-        PermissionDecision: 权限检查结果
+        PermissionDecision: Permission check result.
     """
     chain: list[dict] = []
 
-    # Step 1: 模式规则
+    # Step 1: Mode rules
     mode_decision = check_mode_permission(tool_name, tool_input, mode=mode)
     if mode_decision is not None:
         chain.extend(mode_decision.decision_chain)
         if mode_decision.behavior == "deny":
             return mode_decision
 
-    # Step 1b: 额外规则（如 AgentProfile.permission_rules）
+    # Step 1b: Extra rules (e.g. AgentProfile.permission_rules)
     if extra_rules:
         permission = _tool_to_permission(tool_name)
         pattern = "*"
@@ -284,13 +284,13 @@ def check_permission(
         if rule.action == "deny":
             return PermissionDecision(
                 behavior="deny",
-                reason=f"智能体配置规则禁止使用工具 {tool_name}。",
+                reason=f"Agent profile rules disallow tool {tool_name}.",
                 reason_detail=f"extra_rule={rule}",
                 policy_name="AgentProfileRules",
                 decision_chain=chain,
             )
 
-    # Step 2: PolicyEngine（仅 agent 模式 / mode 规则放行后）
+    # Step 2: PolicyEngine (only agent mode / after mode rules allow)
     try:
         from .policy import get_policy_engine
 
@@ -317,7 +317,7 @@ def check_permission(
             logger.error(f"[Permission] PolicyEngine unavailable, fail-closed for {tool_name}: {e}")
             return PermissionDecision(
                 behavior="deny",
-                reason="安全策略暂时不可用，已阻止高风险操作，请稍后重试。",
+                reason="Security policy is temporarily unavailable; high-risk operations are blocked. Please try again later.",
                 reason_detail=f"PolicyEngine not available for risky tool: {e}",
                 policy_name="PolicyEngineUnavailable",
                 decision_chain=chain,
@@ -366,11 +366,11 @@ def check_mode_permission(
 
     mode_label = _MODE_LABELS.get(mode, mode)
     if tool_name in EDIT_TOOLS and mode == "plan":
-        reason = f"当前处于{mode_label}模式，只能编辑 data/plans/ 下的计划文件。如需执行其他操作，请建议用户切换到执行模式。"
+        reason = f"Currently in {mode_label} mode; only plan files under data/plans/ can be edited. To perform other actions, suggest switching to Execute mode."
     elif mode == "ask":
-        reason = f"当前处于{mode_label}模式，只能查看和搜索，不能修改文件或执行命令。"
+        reason = f"Currently in {mode_label} mode; only viewing and searching are allowed — file modifications and command execution are disabled."
     else:
-        reason = f"工具 {tool_name} 在当前{mode_label}模式下不可用。"
+        reason = f"Tool {tool_name} is not available in {mode_label} mode."
     return PermissionDecision(
         behavior="deny",
         reason=reason,

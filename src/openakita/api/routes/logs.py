@@ -1,11 +1,12 @@
 """
 Logs routes:
-- GET  /api/logs/service   — 后端服务日志尾部
-- POST /api/logs/frontend  — 前端日志上报（Web/Capacitor 模式）
-- GET  /api/logs/frontend  — 前端日志尾部
-- GET  /api/logs/combined  — 合并返回前后端日志（供日志导出）
+- GET  /api/logs/service   — Backend service log tail
+- POST /api/logs/frontend  — Frontend log upload (Web/Capacitor mode)
+- GET  /api/logs/frontend  — Frontend log tail
+- GET  /api/logs/combined  — Combined backend + frontend logs (for log export)
 
-远程模式下，前端通过这些 API 获取/上报日志，替代 Tauri 本地文件读取。
+In remote mode, the frontend uses these APIs to fetch/upload logs,
+replacing Tauri's local file reads.
 """
 
 from __future__ import annotations
@@ -104,9 +105,9 @@ def _rotate_frontend_log(path: Path) -> None:
 
 @router.get("/api/logs/service")
 async def service_log(
-    tail_bytes: int = Query(default=60000, ge=0, le=400000, description="读取尾部字节数"),
+    tail_bytes: int = Query(default=60000, ge=0, le=400000, description="Number of tail bytes to read"),
 ):
-    """读取后端服务日志文件尾部内容。"""
+    """Read the tail of the backend service log file."""
     return _read_log_tail(_log_file_path(), tail_bytes)
 
 
@@ -117,10 +118,10 @@ class FrontendLogPayload(BaseModel):
 @router.post("/api/logs/frontend")
 async def receive_frontend_log(request: Request):
     """
-    接收前端批量日志并追加到 logs/frontend.log。
+    Receive batched frontend logs and append them to logs/frontend.log.
 
-    支持 JSON body 和 sendBeacon（beacon 发送的 content-type 可能不是 application/json，
-    所以这里也处理原始 body 解析）。
+    Supports both JSON body and sendBeacon (beacon requests may not use
+    application/json content-type, so raw body parsing is also handled).
     """
     try:
         body = await request.json()
@@ -151,18 +152,19 @@ async def receive_frontend_log(request: Request):
 
 @router.get("/api/logs/frontend")
 async def frontend_log(
-    tail_bytes: int = Query(default=60000, ge=0, le=400000, description="读取尾部字节数"),
+    tail_bytes: int = Query(default=60000, ge=0, le=400000, description="Number of tail bytes to read"),
 ):
-    """读取前端日志文件尾部内容。"""
+    """Read the tail of the frontend log file."""
     return _read_log_tail(_frontend_log_path(), tail_bytes)
 
 
 @router.get("/api/logs/combined")
 async def combined_log(
-    tail_bytes: int = Query(default=60000, ge=0, le=200000, description="每部分读取的尾部字节数"),
+    tail_bytes: int = Query(default=60000, ge=0, le=200000, description="Tail bytes to read per section"),
 ):
     """
-    合并返回后端服务日志 + 前端日志的尾部内容，供前端 exportLogs() 一次性获取。
+    Return combined tail of backend service log + frontend log,
+    for the frontend's exportLogs() to fetch in a single request.
     """
     return {
         "backend": _read_log_tail(_log_file_path(), tail_bytes),

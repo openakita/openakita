@@ -1,16 +1,16 @@
 """
-API 操作测试用例 (30个)
+API operation test cases (30)
 """
 
 from openakita.testing.runner import TestCase
 
 API_TESTS = [
-    # REST API 测试
+    # REST API tests
     TestCase(
         id="tool_api_001",
         category="tools",
         subcategory="api",
-        description="GET 请求解析 JSON",
+        description="GET request parses JSON",
         input={
             "action": "api_call",
             "method": "GET",
@@ -24,7 +24,7 @@ API_TESTS = [
         id="tool_api_002",
         category="tools",
         subcategory="api",
-        description="POST 请求创建资源",
+        description="POST request creates resource",
         input={
             "action": "api_call",
             "method": "POST",
@@ -39,7 +39,7 @@ API_TESTS = [
         id="tool_api_003",
         category="tools",
         subcategory="api",
-        description="获取用户列表",
+        description="Fetch user list",
         input={
             "action": "api_call",
             "method": "GET",
@@ -53,7 +53,7 @@ API_TESTS = [
         id="tool_api_004",
         category="tools",
         subcategory="api",
-        description="带参数的 GET 请求",
+        description="GET request with query parameters",
         input={
             "action": "api_call",
             "method": "GET",
@@ -68,7 +68,7 @@ API_TESTS = [
         id="tool_api_005",
         category="tools",
         subcategory="api",
-        description="PUT 请求更新资源",
+        description="PUT request updates resource",
         input={
             "action": "api_call",
             "method": "PUT",
@@ -79,12 +79,12 @@ API_TESTS = [
         tags=["api", "rest", "put"],
         timeout=15,
     ),
-    # 状态码测试
+    # Status code tests
     TestCase(
         id="tool_api_010",
         category="tools",
         subcategory="api",
-        description="200 OK 响应",
+        description="200 OK response",
         input={
             "action": "check_status",
             "url": "https://httpbin.org/status/200",
@@ -110,7 +110,7 @@ API_TESTS = [
         id="tool_api_012",
         category="tools",
         subcategory="api",
-        description="重定向处理",
+        description="Redirect handling",
         input={
             "action": "check_redirect",
             "url": "https://httpbin.org/redirect/1",
@@ -119,12 +119,12 @@ API_TESTS = [
         tags=["api", "redirect"],
         timeout=10,
     ),
-    # 请求头测试
+    # Request header tests
     TestCase(
         id="tool_api_020",
         category="tools",
         subcategory="api",
-        description="自定义 User-Agent",
+        description="Custom User-Agent",
         input={
             "action": "api_call",
             "method": "GET",
@@ -139,7 +139,7 @@ API_TESTS = [
         id="tool_api_021",
         category="tools",
         subcategory="api",
-        description="Accept 头",
+        description="Accept header",
         input={
             "action": "api_call",
             "method": "GET",

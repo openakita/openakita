@@ -1,16 +1,21 @@
 """
-流式反馈统一体验层
+Unified streaming feedback layer.
 
-定义 ``StreamPresenter`` 接口，将各 IM 平台的「流式更新」差异封装为
-统一的三段生命周期：``start`` → ``update`` → ``finalize``。
+Defines the ``StreamPresenter`` interface, encapsulating the differences
+across IM platforms' streaming updates into a unified three-phase lifecycle:
+``start`` -> ``update`` -> ``finalize``.
 
-各适配器通过继承并实现具体的平台 API 调用即可接入，网关侧只需
-调用 ``presenter.update(text, thinking)`` 而无需关心底层机制。
+Adapters can integrate by subclassing and implementing platform-specific API
+calls. The gateway side only needs to call
+``presenter.update(text, thinking)`` without worrying about underlying
+mechanisms.
 
-设计要点：
-- 共享节流逻辑（``_min_interval_ms``），避免各适配器重复实现
-- thinking 格式化统一：``<think>`` 包裹或平台专属标签
-- 不支持流式的平台自动降级为"正在思考..."占位 + 完成替换
+Design highlights:
+- Shared throttling logic (``_min_interval_ms``), avoiding duplicate
+  implementations across adapters
+- Unified thinking formatting: ``<think>`` wrapper or platform-specific tags
+- Platforms without streaming support automatically degrade to a
+  "Thinking..." placeholder + final replacement
 """
 
 from __future__ import annotations
@@ -24,12 +29,12 @@ logger = logging.getLogger(__name__)
 
 
 class StreamPresenter(ABC):
-    """IM 流式反馈的统一抽象接口。
+    """Unified abstract interface for IM streaming feedback.
 
     Parameters:
-        chat_id: 目标聊天 ID
-        thread_id: 可选话题/线程 ID
-        min_interval_ms: 更新最小间隔（毫秒），防止平台限流
+        chat_id: Target chat ID
+        thread_id: Optional thread/topic ID
+        min_interval_ms: Minimum update interval (ms) to prevent rate limiting
     """
 
     def __init__(
@@ -54,36 +59,36 @@ class StreamPresenter(ABC):
         self._accumulated_thinking: str = ""
         self._flush_task: asyncio.Task | None = None
 
-    # ── 生命周期（子类实现） ──
+    # ── Lifecycle (subclass implementations) ──
 
     @abstractmethod
     async def _do_start(self) -> None:
-        """平台特定的开始操作（如发送占位消息、创建卡片等）。"""
+        """Platform-specific start action (e.g., send placeholder message, create card)."""
         ...
 
     @abstractmethod
     async def _do_update(self, text: str, thinking: str) -> None:
-        """平台特定的更新操作（如编辑消息、PATCH 卡片等）。
+        """Platform-specific update action (e.g., edit message, PATCH card).
 
         Args:
-            text: 当前完整的回复文本
-            thinking: 当前完整的思考内容
+            text: Current complete reply text
+            thinking: Current complete thinking content
         """
         ...
 
     @abstractmethod
     async def _do_finalize(self, text: str, thinking: str) -> bool:
-        """平台特定的完成操作（如最终消息编辑、卡片定稿等）。
+        """Platform-specific finalize action (e.g., final message edit, card finalization).
 
         Returns:
-            是否成功完成
+            Whether finalization succeeded
         """
         ...
 
-    # ── 公开 API ──
+    # ── Public API ──
 
     async def start(self) -> None:
-        """开始流式反馈。"""
+        """Start streaming feedback."""
         if self._started:
             return
         self._started = True
@@ -94,7 +99,7 @@ class StreamPresenter(ABC):
         self._last_update_ts = time.monotonic()
 
     async def update(self, text_delta: str = "", thinking_delta: str = "") -> None:
-        """推送增量内容，内部自动节流。"""
+        """Push incremental content with automatic internal throttling."""
         if not self._started or self._finalized:
             return
         self._accumulated_text += text_delta
@@ -111,7 +116,7 @@ class StreamPresenter(ABC):
             self._flush_task = asyncio.ensure_future(self._delayed_flush(delay))
 
     async def finalize(self) -> bool:
-        """完成流式反馈，发送最终内容。"""
+        """Finalize streaming feedback and send final content."""
         if self._finalized:
             return True
         self._finalized = True
@@ -128,7 +133,7 @@ class StreamPresenter(ABC):
             logger.warning(f"[StreamPresenter] finalize failed: {e}")
             return False
 
-    # ── 内部节流 ──
+    # ── Internal throttling ──
 
     async def _flush(self) -> None:
         self._last_update_ts = time.monotonic()
@@ -144,9 +149,10 @@ class StreamPresenter(ABC):
 
 
 class NullStreamPresenter(StreamPresenter):
-    """不支持流式更新的平台使用的降级实现。
+    """Fallback implementation for platforms without streaming support.
 
-    ``start`` 时发送"正在思考…"占位消息，``finalize`` 时替换为完整回复。
+    Sends a "Thinking..." placeholder on ``start`` and replaces it with
+    the full reply on ``finalize``.
     """
 
     def __init__(self, adapter, chat_id: str, **kwargs):
@@ -158,7 +164,7 @@ class NullStreamPresenter(StreamPresenter):
         try:
             self._placeholder_msg_id = await self._adapter.send_text(
                 self.chat_id,
-                "💭 正在思考…",
+                "💭 Thinking...",
                 thread_id=self.thread_id,
             )
         except Exception:

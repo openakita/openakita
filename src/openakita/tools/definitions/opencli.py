@@ -1,7 +1,7 @@
 """
-OpenCLI 工具定义
+OpenCLI tool definitions.
 
-将网站和 Electron 应用转化为 CLI 命令，复用 Chrome 登录态。
+Convert websites and Electron apps into CLI commands, reusing Chrome login sessions.
 """
 
 from .base import build_detail
@@ -16,13 +16,13 @@ OPENCLI_TOOLS = [
             "Returns structured command list with names and descriptions."
         ),
         "detail": build_detail(
-            summary="列出 OpenCLI 可用的所有命令（网站 adapter 和外部 CLI）。",
+            summary="List all available OpenCLI commands (website adapters and external CLIs).",
             scenarios=[
-                "发现可以通过 CLI 操作的网站和工具",
-                "查看已安装的 opencli adapter",
+                "Discover websites and tools that can be operated via CLI",
+                "View installed opencli adapters",
             ],
             params_desc={
-                "format": "输出格式：json（默认）或 yaml",
+                "format": "Output format: json (default) or yaml",
             },
         ),
         "triggers": [
@@ -33,13 +33,13 @@ OPENCLI_TOOLS = [
         "warnings": [],
         "examples": [
             {
-                "scenario": "列出可用命令",
+                "scenario": "List available commands",
                 "params": {},
                 "expected": "Returns list of available commands with descriptions",
             },
         ],
         "related_tools": [
-            {"name": "opencli_run", "relation": "发现命令后执行"},
+            {"name": "opencli_run", "relation": "Execute after discovering commands"},
         ],
         "input_schema": {
             "type": "object",
@@ -47,7 +47,7 @@ OPENCLI_TOOLS = [
                 "format": {
                     "type": "string",
                     "enum": ["json", "yaml"],
-                    "description": "输出格式（默认 json）",
+                    "description": "Output format (default: json)",
                     "default": "json",
                 },
             },
@@ -70,22 +70,22 @@ OPENCLI_TOOLS = [
             "- You need deterministic, structured results"
         ),
         "detail": build_detail(
-            summary="执行 OpenCLI 命令操作网站或工具。命令格式: '<site> <subcommand>'，复用 Chrome 登录态，返回结构化 JSON。",
+            summary="Execute an OpenCLI command to operate a website or tool. Command format: '<site> <subcommand>'. Reuses Chrome login session, returns structured JSON.",
             scenarios=[
-                "操作需要登录的网站（如 GitHub、Bilibili、知乎）",
-                "从网站提取结构化数据",
-                "在 Electron 应用中执行操作",
+                "Operate websites that require login (e.g., GitHub, Bilibili, Zhihu)",
+                "Extract structured data from websites",
+                "Perform actions in Electron apps",
             ],
             params_desc={
-                "command": "要执行的命令（如 'zhihu hot list', 'bilibili video info', 'hackernews top'）",
-                "args": "额外命令参数列表（可选）",
-                "json_output": "是否请求 JSON 输出（默认 True）",
+                "command": "Command to execute (e.g., 'zhihu hot list', 'bilibili video info', 'hackernews top')",
+                "args": "Additional command arguments (optional)",
+                "json_output": "Whether to request JSON output (default: True)",
             },
             notes=[
-                "先用 opencli_list 查看可用命令",
-                "命令格式是 '<site> <subcommand>'，不需要加 'run' 前缀",
-                "复用 Chrome 登录态，确保 Chrome 已打开并登录目标网站",
-                "比 browser_task 更可靠，因为命令是确定性的",
+                "Use opencli_list first to check available commands",
+                "Command format is '<site> <subcommand>', no 'run' prefix needed",
+                "Reuses Chrome login session — make sure Chrome is open and logged into the target site",
+                "More reliable than browser_task because commands are deterministic",
             ],
         ),
         "triggers": [
@@ -102,42 +102,42 @@ OPENCLI_TOOLS = [
         ],
         "examples": [
             {
-                "scenario": "查看知乎热榜",
+                "scenario": "View Zhihu hot topics",
                 "params": {"command": "zhihu hot list"},
                 "expected": "Returns JSON list of zhihu hot topics",
             },
             {
-                "scenario": "查看 HackerNews 热门",
+                "scenario": "View HackerNews top stories",
                 "params": {"command": "hackernews top"},
                 "expected": "Returns JSON list of top stories",
             },
             {
-                "scenario": "获取 Bilibili 视频信息",
+                "scenario": "Get Bilibili video info",
                 "params": {"command": "bilibili video info", "args": ["BV1xx411c7XW"]},
                 "expected": "Returns JSON with video metadata",
             },
         ],
         "related_tools": [
-            {"name": "opencli_list", "relation": "先查看可用命令"},
-            {"name": "opencli_doctor", "relation": "命令失败时诊断环境"},
-            {"name": "browser_task", "relation": "无 adapter 时的降级方案"},
+            {"name": "opencli_list", "relation": "Check available commands first"},
+            {"name": "opencli_doctor", "relation": "Diagnose environment when commands fail"},
+            {"name": "browser_task", "relation": "Fallback when no adapter is available"},
         ],
         "input_schema": {
             "type": "object",
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "要执行的命令，格式: '<site> <subcommand>'（如 'zhihu hot list', 'hackernews top'）",
+                    "description": "Command to execute, format: '<site> <subcommand>' (e.g., 'zhihu hot list', 'hackernews top')",
                 },
                 "args": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "命令参数列表",
+                    "description": "Command arguments list",
                     "default": [],
                 },
                 "json_output": {
                     "type": "boolean",
-                    "description": "是否请求 JSON 输出（默认 True）",
+                    "description": "Whether to request JSON output (default: True)",
                     "default": True,
                 },
             },
@@ -152,13 +152,13 @@ OPENCLI_TOOLS = [
             "Chrome extension status, and daemon health. Use when opencli commands fail."
         ),
         "detail": build_detail(
-            summary="诊断 OpenCLI 环境，检查 Browser Bridge、Chrome 扩展和守护进程状态。",
+            summary="Diagnose OpenCLI environment: check Browser Bridge, Chrome extension, and daemon status.",
             scenarios=[
-                "opencli 命令执行失败时排查",
-                "首次使用 opencli 前检查环境",
+                "Troubleshoot when opencli commands fail",
+                "Check environment before first use of opencli",
             ],
             params_desc={
-                "live": "是否使用实时诊断模式（默认 False）",
+                "live": "Whether to use live diagnostic mode (default: False)",
             },
         ),
         "triggers": [
@@ -169,7 +169,7 @@ OPENCLI_TOOLS = [
         "warnings": [],
         "examples": [
             {
-                "scenario": "检查环境",
+                "scenario": "Check environment",
                 "params": {},
                 "expected": "Returns diagnostic information about opencli setup",
             },
@@ -179,7 +179,7 @@ OPENCLI_TOOLS = [
             "properties": {
                 "live": {
                     "type": "boolean",
-                    "description": "是否实时诊断",
+                    "description": "Whether to use live diagnostics",
                     "default": False,
                 },
             },

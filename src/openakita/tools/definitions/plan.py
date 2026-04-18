@@ -216,20 +216,20 @@ Followed by detailed Markdown content (solution analysis, file lists, risk asses
         "name": "exit_plan_mode",
         "category": "Plan",
         "description": "Signal that planning is complete. Triggers the approval UI for the user to review and approve the plan before execution.",
-        "detail": """退出 Plan 模式，通知系统规划已完成。
+        "detail": """Exit Plan mode and notify the system that planning is complete.
 
-**在完成 create_plan_file 后调用此工具**。
+**Call this after completing create_plan_file**.
 
-调用后系统会：
-1. 通知前端展示 Plan 审批界面
-2. 等待用户审批
-3. 用户批准后自动切换到 Agent 模式执行""",
+After calling, the system will:
+1. Notify the frontend to display the Plan approval UI
+2. Wait for user approval
+3. Automatically switch to Agent mode for execution after approval""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "summary": {
                     "type": "string",
-                    "description": "规划完成的简要说明",
+                    "description": "Brief description of the completed plan",
                 },
             },
         },

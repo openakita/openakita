@@ -1,10 +1,10 @@
 """
-用户档案处理器
+User profile handler
 
-处理用户档案相关的系统技能：
-- update_user_profile: 更新档案
-- skip_profile_question: 跳过问题
-- get_user_profile: 获取档案
+Handles system skills related to user profiles:
+- update_user_profile: update profile
+- skip_profile_question: skip question
+- get_user_profile: get profile
 """
 
 import logging
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class ProfileHandler:
-    """用户档案处理器"""
+    """User profile handler"""
 
     TOOLS = [
         "update_user_profile",
@@ -29,7 +29,7 @@ class ProfileHandler:
         self.agent = agent
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
-        """处理工具调用"""
+        """Handle tool invocation"""
         if tool_name == "update_user_profile":
             return self._update_profile(params)
         elif tool_name == "skip_profile_question":
@@ -40,10 +40,10 @@ class ProfileHandler:
             return f"❌ Unknown profile tool: {tool_name}"
 
     def _update_profile(self, params: dict) -> str:
-        """更新用户档案"""
+        """Update user profile"""
         available_keys = self.agent.profile_manager.get_available_keys()
 
-        # LLM 可能传 {name: "小明", age: "28"} 而非 {key: "name", value: "小明"}
+        # LLM may pass {name: "Xiao Ming", age: "28"} instead of {key: "name", value: "Xiao Ming"}
         if "key" not in params:
             updated = []
             for k, v in params.items():
@@ -51,38 +51,38 @@ class ProfileHandler:
                     self.agent.profile_manager.update_profile(k, str(v))
                     updated.append(f"{k} = {v}")
             if updated:
-                return f"✅ 已更新档案: {', '.join(updated)}"
+                return f"✅ Profile updated: {', '.join(updated)}"
             return (
-                f"❌ 参数格式错误，正确用法: {{\"key\": \"name\", \"value\": \"小明\"}}\n"
-                f"可用的键: {', '.join(available_keys)}"
+                f"❌ Invalid parameter format. Correct usage: {{\"key\": \"name\", \"value\": \"value\"}}\n"
+                f"Available keys: {', '.join(available_keys)}"
             )
 
         key = params["key"]
         value = params.get("value", "")
 
         if key not in available_keys:
-            return f"❌ 未知的档案项: {key}\n可用的键: {', '.join(available_keys)}"
+            return f"❌ Unknown profile key: {key}\nAvailable keys: {', '.join(available_keys)}"
 
         self.agent.profile_manager.update_profile(key, value)
-        return f"✅ 已更新档案: {key} = {value}"
+        return f"✅ Profile updated: {key} = {value}"
 
     def _skip_question(self, params: dict) -> str:
-        """跳过档案问题"""
+        """Skip profile question"""
         key = params["key"]
         self.agent.profile_manager.skip_question(key)
-        return f"✅ 已跳过问题: {key}"
+        return f"✅ Question skipped: {key}"
 
     def _get_profile(self, params: dict) -> str:
-        """获取用户档案"""
+        """Get user profile"""
         summary = self.agent.profile_manager.get_profile_summary()
 
         if not summary:
-            return "用户档案为空\n\n提示: 通过对话中分享信息来建立档案"
+            return "User profile is empty\n\nTip: Share information in conversation to build your profile"
 
         return summary
 
 
 def create_handler(agent: "Agent"):
-    """创建用户档案处理器"""
+    """Create user profile handler"""
     handler = ProfileHandler(agent)
     return handler.handle

@@ -1,7 +1,7 @@
 """
 OpenAkita HTTP API Module
 
-提供 FastAPI HTTP API，支持：
+Provides a FastAPI HTTP API with support for:
 - Chat (SSE streaming)
 - Models list
 - Health check

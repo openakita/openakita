@@ -1,11 +1,11 @@
 """
-OneBot 适配器
+OneBot Adapter
 
-基于 OneBot v11 协议实现，可对接任何兼容 OneBot 的实现:
-- NapCat, Lagrange, go-cqhttp 等
-- WebSocket 正向连接 (forward): OpenAkita 作为客户端连接 OneBot 实现的 WS 服务器
-- WebSocket 反向连接 (reverse): OpenAkita 作为 WS 服务端，OneBot 实现主动连入（推荐）
-- 文本/图片/语音/文件收发
+Based on the OneBot v11 protocol; compatible with any OneBot v11 implementation:
+- NapCat, Lagrange, go-cqhttp, etc.
+- WebSocket forward connection: OpenAkita acts as a client connecting to the OneBot WS server
+- WebSocket reverse connection: OpenAkita acts as a WS server; the OneBot implementation connects in (recommended)
+- Text/image/voice/file send and receive
 """
 
 import asyncio
@@ -48,13 +48,13 @@ def _import_websockets():
 
 
 def _decode_cq_entities(s: str) -> str:
-    """解码 CQ 码中的 HTML 实体 (OneBot v11 规范)"""
+    """Decode HTML entities in CQ codes (OneBot v11 spec)"""
     return s.replace("&#44;", ",").replace("&#91;", "[").replace("&#93;", "]").replace("&amp;", "&")
 
 
 @dataclass
 class OneBotConfig:
-    """OneBot 配置"""
+    """OneBot configuration"""
 
     mode: str = "reverse"
     ws_url: str = "ws://127.0.0.1:8080"
@@ -65,11 +65,11 @@ class OneBotConfig:
 
 class OneBotAdapter(ChannelAdapter):
     """
-    OneBot 适配器 (OneBot v11 协议)
+    OneBot Adapter (OneBot v11 protocol)
 
-    支持两种连接模式:
-    - reverse (默认): OpenAkita 作为 WS 服务端，NapCat/Lagrange 配置 Websocket 客户端连入
-    - forward: OpenAkita 主动连接 NapCat/Lagrange 的 Websocket 服务器
+    Supports two connection modes:
+    - reverse (default): OpenAkita acts as WS server; NapCat/Lagrange connects as a WebSocket client
+    - forward: OpenAkita actively connects to NapCat/Lagrange's WebSocket server
     """
 
     channel_name = "onebot"
@@ -118,22 +118,22 @@ class OneBotAdapter(ChannelAdapter):
         self._ws: Any | None = None
         self._api_callbacks: dict[str, asyncio.Future] = {}
         self._receive_task: asyncio.Task | None = None
-        self._server: Any | None = None  # reverse 模式的 websockets Server
+        self._server: Any | None = None  # websockets Server for reverse mode
         self._seen_message_ids: OrderedDict[str, None] = OrderedDict()
         self._SEEN_CAPACITY = 500
 
-        # chat_id → chat_type 映射（send_typing 需要区分群/私聊）
+        # chat_id -> chat_type mapping (send_typing needs to distinguish group vs private chat)
         self._chat_type_map: OrderedDict[str, str] = OrderedDict()
         self._CHAT_TYPE_MAP_CAPACITY = 2000
 
-        # group_id → group_name 缓存
+        # group_id -> group_name cache
         self._group_name_cache: dict[str, str] = {}
 
-        # Bot 已发送消息 ID 追踪：用于识别"回复机器人消息"作为隐式 mention
+        # Bot-sent message ID tracking: used to detect "reply to bot message" as implicit mention
         self._bot_sent_msg_ids: OrderedDict[str, None] = OrderedDict()
         self._BOT_SENT_MSG_IDS_MAX = 500
 
-    # ==================== 生命周期 ====================
+    # ==================== Lifecycle ====================
 
     async def start(self) -> None:
         _import_websockets()
@@ -154,10 +154,10 @@ class OneBotAdapter(ChannelAdapter):
                 self._running = False
                 if e.errno in (10048, 98) or "Address already in use" in str(e):
                     raise ConnectionError(
-                        f"OneBot 反向 WS 端口 {self.config.reverse_port} 已被占用，"
-                        f"请修改配置或释放端口。"
+                        f"OneBot reverse WS port {self.config.reverse_port} is already in use. "
+                        f"Please change the configuration or free the port."
                     ) from e
-                raise ConnectionError(f"OneBot 反向 WS 服务器启动失败: {e}") from e
+                raise ConnectionError(f"OneBot reverse WS server failed to start: {e}") from e
             self._receive_task = asyncio.create_task(self._server.wait_closed())
         else:
             self._receive_task = asyncio.create_task(self._receive_loop_with_reconnect())
@@ -186,10 +186,10 @@ class OneBotAdapter(ChannelAdapter):
 
         logger.info("OneBot adapter stopped")
 
-    # ==================== 反向 WebSocket (reverse 模式) ====================
+    # ==================== Reverse WebSocket (reverse mode) ====================
 
     async def _reverse_ws_handler(self, ws) -> None:
-        """处理反向 WS 客户端连入"""
+        """Handle incoming reverse WS client connection"""
         if not self._verify_access_token(ws):
             logger.warning("OneBot reverse WS: access token mismatch, rejecting connection")
             await ws.close(4001, "Unauthorized")
@@ -232,7 +232,7 @@ class OneBotAdapter(ChannelAdapter):
     def _verify_access_token(self, ws) -> bool:
         if not self.config.access_token:
             return True
-        # Authorization: Bearer <token> 请求头
+        # Authorization: Bearer <token> header
         headers = getattr(ws, "request_headers", getattr(ws, "request", None))
         if headers:
             auth = None
@@ -242,7 +242,7 @@ class OneBotAdapter(ChannelAdapter):
                 auth = headers.headers.get("Authorization", "")
             if auth and auth == f"Bearer {self.config.access_token}":
                 return True
-        # ?access_token=<token> 查询参数
+        # ?access_token=<token> query parameter
         path = getattr(ws, "path", "") or ""
         if not path and hasattr(ws, "request") and hasattr(ws.request, "path"):
             path = ws.request.path or ""
@@ -252,7 +252,7 @@ class OneBotAdapter(ChannelAdapter):
             return True
         return False
 
-    # ==================== 正向 WebSocket (forward 模式) ====================
+    # ==================== Forward WebSocket (forward mode) ====================
 
     async def _connect_ws(self) -> bool:
         headers = {}
@@ -311,7 +311,7 @@ class OneBotAdapter(ChannelAdapter):
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * 2, max_delay)
 
-    # ==================== 事件处理 ====================
+    # ==================== Event Handling ====================
 
     async def _handle_event(self, data: dict) -> None:
         if "echo" in data:
@@ -389,7 +389,7 @@ class OneBotAdapter(ChannelAdapter):
                         is_mentioned = True
                         break
 
-        # 隐式 mention：回复机器人消息视为提及
+        # Implicit mention: replying to a bot message is treated as a mention
         if not is_mentioned and chat_type == "group" and _reply_to_id:
             if _reply_to_id in self._bot_sent_msg_ids:
                 is_mentioned = True
@@ -438,7 +438,7 @@ class OneBotAdapter(ChannelAdapter):
         self._log_message(unified)
         await self._emit_message(unified)
 
-    # ==================== CQ 码解析 ====================
+    # ==================== CQ Code Parsing ====================
 
     _CQ_PATTERN = re.compile(r"\[CQ:(\w+)(?:,([^\]]+))?\]")
 
@@ -468,10 +468,10 @@ class OneBotAdapter(ChannelAdapter):
 
         return result
 
-    # ==================== 消息解析 ====================
+    # ==================== Message Parsing ====================
 
     async def _parse_message(self, message: list) -> tuple[MessageContent, str | None]:
-        """解析 OneBot 消息段列表，返回 (content, reply_to_id)"""
+        """Parse OneBot message segment list, returning (content, reply_to_id)"""
         content = MessageContent()
         text_parts = []
         reply_to_id: str | None = None
@@ -522,24 +522,24 @@ class OneBotAdapter(ChannelAdapter):
             elif seg_type == "at":
                 text_parts.append(f"@{data.get('qq', data.get('id', ''))}")
             elif seg_type == "face":
-                text_parts.append(f"[表情:{data.get('id', '')}]")
+                text_parts.append(f"[Face:{data.get('id', '')}]")
             elif seg_type == "reply":
                 rid = data.get("id", "")
                 if rid:
                     reply_to_id = str(rid)
             elif seg_type == "forward":
                 fwd_id = data.get("id", "")
-                text_parts.append(f"[合并转发:{fwd_id}]")
+                text_parts.append(f"[Forwarded:{fwd_id}]")
             elif seg_type == "share":
                 url = data.get("url", "")
-                title = data.get("title", "链接")
-                text_parts.append(f"[分享: {title} {url}]")
+                title = data.get("title", "Link")
+                text_parts.append(f"[Shared: {title} {url}]")
             elif seg_type == "json":
                 json_data = str(data.get("data", ""))
-                text_parts.append(f"[JSON消息: {json_data[:200]}]")
+                text_parts.append(f"[JSON message: {json_data[:200]}]")
             elif seg_type == "xml":
                 xml_data = str(data.get("data", ""))
-                text_parts.append(f"[XML消息: {xml_data[:200]}]")
+                text_parts.append(f"[XML message: {xml_data[:200]}]")
             elif seg_type == "location":
                 lat = data.get("lat", "")
                 lon = data.get("lon", data.get("long", ""))
@@ -549,13 +549,13 @@ class OneBotAdapter(ChannelAdapter):
         content.text = "".join(text_parts) if text_parts else None
         return content, reply_to_id
 
-    # ==================== API 调用 ====================
+    # ==================== API Calls ====================
 
     async def _call_api(self, action: str, params: dict = None) -> Any:
         ws = self._ws
         if not ws or getattr(ws, "closed", True):
             mode_hint = (
-                "反向 WS 尚无客户端连接" if self.config.mode == "reverse" else "WebSocket 未连接"
+                "reverse WS has no client connected yet" if self.config.mode == "reverse" else "WebSocket not connected"
             )
             raise RuntimeError(f"OneBot {mode_hint}")
 
@@ -577,7 +577,7 @@ class OneBotAdapter(ChannelAdapter):
             raise
 
     def _reject_pending_callbacks(self, reason: str) -> None:
-        """拒绝所有等待中的 API 回调"""
+        """Reject all pending API callbacks"""
         callbacks = list(self._api_callbacks.items())
         self._api_callbacks.clear()
         for _, future in callbacks:
@@ -587,7 +587,7 @@ class OneBotAdapter(ChannelAdapter):
                 except asyncio.InvalidStateError:
                     pass
 
-    # ==================== 消息发送 ====================
+    # ==================== Message Sending ====================
 
     def _is_group_message(self, message: OutgoingMessage) -> bool:
         if "is_group" in message.metadata:
@@ -667,11 +667,12 @@ class OneBotAdapter(ChannelAdapter):
         return mid
 
     async def send_typing(self, chat_id: str, thread_id: str | None = None) -> None:
-        """发送"正在输入"状态。
+        """Send "typing" status.
 
-        使用 NapCat 扩展 API ``set_input_status``，这 **不是** OneBot v11 标准接口。
-        在其他 v11 实现（go-cqhttp、Lagrange、LLOneBot 等）上调用会静默失败
-        （被 except 捕获后忽略），不会影响正常消息流程。
+        Uses the NapCat extension API ``set_input_status``, which is **not** part of
+        the OneBot v11 standard. Calling it on other v11 implementations
+        (go-cqhttp, Lagrange, LLOneBot, etc.) will silently fail (caught by the
+        except block and ignored), and will not affect normal message flow.
         """
         try:
             chat_id_int = int(chat_id)
@@ -695,7 +696,7 @@ class OneBotAdapter(ChannelAdapter):
         except Exception:
             pass
 
-    # ==================== 媒体 ====================
+    # ==================== Media ====================
 
     async def download_media(self, media: MediaFile) -> Path:
         if media.local_path and Path(media.local_path).exists():
@@ -727,7 +728,7 @@ class OneBotAdapter(ChannelAdapter):
     async def upload_media(self, path: Path, mime_type: str) -> MediaFile:
         return MediaFile.create(filename=path.name, mime_type=mime_type)
 
-    # ==================== 用户/群查询 ====================
+    # ==================== User/Group Queries ====================
 
     async def get_user_info(self, user_id: str) -> dict | None:
         try:
@@ -753,7 +754,7 @@ class OneBotAdapter(ChannelAdapter):
         except Exception:
             return None
 
-    # ==================== 文件/语音发送 ====================
+    # ==================== File/Voice Sending ====================
 
     async def send_file(
         self,
@@ -768,7 +769,7 @@ class OneBotAdapter(ChannelAdapter):
             raise FileNotFoundError(f"File not found: {file_path}")
 
         chat_id_int = int(chat_id)
-        _is_grp = is_group if is_group is not None else True  # 文件上传默认尝试群
+        _is_grp = is_group if is_group is not None else True  # file upload defaults to group
 
         if caption:
             text_msg = [{"type": "text", "data": {"text": caption}}]

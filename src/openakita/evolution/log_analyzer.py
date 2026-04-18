@@ -1,11 +1,11 @@
 """
-日志分析器
+Log analyzer
 
-功能:
-- 只提取 ERROR/CRITICAL 级别日志（高效，不加载全部内容）
-- 支持关键词检索（按需获取上下文）
-- 错误分类（区分核心组件和工具）
-- 生成精简摘要（给 LLM 分析）
+Features:
+- Extract only ERROR/CRITICAL level logs (efficient, does not load full content)
+- Keyword search (retrieve context on demand)
+- Error classification (distinguish core components from tools)
+- Generate concise summaries (for LLM analysis)
 """
 
 import logging
@@ -19,14 +19,14 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class LogEntry:
-    """日志条目"""
+    """Log entry."""
 
     timestamp: datetime
     level: str  # ERROR/CRITICAL
-    logger_name: str  # 模块名
+    logger_name: str  # Module name
     message: str
     traceback: str | None = None
-    component: str = ""  # core/tool/channel/...
+    component: str = ""  # core / tool / channel / ...
 
     def to_dict(self) -> dict:
         return {
@@ -41,15 +41,15 @@ class LogEntry:
 
 @dataclass
 class ErrorPattern:
-    """错误模式"""
+    """Error pattern."""
 
-    pattern: str  # 错误模式/类型
+    pattern: str  # Error pattern / type
     count: int
     first_seen: datetime
     last_seen: datetime
-    samples: list[LogEntry] = field(default_factory=list)  # 最多保留 3 个样本
-    component_type: str = ""  # "core" 或 "tool"
-    can_auto_fix: bool = False  # 是否可自动修复
+    samples: list[LogEntry] = field(default_factory=list)  # Keep at most 3 samples
+    component_type: str = ""  # "core" or "tool"
+    can_auto_fix: bool = False  # Whether it can be auto-fixed
 
     def to_dict(self) -> dict:
         return {
@@ -65,12 +65,12 @@ class ErrorPattern:
 
 class LogAnalyzer:
     """
-    日志分析器
+    Log analyzer
 
-    只分析 ERROR 日志，支持关键词检索
+    Analyzes only ERROR logs, supports keyword search.
     """
 
-    # 核心组件模块前缀（不自动修复）
+    # Core component module prefixes (not auto-fixed)
     CORE_COMPONENTS = [
         "openakita.core.brain",
         "openakita.core.agent",
@@ -82,7 +82,7 @@ class LogAnalyzer:
         "openakita.storage",
     ]
 
-    # 工具组件模块前缀（可自动修复）
+    # Tool component module prefixes (auto-fixable)
     TOOL_COMPONENTS = [
         "openakita.tools",
         "openakita.channels",
@@ -90,7 +90,7 @@ class LogAnalyzer:
         "openakita.testing",
     ]
 
-    # 日志行正则表达式
+    # Log line regex pattern
     LOG_PATTERN = re.compile(
         r"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},?\d*)\s+-\s+(\S+)\s+-\s+(ERROR|CRITICAL)\s+-\s+(.+)$"
     )
@@ -98,7 +98,7 @@ class LogAnalyzer:
     def __init__(self, log_dir: Path):
         """
         Args:
-            log_dir: 日志目录
+            log_dir: Log directory
         """
         self.log_dir = Path(log_dir)
 
@@ -109,25 +109,25 @@ class LogAnalyzer:
         since: datetime | None = None,
     ) -> list[LogEntry]:
         """
-        只提取 ERROR/CRITICAL 级别日志
+        Extract only ERROR/CRITICAL level logs.
 
-        高效实现：逐行读取，只保存错误日志
+        Efficient implementation: reads line by line, saves only error logs.
 
         Args:
-            date: 指定日期 (YYYY-MM-DD)，None 表示今天
-            log_file: 指定日志文件，优先于 date
-            since: 只返回此时间之后的日志（用于增量分析）
+            date: Specific date (YYYY-MM-DD); None means today.
+            log_file: Specific log file; takes precedence over *date*.
+            since: Only return logs after this time (for incremental analysis).
 
         Returns:
-            错误日志列表
+            List of error log entries.
         """
         if log_file:
             target_file = Path(log_file)
         else:
-            # 优先读取 error.log（只包含错误）
+            # Prefer error.log (contains only errors)
             target_file = self.log_dir / "error.log"
             if date:
-                # 检查是否有日期后缀的文件
+                # Check for a date-suffixed file
                 dated_file = self.log_dir / f"error.log.{date}"
                 if dated_file.exists():
                     target_file = dated_file
@@ -144,20 +144,20 @@ class LogAnalyzer:
                 for line in f:
                     line = line.rstrip()
 
-                    # 尝试匹配新的日志行
+                    # Try to match a new log line
                     match = self.LOG_PATTERN.match(line)
 
                     if match:
-                        # 保存前一个错误
+                        # Save the previous error
                         if current_entry:
                             errors.append(current_entry)
 
-                        # 解析新错误
+                        # Parse the new error
                         timestamp_str, logger_name, level, message = match.groups()
 
-                        # 解析时间戳
+                        # Parse timestamp
                         try:
-                            # 处理带毫秒和不带毫秒的格式
+                            # Handle both with and without milliseconds
                             if "," in timestamp_str:
                                 timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S,%f")
                             else:
@@ -165,7 +165,7 @@ class LogAnalyzer:
                         except ValueError:
                             timestamp = datetime.now()
 
-                        # 确定组件类型
+                        # Determine component type
                         component = self._classify_component(logger_name)
 
                         current_entry = LogEntry(
@@ -177,13 +177,13 @@ class LogAnalyzer:
                         )
 
                     elif current_entry and line.startswith((" ", "\t", "Traceback")):
-                        # Traceback 续行
+                        # Traceback continuation line
                         if current_entry.traceback:
                             current_entry.traceback += "\n" + line
                         else:
                             current_entry.traceback = line
 
-                # 保存最后一个错误
+                # Save the last error
                 if current_entry:
                     errors.append(current_entry)
 
@@ -207,16 +207,16 @@ class LogAnalyzer:
         context_lines: int = 3,
     ) -> list[str]:
         """
-        按关键词检索日志（当需要上下文时使用）
+        Search logs by keyword (use when context is needed).
 
         Args:
-            keyword: 搜索关键词
-            log_file: 日志文件路径，None 使用主日志
-            limit: 最大返回行数
-            context_lines: 上下文行数
+            keyword: Search keyword.
+            log_file: Log file path; None uses the main log.
+            limit: Maximum number of lines to return.
+            context_lines: Number of context lines.
 
         Returns:
-            匹配的日志行（包含上下文）
+            Matched log lines (including context).
         """
         target_file = Path(log_file) if log_file else self.log_dir / "openakita.log"
 
@@ -224,7 +224,7 @@ class LogAnalyzer:
             return []
 
         results = []
-        buffer = []  # 上下文缓冲
+        buffer = []  # Context buffer
 
         try:
             with open(target_file, encoding="utf-8", errors="ignore") as f:
@@ -232,13 +232,13 @@ class LogAnalyzer:
                     line = line.rstrip()
                     buffer.append(line)
 
-                    # 保持缓冲区大小
+                    # Keep buffer size bounded
                     if len(buffer) > context_lines * 2 + 1:
                         buffer.pop(0)
 
-                    # 检查是否匹配
+                    # Check for match
                     if keyword.lower() in line.lower():
-                        # 添加上下文
+                        # Add context
                         results.append("---")
                         results.extend(buffer)
 
@@ -252,32 +252,32 @@ class LogAnalyzer:
 
     def classify_errors(self, errors: list[LogEntry]) -> dict[str, ErrorPattern]:
         """
-        分类错误（区分核心组件和工具）
+        Classify errors (distinguish core components from tools).
 
         Args:
-            errors: 错误列表
+            errors: List of errors.
 
         Returns:
-            错误模式字典 {pattern: ErrorPattern}
+            Error pattern dict {pattern: ErrorPattern}.
         """
         patterns: dict[str, ErrorPattern] = {}
 
         for error in errors:
-            # 提取错误模式（取消息的前 50 个字符作为模式）
+            # Extract error pattern (use the message prefix as pattern)
             pattern_key = self._extract_pattern(error)
 
             if pattern_key in patterns:
-                # 更新已有模式
+                # Update existing pattern
                 p = patterns[pattern_key]
                 p.count += 1
                 p.last_seen = max(p.last_seen, error.timestamp)
                 p.first_seen = min(p.first_seen, error.timestamp)
 
-                # 最多保留 3 个样本
+                # Keep at most 3 samples
                 if len(p.samples) < 3:
                     p.samples.append(error)
             else:
-                # 创建新模式
+                # Create new pattern
                 component_type = self._get_component_type(error.logger_name)
 
                 patterns[pattern_key] = ErrorPattern(
@@ -298,69 +298,69 @@ class LogAnalyzer:
         max_patterns: int = 20,
     ) -> str:
         """
-        生成精简的错误摘要（给 LLM 分析）
+        Generate a concise error summary (for LLM analysis).
 
         Args:
-            patterns: 错误模式字典
-            max_patterns: 最大显示的错误模式数
+            patterns: Error pattern dict.
+            max_patterns: Maximum number of error patterns to display.
 
         Returns:
-            Markdown 格式摘要
+            Markdown-formatted summary.
         """
         if not patterns:
-            return "# 错误日志摘要\n\n没有发现错误。"
+            return "# Error Log Summary\n\nNo errors found."
 
-        # 按出现次数排序
+        # Sort by occurrence count
         sorted_patterns = sorted(patterns.values(), key=lambda p: p.count, reverse=True)[
             :max_patterns
         ]
 
-        # 统计
+        # Statistics
         total_errors = sum(p.count for p in patterns.values())
         core_errors = [p for p in sorted_patterns if p.component_type == "core"]
         tool_errors = [p for p in sorted_patterns if p.component_type == "tool"]
 
         lines = [
-            "# 错误日志摘要",
+            "# Error Log Summary",
             "",
-            f"- 总错误数: {total_errors}",
-            f"- 核心组件错误: {len(core_errors)} 种（需人工处理）",
-            f"- 工具错误: {len(tool_errors)} 种（可尝试自动修复）",
+            f"- Total errors: {total_errors}",
+            f"- Core component errors: {len(core_errors)} type(s) (require manual handling)",
+            f"- Tool errors: {len(tool_errors)} type(s) (may attempt auto-fix)",
             "",
         ]
 
-        # 核心组件错误
+        # Core component errors
         if core_errors:
-            lines.append("## 核心组件错误（不自动修复）")
+            lines.append("## Core Component Errors (not auto-fixed)")
             lines.append("")
             for p in core_errors:
                 sample = p.samples[0] if p.samples else None
-                lines.append(f"### [{p.count}次] {p.pattern}")
-                lines.append(f"- 模块: `{sample.logger_name if sample else 'unknown'}`")
-                lines.append(f"- 首次: {p.first_seen.strftime('%Y-%m-%d %H:%M:%S')}")
-                lines.append(f"- 最后: {p.last_seen.strftime('%Y-%m-%d %H:%M:%S')}")
+                lines.append(f"### [{p.count} times] {p.pattern}")
+                lines.append(f"- Module: `{sample.logger_name if sample else 'unknown'}`")
+                lines.append(f"- First seen: {p.first_seen.strftime('%Y-%m-%d %H:%M:%S')}")
+                lines.append(f"- Last seen: {p.last_seen.strftime('%Y-%m-%d %H:%M:%S')}")
                 if sample and sample.traceback:
                     lines.append(f"- Traceback: `{sample.traceback}`")
                 lines.append("")
 
-        # 工具错误
+        # Tool errors
         if tool_errors:
-            lines.append("## 工具错误（可自动修复）")
+            lines.append("## Tool Errors (auto-fixable)")
             lines.append("")
             for p in tool_errors:
                 sample = p.samples[0] if p.samples else None
-                lines.append(f"### [{p.count}次] {p.pattern}")
-                lines.append(f"- 模块: `{sample.logger_name if sample else 'unknown'}`")
-                lines.append(f"- 首次: {p.first_seen.strftime('%Y-%m-%d %H:%M:%S')}")
-                lines.append(f"- 最后: {p.last_seen.strftime('%Y-%m-%d %H:%M:%S')}")
+                lines.append(f"### [{p.count} times] {p.pattern}")
+                lines.append(f"- Module: `{sample.logger_name if sample else 'unknown'}`")
+                lines.append(f"- First seen: {p.first_seen.strftime('%Y-%m-%d %H:%M:%S')}")
+                lines.append(f"- Last seen: {p.last_seen.strftime('%Y-%m-%d %H:%M:%S')}")
                 if sample and sample.message:
-                    lines.append(f"- 消息: `{sample.message}`")
+                    lines.append(f"- Message: `{sample.message}`")
                 lines.append("")
 
         return "\n".join(lines)
 
     def _classify_component(self, logger_name: str) -> str:
-        """根据 logger 名称分类组件"""
+        """Classify component based on logger name."""
         for prefix in self.CORE_COMPONENTS:
             if logger_name.startswith(prefix):
                 return "core"
@@ -372,22 +372,22 @@ class LogAnalyzer:
         return "other"
 
     def _get_component_type(self, logger_name: str) -> str:
-        """获取组件类型（core/tool）"""
+        """Get component type (core/tool)."""
         component = self._classify_component(logger_name)
         if component == "core":
             return "core"
         elif component == "tool":
             return "tool"
         else:
-            # 未知组件默认为 core（保守策略）
+            # Unknown components default to core (conservative strategy)
             return "core"
 
     def _extract_pattern(self, error: LogEntry) -> str:
-        """提取错误模式（用于分组）"""
-        # 组合模块名和消息作为模式
+        """Extract error pattern (for grouping)."""
+        # Combine module name and message as pattern
         message_prefix = error.message if error.message else ""
 
-        # 移除动态内容（如 ID、时间戳等）
+        # Remove dynamic content (e.g. IDs, timestamps)
         message_prefix = re.sub(r"\d+", "N", message_prefix)
         message_prefix = re.sub(r"[0-9a-f]{8,}", "ID", message_prefix)
 
@@ -398,20 +398,20 @@ class LogAnalyzer:
         days: int = 1,
     ) -> list[LogEntry]:
         """
-        获取指定天数内的所有错误
+        Get all errors within the specified number of days.
 
         Args:
-            days: 天数
+            days: Number of days.
 
         Returns:
-            错误列表
+            List of errors.
         """
         all_errors = []
 
-        # 当前 error.log
+        # Current error.log
         all_errors.extend(self.extract_errors_only())
 
-        # 历史文件
+        # Historical files
         for i in range(1, days):
             date = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
             errors = self.extract_errors_only(date=date)

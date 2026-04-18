@@ -1,18 +1,18 @@
 """
-Docker 执行后端
+Docker Execution Backend
 
-在 Docker 容器中执行命令，提供比 subprocess 更强的隔离：
-- --cap-drop ALL: 移除所有 Linux capabilities
-- --no-new-privileges: 禁止权限提升
-- --pids-limit: 限制进程数
-- --tmpfs: 挂载临时文件系统
-- --network none: 可选断网模式
-- 工作区挂载为可写卷
+Executes commands inside Docker containers, providing stronger isolation than subprocess:
+- --cap-drop ALL: Drop all Linux capabilities
+- --no-new-privileges: Prevent privilege escalation
+- --pids-limit: Limit the number of processes
+- --tmpfs: Mount a temporary filesystem
+- --network none: Optional network-isolated mode
+- Workspace mounted as a writable volume
 
-配置通过 settings 控制：
-- docker_backend_enabled: 是否启用
-- docker_image: 使用的 Docker 镜像
-- docker_network: 网络模式
+Configuration is controlled via settings:
+- docker_backend_enabled: Whether to enable
+- docker_image: Docker image to use
+- docker_network: Network mode
 """
 
 from __future__ import annotations

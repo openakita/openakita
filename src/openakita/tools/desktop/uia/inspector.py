@@ -1,7 +1,7 @@
 """
-Windows 桌面自动化 - UIAutomation 检查器
+Windows desktop automation - UIAutomation inspector.
 
-提供元素树查看和调试功能
+Provides element tree inspection and debugging capabilities.
 """
 
 import logging
@@ -11,7 +11,7 @@ from typing import Any
 from .client import UIAClient, get_uia_client
 from .elements import UIAElementWrapper
 
-# 平台检查
+# Platform check
 if sys.platform != "win32":
     raise ImportError(
         f"Desktop automation module is Windows-only. Current platform: {sys.platform}"
@@ -22,15 +22,15 @@ logger = logging.getLogger(__name__)
 
 class UIAInspector:
     """
-    UIAutomation 检查器
+    UIAutomation inspector.
 
-    用于查看和调试 UI 元素结构
+    Used for inspecting and debugging UI element structures.
     """
 
     def __init__(self, client: UIAClient | None = None):
         """
         Args:
-            client: UIA 客户端，None 使用全局实例
+            client: UIA client; None uses the global instance.
         """
         self._client = client or get_uia_client()
 
@@ -41,15 +41,15 @@ class UIAInspector:
         include_invisible: bool = False,
     ) -> dict[str, Any]:
         """
-        获取元素树结构
+        Get the element tree structure.
 
         Args:
-            root: 根元素，None 使用活动窗口
-            depth: 遍历深度
-            include_invisible: 是否包含不可见元素
+            root: Root element; None uses the active window.
+            depth: Traversal depth.
+            include_invisible: Whether to include invisible elements.
 
         Returns:
-            树结构字典
+            Tree structure dictionary.
         """
         if root is None:
             root = self._client.get_active_window()
@@ -66,18 +66,18 @@ class UIAInspector:
         current_depth: int = 0,
     ) -> dict[str, Any]:
         """
-        递归构建元素树
+        Recursively build the element tree.
 
         Args:
-            element: 当前元素
-            depth: 最大深度
-            include_invisible: 是否包含不可见元素
-            current_depth: 当前深度
+            element: Current element.
+            depth: Maximum depth.
+            include_invisible: Whether to include invisible elements.
+            current_depth: Current depth.
 
         Returns:
-            元素及其子元素的树结构
+            Tree structure of the element and its children.
         """
-        # 基本信息
+        # Basic information
         node = {
             "name": element.name,
             "control_type": element.control_type,
@@ -89,12 +89,12 @@ class UIAInspector:
             "value": element.value,
         }
 
-        # 如果还有深度，获取子元素
+        # If depth remains, get children
         if current_depth < depth:
             children = []
             try:
                 for child in element.get_children():
-                    # 过滤不可见元素
+                    # Filter out invisible elements
                     if not include_invisible and not child.is_visible:
                         continue
 
@@ -121,16 +121,16 @@ class UIAInspector:
         indent: str = "  ",
     ) -> str:
         """
-        打印元素树（文本格式）
+        Print the element tree in text format.
 
         Args:
-            root: 根元素
-            depth: 遍历深度
-            include_invisible: 是否包含不可见元素
-            indent: 缩进字符串
+            root: Root element.
+            depth: Traversal depth.
+            include_invisible: Whether to include invisible elements.
+            indent: Indentation string.
 
         Returns:
-            格式化的树文本
+            Formatted tree text.
         """
         if root is None:
             root = self._client.get_active_window()
@@ -150,16 +150,16 @@ class UIAInspector:
         lines: list[str],
         current_depth: int,
     ) -> None:
-        """递归打印元素树"""
-        # 构建当前行
+        """Recursively print the element tree."""
+        # Build the current line
         prefix = indent * current_depth
 
-        # 元素信息
+        # Element information
         name = element.name or "(no name)"
         ctrl_type = element.control_type
         auto_id = element.automation_id
 
-        # 格式化
+        # Format
         info_parts = [f"[{ctrl_type}]", f'"{name}"']
         if auto_id:
             info_parts.append(f"(id={auto_id})")
@@ -169,7 +169,7 @@ class UIAInspector:
 
         lines.append(f"{prefix}{' '.join(info_parts)}")
 
-        # 递归子元素
+        # Recurse into children
         if current_depth < depth:
             try:
                 for child in element.get_children():
@@ -194,15 +194,15 @@ class UIAInspector:
         exact_match: bool = False,
     ) -> list[UIAElementWrapper]:
         """
-        按文本内容查找元素
+        Find elements by text content.
 
         Args:
-            text: 要查找的文本
-            root: 搜索根元素
-            exact_match: 是否精确匹配
+            text: Text to search for.
+            root: Search root element.
+            exact_match: Whether to require an exact match.
 
         Returns:
-            匹配的元素列表
+            List of matching elements.
         """
         if root is None:
             root = self._client.get_active_window()
@@ -222,11 +222,11 @@ class UIAInspector:
         max_depth: int = 10,
         current_depth: int = 0,
     ) -> None:
-        """递归按文本搜索"""
+        """Recursively search by text."""
         if current_depth > max_depth:
             return
 
-        # 检查当前元素
+        # Check current element
         name = element.name or ""
         value = element.value or ""
 
@@ -238,7 +238,7 @@ class UIAInspector:
             if text_lower in name.lower() or text_lower in value.lower():
                 results.append(element)
 
-        # 递归子元素
+        # Recurse into children
         try:
             for child in element.get_children():
                 self._search_by_text(
@@ -252,13 +252,13 @@ class UIAInspector:
         root: UIAElementWrapper | None = None,
     ) -> list[UIAElementWrapper]:
         """
-        查找所有可点击元素
+        Find all clickable elements.
 
         Args:
-            root: 搜索根元素
+            root: Search root element.
 
         Returns:
-            可点击元素列表
+            List of clickable elements.
         """
         clickable_types = {
             "Button",
@@ -285,13 +285,13 @@ class UIAInspector:
         root: UIAElementWrapper | None = None,
     ) -> list[UIAElementWrapper]:
         """
-        查找所有输入元素
+        Find all input elements.
 
         Args:
-            root: 搜索根元素
+            root: Search root element.
 
         Returns:
-            输入元素列表
+            List of input elements.
         """
         input_types = {"Edit", "ComboBox", "Spinner", "Slider"}
 
@@ -312,15 +312,15 @@ class UIAInspector:
         max_depth: int = 10,
         current_depth: int = 0,
     ) -> None:
-        """按控件类型查找"""
+        """Find elements by control type."""
         if current_depth > max_depth:
             return
 
-        # 检查当前元素
+        # Check current element
         if element.control_type in control_types and element.is_enabled:
             results.append(element)
 
-        # 递归子元素
+        # Recurse into children
         try:
             for child in element.get_children():
                 self._find_by_types(child, control_types, results, max_depth, current_depth + 1)
@@ -333,19 +333,19 @@ class UIAInspector:
         y: int,
     ) -> UIAElementWrapper | None:
         """
-        获取指定坐标处的元素
+        Get the element at the specified coordinates.
 
         Args:
-            x, y: 屏幕坐标
+            x, y: Screen coordinates.
 
         Returns:
-            该坐标处的元素
+            Element at the given coordinates.
         """
         try:
             import comtypes.client
             from pywinauto.uia_element_info import UIAElementInfo
 
-            # 使用 UI Automation API 获取坐标处的元素
+            # Use UI Automation API to get element at coordinates
             uia = comtypes.client.CreateObject(
                 "{ff48dba4-60ef-4201-aa87-54103eef594e}",
                 interface=comtypes.gen.UIAutomationClient.IUIAutomation,
@@ -354,7 +354,7 @@ class UIAInspector:
             element = uia.ElementFromPoint(comtypes.gen.UIAutomationClient.tagPOINT(x, y))
 
             if element:
-                # 包装为 pywinauto 元素
+                # Wrap as pywinauto element
                 from pywinauto.controls.uiawrapper import UIAWrapper
 
                 elem_info = UIAElementInfo(element)
@@ -371,59 +371,59 @@ class UIAInspector:
         element: UIAElementWrapper,
     ) -> str:
         """
-        生成元素的描述文本
+        Generate a description text for the element.
 
         Args:
-            element: 要描述的元素
+            element: Element to describe.
 
         Returns:
-            描述文本
+            Description text.
         """
         parts = []
 
-        # 控件类型
+        # Control type
         ctrl_type = element.control_type
         if ctrl_type:
-            parts.append(f"类型: {ctrl_type}")
+            parts.append(f"Type: {ctrl_type}")
 
-        # 名称
+        # Name
         name = element.name
         if name:
-            parts.append(f"名称: {name}")
+            parts.append(f"Name: {name}")
 
-        # 自动化 ID
+        # Automation ID
         auto_id = element.automation_id
         if auto_id:
             parts.append(f"ID: {auto_id}")
 
-        # 类名
+        # Class name
         class_name = element.class_name
         if class_name:
-            parts.append(f"类: {class_name}")
+            parts.append(f"Class: {class_name}")
 
-        # 位置
+        # Position
         bbox = element.bbox
         if bbox:
-            parts.append(f"位置: ({bbox.left}, {bbox.top}) - ({bbox.right}, {bbox.bottom})")
-            parts.append(f"中心: {bbox.center}")
+            parts.append(f"Position: ({bbox.left}, {bbox.top}) - ({bbox.right}, {bbox.bottom})")
+            parts.append(f"Center: {bbox.center}")
 
-        # 状态
+        # State
         states = []
         if element.is_enabled:
-            states.append("可用")
+            states.append("enabled")
         else:
-            states.append("禁用")
+            states.append("disabled")
         if element.is_visible:
-            states.append("可见")
+            states.append("visible")
         else:
-            states.append("隐藏")
+            states.append("hidden")
         if element.is_focused:
-            states.append("有焦点")
-        parts.append(f"状态: {', '.join(states)}")
+            states.append("focused")
+        parts.append(f"State: {', '.join(states)}")
 
-        # 值
+        # Value
         value = element.value
         if value:
-            parts.append(f"值: {value}")
+            parts.append(f"Value: {value}")
 
         return "\n".join(parts)

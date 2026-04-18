@@ -269,7 +269,7 @@ def install_from_git(
     plugins_dir = plugins_dir.resolve()
     plugins_dir.mkdir(parents=True, exist_ok=True)
     if progress:
-        progress.update("cloning", f"正在克隆仓库: {source[:80]}", 10)
+        progress.update("cloning", f"Cloning repository: {source[:80]}", 10)
 
     git_url = _normalize_git_url(source)
 
@@ -301,7 +301,7 @@ def install_from_git(
             raise PluginInstallError(f"Git clone failed: {err}")
 
         if progress:
-            progress.update("validating", "正在验证插件清单", 50)
+            progress.update("validating", "Validating plugin manifest", 50)
 
         plugin_src = _find_plugin_json_root(clone_dir)
         if plugin_src is None:
@@ -313,7 +313,7 @@ def install_from_git(
             raise PluginInstallError(str(e)) from e
 
         if progress:
-            progress.update("installing", f"正在安装插件: {manifest.id}", 65)
+            progress.update("installing", f"Installing plugin: {manifest.id}", 65)
 
         dest = plugins_dir / _sanitize_dir_name(manifest.id)
         backup = None
@@ -343,7 +343,7 @@ def install_from_git(
             raise PluginInstallError(f"Could not install plugin files: {e}") from e
 
     if progress:
-        progress.update("dependencies", "正在安装依赖", 80)
+        progress.update("dependencies", "Installing dependencies", 80)
 
     try:
         result = _finalize_install(dest)
@@ -361,7 +361,7 @@ def install_from_git(
         shutil.rmtree(backup, ignore_errors=True)
 
     if progress:
-        progress.update("done", f"插件 {result} 安装完成", 100)
+        progress.update("done", f"Plugin {result} installed successfully", 100)
     return result
 
 
@@ -374,7 +374,7 @@ def install_from_url(
     plugins_dir = plugins_dir.resolve()
     plugins_dir.mkdir(parents=True, exist_ok=True)
     if progress:
-        progress.update("downloading", f"正在下载: {url[:80]}", 10)
+        progress.update("downloading", f"Downloading: {url[:80]}", 10)
 
     with tempfile.TemporaryDirectory(prefix="openakita-plugin-") as tmp:
         tmp_path = Path(tmp)
@@ -382,7 +382,7 @@ def install_from_url(
         _download_to_file(url, archive)
 
         if progress:
-            progress.update("extracting", "正在解压插件包", 40)
+            progress.update("extracting", "Extracting plugin archive", 40)
 
         extract_root = tmp_path / "extract"
         extract_root.mkdir()
@@ -397,7 +397,7 @@ def install_from_url(
             raise PluginInstallError("No plugin.json found in archive")
 
         if progress:
-            progress.update("validating", "正在验证插件清单", 55)
+            progress.update("validating", "Validating plugin manifest", 55)
 
         try:
             manifest = parse_manifest(plugin_src)
@@ -405,7 +405,7 @@ def install_from_url(
             raise PluginInstallError(str(e)) from e
 
         if progress:
-            progress.update("installing", f"正在安装插件: {manifest.id}", 65)
+            progress.update("installing", f"Installing plugin: {manifest.id}", 65)
 
         dest = plugins_dir / _sanitize_dir_name(manifest.id)
         if dest.exists():
@@ -432,7 +432,7 @@ def install_from_url(
             raise PluginInstallError(f"Could not install plugin files: {e}") from e
 
     if progress:
-        progress.update("dependencies", "正在安装依赖", 80)
+        progress.update("dependencies", "Installing dependencies", 80)
 
     try:
         result = _finalize_install(dest)
@@ -450,7 +450,7 @@ def install_from_url(
         shutil.rmtree(backup, ignore_errors=True)
 
     if progress:
-        progress.update("done", f"插件 {result} 安装完成", 100)
+        progress.update("done", f"Plugin {result} installed successfully", 100)
     return result
 
 

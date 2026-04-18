@@ -1,9 +1,9 @@
 """
-技能安装源 URL 的解析与校验。
+Parsing and validation of skill installation source URLs.
 
-将各种 URL 变体（GitHub blob/tree/repo、playbooks.com 市场页面、
-raw.githubusercontent.com 等）归一化为结构化的安装源描述，
-供 SkillManager（聊天路径）和 bridge（Setup Center UI 路径）共用。
+Normalizes various URL variants (GitHub blob/tree/repo, playbooks.com marketplace
+pages, raw.githubusercontent.com, etc.) into a structured installation source
+description, shared by SkillManager (chat path) and bridge (Setup Center UI path).
 """
 
 import re
@@ -34,7 +34,7 @@ _PLAYBOOKS_RE = re.compile(
 
 
 class GitHubSource(NamedTuple):
-    """归一化后的 GitHub 仓库坐标。"""
+    """Normalized GitHub repository coordinates."""
 
     owner: str
     repo: str
@@ -42,9 +42,9 @@ class GitHubSource(NamedTuple):
 
 
 def parse_github_source(url: str) -> GitHubSource | None:
-    """将任意 GitHub URL 归一化为 (owner, repo, subdir)。
+    """Normalize any GitHub URL to (owner, repo, subdir).
 
-    支持:
+    Supported forms:
       - https://github.com/owner/repo
       - https://github.com/owner/repo.git
       - https://github.com/owner/repo/blob/main/path/to/SKILL.md
@@ -64,7 +64,7 @@ def parse_github_source(url: str) -> GitHubSource | None:
 
 
 def parse_playbooks_source(url: str) -> GitHubSource | None:
-    """将 playbooks.com 技能市场 URL 转为 GitHub 坐标。"""
+    """Convert a playbooks.com skill marketplace URL to GitHub coordinates."""
     m = _PLAYBOOKS_RE.match(url)
     if m:
         return GitHubSource(m.group("owner"), m.group("repo"), m.group("skill"))
@@ -77,11 +77,11 @@ def parse_playbooks_source(url: str) -> GitHubSource | None:
 
 
 def is_html_content(text: str) -> bool:
-    """检测 HTTP 响应是否是 HTML 网页而非 Markdown。"""
+    """Detect whether an HTTP response is an HTML page rather than Markdown."""
     stripped = text.lstrip()
     return stripped[:50].lower().startswith(("<!doctype", "<html"))
 
 
 def has_yaml_frontmatter(text: str) -> bool:
-    """检测内容是否有 YAML frontmatter（合法 SKILL.md 的必要条件）。"""
+    """Detect whether content has YAML frontmatter (a requirement for a valid SKILL.md)."""
     return bool(re.match(r"^---\s*\n", text))

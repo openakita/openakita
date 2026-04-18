@@ -58,7 +58,7 @@ Please output evaluation results in JSON format:
 
 @dataclass
 class JudgeResult:
-    """Judge 评估结果"""
+    """Judge evaluation result"""
 
     trace_id: str
     scores: dict[str, float] = field(default_factory=dict)
@@ -70,11 +70,11 @@ class JudgeResult:
 
     @classmethod
     def from_llm_response(cls, trace_id: str, response_text: str) -> "JudgeResult":
-        """从 LLM 响应解析 JudgeResult。"""
+        """Parse JudgeResult from an LLM response."""
         result = cls(trace_id=trace_id, raw_response=response_text)
 
         try:
-            # 尝试提取 JSON
+            # Try to extract JSON
             text = response_text
             if "```json" in text:
                 text = text.split("```json")[1].split("```")[0]
@@ -97,10 +97,10 @@ class JudgeResult:
 
 class Judge:
     """
-    Agent-as-a-Judge 评估器。
+    Agent-as-a-Judge evaluator.
 
-    使用一个 LLM 实例来评估 Agent 的表现。
-    可以使用与 Agent 不同的模型 (通常用更强的模型做评估)。
+    Uses an LLM instance to evaluate Agent performance.
+    Can use a different model from the Agent (typically a stronger model for evaluation).
     """
 
     def __init__(
@@ -109,18 +109,18 @@ class Judge:
         model: str | None = None,
     ) -> None:
         self._brain = brain
-        self._model = model  # 评估用的模型，None 则使用 brain 默认模型
+        self._model = model  # Model used for evaluation; None means use brain's default model
 
     def set_brain(self, brain: Any) -> None:
-        """设置 LLM 客户端（延迟注入）"""
+        """Set the LLM client (lazy injection)."""
         self._brain = brain
 
     async def evaluate(self, trace: Any) -> JudgeResult:
         """
-        评估单个 Trace。
+        Evaluate a single Trace.
 
         Args:
-            trace: Trace 对象 (from tracing.tracer)
+            trace: Trace object (from tracing.tracer)
 
         Returns:
             JudgeResult
@@ -129,7 +129,7 @@ class Judge:
             logger.warning("[Judge] No brain configured, returning empty result")
             return JudgeResult(trace_id=getattr(trace, "trace_id", ""))
 
-        # 构建 trace 摘要
+        # Build trace summary
         trace_summary = self._format_trace_for_judge(trace)
 
         prompt = JUDGE_PROMPT.format(trace_summary=trace_summary)
@@ -149,7 +149,7 @@ class Judge:
                 messages=[{"role": "user", "content": prompt}],
             )
 
-            # 提取文本
+            # Extract text
             text = ""
             for block in getattr(response, "content", []):
                 if getattr(block, "type", "") == "text":
@@ -170,7 +170,7 @@ class Judge:
             reset_tracking_context(_tt)
 
     async def evaluate_batch(self, traces: list[Any]) -> list[JudgeResult]:
-        """批量评估多个 Trace。"""
+        """Evaluate multiple Traces in batch."""
         results = []
         for trace in traces:
             result = await self.evaluate(trace)
@@ -178,7 +178,7 @@ class Judge:
         return results
 
     def _format_trace_for_judge(self, trace: Any) -> str:
-        """将 Trace 格式化为 Judge 可读的摘要。"""
+        """Format a Trace into a human-readable summary for the Judge."""
 
         parts = []
         summary = trace.get_summary()
@@ -196,9 +196,9 @@ class Judge:
             for k, v in trace.metadata.items():
                 parts.append(f"  {k}: {v}")
 
-        # Span 详情
+        # Span details
         parts.append("\nExecution Timeline:")
-        for span in trace.spans[:30]:  # 限制长度
+        for span in trace.spans[:30]:  # Limit length
             status_icon = "✅" if span.status.value == "ok" else "❌"
             duration = f"{span.duration_ms:.0f}ms" if span.duration_ms else "?"
             attrs_str = ""

@@ -1,8 +1,8 @@
 """
-EndpointManager: LLM 端点配置的唯一管理者。
+EndpointManager: single source of truth for LLM endpoint configuration.
 
-所有对 .env 和 llm_endpoints.json 的写操作都必须经过这里。
-提供原子写入、自动备份、线程锁、BOM 容错等保护机制。
+All write operations to .env and llm_endpoints.json must go through this module.
+Provides atomic writes, automatic backups, thread locking, BOM tolerance, and other safeguards.
 """
 
 from __future__ import annotations
@@ -130,9 +130,9 @@ def _merge_env_content(
 
 
 class EndpointManager:
-    """LLM 端点配置的唯一管理者。
+    """Single source of truth for LLM endpoint configuration.
 
-    所有对 .env 和 llm_endpoints.json 的写操作都必须经过这里。
+    All write operations to .env and llm_endpoints.json must go through here.
     """
 
     def __init__(self, workspace_dir: Path):
@@ -177,7 +177,7 @@ class EndpointManager:
 
             if expected_version and expected_version != version:
                 raise ConflictError(
-                    "配置已被其他会话修改，请刷新后重试",
+                    "Configuration has been modified by another session; please refresh and retry",
                     current_version=version,
                 )
 

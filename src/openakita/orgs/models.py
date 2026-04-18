@@ -1,8 +1,8 @@
 """
-AgentOrg 核心数据模型
+AgentOrg core data models
 
-定义组织编排所需的全部数据结构：Organization, OrgNode, OrgEdge,
-OrgMessage, OrgMemoryEntry, NodeSchedule 等。
+Defines all data structures needed for organization orchestration:
+Organization, OrgNode, OrgEdge, OrgMessage, OrgMemoryEntry, NodeSchedule, etc.
 """
 
 from __future__ import annotations
@@ -293,7 +293,7 @@ class OrgEdge:
 @dataclass
 class UserPersona:
     """The human user's identity within an organization."""
-    title: str = "负责人"
+    title: str = "Owner"
     display_name: str = ""
     description: str = ""
 
@@ -332,13 +332,13 @@ class Organization:
     # Heartbeat
     heartbeat_enabled: bool = False
     heartbeat_interval_s: int = 1800
-    heartbeat_prompt: str = "审视组织当前状态，决定是否需要采取行动。"
+    heartbeat_prompt: str = "Review the organization's current state and decide whether action is needed."
     heartbeat_max_cascade_depth: int = 3
 
     # Standup
     standup_enabled: bool = False
     standup_cron: str = "0 9 * * 1-5"
-    standup_agenda: str = "各节点汇报进展、阻塞和计划。"
+    standup_agenda: str = "Each node reports progress, blockers, and plans."
 
     # Policies
     allow_cross_level: bool = False  # TODO: not yet enforced
@@ -520,7 +520,7 @@ class Organization:
     #
     # For *write-effect* tool parameters (``to_node`` on delegate /
     # send_message / reply_message etc.) the same leniency is actively
-    # harmful: if role_titles share a prefix — e.g. "产品总监" vs "产品经理"
+    # harmful: if role_titles share a prefix — e.g. "产品总监" (Product Director) vs "产品经理" (Product Manager)
     # — the substring branches ``title in query`` / ``query in title`` on
     # L496 can silently resolve the caller's own title to itself or to the
     # wrong sibling, which then triggers the self-delegation guard and
@@ -565,7 +565,7 @@ class Organization:
         if q_title:
             # Case-sensitive exact title wins first; if that also yields
             # multiple hits we still have to report ambiguity (e.g. two
-            # nodes literally named "产品经理" across departments).
+            # nodes literally named "产品经理" (Product Manager) across departments).
             exact_title_hits = [
                 n for n in self.nodes if (n.role_title or "").strip() == q_title
             ]

@@ -1,14 +1,14 @@
 """
-OpenRouter 服务商注册表
+OpenRouter provider registry
 
-OpenRouter 的 API 返回完整的能力信息，是最理想的情况。
+OpenRouter's API returns complete capability information, which is the ideal case.
 """
 
 from .base import ModelInfo, ProviderInfo, ProviderRegistry, get_registry_client
 
 
 class OpenRouterRegistry(ProviderRegistry):
-    """OpenRouter 注册表"""
+    """OpenRouter registry"""
 
     info = ProviderInfo(
         name="OpenRouter",
@@ -17,11 +17,11 @@ class OpenRouterRegistry(ProviderRegistry):
         default_base_url="https://openrouter.ai/api/v1",
         api_key_env_suggestion="OPENROUTER_API_KEY",
         supports_model_list=True,
-        supports_capability_api=True,  # OpenRouter 返回能力信息
+        supports_capability_api=True,  # OpenRouter returns capability information
     )
 
     async def list_models(self, api_key: str) -> list[ModelInfo]:
-        """获取 OpenRouter 模型列表"""
+        """Fetch the OpenRouter model list"""
         client = get_registry_client()
         try:
             resp = await client.get(
@@ -51,25 +51,25 @@ class OpenRouterRegistry(ProviderRegistry):
             return []
 
     def _parse_capabilities(self, architecture: dict, model_id: str) -> dict:
-        """从 OpenRouter 架构信息解析能力"""
+        """Parse capabilities from OpenRouter architecture information"""
         input_modalities = architecture.get("input_modalities", [])
         supported_params = architecture.get("supported_parameters", [])
 
-        # 基本能力从 API 获取
+        # Basic capabilities from API
         caps = {
-            "text": "text" in input_modalities or True,  # 所有模型都支持文本
+            "text": "text" in input_modalities or True,  # All models support text
             "vision": "image" in input_modalities,
-            "video": False,  # OpenRouter API 未明确返回视频支持
+            "video": False,  # OpenRouter API does not explicitly return video support
             "tools": "tools" in supported_params or "function_call" in supported_params,
-            "thinking": False,  # OpenRouter API 未明确返回此信息
+            "thinking": False,  # OpenRouter API does not explicitly return this info
         }
 
-        # Thinking 能力需要基于模型名推断（因为 OpenRouter API 不返回）
+        # Thinking capability must be inferred from model name (OpenRouter API does not return it)
         model_lower = model_id.lower()
         if any(kw in model_lower for kw in ["o1", "r1", "qwq", "thinking"]):
             caps["thinking"] = True
 
-        # Video 能力需要基于模型名推断
+        # Video capability must be inferred from model name
         if any(kw in model_lower for kw in ["kimi", "gemini"]):
             caps["video"] = True
 

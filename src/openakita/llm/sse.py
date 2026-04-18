@@ -1,11 +1,11 @@
 """
-标准 SSE (Server-Sent Events) 解析器
+Standard SSE (Server-Sent Events) parser
 
-符合 SSE 规范 (https://html.spec.whatwg.org/multipage/server-sent-events.html):
-- 支持多行 data 字段拼接
-- 支持 event type 字段
-- 支持 [DONE] 终止信号
-- 容错: JSONDecodeError 记录警告而非崩溃
+Compliant with the SSE spec (https://html.spec.whatwg.org/multipage/server-sent-events.html):
+- Supports multi-line data field concatenation
+- Supports event type field
+- Supports [DONE] termination signal
+- Tolerant: JSONDecodeError logs a warning instead of crashing
 """
 
 from __future__ import annotations
@@ -18,13 +18,13 @@ logger = logging.getLogger(__name__)
 
 
 async def parse_sse_stream(response) -> AsyncIterator[dict]:
-    """从 httpx 响应解析 SSE 事件流。
+    """Parse an SSE event stream from an httpx response.
 
     Args:
-        response: httpx.Response (需已调用 .aiter_lines())
+        response: httpx.Response (must have .aiter_lines() available)
 
     Yields:
-        解析后的 JSON 事件 dict
+        Parsed JSON event dicts
     """
     data_parts: list[str] = []
     event_type: str | None = None

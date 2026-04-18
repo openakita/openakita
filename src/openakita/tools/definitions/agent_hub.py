@@ -1,11 +1,11 @@
 """
-Agent Hub 工具定义
+Agent Hub tool definitions
 
-提供与 OpenAkita Platform Agent Store 交互的工具：
-- search_hub_agents: 搜索平台上的 Agent
-- install_hub_agent: 从平台下载并安装 Agent
-- publish_agent: 发布 Agent 到平台
-- get_hub_agent_detail: 查看 Agent 详情
+Provides tools for interacting with the OpenAkita Platform Agent Store:
+- search_hub_agents: Search for Agents on the platform
+- install_hub_agent: Download and install an Agent from the platform
+- publish_agent: Publish an Agent to the platform
+- get_hub_agent_detail: View Agent details
 """
 
 AGENT_HUB_TOOLS = [

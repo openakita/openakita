@@ -1,8 +1,8 @@
 """
 Health check routes: GET /api/health, POST /api/health/check
 
-POST /api/health/check 使用 dry_run=True 模式执行只读检测，
-不会修改 provider 的健康状态和冷静期计数，避免干扰正在运行的 Agent。
+POST /api/health/check runs a read-only check using dry_run=True mode,
+which does not modify provider health status or cooldown counters, avoiding interference with running Agents.
 """
 
 from __future__ import annotations
@@ -271,7 +271,7 @@ async def diagnostics():
     checks.append(
         {
             "id": "C1_BUNDLED_RUNTIME",
-            "title": "内置运行时",
+            "title": "Bundled Runtime",
             "status": "pass",
             "code": "RUNTIME_OK",
             "evidence": [f"Python {platform.python_version()}, {runtime_type}"],
@@ -288,7 +288,7 @@ async def diagnostics():
         checks.append(
             {
                 "id": "C2_PIP",
-                "title": "包管理器",
+                "title": "Package Manager",
                 "status": "pass",
                 "code": "PIP_OK",
                 "evidence": [f"pip {pip_ver}"],
@@ -300,7 +300,7 @@ async def diagnostics():
         checks.append(
             {
                 "id": "C2_PIP",
-                "title": "包管理器",
+                "title": "Package Manager",
                 "status": "warn",
                 "code": "PIP_UNAVAILABLE",
                 "evidence": ["pip not importable — optional module installation disabled"],
@@ -316,7 +316,7 @@ async def diagnostics():
         checks.append(
             {
                 "id": "C3_CORE",
-                "title": "核心引擎",
+                "title": "Core Engine",
                 "status": "pass",
                 "code": "CORE_OK",
                 "evidence": [f"openakita {backend_version}"],
@@ -328,12 +328,12 @@ async def diagnostics():
         checks.append(
             {
                 "id": "C3_CORE",
-                "title": "核心引擎",
+                "title": "Core Engine",
                 "status": "fail",
                 "code": "CORE_IMPORT_ERROR",
                 "evidence": [str(exc)[:300]],
                 "autoFix": False,
-                "fixHint": "核心模块损坏，建议重装 OpenAkita",
+                "fixHint": "Core module corrupted; please reinstall OpenAkita",
             }
         )
 
@@ -389,12 +389,12 @@ async def health_check(request: Request, body: HealthCheckRequest):
 
 @router.get("/api/health/loop")
 async def health_loop(request: Request):
-    """Event loop 健康状态与 LLM 并发统计。"""
+    """Event loop health status and LLM concurrency stats."""
     from openakita.llm.client import LLMClient
 
     loop = asyncio.get_running_loop()
 
-    # 测量 event loop 延迟：调度一个 callback 看实际执行需要多久
+    # Measure event loop lag: schedule a callback and see how long it takes to execute
     lag_event = asyncio.Event()
     t0 = time.monotonic()
     loop.call_soon(lag_event.set)

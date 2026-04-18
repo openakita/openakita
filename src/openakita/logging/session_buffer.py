@@ -1,13 +1,13 @@
 """
-会话日志缓存
+Session Log Buffer
 
-按 session_id 分组存储日志，供 AI 查询当前会话的执行日志。
+Stores logs grouped by session_id for AI to query execution logs of the current session.
 
-功能:
-- 内存中按 session_id 分组存储
-- 每个 session 保留最近 N 条日志（默认 500）
-- 全局单例访问
-- 线程安全
+Features:
+- In-memory storage grouped by session_id
+- Each session retains the most recent N log entries (default 500)
+- Global singleton access
+- Thread-safe
 """
 
 import threading
@@ -19,7 +19,7 @@ from typing import Optional
 
 @dataclass
 class LogEntry:
-    """单条日志记录"""
+    """A single log record."""
 
     timestamp: str
     level: str
@@ -42,16 +42,16 @@ class LogEntry:
 
 class SessionLogBuffer:
     """
-    会话日志缓存
+    Session log buffer.
 
-    按 session_id 分组存储日志，每个 session 使用 deque 限制最大条数。
+    Stores logs grouped by session_id, using a deque per session to cap the maximum entry count.
     """
 
     _instance: Optional["SessionLogBuffer"] = None
     _lock = threading.Lock()
 
     def __new__(cls, *args, **kwargs):
-        """单例模式"""
+        """Singleton pattern."""
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
@@ -61,11 +61,11 @@ class SessionLogBuffer:
 
     def __init__(self, max_entries_per_session: int = 500, max_sessions: int = 50):
         """
-        初始化会话日志缓存
+        Initialize the session log buffer.
 
         Args:
-            max_entries_per_session: 每个 session 最多保留的日志条数
-            max_sessions: 最多保留多少个 session 的缓冲区
+            max_entries_per_session: Maximum log entries retained per session
+            max_sessions: Maximum number of session buffers to retain
         """
         if self._initialized:
             return
@@ -79,15 +79,15 @@ class SessionLogBuffer:
 
     def set_current_session(self, session_id: str) -> None:
         """
-        设置当前活跃的 session_id
+        Set the currently active session_id.
 
         Args:
-            session_id: 会话 ID
+            session_id: Session ID
         """
         self._current_session_id = session_id
 
     def get_current_session(self) -> str | None:
-        """获取当前活跃的 session_id"""
+        """Get the currently active session_id."""
         return self._current_session_id
 
     def add_log(
@@ -99,19 +99,19 @@ class SessionLogBuffer:
         timestamp: str | None = None,
     ) -> None:
         """
-        添加一条日志
+        Add a log entry.
 
         Args:
-            level: 日志级别 (DEBUG/INFO/WARNING/ERROR/CRITICAL)
-            module: 模块名
-            message: 日志消息
-            session_id: 会话 ID（如果为 None，使用当前 session 或 _global）
-            timestamp: 时间戳（如果为 None，使用当前时间）
+            level: Log level (DEBUG/INFO/WARNING/ERROR/CRITICAL)
+            module: Module name
+            message: Log message
+            session_id: Session ID (defaults to current session or _global if None)
+            timestamp: Timestamp (defaults to current time if None)
         """
-        # 确定 session_id
+        # Determine session_id
         sid = session_id or self._current_session_id or "_global"
 
-        # 创建日志条目
+        # Create log entry
         entry = LogEntry(
             timestamp=timestamp or datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
             level=level,
@@ -121,9 +121,9 @@ class SessionLogBuffer:
         )
 
         with self._buffer_lock:
-            # 确保 session 的 buffer 存在
+            # Ensure the session buffer exists
             if sid not in self._buffers:
-                # 超出 session 数上限时，淘汰最旧的非当前 session
+                # When session count exceeds the limit, evict the oldest non-current session
                 if len(self._buffers) >= self._max_sessions:
                     self._evict_oldest_session(sid)
                 self._buffers[sid] = deque(maxlen=self._max_entries)
@@ -138,16 +138,16 @@ class SessionLogBuffer:
         include_global: bool = True,
     ) -> list[dict]:
         """
-        获取指定 session 的日志
+        Get logs for a specified session.
 
         Args:
-            session_id: 会话 ID（如果为 None，使用当前 session）
-            count: 返回的日志条数（默认 20，最大 500）
-            level_filter: 过滤日志级别（可选）
-            include_global: 是否包含全局日志（默认 True）
+            session_id: Session ID (defaults to current session if None)
+            count: Number of log entries to return (default 20, max 500)
+            level_filter: Filter by log level (optional)
+            include_global: Whether to include global logs (default True)
 
         Returns:
-            日志列表（最新的在最后）
+            List of log entries (most recent last)
         """
         sid = session_id or self._current_session_id or "_global"
         count = min(count, self._max_entries)
@@ -155,21 +155,21 @@ class SessionLogBuffer:
         logs = []
 
         with self._buffer_lock:
-            # 获取 session 日志
+            # Retrieve session logs
             if sid in self._buffers:
                 for entry in self._buffers[sid]:
                     if level_filter and entry.level != level_filter:
                         continue
                     logs.append((entry.timestamp, entry))
 
-            # 如果需要，包含全局日志
+            # Include global logs if requested
             if include_global and sid != "_global" and "_global" in self._buffers:
                 for entry in self._buffers["_global"]:
                     if level_filter and entry.level != level_filter:
                         continue
                     logs.append((entry.timestamp, entry))
 
-        # 按时间排序并取最后 count 条
+        # Sort by timestamp and take the last count entries
         logs.sort(key=lambda x: x[0])
         result = [entry.to_dict() for _, entry in logs[-count:]]
 
@@ -182,20 +182,20 @@ class SessionLogBuffer:
         level_filter: str | None = None,
     ) -> str:
         """
-        获取格式化的日志文本
+        Get formatted log text.
 
         Args:
-            session_id: 会话 ID
-            count: 返回的日志条数
-            level_filter: 过滤日志级别
+            session_id: Session ID
+            count: Number of log entries to return
+            level_filter: Filter by log level
 
         Returns:
-            格式化的日志文本
+            Formatted log text
         """
         logs = self.get_logs(session_id, count, level_filter)
 
         if not logs:
-            return "暂无日志记录"
+            return "No log entries available"
 
         lines = []
         for log in logs:
@@ -206,15 +206,15 @@ class SessionLogBuffer:
         return "\n".join(lines)
 
     def _evict_oldest_session(self, keep_sid: str) -> None:
-        """淘汰最旧的 session 缓冲区（已在 _buffer_lock 内调用）。
+        """Evict the oldest session buffer (called within _buffer_lock).
 
-        保留 _global 和 keep_sid，淘汰最不活跃的 session。
+        Preserves _global and keep_sid; evicts the least recently active session.
         """
         protected = {"_global", keep_sid, self._current_session_id or ""}
         candidates = [(sid, buf) for sid, buf in self._buffers.items() if sid not in protected]
         if not candidates:
             return
-        # 按 deque 中最后一条日志的时间排序，淘汰最旧的
+        # Sort by the timestamp of the last log entry in each deque; evict the oldest
         oldest_sid = min(
             candidates,
             key=lambda x: x[1][-1].timestamp if x[1] else "",
@@ -223,26 +223,26 @@ class SessionLogBuffer:
 
     def clear_session(self, session_id: str) -> None:
         """
-        清空指定 session 的日志
+        Clear logs for a specified session.
 
         Args:
-            session_id: 会话 ID
+            session_id: Session ID
         """
         with self._buffer_lock:
             if session_id in self._buffers:
                 self._buffers[session_id].clear()
 
     def clear_all(self) -> None:
-        """清空所有日志"""
+        """Clear all logs."""
         with self._buffer_lock:
             self._buffers.clear()
 
     def get_stats(self) -> dict:
         """
-        获取统计信息
+        Get statistics.
 
         Returns:
-            统计信息字典
+            Statistics dictionary
         """
         with self._buffer_lock:
             return {
@@ -252,12 +252,12 @@ class SessionLogBuffer:
             }
 
 
-# 全局单例
+# Global singleton
 _session_log_buffer: SessionLogBuffer | None = None
 
 
 def get_session_log_buffer() -> SessionLogBuffer:
-    """获取会话日志缓存单例"""
+    """Get the session log buffer singleton."""
     global _session_log_buffer
     if _session_log_buffer is None:
         _session_log_buffer = SessionLogBuffer()

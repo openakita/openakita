@@ -1,15 +1,15 @@
 """
-企业微信智能机器人 WebSocket 长连接适配器
+WeCom Smart Bot WebSocket long-connection adapter
 
-基于企业微信智能机器人 WebSocket 协议实现:
-- WebSocket 长连接 (wss://openws.work.weixin.qq.com)
-- 认证 / 心跳 / 指数退避重连
-- 消息接收 (text/image/mixed/voice/file/video)
-- 流式回复 (stream) / 模板卡片 / 主动推送
-- Markdown @成员 (<@userid>) / @所有人 (<@all>)
-- 文件下载 + AES-256-CBC 逐文件解密
-- WebSocket 分片上传临时素材 (upload_media)
-- response_url HTTP 回退
+Implements the WeCom Smart Bot WebSocket protocol:
+- WebSocket long connection (wss://openws.work.weixin.qq.com)
+- Authentication / heartbeat / exponential back-off reconnect
+- Message reception (text/image/mixed/voice/file/video)
+- Streaming replies (stream) / template cards / proactive pushes
+- Markdown @member (<@userid>) / @all (<@all>)
+- File download + AES-256-CBC per-file decryption
+- WebSocket chunked upload for temporary media (upload_media)
+- response_url HTTP fallback
 
 Official protocol doc:
 https://developer.work.weixin.qq.com/document/path/101463
@@ -43,7 +43,7 @@ from ..types import (
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# 延迟导入
+# Lazy imports
 # ---------------------------------------------------------------------------
 websockets: Any = None
 httpx: Any = None
@@ -76,7 +76,7 @@ def _import_httpx():
 
 
 # ---------------------------------------------------------------------------
-# 协议常量
+# Protocol constants
 # ---------------------------------------------------------------------------
 WS_DEFAULT_URL = "wss://openws.work.weixin.qq.com"
 
@@ -136,14 +136,14 @@ RATE_WARN_THRESHOLD = 0.8  # warn at 80% of limit
 
 
 # ---------------------------------------------------------------------------
-# req_id 生成
+# req_id generation
 # ---------------------------------------------------------------------------
 def _generate_req_id(prefix: str) -> str:
     return f"{prefix}_{int(time.time() * 1000)}_{secrets.token_hex(4)}"
 
 
 # ---------------------------------------------------------------------------
-# AMR 转换
+# AMR conversion
 # ---------------------------------------------------------------------------
 async def _ensure_amr(voice_path: str) -> str:
     """Ensure a voice file is in AMR format (required by WeCom voice API)."""
@@ -175,7 +175,7 @@ async def _ensure_amr(voice_path: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 频率限制追踪器
+# Rate limit tracker
 # ---------------------------------------------------------------------------
 class _RateLimitTracker:
     """Per-chat sliding-window rate limit tracker aligned with OpenClaw model.
@@ -245,7 +245,7 @@ class _RateLimitTracker:
 
 
 # ---------------------------------------------------------------------------
-# 引用消息解析
+# Quoted message parsing
 # ---------------------------------------------------------------------------
 def _parse_quote_content(body: dict) -> tuple[str | None, list[MediaFile]]:
     """Extract text and media from a body.quote object.
@@ -270,7 +270,7 @@ def _parse_quote_content(body: dict) -> tuple[str | None, list[MediaFile]]:
         m = MediaFile.create(filename="quote_image.jpg", mime_type="image/jpeg", url=img.get("url"))
         m.extra = {"aeskey": img.get("aeskey")}
         media_list.append(m)
-        return "[引用图片]", media_list
+        return "[Quoted image]", media_list
 
     if qtype == "file" and quote.get("file", {}).get("url"):
         f = quote["file"]
@@ -281,7 +281,7 @@ def _parse_quote_content(body: dict) -> tuple[str | None, list[MediaFile]]:
         )
         m.extra = {"aeskey": f.get("aeskey")}
         media_list.append(m)
-        return f"[引用文件: {m.filename}]", media_list
+        return f"[Quoted file: {m.filename}]", media_list
 
     if qtype == "mixed":
         text_parts: list[str] = []
@@ -295,13 +295,13 @@ def _parse_quote_content(body: dict) -> tuple[str | None, list[MediaFile]]:
                 )
                 m.extra = {"aeskey": img.get("aeskey")}
                 media_list.append(m)
-        return "\n".join(text_parts) or "[引用图文]", media_list
+        return "\n".join(text_parts) or "[Quoted mixed content]", media_list
 
     return None, []
 
 
 # ---------------------------------------------------------------------------
-# think 标签归一化 (D3)
+# think tag normalization (D3)
 # ---------------------------------------------------------------------------
 _THINK_OPEN_RE = re.compile(r"<think>", re.IGNORECASE)
 _THINK_CLOSE_RE = re.compile(r"</think>", re.IGNORECASE)
@@ -327,11 +327,11 @@ def _normalize_think_tags(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 配置
+# Configuration
 # ---------------------------------------------------------------------------
 @dataclass
 class WeWorkWsConfig:
-    """企业微信 WebSocket 适配器配置"""
+    """WeCom WebSocket adapter configuration"""
 
     bot_id: str
     secret: str
@@ -352,10 +352,10 @@ class WeWorkWsConfig:
 
 
 # ---------------------------------------------------------------------------
-# AES-256-CBC 文件解密 (per-file aeskey)
+# AES-256-CBC file decryption (per-file aeskey)
 # ---------------------------------------------------------------------------
 def _decrypt_file(encrypted: bytes, aes_key_b64: str) -> bytes:
-    """解密企业微信文件 (AES-256-CBC, PKCS#7 pad to 32-byte block)."""
+    """Decrypt WeCom file (AES-256-CBC, PKCS#7 pad to 32-byte block)."""
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
     # WeCom WS protocol may omit trailing '=' padding in base64 aeskey
@@ -380,15 +380,15 @@ def _decrypt_file(encrypted: bytes, aes_key_b64: str) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# Webhook 辅助发送器（图片/语音/文件）
+# Webhook helper sender (image/voice/file)
 # ---------------------------------------------------------------------------
 class _WebhookSender:
-    """通过企微群机器人 Webhook URL 发送富媒体消息（图片/语音/文件）。
+    """Send rich media messages (image/voice/file) via WeCom group bot Webhook URL.
 
-    自 2026/03 起，WS 长连接已支持通过分片上传协议直接发送媒体消息，
-    因此 Webhook 现在作为 fallback 通道使用。
+    Since 2026/03, the WS long connection supports sending media messages directly
+    via the chunked upload protocol, so the Webhook is now used as a fallback channel.
 
-    Webhook API 参考:
+    Webhook API reference:
     https://developer.work.weixin.qq.com/document/path/91770
     """
 
@@ -411,7 +411,7 @@ class _WebhookSender:
         return self._client
 
     async def send_image(self, image_path: str) -> bool:
-        """发送图片（base64 + md5，无需上传）。"""
+        """Send image (base64 + md5, no upload needed)."""
         try:
             path = Path(image_path)
             if not path.exists():
@@ -430,7 +430,7 @@ class _WebhookSender:
             return False
 
     async def send_voice(self, voice_path: str) -> bool:
-        """发送语音（需先转 AMR 再 upload_media 获取 media_id）。"""
+        """Send voice (convert to AMR first, then upload_media to get media_id)."""
         try:
             amr_path = await self._ensure_amr(voice_path)
             media_id = await self._upload_media(amr_path, "voice")
@@ -446,7 +446,7 @@ class _WebhookSender:
             return False
 
     async def send_file(self, file_path: str) -> bool:
-        """发送文件（upload_media 获取 media_id）。"""
+        """Send file (upload_media to get media_id)."""
         try:
             media_id = await self._upload_media(file_path, "file")
             if not media_id:
@@ -461,7 +461,7 @@ class _WebhookSender:
             return False
 
     async def _upload_media(self, file_path: str, media_type: str) -> str | None:
-        """上传媒体文件到企微获取 media_id。"""
+        """Upload media file to WeCom to get media_id."""
         client = await self._ensure_client()
         url = self._upload_url.format(media_type=media_type)
         path = Path(file_path)
@@ -483,11 +483,11 @@ class _WebhookSender:
             return None
 
     async def _ensure_amr(self, voice_path: str) -> str:
-        """确保语音文件为 AMR 格式（Webhook voice 要求 AMR）。"""
+        """Ensure voice file is in AMR format (Webhook voice requires AMR)."""
         return await _ensure_amr(voice_path)
 
     async def _post(self, payload: dict) -> bool:
-        """发送 Webhook 请求。"""
+        """Send a Webhook request."""
         client = await self._ensure_client()
         try:
             resp = await client.post(self._send_url, json=payload)
@@ -509,19 +509,19 @@ class _WebhookSender:
 
 
 # ---------------------------------------------------------------------------
-# 适配器
+# Adapter
 # ---------------------------------------------------------------------------
 class WeWorkWsAdapter(ChannelAdapter):
     """
-    企业微信智能机器人 WebSocket 长连接适配器
+    WeCom Smart Bot WebSocket long-connection adapter
 
-    通过 WebSocket 与企业微信服务端保持长连接，实现:
-    - 消息接收 (text/image/mixed/voice/file/video)
-    - 流式回复 (stream) 和模板卡片回复
-    - 事件接收 (enter_chat/template_card_event/feedback_event/disconnected_event)
-    - 主动消息推送 (markdown/template_card/image/file/voice/video)
-    - WebSocket 分片上传临时素材
-    - 文件下载 + AES-256-CBC 解密
+    Maintains a WebSocket connection to WeCom servers, providing:
+    - Message reception (text/image/mixed/voice/file/video)
+    - Streaming replies (stream) and template card replies
+    - Event reception (enter_chat/template_card_event/feedback_event/disconnected_event)
+    - Proactive message push (markdown/template_card/image/file/voice/video)
+    - WebSocket chunked upload for temporary media
+    - File download + AES-256-CBC decryption
     """
 
     channel_name = "wework_ws"
@@ -567,7 +567,7 @@ class WeWorkWsAdapter(ChannelAdapter):
         self.media_dir.mkdir(parents=True, exist_ok=True)
         self._welcome_message: str = welcome_message
 
-        # Webhook 辅助发送器（用于发送图片/语音/文件）
+        # Webhook helper sender (for sending image/voice/file)
         self._webhook: _WebhookSender | None = _WebhookSender(webhook_url) if webhook_url else None
 
         # WebSocket state
@@ -650,8 +650,8 @@ class WeWorkWsAdapter(ChannelAdapter):
         _import_websockets()
         if self._auth_disabled:
             raise ConnectionError(
-                "企业微信 WebSocket 适配器因连续鉴权失败已被禁用。"
-                "请检查 Bot ID 和 Secret 是否正确，修正后重启服务。"
+                "WeWork WS adapter disabled due to consecutive auth failures. "
+                "Please verify Bot ID and Secret are correct, then restart the service."
             )
         self._running = True
         self._connection_task = asyncio.create_task(self._connection_loop())
@@ -719,9 +719,9 @@ class WeWorkWsAdapter(ChannelAdapter):
                     self._auth_disabled = True
                     last_err = getattr(self, "_auth_error", "?")
                     reason = (
-                        f"连续 {self._consecutive_auth_failures} 次认证失败 "
-                        f"(错误: {last_err})。"
-                        "请检查企业微信 Bot ID / Secret 配置"
+                        f"Consecutive auth failures ({self._consecutive_auth_failures} attempts, "
+                        f"last error: {last_err}). "
+                        "Please check WeCom Bot ID / Secret configuration"
                     )
                     logger.error(f"[WeWork WS] {reason}")
                     self._running = False
@@ -917,13 +917,13 @@ class WeWorkWsAdapter(ChannelAdapter):
             logger.error(f"Message processing timed out ({MSG_PROCESS_TIMEOUT_S}s), msgid={msgid}")
             req_id = frame.get("headers", {}).get("req_id", "")
             if req_id:
-                await self._send_error_finish(req_id, "处理超时，请重新发送。")
+                await self._send_error_finish(req_id, "Processing timed out, please resend.")
         except Exception as e:
             # D4: general exception fallback — always close the stream
             logger.error(f"Message processing failed: {e}", exc_info=True)
             req_id = frame.get("headers", {}).get("req_id", "")
             if req_id:
-                await self._send_error_finish(req_id, f"处理出错：{type(e).__name__}")
+                await self._send_error_finish(req_id, f"Processing error: {type(e).__name__}")
 
     async def _send_error_finish(self, req_id: str, error_text: str) -> None:
         """Send a finish=true stream with error text, suppressing all exceptions."""
@@ -1109,7 +1109,7 @@ class WeWorkWsAdapter(ChannelAdapter):
                 body.get("msgid"),
             )
             return (
-                MessageContent(text="[语音消息，平台未能识别，请重新发送或改用文字]"),
+                MessageContent(text="[Voice message, platform could not recognize, please resend as text]"),
                 media_list,
             )
 
@@ -1136,7 +1136,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             return MessageContent(files=[media]), media_list
 
         logger.debug(f"Unhandled msgtype: {msgtype}")
-        return MessageContent(text=f"[不支持的消息类型: {msgtype}]"), media_list
+        return MessageContent(text=f"[Unsupported message type: {msgtype}]"), media_list
 
     # ==================== Event handling ====================
 
@@ -1223,7 +1223,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             "stream": {
                 "id": stream_id,
                 "finish": False,
-                "content": "<think>等待模型响应 1s</think>",
+                "content": "<think>Waiting for model response 1s</think>",
             },
         }
         try:
@@ -1267,7 +1267,7 @@ class WeWorkWsAdapter(ChannelAdapter):
                         f"[thinking] Stream {stream_id[:8]} hit intermediate limit, stopping counter"
                     )
                     break
-                content = f"<think>等待模型响应 {seconds}s</think>"
+                content = f"<think>Waiting for model response {seconds}s</think>"
                 body: dict = {
                     "msgtype": "stream",
                     "stream": {"id": stream_id, "finish": False, "content": content},
@@ -1315,7 +1315,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             preview = thinking.strip()[:600]
             if len(thinking.strip()) > 600:
                 preview += "..."
-            think_parts.append(f"💭 思考过程{dur_str}\n{preview}")
+            think_parts.append(f"💭 Thinking{dur_str}\n{preview}")
         if chain:
             think_parts.extend(chain[-8:])
 
@@ -1324,7 +1324,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             content = "<think>\n" + "\n".join(think_parts) + "\n</think>\n"
         if reply:
             content += reply
-        return content or "<think>处理中...</think>"
+        return content or "<think>Processing...</think>"
 
     async def _update_stream(
         self,
@@ -1552,7 +1552,7 @@ class WeWorkWsAdapter(ChannelAdapter):
         if req_id:
             logger.info(f"[send_image] All methods failed, skipping: {path.name}")
             return f"skipped:{req_id}"
-        desc = f"> **{label}**\n> （图片发送失败，请稍后重试）"
+        desc = f"> **{label}**\n> (Image send failed, please try again later)"
         return await self._send_active_message(chat_id, desc)
 
     @staticmethod
@@ -1646,7 +1646,7 @@ class WeWorkWsAdapter(ChannelAdapter):
             size_str = ""
         label = caption or path.name
         size_part = f" ({size_str})" if size_str else ""
-        desc = f"> **{label}**{size_part}\n> （文件发送失败，请稍后重试）"
+        desc = f"> **{label}**{size_part}\n> (File send failed, please try again later)"
         return await self._send_active_message(chat_id, desc)
 
     async def send_voice(
@@ -1902,7 +1902,7 @@ class WeWorkWsAdapter(ChannelAdapter):
                 media_errors.append(f"{media_msg.get('msgtype', 'unknown')}: {e}")
 
         if media_errors:
-            error_text = "文件发送失败：\n" + "\n".join(media_errors)
+            error_text = "File send failed:\n" + "\n".join(media_errors)
             try:
                 await self._send_active_message(chat_id, error_text)
             except Exception:
@@ -1934,7 +1934,7 @@ class WeWorkWsAdapter(ChannelAdapter):
                 if count >= MAX_INTERMEDIATE_STREAM_MSGS:
                     logger.debug(f"[keepalive] Stream {stream_id[:8]} hit intermediate limit")
                     break
-                keepalive_content = text[:100] if text else "处理中..."
+                keepalive_content = text[:100] if text else "Processing..."
                 body: dict = {
                     "msgtype": "stream",
                     "stream": {"id": stream_id, "finish": False, "content": keepalive_content},

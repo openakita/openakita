@@ -1,8 +1,9 @@
 """
-Worktree 工具定义
+Worktree tool definitions
 
-参考 CC EnterWorktree / ExitWorktree：暴露 git worktree 管理为工具，
-让模型可以在独立的 worktree 中进行实验性修改而不影响主工作区。
+Modeled after CC EnterWorktree / ExitWorktree: exposes git worktree management
+as tools, allowing the model to make experimental changes in an isolated worktree
+without affecting the main workspace.
 """
 
 WORKTREE_TOOLS: list[dict] = [

@@ -1,13 +1,14 @@
 """
-企业微信智能机器人扫码配置
+WeCom smart bot QR-code onboarding.
 
-用于 Setup Center QR 扫码快速获取 bot_id + secret：
-- 调用企微 /ai/qc/generate 生成二维码（返回 auth_url + scode）
-- 轮询 /ai/qc/query_result 获取扫码结果（返回 botid + secret）
+Used by Setup Center to quickly obtain bot_id + secret via QR scan:
+- Calls WeCom /ai/qc/generate to generate a QR code (returns auth_url + scode)
+- Polls /ai/qc/query_result to get the scan result (returns botid + secret)
 
-接口来自企业微信智能机器人管理后台，对齐 @wecom/wecom-openclaw-cli 实现。
+APIs are from the WeCom smart bot management console, aligned with the
+@wecom/wecom-openclaw-cli implementation.
 
-所有 HTTP 调用均为 async（httpx），bridge.py 通过 asyncio.run() 驱动。
+All HTTP calls are async (httpx); bridge.py drives them via asyncio.run().
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ _PLAT_CODES = {"darwin": 0, "win32": 1, "linux": 2}
 
 
 class WecomOnboardError(Exception):
-    """扫码配置过程中的业务错误"""
+    """Business error during QR-code onboarding."""
 
 
 def _get_plat_code() -> int:
@@ -39,23 +40,23 @@ def _get_plat_code() -> int:
 
 
 class WecomOnboard:
-    """企业微信智能机器人扫码配置
+    """WeCom smart bot QR-code onboarding.
 
     Flow:
-    1. generate() -> auth_url (QR 扫码链接) + scode
-    2. poll(scode) -> 成功时返回 bot_id + secret
+    1. generate() -> auth_url (QR scan link) + scode
+    2. poll(scode) -> returns bot_id + secret on success
     """
 
     def __init__(self, *, timeout: float = 30.0):
         self._timeout = timeout
 
     async def generate(self) -> dict[str, Any]:
-        """Step 1: 生成二维码
+        """Step 1: Generate a QR code.
 
         Returns:
             dict with:
-                auth_url: str  — 二维码扫码链接
-                scode: str     — 用于后续轮询的标识
+                auth_url: str  — QR code scan link
+                scode: str     — identifier used for subsequent polling
         """
         params = {"source": "openakita", "plat": str(_get_plat_code())}
         data = await self._get(QC_GENERATE_PATH, params=params)
@@ -63,17 +64,17 @@ class WecomOnboard:
         scode = resp_data.get("scode", "")
         auth_url = resp_data.get("auth_url", "")
         if not scode:
-            raise WecomOnboardError(f"generate 未返回有效 scode: {data}")
+            raise WecomOnboardError(f"generate did not return a valid scode: {data}")
         return {"auth_url": auth_url, "scode": scode}
 
     async def poll(self, scode: str) -> dict[str, Any]:
-        """Step 2: 查询扫码结果
+        """Step 2: Query the scan result.
 
         Returns:
-            成功: {bot_id: str, secret: str, status: "success"}
-            等待: {status: "pending"}
-            过期: {status: "expired"}
-            失败: {status: "error", error: "..."}
+            success: {bot_id: str, secret: str, status: "success"}
+            pending: {status: "pending"}
+            expired: {status: "expired"}
+            failure: {status: "error", error: "..."}
         """
         data = await self._get(QC_QUERY_RESULT_PATH, params={"scode": scode})
         resp_data = data.get("data", data)
@@ -101,13 +102,13 @@ class WecomOnboard:
         interval: float = 3.0,
         max_attempts: int = 100,
     ) -> dict[str, Any]:
-        """持续轮询直到用户扫码完成或超时
+        """Poll continuously until the user completes the scan or times out.
 
         Returns:
-            成功时的完整响应 (含 bot_id / secret)
+            Full response on success (including bot_id / secret).
 
         Raises:
-            WecomOnboardError: 轮询超时或二维码过期
+            WecomOnboardError: polling timed out or QR code expired.
         """
         for _ in range(max_attempts):
             result = await self.poll(scode)
@@ -117,14 +118,14 @@ class WecomOnboard:
 
             status = result.get("status", "")
             if status in ("expired", "error"):
-                raise WecomOnboardError(f"扫码终止: {status} - {result.get('error', '')}")
+                raise WecomOnboardError(f"Scan terminated: {status} - {result.get('error', '')}")
 
             await asyncio.sleep(interval)
 
-        raise WecomOnboardError(f"轮询超时: {max_attempts} 次尝试后仍未完成扫码")
+        raise WecomOnboardError(f"Polling timed out: scan not completed after {max_attempts} attempts")
 
     async def _get(self, path: str, *, params: dict[str, str] | None = None) -> dict[str, Any]:
-        """发送 GET 请求到企微 QR 配置端点"""
+        """Send a GET request to the WeCom QR onboarding endpoint."""
         url = WECOM_QC_BASE + path
         async with httpx.AsyncClient(timeout=self._timeout) as client:
             resp = await client.get(url, params=params)

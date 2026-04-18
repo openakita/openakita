@@ -1,12 +1,12 @@
 """
-LLM 调用可观测性基础设施
+LLM call observability infrastructure
 
-提供:
-- 请求级唯一 ID (X-Request-ID)
-- TTFT (Time to First Token) 追踪
-- Stall 检测 (流式卡顿)
-- 结构化指标记录
-- 请求来源 (query_source) 维度统计
+Provides:
+- Request-level unique ID (X-Request-ID)
+- TTFT (Time to First Token) tracking
+- Stall detection (streaming stalls)
+- Structured metrics logging
+- Request source (query_source) dimensional statistics
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ STALL_THRESHOLD_SECONDS = 30.0
 
 @dataclass
 class LLMCallMetrics:
-    """单次 LLM 调用的可观测指标"""
+    """Observability metrics for a single LLM call."""
 
     request_id: str = field(default_factory=lambda: str(uuid4()))
     endpoint: str = ""
@@ -52,14 +52,14 @@ class LLMCallMetrics:
     _last_chunk_time: float = field(default=0.0, repr=False)
 
     def record_first_token(self) -> None:
-        """记录首个 token 到达时间。"""
+        """Record the arrival time of the first token."""
         if not self._first_token_received:
             self._first_token_received = True
             self.ttft_ms = (time.monotonic() - self.start_time) * 1000
             self._last_chunk_time = time.monotonic()
 
     def record_chunk(self) -> float | None:
-        """记录 chunk 到达，返回距上次 chunk 的间隔秒数（用于 stall 检测）。"""
+        """Record chunk arrival; returns seconds since last chunk (for stall detection)."""
         now = time.monotonic()
         if self._last_chunk_time > 0:
             gap = now - self._last_chunk_time
@@ -73,7 +73,7 @@ class LLMCallMetrics:
         usage: dict | None = None,
         stop_reason: str | None = None,
     ) -> None:
-        """记录请求完成。"""
+        """Record request completion."""
         self.total_ms = (time.monotonic() - self.start_time) * 1000
         if stop_reason:
             self.stop_reason = stop_reason
@@ -86,13 +86,13 @@ class LLMCallMetrics:
             )
 
     def record_error(self, error: str) -> None:
-        """记录错误。"""
+        """Record an error."""
         self.error = error
         if self.total_ms is None:
             self.total_ms = (time.monotonic() - self.start_time) * 1000
 
     def to_log_dict(self) -> dict:
-        """转换为日志友好的 dict。"""
+        """Convert to a logging-friendly dict."""
         d = {
             "request_id": self.request_id,
             "endpoint": self.endpoint,
@@ -122,7 +122,7 @@ class LLMCallMetrics:
 
 
 class LLMObserver:
-    """集中的 LLM 调用可观测性管理器。"""
+    """Centralized LLM call observability manager."""
 
     def __init__(self) -> None:
         self._listeners: list = []
@@ -170,11 +170,11 @@ _default_observer = LLMObserver()
 
 
 def get_observer() -> LLMObserver:
-    """获取全局 LLM Observer 实例。"""
+    """Get the global LLM Observer instance."""
     return _default_observer
 
 
 def set_observer(observer: LLMObserver) -> None:
-    """替换全局 LLM Observer（用于测试或自定义）。"""
+    """Replace the global LLM Observer (for testing or customization)."""
     global _default_observer
     _default_observer = observer

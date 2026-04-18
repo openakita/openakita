@@ -1,7 +1,7 @@
 """
-Windows 桌面自动化 - 鼠标操作模块
+Windows desktop automation - mouse operations module.
 
-基于 PyAutoGUI 封装鼠标操作
+Provides mouse operations built on top of PyAutoGUI.
 """
 
 import logging
@@ -11,7 +11,7 @@ import time
 from ..config import get_config
 from ..types import ActionResult, BoundingBox, MouseButton, UIElement
 
-# 平台检查
+# Platform check
 if sys.platform != "win32":
     raise ImportError(
         f"Desktop automation module is Windows-only. Current platform: {sys.platform}"
@@ -29,36 +29,36 @@ logger = logging.getLogger(__name__)
 
 class MouseController:
     """
-    鼠标控制器
+    Mouse controller.
 
-    封装 PyAutoGUI 的鼠标操作，提供更友好的接口
+    Wraps PyAutoGUI mouse operations with a friendlier interface.
     """
 
     def __init__(self):
         self._configure_pyautogui()
 
     def _configure_pyautogui(self) -> None:
-        """配置 PyAutoGUI"""
+        """Configure PyAutoGUI settings."""
         config = get_config().actions
 
-        # 设置 failsafe（鼠标移到角落停止）
+        # Set failsafe (moving mouse to corner aborts)
         pyautogui.FAILSAFE = config.failsafe
 
-        # 设置操作间隔
+        # Set action interval
         pyautogui.PAUSE = config.pause_between_actions
 
     def get_position(self) -> tuple[int, int]:
         """
-        获取当前鼠标位置
+        Get current mouse position.
 
         Returns:
-            (x, y) 坐标
+            (x, y) coordinates.
         """
         return pyautogui.position()
 
     def get_screen_size(self) -> tuple[int, int]:
         """
-        获取屏幕尺寸
+        Get screen size.
 
         Returns:
             (width, height)
@@ -70,13 +70,13 @@ class MouseController:
         target: tuple[int, int] | UIElement | BoundingBox | str,
     ) -> tuple[int, int]:
         """
-        解析目标位置
+        Resolve target position.
 
         Args:
-            target: 可以是坐标元组、UIElement、BoundingBox 或 "x,y" 字符串
+            target: Can be a coordinate tuple, UIElement, BoundingBox, or "x,y" string.
 
         Returns:
-            (x, y) 坐标
+            (x, y) coordinates.
         """
         if isinstance(target, tuple) and len(target) == 2:
             return target
@@ -87,7 +87,7 @@ class MouseController:
         elif isinstance(target, BoundingBox):
             return target.center
         elif isinstance(target, str):
-            # 尝试解析 "x,y" 格式
+            # Try parsing "x,y" format
             try:
                 parts = target.split(",")
                 if len(parts) == 2:
@@ -105,11 +105,11 @@ class MouseController:
         duration: float | None = None,
     ) -> ActionResult:
         """
-        移动鼠标到指定位置
+        Move mouse to specified position.
 
         Args:
-            x, y: 目标坐标
-            duration: 移动持续时间（秒），None 使用配置
+            x, y: Target coordinates.
+            duration: Move duration in seconds; None uses config default.
 
         Returns:
             ActionResult
@@ -144,11 +144,11 @@ class MouseController:
         duration: float | None = None,
     ) -> ActionResult:
         """
-        相对移动鼠标
+        Move mouse by relative offset.
 
         Args:
-            dx, dy: 相对偏移量
-            duration: 移动持续时间
+            dx, dy: Relative offset.
+            duration: Move duration.
 
         Returns:
             ActionResult
@@ -185,13 +185,13 @@ class MouseController:
         interval: float = 0.1,
     ) -> ActionResult:
         """
-        点击鼠标
+        Click the mouse.
 
         Args:
-            x, y: 点击位置，None 表示当前位置
-            button: 鼠标按钮
-            clicks: 点击次数
-            interval: 多次点击之间的间隔
+            x, y: Click position; None means current position.
+            button: Mouse button.
+            clicks: Number of clicks.
+            interval: Interval between multiple clicks.
 
         Returns:
             ActionResult
@@ -201,7 +201,7 @@ class MouseController:
 
         start_time = time.time()
         try:
-            # 点击前延迟
+            # Pre-click delay
             if config.click_delay > 0:
                 time.sleep(config.click_delay)
 
@@ -238,12 +238,12 @@ class MouseController:
         clicks: int = 1,
     ) -> ActionResult:
         """
-        点击目标
+        Click a target.
 
         Args:
-            target: 目标（坐标、元素、边界框或字符串）
-            button: 鼠标按钮
-            clicks: 点击次数
+            target: Target (coordinates, element, bounding box, or string).
+            button: Mouse button.
+            clicks: Number of clicks.
 
         Returns:
             ActionResult
@@ -265,10 +265,10 @@ class MouseController:
         y: int | None = None,
     ) -> ActionResult:
         """
-        双击
+        Double-click.
 
         Args:
-            x, y: 点击位置，None 表示当前位置
+            x, y: Click position; None means current position.
 
         Returns:
             ActionResult
@@ -281,10 +281,10 @@ class MouseController:
         y: int | None = None,
     ) -> ActionResult:
         """
-        右键点击
+        Right-click.
 
         Args:
-            x, y: 点击位置，None 表示当前位置
+            x, y: Click position; None means current position.
 
         Returns:
             ActionResult
@@ -297,10 +297,10 @@ class MouseController:
         y: int | None = None,
     ) -> ActionResult:
         """
-        中键点击
+        Middle-click.
 
         Args:
-            x, y: 点击位置，None 表示当前位置
+            x, y: Click position; None means current position.
 
         Returns:
             ActionResult
@@ -317,13 +317,13 @@ class MouseController:
         button: str | MouseButton = MouseButton.LEFT,
     ) -> ActionResult:
         """
-        拖拽
+        Drag from one position to another.
 
         Args:
-            start_x, start_y: 起始位置
-            end_x, end_y: 结束位置
-            duration: 拖拽持续时间
-            button: 鼠标按钮
+            start_x, start_y: Start position.
+            end_x, end_y: End position.
+            duration: Drag duration.
+            button: Mouse button.
 
         Returns:
             ActionResult
@@ -332,9 +332,9 @@ class MouseController:
 
         start_time = time.time()
         try:
-            # 先移动到起始位置
+            # Move to start position first
             pyautogui.moveTo(start_x, start_y)
-            # 拖拽到目标位置
+            # Drag to target position
             pyautogui.drag(
                 end_x - start_x,
                 end_y - start_y,
@@ -367,12 +367,12 @@ class MouseController:
         button: str | MouseButton = MouseButton.LEFT,
     ) -> ActionResult:
         """
-        从当前位置拖拽到目标位置
+        Drag from current position to target position.
 
         Args:
-            end_x, end_y: 目标位置
-            duration: 拖拽持续时间
-            button: 鼠标按钮
+            end_x, end_y: Target position.
+            duration: Drag duration.
+            button: Mouse button.
 
         Returns:
             ActionResult
@@ -387,11 +387,11 @@ class MouseController:
         y: int | None = None,
     ) -> ActionResult:
         """
-        滚动鼠标滚轮
+        Scroll the mouse wheel.
 
         Args:
-            clicks: 滚动格数，正数向上，负数向下
-            x, y: 滚动位置，None 表示当前位置
+            clicks: Number of scroll clicks; positive scrolls up, negative scrolls down.
+            x, y: Scroll position; None means current position.
 
         Returns:
             ActionResult
@@ -428,7 +428,7 @@ class MouseController:
         x: int | None = None,
         y: int | None = None,
     ) -> ActionResult:
-        """向上滚动"""
+        """Scroll up."""
         return self.scroll(abs(clicks), x, y)
 
     def scroll_down(
@@ -437,7 +437,7 @@ class MouseController:
         x: int | None = None,
         y: int | None = None,
     ) -> ActionResult:
-        """向下滚动"""
+        """Scroll down."""
         return self.scroll(-abs(clicks), x, y)
 
     def hscroll(
@@ -447,11 +447,11 @@ class MouseController:
         y: int | None = None,
     ) -> ActionResult:
         """
-        水平滚动（如果支持）
+        Horizontal scroll (if supported).
 
         Args:
-            clicks: 滚动格数，正数向右，负数向左
-            x, y: 滚动位置
+            clicks: Number of scroll clicks; positive scrolls right, negative scrolls left.
+            x, y: Scroll position.
 
         Returns:
             ActionResult
@@ -486,11 +486,11 @@ class MouseController:
         button: str | MouseButton = MouseButton.LEFT,
     ) -> ActionResult:
         """
-        按下鼠标按钮（不释放）
+        Press and hold a mouse button (without releasing).
 
         Args:
-            x, y: 位置，None 表示当前位置
-            button: 鼠标按钮
+            x, y: Position; None means current position.
+            button: Mouse button.
 
         Returns:
             ActionResult
@@ -525,11 +525,11 @@ class MouseController:
         button: str | MouseButton = MouseButton.LEFT,
     ) -> ActionResult:
         """
-        释放鼠标按钮
+        Release a mouse button.
 
         Args:
-            x, y: 位置，None 表示当前位置
-            button: 鼠标按钮
+            x, y: Position; None means current position.
+            button: Mouse button.
 
         Returns:
             ActionResult
@@ -558,12 +558,12 @@ class MouseController:
             )
 
 
-# 全局实例
+# Global instance
 _mouse: MouseController | None = None
 
 
 def get_mouse() -> MouseController:
-    """获取全局鼠标控制器"""
+    """Get the global mouse controller."""
     global _mouse
     if _mouse is None:
         _mouse = MouseController()

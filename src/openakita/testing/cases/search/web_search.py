@@ -1,16 +1,16 @@
 """
-网络搜索测试用例 (40个)
+Web search test cases (40 cases)
 """
 
 from openakita.testing.runner import TestCase
 
 WEB_SEARCH_TESTS = [
-    # HTTP 请求测试
+    # HTTP request tests
     TestCase(
         id="search_http_001",
         category="search",
         subcategory="http",
-        description="GET 请求测试",
+        description="GET request test",
         input={
             "action": "get",
             "url": "https://httpbin.org/get",
@@ -23,7 +23,7 @@ WEB_SEARCH_TESTS = [
         id="search_http_002",
         category="search",
         subcategory="http",
-        description="POST 请求测试",
+        description="POST request test",
         input={
             "action": "post",
             "url": "https://httpbin.org/post",
@@ -37,7 +37,7 @@ WEB_SEARCH_TESTS = [
         id="search_http_003",
         category="search",
         subcategory="http",
-        description="HTTP 头测试",
+        description="HTTP header test",
         input={
             "action": "get",
             "url": "https://httpbin.org/headers",
@@ -51,7 +51,7 @@ WEB_SEARCH_TESTS = [
         id="search_http_004",
         category="search",
         subcategory="http",
-        description="JSON 响应解析",
+        description="JSON response parsing",
         input={
             "action": "get",
             "url": "https://httpbin.org/json",
@@ -60,12 +60,12 @@ WEB_SEARCH_TESTS = [
         tags=["http", "json"],
         timeout=15,
     ),
-    # GitHub 搜索测试
+    # GitHub search tests
     TestCase(
         id="search_github_001",
         category="search",
         subcategory="github",
-        description="搜索 Python 仓库",
+        description="Search Python repositories",
         input={
             "action": "github_search",
             "query": "python web framework",
@@ -79,7 +79,7 @@ WEB_SEARCH_TESTS = [
         id="search_github_002",
         category="search",
         subcategory="github",
-        description="搜索 AI 工具",
+        description="Search AI tools",
         input={
             "action": "github_search",
             "query": "AI agent",
@@ -89,12 +89,12 @@ WEB_SEARCH_TESTS = [
         tags=["github", "search"],
         timeout=30,
     ),
-    # 下载测试
+    # Download tests
     TestCase(
         id="search_download_001",
         category="search",
         subcategory="download",
-        description="下载小文件",
+        description="Download a small file",
         input={
             "action": "download",
             "url": "https://httpbin.org/bytes/100",

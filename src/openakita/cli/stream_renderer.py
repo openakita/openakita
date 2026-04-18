@@ -73,11 +73,11 @@ async def render_stream(
                 if state["graceful_done"]:
                     break
         except Exception as exc:
-            console.print(f"  [red]⚠️ 流式传输中断: {exc}[/red]")
+            console.print(f"  [red]⚠️ Stream interrupted: {exc}[/red]")
             state["has_error"] = True
 
     if not state["graceful_done"] and not state["has_error"]:
-        console.print("  [yellow]⚠️ 流式响应未正常结束[/yellow]")
+        console.print("  [yellow]⚠️ Stream response did not finish normally[/yellow]")
 
     content = "".join(buffer)
 
@@ -113,18 +113,18 @@ def _handle_event(
     if etype == E.ITERATION_START:
         ref["iteration"] = event.get("iteration", ref["iteration"] + 1)
         if ref["iteration"] > 1:
-            live.update(Text(f"  ⟳ 轮次 {ref['iteration']}...", style="dim"))
+            live.update(Text(f"  ⟳ Iteration {ref['iteration']}...", style="dim"))
         return
 
     if etype == E.THINKING_START:
         ref["thinking_started"] = True
-        live.update(Text(f"  💭 思考中 (轮次 {ref['iteration']})...", style="dim italic"))
+        live.update(Text(f"  💭 Thinking (iteration {ref['iteration']})...", style="dim italic"))
         return
 
     if etype == E.THINKING_END:
         duration = (event.get("duration_ms") or 0) / 1000
         if ref["thinking_started"]:
-            console.print(f"  [dim]💭 思考完成 ({duration:.1f}s)[/dim]")
+            console.print(f"  [dim]💭 Thinking complete ({duration:.1f}s)[/dim]")
         ref["thinking_started"] = False
         return
 
@@ -174,19 +174,19 @@ def _handle_event(
     if etype == E.CONTEXT_COMPRESSED:
         before = event.get("before_tokens", "?")
         after = event.get("after_tokens", "?")
-        console.print(f"  [dim]📦 上下文压缩: {before} → {after} tokens[/dim]")
+        console.print(f"  [dim]📦 Context compressed: {before} → {after} tokens[/dim]")
         return
 
     if etype == E.TODO_CREATED:
         plan = event.get("plan", {})
-        title = plan.get("title", "任务计划")
+        title = plan.get("title", "Task Plan")
         steps = plan.get("steps", [])
         console.print(f"  [bold]📋 {title}[/bold]")
         for step in steps[:5]:
             label = step.get("label", step.get("content", ""))
             console.print(f"    □ {label}")
         if len(steps) > 5:
-            console.print(f"    [dim]... 共 {len(steps)} 步[/dim]")
+            console.print(f"    [dim]... {len(steps)} steps total[/dim]")
         return
 
     if etype == E.TODO_STEP_UPDATED:
@@ -194,15 +194,15 @@ def _handle_event(
         status = event.get("status", "")
         icon = "✓" if status == "completed" else "⟳" if status == "in_progress" else "□"
         if step_idx is not None:
-            console.print(f"    {icon} 步骤 {step_idx + 1}: {status}")
+            console.print(f"    {icon} Step {step_idx + 1}: {status}")
         return
 
     if etype == E.TODO_COMPLETED:
-        console.print("  [green]📋 任务计划已完成[/green]")
+        console.print("  [green]📋 Task plan completed[/green]")
         return
 
     if etype == E.TODO_CANCELLED:
-        console.print("  [yellow]📋 任务已取消[/yellow]")
+        console.print("  [yellow]📋 Task cancelled[/yellow]")
         return
 
     if etype == E.SECURITY_CONFIRM or etype == E.ASK_USER:
@@ -213,7 +213,7 @@ def _handle_event(
         to_agent = event.get("to_agent", "")
         reason = event.get("reason", "")
         console.print(
-            f"  [magenta]🤝 Agent 委托: {from_agent} → {to_agent}[/magenta]"
+            f"  [magenta]🤝 Agent handoff: {from_agent} → {to_agent}[/magenta]"
             + (f" ({reason})" if reason else "")
         )
         return
@@ -221,13 +221,13 @@ def _handle_event(
     if etype == E.USER_INSERT:
         content = event.get("content", "")
         if content:
-            console.print(f"  [blue]📝 用户插入: {content[:80]}[/blue]")
+            console.print(f"  [blue]📝 User insert: {content[:80]}[/blue]")
         return
 
     if etype == E.ARTIFACT:
         name = event.get("name", "")
         atype = event.get("artifact_type", "")
-        console.print(f"  [green]📎 产出: {name} ({atype})[/green]")
+        console.print(f"  [green]📎 Artifact: {name} ({atype})[/green]")
         return
 
     if etype == E.ERROR:
@@ -244,10 +244,10 @@ def _handle_event(
             inp = usage.get("input_tokens", 0)
             out = usage.get("output_tokens", 0)
             ctx = usage.get("context_tokens")
-            parts = [f"输入 {inp}", f"输出 {out}"]
+            parts = [f"input {inp}", f"output {out}"]
             if ctx:
                 limit = usage.get("context_limit", 0)
-                parts.append(f"上下文 {ctx}/{limit}")
+                parts.append(f"context {ctx}/{limit}")
             console.print(f"  [dim]📊 {' | '.join(parts)} tokens[/dim]")
         return
 
@@ -266,28 +266,28 @@ def _handle_security_confirm_interactive(event: dict, console: Console) -> None:
 
     color = "red" if risk.lower() in ("high", "critical") else "yellow"
 
-    info_lines = [f"工具: {tool}", f"原因: {reason}", f"风险等级: {risk}"]
+    info_lines = [f"Tool: {tool}", f"Reason: {reason}", f"Risk level: {risk}"]
     cmd = args.get("command") or args.get("code") or args.get("url", "")
     if cmd:
-        info_lines.append(f"参数: {str(cmd)[:200]}")
+        info_lines.append(f"Args: {str(cmd)[:200]}")
 
     console.print()
     console.print(
         Panel(
             "\n".join(info_lines),
-            title="[bold]🔒 安全确认[/bold]",
+            title="[bold]🔒 Security Confirmation[/bold]",
             border_style=color,
         )
     )
 
     choices = ["y", "n", "e", "a"]
     hint = (
-        "[bold]y[/bold]=允许一次  [bold]n[/bold]=拒绝  "
-        "[bold]e[/bold]=会话允许  [bold]a[/bold]=始终允许"
+        "[bold]y[/bold]=Allow once  [bold]n[/bold]=Deny  "
+        "[bold]e[/bold]=Allow session  [bold]a[/bold]=Always allow"
     )
     if needs_sandbox:
         choices.append("s")
-        hint += "  [bold]s[/bold]=沙箱执行"
+        hint += "  [bold]s[/bold]=Sandbox"
 
     decision_str = Prompt.ask(hint, choices=choices, default="n")
     decision_map = {
@@ -306,17 +306,17 @@ def _handle_security_confirm_interactive(event: dict, console: Console) -> None:
         found = engine.resolve_ui_confirm(confirm_id, decision)
         if found:
             labels = {
-                "allow_once": "✅ 已允许（一次）",
-                "allow_session": "✅ 已允许（本次会话）",
-                "allow_always": "✅ 已允许（始终）",
-                "deny": "❌ 已拒绝",
-                "sandbox": "🔒 沙箱执行",
+                "allow_once": "✅ Allowed (once)",
+                "allow_session": "✅ Allowed (this session)",
+                "allow_always": "✅ Allowed (always)",
+                "deny": "❌ Denied",
+                "sandbox": "🔒 Sandbox",
             }
             console.print(f"  {labels.get(decision, decision)}")
         else:
-            console.print(f"  [yellow]⚠️ 确认项已过期或不存在 (id={confirm_id[:8]}…)[/yellow]")
+            console.print(f"  [yellow]⚠️ Confirmation expired or not found (id={confirm_id[:8]}…)[/yellow]")
     except Exception as exc:
-        console.print(f"  [red]确认处理失败: {exc}[/red]")
+        console.print(f"  [red]Confirmation processing failed: {exc}[/red]")
 
 
 def _handle_ask_user_interactive(event: dict, console: Console) -> None:
@@ -325,11 +325,11 @@ def _handle_ask_user_interactive(event: dict, console: Console) -> None:
     options = event.get("options", [])
 
     console.print()
-    console.print(Panel(question, title="[bold]❓ 需要你的回答[/bold]", border_style="blue"))
+    console.print(Panel(question, title="[bold]❓ Your input needed[/bold]", border_style="blue"))
 
     if options:
         for i, opt in enumerate(options, 1):
             label = opt.get("label", str(opt)) if isinstance(opt, dict) else str(opt)
             console.print(f"  [cyan][{i}][/cyan] {label}")
         console.print()
-    console.print("  [dim]请在下次输入中回答（输入序号或直接输入文字）[/dim]")
+    console.print("  [dim]Please respond in your next input (enter a number or type your answer)[/dim]")

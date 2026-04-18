@@ -1,11 +1,11 @@
 """
-MiniMax 服务商注册表（OpenAI 兼容）
+MiniMax Provider Registry (OpenAI Compatible)
 
-参考（常见 base_url）：
-- 中国区： https://api.minimaxi.com/v1
-- 国际区： https://api.minimax.io/v1
+Reference (common base_url values):
+- China region:  https://api.minimaxi.com/v1
+- International: https://api.minimax.io/v1
 
-注意：MiniMax 不提供 /v1/models 端点，需用户手动填写模型名称。
+Note: MiniMax does not provide a /v1/models endpoint; users must enter model names manually.
 """
 
 from .base import ModelInfo, ProviderInfo, ProviderRegistry
@@ -13,7 +13,7 @@ from .base import ModelInfo, ProviderInfo, ProviderRegistry
 
 class MiniMaxChinaRegistry(ProviderRegistry):
     info = ProviderInfo(
-        name="MiniMax（中国区）",
+        name="MiniMax (China)",
         slug="minimax-cn",
         api_type="openai",
         default_base_url="https://api.minimaxi.com/v1",
@@ -28,7 +28,7 @@ class MiniMaxChinaRegistry(ProviderRegistry):
 
 class MiniMaxInternationalRegistry(ProviderRegistry):
     info = ProviderInfo(
-        name="MiniMax（国际区）",
+        name="MiniMax (International)",
         slug="minimax-int",
         api_type="openai",
         default_base_url="https://api.minimax.io/v1",

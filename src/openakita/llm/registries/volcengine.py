@@ -1,10 +1,10 @@
 """
-火山引擎 (Volcengine / 火山方舟 Ark) 服务商注册表
+Volcengine (Volcengine / Ark) provider registry
 
-火山方舟是字节跳动旗下的大模型服务平台，提供 OpenAI 兼容的 API 接口。
-支持豆包(Doubao)系列模型、DeepSeek 等模型。
+Ark is ByteDance's LLM service platform, offering an OpenAI-compatible API.
+It supports Doubao-series models, DeepSeek, and other models.
 
-API 文档: https://www.volcengine.com/docs/82379/1330626
+API docs: https://www.volcengine.com/docs/82379/1330626
 Base URL: https://ark.cn-beijing.volces.com/api/v3
 """
 
@@ -13,10 +13,10 @@ from .base import ModelInfo, ProviderInfo, ProviderRegistry, get_registry_client
 
 
 class VolcEngineRegistry(ProviderRegistry):
-    """火山引擎 (Volcengine Ark) 注册表"""
+    """Volcengine (Ark) registry"""
 
     info = ProviderInfo(
-        name="火山引擎 (Volcengine)",
+        name="Volcengine",
         slug="volcengine",
         api_type="openai",
         default_base_url="https://ark.cn-beijing.volces.com/api/v3",
@@ -27,10 +27,10 @@ class VolcEngineRegistry(ProviderRegistry):
 
     async def list_models(self, api_key: str) -> list[ModelInfo]:
         """
-        获取火山引擎模型列表
+        Fetch the Volcengine model list.
 
-        火山方舟兼容 OpenAI /models 接口。
-        如果 API 调用失败，返回预置的常用模型列表。
+        Ark is compatible with the OpenAI /models endpoint.
+        If the API call fails, returns a preset list of common models.
         """
         client = get_registry_client()
         try:
@@ -63,13 +63,13 @@ class VolcEngineRegistry(ProviderRegistry):
             return self._get_preset_models()
 
     def get_model_capabilities(self, model_id: str) -> dict:
-        """获取模型能力"""
+        """Get model capabilities"""
         return infer_capabilities(model_id, provider_slug="volcengine")
 
     def _get_preset_models(self) -> list[ModelInfo]:
-        """返回预置模型列表（火山方舟常用模型）"""
+        """Return a preset list of common Ark models."""
         preset = [
-            # 豆包 (Doubao) 系列
+            # Doubao series
             "doubao-seed-1-6",
             "doubao-seed-code",
             "doubao-1-5-pro-256k",
@@ -84,7 +84,7 @@ class VolcEngineRegistry(ProviderRegistry):
             "doubao-lite-4k",
             "doubao-vision-pro-32k",
             "doubao-vision-lite-32k",
-            # DeepSeek 系列 (火山方舟托管)
+            # DeepSeek series (hosted on Ark)
             "deepseek-r1",
             "deepseek-v3",
             "deepseek-r1-distill-qwen-32b",

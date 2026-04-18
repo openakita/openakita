@@ -44,7 +44,7 @@ class AgentToolHandler:
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
         if getattr(self.agent, "_is_sub_agent_call", False):
             logger.warning(f"[AgentToolHandler] Blocked {tool_name} — sub-agents cannot delegate")
-            return f"❌ 你是子 Agent，不允许使用 {tool_name}。请直接用你自己的工具完成任务。"
+            return f"❌ You are a sub-agent and cannot use {tool_name}. Please use your own tools to complete the task."
         if tool_name == "task_stop":
             return await self._task_stop(params)
         elif tool_name == "send_agent_message":
@@ -92,10 +92,10 @@ class AgentToolHandler:
 
         isolated_message = ""
         if context:
-            isolated_message += f"[任务背景]\n{context}\n\n"
-        isolated_message += f"[任务指令]\n{message}"
+            isolated_message += f"[Task Context]\n{context}\n\n"
+        isolated_message += f"[Task Instruction]\n{message}"
         if reason:
-            isolated_message += f"\n[委派原因] {reason}"
+            isolated_message += f"\n[Delegation Reason] {reason}"
 
         try:
             result = await orchestrator.delegate(
@@ -121,14 +121,14 @@ class AgentToolHandler:
 
         tasks_param = params.get("tasks")
 
-        # LLM 有时把 tasks 序列化为 JSON 字符串而非原生 list
+        # LLM sometimes serializes tasks as a JSON string instead of a native list
         if isinstance(tasks_param, str):
             try:
                 tasks_param = _json.loads(tasks_param)
             except (ValueError, TypeError):
                 pass
 
-        # 单个 dict → 包装成 list（LLM 偶尔只传一个 task 对象）
+        # Single dict → wrap in list (LLM occasionally passes just one task object)
         if isinstance(tasks_param, dict):
             tasks_param = [tasks_param]
 
@@ -138,7 +138,7 @@ class AgentToolHandler:
                 f"Received type: {type(tasks_param).__name__}"
             )
 
-        # LLM 有时用 "task" 代替 "message"，做 key 映射
+        # LLM sometimes uses "task" instead of "message" — remap the key
         for t in tasks_param:
             if isinstance(t, dict) and "message" not in t and "task" in t:
                 t["message"] = t.pop("task")
@@ -197,7 +197,7 @@ class AgentToolHandler:
                         eph_id = f"ephemeral_{agent_id}_{ts}_{idx}"
                         clone = AgentProfile(
                             id=eph_id,
-                            name=f"{base.name} (分身{idx})",
+                            name=f"{base.name} (clone-{idx})",
                             description=base.description,
                             type=AgentType.DYNAMIC,
                             skills=list(base.skills),
@@ -250,10 +250,10 @@ class AgentToolHandler:
 
             isolated_msg = ""
             if ctx:
-                isolated_msg += f"[任务背景]\n{ctx}\n\n"
-            isolated_msg += f"[任务指令]\n{msg}"
+                isolated_msg += f"[Task Context]\n{ctx}\n\n"
+            isolated_msg += f"[Task Instruction]\n{msg}"
             if rsn:
-                isolated_msg += f"\n[委派原因] {rsn}"
+                isolated_msg += f"\n[Delegation Reason] {rsn}"
 
             logger.info(
                 f"[AgentToolHandler] Parallel delegation: {current_agent} -> {aid} | reason={rsn}"
@@ -347,7 +347,7 @@ class AgentToolHandler:
                 pass
 
     # ------------------------------------------------------------------
-    # spawn_agent — 继承已有 Profile 创建临时 Agent 并立即委派
+    # spawn_agent — inherit an existing profile, create a temporary agent, and delegate immediately
     # ------------------------------------------------------------------
 
     async def _spawn(self, params: dict[str, Any]) -> str:
@@ -398,7 +398,7 @@ class AgentToolHandler:
 
         ephemeral_profile = AgentProfile(
             id=ephemeral_id,
-            name=f"{base_profile.name} (临时)",
+            name=f"{base_profile.name} (ephemeral)",
             description=f"Inherited from {inherit_from}: {reason or message[:80]}",
             type=AgentType.DYNAMIC,
             skills=merged_skills,
@@ -434,7 +434,7 @@ class AgentToolHandler:
             return f"❌ Spawned agent failed: {e}"
 
     # ------------------------------------------------------------------
-    # create_agent — 最后手段：创建全新 Agent (默认 ephemeral)
+    # create_agent — last resort: create a brand-new agent (ephemeral by default)
     # ------------------------------------------------------------------
 
     async def _create(self, params: dict[str, Any]) -> str:

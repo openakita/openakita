@@ -1,8 +1,8 @@
 """
-Mode 工具定义
+Mode tool definitions
 
-包含模式切换工具：
-- switch_mode: 工具化的交互模式切换
+Includes mode switching tools:
+- switch_mode: tool-driven interaction mode switching
 """
 
 MODE_TOOLS = [
@@ -34,11 +34,11 @@ MODE_TOOLS = [
                 "target_mode": {
                     "type": "string",
                     "enum": ["plan", "ask", "agent"],
-                    "description": "目标模式",
+                    "description": "Target mode",
                 },
                 "reason": {
                     "type": "string",
-                    "description": "切换原因（简要说明）",
+                    "description": "Reason for the switch (brief explanation)",
                 },
             },
             "required": ["target_mode"],

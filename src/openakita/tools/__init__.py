@@ -1,5 +1,5 @@
 """
-OpenAkita 工具模块
+OpenAkita tools module
 """
 
 import sys
@@ -22,14 +22,14 @@ __all__ = [
     "scan_mcp_servers",
 ]
 
-# Windows 桌面自动化模块（仅 Windows 平台可用）
-# 延迟导入：pyautogui 在某些 Windows 环境下初始化极慢，
-# 改为按需导入（首次使用桌面工具时才加载）。
+# Windows desktop automation module (only available on Windows)
+# Lazy import: pyautogui initializes very slowly on some Windows environments,
+# so we import on demand (loaded only when desktop tools are first used).
 _DESKTOP_LOADED = False
 
 
 def _ensure_desktop_loaded():
-    """按需加载桌面自动化模块，避免模块级导入阻塞整个包。"""
+    """Lazily load the desktop automation module to avoid blocking the entire package at module-level import."""
     global _DESKTOP_LOADED
     if _DESKTOP_LOADED:
         return True

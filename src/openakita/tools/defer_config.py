@@ -1,17 +1,18 @@
 """
-工具延迟加载配置
+Tool lazy-loading configuration
 
-参考 CC 的 shouldDefer / alwaysLoad 机制，集中管理哪些工具始终加载、
-哪些工具延迟加载（仅传 name + description，不传 input_schema）。
+Modeled after CC's shouldDefer / alwaysLoad mechanism, centrally managing which
+tools are always loaded and which are deferred (only name + description sent,
+no input_schema).
 
-延迟加载的工具可以通过 tool_search 按需发现，或在对话历史中出现后
-自动提升为完整加载。
+Deferred tools can be discovered on demand via tool_search, or automatically
+promoted to full loading once they appear in conversation history.
 """
 
-# 核心工具 — 始终加载完整 schema（参考 CC 的 alwaysLoad: true）
+# Core tools — always load with full schema (modeled after CC's alwaysLoad: true)
 ALWAYS_LOAD_TOOLS: frozenset[str] = frozenset(
     {
-        # 文件系统（最基础的 I/O 操作）
+        # File system (most fundamental I/O operations)
         "run_shell",
         "read_file",
         "write_file",
@@ -20,19 +21,19 @@ ALWAYS_LOAD_TOOLS: frozenset[str] = frozenset(
         "grep",
         "glob",
         "delete_file",
-        # PowerShell（Windows 核心）
+        # PowerShell (Windows core)
         "run_powershell",
-        # 用户交互 + 元工具
+        # User interaction + meta-tools
         "ask_user",
         "get_tool_info",
         "tool_search",
-        # 代理委派
+        # Agent delegation
         "delegate_to_agent",
         "delegate_parallel",
-        # MCP 入口（prompt 中 MCP Catalog 引导用户调用，必须常驻）
+        # MCP entry points (MCP Catalog in the prompt guides users to call these; must stay loaded)
         "call_mcp_tool",
         "list_mcp_servers",
-        # 任务管理
+        # Task management
         "create_todo",
         "update_todo_step",
         "get_todo_status",
@@ -40,7 +41,7 @@ ALWAYS_LOAD_TOOLS: frozenset[str] = frozenset(
     }
 )
 
-# 延迟加载的分类 — 这些分类下的所有工具默认 defer
+# Deferred categories — all tools under these categories are deferred by default
 DEFER_CATEGORIES: frozenset[str] = frozenset(
     {
         "Browser",
@@ -61,7 +62,7 @@ DEFER_CATEGORIES: frozenset[str] = frozenset(
     }
 )
 
-# 非延迟分类中需要延迟的个别工具
+# Individual tools to defer even when their category is not in DEFER_CATEGORIES
 DEFER_INDIVIDUAL_TOOLS: frozenset[str] = frozenset(
     {
         "edit_notebook",
@@ -86,13 +87,13 @@ DEFER_INDIVIDUAL_TOOLS: frozenset[str] = frozenset(
         "set_persona_trait",
         "get_persona_traits",
         "reset_persona",
-        # Phase 3 新增工具（非核心，按需发现）
+        # Phase 3 additions (non-core, discovered on demand)
         "lsp",
         "sleep",
         "structured_output",
         "enter_worktree",
         "exit_worktree",
-        # 低频管理工具：技能管理 & 图片生成（按需通过 tool_search 发现）
+        # Low-frequency management tools: skill management & image generation (discovered via tool_search)
         "generate_image",
         "install_skill",
         "uninstall_skill",
@@ -105,7 +106,7 @@ DEFER_INDIVIDUAL_TOOLS: frozenset[str] = frozenset(
 
 
 def is_always_load(tool_name: str) -> bool:
-    """判断工具是否始终加载。"""
+    """Check whether a tool should always be loaded."""
     return tool_name in ALWAYS_LOAD_TOOLS
 
 
@@ -116,14 +117,14 @@ def should_defer(
     user_always_load: frozenset[str] | None = None,
     user_always_load_cats: frozenset[str] | None = None,
 ) -> bool:
-    """判断工具是否应该延迟加载。
+    """Determine whether a tool should be deferred.
 
-    规则（按优先级）:
-    1. ALWAYS_LOAD_TOOLS 中的工具永不延迟
-    2. 用户配置的 always_load_tools / always_load_categories 豁免
-    3. 在 DEFER_INDIVIDUAL_TOOLS 中的工具延迟
-    4. 在 DEFER_CATEGORIES 分类下的工具延迟
-    5. 其余工具不延迟
+    Rules (by priority):
+    1. Tools in ALWAYS_LOAD_TOOLS are never deferred
+    2. User-configured always_load_tools / always_load_categories grant exemption
+    3. Tools in DEFER_INDIVIDUAL_TOOLS are deferred
+    4. Tools whose category is in DEFER_CATEGORIES are deferred
+    5. All other tools are not deferred
     """
     if tool_name in ALWAYS_LOAD_TOOLS:
         return False
@@ -139,7 +140,7 @@ def should_defer(
 
 
 def build_search_hint(tool: dict) -> str:
-    """为工具构建搜索提示文本（用于 tool_search 匹配）。"""
+    """Build a search hint string for a tool (used for tool_search matching)."""
     parts = [
         tool.get("name", ""),
         tool.get("description", ""),

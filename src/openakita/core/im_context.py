@@ -1,10 +1,10 @@
 """
-IM 上下文（协程隔离）
+IM context (coroutine isolation)
 
-历史上项目使用 `Agent._current_im_session/_current_im_gateway` 作为全局类变量，
-在并发（多会话 IM / 多定时任务并行）时会导致串台。
+Historically the project used `Agent._current_im_session/_current_im_gateway` as class-level
+globals, which caused cross-talk under concurrency (multiple IM sessions / parallel scheduled tasks).
 
-这里改用 contextvars，实现每个协程/任务独立的上下文。
+This module uses contextvars to provide per-coroutine/task isolated context.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from __future__ import annotations
 from contextvars import ContextVar
 from typing import Any
 
-# Session / MessageGateway 类型在不同模块里定义，这里用 Any 避免循环依赖
+# Session / MessageGateway types are defined in other modules; use Any here to avoid circular imports
 current_im_session: ContextVar[Any | None] = ContextVar("current_im_session", default=None)
 current_im_gateway: ContextVar[Any | None] = ContextVar("current_im_gateway", default=None)
 
@@ -27,7 +27,7 @@ def get_im_gateway() -> Any | None:
 
 def set_im_context(*, session: Any | None, gateway: Any | None) -> tuple[Any, Any]:
     """
-    设置 IM 上下文，返回 token 用于 reset。
+    Set IM context; returns tokens for later reset.
     """
     tok1 = current_im_session.set(session)
     tok2 = current_im_gateway.set(gateway)

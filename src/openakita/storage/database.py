@@ -1,5 +1,5 @@
 """
-SQLite 数据库封装
+SQLite database wrapper
 """
 
 import json
@@ -22,15 +22,15 @@ logger = logging.getLogger(__name__)
 
 
 class Database:
-    """SQLite 数据库"""
+    """SQLite database"""
 
     def __init__(self, db_path: Path | None = None):
         self.db_path = db_path or settings.db_full_path
         self._connection: aiosqlite.Connection | None = None
 
     async def connect(self) -> None:
-        """连接数据库"""
-        # 确保目录存在
+        """Connect to the database."""
+        # Ensure the parent directory exists
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         self._connection = await aiosqlite.connect(self.db_path)
@@ -41,16 +41,16 @@ class Database:
         logger.info(f"Database connected: {self.db_path}")
 
     async def close(self) -> None:
-        """关闭数据库连接"""
+        """Close the database connection."""
         if self._connection:
             await self._connection.close()
             self._connection = None
             logger.info("Database connection closed")
 
     async def _init_tables(self) -> None:
-        """初始化数据表"""
+        """Initialize database tables."""
         await self._connection.executescript("""
-            -- 对话表
+            -- Conversations table
             CREATE TABLE IF NOT EXISTS conversations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT,
@@ -59,7 +59,7 @@ class Database:
                 metadata TEXT DEFAULT '{}'
             );
 
-            -- 消息表
+            -- Messages table
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 conversation_id INTEGER,
@@ -70,7 +70,7 @@ class Database:
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id)
             );
 
-            -- 技能记录表
+            -- Skills table
             CREATE TABLE IF NOT EXISTS skills (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT UNIQUE NOT NULL,
@@ -82,7 +82,7 @@ class Database:
                 metadata TEXT DEFAULT '{}'
             );
 
-            -- 记忆表
+            -- Memories table
             CREATE TABLE IF NOT EXISTS memories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 category TEXT NOT NULL,
@@ -93,7 +93,7 @@ class Database:
                 metadata TEXT DEFAULT '{}'
             );
 
-            -- 任务记录表
+            -- Tasks table
             CREATE TABLE IF NOT EXISTS tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_id TEXT UNIQUE NOT NULL,
@@ -107,16 +107,16 @@ class Database:
                 metadata TEXT DEFAULT '{}'
             );
 
-            -- 用户偏好表
+            -- User preferences table
             CREATE TABLE IF NOT EXISTS preferences (
                 key TEXT PRIMARY KEY,
                 value TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
-            -- ========== 新增表 (v0.5.0) ==========
+            -- ========== New tables (v0.5.0) ==========
 
-            -- 定时任务表
+            -- Scheduled tasks table
             CREATE TABLE IF NOT EXISTS scheduled_tasks (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -139,7 +139,7 @@ class Database:
                 metadata TEXT DEFAULT '{}'
             );
 
-            -- 任务执行日志表
+            -- Task execution log table
             CREATE TABLE IF NOT EXISTS task_executions (
                 id TEXT PRIMARY KEY,
                 task_id TEXT NOT NULL,
@@ -152,7 +152,7 @@ class Database:
                 FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id)
             );
 
-            -- 用户表（跨平台统一用户）
+            -- Users table (cross-platform unified users)
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
                 display_name TEXT,
@@ -164,7 +164,7 @@ class Database:
                 total_messages INTEGER DEFAULT 0
             );
 
-            -- 用户通道绑定表
+            -- User channel bindings table
             CREATE TABLE IF NOT EXISTS user_bindings (
                 user_id TEXT NOT NULL,
                 channel TEXT NOT NULL,
@@ -174,7 +174,7 @@ class Database:
                 FOREIGN KEY (user_id) REFERENCES users(id)
             );
 
-            -- 会话表
+            -- Sessions table
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
                 channel TEXT NOT NULL,
@@ -188,7 +188,7 @@ class Database:
                 metadata TEXT DEFAULT '{}'
             );
 
-            -- 索引
+            -- Indexes
             CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
             CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
             CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
@@ -198,7 +198,7 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_user_bindings_channel ON user_bindings(channel, channel_user_id);
             CREATE INDEX IF NOT EXISTS idx_sessions_channel ON sessions(channel, chat_id);
 
-            -- ========== Token 用量追踪表 ==========
+            -- ========== Token usage tracking table ==========
 
             CREATE TABLE IF NOT EXISTS token_usage (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -227,27 +227,27 @@ class Database:
         """)
         await self._connection.commit()
 
-        # Migration: 为旧数据库添加 estimated_cost 列
+        # Migration: add estimated_cost column for existing databases
         try:
             await self._connection.execute(
                 "ALTER TABLE token_usage ADD COLUMN estimated_cost REAL DEFAULT 0"
             )
             await self._connection.commit()
         except Exception:
-            pass  # 列已存在则忽略
-        # Migration: 为旧数据库添加 agent_profile_id 列
+            pass  # Column already exists, ignore
+        # Migration: add agent_profile_id column for existing databases
         try:
             await self._connection.execute(
                 "ALTER TABLE token_usage ADD COLUMN agent_profile_id TEXT DEFAULT 'default'"
             )
             await self._connection.commit()
         except Exception:
-            pass  # 列已存在则忽略
+            pass  # Column already exists, ignore
 
-    # ===== 对话相关 =====
+    # ===== Conversation operations =====
 
     async def create_conversation(self, title: str = "") -> int:
-        """创建对话"""
+        """Create a conversation."""
         cursor = await self._connection.execute(
             "INSERT INTO conversations (title) VALUES (?)",
             (title,),
@@ -256,7 +256,7 @@ class Database:
         return cursor.lastrowid
 
     async def get_conversation(self, id: int) -> Conversation | None:
-        """获取对话"""
+        """Get a conversation by ID."""
         cursor = await self._connection.execute(
             "SELECT * FROM conversations WHERE id = ?",
             (id,),
@@ -266,7 +266,7 @@ class Database:
         if not row:
             return None
 
-        # 获取消息
+        # Fetch messages
         messages = await self.get_messages(id)
 
         return Conversation(
@@ -279,7 +279,7 @@ class Database:
         )
 
     async def get_messages(self, conversation_id: int) -> list[Message]:
-        """获取对话消息"""
+        """Get messages for a conversation."""
         cursor = await self._connection.execute(
             "SELECT * FROM messages WHERE conversation_id = ? ORDER BY timestamp",
             (conversation_id,),
@@ -305,14 +305,14 @@ class Database:
         content: str,
         metadata: dict | None = None,
     ) -> int:
-        """添加消息"""
+        """Add a message to a conversation."""
         cursor = await self._connection.execute(
             """INSERT INTO messages (conversation_id, role, content, metadata)
                VALUES (?, ?, ?, ?)""",
             (conversation_id, role, content, json.dumps(metadata or {})),
         )
 
-        # 更新对话的 updated_at
+        # Update conversation's updated_at timestamp
         await self._connection.execute(
             "UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (conversation_id,),
@@ -321,7 +321,7 @@ class Database:
         await self._connection.commit()
         return cursor.lastrowid
 
-    # ===== 技能相关 =====
+    # ===== Skill operations =====
 
     async def record_skill(
         self,
@@ -330,7 +330,7 @@ class Database:
         source: str,
         metadata: dict | None = None,
     ) -> int:
-        """记录技能安装"""
+        """Record a skill installation."""
         cursor = await self._connection.execute(
             """INSERT OR REPLACE INTO skills (name, version, source, metadata)
                VALUES (?, ?, ?, ?)""",
@@ -340,7 +340,7 @@ class Database:
         return cursor.lastrowid
 
     async def get_skill(self, name: str) -> SkillRecord | None:
-        """获取技能记录"""
+        """Get a skill record by name."""
         cursor = await self._connection.execute(
             "SELECT * FROM skills WHERE name = ?",
             (name,),
@@ -362,7 +362,7 @@ class Database:
         )
 
     async def update_skill_usage(self, name: str) -> None:
-        """更新技能使用记录"""
+        """Update skill usage statistics."""
         await self._connection.execute(
             """UPDATE skills
                SET last_used = CURRENT_TIMESTAMP, use_count = use_count + 1
@@ -372,7 +372,7 @@ class Database:
         await self._connection.commit()
 
     async def list_skills(self) -> list[SkillRecord]:
-        """列出所有技能"""
+        """List all skills."""
         cursor = await self._connection.execute("SELECT * FROM skills ORDER BY installed_at DESC")
         rows = await cursor.fetchall()
 
@@ -390,7 +390,7 @@ class Database:
             for row in rows
         ]
 
-    # ===== 记忆相关 =====
+    # ===== Memory operations =====
 
     async def add_memory(
         self,
@@ -400,7 +400,7 @@ class Database:
         tags: list[str] | None = None,
         metadata: dict | None = None,
     ) -> int:
-        """添加记忆"""
+        """Add a memory entry."""
         cursor = await self._connection.execute(
             """INSERT INTO memories (category, content, importance, tags, metadata)
                VALUES (?, ?, ?, ?, ?)""",
@@ -421,7 +421,7 @@ class Database:
         limit: int = 100,
         min_importance: int = 0,
     ) -> list[MemoryEntry]:
-        """获取记忆"""
+        """Get memories with optional filters."""
         query = "SELECT * FROM memories WHERE importance >= ?"
         params: list[Any] = [min_importance]
 
@@ -449,7 +449,7 @@ class Database:
         ]
 
     async def search_memories(self, query: str, limit: int = 10) -> list[MemoryEntry]:
-        """搜索记忆"""
+        """Search memories by keyword."""
         cursor = await self._connection.execute(
             """SELECT * FROM memories
                WHERE content LIKE ?
@@ -472,7 +472,7 @@ class Database:
             for row in rows
         ]
 
-    # ===== 任务相关 =====
+    # ===== Task operations =====
 
     async def record_task(
         self,
@@ -480,7 +480,7 @@ class Database:
         description: str,
         status: str = "pending",
     ) -> int:
-        """记录任务"""
+        """Record a task."""
         cursor = await self._connection.execute(
             """INSERT OR REPLACE INTO tasks (task_id, description, status)
                VALUES (?, ?, ?)""",
@@ -497,7 +497,7 @@ class Database:
         error: str | None = None,
         attempts: int | None = None,
     ) -> None:
-        """更新任务"""
+        """Update a task."""
         updates = []
         params = []
 
@@ -527,10 +527,10 @@ class Database:
             )
             await self._connection.commit()
 
-    # ===== 偏好相关 =====
+    # ===== Preference operations =====
 
     async def set_preference(self, key: str, value: Any) -> None:
-        """设置偏好"""
+        """Set a preference value."""
         await self._connection.execute(
             """INSERT OR REPLACE INTO preferences (key, value, updated_at)
                VALUES (?, ?, CURRENT_TIMESTAMP)""",
@@ -539,7 +539,7 @@ class Database:
         await self._connection.commit()
 
     async def get_preference(self, key: str, default: Any = None) -> Any:
-        """获取偏好"""
+        """Get a preference value."""
         cursor = await self._connection.execute(
             "SELECT value FROM preferences WHERE key = ?",
             (key,),
@@ -551,13 +551,13 @@ class Database:
         return default
 
     async def get_all_preferences(self) -> dict[str, Any]:
-        """获取所有偏好"""
+        """Get all preferences."""
         cursor = await self._connection.execute("SELECT key, value FROM preferences")
         rows = await cursor.fetchall()
 
         return {row["key"]: json.loads(row["value"]) for row in rows}
 
-    # ===== Token 用量统计 =====
+    # ===== Token usage statistics =====
 
     async def get_token_usage_summary(
         self,
@@ -567,7 +567,7 @@ class Database:
         endpoint_name: str | None = None,
         operation_type: str | None = None,
     ) -> list[dict]:
-        """按维度聚合 token 用量"""
+        """Aggregate token usage by a given dimension."""
         allowed = {
             "endpoint_name",
             "operation_type",
@@ -616,7 +616,7 @@ class Database:
         interval: str = "hour",
         endpoint_name: str | None = None,
     ) -> list[dict]:
-        """按时间线聚合 token 用量（折线图用）"""
+        """Aggregate token usage over time (for line charts)."""
         fmt_map = {"hour": "%Y-%m-%d %H:00", "day": "%Y-%m-%d", "week": "%Y-W%W"}
         time_fmt = fmt_map.get(interval, "%Y-%m-%d %H:00")
 
@@ -651,7 +651,7 @@ class Database:
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict]:
-        """按会话列出 token 消耗"""
+        """List token consumption per session."""
         sql = """
             SELECT session_id,
                    MIN(timestamp) AS first_call,
@@ -680,7 +680,7 @@ class Database:
         start_time: str | datetime,
         end_time: str | datetime,
     ) -> dict:
-        """获取总计 token 用量"""
+        """Get total token usage."""
         sql = """
             SELECT COALESCE(SUM(input_tokens), 0) AS total_input,
                    COALESCE(SUM(output_tokens), 0) AS total_output,
@@ -703,7 +703,7 @@ class Database:
         start_time: str | datetime,
         end_time: str | datetime,
     ) -> dict[str, dict]:
-        """按 agent_profile_id 聚合 token 用量，用于多 Agent 模式统计。"""
+        """Aggregate token usage by agent_profile_id, used for multi-agent mode statistics."""
         sql = """
             SELECT COALESCE(agent_profile_id, 'default') AS agent_profile_id,
                    COALESCE(SUM(input_tokens), 0) AS input_tokens,
@@ -722,7 +722,7 @@ class Database:
             cursor = await self._connection.execute(sql, (s, e))
             rows = await cursor.fetchall()
         except Exception:
-            # 兼容旧库无 agent_profile_id 列
+            # Fallback for databases without the agent_profile_id column
             sql_fallback = """
                 SELECT 'default' AS agent_profile_id,
                        COALESCE(SUM(input_tokens), 0) AS input_tokens,

@@ -437,7 +437,7 @@ async def list_channels(request: Request):
             for ch, entry in registry.items():
                 if ch in skip_channels:
                     continue
-                # 兼容新格式（list of dicts）和旧格式（单 dict）
+                # Compatible with new format (list of dicts) and old format (single dict)
                 items = (
                     entry if isinstance(entry, list) else [entry] if isinstance(entry, dict) else []
                 )

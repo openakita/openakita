@@ -1,42 +1,42 @@
 """
-人格系统 + 活人感工具定义
+Persona system + living-presence tool definitions
 
-包含人格管理和活人感模式相关的工具:
-- switch_persona: 切换人格预设
-- update_persona_trait: 更新人格偏好特质
-- toggle_proactive: 开关活人感模式
-- get_persona_profile: 获取当前人格配置
+Contains tools related to persona management and living-presence mode:
+- switch_persona: Switch persona preset
+- update_persona_trait: Update persona preference trait
+- toggle_proactive: Toggle living-presence mode on/off
+- get_persona_profile: Get current persona configuration
 """
 
 PERSONA_TOOLS = [
     {
         "name": "switch_persona",
         "category": "Persona",
-        "description": "切换人格预设或用户自创的 Agent 角色。内置预设: default/business/tech_expert/butler/girlfriend/boyfriend/family/jarvis。也支持用户自创的角色名称（如「诸葛亮」「翻译官」等）。当用户要求切换角色或沟通风格时使用。",
-        "detail": """切换 Agent 的人格角色。
+        "description": "Switch to a built-in persona preset or a user-created Agent role. Built-in presets: default/business/tech_expert/butler/girlfriend/boyfriend/family/jarvis. Also supports user-created role names (e.g., 'Zhuge Liang', 'Translator', etc.). Use when the user requests a role or communication style change.",
+        "detail": """Switch the Agent's persona role.
 
-**内置预设**：
-- default: 默认助手（专业友好）
-- business: 商务助理（正式高效）
-- tech_expert: 技术专家（严谨深度）
-- butler: 私人管家（周到体贴）
-- girlfriend: 女友感（温柔关心）
-- boyfriend: 男友感（阳光鼓励）
-- family: 家人感（亲切唠叨）
-- jarvis: 贾维斯（英式幽默、小叛逆、话唠、任务时严谨）
+**Built-in presets**:
+- default: Default assistant (professional and friendly)
+- business: Business assistant (formal and efficient)
+- tech_expert: Tech expert (rigorous and in-depth)
+- butler: Personal butler (thoughtful and attentive)
+- girlfriend: Girlfriend vibe (warm and caring)
+- boyfriend: Boyfriend vibe (sunny and encouraging)
+- family: Family vibe (warm and chatty)
+- jarvis: Jarvis (British humor, slightly rebellious, talkative, rigorous during tasks)
 
-也支持传入用户自创的 Agent 角色名称，系统会自动查找匹配的 Agent Profile。
+Also accepts user-created Agent role names; the system will automatically look up the matching Agent Profile.
 
-**适用场景**：
-- 用户要求切换角色/性格
-- 用户说"正式一点"/"随意一点"等
-- 用户说"切换到诸葛亮"/"用XX角色"等""",
+**When to use**:
+- User requests a role/personality switch
+- User says things like "be more formal" / "be more casual"
+- User says "switch to Zhuge Liang" / "use the XX role" etc.""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "preset_name": {
                     "type": "string",
-                    "description": "预设名称或用户自创的角色名称",
+                    "description": "Preset name or user-created role name",
                 }
             },
             "required": ["preset_name"],
@@ -46,42 +46,42 @@ PERSONA_TOOLS = [
         "name": "update_persona_trait",
         "category": "Persona",
         "description": "Update a specific persona preference dimension (formality, humor, emoji_usage, sticker_preference, etc.) based on user feedback or explicit request. Use this for ALL communication-style preferences including sticker/emoji/humor settings.",
-        "detail": """更新用户的人格偏好维度。
+        "detail": """Update a persona preference dimension for the user.
 
-**支持的维度**：
-- formality: 正式程度 (very_formal/formal/neutral/casual/very_casual)
-- humor: 幽默感 (none/occasional/frequent)
-- emoji_usage: 表情使用 (never/rare/moderate/frequent)
-- reply_length: 回复长度 (very_short/short/moderate/detailed/very_detailed)
-- proactiveness: 主动程度 (silent/low/moderate/high)
-- emotional_distance: 情感距离 (professional/friendly/close/intimate)
-- address_style: 称呼方式 (自由文本)
-- encouragement: 鼓励程度 (none/occasional/frequent)
-- care_topics: 关心话题 (自由文本)
-- sticker_preference: 表情包偏好 (never/rare/moderate/frequent)
+**Supported dimensions**:
+- formality: Formality level (very_formal/formal/neutral/casual/very_casual)
+- humor: Humor level (none/occasional/frequent)
+- emoji_usage: Emoji usage (never/rare/moderate/frequent)
+- reply_length: Reply length (very_short/short/moderate/detailed/very_detailed)
+- proactiveness: Proactiveness level (silent/low/moderate/high)
+- emotional_distance: Emotional distance (professional/friendly/close/intimate)
+- address_style: Address style (free text)
+- encouragement: Encouragement level (none/occasional/frequent)
+- care_topics: Care topics (free text)
+- sticker_preference: Sticker preference (never/rare/moderate/frequent)
 
-**适用场景**：
-- 用户明确表达偏好（"随意一点"/"别发表情"等）
-- 从对话中推断出偏好变化""",
+**When to use**:
+- User explicitly states a preference ("be more casual" / "don't use emojis" etc.)
+- A preference change is inferred from the conversation""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "dimension": {
                     "type": "string",
-                    "description": "偏好维度名",
+                    "description": "Preference dimension name",
                 },
                 "preference": {
                     "type": "string",
-                    "description": "偏好值",
+                    "description": "Preference value",
                 },
                 "source": {
                     "type": "string",
-                    "description": "来源 (explicit=用户明确说/mined=从对话推断/correction=用户修正)",
+                    "description": "Source (explicit=user stated directly/mined=inferred from conversation/correction=user correction)",
                     "enum": ["explicit", "mined", "correction"],
                 },
                 "evidence": {
                     "type": "string",
-                    "description": "证据描述（用户说了什么）",
+                    "description": "Evidence description (what the user said)",
                 },
             },
             "required": ["dimension", "preference"],
@@ -91,26 +91,26 @@ PERSONA_TOOLS = [
         "name": "toggle_proactive",
         "category": "Persona",
         "description": "Toggle the proactive/living-presence mode on or off. Controls whether the agent sends proactive messages (greetings, reminders, follow-ups).",
-        "detail": """开关活人感模式。
+        "detail": """Toggle the living-presence mode on or off.
 
-开启后 Agent 会主动发送消息：
-- 早安/晚安问候
-- 任务跟进提醒
-- 关键记忆回顾
-- 闲聊问候（长时间未互动时）
+When enabled, the Agent proactively sends messages:
+- Good morning / good night greetings
+- Task follow-up reminders
+- Key memory reviews
+- Casual check-ins (when no interaction for a long time)
 
-频率由用户反馈自适应调整，安静时段(23:00-07:00)不发送。
+Frequency adapts based on user feedback; no messages during quiet hours (23:00-07:00).
 
-**适用场景**：
-- 用户要求开启/关闭主动消息
-- 用户说"别主动给我发消息了"
-- 用户说"开启活人感"/"主动一点"等""",
+**When to use**:
+- User requests enabling/disabling proactive messages
+- User says "stop sending me messages on your own"
+- User says "enable living presence" / "be more proactive" etc.""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "enabled": {
                     "type": "boolean",
-                    "description": "是否启用活人感模式",
+                    "description": "Whether to enable living-presence mode",
                 }
             },
             "required": ["enabled"],
@@ -120,19 +120,19 @@ PERSONA_TOOLS = [
         "name": "get_persona_profile",
         "category": "Persona",
         "description": "Get the current merged persona profile including preset, user customizations, and context adaptations.",
-        "detail": """获取当前合并后的人格配置信息。
+        "detail": """Get the current merged persona configuration.
 
-**返回信息**：
-- 当前预设角色名称
-- 沟通风格配置
-- 用户偏好叠加
-- 上下文适配
-- 表情包配置
-- 活人感模式状态
+**Returns**:
+- Current preset role name
+- Communication style settings
+- User preference overrides
+- Context adaptations
+- Sticker configuration
+- Living-presence mode status
 
-**适用场景**：
-- 用户询问当前角色配置
-- 需要确认人格设置""",
+**When to use**:
+- User asks about current role configuration
+- Need to confirm persona settings""",
         "input_schema": {"type": "object", "properties": {}},
     },
 ]

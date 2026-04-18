@@ -1,20 +1,20 @@
 """
-OpenAkita Agent 评估框架
+OpenAkita Agent Evaluation Framework
 
-提供全面的 Agent 性能评估能力:
-- EvalMetrics: 评估指标定义和聚合
-- Judge: 基于 LLM 的质量评估 (Agent-as-a-Judge)
-- Runner: 评估任务运行器
-- Reporter: 评估报告生成
-- Optimizer: 评估反馈驱动的自动优化
+Provides comprehensive agent performance evaluation:
+- EvalMetrics: Metric definitions and aggregation
+- Judge: LLM-based quality assessment (Agent-as-a-Judge)
+- Runner: Evaluation task runner
+- Reporter: Evaluation report generation
+- Optimizer: Evaluation-feedback-driven automatic optimization
 
-评估维度:
-- 任务完成率
-- 工具选择准确率
-- 平均迭代次数 / token 消耗 / 延迟
-- 循环检测率
-- 错误恢复率
-- 记忆检索相关性
+Evaluation dimensions:
+- Task completion rate
+- Tool selection accuracy
+- Average iterations / token consumption / latency
+- Loop detection rate
+- Error recovery rate
+- Memory retrieval relevance
 """
 
 from .judge import Judge, JudgeResult

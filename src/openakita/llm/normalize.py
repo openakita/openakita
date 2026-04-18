@@ -1,18 +1,18 @@
 """
-消息规范化管线
+Message normalization pipeline
 
-在发送 API 请求前，将内部消息格式规范化为 API 可接受的格式。
-参考 Claude Code 的 normalizeMessagesForAPI（18 步规范化流水线）。
+Normalizes internal message format into API-acceptable format before sending requests.
+Inspired by Claude Code's normalizeMessagesForAPI (18-step normalization pipeline).
 
-核心步骤:
-1. 过滤内部/虚拟消息
-2. 合并连续 user 消息
-3. tool_result 上提（同一 user 消息中 tool_result 排在前面）
-4. 合并同 ID assistant 分片
-5. 过滤 orphaned thinking-only 消息
-6. error tool_result 内容清洗
-7. 确保 tool_result 与 tool_use 配对
-8. 过滤空 assistant 消息
+Core steps:
+1. Filter internal/synthetic messages
+2. Merge consecutive user messages
+3. Hoist tool_result blocks (within the same user message, tool_results come first)
+4. Merge assistant fragments with the same ID
+5. Filter orphaned thinking-only messages
+6. Sanitize error tool_result content
+7. Ensure tool_result and tool_use pairing
+8. Strip empty assistant messages
 """
 
 from __future__ import annotations
@@ -27,14 +27,14 @@ def normalize_messages_for_api(
     messages: list[dict],
     tool_names: set[str] | None = None,
 ) -> list[dict]:
-    """将内部消息格式规范化为 API 可接受的格式。
+    """Normalize internal message format to API-acceptable format.
 
     Args:
-        messages: 原始消息列表 (Anthropic 格式)
-        tool_names: 当前可用工具名称集合 (用于验证 tool_use)
+        messages: Raw message list (Anthropic format)
+        tool_names: Set of currently available tool names (for validating tool_use)
 
     Returns:
-        规范化后的消息列表
+        Normalized message list
     """
     messages = copy.deepcopy(messages)
     messages = _filter_internal_messages(messages)
@@ -50,14 +50,15 @@ def normalize_messages_for_api(
 
 
 def _filter_internal_messages(messages: list[dict]) -> list[dict]:
-    """过滤内部/虚拟消息（带 _internal 或 _synthetic 标记）。"""
+    """Filter internal/synthetic messages (marked with _internal or _synthetic)."""
     return [m for m in messages if not m.get("_internal") and not m.get("_synthetic")]
 
 
 def _merge_consecutive_user_messages(messages: list[dict]) -> list[dict]:
-    """合并连续的 user 消息。
+    """Merge consecutive user messages.
 
-    API 不允许连续的同角色消息。将连续 user 消息的 content 合并。
+    The API does not allow consecutive same-role messages.
+    Merges the content of consecutive user messages.
     """
     if not messages:
         return messages
@@ -75,10 +76,11 @@ def _merge_consecutive_user_messages(messages: list[dict]) -> list[dict]:
 
 
 def _hoist_tool_results_in_user(messages: list[dict]) -> list[dict]:
-    """在 user 消息中，tool_result 块排在其他内容前面。
+    """Within user messages, place tool_result blocks before other content.
 
-    Anthropic API 要求 tool_result 必须紧跟在 assistant 的 tool_use 后面的
-    user 消息中，且应排在该 user 消息内容的最前面。
+    The Anthropic API requires tool_results to be in the user message immediately
+    following the assistant's tool_use, and they should appear first in that
+    user message's content.
     """
     for msg in messages:
         if msg["role"] != "user":
@@ -100,7 +102,7 @@ def _hoist_tool_results_in_user(messages: list[dict]) -> list[dict]:
 
 
 def _merge_assistant_splits(messages: list[dict]) -> list[dict]:
-    """合并连续的 assistant 消息。"""
+    """Merge consecutive assistant messages."""
     if not messages:
         return messages
 
@@ -117,10 +119,10 @@ def _merge_assistant_splits(messages: list[dict]) -> list[dict]:
 
 
 def _filter_orphaned_thinking(messages: list[dict]) -> list[dict]:
-    """过滤只包含 thinking 块的 assistant 消息。
+    """Filter assistant messages that contain only thinking blocks.
 
-    如果 assistant 消息只有 thinking 块没有实质输出，
-    API 可能报错或产生混乱。
+    If an assistant message has only thinking blocks with no substantive output,
+    the API may raise an error or produce confused behavior.
     """
     result = []
     for msg in messages:
@@ -139,10 +141,10 @@ def _filter_orphaned_thinking(messages: list[dict]) -> list[dict]:
 
 
 def _sanitize_error_tool_results(messages: list[dict]) -> list[dict]:
-    """清洗 is_error=True 的 tool_result，只保留 text 内容。
+    """Sanitize tool_results with is_error=True, keeping only text content.
 
-    错误 tool_result 的 content 可能包含 traceback 等非结构化内容，
-    只保留 text 类型避免 API 解析问题。
+    The content of error tool_results may contain unstructured data like tracebacks;
+    keeping only text parts avoids API parsing issues.
     """
     for msg in messages:
         content = msg.get("content")
@@ -168,10 +170,10 @@ def _sanitize_error_tool_results(messages: list[dict]) -> list[dict]:
 
 
 def _ensure_tool_result_pairing(messages: list[dict]) -> list[dict]:
-    """确保每个 tool_result 都有对应的 tool_use。
+    """Ensure every tool_result has a matching tool_use.
 
-    收集 assistant 消息中所有 tool_use 的 id，
-    然后检查 user 消息中 tool_result 的 tool_use_id 是否存在。
+    Collects all tool_use IDs from assistant messages, then checks that
+    tool_result's tool_use_id in user messages exists in that set.
     """
     tool_use_ids: set[str] = set()
     for msg in messages:
@@ -199,7 +201,7 @@ def _ensure_tool_result_pairing(messages: list[dict]) -> list[dict]:
 
 
 def _strip_empty_assistant(messages: list[dict]) -> list[dict]:
-    """移除空内容的 assistant 消息。"""
+    """Remove assistant messages with empty content."""
     result = []
     for msg in messages:
         if msg["role"] == "assistant":
@@ -211,7 +213,7 @@ def _strip_empty_assistant(messages: list[dict]) -> list[dict]:
 
 
 def _ensure_alternating_roles(messages: list[dict]) -> list[dict]:
-    """确保消息角色交替（user/assistant），必要时插入占位消息。"""
+    """Ensure alternating message roles (user/assistant), inserting placeholder messages when needed."""
     if not messages:
         return messages
 
@@ -228,7 +230,7 @@ def _ensure_alternating_roles(messages: list[dict]) -> list[dict]:
 
 
 def _ensure_content_list(content) -> list[dict]:
-    """将 content 统一为 list[dict] 格式。"""
+    """Normalize content to list[dict] format."""
     if isinstance(content, str):
         return [{"type": "text", "text": content}] if content else []
     if isinstance(content, list):

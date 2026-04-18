@@ -1,8 +1,9 @@
 """
-AgentProfile 数据模型 + ProfileStore
+AgentProfile data model + ProfileStore
 
-AgentProfile 是 Agent 的"蓝图"，定义名称、角色、技能列表、自定义提示词等。
-ProfileStore 负责持久化和检索 Profile，支持 SYSTEM 预置保护。
+AgentProfile is the "blueprint" for an Agent, defining name, role, skill list,
+custom prompt, etc.  ProfileStore handles persistence and retrieval of profiles,
+with SYSTEM preset protection.
 """
 
 from __future__ import annotations
@@ -29,14 +30,14 @@ from ..utils.atomic_io import atomic_json_write
 logger = logging.getLogger(__name__)
 
 
-# ─── 内置分类 ──────────────────────────────────────────────────────────
+# --- Built-in categories ----------------------------------------------------------------
 BUILTIN_CATEGORIES: list[dict[str, Any]] = [
-    {"id": "general", "label": "通用基础", "color": "#4A90D9", "builtin": True},
-    {"id": "content", "label": "内容创作", "color": "#FF6B6B", "builtin": True},
-    {"id": "enterprise", "label": "企业办公", "color": "#27AE60", "builtin": True},
-    {"id": "education", "label": "教育辅助", "color": "#8E44AD", "builtin": True},
-    {"id": "productivity", "label": "生活效率", "color": "#E74C3C", "builtin": True},
-    {"id": "devops", "label": "开发运维", "color": "#95A5A6", "builtin": True},
+    {"id": "general", "label": "General", "color": "#4A90D9", "builtin": True},
+    {"id": "content", "label": "Content Creation", "color": "#FF6B6B", "builtin": True},
+    {"id": "enterprise", "label": "Enterprise Office", "color": "#27AE60", "builtin": True},
+    {"id": "education", "label": "Education", "color": "#8E44AD", "builtin": True},
+    {"id": "productivity", "label": "Productivity", "color": "#E74C3C", "builtin": True},
+    {"id": "devops", "label": "DevOps", "color": "#95A5A6", "builtin": True},
 ]
 _BUILTIN_IDS = frozenset(c["id"] for c in BUILTIN_CATEGORIES)
 
@@ -48,9 +49,9 @@ class AgentType(StrEnum):
 
 
 class SkillsMode(StrEnum):
-    INCLUSIVE = "inclusive"  # 仅含 skills 列表中的技能
-    EXCLUSIVE = "exclusive"  # 排除 skills 列表中的技能
-    ALL = "all"  # 全部技能
+    INCLUSIVE = "inclusive"  # Only skills in the skills list
+    EXCLUSIVE = "exclusive"  # Exclude skills in the skills list
+    ALL = "all"  # All skills
 
 
 _SKILLS_MODE_ALIASES: dict[str, str] = {
@@ -59,7 +60,7 @@ _SKILLS_MODE_ALIASES: dict[str, str] = {
 
 
 def safe_agent_type(value: Any) -> AgentType:
-    """将任意值安全转换为 AgentType，无法识别时回退到 CUSTOM。"""
+    """Safely convert an arbitrary value to AgentType, falling back to CUSTOM if unrecognized."""
     if isinstance(value, AgentType):
         return value
     try:
@@ -69,7 +70,7 @@ def safe_agent_type(value: Any) -> AgentType:
 
 
 def safe_skills_mode(value: Any) -> SkillsMode:
-    """将任意值安全转换为 SkillsMode，支持别名映射，无法识别时回退到 ALL。"""
+    """Safely convert an arbitrary value to SkillsMode, supporting alias mapping, falling back to ALL if unrecognized."""
     if isinstance(value, SkillsMode):
         return value
     try:
@@ -79,7 +80,7 @@ def safe_skills_mode(value: Any) -> SkillsMode:
         return SkillsMode.ALL
 
 
-# SYSTEM Profile 中不可被用户修改的身份字段（其余均可自定义）
+# Identity fields in SYSTEM profiles that cannot be modified by users (all others are customizable)
 _SYSTEM_IMMUTABLE_FIELDS = frozenset(
     {
         "id",
@@ -97,65 +98,65 @@ class AgentProfile:
     type: AgentType = AgentType.CUSTOM
     role: str = "worker"  # "worker" | "coordinator"
 
-    # 技能配置
+    # Skills configuration
     skills: list[str] = field(default_factory=list)
     skills_mode: SkillsMode = SkillsMode.ALL
 
-    # 工具控制（类目名或具体工具名，复用 orgs/tool_categories.py 的 TOOL_CATEGORIES）
+    # Tool control (category names or specific tool names; reuses TOOL_CATEGORIES from orgs/tool_categories.py)
     tools: list[str] = field(default_factory=list)
     tools_mode: str = "all"  # "all" | "inclusive" | "exclusive"
 
-    # MCP 服务器控制
+    # MCP server control
     mcp_servers: list[str] = field(default_factory=list)
     mcp_mode: str = "all"  # "all" | "inclusive" | "exclusive"
 
-    # 插件控制
+    # Plugin control
     plugins: list[str] = field(default_factory=list)
     plugins_mode: str = "all"  # "all" | "inclusive" | "exclusive"
 
-    # 自定义提示词（追加到系统提示词中）
+    # Custom prompt (appended to the system prompt)
     custom_prompt: str = ""
 
-    # 显示
+    # Display
     icon: str = "🤖"
     color: str = "#4A90D9"
 
-    # 能力边界
+    # Capability boundary
     fallback_profile_id: str | None = None
 
-    # 首选 LLM 端点（为 None 或空字符串时使用全局优先级，不可用时自动回退）
+    # Preferred LLM endpoint (uses global priority when None or empty string; auto-fallback on unavailability)
     preferred_endpoint: str | None = None
 
-    # 权限规则集 (OpenCode 风格，空列表 = 全部允许)
-    # 格式: [{"permission": "edit", "pattern": "*", "action": "deny"}, ...]
+    # Permission rule set (OpenCode style; empty list = allow all)
+    # Format: [{"permission": "edit", "pattern": "*", "action": "deny"}, ...]
     permission_rules: list[dict[str, str]] = field(default_factory=list)
 
-    # 元数据
+    # Metadata
     created_by: str = "system"
     created_at: str = ""
 
-    # 国际化：{"zh": "小秋", "en": "Akita"}
+    # Internationalization: {"zh": "小秋", "en": "Akita"}
     name_i18n: dict[str, str] = field(default_factory=dict)
     description_i18n: dict[str, str] = field(default_factory=dict)
 
-    # 分类与可见性
+    # Category and visibility
     category: str = ""
     hidden: bool = False
 
-    # 像素形象（前端像素办公室/聊天头像渲染用）
+    # Pixel avatar (used by frontend pixel-office / chat avatar rendering)
     pixel_appearance: dict | None = None
 
-    # 用户自定义标记：系统预设被用户编辑后置 True，升级时不再覆盖
+    # User customization flag: set True when a system preset is edited by the user; prevents overwrite on upgrade
     user_customized: bool = False
 
-    # Hub 来源（从 Agent Store 安装时记录来源信息）
+    # Hub source (records provenance when installed from Agent Store)
     hub_source: dict[str, Any] | None = None
 
-    # 临时 Agent 支持
+    # Ephemeral agent support
     ephemeral: bool = False
     inherit_from: str | None = None
 
-    # 隔离配置
+    # Isolation configuration
     identity_mode: str = "shared"  # "shared" | "custom"
     memory_mode: str = "shared"  # "shared" | "isolated"
     memory_inherit_global: bool = True
@@ -178,7 +179,7 @@ class AgentProfile:
         return self.type == AgentType.SYSTEM
 
     def get_display_name(self, lang: str = "zh") -> str:
-        """按语言返回显示名称，找不到则回退到 name"""
+        """Return display name for the given language, falling back to *name* if not found."""
         return self.name_i18n.get(lang, self.name)
 
     @property
@@ -271,12 +272,14 @@ def get_profile_store(base_dir: str | Path | None = None) -> ProfileStore:
 
 class ProfileStore:
     """
-    AgentProfile 持久化存储 + 临时 (ephemeral) 内存存储。
+    AgentProfile persistent store + ephemeral in-memory store.
 
-    持久化路径: {base_dir}/profiles/{profile_id}.json
-    临时 Profile: 仅存内存 (_ephemeral dict)，不写磁盘，任务结束后自动清理。
-    线程安全：使用 RLock 保护所有缓存。
-    SYSTEM Profile 保护：禁止删除，id/type/created_by 不可变，其余均可编辑。
+    Persistence path: {base_dir}/profiles/{profile_id}.json
+    Ephemeral profiles: memory-only (_ephemeral dict), not written to disk,
+        automatically cleaned up when the task ends.
+    Thread safety: uses RLock to protect all caches.
+    SYSTEM profile protection: deletion is prohibited; id/type/created_by are
+        immutable; everything else is editable.
     """
 
     def __init__(self, base_dir: str | Path):
@@ -292,7 +295,7 @@ class ProfileStore:
         self._load_categories()
 
     def _load_all(self) -> None:
-        """从磁盘加载所有 Profile 到缓存"""
+        """Load all profiles from disk into cache."""
         loaded = 0
         for fp in self._profiles_dir.glob("*.json"):
             try:
@@ -323,7 +326,7 @@ class ProfileStore:
             return result
 
     def save(self, profile: AgentProfile) -> None:
-        """保存 Profile。ephemeral=True 的只存内存，否则写磁盘。"""
+        """Save a profile. Ephemeral profiles (ephemeral=True) are memory-only; others are written to disk."""
         with self._lock:
             if profile.ephemeral:
                 self._ephemeral[profile.id] = profile
@@ -340,7 +343,7 @@ class ProfileStore:
             self._persist(profile)
         logger.info(f"ProfileStore saved: {profile.id} ({profile.type.value})")
 
-    # 仅用于判断"用户是否实质修改了系统 Agent"的字段集（hidden/visibility 不算）
+    # Fields used to determine whether the user made substantive changes to a system agent (hidden/visibility excluded)
     _CUSTOMIZATION_FIELDS = frozenset(
         {
             "name",
@@ -367,10 +370,10 @@ class ProfileStore:
 
     def update(self, profile_id: str, updates: dict[str, Any]) -> AgentProfile:
         """
-        部分更新 Profile 字段。
+        Partially update profile fields.
 
-        对 SYSTEM Profile，过滤掉身份字段（id/type/created_by）。
-        实质修改（非 hidden）时自动标记 user_customized=True。
+        For SYSTEM profiles, identity fields (id/type/created_by) are filtered out.
+        Substantive edits (non-hidden) automatically set user_customized=True.
         """
         with self._lock:
             existing = self._cache.get(profile_id)
@@ -386,7 +389,7 @@ class ProfileStore:
                     updates = {
                         k: v for k, v in updates.items() if k not in _SYSTEM_IMMUTABLE_FIELDS
                     }
-                # 实质修改时自动标记
+                # Auto-flag substantive edits
                 if set(updates.keys()) & self._CUSTOMIZATION_FIELDS:
                     updates["user_customized"] = True
 
@@ -402,7 +405,7 @@ class ProfileStore:
     _RESERVED_DIR_NAMES = frozenset({"profiles"})
 
     def get_profile_dir(self, profile_id: str) -> Path:
-        """返回 Profile 专属数据目录 data/agents/{profile_id}/
+        """Return the profile-specific data directory data/agents/{profile_id}/
 
         Raises ValueError if profile_id collides with reserved directory names.
         """
@@ -411,14 +414,14 @@ class ProfileStore:
         return self._base_dir / profile_id
 
     def ensure_profile_dir(self, profile_id: str) -> Path:
-        """确保 Profile 专属目录存在并初始化必要子目录。"""
+        """Ensure the profile-specific directory exists and initialize required subdirectories."""
         d = self.get_profile_dir(profile_id)
         (d / "identity").mkdir(parents=True, exist_ok=True)
         (d / "memory").mkdir(parents=True, exist_ok=True)
         return d
 
     def delete(self, profile_id: str) -> bool:
-        """删除 Profile。SYSTEM 类型禁止删除。同时清理 Profile 专属目录。"""
+        """Delete a profile. SYSTEM profiles cannot be deleted. Also cleans up the profile-specific directory."""
         with self._lock:
             existing = self._cache.get(profile_id)
             if existing is None:
@@ -452,7 +455,7 @@ class ProfileStore:
             return n
 
     def remove_ephemeral(self, profile_id: str) -> bool:
-        """移除单个临时 Profile。"""
+        """Remove a single ephemeral profile."""
         with self._lock:
             removed = self._ephemeral.pop(profile_id, None)
         if removed:
@@ -461,7 +464,7 @@ class ProfileStore:
         return False
 
     def cleanup_ephemeral(self, session_prefix: str = "") -> int:
-        """按 ID 前缀批量清理临时 Profile。无前缀时清理全部。"""
+        """Batch-remove ephemeral profiles by ID prefix. Removes all if no prefix is given."""
         with self._lock:
             if not session_prefix:
                 count = len(self._ephemeral)
@@ -489,7 +492,7 @@ class ProfileStore:
         existing: AgentProfile,
         new: AgentProfile,
     ) -> None:
-        """检查对 SYSTEM Profile 的修改是否合法"""
+        """Validate that modifications to a SYSTEM profile are allowed."""
         for f in _SYSTEM_IMMUTABLE_FIELDS:
             old_val = getattr(existing, f)
             new_val = getattr(new, f)
@@ -499,7 +502,7 @@ class ProfileStore:
                     f"'{existing.id}': {old_val!r} -> {new_val!r}"
                 )
 
-    # ── 分类管理 ────────────────────────────────────────────────────────
+    # --- Category management ---------------------------------------------------------------
 
     def _load_categories(self) -> None:
         if not self._categories_file.exists():
@@ -516,7 +519,7 @@ class ProfileStore:
         atomic_json_write(self._categories_file, self._custom_categories)
 
     def list_categories(self) -> list[dict[str, Any]]:
-        """返回所有分类（内置 + 自定义），每项含 agent_count。"""
+        """Return all categories (built-in + custom), each with an agent_count."""
         with self._lock:
             all_profiles = list(self._cache.values())
 
@@ -540,11 +543,11 @@ class ProfileStore:
         return result
 
     def add_category(self, cat_id: str, label: str, color: str) -> dict[str, Any]:
-        """新增自定义分类。id 不能与已有分类重复。"""
+        """Add a custom category. The id must not duplicate an existing category."""
         with self._lock:
             existing_ids = _BUILTIN_IDS | {c["id"] for c in self._custom_categories}
             if cat_id in existing_ids:
-                raise ValueError(f"分类 ID 已存在: {cat_id}")
+                raise ValueError(f"Category ID already exists: {cat_id}")
             entry: dict[str, Any] = {"id": cat_id, "label": label, "color": color}
             self._custom_categories.append(entry)
             self._persist_categories()
@@ -552,16 +555,16 @@ class ProfileStore:
         return {**entry, "builtin": False, "agent_count": 0}
 
     def remove_category(self, cat_id: str) -> bool:
-        """删除自定义分类。内置分类或有 Agent 的分类拒绝删除。"""
+        """Delete a custom category. Built-in categories or those with agents are refused."""
         if cat_id in _BUILTIN_IDS:
-            raise PermissionError(f"不能删除内置分类: {cat_id}")
+            raise PermissionError(f"Cannot delete built-in category: {cat_id}")
         with self._lock:
             agent_count = sum(
                 1 for p in self._cache.values() if p.category == cat_id and not p.hidden
             )
             if agent_count > 0:
                 raise ValueError(
-                    f"分类 '{cat_id}' 下还有 {agent_count} 个 Agent，请先移除或更换分类"
+                    f"Category '{cat_id}' still has {agent_count} agent(s); please remove or reassign them first"
                 )
             before = len(self._custom_categories)
             self._custom_categories = [c for c in self._custom_categories if c["id"] != cat_id]

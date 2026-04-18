@@ -272,7 +272,7 @@ class SkillParser:
 
     def _build_metadata(self, data: dict, path: Path, body: str = "") -> SkillMetadata:
         """Build metadata from YAML data."""
-        # 必需字段
+        # Required fields
         name = data.get("name")
         description = data.get("description", "")
 
@@ -286,22 +286,22 @@ class SkillParser:
         if not description:
             raise ValueError(f"Missing required 'description' field in {path}")
 
-        # 处理 allowed-tools (连字符转下划线)
+        # Process allowed-tools (hyphens to underscores)
         allowed_tools = data.get("allowed-tools", "")
         if isinstance(allowed_tools, str):
             allowed_tools = allowed_tools.split() if allowed_tools else []
 
-        # 系统技能字段
+        # System skill fields
         system = data.get("system", False)
         handler = data.get("handler")
-        tool_name = data.get("tool-name") or data.get("tool_name")  # 支持两种格式
+        tool_name = data.get("tool-name") or data.get("tool_name")  # Support both formats
         category = data.get("category")
 
-        # 如果是系统技能但没有指定 tool_name，从 name 生成
+        # If system skill but no tool_name specified, generate from name
         if system and not tool_name:
             tool_name = name.replace("-", "_")
 
-        # 配置 schema
+        # Config schema
         config_raw = data.get("config", [])
         config: list[dict] = []
         if isinstance(config_raw, list):
@@ -347,7 +347,7 @@ class SkillParser:
                 if isinstance(env_val, list):
                     required_env = [str(e) for e in env_val]
 
-        # F1: 新字段解析
+        # F1: Parse new fields
         when_to_use = str(data.get("when-to-use", "") or "")
         keywords_raw = data.get("keywords", [])
         if isinstance(keywords_raw, list):

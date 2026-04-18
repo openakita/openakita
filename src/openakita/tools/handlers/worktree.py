@@ -1,8 +1,8 @@
 """
-Worktree 工具处理器
+Worktree tool handler
 
-暴露 utils/worktree.py 的功能为 Agent 工具。
-参考 CC EnterWorktree / ExitWorktree。
+Exposes utils/worktree.py functionality as Agent tools.
+Modeled after CC EnterWorktree / ExitWorktree.
 """
 
 import logging

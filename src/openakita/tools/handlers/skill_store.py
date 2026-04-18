@@ -48,7 +48,7 @@ class SkillStoreHandler:
                 return f"Unknown tool: {tool_name}"
         except Exception as e:
             logger.error(f"SkillStoreHandler error ({tool_name}): {e}", exc_info=True)
-            return f"❌ 操作失败: {e}"
+            return f"Operation failed: {e}"
 
     async def _search(self, params: dict[str, Any]) -> str:
         client = self._get_client()
@@ -62,11 +62,11 @@ class SkillStoreHandler:
             )
         except Exception as e:
             return (
-                f"❌ 无法连接到远程 Skill Store: {e}\n\n"
-                f"💡 远程市场暂不可用，但你仍可以：\n"
-                f"- 使用 `list_skills` 查看已安装的本地技能\n"
-                f"- 使用 `install_skill` 从 GitHub 直接安装技能\n"
-                f"- 在 Setup Center「技能管理 → 浏览市场」从 skills.sh 搜索安装"
+                f"Cannot connect to remote Skill Store: {e}\n\n"
+                f"The remote marketplace is temporarily unavailable, but you can still:\n"
+                f"- Use `list_skills` to view locally installed skills\n"
+                f"- Use `install_skill` to install directly from GitHub\n"
+                f"- Go to Setup Center > Skill Management > Browse Marketplace to search and install from skills.sh"
             )
 
         skills = result.get("skills", result.get("data", []))
@@ -75,12 +75,12 @@ class SkillStoreHandler:
         if not skills:
             query = params.get("query", "")
             if query:
-                return f"未找到匹配「{query}」的 Skill。"
-            return "Skill Store 暂无可用 Skill。"
+                return f"No skills found matching \"{query}\"."
+            return "The Skill Store has no skills available yet."
 
         trust_icons = {"official": "🏛️", "certified": "✅", "community": "🌐"}
 
-        lines = [f"🔍 搜索结果（共 {total} 个）：\n"]
+        lines = [f"Search results ({total} total):\n"]
         for s in skills[:10]:
             trust = s.get("trustLevel", "community")
             icon = trust_icons.get(trust, "")
@@ -95,15 +95,15 @@ class SkillStoreHandler:
             )
 
         if total > 10:
-            lines.append(f"\n…还有 {total - 10} 个结果，使用 page 参数翻页查看。")
+            lines.append(f"\n...and {total - 10} more results. Use the page parameter to navigate.")
 
-        lines.append("\n使用 `install_store_skill` 安装感兴趣的 Skill。")
+        lines.append("\nUse `install_store_skill` to install a skill you are interested in.")
         return "\n".join(lines)
 
     async def _install(self, params: dict[str, Any]) -> str:
         skill_id = params.get("skill_id", "")
         if not skill_id:
-            return "❌ 需要指定 skill_id"
+            return "skill_id is required"
 
         client = self._get_client()
 
@@ -111,26 +111,26 @@ class SkillStoreHandler:
             detail = await client.get_detail(skill_id)
         except Exception as e:
             return (
-                f"❌ 无法连接远程 Skill Store: {e}\n\n"
-                f"💡 如果你知道 Skill 的 GitHub 地址，可以直接使用 `install_skill` 工具安装，\n"
-                f"例如：`install_skill` name=my-skill source=owner/repo"
+                f"Cannot connect to remote Skill Store: {e}\n\n"
+                f"If you know the skill's GitHub URL, you can install it directly using the `install_skill` tool,\n"
+                f"e.g.: `install_skill` name=my-skill source=owner/repo"
             )
 
         skill = detail.get("skill", detail)
         install_url = skill.get("installUrl", "")
         if not install_url:
-            return f"❌ Skill `{skill_id}` 没有安装地址，无法自动安装。"
+            return f"Skill `{skill_id}` has no install URL; cannot install automatically."
 
         try:
             skill_dir = await client.install_skill(install_url, skill_id=skill_id)
         except Exception as e:
             return (
-                f"❌ 安装失败: {e}\n\n"
-                f"💡 你也可以使用 `install_skill` 工具直接从 GitHub 安装：\n"
+                f"Installation failed: {e}\n\n"
+                f"You can also install directly from GitHub using the `install_skill` tool:\n"
                 f"install_url: {install_url}"
             )
 
-        # Store 安装完成后：统一走 Agent.propagate_skill_change，不再自行 rescan / rebuild。
+        # After Store installation: delegate to Agent.propagate_skill_change instead of manual rescan / rebuild.
         try:
             from ...skills.events import SkillEvent
 
@@ -141,23 +141,23 @@ class SkillStoreHandler:
 
         skill_name = skill.get("name", skill_id)
         return (
-            f"✅ Skill 从 Store 安装成功！\n\n"
-            f"📦 名称: {skill_name}\n"
-            f"📂 路径: {skill_dir}\n"
-            f"🏷️ 信任等级: {skill.get('trustLevel', 'community')}\n\n"
-            f"Skill 已安装到本地并自动加载。"
+            f"Skill installed from Store successfully!\n\n"
+            f"Name: {skill_name}\n"
+            f"Path: {skill_dir}\n"
+            f"Trust level: {skill.get('trustLevel', 'community')}\n\n"
+            f"The skill has been installed locally and loaded automatically."
         )
 
     async def _get_detail(self, params: dict[str, Any]) -> str:
         skill_id = params.get("skill_id", "")
         if not skill_id:
-            return "❌ 需要指定 skill_id"
+            return "skill_id is required"
 
         client = self._get_client()
         try:
             detail = await client.get_detail(skill_id)
         except Exception as e:
-            return f"❌ 获取详情失败: {e}"
+            return f"Failed to fetch details: {e}"
 
         s = detail.get("skill", detail)
         trust_icons = {
@@ -167,43 +167,43 @@ class SkillStoreHandler:
         }
 
         lines = [
-            "📋 Skill 详情\n",
-            f"**名称**: {s.get('name', '?')}",
+            "Skill Details\n",
+            f"**Name**: {s.get('name', '?')}",
             f"**ID**: {s.get('id', '?')}",
-            f"**版本**: {s.get('version', '?')}",
-            f"**作者**: {s.get('authorName', '?')}",
-            f"**信任等级**: {trust_icons.get(s.get('trustLevel', ''), s.get('trustLevel', '?'))}",
-            f"**分类**: {s.get('category', '无')}",
-            f"**安装量**: {s.get('installCount', 0)}",
+            f"**Version**: {s.get('version', '?')}",
+            f"**Author**: {s.get('authorName', '?')}",
+            f"**Trust Level**: {trust_icons.get(s.get('trustLevel', ''), s.get('trustLevel', '?'))}",
+            f"**Category**: {s.get('category', 'N/A')}",
+            f"**Installs**: {s.get('installCount', 0)}",
         ]
 
         if s.get("avgRating"):
-            lines.append(f"**评分**: ⭐{s['avgRating']:.1f} ({s.get('ratingCount', 0)} 人评价)")
+            lines.append(f"**Rating**: {s['avgRating']:.1f} ({s.get('ratingCount', 0)} ratings)")
         if s.get("description"):
-            lines.append(f"\n**描述**: {s['description']}")
+            lines.append(f"\n**Description**: {s['description']}")
         if s.get("sourceRepo"):
-            lines.append(f"**源码**: https://github.com/{s['sourceRepo']}")
+            lines.append(f"**Source**: https://github.com/{s['sourceRepo']}")
         if s.get("githubStars"):
             lines.append(f"**GitHub Stars**: ★{s['githubStars']}")
 
-        lines.append("\n使用 `install_store_skill` 安装此 Skill。")
+        lines.append("\nUse `install_store_skill` to install this skill.")
         return "\n".join(lines)
 
     async def _submit_repo(self, params: dict[str, Any]) -> str:
         repo_url = params.get("repo_url", "")
         if not repo_url:
-            return "❌ 需要指定 repo_url"
+            return "repo_url is required"
 
         client = self._get_client()
         try:
             result = await client.submit_repo(repo_url)
         except Exception as e:
-            return f"❌ 提交失败: {e}"
+            return f"Submission failed: {e}"
 
         return (
-            f"✅ 仓库已提交！\n\n"
-            f"📦 {result.get('message', '处理中')}\n"
-            f"平台将扫描仓库中的 SKILL.md 文件并创建 Skill 条目。"
+            f"Repository submitted!\n\n"
+            f"{result.get('message', 'Processing')}\n"
+            f"The platform will scan the SKILL.md file in the repository and create a Skill entry."
         )
 
 

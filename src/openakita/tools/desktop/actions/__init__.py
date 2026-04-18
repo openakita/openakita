@@ -1,7 +1,7 @@
 """
-Windows 桌面自动化 - 操作模块
+Windows desktop automation - actions module
 
-提供鼠标和键盘操作功能
+Provides mouse and keyboard action functionality
 """
 
 from .keyboard import KeyboardController, get_keyboard

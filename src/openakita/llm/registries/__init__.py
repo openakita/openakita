@@ -1,21 +1,26 @@
 """
-服务商注册表
+Provider Registry
 
-用于从各个 LLM 服务商获取模型列表和能力信息。
+Retrieves model lists and capability info from various LLM providers.
 
 ┌──────────────────────────────────────────────────────────────┐
-│  数据来源:                                                   │
-│  1. 内置 providers.json (同目录, 随版本更新)                 │
-│  2. 工作区 data/custom_providers.json (用户自定义, 可选)     │
+│  Data sources:                                               │
+│  1. Built-in providers.json (same directory, shipped with    │
+│     each release)                                            │
+│  2. Workspace data/custom_providers.json (user-defined,      │
+│     optional)                                                │
 │                                                              │
-│  合并规则: 内置列表为基础, 工作区文件按 slug 覆盖或追加。    │
-│  用户可通过 AI 工具 (manage_provider action) 或手动编辑       │
-│  data/custom_providers.json 来增删改服务商。                 │
+│  Merge rule: built-in list is the base; workspace entries    │
+│  override or append by slug. Users can add/remove/update     │
+│  providers via AI tools (manage_provider action) or by       │
+│  editing data/custom_providers.json directly.                │
 │                                                              │
-│  新增内置服务商时，只需：                                     │
-│  1. 编写新的 XxxRegistry 类 (继承 ProviderRegistry)          │
-│  2. 在 providers.json 中添加一条，registry_class 对应类名     │
-│  3. 前端会自动同步 (构建时 vite 直接 import JSON)            │
+│  To add a new built-in provider:                             │
+│  1. Write a new XxxRegistry class (subclass ProviderRegistry)│
+│  2. Add an entry in providers.json with registry_class set   │
+│     to the class name                                        │
+│  3. Frontend syncs automatically (Vite imports JSON at build │
+│     time)                                                    │
 └──────────────────────────────────────────────────────────────┘
 """
 
@@ -42,11 +47,11 @@ __all__ = [
 
 _logger = logging.getLogger(__name__)
 
-# ── 从 providers.json 加载内置服务商声明 ──
+# ── Load built-in provider declarations from providers.json ──
 _PROVIDERS_JSON = Path(__file__).parent / "providers.json"
 _BUILTIN_ENTRIES: list[dict] = json.loads(_PROVIDERS_JSON.read_text(encoding="utf-8"))
 
-# ── registry_class -> 模块映射 ──
+# ── registry_class -> module mapping ──
 _CLASS_MODULE_MAP: dict[str, str] = {
     "AnthropicRegistry": ".anthropic",
     "OpenAIRegistry": ".openai",
@@ -67,7 +72,7 @@ _CLASS_MODULE_MAP: dict[str, str] = {
 
 
 def _entry_to_provider_info(entry: dict) -> ProviderInfo:
-    """将 JSON entry 转换为 ProviderInfo"""
+    """Convert a JSON entry to ProviderInfo."""
     return ProviderInfo(
         name=entry["name"],
         slug=entry["slug"],
@@ -84,18 +89,18 @@ def _entry_to_provider_info(entry: dict) -> ProviderInfo:
     )
 
 
-# ── 工作区自定义服务商管理 ──
+# ── Workspace custom provider management ──
 
 
 def _get_custom_providers_path() -> Path:
-    """获取工作区自定义服务商文件路径 (与 llm_endpoints.json 同级)"""
+    """Return the path to the workspace custom providers file (sibling of llm_endpoints.json)."""
     from ..config import get_default_config_path
 
     return get_default_config_path().parent / "custom_providers.json"
 
 
 def load_custom_providers() -> list[dict]:
-    """从工作区加载自定义服务商列表"""
+    """Load custom provider list from workspace."""
     path = _get_custom_providers_path()
     if not path.exists():
         return []
@@ -108,7 +113,7 @@ def load_custom_providers() -> list[dict]:
 
 
 def save_custom_providers(entries: list[dict]) -> None:
-    """保存自定义服务商列表到工作区"""
+    """Save custom provider list to workspace."""
     path = _get_custom_providers_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -119,9 +124,9 @@ def save_custom_providers(entries: list[dict]) -> None:
 
 
 def _merge_provider_entries() -> list[dict]:
-    """合并内置 + 工作区自定义服务商。
+    """Merge built-in and workspace custom providers.
 
-    自定义条目按 slug 覆盖内置条目；新 slug 追加到末尾。
+    Custom entries override built-in entries by slug; new slugs are appended.
     """
     merged: dict[str, dict] = {}
     for entry in _BUILTIN_ENTRIES:
@@ -141,7 +146,7 @@ def _merge_provider_entries() -> list[dict]:
 
 
 def _build_registry_for_entry(entry: dict) -> ProviderRegistry | None:
-    """为单个 provider entry 构建 registry 实例。"""
+    """Build a registry instance for a single provider entry."""
     cls_name = entry.get("registry_class", "")
     if not cls_name:
         api_type = entry.get("api_type", "openai")
@@ -150,8 +155,8 @@ def _build_registry_for_entry(entry: dict) -> ProviderRegistry | None:
     mod_name = _CLASS_MODULE_MAP.get(cls_name)
     if mod_name is None:
         _logger.warning(
-            f"registry_class '{cls_name}' 未在 _CLASS_MODULE_MAP 中注册，"
-            f"跳过服务商 '{entry.get('name', '?')}'"
+            f"registry_class '{cls_name}' not registered in _CLASS_MODULE_MAP, "
+            f"skipping provider '{entry.get('name', '?')}'"
         )
         return None
     try:
@@ -159,8 +164,8 @@ def _build_registry_for_entry(entry: dict) -> ProviderRegistry | None:
         cls = getattr(mod, cls_name)
     except (ImportError, AttributeError) as e:
         _logger.warning(
-            f"Registry '{cls_name}' (module={mod_name}) 加载失败，"
-            f"跳过服务商 '{entry.get('name', '?')}': {e}"
+            f"Failed to load registry '{cls_name}' (module={mod_name}), "
+            f"skipping provider '{entry.get('name', '?')}': {e}"
         )
         return None
 
@@ -170,9 +175,9 @@ def _build_registry_for_entry(entry: dict) -> ProviderRegistry | None:
 
 
 def _build_registries() -> list[ProviderRegistry]:
-    """根据合并后的服务商列表构建全部注册表实例。
+    """Build all registry instances from the merged provider list.
 
-    单个 registry 加载失败不影响其他 provider（仅记录警告并跳过）。
+    A failure to load one registry does not affect other providers (logged as a warning and skipped).
     """
     registries: list[ProviderRegistry] = []
     for entry in _merge_provider_entries():
@@ -188,7 +193,7 @@ REGISTRY_BY_SLUG = {r.info.slug: r for r in ALL_REGISTRIES}
 
 
 def reload_registries() -> int:
-    """重新加载服务商注册表（合并内置 + 自定义 + 插件），返回加载数量。"""
+    """Reload provider registries (merge built-in + custom + plugins), return the count."""
     global ALL_REGISTRIES, REGISTRY_BY_SLUG
     ALL_REGISTRIES = _build_registries()
 
@@ -207,14 +212,14 @@ def reload_registries() -> int:
 
 
 def get_registry(slug: str) -> ProviderRegistry:
-    """根据 slug 获取注册表"""
+    """Get a registry by slug."""
     if slug not in REGISTRY_BY_SLUG:
         raise ValueError(f"Unknown provider: {slug}")
     return REGISTRY_BY_SLUG[slug]
 
 
 def list_providers() -> list[ProviderInfo]:
-    """列出所有支持的服务商"""
+    """List all supported providers."""
     return [r.info for r in ALL_REGISTRIES]
 
 

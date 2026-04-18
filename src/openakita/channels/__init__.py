@@ -1,11 +1,11 @@
 """
-消息通道模块
+Messaging channel module
 
-提供多平台 IM 集成能力:
-- 统一消息类型
-- 通道适配器
-- 消息网关
-- 媒体处理
+Provides multi-platform IM integration:
+- Unified message types
+- Channel adapters
+- Message gateway
+- Media processing
 """
 
 from .base import ChannelAdapter
@@ -19,14 +19,14 @@ from .types import (
 )
 
 __all__ = [
-    # 类型
+    # Types
     "MessageType",
     "UnifiedMessage",
     "MessageContent",
     "MediaFile",
     "OutgoingMessage",
-    # 适配器
+    # Adapters
     "ChannelAdapter",
-    # 网关
+    # Gateway
     "MessageGateway",
 ]

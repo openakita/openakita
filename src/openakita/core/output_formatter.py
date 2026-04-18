@@ -1,10 +1,10 @@
 """
-多格式输出 (Headless 模式)
+Multi-format output (Headless mode)
 
-参考 Claude Code 的 output format 设计:
-- text: 默认交互式输出
-- json: 完整对话 JSON
-- stream-json: NDJSON 流式输出
+Modeled after Claude Code's output format design:
+- text: Default interactive output
+- json: Full conversation JSON
+- stream-json: NDJSON streaming output
 """
 
 from __future__ import annotations
@@ -16,31 +16,31 @@ from typing import TextIO
 
 
 class OutputFormatter(ABC):
-    """输出格式化器基类。"""
+    """Base class for output formatters."""
 
     @abstractmethod
     def format_message(self, role: str, content: str, **kwargs) -> str:
-        """格式化单条消息。"""
+        """Format a single message."""
         pass
 
     @abstractmethod
     def format_tool_use(self, tool_name: str, tool_input: dict) -> str:
-        """格式化工具调用。"""
+        """Format a tool invocation."""
         pass
 
     @abstractmethod
     def format_tool_result(self, tool_name: str, result: str, is_error: bool = False) -> str:
-        """格式化工具结果。"""
+        """Format a tool result."""
         pass
 
     @abstractmethod
     def format_final(self, conversation: list[dict]) -> str:
-        """格式化最终输出。"""
+        """Format the final output."""
         pass
 
 
 class TextFormatter(OutputFormatter):
-    """文本格式化器（默认）。"""
+    """Text formatter (default)."""
 
     def format_message(self, role: str, content: str, **kwargs) -> str:
         prefix = {"assistant": "🤖", "user": "👤", "system": "⚙️"}.get(role, "📝")
@@ -60,7 +60,7 @@ class TextFormatter(OutputFormatter):
 
 
 class JSONFormatter(OutputFormatter):
-    """JSON 格式化器（完整对话）。"""
+    """JSON formatter (full conversation)."""
 
     def format_message(self, role: str, content: str, **kwargs) -> str:
         return ""  # Suppress intermediate output
@@ -76,7 +76,7 @@ class JSONFormatter(OutputFormatter):
 
 
 class StreamJSONFormatter(OutputFormatter):
-    """NDJSON 流式格式化器。"""
+    """NDJSON streaming formatter."""
 
     def __init__(self, stream: TextIO = sys.stdout) -> None:
         self._stream = stream
@@ -119,7 +119,7 @@ class StreamJSONFormatter(OutputFormatter):
 
 
 def create_formatter(format_type: str = "text") -> OutputFormatter:
-    """创建指定类型的格式化器。
+    """Create a formatter of the specified type.
 
     Args:
         format_type: 'text' | 'json' | 'stream-json'

@@ -1,11 +1,11 @@
 """
-技能系统
+Skill System
 
-遵循 Agent Skills 规范 (agentskills.io/specification)
-支持渐进式披露:
-- Level 1: 技能清单 (name + description) - 系统提示
-- Level 2: 完整指令 (SKILL.md body) - 激活时
-- Level 3: 资源文件 - 按需加载
+Follows the Agent Skills specification (agentskills.io/specification)
+Supports progressive disclosure:
+- Level 1: Skill manifest (name + description) - system prompt
+- Level 2: Full instructions (SKILL.md body) - on activation
+- Level 3: Resource files - loaded on demand
 """
 
 from .activation import SkillActivationManager

@@ -1,7 +1,8 @@
 """
-LLM 适配层
+LLM Adapter Layer
 
-为现有的 Brain 类提供向后兼容的接口，同时使用新的 LLMClient。
+Provides a backward-compatible interface for the existing Brain class
+while using the new LLMClient internally.
 """
 
 import logging
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class LegacyResponse:
-    """兼容旧版 Brain.Response 的响应格式"""
+    """Response format compatible with the legacy Brain.Response"""
 
     content: str
     tool_calls: list[dict] = field(default_factory=list)
@@ -34,7 +35,7 @@ class LegacyResponse:
 
 @dataclass
 class LegacyContext:
-    """兼容旧版 Brain.Context 的上下文格式"""
+    """Context format compatible with the legacy Brain.Context"""
 
     messages: list[dict] = field(default_factory=list)
     system: str = ""
@@ -43,9 +44,10 @@ class LegacyContext:
 
 class LLMAdapter:
     """
-    LLM 适配器
+    LLM Adapter
 
-    提供与旧版 Brain 类兼容的接口，内部使用 LLMClient。
+    Provides an interface compatible with the legacy Brain class,
+    using LLMClient internally.
 
     Example:
         adapter = LLMAdapter()
@@ -58,10 +60,10 @@ class LLMAdapter:
 
     def __init__(self, client: LLMClient | None = None):
         """
-        初始化适配器
+        Initialize the adapter.
 
         Args:
-            client: LLMClient 实例，默认使用全局单例
+            client: LLMClient instance; defaults to the global singleton
         """
         self._client = client or get_default_client()
 
@@ -75,34 +77,34 @@ class LLMAdapter:
         max_tokens: int = 4096,
     ) -> LegacyResponse:
         """
-        兼容旧版 Brain.think 的接口
+        Interface compatible with the legacy Brain.think.
 
         Args:
-            prompt: 用户输入
-            context: 对话上下文（旧格式）
-            system: 系统提示词
-            tools: 可用工具列表（旧格式）
-            enable_thinking: 是否启用思考模式
-            max_tokens: 最大输出 tokens
+            prompt: User input
+            context: Conversation context (legacy format)
+            system: System prompt
+            tools: Available tools list (legacy format)
+            enable_thinking: Whether to enable thinking mode
+            max_tokens: Maximum output tokens
 
         Returns:
-            兼容旧版的响应对象
+            A response object in the legacy format
         """
-        # 转换消息格式
+        # Convert message format
         messages = self._convert_legacy_messages(context)
         messages.append(Message(role="user", content=prompt))
 
-        # 确定系统提示词
+        # Determine system prompt
         sys_prompt = system or (context.system if context else "")
 
-        # 转换工具格式
+        # Convert tool format
         converted_tools = None
         if tools:
             converted_tools = self._convert_legacy_tools(tools)
         elif context and context.tools:
             converted_tools = self._convert_legacy_tools(context.tools)
 
-        # 调用新的 LLMClient
+        # Call the new LLMClient
         try:
             response = await self._client.chat(
                 messages=messages,
@@ -119,7 +121,7 @@ class LLMAdapter:
             raise
 
     def _convert_legacy_messages(self, context: LegacyContext | None) -> list[Message]:
-        """将旧格式消息转换为新格式"""
+        """Convert legacy-format messages to the new format"""
         if not context or not context.messages:
             return []
 
@@ -131,7 +133,7 @@ class LLMAdapter:
             if isinstance(content, str):
                 messages.append(Message(role=role, content=content))
             elif isinstance(content, list):
-                # 处理多模态内容
+                # Handle multimodal content
                 blocks = []
                 for part in content:
                     if isinstance(part, dict):
@@ -174,7 +176,7 @@ class LLMAdapter:
         return messages
 
     def _convert_legacy_tools(self, tools: list[dict]) -> list[Tool]:
-        """将旧格式工具转换为新格式"""
+        """Convert legacy-format tools to the new format"""
         converted = []
         for tool in tools:
             converted.append(
@@ -187,11 +189,11 @@ class LLMAdapter:
         return converted
 
     def _convert_to_legacy_response(self, response: LLMResponse) -> LegacyResponse:
-        """将新格式响应转换为旧格式"""
-        # 提取文本内容
+        """Convert new-format response to legacy format"""
+        # Extract text content
         content = response.text
 
-        # 提取工具调用
+        # Extract tool calls
         tool_calls = []
         for tc in response.tool_calls:
             tool_calls.append(
@@ -215,11 +217,11 @@ class LLMAdapter:
 
     @property
     def client(self) -> LLMClient:
-        """获取底层的 LLMClient"""
+        """Return the underlying LLMClient"""
         return self._client
 
 
-# 便捷函数
+# Convenience function
 async def think(
     prompt: str,
     context: LegacyContext | None = None,
@@ -228,9 +230,9 @@ async def think(
     **kwargs,
 ) -> LegacyResponse:
     """
-    便捷函数：使用默认适配器思考
+    Convenience function: think using the default adapter.
 
-    这是对旧版 Brain.think 的直接替代。
+    This is a direct replacement for the legacy Brain.think.
     """
     adapter = LLMAdapter()
     return await adapter.think(prompt, context, system, tools, **kwargs)

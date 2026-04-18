@@ -1,33 +1,33 @@
 """
-多轮对话测试用例 (35个)
+Multi-turn conversation test cases (35)
 """
 
 from openakita.testing.runner import TestCase
 
 MULTITURN_TESTS = [
-    # 上下文记忆
+    # Context memory
     TestCase(
         id="qa_context_001",
         category="qa",
         subcategory="context",
-        description="记住名字",
+        description="Remember name",
         input=[
-            {"role": "user", "content": "我叫小明"},
-            {"role": "assistant", "content": "你好小明！"},
-            {"role": "user", "content": "我叫什么名字？"},
+            {"role": "user", "content": "My name is Xiao Ming"},
+            {"role": "assistant", "content": "Hello Xiao Ming!"},
+            {"role": "user", "content": "What is my name?"},
         ],
-        expected="contains:小明",
+        expected="contains:Xiao Ming",
         tags=["context", "memory"],
     ),
     TestCase(
         id="qa_context_002",
         category="qa",
         subcategory="context",
-        description="记住数字",
+        description="Remember number",
         input=[
-            {"role": "user", "content": "记住这个数字：42"},
-            {"role": "assistant", "content": "好的，我记住了42。"},
-            {"role": "user", "content": "刚才那个数字乘以2是多少？"},
+            {"role": "user", "content": "Remember this number: 42"},
+            {"role": "assistant", "content": "Okay, I have remembered 42."},
+            {"role": "user", "content": "What is that number multiplied by 2?"},
         ],
         expected="contains:84",
         tags=["context", "memory", "math"],
@@ -36,25 +36,25 @@ MULTITURN_TESTS = [
         id="qa_context_003",
         category="qa",
         subcategory="context",
-        description="代词消解",
+        description="Coreference resolution",
         input=[
-            {"role": "user", "content": "Python是一种编程语言"},
-            {"role": "assistant", "content": "是的，Python是一种流行的编程语言。"},
-            {"role": "user", "content": "它是什么时候发明的？"},
+            {"role": "user", "content": "Python is a programming language"},
+            {"role": "assistant", "content": "Yes, Python is a popular programming language."},
+            {"role": "user", "content": "When was it invented?"},
         ],
         expected="contains:1991",
         tags=["context", "coreference"],
     ),
-    # 话题追踪
+    # Topic tracking
     TestCase(
         id="qa_topic_001",
         category="qa",
         subcategory="topic",
-        description="话题延续",
+        description="Topic continuation",
         input=[
-            {"role": "user", "content": "给我讲讲机器学习"},
-            {"role": "assistant", "content": "机器学习是人工智能的一个分支..."},
-            {"role": "user", "content": "它和深度学习有什么区别？"},
+            {"role": "user", "content": "Tell me about machine learning"},
+            {"role": "assistant", "content": "Machine learning is a branch of artificial intelligence..."},
+            {"role": "user", "content": "What is the difference between it and deep learning?"},
         ],
         expected="length>=50",
         tags=["topic", "ml"],
@@ -63,25 +63,25 @@ MULTITURN_TESTS = [
         id="qa_topic_002",
         category="qa",
         subcategory="topic",
-        description="话题切换",
+        description="Topic switch",
         input=[
-            {"role": "user", "content": "今天天气怎么样？"},
-            {"role": "assistant", "content": "抱歉，我无法获取实时天气信息。"},
-            {"role": "user", "content": "那帮我写一段Python代码打印hello"},
+            {"role": "user", "content": "How is the weather today?"},
+            {"role": "assistant", "content": "Sorry, I cannot access real-time weather information."},
+            {"role": "user", "content": "Then help me write some Python code to print hello"},
         ],
         expected="contains:print",
         tags=["topic", "switch"],
     ),
-    # 指令追踪
+    # Instruction tracking
     TestCase(
         id="qa_instruction_001",
         category="qa",
         subcategory="instruction",
-        description="持续遵循指令",
+        description="Continue following instructions",
         input=[
-            {"role": "user", "content": "接下来用英文回答我的问题"},
+            {"role": "user", "content": "From now on, answer my questions in English"},
             {"role": "assistant", "content": "Sure, I will answer in English."},
-            {"role": "user", "content": "你好"},
+            {"role": "user", "content": "Hello"},
         ],
         expected="regex:(Hello|Hi|Greetings)",
         tags=["instruction", "follow"],
@@ -90,25 +90,25 @@ MULTITURN_TESTS = [
         id="qa_instruction_002",
         category="qa",
         subcategory="instruction",
-        description="格式保持",
+        description="Format persistence",
         input=[
-            {"role": "user", "content": "用JSON格式回答问题"},
-            {"role": "assistant", "content": "好的，我会用JSON格式回答。"},
-            {"role": "user", "content": "1+1等于几？"},
+            {"role": "user", "content": "Answer questions in JSON format"},
+            {"role": "assistant", "content": "Okay, I will answer in JSON format."},
+            {"role": "user", "content": "What is 1+1?"},
         ],
         expected="contains:{",
         tags=["instruction", "format"],
     ),
-    # 纠错与澄清
+    # Correction and clarification
     TestCase(
         id="qa_correct_001",
         category="qa",
         subcategory="correction",
-        description="接受纠正",
+        description="Accept correction",
         input=[
-            {"role": "user", "content": "Python是谁发明的？"},
-            {"role": "assistant", "content": "Python是由Guido van Rossum发明的。"},
-            {"role": "user", "content": "不对，我问的是谁发明的，不是什么时候"},
+            {"role": "user", "content": "Who invented Python?"},
+            {"role": "assistant", "content": "Python was invented by Guido van Rossum."},
+            {"role": "user", "content": "No, I asked who invented it, not when"},
         ],
         expected="contains:Guido",
         tags=["correction"],
@@ -117,11 +117,11 @@ MULTITURN_TESTS = [
         id="qa_correct_002",
         category="qa",
         subcategory="clarification",
-        description="请求澄清",
+        description="Request clarification",
         input=[
-            {"role": "user", "content": "帮我处理那个文件"},
+            {"role": "user", "content": "Help me process that file"},
         ],
-        expected="contains:哪个",
+        expected="contains:which",
         tags=["clarification"],
     ),
 ]

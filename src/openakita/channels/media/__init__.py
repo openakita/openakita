@@ -1,10 +1,10 @@
 """
-媒体处理模块
+Media processing module
 
-提供媒体文件处理能力:
-- 语音转文字
-- 图片理解
-- 文件内容提取
+Provides media file processing capabilities:
+- Speech-to-text
+- Image understanding
+- File content extraction
 """
 
 from .handler import MediaHandler

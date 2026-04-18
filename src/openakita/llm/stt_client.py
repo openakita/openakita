@@ -1,19 +1,19 @@
 """
-在线语音识别 (STT) 客户端
+Online speech-to-text (STT) client.
 
-支持两种 API 协议:
+Supports two API protocols:
 1. OpenAI /audio/transcriptions (Whisper API):
    - OpenAI Whisper API (gpt-4o-transcribe, whisper-1)
-   - Groq Whisper 等兼容服务
+   - Groq Whisper and compatible services
 2. DashScope /chat/completions (Qwen-ASR):
-   - qwen3-asr-flash（文件识别，≤5分钟）
-   - 通过 chat/completions 端点，音频以 base64 编码传入
+   - qwen3-asr-flash (file recognition, up to 5 minutes)
+   - Uses the chat/completions endpoint with base64-encoded audio
 
-特性:
-- 多端点 failover（按 priority 排序）
-- 自动检测 provider 并选择合适的 API 协议
-- 重试和超时
-- 支持格式: mp3, mp4, wav, webm, m4a, ogg, flac
+Features:
+- Multi-endpoint failover (sorted by priority)
+- Automatic provider detection and protocol selection
+- Retry and timeout handling
+- Supported formats: mp3, mp4, wav, webm, m4a, ogg, flac
 """
 
 import asyncio
@@ -43,7 +43,7 @@ _AUDIO_MIME_MAP = {
 
 
 def _is_dashscope_asr(endpoint: EndpointConfig) -> bool:
-    """判断端点是否需要走 DashScope chat/completions ASR 协议"""
+    """Determine whether the endpoint should use the DashScope chat/completions ASR protocol."""
     provider = (endpoint.provider or "").lower()
     model = (endpoint.model or "").lower()
     if provider in _DASHSCOPE_ASR_PROVIDERS and "asr" in model:
@@ -52,7 +52,7 @@ def _is_dashscope_asr(endpoint: EndpointConfig) -> bool:
 
 
 class STTClient:
-    """在线语音识别客户端"""
+    """Online speech-to-text client."""
 
     def __init__(self, endpoints: list[EndpointConfig] | None = None):
         self._endpoints = sorted(endpoints or [], key=lambda x: x.priority)
@@ -62,7 +62,7 @@ class STTClient:
 
     @property
     def is_available(self) -> bool:
-        """检查是否有可用的 STT 端点"""
+        """Check whether any STT endpoint is available."""
         return bool(self._endpoints)
 
     @property
@@ -70,7 +70,7 @@ class STTClient:
         return self._endpoints
 
     def reload(self, endpoints: list[EndpointConfig] | None = None) -> None:
-        """重载端点配置"""
+        """Reload endpoint configuration."""
         self._endpoints = sorted(endpoints or [], key=lambda x: x.priority)
         if self._endpoints:
             names = [ep.name for ep in self._endpoints]
@@ -82,15 +82,15 @@ class STTClient:
         language: str | None = None,
         timeout: int = 60,
     ) -> str | None:
-        """语音转文字
+        """Transcribe speech to text.
 
         Args:
-            audio_path: 音频文件路径
-            language: 语言代码（如 "zh", "en"），可选
-            timeout: 请求超时时间（秒）
+            audio_path: Path to the audio file.
+            language: Language code (e.g., "zh", "en"), optional.
+            timeout: Request timeout in seconds.
 
         Returns:
-            转写文本，失败返回 None
+            Transcribed text, or None on failure.
         """
         if not self._endpoints:
             logger.warning("[STT] No STT endpoints configured")
@@ -126,7 +126,7 @@ class STTClient:
         language: str | None,
         timeout: int,
     ) -> str | None:
-        """调用单个 STT 端点，自动选择协议"""
+        """Call a single STT endpoint, auto-selecting the protocol."""
         if _is_dashscope_asr(endpoint):
             return await self._call_dashscope_asr(endpoint, audio_file, language, timeout)
         return await self._call_openai_transcriptions(endpoint, audio_file, language, timeout)
@@ -138,7 +138,7 @@ class STTClient:
         language: str | None,
         timeout: int,
     ) -> str | None:
-        """OpenAI /audio/transcriptions 协议"""
+        """OpenAI /audio/transcriptions protocol."""
         import httpx
 
         api_key = endpoint.get_api_key()
@@ -175,7 +175,7 @@ class STTClient:
         language: str | None,
         timeout: int,
     ) -> str | None:
-        """DashScope Qwen-ASR 协议 (/chat/completions + base64 音频)"""
+        """DashScope Qwen-ASR protocol (/chat/completions + base64 audio)."""
         import httpx
 
         api_key = endpoint.get_api_key()

@@ -1,10 +1,10 @@
 """
-Todo 状态 JSON 持久化层
+Todo state JSON persistence layer
 
-原子写 + 防抖，复用项目已有的 atomic_io 工具：
-safe_json_write (.tmp → .bak → replace) / read_json_safe (.bak 回退)
+Atomic write + debounce, reusing the project's existing atomic_io utilities:
+safe_json_write (.tmp → .bak → replace) / read_json_safe (.bak fallback)
 
-仅持久化 status == "in_progress" 的 plan，已完成/取消的自动清理。
+Only persists plans with status == "in_progress"; completed/cancelled ones are cleaned up automatically.
 """
 
 import asyncio
@@ -21,7 +21,7 @@ __all__ = ["TodoStore"]
 
 
 class TodoStore:
-    """Todo 状态 JSON 持久化层"""
+    """Todo state JSON persistence layer"""
 
     def __init__(self, store_path: Path | None = None):
         self._path = Path(store_path) if store_path else Path("data/plans/todo_store.json")
@@ -32,7 +32,7 @@ class TodoStore:
     # --- CRUD ---
 
     def load(self) -> dict[str, dict]:
-        """启动时同步加载，返回 {conversation_id: plan_data}"""
+        """Synchronous load on startup, returns {conversation_id: plan_data}"""
         raw = read_json_safe(self._path)
         if raw is None:
             return {}
@@ -49,7 +49,7 @@ class TodoStore:
         return {}
 
     def upsert(self, conversation_id: str, plan: dict) -> None:
-        """存 deepcopy 快照而非引用，避免防抖写入中间状态。"""
+        """Store a deep-copy snapshot rather than a reference, to avoid writing intermediate state during debounce."""
         self._data[conversation_id] = copy.deepcopy(plan)
         self._dirty = True
 
@@ -64,10 +64,10 @@ class TodoStore:
     def get_all_active(self) -> dict[str, dict]:
         return {k: v for k, v in self._data.items() if v.get("status") == "in_progress"}
 
-    # --- 持久化 ---
+    # --- Persistence ---
 
     def save(self) -> bool:
-        """同步保存到磁盘（原子写 + .bak 备份）"""
+        """Synchronously save to disk (atomic write + .bak backup)"""
         if not self._dirty:
             return True
         payload = {
@@ -83,10 +83,10 @@ class TodoStore:
             logger.warning(f"[TodoStore] Save failed: {e}")
             return False
 
-    # --- 消息回放恢复（兜底） ---
+    # --- Message replay recovery (fallback) ---
 
     def restore_from_messages(self, conversation_id: str, messages: list[dict]) -> dict | None:
-        """参考 claude-code extractTodosFromTranscript：倒序找最后一次 create_todo"""
+        """Modeled after claude-code extractTodosFromTranscript: scan in reverse to find the last create_todo"""
         for msg in reversed(messages):
             if msg.get("role") != "assistant":
                 continue
@@ -105,7 +105,7 @@ class TodoStore:
         return None
 
     def _rebuild_plan_from_create_todo(self, tool_input: dict) -> dict:
-        """从 create_todo 的工具参数重建 plan 结构"""
+        """Rebuild plan structure from create_todo tool parameters"""
         steps = []
         for i, raw in enumerate(tool_input.get("steps", [])):
             if isinstance(raw, dict):
@@ -128,13 +128,13 @@ class TodoStore:
             "steps": steps,
             "created_at": datetime.now().isoformat(),
             "completed_at": None,
-            "logs": ["(从消息历史恢复)"],
+            "logs": ["(restored from message history)"],
         }
 
-    # --- 防抖循环 ---
+    # --- Debounce loop ---
 
     async def start_save_loop(self, interval: float = 5.0):
-        """后台防抖保存循环（由 asyncio.create_task 驱动）"""
+        """Background debounced save loop (driven by asyncio.create_task)"""
         try:
             while True:
                 await asyncio.sleep(interval)
@@ -144,6 +144,6 @@ class TodoStore:
             self.save()
 
     async def flush(self):
-        """立即持久化（shutdown 时调用）"""
+        """Persist immediately (called during shutdown)"""
         if self._dirty:
             self.save()

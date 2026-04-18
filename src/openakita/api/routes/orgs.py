@@ -24,7 +24,7 @@ ALLOWED_AVATAR_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp", "i
 MAX_AVATAR_SIZE = 2 * 1024 * 1024  # 2 MB
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/orgs", tags=["组织编排"])
+router = APIRouter(prefix="/api/orgs", tags=["Organization Orchestration"])
 
 _LIM_API = 2000
 
@@ -61,14 +61,15 @@ def _get_runtime(request: Request):
 
 
 def _require_org_running(rt, org_id: str):
-    """校验组织处于可接受外部指令的状态。
+    """Verify the organization is in a state that accepts external commands.
 
-    只有 ACTIVE/RUNNING 允许；其它状态返回 409，前端应据此弹出
-    "请先启动组织"的提示，而不是让 runtime 在未经用户确认的情况下自动启动。
+    Only ACTIVE/RUNNING are allowed; other states return 409 so the frontend
+    prompts the user to start the org, rather than having the runtime auto-start
+    without user confirmation.
 
-    DORMANT/ARCHIVED → 请先启动；
-    PAUSED          → 请先恢复；
-    组织不存在       → 404。
+    DORMANT/ARCHIVED -> start first;
+    PAUSED           -> resume first;
+    org not found    -> 404.
     """
     from openakita.orgs.models import OrgStatus
 
@@ -88,8 +89,8 @@ def _require_org_running(rt, org_id: str):
                 "code": "org_paused",
                 "org_id": org_id,
                 "status": status_value,
-                "message": "组织当前已暂停，请先恢复组织后再下发指令。",
-                "guidance": "点击组织控制面板中的 [恢复] 按钮。",
+                "message": "The organization is currently paused. Please resume it before sending commands.",
+                "guidance": "Click the [Resume] button in the organization control panel.",
             },
         )
 
@@ -100,8 +101,8 @@ def _require_org_running(rt, org_id: str):
                 "code": "org_archived",
                 "org_id": org_id,
                 "status": status_value,
-                "message": "组织已归档，无法下发指令。",
-                "guidance": "请先取消归档（unarchive）并启动组织。",
+                "message": "The organization is archived and cannot receive commands.",
+                "guidance": "Please unarchive and start the organization first.",
             },
         )
 
@@ -111,8 +112,8 @@ def _require_org_running(rt, org_id: str):
             "code": "org_not_running",
             "org_id": org_id,
             "status": status_value,
-            "message": "组织尚未启动，无法下发指令或与节点通讯。",
-            "guidance": "请先点击控制面板中的 [启动] 按钮启动组织后再试。",
+            "message": "The organization has not been started. Cannot send commands or communicate with nodes.",
+            "guidance": "Click the [Start] button in the control panel to start the organization first.",
         },
     )
 
@@ -219,11 +220,11 @@ async def import_org(request: Request, file: UploadFile = File(...)):
     try:
         data = json.loads(content)
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        raise HTTPException(400, f"无效的文件格式: {e}")
+        raise HTTPException(400, f"Invalid file format: {e}")
 
     org_data = data.get("organization")
     if not org_data or not isinstance(org_data, dict):
-        raise HTTPException(400, "文件缺少 organization 字段")
+        raise HTTPException(400, "File missing 'organization' field")
 
     org_data.pop("id", None)
     org_data["status"] = "dormant"
@@ -241,7 +242,7 @@ async def import_org(request: Request, file: UploadFile = File(...)):
     try:
         org = mgr.create(org_data)
     except Exception as e:
-        raise HTTPException(400, f"导入失败: {e}")
+        raise HTTPException(400, f"Import failed: {e}")
 
     files_data: dict = data.get("files", {})
     if files_data:
@@ -257,9 +258,9 @@ async def import_org(request: Request, file: UploadFile = File(...)):
                 pass
 
     renamed = org_data["name"] != orig_name
-    msg = f"组织「{org_data['name']}」导入成功"
+    msg = f"Organization '{org_data['name']}' imported successfully"
     if renamed:
-        msg += f"（原名「{orig_name}」已存在，已重命名）"
+        msg += f" (original name '{orig_name}' already existed, renamed)"
 
     return {
         "message": msg,
@@ -651,7 +652,7 @@ def _bridge_persist_result(
         if not session:
             return
         if result.get("error"):
-            session.add_message("system", f"命令执行失败: {result['error']}")
+            session.add_message("system", f"Command execution failed: {result['error']}")
         elif result.get("result"):
             text = result["result"]
             if isinstance(text, dict):
@@ -667,8 +668,8 @@ async def send_command(request: Request, org_id: str):
     """Submit a command to the organization. Returns immediately with a
     command_id that the frontend can use to poll for progress / result.
 
-    若组织未启动（DORMANT/PAUSED/ARCHIVED），返回 409 让前端提示用户先
-    启动组织，而不是让 runtime 默默自动启动。
+    If the organization is not running (DORMANT/PAUSED/ARCHIVED), returns 409
+    to prompt the user to start the org, rather than silently auto-starting.
     """
     rt = _get_runtime(request)
     body = await request.json()
@@ -716,7 +717,7 @@ async def send_command(request: Request, org_id: str):
                     inbox.push_task_complete(
                         org_id, root_id,
                         content[:60],
-                        result_text[:300] if result_text else "命令已完成",
+                        result_text[:300] if result_text else "Command completed",
                     )
             except Exception:
                 pass
@@ -926,7 +927,7 @@ async def preview_node_prompt(request: Request, org_id: str, node_id: str):
     allowed_external = expand_tool_categories(node.external_tools) - _ORG_CONFLICT
 
     tool_summary = {
-        "org_tools": "(org_* 系列 — 运行时自动注入)",
+        "org_tools": "(org_* series — auto-injected at runtime)",
         "keep_tools": sorted(_KEEP),
         "external_tools_config": node.external_tools or [],
         "external_tools_expanded": sorted(allowed_external),
@@ -937,23 +938,23 @@ async def preview_node_prompt(request: Request, org_id: str, node_id: str):
         "node_id": node_id,
         "identity_level": resolved.level,
         "identity_level_desc": {
-            0: "Level 0: 无 ROLE.md（使用 custom_prompt / AgentProfile / 自动生成）",
-            1: "Level 1: 有 ROLE.md",
-            2: "Level 2: 有 ROLE.md + AGENT.md",
-            3: "Level 3: 有 ROLE.md + AGENT.md + SOUL.md",
+            0: "Level 0: No ROLE.md (uses custom_prompt / AgentProfile / auto-generated)",
+            1: "Level 1: Has ROLE.md",
+            2: "Level 2: Has ROLE.md + AGENT.md",
+            3: "Level 3: Has ROLE.md + AGENT.md + SOUL.md",
         }.get(resolved.level, f"Level {resolved.level}"),
         "role_text": resolved.role or "(auto-generated)",
         "soul_agent_injected": False,
-        "soul_agent_note": ("组织模式使用精简协作身份，不注入 SOUL.md / AGENT.md 全文"),
+        "soul_agent_note": ("Organization mode uses a lean collaborative identity; SOUL.md / AGENT.md full text is not injected"),
         "full_prompt": org_context_prompt,
         "char_count": len(org_context_prompt),
         "lean_prompt_structure": [
-            "1. 组织上下文（上方 full_prompt 内容）",
-            "2. 运行环境（时间、OS、Shell — 自动注入）",
-            "3. org_* 工具清单（运行时生成）",
-            "4. 外部执行工具清单（运行时生成）" if allowed_external else None,
-            "5. 行为准则（协作规则 + 交付流程）",
-            "6. 核心策略红线",
+            "1. Organization context (full_prompt content above)",
+            "2. Runtime environment (time, OS, Shell — auto-injected)",
+            "3. org_* tool list (generated at runtime)",
+            "4. External execution tool list (generated at runtime)" if allowed_external else None,
+            "5. Behavioral guidelines (collaboration rules + delivery flow)",
+            "6. Core policy red lines",
         ],
         "tool_summary": tool_summary,
     }
@@ -966,7 +967,7 @@ async def freeze_node(request: Request, org_id: str, node_id: str):
     result = await to_engine(
         rt.handle_org_tool(
             "org_freeze_node",
-            {"node_id": node_id, "reason": body.get("reason", "用户操作")},
+            {"node_id": node_id, "reason": body.get("reason", "User action")},
             org_id,
             "user",
         )
@@ -1377,7 +1378,7 @@ async def scale_clone(request: Request, org_id: str):
             org_id=org_id,
             requester="user",
             source_node_id=source_node_id,
-            reason=body.get("reason", "用户手动克隆"),
+            reason=body.get("reason", "User manual clone"),
             ephemeral=body.get("ephemeral", True),
         )
         return {
@@ -1406,7 +1407,7 @@ async def scale_recruit(request: Request, org_id: str):
             role_goal=body.get("role_goal", ""),
             department=body.get("department", ""),
             parent_node_id=parent_node_id,
-            reason=body.get("reason", "用户手动招募"),
+            reason=body.get("reason", "User manual recruit"),
         )
         return {"id": req.id, "status": req.status}
     except ValueError as e:
@@ -1710,7 +1711,7 @@ async def get_org_stats(request: Request, org_id: str):
                     "node_id": n.id,
                     "role_title": n.role_title,
                     "type": "error",
-                    "message": "节点处于错误状态",
+                    "message": "Node is in error state",
                 }
             )
         elif n.status.value == "busy" and idle_secs is not None and idle_secs > 600:
@@ -1719,7 +1720,7 @@ async def get_org_stats(request: Request, org_id: str):
                     "node_id": n.id,
                     "role_title": n.role_title,
                     "type": "stuck",
-                    "message": f"节点标记为忙碌但已 {round(idle_secs / 60)} 分钟无活动",
+                    "message": f"Node marked as busy but no activity for {round(idle_secs / 60)} minutes",
                 }
             )
         if node_pending > 5:
@@ -1728,7 +1729,7 @@ async def get_org_stats(request: Request, org_id: str):
                     "node_id": n.id,
                     "role_title": n.role_title,
                     "type": "backlog",
-                    "message": f"待处理消息积压 {node_pending} 条",
+                    "message": f"{node_pending} pending messages backlogged",
                 }
             )
 
@@ -1749,7 +1750,7 @@ async def get_org_stats(request: Request, org_id: str):
             if now_wall - pushed.get(key, 0) > _ANOMALY_COOLDOWN:
                 inbox.push(
                     org_id,
-                    title=f"异常告警: {a['role_title']}",
+                    title=f"Anomaly alert: {a['role_title']}",
                     body=a["message"],
                     priority=_ANOMALY_PRIORITY.get(a["type"], InboxPriority.WARNING),
                     source_node=a["node_id"],
@@ -1800,7 +1801,7 @@ async def get_org_stats(request: Request, org_id: str):
     recent_tasks: list[dict] = []
     try:
         es = rt.get_event_store(org_id)
-        # 需多读一些原始事件：最近 N 条里常混入 llm_usage/heartbeat，过滤后否则任务流仍为空
+        # Read more raw events: recent N often include llm_usage/heartbeat noise; without over-reading the task flow would be empty after filtering
         task_events = es.query(limit=400)
         for evt in task_events:
             et = evt.get("event_type", "")
@@ -1848,7 +1849,7 @@ async def get_org_stats(request: Request, org_id: str):
     # Department workload (count busy + recent tasks per department)
     dept_workload: dict[str, dict[str, int]] = {}
     for n in org.nodes:
-        dep = n.department or "未分组"
+        dep = n.department or "Ungrouped"
         if dep not in dept_workload:
             dept_workload[dep] = {"total": 0, "busy": 0}
         dept_workload[dep]["total"] += 1
@@ -1984,7 +1985,7 @@ async def create_task(request: Request, org_id: str, project_id: str):
 async def dispatch_task(request: Request, org_id: str, project_id: str, task_id: str):
     """Dispatch a user-created task to the organization for execution.
 
-    组织未启动时返回 409，让前端提示用户先启动组织。
+    Returns 409 if the organization is not running, prompting the user to start it.
     """
     store = _get_project_store(request, org_id)
     task_data, proj_data = store.get_task(task_id)
@@ -1997,10 +1998,10 @@ async def dispatch_task(request: Request, org_id: str, project_id: str, task_id:
     org = _require_org_running(runtime, org_id)
 
     prompt = (
-        f"请执行以下项目任务:\n"
-        f"任务ID: {task_data.id}\n"
-        f"标题: {task_data.title}\n"
-        f"描述: {task_data.description}"
+        f"Please execute the following project task:\n"
+        f"Task ID: {task_data.id}\n"
+        f"Title: {task_data.title}\n"
+        f"Description: {task_data.description}"
     )
 
     store.update_task(project_id, task_id, {"status": "in_progress"})
@@ -2008,7 +2009,7 @@ async def dispatch_task(request: Request, org_id: str, project_id: str, task_id:
     chain_id = f"dispatch:{task_id}:{uuid.uuid4().hex[:8]}"
     store.update_task(project_id, task_id, {"chain_id": chain_id})
 
-    # 若任务指定负责人节点，派发到该节点（与看板 assignee 一致）；否则走根节点
+    # If the task has an assigned node, dispatch to that node (consistent with board assignee); otherwise use root
     target_node_id: str | None = task_data.assignee_node_id
     if target_node_id and not org.get_node(target_node_id):
         target_node_id = None
@@ -2056,7 +2057,7 @@ async def cancel_dispatched_task(request: Request, org_id: str, project_id: str,
         body = await request.json() if request.headers.get("content-length", "0") != "0" else {}
     except Exception:
         pass
-    reason = body.get("reason", "用户取消任务")
+    reason = body.get("reason", "User cancelled task")
 
     cancel_result = {"ok": False}
     if target_node_id:
@@ -2253,7 +2254,7 @@ async def get_node_active_plan(request: Request, org_id: str, node_id: str):
 # Cross-organization inbox (mounted at /api/org-inbox)
 # =====================================================================
 
-inbox_router = APIRouter(prefix="/api/org-inbox", tags=["组织消息中心"])
+inbox_router = APIRouter(prefix="/api/org-inbox", tags=["Organization Inbox"])
 
 
 @inbox_router.get("")

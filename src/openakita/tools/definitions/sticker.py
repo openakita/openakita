@@ -1,8 +1,8 @@
 """
-表情包工具定义
+Sticker tool definitions
 
-包含表情包发送相关的工具:
-- send_sticker: 搜索并发送表情包图片
+Contains tools related to sending stickers:
+- send_sticker: Search and send sticker/meme images
 """
 
 STICKER_TOOLS = [
@@ -10,29 +10,29 @@ STICKER_TOOLS = [
         "name": "send_sticker",
         "category": "IM Channel",
         "description": "Search and send a sticker/meme image to express emotions. Use during casual chat, greetings, encouragement, etc. to make conversation more vivid.",
-        "detail": """搜索并发送表情包图片来表达情绪。闲聊时增加趣味性，让对话更生动。
+        "detail": """Search and send sticker/meme images to express emotions. Adds fun during casual chat and makes conversations more vivid.
 
-**搜索方式**（二选一或组合）：
-- query: 关键词搜索（如：鼓掌/开心/加油/摸鱼/害怕/比心）
-- mood: 情绪类型搜索（happy/sad/angry/greeting/encourage/love/tired/surprise）
+**Search methods** (use one or both):
+- query: Keyword search (e.g., applause/happy/cheer/slacking off/scared/heart)
+- mood: Mood type search (happy/sad/angry/greeting/encourage/love/tired/surprise)
 
-**可选过滤**：
-- category: 限定分类（如：猫/企鹅/程序员）
+**Optional filters**:
+- category: Restrict to a category (e.g., cats/penguins/programmers)
 
-**使用时机**：
-- 闲聊问候时
-- 鼓励用户时
-- 表达情绪时
-- 庆祝任务完成时
-- 注意：需要遵循当前角色的表情包使用频率设定
+**When to use**:
+- Casual chat and greetings
+- Encouraging the user
+- Expressing emotions
+- Celebrating task completion
+- Note: Follow the current character's sticker usage frequency settings
 
-**重要**：表情包只能通过本工具发送，禁止在文字回复中描述表情包代替实际发送。""",
+**Important**: Stickers can only be sent via this tool. Do not describe stickers in text replies as a substitute for actually sending them.""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "搜索关键词（如：鼓掌/开心/加油/摸鱼/害怕/比心）",
+                    "description": "Search keywords (e.g., applause/happy/cheer/slacking off/scared/heart)",
                 },
                 "mood": {
                     "type": "string",
@@ -46,11 +46,11 @@ STICKER_TOOLS = [
                         "tired",
                         "surprise",
                     ],
-                    "description": "情绪类型，与 query 二选一",
+                    "description": "Mood type, use as an alternative to query",
                 },
                 "category": {
                     "type": "string",
-                    "description": "可选，限定分类（如：猫/企鹅/程序员）",
+                    "description": "Optional, restrict to a category (e.g., cats/penguins/programmers)",
                 },
             },
         },

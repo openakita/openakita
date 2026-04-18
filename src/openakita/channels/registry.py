@@ -1,8 +1,8 @@
 """
-适配器注册表：集中管理 IM 适配器的工厂创建函数
+Adapter registry: centralized management of IM adapter factory creation functions.
 
-替代 main.py 中的 _create_bot_adapter if/elif 分支，
-新增通道只需在此注册工厂函数。
+Replaces the _create_bot_adapter if/elif branching in main.py.
+Adding a new channel only requires registering its factory function here.
 """
 
 from __future__ import annotations
@@ -214,7 +214,7 @@ def _create_wechat(creds: dict, *, channel_name: str, bot_id: str, agent_profile
     )
 
 
-# 自动注册所有内置适配器
+# Auto-register all built-in adapters
 register_adapter("feishu", _create_feishu)
 register_adapter("telegram", _create_telegram)
 register_adapter("dingtalk", _create_dingtalk)

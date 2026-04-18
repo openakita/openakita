@@ -1,8 +1,9 @@
 """
-OrgEventStore — 事件溯源 + 审计日志 + 组织报告生成
+OrgEventStore — Event sourcing + audit log + org report generation
 
-所有状态变更以不可变事件流记录，支持审计和状态重建。
-事件按天分文件存储在 events/{YYYYMMDD}.jsonl。
+All state changes are recorded as an immutable event stream, supporting
+auditing and state reconstruction.  Events are stored per-day in
+events/{YYYYMMDD}.jsonl files.
 """
 
 from __future__ import annotations
@@ -170,15 +171,15 @@ class OrgEventStore:
         log_file = self._logs_dir / f"audit_{now.strftime('%Y%m%d')}.md"
 
         lines = [
-            "# 审计日志",
+            "# Audit Log",
             "",
-            f"**组织**: {self._org_id}",
-            f"**生成时间**: {now.isoformat()}",
-            f"**覆盖范围**: 最近 {days} 天",
-            f"**事件数量**: {len(events)}",
+            f"**Organization**: {self._org_id}",
+            f"**Generated at**: {now.isoformat()}",
+            f"**Coverage**: Last {days} day(s)",
+            f"**Event count**: {len(events)}",
             "",
-            "| 时间 | 事件 | 执行者 | 详情 |",
-            "|------|------|--------|------|",
+            "| Time | Event | Actor | Details |",
+            "|------|-------|-------|---------|",
         ]
 
         for evt in events:
@@ -249,37 +250,37 @@ class OrgEventStore:
         report_path = self._reports_dir / f"report_{now.strftime('%Y%m%d')}.md"
 
         lines = [
-            "# 组织运行报告",
+            "# Organization Operations Report",
             "",
-            f"**组织**: {self._org_id}",
-            f"**生成时间**: {now.isoformat()}",
-            f"**统计周期**: 最近 {days} 天",
+            f"**Organization**: {self._org_id}",
+            f"**Generated at**: {now.isoformat()}",
+            f"**Period**: Last {days} day(s)",
             "",
-            "## 概览",
-            f"- 总事件数: {summary['total_events']}",
-            f"- 完成任务: {summary['tasks_completed']}",
-            f"- 失败任务: {summary['tasks_failed']}",
-            f"- 消息总量: {summary['messages_sent']}",
+            "## Overview",
+            f"- Total events: {summary['total_events']}",
+            f"- Tasks completed: {summary['tasks_completed']}",
+            f"- Tasks failed: {summary['tasks_failed']}",
+            f"- Total messages: {summary['messages_sent']}",
             "",
-            "## 事件类型分布",
+            "## Event Type Distribution",
         ]
 
         for etype, count in summary["event_type_distribution"].items():
             lines.append(f"- {etype}: {count}")
 
         lines.append("")
-        lines.append("## 节点活跃度")
+        lines.append("## Node Activity")
         for node, count in summary["node_activity"].items():
-            lines.append(f"- {node}: {count} 次操作")
+            lines.append(f"- {node}: {count} operations")
 
         lines.append("")
-        lines.append("## 每日活动")
+        lines.append("## Daily Activity")
         for day, count in summary["daily_activity"].items():
-            lines.append(f"- {day}: {count} 个事件")
+            lines.append(f"- {day}: {count} events")
 
         if summary["recent_errors"]:
             lines.append("")
-            lines.append("## 近期错误")
+            lines.append("## Recent Errors")
             for err in summary["recent_errors"]:
                 lines.append(f"- [{err['time'][:19]}] {err['node']}: {err['error']}")
 

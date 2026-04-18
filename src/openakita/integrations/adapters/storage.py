@@ -1,6 +1,6 @@
 """
-云存储 API 适配器
-支持阿里云 OSS 和七牛云
+Cloud storage API adapters
+Supports Alibaba Cloud OSS and Qiniu Cloud
 """
 
 import base64
@@ -15,7 +15,7 @@ from . import BaseAPIAdapter
 
 
 class AliyunOSSAdapter(BaseAPIAdapter):
-    """阿里云 OSS 适配器"""
+    """Alibaba Cloud OSS adapter"""
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
@@ -76,7 +76,7 @@ class AliyunOSSAdapter(BaseAPIAdapter):
 
 
 class QiniuAdapter(BaseAPIAdapter):
-    """七牛云存储适配器"""
+    """Qiniu Cloud storage adapter"""
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
@@ -89,7 +89,7 @@ class QiniuAdapter(BaseAPIAdapter):
         return bool(self.access_key and self.secret_key)
 
     async def call(self, endpoint: str, method: str = "GET", **kwargs) -> dict[str, Any]:
-        raise NotImplementedError("七牛云上传需使用表单上传，请使用 upload 方法")
+        raise NotImplementedError("Qiniu uploads require form-based upload; please use the upload method")
 
     async def upload(self, key: str, data: bytes, token: str | None = None) -> dict:
         if not self._session:
@@ -129,5 +129,5 @@ class QiniuAdapter(BaseAPIAdapter):
 def create_storage_adapter(provider: str, config: dict[str, Any]) -> BaseAPIAdapter:
     providers = {"aliyun": AliyunOSSAdapter, "qiniu": QiniuAdapter}
     if provider not in providers:
-        raise ValueError(f"不支持的存储提供商：{provider}")
+        raise ValueError(f"Unsupported storage provider: {provider}")
     return providers[provider](config)

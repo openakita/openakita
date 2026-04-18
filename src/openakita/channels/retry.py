@@ -1,8 +1,8 @@
 """
-通用异步重试工具
+General-purpose async retry utilities.
 
-为 IM 适配器的 HTTP 请求（发送消息、上传文件、下载媒体等）
-提供统一的指数退避重试机制。
+Provides a unified exponential-backoff retry mechanism for IM adapter HTTP
+requests (sending messages, uploading files, downloading media, etc.).
 """
 
 from __future__ import annotations
@@ -19,10 +19,10 @@ T = TypeVar("T")
 
 
 def default_should_retry(exc: BaseException) -> bool:
-    """默认重试判定：网络/超时/服务端 5xx 类错误可重试。
+    """Default retry predicate: network/timeout/server 5xx errors are retryable.
 
-    各适配器可提供自定义判定函数来处理平台特有的可重试错误码
-    （如 token 过期、限流等）。
+    Adapters can supply a custom predicate to handle platform-specific
+    retryable error codes (e.g., token expiry, rate limiting).
     """
     if isinstance(exc, (asyncio.TimeoutError, ConnectionError, OSError)):
         return True
@@ -65,24 +65,25 @@ async def async_with_retry(
     operation_name: str = "",
     **kwargs: Any,
 ) -> T:
-    """带指数退避的异步重试执行器。
+    """Async retry executor with exponential backoff.
 
     Args:
-        fn: 要执行的异步函数
-        *args: 传给 fn 的位置参数
-        max_retries: 最大重试次数（不含首次执行）
-        base_delay: 首次重试前的等待秒数
-        max_delay: 最大等待秒数上限
-        backoff_factor: 退避倍数
-        should_retry: 判定异常是否可重试的函数；None 时使用 default_should_retry
-        operation_name: 日志中标识操作名称
-        **kwargs: 传给 fn 的关键字参数
+        fn: The async function to execute.
+        *args: Positional arguments forwarded to fn.
+        max_retries: Maximum number of retries (excluding the first attempt).
+        base_delay: Seconds to wait before the first retry.
+        max_delay: Upper bound on the wait time.
+        backoff_factor: Multiplier for each backoff step.
+        should_retry: Predicate that decides whether an exception is retryable;
+            None uses default_should_retry.
+        operation_name: Label used in log messages to identify the operation.
+        **kwargs: Keyword arguments forwarded to fn.
 
     Returns:
-        fn 的返回值
+        The return value of fn.
 
     Raises:
-        最后一次失败的原始异常
+        The original exception from the last failed attempt.
     """
     if should_retry is None:
         should_retry = default_should_retry

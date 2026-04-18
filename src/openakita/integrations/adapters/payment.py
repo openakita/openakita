@@ -1,6 +1,6 @@
 """
-支付 API 适配器
-支持支付宝和微信支付
+Payment API adapter
+Supports Alipay and WeChat Pay
 """
 
 from typing import Any
@@ -11,7 +11,7 @@ from . import BaseAPIAdapter
 
 
 class AlipayAdapter(BaseAPIAdapter):
-    """支付宝支付适配器"""
+    """Alipay adapter"""
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
@@ -24,7 +24,7 @@ class AlipayAdapter(BaseAPIAdapter):
         return bool(self.app_id and self.private_key)
 
     async def create_order(self, out_trade_no: str, total_amount: str, subject: str) -> dict:
-        """创建订单"""
+        """Create an order"""
         biz_content = {
             "out_trade_no": out_trade_no,
             "total_amount": total_amount,
@@ -63,7 +63,7 @@ class AlipayAdapter(BaseAPIAdapter):
         return base64.b64encode(signature).decode()
 
     async def verify_notify(self, notify_data: dict) -> bool:
-        """验证异步通知"""
+        """Verify async notification"""
         signature = notify_data.pop("sign")
         return self._verify(notify_data, signature)
 
@@ -86,7 +86,7 @@ class AlipayAdapter(BaseAPIAdapter):
 
 
 class WeChatPayAdapter(BaseAPIAdapter):
-    """微信支付适配器"""
+    """WeChat Pay adapter"""
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
@@ -100,7 +100,7 @@ class WeChatPayAdapter(BaseAPIAdapter):
         return bool(self.appid and self.mch_id and self.api_key)
 
     async def create_order(self, out_trade_no: str, total_amount: int, description: str) -> dict:
-        """创建 JSAPI 订单"""
+        """Create a JSAPI order"""
         url = "https://api.mch.weixin.qq.com/v3/pay/transactions/jsapi"
         headers = {
             "Accept": "application/json",
@@ -138,12 +138,12 @@ class WeChatPayAdapter(BaseAPIAdapter):
         return base64.b64encode(signature).decode()
 
     async def verify_notify(self, notify_data: dict) -> bool:
-        """验证支付结果通知"""
-        return True  # 简化实现，实际需要验证签名
+        """Verify payment result notification"""
+        return True  # Simplified implementation; signature verification needed in production
 
 
 def create_payment_adapter(provider: str, config: dict[str, Any]) -> BaseAPIAdapter:
     providers = {"alipay": AlipayAdapter, "wechat": WeChatPayAdapter}
     if provider not in providers:
-        raise ValueError(f"不支持的支付提供商：{provider}")
+        raise ValueError(f"Unsupported payment provider: {provider}")
     return providers[provider](config)

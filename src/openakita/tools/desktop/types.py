@@ -1,7 +1,7 @@
 """
-Windows 桌面自动化 - 数据类型定义
+Windows Desktop Automation - Data Type Definitions
 
-定义所有模块共用的数据结构
+Defines shared data structures used across all modules
 """
 
 from dataclasses import dataclass, field
@@ -11,7 +11,7 @@ from typing import Any
 
 
 class ControlType(StrEnum):
-    """Windows UI 控件类型"""
+    """Windows UI control types"""
 
     BUTTON = "Button"
     EDIT = "Edit"
@@ -52,7 +52,7 @@ class ControlType(StrEnum):
 
 
 class MouseButton(StrEnum):
-    """鼠标按钮"""
+    """Mouse buttons"""
 
     LEFT = "left"
     RIGHT = "right"
@@ -60,7 +60,7 @@ class MouseButton(StrEnum):
 
 
 class ScrollDirection(StrEnum):
-    """滚动方向"""
+    """Scroll directions"""
 
     UP = "up"
     DOWN = "down"
@@ -69,15 +69,15 @@ class ScrollDirection(StrEnum):
 
 
 class FindMethod(StrEnum):
-    """元素查找方法"""
+    """Element find methods"""
 
-    AUTO = "auto"  # 自动选择：先 UIA，失败则 Vision
-    UIA = "uia"  # 只使用 UIAutomation
-    VISION = "vision"  # 只使用视觉识别
+    AUTO = "auto"  # Auto-select: UIA first, fall back to Vision
+    UIA = "uia"  # UIAutomation only
+    VISION = "vision"  # Visual recognition only
 
 
 class WindowAction(StrEnum):
-    """窗口操作类型"""
+    """Window action types"""
 
     LIST = "list"
     SWITCH = "switch"
@@ -89,7 +89,7 @@ class WindowAction(StrEnum):
 
 @dataclass
 class BoundingBox:
-    """边界框"""
+    """Bounding box"""
 
     left: int
     top: int
@@ -112,7 +112,7 @@ class BoundingBox:
         return (self.left, self.top, self.right, self.bottom)
 
     def to_region(self) -> tuple[int, int, int, int]:
-        """转换为 (x, y, width, height) 格式"""
+        """Convert to (x, y, width, height) format"""
         return (self.left, self.top, self.width, self.height)
 
     @classmethod
@@ -121,24 +121,24 @@ class BoundingBox:
 
     @classmethod
     def from_region(cls, x: int, y: int, width: int, height: int) -> "BoundingBox":
-        """从 (x, y, width, height) 创建"""
+        """Create from (x, y, width, height)"""
         return cls(left=x, top=y, right=x + width, bottom=y + height)
 
 
 @dataclass
 class UIElement:
     """
-    统一的 UI 元素数据结构
+    Unified UI element data structure
 
-    可以来自 UIAutomation 或视觉识别
+    Can originate from UIAutomation or visual recognition
     """
 
-    # 基本信息
+    # Basic info
     name: str = ""
     control_type: str = "Unknown"
     bbox: BoundingBox | None = None
 
-    # UIAutomation 特有属性
+    # UIAutomation-specific attributes
     automation_id: str = ""
     class_name: str = ""
     value: str | None = None
@@ -146,25 +146,25 @@ class UIElement:
     is_visible: bool = True
     is_focused: bool = False
 
-    # 视觉识别特有属性
+    # Visual-recognition-specific attributes
     description: str = ""
     confidence: float = 1.0
 
-    # 来源标识
-    source: str = "unknown"  # "uia" 或 "vision"
+    # Source identifier
+    source: str = "unknown"  # "uia" or "vision"
 
-    # 原始控件引用（仅 UIA）
+    # Raw control reference (UIA only)
     _control: Any = field(default=None, repr=False)
 
     @property
     def center(self) -> tuple[int, int] | None:
-        """获取元素中心点坐标"""
+        """Get element center coordinates"""
         if self.bbox:
             return self.bbox.center
         return None
 
     def to_dict(self) -> dict:
-        """转换为字典（不包含 _control）"""
+        """Convert to dict (excludes _control)"""
         return {
             "name": self.name,
             "control_type": self.control_type,
@@ -183,7 +183,7 @@ class UIElement:
 
 @dataclass
 class WindowInfo:
-    """窗口信息"""
+    """Window info"""
 
     title: str
     handle: int
@@ -196,11 +196,11 @@ class WindowInfo:
     is_maximized: bool = False
     is_focused: bool = False
 
-    # 原始窗口引用
+    # Raw window reference
     _window: Any = field(default=None, repr=False)
 
     def to_dict(self) -> dict:
-        """转换为字典"""
+        """Convert to dict"""
         return {
             "title": self.title,
             "handle": self.handle,
@@ -217,7 +217,7 @@ class WindowInfo:
 
 @dataclass
 class ElementLocation:
-    """视觉识别返回的元素位置"""
+    """Element location returned by visual recognition"""
 
     description: str
     bbox: BoundingBox
@@ -229,7 +229,7 @@ class ElementLocation:
         return self.bbox.center
 
     def to_ui_element(self) -> UIElement:
-        """转换为 UIElement"""
+        """Convert to UIElement"""
         return UIElement(
             name=self.description,
             control_type="Unknown",
@@ -242,7 +242,7 @@ class ElementLocation:
 
 @dataclass
 class VisionResult:
-    """视觉分析结果"""
+    """Visual analysis result"""
 
     success: bool
     query: str
@@ -254,7 +254,7 @@ class VisionResult:
 
 @dataclass
 class ScreenshotInfo:
-    """截图信息"""
+    """Screenshot info"""
 
     width: int
     height: int
@@ -266,7 +266,7 @@ class ScreenshotInfo:
 
 @dataclass
 class ActionResult:
-    """操作结果"""
+    """Action result"""
 
     success: bool
     action: str
@@ -288,7 +288,7 @@ class ActionResult:
 
 @dataclass
 class DesktopState:
-    """桌面状态快照"""
+    """Desktop state snapshot"""
 
     active_window: WindowInfo | None = None
     windows: list[WindowInfo] = field(default_factory=list)

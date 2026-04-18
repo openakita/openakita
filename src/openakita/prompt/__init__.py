@@ -1,13 +1,14 @@
 """
-OpenAkita Prompt 管线模块
+OpenAkita Prompt pipeline module.
 
-从全文注入改为"编译摘要 + 语义检索 + 预算组装"的管线模式。
+Replaced full-text injection with a pipeline of "compile summary + semantic
+retrieval + budget assembly".
 
-模块组成:
-- compiler.py: 从源 md 编译摘要
-- retriever.py: 从 MEMORY.md 检索相关片段
-- budget.py: Token 预算裁剪
-- builder.py: 组装最终系统提示词
+Module components:
+- compiler.py: Compile summaries from source .md files
+- retriever.py: Retrieve relevant segments from MEMORY.md
+- budget.py: Token budget trimming
+- builder.py: Assemble the final system prompt
 """
 
 from .budget import BudgetConfig, apply_budget

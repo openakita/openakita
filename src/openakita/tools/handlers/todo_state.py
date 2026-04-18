@@ -301,23 +301,23 @@ def force_close_plan(session_id: str) -> bool:
 
 
 def register_plan_handler(session_id: str, handler: "PlanHandler") -> None:
-    """注册 PlanHandler 实例"""
+    """Register a PlanHandler instance"""
     _prune_oldest_sessions()
     _session_handlers[session_id] = handler
     logger.debug(f"[Plan] Registered handler for session {session_id}")
 
 
 def get_todo_handler_for_session(session_id: str) -> Optional["PlanHandler"]:
-    """获取 session 对应的 PlanHandler 实例"""
+    """Get the PlanHandler instance for the given session"""
     return _session_handlers.get(session_id)
 
 
 def get_active_todo_prompt(session_id: str) -> str:
     """
-    获取 session 对应的活跃 Todo 提示词段落（注入 system_prompt 用）。
+    Get the active Todo prompt section for the session (for injection into system_prompt).
 
-    返回紧凑格式的计划摘要，包含所有步骤及其当前状态。
-    如果没有活跃 Todo 或 Todo 已完成，返回空字符串。
+    Returns a compact plan summary including all steps and their current status.
+    Returns an empty string if there is no active Todo or the Todo is completed.
     """
     handler = get_todo_handler_for_session(session_id)
     if handler:

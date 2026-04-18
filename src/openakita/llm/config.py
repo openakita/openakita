@@ -1,7 +1,7 @@
 """
-LLM 端点配置加载
+LLM endpoint configuration loading.
 
-支持从 JSON 文件加载端点配置。
+Supports loading endpoint configuration from JSON files.
 """
 
 import json
@@ -168,20 +168,20 @@ def _ensure_workspace_env_loaded(config_path: Path) -> None:
 
 
 def get_default_config_path() -> Path:
-    """获取默认配置文件路径
+    """Return the default configuration file path.
 
-    搜索顺序：
-    1. 环境变量 LLM_ENDPOINTS_CONFIG
-    2. CWD 及其父级（最多 3 层）下的 data/llm_endpoints.json
-    3. 包文件所在目录向上（最多 5 层）下的 data/llm_endpoints.json
-    4. 兜底返回 CWD/data/llm_endpoints.json（即使不存在）
+    Search order:
+    1. Environment variable LLM_ENDPOINTS_CONFIG
+    2. data/llm_endpoints.json in CWD or its parents (up to 3 levels)
+    3. data/llm_endpoints.json relative to the package file (up to 5 levels)
+    4. Fallback: CWD/data/llm_endpoints.json (even if it does not exist)
     """
-    # 1) 环境变量优先
+    # 1) Environment variable takes priority
     env_path = os.environ.get("LLM_ENDPOINTS_CONFIG")
     if env_path:
         return Path(env_path)
 
-    # 2) 从 CWD 向上搜索（pip install 场景：openakita init 在 CWD 创建 data/）
+    # 2) Search upward from CWD (pip install scenario: openakita init creates data/ in CWD)
     cwd = Path.cwd()
     current = cwd
     for _ in range(3):
@@ -193,7 +193,7 @@ def get_default_config_path() -> Path:
             break
         current = parent
 
-    # 3) 从包文件向上搜索（开发 / editable install 场景）
+    # 3) Search upward from the package file (development / editable install scenario)
     current = Path(__file__).parent
     for _ in range(5):
         config_path = current / "data" / "llm_endpoints.json"
@@ -201,7 +201,7 @@ def get_default_config_path() -> Path:
             return config_path
         current = current.parent
 
-    # 4) 兜底：返回 CWD 下的默认位置（让调用方统一处理不存在的情况）
+    # 4) Fallback: return the default location under CWD (let the caller handle non-existence)
     return cwd / "data" / "llm_endpoints.json"
 
 
@@ -212,17 +212,18 @@ def load_endpoints_config(
     config_path: Path | None = None,
 ) -> tuple[list[EndpointConfig], list[EndpointConfig], list[EndpointConfig], dict]:
     """
-    加载端点配置
+    Load endpoint configuration.
 
     Args:
-        config_path: 配置文件路径，默认使用 get_default_config_path()
+        config_path: Configuration file path; defaults to get_default_config_path().
 
     Returns:
         (endpoints, compiler_endpoints, stt_endpoints, settings):
-        主端点列表、Prompt Compiler 专用端点列表、语音识别端点列表、全局设置
+        Main endpoint list, Prompt Compiler endpoint list,
+        speech-to-text endpoint list, and global settings.
 
     Raises:
-        ConfigurationError: 配置错误
+        ConfigurationError: Configuration error.
     """
     if config_path is None:
         config_path = get_default_config_path()
@@ -262,24 +263,24 @@ def load_endpoints_config(
         result.sort(key=lambda x: x.priority)
         return result
 
-    # 解析主端点
+    # Parse main endpoints
     endpoints = _parse_endpoint_list("endpoints")
     if not endpoints:
         logger.warning("No valid endpoints found in config")
 
-    # 解析 Prompt Compiler 专用端点
+    # Parse Prompt Compiler endpoints
     compiler_endpoints = _parse_endpoint_list("compiler_endpoints")
     if compiler_endpoints:
         logger.info(f"Loaded {len(compiler_endpoints)} compiler endpoints")
 
-    # 解析语音识别（STT）端点
+    # Parse speech-to-text (STT) endpoints
     stt_endpoints = _parse_endpoint_list("stt_endpoints")
     if stt_endpoints:
         logger.info(f"Loaded {len(stt_endpoints)} STT endpoints")
     else:
         logger.debug("No STT endpoints configured")
 
-    # 解析全局设置
+    # Parse global settings
     settings = data.get("settings", {})
 
     logger.info(f"Loaded {len(endpoints)} endpoints from {config_path}")
@@ -295,14 +296,14 @@ def save_endpoints_config(
     stt_endpoints: list[EndpointConfig] | None = None,
 ):
     """
-    保存端点配置
+    Save endpoint configuration.
 
     Args:
-        endpoints: 主端点配置列表
-        settings: 全局设置
-        config_path: 配置文件路径
-        compiler_endpoints: Prompt Compiler 专用端点列表（可选）
-        stt_endpoints: 语音识别端点列表（可选）
+        endpoints: Main endpoint configuration list.
+        settings: Global settings.
+        config_path: Configuration file path.
+        compiler_endpoints: Prompt Compiler endpoint list (optional).
+        stt_endpoints: Speech-to-text endpoint list (optional).
     """
     if config_path is None:
         config_path = get_default_config_path()
@@ -334,10 +335,10 @@ def save_endpoints_config(
 
 def create_default_config(config_path: Path | None = None):
     """
-    创建默认配置文件
+    Create a default configuration file.
 
     Args:
-        config_path: 配置文件路径
+        config_path: Configuration file path.
     """
     default_endpoints = [
         EndpointConfig(
@@ -372,10 +373,10 @@ def create_default_config(config_path: Path | None = None):
 
 def validate_config(config_path: Path | None = None) -> list[str]:
     """
-    验证配置文件
+    Validate the configuration file.
 
     Returns:
-        错误列表（空列表表示没有错误）
+        A list of errors (empty list means no errors).
     """
     errors = []
 
@@ -395,17 +396,17 @@ def validate_config(config_path: Path | None = None) -> list[str]:
     def _validate_endpoints(eps: list[EndpointConfig], label: str = "") -> None:
         prefix = f"[{label}] " if label else ""
         for ep in eps:
-            # 检查 API Key
+            # Check API key
             if ep.api_key_env and not ep.get_api_key():
                 errors.append(
                     f"{prefix}Endpoint '{ep.name}': API key env var '{ep.api_key_env}' not set"
                 )
 
-            # 检查 API 类型
+            # Check API type
             if ep.api_type not in ("anthropic", "openai"):
                 errors.append(f"{prefix}Endpoint '{ep.name}': Invalid api_type '{ep.api_type}'")
 
-            # 检查 base_url
+            # Check base_url
             if not ep.base_url.startswith(("http://", "https://")):
                 errors.append(f"{prefix}Endpoint '{ep.name}': Invalid base_url '{ep.base_url}'")
 

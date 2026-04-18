@@ -1,17 +1,17 @@
 """
-微信个人号适配器
+WeChat personal-account adapter
 
-基于腾讯 iLink Bot API（与 OpenClaw 相同的开源协议）实现:
-- HTTP 长轮询接收消息 (getUpdates)
-- HTTP API 发送消息 (sendMessage)
-- CDN 媒体上传/下载 + AES-128-ECB 加解密
-- 扫码登录获取 Bearer token
-- Typing 指示器 (sendTyping)
-- 无需公网 IP
+Built on the Tencent iLink Bot API (same open-source protocol as OpenClaw):
+- HTTP long-polling for receiving messages (getUpdates)
+- HTTP API for sending messages (sendMessage)
+- CDN media upload/download + AES-128-ECB encryption/decryption
+- QR-code login to obtain Bearer token
+- Typing indicator (sendTyping)
+- No public IP required
 
 API Base: https://ilinkai.weixin.qq.com
 CDN Base: https://novac2c.cdn.weixin.qq.com/c2c
-协议参考: @tencent-weixin/openclaw-weixin v2.1.6 (MIT)
+Protocol reference: @tencent-weixin/openclaw-weixin v2.1.6 (MIT)
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ from ..types import (
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# 延迟导入
+# Lazy imports
 # ---------------------------------------------------------------------------
 
 httpx = None
@@ -65,7 +65,7 @@ def _import_httpx():
 
 
 # ---------------------------------------------------------------------------
-# 常量 (对齐 @tencent-weixin/openclaw-weixin 源码)
+# Constants (aligned with @tencent-weixin/openclaw-weixin source)
 # ---------------------------------------------------------------------------
 
 DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com"
@@ -74,8 +74,8 @@ DEFAULT_ILINK_BOT_TYPE = "3"
 DEFAULT_CHANNEL_VERSION = "2.0.0"
 
 # ---------------------------------------------------------------------------
-# 协议兼容参数 — 对齐 @tencent-weixin/openclaw-weixin v2.1.6
-# 可通过环境变量紧急覆盖，无需改代码
+# Protocol compatibility parameters -- aligned with @tencent-weixin/openclaw-weixin v2.1.6
+# Can be overridden via environment variables without code changes
 # ---------------------------------------------------------------------------
 
 OPENCLAW_COMPAT_VERSION = os.environ.get("WECHAT_OPENCLAW_COMPAT_VERSION", "2.1.6")
@@ -83,7 +83,7 @@ ILINK_APP_ID = os.environ.get("WECHAT_ILINK_APP_ID", "bot")
 
 
 def _encode_client_version(semver: str) -> int:
-    """将语义化版本号编码为 uint32: 0x00MMNNPP (major<<16 | minor<<8 | patch)"""
+    """Encode a semantic version as uint32: 0x00MMNNPP (major<<16 | minor<<8 | patch)"""
     parts = semver.split(".")
     major = int(parts[0]) if len(parts) > 0 else 0
     minor = int(parts[1]) if len(parts) > 1 else 0
@@ -144,7 +144,7 @@ TYPING_CANCEL = 2
 
 
 # ---------------------------------------------------------------------------
-# AES-128-ECB 加解密
+# AES-128-ECB encryption / decryption
 # ---------------------------------------------------------------------------
 
 
@@ -173,9 +173,9 @@ def _aes_ecb_padded_size(plaintext_size: int) -> int:
 
 
 def _parse_aes_key(aes_key_b64: str) -> bytes:
-    """解析 AES key，支持两种格式:
+    """Parse AES key. Supports two formats:
     - base64(16 raw bytes)
-    - base64(32 hex chars) → hex decode → 16 bytes
+    - base64(32 hex chars) -> hex decode -> 16 bytes
     """
     decoded = base64.b64decode(aes_key_b64)
     if len(decoded) == 16:
@@ -380,7 +380,7 @@ def _markdown_to_plaintext(text: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# MIME 工具
+# MIME utilities
 # ---------------------------------------------------------------------------
 
 
@@ -415,7 +415,7 @@ def _guess_mime(filepath: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Log Redaction — 敏感信息脱敏
+# Log Redaction -- sanitize sensitive information
 # ---------------------------------------------------------------------------
 
 
@@ -447,7 +447,7 @@ def _guess_extension(content_type: str | None, url: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
-# 配置
+# Configuration
 # ---------------------------------------------------------------------------
 
 
@@ -462,7 +462,7 @@ class WeChatConfig:
 
 
 # ---------------------------------------------------------------------------
-# TypingTicket 缓存
+# TypingTicket cache
 # ---------------------------------------------------------------------------
 
 
@@ -480,7 +480,7 @@ class _TicketEntry:
 
 
 class WeChatAdapter(ChannelAdapter):
-    """微信个人号适配器 (iLink Bot API)"""
+    """WeChat personal-account adapter (iLink Bot API)"""
 
     channel_name: str = "wechat"
 
@@ -527,32 +527,32 @@ class WeChatAdapter(ChannelAdapter):
         self._http: Any = None
         self._poll_task: asyncio.Task | None = None
 
-        # 同步游标
+        # Sync cursor
         self._get_updates_buf: str = ""
         self._sync_buf_dir = Path("data/wechat_sync")
 
-        # context_token 缓存 (user_id → token)
+        # context_token cache (user_id -> token)
         self._context_tokens: dict[str, str] = {}
 
-        # Typing ticket 缓存
+        # Typing ticket cache
         self._ticket_cache: dict[str, _TicketEntry] = {}
 
-        # 消息去重
+        # Message deduplication
         self._seen_msg_ids: OrderedDict[int, float] = OrderedDict()
 
-        # Session 过期管理
+        # Session expiration management
         self._session_paused_until: float = 0.0
 
-        # 动态轮询超时
+        # Dynamic poll timeout
         self._next_poll_timeout_ms: int = self.config.long_poll_timeout_ms
 
-        # 连续失败计数
+        # Consecutive failure counter
         self._consecutive_failures: int = 0
 
-        # 发送限流 (user_id → 上次发送时间戳)
+        # Send rate limiting (user_id -> last send timestamp)
         self._last_send_ts: dict[str, float] = {}
 
-        # 耗时统计 (chat_id → 首次 send_typing 的 time.time())
+        # Elapsed-time tracking (chat_id -> time.time() at first send_typing)
         self._typing_start_time: dict[str, float] = {}
         self._footer_elapsed: bool = (
             footer_elapsed
@@ -560,7 +560,7 @@ class WeChatAdapter(ChannelAdapter):
             else (os.environ.get("WECHAT_FOOTER_ELAPSED", "true").lower() in ("true", "1", "yes"))
         )
 
-        # 统计指标
+        # Statistics counters
         self._msg_count: int = 0
         self._send_count: int = 0
 
@@ -569,11 +569,11 @@ class WeChatAdapter(ChannelAdapter):
 
         self.media_dir = Path("data/media/wechat")
 
-    # ==================== 生命周期 ====================
+    # ==================== Lifecycle ====================
 
     async def start(self) -> None:
         if not self.config.token:
-            raise ValueError("微信 Token 未配置，请先在 Bot 配置中扫码登录获取 Token。")
+            raise ValueError("WeChat Token not configured. Please scan the QR code in the Bot settings to obtain a Token.")
 
         _import_httpx()
         self._http = httpx.AsyncClient(
@@ -613,7 +613,7 @@ class WeChatAdapter(ChannelAdapter):
             f"(msgs_received={self._msg_count}, msgs_sent={self._send_count})"
         )
 
-    # ==================== 请求基础 ====================
+    # ==================== Request infrastructure ====================
 
     def _build_headers(self) -> dict[str, str]:
         uint32 = struct.unpack(">I", os.urandom(4))[0]
@@ -675,10 +675,10 @@ class WeChatAdapter(ChannelAdapter):
         self._last_send_ts[user_id] = time.time()
 
     def _check_send_response(self, resp: dict, *, action: str = "sendmessage") -> None:
-        """检查 sendmessage / sendtyping 等 API 响应中的业务层错误。
+        """Check for business-layer errors in sendmessage / sendtyping API responses.
 
-        iLink Bot API 在 HTTP 200 下可能返回 {"ret": -14, "errmsg": "..."}，
-        如果不检查会导致消息静默丢失。
+        The iLink Bot API may return {"ret": -14, "errmsg": "..."} under HTTP 200.
+        Without this check messages could be silently lost.
         """
         ret = resp.get("ret")
         errcode = resp.get("errcode")
@@ -699,7 +699,7 @@ class WeChatAdapter(ChannelAdapter):
 
         raise RuntimeError(f"WeChat {action} failed: ret={ret}, errcode={errcode}, errmsg={errmsg}")
 
-    # ==================== 长轮询 ====================
+    # ==================== Long-polling ====================
 
     async def _poll_loop(self) -> None:
         logger.info(f"{self.channel_name}: poll loop started")
@@ -797,7 +797,7 @@ class WeChatAdapter(ChannelAdapter):
             logger.error(f"{self.channel_name}: getUpdates HTTP {e.response.status_code}")
             raise
 
-    # ==================== 消息解析 ====================
+    # ==================== Message parsing ====================
 
     def _dedup_check(self, message_id: int | None) -> bool:
         if message_id is None:
@@ -805,7 +805,7 @@ class WeChatAdapter(ChannelAdapter):
         now = time.time()
         if message_id in self._seen_msg_ids:
             return True
-        # 清理过期条目
+        # Evict expired entries
         while self._seen_msg_ids:
             oldest_id, oldest_ts = next(iter(self._seen_msg_ids.items()))
             if now - oldest_ts > DEDUP_TTL_S or len(self._seen_msg_ids) >= DEDUP_MAX_SIZE:
@@ -835,7 +835,7 @@ class WeChatAdapter(ChannelAdapter):
                     if ref_text:
                         parts.append(ref_text)
                 if parts:
-                    return f"[引用: {' | '.join(parts)}]\n{text}"
+                    return f"[Quote: {' | '.join(parts)}]\n{text}"
                 return text
             if item.get("type") == ITEM_VOICE:
                 voice_text = (item.get("voice_item") or {}).get("text")
@@ -852,7 +852,7 @@ class WeChatAdapter(ChannelAdapter):
         return bool(media.get("encrypt_query_param") or media.get("full_url"))
 
     def _find_media_item(self, item_list: list[dict] | None) -> dict | None:
-        """按优先级 IMAGE > VIDEO > FILE > VOICE 查找第一个可下载的媒体 item"""
+        """Find the first downloadable media item by priority: IMAGE > VIDEO > FILE > VOICE"""
         if not item_list:
             return None
         for target_type, media_key in [
@@ -888,7 +888,7 @@ class WeChatAdapter(ChannelAdapter):
         return param, cdn_full, key
 
     async def _download_media_item(self, item: dict) -> tuple[Path | None, str]:
-        """下载并解密一个媒体 item，返回 (local_path, mime_type)"""
+        """Download and decrypt a media item. Returns (local_path, mime_type)."""
         item_type = item.get("type")
         try:
             if item_type == ITEM_IMAGE:
@@ -971,10 +971,10 @@ class WeChatAdapter(ChannelAdapter):
         content = MessageContent()
         content.text = text_body
 
-        # 查找并下载媒体
+        # Find and download media
         media_item = self._find_media_item(item_list)
         if not media_item:
-            # 回退检查引用消息中的媒体
+            # Fallback: check for media in quoted message
             for item in item_list:
                 if item.get("type") == ITEM_TEXT:
                     ref = item.get("ref_msg", {})
@@ -1011,7 +1011,7 @@ class WeChatAdapter(ChannelAdapter):
                 _mime, _list_name = _type_map.get(item_type, ("application/octet-stream", "files"))
                 failed = MediaFile.create(filename="media", mime_type=_mime)
                 failed.status = MediaStatus.FAILED
-                failed.description = "CDN 下载失败"
+                failed.description = "CDN download failed"
                 getattr(content, _list_name).append(failed)
 
         ts_ms = msg.get("create_time_ms") or 0
@@ -1045,7 +1045,7 @@ class WeChatAdapter(ChannelAdapter):
         self._log_message(unified)
         await self._emit_message(unified)
 
-    # ==================== 斜杠命令 ====================
+    # ==================== Slash commands ====================
 
     async def _handle_slash_command(
         self,
@@ -1064,7 +1064,7 @@ class WeChatAdapter(ChannelAdapter):
             ts_ms = msg.get("create_time_ms") or 0
             latency = ""
             if ts_ms:
-                latency = f"\n平台延迟: {(time.time() * 1000 - ts_ms):.0f}ms"
+                latency = f"\nPlatform latency: {(time.time() * 1000 - ts_ms):.0f}ms"
             reply = f"[echo] {payload}{latency}"
             try:
                 await self._send_text(user_id, reply, ctx_token)
@@ -1075,10 +1075,10 @@ class WeChatAdapter(ChannelAdapter):
         if stripped == "/toggle-debug":
             if user_id in self._debug_users:
                 self._debug_users.discard(user_id)
-                reply = "🔧 Debug 模式已关闭"
+                reply = "🔧 Debug mode disabled"
             else:
                 self._debug_users.add(user_id)
-                reply = "🔧 Debug 模式已开启，消息尾部将附加耗时信息"
+                reply = "🔧 Debug mode enabled; elapsed time will be appended to messages"
             try:
                 await self._send_text(user_id, reply, ctx_token)
             except Exception:
@@ -1087,7 +1087,7 @@ class WeChatAdapter(ChannelAdapter):
 
         return False
 
-    # ==================== 消息发送 ====================
+    # ==================== Message sending ====================
 
     async def _send_error_notice(
         self,
@@ -1114,7 +1114,7 @@ class WeChatAdapter(ChannelAdapter):
 
         text = message.content.text or ""
 
-        # 发送媒体
+        # Send media
         all_media = message.content.all_media
         if all_media:
             media = all_media[0]
@@ -1133,16 +1133,16 @@ class WeChatAdapter(ChannelAdapter):
                     )
                     err_str = str(exc)
                     if "upload" in err_str.lower() or "CDN" in err_str:
-                        notice = "⚠️ 媒体文件上传失败，请稍后重试。"
+                        notice = "⚠️ Media upload failed, please try again later."
                     elif "download" in err_str.lower():
-                        notice = "⚠️ 媒体文件下载失败，请检查链接是否可访问。"
+                        notice = "⚠️ Media download failed, please check if the link is accessible."
                     else:
-                        notice = "⚠️ 媒体文件发送失败，请稍后重试。"
+                        notice = "⚠️ Media send failed, please try again later."
                     asyncio.create_task(self._send_error_notice(chat_id, notice, ctx_token))
                     if not text:
-                        text = f"[媒体消息: {media.filename}]"
+                        text = f"[Media message: {media.filename}]"
 
-        # 发送纯文本
+        # Send plain text
         plain = _markdown_to_plaintext(text) if text else ""
         if not plain:
             return ""
@@ -1153,10 +1153,10 @@ class WeChatAdapter(ChannelAdapter):
         chat_id: str,
         metadata: dict | None = None,
     ) -> str:
-        """返回最新可用的 context_token。
+        """Return the latest available context_token.
 
-        优先级: 最新缓存（来自最近一次 getUpdates） > 消息 metadata 中的原始 token。
-        长耗时任务中原始 token 可能已过期，缓存中的更可能有效。
+        Priority: latest cache (from most recent getUpdates) > original token from message metadata.
+        During long-running tasks the original token may have expired; the cached one is more likely valid.
         """
         cached = self._context_tokens.get(chat_id, "")
         meta_token = (metadata or {}).get("context_token", "")
@@ -1220,12 +1220,12 @@ class WeChatAdapter(ChannelAdapter):
 
         client_ids: list[str] = []
 
-        # 先发 caption
+        # Send caption first
         if plain_caption:
             cid = await self._send_text(chat_id, plain_caption, ctx_token)
             client_ids.append(cid)
 
-        # 构造媒体 item
+        # Build media item
         client_id = f"openakita-wechat-{uuid.uuid4().hex[:12]}"
         aeskey_hex = uploaded["aeskey"]
         media_ref = {
@@ -1313,8 +1313,9 @@ class WeChatAdapter(ChannelAdapter):
         )
 
     # ==================== Typing ====================
-    # iLink Bot API 不支持通过同一 client_id 更新消息（API 按 client_id 去重），
-    # 因此无法实现"单气泡流式更新"。仅使用原生 typing 指示器。
+    # The iLink Bot API does not support updating messages via the same client_id
+    # (the API deduplicates by client_id), so "single-bubble streaming updates"
+    # cannot be implemented. Only the native typing indicator is used.
 
     _TYPING_STALE_THRESHOLD_S = 1800  # 30 min
 
@@ -1364,11 +1365,11 @@ class WeChatAdapter(ChannelAdapter):
         if not self._footer_elapsed and not is_debug:
             return None
         if elapsed < 60:
-            footer = f"\n\n⏱ 耗时 {elapsed:.1f}s"
+            footer = f"\n\n⏱ Elapsed {elapsed:.1f}s"
         else:
             minutes = int(elapsed // 60)
             secs = elapsed % 60
-            footer = f"\n\n⏱ 耗时 {minutes}m{secs:.0f}s"
+            footer = f"\n\n⏱ Elapsed {minutes}m{secs:.0f}s"
         if is_debug:
             footer += (
                 f"\n[debug] msgs_recv={self._msg_count} msgs_sent={self._send_count}"
@@ -1414,7 +1415,7 @@ class WeChatAdapter(ChannelAdapter):
             )
         return entry.ticket if entry else ""
 
-    # ==================== CDN 媒体 ====================
+    # ==================== CDN media ====================
 
     async def _cdn_download(
         self,
@@ -1540,7 +1541,7 @@ class WeChatAdapter(ChannelAdapter):
             "filesize_cipher": filesize,
         }
 
-    # ==================== 媒体接口（基类） ====================
+    # ==================== Media interface (base class) ====================
 
     async def download_media(self, media: MediaFile) -> Path:
         if media.local_path and Path(media.local_path).exists():
@@ -1573,7 +1574,7 @@ class WeChatAdapter(ChannelAdapter):
         mf.status = MediaStatus.READY
         return mf
 
-    # ==================== 同步游标 & Context Token 持久化 ====================
+    # ==================== Sync cursor & context token persistence ====================
 
     def _sync_buf_path(self) -> Path:
         safe_id = self.bot_id.replace(":", "_").replace("/", "_")

@@ -1,11 +1,11 @@
 """
-Skill Store 工具定义
+Skill Store Tool Definitions
 
-提供与 OpenAkita Platform Skill Store 交互的工具：
-- search_store_skills: 搜索平台上的 Skill
-- install_store_skill: 从平台安装 Skill 到本地
-- get_store_skill_detail: 查看 Skill 详情
-- submit_skill_repo: 提交 GitHub 仓库供索引
+Provides tools for interacting with the OpenAkita Platform Skill Store:
+- search_store_skills: Search for Skills on the platform
+- install_store_skill: Install a Skill from the platform to the local system
+- get_store_skill_detail: View Skill details
+- submit_skill_repo: Submit a GitHub repository for indexing
 """
 
 SKILL_STORE_TOOLS = [

@@ -82,7 +82,7 @@ Return ONLY the JSON, no explanation."""
 
         response = await self.brain.think(analysis_prompt)
 
-        # 解析响应
+        # Parse the response
         import json
 
         try:
@@ -108,7 +108,7 @@ Return ONLY the JSON, no explanation."""
         complexity = data.get("complexity", 5)
         estimated_steps = data.get("estimated_steps", 3)
 
-        # 检查哪些能力已有
+        # Check which capabilities are already available
         available = []
         missing = []
 
@@ -130,15 +130,15 @@ Return ONLY the JSON, no explanation."""
         )
 
     def _has_capability(self, capability: str) -> bool:
-        """检查是否有某能力"""
-        # 检查技能注册表
+        """Check whether a capability is available"""
+        # Check the skill registry
         cap_lower = capability.lower()
 
         for skill in self.skill_registry:
             if cap_lower in skill.name.lower() or cap_lower in skill.description.lower():
                 return True
 
-        # 检查内置工具
+        # Check built-in tools
         builtin_tools = [
             "shell",
             "file",
@@ -198,13 +198,13 @@ Return in JSON format:
 
     async def suggest_evolution(self, gaps: list[CapabilityGap]) -> list[dict]:
         """
-        根据能力缺口建议进化方案
+        Suggest evolution plans based on capability gaps
 
         Args:
-            gaps: 能力缺口列表
+            gaps: List of capability gaps
 
         Returns:
-            进化建议列表
+            List of evolution suggestions
         """
         suggestions = []
 
@@ -220,14 +220,14 @@ Return in JSON format:
                     suggestion["actions"].append(
                         {
                             "type": "search_install",
-                            "description": f"搜索并安装 {gap.name} 相关技能",
+                            "description": f"Search and install {gap.name} related skills",
                         }
                     )
                 elif "编写" in solution or "实现" in solution:
                     suggestion["actions"].append(
                         {
                             "type": "generate",
-                            "description": f"自动生成 {gap.name} 技能",
+                            "description": f"Auto-generate {gap.name} skill",
                         }
                     )
                 else:

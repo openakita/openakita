@@ -1,14 +1,15 @@
 """
-条件技能激活
+Conditional skill activation.
 
-两种激活维度:
-1. 文件路径模式 (fnmatch) —— 技能声明 ``paths`` 后，
-   仅当工作区存在匹配文件时才激活。
-2. 工具集回退 (fallback_for_toolsets) —— 技能声明所依赖的工具集名称后，
-   仅当这些工具集全部不可用时才自动激活，提供降级替代能力。
+Two activation dimensions:
+1. File path patterns (fnmatch) — when a skill declares ``paths``,
+   it activates only if matching files exist in the workspace.
+2. Toolset fallback (fallback_for_toolsets) — when a skill declares
+   the names of toolsets it depends on, it activates only when ALL
+   of those toolsets are unavailable, providing a degraded alternative.
 
-两种条件是 OR 关系：任一维度满足即可激活。
-未声明任何条件的技能始终处于激活状态。
+The two conditions are OR-ed: satisfying either dimension activates the skill.
+Skills with no declared conditions are always active.
 """
 
 from __future__ import annotations

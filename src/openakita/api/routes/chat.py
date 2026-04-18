@@ -561,7 +561,7 @@ async def _stream_chat(
             else:
                 continue
 
-            # deliver_artifacts / send_sticker 都可能返回带 receipts 的 JSON
+            # deliver_artifacts / send_sticker may both return JSON with receipts
             _artifact_tools = ("deliver_artifacts", "send_sticker")
             if event_type == "tool_call_end" and event.get("tool") in _artifact_tools:
                 try:

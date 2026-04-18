@@ -1,7 +1,7 @@
 """
 Models route: GET /api/models
 
-返回当前可用的 LLM 端点列表及其状态。
+Returns the list of currently available LLM endpoints and their status.
 """
 
 from __future__ import annotations

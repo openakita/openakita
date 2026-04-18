@@ -1,8 +1,9 @@
 """
-OrgScaler — 动态扩编/缩编管理
+OrgScaler — Dynamic scaling (scale up / scale down) management
 
-支持克隆（加人手）、招募（新岗位）、裁撤（临时节点），
-含审批链和防失控机制。
+Supports cloning (adding manpower), recruiting (new positions),
+and dismissing (ephemeral nodes), with approval chains and
+ safeguards against runaway growth.
 """
 
 from __future__ import annotations
@@ -344,7 +345,7 @@ class OrgScaler:
 
         new_node = OrgNode(
             id=_new_id("node_"),
-            role_title=f"{source.role_title} (副本{clone_count + 1})",
+            role_title=f"{source.role_title} (copy {clone_count + 1})",
             role_goal=source.role_goal,
             role_backstory=source.role_backstory,
             agent_source=source.agent_source,
@@ -388,7 +389,7 @@ class OrgScaler:
 
         new_node = OrgNode(
             id=_new_id("node_"),
-            role_title=req.role_title or "新岗位",
+            role_title=req.role_title or "New Position",
             role_goal=req.role_goal or "",
             department=req.department or "",
             level=(parent.level + 1) if parent else 1,

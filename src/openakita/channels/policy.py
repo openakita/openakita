@@ -1,19 +1,20 @@
 """
-IM 访问控制策略引擎
+IM Access Control Policy Engine
 
-参考 openclaw-china-main packages/shared/src/policy/{dm-policy,group-policy}.ts
+Reference: openclaw-china-main packages/shared/src/policy/{dm-policy,group-policy}.ts
 
-DM 策略 (DmPolicy):
-- open:      任何人都可以私聊
-- pairing:   需要配对码验证后才可对话
-- allowlist: 仅白名单用户可以私聊
+DM Policy (DmPolicy):
+- open:      Anyone can start a private chat
+- pairing:   Requires pairing-code verification before chatting
+- allowlist: Only whitelisted users can private-chat
 
-群聊策略 (GroupPolicy):
-- open:        任何群都可以使用（仍受 GroupResponseMode 控制）
-- allowlist:   仅白名单群可以使用
-- disabled:    完全禁用群聊
+Group Policy (GroupPolicy):
+- open:        Any group may be used (still subject to GroupResponseMode)
+- allowlist:   Only whitelisted groups may be used
+- disabled:    Group chat is fully disabled
 
-策略检查返回 PolicyResult，包含 allowed 标志和可选的拒绝原因/提示消息。
+Policy checks return a PolicyResult containing an allowed flag and an
+optional rejection reason / hint message.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from enum import StrEnum
 logger = logging.getLogger(__name__)
 
 
-# ==================== DM 策略 ====================
+# ==================== DM Policy ====================
 
 
 class DmPolicyType(StrEnum):
@@ -47,12 +48,12 @@ class DmPolicyConfig:
     policy: DmPolicyType = DmPolicyType.OPEN
     allowlist: set[str] = field(default_factory=set)
     is_paired: Callable[[str], bool] | None = None
-    pairing_hint: str = "请先发送配对码完成验证。"
-    deny_hint: str = "您暂无权限使用此机器人。"
+    pairing_hint: str = "Please send a pairing code to complete verification first."
+    deny_hint: str = "You do not have permission to use this bot."
 
 
 def check_dm_policy(user_id: str, config: DmPolicyConfig) -> PolicyResult:
-    """检查 DM（私聊）访问策略。"""
+    """Check DM (private chat) access policy."""
     if config.policy == DmPolicyType.OPEN:
         return PolicyResult(allowed=True)
 
@@ -80,7 +81,7 @@ def check_dm_policy(user_id: str, config: DmPolicyConfig) -> PolicyResult:
     return PolicyResult(allowed=False, reason="unknown_policy")
 
 
-# ==================== 群聊策略 ====================
+# ==================== Group Policy ====================
 
 
 class GroupPolicyType(StrEnum):
@@ -97,7 +98,7 @@ class GroupPolicyConfig:
 
 
 def check_group_policy(chat_id: str, config: GroupPolicyConfig) -> PolicyResult:
-    """检查群聊访问策略。"""
+    """Check group chat access policy."""
     if config.policy == GroupPolicyType.DISABLED:
         return PolicyResult(
             allowed=False,

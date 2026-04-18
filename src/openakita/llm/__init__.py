@@ -1,5 +1,5 @@
 """
-LLM 统一调用层。
+Unified LLM invocation layer.
 
 Keep package exports lazy so importing lightweight modules such as
 `openakita.llm.types` does not automatically initialize the full client stack.

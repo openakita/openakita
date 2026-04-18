@@ -1,8 +1,8 @@
 """
-OrgBlackboard — 三级共享记忆系统
+OrgBlackboard — Three-tier shared memory system
 
-组织级（黑板）、部门级、节点私有三层记忆，
-支持读写、容量管理、自动淘汰。
+Organization-level (blackboard), department-level, and node-private memory,
+with read/write, capacity management, and automatic eviction.
 """
 
 from __future__ import annotations
@@ -172,7 +172,7 @@ class OrgBlackboard:
     def get_org_summary(self, max_entries: int = 10) -> str:
         entries = self.read_org(limit=max_entries)
         if not entries:
-            return "(暂无组织级记忆)"
+            return "(No org-level memories yet)"
         lines = []
         for e in entries:
             tag_str = f" [{', '.join(e.tags)}]" if e.tags else ""
@@ -182,7 +182,7 @@ class OrgBlackboard:
     def get_dept_summary(self, dept_name: str, max_entries: int = 5) -> str:
         entries = self.read_department(dept_name, limit=max_entries)
         if not entries:
-            return f"({dept_name} 暂无部门级记忆)"
+            return f"({dept_name} has no department-level memories yet)"
         lines = []
         for e in entries:
             lines.append(f"- [{e.memory_type.value}] {e.content}")
@@ -191,7 +191,7 @@ class OrgBlackboard:
     def get_node_summary(self, node_id: str, max_entries: int = 5) -> str:
         entries = self.read_node(node_id, limit=max_entries)
         if not entries:
-            return "(暂无私有记忆)"
+            return "(No private memories yet)"
         lines = []
         for e in entries:
             lines.append(f"- {e.content}")

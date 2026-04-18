@@ -1,13 +1,14 @@
 """
-流式事件累加器 (Stream Accumulator)
+Stream Event Accumulator
 
-参考 Claude Code (claude.ts) 的 contentBlocks[] 状态机模式，统一处理
-Anthropic 原始 SSE 和 OpenAI 归一化流事件，产出高层 SSE 事件并累积构建 Decision。
+Modeled after the Claude Code (claude.ts) contentBlocks[] state machine pattern,
+it unifies handling of Anthropic raw SSE and OpenAI normalized stream events,
+producing high-level SSE events and accumulating data to build a Decision.
 
-核心设计：
-- tool_use 的 input 作为字符串拼接，仅在 block 结束时 json.loads（避免 O(n²)）
-- text_delta / thinking_delta 即时产出供上游 yield 给前端
-- 流结束后通过 build_decision() 构建完整 Decision 对象
+Core design:
+- tool_use input is concatenated as a string and only json.loads'd at block end (avoids O(n^2))
+- text_delta / thinking_delta are yielded immediately for upstream consumption
+- After the stream ends, build_decision() constructs the full Decision object
 """
 
 from __future__ import annotations
@@ -20,12 +21,12 @@ logger = logging.getLogger(__name__)
 
 
 class StreamAccumulator:
-    """归一化 Provider 流事件 → 高层 SSE 事件 + Decision 数据累积。
+    """Normalize Provider stream events into high-level SSE events + accumulate Decision data.
 
-    支持两种 Provider 事件格式:
-    - Anthropic 原始 SSE: message_start / content_block_start / content_block_delta /
+    Supports two Provider event formats:
+    - Anthropic raw SSE: message_start / content_block_start / content_block_delta /
       content_block_stop / message_delta / message_stop
-    - OpenAI 归一化格式: content_block_delta (delta.type: text/thinking/tool_use) /
+    - OpenAI normalized format: content_block_delta (delta.type: text/thinking/tool_use) /
       message_stop / ping
     """
 
@@ -37,24 +38,24 @@ class StreamAccumulator:
         self.stop_reason: str = ""
         self.usage: dict | None = None
 
-        # Anthropic: 按 content block index 追踪
+        # Anthropic: track by content block index
         self._blocks: dict[int, dict] = {}
-        # OpenAI: 按 tool call id 追踪 JSON 字符串
+        # OpenAI: track JSON strings by tool call id
         self._openai_tool_inputs: dict[str, dict] = {}
         self._openai_current_tool_id: str | None = None
 
     # ------------------------------------------------------------------
-    # 公共接口
+    # Public interface
     # ------------------------------------------------------------------
 
     def feed(self, event: dict) -> list[dict]:
-        """处理一个原始 Provider 事件，返回 0~N 个高层事件供 yield。"""
+        """Process a raw Provider event, returning 0-N high-level events for yielding."""
         evt_type = event.get("type", "")
 
         if evt_type == "ping":
             return []
 
-        # ── Anthropic 专有事件 ──
+        # -- Anthropic-specific events --
         if evt_type == "message_start":
             return self._on_anthropic_message_start(event)
         if evt_type == "content_block_start":
@@ -78,17 +79,17 @@ class StreamAccumulator:
                 self.usage = u
             return []
 
-        # ── 共用: content_block_delta（Anthropic 原始 / OpenAI 归一化） ──
+        # -- Shared: content_block_delta (Anthropic raw / OpenAI normalized) --
         if evt_type == "content_block_delta":
             return self._on_content_block_delta(event)
 
-        # ── 其它/未知 ──
+        # -- Other/unknown --
         return []
 
     def build_decision(self):
-        """从累积状态构建 Decision 对象。
+        """Build a Decision object from accumulated state.
 
-        返回 Decision（延迟导入，避免循环依赖）。
+        Returns a Decision (lazy import to avoid circular dependencies).
         """
         from .reasoning_engine import Decision, DecisionType
 
@@ -104,7 +105,7 @@ class StreamAccumulator:
         )
 
     # ------------------------------------------------------------------
-    # Anthropic 事件处理
+    # Anthropic event handling
     # ------------------------------------------------------------------
 
     def _on_anthropic_message_start(self, event: dict) -> list[dict]:
@@ -194,7 +195,7 @@ class StreamAccumulator:
         return []
 
     # ------------------------------------------------------------------
-    # 共用: content_block_delta
+    # Shared: content_block_delta
     # ------------------------------------------------------------------
 
     def _on_content_block_delta(self, event: dict) -> list[dict]:
@@ -202,7 +203,7 @@ class StreamAccumulator:
         delta_type = delta.get("type", "")
         idx = event.get("index")
 
-        # ── Anthropic: text_delta ──
+        # -- Anthropic: text_delta --
         if delta_type == "text_delta":
             text = delta.get("text", "")
             self.text_content += text
@@ -210,7 +211,7 @@ class StreamAccumulator:
                 self._blocks[idx]["text"] = self._blocks[idx].get("text", "") + text
             return [{"type": "text_delta", "content": text}] if text else []
 
-        # ── Anthropic: thinking_delta ──
+        # -- Anthropic: thinking_delta --
         if delta_type == "thinking_delta":
             text = delta.get("thinking", "")
             self.thinking_content += text
@@ -218,7 +219,7 @@ class StreamAccumulator:
                 self._blocks[idx]["thinking"] = self._blocks[idx].get("thinking", "") + text
             return [{"type": "thinking_delta", "content": text}] if text else []
 
-        # ── Anthropic: signature_delta ──
+        # -- Anthropic: signature_delta --
         if delta_type == "signature_delta":
             if idx is not None and idx in self._blocks:
                 self._blocks[idx]["signature"] = self._blocks[idx].get("signature", "") + delta.get(
@@ -226,7 +227,7 @@ class StreamAccumulator:
                 )
             return []
 
-        # ── Anthropic: input_json_delta ──
+        # -- Anthropic: input_json_delta --
         if delta_type == "input_json_delta":
             if idx is not None:
                 if idx not in self._blocks:
@@ -245,26 +246,26 @@ class StreamAccumulator:
                 )
             return []
 
-        # ── OpenAI 归一化: text ──
+        # -- OpenAI normalized: text --
         if delta_type == "text":
             text = delta.get("text", "")
             self.text_content += text
             return [{"type": "text_delta", "content": text}] if text else []
 
-        # ── OpenAI 归一化: thinking ──
+        # -- OpenAI normalized: thinking --
         if delta_type == "thinking":
             text = delta.get("text", "")
             self.thinking_content += text
             return [{"type": "thinking_delta", "content": text}] if text else []
 
-        # ── OpenAI 归一化: tool_use ──
+        # -- OpenAI normalized: tool_use --
         if delta_type == "tool_use":
             return self._on_openai_tool_delta(delta)
 
         return []
 
     # ------------------------------------------------------------------
-    # OpenAI 工具增量
+    # OpenAI tool deltas
     # ------------------------------------------------------------------
 
     def _on_openai_tool_delta(self, delta: dict) -> list[dict]:
@@ -286,7 +287,7 @@ class StreamAccumulator:
         return []
 
     def _finalize_openai_tools(self) -> None:
-        """message_stop 时解析所有累积的 OpenAI 工具 JSON。"""
+        """Parse all accumulated OpenAI tool JSON on message_stop."""
         for call_id, tc in self._openai_tool_inputs.items():
             try:
                 args = json.loads(tc["arguments"]) if tc["arguments"] else {}
@@ -314,16 +315,16 @@ class StreamAccumulator:
 
 
 def post_process_streamed_decision(decision) -> None:
-    """对流式构建的 Decision 执行与 _parse_decision 相同的防御逻辑（原地修改）。
+    """Apply the same defensive logic as _parse_decision to a stream-built Decision (in-place).
 
-    - 从 thinking_content 中提取嵌入的工具调用
-    - 从 text_content 中提取文本式工具调用
-    - 剥离 text_content 中的 <thinking>/<think> 标签
-    - 剥离末尾裸工具名
+    - Extract embedded tool calls from thinking_content
+    - Extract text-based tool calls from text_content
+    - Strip <thinking>/think tags from text_content
+    - Strip trailing bare tool names
     """
     from .response_handler import strip_thinking_tags
 
-    # 1) 剥离 text_content 中的 thinking 标签
+    # 1) Strip thinking tags from text_content
     raw_text = decision.text_content
     if raw_text and ("<thinking>" in raw_text or "<think>" in raw_text):
         display_text = strip_thinking_tags(raw_text)
@@ -333,7 +334,7 @@ def post_process_streamed_decision(decision) -> None:
                 decision.thinking_content = m.group(1).strip()
         decision.text_content = display_text
 
-    # 2) 从 thinking_content 中提取嵌入工具调用
+    # 2) Extract embedded tool calls from thinking_content
     if not decision.tool_calls and decision.thinking_content:
         try:
             from ..llm.converters.tools import has_text_tool_calls, parse_text_tool_calls
@@ -354,7 +355,7 @@ def post_process_streamed_decision(decision) -> None:
         except Exception as e:
             logger.debug(f"[post_process] Thinking tool-call check failed: {e}")
 
-    # 3) 从 text_content 中提取文本式工具调用
+    # 3) Extract text-based tool calls from text_content
     if not decision.tool_calls and decision.text_content:
         try:
             from ..llm.converters.tools import has_text_tool_calls, parse_text_tool_calls
@@ -374,7 +375,7 @@ def post_process_streamed_decision(decision) -> None:
         except Exception as e:
             logger.debug(f"[post_process] Text tool-call check failed: {e}")
 
-    # 4) 剥离末尾裸工具名
+    # 4) Strip trailing bare tool names
     if decision.text_content and len(decision.text_content.strip()) < 200:
         lines = decision.text_content.strip().split("\n")
         last = lines[-1].strip() if lines else ""
@@ -382,7 +383,7 @@ def post_process_streamed_decision(decision) -> None:
             decision.text_content = "\n".join(lines[:-1]).strip()
             logger.warning(f"[post_process] Stripped bare tool name '{last}'")
 
-    # 5) 更新 decision type
+    # 5) Update decision type
     from .reasoning_engine import DecisionType
 
     if decision.tool_calls:

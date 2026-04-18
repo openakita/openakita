@@ -1,16 +1,16 @@
 """
-技能参数替换系统
+Skill argument substitution system
 
-支持 SKILL.md body 和脚本参数中的占位符替换。
-占位符格式: {{placeholder_name}}
+Supports placeholder substitution in SKILL.md body and script arguments.
+Placeholder format: {{placeholder_name}}
 
-内置占位符:
-- {{date}}        — 当前日期 (YYYY-MM-DD)
-- {{datetime}}    — 当前日期时间 (ISO 8601)
-- {{cwd}}         — 当前工作目录
-- {{os}}          — 操作系统名称
-- {{user}}        — 当前用户名
-- {{project_root}} — 项目根目录
+Built-in placeholders:
+- {{date}}        — current date (YYYY-MM-DD)
+- {{datetime}}    — current date and time (ISO 8601)
+- {{cwd}}         — current working directory
+- {{os}}          — operating system name
+- {{user}}        — current username
+- {{project_root}} — project root directory
 """
 
 from __future__ import annotations

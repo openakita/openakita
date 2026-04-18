@@ -1,19 +1,19 @@
 """
-QQ 机器人 OpenClaw 扫码建应用 & 凭证校验
+QQ Bot OpenClaw QR-code onboarding & credential validation
 
-用于 Setup Center 和 CLI Wizard：
-- 扫码登录 QQ 开发者后台（OpenClaw）
-- 自动创建 QQ 机器人并获取 AppID / AppSecret
-- 验证已有 App ID / App Secret 的有效性
+Used by Setup Center and CLI Wizard:
+- Scan QR code to log in to QQ developer console (OpenClaw)
+- Automatically create a QQ bot and obtain AppID / AppSecret
+- Validate existing App ID / App Secret
 
-OpenClaw 三步：
-  1. create_session → 获取 session_id（生成 QR 码内容）
-  2. poll            → 轮询扫码登录状态，成功返回 developer_id
-  3. create_bot      → 调用 lite_create 创建机器人，返回 appid + client_secret
+OpenClaw three-step flow:
+  1. create_session -> obtain session_id (used to generate QR code content)
+  2. poll           -> poll scan-login status; returns developer_id on success
+  3. create_bot     -> call lite_create to create bot; returns appid + client_secret
 
-验证通过 QQ 官方 getAppAccessToken 接口。
+Validation via the official QQ getAppAccessToken endpoint.
 
-所有 HTTP 调用均为 async（httpx），bridge.py 通过 asyncio.run() 驱动。
+All HTTP calls are async (httpx); bridge.py drives them via asyncio.run().
 """
 
 from __future__ import annotations
@@ -44,13 +44,13 @@ _COMMON_HEADERS = {
 
 
 class QQBotOnboardError(Exception):
-    """OpenClaw 过程中的业务错误"""
+    """Business error during the OpenClaw flow"""
 
 
 class QQBotOnboard:
-    """QQ 机器人 OpenClaw 扫码建应用
+    """QQ Bot OpenClaw QR-code onboarding
 
-    完整流程：create_session → (用户扫码) → poll → create_bot
+    Full flow: create_session -> (user scans QR) -> poll -> create_bot
     """
 
     def __init__(self, *, timeout: float = 30.0):
@@ -71,7 +71,7 @@ class QQBotOnboard:
             self._client = None
 
     async def create_session(self) -> dict[str, Any]:
-        """Step 1: 创建登录会话，获取 session_id
+        """Step 1: Create a login session and obtain session_id.
 
         Returns:
             {
@@ -90,20 +90,20 @@ class QQBotOnboard:
         retcode = data.get("retcode", -1)
         inner = data.get("data", {})
         if retcode != 0 or inner.get("code", -1) != 0:
-            msg = inner.get("message", data.get("msg", "未知错误"))
-            raise QQBotOnboardError(f"create_session 失败: {msg}")
+            msg = inner.get("message", data.get("msg", "unknown error"))
+            raise QQBotOnboardError(f"create_session failed: {msg}")
 
         session_id = inner["session_id"]
         qr_url = f"https://q.qq.com/qqbot/openclaw/login.html?session_id={session_id}"
         return {"session_id": session_id, "qr_url": qr_url}
 
     async def poll(self, session_id: str) -> dict[str, Any]:
-        """Step 2: 单次轮询登录状态
+        """Step 2: Single poll of login status.
 
         Returns:
-            等待: {"status": "waiting"}
-            成功: {"status": "ok", "developer_id": "..."}
-            失败: {"status": "error", "message": "..."}
+            Waiting: {"status": "waiting"}
+            Success: {"status": "ok", "developer_id": "..."}
+            Failure: {"status": "error", "message": "..."}
         """
         client = await self._get_client()
         resp = await client.get(
@@ -123,9 +123,9 @@ class QQBotOnboard:
             developer_id = inner.get("developer_id", "")
             if developer_id:
                 return {"status": "ok", "developer_id": developer_id}
-            return {"status": "error", "message": "登录成功但未返回 developer_id"}
+            return {"status": "error", "message": "Login succeeded but developer_id was not returned"}
 
-        return {"status": "error", "message": inner.get("message", "未知状态")}
+        return {"status": "error", "message": inner.get("message", "unknown status")}
 
     async def poll_until_done(
         self,
@@ -134,26 +134,26 @@ class QQBotOnboard:
         interval: float = 2.0,
         max_attempts: int = 150,
     ) -> dict[str, Any]:
-        """持续轮询直到用户完成扫码或超时
+        """Poll continuously until the user completes the QR scan or times out.
 
         Returns:
-            成功: {"status": "ok", "developer_id": "..."}
+            Success: {"status": "ok", "developer_id": "..."}
 
         Raises:
-            QQBotOnboardError: 轮询超时
+            QQBotOnboardError: Polling timed out
         """
         for _ in range(max_attempts):
             result = await self.poll(session_id)
             if result["status"] == "ok":
                 return result
             if result["status"] == "error":
-                raise QQBotOnboardError(result.get("message", "登录失败"))
+                raise QQBotOnboardError(result.get("message", "Login failed"))
             await asyncio.sleep(interval)
 
-        raise QQBotOnboardError(f"轮询超时: {max_attempts} 次尝试后仍未完成扫码")
+        raise QQBotOnboardError(f"Polling timed out: scan not completed after {max_attempts} attempts")
 
     async def list_bots(self, developer_id: str) -> list[dict[str, Any]]:
-        """查询已有机器人列表
+        """Query the list of existing bots.
 
         Returns:
             [{"app_id": "...", "app_name": "...", "bot_uin": "...", "is_lite_bot": 1}, ...]
@@ -171,10 +171,10 @@ class QQBotOnboard:
         return apps
 
     async def check_remain(self) -> int:
-        """查询剩余可创建数量
+        """Query remaining creation quota.
 
         Returns:
-            剩余配额数（0 = 无法再创建）
+            Remaining quota (0 = no more bots can be created)
         """
         client = await self._get_client()
         resp = await client.get(
@@ -186,7 +186,7 @@ class QQBotOnboard:
         return data.get("data", {}).get("create_remain", 0)
 
     async def create_bot(self) -> dict[str, Any]:
-        """Step 3: 创建机器人
+        """Step 3: Create a bot.
 
         Returns:
             {
@@ -197,7 +197,7 @@ class QQBotOnboard:
             }
 
         Raises:
-            QQBotOnboardError: 创建失败（配额不足、需要 cookie 等）
+            QQBotOnboardError: Creation failed (quota exhausted, cookie required, etc.)
         """
         client = await self._get_client()
         resp = await client.post(
@@ -215,15 +215,15 @@ class QQBotOnboard:
         inner = data.get("data", {})
 
         if retcode != 0:
-            msg = data.get("msg", inner.get("message", "创建失败"))
-            raise QQBotOnboardError(f"lite_create 失败 (retcode={retcode}): {msg}")
+            msg = data.get("msg", inner.get("message", "creation failed"))
+            raise QQBotOnboardError(f"lite_create failed (retcode={retcode}): {msg}")
 
         appid = inner.get("appid", "")
         secret = inner.get("client_secret", "")
         if not appid or not secret:
             raise QQBotOnboardError(
-                "lite_create 未返回凭证，可能需要浏览器 cookie 认证。"
-                "请尝试在浏览器中打开 https://q.qq.com/qqbot/openclaw/ 手动创建。"
+                "lite_create did not return credentials; browser cookie authentication may be required. "
+                "Try opening https://q.qq.com/qqbot/openclaw/ in a browser to create manually."
             )
 
         return {
@@ -234,21 +234,22 @@ class QQBotOnboard:
         }
 
     async def poll_and_create(self, session_id: str) -> dict[str, Any]:
-        """原子操作：poll 确认登录态 + 创建机器人（同一 httpx 客户端保持 cookie）
+        """Atomic operation: poll to confirm login state, then create a bot (same httpx client keeps cookie).
 
-        前端在检测到 poll 返回 ok 后调用此方法。此方法会再做一次 poll
-        以在当前 httpx 客户端中获取登录态 cookie，然后立即调用 create_bot。
+        The frontend calls this after detecting that poll returns ok. This method
+        performs one more poll to obtain the login-state cookie on the current httpx
+        client, then immediately calls create_bot.
 
-        如果 create_bot 失败（如配额不足），自动 fallback 到 list_bots
-        获取最近创建的机器人信息。
+        If create_bot fails (e.g. quota exhausted), automatically falls back to
+        list_bots to retrieve the most recently created bot's info.
 
         Returns:
-            仍在等待: {"status": "waiting"}
-            创建成功: {"status": "ok", "app_id": "...", "app_secret": "...", ...}
-            已有机器人: {"status": "ok", "app_id": "...", "app_secret": "", ...}
+            Still waiting: {"status": "waiting"}
+            Created successfully: {"status": "ok", "app_id": "...", "app_secret": "...", ...}
+            Existing bot: {"status": "ok", "app_id": "...", "app_secret": "", ...}
 
         Raises:
-            QQBotOnboardError: poll 失败或创建失败且无 fallback
+            QQBotOnboardError: poll failed, or creation failed with no fallback
         """
         poll_result = await self.poll(session_id)
 
@@ -256,7 +257,7 @@ class QQBotOnboard:
             return {"status": "waiting"}
 
         if poll_result["status"] == "error":
-            raise QQBotOnboardError(poll_result.get("message", "登录失败"))
+            raise QQBotOnboardError(poll_result.get("message", "Login failed"))
 
         developer_id = poll_result.get("developer_id", "")
 
@@ -265,10 +266,10 @@ class QQBotOnboard:
             bot["status"] = "ok"
             return bot
         except QQBotOnboardError as e:
-            logger.warning(f"lite_create 失败，尝试 list_bots fallback: {e}")
+            logger.warning(f"lite_create failed, trying list_bots fallback: {e}")
 
         if not developer_id:
-            raise QQBotOnboardError("创建失败且无法获取已有机器人列表（缺少 developer_id）")
+            raise QQBotOnboardError("Creation failed and cannot list existing bots (missing developer_id)")
 
         apps = await self.list_bots(developer_id)
         lite_bots = [a for a in apps if a.get("is_lite_bot")]
@@ -287,7 +288,8 @@ class QQBotOnboard:
             }
 
         raise QQBotOnboardError(
-            "创建机器人失败且未找到已有机器人。请前往 https://q.qq.com/qqbot/openclaw/ 手动操作。"
+            "Bot creation failed and no existing bots found. "
+            "Please go to https://q.qq.com/qqbot/openclaw/ to create one manually."
         )
 
 
@@ -297,12 +299,12 @@ async def validate_credentials(
     *,
     timeout: float = 15.0,
 ) -> dict[str, Any]:
-    """验证 QQ 机器人 AppID / AppSecret 是否有效
+    """Validate QQ Bot AppID / AppSecret.
 
-    通过请求 getAppAccessToken 来验证。
+    Validates by requesting getAppAccessToken.
 
     Returns:
-        {"valid": True} 或
+        {"valid": True} or
         {"valid": False, "error": "..."}
     """
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -325,7 +327,7 @@ async def validate_credentials(
 
 
 def render_qr_terminal(url: str) -> None:
-    """在终端渲染 QR 码（依赖 qrcode 包，不可用时 fallback 到打印 URL）"""
+    """Render a QR code in the terminal (requires the qrcode package; falls back to printing the URL)"""
     try:
         import qrcode
 
@@ -334,8 +336,8 @@ def render_qr_terminal(url: str) -> None:
         qr.make(fit=True)
         qr.print_ascii(invert=True)
     except ImportError:
-        logger.info("qrcode 包未安装，直接输出 URL")
-        print(f"\n请用手机 QQ 扫描以下链接对应的二维码：\n  {url}\n")
+        logger.info("qrcode package not installed, printing URL directly")
+        print(f"\nPlease scan the following QR code URL with QQ on your phone:\n  {url}\n")
     except Exception as e:
-        logger.warning(f"QR 渲染失败: {e}")
-        print(f"\n请用手机 QQ 扫描以下链接对应的二维码：\n  {url}\n")
+        logger.warning(f"QR rendering failed: {e}")
+        print(f"\nPlease scan the following QR code URL with QQ on your phone:\n  {url}\n")

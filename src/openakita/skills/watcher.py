@@ -1,13 +1,14 @@
 """
-技能文件热更新监视器
+Skill File Hot-Reload Watcher
 
-监视技能目录的文件变更，触发自动重新加载。
-使用 watchdog 库（可选依赖），不可用时热更新功能静默禁用。
+Monitors skill directories for file changes and triggers automatic reload.
+Uses the watchdog library (optional dependency); hot-reload is silently
+disabled when watchdog is unavailable.
 
-特性:
-- 500ms 防抖：合并短时间内的多次变更
-- Graceful 降级：watchdog 不可用时静默禁用（不阻塞启动）
-- 资源清理：stop() 方法释放所有资源
+Features:
+- 500ms debounce: coalesces multiple rapid changes
+- Graceful degradation: silently disabled when watchdog is missing (does not block startup)
+- Resource cleanup: stop() method releases all resources
 """
 
 from __future__ import annotations

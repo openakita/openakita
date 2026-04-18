@@ -1,7 +1,7 @@
 """
-Windows 桌面自动化 - 键盘操作模块
+Windows Desktop Automation - Keyboard Actions Module
 
-基于 PyAutoGUI 封装键盘操作
+Wraps PyAutoGUI keyboard operations.
 """
 
 import logging
@@ -12,7 +12,7 @@ from contextlib import contextmanager, suppress
 from ..config import get_config
 from ..types import ActionResult
 
-# 平台检查
+# Platform check
 if sys.platform != "win32":
     raise ImportError(
         f"Desktop automation module is Windows-only. Current platform: {sys.platform}"
@@ -28,9 +28,9 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
-# 常用按键别名映射
+# Common key alias mapping
 KEY_ALIASES = {
-    # 功能键
+    # Function keys
     "enter": "enter",
     "return": "enter",
     "tab": "tab",
@@ -42,7 +42,7 @@ KEY_ALIASES = {
     "del": "delete",
     "insert": "insert",
     "ins": "insert",
-    # 修饰键
+    # Modifier keys
     "ctrl": "ctrl",
     "control": "ctrl",
     "alt": "alt",
@@ -51,7 +51,7 @@ KEY_ALIASES = {
     "windows": "win",
     "cmd": "win",
     "command": "win",
-    # 方向键
+    # Arrow keys
     "up": "up",
     "down": "down",
     "left": "left",
@@ -62,9 +62,9 @@ KEY_ALIASES = {
     "pgdn": "pagedown",
     "home": "home",
     "end": "end",
-    # 功能键 F1-F12
+    # F1-F12 function keys
     **{f"f{i}": f"f{i}" for i in range(1, 13)},
-    # 其他
+    # Other
     "printscreen": "printscreen",
     "prtsc": "printscreen",
     "scrolllock": "scrolllock",
@@ -76,30 +76,30 @@ KEY_ALIASES = {
 
 class KeyboardController:
     """
-    键盘控制器
+    Keyboard Controller
 
-    封装 PyAutoGUI 的键盘操作，提供更友好的接口
+    Wraps PyAutoGUI keyboard operations and provides a friendlier interface.
     """
 
     def __init__(self):
         self._configure_pyautogui()
-        self._held_keys: list[str] = []  # 当前按住的键
+        self._held_keys: list[str] = []  # Currently held keys
 
     def _configure_pyautogui(self) -> None:
-        """配置 PyAutoGUI"""
+        """Configure PyAutoGUI."""
         config = get_config().actions
         pyautogui.FAILSAFE = config.failsafe
         pyautogui.PAUSE = config.pause_between_actions
 
     def _normalize_key(self, key: str) -> str:
         """
-        标准化按键名称
+        Normalize a key name.
 
         Args:
-            key: 按键名称
+            key: Key name.
 
         Returns:
-            标准化后的按键名称
+            Normalized key name.
         """
         key_lower = key.lower().strip()
         return KEY_ALIASES.get(key_lower, key_lower)
@@ -110,13 +110,13 @@ class KeyboardController:
         interval: float | None = None,
     ) -> ActionResult:
         """
-        输入文本
+        Type text.
 
-        支持中文和特殊字符（通过剪贴板方式）
+        Supports Chinese and special characters (via clipboard).
 
         Args:
-            text: 要输入的文本
-            interval: 字符间隔，None 使用配置
+            text: The text to type.
+            interval: Character interval; None uses the configured value.
 
         Returns:
             ActionResult
@@ -126,12 +126,12 @@ class KeyboardController:
 
         start_time = time.time()
         try:
-            # 检查是否包含非 ASCII 字符
+            # Check for non-ASCII characters
             if any(ord(c) > 127 for c in text):
-                # 使用剪贴板方式输入（支持中文）
+                # Use clipboard-based input (supports Chinese)
                 result = self._type_via_clipboard(text)
             else:
-                # 直接输入 ASCII 字符
+                # Direct ASCII input
                 pyautogui.typewrite(text, interval=int_val)
                 result = ActionResult(
                     success=True,
@@ -155,10 +155,10 @@ class KeyboardController:
 
     def _type_via_clipboard(self, text: str) -> ActionResult:
         """
-        通过剪贴板输入文本（支持中文）
+        Type text via the clipboard (supports Chinese).
 
         Args:
-            text: 要输入的文本
+            text: The text to type.
 
         Returns:
             ActionResult
@@ -167,19 +167,19 @@ class KeyboardController:
 
         start_time = time.time()
         try:
-            # 保存原有剪贴板内容
+            # Save original clipboard content
             original_clipboard = ""
             with suppress(Exception):
                 original_clipboard = pyperclip.paste()
 
-            # 复制文本到剪贴板
+            # Copy text to clipboard
             pyperclip.copy(text)
 
-            # 粘贴
+            # Paste
             pyautogui.hotkey("ctrl", "v")
 
-            # 恢复原有剪贴板内容
-            time.sleep(0.1)  # 等待粘贴完成
+            # Restore original clipboard content
+            time.sleep(0.1)  # Wait for paste to complete
             with suppress(Exception):
                 pyperclip.copy(original_clipboard)
 
@@ -192,7 +192,7 @@ class KeyboardController:
             )
 
         except ImportError:
-            # 如果没有 pyperclip，尝试使用 Windows 原生方式
+            # If pyperclip is not available, try native Windows clipboard
             logger.warning("pyperclip not available, trying native Windows clipboard")
             return self._type_via_win_clipboard(text)
         except Exception as e:
@@ -206,10 +206,10 @@ class KeyboardController:
 
     def _type_via_win_clipboard(self, text: str) -> ActionResult:
         """
-        使用 Windows 原生剪贴板输入文本
+        Type text using the native Windows clipboard.
 
         Args:
-            text: 要输入的文本
+            text: The text to type.
 
         Returns:
             ActionResult
@@ -218,30 +218,30 @@ class KeyboardController:
 
         start_time = time.time()
         try:
-            # Windows API 常量
+            # Windows API constants
             CF_UNICODETEXT = 13
             GHND = 0x0042
 
             user32 = ctypes.windll.user32
             kernel32 = ctypes.windll.kernel32
 
-            # 打开剪贴板
+            # Open clipboard
             if not user32.OpenClipboard(None):
                 raise Exception("Failed to open clipboard")
 
             try:
-                # 清空剪贴板
+                # Empty clipboard
                 user32.EmptyClipboard()
 
-                # 准备文本数据
+                # Prepare text data
                 text_bytes = text.encode("utf-16-le") + b"\x00\x00"
 
-                # 分配全局内存
+                # Allocate global memory
                 h_mem = kernel32.GlobalAlloc(GHND, len(text_bytes))
                 if not h_mem:
                     raise Exception("Failed to allocate memory")
 
-                # 锁定内存并复制数据
+                # Lock memory and copy data
                 p_mem = kernel32.GlobalLock(h_mem)
                 if not p_mem:
                     kernel32.GlobalFree(h_mem)
@@ -250,14 +250,14 @@ class KeyboardController:
                 ctypes.memmove(p_mem, text_bytes, len(text_bytes))
                 kernel32.GlobalUnlock(h_mem)
 
-                # 设置剪贴板数据
+                # Set clipboard data
                 user32.SetClipboardData(CF_UNICODETEXT, h_mem)
 
             finally:
-                # 关闭剪贴板
+                # Close clipboard
                 user32.CloseClipboard()
 
-            # 粘贴
+            # Paste
             pyautogui.hotkey("ctrl", "v")
 
             return ActionResult(
@@ -279,10 +279,10 @@ class KeyboardController:
 
     def press(self, key: str) -> ActionResult:
         """
-        按下并释放按键
+        Press and release a key.
 
         Args:
-            key: 按键名称
+            key: Key name.
 
         Returns:
             ActionResult
@@ -316,12 +316,12 @@ class KeyboardController:
         interval: float = 0.1,
     ) -> ActionResult:
         """
-        多次按下按键
+        Press a key multiple times.
 
         Args:
-            key: 按键名称
-            presses: 按下次数
-            interval: 按键间隔
+            key: Key name.
+            presses: Number of presses.
+            interval: Interval between presses.
 
         Returns:
             ActionResult
@@ -350,10 +350,10 @@ class KeyboardController:
 
     def hotkey(self, *keys: str) -> ActionResult:
         """
-        执行快捷键组合
+        Execute a keyboard shortcut / hotkey combination.
 
         Args:
-            *keys: 按键名称列表，如 hotkey("ctrl", "c")
+            *keys: Key names, e.g. hotkey("ctrl", "c").
 
         Returns:
             ActionResult
@@ -383,10 +383,10 @@ class KeyboardController:
 
     def key_down(self, key: str) -> ActionResult:
         """
-        按下按键（不释放）
+        Press and hold a key (without releasing).
 
         Args:
-            key: 按键名称
+            key: Key name.
 
         Returns:
             ActionResult
@@ -416,10 +416,10 @@ class KeyboardController:
 
     def key_up(self, key: str) -> ActionResult:
         """
-        释放按键
+        Release a held key.
 
         Args:
-            key: 按键名称
+            key: Key name.
 
         Returns:
             ActionResult
@@ -451,25 +451,25 @@ class KeyboardController:
     @contextmanager
     def hold(self, *keys: str):
         """
-        按住按键的上下文管理器
+        Context manager for holding keys down.
 
-        用法:
+        Usage:
             with keyboard.hold("ctrl", "shift"):
                 keyboard.press("n")
 
         Args:
-            *keys: 要按住的按键
+            *keys: Keys to hold down.
         """
         normalized_keys = [self._normalize_key(k) for k in keys]
 
         try:
-            # 按下所有键
+            # Press all keys
             for key in normalized_keys:
                 pyautogui.keyDown(key)
                 self._held_keys.append(key)
             yield
         finally:
-            # 释放所有键（逆序）
+            # Release all keys (in reverse order)
             for key in reversed(normalized_keys):
                 pyautogui.keyUp(key)
                 if key in self._held_keys:
@@ -477,7 +477,7 @@ class KeyboardController:
 
     def release_all(self) -> ActionResult:
         """
-        释放所有按住的按键
+        Release all held keys.
 
         Returns:
             ActionResult
@@ -486,7 +486,7 @@ class KeyboardController:
         released = []
 
         try:
-            for key in self._held_keys[:]:  # 使用副本遍历
+            for key in self._held_keys[:]:  # Iterate over a copy
                 pyautogui.keyUp(key)
                 released.append(key)
                 self._held_keys.remove(key)
@@ -506,74 +506,74 @@ class KeyboardController:
                 duration_ms=(time.time() - start_time) * 1000,
             )
 
-    # 便捷方法
+    # Convenience methods
     def copy(self) -> ActionResult:
-        """Ctrl+C 复制"""
+        """Ctrl+C Copy"""
         return self.hotkey("ctrl", "c")
 
     def paste(self) -> ActionResult:
-        """Ctrl+V 粘贴"""
+        """Ctrl+V Paste"""
         return self.hotkey("ctrl", "v")
 
     def cut(self) -> ActionResult:
-        """Ctrl+X 剪切"""
+        """Ctrl+X Cut"""
         return self.hotkey("ctrl", "x")
 
     def undo(self) -> ActionResult:
-        """Ctrl+Z 撤销"""
+        """Ctrl+Z Undo"""
         return self.hotkey("ctrl", "z")
 
     def redo(self) -> ActionResult:
-        """Ctrl+Y 重做"""
+        """Ctrl+Y Redo"""
         return self.hotkey("ctrl", "y")
 
     def select_all(self) -> ActionResult:
-        """Ctrl+A 全选"""
+        """Ctrl+A Select all"""
         return self.hotkey("ctrl", "a")
 
     def save(self) -> ActionResult:
-        """Ctrl+S 保存"""
+        """Ctrl+S Save"""
         return self.hotkey("ctrl", "s")
 
     def find(self) -> ActionResult:
-        """Ctrl+F 查找"""
+        """Ctrl+F Find"""
         return self.hotkey("ctrl", "f")
 
     def new(self) -> ActionResult:
-        """Ctrl+N 新建"""
+        """Ctrl+N New"""
         return self.hotkey("ctrl", "n")
 
     def close_window(self) -> ActionResult:
-        """Alt+F4 关闭窗口"""
+        """Alt+F4 Close window"""
         return self.hotkey("alt", "f4")
 
     def switch_window(self) -> ActionResult:
-        """Alt+Tab 切换窗口"""
+        """Alt+Tab Switch window"""
         return self.hotkey("alt", "tab")
 
     def minimize_all(self) -> ActionResult:
-        """Win+D 显示桌面"""
+        """Win+D Show desktop"""
         return self.hotkey("win", "d")
 
     def open_run(self) -> ActionResult:
-        """Win+R 打开运行"""
+        """Win+R Open Run dialog"""
         return self.hotkey("win", "r")
 
     def open_explorer(self) -> ActionResult:
-        """Win+E 打开资源管理器"""
+        """Win+E Open File Explorer"""
         return self.hotkey("win", "e")
 
     def screenshot_to_clipboard(self) -> ActionResult:
-        """Win+Shift+S 截图到剪贴板"""
+        """Win+Shift+S Screenshot to clipboard"""
         return self.hotkey("win", "shift", "s")
 
 
-# 全局实例
+# Global instance
 _keyboard: KeyboardController | None = None
 
 
 def get_keyboard() -> KeyboardController:
-    """获取全局键盘控制器"""
+    """Get the global keyboard controller."""
     global _keyboard
     if _keyboard is None:
         _keyboard = KeyboardController()

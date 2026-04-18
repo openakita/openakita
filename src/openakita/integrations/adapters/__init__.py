@@ -1,4 +1,4 @@
-"""API 适配器子包。"""
+"""API adapter sub-package."""
 
 from openakita.integrations import APIError, AuthenticationError, BaseAPIAdapter, RateLimitError
 

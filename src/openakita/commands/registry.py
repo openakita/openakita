@@ -37,33 +37,33 @@ class CommandDef:
 
 
 COMMANDS: tuple[CommandDef, ...] = (
-    CommandDef("help", "帮助", "显示可用命令列表"),
-    CommandDef("model", "切换模型", "选择使用的 LLM 端点", args_hint="<端点名>"),
-    CommandDef("plan", "计划模式", "开启/关闭 Plan 模式，先计划再执行"),
-    CommandDef("clear", "清空对话", "清除当前对话的所有消息"),
-    CommandDef("skill", "使用技能", "调用已安装的技能", args_hint="<技能名>"),
-    CommandDef("persona", "切换角色", "切换 Agent 的人格预设", args_hint="<角色ID>"),
-    CommandDef("agent", "切换 Agent", "在多 Agent 间切换", args_hint="<Agent名>"),
-    CommandDef("agents", "Agent 列表", "显示可用的 Agent 列表"),
+    CommandDef("help", "Help", "Show available commands"),
+    CommandDef("model", "Switch Model", "Select the LLM endpoint to use", args_hint="<endpoint>"),
+    CommandDef("plan", "Plan Mode", "Toggle Plan mode: plan before executing"),
+    CommandDef("clear", "Clear Conversation", "Clear all messages in the current conversation"),
+    CommandDef("skill", "Use Skill", "Invoke an installed skill", args_hint="<skill>"),
+    CommandDef("persona", "Switch Persona", "Switch the agent's persona preset", args_hint="<persona-id>"),
+    CommandDef("agent", "Switch Agent", "Switch between multiple agents", args_hint="<agent-name>"),
+    CommandDef("agents", "Agent List", "Show available agents"),
     CommandDef(
         "org",
-        "组织模式",
-        "切换到组织编排模式",
-        args_hint="<组织名|off>",
+        "Organization Mode",
+        "Switch to organization orchestration mode",
+        args_hint="<org-name|off>",
         scope=CommandScope.DESKTOP,
     ),
-    CommandDef("thinking", "深度思考", "设置思考模式", args_hint="on|off|auto"),
-    CommandDef("thinking_depth", "思考程度", "设置思考程度", args_hint="low|medium|high"),
-    CommandDef("status", "Agent 状态", "显示 Agent 运行状态", scope=CommandScope.CLI),
-    CommandDef("selfcheck", "自检", "运行系统自检", scope=CommandScope.CLI),
-    CommandDef("memory", "记忆信息", "查看 Agent 记忆", scope=CommandScope.CLI),
-    CommandDef("skills", "技能列表", "查看已安装技能", scope=CommandScope.CLI),
-    CommandDef("channels", "IM 通道", "查看 IM 通道状态", scope=CommandScope.CLI),
-    CommandDef("sessions", "会话列表", "查看 CLI 历史会话", scope=CommandScope.CLI),
+    CommandDef("thinking", "Deep Thinking", "Set thinking mode", args_hint="on|off|auto"),
+    CommandDef("thinking_depth", "Thinking Depth", "Set thinking depth", args_hint="low|medium|high"),
+    CommandDef("status", "Agent Status", "Show agent running status", scope=CommandScope.CLI),
+    CommandDef("selfcheck", "Self-Check", "Run system self-check", scope=CommandScope.CLI),
+    CommandDef("memory", "Memory Info", "View agent memory", scope=CommandScope.CLI),
+    CommandDef("skills", "Skill List", "View installed skills", scope=CommandScope.CLI),
+    CommandDef("channels", "IM Channels", "View IM channel status", scope=CommandScope.CLI),
+    CommandDef("sessions", "Session List", "View CLI session history", scope=CommandScope.CLI),
     CommandDef(
-        "session", "切换会话", "切换到指定的 CLI 会话", args_hint="<#>", scope=CommandScope.CLI
+        "session", "Switch Session", "Switch to a specific CLI session", args_hint="<#>", scope=CommandScope.CLI
     ),
-    CommandDef("exit", "退出", "退出 OpenAkita", aliases=("quit",), scope=CommandScope.CLI),
+    CommandDef("exit", "Exit", "Exit OpenAkita", aliases=("quit",), scope=CommandScope.CLI),
 )
 
 

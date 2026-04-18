@@ -1,14 +1,15 @@
 """
-子进程代理 — 通过系统 Python 调用需要可选依赖的操作
+Subprocess bridge — invoke operations requiring optional dependencies via system Python
 
-当 PyInstaller 打包环境中无法直接 import 某些重量级包（如 playwright）时，
-通过系统 Python 子进程执行，返回 JSON 结果。
+When certain heavyweight packages (e.g., playwright) cannot be directly imported in a
+PyInstaller packaged environment, they are executed via a system Python subprocess,
+returning JSON results.
 
-典型流程：
-  1. 直接 import → 成功则走进程内路径
+Typical flow:
+  1. Direct import → succeeds → in-process path
   2. ImportError → SubprocessBridge.check_package("playwright")
-  3. 如果系统有 → 启动子进程执行
-  4. 如果没有 → 返回友好提示
+  3. If available on system → launch subprocess to execute
+  4. If not available → return a friendly message
 """
 
 import asyncio
@@ -29,24 +30,24 @@ _NO_WINDOW_FLAGS: dict = (
 
 
 class SubprocessBridge:
-    """通过系统 Python 子进程执行需要可选依赖的操作。"""
+    """Execute operations requiring optional dependencies via system Python subprocess."""
 
     def __init__(self) -> None:
         self._python: str | None = None
 
     def _get_python(self) -> str | None:
-        """获取可用的系统 Python 路径（缓存结果）。"""
+        """Get the available system Python path (cached result)."""
         if self._python is None:
             py = get_python_executable()
-            # 打包环境下 sys.executable 是 openakita-server.exe，不可用
+            # In packaged environment, sys.executable is openakita-server.exe, not usable
             if py and (not IS_FROZEN or py != sys.executable):
                 self._python = py
             else:
-                self._python = ""  # 标记为不可用
+                self._python = ""  # Mark as unavailable
         return self._python or None
 
     async def check_package(self, package: str) -> bool:
-        """检查系统 Python 中是否安装了指定包。"""
+        """Check whether the specified package is installed in the system Python."""
         py = self._get_python()
         if not py:
             return False
@@ -72,29 +73,29 @@ class SubprocessBridge:
         timeout: float = 60,
         env_extra: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        """执行一段 Python 脚本，脚本应将结果以 JSON 格式输出到 stdout。
+        """Execute a Python script; the script should output results as JSON to stdout.
 
         Args:
-            script: Python 代码片段（会被 dedent 处理）
-            timeout: 超时秒数
-            env_extra: 额外环境变量
+            script: Python code snippet (will be dedented)
+            timeout: Timeout in seconds
+            env_extra: Additional environment variables
 
         Returns:
-            {"success": True, "data": <parsed JSON>} 或
+            {"success": True, "data": <parsed JSON>} or
             {"success": False, "error": <error message>}
         """
         py = self._get_python()
         if not py:
             return {
                 "success": False,
-                "error": "未找到可用的系统 Python 解释器，无法执行子进程任务",
+                "error": "No available system Python interpreter found; cannot execute subprocess task",
             }
 
         import os
 
         env = os.environ.copy()
-        # _ensure_utf8 已在父进程设置了这些环境变量，os.environ.copy() 会继承。
-        # 这里保留 setdefault 作为防御，以防本模块在 _ensure_utf8 之前被使用。
+        # _ensure_utf8 has already set these env vars in the parent process; os.environ.copy() inherits them.
+        # Keep setdefault here as a defensive measure in case this module is used before _ensure_utf8.
         env.setdefault("PYTHONUTF8", "1")
         env.setdefault("PYTHONIOENCODING", "utf-8")
         if env_extra:
@@ -116,23 +117,23 @@ class SubprocessBridge:
 
             if proc.returncode != 0:
                 err_msg = stderr.decode("utf-8", errors="replace").strip()
-                return {"success": False, "error": f"子进程退出码 {proc.returncode}: {err_msg}"}
+                return {"success": False, "error": f"Subprocess exit code {proc.returncode}: {err_msg}"}
 
-            # 尝试解析 JSON 输出
+            # Try to parse JSON output
             out_text = stdout.decode("utf-8", errors="replace").strip()
             if out_text:
                 try:
                     data = json.loads(out_text)
                     return {"success": True, "data": data}
                 except json.JSONDecodeError:
-                    # 非 JSON 输出也视为成功
+                    # Non-JSON output is also treated as success
                     return {"success": True, "data": out_text}
             return {"success": True, "data": None}
 
         except (asyncio.TimeoutError, TimeoutError):
-            return {"success": False, "error": f"子进程执行超时 ({timeout}s)"}
+            return {"success": False, "error": f"Subprocess execution timed out ({timeout}s)"}
         except Exception as e:
-            return {"success": False, "error": f"子进程执行异常: {e}"}
+            return {"success": False, "error": f"Subprocess execution error: {e}"}
 
     async def run_module_func(
         self,
@@ -143,9 +144,9 @@ class SubprocessBridge:
         kwargs: dict[str, Any] | None = None,
         timeout: float = 60,
     ) -> dict[str, Any]:
-        """调用系统 Python 中指定模块的函数。
+        """Call a function in the specified module via system Python.
 
-        生成一段 Python 脚本:
+        Generates a Python script:
             import module
             result = module.func(*args, **kwargs)
             print(json.dumps(result))
@@ -167,10 +168,10 @@ print(json.dumps(result, ensure_ascii=False, default=str))
         self,
         port: int = 9222,
     ) -> dict[str, Any]:
-        """通过系统 Python 启动 Playwright CDP 服务。
+        """Launch a Playwright CDP server via system Python.
 
-        启动一个暴露 CDP 端口的 Chromium 实例，主进程可以通过
-        playwright 的 connect_over_cdp 连接，或通过 HTTP 协议直接交互。
+        Starts a Chromium instance exposing a CDP port; the main process can
+        connect via playwright's connect_over_cdp or interact directly via HTTP protocol.
         """
         script = f"""
 import json, sys, asyncio
@@ -183,14 +184,14 @@ async def main():
             headless=True,
             args=["--remote-debugging-port={port}"]
         )
-        # 输出连接信息
+        # Output connection info
         info = {{
             "cdp_url": f"http://127.0.0.1:{port}",
             "ws_endpoint": browser.contexts[0].pages[0].url if browser.contexts else None,
             "pid": browser.process.pid if hasattr(browser, 'process') and browser.process else None,
         }}
         print(json.dumps(info))
-        # 保持浏览器运行直到 stdin 关闭
+        # Keep the browser running until stdin is closed
         sys.stdin.read()
     except ImportError:
         print(json.dumps({{"error": "playwright not installed"}}))
@@ -205,18 +206,18 @@ asyncio.run(main())
         if not py:
             return {
                 "success": False,
-                "error": "未找到系统 Python，无法启动 Playwright CDP 服务",
+                "error": "System Python not found; cannot launch Playwright CDP server",
             }
 
-        # 先检查 playwright 是否可用
+        # Check if playwright is available first
         has_pw = await self.check_package("playwright")
         if not has_pw:
             return {
                 "success": False,
-                "error": "系统 Python 中未安装 playwright，请在设置中心安装「浏览器自动化」模块",
+                "error": "playwright is not installed in system Python; please install the 'Browser Automation' module in the setup center",
             }
 
-        # 以短超时执行启动脚本，等它输出连接信息
+        # Execute the launch script with a short timeout, waiting for connection info output
         import os
 
         proc = await asyncio.create_subprocess_exec(
@@ -231,7 +232,7 @@ asyncio.run(main())
         )
 
         try:
-            # 等待第一行输出（连接信息）
+            # Wait for the first line of output (connection info)
             line = await asyncio.wait_for(proc.stdout.readline(), timeout=30)
             info = json.loads(line.decode("utf-8").strip())
             if "error" in info:
@@ -240,18 +241,18 @@ asyncio.run(main())
             return {"success": True, "data": info}
         except (asyncio.TimeoutError, TimeoutError):
             proc.kill()
-            return {"success": False, "error": "Playwright CDP 服务启动超时"}
+            return {"success": False, "error": "Playwright CDP server startup timed out"}
         except Exception as e:
             proc.kill()
-            return {"success": False, "error": f"启动 Playwright CDP 失败: {e}"}
+            return {"success": False, "error": f"Failed to start Playwright CDP: {e}"}
 
 
-# 全局单例
+# Global singleton
 _bridge: SubprocessBridge | None = None
 
 
 def get_subprocess_bridge() -> SubprocessBridge:
-    """获取全局 SubprocessBridge 单例。"""
+    """Get the global SubprocessBridge singleton."""
     global _bridge
     if _bridge is None:
         _bridge = SubprocessBridge()

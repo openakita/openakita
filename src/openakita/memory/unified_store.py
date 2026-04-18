@@ -1,10 +1,10 @@
 """
-统一存储层
+Unified storage layer
 
-协调 MemoryStorage (SQLite) + SearchBackend (搜索引擎):
-- 写入: SQLite 主写 + SearchBackend 索引同步
-- 查询: 结构化查询走 SQLite, 语义搜索走 SearchBackend
-- 降级: SearchBackend 不可用时回退到 FTS5
+Coordinates MemoryStorage (SQLite) + SearchBackend (search engine):
+- Writes: SQLite as primary + SearchBackend index sync
+- Queries: structured queries via SQLite, semantic search via SearchBackend
+- Fallback: falls back to FTS5 when SearchBackend is unavailable
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 class UnifiedStore:
-    """统一存储层: SQLite 为主存储, SearchBackend 为搜索引擎"""
+    """Unified storage layer: SQLite as primary storage, SearchBackend as search engine"""
 
     def __init__(
         self,
@@ -338,7 +338,7 @@ class UnifiedStore:
         self.db.complete_extraction(queue_id, success)
 
     # ======================================================================
-    # Attachments (文件/媒体记忆)
+    # Attachments (file/media memory)
     # ======================================================================
 
     def save_attachment(self, attachment: Attachment) -> str:

@@ -1,8 +1,9 @@
 """
-L4: 文件快照与回滚系统
+L4: File snapshot and rollback system
 
-在可控区文件修改前自动创建快照，支持按 checkpoint ID 回滚。
-快照存储在 data/checkpoints/，保留最近 N 个。
+Automatically creates snapshots before modifying files in the controlled area,
+and supports rollback by checkpoint ID.
+Snapshots are stored in data/checkpoints/ and the most recent N are kept.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class CheckpointEntry:
-    """单个文件的快照记录"""
+    """Snapshot record for a single file"""
 
     original_path: str
     backup_path: str
@@ -33,7 +34,7 @@ class CheckpointEntry:
 
 @dataclass
 class Checkpoint:
-    """一次快照"""
+    """A single snapshot"""
 
     checkpoint_id: str
     timestamp: float
@@ -46,7 +47,7 @@ class Checkpoint:
 
 
 class CheckpointManager:
-    """管理文件快照的创建与回滚"""
+    """Manages the creation and rollback of file snapshots"""
 
     def __init__(
         self,

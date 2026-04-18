@@ -1,15 +1,15 @@
 """
-技能目录 (Skill Catalog)
+Skill Catalog
 
-遵循 Agent Skills 规范的渐进式披露:
-- Level 1: 技能清单 (name + description) - 在系统提示中提供
-- Level 2: 完整指令 (SKILL.md body) - 激活时加载
-- Level 3: 资源文件 - 按需加载
+Follows the Agent Skills progressive disclosure specification:
+- Level 1: Skill list (name + description) - provided in system prompt
+- Level 2: Full instructions (SKILL.md body) - loaded on activation
+- Level 3: Resource files - loaded on demand
 
-技能清单在 Agent 启动时生成，并注入到系统提示中，
-让大模型在首次对话时就知道有哪些技能可用。
+The skill list is generated at Agent startup and injected into the system
+prompt so the model knows which skills are available from the first conversation.
 
-三级降级预算策略:
+Three-level budget degradation strategy:
 - Level A (full): name + description + when_to_use
 - Level B (compact): name + when_to_use
 - Level C (index): names only
@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 
 class SkillCatalog:
     """
-    技能目录
+    Skill Catalog
 
-    管理技能清单的生成和格式化，用于系统提示注入。
+    Manages the generation and formatting of the skill list for system prompt injection.
     """
 
     CATALOG_TEMPLATE = """
@@ -103,12 +103,12 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
 
     def generate_catalog(self, *, exposure_filter: str | None = None) -> str:
         """
-        生成已启用技能清单（disabled 和 disable_model_invocation 技能不出现在系统提示中）
+        Generate the list of enabled skills (disabled and disable_model_invocation skills are excluded from the system prompt).
 
         Args:
             exposure_filter: "core" | "core+recommended" | None
-                控制按 exposure_level 过滤。CONSUMER_CHAT 场景传 "core"，
-                IM_ASSISTANT 传 "core+recommended"，LOCAL_AGENT 传 None。
+                Controls filtering by exposure_level. Pass "core" for CONSUMER_CHAT,
+                "core+recommended" for IM_ASSISTANT, and None for LOCAL_AGENT.
         """
         with self._lock:
             skills = self._list_model_visible(exposure_filter=exposure_filter)
@@ -176,17 +176,17 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
 
     def get_catalog(self, refresh: bool = False) -> str:
         """
-        获取技能清单
+        Retrieve the skill catalog.
 
         Args:
-            refresh: 是否强制刷新
+            refresh: Whether to force a refresh.
         """
         if refresh or self._cached_catalog is None:
             return self.generate_catalog()
         return self._cached_catalog
 
     def get_compact_catalog(self) -> str:
-        """获取紧凑版技能清单 (仅名称列表)，用于 token 受限场景。"""
+        """Retrieve the compact skill catalog (names only), for token-constrained scenarios."""
         with self._lock:
             skills = self._list_model_visible()
             if not skills:
@@ -199,7 +199,7 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
 
     def get_index_catalog(self, *, exposure_filter: str | None = None) -> str:
         """
-        获取已启用技能的"全量索引"（仅名称，尽量短，但完整）。
+        Retrieve a "full index" of enabled skills (names only, as short as possible but complete).
 
         Args:
             exposure_filter: "core" | "core+recommended" | None
@@ -302,7 +302,7 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
             return f"Skills ({len(skills)}): {', '.join(names)}"
 
     def get_skill_summary(self, skill_name: str) -> str | None:
-        """获取单个技能的摘要"""
+        """Retrieve a summary for a single skill."""
         skill = self.registry.get(skill_name)
         if not skill:
             return None
@@ -316,16 +316,16 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
         max_chars: int = 250,
         exposure_filter: str | None = None,
     ) -> str:
-        """根据用户输入生成轻量技能推荐 hint。
+        """Generate lightweight skill recommendation hints based on user input.
 
-        基于 when_to_use 和 keywords 做简单关键词匹配，不调用 LLM。
-        返回格式如: "💡 可能有用的技能: web-search (搜索网页), ..."
+        Performs simple keyword matching against when_to_use and keywords fields; does not call the LLM.
+        Returns a format like: "Potentially useful skills: web-search (search the web), ..."
 
         Args:
-            task_description: 用户的任务描述/输入
-            max_hints: 最多推荐几个技能
-            max_chars: hint 总长度上限
-            exposure_filter: "core" / "core+recommended" / None(all except hidden)
+            task_description: The user's task description/input.
+            max_hints: Maximum number of skills to recommend.
+            max_chars: Total length limit for the hint.
+            exposure_filter: "core" / "core+recommended" / None (all except hidden).
         """
         if not task_description:
             return ""
@@ -368,14 +368,14 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
         candidates.sort(key=lambda x: x[0], reverse=True)
         top = candidates[:max_hints]
         parts = [f"{name} ({desc})" for _, name, desc in top]
-        hint = "💡 可能有用的技能: " + ", ".join(parts)
+        hint = "Potentially useful skills: " + ", ".join(parts)
 
         if len(hint) > max_chars:
             hint = hint[:max_chars - 3] + "..."
         return hint
 
     def invalidate_cache(self) -> None:
-        """使所有缓存失效"""
+        """Invalidate all caches."""
         with self._lock:
             self._cached_catalog = None
             self._cached_index = None
@@ -383,11 +383,11 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
 
     @property
     def skill_count(self) -> int:
-        """技能数量"""
+        """Skill count."""
         return self.registry.count
 
 
 def generate_skill_catalog(registry: SkillRegistry) -> str:
-    """便捷函数：生成技能清单"""
+    """Convenience function: generate the skill catalog."""
     catalog = SkillCatalog(registry)
     return catalog.generate_catalog()

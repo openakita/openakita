@@ -1,10 +1,10 @@
 """
-触发器定义
+Trigger definitions
 
-支持三种触发类型:
-- OnceTrigger: 一次性（指定时间执行）
-- IntervalTrigger: 间隔（每 N 分钟/小时）
-- CronTrigger: Cron 表达式
+Supports three trigger types:
+- OnceTrigger: one-shot (execute at a specified time)
+- IntervalTrigger: recurring (every N minutes/hours)
+- CronTrigger: cron expression
 """
 
 import logging
@@ -15,45 +15,45 @@ logger = logging.getLogger(__name__)
 
 
 class Trigger(ABC):
-    """触发器基类"""
+    """Trigger base class"""
 
     @abstractmethod
     def get_next_run_time(self, last_run: datetime | None = None) -> datetime | None:
         """
-        计算下一次运行时间
+        Calculate the next run time.
 
         Args:
-            last_run: 上次运行时间（None 表示从未运行）
+            last_run: Previous run time (None = never run)
 
         Returns:
-            下一次运行时间，None 表示不再运行
+            Next run time, or None if no further runs
         """
         pass
 
     @abstractmethod
     def should_run(self, last_run: datetime | None = None) -> bool:
         """
-        检查是否应该运行
+        Check whether the trigger should fire.
 
         Args:
-            last_run: 上次运行时间
+            last_run: Previous run time
 
         Returns:
-            是否应该运行
+            Whether the trigger should run
         """
         pass
 
     @classmethod
     def from_config(cls, trigger_type: str, config: dict) -> "Trigger":
         """
-        从配置创建触发器
+        Create a trigger from config.
 
         Args:
-            trigger_type: 触发器类型 (once/interval/cron)
-            config: 触发器配置
+            trigger_type: Trigger type (once/interval/cron)
+            config: Trigger configuration
 
         Returns:
-            触发器实例
+            Trigger instance
         """
         if trigger_type == "once":
             return OnceTrigger.from_config(config)
@@ -67,9 +67,9 @@ class Trigger(ABC):
 
 class OnceTrigger(Trigger):
     """
-    一次性触发器
+    One-shot trigger
 
-    在指定时间执行一次
+    Executes once at the specified time.
     """
 
     def __init__(self, run_at: datetime):
@@ -105,9 +105,9 @@ class OnceTrigger(Trigger):
 
 class IntervalTrigger(Trigger):
     """
-    间隔触发器
+    Interval trigger
 
-    每隔固定时间执行一次
+    Executes at a fixed interval.
     """
 
     def __init__(
@@ -120,11 +120,11 @@ class IntervalTrigger(Trigger):
     ):
         """
         Args:
-            interval_seconds: 间隔秒数
-            interval_minutes: 间隔分钟数
-            interval_hours: 间隔小时数
-            interval_days: 间隔天数
-            start_time: 起始时间（默认为当前时间）
+            interval_seconds: Interval in seconds
+            interval_minutes: Interval in minutes
+            interval_hours: Interval in hours
+            interval_days: Interval in days
+            start_time: Start time (defaults to now)
         """
         self.interval = timedelta(
             seconds=interval_seconds,
@@ -142,22 +142,22 @@ class IntervalTrigger(Trigger):
         now = datetime.now()
 
         if last_run is None:
-            # 首次运行：计算从 start_time 开始的下一个间隔时间点
-            # 注意：不立即执行，而是等到下一个间隔
+            # First run: calculate the next aligned interval from start_time
+            # Note: do not execute immediately; wait for the next interval
             if now < self.start_time:
-                # start_time 还没到，返回 start_time
+                # start_time has not yet been reached
                 return self.start_time
 
-            # start_time 已过，计算下一个对齐的时间点
+            # start_time has passed; calculate next aligned time point
             elapsed = now - self.start_time
             intervals_passed = int(elapsed.total_seconds() / self.interval.total_seconds())
             next_run = self.start_time + self.interval * (intervals_passed + 1)
             return next_run
 
-        # 计算下一次运行时间
+        # Calculate next run time
         next_run = last_run + self.interval
 
-        # 如果下一次运行时间已过，计算最近的下一次
+        # If the next run time has passed, find the nearest upcoming one
         while next_run < now:
             next_run += self.interval
 
@@ -174,7 +174,7 @@ class IntervalTrigger(Trigger):
         interval_hours = config.get("interval_hours", 0)
         interval_days = config.get("interval_days", 0)
 
-        # 简化配置：如果只指定了 interval，默认为分钟
+        # Convenience: if only "interval" is specified, treat it as minutes
         if "interval" in config:
             interval_minutes = config["interval"]
 
@@ -193,28 +193,28 @@ class IntervalTrigger(Trigger):
 
 class CronTrigger(Trigger):
     """
-    Cron 表达式触发器
+    Cron expression trigger
 
-    支持标准 cron 表达式:
-    分 时 日 月 周
+    Supports standard cron expressions:
+    minute hour day month weekday
 
-    示例:
-    - "0 9 * * *"     每天 9:00
-    - "*/15 * * * *"  每 15 分钟
-    - "0 9 * * 1"     每周一 9:00
-    - "0 0 1 * *"     每月 1 日 0:00
+    Examples:
+    - "0 9 * * *"     Every day at 9:00
+    - "*/15 * * * *"  Every 15 minutes
+    - "0 9 * * 1"     Every Monday at 9:00
+    - "0 0 1 * *"     First of every month at 0:00
     """
 
     def __init__(self, cron_expression: str):
         """
         Args:
-            cron_expression: cron 表达式
+            cron_expression: Cron expression
         """
         self.expression = cron_expression
         self._parse_expression()
 
     def _parse_expression(self) -> None:
-        """解析 cron 表达式"""
+        """Parse the cron expression."""
         parts = self.expression.strip().split()
 
         if len(parts) != 5:
@@ -227,18 +227,18 @@ class CronTrigger(Trigger):
         self.hour_spec = self._parse_field(parts[1], 0, 23)
         self.day_spec = self._parse_field(parts[2], 1, 31)
         self.month_spec = self._parse_field(parts[3], 1, 12)
-        self.weekday_spec = self._parse_field(parts[4], 0, 6)  # 0=周日
+        self.weekday_spec = self._parse_field(parts[4], 0, 6)  # 0=Sunday
 
     def _parse_field(self, field: str, min_val: int, max_val: int) -> set[int]:
         """
-        解析单个字段
+        Parse a single field.
 
-        支持:
-        - *: 所有值
-        - N: 单个值
-        - N-M: 范围
-        - */N: 步进
-        - N,M,K: 列表
+        Supports:
+        - *: all values
+        - N: single value
+        - N-M: range
+        - */N: step
+        - N,M,K: list
         """
         result = set()
 
@@ -246,7 +246,7 @@ class CronTrigger(Trigger):
             if part == "*":
                 result.update(range(min_val, max_val + 1))
             elif "/" in part:
-                # 步进 (*/N 或 M-N/S)
+                # Step (*/N or M-N/S)
                 base, step = part.split("/")
                 step = int(step)
 
@@ -259,17 +259,17 @@ class CronTrigger(Trigger):
                     start = int(base)
                     result.update(range(start, max_val + 1, step))
             elif "-" in part:
-                # 范围
+                # Range
                 start, end = map(int, part.split("-"))
                 result.update(range(start, end + 1))
             else:
-                # 单个值
+                # Single value
                 result.add(int(part))
 
         return result
 
     def get_next_run_time(self, last_run: datetime | None = None) -> datetime:
-        """计算下一次运行时间（层级跳跃搜索，避免逐分钟遍历）"""
+        """Calculate the next run time (hierarchical skip search, avoids per-minute iteration)."""
         if last_run:
             start = last_run + timedelta(minutes=1)
         else:
@@ -278,12 +278,12 @@ class CronTrigger(Trigger):
         start = start.replace(second=0, microsecond=0)
 
         current = start
-        # 每次迭代最少前进 1 分钟，最多搜索约 4 年（48 月 × 31 天）
+        # Each iteration advances at least 1 minute; search up to ~4 years (48 months x 31 days)
         max_iterations = 48 * 31
 
         for _ in range(max_iterations):
             if current.month not in self.month_spec:
-                # 跳到下一个匹配的月份
+                # Skip to next matching month
                 current = self._next_matching_month(current)
                 if current is None:
                     break
@@ -292,14 +292,14 @@ class CronTrigger(Trigger):
             if current.day not in self.day_spec or current.weekday() not in self._convert_weekday(
                 self.weekday_spec
             ):
-                # 跳到下一天
+                # Skip to next day
                 current = (current + timedelta(days=1)).replace(hour=0, minute=0)
                 if current > start + timedelta(days=max_iterations):
                     break
                 continue
 
             if current.hour not in self.hour_spec:
-                # 跳到下一个匹配的小时
+                # Skip to next matching hour
                 next_hour = self._next_in_set(current.hour, self.hour_spec)
                 if next_hour is not None and next_hour > current.hour:
                     current = current.replace(hour=next_hour, minute=0)
@@ -312,7 +312,7 @@ class CronTrigger(Trigger):
                 if next_min is not None and next_min > current.minute:
                     current = current.replace(minute=next_min)
                 else:
-                    # 跳到下一小时
+                    # Skip to next hour
                     current = (current + timedelta(hours=1)).replace(minute=0)
                 continue
 
@@ -323,12 +323,12 @@ class CronTrigger(Trigger):
 
     @staticmethod
     def _next_in_set(current_val: int, spec: set[int]) -> int | None:
-        """找到 spec 中 > current_val 的最小值"""
+        """Find the smallest value in spec that is > current_val."""
         candidates = [v for v in spec if v > current_val]
         return min(candidates) if candidates else None
 
     def _next_matching_month(self, current: datetime) -> datetime | None:
-        """跳到下一个匹配 month_spec 的月份首日"""
+        """Skip to the first day of the next month matching month_spec."""
         for _ in range(48):
             if current.month == 12:
                 current = current.replace(year=current.year + 1, month=1, day=1, hour=0, minute=0)
@@ -339,7 +339,7 @@ class CronTrigger(Trigger):
         return None
 
     def _matches(self, dt: datetime) -> bool:
-        """检查时间是否匹配 cron 表达式"""
+        """Check whether a datetime matches the cron expression."""
         return (
             dt.minute in self.minute_spec
             and dt.hour in self.hour_spec
@@ -350,15 +350,15 @@ class CronTrigger(Trigger):
 
     def _convert_weekday(self, weekday_spec: set[int]) -> set[int]:
         """
-        转换星期规范
+        Convert weekday spec.
 
-        cron: 0=周日, 1=周一, ..., 6=周六, 7=周日(兼容)
-        Python: 0=周一, 1=周二, ..., 6=周日
+        cron: 0=Sunday, 1=Monday, ..., 6=Saturday, 7=Sunday (compat)
+        Python: 0=Monday, 1=Tuesday, ..., 6=Sunday
         """
         result = set()
         for w in weekday_spec:
             if w == 0 or w == 7:
-                result.add(6)  # 周日
+                result.add(6)  # Sunday
             else:
                 result.add(w - 1)
         return result
@@ -375,15 +375,15 @@ class CronTrigger(Trigger):
         return cls(cron_expression=cron)
 
     def describe(self) -> str:
-        """生成人类可读的描述"""
-        # 简化描述
+        """Generate a human-readable description."""
+        # Simplified descriptions
         descriptions = {
-            "* * * * *": "每分钟",
-            "0 * * * *": "每小时",
-            "0 0 * * *": "每天午夜",
-            "0 9 * * *": "每天上午9点",
-            "0 9 * * 1": "每周一上午9点",
-            "0 0 1 * *": "每月1日午夜",
+            "* * * * *": "Every minute",
+            "0 * * * *": "Every hour",
+            "0 0 * * *": "Every day at midnight",
+            "0 9 * * *": "Every day at 9:00 AM",
+            "0 9 * * 1": "Every Monday at 9:00 AM",
+            "0 0 1 * *": "First of every month at midnight",
         }
 
         return descriptions.get(self.expression, f"Cron: {self.expression}")

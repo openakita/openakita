@@ -1,8 +1,8 @@
 """
-Mode 处理器
+Mode handler
 
-模式切换：
-- switch_mode: 切换交互模式 (agent/plan/ask)
+Mode switching:
+- switch_mode: switch interaction mode (agent/plan/ask)
 """
 
 import logging
@@ -31,7 +31,7 @@ class ModeHandler:
 
         valid_modes = ("plan", "ask", "agent")
         if target_mode not in valid_modes:
-            return f"❌ 无效模式: '{target_mode}'。可选: {', '.join(valid_modes)}"
+            return f"❌ Invalid mode: '{target_mode}'. Valid options: {', '.join(valid_modes)}"
 
         session = getattr(self.agent, "session", None)
         if session and hasattr(session, "mode"):
@@ -45,11 +45,11 @@ class ModeHandler:
                 + (f" (reason: {reason})" if reason else "")
             )
 
-            mode_labels = {"plan": "Plan（规划）", "ask": "Ask（问答）", "agent": "Agent（执行）"}
+            mode_labels = {"plan": "Plan (planning)", "ask": "Ask (Q&A)", "agent": "Agent (execution)"}
             label = mode_labels.get(target_mode, target_mode)
-            msg = f"已切换到 {label} 模式。"
+            msg = f"Switched to {label} mode."
             if reason:
-                msg += f"\n原因: {reason}"
+                msg += f"\nReason: {reason}"
             return msg
 
         logger.warning("No session found for mode switch, setting flag for next iteration")

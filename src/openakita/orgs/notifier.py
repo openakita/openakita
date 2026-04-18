@@ -1,8 +1,9 @@
 """
-OrgNotifier — IM 推送 + 编号追踪 + 自然语言审批解析
+OrgNotifier — IM push + tracking numbers + natural-language approval parsing
 
-通过配置的 IM 通道（如 Feishu / DingTalk / WeChat Work / generic webhook）
-向用户推送组织消息，并解析用户通过自然语言发送的审批回复。
+Pushes org messages to users via configured IM channels
+(e.g. Feishu / DingTalk / WeChat Work / generic webhook)
+and parses approval replies sent in natural language.
 """
 
 from __future__ import annotations
@@ -126,14 +127,14 @@ class OrgNotifier:
 
     def _format_message(self, msg: InboxMessage) -> str:
         priority_labels = {
-            InboxPriority.ALERT: "紧急",
-            InboxPriority.APPROVAL: "待审批",
-            InboxPriority.ACTION: "待处理",
-            InboxPriority.WARNING: "警告",
-            InboxPriority.NOTICE: "通知",
-            InboxPriority.INFO: "消息",
+            InboxPriority.ALERT: "Urgent",
+            InboxPriority.APPROVAL: "Pending Approval",
+            InboxPriority.ACTION: "Action Required",
+            InboxPriority.WARNING: "Warning",
+            InboxPriority.NOTICE: "Notice",
+            InboxPriority.INFO: "Message",
         }
-        label = priority_labels.get(msg.priority, "消息")
+        label = priority_labels.get(msg.priority, "Message")
 
         org_prefix = f"[{msg.org_name}] " if msg.org_name else ""
         lines = [f"{org_prefix}[{label}] {msg.title}"]
@@ -145,7 +146,7 @@ class OrgNotifier:
 
         if msg.requires_approval and msg.approval_id:
             lines.append(
-                f"\n回复「{msg.approval_id} 批准」或「{msg.approval_id} 拒绝」处理此项"
+                f"\nReply \"{msg.approval_id} approve\" or \"{msg.approval_id} reject\" to handle this item"
             )
 
         return "\n".join(lines)

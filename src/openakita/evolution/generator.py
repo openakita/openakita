@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class GenerationResult:
-    """生成结果"""
+    """Generation result"""
 
     success: bool
     skill_name: str
@@ -128,60 +128,60 @@ if __name__ == "__main__":
 
     async def generate(self, description: str, name: str | None = None) -> GenerationResult:
         """
-        生成技能
+        Generate a skill
 
         Args:
-            description: 技能功能描述
-            name: 技能名称（可选，自动生成）
+            description: Description of the skill functionality
+            name: Skill name (optional, auto-generated)
 
         Returns:
             GenerationResult
         """
         logger.info(f"Generating skill: {description}")
 
-        # 1. 生成技能名称
+        # 1. Generate skill name
         if not name:
             name = await self._generate_name(description)
 
-        # 确保名称格式正确 (lowercase, hyphens)
+        # Ensure name format is correct (lowercase, hyphens)
         name = self._normalize_name(name)
 
-        # 2. 检查是否已存在
+        # 2. Check if it already exists
         skill_dir = self.skills_dir / name
         if skill_dir.exists():
             logger.warning(f"Skill directory already exists: {skill_dir}")
-            # 可以选择覆盖或返回错误
+            # Can choose to overwrite or return an error
 
-        # 3. 创建目录结构
+        # 3. Create directory structure
         skill_dir.mkdir(parents=True, exist_ok=True)
         scripts_dir = skill_dir / "scripts"
         scripts_dir.mkdir(exist_ok=True)
 
-        # 4. 生成 SKILL.md
+        # 4. Generate SKILL.md
         skill_md_content = await self._generate_skill_md(name, description)
         skill_md_path = skill_dir / "SKILL.md"
         await self.file_tool.write(str(skill_md_path), skill_md_content)
 
-        # 4.5 生成 i18n 翻译（agents/openai.yaml）
+        # 4.5 Generate i18n translations (agents/openai.yaml)
         await self._generate_i18n(skill_dir, name, description)
 
-        # 5. 生成脚本
+        # 5. Generate script
         script_content = await self._generate_script(name, description)
         script_path = scripts_dir / "main.py"
         await self.file_tool.write(str(script_path), script_content)
 
-        # 6. 测试脚本
+        # 6. Test script
         test_passed = await self._test_script(script_path)
 
         if not test_passed:
-            # 尝试修复
+            # Attempt to fix
             logger.info("Initial test failed, attempting to fix...")
             fixed_script = await self._fix_script(script_content, name, description)
             if fixed_script:
                 await self.file_tool.write(str(script_path), fixed_script)
                 test_passed = await self._test_script(script_path)
 
-        # 7. 加载技能到 registry
+        # 7. Load skill into registry
         if test_passed:
             try:
                 loaded = self.loader.load_skill(skill_dir)
@@ -198,16 +198,16 @@ if __name__ == "__main__":
         )
 
     def _normalize_name(self, name: str) -> str:
-        """标准化技能名称 (lowercase, hyphens only)"""
-        # 转小写
+        """Normalize skill name (lowercase, hyphens only)"""
+        # Convert to lowercase
         name = name.lower()
-        # 替换空格和下划线为连字符
+        # Replace spaces and underscores with hyphens
         name = name.replace("_", "-").replace(" ", "-")
-        # 只保留小写字母、数字和连字符
+        # Keep only lowercase letters, digits, and hyphens
         name = re.sub(r"[^a-z0-9-]", "", name)
-        # 去除连续连字符
+        # Collapse consecutive hyphens
         name = re.sub(r"-+", "-", name)
-        # 去除首尾连字符
+        # Strip leading/trailing hyphens
         name = name.strip("-")
 
         if not name:
@@ -227,7 +227,7 @@ Return ONLY the name, no explanation."""
         return response.content.strip()
 
     async def _generate_i18n(self, skill_dir: Path, name: str, description: str) -> None:
-        """生成中文翻译，写入 agents/openai.yaml i18n 字段。"""
+        """Generate i18n translations and write to agents/openai.yaml i18n fields."""
         try:
             from ..skills.i18n import auto_translate_skill
 
@@ -254,14 +254,14 @@ Return ONLY the Markdown content, do not include frontmatter."""
         response = await self.brain.think(prompt)
         body_content = response.content.strip()
 
-        # 组装完整的 SKILL.md
+        # Assemble the complete SKILL.md
         title = name.replace("-", " ").title()
 
-        # 解析 LLM 生成的内容，提取各部分
-        when_to_use = "- 见上述描述"
-        instructions = "运行 `python scripts/main.py --help` 查看帮助"
+        # Parse the LLM-generated content and extract sections
+        when_to_use = "- See the description above"
+        instructions = "Run `python scripts/main.py --help` for usage information"
 
-        # 尝试从响应中提取
+        # Try to extract from response
         if "## When to Use" in body_content:
             parts = body_content.split("## When to Use")
             if len(parts) > 1:
@@ -277,9 +277,9 @@ Return ONLY the Markdown content, do not include frontmatter."""
 
         return self.SKILL_MD_TEMPLATE.format(
             name=name,
-            description=description.replace("\n", "\n  "),  # YAML 多行缩进
+            description=description.replace("\n", "\n  "),  # YAML multiline indentation
             title=title,
-            body=body_content if body_content else f"提供 {description} 的功能。",
+            body=body_content if body_content else f"Provides {description} functionality.",
             when_to_use=when_to_use,
             instructions=instructions,
         )
@@ -334,7 +334,7 @@ Generate the complete code. Return ONLY the code, no explanation.'''
 
         response = await self.brain.think(prompt)
 
-        # 提取代码
+        # Extract code
         code = response.content
         if "```python" in code:
             start = code.find("```python") + 9
@@ -350,17 +350,17 @@ Generate the complete code. Return ONLY the code, no explanation.'''
         return code
 
     async def _test_script(self, script_path: Path) -> bool:
-        """测试脚本"""
+        """Test script"""
         logger.info(f"Testing script: {script_path}")
 
-        # 语法检查
+        # Syntax check
         result = await self.shell.run(f'python -m py_compile "{script_path}"')
 
         if not result.success:
             logger.error(f"Syntax error: {result.stderr}")
             return False
 
-        # 尝试运行 --help
+        # Try running --help
         result = await self.shell.run(f'python "{script_path}" --help')
 
         if not result.success:
@@ -403,11 +403,11 @@ Return ONLY the complete fixed code, no explanation."""
 
     async def improve(self, skill_name: str, feedback: str) -> GenerationResult:
         """
-        根据反馈改进技能
+        Improve a skill based on feedback
 
         Args:
-            skill_name: 技能名称
-            feedback: 改进反馈
+            skill_name: Skill name
+            feedback: Improvement feedback
 
         Returns:
             GenerationResult
@@ -418,7 +418,7 @@ Return ONLY the complete fixed code, no explanation."""
             return GenerationResult(
                 success=False,
                 skill_name=skill_name,
-                error="技能目录不存在",
+                error="Skill directory does not exist",
             )
 
         script_path = skill_dir / "scripts" / "main.py"
@@ -426,7 +426,7 @@ Return ONLY the complete fixed code, no explanation."""
             return GenerationResult(
                 success=False,
                 skill_name=skill_name,
-                error="脚本文件不存在",
+                error="Script file does not exist",
             )
 
         current_code = await self.file_tool.read(str(script_path))
@@ -452,7 +452,7 @@ Return ONLY the complete improved code, no explanation."""
             if end > start:
                 improved_code = improved_code[start:end].strip()
 
-        # 保存并测试
+        # Save and test
         await self.file_tool.write(str(script_path), improved_code)
         test_passed = await self._test_script(script_path)
 

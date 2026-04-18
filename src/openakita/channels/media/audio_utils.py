@@ -1,11 +1,12 @@
 """
-音频格式工具 —— 处理 QQ/微信 SILK v3 等非标准音频格式。
+Audio format utilities — handles non-standard audio formats such as QQ/WeChat SILK v3.
 
-QQ/微信的语音文件扩展名通常是 .amr，但实际编码是腾讯私有的 SILK v3，
-标准 ffmpeg 无法解码。本模块在调用 Whisper 之前自动检测并转换。
+QQ/WeChat voice files typically have the .amr extension, but the actual encoding is
+Tencent's proprietary SILK v3, which standard ffmpeg cannot decode. This module
+automatically detects and converts such files before passing them to Whisper.
 
-转换链路:
-  SILK (.amr/.silk/.slk) → pilk.decode → raw PCM → wave 模块 → .wav → Whisper
+Conversion pipeline:
+  SILK (.amr/.silk/.slk) → pilk.decode → raw PCM → wave module → .wav → Whisper
 """
 
 from __future__ import annotations
@@ -16,18 +17,18 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# SILK v3 文件魔数 —— 可能以 '\x02' 前缀开头（QQ），也可能直接以 '#!SILK' 开头
+# SILK v3 file magic bytes — may start with '\x02' prefix (QQ) or directly with '#!SILK'
 _SILK_MAGIC = b"#!SILK"
 _SILK_MAGIC_QQ = b"\x02#!SILK"
 
-# SILK 默认采样率（QQ 语音一般是 24000 Hz）
+# SILK default sample rate (QQ voice typically uses 24000 Hz)
 _SILK_SAMPLE_RATE = 24000
-# Whisper 要求 16000 Hz 单声道 16-bit PCM
+# Whisper requires 16000 Hz mono 16-bit PCM
 _TARGET_SAMPLE_RATE = 16000
 
 
 def is_silk_file(file_path: str | Path) -> bool:
-    """检测文件是否为 SILK v3 格式（读取前 10 字节检查魔数）"""
+    """Check whether a file is in SILK v3 format (reads first 10 bytes to check magic bytes)."""
     try:
         with open(file_path, "rb") as f:
             head = f.read(10)
@@ -38,9 +39,10 @@ def is_silk_file(file_path: str | Path) -> bool:
 
 def _silk_to_wav_pilk(silk_path: str, wav_path: str) -> bool:
     """
-    使用 pilk 库将 SILK 转换为 WAV。
+    Convert SILK to WAV using the pilk library.
 
-    pilk.decode() 输出 raw PCM (16-bit LE mono)，再用 wave 模块包装成 .wav。
+    pilk.decode() outputs raw PCM (16-bit LE mono), which is then wrapped into .wav
+    using the wave module.
     """
     try:
         import pilk  # type: ignore[import-untyped]
@@ -48,22 +50,22 @@ def _silk_to_wav_pilk(silk_path: str, wav_path: str) -> bool:
         from openakita.tools._import_helper import import_or_hint
 
         hint = import_or_hint("pilk")
-        logger.warning(f"SILK 解码不可用: {hint}")
-        logger.warning(f"pilk ImportError 详情: {e}", exc_info=True)
+        logger.warning(f"SILK decoding unavailable: {hint}")
+        logger.warning(f"pilk ImportError details: {e}", exc_info=True)
         return False
 
     import wave
 
-    # pilk.decode 输出 raw PCM 文件
+    # pilk.decode outputs a raw PCM file
     pcm_path = wav_path + ".pcm"
     try:
-        # pilk.decode(silk_input, pcm_output, sample_rate) -> duration_ms
+        # pilk.decode(silk_input, pcm_output, sample_rate) returns duration_ms
         duration_ms = pilk.decode(silk_path, pcm_path, _SILK_SAMPLE_RATE)
         logger.info(
             f"SILK decoded: {Path(silk_path).name} → PCM ({duration_ms}ms, {_SILK_SAMPLE_RATE}Hz)"
         )
 
-        # PCM → WAV (16-bit LE mono)
+        # Convert PCM to WAV (16-bit LE mono)
         with open(pcm_path, "rb") as pcm_f:
             pcm_data = pcm_f.read()
 
@@ -80,7 +82,7 @@ def _silk_to_wav_pilk(silk_path: str, wav_path: str) -> bool:
         logger.error(f"SILK → WAV conversion failed: {e}")
         return False
     finally:
-        # 清理临时 PCM 文件
+        # Clean up temporary PCM file
         try:
             if os.path.exists(pcm_path):
                 os.remove(pcm_path)
@@ -89,7 +91,7 @@ def _silk_to_wav_pilk(silk_path: str, wav_path: str) -> bool:
 
 
 def _ffmpeg_to_wav(src_path: str, wav_path: str) -> bool:
-    """通过 ffmpeg 将非标准音频格式转换为 16kHz mono WAV。"""
+    """Convert non-standard audio formats to 16kHz mono WAV via ffmpeg."""
     import shutil
     import subprocess
 
@@ -132,19 +134,19 @@ def _ffmpeg_to_wav(src_path: str, wav_path: str) -> bool:
 
 def ensure_whisper_compatible(audio_path: str) -> str:
     """
-    确保音频文件可被 Whisper (ffmpeg) 处理。
+    Ensure the audio file can be processed by Whisper (ffmpeg).
 
-    - SILK 格式 → pilk 转换为 WAV
-    - opus/ogg/amr/webm/wma/aac → ffmpeg 转换为 WAV
-    - wav/mp3/flac 等标准格式 → 原样返回
+    - SILK format → converted to WAV via pilk
+    - opus/ogg/amr/webm/wma/aac → converted to WAV via ffmpeg
+    - wav/mp3/flac and other standard formats → returned as-is
 
     Args:
-        audio_path: 原始音频文件路径
+        audio_path: Path to the original audio file
 
     Returns:
-        可被 Whisper 处理的音频文件路径（可能是转换后的 WAV）
+        Path to an audio file that Whisper can process (may be a converted WAV)
     """
-    # 1. SILK 格式特殊处理（pilk 转换）
+    # 1. SILK format special handling (pilk conversion)
     if is_silk_file(audio_path):
         logger.info(f"Detected SILK format: {Path(audio_path).name}, converting to WAV...")
 
@@ -164,7 +166,7 @@ def ensure_whisper_compatible(audio_path: str) -> str:
         )
         return audio_path
 
-    # 2. 非标准格式 → ffmpeg 转 WAV（飞书 Opus、钉钉 OGG 等）
+    # 2. Non-standard formats → ffmpeg conversion to WAV (e.g. Feishu Opus, DingTalk OGG)
     src = Path(audio_path)
     suffix = src.suffix.lower()
     need_convert = {".opus", ".ogg", ".amr", ".webm", ".wma", ".aac"}
@@ -180,21 +182,22 @@ def ensure_whisper_compatible(audio_path: str) -> str:
         logger.warning(f"ffmpeg conversion failed for {src.name}, returning original")
         return audio_path
 
-    # 3. wav/mp3/flac 等标准格式原样返回
+    # 3. Standard formats like wav/mp3/flac are returned as-is
     return audio_path
 
 
 def load_wav_as_numpy(wav_path: str, target_sr: int = 16000):
-    """直接加载 WAV 为 Whisper 兼容的 float32 numpy 数组，无需 ffmpeg。
+    """Load a WAV file directly as a Whisper-compatible float32 numpy array, without ffmpeg.
 
-    Whisper.transcribe() 接受 numpy 数组时跳过内部 load_audio()（即跳过 ffmpeg）。
+    When Whisper.transcribe() receives a numpy array, it skips the internal load_audio()
+    step (and thus skips ffmpeg).
 
     Args:
-        wav_path: WAV 文件路径
-        target_sr: 目标采样率（Whisper 默认 16000Hz）
+        wav_path: Path to the WAV file
+        target_sr: Target sample rate (Whisper defaults to 16000 Hz)
 
     Returns:
-        numpy float32 数组（单声道, [-1, 1]），如果加载失败返回 None
+        numpy float32 array (mono, [-1, 1]), or None if loading fails
     """
     import wave
 
@@ -239,25 +242,25 @@ def load_wav_as_numpy(wav_path: str, target_sr: int = 16000):
 
 def ensure_llm_compatible(audio_path: str, target_format: str = "wav") -> str:
     """
-    确保音频文件可被 LLM 原生音频输入处理。
+    Ensure the audio file can be processed by LLM native audio input.
 
-    LLM 音频输入通常要求:
+    LLM audio input typically requires:
     - OpenAI: wav, pcm16, mp3
     - Gemini: wav, mp3, flac, ogg
     - DashScope: wav, mp3
 
-    处理:
-    - SILK → WAV（与 Whisper 兼容逻辑相同）
-    - OGG/Opus → WAV（通过 ffmpeg）
-    - AMR → WAV（通过 ffmpeg）
-    - 其他标准格式原样返回
+    Processing:
+    - SILK → WAV (same logic as Whisper compatibility)
+    - OGG/Opus → WAV (via ffmpeg)
+    - AMR → WAV (via ffmpeg)
+    - Other standard formats are returned as-is
 
     Args:
-        audio_path: 原始音频文件路径
-        target_format: 目标格式 (默认 "wav")
+        audio_path: Path to the original audio file
+        target_format: Target format (default "wav")
 
     Returns:
-        LLM 兼容格式的音频文件路径
+        Path to an audio file in an LLM-compatible format
     """
     import shutil
     import subprocess
@@ -265,16 +268,16 @@ def ensure_llm_compatible(audio_path: str, target_format: str = "wav") -> str:
     src = Path(audio_path)
     suffix = src.suffix.lower()
 
-    # SILK 格式特殊处理
+    # SILK format special handling
     if is_silk_file(audio_path):
         return ensure_whisper_compatible(audio_path)
 
-    # 已经是目标格式，直接返回
+    # Already in a target format, return as-is
     llm_native_formats = {".wav", ".mp3", ".flac", ".m4a"}
     if suffix in llm_native_formats:
         return audio_path
 
-    # 需要通过 ffmpeg 转换的格式
+    # Formats that require ffmpeg conversion
     need_convert = {".ogg", ".opus", ".amr", ".webm", ".wma", ".aac"}
     if suffix not in need_convert:
         return audio_path

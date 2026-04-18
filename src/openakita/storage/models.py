@@ -1,5 +1,5 @@
 """
-数据模型
+Data models
 """
 
 from dataclasses import dataclass, field
@@ -9,7 +9,7 @@ from typing import Any
 
 @dataclass
 class Message:
-    """消息"""
+    """A chat message."""
 
     id: int | None = None
     conversation_id: int | None = None
@@ -21,7 +21,7 @@ class Message:
 
 @dataclass
 class Conversation:
-    """对话"""
+    """A conversation thread."""
 
     id: int | None = None
     title: str = ""
@@ -33,7 +33,7 @@ class Conversation:
 
 @dataclass
 class SkillRecord:
-    """技能记录"""
+    """A skill installation record."""
 
     id: int | None = None
     name: str = ""
@@ -47,7 +47,7 @@ class SkillRecord:
 
 @dataclass
 class MemoryEntry:
-    """记忆条目"""
+    """A memory entry."""
 
     id: int | None = None
     category: str = ""  # task, experience, discovery, error
@@ -60,7 +60,7 @@ class MemoryEntry:
 
 @dataclass
 class TaskRecord:
-    """任务记录"""
+    """A task record."""
 
     id: int | None = None
     task_id: str = ""
@@ -76,7 +76,7 @@ class TaskRecord:
 
 @dataclass
 class UserPreference:
-    """用户偏好"""
+    """A user preference."""
 
     key: str
     value: Any

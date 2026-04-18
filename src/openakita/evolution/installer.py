@@ -1,7 +1,7 @@
 """
-自动安装器
+Auto-installer
 
-自动安装缺失的依赖包 (pip/npm)。
+Automatically installs missing dependency packages (pip/npm).
 """
 
 import logging
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class InstallResult:
-    """安装结果"""
+    """Installation result."""
 
     success: bool
     capability: str
@@ -27,9 +27,9 @@ class InstallResult:
 
 class AutoInstaller:
     """
-    自动安装器
+    Auto-installer
 
-    根据能力缺口自动安装所需的依赖包。
+    Automatically installs required dependency packages based on capability gaps.
     """
 
     def __init__(
@@ -41,17 +41,17 @@ class AutoInstaller:
 
     async def install_capability(self, gap: CapabilityGap) -> InstallResult:
         """
-        安装缺失的能力
+        Install a missing capability.
 
         Args:
-            gap: 能力缺口
+            gap: Capability gap.
 
         Returns:
             InstallResult
         """
         logger.info(f"Attempting to install capability: {gap.name}")
 
-        # 按优先级尝试不同的安装方法
+        # Try different installation methods by priority
         methods = [
             self._try_pip_install,
             self._try_npm_install,
@@ -62,18 +62,18 @@ class AutoInstaller:
             if result.success:
                 return result
 
-        # 都失败了，建议走“创建技能”的工作流
+        # All methods failed; suggest creating a custom skill
         return InstallResult(
             success=False,
             capability=gap.name,
-            method="none",
-            details="无法自动安装，建议创建一个自定义技能来补齐该能力",
-            error="无法找到或安装此能力",
+            method=”none”,
+            details=”Could not auto-install. Consider creating a custom skill to cover this capability.”,
+            error=”Unable to find or install this capability”,
         )
 
     async def _try_pip_install(self, gap: CapabilityGap) -> InstallResult:
-        """尝试通过 pip 安装"""
-        # PyInstaller 兼容: 检查当前环境是否支持 pip install
+        """Try installing via pip."""
+        # PyInstaller compat: check if current environment supports pip install
         from openakita.runtime_env import can_pip_install
 
         if not can_pip_install():
@@ -81,10 +81,10 @@ class AutoInstaller:
                 success=False,
                 capability=gap.name,
                 method="pip",
-                details="打包环境下不支持自动 pip install，请通过设置中心安装",
+                details="Auto pip install is not supported in packaged environments. Please install via the Settings Center.",
             )
 
-        # 常见的 Python 包映射
+        # Common Python package mapping
         package_mapping = {
             "爬虫": "scrapy",
             "scraping": "beautifulsoup4",
@@ -109,7 +109,7 @@ class AutoInstaller:
                 break
 
         if not package:
-            # 直接尝试用能力名作为包名
+            # Try using the capability name directly as a package name
             package = gap.name.lower().replace(" ", "-")
 
         logger.info(f"Trying pip install: {package}")
@@ -121,20 +121,20 @@ class AutoInstaller:
                 success=True,
                 capability=gap.name,
                 method="pip",
-                details=f"通过 pip 安装了 {package}",
+                details=f"Installed {package} via pip",
             )
         else:
             return InstallResult(
                 success=False,
                 capability=gap.name,
                 method="pip",
-                details=f"pip install {package} 失败",
+                details=f"pip install {package} failed",
                 error=result.stderr,
             )
 
     async def _try_npm_install(self, gap: CapabilityGap) -> InstallResult:
-        """尝试通过 npm 安装"""
-        # 检查是否需要 npm 包
+        """Try installing via npm."""
+        # Check if an npm package is needed
         npm_keywords = ["前端", "frontend", "react", "vue", "node", "js", "javascript"]
 
         if not any(kw in gap.name.lower() for kw in npm_keywords):
@@ -142,7 +142,7 @@ class AutoInstaller:
                 success=False,
                 capability=gap.name,
                 method="npm",
-                details="不需要 npm 包",
+                details="No npm package needed",
             )
 
         package = gap.name.lower().replace(" ", "-")
@@ -156,30 +156,30 @@ class AutoInstaller:
                 success=True,
                 capability=gap.name,
                 method="npm",
-                details=f"通过 npm 安装了 {package}",
+                details=f"Installed {package} via npm",
             )
         else:
             return InstallResult(
                 success=False,
                 capability=gap.name,
                 method="npm",
-                details=f"npm install {package} 失败",
+                details=f"npm install {package} failed",
                 error=result.stderr,
             )
 
     async def install_all(self, gaps: list[CapabilityGap]) -> list[InstallResult]:
         """
-        安装所有缺失的能力
+        Install all missing capabilities.
 
         Args:
-            gaps: 能力缺口列表
+            gaps: List of capability gaps.
 
         Returns:
-            安装结果列表
+            List of installation results.
         """
         results = []
 
-        # 按优先级排序
+        # Sort by priority
         sorted_gaps = sorted(gaps, key=lambda g: -g.priority)
 
         for gap in sorted_gaps:

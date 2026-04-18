@@ -1,5 +1,5 @@
 """
-OpenAkita 核心模块。
+OpenAkita core module.
 
 This package intentionally avoids eager imports so submodules like
 `openakita.core.errors` can be imported without dragging in the full agent

@@ -1,8 +1,9 @@
 """
-凭证脱敏工具
+Credential redaction utility
 
-对 MCP 工具返回结果等文本进行凭证脱敏，
-防止 API Key、密码、Token 等敏感信息泄露到 LLM 上下文中。
+Redacts credential-like patterns from text such as MCP tool return values,
+preventing API keys, passwords, tokens and other sensitive information from
+leaking into the LLM context.
 """
 
 import re

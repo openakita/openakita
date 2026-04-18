@@ -1,5 +1,5 @@
 """
-Web Search 处理器
+Web Search Handler
 
 Delegates to SearchProviderRouter which supports multiple backends:
   DuckDuckGo (default, no key) | Brave | Tavily | Exa
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class WebSearchHandler:
-    """Web Search 处理器"""
+    """Web Search handler"""
 
     TOOLS = ["web_search", "news_search"]
 
@@ -42,10 +42,10 @@ class WebSearchHandler:
         return get_router()
 
     async def _web_search(self, params: dict[str, Any]) -> str:
-        """搜索网页"""
+        """Search the web"""
         query = params.get("query", "")
         if not query:
-            return "错误：query 参数不能为空"
+            return "Error: query parameter must not be empty"
 
         max_results = min(max(1, params.get("max_results", 5)), 20)
         region = params.get("region", "wt-wt")
@@ -66,16 +66,17 @@ class WebSearchHandler:
             tb = traceback.format_exc()
             logger.error("Web search failed: %s\n%s", e, tb)
             return (
-                "搜索暂时不可用（所有搜索提供商均无法访问）。"
-                "请直接告知用户\"当前无法联网搜索\"，建议稍后重试或改用其他工具，"
-                "不要反复重试，也不要伪造搜索结果。"
+                "Search is temporarily unavailable (all search providers are unreachable). "
+                'Please inform the user that "web search is currently unavailable" '
+                "and suggest retrying later or using a different tool. "
+                "Do not retry repeatedly or fabricate search results."
             )
 
     async def _news_search(self, params: dict[str, Any]) -> str:
-        """搜索新闻"""
+        """Search news"""
         query = params.get("query", "")
         if not query:
-            return "错误：query 参数不能为空"
+            return "Error: query parameter must not be empty"
 
         max_results = min(max(1, params.get("max_results", 5)), 20)
         region = params.get("region", "wt-wt")
@@ -98,20 +99,21 @@ class WebSearchHandler:
             tb = traceback.format_exc()
             logger.error("News search failed: %s\n%s", e, tb)
             return (
-                "新闻搜索暂时不可用（所有搜索提供商均无法访问）。"
-                "请直接告知用户\"当前无法联网搜索\"，建议稍后重试或改用其他工具，"
-                "不要反复重试，也不要伪造搜索结果。"
+                "News search is temporarily unavailable (all search providers are unreachable). "
+                'Please inform the user that "web search is currently unavailable" '
+                "and suggest retrying later or using a different tool. "
+                "Do not retry repeatedly or fabricate search results."
             )
 
     @staticmethod
     def _format_web_results(results: list) -> str:
-        """格式化搜索结果（web + news 共用）"""
+        """Format search results (shared by web + news)"""
         if not results:
-            return "未找到相关结果"
+            return "No relevant results found"
 
         output = []
         for i, r in enumerate(results, 1):
-            title = r.get("title", "无标题")
+            title = r.get("title", "No title")
             url = r.get("url", r.get("href", r.get("link", "")))
             body = r.get("body", r.get("snippet", r.get("content", "")))
             output.append(f"**{i}. {title}**\n{url}\n{body}\n")
@@ -120,6 +122,6 @@ class WebSearchHandler:
 
 
 def create_handler(agent: Any = None):
-    """创建 WebSearchHandler 实例并返回 handle 方法"""
+    """Create a WebSearchHandler instance and return its handle method"""
     handler = WebSearchHandler(agent)
     return handler.handle

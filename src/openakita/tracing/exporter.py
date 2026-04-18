@@ -1,10 +1,10 @@
 """
-追踪导出器
+Trace Exporter
 
-将 Trace 数据导出到不同的后端:
-- FileExporter: JSON 文件存储 (默认)
-- ConsoleExporter: 控制台输出 (开发调试)
-- OpenTelemetry: OTEL 兼容导出 (可选扩展)
+Exports trace data to different backends:
+- FileExporter: JSON file storage (default)
+- ConsoleExporter: Console output (for development debugging)
+- OpenTelemetry: OTEL-compatible export (optional extension)
 """
 
 import json
@@ -20,24 +20,24 @@ logger = logging.getLogger(__name__)
 
 
 class TraceExporter(ABC):
-    """追踪导出器基类"""
+    """Base class for trace exporters."""
 
     @abstractmethod
     def export(self, trace: Trace) -> None:
-        """导出一个 Trace"""
+        """Export a trace."""
         ...
 
     def shutdown(self) -> None:
-        """关闭导出器（释放资源）- 子类可重写"""
-        # 默认实现不做任何事情，子类可以重写此方法释放资源
+        """Shut down the exporter (release resources) - subclasses may override."""
+        # Default implementation does nothing; subclasses can override to release resources
         return None
 
 
 class FileExporter(TraceExporter):
     """
-    JSON 文件导出器。
+    JSON file exporter.
 
-    按日期分目录存储:
+    Stores traces in date-partitioned directories:
       data/traces/
         2026-02-10/
           trace-abc123.json
@@ -45,7 +45,7 @@ class FileExporter(TraceExporter):
         2026-02-11/
           ...
 
-    同时维护一个 daily_summary.json 用于聚合统计。
+    Also maintains a daily_summary.json for aggregated statistics.
     """
 
     def __init__(self, base_dir: str | Path = "data/traces") -> None:
@@ -53,21 +53,21 @@ class FileExporter(TraceExporter):
         self._base_dir.mkdir(parents=True, exist_ok=True)
 
     def export(self, trace: Trace) -> None:
-        """导出 Trace 到 JSON 文件"""
+        """Export a trace to a JSON file."""
         try:
-            # 按日期分目录
+            # Partition by date
             date_str = datetime.fromtimestamp(trace.start_time).strftime("%Y-%m-%d")
             day_dir = self._base_dir / date_str
             day_dir.mkdir(parents=True, exist_ok=True)
 
-            # 写入 trace 文件
+            # Write trace file
             trace_file = day_dir / f"trace-{trace.trace_id[:12]}.json"
             trace_dict = trace.to_dict()
 
             with open(trace_file, "w", encoding="utf-8") as f:
                 json.dump(trace_dict, f, ensure_ascii=False, indent=2, default=str)
 
-            # 更新每日摘要
+            # Update daily summary
             self._update_daily_summary(day_dir, trace)
 
             logger.debug(f"[Tracing] Exported trace {trace.trace_id[:8]} to {trace_file}")
@@ -76,10 +76,10 @@ class FileExporter(TraceExporter):
             logger.warning(f"[Tracing] Failed to export trace to file: {e}")
 
     def _update_daily_summary(self, day_dir: Path, trace: Trace) -> None:
-        """更新每日摘要文件"""
+        """Update the daily summary file."""
         summary_file = day_dir / "daily_summary.json"
 
-        # 加载现有摘要
+        # Load existing summary
         summary: dict[str, Any] = {}
         if summary_file.exists():
             try:
@@ -88,7 +88,7 @@ class FileExporter(TraceExporter):
             except Exception:
                 summary = {}
 
-        # 更新统计
+        # Update statistics
         trace_summary = trace.get_summary()
         traces = summary.get("traces", [])
         traces.append(
@@ -104,7 +104,7 @@ class FileExporter(TraceExporter):
             }
         )
 
-        # 聚合统计
+        # Aggregate statistics
         total_llm_calls = sum(t.get("llm_calls", 0) for t in traces)
         total_tool_calls = sum(t.get("tool_calls", 0) for t in traces)
         total_tool_errors = sum(t.get("tool_errors", 0) for t in traces)
@@ -134,7 +134,7 @@ class FileExporter(TraceExporter):
             logger.warning(f"[Tracing] Failed to update daily summary: {e}")
 
     def load_traces_by_date(self, date_str: str) -> list[dict]:
-        """加载指定日期的所有 Trace"""
+        """Load all traces for a given date."""
         day_dir = self._base_dir / date_str
         if not day_dir.exists():
             return []
@@ -150,7 +150,7 @@ class FileExporter(TraceExporter):
         return traces
 
     def load_daily_summary(self, date_str: str) -> dict | None:
-        """加载指定日期的摘要"""
+        """Load the summary for a given date."""
         summary_file = self._base_dir / date_str / "daily_summary.json"
         if not summary_file.exists():
             return None
@@ -163,16 +163,16 @@ class FileExporter(TraceExporter):
 
 class ConsoleExporter(TraceExporter):
     """
-    控制台导出器。
+    Console exporter.
 
-    以可读格式打印 Trace 信息，用于开发调试。
+    Prints trace information in a readable format for development debugging.
     """
 
     def __init__(self, verbose: bool = False) -> None:
         self._verbose = verbose
 
     def export(self, trace: Trace) -> None:
-        """打印 Trace 到控制台"""
+        """Print a trace to the console."""
         summary = trace.get_summary()
         duration = summary.get("duration_ms")
         duration_str = f"{duration:.0f}ms" if duration else "N/A"

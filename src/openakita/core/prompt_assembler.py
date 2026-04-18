@@ -1,9 +1,9 @@
 """
-提示词组装器
+Prompt Assembler
 
-从 agent.py 提取的系统提示词构建逻辑，负责:
-- 构建完整系统提示词（含身份、技能清单、MCP、记忆、工具列表）
-- 编译管线 v2 (低 token 版本)
+System prompt construction logic extracted from agent.py, responsible for:
+- Building complete system prompts (identity, skill catalog, MCP, memory, tool list)
+- Compilation pipeline v2 (low-token version)
 """
 
 import logging
@@ -16,10 +16,11 @@ logger = logging.getLogger(__name__)
 
 class PromptAssembler:
     """
-    系统提示词组装器。
+    System Prompt Assembler.
 
-    集成身份信息、技能清单、MCP 清单、记忆上下文、
-    工具列表和环境信息来构建完整的系统提示词。
+    Integrates identity information, skill catalog, MCP catalog,
+    memory context, tool list, and environment information to build
+    a complete system prompt.
     """
 
     def __init__(
@@ -47,14 +48,14 @@ class PromptAssembler:
         session_type: str = "cli",
     ) -> str:
         """
-        构建完整的系统提示词（使用编译管线 v2）。
+        Build the complete system prompt (using compilation pipeline v2).
 
         Args:
-            task_description: 任务描述（用于记忆检索）
-            session_type: 会话类型 "cli" 或 "im"
+            task_description: Task description (used for memory retrieval)
+            session_type: Session type, "cli" or "im"
 
         Returns:
-            完整的系统提示词
+            The complete system prompt
         """
         return self._build_compiled_sync(task_description, session_type=session_type)
 
@@ -76,24 +77,24 @@ class PromptAssembler:
         prompt_tier: "Any | None" = None,
     ) -> str:
         """
-        使用编译管线构建系统提示词 (v2) - 异步版本。
+        Build system prompt using compilation pipeline (v2) - async version.
 
         Args:
-            task_description: 任务描述
-            session_type: 会话类型
-            context_window: 目标模型上下文窗口大小（>0 时启用自适应预算）
-            is_sub_agent: 是否为子 Agent 调用
-            tools_enabled: 是否启用工具
-            model_display_name: 当前 LLM 模型显示名称
-            session_context: 会话元数据
-            mode: 当前模式 (ask/plan/agent)
-            model_id: 模型标识
-            skip_catalogs: 是否跳过 Catalogs 层（向后兼容，优先使用 prompt_profile）
-            prompt_profile: 产品场景 profile
-            prompt_tier: 上下文窗口分档
+            task_description: Task description
+            session_type: Session type
+            context_window: Target model context window size (enables adaptive budget when >0)
+            is_sub_agent: Whether this is a sub-agent call
+            tools_enabled: Whether tools are enabled
+            model_display_name: Display name of the current LLM model
+            session_context: Session metadata
+            mode: Current mode (ask/plan/agent)
+            model_id: Model identifier
+            skip_catalogs: Whether to skip the Catalogs layer (backwards compat, prefer prompt_profile)
+            prompt_profile: Product scenario profile
+            prompt_tier: Context window tier
 
         Returns:
-            编译后的系统提示词
+            The compiled system prompt
         """
         from ..prompt.budget import BudgetConfig
         from ..prompt.builder import build_system_prompt
@@ -137,7 +138,7 @@ class PromptAssembler:
         context_window: int = 0,
         is_sub_agent: bool = False,
     ) -> str:
-        """同步版本：启动时构建初始系统提示词"""
+        """Sync version: build the initial system prompt at startup"""
         from ..prompt.budget import BudgetConfig
         from ..prompt.builder import build_system_prompt
         from ..prompt.compiler import check_compiled_outdated, compile_all

@@ -1,8 +1,8 @@
 """
-PlaywrightTools - 所有直接 Playwright 页面操作
+PlaywrightTools - All direct Playwright page operations
 
-依赖 BrowserManager 提供活跃的 ``page``。
-每个公共方法在开始时自动调用 ``manager.ensure_ready()``。
+Depends on BrowserManager to provide the active ``page``.
+Each public method automatically calls ``manager.ensure_ready()`` at the start.
 """
 
 from __future__ import annotations
@@ -19,12 +19,12 @@ logger = logging.getLogger(__name__)
 
 
 class PlaywrightTools:
-    """在 BrowserManager 提供的 page 上执行 Playwright 操作。"""
+    """Execute Playwright operations on the page provided by BrowserManager."""
 
     def __init__(self, manager: BrowserManager):
         self._manager = manager
 
-    # ── 辅助 ──────────────────────────────────────────
+    # ── Helpers ─────────────────────────────────────────
 
     async def _ensure(self) -> bool:
         return await self._manager.ensure_ready()
@@ -37,15 +37,15 @@ class PlaywrightTools:
     def _context(self) -> Any:
         return self._manager.context
 
-    # ── 公共工具方法（暴露给 LLM） ──────────────────────
+    # ── Public tool methods (exposed to LLM) ──────────────────────
 
     async def navigate(self, url: str) -> dict:
-        """导航到 URL"""
+        """Navigate to URL"""
         if not url:
             return {"success": False, "error": "URL is required"}
 
         if not await self._ensure():
-            return {"success": False, "error": "浏览器启动失败"}
+            return {"success": False, "error": "Failed to start browser"}
 
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
@@ -64,7 +64,7 @@ class PlaywrightTools:
                     "url": self._page.url,
                     "title": title,
                     "status": response.status if response else None,
-                    "message": f"已打开页面: {title}",
+                    "message": f"Page opened: {title}",
                 },
             }
         except Exception as e:
@@ -75,24 +75,24 @@ class PlaywrightTools:
                 await self._manager.reset_state()
                 return {
                     "success": False,
-                    "error": "浏览器已关闭（可能被用户关闭或崩溃）。\n"
-                    "【重要】请先调用 browser_close 清理状态，然后重新调用 browser_open 启动浏览器。",
+                    "error": "Browser has been closed (possibly by user or due to a crash).\n"
+                    "[IMPORTANT] Please call browser_close to clean up state first, then call browser_open to restart the browser.",
                 }
             return {
                 "success": False,
-                "error": f"页面加载失败: {error_str}\n建议: 1) 检查 URL 是否正确 2) 该网站可能无法访问",
+                "error": f"Page load failed: {error_str}\nSuggestions: 1) Check that the URL is correct 2) The website may be unreachable",
             }
 
     async def screenshot(self, full_page: bool = False, path: str | None = None) -> dict:
-        """截取当前页面截图"""
+        """Take a screenshot of the current page"""
         if not await self._ensure():
-            return {"success": False, "error": "浏览器启动失败"}
+            return {"success": False, "error": "Failed to start browser"}
 
         current_url = self._page.url
         if current_url == "about:blank":
             return {
                 "success": False,
-                "error": "当前页面是空白页 (about:blank)，请先使用 browser_navigate 打开一个网页",
+                "error": "Current page is blank (about:blank). Please use browser_navigate to open a webpage first",
             }
 
         try:
@@ -104,11 +104,11 @@ class PlaywrightTools:
         screenshot_bytes = await self._page.screenshot(full_page=full_page)
         page_title = await self._page.title()
 
-        # 提取页面简要文本（帮助 LLM 判断页面状态，即使无 vision 也能了解页面内容）
+        # Extract brief page text (helps LLM judge page state, even without vision)
         page_text_brief = ""
         try:
             raw_text = await self._page.inner_text("body")
-            # 去掉多余空白，截取前 500 字
+            # Remove excess whitespace, take first 500 characters
             import re as _re
 
             cleaned = _re.sub(r"\s+", " ", raw_text).strip()
@@ -130,10 +130,10 @@ class PlaywrightTools:
             "saved_to": path,
             "page_url": current_url,
             "page_title": page_title,
-            "message": f"截图已保存到: {path}",
+            "message": f"Screenshot saved to: {path}",
             "hint": (
-                "如需将截图交付给用户，请使用 deliver_artifacts 工具。"
-                "如需确认截图内容，可使用 view_image 工具查看截图。"
+                "To deliver the screenshot to the user, use the deliver_artifacts tool. "
+                "To verify the screenshot content, use the view_image tool to view it."
             ),
         }
         if page_text_brief:
@@ -141,9 +141,9 @@ class PlaywrightTools:
         return {"success": True, "result": result_data}
 
     async def get_content(self, selector: str | None = None, format: str = "text") -> dict:
-        """获取页面内容"""
+        """Get page content"""
         if not await self._ensure():
-            return {"success": False, "error": "浏览器启动失败"}
+            return {"success": False, "error": "Failed to start browser"}
 
         if selector:
             element = await self._page.query_selector(selector)
@@ -161,12 +161,12 @@ class PlaywrightTools:
 
         return {"success": True, "result": content}
 
-    # ── 内部工具方法（不暴露给 LLM，供内部调用） ──────────
+    # ── Internal tool methods (not exposed to LLM, for internal use) ──────────
 
     async def click(self, selector: str | None = None, text: str | None = None) -> dict:
-        """点击元素"""
+        """Click an element"""
         if not await self._ensure():
-            return {"success": False, "error": "浏览器启动失败"}
+            return {"success": False, "error": "Failed to start browser"}
 
         if text and not selector:
             selector = f"text={text}"
@@ -177,9 +177,9 @@ class PlaywrightTools:
         return {"success": True, "result": f"Clicked: {selector}"}
 
     async def type_text(self, selector: str, text: str, clear: bool = True) -> dict:
-        """输入文本（带智能重试和遮挡处理）"""
+        """Type text (with smart retry and overlay handling)"""
         if not await self._ensure():
-            return {"success": False, "error": "浏览器启动失败"}
+            return {"success": False, "error": "Failed to start browser"}
 
         if not selector or not text:
             return {"success": False, "error": "selector and text are required"}
@@ -280,16 +280,16 @@ class PlaywrightTools:
 
         return {
             "success": False,
-            "error": f"输入失败（重试 {max_retries} 次）: {last_error}\n"
-            f"建议: 1) 先用 browser_screenshot 截图查看当前页面状态 "
-            f"2) 使用 browser_click 点击页面空白处关闭可能的弹窗 "
-            f"3) 使用 browser_get_content 获取页面内容确认元素选择器",
+            "error": f"Input failed (retried {max_retries} times): {last_error}\n"
+            f"Suggestions: 1) Use browser_screenshot to check the current page state "
+            f"2) Use browser_click to click on blank area to dismiss potential popups "
+            f"3) Use browser_get_content to get page content and confirm the element selector",
         }
 
     async def scroll(self, direction: str = "down", amount: int = 500) -> dict:
-        """滚动页面"""
+        """Scroll the page"""
         if not await self._ensure():
-            return {"success": False, "error": "浏览器启动失败"}
+            return {"success": False, "error": "Failed to start browser"}
 
         if direction == "up":
             amount = -amount
@@ -297,9 +297,9 @@ class PlaywrightTools:
         return {"success": True, "result": f"Scrolled {direction} by {abs(amount)}px"}
 
     async def wait(self, selector: str | None = None, timeout: int = 30000) -> dict:
-        """等待"""
+        """Wait"""
         if not await self._ensure():
-            return {"success": False, "error": "浏览器启动失败"}
+            return {"success": False, "error": "Failed to start browser"}
 
         if selector:
             await self._page.wait_for_selector(selector, timeout=timeout)
@@ -309,9 +309,9 @@ class PlaywrightTools:
             return {"success": True, "result": f"Waited {timeout}ms"}
 
     async def execute_js(self, script: str) -> dict:
-        """执行 JavaScript"""
+        """Execute JavaScript"""
         if not await self._ensure():
-            return {"success": False, "error": "浏览器启动失败"}
+            return {"success": False, "error": "Failed to start browser"}
 
         if not script:
             return {"success": False, "error": "script is required"}
@@ -319,9 +319,9 @@ class PlaywrightTools:
         return {"success": True, "result": result}
 
     async def list_tabs(self) -> dict:
-        """列出所有标签页"""
+        """List all tabs"""
         if not self._manager.is_ready or not self._context:
-            return {"success": False, "error": "浏览器未启动"}
+            return {"success": False, "error": "Browser is not started"}
 
         try:
             all_pages = self._context.pages
@@ -342,29 +342,29 @@ class PlaywrightTools:
                         {
                             "index": i,
                             "url": page.url,
-                            "title": "(无法获取)",
+                            "title": "(unable to retrieve)",
                             "is_current": page == self._page,
                         }
                     )
             return {
                 "success": True,
-                "result": {"tabs": tabs, "count": len(tabs), "message": f"共 {len(tabs)} 个标签页"},
+                "result": {"tabs": tabs, "count": len(tabs), "message": f"{len(tabs)} tab(s) in total"},
             }
         except Exception as e:
             logger.error(f"Failed to list tabs: {e}")
-            return {"success": False, "error": f"获取标签页列表失败: {str(e)}"}
+            return {"success": False, "error": f"Failed to list tabs: {str(e)}"}
 
     async def switch_tab(self, index: int) -> dict:
-        """切换到指定标签页"""
+        """Switch to the specified tab"""
         if not self._manager.is_ready or not self._context:
-            return {"success": False, "error": "浏览器未启动"}
+            return {"success": False, "error": "Browser is not started"}
 
         try:
             all_pages = self._context.pages
             if index < 0 or index >= len(all_pages):
                 return {
                     "success": False,
-                    "error": f"标签页索引 {index} 无效。有效范围: 0-{len(all_pages) - 1}",
+                    "error": f"Tab index {index} is invalid. Valid range: 0-{len(all_pages) - 1}",
                 }
             self._manager._page = all_pages[index]
             await self._manager._page.bring_to_front()
@@ -373,21 +373,21 @@ class PlaywrightTools:
                 "success": True,
                 "result": {
                     "switched_to": {"index": index, "url": self._manager._page.url, "title": title},
-                    "message": f"已切换到标签页 {index}: {title}",
+                    "message": f"Switched to tab {index}: {title}",
                 },
             }
         except Exception as e:
             logger.error(f"Failed to switch tab: {e}")
-            return {"success": False, "error": f"切换标签页失败: {str(e)}"}
+            return {"success": False, "error": f"Failed to switch tab: {str(e)}"}
 
     async def new_tab(self, url: str) -> dict:
-        """在新标签页打开 URL"""
+        """Open URL in a new tab"""
         if not await self._ensure():
-            return {"success": False, "error": "浏览器启动失败"}
+            return {"success": False, "error": "Failed to start browser"}
 
         try:
             if not self._context:
-                return {"success": False, "error": "浏览器 context 不可用"}
+                return {"success": False, "error": "Browser context is not available"}
 
             reused_blank = False
             if self._page and self._page.url in ("about:blank", ""):
@@ -409,7 +409,7 @@ class PlaywrightTools:
                     "tab_index": len(all_pages) - 1,
                     "total_tabs": len(all_pages),
                     "reused_blank": reused_blank,
-                    "message": f"已在{'空白' if reused_blank else '新'}标签页打开: {title}",
+                    "message": f"Opened in {'blank' if reused_blank else 'new'} tab: {title}",
                 },
             }
         except Exception as e:
@@ -420,14 +420,14 @@ class PlaywrightTools:
                 await self._manager.reset_state()
                 return {
                     "success": False,
-                    "error": "浏览器已关闭。请先调用 browser_close 然后重新调用 browser_open 启动浏览器。",
+                    "error": "Browser has been closed. Please call browser_close first, then call browser_open to restart the browser.",
                 }
-            return {"success": False, "error": f"打开新标签页失败: {error_str}"}
+            return {"success": False, "error": f"Failed to open new tab: {error_str}"}
 
-    # ── 内部辅助 ─────────────────────────────────────
+    # ── Internal helpers ─────────────────────────────────────
 
     async def _handle_page_overlays(self) -> None:
-        """处理常见的页面遮挡元素（弹窗、广告、登录提示等）。"""
+        """Handle common page overlay elements (popups, ads, login prompts, etc.)."""
         current_url = self._page.url
 
         if "baidu.com" in current_url:
