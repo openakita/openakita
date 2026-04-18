@@ -229,6 +229,32 @@ class Settings(BaseSettings):
     memory_max_history_files: int = Field(default=1000, description="最大历史文件数")
     memory_max_history_size_mb: int = Field(default=500, description="历史文件最大总大小(MB)")
 
+    # === Web Search 配置 ===
+    search_provider: str = Field(
+        default="auto",
+        description=(
+            "Web 搜索提供商: "
+            "auto(自动选择，推荐) | ddgs(DuckDuckGo，无需Key) | "
+            "brave(Brave Search) | tavily(Tavily) | exa(Exa)"
+        ),
+    )
+    search_fallback_enabled: bool = Field(
+        default=True,
+        description="搜索失败时是否自动回退到下一个可用提供商（最终回退到 DuckDuckGo）",
+    )
+    brave_api_key: str = Field(
+        default="",
+        description="Brave Search API Key (https://api.search.brave.com/)",
+    )
+    tavily_api_key: str = Field(
+        default="",
+        description="Tavily Search API Key (https://tavily.com/)",
+    )
+    exa_api_key: str = Field(
+        default="",
+        description="Exa Search API Key (https://exa.ai/)",
+    )
+
     # GitHub
     github_token: str = Field(default="", description="GitHub Token")
 

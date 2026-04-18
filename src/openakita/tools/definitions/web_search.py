@@ -2,8 +2,10 @@
 Web Search 工具定义
 
 包含网络搜索相关的工具：
-- web_search: 搜索网页
+- web_search: 搜索网页（支持 DuckDuckGo / Brave / Tavily / Exa）
 - news_search: 搜索新闻
+
+搜索提供商通过 SEARCH_PROVIDER 配置，默认 auto（自动选择）。
 """
 
 WEB_SEARCH_TOOLS = [
@@ -32,7 +34,7 @@ WEB_SEARCH_TOOLS = [
             },
             {"name": "news_search", "relation": "专门搜索新闻时改用 news_search"},
         ],
-        "detail": """使用 DuckDuckGo 搜索网页。
+        "detail": """搜索网页（通过配置的搜索提供商：DuckDuckGo / Brave / Tavily / Exa）。
 
 **适用场景**：
 - 查找最新信息
@@ -75,8 +77,8 @@ WEB_SEARCH_TOOLS = [
     {
         "name": "news_search",
         "category": "Web Search",
-        "description": "Search news using DuckDuckGo. Use when you need to find recent news articles, current events, or breaking news. Returns titles, sources, dates, URLs, and excerpts.",
-        "detail": """使用 DuckDuckGo 搜索新闻。
+        "description": "Search news using the configured search provider (DuckDuckGo by default; or Brave / Tavily / Exa when API keys are set). Use when you need to find recent news articles, current events, or breaking news. Returns titles, sources, dates, URLs, and excerpts.",
+        "detail": """搜索新闻（通过配置的搜索提供商）。
 
 **适用场景**：
 - 查找最新新闻

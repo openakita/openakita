@@ -111,6 +111,7 @@ _CATEGORY_RULES: list[tuple[tuple[str, ...], str]] = [
     (("embedding_", "search_backend"), "Embedding/记忆搜索"),
     (("memory_",), "记忆"),
     (("github_",), "GitHub"),
+    (("search_provider", "search_fallback_enabled", "brave_api_key", "tavily_api_key", "exa_api_key"), "Web Search"),
     (("telegram_",), "IM/Telegram"),
     (("feishu_",), "IM/飞书"),
     (("wework_",), "IM/企业微信"),
@@ -519,6 +520,19 @@ class ConfigHandler:
                     runtime_state.save()
             except Exception as e:
                 logger.warning(f"[ConfigHandler] runtime_state save failed: {e}")
+
+            # 搜索提供商配置变更时重置 router 单例（热重载）
+            _SEARCH_FIELDS = {
+                "search_provider", "search_fallback_enabled",
+                "brave_api_key", "tavily_api_key", "exa_api_key",
+            }
+            if any(k.lower() in _SEARCH_FIELDS for k in env_entries):
+                try:
+                    from openakita.tools.handlers.search_providers import reset_router
+                    reset_router()
+                    logger.info("[ConfigHandler] Search provider router reset after config change")
+                except Exception as e:
+                    logger.warning(f"[ConfigHandler] search router reset failed: {e}")
 
         # 构建响应
         result_lines = ["✅ 配置已更新:\n"] + changes
