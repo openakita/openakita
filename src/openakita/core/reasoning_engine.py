@@ -522,7 +522,7 @@ class ReasoningEngine:
             if reminders_sent < max_reminders:
                 # 发送追问提醒
                 reminders_sent += 1
-                reminder = "⏰ 我在等你回复上面的问题哦，看到的话回复一下~"
+                reminder = "⏰ Waiting for your reply to the question above — please respond when you're ready."
                 try:
                     await gateway.send_to_session(session, reminder, role="assistant")
                     logger.info(f"[ask_user] Timeout #{reminders_sent}, reminder sent")
@@ -954,9 +954,9 @@ class ReasoningEngine:
                     task_id=state.task_id,
                 )
                 return (
-                    f"⚠️ 任务资源预算已用尽（{budget_status.dimension}: "
-                    f"{budget_status.usage_ratio:.0%}），任务暂停。\n"
-                    f"已完成的工作进度已保存，请调整预算后继续。"
+                    f"⚠️ Task resource budget exhausted ({budget_status.dimension}: "
+                    f"{budget_status.usage_ratio:.0%}). Task paused.\n"
+                    f"Progress saved — adjust the budget and continue."
                 )
             elif budget_status.action in (BudgetAction.WARNING, BudgetAction.DOWNGRADE):
                 logger.info(
@@ -1041,7 +1041,7 @@ class ReasoningEngine:
                         "after_tokens": _after_tokens,
                     }
                     await _emit_progress(
-                        f"📦 上下文压缩: {_before_tokens // 1000}k → {_after_tokens // 1000}k tokens"
+                        f"📦 Context compressed: {_before_tokens // 1000}k → {_after_tokens // 1000}k tokens"
                     )
                     logger.info(
                         f"[ReAct] Context compressed: {_before_tokens} → {_after_tokens} tokens"
@@ -1113,7 +1113,7 @@ class ReasoningEngine:
                 if retry_result == "retry":
                     _total_r = getattr(state, "_total_llm_retries", 1)
                     await _emit_progress(
-                        f"AI 服务响应异常，正在重试"
+                        f"AI service error, retrying…"
                         f"（{_total_r}/{self.MAX_TOTAL_LLM_RETRIES}）..."
                     )
                     _retry_sleep = min(2 * _total_r, 15)
@@ -1136,7 +1136,7 @@ class ReasoningEngine:
                 elif isinstance(retry_result, tuple):
                     current_model, working_messages = retry_result
                     await _emit_progress(
-                        "当前模型不可用，正在切换到备用模型..."
+                        "Current model unavailable, switching to fallback…"
                     )
                     no_tool_call_count = 0
                     tools_executed_in_task = False
@@ -1158,7 +1158,7 @@ class ReasoningEngine:
                 if len(decision.thinking_content) > 600:
                     _raw += "..."
                 _think_preview = "> " + _raw.replace("\n", "\n> ")
-                await _emit_progress(f"💭 **思考中**\n{_think_preview}")
+                await _emit_progress(f"💭 **Thinking**\n{_think_preview}")
 
             # === IM 进度: LLM 推理意图 ===
             _decision_text_run = (decision.text_content or "").strip().replace("\n", " ")
@@ -1287,7 +1287,7 @@ class ReasoningEngine:
                     })
                     working_messages.append({
                         "role": "user",
-                        "content": "你的回答被截断了。请直接从断点处继续输出，不要重复已说过的内容，不要道歉。",
+                        "content": "Your response was cut off. Please continue directly from where you left off — do not repeat yourself or apologize.",
                     })
                     react_trace.append(_iter_trace)
                     continue
@@ -1343,7 +1343,7 @@ class ReasoningEngine:
                     return result
                 else:
                     # 需要继续循环（验证不通过）
-                    await _emit_progress("🔄 任务尚未完成，继续处理...")
+                    await _emit_progress("🔄 Task not yet complete, continuing…")
                     logger.info(
                         f"[ReAct] Iter {iteration + 1} — VERIFY: incomplete, continuing loop"
                     )
@@ -2365,9 +2365,9 @@ class ReasoningEngine:
                         task_id=state.task_id,
                     )
                     msg = (
-                        f"⚠️ 任务资源预算已用尽（{budget_status.dimension}: "
-                        f"{budget_status.usage_ratio:.0%}），任务暂停。\n"
-                        f"已完成的工作进度已保存，请调整预算后继续。"
+                        f"⚠️ Task resource budget exhausted ({budget_status.dimension}: "
+                        f"{budget_status.usage_ratio:.0%}). Task paused.\n"
+                        f"Progress saved — adjust the budget and continue."
                     )
                     yield {"type": "text_delta", "content": msg}
                     yield {"type": "done"}
@@ -2566,7 +2566,7 @@ class ReasoningEngine:
                         yield {
                             "type": "chain_text",
                             "content": (
-                                f"AI 服务响应异常，正在重试"
+                                f"AI service error, retrying…"
                                 f"（{_total_r}/{self.MAX_TOTAL_LLM_RETRIES}）..."
                             ),
                             "icon": "alert",
@@ -2595,7 +2595,7 @@ class ReasoningEngine:
                         current_model, working_messages = retry_result
                         yield {
                             "type": "chain_text",
-                            "content": "当前模型不可用，正在切换到备用模型...",
+                            "content": "Current model unavailable, switching to fallback…",
                             "icon": "refresh",
                         }
                         no_tool_call_count = 0
@@ -2776,7 +2776,7 @@ class ReasoningEngine:
                         })
                         working_messages.append({
                             "role": "user",
-                            "content": "你的回答被截断了。请直接从断点处继续输出，不要重复已说过的内容，不要道歉。",
+                            "content": "Your response was cut off. Please continue directly from where you left off — do not repeat yourself or apologize.",
                         })
                         react_trace.append(_iter_trace)
                         continue
@@ -2837,7 +2837,7 @@ class ReasoningEngine:
                         )
                         if _streamed_text:
                             yield {"type": "text_replace", "content": ""}
-                        yield {"type": "chain_text", "content": "任务尚未完成，继续处理..."}
+                        yield {"type": "chain_text", "content": "Task not yet complete, continuing…"}
                         react_trace.append(_iter_trace)
                         try:
                             state.transition(TaskStatus.VERIFYING)

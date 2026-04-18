@@ -12,7 +12,7 @@ priority: high
 
 使用通义百炼 Qwen-Image 系列模型（如 `qwen-image-max`）根据提示词生成图片，并自动下载保存为本地 PNG 文件。
 
-## 前置条件
+## Prerequisites
 
 - 环境变量：`DASHSCOPE_API_KEY`（与通义其它模型共用）
 - 可选：`DASHSCOPE_IMAGE_API_URL`
@@ -33,7 +33,7 @@ priority: high
 }
 ```
 
-## 参数
+## Parameters
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|

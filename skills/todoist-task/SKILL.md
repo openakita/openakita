@@ -7,17 +7,17 @@ metadata:
   version: "1.0.0"
 ---
 
-# Todoist Task — Todoist 任务管理
+# Todoist Task — Todoist 任务manage
 
 ## When to Use
 
-- 用户需要创建、查看、更新或删除 Todoist 任务
-- 需要管理 Todoist 项目和分区
+- When the user needscreate、查看、update或delete Todoist 任务
+- 需要manage Todoist 项目和分区
 - 需要设置任务优先级、截止日期、重复规则
 - 需要用标签分类任务
 - 需要查询和过滤任务
 - 需要将对话中讨论的待办事项同步到 Todoist
-- 需要批量管理任务（导入/导出/整理）
+- 需要批量manage任务（导入/导出/整理）
 
 ---
 
@@ -29,7 +29,7 @@ metadata:
 |--------|------|
 | `TODOIST_API_TOKEN` | Todoist API Token |
 
-**获取 Token：**
+**get Token：**
 
 1. 登录 Todoist → 设置 → 集成 → 开发者
 2. 或访问：https://app.todoist.com/app/settings/integrations/developer
@@ -98,9 +98,9 @@ curl -s "https://api.todoist.com/rest/v2/{endpoint}" \
 
 ### Workflow 1: 任务 CRUD
 
-#### 创建任务
+#### create任务
 
-**基本创建**
+**基本create**
 
 ```bash
 curl -s -X POST "https://api.todoist.com/rest/v2/tasks" \
@@ -116,7 +116,7 @@ curl -s -X POST "https://api.todoist.com/rest/v2/tasks" \
   }' | jq '.'
 ```
 
-**带标签和分区的创建**
+**带标签和分区的create**
 
 ```bash
 curl -s -X POST "https://api.todoist.com/rest/v2/tasks" \
@@ -133,7 +133,7 @@ curl -s -X POST "https://api.todoist.com/rest/v2/tasks" \
   }' | jq '.'
 ```
 
-**创建子任务**
+**create子任务**
 
 ```bash
 curl -s -X POST "https://api.todoist.com/rest/v2/tasks" \
@@ -148,7 +148,7 @@ curl -s -X POST "https://api.todoist.com/rest/v2/tasks" \
 
 #### 查看任务
 
-**获取所有活跃任务**
+**get所有活跃任务**
 
 ```bash
 curl -s "https://api.todoist.com/rest/v2/tasks" \
@@ -176,21 +176,21 @@ curl -s "https://api.todoist.com/rest/v2/tasks?filter=today%20%7C%20overdue" \
   -H "Authorization: Bearer $TODOIST_API_TOKEN" | jq '.'
 ```
 
-**获取单个任务**
+**get单个任务**
 
 ```bash
 curl -s "https://api.todoist.com/rest/v2/tasks/TASK_ID" \
   -H "Authorization: Bearer $TODOIST_API_TOKEN" | jq '.'
 ```
 
-#### 更新任务
+#### update任务
 
 ```bash
 curl -s -X POST "https://api.todoist.com/rest/v2/tasks/TASK_ID" \
   -H "Authorization: Bearer $TODOIST_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "content": "更新后的任务标题",
+    "content": "update后的任务标题",
     "due_string": "下周一",
     "due_lang": "zh",
     "priority": 3
@@ -211,7 +211,7 @@ curl -s -X POST "https://api.todoist.com/rest/v2/tasks/TASK_ID/reopen" \
   -H "Authorization: Bearer $TODOIST_API_TOKEN"
 ```
 
-#### 删除任务
+#### delete任务
 
 ```bash
 curl -s -X DELETE "https://api.todoist.com/rest/v2/tasks/TASK_ID" \
@@ -220,16 +220,16 @@ curl -s -X DELETE "https://api.todoist.com/rest/v2/tasks/TASK_ID" \
 
 ---
 
-### Workflow 2: 项目管理
+### Workflow 2: 项目manage
 
-#### 列出所有项目
+#### list所有项目
 
 ```bash
 curl -s "https://api.todoist.com/rest/v2/projects" \
   -H "Authorization: Bearer $TODOIST_API_TOKEN" | jq '.[] | {id, name, color, is_favorite}'
 ```
 
-#### 创建项目
+#### create项目
 
 ```bash
 curl -s -X POST "https://api.todoist.com/rest/v2/projects" \
@@ -247,7 +247,7 @@ curl -s -X POST "https://api.todoist.com/rest/v2/projects" \
 - `list`：列表视图（默认）
 - `board`：看板视图
 
-#### 更新项目
+#### update项目
 
 ```bash
 curl -s -X POST "https://api.todoist.com/rest/v2/projects/PROJECT_ID" \
@@ -259,7 +259,7 @@ curl -s -X POST "https://api.todoist.com/rest/v2/projects/PROJECT_ID" \
   }' | jq '.'
 ```
 
-#### 删除项目
+#### delete项目
 
 ```bash
 curl -s -X DELETE "https://api.todoist.com/rest/v2/projects/PROJECT_ID" \
@@ -268,18 +268,18 @@ curl -s -X DELETE "https://api.todoist.com/rest/v2/projects/PROJECT_ID" \
 
 ---
 
-### Workflow 3: 分区管理
+### Workflow 3: 分区manage
 
 分区（Section）用于在项目内组织任务，类似看板的列。
 
-#### 列出分区
+#### list分区
 
 ```bash
 curl -s "https://api.todoist.com/rest/v2/sections?project_id=PROJECT_ID" \
   -H "Authorization: Bearer $TODOIST_API_TOKEN" | jq '.'
 ```
 
-#### 创建分区
+#### create分区
 
 ```bash
 curl -s -X POST "https://api.todoist.com/rest/v2/sections" \
@@ -296,7 +296,7 @@ curl -s -X POST "https://api.todoist.com/rest/v2/sections" \
 **看板式**
 
 ```bash
-for section in "待处理" "进行中" "待审核" "已完成"; do
+for section in "待handle" "进行中" "待审核" "已完成"; do
   curl -s -X POST "https://api.todoist.com/rest/v2/sections" \
     -H "Authorization: Bearer $TODOIST_API_TOKEN" \
     -H "Content-Type: application/json" \
@@ -317,16 +317,16 @@ done
 
 ---
 
-### Workflow 4: 标签管理
+### Workflow 4: 标签manage
 
-#### 列出所有标签
+#### list所有标签
 
 ```bash
 curl -s "https://api.todoist.com/rest/v2/labels" \
   -H "Authorization: Bearer $TODOIST_API_TOKEN" | jq '.[] | {id, name, color, is_favorite}'
 ```
 
-#### 创建标签
+#### create标签
 
 ```bash
 curl -s -X POST "https://api.todoist.com/rest/v2/labels" \
@@ -429,7 +429,7 @@ Todoist 支持多语言自然语言日期：
 | `#项目名` | 指定项目的任务 |
 | `@标签名` | 指定标签的任务 |
 | `assigned to: me` | 分配给自己的任务 |
-| `created before: -7 days` | 7 天前创建的任务 |
+| `created before: -7 days` | 7 天前create的任务 |
 
 #### 查询示例
 
@@ -455,7 +455,7 @@ curl -s "https://api.todoist.com/rest/v2/tasks?filter=7%20days%20%26%20(p1%20%7C
 
 #### 从对话生成任务
 
-当用户在对话中提到多个待办事项时，批量创建：
+When the user在对话中提到多个待办事项时，批量create：
 
 ```bash
 tasks='[
@@ -518,10 +518,10 @@ curl -s "https://api.todoist.com/rest/v2/tasks" \
 ✅ 已完成: 3 项 | ⏰ 逾期: 1 项
 ```
 
-### 创建确认
+### create确认
 
 ```
-✅ 任务已创建
+✅ 任务已create
 - 内容: 完成项目方案
 - 项目: Q2 产品开发
 - 截止: 明天 15:00
@@ -537,7 +537,7 @@ curl -s "https://api.todoist.com/rest/v2/tasks" \
 ### 1. API Token 无效
 
 **症状**：所有请求返回 401
-**解决**：确认 `TODOIST_API_TOKEN` 正确设置，到 Todoist 设置页面重新获取
+**解决**：确认 `TODOIST_API_TOKEN` 正确设置，到 Todoist 设置页面重新get
 
 ### 2. 优先级数字混淆
 
@@ -564,7 +564,7 @@ P4_NORMAL=1
 
 ### 5. 项目/任务 ID 是字符串
 
-Todoist REST API v2 返回的 ID 是字符串类型，不是数字。使用 jq 处理时注意类型。
+Todoist REST API v2 返回的 ID 是字符串类型，不是数字。使用 jq handle时注意类型。
 
 ### 6. 批量操作超频
 
@@ -576,8 +576,8 @@ sleep 0.3  # 每次请求间隔 300ms
 
 ### 7. 重复任务的 close vs delete
 
-- `close`（完成）：对重复任务，会自动创建下一次任务
-- `delete`：永久删除，不会创建下次任务
+- `close`（完成）：对重复任务，会自动create下一次任务
+- `delete`：永久delete，不会create下次任务
 
 确保对重复任务使用 `close` 而非 `delete`。
 
@@ -631,7 +631,7 @@ echo "📊 项目进度: 剩余 $total 个活跃任务"
 
 ## EXTEND.md 扩展
 
-用户可在技能同目录下创建 `EXTEND.md` 添加：
+用户可在技能同目录下create `EXTEND.md` 添加：
 - 默认项目 ID 和名称映射
 - 自定义标签体系
 - 任务模板（如每周例行任务）

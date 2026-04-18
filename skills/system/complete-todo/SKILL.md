@@ -21,7 +21,7 @@ category: Plan
 
 ```json
 {
-  "summary": "已完成百度搜索天气并截图发送给用户"
+  "summary": "已完成百度search天气并截图发送给用户"
 }
 ```
 
@@ -33,6 +33,6 @@ category: Plan
 
 ## Related Skills
 
-- `create-todo`: 创建计划
-- `update-todo-step`: 更新步骤状态
+- `create-todo`: create计划
+- `update-todo-step`: update步骤状态
 - `get-todo-status`: 查看计划状态

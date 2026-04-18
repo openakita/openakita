@@ -7,11 +7,11 @@ metadata:
   version: "1.0.0"
 ---
 
-# 百度网盘
+# Baidu NetDisk
 
 个人和企业的专属云端数字助手，文件上传下载、备份、分享、管理一句话搞定。
 
-## 安装
+## Installation
 
 npx skills add https://github.com/baidu-netdisk/bdpan-storage --skill bdpan-storage
 

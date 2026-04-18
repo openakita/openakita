@@ -23,21 +23,21 @@ browser_task(
 )
 ```
 
-## 参数
+## Parameters
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | task | string | 是 | 任务描述，用自然语言描述你想完成的操作 |
 | max_steps | integer | 否 | 最大执行步骤数，默认 15 |
 
-## 何时使用（优先）
+## When to Use（优先）
 
 - 任何涉及多步骤的浏览器操作
 - 网页搜索、表单填写、信息提取
 - 不确定具体操作步骤时
 - 复杂的网页交互流程
 
-## 示例
+## Examples
 
 ### 搜索任务
 ```python
@@ -75,7 +75,7 @@ browser_task(task="打开百度搜索福建福州，截图保存")
 
 决策顺序：`opencli_run`（有 adapter 时）→ `web_fetch`/`web_search`（只读时）→ `browser_task` → 手动 browser_click/type 组合 → chrome-devtools MCP。
 
-## 何时使用细粒度工具
+## When to Use细粒度工具
 
 仅在以下情况使用 `browser_navigate`、`browser_click` 等细粒度工具：
 
@@ -97,7 +97,7 @@ browser_task(task="打开百度搜索福建福州，截图保存")
 }
 ```
 
-## 注意事项
+## Notes
 
 1. 任务描述要清晰具体，避免歧义
 2. 复杂任务可能需要增加 max_steps

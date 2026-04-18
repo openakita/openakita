@@ -13,7 +13,7 @@ metadata:
 
 ---
 
-## 简介
+## Introduction
 
 图片理解技能是一个强大的视觉分析工具，通过调用 Dashscope（阿里云通义千问）的视觉大模型（qwen-vl-plus、qwen-vl-max），让 AI 能够理解和分析图像内容。
 
@@ -25,7 +25,7 @@ metadata:
 
 ---
 
-## 使用场景
+## Use Cases
 
 ### 📄 文档处理
 - 会议白板照片转文字
@@ -69,7 +69,7 @@ set DASHSCOPE_API_KEY=sk-your-api-key-here
 
 ---
 
-## 使用方法
+## Usage
 
 ### 基本命令
 
@@ -116,7 +116,7 @@ python scripts/image_understanding.py -i photo.jpg
 
 ---
 
-## 最佳实践
+## Best Practices
 
 ### 📸 图片质量
 - 确保图片清晰、亮度充足

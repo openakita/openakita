@@ -9,7 +9,7 @@ category: File System
 
 # List Directory
 
-列出目录内容。
+List directory contents.
 
 ## Parameters
 

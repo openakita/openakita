@@ -27,4 +27,4 @@ category: Skills Management
 ## Related Skills
 
 - `get-skill-info`: 查看可用脚本
-- `list-skills`: 列出所有技能
+- `list-skills`: list所有技能

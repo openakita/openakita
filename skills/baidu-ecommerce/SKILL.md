@@ -7,7 +7,7 @@ metadata:
   version: "1.0.0"
 ---
 
-# 百度电商
+# Baidu E-commerce
 
 赋予智能体跨平台比价、口碑分析、选购知识等结构化能力，一站式完成从找货到决策到下单的全流程电商任务。
 
@@ -18,7 +18,7 @@ metadata:
 - 选购知识与推荐
 - 从找货到下单的完整链路
 
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/ecommerce.py
 商品比价/口碑分析（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。

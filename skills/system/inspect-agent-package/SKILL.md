@@ -9,7 +9,7 @@ category: Agent Package
 
 # Inspect Agent Package
 
-预览 `.akita-agent` 包文件内容，不执行安装。
+预览 `.akita-agent` 包文件内容，不执行install。
 
 ## Parameters
 

@@ -9,7 +9,7 @@ category: Skills Management
 
 # Install Skill
 
-从 URL 或 Git 仓库安装技能到本地 skills/ 目录。
+从 URL 或 Git 仓库install技能到本地 skills/ 目录。
 
 ## Parameters
 
@@ -27,9 +27,9 @@ category: Skills Management
    - 支持指定子目录路径
 
 2. **单个 SKILL.md 文件 URL**
-   - 创建规范目录结构（scripts/, references/, assets/）
+   - create规范目录结构（scripts/, references/, assets/）
 
 ## Related Skills
 
-- `list-skills`: 查看已安装技能
-- `find-skills`: 搜索可用技能
+- `list-skills`: 查看已install技能
+- `find-skills`: search可用技能

@@ -19,7 +19,7 @@ priority: high
 - **结构化 JSON 输出** — `--json` 和 `--help` 标准支持
 - **比 GUI 自动化可靠 100x** — 不依赖像素位置、窗口状态
 
-## 何时使用 CLI-Anything（优先于 desktop_* 工具）
+## When to Use CLI-Anything（优先于 desktop_* 工具）
 
 | 场景 | 推荐工具 | 原因 |
 |------|---------|------|
@@ -50,7 +50,7 @@ cli_anything_help(app="gimp")
 cli_anything_help(app="gimp", subcommand="image resize")
 ```
 
-## 安装 CLI-Anything 工具
+## Installation CLI-Anything 工具
 
 ```bash
 # 从 CLI-Hub 安装已有的 CLI

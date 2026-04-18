@@ -9,7 +9,7 @@ requires:
   env: [IMA_OPENAPI_CLIENTID, IMA_OPENAPI_APIKEY]
 ---
 
-# 腾讯 IMA 智能工作台
+# Tencent IMA 智能工作台
 
 统一的 IMA OpenAPI 技能，支持笔记管理和知识库操作。
 

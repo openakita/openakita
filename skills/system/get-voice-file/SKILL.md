@@ -9,7 +9,7 @@ category: IM Channel
 
 # Get Voice File
 
-获取用户发送的语音消息的本地文件路径。
+Get the local file path of a voice message sent by the user.
 
 ## Parameters
 

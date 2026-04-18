@@ -9,7 +9,7 @@ category: Skills Management
 
 # Get Skill Info
 
-获取技能的详细信息和指令（Level 2 披露）。
+get技能的详细信息和指令（Level 2 披露）。
 
 ## Parameters
 
@@ -29,5 +29,5 @@ category: Skills Management
 
 ## Related Skills
 
-- `list-skills`: 列出所有技能
+- `list-skills`: list所有技能
 - `run-shell`: 执行按技能指令编写的代码

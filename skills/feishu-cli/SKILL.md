@@ -15,7 +15,7 @@ metadata:
 > 官方介绍: https://www.feishu.cn/content/article/7623291503305083853
 > npm: https://www.npmjs.com/package/@larksuite/cli
 
-## 安装
+## Installation
 
 ```bash
 # 第一步：安装 lark-cli

@@ -35,5 +35,5 @@ category: MCP
 
 ## Related Skills
 
-- `list-mcp-servers`: 列出可用服务器
-- `get-mcp-instructions`: 获取使用说明
+- `list-mcp-servers`: list可用服务器
+- `get-mcp-instructions`: get使用说明

@@ -19,7 +19,7 @@ priority: high
 - **确定性命令** — 比 browser_task 的 "让 LLM 猜" 可靠得多
 - **结构化 JSON 输出** — LLM 解析零歧义
 
-## 何时使用 OpenCLI（优先于 browser_task）
+## When to Use OpenCLI（优先于 browser_task）
 
 | 场景 | 推荐工具 | 原因 |
 |------|---------|------|
@@ -52,7 +52,7 @@ opencli_run(command="bilibili video info", args=["BV1xx411c7XW"])
 opencli_doctor()
 ```
 
-## 前置条件
+## Prerequisites
 
 1. 安装 opencli: `npm install -g @jackwener/opencli`
 2. Chrome 浏览器正在运行并已登录目标网站

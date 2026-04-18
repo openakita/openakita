@@ -42,7 +42,7 @@ OpenAkita 使用目录结构管理 MCP 服务器。每个 MCP 服务器是一个
 
 ---
 
-## 安装流程
+## Installation流程
 
 ### 方式一：使用 `add_mcp_server` 工具（推荐）
 
@@ -279,7 +279,7 @@ add_mcp_server(
 
 ---
 
-## 安装前检查清单
+## Installation前检查清单
 
 1. **确认命令可用**：stdio 模式下检查 `command` 是否在 PATH 中（`which npx`、`which python`）
 2. **确认依赖已安装**：npm 包需要 Node.js，Python 包需要对应环境
@@ -287,7 +287,7 @@ add_mcp_server(
 4. **准备环境变量**：许多 MCP 服务器需要 API Key 等凭证，通过 `env` 字段传入
 5. **命名规范**：`serverIdentifier` 使用小写字母和连字符（如 `my-tool`），保持简洁
 
-## 安装后验证
+## Installation后验证
 
 添加后系统会自动尝试连接。如果自动连接失败：
 

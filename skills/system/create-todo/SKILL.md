@@ -9,7 +9,7 @@ category: Plan
 
 # Create Todo
 
-创建任务执行计划。多步骤任务必须先创建计划再执行。
+create任务执行计划。多步骤任务必须先create计划再执行。
 
 ## When to Use
 
@@ -40,13 +40,13 @@ category: Plan
 
 ## Examples
 
-**打开百度搜索天气并截图发给用户**:
+**打开百度search天气并截图发给用户**:
 ```json
 {
-  "task_summary": "打开百度搜索天气并截图发送",
+  "task_summary": "打开百度search天气并截图发送",
   "steps": [
     {"id": "step_1", "description": "打开百度", "tool": "browser_navigate", "skills": ["browser-navigate"]},
-    {"id": "step_2", "description": "输入搜索关键词", "tool": "browser_type", "skills": ["browser-type"], "depends_on": ["step_1"]},
+    {"id": "step_2", "description": "输入search关键词", "tool": "browser_type", "skills": ["browser-type"], "depends_on": ["step_1"]},
     {"id": "step_3", "description": "截图", "tool": "browser_screenshot", "skills": ["browser-screenshot"], "depends_on": ["step_2"]},
     {"id": "step_4", "description": "发送截图", "tool": "deliver_artifacts", "skills": ["deliver-artifacts"], "depends_on": ["step_3"]}
   ]
@@ -55,6 +55,6 @@ category: Plan
 
 ## Related Skills
 
-- `update-todo-step`: 更新步骤状态
+- `update-todo-step`: update步骤状态
 - `get-todo-status`: 查看计划状态
 - `complete-todo`: 完成计划

@@ -9,11 +9,11 @@ category: Scheduled Tasks
 
 # Schedule Task
 
-创建定时任务或提醒。
+create定时任务或提醒。
 
 ## Important
 
-**必须调用此工具才能创建任务！只是说"好的我会提醒你"不会创建任务！**
+**必须调用此工具才能create任务！只是说"好的我会提醒你"不会create任务！**
 
 ## Parameters
 
@@ -85,5 +85,5 @@ category: Scheduled Tasks
 
 ## Related Skills
 
-- `list-scheduled-tasks`: 查看已创建的任务
+- `list-scheduled-tasks`: 查看已create的任务
 - `cancel-scheduled-task`: 取消任务

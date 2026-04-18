@@ -286,7 +286,7 @@ output = replicate.run(
 
 示例：`coffee_shop_dalle3_16x9_20250301_143022.png`
 
-### 输出内容
+### Output内容
 
 每次图片生成后，返回以下信息：
 

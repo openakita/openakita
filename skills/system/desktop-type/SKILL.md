@@ -46,5 +46,5 @@ category: Desktop
 
 ## Related Skills
 
-- `desktop-click`: 先点击获取焦点
+- `desktop-click`: 先点击get焦点
 - `desktop-hotkey`: 快捷键操作

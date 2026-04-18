@@ -11,7 +11,7 @@ metadata:
 
 通过 flyai-cli 调用飞猪 MCP 服务，支持全品类旅行搜索与预订。
 
-## 安装
+## Installation
 
 npm i -g @fly-ai/flyai-cli
 flyai keyword-search --query "三亚有什么好玩的"
@@ -29,7 +29,7 @@ flyai keyword-search --query "三亚有什么好玩的"
 | search-poi | 按城市景点搜索 | --city-name |
 | search-train | 火车票搜索 | --origin |
 
-## 输出格式
+## Output Format
 
 所有命令输出单行 JSON，可配合 jq 或 Python 处理。
 

@@ -52,5 +52,5 @@ category: File System
 ## Related Skills
 
 - `read-file`: 先读取文件确认内容
-- `write-file`: 创建新文件或完全覆盖
-- `grep`: 搜索要编辑的内容位置
+- `write-file`: create新文件或完全覆盖
+- `grep`: search要编辑的内容位置

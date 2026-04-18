@@ -9,7 +9,7 @@ category: Plan
 
 # Update Todo Step
 
-更新计划中某个步骤的状态。每完成一步必须调用。
+update计划中某个步骤的状态。每完成一步必须调用。
 
 ## Parameters
 
@@ -35,12 +35,12 @@ category: Plan
 {
   "step_id": "step_2",
   "status": "failed",
-  "result": "找不到搜索框元素"
+  "result": "找不到search框元素"
 }
 ```
 
 ## Related Skills
 
-- `create-todo`: 创建计划
+- `create-todo`: create计划
 - `get-todo-status`: 查看计划状态
 - `complete-todo`: 完成计划

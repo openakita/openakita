@@ -9,7 +9,7 @@ category: Communication
 
 # 发送表情包
 
-## 何时使用
+## When to Use
 
 - 闲聊问候时，增加互动趣味
 - 鼓励用户完成任务时
@@ -24,7 +24,7 @@ category: Communication
 - 正式的技术讨论中
 - 用户情绪不好需要安慰时（文字更合适）
 
-## 参数
+## Parameters
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
@@ -56,7 +56,7 @@ category: Communication
 | 管家 | 偶尔 | 通用 |
 | 贾维斯 | 适中 | 滑稽/程序员 |
 
-## 示例
+## Examples
 
 ```
 # 按情绪发送

@@ -9,13 +9,13 @@ category: IM Channel
 
 # Get Chat History
 
-获取当前聊天的历史消息记录。
+get当前聊天的历史消息记录。
 
 ## Parameters
 
 | 参数 | 类型 | 必填 | 说明 |
 |-----|------|-----|------|
-| limit | integer | 否 | 获取最近多少条消息，默认 20 |
+| limit | integer | 否 | get最近多少条消息，默认 20 |
 | include_system | boolean | 否 | 是否包含系统消息（如任务通知），默认 True |
 
 ## Returns

@@ -9,7 +9,7 @@ category: Skills Management
 
 # Get Skill Reference
 
-获取技能的参考文档。
+get技能的参考文档。
 
 ## Parameters
 
@@ -20,5 +20,5 @@ category: Skills Management
 
 ## Related Skills
 
-- `get-skill-info`: 获取主要说明
+- `get-skill-info`: get主要说明
 - `run-shell`: 执行按技能指令编写的代码

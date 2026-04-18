@@ -9,7 +9,7 @@ category: Agent Package
 
 # Import Agent
 
-从 `.akita-agent` 包文件导入 Agent，安装 Agent 配置和捆绑技能到本地。
+从 `.akita-agent` 包文件导入 Agent，install Agent 配置和捆绑技能到本地。
 
 ## Parameters
 
@@ -21,8 +21,8 @@ category: Agent Package
 ## Import Behavior
 
 1. 校验包格式和安全性
-2. 安装捆绑技能到 `skills/custom/` 目录
-3. 创建 Agent Profile（type 强制为 custom）
+2. install捆绑技能到 `skills/custom/` 目录
+3. create Agent Profile（type 强制为 custom）
 4. 如果 ID 冲突且未 force，自动追加后缀
 
 ## Related Skills

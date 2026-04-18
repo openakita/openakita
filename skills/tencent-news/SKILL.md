@@ -7,7 +7,7 @@ metadata:
   version: "1.0.7"
 ---
 
-# 腾讯新闻内容订阅
+# Tencent News内容订阅
 
 通过 tencent-news-cli 获取腾讯新闻内容，支持热点新闻、早报晚报、实时资讯、新闻榜单、领域新闻查询。
 
@@ -16,7 +16,7 @@ metadata:
 ### API Key 获取
 打开 https://news.qq.com/exchange?scene=appkey 获取 API Key。
 
-### 安装 CLI
+### Installation CLI
 下载官方 skill 包并安装 CLI。
 
 ### 设置 Key
@@ -28,7 +28,7 @@ metadata:
 2. 理解用户意图，映射子命令
 3. 执行并按格式输出
 
-## 输出格式
+## Output Format
 
 1. **标题文字**
    来源：媒体名称

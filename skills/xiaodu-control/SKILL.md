@@ -16,7 +16,7 @@ metadata:
 - 智能设备控制
 - 场景联动
 - 家庭 IoT 任务
-- 生态硬件管理
+- 生态硬件manage
 
 ## Pre-built Scripts
 

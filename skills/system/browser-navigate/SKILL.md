@@ -19,7 +19,7 @@ category: Browser
 
 ## Examples
 
-**打开搜索引擎**:
+**打开search引擎**:
 ```json
 {"url": "https://www.google.com"}
 ```
@@ -54,5 +54,5 @@ category: Browser
 
 示例：
 ```python
-browser_task(task="打开百度搜索福建福州并截图")
+browser_task(task="打开百度search福建福州并截图")
 ```

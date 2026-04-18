@@ -9,7 +9,7 @@ category: File System
 
 # Run Shell
 
-执行 Shell 命令。
+Execute shell commands.
 
 ## Parameters
 
@@ -49,7 +49,7 @@ category: File System
 系统会自动将 PowerShell 命令通过 `-EncodedCommand`（Base64 UTF-16LE）编码执行，
 避免 cmd.exe → PowerShell 的多层引号/特殊字符转义破坏。直接传入 PowerShell 命令即可。
 
-### 何时使用 PowerShell vs Python 脚本
+### When to Use PowerShell vs Python 脚本
 
 | 场景 | 推荐方式 | 原因 |
 |------|----------|------|

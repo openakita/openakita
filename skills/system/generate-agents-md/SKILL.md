@@ -16,7 +16,7 @@ allowed-tools: ["read_file", "write_file", "run_shell", "list_directory"]
 
 ## When to Use
 
-- 用户说"生成 AGENTS.md"、"初始化项目规范"、"创建项目指引"
+- 用户说"生成 AGENTS.md"、"初始化项目规范"、"create项目指引"
 - 用户开始用 OpenAkita 开发一个新项目，还没有 AGENTS.md
 - 用户说"帮我规范这个项目"、"让 AI 更好地理解这个项目"
 
@@ -32,7 +32,7 @@ allowed-tools: ["read_file", "write_file", "run_shell", "list_directory"]
 4. **CI/CD**：`.github/workflows/`、`.gitlab-ci.yml`、`Jenkinsfile` 等
 5. **测试**：`tests/`、`__tests__/`、`spec/`、`test/` 目录；`jest.config.*`、`vitest.config.*`、`pytest.ini`、`conftest.py` 等
 6. **目录结构**：顶层目录布局，识别 monorepo（`apps/`、`packages/`、`workspaces`）
-7. **现有 AGENTS.md**：如果已存在，读取后在其基础上更新
+7. **现有 AGENTS.md**：如果已存在，读取后在其基础上update
 
 ### Step 2: 生成 AGENTS.md
 
@@ -47,11 +47,11 @@ allowed-tools: ["read_file", "write_file", "run_shell", "list_directory"]
 
 - Language: [语言及版本]
 - Framework: [框架]
-- Package Manager: [包管理器]
+- Package Manager: [包manage器]
 
 ## Dev Environment Setup
 
-[环境准备步骤，如 Python 版本、Node 版本、依赖安装命令]
+[环境准备步骤，如 Python 版本、Node 版本、依赖install命令]
 
 ## Build & Run
 
@@ -67,7 +67,7 @@ allowed-tools: ["read_file", "write_file", "run_shell", "list_directory"]
 
 ## Project Structure
 
-[关键目录说明，不要列出每个文件]
+[关键目录说明，不要list每个文件]
 
 ## Architecture Notes
 
@@ -105,6 +105,6 @@ allowed-tools: ["read_file", "write_file", "run_shell", "list_directory"]
 
 → 执行 Step 1-4，扫描项目后生成文件。
 
-用户说："更新一下 AGENTS.md"
+用户说："update一下 AGENTS.md"
 
-→ 先读取现有 AGENTS.md，结合项目当前状态更新过时的内容。
+→ 先读取现有 AGENTS.md，结合项目当前状态update过时的内容。

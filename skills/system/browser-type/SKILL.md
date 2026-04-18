@@ -20,7 +20,7 @@ category: Browser
 
 ## Examples
 
-**在搜索框输入**:
+**在search框输入**:
 ```json
 {"selector": "input[name='q']", "text": "OpenAkita"}
 ```
@@ -43,7 +43,7 @@ category: Browser
 ## Related Skills
 
 - `browser-navigate`: 先导航到页面
-- `browser-click`: 点击输入框获取焦点
+- `browser-click`: 点击输入框get焦点
 
 
 ## 推荐
@@ -52,5 +52,5 @@ category: Browser
 
 示例：
 ```python
-browser_task(task="打开百度搜索福建福州并截图")
+browser_task(task="打开百度search福建福州并截图")
 ```

@@ -9,7 +9,7 @@ requires:
   env: [TENCENT_SURVEY_TOKEN]
 ---
 
-# 腾讯问卷
+# Tencent Survey
 
 腾讯问卷 MCP 提供问卷查询、创建、编辑与回答查看能力。
 

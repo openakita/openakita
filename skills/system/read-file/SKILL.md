@@ -9,7 +9,7 @@ category: File System
 
 # Read File
 
-读取文件内容。
+Read file content.
 
 ## Parameters
 

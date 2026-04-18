@@ -47,7 +47,7 @@ category: Desktop
 ## Workflow
 
 1. 调用此工具截图
-2. 获取返回的 `file_path`
+2. get返回的 `file_path`
 3. 用 `deliver_artifacts` 发送给用户
 
 ## Notes

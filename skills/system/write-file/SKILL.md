@@ -9,7 +9,7 @@ category: File System
 
 # Write File
 
-写入文件内容。
+Write content to a file.
 
 ## Parameters
 

@@ -9,7 +9,7 @@ category: Agent Package
 
 # List Exportable Agents
 
-列出所有可导出的 Agent，包括系统预设和自定义 Agent。
+list所有可导出的 Agent，包括系统预设和自定义 Agent。
 
 ## Parameters
 

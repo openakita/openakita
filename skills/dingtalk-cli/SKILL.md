@@ -7,14 +7,14 @@ metadata:
   version: "1.0.8"
 ---
 
-# 钉钉 Workspace CLI (dws)
+# DingTalk CLI Workspace CLI (dws)
 
 钉钉官方开源的跨平台 CLI 工具，Go 语言开发。为人类用户和 AI Agent 场景同时设计，统一钉钉全套产品能力。
 
 > 官方 GitHub: https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli
 > 1500+ Stars | Apache-2.0 许可
 
-## 安装
+## Installation
 
 ### macOS / Linux
 
@@ -173,7 +173,7 @@ dws upgrade --check            # 检查新版本
 dws upgrade --rollback         # 回滚到上一版本
 ```
 
-## 快速开始
+## Quick Start
 
 ```bash
 dws contact user search --keyword "engineering"     # 搜索联系人

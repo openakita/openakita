@@ -7,11 +7,11 @@ metadata:
   version: "1.0.0"
 ---
 
-# 网易云音乐
+# NetEase Music
 
 通过 ncm-cli 控制网易云音乐，支持搜索、播放、歌单管理和智能推荐。
 
-## 安装
+## Installation
 
 npm install -g @music163/ncm-cli
 ncm-cli configure

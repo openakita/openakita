@@ -25,5 +25,5 @@ category: User Profile
 
 ## Related Skills
 
-- `update-user-profile`: 更新档案
-- `get-user-profile`: 获取档案
+- `update-user-profile`: update档案
+- `get-user-profile`: get档案

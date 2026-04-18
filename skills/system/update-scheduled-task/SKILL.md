@@ -9,7 +9,7 @@ category: Scheduled Tasks
 
 # Update Scheduled Task
 
-修改定时任务设置【不删除任务】。
+修改定时任务设置【不delete任务】。
 
 ## Parameters
 
@@ -28,5 +28,5 @@ category: Scheduled Tasks
 
 ## Related Skills
 
-- `list-scheduled-tasks`: 获取任务 ID
-- `cancel-scheduled-task`: 永久删除任务
+- `list-scheduled-tasks`: get任务 ID
+- `cancel-scheduled-task`: 永久delete任务

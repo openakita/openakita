@@ -45,7 +45,7 @@ install_hub_agent(agent_id="the-agent-id")
 - 系统自动：下载包 → 解压技能 → 版本去重 → 注册 Agent → 热重载
 - 安装后 Agent **立刻可用**
 
-### 安装时发生了什么？
+### Installation时发生了什么？
 1. 下载 `.akita-agent` 包
 2. 打包的技能 → `skills/custom/`（版本去重：本地有更新版就跳过）
 3. 外部依赖技能 → 从原始 GitHub 仓库拉取到 `skills/community/`

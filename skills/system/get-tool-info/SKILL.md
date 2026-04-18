@@ -9,7 +9,7 @@ category: System
 
 # Get Tool Info
 
-获取系统工具的详细参数定义（Level 2 披露）。
+get系统工具的详细参数定义（Level 2 披露）。
 
 ## Parameters
 

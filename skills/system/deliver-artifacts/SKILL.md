@@ -51,4 +51,4 @@ category: IM Channel
 
 - `browser-screenshot`: 网页截图
 - `desktop-screenshot`: 桌面截图
-- `get-voice-file`: 获取语音文件
+- `get-voice-file`: get语音文件

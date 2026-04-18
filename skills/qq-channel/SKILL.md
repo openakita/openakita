@@ -7,17 +7,17 @@ metadata:
   version: "1.0.0"
 ---
 
-# QQ 频道管理
+# QQ Channel管理
 
 通过 QQ 机器人 API 管理腾讯频道/QQ 频道的消息、成员和内容。
 
-## 前置条件
+## Prerequisites
 
 - 在 QQ 机器人开放平台 https://bot.q.qq.com 注册并创建机器人
 - 获取 AppID 和 Token
 - 设置 QQBot 鉴权头信息
 
-## 核心能力
+## Core Capabilities
 
 | 功能 | 说明 |
 |------|------|

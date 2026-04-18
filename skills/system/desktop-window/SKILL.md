@@ -9,7 +9,7 @@ category: Desktop
 
 # Desktop Window
 
-窗口管理操作。
+窗口manage操作。
 
 ## Parameters
 
@@ -22,7 +22,7 @@ category: Desktop
 
 | 操作 | 说明 | 需要 title |
 |------|------|-----------|
-| list | 列出所有窗口 | 否 |
+| list | list所有窗口 | 否 |
 | switch | 切换到指定窗口（激活并置顶） | 是 |
 | minimize | 最小化窗口 | 是 |
 | maximize | 最大化窗口 | 是 |
@@ -31,7 +31,7 @@ category: Desktop
 
 ## Examples
 
-**列出所有窗口**:
+**list所有窗口**:
 ```json
 {"action": "list"}
 ```

@@ -9,7 +9,7 @@ category: Browser
 
 # Browser Status
 
-获取浏览器当前状态。
+get浏览器当前状态。
 
 ## Parameters
 
@@ -40,5 +40,5 @@ category: Browser
 
 示例：
 ```python
-browser_task(task="打开百度搜索福建福州并截图")
+browser_task(task="打开百度search福建福州并截图")
 ```

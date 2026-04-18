@@ -19,13 +19,13 @@ metadata:
 |------|------|------|
 | 图片描述 | `-m describe` | 详细描述图片内容 |
 | 文字提取 | `-m ocr` | 提取图片中的所有文字 |
-| 物体识别 | `-m objects` | 识别并列出图片中的物体 |
+| 物体识别 | `-m objects` | 识别并list图片中的物体 |
 | 图片问答 | `-m qa` | 针对图片回答问题 |
 
-## 📦 安装
+## 📦 install
 
 ```bash
-# 安装依赖
+# install依赖
 pip install openai pillow requests
 ```
 

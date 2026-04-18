@@ -11,19 +11,19 @@ category: skills-management
 
 加载新创建的技能到系统中，使其立即可用。
 
-## 使用场景
+## Use Cases
 
 - 使用 `skill-creator` 创建技能后
 - 手动在 `skills/` 目录创建技能后
 - 需要立即使用新技能时
 
-## 使用方法
+## Usage
 
 ```
 load_skill(skill_name="my-new-skill")
 ```
 
-## 参数
+## Parameters
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
@@ -36,7 +36,7 @@ load_skill(skill_name="my-new-skill")
 3. 调用 `load_skill("<skill-name>")` 加载技能
 4. 技能立即可用
 
-## 注意事项
+## Notes
 
 - 技能目录必须包含有效的 `SKILL.md` 文件
 - 如果技能已存在，请使用 `reload_skill` 重新加载

@@ -7,14 +7,14 @@ metadata:
   version: "1.0.0"
 ---
 
-# Yuque Skills — 语雀知识管理
+# Yuque Skills — 语雀知识manage
 
 ## When to Use
 
-- 用户需要搜索语雀中的文档和知识
-- 需要创建、编辑、发布语雀文档
+- When the user needssearch语雀中的文档和知识
+- 需要create、编辑、发布语雀文档
 - 需要生成周报/月报并发布到语雀
-- 需要管理知识库结构（目录、分类）
+- 需要manage知识库结构（目录、分类）
 - 需要在团队知识库中进行协作
 - 需要从语雀导出文档或同步内容
 - 需要统计知识库的使用数据
@@ -30,11 +30,11 @@ metadata:
 | `YUQUE_TOKEN` | 语雀 API Token |
 | `YUQUE_HOST` | 语雀 API 地址（默认 `https://www.yuque.com/api/v2`） |
 
-**获取 Token：**
+**get Token：**
 
 1. 登录语雀 → 点击头像 → 设置 → Token
 2. 或访问：https://www.yuque.com/settings/tokens
-3. 创建新 Token，勾选所需权限
+3. create新 Token，勾选所需权限
 
 在 `.env` 中配置：
 
@@ -47,13 +47,13 @@ YUQUE_HOST=https://www.yuque.com/api/v2
 
 ### 必需依赖
 
-| 依赖 | 用途 | 安装方式 |
+| 依赖 | 用途 | install方式 |
 |------|------|---------|
 | `httpx` | HTTP API 调用 | `pip install httpx` |
 
 ### 可选依赖
 
-| 依赖 | 用途 | 安装方式 |
+| 依赖 | 用途 | install方式 |
 |------|------|---------|
 | `markdownify` | HTML → Markdown 转换 | `pip install markdownify` |
 | `beautifulsoup4` | HTML 解析 | `pip install beautifulsoup4` |
@@ -107,17 +107,17 @@ async def yuque_api(method, path, data=None):
 
 | 权限 | 可执行操作 |
 |------|-----------|
-| 只读 | 搜索、查看文档、导出 |
-| 读写 | 创建、编辑、删除文档 |
-| 管理 | 知识库设置、成员管理 |
+| 只读 | search、查看文档、导出 |
+| 读写 | create、编辑、delete文档 |
+| manage | 知识库设置、成员manage |
 
 ---
 
 ## Workflows
 
-### Workflow 1: 个人文档搜索
+### Workflow 1: 个人文档search
 
-**步骤 1 — 获取用户信息**
+**步骤 1 — get用户信息**
 
 ```python
 user = await yuque_api("GET", "/user")
@@ -125,11 +125,11 @@ user_login = user["login"]
 print(f"当前用户: {user['name']} ({user_login})")
 ```
 
-**步骤 2 — 搜索文档**
+**步骤 2 — search文档**
 
 ```python
 async def search_docs(query, scope="user"):
-    """搜索语雀文档"""
+    """search语雀文档"""
     params = {
         "q": query,
         "type": "doc",
@@ -139,11 +139,11 @@ async def search_docs(query, scope="user"):
     return result
 ```
 
-**步骤 3 — 获取文档内容**
+**步骤 3 — get文档内容**
 
 ```python
 async def get_doc(repo_slug, doc_slug):
-    """获取文档详细内容"""
+    """get文档详细内容"""
     doc = await yuque_api("GET", f"/repos/{repo_slug}/docs/{doc_slug}")
     return {
         "title": doc["title"],
@@ -154,7 +154,7 @@ async def get_doc(repo_slug, doc_slug):
     }
 ```
 
-**步骤 4 — 返回搜索结果摘要**
+**步骤 4 — 返回search结果摘要**
 
 ---
 
@@ -222,13 +222,13 @@ async def publish_report(repo_slug, title, content):
 
 ---
 
-### Workflow 3: 知识库管理
+### Workflow 3: 知识库manage
 
-**列出所有知识库**
+**list所有知识库**
 
 ```python
 async def list_repos(user_login=None, group_login=None):
-    """列出知识库"""
+    """list知识库"""
     if group_login:
         repos = await yuque_api("GET", f"/groups/{group_login}/repos")
     else:
@@ -246,20 +246,20 @@ async def list_repos(user_login=None, group_login=None):
     } for r in repos]
 ```
 
-**获取知识库目录**
+**get知识库目录**
 
 ```python
 async def get_toc(repo_namespace):
-    """获取知识库的目录结构"""
+    """get知识库的目录结构"""
     toc = await yuque_api("GET", f"/repos/{repo_namespace}/toc")
     return toc
 ```
 
-**创建知识库**
+**create知识库**
 
 ```python
 async def create_repo(user_or_group_login, name, description="", public=0):
-    """创建新知识库"""
+    """create新知识库"""
     data = {
         "name": name,
         "slug": slugify(name),
@@ -275,7 +275,7 @@ async def create_repo(user_or_group_login, name, description="", public=0):
 
 ### Workflow 4: 文档 CRUD 操作
 
-**创建文档**
+**create文档**
 
 ```python
 async def create_doc(repo_namespace, title, body, format="markdown"):
@@ -288,7 +288,7 @@ async def create_doc(repo_namespace, title, body, format="markdown"):
     return await yuque_api("POST", f"/repos/{repo_namespace}/docs", data=data)
 ```
 
-**更新文档**
+**update文档**
 
 ```python
 async def update_doc(repo_namespace, doc_id, title=None, body=None):
@@ -300,7 +300,7 @@ async def update_doc(repo_namespace, doc_id, title=None, body=None):
     return await yuque_api("PUT", f"/repos/{repo_namespace}/docs/{doc_id}", data=data)
 ```
 
-**删除文档**
+**delete文档**
 
 ```python
 async def delete_doc(repo_namespace, doc_id):
@@ -326,11 +326,11 @@ async def export_doc(repo_namespace, doc_slug, format="markdown"):
 
 ### Workflow 5: 团队协作
 
-**列出团队**
+**list团队**
 
 ```python
 async def list_groups():
-    """列出用户加入的所有团队"""
+    """list用户加入的所有团队"""
     groups = await yuque_api("GET", "/users/groups")
     return [{
         "id": g["id"],
@@ -366,7 +366,7 @@ async def generate_team_report(group_login):
     return report
 ```
 
-**知识库协作者管理**
+**知识库协作者manage**
 
 ```python
 async def add_collaborator(repo_namespace, user_login, role="writer"):
@@ -402,10 +402,10 @@ async def sync_markdown_to_yuque(md_dir, repo_namespace):
         existing = await search_doc_by_title(repo_namespace, title)
         if existing:
             await update_doc(repo_namespace, existing["id"], body=content)
-            print(f"更新: {title}")
+            print(f"update: {title}")
         else:
             await create_doc(repo_namespace, title, content)
-            print(f"创建: {title}")
+            print(f"create: {title}")
 ```
 
 **从语雀导出到本地**
@@ -429,19 +429,19 @@ async def export_repo_to_local(repo_namespace, output_dir):
 
 ## Output Format
 
-### 搜索结果
+### search结果
 
 ```
-🔍 搜索 "项目规范" 共找到 5 条结果：
+🔍 search "项目规范" 共找到 5 条结果：
 
 1. 📄 代码规范 v2.0
    - 知识库: 工程团队/开发规范
-   - 更新时间: 2025-02-28
+   - update时间: 2025-02-28
    - 链接: https://www.yuque.com/team/repo/doc-slug
 
-2. 📄 项目管理规范
+2. 📄 项目manage规范
    - 知识库: PMO/流程文档
-   - 更新时间: 2025-02-25
+   - update时间: 2025-02-25
    - 链接: https://www.yuque.com/team/repo/doc-slug2
 
 ...
@@ -458,8 +458,8 @@ async def export_repo_to_local(repo_namespace, output_dir):
 - 总知识库数: 12
 - 总文档数: 456
 - 本月新增: 28 篇
-- 最活跃知识库: "产品设计" (本月 12 篇更新)
-- 最近更新:
+- 最活跃知识库: "产品设计" (本月 12 篇update)
+- 最近update:
   1. API 接口文档 v3 (2 小时前)
   2. Q1 OKR 复盘 (昨天)
   3. 新员工入职手册 (3 天前)
@@ -474,7 +474,7 @@ async def export_repo_to_local(repo_namespace, output_dir):
 **症状**：API 返回 401 或 403
 **解决**：
 - 确认 Token 有读写权限
-- 企业版语雀可能需要管理员授权
+- 企业版语雀可能需要manage员授权
 - 检查 Token 是否过期
 
 ### 2. namespace 格式错误
@@ -487,10 +487,10 @@ async def export_repo_to_local(repo_namespace, output_dir):
 ### 3. Markdown 与 HTML 格式混淆
 
 语雀文档有两种内容格式：
-- `body`：Markdown 格式（创建时使用 `format: "markdown"`）
+- `body`：Markdown 格式（create时使用 `format: "markdown"`）
 - `body_html`：HTML 格式
 
-创建文档时需明确指定 `format` 参数。
+create文档时需明确指定 `format` 参数。
 
 ### 4. API 频率限制
 
@@ -509,7 +509,7 @@ for doc in docs:
 
 ### 5. 文档 slug 冲突
 
-同一知识库中 slug 必须唯一。创建文档前先检查是否已存在：
+同一知识库中 slug 必须唯一。create文档前先检查是否已存在：
 
 ```python
 async def safe_create_doc(repo_namespace, title, body):
@@ -525,11 +525,11 @@ async def safe_create_doc(repo_namespace, title, body):
 企业版语雀的部分 API 路径和参数可能有差异：
 - Host 不同（`your-company.yuque.com`）
 - 部分接口需要额外权限
-- 团队管理接口更丰富
+- 团队manage接口更丰富
 
 ### 7. 大文档性能问题
 
-超过 5 万字的文档在创建/更新时可能超时。建议：
+超过 5 万字的文档在create/update时可能超时。建议：
 - 拆分为多篇文档
 - 使用分页上传
 - 图片先上传到 CDN 再引用
@@ -538,7 +538,7 @@ async def safe_create_doc(repo_namespace, title, body):
 
 ## EXTEND.md 扩展
 
-用户可在技能同目录下创建 `EXTEND.md` 添加：
+用户可在技能同目录下create `EXTEND.md` 添加：
 - 默认知识库 namespace
 - 团队的语雀 Host 地址
 - 周报/月报模板定制

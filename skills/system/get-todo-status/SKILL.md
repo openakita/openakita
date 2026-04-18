@@ -9,7 +9,7 @@ category: Plan
 
 # Get Todo Status
 
-获取当前计划的执行状态。
+get当前计划的执行状态。
 
 ## Parameters
 
@@ -24,6 +24,6 @@ category: Plan
 
 ## Related Skills
 
-- `create-todo`: 创建计划
-- `update-todo-step`: 更新步骤状态
+- `create-todo`: create计划
+- `update-todo-step`: update步骤状态
 - `complete-todo`: 完成计划

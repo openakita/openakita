@@ -9,7 +9,7 @@ category: Browser
 
 # Browser List Tabs
 
-列出所有打开的标签页。
+list所有打开的标签页。
 
 ## Parameters
 
@@ -34,5 +34,5 @@ category: Browser
 
 示例：
 ```python
-browser_task(task="打开百度搜索福建福州并截图")
+browser_task(task="打开百度search福建福州并截图")
 ```

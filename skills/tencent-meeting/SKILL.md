@@ -17,9 +17,9 @@ requires:
   env: [TENCENT_MEETING_TOKEN]
 ---
 
-# 腾讯会议 MCP 服务
+# Tencent Meeting MCP 服务
 
-## 概述
+## Overview
 
 本技能为腾讯会议提供完整的 MCP 工具集，涵盖会议管理、成员管理、录制与转写查询等核心功能。
 

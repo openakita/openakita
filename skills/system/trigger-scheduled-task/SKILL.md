@@ -20,9 +20,9 @@ category: Scheduled Tasks
 ## Notes
 
 - 不会影响原有的执行计划
-- 适用于测试任务或提前运行
+- Applicable to测试任务或提前运行
 
 ## Related Skills
 
-- `list-scheduled-tasks`: 获取任务 ID
-- `schedule-task`: 创建新任务
+- `list-scheduled-tasks`: get任务 ID
+- `schedule-task`: create新任务

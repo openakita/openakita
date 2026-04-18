@@ -32,7 +32,7 @@ export PDD_PID="your_pdd_pid"
 | 京东 | 短链接、标准链接 | 完整 | 完整 |
 | 拼多多 | mobile.yangkeduo.com | 基础 | 基础 |
 
-## 核心功能
+## Core Features
 
 - 智能转链：淘宝/京东/拼多多链接自动转佣金链接
 - 全网比价：对比三大平台价格

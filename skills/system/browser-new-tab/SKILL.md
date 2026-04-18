@@ -35,5 +35,5 @@ category: Browser
 
 示例：
 ```python
-browser_task(task="打开百度搜索福建福州并截图")
+browser_task(task="打开百度search福建福州并截图")
 ```

@@ -9,13 +9,13 @@ category: Memory
 
 # Search Memory
 
-搜索相关记忆。
+search相关记忆。
 
 ## Parameters
 
 | 参数 | 类型 | 必填 | 说明 |
 |-----|------|-----|------|
-| query | string | 是 | 搜索关键词 |
+| query | string | 是 | search关键词 |
 | type | string | 否 | 记忆类型过滤（可选） |
 
 ## Memory Types for Filter
@@ -28,12 +28,12 @@ category: Memory
 
 ## Examples
 
-**搜索用户偏好**:
+**search用户偏好**:
 ```json
 {"query": "代码风格", "type": "preference"}
 ```
 
-**通用搜索**:
+**通用search**:
 ```json
 {"query": "Python"}
 ```

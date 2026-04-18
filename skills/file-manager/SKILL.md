@@ -9,19 +9,19 @@ metadata:
 
 # File Manager
 
-管理文件和目录的工具集。
+manage文件和目录的工具集。
 
 ## When to Use
 
-- 创建、删除、移动、复制文件或目录
+- create、delete、移动、复制文件或目录
 - 读取或写入文件内容
-- 搜索文件
-- 列出目录内容
-- 获取文件信息（大小、修改时间等）
+- search文件
+- list目录内容
+- get文件信息（大小、修改时间等）
 
 ## Instructions
 
-### 列出目录
+### list目录
 
 ```bash
 python scripts/file_ops.py list <path> [--recursive] [--pattern "*.py"]
@@ -51,19 +51,19 @@ python scripts/file_ops.py copy <source> <destination>
 python scripts/file_ops.py move <source> <destination>
 ```
 
-### 删除
+### delete
 
 ```bash
 python scripts/file_ops.py delete <path> [--recursive]
 ```
 
-### 搜索文件
+### search文件
 
 ```bash
 python scripts/file_ops.py search <directory> --pattern "*.py" [--content "search_text"]
 ```
 
-### 获取文件信息
+### get文件信息
 
 ```bash
 python scripts/file_ops.py info <path>
@@ -87,6 +87,6 @@ python scripts/file_ops.py info <path>
 
 ## Safety Notes
 
-- 删除操作不可恢复，谨慎使用
+- delete操作不可恢复，谨慎使用
 - 写入文件会覆盖原有内容（除非使用 --append）
 - 对于重要文件，建议先备份

@@ -9,22 +9,22 @@ category: Browser
 
 # Browser Get Content
 
-获取页面内容（文本）。
+get页面内容（文本）。
 
 ## Parameters
 
 | 参数 | 类型 | 必填 | 说明 |
 |-----|------|-----|------|
-| selector | string | 否 | CSS 选择器（可选，不填则获取整个页面） |
+| selector | string | 否 | CSS 选择器（可选，不填则get整个页面） |
 
 ## Examples
 
-**获取整个页面**:
+**get整个页面**:
 ```json
 {}
 ```
 
-**获取特定元素**:
+**get特定元素**:
 ```json
 {"selector": ".article-body"}
 ```
@@ -41,5 +41,5 @@ category: Browser
 
 示例：
 ```python
-browser_task(task="打开百度搜索福建福州并截图")
+browser_task(task="打开百度search福建福州并截图")
 ```

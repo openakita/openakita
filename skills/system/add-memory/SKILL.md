@@ -9,7 +9,7 @@ category: Memory
 
 # Add Memory
 
-记录重要信息到长期记忆。
+Record important information to long-term memory.
 
 ## Parameters
 

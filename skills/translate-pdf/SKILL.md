@@ -344,7 +344,7 @@ async def batch_translate_pdfs(input_dir, output_dir, target_lang="zh-CN"):
 - `research_paper_zh-CN.pdf`（翻译版）
 - `research_paper_bilingual.pdf`（双语版）
 
-### 输出报告
+### Output报告
 
 ```
 📄 PDF 翻译完成

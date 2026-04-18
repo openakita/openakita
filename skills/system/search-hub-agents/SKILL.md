@@ -14,7 +14,7 @@ Search for Agents on the OpenAkita Platform Agent Store.
 ## When to Use
 
 - User wants to find or browse Agents on the OpenAkita marketplace
-- User asks "有什么 Agent 可以用" or "搜索一个 XX Agent"
+- User asks "有什么 Agent 可以用" or "search一个 XX Agent"
 - User wants to discover community-shared Agents by category
 
 ## Workflow

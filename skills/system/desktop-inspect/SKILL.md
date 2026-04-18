@@ -47,4 +47,4 @@ category: Desktop
 ## Related Skills
 
 - `desktop-find-element`: 查找特定元素
-- `desktop-window`: 窗口管理
+- `desktop-window`: 窗口manage

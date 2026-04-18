@@ -9,7 +9,7 @@ category: MCP
 
 # List MCP Servers
 
-列出所有配置的 MCP 服务器及其连接状态。
+list所有配置的 MCP 服务器及其连接状态。
 
 ## Parameters
 
@@ -25,4 +25,4 @@ category: MCP
 ## Related Skills
 
 - `call-mcp-tool`: 调用 MCP 工具
-- `get-mcp-instructions`: 获取使用说明
+- `get-mcp-instructions`: get使用说明

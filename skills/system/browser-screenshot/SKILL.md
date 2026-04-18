@@ -36,7 +36,7 @@ category: Browser
 
 ## Workflow
 
-1. 截图后获取 `file_path`
+1. 截图后get `file_path`
 2. 使用 `deliver_artifacts` 发送给用户
 
 ## Related Skills
@@ -51,5 +51,5 @@ category: Browser
 
 示例：
 ```python
-browser_task(task="打开百度搜索福建福州并截图")
+browser_task(task="打开百度search福建福州并截图")
 ```

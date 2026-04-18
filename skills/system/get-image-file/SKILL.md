@@ -9,7 +9,7 @@ category: IM Channel
 
 # Get Image File
 
-获取用户发送的图片的本地文件路径。
+get用户发送的图片的本地文件路径。
 
 ## Parameters
 
@@ -19,9 +19,9 @@ category: IM Channel
 
 1. 用户发送图片
 2. 系统自动下载到本地
-3. 使用此工具获取文件路径
+3. 使用此工具get文件路径
 
 ## Related Skills
 
-- `get-voice-file`: 获取语音文件
+- `get-voice-file`: get语音文件
 - `deliver-artifacts`: 发送文件给用户

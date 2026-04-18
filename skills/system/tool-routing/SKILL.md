@@ -18,8 +18,8 @@ priority: high
 ├─ 只需读取内容（文章、文档、API）
 │   └─ web_fetch（最快，无需浏览器）
 │
-├─ 只需搜索信息
-│   └─ web_search（DuckDuckGo 直接搜索）
+├─ 只需search信息
+│   └─ web_search（DuckDuckGo 直接search）
 │
 ├─ 需要交互（点击、填表、登录）
 │   │
@@ -56,7 +56,7 @@ priority: high
 
 ### 网站操作（从高到低）
 1. **opencli_run** — 确定性命令 + JSON 输出 + 登录态
-2. **web_fetch** — 简单 HTTP 获取（仅读取）
+2. **web_fetch** — 简单 HTTP get（仅读取）
 3. **browser_navigate + browser_click/type** — 手动精确控制
 4. **browser_task** — AI 自主操作（可能不稳定）
 5. **call_mcp_tool("chrome-devtools")** — 需要额外配置
@@ -69,6 +69,6 @@ priority: high
 ## 关键原则
 
 - **browser_task 失败不要反复重试** — 失败 1 次就切换到手动 browser_click/type 组合
-- **搜索类任务不要用 browser_task** — 直接用 browser_navigate 拼 URL 参数更可靠
+- **search类任务不要用 browser_task** — 直接用 browser_navigate 拼 URL 参数更可靠
 - **有 opencli adapter 时总是优先使用** — 比让 LLM 猜测页面操作可靠得多
 - **有 cli-anything CLI 时优先使用** — 比 GUI 自动化可靠 100 倍

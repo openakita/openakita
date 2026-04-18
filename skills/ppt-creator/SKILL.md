@@ -11,7 +11,7 @@ metadata:
 
 ## When to Use
 
-- 用户需要制作商业演示文稿（汇报、路演、培训、产品介绍）
+- When the user needs制作商业演示文稿（汇报、路演、培训、产品介绍）
 - 需要将非结构化的想法整理为逻辑清晰的幻灯片
 - 需要生成包含数据图表的演示文稿
 - 需要自动生成演讲稿/备注
@@ -24,21 +24,21 @@ metadata:
 
 ### 必需工具
 
-| 工具 | 用途 | 安装方式 |
+| 工具 | 用途 | install方式 |
 |------|------|---------|
 | Python ≥ 3.10 | 运行生成脚本 | 系统预装 |
 | `python-pptx` | 生成 PPTX 文件 | `pip install python-pptx` |
 
 ### 可选工具
 
-| 工具 | 用途 | 安装方式 |
+| 工具 | 用途 | install方式 |
 |------|------|---------|
 | `marp-cli` | Markdown → PPT/PDF | `npm install -g @marp-team/marp-cli` |
 | `matplotlib` | 数据图表生成 | `pip install matplotlib` |
-| `Pillow` | 图片处理 | `pip install Pillow` |
+| `Pillow` | 图片handle | `pip install Pillow` |
 | `plotly` | 交互式图表 | `pip install plotly kaleido` |
 
-### 验证安装
+### 验证install
 
 ```bash
 python -c "from pptx import Presentation; print('python-pptx OK')"
@@ -89,7 +89,7 @@ marp --version  # 可选
 
 ## Workflows
 
-### Workflow 1: 快速创建（Minimal Intake Form）
+### Workflow 1: 快速create（Minimal Intake Form）
 
 **步骤 1 — 收集关键信息**
 
@@ -98,7 +98,7 @@ marp --version  # 可选
 | # | 问题 | 示例回答 |
 |---|------|---------|
 | 1 | 演讲主题是什么？ | "Q4 产品路线图汇报" |
-| 2 | 目标受众是谁？ | "公司管理层" |
+| 2 | 目标受众是谁？ | "公司manage层" |
 | 3 | 核心结论/诉求？ | "需要追加 30% 研发预算" |
 | 4 | 有哪些关键数据或论据？ | "用户增长 200%、竞品分析、技术债" |
 | 5 | 幻灯片数量偏好？ | "10-15 页" |
@@ -135,7 +135,7 @@ marp --version  # 可选
 
 **步骤 4 — 输出文件**
 
-根据用户需要选择输出格式（见 Output Format 部分）。
+根据When the user needs选择输出格式（见 Output Format 部分）。
 
 ---
 
@@ -157,7 +157,7 @@ marp --version  # 可选
 
 1. **标题即结论** — 图表标题描述洞察而非数据（"销售额同比增长 40%" vs "Q4 销售数据"）
 2. **极简配色** — 使用 2-3 种颜色，重点数据用强调色
-3. **去除噪音** — 删除网格线、多余边框、3D 效果
+3. **去除噪音** — delete网格线、多余边框、3D 效果
 4. **标注关键值** — 在图表上直接标注最重要的数据点
 5. **适当留白** — 图表不超过幻灯片面积的 60%
 
@@ -366,7 +366,7 @@ marp slides.md --html -o presentation.html
 
 ### 5. 忽略受众水平
 
-- 给管理层：聚焦商业影响、省略技术细节
+- 给manage层：聚焦商业影响、省略技术细节
 - 给技术团队：可以深入架构、代码层面
 - 给客户：突出价值和收益
 
@@ -387,7 +387,7 @@ paragraph.font.name = 'Microsoft YaHei'
 
 ## EXTEND.md 扩展
 
-用户可在技能同目录下创建 `EXTEND.md` 添加：
+用户可在技能同目录下create `EXTEND.md` 添加：
 - 公司 PPT 模板路径
 - 品牌配色和字体
 - 常用 PPT 结构模板

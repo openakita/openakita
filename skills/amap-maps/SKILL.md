@@ -9,7 +9,7 @@ requires:
   env: [AMAP_WEBSERVICE_KEY]
 ---
 
-# 高德地图综合服务
+# Amap Maps综合服务
 
 高德地图综合服务，包括地点搜索、路径规划、旅游规划和数据可视化等功能。
 

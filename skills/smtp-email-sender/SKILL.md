@@ -31,7 +31,7 @@ description: Send emails via SMTP (Gmail, Outlook, etc.). Supports attachments, 
 - SMTP 端口（通常 587 或 465）
 - 是否需要 SSL/TLS
 
-## 配置
+## Configuration
 
 在 `.env` 文件中添加以下环境变量：
 
@@ -46,7 +46,7 @@ SMTP_USE_TLS=true
 
 或者首次使用时运行配置脚本。
 
-## 使用方法
+## Usage
 
 ### 基本用法
 
@@ -72,7 +72,7 @@ python scripts/send_email.py \
 | `--is_html` | 否 | 正文是否为 HTML 格式（默认 false） |
 | `--from_name` | 否 | 发件人显示名称 |
 
-### 示例
+### Examples
 
 **发送简单邮件**：
 ```bash
@@ -139,7 +139,7 @@ SMTP_PORT=587
 SMTP_USE_TLS=true
 ```
 
-## 常见问题
+## FAQ
 
 ### 1. 认证失败
 

@@ -20,7 +20,7 @@ metadata:
 - SaaS 产品
 - 数据看板
 
-## 安装
+## Installation
 
 通过 ClawHub 安装：clawhub install miaoda-app-builder
 

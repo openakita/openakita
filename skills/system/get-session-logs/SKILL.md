@@ -9,7 +9,7 @@ category: System
 
 # Get Session Logs
 
-获取当前会话的系统日志。
+Get system logs for the current session.
 
 ## Parameters
 

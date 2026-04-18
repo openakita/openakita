@@ -30,5 +30,5 @@ category: Agent Package
 ## Related Skills
 
 - `import-agent`: 导入 Agent 包
-- `list-exportable-agents`: 列出可导出的 Agent
+- `list-exportable-agents`: list可导出的 Agent
 - `inspect-agent-package`: 预览包内容

@@ -9,11 +9,11 @@ requires:
   env: [DIDI_MCP_KEY]
 ---
 
-# 滴滴出行服务
+# Didi Ride服务
 
 通过 DiDi MCP Server API 提供打车、路线规划、订单管理等出行能力。
 
-## 快速开始
+## Quick Start
 
 ### 获取 MCP KEY
 
@@ -28,7 +28,7 @@ export DIDI_MCP_KEY="your_key"
 
 npm install -g mcporter
 
-## 核心能力
+## Core Capabilities
 
 - 打车：直接说"打车去[地点]"、"回家"、"上班"
 - 查价：查一下从 A 到 B 多少钱

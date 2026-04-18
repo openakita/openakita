@@ -7,16 +7,16 @@ tool-name: switch_persona
 category: Persona
 ---
 
-# 切换人格预设
+# Switch Persona预设
 
-## 何时使用
+## When to Use
 
 - 用户要求切换角色/性格
 - 用户说"正式一点"/"随意一点"/"温柔一点"等
 - 用户希望改变 Agent 的沟通风格
 - 首次使用时的角色选择引导
 
-## 参数
+## Parameters
 
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
@@ -33,7 +33,7 @@ category: Persona
 - `family` - 家人感（亲切唠叨，关心健康）
 - `jarvis` - 贾维斯（英式幽默、小叛逆、话唠，任务时严谨）
 
-## 示例
+## Examples
 
 ```
 用户: "你能像个女朋友一样跟我聊天吗"
@@ -46,7 +46,7 @@ category: Persona
 → switch_persona(preset_name="default") + update_persona_trait(dimension="formality", preference="casual")
 ```
 
-## 注意事项
+## Notes
 
 - 预设只是起点，用户的实际偏好会通过对话不断叠加调整
 - 切换后 Agent 应立即按新角色风格回复

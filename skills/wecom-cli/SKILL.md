@@ -14,7 +14,7 @@ metadata:
 > 官方 GitHub: https://github.com/WecomTeam/wecom-cli
 > 官方帮助: https://open.work.weixin.qq.com/help2/pc/21676
 
-## 安装
+## Installation
 
 ```bash
 # 安装 CLI
@@ -27,7 +27,7 @@ npx skills add WeComTeam/wecom-cli -y -g
 wecom-cli init
 ```
 
-### 前置条件
+### Prerequisites
 
 - 支持平台：macOS (x64/arm64)、Linux (x64/arm64) 及 Windows (x64)
 - Node.js >= 18

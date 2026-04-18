@@ -7,11 +7,11 @@ metadata:
   version: "1.0.0"
 ---
 
-# Seedance 视频生成
+# Seedance Video Generation
 
 通过火山方舟 API 使用字节跳动 Seedance 模型生成 AI 视频。
 
-## 前置条件
+## Prerequisites
 
 需设置 ARK_API_KEY 环境变量：
 export ARK_API_KEY="your-api-key-here"
@@ -51,7 +51,7 @@ curl -s -X GET "https://ark.cn-beijing.volces.com/api/v3/contents/generations/ta
 
 状态为 succeeded 时从 content.video_url 获取视频地址。视频 URL 24 小时内有效，需立即下载。
 
-## 参数参考
+## Parameters参考
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
@@ -61,14 +61,14 @@ curl -s -X GET "https://ark.cn-beijing.volces.com/api/v3/contents/generations/ta
 | generate_audio | bool | true | 生成同步音频（仅 1.5 Pro） |
 | draft | bool | false | 草稿模式，低成本预览（仅 1.5 Pro） |
 
-## 注意事项
+## Notes
 
 - 轮询间隔建议 15 秒
 - 视频 URL 24 小时过期，需立即下载
 - 任务历史保留 7 天
 - 本地图片需转为 base64 data URL
 
-## 预置脚本
+## Pre-built Scripts
 
 本 skill 提供以下可执行 Python 脚本（纯 stdlib，零依赖）：
 

@@ -9,7 +9,7 @@ category: Scheduled Tasks
 
 # List Scheduled Tasks
 
-列出所有定时任务。
+List all scheduled tasks.
 
 ## Parameters
 

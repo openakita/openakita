@@ -9,7 +9,7 @@ category: User Profile
 
 # Update User Profile
 
-更新用户档案信息。
+update用户档案信息。
 
 ## Parameters
 
@@ -34,5 +34,5 @@ category: User Profile
 
 ## Related Skills
 
-- `get-user-profile`: 获取档案
+- `get-user-profile`: get档案
 - `skip-profile-question`: 跳过问题

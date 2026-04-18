@@ -19,12 +19,12 @@ category: Browser
 
 ## Workflow
 
-1. 先用 `browser_list_tabs` 获取所有标签页
+1. 先用 `browser_list_tabs` get所有标签页
 2. 使用返回的索引切换
 
 ## Related Skills
 
-- `browser-list-tabs`: 获取标签页列表
+- `browser-list-tabs`: get标签页列表
 - `browser-new-tab`: 新建标签页
 
 
@@ -34,5 +34,5 @@ category: Browser
 
 示例：
 ```python
-browser_task(task="打开百度搜索福建福州并截图")
+browser_task(task="打开百度search福建福州并截图")
 ```
