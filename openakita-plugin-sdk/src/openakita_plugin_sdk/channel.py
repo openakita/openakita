@@ -72,11 +72,17 @@ class ChannelAdapter(ABC):
     async def send_text(self, chat_id: str, text: str, **kwargs: Any) -> str:
         """Convenience: send a plain text message.
 
-        The default builds an ``OutgoingMessage.text(chat_id, text)`` and calls
-        ``send_message``.  Override if you have a simpler send path.
+        The default builds an ``OutgoingMessage`` and calls ``send_message``.
+        Override if you have a simpler send path.
         """
-        from openakita.channels.types import OutgoingMessage
-        return await self.send_message(OutgoingMessage.text(chat_id, text, **kwargs))
+        try:
+            from openakita.channels.types import OutgoingMessage
+            return await self.send_message(OutgoingMessage.text(chat_id, text, **kwargs))
+        except ImportError:
+            raise NotImplementedError(
+                "Default send_text requires the full OpenAkita runtime. "
+                "Override send_text() in your adapter."
+            )
 
     # --- Streaming ---
 

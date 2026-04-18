@@ -1,6 +1,6 @@
 import { Fragment, useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import type { StepId, Step, ViewId } from "../types";
+import type { StepId, Step, ViewId, PluginUIApp } from "../types";
 import {
   IconChat, IconIM, IconSkills, IconStatus, IconConfig,
   IconChevronDown, IconChevronRight, IconGlobe,
@@ -31,6 +31,7 @@ export type SidebarProps = {
   onRefreshStatus: () => Promise<void>;
   isWeb?: boolean;
   mobileOpen?: boolean;
+  httpApiBase?: string;
 };
 
 const stepIcons: Partial<Record<StepId, React.ReactNode>> = {
@@ -46,7 +47,7 @@ function StepDot({ stepId: sid }: { stepId: StepId }) {
   return <div className="stepDot">{stepIcons[sid]}</div>;
 }
 
-type NavGroupId = "capabilities" | "monitor" | "multiAgent" | "store";
+type NavGroupId = "capabilities" | "apps" | "monitor" | "multiAgent" | "store";
 const GROUP_ICON_SIZE = 16;
 
 const BETA_SUP = <sup style={{ fontSize: 9, color: "var(--primary, #3b82f6)", fontWeight: 600 }}>Beta</sup>;
@@ -91,12 +92,13 @@ export function Sidebar({
   disabledViews,
   storeVisible,
   desktopVersion, backendVersion, serviceRunning,
-  onBugReport, onRefreshStatus, isWeb, mobileOpen,
+  onBugReport, onRefreshStatus, isWeb, mobileOpen, httpApiBase,
 }: SidebarProps) {
   const { t } = useTranslation();
 
   const [expandedGroups, setExpandedGroups] = useState<Record<NavGroupId, boolean>>({
     capabilities: false,
+    apps: false,
     monitor: false,
     multiAgent: false,
     store: false,
@@ -105,6 +107,19 @@ export function Sidebar({
   const toggleGroup = useCallback((id: NavGroupId) => {
     setExpandedGroups(prev => ({ ...prev, [id]: !prev[id] }));
   }, []);
+
+  const [pluginApps, setPluginApps] = useState<PluginUIApp[]>([]);
+
+  const pluginAppsFetchKey = `${httpApiBase}|${serviceRunning}|${view}`;
+  useEffect(() => {
+    if (!httpApiBase || !serviceRunning) { setPluginApps([]); return; }
+    let cancelled = false;
+    fetch(`${httpApiBase}/api/plugins/ui-apps`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => { if (!cancelled) setPluginApps(Array.isArray(data) ? data : []); })
+      .catch(() => { if (!cancelled) setPluginApps([]); });
+    return () => { cancelled = true; };
+  }, [pluginAppsFetchKey]);
 
   const capViews: ViewId[] = ["skills", "mcp", "plugins", "memory", "scheduler"];
   const monViews: ViewId[] = ["token_stats", "security"];
@@ -120,12 +135,14 @@ export function Sidebar({
         : monViews.includes(v) ? "monitor"
         : maViews.includes(v) ? "multiAgent"
         : stViews.includes(v) ? "store"
+        : (typeof v === "string" && v.startsWith("plugin_app:")) ? "apps"
         : null;
     const g = groupOf(view);
     if (g) setExpandedGroups(prev => ({ ...prev, [g]: true }));
   }, [view]);
 
   const capExpanded = expandedGroups.capabilities;
+  const appsExpanded = expandedGroups.apps;
   const monExpanded = expandedGroups.monitor;
   const maExpanded = expandedGroups.multiAgent;
   const stExpanded = expandedGroups.store;
@@ -189,6 +206,37 @@ export function Sidebar({
               <IconCalendar size={16} /> {!collapsed && <span>{t("sidebar.scheduler")} {BETA_SUP}</span>}
             </div>
           </div>
+        )}
+
+        {/* ── Group: Apps (Plugin 2.0 UI plugins) ── */}
+        {pluginApps.length > 0 && (
+          <>
+            <NavGroupHeader collapsed={collapsed} icon={<IconLayoutGrid size={GROUP_ICON_SIZE} />} label={t("sidebar.groupApps", "Apps")} expanded={appsExpanded} onToggle={() => toggleGroup("apps")} />
+            {(collapsed || appsExpanded) && (
+              <div className="navGroupItems">
+                {pluginApps.map(app => {
+                  const appViewId: ViewId = `plugin_app:${app.id}`;
+                  return (
+                    <div
+                      key={app.id}
+                      className={`navItem ${view === appViewId ? "navItemActive" : ""}`}
+                      onClick={() => onViewChange(appViewId)}
+                      role="button"
+                      tabIndex={0}
+                      title={app.title}
+                    >
+                      {app.icon_url ? (
+                        <img src={`${httpApiBase}${app.icon_url}`} alt="" style={{ width: 16, height: 16, borderRadius: 2 }} />
+                      ) : (
+                        <IconLayoutGrid size={16} />
+                      )}
+                      {!collapsed && <span>{app.title}</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
 
         {/* ── Group: Monitor ── */}

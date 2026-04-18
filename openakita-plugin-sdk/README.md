@@ -24,7 +24,7 @@ python -m openakita_plugin_sdk.scaffold --id my-tool --type tool --dir ./plugins
 
 This creates a complete plugin directory with `plugin.json`, `plugin.py`, and `README.md`.
 
-Available types: `tool`, `channel`, `rag`, `memory`, `llm`, `hook`, `skill`, `mcp`.
+Available types: `tool`, `channel`, `rag`, `memory`, `llm`, `hook`, `skill`, `mcp`, `ui`.
 
 ### Option B: Use decorators
 
@@ -83,6 +83,7 @@ class Plugin(PluginBase):
 | **Hook** | React to lifecycle events | `api.register_hook()` |
 | **Skill** | Inject prompt guidance (SKILL.md) | Declarative (no code) |
 | **MCP** | Wrap an MCP server as a managed plugin | JSON config only |
+| **Full-Stack UI** | Plugin with dedicated frontend page (2.0) | `api.register_api_routes()` + Bridge SDK |
 
 ## Testing
 
@@ -101,17 +102,23 @@ def test_my_plugin():
 |-----|---------------|
 | [Getting Started](docs/getting-started.md) | Full walkthrough from zero to running plugin |
 | [API Reference](docs/api-reference.md) | All `PluginAPI` methods and signatures |
+| [UI Plugin Guide](docs/plugin-ui.md) | Full-stack UI plugin development (Plugin 2.0) |
+| [REST API](docs/rest-api.md) | Plugin management HTTP endpoints |
 | [Permissions](docs/permissions.md) | Three-tier permission model |
-| [Hooks](docs/hooks.md) | All 10 lifecycle hooks with callback signatures |
+| [Hooks](docs/hooks.md) | All 14 lifecycle hooks with callback signatures |
 | [Protocols](docs/protocols.md) | Memory, Retrieval, Search interfaces |
 | [plugin.json](docs/plugin-json.md) | Manifest schema reference |
 | [Testing](docs/testing.md) | MockPluginAPI and test patterns |
 | [Cross-Ecosystem](docs/cross-ecosystem.md) | Compatibility with Claude/Cursor/Codex |
+| [Examples](docs/examples/) | Complete examples for all 9 plugin types |
 
 ## SDK Modules
 
 ```python
-from openakita_plugin_sdk import PluginBase, PluginAPI, tool_definition
+from openakita_plugin_sdk import (
+    PluginBase, PluginAPI, PluginManifest, tool_definition,
+    SDK_VERSION, PLUGIN_API_VERSION, PLUGIN_UI_API_VERSION,
+)
 from openakita_plugin_sdk.decorators import tool, hook, auto_register
 from openakita_plugin_sdk.scaffold import scaffold_plugin
 from openakita_plugin_sdk.testing import MockPluginAPI, assert_plugin_loads

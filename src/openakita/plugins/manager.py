@@ -259,7 +259,8 @@ class PluginManager:
         granted = self._resolve_permissions(manifest, state_entry.granted_permissions)
         state_entry.granted_permissions = granted
 
-        data_dir = plugin_dir
+        data_dir = self._plugins_dir.parent / "plugin_data" / manifest.id
+        data_dir.mkdir(parents=True, exist_ok=True)
         api = PluginAPI(
             plugin_id=manifest.id,
             manifest=manifest,
@@ -296,6 +297,74 @@ class PluginManager:
             module_name=module_name,
             sys_path_entry=sys_path_entry,
         )
+
+        plugin_pending = api._host.pop("_pending_plugin_routers", [])
+        if plugin_pending:
+            shared_pending = self._host_refs.setdefault("_pending_plugin_routers", [])
+            if plugin_pending is not shared_pending:
+                for entry in plugin_pending:
+                    if entry not in shared_pending:
+                        shared_pending.append(entry)
+
+        if manifest.has_ui:
+            self._mount_plugin_ui(manifest, plugin_dir)
+
+    def _mount_plugin_ui(
+        self, manifest: PluginManifest, plugin_dir: Path
+    ) -> None:
+        """Mount plugin UI static files to the FastAPI app."""
+        assert manifest.ui is not None
+        ui_entry = manifest.ui.entry
+        ui_dist_dir = (plugin_dir / ui_entry).parent
+        if not ui_dist_dir.is_dir():
+            logger.warning(
+                "Plugin '%s' declares UI but dist dir '%s' not found, skipping UI mount",
+                manifest.id, ui_dist_dir,
+            )
+            return
+        index_file = plugin_dir / ui_entry
+        if not index_file.is_file():
+            logger.warning(
+                "Plugin '%s' UI entry '%s' not found, skipping UI mount",
+                manifest.id, ui_entry,
+            )
+            return
+
+        app = self._host_refs.get("api_app")
+        if app is None:
+            logger.debug(
+                "Plugin '%s' has UI but api_app not yet available; will mount later",
+                manifest.id,
+            )
+            pending = self._host_refs.setdefault("_pending_plugin_ui_mounts", [])
+            pending.append((manifest.id, str(ui_dist_dir)))
+            return
+
+        self._do_mount_plugin_ui(app, manifest.id, str(ui_dist_dir))
+
+    @staticmethod
+    def _do_mount_plugin_ui(app: Any, plugin_id: str, ui_dist_dir: str) -> None:
+        from fastapi.staticfiles import StaticFiles
+        from starlette.responses import Response
+
+        mount_path = f"/api/plugins/{plugin_id}/ui"
+
+        class NoCacheStaticFiles(StaticFiles):
+            async def get_response(self, path: str, scope) -> Response:  # type: ignore[override]
+                resp = await super().get_response(path, scope)
+                resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+                resp.headers["Pragma"] = "no-cache"
+                return resp
+
+        try:
+            app.mount(
+                mount_path,
+                NoCacheStaticFiles(directory=ui_dist_dir, html=True),
+                name=f"plugin-ui-{plugin_id}",
+            )
+            logger.info("Mounted plugin UI for '%s' at %s", plugin_id, mount_path)
+        except Exception as e:
+            logger.warning("Failed to mount UI for plugin '%s': %s", plugin_id, e)
 
     def _load_python_plugin(
         self, manifest: PluginManifest, plugin_dir: Path
@@ -595,6 +664,7 @@ class PluginManager:
                 pass
 
         self._unload_plugin_skills(loaded)
+        self._unmount_plugin_ui(plugin_id)
 
         logger.info("Plugin '%s' unloaded", plugin_id)
         return True
@@ -738,16 +808,54 @@ class PluginManager:
             self._failed[plugin_id] = msg
         self._save_state()
 
+    def _unmount_plugin_ui(self, plugin_id: str) -> None:
+        """Remove the plugin UI static-file mount from the FastAPI app."""
+        app = self._host_refs.get("api_app")
+        if app is None:
+            return
+        mount_path = f"/api/plugins/{plugin_id}/ui"
+        mount_name = f"plugin-ui-{plugin_id}"
+        try:
+            app.routes[:] = [
+                r for r in app.routes
+                if not (hasattr(r, "name") and r.name == mount_name)
+            ]
+            logger.debug("Unmounted plugin UI '%s' at %s", plugin_id, mount_path)
+        except Exception as e:
+            logger.debug("Plugin '%s' UI unmount error: %s", plugin_id, e)
+
+    def list_ui_plugins(self) -> list[dict]:
+        """Return metadata for all loaded plugins that have a UI."""
+        result = []
+        for lp in self._loaded.values():
+            if not lp.manifest.has_ui:
+                continue
+            ui = lp.manifest.ui
+            assert ui is not None
+            icon_url = ""
+            if ui.icon:
+                icon_url = f"/api/plugins/{lp.manifest.id}/ui/{ui.icon}"
+            result.append({
+                "id": lp.manifest.id,
+                "title": ui.title or lp.manifest.name,
+                "title_i18n": dict(ui.title_i18n) if ui.title_i18n else {},
+                "icon_url": icon_url,
+                "sidebar_group": ui.sidebar_group,
+                "enabled": True,
+                "status": "loaded",
+            })
+        return result
+
     def list_failed(self) -> dict[str, str]:
         return dict(self._failed)
 
     def get_plugin_logs(self, plugin_id: str, lines: int = 100) -> str:
         loaded = self._loaded.get(plugin_id)
         if loaded is not None:
-            log_dir = loaded.plugin_dir / "logs"
+            log_dir = loaded.api._data_dir / "logs"
         else:
-            found = self._find_plugin_dir(plugin_id)
-            log_dir = (found / "logs") if found else (self._plugins_dir / plugin_id / "logs")
+            data_dir = self._plugins_dir.parent / "plugin_data" / plugin_id
+            log_dir = data_dir / "logs"
 
         log_file = log_dir / f"{plugin_id}.log"
         if not log_file.exists():

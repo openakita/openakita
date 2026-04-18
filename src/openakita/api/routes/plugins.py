@@ -213,7 +213,7 @@ async def _sync_new_plugins(pm, plugins_dir: Path) -> None:
     if pm is None or not plugins_dir.is_dir():
         return
     loaded_ids = {e["id"] for e in pm.list_loaded()}
-    failed_ids = {pid for pid, _ in pm.list_failed()}
+    failed_ids = set(pm.list_failed())
     state = pm.state
     for child in plugins_dir.iterdir():
         if not child.is_dir() or not (child / "plugin.json").is_file():
@@ -248,6 +248,19 @@ async def list_plugins(request: Request) -> dict[str, Any]:
             status_code=500,
             detail=make_error_response(PluginErrorCode.INTERNAL_ERROR),
         ) from e
+
+
+@router.get("/ui-apps")
+async def list_ui_plugins(request: Request) -> list[dict]:
+    """Return all enabled plugins that have a UI, for sidebar rendering."""
+    pm = _get_plugin_manager(request)
+    if pm is None:
+        return []
+    try:
+        return pm.list_ui_plugins()
+    except Exception:
+        logger.exception("Failed to list UI plugins")
+        return []
 
 
 class InstallBody(BaseModel):

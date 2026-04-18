@@ -10,9 +10,9 @@ OpenAkita plugins use a **three-tier permission model** to control access to sys
 
 | 级别 / Tier | 授权方式 / Approval | 能力范围 / Scope |
 |-------------|---------------------|-----------------|
-| **Basic** | 安装即有 / Auto-granted | 日志、自有配置/数据、工具注册、基础钩子 / Logging, own config/data, tools, basic hooks |
-| **Advanced** | 用户确认 / User consent | 通道、记忆读写、检索源、路由、消息发送、宿主服务访问、消息/检索钩子 / Channels, memory R/W, retrieval, routes, messaging, host access, message/retrieve hooks |
-| **System** | 手动确认 / Manual approval | LLM 注册、记忆替换、全钩子、系统配置写入 / LLM registration, memory replacement, all hooks, system config |
+| **Basic** | 安装即有 / Auto-granted | 日志、自有配置/数据、工具注册、基础钩子、技能声明 / Logging, own config/data, tools, basic hooks, skill declaration |
+| **Advanced** | 用户确认 / User consent | 通道、记忆读写、LLM 注册、检索源、路由、消息发送、宿主服务访问 / Channels, memory R/W, LLM registration, retrieval, routes, messaging, host access |
+| **System** | 手动确认 / Manual approval | 记忆替换、全钩子、系统配置写入 / Memory replacement, all hooks, system config write |
 
 ---
 
@@ -27,7 +27,8 @@ OpenAkita plugins use a **three-tier permission model** to control access to sys
 | `config.write` | `set_config()` | 低 / Low — 写入本插件配置 |
 | `data.own` | `get_data_dir()` | 低 / Low — 本插件数据目录 |
 | `tools.register` | `register_tools()` | 中 / Medium — 新工具影响 AI 行为 |
-| `hooks.basic` | `register_hook("on_init" / "on_shutdown" / "on_schedule")` | 低 / Low — 生命周期钩子 |
+| `hooks.basic` | `register_hook("on_init" / "on_shutdown" / "on_schedule" / "on_config_change" / "on_error")` | 低 / Low — 生命周期钩子 |
+| `skill` | (declarative) | 低 / Low — 声明插件提供技能文件 |
 
 ### Advanced 级
 
@@ -48,14 +49,14 @@ Risk prompts are shown to users during installation.
 | `retrieval.register` | `register_retrieval_source()` | "此插件将添加知识检索来源 / This plugin will add a retrieval source" |
 | `routes.register` | `register_api_routes()` | "此插件将添加网络接口 / This plugin will add HTTP endpoints" |
 | `hooks.message` | `on_message_received`, `on_message_sending`, `on_session_start`, `on_session_end` | "此插件可以拦截和观察消息 / This plugin can intercept and observe messages" |
-| `hooks.retrieve` | `on_retrieve`, `on_tool_result`, `on_prompt_build` | "此插件可以向 AI 注入上下文 / This plugin can inject context into AI prompts" |
+| `hooks.retrieve` | `on_retrieve`, `on_tool_result`, `on_prompt_build`, `on_before_tool_use`, `on_after_tool_use` | "此插件可以向 AI 注入上下文 / This plugin can inject context into AI prompts" |
+| `llm.register` | `register_llm_provider()`, `register_llm_registry()` | "此插件将注册新的 LLM 提供商 / This plugin will register a new LLM provider" |
 
 ### System 级
 
 | 权限 ID / Permission | API 方法 / API Method | 说明 / Description |
 |---------------------|----------------------|-------------------|
-| `llm.register` | `register_llm_provider()`, `register_llm_registry()` | 注册新的 LLM 提供商 / Register new LLM providers |
-| `hooks.all` | 所有 10 个钩子 / all 10 hooks | 完整钩子访问权 / Full hook access |
+| `hooks.all` | 所有 14 个钩子 / all 14 hooks | 完整钩子访问权 / Full hook access |
 | `memory.replace` | `register_memory_backend()` 替换模式 / replace mode | 替换内置记忆系统 / Replace built-in memory |
 | `system.config.write` | — | 写入全局系统配置 / Write global system config |
 
@@ -112,16 +113,27 @@ Declare the minimal required permission set in `plugin.json`:
 
 ## 权限不足时的行为 / Behavior When Permission Denied
 
+**系统采用优雅降级策略**：当插件调用了未被授权的 API 时，系统**不会抛出异常**，而是：
+
+1. 记录一条 warning 日志
+2. 将该权限加入 `_pending_permissions`，前端显示待授权提示
+3. 跳过本次操作（`register_*` 类方法不执行注册，`get_*` 类方法返回 `None`）
+4. 插件继续正常运行，只是缺少对应功能
+
+**The system uses graceful degradation**: when a plugin calls an API it doesn't have permission for, the system **does not raise an exception**. Instead it:
+
+1. Logs a warning
+2. Adds the permission to `_pending_permissions` (shown in the frontend)
+3. Skips the operation (`register_*` methods do nothing, `get_*` methods return `None`)
+4. The plugin continues running with reduced capabilities
+
 ```python
-# 如果未声明 channel.send，调用 send_message 会抛出：
-# If channel.send is not declared, calling send_message raises:
-# PluginPermissionError: Plugin 'my-plugin' requires permission 'channel.send'
-#                        which was not granted. Add it to plugin.json permissions.
+# 示例：未授权 channel.send 时调用 send_message
+# Example: calling send_message without channel.send permission
+api.send_message("test", "chat1", "hello")
+# WARNING: Permission 'channel.send' not granted — skipping this registration.
+# 不会崩溃，消息不会发出 / No crash, message is simply not sent
 ```
-
-**建议 / Recommendation:** 插件应优雅降级 — 如果某个功能的权限被拒绝，记录日志并禁用该功能，而不是让整个插件崩溃。
-
-Plugins should degrade gracefully — if a feature's permission is denied, log it and disable that feature rather than crashing the entire plugin.
 
 ---
 
@@ -130,3 +142,5 @@ Plugins should degrade gracefully — if a feature's permission is denied, log i
 - [api-reference.md](api-reference.md) — 每个方法对应的权限 / Permission for each method
 - [hooks.md](hooks.md) — 每个钩子对应的权限 / Permission for each hook
 - [plugin-json.md](plugin-json.md) — `permissions` 字段格式 / permissions field format
+- [rest-api.md](rest-api.md) — 权限批准/撤销 API / Permission approve/revoke API
+- [getting-started.md](getting-started.md) — 声明权限的最佳实践 / Best practices for declaring permissions

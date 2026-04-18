@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 PLUGIN_API_VERSION = "1.0.0"
+PLUGIN_UI_API_VERSION = "1.0.0"
 
 
 @dataclass
@@ -48,6 +49,9 @@ def check_compatibility(manifest: PluginManifest) -> CompatResult:
     _check_plugin_api(manifest.id, requires.get("plugin_api", ""), result)
     _check_sdk(manifest.id, requires.get("sdk", ""), result)
     _check_python(manifest.id, requires.get("python", ""), result)
+
+    if manifest.has_ui:
+        _check_plugin_ui_api(manifest.id, requires.get("plugin_ui_api", ""), result)
 
     return result
 
@@ -189,3 +193,45 @@ def _check_python(plugin_id: str, spec: str, result: CompatResult) -> None:
         msg = f"Plugin '{plugin_id}' requires Python {spec}, current is {platform.python_version()}"
         result.errors.append(msg)
         result.ok = False
+
+
+def _check_plugin_ui_api(plugin_id: str, spec: str, result: CompatResult) -> None:
+    """Check plugin_ui_api compatibility — same logic as _check_plugin_api."""
+    if not spec:
+        return
+
+    current = _parse_version(PLUGIN_UI_API_VERSION)
+    if current is None:
+        return
+
+    if spec.startswith("~"):
+        req_major_str = spec[1:].strip()
+        req_major = _parse_version(req_major_str)
+        if req_major is None:
+            result.warnings.append(f"Cannot parse plugin_ui_api spec '{spec}'")
+            return
+        if req_major[0] != current[0]:
+            result.warnings.append(
+                f"Plugin '{plugin_id}' requires plugin_ui_api {spec} "
+                f"(major {req_major[0]}), current UI API is {PLUGIN_UI_API_VERSION} "
+                f"(major {current[0]}) — UI will not be loaded"
+            )
+        elif len(req_major) > 1 and len(current) > 1 and req_major[1] > current[1]:
+            result.warnings.append(
+                f"Plugin '{plugin_id}' was built for UI API ~{req_major_str}, "
+                f"current is {PLUGIN_UI_API_VERSION} — some UI features may be missing"
+            )
+    elif spec.startswith(">="):
+        req = _parse_version(spec[2:])
+        if req is None:
+            result.warnings.append(f"Cannot parse plugin_ui_api spec '{spec}'")
+            return
+        if current < req:
+            result.warnings.append(
+                f"Plugin '{plugin_id}' requires plugin_ui_api {spec}, "
+                f"current is {PLUGIN_UI_API_VERSION} — UI will not be loaded"
+            )
+    else:
+        result.warnings.append(
+            f"Unrecognised plugin_ui_api spec '{spec}' (expected ~N or >=X.Y.Z)"
+        )

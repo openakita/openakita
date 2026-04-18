@@ -27,7 +27,7 @@ echo-channel/
   "description": "回显所有消息的演示通道 / Demo channel that echoes all messages",
   "type": "python",
   "entry": "plugin.py",
-  "permissions": ["channel.register", "hooks.basic"],
+  "permissions": ["channel.register", "hooks.basic", "hooks.message", "channel.send"],
   "provides": { "channels": ["echo"] },
   "category": "channel",
   "tags": ["demo", "channel"]
@@ -49,7 +49,7 @@ class EchoAdapter(ChannelAdapter):
     """
 
     def __init__(self, channel_name: str = "echo"):
-        self.channel_name = channel_name
+        super().__init__(channel_name=channel_name)
 
     async def start(self) -> None:
         print(f"[{self.channel_name}] Adapter started")
@@ -57,11 +57,13 @@ class EchoAdapter(ChannelAdapter):
     async def stop(self) -> None:
         print(f"[{self.channel_name}] Adapter stopped")
 
-    async def send_message(self, message) -> None:
+    async def send_message(self, message) -> str:
         print(f"[{self.channel_name}] Send: {message}")
+        return "echo-msg-id"
 
-    async def send_text(self, chat_id: str, text: str, **kwargs) -> None:
+    async def send_text(self, chat_id: str, text: str, **kwargs) -> str:
         print(f"[{self.channel_name} -> {chat_id}] {text}")
+        return "echo-msg-id"
 
 
 def _adapter_factory(creds, *, channel_name, bot_id, agent_profile_id):
@@ -102,7 +104,7 @@ def test_plugin_loads():
 
 ## 关键要点 / Key Points
 
-- 继承 `ChannelAdapter` 并实现 4 个方法 / Subclass `ChannelAdapter` and implement 4 methods
+- 继承 `ChannelAdapter`，**必须调用 `super().__init__()`**，实现 4 个方法（`send_message`/`send_text` 返回 `str`）/ Subclass `ChannelAdapter`, **must call `super().__init__()`**, implement 4 methods (`send_message`/`send_text` return `str`)
 - 工厂函数接收凭证和配置参数 / Factory receives credentials and config parameters
 - 需要 `channel.register` 权限（Advanced 级）/ Requires `channel.register` (Advanced tier)
 - 可选使用 `ChannelPluginMixin` 简化注册 / Optionally use `ChannelPluginMixin` for simpler registration

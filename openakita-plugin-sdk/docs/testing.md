@@ -216,7 +216,45 @@ Every plugin should at least pass these tests:
 
 ---
 
+## UI 插件测试 / Testing UI Plugins
+
+全栈 UI 插件的后端逻辑可以用相同的 `MockPluginAPI` 测试。前端 Bridge 通信需要手动或端到端测试。
+
+Backend logic of full-stack UI plugins can use the same `MockPluginAPI`. Frontend Bridge communication requires manual or end-to-end testing.
+
+### 后端路由测试 / Backend Route Testing
+
+```python
+from fastapi.testclient import TestClient
+from fastapi import FastAPI
+
+def test_plugin_routes():
+    app = FastAPI()
+    api = MockPluginAPI()
+    api._host = {"api_app": app}
+
+    plugin = MyUIPlugin()
+    plugin.on_load(api)
+
+    for router in api.registered_routes:
+        app.include_router(router, prefix="/api/plugins/my-plugin")
+
+    client = TestClient(app)
+    resp = client.get("/api/plugins/my-plugin/tasks")
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+```
+
+### 前端测试建议 / Frontend Testing Tips
+
+- 在浏览器中直接打开 `ui/dist/index.html` 测试渲染（SDK 自动 fallback 到直连模式）
+- 使用浏览器开发者工具的 Console 调用 `window.__bridge.pluginApi("GET", "/tasks")` 验证 API 通信
+- `_inIframe` 为 `false` 时，SDK 自动跳过 Bridge 使用直连 fetch，适合独立测试
+
+---
+
 ## 相关文档 / Related
 
 - [getting-started.md](getting-started.md) — 第一个测试示例 / First test example
 - [api-reference.md](api-reference.md) — `MockPluginAPI` 模拟的所有方法 / All methods mocked by MockPluginAPI
+- [plugin-ui.md](plugin-ui.md) — UI 插件开发指南 / UI plugin development guide

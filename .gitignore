@@ -116,6 +116,10 @@ identity/runtime/persona.custom.md
 # Plugins (keep structure)
 plugins/*
 !plugins/.gitkeep
+!plugins/tongyi-image/
+!plugins/tongyi-image/ui/
+!plugins/tongyi-image/ui/dist/
+!plugins/tongyi-image/ui/dist/**
 
 # Tests - only ignore test outputs, not test source code
 tests/__pycache__/

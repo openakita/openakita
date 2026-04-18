@@ -1,0 +1,1250 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tongyi Image Generator</title>
+  <style>
+    :root {
+      --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
+      --text: #1e293b; --text-muted: #64748b; --text-dim: #94a3b8;
+      --primary: #6366f1; --primary-hover: #4f46e5; --primary-light: rgba(99,102,241,.1);
+      --success: #22c55e; --warning: #f59e0b; --danger: #ef4444;
+      --border: #e2e8f0; --radius: 8px;
+    }
+    [data-theme="dark"] {
+      --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+      --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
+      --border: #334155;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+        --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
+        --border: #334155;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+    .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    .header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--bg-card); }
+    .header h1 { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .header-right { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-muted); }
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--bg-card); padding: 0 16px; }
+    .tab { padding: 10px 18px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--text-muted); transition: all .15s; white-space: nowrap; }
+    .tab:hover { color: var(--text); background: var(--bg-hover); }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
+    .content { flex: 1; overflow: hidden; padding: 20px; position: relative; }
+    .content > div { overflow-y: auto; }
+    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+    .card-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+    .btn { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-size: 13px; cursor: pointer; transition: all .15s; display: inline-flex; align-items: center; gap: 6px; }
+    .btn:hover { background: var(--bg-hover); }
+    .btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .btn-danger { color: var(--danger); border-color: var(--danger); }
+    .input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px; outline: none; }
+    .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(99,102,241,.15); }
+    .textarea { resize: vertical; min-height: 80px; font-family: inherit; }
+    .select { appearance: none; padding-right: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
+    .label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px; color: var(--text-muted); }
+    .form-row { margin-bottom: 14px; }
+    .flex { display: flex; } .gap-2 { gap: 8px; } .gap-3 { gap: 12px; }
+    .items-center { align-items: center; } .justify-between { justify-content: space-between; }
+    .flex-1 { flex: 1; } .flex-wrap { flex-wrap: wrap; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .text-sm { font-size: 13px; } .text-xs { font-size: 11px; }
+    .text-muted { color: var(--text-muted); } .text-dim { color: var(--text-dim); }
+    .text-success { color: var(--success); } .text-warning { color: var(--warning); } .text-danger { color: var(--danger); }
+    .tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+    .tag-blue { background: rgba(99,102,241,.15); color: #818cf8; }
+    .tag-orange { background: rgba(245,158,11,.15); color: #fbbf24; }
+    .tag-green { background: rgba(34,197,94,.15); color: #4ade80; }
+    .tag-red { background: rgba(239,68,68,.15); color: #f87171; }
+    .tag-gray { background: rgba(148,163,184,.15); color: #94a3b8; }
+    .mode-btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-size: 12px; cursor: pointer; transition: all .15s; }
+    .mode-btn:hover { background: var(--bg-hover); color: var(--text); }
+    .mode-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .upload-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 24px; text-align: center; cursor: pointer; transition: .15s; color: var(--text-muted); }
+    .upload-zone:hover { border-color: var(--primary); background: rgba(99,102,241,.04); }
+    .upload-zone.has-image { padding: 8px; border-style: solid; }
+    .upload-preview { max-width: 100%; max-height: 180px; border-radius: 6px; object-fit: contain; }
+    .split-layout { display: flex; gap: 20px; height: 100%; }
+    .split-left { width: 42%; min-width: 380px; overflow-y: auto; flex-shrink: 0; }
+    .split-right { flex: 1; overflow-y: auto; }
+    .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: var(--text-dim); text-align: center; }
+    .image-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+    .image-card { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; cursor: pointer; transition: .15s; position: relative; }
+    .image-card:hover { border-color: var(--primary); box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+    .image-card img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+    .image-card-actions { position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(transparent, rgba(0,0,0,.7)); padding: 8px; display: flex; gap: 4px; justify-content: flex-end; opacity: 0; transition: .2s; }
+    .image-card:hover .image-card-actions { opacity: 1; }
+    .image-card-actions button { background: rgba(255,255,255,.2); border: none; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; backdrop-filter: blur(4px); }
+    .image-card-actions button:hover { background: rgba(255,255,255,.4); }
+    .task-card { display: flex; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); transition: .15s; cursor: pointer; margin-bottom: 8px; }
+    .task-card:hover { background: var(--bg-hover); }
+    .task-card.selected { border-color: var(--primary); background: var(--primary-light); }
+    .task-thumb { width: 64px; height: 64px; border-radius: 6px; background: var(--bg-hover); flex-shrink: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+    .task-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .task-info { flex: 1; min-width: 0; }
+    .task-info h4 { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+    .task-meta { font-size: 11px; color: var(--text-dim); display: flex; gap: 8px; flex-wrap: wrap; }
+    .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; }
+    .spinner-sm { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .keyword-tag { display: inline-block; padding: 3px 10px; margin: 3px; border-radius: 4px; font-size: 12px; background: var(--bg-hover); color: var(--text-muted); cursor: pointer; transition: .15s; border: 1px solid transparent; }
+    .keyword-tag:hover { border-color: var(--primary); color: var(--primary); }
+    .template-card { padding: 12px 14px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; transition: .15s; margin-bottom: 8px; }
+    .template-card:hover { border-color: var(--primary); background: rgba(99,102,241,.04); }
+    .template-card h4 { font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+    .template-card p { font-size: 12px; color: var(--text-dim); }
+    .setting-section { margin-bottom: 24px; }
+    .setting-section h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    .collapsible { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; }
+    .collapsible-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: pointer; font-size: 13px; font-weight: 500; }
+    .collapsible-header:hover { background: var(--bg-hover); }
+    .collapsible-body { padding: 0 14px 12px; display: none; }
+    .collapsible.open .collapsible-body { display: block; }
+    .collapsible .arrow { transition: transform .2s; font-size: 10px; }
+    .collapsible.open .arrow { transform: rotate(90deg); }
+    .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 1000; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+    .lightbox img { max-width: 90%; max-height: 90%; object-fit: contain; border-radius: 8px; }
+    .style-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
+    .style-option { padding: 8px; border: 1px solid var(--border); border-radius: 6px; text-align: center; cursor: pointer; font-size: 12px; transition: .15s; }
+    .style-option:hover { border-color: var(--primary); }
+    .style-option.active { border-color: var(--primary); background: var(--primary-light); color: var(--primary); }
+    @media (max-width: 860px) { .split-layout { flex-direction: column; } .split-left { width: 100%; min-width: unset; } }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+// ── Bridge SDK ──
+const BRIDGE_VER = 1;
+let _ctx = null, _caps = [], _pending = {}, _handlers = {};
+let _bridgeConnected = false;
+const _inIframe = window.parent !== window;
+function uid() { return Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
+function post(msg) { if (_inIframe) window.parent.postMessage({ __akita_bridge: true, version: BRIDGE_VER, ...msg }, "*"); }
+
+function _detectApiBase() {
+  if (_ctx && _ctx.apiBase) return _ctx.apiBase;
+  var loc = window.location;
+  if (loc.port === "5173" || loc.port === "1420") return "http://127.0.0.1:18900";
+  return loc.origin;
+}
+
+function directFetch(method, path, body) {
+  var url = path.startsWith("http") ? path : _detectApiBase() + path;
+  var opts = { method: method, headers: { "Content-Type": "application/json" } };
+  if (body && method !== "GET" && method !== "HEAD") {
+    if (body instanceof FormData) { opts.body = body; delete opts.headers["Content-Type"]; }
+    else { opts.body = JSON.stringify(body); }
+  }
+  return fetch(url, opts).then(function(resp) {
+    return resp.json().then(function(json) { return { ok: resp.ok, status: resp.status, body: json }; });
+  });
+}
+
+function apiCall(method, path, body) {
+  if (!_inIframe || !_bridgeConnected) return directFetch(method, path, body);
+  return new Promise(function(resolve, reject) {
+    var id = uid();
+    _pending[id] = { resolve: resolve, reject: reject };
+    post({ type: "bridge:api-request", requestId: id, payload: { method: method, path: path, body: body } });
+    setTimeout(function() {
+      if (_pending[id]) { delete _pending[id]; directFetch(method, path, body).then(resolve).catch(reject); }
+    }, 5000);
+  });
+}
+
+function pluginApi(method, path, body) {
+  var base = _ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/tongyi-image";
+  return apiCall(method, base + path, body);
+}
+
+window.addEventListener("message", function(e) {
+  var d = e.data;
+  if (!d || !d.__akita_bridge) return;
+  if (d.type === "bridge:init" && d.payload) {
+    _ctx = d.payload; _bridgeConnected = true;
+    if (_ctx.theme) document.documentElement.setAttribute("data-theme", _ctx.theme.includes("dark") ? "dark" : "light");
+  }
+  if (d.type === "bridge:handshake-ack" && d.payload) { _caps = d.payload.capabilities || []; _bridgeConnected = true; }
+  var acks = ["bridge:api-response","bridge:clipboard-ack","bridge:download-ack","bridge:show-in-folder-ack","bridge:pick-folder-ack"];
+  if (acks.indexOf(d.type) !== -1 && d.requestId && _pending[d.requestId]) {
+    _pending[d.requestId].resolve(d.payload); delete _pending[d.requestId];
+  }
+  if (d.type === "bridge:theme-change" && d.payload) {
+    document.documentElement.setAttribute("data-theme", (d.payload.theme || "").includes("dark") ? "dark" : "light");
+  }
+  if (d.type === "bridge:event" && d.payload) {
+    var h = _handlers[d.payload.eventType];
+    if (h) h.forEach(function(fn) { fn(d.payload.data); });
+  }
+});
+var _readyInterval = null;
+function _sendReady() { post({ type: "bridge:ready" }); post({ type: "bridge:handshake", payload: { sdkVersion: "1.0.0" } }); }
+_sendReady();
+if (_inIframe) {
+  _readyInterval = setInterval(function() { if (_bridgeConnected) { clearInterval(_readyInterval); return; } _sendReady(); }, 300);
+  setTimeout(function() { if (_readyInterval) clearInterval(_readyInterval); }, 20000);
+}
+function onEvent(type, fn) { (_handlers[type] = _handlers[type] || []).push(fn); }
+
+function uploadFile(file) {
+  var base = _detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/tongyi-image");
+  var fd = new FormData(); fd.append("file", file);
+  return fetch(base + "/upload", { method: "POST", body: fd }).then(function(r) { return r.json(); });
+}
+
+async function downloadImage(taskId, idx, promptHint) {
+  try {
+    showToast("正在下载...");
+    var base = _detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/tongyi-image");
+    var url = base + "/images/" + taskId + "?idx=" + (idx || 0) + "&download=1";
+    var resp = await fetch(url);
+    if (!resp.ok) throw new Error("服务端返回 " + resp.status);
+    var blob = await resp.blob();
+    var objUrl = URL.createObjectURL(blob);
+    var ext = blob.type === "image/jpeg" ? ".jpg" : blob.type === "image/webp" ? ".webp" : ".png";
+    var fname = "tongyi_" + (promptHint || "image").slice(0, 20).replace(/[\\/:*?"<>|\s]/g, "_") + "_" + idx + ext;
+    var a = document.createElement("a");
+    a.href = objUrl;
+    a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(objUrl); }, 3000);
+    showToast("已下载: " + fname);
+  } catch (e) {
+    showToast("下载失败: " + e.message);
+  }
+}
+
+function showToast(body, type) {
+  type = type || "success";
+  if (_inIframe && _bridgeConnected) { post({ type: "bridge:notification", payload: { title: "", body: body, type: type } }); return; }
+  console.log("[Toast]", type, body);
+}
+</script>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useRef, useCallback } = React;
+
+const MODES = [
+  { id: "text2img", name: "文生图", icon: "🎨" },
+  { id: "img_edit", name: "图像编辑", icon: "✏️" },
+  { id: "ecommerce", name: "电商套图", icon: "🛒" },
+  { id: "style_repaint", name: "风格重绘", icon: "🖌️" },
+  { id: "background", name: "背景生成", icon: "🖼️" },
+  { id: "outpaint", name: "画面扩展", icon: "↔️" },
+  { id: "sketch", name: "涂鸦作画", icon: "✍️" },
+];
+
+const STATUS_MAP = {
+  pending: { label: "等待中", cls: "tag-orange" },
+  running: { label: "生成中", cls: "tag-blue" },
+  succeeded: { label: "已完成", cls: "tag-green" },
+  failed: { label: "失败", cls: "tag-red" },
+};
+
+// ─── App ───
+function App() {
+  const [tab, setTab] = useState("create");
+  const [apiReady, setApiReady] = useState(false);
+  const [tabsMounted, setTabsMounted] = useState({ create: true });
+
+  useEffect(() => {
+    pluginApi("GET", "/settings").then(r => {
+      if (r.body && r.body.config && r.body.config.dashscope_api_key) setApiReady(true);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setTabsMounted(prev => ({ ...prev, [tab]: true }));
+  }, [tab]);
+
+  return (
+    <div className="app">
+      <div className="header">
+        <h1>🎨 通义生图</h1>
+        <div className="header-right">
+          {!apiReady && <span className="text-warning text-xs">⚠ 请先配置 API Key</span>}
+        </div>
+      </div>
+      <div className="tabs">
+        {[
+          { id: "create", name: "创建" },
+          { id: "tasks", name: "任务列表" },
+          { id: "guide", name: "提示词指南" },
+          { id: "settings", name: "设置" },
+        ].map(t => (
+          <div key={t.id} className={`tab ${tab === t.id ? "active" : ""}`}
+               onClick={() => setTab(t.id)}>{t.name}</div>
+        ))}
+      </div>
+      <div className="content">
+        <div style={{ display: tab === "create" ? "block" : "none", height: "100%" }}>
+          <CreateTab apiReady={apiReady} goToTasks={() => setTab("tasks")} />
+        </div>
+        <div style={{ display: tab === "tasks" ? "block" : "none", height: "100%" }}>
+          {tabsMounted.tasks && <TasksTab />}
+        </div>
+        <div style={{ display: tab === "guide" ? "block" : "none", height: "100%" }}>
+          {tabsMounted.guide && <GuideTab />}
+        </div>
+        <div style={{ display: tab === "settings" ? "block" : "none", height: "100%" }}>
+          {tabsMounted.settings && <SettingsTab onApiKeyChange={k => setApiReady(!!k)} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Create Tab ───
+function CreateTab({ apiReady, goToTasks }) {
+  const [mode, setMode] = useState("text2img");
+  const [prompt, setPrompt] = useState("");
+  const [negPrompt, setNegPrompt] = useState("");
+  const [model, setModel] = useState("");
+  const [models, setModels] = useState([]);
+  const [size, setSize] = useState("");
+  const [n, setN] = useState(1);
+  const [images, setImages] = useState([]);
+  const [imagePreview, setImagePreview] = useState([]);
+  const [creating, setCreating] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
+  const [result, setResult] = useState(null);
+  const [lightbox, setLightbox] = useState(null);
+  const [styleIndex, setStyleIndex] = useState(0);
+  const [stylePresets, setStylePresets] = useState([]);
+  const [sketchStyles, setSketchStyles] = useState([]);
+  const [sketchStyle, setSketchStyle] = useState("<watercolor>");
+  const [refPrompt, setRefPrompt] = useState("");
+  const [outputRatio, setOutputRatio] = useState("1:1");
+  const [thinking, setThinking] = useState(false);
+  const [productName, setProductName] = useState("");
+  const [ecScenes, setEcScenes] = useState([]);
+  const [ecScenePresets, setEcScenePresets] = useState([]);
+  const [ecResults, setEcResults] = useState(null);
+
+  useEffect(() => {
+    pluginApi("GET", "/models?category=" + mode.replace("text2img", "text2img")).then(r => {
+      if (r.body && r.body.models) setModels(r.body.models);
+    }).catch(() => {});
+    pluginApi("GET", "/style-presets").then(r => {
+      if (r.body) {
+        setStylePresets(r.body.repaint_presets || []);
+        setSketchStyles(r.body.sketch_styles || []);
+        const ecPresets = r.body.ecommerce_scenes || [];
+        setEcScenePresets(ecPresets);
+        setEcScenes(ecPresets.map(s => s.id));
+      }
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const cat = mode === "text2img" ? "text2img" : mode === "img_edit" ? "img_edit" : "";
+    if (cat) {
+      pluginApi("GET", "/models?category=" + cat).then(r => {
+        if (r.body && r.body.models) { setModels(r.body.models); if (r.body.models.length) setModel(r.body.models[0].id); }
+      }).catch(() => {});
+    } else {
+      setModels([]);
+      setModel("");
+    }
+  }, [mode]);
+
+  const handleUpload = useCallback(async (e) => {
+    const files = Array.from(e.target.files || []);
+    for (const file of files) {
+      const result = await uploadFile(file);
+      if (result.ok) {
+        setImages(prev => [...prev, result.base64 || result.path]);
+        setImagePreview(prev => [...prev, result.base64 || ""]);
+      }
+    }
+  }, []);
+
+  const removeImage = useCallback((idx) => {
+    setImages(prev => prev.filter((_, i) => i !== idx));
+    setImagePreview(prev => prev.filter((_, i) => i !== idx));
+  }, []);
+
+  const handleOptimize = async () => {
+    if (!prompt.trim()) return;
+    setOptimizing(true);
+    try {
+      const r = await pluginApi("POST", "/prompt-optimize", { prompt, model, size, level: "professional" });
+      if (r.body && r.body.ok && r.body.result) {
+        setPrompt(r.body.result);
+        showToast("提示词优化完成");
+      } else {
+        showToast(r.body?.error || "优化失败", "error");
+      }
+    } catch { showToast("优化请求失败", "error"); }
+    setOptimizing(false);
+  };
+
+  const handleCreate = async () => {
+    if (!apiReady) { showToast("请先在设置中配置 API Key", "warning"); return; }
+    setCreating(true);
+    setResult(null);
+    setEcResults(null);
+    try {
+      if (mode === "ecommerce") {
+        const body = {
+          product_name: productName,
+          prompt: prompt || productName,
+          images,
+          scenes: ecScenes,
+          model,
+          size,
+        };
+        const r = await pluginApi("POST", "/tasks/ecommerce-suite", body);
+        if (r.body && r.body.ok) {
+          setEcResults(r.body);
+          showToast(`套图生成已启动，共 ${r.body.total} 个任务`);
+          const running = r.body.tasks.filter(t => t.status === "running");
+          running.forEach(t => pollEcTask(t.id, r.body.group_id));
+        } else {
+          showToast(r.body?.detail || "创建失败", "error");
+        }
+      } else {
+        const body = { mode, prompt, negative_prompt: negPrompt, model, size, n, images };
+        if (mode === "style_repaint") body.style_index = styleIndex;
+        if (mode === "background") body.ref_prompt = refPrompt;
+        if (mode === "outpaint") body.output_ratio = outputRatio;
+        if (mode === "sketch") body.sketch_style = sketchStyle;
+        if (mode === "img_edit") body.edit_instruction = prompt;
+        if (thinking) body.thinking_mode = true;
+
+        const r = await pluginApi("POST", "/tasks", body);
+        if (r.body && r.body.ok) {
+          setResult(r.body.task);
+          if (r.body.task.status === "running") {
+            showToast("任务已启动，生成中...");
+            pollTask(r.body.task.id);
+          } else if (r.body.task.status === "succeeded") {
+            showToast("生成完成！");
+          } else {
+            showToast("任务已创建");
+          }
+        } else {
+          showToast(r.body?.detail || "创建失败", "error");
+        }
+      }
+    } catch(e) { showToast("请求失败: " + e.message, "error"); }
+    setCreating(false);
+  };
+
+  const pollEcTask = async (taskId, groupId) => {
+    let attempts = 0;
+    const poll = async () => {
+      if (attempts > 60) return;
+      attempts++;
+      try {
+        const r = await pluginApi("GET", "/tasks/" + taskId);
+        if (r.body && r.body.ok) {
+          setEcResults(prev => {
+            if (!prev) return prev;
+            const tasks = prev.tasks.map(t => t.id === taskId ? r.body.task : t);
+            return { ...prev, tasks };
+          });
+          if (r.body.task.status === "succeeded" || r.body.task.status === "failed") return;
+        }
+      } catch {}
+      setTimeout(poll, attempts < 10 ? 3000 : 8000);
+    };
+    setTimeout(poll, 3000);
+  };
+
+  const pollTask = async (taskId) => {
+    let attempts = 0;
+    const poll = async () => {
+      if (attempts > 60) return;
+      attempts++;
+      try {
+        const r = await pluginApi("GET", "/tasks/" + taskId);
+        if (r.body && r.body.ok) {
+          setResult(r.body.task);
+          if (r.body.task.status === "succeeded" || r.body.task.status === "failed") return;
+        }
+      } catch {}
+      setTimeout(poll, attempts < 10 ? 3000 : 8000);
+    };
+    setTimeout(poll, 3000);
+  };
+
+  return (
+    <div className="split-layout">
+      <div className="split-left">
+        <div className="card">
+          <div className="form-row">
+            <div className="label">生成模式</div>
+            <div className="flex gap-2 flex-wrap">
+              {MODES.map(m => (
+                <button key={m.id} className={`mode-btn ${mode === m.id ? "active" : ""}`}
+                        onClick={() => setMode(m.id)}>
+                  {m.icon} {m.name}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {mode === "ecommerce" && (
+            <>
+              <div className="form-row">
+                <div className="label">商品名称</div>
+                <input className="input" value={productName} onChange={e => setProductName(e.target.value)}
+                       placeholder="例如：蓝牙降噪耳机、精致香水、手工皮包..." />
+              </div>
+              <div className="form-row">
+                <div className="label">商品描述 (可选，补充风格/材质等)</div>
+                <textarea className="input textarea" value={prompt} onChange={e => setPrompt(e.target.value)}
+                          placeholder="补充描述：银色金属质感蓝牙耳机，头戴式设计..." style={{minHeight:60}} />
+              </div>
+              <div className="form-row">
+                <div className="label">商品图片 (可选，上传后自动用于换背景)</div>
+                <div className="flex gap-2 flex-wrap">
+                  {imagePreview.map((p, i) => (
+                    <div key={i} className="upload-zone has-image" style={{width:80,height:80,position:"relative"}}>
+                      <img src={p} style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:4}} />
+                      <button onClick={() => removeImage(i)} style={{position:"absolute",top:2,right:2,background:"rgba(0,0,0,.5)",color:"#fff",border:"none",borderRadius:"50%",width:18,height:18,cursor:"pointer",fontSize:11}}>×</button>
+                    </div>
+                  ))}
+                  <label className="upload-zone" style={{width:80,height:80,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>
+                    +<input type="file" accept="image/*" style={{display:"none"}} onChange={handleUpload} />
+                  </label>
+                </div>
+                <div className="text-xs text-dim" style={{marginTop:4}}>推荐上传透明背景(PNG)商品图，效果最佳</div>
+              </div>
+              <div className="form-row">
+                <div className="label">选择生成场景</div>
+                <div className="style-grid" style={{gridTemplateColumns:"repeat(auto-fill, minmax(120px, 1fr))"}}>
+                  {ecScenePresets.map(s => {
+                    const checked = ecScenes.includes(s.id);
+                    return (
+                      <div key={s.id} className={`style-option ${checked ? "active" : ""}`}
+                           onClick={() => setEcScenes(prev => checked ? prev.filter(x => x !== s.id) : [...prev, s.id])}
+                           style={{textAlign:"left", padding:"8px 10px"}}>
+                        <div style={{fontSize:13,fontWeight:500}}>{s.name}</div>
+                        <div className="text-xs text-dim">{s.desc}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+
+          {(mode === "text2img" || mode === "img_edit" || mode === "sketch") && (
+            <div className="form-row">
+              <div className="flex items-center justify-between">
+                <span className="label" style={{marginBottom:0}}>
+                  {mode === "img_edit" ? "编辑指令" : mode === "sketch" ? "文字描述" : "提示词"}
+                </span>
+                {mode === "text2img" && (
+                  <button className="btn btn-sm" onClick={handleOptimize} disabled={optimizing || !prompt.trim()}>
+                    {optimizing ? <span className="spinner-sm" /> : "✨"} AI 优化
+                  </button>
+                )}
+              </div>
+              <textarea className="input textarea" value={prompt} onChange={e => setPrompt(e.target.value)}
+                        placeholder={mode === "text2img" ? "描述你想生成的图像..." : mode === "img_edit" ? "描述编辑内容..." : "描述目标图像..."} />
+            </div>
+          )}
+
+          {mode === "text2img" && (
+            <div className="form-row">
+              <div className="label">反向提示词 (可选)</div>
+              <input className="input" value={negPrompt} onChange={e => setNegPrompt(e.target.value)}
+                     placeholder="不希望出现的内容..." />
+            </div>
+          )}
+
+          {mode === "background" && (
+            <div className="form-row">
+              <div className="label">背景描述</div>
+              <textarea className="input textarea" value={refPrompt} onChange={e => setRefPrompt(e.target.value)}
+                        placeholder="描述目标背景场景..." />
+            </div>
+          )}
+
+          {(mode !== "text2img" || images.length > 0) && (mode !== "outpaint" || true) && (
+            <div className="form-row">
+              <div className="label">
+                {mode === "style_repaint" ? "人物照片" : mode === "background" ? "主体图片 (透明背景)" :
+                 mode === "outpaint" ? "原始图片" : mode === "sketch" ? "草图" :
+                 mode === "img_edit" ? "参考图片" : "参考图片 (可选)"}
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                {imagePreview.map((p, i) => (
+                  <div key={i} className="upload-zone has-image" style={{width: 100, height: 100, position: "relative"}}>
+                    <img src={p} className="upload-preview" style={{width: "100%", height: "100%", objectFit: "cover"}} />
+                    <button onClick={() => removeImage(i)} style={{position:"absolute", top:2, right:2, background:"rgba(0,0,0,.5)", color:"#fff", border:"none", borderRadius:"50%", width:20, height:20, cursor:"pointer", fontSize:12}}>×</button>
+                  </div>
+                ))}
+                <label className="upload-zone" style={{width: 100, height: 100, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24}}>
+                  +
+                  <input type="file" accept="image/*" style={{display:"none"}} onChange={handleUpload} multiple={mode === "img_edit"} />
+                </label>
+              </div>
+            </div>
+          )}
+
+          {models.length > 0 && (
+            <div className="form-row">
+              <div className="label">模型</div>
+              <select className="input select" value={model} onChange={e => setModel(e.target.value)}>
+                {models.map(m => <option key={m.id} value={m.id}>{m.name} ({m.model_id})</option>)}
+              </select>
+            </div>
+          )}
+
+          {(mode === "text2img" || mode === "img_edit") && (
+            <div className="grid-2">
+              <div className="form-row">
+                <div className="label">尺寸</div>
+                <select className="input select" value={size} onChange={e => setSize(e.target.value)}>
+                  <option value="">默认</option>
+                  <option value="1024*1024">1024×1024 (1:1)</option>
+                  <option value="2048*2048">2048×2048 (1:1)</option>
+                  <option value="1536*2688">1536×2688 (9:16)</option>
+                  <option value="2688*1536">2688×1536 (16:9)</option>
+                  <option value="1728*2368">1728×2368 (3:4)</option>
+                  <option value="2368*1728">2368×1728 (4:3)</option>
+                </select>
+              </div>
+              <div className="form-row">
+                <div className="label">数量</div>
+                <select className="input select" value={n} onChange={e => setN(parseInt(e.target.value))}>
+                  {[1,2,3,4].map(v => <option key={v} value={v}>{v} 张</option>)}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {mode === "style_repaint" && (
+            <div className="form-row">
+              <div className="label">预置风格</div>
+              <div className="style-grid">
+                {stylePresets.map(s => (
+                  <div key={s.index} className={`style-option ${styleIndex === s.index ? "active" : ""}`}
+                       onClick={() => setStyleIndex(s.index)}>
+                    {s.name}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {mode === "sketch" && (
+            <div className="form-row">
+              <div className="label">画风</div>
+              <div className="style-grid">
+                {sketchStyles.map(s => (
+                  <div key={s.id} className={`style-option ${sketchStyle === s.id ? "active" : ""}`}
+                       onClick={() => setSketchStyle(s.id)}>
+                    {s.name}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {mode === "outpaint" && (
+            <div className="form-row">
+              <div className="label">目标比例</div>
+              <div className="flex gap-2 flex-wrap">
+                {["1:1","16:9","9:16","4:3","3:4","2:1"].map(r => (
+                  <button key={r} className={`mode-btn ${outputRatio === r ? "active" : ""}`}
+                          onClick={() => setOutputRatio(r)}>{r}</button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {mode === "text2img" && model && models.find(m => m.id === model)?.supports_thinking && (
+            <div className="form-row">
+              <div className="flex items-center gap-2">
+                <div className={`switch ${thinking ? "on" : ""}`} onClick={() => setThinking(!thinking)} style={{width:36,height:20,borderRadius:10,background:thinking?"var(--primary)":"var(--border)",cursor:"pointer",position:"relative",transition:".2s"}}>
+                  <div style={{position:"absolute",top:2,left:thinking?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:".2s"}} />
+                </div>
+                <span className="text-sm">深度思考模式</span>
+                <span className="text-xs text-dim">适合复杂构图</span>
+              </div>
+            </div>
+          )}
+
+          <button className="btn btn-primary" style={{width: "100%", justifyContent: "center", padding: "10px"}}
+                  onClick={handleCreate} disabled={creating || !apiReady || (mode === "ecommerce" && !productName.trim() && !prompt.trim())}>
+            {creating ? <><span className="spinner-sm" /> 生成中...</> : mode === "ecommerce" ? `🛒 一键生成套图 (${ecScenes.length} 张)` : "✨ 开始生成"}
+          </button>
+        </div>
+      </div>
+
+      <div className="split-right">
+        {mode === "ecommerce" && ecResults ? (
+          <div>
+            <div className="card">
+              <div className="flex items-center justify-between" style={{marginBottom: 12}}>
+                <span className="card-title" style={{marginBottom: 0}}>🛒 电商套图结果</span>
+                <span className="text-xs text-dim">共 {ecResults.total} 张</span>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(200px, 1fr))",gap:12}}>
+                {ecResults.tasks.map(t => {
+                  const scene = ecScenePresets.find(s => s.id === (t.params?.scene_id || ""));
+                  return (
+                    <div key={t.id} className="card" style={{padding:10,marginBottom:0}}>
+                      <div className="flex items-center justify-between" style={{marginBottom:6}}>
+                        <span className="text-sm" style={{fontWeight:500}}>{scene?.name || t.params?.scene_id || "场景"}</span>
+                        <span className={`tag ${STATUS_MAP[t.status]?.cls || "tag-gray"}`} style={{fontSize:10}}>
+                          {STATUS_MAP[t.status]?.label || t.status}
+                        </span>
+                      </div>
+                      {t.status === "running" && (
+                        <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:120}}>
+                          <div className="spinner" />
+                        </div>
+                      )}
+                      {t.status === "succeeded" && t.image_urls?.length > 0 && (
+                        <div className="image-card" onClick={() => setLightbox(t.image_urls[0])}>
+                          <img src={t.image_urls[0]} alt="" style={{width:"100%",aspectRatio:"1",objectFit:"cover"}} />
+                          <div className="image-card-actions">
+                            <button onClick={e => { e.stopPropagation(); downloadImage(t.id, 0, t.prompt); }}>下载</button>
+                          </div>
+                        </div>
+                      )}
+                      {t.status === "failed" && (
+                        <div style={{padding:8,background:"rgba(239,68,68,.08)",borderRadius:4,fontSize:12,color:"var(--danger)"}}>
+                          {t.error_message || "生成失败"}
+                        </div>
+                      )}
+                      <div className="text-xs text-dim" style={{marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {t.prompt?.slice(0,60)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ) : result ? (
+          <div>
+            <div className="card">
+              <div className="flex items-center justify-between" style={{marginBottom: 12}}>
+                <span className="card-title" style={{marginBottom: 0}}>生成结果</span>
+                <span className={`tag ${STATUS_MAP[result.status]?.cls || "tag-gray"}`}>
+                  {STATUS_MAP[result.status]?.label || result.status}
+                </span>
+              </div>
+
+              {result.status === "running" && (
+                <div className="empty-state" style={{padding: "40px 20px"}}>
+                  <div className="spinner" style={{width: 32, height: 32, marginBottom: 12}} />
+                  <span className="text-sm text-muted">图像生成中，请稍候...</span>
+                  <button className="btn btn-sm" style={{marginTop: 12}} onClick={goToTasks}>
+                    📋 在任务列表中查看
+                  </button>
+                </div>
+              )}
+
+              {result.status === "succeeded" && (
+                result.image_urls && result.image_urls.length > 0 ? (
+                  <div className="image-gallery">
+                    {result.image_urls.map((url, i) => (
+                      <div key={i} className="image-card" onClick={() => setLightbox(url)}>
+                        <img src={url} alt={`Generated ${i + 1}`} />
+                        <div className="image-card-actions">
+                          <button onClick={e => { e.stopPropagation(); downloadImage(result.id, i, result.prompt); }}>下载</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-state" style={{padding: "30px 20px"}}>
+                    <span style={{fontSize: 28, marginBottom: 8, opacity: .5}}>✓</span>
+                    <span className="text-sm text-muted">任务已完成，图片加载中...</span>
+                    <button className="btn btn-sm" style={{marginTop: 8}} onClick={() => {
+                      pluginApi("GET", "/tasks/" + result.id).then(r => {
+                        if (r.body && r.body.ok) setResult(r.body.task);
+                      });
+                    }}>🔄 刷新结果</button>
+                    <button className="btn btn-sm" style={{marginTop: 4}} onClick={goToTasks}>
+                      📋 在任务列表中查看
+                    </button>
+                  </div>
+                )
+              )}
+
+              {result.status === "failed" && (
+                <div className="empty-state" style={{padding: "40px 20px"}}>
+                  <span className="text-danger" style={{fontSize: 32, marginBottom: 8}}>✕</span>
+                  <span className="text-sm text-danger">{result.error_message || "生成失败"}</span>
+                </div>
+              )}
+            </div>
+            {result.prompt && (
+              <div className="card">
+                <div className="text-xs text-dim" style={{marginBottom:4}}>提示词</div>
+                <div className="text-sm">{result.prompt}</div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="empty-state">
+            <div style={{fontSize: 48, marginBottom: 12, opacity: .4}}>{mode === "ecommerce" ? "🛒" : "🎨"}</div>
+            <div className="text-sm text-dim">{mode === "ecommerce" ? "输入商品信息，一键生成电商套图" : "选择模式，输入描述，开始创作"}</div>
+          </div>
+        )}
+
+        {lightbox && (
+          <div className="lightbox" onClick={() => setLightbox(null)}>
+            <img src={lightbox} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Tasks Tab ───
+function TasksTab() {
+  const [tasks, setTasks] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [filter, setFilter] = useState("");
+  const [modeFilter, setModeFilter] = useState("");
+  const [selected, setSelected] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [lightbox, setLightbox] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      let q = "/tasks?limit=50";
+      if (filter) q += "&status=" + filter;
+      if (modeFilter) q += "&mode=" + modeFilter;
+      const r = await pluginApi("GET", q);
+      if (r.body && r.body.ok) {
+        setTasks(r.body.tasks);
+        setTotal(r.body.total);
+      }
+    } catch {}
+    setLoading(false);
+  }, [filter, modeFilter]);
+
+  useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    onEvent("plugin:tongyi-image:task_update", () => load());
+    const iv = setInterval(load, 15000);
+    return () => clearInterval(iv);
+  }, [load]);
+
+  const handleDelete = async (id) => {
+    if (!confirm("确定删除？")) return;
+    await pluginApi("DELETE", "/tasks/" + id);
+    if (selected && selected.id === id) setSelected(null);
+    load();
+  };
+
+  const handleRetry = async (id) => {
+    const r = await pluginApi("POST", "/tasks/" + id + "/retry");
+    if (r.body && r.body.ok) { showToast("重试任务已创建"); load(); }
+  };
+
+  const handleRecheck = async (id) => {
+    showToast("正在重新查询...");
+    const r = await pluginApi("POST", "/tasks/" + id + "/recheck");
+    if (r.body && r.body.ok) {
+      const found = r.body.images_found || 0;
+      if (found > 0) {
+        showToast("找到 " + found + " 张图片！");
+        setSelected(r.body.task);
+      } else {
+        showToast("未找到图片，请稍后重试");
+      }
+      load();
+    } else {
+      showToast(r.body?.error || "查询失败");
+    }
+  };
+
+  return (
+    <div className="split-layout">
+      <div className="split-left">
+        <div className="flex gap-2 flex-wrap" style={{marginBottom: 12}}>
+          {[
+            { v: "", l: "全部" }, { v: "running", l: "生成中" },
+            { v: "succeeded", l: "已完成" }, { v: "failed", l: "失败" },
+          ].map(f => (
+            <button key={f.v} className={`mode-btn ${filter === f.v ? "active" : ""}`}
+                    onClick={() => setFilter(f.v)}>{f.l}</button>
+          ))}
+        </div>
+        <div className="flex gap-2 flex-wrap" style={{marginBottom: 12}}>
+          <button className={`btn btn-sm ${modeFilter === "" ? "btn-primary" : ""}`}
+                  onClick={() => setModeFilter("")}>全部模式</button>
+          {MODES.map(m => (
+            <button key={m.id} className={`btn btn-sm ${modeFilter === m.id ? "btn-primary" : ""}`}
+                    onClick={() => setModeFilter(m.id)}>{m.icon} {m.name}</button>
+          ))}
+        </div>
+
+        {loading && tasks.length === 0 ? (
+          <div className="empty-state"><div className="spinner" /></div>
+        ) : tasks.length === 0 ? (
+          <div className="empty-state"><div className="text-sm text-dim">暂无任务</div></div>
+        ) : (
+          tasks.map(t => (
+            <div key={t.id} className={`task-card ${selected?.id === t.id ? "selected" : ""}`}
+                 onClick={() => setSelected(t)}>
+              <div className="task-thumb">
+                {t.image_urls && t.image_urls.length > 0 ? (
+                  <img src={t.image_urls[0]} alt="" />
+                ) : t.status === "running" ? (
+                  <div className="spinner-sm" />
+                ) : (
+                  <span className="text-dim text-xs">—</span>
+                )}
+              </div>
+              <div className="task-info">
+                <h4>{t.prompt || t.mode || "无标题"}</h4>
+                <div className="task-meta">
+                  <span className={`tag ${STATUS_MAP[t.status]?.cls || "tag-gray"}`}>
+                    {STATUS_MAP[t.status]?.label || t.status}
+                  </span>
+                  <span>{MODES.find(m => m.id === t.mode)?.name || t.mode}</span>
+                  <span>{t.model}</span>
+                  <span>{t.created_at}</span>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+        <div className="text-xs text-dim" style={{marginTop: 8}}>共 {total} 个任务</div>
+      </div>
+
+      <div className="split-right">
+        {selected ? (
+          <div>
+            <div className="card">
+              <div className="flex items-center justify-between" style={{marginBottom: 12}}>
+                <span className="card-title" style={{marginBottom:0}}>任务详情</span>
+                <div className="flex gap-2">
+                  {selected.status === "failed" && (
+                    <button className="btn btn-sm" onClick={() => handleRetry(selected.id)}>重试</button>
+                  )}
+                  <button className="btn btn-sm btn-danger" onClick={() => handleDelete(selected.id)}>删除</button>
+                </div>
+              </div>
+
+              {selected.status === "succeeded" && (
+                selected.image_urls?.length > 0 ? (
+                  <div className="image-gallery">
+                    {selected.image_urls.map((url, i) => (
+                      <div key={i} className="image-card" onClick={() => setLightbox(url)}>
+                        <img src={url} alt="" />
+                        <div className="image-card-actions">
+                          <button onClick={e => { e.stopPropagation(); downloadImage(selected.id, i, selected.prompt); }}>下载</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-state" style={{padding: "30px 20px"}}>
+                    <span style={{fontSize: 28, marginBottom: 8, opacity: .5}}>✓</span>
+                    <span className="text-sm text-muted">任务已完成，但未找到图片</span>
+                    {selected.api_task_id && (
+                      <button className="btn btn-sm btn-primary" style={{marginTop: 8}}
+                              onClick={() => handleRecheck(selected.id)}>🔄 重新获取图片</button>
+                    )}
+                  </div>
+                )
+              )}
+
+              {selected.status === "running" && (
+                <div className="empty-state" style={{padding: "30px"}}>
+                  <div className="spinner" style={{marginBottom: 8}} />
+                  <span className="text-sm text-muted">生成中...</span>
+                </div>
+              )}
+
+              {selected.status === "failed" && (
+                <div style={{padding: "12px", background: "rgba(239,68,68,.08)", borderRadius: 6, color: "var(--danger)", fontSize: 13}}>
+                  {selected.error_message || "生成失败"}
+                </div>
+              )}
+            </div>
+
+            <div className="card">
+              <div className="grid-2">
+                <div><span className="text-xs text-dim">ID</span><div className="text-sm">{selected.id}</div></div>
+                <div><span className="text-xs text-dim">模式</span><div className="text-sm">{MODES.find(m => m.id === selected.mode)?.name || selected.mode}</div></div>
+                <div><span className="text-xs text-dim">模型</span><div className="text-sm">{selected.model}</div></div>
+                <div><span className="text-xs text-dim">创建时间</span><div className="text-sm">{selected.created_at}</div></div>
+              </div>
+              {selected.prompt && (
+                <div style={{marginTop: 12}}>
+                  <span className="text-xs text-dim">提示词</span>
+                  <div className="text-sm" style={{marginTop: 4, padding: "8px 10px", background: "var(--bg)", borderRadius: 6}}>{selected.prompt}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="empty-state">
+            <div style={{fontSize: 48, marginBottom: 12, opacity: .4}}>📋</div>
+            <div className="text-sm text-dim">选择任务查看详情</div>
+          </div>
+        )}
+
+        {lightbox && (
+          <div className="lightbox" onClick={() => setLightbox(null)}>
+            <img src={lightbox} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Guide Tab ───
+function GuideTab() {
+  const [guide, setGuide] = useState(null);
+
+  useEffect(() => {
+    pluginApi("GET", "/prompt-guide").then(r => {
+      if (r.body && r.body.ok) setGuide(r.body);
+    }).catch(() => {});
+  }, []);
+
+  if (!guide) return <div className="empty-state"><div className="spinner" /></div>;
+
+  return (
+    <div style={{maxWidth: 800}}>
+      {/* Mode Formulas */}
+      <Collapsible title="📐 提示词公式" defaultOpen>
+        {Object.entries(guide.mode_formulas || {}).map(([k, v]) => (
+          <div key={k} style={{marginBottom: 12}}>
+            <div className="text-sm" style={{fontWeight: 600, marginBottom: 4}}>
+              {MODES.find(m => m.id === k)?.name || k}
+            </div>
+            {v.basic && <div className="text-xs text-dim">基础: {v.basic}</div>}
+            {v.advanced && <div className="text-xs text-dim">进阶: {v.advanced}</div>}
+            {v.tips && (
+              <div style={{marginTop: 4}}>
+                {v.tips.map((t, i) => <div key={i} className="text-xs text-muted">• {t}</div>)}
+              </div>
+            )}
+          </div>
+        ))}
+      </Collapsible>
+
+      {/* Templates */}
+      <Collapsible title="📝 提示词模板">
+        {(guide.templates || []).map(t => (
+          <div key={t.id} className="template-card">
+            <h4>{t.name} <span className="text-xs text-dim">{t.name_en}</span></h4>
+            <p>{t.description}</p>
+            {t.example && <div className="text-xs" style={{marginTop: 4, fontStyle: "italic", color: "var(--primary)"}}>{t.example}</div>}
+          </div>
+        ))}
+      </Collapsible>
+
+      {/* Style Keywords */}
+      <Collapsible title="🎨 风格词典">
+        {Object.entries(guide.style_keywords || {}).map(([cat, words]) => (
+          <div key={cat} style={{marginBottom: 8}}>
+            <span className="text-xs text-dim" style={{textTransform: "capitalize"}}>{cat.replace(/_/g, " ")}</span>
+            <div>{words.map((w, i) => <span key={i} className="keyword-tag">{w}</span>)}</div>
+          </div>
+        ))}
+      </Collapsible>
+
+      {/* Lighting Keywords */}
+      <Collapsible title="💡 光线词典">
+        {Object.entries(guide.lighting_keywords || {}).map(([cat, words]) => (
+          <div key={cat} style={{marginBottom: 8}}>
+            <span className="text-xs text-dim" style={{textTransform: "capitalize"}}>{cat.replace(/_/g, " ")}</span>
+            <div>{words.map((w, i) => <span key={i} className="keyword-tag">{w}</span>)}</div>
+          </div>
+        ))}
+      </Collapsible>
+
+      {/* Composition */}
+      <Collapsible title="📷 构图词典">
+        {Object.entries(guide.composition_keywords || {}).map(([cat, data]) => (
+          <div key={cat} style={{marginBottom: 8}}>
+            <span className="text-xs text-dim">{data.label}</span>
+            <div>{data.keywords.map((kw, i) => (
+              <span key={i} className="keyword-tag" title={kw.desc}>{kw.zh} ({kw.en})</span>
+            ))}</div>
+          </div>
+        ))}
+      </Collapsible>
+
+      {/* Negative Presets */}
+      <Collapsible title="🚫 反向提示词预设">
+        {Object.entries(guide.negative_presets || {}).map(([k, v]) => (
+          <div key={k} style={{marginBottom: 8}}>
+            <span className="text-xs" style={{fontWeight: 500}}>{k}</span>
+            <div className="text-xs text-dim" style={{padding: "6px 10px", background: "var(--bg)", borderRadius: 6, marginTop: 4}}>{v}</div>
+          </div>
+        ))}
+      </Collapsible>
+    </div>
+  );
+}
+
+function Collapsible({ title, children, defaultOpen }) {
+  const [open, setOpen] = useState(!!defaultOpen);
+  return (
+    <div className={`collapsible ${open ? "open" : ""}`}>
+      <div className="collapsible-header" onClick={() => setOpen(!open)}>
+        <span>{title}</span>
+        <span className="arrow">▶</span>
+      </div>
+      <div className="collapsible-body">{children}</div>
+    </div>
+  );
+}
+
+// ─── Settings Tab ───
+function SettingsTab({ onApiKeyChange }) {
+  const [config, setConfig] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [stats, setStats] = useState(null);
+  const [keyVisible, setKeyVisible] = useState(false);
+
+  useEffect(() => {
+    pluginApi("GET", "/settings").then(r => {
+      if (r.body && r.body.config) setConfig(r.body.config);
+    }).catch(() => {});
+    pluginApi("GET", "/storage/stats").then(r => {
+      if (r.body && r.body.stats) setStats(r.body.stats);
+    }).catch(() => {});
+  }, []);
+
+  const save = async (updates) => {
+    setSaving(true);
+    try {
+      const r = await pluginApi("PUT", "/settings", { updates });
+      if (r.body && r.body.ok) {
+        setConfig(r.body.config);
+        if (updates.dashscope_api_key !== undefined) onApiKeyChange(updates.dashscope_api_key);
+        showToast("设置已保存");
+      }
+    } catch { showToast("保存失败", "error"); }
+    setSaving(false);
+  };
+
+  const updateField = (key, value) => {
+    setConfig(prev => ({ ...prev, [key]: value }));
+  };
+
+  return (
+    <div style={{maxWidth: 640}}>
+      <div className="setting-section">
+        <h3>🔑 API 配置</h3>
+        <div className="form-row">
+          <div className="label">DashScope API Key</div>
+          <div className="flex gap-2">
+            <input className="input flex-1" type={keyVisible ? "text" : "password"}
+                   value={config.dashscope_api_key || ""}
+                   onChange={e => updateField("dashscope_api_key", e.target.value)}
+                   placeholder="sk-..." />
+            <button className="btn btn-sm" onClick={() => setKeyVisible(!keyVisible)}>
+              {keyVisible ? "隐藏" : "显示"}
+            </button>
+            <button className="btn btn-sm btn-primary" onClick={() => save({ dashscope_api_key: config.dashscope_api_key })}
+                    disabled={saving}>保存</button>
+          </div>
+          <div className="text-xs text-dim" style={{marginTop: 4}}>
+            获取地址: <a href="https://bailian.console.aliyun.com/#/api-key" target="_blank" rel="noopener" style={{color: "var(--primary)"}}>阿里云百炼控制台</a>
+          </div>
+        </div>
+      </div>
+
+      <div className="setting-section">
+        <h3>⚙️ 默认参数</h3>
+        <div className="grid-2">
+          <div className="form-row">
+            <div className="label">默认模型</div>
+            <select className="input select" value={config.default_model || "wan27-pro"}
+                    onChange={e => { updateField("default_model", e.target.value); save({ default_model: e.target.value }); }}>
+              <option value="wan27-pro">万相 2.7 Pro</option>
+              <option value="wan27">万相 2.7</option>
+              <option value="qwen-pro">千问 2.0 Pro</option>
+              <option value="qwen">千问 2.0</option>
+            </select>
+          </div>
+          <div className="form-row">
+            <div className="label">默认尺寸</div>
+            <select className="input select" value={config.default_size || "2K"}
+                    onChange={e => { updateField("default_size", e.target.value); save({ default_size: e.target.value }); }}>
+              <option value="1K">1K</option>
+              <option value="2K">2K</option>
+              <option value="4K">4K (仅 wan2.7 Pro)</option>
+            </select>
+          </div>
+        </div>
+        <div className="grid-2">
+          <div className="form-row">
+            <div className="label">自动下载</div>
+            <div className="flex items-center gap-2">
+              <div className={`switch ${config.auto_download === "true" ? "on" : ""}`}
+                   onClick={() => { const v = config.auto_download === "true" ? "false" : "true"; updateField("auto_download", v); save({ auto_download: v }); }}
+                   style={{width:36,height:20,borderRadius:10,background:config.auto_download==="true"?"var(--primary)":"var(--border)",cursor:"pointer",position:"relative",transition:".2s"}}>
+                <div style={{position:"absolute",top:2,left:config.auto_download==="true"?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:".2s"}} />
+              </div>
+              <span className="text-sm">生成完成后自动下载到本地</span>
+            </div>
+          </div>
+          <div className="form-row">
+            <div className="label">水印</div>
+            <div className="flex items-center gap-2">
+              <div className={`switch ${config.watermark === "true" ? "on" : ""}`}
+                   onClick={() => { const v = config.watermark === "true" ? "false" : "true"; updateField("watermark", v); save({ watermark: v }); }}
+                   style={{width:36,height:20,borderRadius:10,background:config.watermark==="true"?"var(--primary)":"var(--border)",cursor:"pointer",position:"relative",transition:".2s"}}>
+                <div style={{position:"absolute",top:2,left:config.watermark==="true"?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:".2s"}} />
+              </div>
+              <span className="text-sm">添加水印</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {stats && (
+        <div className="setting-section">
+          <h3>💾 存储</h3>
+          {Object.entries(stats).map(([k, v]) => (
+            <div key={k} className="flex items-center justify-between" style={{padding: "8px 0", borderBottom: "1px solid var(--border)"}}>
+              <div>
+                <div className="text-sm">{k === "images" ? "生成图片" : "上传文件"}</div>
+                <div className="text-xs text-dim">{v.path}</div>
+              </div>
+              <div className="text-sm text-muted">{v.size_mb} MB / {v.file_count} 文件</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Mount ───
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

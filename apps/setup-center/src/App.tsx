@@ -13,6 +13,7 @@ const IMView = lazy(() => import("./views/IMView").then(m => ({ default: m.IMVie
 const TokenStatsView = lazy(() => import("./views/TokenStatsView").then(m => ({ default: m.TokenStatsView })));
 const MCPView = lazy(() => import("./views/MCPView").then(m => ({ default: m.MCPView })));
 const PluginManagerView = lazy(() => import("./views/PluginManagerView"));
+const PluginAppHost = lazy(() => import("./views/PluginAppHost"));
 const SchedulerView = lazy(() => import("./views/SchedulerView").then(m => ({ default: m.SchedulerView })));
 const MemoryView = lazy(() => import("./views/MemoryView").then(m => ({ default: m.MemoryView })));
 const IdentityView = lazy(() => import("./views/IdentityView").then(m => ({ default: m.IdentityView })));
@@ -139,12 +140,19 @@ function _parseHashRoute(hash: string): { view: ViewId; stepId?: StepId } | null
     const step = path.slice(7);
     if (_HASH_TO_STEP[step]) return { view: "wizard", stepId: _HASH_TO_STEP[step] as StepId };
   }
+  if (path.startsWith("app/")) {
+    const pluginId = path.slice(4);
+    if (pluginId) return { view: `plugin_app:${pluginId}` as ViewId };
+  }
   return null;
 }
 
 function _viewToHash(view: string, stepId?: string): string {
   if (view === "wizard" && stepId) {
     return `#/config/${stepId}`;
+  }
+  if (view.startsWith("plugin_app:")) {
+    return `#/app/${view.slice("plugin_app:".length)}`;
   }
   return _VIEW_TO_HASH[view] ? `#/${_VIEW_TO_HASH[view]}` : "";
 }
@@ -4803,6 +4811,16 @@ function MainApp() {
         />
       );
     }
+    if (view.startsWith("plugin_app:")) {
+      const pluginId = view.slice("plugin_app:".length);
+      return (
+        <PluginAppHost
+          pluginId={pluginId}
+          apiBase={httpApiBase()}
+          onViewChange={(v) => setView(v)}
+        />
+      );
+    }
     if (view === "docs") {
       const docsBase = httpApiBase();
       return (
@@ -4989,6 +5007,7 @@ function MainApp() {
         onBugReport={() => setBugReportOpen(true)}
         onRefreshStatus={async () => { await refreshStatus(undefined, undefined, true); }}
         isWeb={IS_WEB}
+        httpApiBase={httpApiBase()}
       />
 
       <main className="main">
