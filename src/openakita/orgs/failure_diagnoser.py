@@ -106,10 +106,20 @@ def _extract_evidence(react_trace: list[dict]) -> list[dict]:
             if not _is_error_entry(is_error, result_content):
                 continue
             args = call.get("input") or {}
+            # args_raw_truncated: 完整 JSON 截断版本，用于复盘 LLM 实际传参
+            # （args_summary 只截关键字段，无法判断 LLM 是否漏传 task_chain_id 等）。
+            try:
+                import json as _json
+                args_raw = _json.dumps(args, ensure_ascii=False, default=str)
+            except Exception:
+                args_raw = str(args)
+            if len(args_raw) > 1024:
+                args_raw = args_raw[:1024] + "…"
             evidence.append({
                 "iter": iteration,
                 "tool": str(call.get("name") or ""),
                 "args_summary": _summarize_args(args),
+                "args_raw_truncated": args_raw,
                 "error": result_content[:EVIDENCE_ERROR_MAX],
             })
     return evidence

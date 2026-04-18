@@ -431,6 +431,38 @@ ORG_NODE_TOOLS: list[dict] = [
             "required": ["task_chain_id", "from_node", "reason"],
         },
     },
+    {
+        "name": "org_wait_for_deliverable",
+        "description": (
+            "阻塞等待你派出的下级任务完成（用 org_delegate_task 派的）。"
+            "比 org_list_delegated_tasks 轮询高效得多——会在以下任一事件触发时立即返回：\n"
+            "  1) 任意指定的子任务链关闭（被你 accept/reject 或被取消）\n"
+            "  2) 收到下级新消息（提问/升级），需要你立即处理\n"
+            "  3) timeout 到期（默认 60 秒）\n"
+            "  4) 用户取消整个命令\n"
+            "返回值会告诉你：哪些子链已关闭、是否被消息打断、是否超时。"
+            "建议用法：派完一组并行任务后立即 wait，超时后用 org_list_delegated_tasks "
+            "看进度，再决定是继续 wait 还是输出阶段性汇总。"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "chain_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "要等待的具体任务链 ID 列表（可选）。"
+                        "省略时自动等待你最近派出的所有未关闭子链。"
+                    ),
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "最大等待秒数，默认 60，最大 300。",
+                    "default": 60,
+                },
+            },
+        },
+    },
     # ── 制度提议 ──
     {
         "name": "org_propose_policy",

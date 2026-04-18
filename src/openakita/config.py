@@ -582,6 +582,54 @@ class Settings(BaseSettings):
         description="任务完成时是否自动向父节点发送[通知]：False 表示不主动唤醒父级",
     )
 
+    # === 组织编排 · 多层级指挥治理（org-orchestration-fix） ===
+    # 这组开关用于治理"CEO -> CMO -> 多个执行者 -> CMO 汇总 -> CEO 回包"
+    # 这类多层级指挥场景，解决以下根因：
+    #   1) 子链 chain_id 默认 _now_iso()，导致父子链断裂、tracker 子树失明
+    #   2) 协调者用 org_send_message(question) 派任务，绕过 chain 注册
+    #   3) Supervisor 把合法 poll 当死循环 TERMINATE
+    #   4) 缺少阻塞等待原语，协调者只能轮询
+    #   5) 完成判定一次性 set，CEO 拿不到最终汇总
+    # 默认全部开启；任一项设为 false 可一键回退到旧行为，旧代码路径保留。
+    org_chain_parent_enforced: bool = Field(
+        default=True,
+        description=(
+            "强制 chain 父子关系：delegate 时为子任务新建 chain 并挂到 caller "
+            "current chain 之下；submit 强制复用 caller current chain；"
+            "tracker 完成判定走整棵子树。关闭后回退到旧的'复用 caller chain'语义。"
+        ),
+    )
+    org_question_task_guard: bool = Field(
+        default=True,
+        description=(
+            "拦截协调者用 org_send_message(question) 派发任务的反模式："
+            "若 sender 有下属且消息文本含'撰写/优化/产出/完成/给出/生成'等任务措辞，"
+            "拒绝发送并提示改用 org_delegate_task。"
+        ),
+    )
+    org_supervisor_poll_whitelist: bool = Field(
+        default=True,
+        description=(
+            "Supervisor 对 org_list_delegated_tasks / org_wait_for_deliverable "
+            "等合法轮询/等待工具，抬高重复阈值且最高仅 NUDGE，绝不 TERMINATE。"
+        ),
+    )
+    org_wait_primitive_enabled: bool = Field(
+        default=True,
+        description=(
+            "启用 org_wait_for_deliverable 工具：协调者派完任务后可阻塞等待"
+            "下级交付，避免 org_list_delegated_tasks 轮询触发 Supervisor 死循环。"
+        ),
+    )
+    org_root_post_summary: bool = Field(
+        default=True,
+        description=(
+            "用户命令完成判定的两阶段状态机：所有子链关闭 + root IDLE 时，"
+            "先 push 一条 task_complete 到 root inbox 唤醒 root 产出最终汇总，"
+            "等 root 二次 IDLE 后再 set completed。关闭后退回到一阶段判定。"
+        ),
+    )
+
     # === 组织编排 · 用户命令生命周期看门狗 ===
     # 用户通过 send_command 下发一条顶层指令后，完成判定由事件驱动
     # （所有委派链 chain 关闭 + root IDLE + root inbox 空）。下列时间参数

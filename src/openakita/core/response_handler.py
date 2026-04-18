@@ -309,6 +309,66 @@ class ResponseHandler:
         except Exception as e:
             logger.debug(f"[TaskVerify] Deterministic validation skipped: {e}")
 
+        # === Trust-but-verify: org_submit_deliverable / deliver_artifacts 信任路径 ===
+        # 组织节点用 org_submit_deliverable 提交交付物时，如果 deliverable 内容
+        # 足够长或带文件附件，说明已经实际产出，直接放行；否则才走 LLM 复核。
+        # 这是修复"sub-agent 实际已经写好文档/代码并提交，但 LLM verify 误判
+        # 'verify_incomplete' 反复重试"的关键。
+        try:
+            executed_set = set(executed_tools or [])
+            tool_results_list = tool_results or []
+            org_submit_ok = "org_submit_deliverable" in executed_set
+            deliver_artifacts_ok = "deliver_artifacts" in executed_set
+
+            if org_submit_ok or deliver_artifacts_ok:
+                # 找出 submit_deliverable 工具调用对应的成功结果
+                submit_ok_run = False
+                deliverable_len = 0
+                attachments_count = 0
+                for tr in tool_results_list:
+                    name = tr.get("tool_name") or tr.get("name") or ""
+                    if name not in (
+                        "org_submit_deliverable", "deliver_artifacts",
+                    ):
+                        continue
+                    if tr.get("is_error"):
+                        continue
+                    submit_ok_run = True
+                    args = tr.get("arguments") or tr.get("input") or {}
+                    if isinstance(args, dict):
+                        deliverable_len = max(
+                            deliverable_len,
+                            len(args.get("deliverable") or ""),
+                        )
+                        files = args.get("file_attachments") or args.get("files") or []
+                        if isinstance(files, list):
+                            attachments_count = max(attachments_count, len(files))
+
+                # 兜底：tool_results 里拿不到详细参数（旧调用路径），退一步只看
+                # 工具是否被执行 + delivery_receipts 是否非空（说明附件已发送）
+                if not submit_ok_run and (org_submit_ok or deliver_artifacts_ok):
+                    submit_ok_run = True
+                    if delivery_receipts:
+                        attachments_count = max(attachments_count, len(delivery_receipts))
+
+                if submit_ok_run and (deliverable_len >= 200 or attachments_count >= 1):
+                    logger.info(
+                        "[TaskVerify] trust-but-verify PASS: "
+                        "submit_deliverable executed, deliverable_len=%d files=%d",
+                        deliverable_len, attachments_count,
+                    )
+                    return True
+                if submit_ok_run:
+                    logger.info(
+                        "[TaskVerify] trust-but-verify INSUFFICIENT: "
+                        "deliverable_len=%d files=%d → fall back to LLM verify",
+                        deliverable_len, attachments_count,
+                    )
+        except Exception as exc:
+            logger.debug(
+                "[TaskVerify] trust-but-verify gate skipped: %s", exc,
+            )
+
         expects_artifact = self._request_expects_artifact(user_request)
 
         # 宣称已交付但无证据

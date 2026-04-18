@@ -87,7 +87,10 @@ class UserCommandTracker:
         (accepted / rejected / cancelled), AND
       - the root node is IDLE, AND
       - the root's inbox has no pending messages, AND
-      - no other nodes under this org are still BUSY/WAITING with pending work.
+      - no other nodes under this org are still BUSY/WAITING with pending work, AND
+      - (when ``org_root_post_summary`` is enabled) the root has produced a
+        post-summary ReAct after being woken up by the auto-pushed
+        ``task_complete`` notification.
 
     This tracker is event-driven: `register_chain`/`unregister_chain` are called
     from `_handle_org_delegate_task` and `_mark_chain_closed` respectively.
@@ -98,6 +101,13 @@ class UserCommandTracker:
     dispatch, chain event). It is consumed **only** by the command watchdog to
     decide whether to emit a stuck warning or to soft-stop the organization.
     It does **not** participate in completion judgement.
+
+    State machine (when ``org_root_post_summary`` enabled):
+      ``running`` → (subtree closed + root idle) → ``awaiting_summary``
+      ``awaiting_summary`` → (root re-activated and back to idle) → ``done``
+    When ``org_root_post_summary`` disabled the tracker behaves like before:
+    once the subtree is closed and root is idle, ``completed`` is set directly
+    (state stays ``running`` for compatibility).
     """
 
     __slots__ = (
@@ -105,11 +115,14 @@ class UserCommandTracker:
         "root_node_id",
         "command_id",
         "open_chains",
+        "root_chain_id",
         "completed",
         "last_progress_at",
         "started_at",
         "warned_stuck",
         "auto_stopped",
+        "state",
+        "summary_pushed_at",
     )
 
     def __init__(
@@ -122,12 +135,21 @@ class UserCommandTracker:
         self.root_node_id = root_node_id
         self.command_id = command_id
         self.open_chains: set[str] = set()
+        # The first chain opened under this command (typically created by
+        # the root node's first `org_delegate_task`). Used by the subtree
+        # walker in ``_maybe_finalize_tracker`` as the root of the chain
+        # tree. ``None`` when the root has not delegated anything yet.
+        self.root_chain_id: str | None = None
         self.completed: asyncio.Event = asyncio.Event()
         now = time.monotonic()
         self.last_progress_at: float = now
         self.started_at: float = now
         self.warned_stuck: bool = False
         self.auto_stopped: bool = False
+        # See class docstring for state machine details.
+        self.state: str = "running"
+        # monotonic time when summary inbox push happened (debounce).
+        self.summary_pushed_at: float = 0.0
 
     def _touch(self) -> None:
         self.last_progress_at = time.monotonic()
@@ -137,6 +159,8 @@ class UserCommandTracker:
         if not chain_id:
             return
         self.open_chains.add(chain_id)
+        if self.root_chain_id is None:
+            self.root_chain_id = chain_id
         self._touch()
         self.completed.clear()
 
@@ -186,6 +210,21 @@ class OrgRuntime:
 
         self._chain_delegation_depth: dict[str, int] = {}  # chain_id -> delegation depth
         self._node_current_chain: dict[str, str] = {}  # org_id:node_id -> chain_id
+        # 子链 → 父链 映射；由 `_handle_org_delegate_task` 在
+        # `org_chain_parent_enforced=True` 时维护。tracker 据此沿向上指针
+        # 遍历整棵 chain 子树，决定是否所有后代 chain 都已关闭。
+        # key=chain_id, value=parent_chain_id 或 None（顶层 chain）。
+        self._chain_parent: dict[str, str | None] = {}
+        # chain 关闭事件：由 `_handle_org_delegate_task` 创建，
+        # 由 `_mark_chain_closed` 在关链时 set，供 `org_wait_for_deliverable`
+        # 工具阻塞等待。短期映射，超过 max_chain_events 后按 LRU 弹出（
+        # 弹出前事件已经被 set，wait 任务已经收到通知，不会误等）。
+        self._chain_events: OrderedDict[str, asyncio.Event] = OrderedDict()
+        self._max_chain_events: int = 2048
+        # 节点 inbox "新事件" 异步信号：sub-agent 发来 question/escalate 等
+        # 需要 coordinator 立即处理的消息时被 set，用于 `org_wait_for_deliverable`
+        # 跳出阻塞，避免 coordinator 阻塞导致的死锁。key=org_id:node_id。
+        self._node_inbox_events: dict[str, asyncio.Event] = {}
         # 已验收/打回/取消的任务链集合（按组织维度）。用于：
         #   1) 抑制已关闭 chain 的消息重新唤醒 agent ReAct；
         #   2) 阻断对已关闭 chain 的 delegate/submit；
@@ -910,6 +949,16 @@ class OrgRuntime:
         if tracker is not None and not tracker.completed.is_set():
             tracker.completed.set()
 
+        # (c3) 唤醒该节点的 org_wait_for_deliverable / inbox 等待者，避免
+        # 任务被取消后 wait 还在原超时上挂着不返回。
+        try:
+            inbox_key = f"{org_id}:{node_id}"
+            ev = self._node_inbox_events.get(inbox_key)
+            if ev is not None:
+                ev.set()
+        except Exception:
+            pass
+
         # (d) Broadcast events
         self.get_event_store(org_id).emit(
             "task_cancelled", node_id, {"reason": reason[:_LIM_EVENT]},
@@ -1009,6 +1058,21 @@ class OrgRuntime:
             logger.debug(
                 "[OrgRuntime] tracker unregister_chain failed",
                 exc_info=True,
+            )
+        # 触发该 chain 的 wait event（如果有），让 org_wait_for_deliverable
+        # 立即返回。event 一旦 set 便永久保留 set 状态，后到的 wait 会立即返回；
+        # 容量超限时按 LRU 弹出最早的（弹出前已 set，无需阻塞 wait）。
+        try:
+            ev = self._chain_events.get(chain_id)
+            if ev is not None:
+                ev.set()
+                # touch LRU
+                self._chain_events.move_to_end(chain_id)
+            while len(self._chain_events) > self._max_chain_events:
+                self._chain_events.popitem(last=False)
+        except Exception:
+            logger.debug(
+                "[OrgRuntime] chain_event set failed", exc_info=True,
             )
 
     def _cleanup_accepted_chain(
@@ -1906,6 +1970,21 @@ class OrgRuntime:
         if not node or node.status in (NodeStatus.FROZEN, NodeStatus.OFFLINE):
             return
 
+        # 触发节点 inbox event：让 org_wait_for_deliverable 阻塞中的 coordinator
+        # 立即跳出去处理新消息，避免下属在等 coordinator 决策时死等。
+        # 仅对 question/escalate/feedback 这类需要立即响应的消息触发；
+        # task_delivered 由 chain_event 通道触发，避免重复信号。
+        try:
+            if msg.msg_type in (
+                MsgType.QUESTION, MsgType.ESCALATE, MsgType.FEEDBACK,
+            ):
+                inbox_key = f"{org_id}:{node_id}"
+                ev = self._node_inbox_events.get(inbox_key)
+                if ev is not None:
+                    ev.set()
+        except Exception:
+            logger.debug("[OrgRuntime] inbox_event set failed", exc_info=True)
+
         # ---------- 已关闭任务链软屏障 ----------
         # 目的：任务被验收/打回/取消后，该 chain 的后续"非派工类"消息不应再
         # 唤醒 agent 的 ReAct 循环（这是用户反馈的"任务结束后仍自主派活"的
@@ -2633,6 +2712,29 @@ class OrgRuntime:
                 self._set_node_status(org, node, NodeStatus.IDLE, "soft_stop")
             if messenger:
                 messenger.clear_node_pending(node.id)
+        # Wake up any org_wait_for_deliverable / inbox waiters in this org
+        # so they unblock with "cancelled" semantics rather than waiting full
+        # timeout. Iterate over all chain/inbox events touching this org.
+        try:
+            org_prefix = f"{org_id}:"
+            for k in list(self._node_inbox_events.keys()):
+                if k.startswith(org_prefix):
+                    ev = self._node_inbox_events.get(k)
+                    if ev is not None:
+                        ev.set()
+            # chain events: we don't know which chain belongs to which org
+            # without walking ProjectStore, so set every event whose chain is
+            # already in this org's closed_chains bucket. Other waits will
+            # naturally timeout.
+            bucket = self._closed_chains.get(org_id) or {}
+            for cid in bucket:
+                ev = self._chain_events.get(cid)
+                if ev is not None:
+                    ev.set()
+        except Exception:
+            logger.debug(
+                "[OrgRuntime] soft_stop wake waiters failed", exc_info=True,
+            )
         self.get_event_store(org_id).emit("soft_stop", "user", {})
 
     def _has_active_delegations(self, org_id: str, root_node_id: str) -> bool:
@@ -2688,28 +2790,253 @@ class OrgRuntime:
         for tracker in self._trackers_for_org(org_id):
             tracker._touch()
 
+    def _collect_chain_subtree(
+        self, root_chain_id: str | None,
+    ) -> set[str]:
+        """Walk forward from ``root_chain_id`` collecting all descendant chains.
+
+        Only used by ``_maybe_finalize_tracker`` when
+        ``org_chain_parent_enforced`` is enabled. Returns the set of chain ids
+        in the subtree (including the root). Empty when ``root_chain_id`` is
+        ``None``.
+        """
+        if not root_chain_id:
+            return set()
+        subtree: set[str] = {root_chain_id}
+        # _chain_parent maps child→parent; reverse-walk by scanning entries.
+        # Sub-tree size is small in practice (<= 数十), so O(n*depth) is fine.
+        changed = True
+        while changed:
+            changed = False
+            for child, parent in self._chain_parent.items():
+                if parent in subtree and child not in subtree:
+                    subtree.add(child)
+                    changed = True
+        return subtree
+
+    def _is_subtree_fully_closed(
+        self, tracker: UserCommandTracker,
+    ) -> bool:
+        """Return True iff every chain in the tracker's chain-subtree is closed.
+
+        Falls back to the legacy ``open_chains`` check when
+        ``org_chain_parent_enforced`` is disabled or the tracker has no
+        ``root_chain_id`` yet (e.g. root never delegated).
+        """
+        try:
+            from openakita.config import settings as _settings
+            enforced = bool(getattr(
+                _settings, "org_chain_parent_enforced", True,
+            ))
+        except Exception:
+            enforced = True
+
+        if not enforced or not tracker.root_chain_id:
+            return not tracker.open_chains
+
+        subtree = self._collect_chain_subtree(tracker.root_chain_id)
+        bucket = self._closed_chains.get(tracker.org_id) or {}
+        # A chain in the subtree is "open" if it's not yet in closed_chains.
+        return all(cid in bucket for cid in subtree)
+
     def _maybe_finalize_tracker(
         self, tracker: UserCommandTracker,
     ) -> None:
-        """If completion conditions are met, set tracker.completed.
+        """If completion conditions are met, advance tracker state.
 
-        Completion = all chains closed + root IDLE + no active delegations
-        (which already covers root/non-root pending messages).
+        Two-phase completion when ``org_root_post_summary`` is enabled:
+          1. running → awaiting_summary: subtree closed + root IDLE + no
+             active delegations. Push a ``task_complete`` notification to
+             the root inbox so the root can produce a final summary ReAct.
+          2. awaiting_summary → done: same conditions hold for a *second*
+             time (root finished its summary ReAct and is back to IDLE).
+        When the flag is disabled, completion is set immediately on first
+        match (legacy behaviour).
         """
         if tracker.completed.is_set():
             return
-        if tracker.open_chains:
+        if not self._is_subtree_fully_closed(tracker):
+            self._log_finalize_decision(tracker, "subtree_not_closed")
             return
         org = self.get_org(tracker.org_id)
         if not org:
             tracker.completed.set()
+            self._log_finalize_decision(tracker, "no_org")
             return
         root = org.get_node(tracker.root_node_id)
         if not root or root.status != NodeStatus.IDLE:
+            self._log_finalize_decision(
+                tracker, "root_not_idle",
+                root_status=root.status.value if root else None,
+            )
             return
         if self._has_active_delegations(tracker.org_id, tracker.root_node_id):
+            self._log_finalize_decision(tracker, "active_delegations")
             return
+
+        try:
+            from openakita.config import settings as _settings
+            post_summary_enabled = bool(getattr(
+                _settings, "org_root_post_summary", True,
+            ))
+        except Exception:
+            post_summary_enabled = True
+
+        if not post_summary_enabled:
+            self._log_finalize_decision(tracker, "completed_legacy")
+            tracker.completed.set()
+            return
+
+        # Two-phase state machine.
+        if tracker.state == "running":
+            if self._push_root_summary_prompt(tracker):
+                tracker.state = "awaiting_summary"
+                tracker.summary_pushed_at = time.monotonic()
+                self._log_finalize_decision(tracker, "summary_pushed")
+            else:
+                # push failed (no children, no chains, or already pushed) →
+                # treat as legacy direct completion to avoid hanging.
+                tracker.completed.set()
+                self._log_finalize_decision(tracker, "completed_no_summary")
+            return
+
+        if tracker.state == "awaiting_summary":
+            tracker.state = "done"
+            tracker.completed.set()
+            self._log_finalize_decision(tracker, "completed_after_summary")
+            return
+
+        # Unknown state — defensive, complete to avoid hanging.
         tracker.completed.set()
+        self._log_finalize_decision(tracker, "completed_unknown_state")
+
+    def _log_finalize_decision(
+        self,
+        tracker: UserCommandTracker,
+        decision: str,
+        **extra: Any,
+    ) -> None:
+        """Structured debug log for tracker finalize decisions (L. observability).
+
+        Helps diagnose "why didn't / did this command finish" without trawling
+        events.jsonl. DEBUG level: opt-in by lowering openakita.orgs logger.
+        """
+        try:
+            subtree = self._collect_chain_subtree(tracker.root_chain_id)
+            payload = {
+                "org": tracker.org_id,
+                "root": tracker.root_node_id,
+                "cmd": tracker.command_id or "",
+                "decision": decision,
+                "state": tracker.state,
+                "open_chains": len(tracker.open_chains),
+                "subtree_size": len(subtree),
+                "subtree_closed": sum(
+                    1 for c in subtree
+                    if c in (self._closed_chains.get(tracker.org_id) or {})
+                ),
+            }
+            payload.update(extra)
+            logger.debug("[Finalize] %s", payload)
+        except Exception:
+            logger.debug("[Finalize] log emit failed", exc_info=True)
+
+    def _push_root_summary_prompt(
+        self, tracker: UserCommandTracker,
+    ) -> bool:
+        """Wake up the root node so it can produce a final summary ReAct.
+
+        Two side effects:
+          1. Push a ``task_complete`` inbox card (UI signal).
+          2. Schedule an ``_activate_and_run`` task that runs the root with
+             a "summarise everything" prompt. When that ReAct finishes the
+             root goes IDLE → ``_maybe_finalize_trackers_for_org`` runs
+             again → tracker advances ``awaiting_summary`` → ``done``.
+
+        Returns True on successful schedule. Debounced by
+        ``tracker.summary_pushed_at`` so repeated finalize attempts don't
+        re-wake the root.
+        """
+        if tracker.summary_pushed_at > 0:
+            return False
+        org = self.get_org(tracker.org_id)
+        if not org:
+            return False
+        root = org.get_node(tracker.root_node_id)
+        if not root:
+            return False
+
+        # Build a brief recap from the closed subtree (best-effort).
+        subtree = self._collect_chain_subtree(tracker.root_chain_id)
+        recap_parts: list[str] = []
+        try:
+            from openakita.orgs.project_store import ProjectStore as _PS
+            store = _PS(self._manager._org_dir(tracker.org_id))
+            for cid in list(subtree)[:10]:
+                task = store.find_task_by_chain(cid)
+                if task:
+                    title = (task.title or "")[:60]
+                    assignee = task.assignee_node_id or ""
+                    recap_parts.append(
+                        f"- {assignee}: {title} [{task.status.value}]"
+                    )
+        except Exception:
+            logger.debug(
+                "[PushSummary] project_store recap failed", exc_info=True,
+            )
+
+        recap = "\n".join(recap_parts) if recap_parts else (
+            "（无可识别的子任务记录，请直接根据已收到的下级 deliverable 汇总）"
+        )
+        body = (
+            "[用户指令最终汇总] 你最初接到的用户指令所触发的所有委派任务均已关闭。"
+            "请基于下级各自交付的成果，向用户输出一份完整的最终汇总——"
+            "覆盖每位下级的产出要点、关键文件/链接、已完成程度、"
+            "以及任何遗留风险或下一步建议。\n\n"
+            "已关闭的子任务概览：\n" + recap + "\n\n"
+            "重要约束：本次激活只用于产出汇总文本，"
+            "禁止再调 org_delegate_task / org_submit_deliverable / "
+            "org_wait_for_deliverable 等会重启任务流转的工具，"
+            "直接以自然语言回复用户即可。"
+        )
+
+        # Inbox card (UI/notification only).
+        try:
+            inbox = self._inbox
+            if inbox is not None:
+                inbox.push_task_complete(
+                    tracker.org_id,
+                    tracker.root_node_id,
+                    task_name=(tracker.command_id or "用户指令"),
+                    result_summary=body[:500],
+                )
+        except Exception:
+            logger.debug(
+                "[PushSummary] inbox push failed", exc_info=True,
+            )
+
+        # Actually wake the root for a summary ReAct.
+        try:
+            asyncio.create_task(
+                self._activate_and_run(
+                    org, root, body,
+                    activation_origin="delivery_followup",
+                ),
+                name=f"summary_followup:{tracker.org_id}:{tracker.root_node_id}",
+            )
+        except RuntimeError:
+            # No running loop — extremely unlikely in production but fall back
+            # to direct completion to avoid hanging tests.
+            logger.debug(
+                "[PushSummary] no running loop; mark completed directly",
+            )
+            return False
+        except Exception:
+            logger.debug(
+                "[PushSummary] schedule activate failed", exc_info=True,
+            )
+            return False
+        return True
 
     def _maybe_finalize_trackers_for_org(self, org_id: str) -> None:
         if not self._active_user_cmd:

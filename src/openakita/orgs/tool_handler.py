@@ -7,6 +7,7 @@ OrgToolHandler — 组织工具执行器
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -548,12 +549,75 @@ class OrgToolHandler:
     # Communication tools
     # ------------------------------------------------------------------
 
+    # ── 协调者反模式 heuristic guard ──
+    # 协调者（有下属的节点）经常错误地用 ``org_send_message(question)`` 给下级
+    # 派发任务，绕过 ``org_delegate_task`` 的 chain 注册，导致：
+    #   1) UserCommandTracker 看不到子任务，提前判定命令完成
+    #   2) 子任务无 deadline / 无验收闭环
+    # 触发条件：sender 有直属下级 + msg_type=question + content 含明显任务措辞。
+    # 触发后拒绝发送，引导改用 org_delegate_task。受
+    # ``org_question_task_guard`` flag 控制，可一键关闭。
+    _TASK_INTENT_PATTERNS: tuple[str, ...] = (
+        "撰写", "编写", "起草", "草拟", "拟定",
+        "优化", "改写", "重写",
+        "产出", "给出", "生成", "制作", "做一份", "做一版",
+        "完成", "完成一份", "完成一版",
+        "整理一份", "整理出", "提供一份", "提供一版",
+        "出一份", "出一版", "出一稿",
+        "写一篇", "写一份", "写一版", "写一稿",
+        "给我一份", "给我一稿", "给我一版",
+    )
+
+    def _looks_like_task_assignment(self, content: str) -> bool:
+        if not content:
+            return False
+        return any(p in content for p in self._TASK_INTENT_PATTERNS)
+
     async def _handle_org_send_message(
         self, args: dict, org_id: str, node_id: str
     ) -> str:
         messenger = self._runtime.get_messenger(org_id)
         if not messenger:
             return self._org_not_running_error(org_id)
+
+        # 反模式拦截：协调者用 question 派任务（受 flag 控制）
+        try:
+            from openakita.config import settings as _settings_sm
+            _guard_enabled = bool(getattr(
+                _settings_sm, "org_question_task_guard", True,
+            ))
+        except Exception:
+            _guard_enabled = True
+
+        if _guard_enabled:
+            raw_msg_type = args.get("msg_type", "question")
+            content_preview = (args.get("content") or "")[:2000]
+            org_for_guard = self._runtime.get_org(org_id)
+            sender_has_children = False
+            if org_for_guard:
+                try:
+                    sender_has_children = bool(
+                        org_for_guard.get_children(node_id)
+                    )
+                except Exception:
+                    sender_has_children = False
+            if (
+                raw_msg_type == "question"
+                and sender_has_children
+                and self._looks_like_task_assignment(content_preview)
+            ):
+                logger.info(
+                    "[ToolHandler] block question-as-task by=%s to=%s",
+                    node_id, args.get("to_node", ""),
+                )
+                return (
+                    "[org_send_message 拦截] 检测到你正用 msg_type=question "
+                    "向下属派发实际任务（含'撰写/优化/产出/完成'等任务措辞）。"
+                    "这会绕过任务链跟踪，导致系统认为你的指令已完成而提前结束。"
+                    "请改用 org_delegate_task 正式派发任务（一次只能派一个，"
+                    "可并行多次调用），并在下属交付后用 org_accept_deliverable "
+                    "验收。需要等下属交付时可调用 org_wait_for_deliverable。"
+                )
 
         metadata: dict = {}
 
@@ -672,11 +736,33 @@ class OrgToolHandler:
 
         org = self._runtime.get_org(org_id)
 
-        chain_id = (
-            args.get("task_chain_id")
-            or self._runtime.get_current_chain_id(org_id, node_id)
-            or _now_iso() + ":" + node_id[:8]
-        )
+        # chain_id 计算策略（受 ``org_chain_parent_enforced`` flag 控制）：
+        #   - flag=True（默认，新行为）：每次 delegate 一律新建子 chain，并把
+        #     新 chain 挂到 caller 的 current_chain 之下作为父子关系，便于
+        #     UserCommandTracker 沿子树关系判定真正的"全树关闭"。
+        #   - flag=False（旧行为）：caller 已有 current_chain 时复用，整棵
+        #     调用树共用一个 chain_id。这是出 bug 前的兼容路径。
+        # LLM 显式传入的 ``task_chain_id`` 始终优先（用于"重派/续派"场景的
+        # 主动指定 chain）。
+        try:
+            from openakita.config import settings as _settings_dt
+            _chain_parent_enforced = bool(getattr(
+                _settings_dt, "org_chain_parent_enforced", True,
+            ))
+        except Exception:
+            _chain_parent_enforced = True
+
+        caller_chain = self._runtime.get_current_chain_id(org_id, node_id)
+        explicit_chain = args.get("task_chain_id") or None
+        if explicit_chain:
+            chain_id = explicit_chain
+            parent_chain = caller_chain if caller_chain != chain_id else None
+        elif _chain_parent_enforced:
+            chain_id = _now_iso() + ":" + node_id[:8]
+            parent_chain = caller_chain or None
+        else:
+            chain_id = caller_chain or (_now_iso() + ":" + node_id[:8])
+            parent_chain = None
 
         # 软屏障：如果当前 chain 已被验收/打回/取消，禁止继续 delegate。
         # 这是防止"任务完成后组织继续自主派活"的核心拦截点之一。
@@ -835,6 +921,29 @@ class OrgToolHandler:
 
         messenger.bind_task_affinity(chain_id, to_node)
         self._runtime._chain_delegation_depth[chain_id] = chain_depth + 1
+
+        # 维护 chain 父子关系（org_chain_parent_enforced 路径下使用）。
+        # parent_chain 在上面的 chain_id 计算分支里已经决定：caller 已有
+        # current_chain 且本次新建子 chain 时 = caller_chain，其它路径 = None。
+        try:
+            if parent_chain and parent_chain != chain_id:
+                self._runtime._chain_parent.setdefault(chain_id, parent_chain)
+            else:
+                self._runtime._chain_parent.setdefault(chain_id, None)
+        except Exception:
+            logger.debug(
+                "[ToolHandler] chain_parent register failed", exc_info=True,
+            )
+
+        # 注册一个 chain 关闭事件，供 org_wait_for_deliverable 阻塞等待。
+        # 同一 chain 重复 delegate 时复用既有 event。
+        try:
+            if chain_id not in self._runtime._chain_events:
+                self._runtime._chain_events[chain_id] = asyncio.Event()
+        except Exception:
+            logger.debug(
+                "[ToolHandler] chain_event create failed", exc_info=True,
+            )
 
         # 用户命令生命周期追踪：如果当前 org 上存在进行中的 UserCommandTracker
         # 且本次派工源自 tracker 的 root 或其后代，则把新 chain 登记进 tracker，
@@ -1351,8 +1460,34 @@ class OrgToolHandler:
         to_node = args.get("to_node", "")
         deliverable = args.get("deliverable", "")
         summary = args.get("summary", "")
-        chain_id = args.get("task_chain_id") or _now_iso()
         raw_file_attachments = args.get("file_attachments") or []
+
+        # chain_id 强制策略（org_chain_parent_enforced=True 时启用）：
+        # submit 时必须使用 caller 当前 incoming chain（即上级派给我时的 chain）。
+        # 这是修复"content-op submit 时 LLM 漏传 task_chain_id 导致开新链、
+        # 整树 chain 关系断裂"的关键。LLM 传错时用 caller current_chain 强制覆盖
+        # 并 warn；caller 没有 current_chain 时 fall back 到 LLM 传值或新 chain
+        # （保持旧兼容路径，例如 root 节点意外调 submit 的边缘场景）。
+        try:
+            from openakita.config import settings as _settings_sd
+            _enforce_sd = bool(getattr(
+                _settings_sd, "org_chain_parent_enforced", True,
+            ))
+        except Exception:
+            _enforce_sd = True
+
+        explicit_chain_sd = args.get("task_chain_id") or None
+        caller_chain_sd = self._runtime.get_current_chain_id(org_id, node_id)
+        if _enforce_sd and caller_chain_sd:
+            if explicit_chain_sd and explicit_chain_sd != caller_chain_sd:
+                logger.warning(
+                    "[ToolHandler] submit_deliverable chain_id mismatch: "
+                    "node=%s LLM_passed=%s overridden_to=%s",
+                    node_id, explicit_chain_sd, caller_chain_sd,
+                )
+            chain_id = caller_chain_sd
+        else:
+            chain_id = explicit_chain_sd or _now_iso()
 
         if not to_node:
             org = self._runtime.get_org(org_id)
@@ -1676,6 +1811,144 @@ class OrgToolHandler:
                 logger.debug("cleanup_accepted_chain on reject failed: %s", exc)
 
         return f"已打回 {from_node} 的交付物，原因：{reason[:50]}"
+
+    async def _handle_org_wait_for_deliverable(
+        self, args: dict, org_id: str, node_id: str
+    ) -> str:
+        """阻塞等待下级任务交付，避免 org_list_delegated_tasks 轮询触发死循环。
+
+        多事件 wait 防止死锁：
+          - 任一指定 chain 关闭（被 accept/reject/cancel）
+          - 节点 inbox 收到 question/escalate（需要 coordinator 立即处理）
+          - timeout 到期（默认 60s，最大 300s）
+          - 整个组织被 soft-stop / 命令被取消
+        所有路径出口都会 ``_touch_trackers_for_org``，避免命令看门狗误判。
+        """
+        try:
+            from openakita.config import settings as _s_wait
+            if not getattr(_s_wait, "org_wait_primitive_enabled", True):
+                return (
+                    "[org_wait_for_deliverable 已禁用] "
+                    "请改用 org_list_delegated_tasks 查询进度。"
+                )
+        except Exception:
+            pass
+
+        try:
+            timeout = int(args.get("timeout") or 60)
+        except (TypeError, ValueError):
+            timeout = 60
+        timeout = max(1, min(300, timeout))
+
+        runtime = self._runtime
+        my_chain = runtime.get_current_chain_id(org_id, node_id)
+        explicit_chains_raw = args.get("chain_ids")
+        if isinstance(explicit_chains_raw, list):
+            explicit_chains = [
+                c for c in explicit_chains_raw if isinstance(c, str) and c
+            ]
+        else:
+            explicit_chains = []
+
+        if explicit_chains:
+            target_chains = explicit_chains
+        else:
+            # 反查 _chain_parent：所有以 my_chain 为父的子 chain
+            target_chains = [
+                c for c, p in runtime._chain_parent.items() if p == my_chain
+            ]
+
+        # 过滤掉已关闭的 chain（不再有意义）
+        open_targets = [
+            c for c in target_chains
+            if not runtime.is_chain_closed(org_id, c)
+        ]
+        if not open_targets:
+            return (
+                "没有需要等待的未关闭子链。可能下级已全部交付——"
+                "请检查 inbox 中的 deliverable 消息后用 org_accept_deliverable 验收，"
+                "或调用 org_list_delegated_tasks 确认状态。"
+            )
+
+        # 准备 chain events（缺失时按需补建）
+        chain_events: list[tuple[str, asyncio.Event]] = []
+        for c in open_targets:
+            ev = runtime._chain_events.get(c)
+            if ev is None:
+                ev = asyncio.Event()
+                runtime._chain_events[c] = ev
+            chain_events.append((c, ev))
+
+        # 节点 inbox 事件：每次 wait 调用都重置，只关心"等待期内"的新消息
+        inbox_key = f"{org_id}:{node_id}"
+        inbox_event = runtime._node_inbox_events.get(inbox_key)
+        if inbox_event is None:
+            inbox_event = asyncio.Event()
+            runtime._node_inbox_events[inbox_key] = inbox_event
+        inbox_event.clear()
+
+        runtime._touch_trackers_for_org(org_id)
+
+        waiters: list[asyncio.Task] = []
+        for c, ev in chain_events:
+            waiters.append(
+                asyncio.create_task(ev.wait(), name=f"wait_chain:{c[:24]}")
+            )
+        waiters.append(
+            asyncio.create_task(inbox_event.wait(), name=f"wait_inbox:{node_id}")
+        )
+
+        try:
+            done, _pending = await asyncio.wait(
+                waiters, timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for w in waiters:
+                if not w.done():
+                    w.cancel()
+            for w in waiters:
+                try:
+                    await w
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+        runtime._touch_trackers_for_org(org_id)
+
+        # 复检 chain 状态（asyncio.wait 返回时可能已有多个 chain 同时关闭）
+        closed_chains_now = [
+            c for c, _ in chain_events
+            if runtime.is_chain_closed(org_id, c)
+        ]
+        inbox_triggered = inbox_event.is_set()
+
+        if not done:
+            return (
+                f"[等待超时] {timeout}s 内未收到下级新交付/新消息。"
+                f"未关闭子链：{open_targets[:5]}{'...' if len(open_targets) > 5 else ''}。"
+                "建议：用 org_list_delegated_tasks 查看具体进度，"
+                "或继续 org_wait_for_deliverable 再等一轮；"
+                "若已等待较久且确实需要推进，可向用户输出阶段性汇总。"
+            )
+
+        parts: list[str] = []
+        if closed_chains_now:
+            preview = closed_chains_now[:5]
+            extra = "..." if len(closed_chains_now) > 5 else ""
+            parts.append(
+                f"以下子链已关闭，请检查相关 deliverable：{preview}{extra}"
+            )
+        if inbox_triggered:
+            parts.append(
+                "下级有新消息（question/escalate）需要你立即响应——"
+                "请先处理 inbox 中的消息，处理完可继续 org_wait_for_deliverable 等剩余子链。"
+            )
+        if not parts:
+            parts.append(
+                "[wait 已返回] 未识别到具体事件来源，可能是命令被取消或事件被竞态消化。"
+                "请检查组织状态后决定下一步。"
+            )
+        return " | ".join(parts)
 
     # ------------------------------------------------------------------
     # Meeting tools

@@ -111,6 +111,25 @@ UNPRODUCTIVE_ADMIN_TOOLS = frozenset(
     }
 )
 
+# Polling/waiting tools used by org coordinators that are *expected* to be
+# called repeatedly while waiting for sub-agents to deliver. Flagging these
+# as a "tool dead loop" (the historical default) caused legitimate CMO/CTO
+# coordinators to be TERMINATEd. When ``org_supervisor_poll_whitelist`` is
+# enabled, signature_repeat checks for these tools:
+#   - use a higher repeat threshold (POLL_REPEAT_MULTIPLIER × normal)
+#   - cap intervention at NUDGE (never STRATEGY_SWITCH / TERMINATE)
+#   - inject a softer prompt suggesting ``org_wait_for_deliverable``
+POLL_FRIENDLY_TOOLS = frozenset(
+    {
+        "org_list_delegated_tasks",
+        "org_list_my_tasks",
+        "org_get_task_progress",
+        "org_get_node_status",
+        "org_wait_for_deliverable",
+    }
+)
+POLL_REPEAT_MULTIPLIER = 2  # raise repeat thresholds by this factor
+
 
 class RuntimeSupervisor:
     """
@@ -350,11 +369,32 @@ class RuntimeSupervisor:
             )
         return ""
 
+    @staticmethod
+    def _is_poll_friendly(tool_name: str) -> bool:
+        """Return True iff the tool is in POLL_FRIENDLY_TOOLS and the
+        ``org_supervisor_poll_whitelist`` flag is enabled.
+
+        Reading config inline (lazy import) so that tests can monkeypatch
+        ``openakita.config.settings`` without re-importing the supervisor
+        module.
+        """
+        if not tool_name or tool_name not in POLL_FRIENDLY_TOOLS:
+            return False
+        try:
+            from openakita.config import settings as _s
+            return bool(getattr(_s, "org_supervisor_poll_whitelist", True))
+        except Exception:
+            return True
+
     def _check_signature_repeat(self, iteration: int) -> Intervention | None:
         """签名重复检测：工具名维度优先于精确签名。
 
         三级干预：WARN(2次) -> STRATEGY_SWITCH(3次) -> TERMINATE(4次)
         TERMINATE 级别的检测优先执行，避免低级别干预抢先 return。
+
+        组织协调者轮询白名单（``POLL_FRIENDLY_TOOLS``）：对
+        ``org_list_delegated_tasks`` 等合法等待工具放宽阈值且最高仅 NUDGE，
+        防止协调者因等下属交付而被误判 TERMINATE。
         """
         recent = self._signature_history[-TOOL_THRASH_WINDOW:]
         if len(recent) < self._signature_repeat_warn:
@@ -375,8 +415,18 @@ class RuntimeSupervisor:
             most_common_sig.split("(")[0] if "(" in most_common_sig else most_common_sig
         )
 
+        # 白名单豁免：top 工具是 poll-friendly 且未达到放宽后的阈值时直接放行；
+        # 达到放宽阈值时强制只发 NUDGE，绝不 STRATEGY_SWITCH/TERMINATE。
+        top_is_poll = self._is_poll_friendly(top_name)
+        sig_is_poll = self._is_poll_friendly(_most_common_tool)
+        # poll-friendly tools 用放宽后的 warn 阈值触发 NUDGE；TERMINATE / STRATEGY_SWITCH
+        # 路径直接通过 ``not top_is_poll`` / ``not sig_is_poll`` 兜底跳过，无需单独阈值。
+        poll_warn_threshold = (
+            self._signature_repeat_warn * POLL_REPEAT_MULTIPLIER
+        )
+
         # --- TERMINATE checks first (highest severity) ---
-        if top_count >= self._signature_repeat_terminate:
+        if top_count >= self._signature_repeat_terminate and not top_is_poll:
             return Intervention(
                 level=InterventionLevel.TERMINATE,
                 pattern=PatternType.SIGNATURE_REPEAT,
@@ -387,7 +437,7 @@ class RuntimeSupervisor:
                 should_terminate=True,
             )
 
-        if most_common_count >= self._signature_repeat_terminate:
+        if most_common_count >= self._signature_repeat_terminate and not sig_is_poll:
             return Intervention(
                 level=InterventionLevel.TERMINATE,
                 pattern=PatternType.SIGNATURE_REPEAT,
@@ -395,7 +445,7 @@ class RuntimeSupervisor:
                 should_terminate=True,
             )
 
-        if most_common_count >= SIGNATURE_REPEAT_STRATEGY_SWITCH:
+        if most_common_count >= SIGNATURE_REPEAT_STRATEGY_SWITCH and not sig_is_poll:
             return Intervention(
                 level=InterventionLevel.STRATEGY_SWITCH,
                 pattern=PatternType.SIGNATURE_REPEAT,
@@ -428,7 +478,26 @@ class RuntimeSupervisor:
                 )
 
         # --- NUDGE checks (lower severity) ---
-        if top_count >= self._signature_repeat_warn:
+        # poll-friendly 路径：threshold 放宽 POLL_REPEAT_MULTIPLIER 倍。
+        if top_is_poll and top_count >= poll_warn_threshold:
+            return Intervention(
+                level=InterventionLevel.NUDGE,
+                pattern=PatternType.SIGNATURE_REPEAT,
+                message=(
+                    f"Poll-friendly tool '{top_name}' called {top_count} times — "
+                    "suggest org_wait_for_deliverable"
+                ),
+                should_inject_prompt=True,
+                prompt_injection=(
+                    f"[系统提示] 你已连续 {top_count} 次调用 {top_name} 轮询下属进度。"
+                    "建议改用 org_wait_for_deliverable 阻塞等待下属交付，"
+                    "可避免无效轮询。如果下属已全部交付，请直接 org_accept_deliverable "
+                    "并向用户输出汇总，不要再轮询。"
+                ),
+                throttled_tool_names=[top_name],
+            )
+
+        if top_count >= self._signature_repeat_warn and not top_is_poll:
             return Intervention(
                 level=InterventionLevel.NUDGE,
                 pattern=PatternType.SIGNATURE_REPEAT,
@@ -443,7 +512,7 @@ class RuntimeSupervisor:
                 throttled_tool_names=[top_name],
             )
 
-        if most_common_count >= self._signature_repeat_warn:
+        if most_common_count >= self._signature_repeat_warn and not sig_is_poll:
             _sig_tool = most_common_sig.split("(")[0] if "(" in most_common_sig else top_name
             return Intervention(
                 level=InterventionLevel.NUDGE,
