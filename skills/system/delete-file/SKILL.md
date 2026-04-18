@@ -13,9 +13,9 @@ delete文件或空目录。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| path | string | 是 | 要delete的文件或空目录路径 |
+| path | string | Yes | 要delete的文件或空Directory path |
 
 ## Examples
 
@@ -32,11 +32,11 @@ delete文件或空目录。
 ## Notes
 
 - 仅delete文件或空目录
-- 非空目录会被拒绝，需使用 run_shell 执行delete命令
+- 非空目录会被拒绝，需Use run_shell Executedelete命令
 - 路径受安全策略保护
 
 ## Related Skills
 
 - `write-file`: create文件
-- `list-directory`: 查看目录内容
+- `list-directory`: View目录内容
 - `run-shell`: 递归delete非空目录

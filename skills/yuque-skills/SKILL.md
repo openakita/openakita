@@ -12,12 +12,12 @@ metadata:
 ## When to Use
 
 - When the user needssearch语雀中的文档和知识
-- 需要create、编辑、发布语雀文档
-- 需要生成周报/月报并发布到语雀
+- 需要create、Edit、发布语雀文档
+- 需要Generation周报/月报并发布到语雀
 - 需要manage知识库结构（目录、分类）
 - 需要在团队知识库中进行协作
 - 需要从语雀导出文档或同步内容
-- 需要统计知识库的使用数据
+- 需要统计知识库的Use数据
 
 ---
 
@@ -25,14 +25,14 @@ metadata:
 
 ### 必需配置
 
-| 配置项 | 说明 |
+| 配置项 | Description |
 |--------|------|
 | `YUQUE_TOKEN` | 语雀 API Token |
-| `YUQUE_HOST` | 语雀 API 地址（默认 `https://www.yuque.com/api/v2`） |
+| `YUQUE_HOST` | 语雀 API 地址（Default `https://www.yuque.com/api/v2`） |
 
 **get Token：**
 
-1. 登录语雀 → 点击头像 → 设置 → Token
+1. 登录语雀 → Click头像 → Set → Token
 2. 或访问：https://www.yuque.com/settings/tokens
 3. create新 Token，勾选所需权限
 
@@ -49,7 +49,7 @@ YUQUE_HOST=https://www.yuque.com/api/v2
 
 | 依赖 | 用途 | install方式 |
 |------|------|---------|
-| `httpx` | HTTP API 调用 | `pip install httpx` |
+| `httpx` | HTTP API Call | `pip install httpx` |
 
 ### 可选依赖
 
@@ -70,7 +70,7 @@ curl -s -H "X-Auth-Token: $YUQUE_TOKEN" "https://www.yuque.com/api/v2/user" | py
 
 ### 语雀核心概念
 
-| 概念 | 英文 | 说明 |
+| 概念 | 英文 | Description |
 |------|------|------|
 | 用户 | User | 个人账号 |
 | 团队 | Group | 组织/团队空间 |
@@ -79,7 +79,7 @@ curl -s -H "X-Auth-Token: $YUQUE_TOKEN" "https://www.yuque.com/api/v2/user" | py
 | 目录 | TOC | 知识库内的文档组织结构 |
 | 协作者 | Collaborator | 知识库的共同维护者 |
 
-### API 基础调用
+### API 基础Call
 
 所有 API 请求需携带 Token：
 
@@ -105,11 +105,11 @@ async def yuque_api(method, path, data=None):
 
 ### 权限说明
 
-| 权限 | 可执行操作 |
+| 权限 | 可Execute操作 |
 |------|-----------|
-| 只读 | search、查看文档、导出 |
-| 读写 | create、编辑、delete文档 |
-| manage | 知识库设置、成员manage |
+| 只读 | search、View文档、导出 |
+| 读写 | create、Edit、delete文档 |
+| manage | 知识库Set、成员manage |
 
 ---
 
@@ -122,7 +122,7 @@ async def yuque_api(method, path, data=None):
 ```python
 user = await yuque_api("GET", "/user")
 user_login = user["login"]
-print(f"当前用户: {user['name']} ({user_login})")
+print(f"current user: {user['name']} ({user_login})")
 ```
 
 **步骤 2 — search文档**
@@ -154,11 +154,11 @@ async def get_doc(repo_slug, doc_slug):
     }
 ```
 
-**步骤 4 — 返回search结果摘要**
+**步骤 4 — Returnssearch结果摘要**
 
 ---
 
-### Workflow 2: 周报/月报生成
+### Workflow 2: 周报/月报Generation
 
 **步骤 1 — 收集周报内容**
 
@@ -172,11 +172,11 @@ async def get_doc(repo_slug, doc_slug):
 | 风险与阻塞 | 需要协助的问题 |
 | 数据指标 | 关键 KPI 变化 |
 
-**步骤 2 — 生成 Markdown 内容**
+**步骤 2 — Generation Markdown 内容**
 
 ```python
 def generate_weekly_report(data):
-    """生成周报 Markdown"""
+    """Generation周报 Markdown"""
     report = f"""# 周报 | {data['date_range']}
 
 ## ✅ 本周完成
@@ -218,7 +218,7 @@ async def publish_report(repo_slug, title, content):
     return result
 ```
 
-**步骤 4 — 返回文档链接**
+**步骤 4 — Returns文档链接**
 
 ---
 
@@ -345,7 +345,7 @@ async def list_groups():
 
 ```python
 async def generate_team_report(group_login):
-    """生成团队知识库使用报告"""
+    """Generation团队知识库Use报告"""
     repos = await list_repos(group_login=group_login)
 
     report = {
@@ -449,7 +449,7 @@ async def export_repo_to_local(repo_namespace, output_dir):
 
 ### 周报输出
 
-生成后返回发布链接和摘要。
+Generation后Returns发布链接和摘要。
 
 ### 知识库统计
 
@@ -471,23 +471,23 @@ async def export_repo_to_local(repo_namespace, output_dir):
 
 ### 1. Token 权限不足
 
-**症状**：API 返回 401 或 403
+**症状**：API Returns 401 或 403
 **解决**：
 - 确认 Token 有读写权限
 - 企业版语雀可能需要manage员授权
-- 检查 Token 是否过期
+- 检查 Token YesNo过期
 
 ### 2. namespace 格式错误
 
 语雀的 namespace 格式为 `{user_or_group_login}/{repo_slug}`，例如 `myteam/dev-docs`。
 
-**错误**：使用 repo 名称代替 slug
-**正确**：使用 URL 中的 slug
+**错误**：Use repo 名称代替 slug
+**正确**：Use URL 中的 slug
 
 ### 3. Markdown 与 HTML 格式混淆
 
 语雀文档有两种内容格式：
-- `body`：Markdown 格式（create时使用 `format: "markdown"`）
+- `body`：Markdown 格式（create时Use `format: "markdown"`）
 - `body_html`：HTML 格式
 
 create文档时需明确指定 `format` 参数。
@@ -509,7 +509,7 @@ for doc in docs:
 
 ### 5. 文档 slug 冲突
 
-同一知识库中 slug 必须唯一。create文档前先检查是否已存在：
+同一知识库中 slug 必须唯一。create文档前先检查YesNo已存在：
 
 ```python
 async def safe_create_doc(repo_namespace, title, body):
@@ -522,24 +522,24 @@ async def safe_create_doc(repo_namespace, title, body):
 
 ### 6. 企业版与个人版 API 差异
 
-企业版语雀的部分 API 路径和参数可能有差异：
+企业版语雀的Partial API 路径和参数可能有差异：
 - Host 不同（`your-company.yuque.com`）
-- 部分接口需要额外权限
+- Partial接口需要额外权限
 - 团队manage接口更丰富
 
 ### 7. 大文档性能问题
 
 超过 5 万字的文档在create/update时可能超时。建议：
 - 拆分为多篇文档
-- 使用分页上传
-- 图片先上传到 CDN 再引用
+- Use分页Upload
+- 图片先Upload到 CDN 再引用
 
 ---
 
 ## EXTEND.md 扩展
 
 用户可在技能同目录下create `EXTEND.md` 添加：
-- 默认知识库 namespace
+- Default知识库 namespace
 - 团队的语雀 Host 地址
 - 周报/月报模板定制
 - 常用知识库列表和别名

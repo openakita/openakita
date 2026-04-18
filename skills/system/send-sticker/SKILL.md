@@ -7,7 +7,7 @@ tool-name: send_sticker
 category: Communication
 ---
 
-# 发送表情包
+# Send表情包
 
 ## When to Use
 
@@ -17,7 +17,7 @@ category: Communication
 - 早安/晚安问候时（配合活人感模式）
 - 庆祝任务成功完成
 
-## 何时不使用
+## 何时不Use
 
 - 商务角色（sticker_preference=never）
 - 用户明确表示不喜欢表情包
@@ -26,11 +26,11 @@ category: Communication
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |------|------|------|------|
-| query | string | 否 | 搜索关键词（如：鼓掌/开心/加油） |
-| mood | string | 否 | 情绪类型，与 query 二选一 |
-| category | string | 否 | 限定分类（如：猫/程序员） |
+| query | string | No | Search keyword（如：鼓掌/开心/加油） |
+| mood | string | No | 情绪类型，与 query 二选一 |
+| category | string | No | 限定分类（如：猫/程序员） |
 
 ## mood 类型
 
@@ -47,8 +47,8 @@ category: Communication
 
 | 角色 | 频率 | 偏好 |
 |------|------|------|
-| 默认 | 偶尔 | 通用 |
-| 商务 | 不使用 | - |
+| Default | 偶尔 | 通用 |
+| 商务 | 不Use | - |
 | 技术 | 偶尔 | 程序员 |
 | 女友 | 频繁 | 可爱/心心 |
 | 男友 | 适中 | 搞笑 |
@@ -59,10 +59,10 @@ category: Communication
 ## Examples
 
 ```
-# 按情绪发送
+# 按情绪Send
 send_sticker(mood="happy")
 
-# 按关键词搜索
+# 按关键词Search
 send_sticker(query="加油")
 
 # 限定分类

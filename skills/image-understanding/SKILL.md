@@ -9,17 +9,17 @@ metadata:
 
 # 图片理解技能 (Image Understanding)
 
-使用 **Dashscope（通义千问）** 视觉模型分析图片，支持详细描述、OCR文字提取、物体识别和图片问答。
+Use **Dashscope（通义千问）** 视觉模型Analyze图片，Supports详细描述、OCR文字Extract、物体识别和图片问答。
 
 ---
 
 ## Introduction
 
-图片理解技能是一个强大的视觉分析工具，通过调用 Dashscope（阿里云通义千问）的视觉大模型（qwen-vl-plus、qwen-vl-max），让 AI 能够理解和分析图像内容。
+图片理解技能Yes一个强大的视觉Analyze工具，ViaCall Dashscope（阿里云通义千问）的视觉大模型（qwen-vl-plus、qwen-vl-max），让 AI 能够理解和Analyze图像内容。
 
 **核心功能：**
 - 🖼️ 图片内容详细描述
-- 🔤 文字提取（OCR）
+- 🔤 文字Extract（OCR）
 - 🎯 物体识别
 - 💬 图片问答
 
@@ -33,14 +33,14 @@ metadata:
 - 手写笔记数字化
 
 ### 🛒 工作应用
-- 产品图片分析
-- 竞品图片提取信息
+- 产品图片Analyze
+- 竞品图片Extract信息
 - 图表数据解读
 
 ### 💬 图片问答
-- 针对图片提问获取答案
+- 针对图片提问Get答案
 - 理解复杂场景细节
-- 技术图纸逻辑分析
+- 技术图纸逻辑Analyze
 
 ---
 
@@ -52,19 +52,19 @@ metadata:
 pip install requests
 ```
 
-### 2️⃣ 获取 Dashscope API Key
+### 2️⃣ Get Dashscope API Key
 
 1. 访问 [Dashscope 控制台](https://dashscope.console.aliyun.com/)
-2. 创建账号并开通服务
-3. 创建 API Key
+2. Create账号并开通服务
+3. Create API Key
 
 ### 3️⃣ 配置 API Key
 
 ```bash
-# 方式一：环境变量（推荐）
+# 方式一：环境变量（Recommendations）
 set DASHSCOPE_API_KEY=sk-your-api-key-here
 
-# 方式二：运行时传入（见下方）
+# 方式二：Run时传入（见下方）
 ```
 
 ---
@@ -79,22 +79,22 @@ python scripts/image_understanding.py -i 图片路径 [选项]
 
 ### 常用参数
 
-| 参数 | 说明 |
+| Parameter | Description |
 |------|------|
-| `-i, --image` | **必填** 图片路径或URL |
-| `-m, --model` | 模型选择：`qwen-vl-plus`(默认) 或 `qwen-vl-max` |
-| `-p, --custom-prompt` | 自定义分析提示词 |
-| `-e, --extract-text` | 提取文字(OCR) |
+| `-i, --image` | **Required** 图片路径或URL |
+| `-m, --model` | 模型选择：`qwen-vl-plus`(Default) 或 `qwen-vl-max` |
+| `-p, --custom-prompt` | 自定义Analyze提示词 |
+| `-e, --extract-text` | Extract文字(OCR) |
 | `-o, --identify-objects` | 识别物体 |
 | `--compact` | 输出紧凑JSON |
 
-### 使用示例
+### Usage Examples
 
 ```bash
-# 1. 基本描述（默认）
+# 1. 基本描述（Default）
 python scripts/image_understanding.py -i photo.jpg
 
-# 2. 提取文字
+# 2. Extract文字
 python scripts/image_understanding.py -i screenshot.png -e
 
 # 3. 识别物体
@@ -103,13 +103,13 @@ python scripts/image_understanding.py -i photo.jpg -o
 # 4. 自定义问答
 python scripts/image_understanding.py -i photo.jpg -p "这个产品多少钱？"
 
-# 5. 使用更强的模型
+# 5. Use更强的模型
 python scripts/image_understanding.py -i photo.jpg -m qwen-vl-max
 
 # 6. 网络图片
 python scripts/image_understanding.py -i "https://example.com/image.png" -e
 
-# 7. 设置API Key后运行
+# 7. SetAPI Key后Run
 set DASHSCOPE_API_KEY=sk-xxx
 python scripts/image_understanding.py -i photo.jpg
 ```
@@ -124,23 +124,23 @@ python scripts/image_understanding.py -i photo.jpg
 - 避免模糊或过暗的图片
 
 ### 💡 提示词技巧
-- 使用具体、明确的指令
+- Use具体、明确的指令
 - 指定关注点（如"重点关注价格标签"）
 - 多语言场景可混合中英文
 
 ### ✅ 结果验证
 - 重要信息建议人工复核
 - 涉及专业领域需专家确认
-- 妥善保存原始图片和分析结果
+- 妥善Save原始图片和Analyze结果
 
 ---
 
 ## API 配置
 
-| 配置项 | 值 |
+| 配置项 | Value |
 |--------|-----|
 | 服务商 | Dashscope (通义千问) |
-| 默认模型 | qwen-vl-plus |
+| Default模型 | qwen-vl-plus |
 | 高级模型 | qwen-vl-max |
 | API Base | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | 环境变量 | `DASHSCOPE_API_KEY` |
@@ -151,11 +151,11 @@ python scripts/image_understanding.py -i photo.jpg
 
 | 问题 | 解决方案 |
 |------|----------|
-| API Key 错误 | 检查 `DASHSCOPE_API_KEY` 是否正确 |
-| 图片格式不支持 | 使用 PNG/JPG/GIF/WEBP/BMP 格式 |
-| 网络超时 | 检查网络连接，尝试使用代理 |
+| API Key 错误 | 检查 `DASHSCOPE_API_KEY` YesNo正确 |
+| 图片格式不Supports | Use PNG/JPG/GIF/WEBP/BMP 格式 |
+| 网络超时 | 检查网络连接，尝试Use代理 |
 | 识别不准确 | 提高图片质量，添加更详细的提示词 |
 
 ---
 
-运行 `python scripts/image_understanding.py --help` 查看完整帮助
+Run `python scripts/image_understanding.py --help` ViewFull帮助

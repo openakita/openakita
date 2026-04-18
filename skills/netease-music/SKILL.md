@@ -9,18 +9,18 @@ metadata:
 
 # NetEase Music
 
-通过 ncm-cli 控制网易云音乐，支持搜索、播放、歌单管理和智能推荐。
+Via ncm-cli 控制网易云音乐，SupportsSearch、播放、歌单Manage和智能Recommendations。
 
 ## Installation
 
 npm install -g @music163/ncm-cli
 ncm-cli configure
 
-按向导输入 App ID 和 Private Key（需在 https://developer.music.163.com 入驻获取）。
+按向导输入 App ID 和 Private Key（需在 https://developer.music.163.com 入驻Get）。
 
 ## 登录
 
-ncm-cli login — 使用网易云音乐 App 扫码授权。
+ncm-cli login — Use网易云音乐 App 扫码授权。
 
 ## 三层技能架构
 
@@ -28,14 +28,14 @@ ncm-cli login — 使用网易云音乐 App 扫码授权。
 安装配置 ncm-cli 工具。
 
 ### netease-music-cli
-基础操作：搜索歌曲/歌单/专辑、播放控制、歌单管理、获取每日推荐。
+基础操作：Search歌曲/歌单/专辑、播放控制、歌单Manage、Get每日Recommendations。
 
 ### netease-music-assistant
-智能推荐：基于红心歌曲分析偏好，自动搜索并推荐个性化音乐。
+智能Recommendations：Based on红心歌曲Analyze偏好，AutomaticSearch并Recommendations个性化音乐。
 
-## 使用示例
+## Usage Examples
 
-搜索歌曲、播放音乐、创建歌单、获取推荐等，均可用自然语言描述。
+Search歌曲、播放音乐、Create歌单、GetRecommendations等，均可用自然语言描述。
 
 ## Pre-built Scripts
 

@@ -13,14 +13,14 @@ category: System
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| enabled | boolean | 是 | 是否启用 thinking 模式 |
-| reason | string | 是 | 简要说明原因 |
+| enabled | boolean | Yes | YesNoEnable thinking 模式 |
+| reason | string | Yes | 简要说明原因 |
 
 ## Notes
 
-- 默认状态：启用
-- 可临时关闭的场景：简单提醒、简单问候、快速查询
-- 完成后会自动恢复默认启用状态
-- 复杂任务建议保持启用
+- Default状态：Enable
+- 可临时Close的场景：简单提醒、简单问候、Quick查询
+- 完成后会AutomaticResumeDefaultEnable状态
+- 复杂任务建议保持Enable

@@ -13,12 +13,12 @@ get技能的参考文档。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| skill_name | string | 是 | 技能名称 |
-| ref_name | string | 否 | 参考文档名称，默认 REFERENCE.md |
+| skill_name | string | Yes | Skill name |
+| ref_name | string | No | 参考文档名称，Default REFERENCE.md |
 
 ## Related Skills
 
 - `get-skill-info`: get主要说明
-- `run-shell`: 执行按技能指令编写的代码
+- `run-shell`: Execute按技能指令编写的代码

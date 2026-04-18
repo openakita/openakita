@@ -13,16 +13,16 @@ list所有配置的 MCP 服务器及其连接状态。
 
 ## Parameters
 
-无参数。
+No parameters.
 
 ## Returns
 
-- 服务器标识符
+- Server identifier
 - 服务器名称
 - 连接状态
 - 可用工具数量
 
 ## Related Skills
 
-- `call-mcp-tool`: 调用 MCP 工具
-- `get-mcp-instructions`: get使用说明
+- `call-mcp-tool`: Call MCP tool
+- `get-mcp-instructions`: getUse说明

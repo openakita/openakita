@@ -16,14 +16,14 @@ metadata:
 - 工业视觉检测
 - 多行业场景覆盖
 - 实时监控与告警
-- 视觉分析报告
+- 视觉Analyze报告
 
 ## Pre-built Scripts
 
 ### scripts/yijian.py
-工业视觉检测（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+工业视觉检测（百度千帆 AppBuilder），需Set APPBUILDER_TOKEN。
 
 ```bash
 python3 scripts/yijian.py detect --image /path/to/product.jpg
-python3 scripts/yijian.py report "产线质检分析"
+python3 scripts/yijian.py report "产线质检Analyze"
 ```

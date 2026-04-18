@@ -9,16 +9,16 @@ category: File System
 
 # Edit File
 
-精确字符串替换式编辑文件。
+精确字符串替换式Edit文件。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| path | string | 是 | 文件路径 |
-| old_string | string | 是 | 要替换的原文本（须精确匹配） |
-| new_string | string | 是 | 替换后的新文本 |
-| replace_all | boolean | 否 | 是否替换所有匹配项（默认 false） |
+| path | string | Yes | File path |
+| old_string | string | Yes | 要替换的原文本（须精确匹配） |
+| new_string | string | Yes | 替换后的新文本 |
+| replace_all | boolean | No | YesNo替换所有匹配项（Default false） |
 
 ## Examples
 
@@ -43,14 +43,14 @@ category: File System
 
 ## Notes
 
-- 修改前请先用 read_file 确认文件内容
+- 修改前请先用 read_file 确认File content
 - old_string 必须精确匹配（包括缩进和空格）
 - 如果 old_string 匹配多处且未设 replace_all，会报错
-- 自动兼容 Windows CRLF 和 Unix LF 换行符
-- 优先使用此工具而非 write_file 来编辑现有文件
+- Automatic兼容 Windows CRLF 和 Unix LF 换行符
+- 优先Use此工具而非 write_file 来Edit现有文件
 
 ## Related Skills
 
-- `read-file`: 先读取文件确认内容
+- `read-file`: 先Read文件确认内容
 - `write-file`: create新文件或完全覆盖
-- `grep`: search要编辑的内容位置
+- `grep`: search要Edit的内容位置

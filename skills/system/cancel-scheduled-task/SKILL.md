@@ -13,20 +13,20 @@ category: Scheduled Tasks
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| task_id | string | 是 | 任务 ID |
+| task_id | string | Yes | 任务 ID |
 
 ## Important
 
 **操作区分**：
 - 用户说"取消/delete任务" → 用此工具
-- 用户说"关闭提醒" → 用 `update_scheduled_task` 设 notify=false
-- 用户说"暂停任务" → 用 `update_scheduled_task` 设 enabled=false
+- 用户说"Close提醒" → 用 `update_scheduled_task` 设 notify=false
+- 用户说"Pause任务" → 用 `update_scheduled_task` 设 enabled=false
 
-**注意**：delete后无法恢复！
+**注意**：delete后无法Resume！
 
 ## Related Skills
 
 - `list-scheduled-tasks`: get任务 ID
-- `update-scheduled-task`: 修改任务设置
+- `update-scheduled-task`: 修改任务Set

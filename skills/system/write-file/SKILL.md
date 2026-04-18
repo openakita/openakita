@@ -13,14 +13,14 @@ Write content to a file.
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| path | string | 是 | 文件路径 |
-| content | string | 是 | 文件内容 |
+| path | string | Yes | File path |
+| content | string | Yes | File content |
 
 ## Examples
 
-**创建配置文件**:
+**Create配置文件**:
 ```json
 {
   "path": "config.json",
@@ -28,7 +28,7 @@ Write content to a file.
 }
 ```
 
-**写入代码文件**:
+**Write代码文件**:
 ```json
 {
   "path": "hello.py",
@@ -39,10 +39,10 @@ Write content to a file.
 ## Notes
 
 - 会覆盖已存在的文件
-- 自动创建父目录（如果不存在）
-- 使用 UTF-8 编码
+- AutomaticCreate父目录（如果不存在）
+- Use UTF-8 编码
 
 ## Related Skills
 
-- `read-file`: 读取文件
-- `run-shell`: 执行脚本
+- `read-file`: Read文件
+- `run-shell`: Execute脚本

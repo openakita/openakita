@@ -13,11 +13,11 @@ category: Desktop
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |------|------|------|------|
-| target | string | 是 | 元素描述或窗口标题 |
-| target_type | string | 否 | 目标类型：element（默认）/ window |
-| timeout | integer | 否 | 超时时间（秒），默认 10 |
+| target | string | Yes | 元素描述或窗口标题 |
+| target_type | string | No | 目标类型：element（Default）/ window |
+| timeout | integer | No | Timeout duration（秒），Default 10 |
 
 ## Target Types
 
@@ -26,13 +26,13 @@ category: Desktop
 
 ## Use Cases
 
-- 等待对话框打开
-- 等待加载完成
+- 等待对话框Open
+- 等待Load完成
 - 在下一步操作前同步应用状态
 
 ## Examples
 
-**等待保存对话框**:
+**等待Save对话框**:
 ```json
 {"target": "另存为", "target_type": "window"}
 ```
@@ -49,5 +49,5 @@ category: Desktop
 
 ## Related Skills
 
-- `desktop-click`: 等待后点击
-- `desktop-find-element`: 查找元素
+- `desktop-click`: 等待后Click
+- `desktop-find-element`: Find元素

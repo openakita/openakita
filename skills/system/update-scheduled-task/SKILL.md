@@ -9,22 +9,22 @@ category: Scheduled Tasks
 
 # Update Scheduled Task
 
-修改定时任务设置【不delete任务】。
+修改定时任务Set【不delete任务】。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| task_id | string | 是 | 要修改的任务 ID |
-| notify_on_start | boolean | 否 | 开始时是否通知，不传=不修改 |
-| notify_on_complete | boolean | 否 | 完成时是否通知，不传=不修改 |
-| enabled | boolean | 否 | 启用/暂停任务，不传=不修改 |
+| task_id | string | Yes | 要修改的任务 ID |
+| notify_on_start | boolean | No | 开始时YesNo通知，不传=不修改 |
+| notify_on_complete | boolean | No | 完成时YesNo通知，不传=不修改 |
+| enabled | boolean | No | Enable/Pause任务，不传=不修改 |
 
 ## Common Uses
 
-- "关闭提醒" → notify_on_start=false, notify_on_complete=false
-- "暂停任务" → enabled=false
-- "恢复任务" → enabled=true
+- "Close提醒" → notify_on_start=false, notify_on_complete=false
+- "Pause任务" → enabled=false
+- "Resume任务" → enabled=true
 
 ## Related Skills
 

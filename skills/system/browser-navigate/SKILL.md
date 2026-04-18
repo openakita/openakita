@@ -9,50 +9,50 @@ category: Browser
 
 # Browser Navigate
 
-导航到指定 URL，打开网页。
+Navigate to specified URL，Open网页。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| url | string | 是 | 要访问的 URL（必须包含协议，如 https://） |
+| url | string | Yes | 要访问的 URL（必须Includes协议，如 https://） |
 
 ## Examples
 
-**打开search引擎**:
+**Opensearch引擎**:
 ```json
 {"url": "https://www.google.com"}
 ```
 
-**打开本地文件**:
+**Open本地文件**:
 ```json
 {"url": "file:///C:/Users/test.html"}
 ```
 
 ## Workflow
 
-1. 调用此工具导航到目标页面
-2. 等待页面加载
-3. 使用 `browser_click` / `browser_type` 与页面交互
+1. Call此工具导航到目标页面
+2. 等待页面Load
+3. Use `browser_click` / `browser_type` 与页面交互
 
 ## Important Notes
 
-- 必须在 `browser_click` / `browser_type` 之前调用此工具
-- 如果浏览器未启动会自动启动
-- URL 必须包含协议（http:// 或 https://）
+- 必须在 `browser_click` / `browser_type` 之前Call此工具
+- 如果浏览器未Launch会AutomaticLaunch
+- URL 必须Includes协议（http:// 或 https://）
 
 ## Related Skills
 
-- `browser-status`: 检查浏览器状态
-- `browser-click`: 点击页面元素
-- `browser-type`: 在输入框输入文本
+- `browser-status`: 检查Browser status
+- `browser-click`: Click page element
+- `browser-type`: 在输入框Type text
 
 
-## 推荐
+## Recommendations
 
-对于多步骤的浏览器任务，建议优先使用 `browser_task` 工具。它可以自动规划和执行复杂的浏览器操作，无需手动逐步调用各个工具。
+对于多步骤的浏览器任务，建议优先Use `browser_task` 工具。它可以Automatic规划和Execute复杂的Browser operations，无需Manual逐步Call各个工具。
 
 示例：
 ```python
-browser_task(task="打开百度search福建福州并截图")
+browser_task(task="Open百度search福建福州并截图")
 ```

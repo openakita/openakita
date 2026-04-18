@@ -13,10 +13,10 @@ search相关记忆。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| query | string | 是 | search关键词 |
-| type | string | 否 | 记忆类型过滤（可选） |
+| query | string | Yes | search关键词 |
+| type | string | No | Filter by memory type（可选） |
 
 ## Memory Types for Filter
 
@@ -41,4 +41,4 @@ search相关记忆。
 ## Related Skills
 
 - `add-memory`: 添加新记忆
-- `get-memory-stats`: 查看记忆统计
+- `get-memory-stats`: View记忆统计

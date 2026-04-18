@@ -7,14 +7,14 @@ metadata:
   version: "1.0.0"
 ---
 
-# Pretty Mermaid — 专业 Mermaid 图表生成
+# Pretty Mermaid — 专业 Mermaid 图表Generation
 
 ## When to Use
 
-- 用户要求创建流程图、架构图、时序图、类图、状态图、ER 图、C4 架构图或甘特图
+- 用户要求Create流程图、架构图、时序图、类图、状态图、ER 图、C4 架构图或甘特图
 - 需要将图表渲染为 SVG 或 ASCII 文本输出
-- 需要批量生成多张图表
-- 用户要求使用特定主题或配色方案
+- 需要批量Generation多张图表
+- 用户要求Use特定主题或配色方案
 - 需要可复用的图表模板
 
 ---
@@ -25,14 +25,14 @@ metadata:
 
 | 工具 | 用途 | 安装方式 |
 |------|------|---------|
-| Node.js ≥ 18 | 运行 Mermaid CLI | 系统预装或 `nvm install 18` |
+| Node.js ≥ 18 | Run Mermaid CLI | 系统预装或 `nvm install 18` |
 | `@mermaid-js/mermaid-cli` | 渲染 SVG/PNG | `npm install -g @mermaid-js/mermaid-cli` |
 
 ### 可选工具
 
 | 工具 | 用途 | 安装方式 |
 |------|------|---------|
-| `monodraw` (macOS) | ASCII 图表编辑 | App Store |
+| `monodraw` (macOS) | ASCII 图表Edit | App Store |
 | `graph-easy` | ASCII 渲染 | `cpan Graph::Easy` |
 
 ### 验证安装
@@ -41,7 +41,7 @@ metadata:
 mmdc --version
 ```
 
-如果 `mmdc` 不可用，回退到纯 Mermaid 代码块输出，让用户在支持 Mermaid 的编辑器或浏览器中预览。
+如果 `mmdc` 不可用，回退到纯 Mermaid 代码块输出，让用户在Supports Mermaid 的Edit器或浏览器中预览。
 
 ---
 
@@ -51,17 +51,17 @@ mmdc --version
 
 1. **理解需求** — 明确图表类型、数据来源、目标受众
 2. **选择图表类型** — 根据场景匹配最合适的 Mermaid 图表
-3. **选择主题** — 根据使用场景选择配色方案
+3. **选择主题** — 根据Use场景选择配色方案
 4. **编写 Mermaid 代码** — 遵循可读性最佳实践
 5. **渲染输出** — 按指定格式输出 SVG、PNG 或 ASCII
 6. **校验与优化** — 检查语法、布局、可读性
 
 ### 图表类型选择指南
 
-| 场景 | 推荐图表 | Mermaid 关键字 |
+| 场景 | Recommendations图表 | Mermaid 关键字 |
 |------|---------|---------------|
 | 业务流程、审批流 | 流程图 | `flowchart TD/LR` |
-| API 调用、服务交互 | 时序图 | `sequenceDiagram` |
+| API Call、服务交互 | 时序图 | `sequenceDiagram` |
 | 代码结构、OOP 设计 | 类图 | `classDiagram` |
 | 生命周期、状态机 | 状态图 | `stateDiagram-v2` |
 | 数据库设计 | ER 图 | `erDiagram` |
@@ -69,19 +69,19 @@ mmdc --version
 | 项目排期、里程碑 | 甘特图 | `gantt` |
 | Git 分支策略 | Git 图 | `gitGraph` |
 | 思维导图、脑暴 | 思维导图 | `mindmap` |
-| 时间线 | 时间线 | `timeline` |
+| Timeline | Timeline | `timeline` |
 
 ---
 
 ## Workflows
 
-### Workflow 1: 单张图表生成
+### Workflow 1: 单张图表Generation
 
 **步骤 1 — 收集信息**
 
-向用户确认以下内容（如未提供则使用默认值）：
+向用户确认以下内容（如未Provides则UseDefault值）：
 
-| 参数 | 默认值 | 可选值 |
+| Parameter | Default | 可选值 |
 |------|--------|-------|
 | 图表类型 | flowchart | 见上方选择指南 |
 | 方向 | TD（上到下） | TD, LR, RL, BT |
@@ -97,15 +97,15 @@ mmdc --version
 %%{init: {'theme': 'dark', 'themeVariables': { 'primaryColor': '#1a1b26', 'primaryTextColor': '#a9b1d6', 'primaryBorderColor': '#7aa2f7', 'lineColor': '#565f89', 'secondaryColor': '#24283b', 'tertiaryColor': '#1a1b26' }}}%%
 flowchart TD
     A[开始] --> B{条件判断}
-    B -->|是| C[执行操作]
-    B -->|否| D[跳过]
+    B -->|Yes| C[Execute操作]
+    B -->|No| D[跳过]
     C --> E[结束]
     D --> E
 ```
 
 **步骤 3 — 渲染（如需 SVG/PNG）**
 
-将 Mermaid 代码写入临时 `.mmd` 文件，然后调用：
+将 Mermaid 代码Write临时 `.mmd` 文件，然后Call：
 
 ```bash
 mmdc -i diagram.mmd -o diagram.svg -t dark -b transparent
@@ -114,17 +114,17 @@ mmdc -i diagram.mmd -o diagram.png -t dark -b white -w 1200
 
 **步骤 4 — 输出**
 
-返回渲染后的文件路径，或直接在消息中嵌入 Mermaid 代码块。
+Returns渲染后的File path，或直接在消息中嵌入 Mermaid 代码块。
 
 ---
 
-### Workflow 2: 批量图表生成
+### Workflow 2: 批量图表Generation
 
-适用于一次性生成多张相关图表（如系统设计文档）。
+适Used for一次性Generation多张相关图表（如系统设计文档）。
 
 **步骤 1** — 收集所有图表的需求列表
 
-**步骤 2** — 创建批处理配置：
+**步骤 2** — Create批处理配置：
 
 ```json
 {
@@ -140,7 +140,7 @@ mmdc -i diagram.mmd -o diagram.png -t dark -b white -w 1200
     {
       "name": "api-sequence",
       "type": "sequenceDiagram",
-      "title": "API 调用时序"
+      "title": "API Call时序"
     },
     {
       "name": "data-model",
@@ -151,19 +151,19 @@ mmdc -i diagram.mmd -o diagram.png -t dark -b white -w 1200
 }
 ```
 
-**步骤 3** — 逐一生成 Mermaid 代码并渲染
+**步骤 3** — 逐一Generation Mermaid 代码并渲染
 
-**步骤 4** — 返回所有图表的路径和预览
+**步骤 4** — Returns所有图表的路径和预览
 
 ---
 
 ### Workflow 3: ASCII 图表输出
 
-当用户需要纯文本图表（用于 CLI、日志、README 等场景）：
+当用户需要纯文本图表（Used for CLI、日志、README 等场景）：
 
-**方法 A — 手动 ASCII 绘制**
+**方法 A — Manual ASCII 绘制**
 
-对于简单图表，直接使用字符绘制：
+对于简单图表，直接Use字符绘制：
 
 ```
 ┌─────────┐     ┌─────────┐     ┌─────────┐
@@ -176,7 +176,7 @@ mmdc -i diagram.mmd -o diagram.png -t dark -b white -w 1200
                 └─────────┘
 ```
 
-**方法 B — 使用 graph-easy 转换**
+**方法 B — Use graph-easy 转换**
 
 ```bash
 echo "[ Client ] -> [ Server ] -> [ Database ]" | graph-easy --as=ascii
@@ -186,7 +186,7 @@ echo "[ Client ] -> [ Server ] -> [ Database ]" | graph-easy --as=ascii
 
 ## 主题配置
 
-### Tokyo Night（默认）
+### Tokyo Night（Default）
 
 ```
 %%{init: {'theme': 'base', 'themeVariables': {
@@ -276,7 +276,7 @@ echo "[ Client ] -> [ Server ] -> [ Database ]" | graph-easy --as=ascii
 C4Container
     title 微服务系统架构
 
-    Person(user, "用户", "通过浏览器或移动端访问系统")
+    Person(user, "用户", "Via浏览器或移动端访问系统")
 
     System_Boundary(system, "核心系统") {
         Container(web, "Web 前端", "React", "用户界面")
@@ -289,8 +289,8 @@ C4Container
         ContainerQueue(mq, "消息队列", "RabbitMQ", "异步任务处理")
     }
 
-    Rel(user, web, "使用", "HTTPS")
-    Rel(web, gateway, "API 调用", "HTTPS")
+    Rel(user, web, "Use", "HTTPS")
+    Rel(web, gateway, "API Call", "HTTPS")
     Rel(gateway, auth, "鉴权", "gRPC")
     Rel(gateway, biz, "业务请求", "gRPC")
     Rel(biz, db, "读写", "TCP")
@@ -305,9 +305,9 @@ C4Container
 flowchart LR
     A[代码提交] --> B[触发 CI]
     B --> C{代码检查}
-    C -->|通过| D[单元测试]
+    C -->|Via| D[单元测试]
     C -->|失败| Z[通知开发者]
-    D -->|通过| E[构建镜像]
+    D -->|Via| E[构建镜像]
     D -->|失败| Z
     E --> F[推送镜像仓库]
     F --> G{环境选择}
@@ -316,11 +316,11 @@ flowchart LR
     I -->|批准| J[蓝绿部署]
     I -->|拒绝| Z
     H --> K[集成测试]
-    K -->|通过| L[✅ Staging 就绪]
-    K -->|失败| M[自动回滚]
+    K -->|Via| L[✅ Staging 就绪]
+    K -->|失败| M[Automatic回滚]
     J --> N[健康检查]
-    N -->|通过| O[✅ 上线成功]
-    N -->|失败| P[自动回滚]
+    N -->|Via| O[✅ 上线成功]
+    N -->|失败| P[Automatic回滚]
 ```
 
 ### 模板 3: 用户认证时序（Sequence）
@@ -337,11 +337,11 @@ sequenceDiagram
     C->>G: POST /api/auth/login
     G->>A: 转发认证请求
     A->>D: 查询用户记录
-    D-->>A: 返回用户数据
+    D-->>A: Returns用户数据
     alt 密码正确
-        A->>A: 生成 JWT Token
+        A->>A: Generation JWT Token
         A-->>G: 200 OK + Token
-        G-->>C: 返回 Token
+        G-->>C: Returns Token
         C->>C: 存储 Token
         C-->>U: 登录成功
     else 密码错误
@@ -439,9 +439,9 @@ gantt
 
 ## Output Format
 
-### 默认输出
+### Default输出
 
-直接在回复中使用 Mermaid 代码块：
+直接在回复中Use Mermaid 代码块：
 
 ````
 ```mermaid
@@ -471,7 +471,7 @@ mmdc -i input.mmd -o output.png -t dark -b white -w 1920 -H 1080 -s 2
 
 ### ASCII 文本
 
-直接使用字符绘制，适合嵌入代码注释、终端输出、纯文本文档。
+直接Use字符绘制，适合嵌入代码注释、终端输出、纯文本文档。
 
 ---
 
@@ -479,7 +479,7 @@ mmdc -i input.mmd -o output.png -t dark -b white -w 1920 -H 1080 -s 2
 
 ### 1. 节点 ID 冲突
 
-**错误**：在同一图表中使用重复的节点 ID
+**错误**：在同一图表中Use重复的节点 ID
 
 ```mermaid
 flowchart TD
@@ -487,7 +487,7 @@ flowchart TD
     A[注册] --> B[检查]
 ```
 
-**正确**：使用唯一 ID
+**正确**：Use唯一 ID
 
 ```mermaid
 flowchart TD
@@ -497,13 +497,13 @@ flowchart TD
 
 ### 2. 特殊字符未转义
 
-**错误**：节点文本包含括号、引号等
+**错误**：节点文本Includes括号、引号等
 
 ```
 A[用户输入(name)]
 ```
 
-**正确**：使用引号包裹
+**正确**：Use引号包裹
 
 ```
 A["用户输入(name)"]
@@ -528,12 +528,12 @@ flowchart TD
 
 - 层级结构（组织架构、决策树）→ **TD**（上到下）
 - 流程/管道 → **LR**（左到右）
-- 时间线/历史 → **LR**
+- Timeline/历史 → **LR**
 - 请求-响应 → **TD** 或 **LR**
 
 ### 5. 中文乱码
 
-渲染 SVG/PNG 时如果出现中文乱码，使用 `--cssFile` 指定字体：
+渲染 SVG/PNG 时如果出现中文乱码，Use `--cssFile` 指定字体：
 
 ```css
 * {
@@ -558,22 +558,22 @@ mmdc -i large-diagram.mmd -o output.svg --puppeteerConfigFile puppeteer.json
 
 ### 7. 子图嵌套限制
 
-Mermaid 支持子图嵌套，但过深的嵌套（超过 3 层）可能导致渲染异常。保持层级扁平化。
+Mermaid Supports子图嵌套，但过深的嵌套（超过 3 层）可能导致渲染异常。保持层级扁平化。
 
 ---
 
 ## Best Practices
 
-1. **命名规范** — 节点 ID 使用有意义的英文命名，显示文本使用中文
+1. **命名规范** — 节点 ID Use有意义的英文命名，Display文本Use中文
 2. **布局控制** — 善用 `subgraph` 对节点分组，改善布局
 3. **颜色语义** — 绿色表示成功、红色表示失败、蓝色表示进行中
-4. **注释标注** — 使用 `Note` 添加关键说明
+4. **注释标注** — Use `Note` 添加关键说明
 5. **渐进呈现** — 复杂系统先画总览再画细节，用 C4 的 Context → Container → Component 层级
-6. **版本控制** — Mermaid 代码是纯文本，适合纳入 Git 管理
-7. **一致性** — 同一文档中的所有图表使用相同主题配置
+6. **版本控制** — Mermaid 代码Yes纯文本，适合纳入 Git Manage
+7. **一致性** — 同一文档中的所有图表Use相同主题配置
 
 ---
 
 ## EXTEND.md 扩展
 
-用户可在技能同目录下创建 `EXTEND.md` 添加自定义主题和模板，Agent 会自动合并使用。
+用户可在技能同目录下Create `EXTEND.md` 添加自定义主题和模板，Agent 会Automatic合并Use。

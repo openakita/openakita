@@ -17,9 +17,9 @@ requires:
 
 export BAIDU_API_KEY="your_key"
 
-## 使用
+## Use
 
-输入名词或概念，返回百度百科的标准化详细解释。依赖 Python 3 和 requests 库。
+输入名词或概念，Returns百度百科的标准化详细解释。依赖 Python 3 和 requests 库。
 
 ## Pre-built Scripts
 

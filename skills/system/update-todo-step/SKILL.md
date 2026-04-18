@@ -9,15 +9,15 @@ category: Plan
 
 # Update Todo Step
 
-update计划中某个步骤的状态。每完成一步必须调用。
+update计划中某个步骤的状态。每完成一步必须Call。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| step_id | string | 是 | 步骤 ID |
-| status | string | 是 | pending / in_progress / completed / failed / skipped |
-| result | string | 否 | 执行结果或错误信息 |
+| step_id | string | Yes | 步骤 ID |
+| status | string | Yes | pending / in_progress / completed / failed / skipped |
+| result | string | No | Execution result or error message |
 
 ## Examples
 
@@ -26,7 +26,7 @@ update计划中某个步骤的状态。每完成一步必须调用。
 {
   "step_id": "step_1",
   "status": "completed",
-  "result": "已打开百度首页"
+  "result": "已Open百度首页"
 }
 ```
 
@@ -42,5 +42,5 @@ update计划中某个步骤的状态。每完成一步必须调用。
 ## Related Skills
 
 - `create-todo`: create计划
-- `get-todo-status`: 查看计划状态
+- `get-todo-status`: View计划状态
 - `complete-todo`: 完成计划

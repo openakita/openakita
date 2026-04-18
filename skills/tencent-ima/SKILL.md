@@ -11,11 +11,11 @@ requires:
 
 # Tencent IMA 智能工作台
 
-统一的 IMA OpenAPI 技能，支持笔记管理和知识库操作。
+统一的 IMA OpenAPI 技能，Supports笔记Manage和知识库操作。
 
 ## Configuration
 
-1. 打开 https://ima.qq.com/agent-interface 获取 Client ID 和 API Key
+1. Open https://ima.qq.com/agent-interface Get Client ID 和 API Key
 2. 存储凭证：
 
 方式 A — 配置文件：
@@ -27,7 +27,7 @@ echo "your_api_key" > ~/.config/ima/api_key
 export IMA_OPENAPI_CLIENTID="your_client_id"
 export IMA_OPENAPI_APIKEY="your_api_key"
 
-## API 调用模板
+## API Call模板
 
 ima_api() {
   local path="$1" body="$2"
@@ -42,13 +42,13 @@ ima_api() {
 
 | 用户意图 | 模块 |
 |---------|------|
-| 搜索/浏览/创建/编辑笔记 | notes |
-| 上传文件/添加网页/搜索知识库 | knowledge-base |
+| Search/浏览/Create/Edit笔记 | notes |
+| Upload文件/添加网页/Search知识库 | knowledge-base |
 
 ## Pre-built Scripts
 
 ### scripts/ima_notes.py
-IMA 笔记 API 封装，需设置 IMA_OPENAPI_CLIENTID 和 IMA_OPENAPI_APIKEY。
+IMA 笔记 API 封装，需Set IMA_OPENAPI_CLIENTID 和 IMA_OPENAPI_APIKEY。
 
 ```bash
 python3 scripts/ima_notes.py search "会议纪要"

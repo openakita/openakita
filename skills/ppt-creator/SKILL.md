@@ -13,8 +13,8 @@ metadata:
 
 - When the user needs制作商业演示文稿（汇报、路演、培训、产品介绍）
 - 需要将非结构化的想法整理为逻辑清晰的幻灯片
-- 需要生成包含数据图表的演示文稿
-- 需要自动生成演讲稿/备注
+- 需要GenerationIncludes数据图表的演示文稿
+- 需要AutomaticGeneration演讲稿/备注
 - 需要将 Markdown 转换为演示文稿格式（Marp / Reveal.js）
 - 需要评估已有 PPT 的质量
 
@@ -26,15 +26,15 @@ metadata:
 
 | 工具 | 用途 | install方式 |
 |------|------|---------|
-| Python ≥ 3.10 | 运行生成脚本 | 系统预装 |
-| `python-pptx` | 生成 PPTX 文件 | `pip install python-pptx` |
+| Python ≥ 3.10 | RunGeneration脚本 | 系统预装 |
+| `python-pptx` | Generation PPTX 文件 | `pip install python-pptx` |
 
 ### 可选工具
 
 | 工具 | 用途 | install方式 |
 |------|------|---------|
 | `marp-cli` | Markdown → PPT/PDF | `npm install -g @marp-team/marp-cli` |
-| `matplotlib` | 数据图表生成 | `pip install matplotlib` |
+| `matplotlib` | 数据图表Generation | `pip install matplotlib` |
 | `Pillow` | 图片handle | `pip install Pillow` |
 | `plotly` | 交互式图表 | `pip install plotly kaleido` |
 
@@ -65,10 +65,10 @@ marp --version  # 可选
 ```
 
 **原则：**
-1. **结论先行** — 每页幻灯片的标题就是该页的结论
-2. **以上统下** — 上层观点是下层内容的概括
+1. **结论先行** — 每页幻灯片的标题就Yes该页的结论
+2. **以上统下** — 上层观点Yes下层内容的概括
 3. **归类分组** — 同层内容属于同一逻辑范畴
-4. **逻辑递进** — 同层内容有明确的排列顺序（时间、结构、重要性）
+4. **逻辑递进** — 同层内容有明确的排列顺序（时间、结构、Importance）
 
 ### 演示文稿结构模板
 
@@ -81,7 +81,7 @@ marp --version  # 可选
 | 核心论点 2 | 第二个支撑论点 + 数据/案例 | 45-60s |
 | 核心论点 3 | 第三个支撑论点 + 数据/案例 | 45-60s |
 | 方案/建议 | 具体行动方案 | 45-60s |
-| 时间线/路线图 | 实施计划 | 45-60s |
+| Timeline/路线图 | 实施计划 | 45-60s |
 | 总结 | 回扣核心结论、关键要点 | 30s |
 | Q&A / 致谢 | 联系方式、讨论时间 | — |
 
@@ -89,7 +89,7 @@ marp --version  # 可选
 
 ## Workflows
 
-### Workflow 1: 快速create（Minimal Intake Form）
+### Workflow 1: Quickcreate（Minimal Intake Form）
 
 **步骤 1 — 收集关键信息**
 
@@ -97,17 +97,17 @@ marp --version  # 可选
 
 | # | 问题 | 示例回答 |
 |---|------|---------|
-| 1 | 演讲主题是什么？ | "Q4 产品路线图汇报" |
-| 2 | 目标受众是谁？ | "公司manage层" |
+| 1 | 演讲主题Yes什么？ | "Q4 产品路线图汇报" |
+| 2 | 目标受众Yes谁？ | "公司manage层" |
 | 3 | 核心结论/诉求？ | "需要追加 30% 研发预算" |
-| 4 | 有哪些关键数据或论据？ | "用户增长 200%、竞品分析、技术债" |
+| 4 | 有哪些关键数据或论据？ | "用户增长 200%、竞品Analyze、技术债" |
 | 5 | 幻灯片数量偏好？ | "10-15 页" |
 
-如果用户只给了主题，根据常识和金字塔原理自行推导其余要素，并在生成前确认。
+如果用户只给了主题，根据常识和金字塔原理自行推导其余要素，并在Generation前确认。
 
 **步骤 2 — 构建金字塔结构**
 
-基于收集的信息，输出结构大纲：
+Based on收集的信息，输出结构大纲：
 
 ```
 核心结论：追加 30% 研发预算以支撑用户增长
@@ -125,30 +125,30 @@ marp --version  # 可选
     └── 证据：开发者满意度调查
 ```
 
-**步骤 3 — 生成幻灯片内容**
+**步骤 3 — Generation幻灯片内容**
 
 逐页编写：
-- **标题**：一句完整的结论性陈述（非主题词）
+- **标题**：一句Full的结论性陈述（非主题词）
 - **正文**：3-5 个要点，每点 ≤ 15 字
 - **图表/数据**：识别需要数据可视化的页面
 - **备注**：45-60 秒的演讲脚本
 
 **步骤 4 — 输出文件**
 
-根据When the user needs选择输出格式（见 Output Format 部分）。
+根据When the user needs选择输出格式（见 Output Format Partial）。
 
 ---
 
-### Workflow 2: 数据图表生成
+### Workflow 2: 数据图表Generation
 
-**支持的图表类型**
+**Supports的图表类型**
 
 | 图表 | 适用场景 | 库 |
 |------|---------|-----|
 | 柱状图 | 对比数据 | matplotlib / plotly |
 | 折线图 | 趋势变化 | matplotlib / plotly |
 | 饼图 | 占比分布 | matplotlib / plotly |
-| 散点图 | 相关性分析 | matplotlib / plotly |
+| 散点图 | 相关性Analyze | matplotlib / plotly |
 | 瀑布图 | 增减分解 | plotly |
 | 热力图 | 矩阵数据 | matplotlib / seaborn |
 | 雷达图 | 多维对比 | matplotlib |
@@ -156,12 +156,12 @@ marp --version  # 可选
 **图表设计原则**
 
 1. **标题即结论** — 图表标题描述洞察而非数据（"销售额同比增长 40%" vs "Q4 销售数据"）
-2. **极简配色** — 使用 2-3 种颜色，重点数据用强调色
+2. **极简配色** — Use 2-3 种颜色，重点数据用强调色
 3. **去除噪音** — delete网格线、多余边框、3D 效果
 4. **标注关键值** — 在图表上直接标注最重要的数据点
 5. **适当留白** — 图表不超过幻灯片面积的 60%
 
-**生成图表的 Python 示例**
+**Generation图表的 Python 示例**
 
 ```python
 import matplotlib.pyplot as plt
@@ -189,9 +189,9 @@ plt.savefig('chart_revenue.png', dpi=200, bbox_inches='tight')
 
 ---
 
-### Workflow 3: 演讲备注生成
+### Workflow 3: 演讲备注Generation
 
-为每张幻灯片生成 45-60 秒的演讲稿：
+为每张幻灯片Generation 45-60 秒的演讲稿：
 
 **规则：**
 1. 开头：过渡语连接上一页（"接下来看...""那么..."）
@@ -207,7 +207,7 @@ plt.savefig('chart_revenue.png', dpi=200, bbox_inches='tight')
 那么我们来看第一个关键发现。[停顿]
 
 过去一个季度，我们的月活跃用户从 50 万增长到了 150 万，
-同比增长了 200%。[看向观众] 这是一个非常可喜的数字，
+同比增长了 200%。[看向观众] 这Yes一个非常可喜的数字，
 但同时也带来了挑战。
 
 大家可以看到右边的图表，随着用户量的激增，
@@ -222,18 +222,18 @@ plt.savefig('chart_revenue.png', dpi=200, bbox_inches='tight')
 
 ### Workflow 4: 自评打分
 
-生成完成后，用以下 rubric 评估质量：
+Generation完成后，用以下 rubric 评估质量：
 
 | 维度 | 满分 | 评分标准 |
 |------|------|---------|
-| 结构逻辑 | 25 | 金字塔结构完整、论点 MECE |
+| 结构逻辑 | 25 | 金字塔结构Full、论点 MECE |
 | 视觉设计 | 20 | 一致的配色、排版、留白 |
 | 数据可视化 | 20 | 图表清晰、标题即结论 |
 | 演讲备注 | 15 | 流畅、口语化、时间合适 |
 | 受众适配 | 10 | 语言风格匹配目标受众 |
 | 行动导向 | 10 | 明确的 CTA 和下一步 |
 
-目标分数：≥ 80/100。低于 80 分时自动修订弱项。
+目标分数：≥ 80/100。低于 80 分时Automatic修订弱项。
 
 ---
 
@@ -241,7 +241,7 @@ plt.savefig('chart_revenue.png', dpi=200, bbox_inches='tight')
 
 ### 格式 1: PPTX 文件（python-pptx）
 
-使用 `python-pptx` 生成标准 PowerPoint 文件：
+Use `python-pptx` Generation标准 PowerPoint 文件：
 
 ```python
 from pptx import Presentation
@@ -356,9 +356,9 @@ marp slides.md --html -o presentation.html
 
 ### 3. 配色不一致
 
-整套 PPT 使用同一配色方案。推荐的安全配色：
+整套 PPT Use同一配色方案。Recommendations的安全配色：
 - 主色 1 种 + 强调色 1 种 + 灰色系
-- 避免使用超过 4 种颜色
+- 避免Use超过 4 种颜色
 
 ### 4. 图表与结论脱节
 
@@ -372,7 +372,7 @@ marp slides.md --html -o presentation.html
 
 ### 6. 中文字体兼容
 
-使用 python-pptx 时确保指定中文字体：
+Use python-pptx 时确保指定中文字体：
 
 ```python
 from pptx.util import Pt

@@ -9,21 +9,21 @@ category: MCP
 
 # Get MCP Instructions
 
-get MCP 服务器的详细使用说明。
+get MCP 服务器的详细Use说明。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| server | string | 是 | 服务器标识符 |
+| server | string | Yes | Server identifier |
 
 ## Returns
 
 - 服务器功能说明
-- 工具使用指南
+- 工具Use指南
 - 示例和最佳实践
 
 ## Related Skills
 
 - `list-mcp-servers`: list服务器
-- `call-mcp-tool`: 调用工具
+- `call-mcp-tool`: Call工具

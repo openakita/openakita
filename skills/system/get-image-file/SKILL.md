@@ -9,19 +9,19 @@ category: IM Channel
 
 # Get Image File
 
-get用户发送的图片的本地文件路径。
+get用户Send的图片's local file path。
 
 ## Parameters
 
-无参数。
+No parameters.
 
 ## Workflow
 
-1. 用户发送图片
-2. 系统自动下载到本地
-3. 使用此工具get文件路径
+1. 用户Send图片
+2. System automatically downloads到本地
+3. Use此工具getFile path
 
 ## Related Skills
 
 - `get-voice-file`: get语音文件
-- `deliver-artifacts`: 发送文件给用户
+- `deliver-artifacts`: Send文件给用户

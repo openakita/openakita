@@ -8,9 +8,9 @@ metadata:
   based_on: openclaw/skills/bilibili-youtube-watcher
 ---
 
-# Bilibili & YouTube Watcher — 双平台字幕提取
+# Bilibili & YouTube Watcher — 双平台字幕Extract
 
-从 Bilibili（B站）和 YouTube 视频中提取字幕/转录文本，支持多语言、会员视频和内容问答。
+从 Bilibili（B站）和 YouTube 视频中Extract字幕/转录文本，Supports多语言、会员视频和内容问答。
 
 ## When to Use This Skill
 
@@ -259,7 +259,7 @@ Transcript:
 
 ### Workflow 1: Quick Bilibili Subtitle Extraction
 
-User says: "提取这个B站视频的字幕: https://www.bilibili.com/video/BV..."
+User says: "Extract这个B站视频的字幕: https://www.bilibili.com/video/BV..."
 
 1. Run `yt-dlp --list-subs` to check available subtitles
 2. Download Chinese subtitles: `yt-dlp --write-sub --sub-lang zh-CN --convert-subs srt --skip-download URL`
@@ -268,7 +268,7 @@ User says: "提取这个B站视频的字幕: https://www.bilibili.com/video/BV..
 
 ### Workflow 2: Bilibili Member Video
 
-User says: "这是大会员视频，帮我提取字幕"
+User says: "这Yes大会员视频，帮我Extract字幕"
 
 1. Inform user that cookies are needed
 2. Use `--cookies-from-browser chrome` (or user's preferred browser)
@@ -328,7 +328,7 @@ User shares a bangumi URL:
 ---
 
 [00:00] 大家好，欢迎来到今天的视频
-[00:05] 今天我们要讨论的话题是...
+[00:05] 今天我们要讨论的话题Yes...
 [00:12] 首先我们来看一下背景
 ...
 ```
@@ -350,10 +350,10 @@ User shares a bangumi URL:
 
 ## 详细笔记
 
-### 第一部分: [主题] (00:00 - 05:30)
+### 第一Partial: [主题] (00:00 - 05:30)
 [详细内容笔记]
 
-### 第二部分: [主题] (05:30 - 12:00)
+### 第二Partial: [主题] (05:30 - 12:00)
 [详细内容笔记]
 ```
 

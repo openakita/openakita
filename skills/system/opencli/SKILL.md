@@ -10,8 +10,8 @@ priority: high
 
 # OpenCLI - 网站 CLI 操作
 
-通过 [OpenCLI](https://github.com/jackwener/opencli) 将网站和 Electron 应用转化为 CLI 命令。
-复用用户 Chrome 登录态，无需输入密码，返回结构化 JSON。
+Via [OpenCLI](https://github.com/jackwener/opencli) 将网站和 Electron 应用转化为 CLI 命令。
+复用用户 Chrome 登录态，无需输入密码，Returns结构化 JSON。
 
 ## 核心优势
 
@@ -21,12 +21,12 @@ priority: high
 
 ## When to Use OpenCLI（优先于 browser_task）
 
-| 场景 | 推荐工具 | 原因 |
+| 场景 | Recommendations工具 | 原因 |
 |------|---------|------|
 | 操作有 adapter 的网站（GitHub、Bilibili 等）| `opencli_run` | 确定性命令，JSON 输出 |
 | 需要登录态的操作 | `opencli_run` | 复用 Chrome 登录 |
-| 无 adapter 的网站 | `browser_task` / 手动 browser_* | OpenCLI 不支持的站点 |
-| 简单读取网页内容 | `web_fetch` | 无需浏览器 |
+| 无 adapter 的网站 | `browser_task` / Manual browser_* | OpenCLI 不Supports的站点 |
+| 简单Read网页内容 | `web_fetch` | 无需浏览器 |
 
 ## 工具
 
@@ -36,7 +36,7 @@ priority: high
 opencli_list()
 ```
 
-### opencli_run — 执行命令
+### opencli_run — Execute命令
 
 命令格式: `<site> <subcommand>`，直接传给 opencli。
 
@@ -55,22 +55,22 @@ opencli_doctor()
 ## Prerequisites
 
 1. 安装 opencli: `npm install -g @jackwener/opencli`
-2. Chrome 浏览器正在运行并已登录目标网站
-3. Browser Bridge 扩展已安装（首次运行 `opencli setup` 配置）
+2. Chrome 浏览器正在Run并已登录目标网站
+3. Browser Bridge 扩展已安装（首次Run `opencli setup` 配置）
 
 ## 决策路径
 
 ```
 需要操作网站？
 ├─ 目标网站有 opencli adapter → opencli_run（首选）
-├─ 需要登录但无 adapter → browser_task → 手动 browser_click/type 组合
-├─ 只需读取内容 → web_fetch
-└─ 只需搜索 → web_search
+├─ 需要登录但无 adapter → browser_task → Manual browser_click/type 组合
+├─ 只需Read内容 → web_fetch
+└─ 只需Search → web_search
 ```
 
 ## 相关技能
 
 - `browser_task` — 无 adapter 时的降级方案
 - `browser_navigate` — 简单导航
-- `web_fetch` — 轻量 URL 内容获取
-- `web_search` — 搜索引擎查询
+- `web_fetch` — 轻量 URL 内容Get
+- `web_search` — Search引擎查询

@@ -277,7 +277,7 @@ add_mcp_server(
 
 After `add_mcp_server` returns:
 
-1. Check the response — it should show "已自动连接" and discovered tools
+1. Check the response — it should show "已Automatic连接" and discovered tools
 2. If auto-connect failed, troubleshoot:
    - Verify the command path is correct (use absolute paths for local scripts)
    - Check dependencies are installed

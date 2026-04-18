@@ -13,16 +13,16 @@ Get the local file path of a voice message sent by the user.
 
 ## Parameters
 
-无参数。
+No parameters.
 
 ## Workflow
 
-1. 用户发送语音消息
-2. 系统自动下载到本地
-3. 使用此工具获取文件路径
-4. 用语音识别脚本处理
+1. 用户Send语音消息
+2. System automatically downloads到本地
+3. Use此工具GetFile path
+4. Process with speech recognition script
 
 ## Related Skills
 
-- `get-image-file`: 获取图片文件
-- `deliver-artifacts`: 发送文件给用户
+- `get-image-file`: Get图片文件
+- `deliver-artifacts`: Send文件给用户

@@ -13,10 +13,10 @@ update用户档案信息。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| key | string | 是 | 档案项键名 |
-| value | string | 是 | 用户提供的信息值 |
+| key | string | Yes | 档案项键名 |
+| value | string | Yes | 用户Provides的信息值 |
 
 ## Supported Keys
 

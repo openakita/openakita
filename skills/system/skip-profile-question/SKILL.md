@@ -13,9 +13,9 @@ category: User Profile
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| key | string | 是 | 要跳过的档案项键名 |
+| key | string | Yes | 要跳过的档案项键名 |
 
 ## When to Use
 

@@ -11,9 +11,9 @@ metadata:
 
 ## When to Use
 
-- When the user needscreate、查看、update或delete Todoist 任务
+- When the user needscreate、View、update或delete Todoist 任务
 - 需要manage Todoist 项目和分区
-- 需要设置任务优先级、截止日期、重复规则
+- 需要Set任务优先级、截止日期、重复规则
 - 需要用标签分类任务
 - 需要查询和过滤任务
 - 需要将对话中讨论的待办事项同步到 Todoist
@@ -25,13 +25,13 @@ metadata:
 
 ### 必需配置
 
-| 配置项 | 说明 |
+| 配置项 | Description |
 |--------|------|
 | `TODOIST_API_TOKEN` | Todoist API Token |
 
 **get Token：**
 
-1. 登录 Todoist → 设置 → 集成 → 开发者
+1. 登录 Todoist → Set → 集成 → 开发者
 2. 或访问：https://app.todoist.com/app/settings/integrations/developer
 3. 复制 API Token
 
@@ -43,9 +43,9 @@ TODOIST_API_TOKEN=your_todoist_api_token_here
 
 ### 工具依赖
 
-| 工具 | 用途 | 说明 |
+| 工具 | 用途 | Description |
 |------|------|------|
-| `curl` | HTTP API 调用 | 系统通常自带 |
+| `curl` | HTTP API Call | 系统通常自带 |
 | `jq` | JSON 解析 | Windows: `choco install jq`; macOS: `brew install jq` |
 
 ### 验证配置
@@ -61,7 +61,7 @@ curl -s "https://api.todoist.com/rest/v2/projects" \
 
 ### Todoist API v2 基础
 
-所有请求发送到 `https://api.todoist.com/rest/v2/`，携带 Bearer Token：
+所有请求Send到 `https://api.todoist.com/rest/v2/`，携带 Bearer Token：
 
 ```bash
 curl -s "https://api.todoist.com/rest/v2/{endpoint}" \
@@ -71,7 +71,7 @@ curl -s "https://api.todoist.com/rest/v2/{endpoint}" \
 
 ### 核心概念
 
-| 概念 | 说明 |
+| 概念 | Description |
 |------|------|
 | Task（任务） | 待办事项，Todoist 的核心单元 |
 | Project（项目） | 任务的容器，类似文件夹 |
@@ -79,13 +79,13 @@ curl -s "https://api.todoist.com/rest/v2/{endpoint}" \
 | Label（标签） | 跨项目的任务分类标签 |
 | Filter（过滤器） | 自定义查询条件 |
 | Priority（优先级） | 1=普通, 2=低, 3=中, 4=紧急（API 与 UI 相反） |
-| Due Date（截止日期） | 支持自然语言和 ISO 8601 |
+| Due Date（截止日期） | Supports自然语言和 ISO 8601 |
 
 ### 优先级映射
 
-注意 API 的优先级数字与 Todoist UI 显示是**相反**的：
+注意 API 的优先级数字与 Todoist UI DisplayYes**相反**的：
 
-| API 值 | UI 显示 | 颜色 |
+| API 值 | UI Display | 颜色 |
 |--------|---------|------|
 | `priority: 1` | Priority 4（普通） | 无色 |
 | `priority: 2` | Priority 3（低） | 蓝色 |
@@ -108,7 +108,7 @@ curl -s -X POST "https://api.todoist.com/rest/v2/tasks" \
   -H "Content-Type: application/json" \
   -d '{
     "content": "完成项目方案",
-    "description": "包含技术选型和时间线",
+    "description": "Includes技术选型和Timeline",
     "due_string": "明天下午3点",
     "due_lang": "zh",
     "priority": 4,
@@ -146,7 +146,7 @@ curl -s -X POST "https://api.todoist.com/rest/v2/tasks" \
   }' | jq '.'
 ```
 
-#### 查看任务
+#### View任务
 
 **get所有活跃任务**
 
@@ -169,7 +169,7 @@ curl -s "https://api.todoist.com/rest/v2/tasks?label=urgent" \
   -H "Authorization: Bearer $TODOIST_API_TOKEN" | jq '.'
 ```
 
-**使用过滤器查询**
+**Use过滤器查询**
 
 ```bash
 curl -s "https://api.todoist.com/rest/v2/tasks?filter=today%20%7C%20overdue" \
@@ -204,7 +204,7 @@ curl -s -X POST "https://api.todoist.com/rest/v2/tasks/TASK_ID/close" \
   -H "Authorization: Bearer $TODOIST_API_TOKEN"
 ```
 
-#### 重新打开任务
+#### 重新Open任务
 
 ```bash
 curl -s -X POST "https://api.todoist.com/rest/v2/tasks/TASK_ID/reopen" \
@@ -244,7 +244,7 @@ curl -s -X POST "https://api.todoist.com/rest/v2/projects" \
 ```
 
 `view_style` 可选：
-- `list`：列表视图（默认）
+- `list`：列表视图（Default）
 - `board`：看板视图
 
 #### update项目
@@ -270,7 +270,7 @@ curl -s -X DELETE "https://api.todoist.com/rest/v2/projects/PROJECT_ID" \
 
 ### Workflow 3: 分区manage
 
-分区（Section）用于在项目内组织任务，类似看板的列。
+分区（Section）Used for在项目内组织任务，类似看板的列。
 
 #### list分区
 
@@ -338,22 +338,22 @@ curl -s -X POST "https://api.todoist.com/rest/v2/labels" \
   }' | jq '.'
 ```
 
-#### 推荐标签体系
+#### Recommendations标签体系
 
 | 类别 | 标签 | 用途 |
 |------|------|------|
 | 精力 | `high-energy`, `low-energy` | 按精力状态选择任务 |
 | 时长 | `5min`, `15min`, `30min`, `1hour` | 按可用时间选择任务 |
 | 场景 | `at-computer`, `at-phone`, `at-office`, `anywhere` | 按场景选择任务 |
-| 类型 | `meeting`, `deep-work`, `admin`, `learning` | 按任务性质分类 |
+| Type | `meeting`, `deep-work`, `admin`, `learning` | 按任务性质分类 |
 
 ---
 
 ### Workflow 5: 截止日期与重复任务
 
-#### 自然语言日期（推荐）
+#### 自然语言日期（Recommendations）
 
-Todoist 支持多语言自然语言日期：
+Todoist Supports多语言自然语言日期：
 
 ```json
 {
@@ -400,7 +400,7 @@ Todoist 支持多语言自然语言日期：
 
 常见重复规则：
 
-| 规则 | `due_string` | 说明 |
+| 规则 | `due_string` | Description |
 |------|-------------|------|
 | 每日 | `every day` | 每天 |
 | 工作日 | `every weekday` | 周一至周五 |
@@ -417,7 +417,7 @@ Todoist 支持多语言自然语言日期：
 
 #### 过滤器语法
 
-| 过滤器 | 说明 |
+| 过滤器 | Description |
 |--------|------|
 | `today` | 今天到期的任务 |
 | `overdue` | 已过期任务 |
@@ -453,7 +453,7 @@ curl -s "https://api.todoist.com/rest/v2/tasks?filter=7%20days%20%26%20(p1%20%7C
 
 ### Workflow 7: 批量操作
 
-#### 从对话生成任务
+#### 从对话Generation任务
 
 When the user在对话中提到多个待办事项时，批量create：
 
@@ -536,12 +536,12 @@ curl -s "https://api.todoist.com/rest/v2/tasks" \
 
 ### 1. API Token 无效
 
-**症状**：所有请求返回 401
-**解决**：确认 `TODOIST_API_TOKEN` 正确设置，到 Todoist 设置页面重新get
+**症状**：所有请求Returns 401
+**解决**：确认 `TODOIST_API_TOKEN` 正确Set，到 Todoist Set页面重新get
 
 ### 2. 优先级数字混淆
 
-API 的 `priority: 4` 对应 UI 的 P1（紧急），这是反直觉的。牢记映射关系或在代码中使用常量：
+API 的 `priority: 4` 对应 UI 的 P1（紧急），这Yes反直觉的。牢记映射关系或在代码中Use常量：
 
 ```bash
 P1_URGENT=4
@@ -552,23 +552,23 @@ P4_NORMAL=1
 
 ### 3. 中文日期解析失败
 
-使用中文自然语言日期时必须指定 `due_lang: "zh"`，否则会解析失败或解析为错误日期。
+Use中文自然语言日期时必须指定 `due_lang: "zh"`，No则会解析失败或解析为错误日期。
 
 ### 4. 过滤器 URL 编码
 
-通过 curl 传递过滤器时需要 URL 编码：
+Via curl 传递过滤器时需要 URL 编码：
 - `|` → `%7C`
 - `&` → `%26`
 - `#` → `%23`
 - 空格 → `%20`
 
-### 5. 项目/任务 ID 是字符串
+### 5. 项目/任务 ID Yes字符串
 
-Todoist REST API v2 返回的 ID 是字符串类型，不是数字。使用 jq handle时注意类型。
+Todoist REST API v2 Returns的 ID Yes字符串类型，不Yes数字。Use jq handle时注意类型。
 
 ### 6. 批量操作超频
 
-Todoist API 的限制是每分钟约 450 次请求。批量操作时添加 sleep：
+Todoist API 的限制Yes每分钟约 450 次请求。批量操作时添加 sleep：
 
 ```bash
 sleep 0.3  # 每次请求间隔 300ms
@@ -576,14 +576,14 @@ sleep 0.3  # 每次请求间隔 300ms
 
 ### 7. 重复任务的 close vs delete
 
-- `close`（完成）：对重复任务，会自动create下一次任务
+- `close`（完成）：对重复任务，会Automaticcreate下一次任务
 - `delete`：永久delete，不会create下次任务
 
-确保对重复任务使用 `close` 而非 `delete`。
+确保对重复任务Use `close` 而非 `delete`。
 
 ### 8. 时区问题
 
-带时间的截止日期使用 UTC 格式。如果用户在东八区（CST），需注意时差：
+带时间的截止日期Use UTC 格式。如果用户在东八区（CST），需注意时差：
 
 ```json
 {
@@ -632,8 +632,8 @@ echo "📊 项目进度: 剩余 $total 个活跃任务"
 ## EXTEND.md 扩展
 
 用户可在技能同目录下create `EXTEND.md` 添加：
-- 默认项目 ID 和名称映射
+- Default项目 ID 和名称映射
 - 自定义标签体系
-- 任务模板（如每周例行任务）
+- Task模板（如每周例行任务）
 - 与其他工具的集成配置
 - 团队成员 ID 映射

@@ -13,11 +13,11 @@ Record important information to long-term memory.
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| content | string | 是 | 要记住的内容 |
-| type | string | 是 | 记忆类型（见下方列表） |
-| importance | number | 否 | 重要性（0-1），默认 0.5 |
+| content | string | Yes | Content to remember |
+| type | string | Yes | Memory type (see list below） |
+| importance | number | No | Importance (0-1），Default 0.5 |
 
 ## Memory Types
 
@@ -47,7 +47,7 @@ Record important information to long-term memory.
 **记录错误教训**:
 ```json
 {
-  "content": "在 Windows 上使用 / 而不是 \\ 作为路径分隔符",
+  "content": "在 Windows 上Use / 而不Yes \\ 作为路径分隔符",
   "type": "error",
   "importance": 0.7
 }
@@ -55,5 +55,5 @@ Record important information to long-term memory.
 
 ## Related Skills
 
-- `search-memory`: 搜索相关记忆
-- `get-memory-stats`: 查看记忆统计
+- `search-memory`: Search related memories
+- `get-memory-stats`: View记忆统计

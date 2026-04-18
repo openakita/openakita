@@ -9,19 +9,19 @@ metadata:
 
 # 百度伏谋 (FaMou)
 
-轻松高效调用伏谋算法自演化能力，提供实验manage和可视化能力，帮助用户极致调优完成复杂的算法实验。
+轻松高效Call伏谋算法自演化能力，Provides实验manage和可视化能力，帮助用户极致调优完成复杂的算法实验。
 
 ## Features
 
 - 算法自演化
 - 实验manage
-- 可视化分析
+- 可视化Analyze
 - 参数调优
 
 ## Pre-built Scripts
 
 ### scripts/famou.py
-算法实验manage（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+算法实验manage（百度千帆 AppBuilder），需Set APPBUILDER_TOKEN。
 
 ```bash
 python3 scripts/famou.py experiment "图像分类模型调优"

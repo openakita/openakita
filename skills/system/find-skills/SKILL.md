@@ -128,6 +128,6 @@ If no relevant skills exist:
 
 ## Related Skills
 
-- `list-skills`: 查看已install技能
+- `list-skills`: List alreadyinstall技能
 - `install-skill`: install新技能
 - `get-skill-info`: get技能详情

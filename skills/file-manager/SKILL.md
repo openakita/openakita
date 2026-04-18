@@ -14,7 +14,7 @@ manage文件和目录的工具集。
 ## When to Use
 
 - create、delete、移动、复制文件或目录
-- 读取或写入文件内容
+- Read或Write file content
 - search文件
 - list目录内容
 - get文件信息（大小、修改时间等）
@@ -27,13 +27,13 @@ manage文件和目录的工具集。
 python scripts/file_ops.py list <path> [--recursive] [--pattern "*.py"]
 ```
 
-### 读取文件
+### Read文件
 
 ```bash
 python scripts/file_ops.py read <file_path> [--encoding utf-8]
 ```
 
-### 写入文件
+### Write文件
 
 ```bash
 python scripts/file_ops.py write <file_path> --content "内容" [--append]
@@ -71,7 +71,7 @@ python scripts/file_ops.py info <path>
 
 ## Output Format
 
-所有操作返回 JSON 格式:
+所有操作Returns JSON 格式:
 
 ```json
 {
@@ -87,6 +87,6 @@ python scripts/file_ops.py info <path>
 
 ## Safety Notes
 
-- delete操作不可恢复，谨慎使用
-- 写入文件会覆盖原有内容（除非使用 --append）
+- delete操作不可Resume，谨慎Use
+- Write文件会覆盖原有内容（除非Use --append）
 - 对于重要文件，建议先备份

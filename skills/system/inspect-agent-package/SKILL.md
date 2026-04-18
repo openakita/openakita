@@ -9,22 +9,22 @@ category: Agent Package
 
 # Inspect Agent Package
 
-预览 `.akita-agent` 包文件内容，不执行install。
+预览 `.akita-agent` 包File content，不Executeinstall。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| package_path | string | 是 | .akita-agent 包文件路径 |
+| package_path | string | Yes | .akita-agent 包File path |
 
 ## Returns
 
-返回包详情：
+Returns包详情：
 - `manifest`: 包元数据
 - `profile`: Agent 配置
 - `bundled_skills`: 捆绑技能列表
 - `validation_errors`: 校验错误（如有）
-- `id_conflict`: 是否与本地已有 Agent 冲突
+- `id_conflict`: YesNo与本地已有 Agent 冲突
 - `package_size`: 包文件大小
 
 ## Related Skills

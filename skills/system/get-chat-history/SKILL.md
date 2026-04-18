@@ -13,16 +13,16 @@ get当前聊天的历史消息记录。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| limit | integer | 否 | get最近多少条消息，默认 20 |
-| include_system | boolean | 否 | 是否包含系统消息（如任务通知），默认 True |
+| limit | integer | No | get最近messages，Default 20 |
+| include_system | boolean | No | Whether to include system messages（如任务通知），Default True |
 
 ## Returns
 
-- 用户发送的消息
-- 你之前的回复
-- 系统任务发送的通知
+- Messages sent by user
+- Your previous replies
+- Notifications sent by system tasks
 
 ## When to Use
 
@@ -32,4 +32,4 @@ get当前聊天的历史消息记录。
 
 ## Related Skills
 
-- `deliver-artifacts`: 发送附件给用户
+- `deliver-artifacts`: Send附件给用户

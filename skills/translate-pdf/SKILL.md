@@ -25,9 +25,9 @@ metadata:
 
 | 依赖 | 用途 | 安装方式 |
 |------|------|---------|
-| Python ≥ 3.10 | 运行翻译脚本 | 系统预装 |
+| Python ≥ 3.10 | Run翻译脚本 | 系统预装 |
 | `PyMuPDF` (fitz) | PDF 解析与重建 | `pip install PyMuPDF` |
-| `httpx` | HTTP API 调用 | `pip install httpx` |
+| `httpx` | HTTP API Call | `pip install httpx` |
 
 ### 可选依赖
 
@@ -35,17 +35,17 @@ metadata:
 |------|------|---------|
 | `pdf2image` | PDF 转图片（OCR 场景） | `pip install pdf2image` |
 | `pytesseract` | OCR 文字识别 | `pip install pytesseract` |
-| `pdfplumber` | 表格提取 | `pip install pdfplumber` |
-| `reportlab` | PDF 生成 | `pip install reportlab` |
+| `pdfplumber` | 表格Extract | `pip install pdfplumber` |
+| `reportlab` | PDF Generation | `pip install reportlab` |
 | `deep-translator` | 多引擎翻译 | `pip install deep-translator` |
 | `openai` | GPT 翻译 | `pip install openai` |
 
 ### 系统级依赖
 
-| 工具 | 用途 | 说明 |
+| 工具 | 用途 | Description |
 |------|------|------|
-| Poppler | pdf2image 的后端 | Windows: 下载 poppler-utils; macOS: `brew install poppler` |
-| Tesseract | OCR 引擎 | Windows: 下载安装包; macOS: `brew install tesseract` |
+| Poppler | pdf2image 的后端 | Windows: Download poppler-utils; macOS: `brew install poppler` |
+| Tesseract | OCR 引擎 | Windows: Download安装包; macOS: `brew install tesseract` |
 | 中文字体 | PDF 中文渲染 | 系统需安装中文字体（微软雅黑、思源黑体等） |
 
 ### 验证安装
@@ -69,7 +69,7 @@ OPENAI_API_KEY=sk-xxxxx
 
 ## Instructions
 
-### 支持的语言
+### Supports的语言
 
 | 语言代码 | 语言 | 翻译质量 |
 |---------|------|---------|
@@ -92,7 +92,7 @@ OPENAI_API_KEY=sk-xxxxx
 | 2 | DeepL API | 高质量机器翻译 |
 | 3 | Google Translate | 免费，覆盖语种广 |
 
-Agent 按照优先级自动选择可用的翻译引擎。用户可以指定使用特定引擎。
+Agent 按照优先级Automatic选择可用的翻译引擎。用户可以指定Use特定引擎。
 
 ### PDF 元素处理策略
 
@@ -134,11 +134,11 @@ for page_num in range(min(3, doc.page_count)):
     print(f"第 {page_num + 1} 页: {len(text['blocks'])} 个文本块")
 ```
 
-**步骤 2 — 逐页提取文本块**
+**步骤 2 — 逐页Extract文本块**
 
 ```python
 def extract_text_blocks(page):
-    """提取页面中所有文本块及其位置和样式"""
+    """Extract页面中所有文本块及其位置和样式"""
     blocks = []
     text_dict = page.get_text("dict")
 
@@ -159,7 +159,7 @@ def extract_text_blocks(page):
 
 **步骤 3 — 批量翻译**
 
-将提取的文本按段落分组，批量发送给翻译引擎：
+将Extract的文本按段落分组，批量Send给翻译引擎：
 
 ```python
 async def translate_blocks(blocks, target_lang="zh-CN"):
@@ -177,7 +177,7 @@ async def translate_blocks(blocks, target_lang="zh-CN"):
 **LLM 翻译 Prompt**
 
 ```
-你是一位专业的文档翻译师。请将以下文本从{source_lang}翻译为{target_lang}。
+你Yes一位专业的文档翻译师。请将以下文本从{source_lang}翻译为{target_lang}。
 
 要求：
 1. 保持专业术语的准确性和一致性
@@ -209,7 +209,7 @@ def rebuild_pdf(original_doc, translated_blocks, output_path):
         # 复制图片和非文本元素
         new_page.show_pdf_page(new_page.rect, original_doc, page_num)
 
-        # 覆盖原文区域并写入译文
+        # 覆盖原文区域并Write译文
         for block in translated_blocks[page_num]:
             rect = fitz.Rect(block["bbox"])
             new_page.draw_rect(rect, color=None, fill=(1, 1, 1))
@@ -226,7 +226,7 @@ def rebuild_pdf(original_doc, translated_blocks, output_path):
 
 **步骤 5 — 质量检查**
 
-翻译完成后执行自动检查：
+翻译完成后ExecuteAutomatic检查：
 - 页数与原文一致
 - 无空白页面
 - 翻译覆盖率（已翻译文本 / 总文本 ≥ 95%）
@@ -236,14 +236,14 @@ def rebuild_pdf(original_doc, translated_blocks, output_path):
 
 ### Workflow 2: 双语对照 PDF
 
-生成左右/上下对照的双语 PDF：
+Generation左右/上下对照的双语 PDF：
 
 **布局选项**
 
-| 布局 | 说明 | 适用场景 |
+| 布局 | Description | 适用场景 |
 |------|------|---------|
 | 左右对照 | 左页原文、右页译文 | 学术论文、对比审阅 |
-| 上下对照 | 段落级交替显示 | 学习材料 |
+| 上下对照 | 段落级交替Display | 学习材料 |
 | 注释模式 | 译文作为侧边注释 | 保留原文为主 |
 
 ```python
@@ -284,7 +284,7 @@ def create_bilingual_pdf(original_doc, translated_blocks, output_path, layout="s
 
 ```python
 def is_scanned_pdf(doc):
-    """检测 PDF 是否为扫描件"""
+    """检测 PDF YesNo为扫描件"""
     for page_num in range(min(3, doc.page_count)):
         page = doc[page_num]
         text = page.get_text().strip()
@@ -303,11 +303,11 @@ import pytesseract
 images = convert_from_path("scanned.pdf", dpi=300)
 for i, img in enumerate(images):
     text = pytesseract.image_to_string(img, lang='eng')
-    # 使用 image_to_data 获取文字位置信息
+    # Use image_to_data Get文字位置信息
     data = pytesseract.image_to_data(img, lang='eng', output_type=pytesseract.Output.DICT)
 ```
 
-**步骤 3** — 对 OCR 结果执行 Workflow 1 的翻译和重建流程
+**步骤 3** — 对 OCR 结果Execute Workflow 1 的翻译和重建流程
 
 ---
 
@@ -365,16 +365,16 @@ async def batch_translate_pdfs(input_dir, output_dir, target_lang="zh-CN"):
 
 ### 1. 中文字体缺失导致乱码
 
-**症状**：翻译后的 PDF 中文显示为方框或乱码
+**症状**：翻译后的 PDF 中文Display为方框或乱码
 **解决**：确保系统安装了中文字体，并在 PyMuPDF 中注册：
 
 ```python
 import fitz
 
-# PyMuPDF 支持的中文字体
+# PyMuPDF Supports的中文字体
 # "china-ss" = 思源宋体 (简体)
 # "china-ts" = 思源宋体 (繁体)
-# 或使用自定义字体
+# 或Use自定义字体
 page.insert_font(fontname="custom-zh", fontfile="/path/to/NotoSansCJK-Regular.ttf")
 ```
 
@@ -384,19 +384,19 @@ page.insert_font(fontname="custom-zh", fontfile="/path/to/NotoSansCJK-Regular.tt
 **原因**：中文译文通常比英文短，但某些情况下可能更长
 **解决**：
 - 动态调整字体大小以适应单元格
-- 允许文本自动换行
-- 对于复杂表格，使用 pdfplumber 提取后单独翻译
+- Allows文本Automatic换行
+- 对于复杂表格，Use pdfplumber Extract后单独翻译
 
 ### 3. 数学公式被错误翻译
 
 **症状**：公式被当作文本翻译
-**解决**：在翻译前识别并标记数学公式区域，跳过翻译：
+**解决**：在翻译前识别并Mark数学公式区域，跳过翻译：
 
 ```python
 import re
 
 def should_skip_translation(text):
-    """判断文本是否应跳过翻译"""
+    """判断文本YesNo应跳过翻译"""
     # 数学公式模式
     if re.match(r'^[\s\d\+\-\*\/\=\(\)\[\]\{\}\^\_\\\$]+$', text):
         return True
@@ -412,7 +412,7 @@ def should_skip_translation(text):
 ### 4. 大文件内存溢出
 
 **症状**：处理超过 100 页的大型 PDF 时内存不足
-**解决**：逐页处理而非一次性加载：
+**解决**：逐页处理而非一次性Load：
 
 ```python
 for page_num in range(doc.page_count):
@@ -429,7 +429,7 @@ for page_num in range(doc.page_count):
 **解决**：
 - 提高扫描 DPI（≥ 300）
 - 预处理图片（二值化、去噪、倾斜校正）
-- 使用语言包：`pytesseract.image_to_string(img, lang='eng+chi_sim')`
+- Use语言包：`pytesseract.image_to_string(img, lang='eng+chi_sim')`
 
 ### 6. 翻译术语不一致
 
@@ -461,14 +461,14 @@ glossary = {
 
 | 等级 | 方式 | 速度 | 质量 | 费用 |
 |------|------|------|------|------|
-| 快速 | Google Translate | ★★★★★ | ★★★ | 免费 |
+| Quick | Google Translate | ★★★★★ | ★★★ | 免费 |
 | 标准 | DeepL | ★★★★ | ★★★★ | $$ |
 | 专业 | GPT-4 | ★★★ | ★★★★★ | $$$ |
 | 人机协作 | GPT-4 + 人工审校 | ★★ | ★★★★★+ | $$$$ |
 
 ### 自定义术语表
 
-用户可提供术语表文件（CSV/JSON）确保特定术语的翻译一致：
+用户可Provides术语表文件（CSV/JSON）确保特定术语的翻译一致：
 
 ```json
 {
@@ -487,7 +487,7 @@ glossary = {
 
 ## EXTEND.md 扩展
 
-用户可在技能同目录下创建 `EXTEND.md` 添加：
+用户可在技能同目录下Create `EXTEND.md` 添加：
 - 行业专用术语表
 - 首选翻译引擎和质量等级
 - 自定义字体路径

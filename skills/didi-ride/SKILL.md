@@ -11,17 +11,17 @@ requires:
 
 # Didi Ride服务
 
-通过 DiDi MCP Server API 提供打车、路线规划、订单管理等出行能力。
+Via DiDi MCP Server API Provides打车、路线规划、订单Manage等出行能力。
 
 ## Quick Start
 
-### 获取 MCP KEY
+### Get MCP KEY
 
-访问 https://mcp.didichuxing.com/claw 获取 MCP Key，或使用滴滴出行 App 扫码。
+访问 https://mcp.didichuxing.com/claw Get MCP Key，或Use滴滴出行 App 扫码。
 
 ### Configuration Key
 
-直接在对话中告诉 Agent 你的 MCP Key，或编辑配置：
+直接在对话中告诉 Agent 你的 MCP Key，或Edit配置：
 export DIDI_MCP_KEY="your_key"
 
 ### 依赖
@@ -42,8 +42,8 @@ npm install -g mcporter
 
 1. 地址解析：maps_textsearch
 2. 确认起终点
-3. 价格预估：taxi_estimate（获取 traceId）
-4. 创建订单：taxi_create_order
+3. 价格预估：taxi_estimate（Get traceId）
+4. Create订单：taxi_create_order
 5. 查询状态：taxi_query_order
 
 ## 工具清单
@@ -54,7 +54,7 @@ npm install -g mcporter
 | 路线 | maps_direction_driving, maps_direction_transit, maps_direction_walking, maps_direction_bicycling |
 | 周边 | maps_place_around |
 
-## MCP 调用格式
+## MCP Call格式
 
 MCP_URL="https://mcp.didichuxing.com/mcp-servers?key=$DIDI_MCP_KEY"
 mcporter call "$MCP_URL" <tool> --args '{"key":"value"}'
@@ -62,7 +62,7 @@ mcporter call "$MCP_URL" <tool> --args '{"key":"value"}'
 ## Pre-built Scripts
 
 ### scripts/didi_mcp.py
-滴滴出行 MCP 客户端，需设置 DIDI_MCP_KEY。
+滴滴出行 MCP 客户端，需Set DIDI_MCP_KEY。
 
 ```bash
 python3 scripts/didi_mcp.py ride --from "望京SOHO" --to "国贸大厦"

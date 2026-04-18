@@ -9,7 +9,7 @@ category: System
 
 # Set Task Timeout
 
-动态调整当前任务的超时策略，主要用于避免"卡死检测"误触发。
+动态调整current task的超时策略，主要Used for避免"卡死检测"误触发。
 
 ## When to Use
 
@@ -18,11 +18,11 @@ category: System
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| progress_timeout_seconds | integer | 是 | 无进展超时阈值（秒），建议 600~3600 |
-| hard_timeout_seconds | integer | 否 | 硬超时上限（秒，0=禁用） |
-| reason | string | 是 | 简要说明调整原因 |
+| progress_timeout_seconds | integer | Yes | 无进展超时阈值（秒），建议 600~3600 |
+| hard_timeout_seconds | integer | No | 硬超时上限（秒，0=Disable） |
+| reason | string | Yes | 简要说明调整原因 |
 
 ## Examples
 
@@ -30,15 +30,15 @@ category: System
 ```json
 {
   "progress_timeout_seconds": 1800,
-  "reason": "需要完成多步浏览器操作，预计耗时较长"
+  "reason": "需要完成多步Browser operations，预计耗时较长"
 }
 ```
 
 ## Note
 
-该设置只影响当前会话正在执行的任务，不影响全局配置。
+该Set只影响当前会话正在Execute的任务，不影响全局配置。
 
 ## Related Skills
 
 - `create-todo`: create任务计划
-- `enable-thinking`: 启用深度思考
+- `enable-thinking`: Enable deep thinking

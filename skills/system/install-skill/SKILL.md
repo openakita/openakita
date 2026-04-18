@@ -13,23 +13,23 @@ category: Skills Management
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| source | string | 是 | Git 仓库 URL 或 SKILL.md 文件 URL |
-| name | string | 否 | 技能名称（可选，自动从 SKILL.md 提取） |
-| subdir | string | 否 | Git 仓库中技能所在的子目录路径 |
-| extra_files | array | 否 | 额外需要下载的文件 URL 列表 |
+| source | string | Yes | Git 仓库 URL 或 SKILL.md 文件 URL |
+| name | string | No | Skill name（Optional,Automatic从 SKILL.md Extract） |
+| subdir | string | No | Git 仓库中技能所在的子Directory path |
+| extra_files | array | No | 额外需要Download的文件 URL 列表 |
 
 ## Supported Sources
 
 1. **Git 仓库** (如 https://github.com/user/repo)
-   - 自动克隆仓库并查找 SKILL.md
-   - 支持指定子目录路径
+   - Automatic克隆仓库并Find SKILL.md
+   - Supports指定子Directory path
 
 2. **单个 SKILL.md 文件 URL**
    - create规范目录结构（scripts/, references/, assets/）
 
 ## Related Skills
 
-- `list-skills`: 查看已install技能
+- `list-skills`: List alreadyinstall技能
 - `find-skills`: search可用技能

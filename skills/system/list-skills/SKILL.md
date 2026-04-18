@@ -13,13 +13,13 @@ list已install的技能（遵循 Agent Skills 规范）。
 
 ## Parameters
 
-无参数。
+No parameters.
 
 ## Returns
 
-- 技能名称
+- Skill name
 - 技能描述
-- 是否可自动调用
+- YesNo可AutomaticCall
 - 系统技能 vs 外部技能标识
 
 ## Related Skills

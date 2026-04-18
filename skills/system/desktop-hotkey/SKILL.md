@@ -9,13 +9,13 @@ category: Desktop
 
 # Desktop Hotkey
 
-执行键盘快捷键。
+Execute keyboard shortcuts。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |------|------|------|------|
-| keys | array | 是 | 按键组合数组，如 ['ctrl', 'c'] |
+| keys | array | Yes | 按键组合数组，如 ['ctrl', 'c'] |
 
 ## Common Shortcuts
 
@@ -24,13 +24,13 @@ category: Desktop
 | ['ctrl', 'c'] | 复制 |
 | ['ctrl', 'v'] | 粘贴 |
 | ['ctrl', 'x'] | 剪切 |
-| ['ctrl', 's'] | 保存 |
+| ['ctrl', 's'] | Save |
 | ['ctrl', 'z'] | 撤销 |
 | ['ctrl', 'y'] | 重做 |
 | ['ctrl', 'a'] | 全选 |
-| ['alt', 'f4'] | 关闭窗口 |
-| ['alt', 'tab'] | 切换窗口 |
-| ['win', 'd'] | 显示桌面 |
+| ['alt', 'f4'] | Close窗口 |
+| ['alt', 'tab'] | Switch窗口 |
+| ['win', 'd'] | Display桌面 |
 
 ## Examples
 
@@ -39,12 +39,12 @@ category: Desktop
 {"keys": ["ctrl", "c"]}
 ```
 
-**保存文件**:
+**Save文件**:
 ```json
 {"keys": ["ctrl", "s"]}
 ```
 
 ## Related Skills
 
-- `desktop-type`: 输入文本
-- `desktop-click`: 点击元素
+- `desktop-type`: Type text
+- `desktop-click`: Click元素

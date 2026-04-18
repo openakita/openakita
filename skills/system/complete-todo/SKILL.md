@@ -9,30 +9,30 @@ category: Plan
 
 # Complete Todo
 
-标记计划完成，生成最终报告。在所有步骤完成后调用。
+Mark plan as completed，Generate final report。Called after all steps are completed。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| summary | string | 是 | 完成总结 |
+| summary | string | Yes | 完成总结 |
 
 ## Examples
 
 ```json
 {
-  "summary": "已完成百度search天气并截图发送给用户"
+  "summary": "已完成百度search天气并截图Send给用户"
 }
 ```
 
 ## Returns
 
-- 执行摘要
-- 成功/失败统计
-- 总耗时
+- Execute摘要
+- Success/failure statistics
+- Total time elapsed
 
 ## Related Skills
 
 - `create-todo`: create计划
-- `update-todo-step`: update步骤状态
-- `get-todo-status`: 查看计划状态
+- `update-todo-step`: updateStep status
+- `get-todo-status`: View计划状态

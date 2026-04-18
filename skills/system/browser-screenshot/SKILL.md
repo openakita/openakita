@@ -9,47 +9,47 @@ category: Browser
 
 # Browser Screenshot
 
-截取当前页面截图。
+Capture current page screenshot。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| path | string | 否 | 保存路径（可选，不填自动生成） |
+| path | string | No | Save路径（Optional,不填AutomaticGeneration） |
 
 ## Examples
 
-**截取当前页面**:
+**Capture current page**:
 ```json
 {}
 ```
 
-**保存到指定路径**:
+**Save到指定路径**:
 ```json
 {"path": "C:/screenshots/result.png"}
 ```
 
 ## Notes
 
-- 仅截取浏览器页面内容
-- 如需截取桌面或其他应用，请使用 `desktop_screenshot`
+- 仅Capture browser page内容
+- 如需Capture桌面或其他应用，请Use `desktop_screenshot`
 
 ## Workflow
 
 1. 截图后get `file_path`
-2. 使用 `deliver_artifacts` 发送给用户
+2. Use `deliver_artifacts` Send给用户
 
 ## Related Skills
 
-- `desktop-screenshot`: 截取桌面应用
-- `deliver-artifacts`: 发送截图给用户
+- `desktop-screenshot`: Capture桌面应用
+- `deliver-artifacts`: Send截图给用户
 
 
-## 推荐
+## Recommendations
 
-对于多步骤的浏览器任务，建议优先使用 `browser_task` 工具。它可以自动规划和执行复杂的浏览器操作，无需手动逐步调用各个工具。
+对于多步骤的浏览器任务，建议优先Use `browser_task` 工具。它可以Automatic规划和Execute复杂的Browser operations，无需Manual逐步Call各个工具。
 
 示例：
 ```python
-browser_task(task="打开百度search福建福州并截图")
+browser_task(task="Open百度search福建福州并截图")
 ```

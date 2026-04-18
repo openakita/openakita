@@ -7,14 +7,14 @@ metadata:
   version: "1.0.0"
 ---
 
-# Baoyu Image Gen — AI 图像生成
+# Baoyu Image Gen — AI 图像Generation
 
 ## When to Use
 
-- 用户要求生成图片、插图、海报、封面、图标等视觉内容
-- 需要为文章、PPT、网站创建配图
+- 用户要求Generate image、插图、海报、封面、图标等视觉内容
+- 需要为文章、PPT、网站Create配图
 - 需要特定比例的图片（社交媒体封面、手机壁纸等）
-- 需要批量生成多张图片并选择
+- 需要批量Generation多张图片并选择
 - 需要针对不同 AI 绘图服务编写优化 prompt
 - 需要将自然语言描述转换为高质量 AI 图片
 
@@ -24,9 +24,9 @@ metadata:
 
 ### API 密钥配置
 
-至少需要配置一个图像生成服务的 API 密钥。在 `.env` 文件或环境变量中设置：
+至少需要配置一个图像Generation服务的 API 密钥。在 `.env` 文件或环境变量中Set：
 
-| 环境变量 | 服务商 | 获取方式 |
+| 环境变量 | 服务商 | Get方式 |
 |---------|--------|---------|
 | `OPENAI_API_KEY` | OpenAI DALL-E 3 | https://platform.openai.com/api-keys |
 | `GOOGLE_API_KEY` | Google Imagen 3 | https://aistudio.google.com/apikey |
@@ -37,7 +37,7 @@ metadata:
 
 | 依赖 | 用途 | 安装方式 |
 |------|------|---------|
-| Python ≥ 3.10 | 运行生成脚本 | 系统预装 |
+| Python ≥ 3.10 | RunGeneration脚本 | 系统预装 |
 | `httpx` | HTTP 请求 | `pip install httpx` |
 | `Pillow` | 图片处理 | `pip install Pillow` |
 
@@ -66,18 +66,18 @@ metadata:
 | 尺寸灵活度 | 3 种固定 | 多种 | 多种 | 自定义 |
 | 风格多样性 | ★★★★★ | ★★★★ | ★★★★ | ★★★★★ |
 
-### 服务商自动选择策略
+### 服务商Automatic选择策略
 
-Agent 根据以下规则自动选择最合适的服务商：
+Agent 根据以下规则Automatic选择最合适的服务商：
 
-1. **中文场景优先** — 如果 prompt 是中文或涉及中国文化元素，优先使用通义万象
-2. **文字渲染需求** — 需要在图片中嵌入文字时，优先使用 DALL-E 3 或 Imagen 3
-3. **速度优先** — 用户要求快速生成时，优先使用 Imagen 3 或通义万象
-4. **质量优先** — 用户要求最高质量时，使用 DALL-E 3 或 Flux Pro
-5. **成本优先** — 批量生成时优先使用通义万象
+1. **中文场景优先** — 如果 prompt Yes中文或涉及中国文化元素，优先Use通义万象
+2. **文字渲染需求** — 需要在图片中嵌入文字时，优先Use DALL-E 3 或 Imagen 3
+3. **速度优先** — 用户要求QuickGeneration时，优先Use Imagen 3 或通义万象
+4. **质量优先** — 用户要求最高质量时，Use DALL-E 3 或 Flux Pro
+5. **成本优先** — 批量Generation时优先Use通义万象
 6. **可用性** — 根据用户已配置的 API Key 选择
 
-用户可通过指定服务商名称覆盖自动选择。
+用户可Via指定服务商名称覆盖Automatic选择。
 
 ### 宽高比速查
 
@@ -92,10 +92,10 @@ Agent 根据以下规则自动选择最合适的服务商：
 
 ### 质量预设
 
-| 预设 | 说明 | 适用场景 |
+| 预设 | Description | 适用场景 |
 |------|------|---------|
-| `draft` | 快速草稿，低分辨率 | 方案探索、快速迭代 |
-| `standard` | 标准质量 | 日常使用、网页配图 |
+| `draft` | Quick草稿，低分辨率 | 方案探索、Quick迭代 |
+| `standard` | 标准质量 | 日常Use、网页配图 |
 | `hd` | 高清，细节丰富 | 正式出版、印刷 |
 | `ultra` | 最高质量，最长等待 | 海报、展览 |
 
@@ -103,48 +103,48 @@ Agent 根据以下规则自动选择最合适的服务商：
 
 ## Workflows
 
-### Workflow 1: 单张图片生成
+### Workflow 1: 单张图片Generation
 
 **步骤 1 — 理解用户意图**
 
-从用户描述中提取以下信息：
+从用户描述中Extract以下信息：
 
-| 要素 | 默认值 | 说明 |
+| 要素 | Default | Description |
 |------|--------|------|
 | 主题 | — | 图片的核心内容 |
 | 风格 | 写实 | 摄影、插画、水彩、赛博朋克、扁平化等 |
-| 比例 | 1:1 | 根据用途自动推断 |
+| 比例 | 1:1 | 根据用途Automatic推断 |
 | 质量 | standard | draft/standard/hd/ultra |
-| 服务商 | auto | 自动选择或用户指定 |
+| 服务商 | auto | Automatic选择或用户指定 |
 
 **步骤 2 — 构建优化 Prompt**
 
-将用户描述转换为各服务商优化的 prompt（见 Prompt 工程部分）。
+将用户描述转换为各服务商优化的 prompt（见 Prompt 工程Partial）。
 
-**步骤 3 — 调用生成 API**
+**步骤 3 — CallGeneration API**
 
-根据选择的服务商调用对应 API。
+根据选择的服务商Call对应 API。
 
-**步骤 4 — 返回结果**
+**步骤 4 — Returns结果**
 
-输出生成的图片文件路径，并附上使用的 prompt 和参数。
+输出Generation的图片File path，并附上Use的 prompt 和参数。
 
 ---
 
-### Workflow 2: 批量生成
+### Workflow 2: 批量Generation
 
-一次生成多张图片供用户选择：
+一次Generation多张图片供用户选择：
 
 **步骤 1** — 确定批量参数
 
-| 参数 | 说明 |
+| Parameter | Description |
 |------|------|
-| 数量 | 2-8 张（默认 4） |
+| 数量 | 2-8 张（Default 4） |
 | 变体策略 | same-prompt（同 prompt 不同种子）/ varied-prompt（不同风格变体） |
 
-**步骤 2** — 生成所有图片
+**步骤 2** — Generation所有图片
 
-并行调用 API 以加快速度。对于 varied-prompt 模式，为每张图调整 prompt 的风格描述词。
+并行Call API 以加Quick度。对于 varied-prompt 模式，为每张图调整 prompt 的风格描述词。
 
 **步骤 3** — 展示结果并让用户选择
 
@@ -155,9 +155,9 @@ Agent 根据以下规则自动选择最合适的服务商：
 当用户不确定如何描述想要的图片时：
 
 1. 与用户对话，逐步明确需求
-2. 提供 3-5 个不同方向的 prompt 建议
+2. Provides 3-5 个不同方向的 prompt 建议
 3. 用户选择方向后微调 prompt
-4. 生成图片
+4. Generate image
 
 ---
 
@@ -183,9 +183,9 @@ shallow depth of field, photorealistic
 
 1. **自然语言描述** — DALL-E 3 理解长句叙述，不需要关键词堆砌
 2. **风格指定** — 明确说明 "digital art"、"oil painting"、"photograph" 等
-3. **避免否定词** — 说"蓝天"而非"没有云的天空"
+3. **避免No定词** — 说"蓝天"而非"没有云的天空"
 4. **文字嵌入** — 直接写 `with text "Hello"` 可以在图中渲染文字
-5. **revisedPrompt** — DALL-E 3 会重写 prompt，可从返回值获取实际使用的 prompt
+5. **revisedPrompt** — DALL-E 3 会重写 prompt，可从Returns值Get实际Use的 prompt
 
 ```python
 from openai import OpenAI
@@ -193,7 +193,7 @@ client = OpenAI()
 
 response = client.images.generate(
     model="dall-e-3",
-    prompt="一只橘猫坐在窗台上看雨，窗外是东京夜景，赛博朋克风格，霓虹灯倒映在雨滴中",
+    prompt="一只橘猫坐在窗台上看雨，窗外Yes东京夜景，赛博朋克风格，霓虹灯倒映在雨滴中",
     size="1792x1024",
     quality="hd",
     n=1
@@ -207,7 +207,7 @@ revised_prompt = response.data[0].revised_prompt
 1. **结构化描述** — 主体 + 动作 + 环境 + 风格
 2. **摄影参数** — 可以指定镜头焦段、光圈、ISO 等
 3. **艺术家风格** — 可以参考知名艺术家的风格
-4. **多语言支持** — 支持中文 prompt 但英文效果更佳
+4. **多语言Supports** — Supports中文 prompt 但英文效果更佳
 
 ```python
 from google import genai
@@ -228,10 +228,10 @@ for image in response.generated_images:
 
 ### 通义万象专用技巧
 
-1. **中文 prompt 最优** — 直接使用中文描述效果最佳
-2. **风格参数** — 支持 `<photography>`、`<anime>`、`<3d cartoon>` 等风格标签
-3. **负向提示** — 支持 negative_prompt 排除不想要的元素
-4. **参考图** — 支持 img2img 以图生图
+1. **中文 prompt 最优** — 直接Use中文描述效果最佳
+2. **风格参数** — Supports `<photography>`、`<anime>`、`<3d cartoon>` 等风格标签
+3. **负向提示** — Supports negative_prompt 排除不想要的元素
+4. **参考图** — Supports img2img 以图生图
 
 ```python
 import dashscope
@@ -258,7 +258,7 @@ image_url = response.output.results[0].url
 1. **英文 prompt** — Flux 模型英文效果远优于中文
 2. **极致细节** — 适合描述复杂场景和精细纹理
 3. **风格混搭** — 可以混合多种艺术风格
-4. **自定义参数** — 支持 guidance_scale、steps 等高级参数
+4. **自定义参数** — Supports guidance_scale、steps 等高级参数
 
 ```python
 import replicate
@@ -288,22 +288,22 @@ output = replicate.run(
 
 ### Output内容
 
-每次图片生成后，返回以下信息：
+每次图片Generation后，Returns以下信息：
 
 ```
-📸 图片已生成
+📸 图片已Generation
 - 文件：./images/coffee_shop_dalle3_16x9.png
 - 服务商：DALL-E 3
 - 尺寸：1792 × 1024 (16:9)
 - 质量：HD
-- Prompt：[实际使用的 prompt]
+- Prompt：[实际Use的 prompt]
 - 耗时：8.3s
 - 费用估算：$0.08
 ```
 
 ### 多图对比输出
 
-批量生成时以网格形式对比展示，标注每张的差异（不同风格、不同构图等）。
+批量Generation时以网格形式对比展示，标注每张的差异（不同风格、不同构图等）。
 
 ---
 
@@ -311,13 +311,13 @@ output = replicate.run(
 
 ### 1. API Key 未配置
 
-**症状**：调用失败，返回 401/403 错误
-**解决**：检查 `.env` 或环境变量中的 API Key 是否已正确设置
+**症状**：Call失败，Returns 401/403 错误
+**解决**：检查 `.env` 或环境变量中的 API Key YesNo已正确Set
 
 ### 2. Prompt 过于模糊
 
 **错误**："画一张好看的图"
-**正确**："一只白色的猫咪趴在阳光下的窗台上，背景是模糊的绿色植物，温暖的暖色调，胶片摄影风格"
+**正确**："一只白色的猫咪趴在阳光下的窗台上，背景Yes模糊的绿色植物，温暖的暖色调，胶片摄影风格"
 
 ### 3. 比例与用途不匹配
 
@@ -328,12 +328,12 @@ output = replicate.run(
 
 ### 4. 中文 prompt 发给 Flux/Replicate
 
-Flux 等模型对中文支持有限，必须先翻译为英文再调用。Agent 应自动完成翻译。
+Flux 等模型对中文Supports有限，必须先翻译为英文再Call。Agent 应Automatic完成翻译。
 
 ### 5. 图片中文字乱码
 
-AI 图像生成模型在渲染中文文字时质量不稳定。如果必须在图片中嵌入中文文字，建议：
-- 先生成不含文字的图片
+AI 图像Generation模型在渲染中文文字时质量不稳定。如果必须在图片中嵌入中文文字，建议：
+- 先Generation不含文字的图片
 - 然后用 Pillow 在图片上叠加中文文字
 
 ```python
@@ -348,7 +348,7 @@ img.save('final_image.png')
 
 ### 6. 费用失控
 
-批量生成时注意费用：
+批量Generation时注意费用：
 | 服务商 | 单张费用（约） |
 |--------|-------------|
 | DALL-E 3 HD | $0.08 |
@@ -357,12 +357,12 @@ img.save('final_image.png')
 | 通义万象 | ¥0.04 |
 | Flux Pro | $0.05 |
 
-生成前提醒用户预估费用。
+Generation前提醒用户预估费用。
 
 ### 7. 内容安全限制
 
-所有服务商都有内容安全审查。如果生成被拒绝：
-- 检查 prompt 是否包含敏感词
+所有服务商都有内容安全审查。如果Generation被拒绝：
+- 检查 prompt YesNoIncludes敏感词
 - 调整描述方式
 - 不要尝试绕过安全限制
 
@@ -370,8 +370,8 @@ img.save('final_image.png')
 
 ## EXTEND.md 扩展
 
-用户可在技能同目录下创建 `EXTEND.md` 添加：
-- 首选服务商和默认参数
+用户可在技能同目录下Create `EXTEND.md` 添加：
+- 首选服务商和Default参数
 - 自定义风格预设模板
 - 品牌相关的 prompt 片段（Logo 描述、品牌色等）
 - 额外的 API 端点或自部署模型地址

@@ -13,14 +13,14 @@ category: File System
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| pattern | string | 是 | 正则表达式search模式 |
-| path | string | 否 | search目录（默认当前目录） |
-| include | string | 否 | 文件名 glob 过滤（如 "*.py"） |
-| context_lines | integer | 否 | 匹配行前后的上下文行数（默认 0） |
-| max_results | integer | 否 | 最大返回匹配数（默认 50） |
-| case_insensitive | boolean | 否 | 是否忽略大小写（默认 false） |
+| pattern | string | Yes | 正则表达式search模式 |
+| path | string | No | search目录（Default当前目录） |
+| include | string | No | 文件名 glob 过滤（如 "*.py"） |
+| context_lines | integer | No | 匹配行前后的上下文行数（Default 0） |
+| max_results | integer | No | MaximumReturns匹配数（Default 50） |
+| case_insensitive | boolean | No | YesNo忽略大小写（Default false） |
 
 ## Examples
 
@@ -32,7 +32,7 @@ category: File System
 }
 ```
 
-**search TODO 标记（忽略大小写）**:
+**search TODO Mark（忽略大小写）**:
 ```json
 {
   "pattern": "TODO|FIXME",
@@ -41,7 +41,7 @@ category: File System
 }
 ```
 
-**search并显示上下文**:
+**search并Display上下文**:
 ```json
 {
   "pattern": "class.*Error",
@@ -52,13 +52,13 @@ category: File System
 
 ## Notes
 
-- 自动跳过 .git、node_modules、__pycache__、.venv 等目录
-- 自动跳过二进制文件
+- Automatic跳过 .git、node_modules、__pycache__、.venv 等目录
+- Automatic跳过二进制文件
 - 纯 Python 实现，无需install ripgrep/grep
-- 返回格式: file:line_number:content
+- Returns格式: file:line_number:content
 
 ## Related Skills
 
-- `glob`: 按文件名模式查找文件
-- `read-file`: 读取search到的文件
-- `edit-file`: 编辑search到的匹配
+- `glob`: 按文件名模式Find文件
+- `read-file`: Readsearch到的文件
+- `edit-file`: Editsearch到的匹配

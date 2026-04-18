@@ -9,14 +9,14 @@ category: Browser
 
 # Browser Type
 
-在输入框中输入文本。
+在输入框中Type text。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| selector | string | 是 | 输入框的 CSS 选择器 |
-| text | string | 是 | 要输入的文本 |
+| selector | string | Yes | 输入框的 CSS 选择器 |
+| text | string | Yes | 要输入的文本 |
 
 ## Examples
 
@@ -32,25 +32,25 @@ category: Browser
 
 ## Prerequisites
 
-- 必须先用 `browser_navigate` 打开目标页面
-- 如果输入框没有焦点，可能需要先点击
+- 必须先用 `browser_navigate` Open目标页面
+- 如果输入框没有焦点，可能需要先Click
 
 ## Notes
 
-- 支持中文输入
+- Supports中文输入
 - 输入会追加到现有内容（如需清空请先选中）
 
 ## Related Skills
 
 - `browser-navigate`: 先导航到页面
-- `browser-click`: 点击输入框get焦点
+- `browser-click`: Click输入框get焦点
 
 
-## 推荐
+## Recommendations
 
-对于多步骤的浏览器任务，建议优先使用 `browser_task` 工具。它可以自动规划和执行复杂的浏览器操作，无需手动逐步调用各个工具。
+对于多步骤的浏览器任务，建议优先Use `browser_task` 工具。它可以Automatic规划和Execute复杂的Browser operations，无需Manual逐步Call各个工具。
 
 示例：
 ```python
-browser_task(task="打开百度search福建福州并截图")
+browser_task(task="Open百度search福建福州并截图")
 ```

@@ -13,30 +13,30 @@ create定时任务或提醒。
 
 ## Important
 
-**必须调用此工具才能create任务！只是说"好的我会提醒你"不会create任务！**
+**必须Call此工具才能create任务！只Yes说"好的我会提醒你"不会create任务！**
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| name | string | 是 | 任务名称 |
-| description | string | 是 | 任务描述 |
-| task_type | string | 是 | 任务类型：reminder 或 task |
-| trigger_type | string | 是 | 触发类型：once, interval, cron |
-| trigger_config | object | 是 | 触发配置（见下方） |
-| reminder_message | string | 否 | 提醒消息（仅 reminder 类型） |
-| prompt | string | 否 | AI 执行提示（仅 task 类型） |
+| name | string | Yes | 任务名称 |
+| description | string | Yes | 任务描述 |
+| task_type | string | Yes | 任务类型：reminder 或 task |
+| trigger_type | string | Yes | 触发类型：once, interval, cron |
+| trigger_config | object | Yes | 触发配置（见下方） |
+| reminder_message | string | No | 提醒消息（仅 reminder 类型） |
+| prompt | string | No | AI Execute提示（仅 task 类型） |
 
 ## Task Type Guidelines
 
-**90% 的提醒都应该是 reminder 类型！**
+**90% 的提醒都应该Yes reminder 类型！**
 
-✅ **reminder**（默认优先）:
+✅ **reminder**（Default优先）:
 - "提醒我喝水" → reminder
 - "站立提醒" → reminder
 - "叫我起床" → reminder
 
-❌ **task**（仅当需要 AI 执行操作时）:
+❌ **task**（仅当需要 AI Execute操作时）:
 - "查询天气告诉我" → task（需要查询）
 - "截图发给我" → task（需要操作）
 
@@ -47,7 +47,7 @@ create定时任务或提醒。
 {"run_at": "2026-02-01 10:00"}
 ```
 
-**interval（间隔执行）**:
+**interval（间隔Execute）**:
 ```json
 {"interval_minutes": 30}
 ```
@@ -85,5 +85,5 @@ create定时任务或提醒。
 
 ## Related Skills
 
-- `list-scheduled-tasks`: 查看已create的任务
+- `list-scheduled-tasks`: List alreadycreate的任务
 - `cancel-scheduled-task`: 取消任务

@@ -9,18 +9,18 @@ category: Scheduled Tasks
 
 # Trigger Scheduled Task
 
-立即触发定时任务（不等待计划时间）。
+立即Trigger scheduled task（不等待计划时间）。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| task_id | string | 是 | 任务 ID |
+| task_id | string | Yes | 任务 ID |
 
 ## Notes
 
-- 不会影响原有的执行计划
-- Applicable to测试任务或提前运行
+- 不会影响原有的Execute计划
+- Applicable to测试任务或提前Run
 
 ## Related Skills
 

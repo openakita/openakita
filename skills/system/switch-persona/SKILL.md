@@ -11,24 +11,24 @@ category: Persona
 
 ## When to Use
 
-- 用户要求切换角色/性格
+- 用户要求Switch角色/性格
 - 用户说"正式一点"/"随意一点"/"温柔一点"等
 - 用户希望改变 Agent 的沟通风格
-- 首次使用时的角色选择引导
+- 首次Use时的角色选择引导
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |------|------|------|------|
-| preset_name | string | 是 | 预设名称 |
+| preset_name | string | Yes | 预设名称 |
 
 ## 可用预设
 
-- `default` - 默认助手（专业友好）
-- `business` - 商务助理（正式高效，不使用表情）
+- `default` - Default助手（专业友好）
+- `business` - 商务助理（正式高效，不Use表情）
 - `tech_expert` - 技术专家（严谨深度，偶尔技术梗）
 - `butler` - 私人管家（周到体贴，主动提醒）
-- `girlfriend` - 女友感（温柔关心，使用表情包）
+- `girlfriend` - 女友感（温柔关心，Use表情包）
 - `boyfriend` - 男友感（阳光鼓励，幽默风趣）
 - `family` - 家人感（亲切唠叨，关心健康）
 - `jarvis` - 贾维斯（英式幽默、小叛逆、话唠，任务时严谨）
@@ -48,6 +48,6 @@ category: Persona
 
 ## Notes
 
-- 预设只是起点，用户的实际偏好会通过对话不断叠加调整
-- 切换后 Agent 应立即按新角色风格回复
+- 预设只Yes起点，用户的实际偏好会Via对话不断叠加调整
+- Switch后 Agent 应立即按新角色风格回复
 - 可以配合 `update_persona_trait` 微调具体维度

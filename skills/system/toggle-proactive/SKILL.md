@@ -11,20 +11,20 @@ category: Persona
 
 ## When to Use
 
-- 用户要求开启/关闭主动消息
+- 用户要求开启/Close主动消息
 - 用户说"别主动给我发消息了"
 - 用户说"你可以主动跟我聊天"
 - 用户在首次人格引导中选择开启
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |------|------|------|------|
-| enabled | boolean | 是 | 是否启用 |
+| enabled | boolean | Yes | YesNoEnable |
 
 ## Features说明
 
-开启后 Agent 会通过 IM 通道主动发送：
+开启后 Agent 会Via IM 通道主动Send：
 
 - **早安问候**: 每天早上（7-9 点）
 - **任务跟进**: 提醒未完成的任务
@@ -36,8 +36,8 @@ category: Persona
 
 - 每日最多 3 条（自适应调整）
 - 两条之间至少间隔 2 小时
-- 安静时段（23:00-07:00）不发送
-- 根据用户反馈自动调整频率
+- 安静时段（23:00-07:00）不Send
+- 根据用户反馈Automatic调整频率
 
 ## Examples
 

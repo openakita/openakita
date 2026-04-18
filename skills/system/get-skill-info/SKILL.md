@@ -13,21 +13,21 @@ get技能的详细信息和指令（Level 2 披露）。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| skill_name | string | 是 | 技能名称 |
+| skill_name | string | Yes | Skill name |
 
 ## Returns
 
-- 完整的 SKILL.md 内容（使用说明和指令）
+- Full的 SKILL.md 内容（Use说明和指令）
 - 参考文档列表（如有）
 
 ## Important
 
-大多数外部技能（xlsx, docx, pptx, pdf 等）是**指令型技能**，没有预置脚本。
-读取指令后应按照指令编写代码，通过 `run_shell` 执行，而非调用 `run_skill_script`。
+大多数外部技能（xlsx, docx, pptx, pdf 等）Yes**指令型技能**，没有预置脚本。
+Read指令后应按照指令编写代码，Via `run_shell` Execute，而非Call `run_skill_script`。
 
 ## Related Skills
 
 - `list-skills`: list所有技能
-- `run-shell`: 执行按技能指令编写的代码
+- `run-shell`: Execute按技能指令编写的代码

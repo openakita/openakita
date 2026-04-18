@@ -13,21 +13,21 @@ category: Desktop
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |------|------|------|------|
-| action | string | 是 | 操作类型：list/switch/minimize/maximize/restore/close |
-| title | string | 否 | 窗口标题（模糊匹配），list 操作不需要 |
+| action | string | Yes | 操作类型：list/switch/minimize/maximize/restore/close |
+| title | string | No | 窗口标题（模糊匹配），list 操作不需要 |
 
 ## Actions
 
-| 操作 | 说明 | 需要 title |
+| 操作 | Description | 需要 title |
 |------|------|-----------|
-| list | list所有窗口 | 否 |
-| switch | 切换到指定窗口（激活并置顶） | 是 |
-| minimize | 最小化窗口 | 是 |
-| maximize | 最大化窗口 | 是 |
-| restore | 恢复窗口 | 是 |
-| close | 关闭窗口 | 是 |
+| list | list所有窗口 | No |
+| switch | Switch到指定窗口（激活并置顶） | Yes |
+| minimize | Minimum化窗口 | Yes |
+| maximize | Maximum化窗口 | Yes |
+| restore | Resume窗口 | Yes |
+| close | Close窗口 | Yes |
 
 ## Examples
 
@@ -36,12 +36,12 @@ category: Desktop
 {"action": "list"}
 ```
 
-**切换到记事本**:
+**Switch到记事本**:
 ```json
 {"action": "switch", "title": "记事本"}
 ```
 
-**最大化 Chrome**:
+**Maximum化 Chrome**:
 ```json
 {"action": "maximize", "title": "Chrome"}
 ```
@@ -54,5 +54,5 @@ category: Desktop
 
 ## Related Skills
 
-- `desktop-screenshot`: 截取窗口
-- `desktop-inspect`: 检查窗口结构
+- `desktop-screenshot`: Capture窗口
+- `desktop-inspect`: Inspect window结构

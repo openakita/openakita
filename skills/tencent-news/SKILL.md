@@ -9,31 +9,31 @@ metadata:
 
 # Tencent News内容订阅
 
-通过 tencent-news-cli 获取腾讯新闻内容，支持热点新闻、早报晚报、实时资讯、新闻榜单、领域新闻查询。
+Via tencent-news-cli Get腾讯新闻内容，Supports热点新闻、早报晚报、实时资讯、新闻榜单、领域新闻查询。
 
 ## Configuration
 
-### API Key 获取
-打开 https://news.qq.com/exchange?scene=appkey 获取 API Key。
+### API Key Get
+Open https://news.qq.com/exchange?scene=appkey Get API Key。
 
 ### Installation CLI
-下载官方 skill 包并安装 CLI。
+Download官方 skill 包并安装 CLI。
 
-### 设置 Key
+### Set Key
 "<cliPath>" apikey-set KEY
 
-## 获取新闻
+## Get新闻
 
-1. 执行 help 查看可用子命令
+1. Execute help View可用子命令
 2. 理解用户意图，映射子命令
-3. 执行并按格式输出
+3. Execute并按格式输出
 
 ## Output Format
 
 1. **标题文字**
    来源：媒体名称
    摘要内容……
-   [查看原文](https://…)
+   [View原文](https://…)
 
 **来源：腾讯新闻**
 

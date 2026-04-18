@@ -11,14 +11,14 @@ metadata:
 
 ## 📋 概述
 
-一个基于 OpenAI GPT-4 Vision 的图片理解工具，支持图片描述、文字识别(OCR)、物体识别和图片问答。
+一个Based on OpenAI GPT-4 Vision 的图片理解工具，Supports图片描述、文字识别(OCR)、物体识别和图片问答。
 
 ## 🚀 功能
 
-| 功能 | 命令 | 说明 |
+| 功能 | 命令 | Description |
 |------|------|------|
 | 图片描述 | `-m describe` | 详细描述图片内容 |
-| 文字提取 | `-m ocr` | 提取图片中的所有文字 |
+| 文字Extract | `-m ocr` | Extract图片中的所有文字 |
 | 物体识别 | `-m objects` | 识别并list图片中的物体 |
 | 图片问答 | `-m qa` | 针对图片回答问题 |
 
@@ -41,14 +41,14 @@ set OPENAI_API_KEY=sk-your-api-key-here
 python scripts/main.py -i photo.jpg -a sk-your-key
 ```
 
-## 📖 使用方法
+## 📖 Use方法
 
-### 基本使用
+### 基本Use
 ```bash
 # 描述图片
 python scripts/main.py -i photo.jpg -m describe
 
-# 提取文字（OCR）
+# Extract文字（OCR）
 python scripts/main.py -i screenshot.png -m ocr
 
 # 识别物体
@@ -58,7 +58,7 @@ python scripts/main.py -i photo.jpg -m objects
 python scripts/main.py -i photo.jpg -m qa -q "这个图片里有什么？"
 ```
 
-### 完整参数
+### Full参数
 ```bash
 python scripts/main.py \
   --image PATH_TO_IMAGE \
@@ -83,6 +83,6 @@ python scripts/main.py \
 
 ## ⚠️ 注意事项
 
-- 需要 OpenAI API Key（支持 GPT-4 Vision）
-- 支持的图片格式：PNG、JPG、GIF、BMP
+- 需要 OpenAI API Key（Supports GPT-4 Vision）
+- Supports的图片格式：PNG、JPG、GIF、BMP
 - 图片大小建议小于 20MB

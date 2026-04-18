@@ -13,29 +13,29 @@ Read file content.
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| path | string | 是 | 文件路径 |
+| path | string | Yes | File path |
 
 ## Examples
 
-**读取配置文件**:
+**Read config file**:
 ```json
 {"path": "config.json"}
 ```
 
-**读取代码文件**:
+**Read代码文件**:
 ```json
 {"path": "src/main.py"}
 ```
 
 ## Notes
 
-- 适用于文本文件
-- 使用 UTF-8 编码
+- 适Used for文本文件
+- Use UTF-8 编码
 - 二进制文件需要特殊处理
 
 ## Related Skills
 
-- `write-file`: 写入文件
-- `list-directory`: 列出目录内容
+- `write-file`: Write文件
+- `list-directory`: List directory contents

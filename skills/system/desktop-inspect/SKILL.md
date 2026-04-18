@@ -9,20 +9,20 @@ category: Desktop
 
 # Desktop Inspect
 
-检查窗口的 UI 元素树结构（用于调试和了解界面结构）。
+Inspect window's UI 元素树结构（Used for调试和了解界面结构）。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |------|------|------|------|
-| window_title | string | 否 | 窗口标题，不填则检查当前活动窗口 |
-| depth | integer | 否 | 元素树遍历深度，默认 2 |
+| window_title | string | No | 窗口标题，不填则检查当前活动窗口 |
+| depth | integer | No | 元素树遍历深度，Default 2 |
 
 ## Use Cases
 
-- 调试 UI 自动化问题
+- 调试 UI Automatic化问题
 - 了解应用程序界面结构
-- 查找正确的元素标识符用于点击/输入
+- Find正确的元素标识符Used forClick/输入
 
 ## Examples
 
@@ -46,5 +46,5 @@ category: Desktop
 
 ## Related Skills
 
-- `desktop-find-element`: 查找特定元素
+- `desktop-find-element`: Find特定元素
 - `desktop-window`: 窗口manage

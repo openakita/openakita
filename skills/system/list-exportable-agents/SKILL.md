@@ -13,13 +13,13 @@ list所有可导出的 Agent，包括系统预设和自定义 Agent。
 
 ## Parameters
 
-无参数。
+No parameters.
 
 ## Returns
 
-返回 Agent 列表，每项包含：
+Returns Agent 列表，每项Includes：
 - `id`: Agent ID
-- `name`: 显示名称
+- `name`: Display名称
 - `type`: 类型（system/custom）
 - `category`: 分类
 - `skills_count`: 技能数量

@@ -13,7 +13,7 @@ get记忆系统统计信息。
 
 ## Parameters
 
-无参数。
+No parameters.
 
 ## Returns
 

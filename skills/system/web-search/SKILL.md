@@ -9,16 +9,16 @@ category: Web Search
 
 # Web Search
 
-使用 DuckDuckGo search网页，get最新信息。
+Use DuckDuckGo search网页，get最新信息。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| query | string | 是 | search关键词 |
-| max_results | integer | 否 | 最大结果数（1-20，默认 5） |
-| region | string | 否 | 地区代码（wt-wt 全球，cn-zh 中国） |
-| safesearch | string | 否 | 安全search（on/moderate/off） |
+| query | string | Yes | search关键词 |
+| max_results | integer | No | Maximum结果数（1-20，Default 5） |
+| region | string | No | 地区代码（wt-wt 全球，cn-zh 中国） |
+| safesearch | string | No | 安全search（on/moderate/off） |
 
 ## Examples
 

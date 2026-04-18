@@ -9,13 +9,13 @@ category: Browser
 
 # Browser Get Content
 
-get页面内容（文本）。
+getPage content（文本）。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| selector | string | 否 | CSS 选择器（可选，不填则get整个页面） |
+| selector | string | No | CSS 选择器（Optional,不填则get整个页面） |
 
 ## Examples
 
@@ -35,11 +35,11 @@ get页面内容（文本）。
 - `browser-screenshot`: 视觉捕获
 
 
-## 推荐
+## Recommendations
 
-对于多步骤的浏览器任务，建议优先使用 `browser_task` 工具。它可以自动规划和执行复杂的浏览器操作，无需手动逐步调用各个工具。
+对于多步骤的浏览器任务，建议优先Use `browser_task` 工具。它可以Automatic规划和Execute复杂的Browser operations，无需Manual逐步Call各个工具。
 
 示例：
 ```python
-browser_task(task="打开百度search福建福州并截图")
+browser_task(task="Open百度search福建福州并截图")
 ```

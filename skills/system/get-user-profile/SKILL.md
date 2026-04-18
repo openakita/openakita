@@ -9,16 +9,16 @@ category: User Profile
 
 # Get User Profile
 
-get当前用户档案信息摘要。
+getcurrent user档案信息摘要。
 
 ## Parameters
 
-无参数。
+No parameters.
 
 ## Returns
 
 - 已填写的档案项
-- 用户偏好设置
+- 用户偏好Set
 - 工作相关信息
 
 ## Related Skills

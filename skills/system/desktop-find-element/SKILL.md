@@ -9,26 +9,26 @@ category: Desktop
 
 # Desktop Find Element
 
-查找桌面 UI 元素。优先使用 UIAutomation（快速准确），失败时用视觉识别（通用）。
+Find桌面 UI 元素。优先Use UIAutomation（Quick准确），失败时用视觉识别（通用）。
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |------|------|------|------|
-| target | string | 是 | 元素描述，如 '保存按钮'、'name:文件'、'id:btn_ok' |
-| window_title | string | 否 | 限定在某个窗口内查找 |
-| method | string | 否 | 查找方法：auto（默认）、uia、vision |
+| target | string | Yes | 元素描述，如 'Save按钮'、'name:文件'、'id:btn_ok' |
+| window_title | string | No | 限定在某个窗口内Find |
+| method | string | No | Find方法：auto（Default）、uia、vision |
 
 ## Supported Target Formats
 
-- 自然语言："保存按钮"、"红色图标"
-- 按名称："name:保存"
+- 自然语言："Save按钮"、"红色图标"
+- 按名称："name:Save"
 - 按 ID："id:btn_save"
 - 按类型："type:Button"
 
 ## Find Methods
 
-- `auto`: 自动选择（推荐）
+- `auto`: Automatic选择（Recommendations）
 - `uia`: 只用 UIAutomation
 - `vision`: 只用视觉识别
 
@@ -40,9 +40,9 @@ category: Desktop
 
 ## Warning
 
-如果操作的是浏览器内的网页元素，请使用 `browser_*` 工具。
+如果操作的Yes浏览器内的网页元素，请Use `browser_*` 工具。
 
 ## Related Skills
 
-- `desktop-click`: 点击找到的元素
-- `desktop-inspect`: 查看元素树结构
+- `desktop-click`: Click找到的元素
+- `desktop-inspect`: View元素树结构

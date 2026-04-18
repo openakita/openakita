@@ -13,19 +13,19 @@ category: File System
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| pattern | string | 是 | Glob 模式（如 "*.py"、"**/test_*.ts"） |
-| path | string | 否 | search根目录（默认当前目录） |
+| pattern | string | Yes | Glob 模式（如 "*.py"、"**/test_*.ts"） |
+| path | string | No | search根目录（Default当前目录） |
 
 ## Examples
 
-**查找所有 Python 文件**:
+**Find所有 Python 文件**:
 ```json
 {"pattern": "*.py"}
 ```
 
-**查找测试文件**:
+**Find测试文件**:
 ```json
 {
   "pattern": "test_*.py",
@@ -33,20 +33,20 @@ category: File System
 }
 ```
 
-**查找配置文件**:
+**Find配置文件**:
 ```json
 {"pattern": "*config*"}
 ```
 
 ## Notes
 
-- 不以 `**/` 开头的 pattern 会自动加 `**/` 前缀进行递归search
-- 自动跳过 .git、node_modules、__pycache__ 等目录
+- 不以 `**/` 开头的 pattern 会Automatic加 `**/` 前缀进行递归search
+- Automatic跳过 .git、node_modules、__pycache__ 等目录
 - 结果按修改时间降序排序（最新的在前）
-- 返回相对路径列表
+- Returns相对路径列表
 
 ## Related Skills
 
 - `grep`: 按内容search文件
 - `list-directory`: list目录内容
-- `read-file`: 读取找到的文件
+- `read-file`: Read找到的文件

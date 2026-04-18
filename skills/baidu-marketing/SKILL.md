@@ -9,19 +9,19 @@ metadata:
 
 # 百度智能云客悦营销
 
-让 AI 更懂营销，覆盖笔记生成、营销视频生成、文案优化等场景，支持立即呼叫与延迟呼叫。
+让 AI 更懂营销，覆盖笔记Generation、营销视频Generation、文案优化等场景，Supports立即呼叫与延迟呼叫。
 
 ## Features
 
-- 营销笔记生成
-- 营销视频生成
+- 营销笔记Generation
+- 营销视频Generation
 - 文案优化
 - 呼叫触发（立即/延迟）
 
 ## Pre-built Scripts
 
 ### scripts/marketing.py
-营销文案/方案生成（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+营销文案/方案Generation（百度千帆 AppBuilder），需Set APPBUILDER_TOKEN。
 
 ```bash
 python3 scripts/marketing.py copywrite "新品咖啡上市推广"

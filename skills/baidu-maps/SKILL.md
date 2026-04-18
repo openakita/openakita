@@ -9,12 +9,12 @@ metadata:
 
 # Baidu Maps
 
-让 AI 像专家一样写地图代码，适用于出行、文旅、商业、智能车载等多场景。
+让 AI 像专家一样写地图代码，适Used for出行、文旅、商业、智能车载等多场景。
 
 ## Features
 
-- 地址搜索：关键词搜索地点
-- 附近搜索：基于位置搜索周边
+- 地址Search：关键词Search地点
+- 附近Search：Based on位置Search周边
 - Geocoding：地址与坐标互转
 - Route planning：驾车/步行路线
 - 天气查询：城市天气信息
@@ -26,7 +26,7 @@ metadata:
 ## Pre-built Scripts
 
 ### scripts/baidu_maps.py
-百度地图 Web 服务 API 封装，需设置 BAIDU_MAP_AK。
+百度地图 Web 服务 API 封装，需Set BAIDU_MAP_AK。
 
 ```bash
 python3 scripts/baidu_maps.py geocode "北京市海淀区"
