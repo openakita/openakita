@@ -1,88 +1,87 @@
-# 企业微信文档与协作 MCP Server
+# WeCom Document & Collaboration MCP Server
 
-企业微信 MCP 服务提供文档创建/编辑、智能表格、待办、日程、会议、消息等一站式协作工具，
-通过标准 MCP 协议接入，支持 AI Agent 直接操作企业微信中的文档和协作资源。
+The WeCom MCP service provides an all-in-one collaboration toolkit covering document creation/editing, smart tables, to-dos, calendars, meetings, messaging, and more. It connects via the standard MCP protocol, enabling AI Agents to directly operate WeCom documents and collaboration resources.
 
-## 前置条件
+## Prerequisites
 
-需要部署一个企业微信 MCP Server 实例。推荐方案：
+A WeCom MCP Server instance must be deployed. Recommended solution:
 
-- **Crain99/wecom-mcp-server** (39 个工具，覆盖 7 大业务域)
+- **Crain99/wecom-mcp-server** (39 tools, covering 7 business domains)
   https://github.com/Crain99/wecom-mcp-server
 
-部署步骤请参考对应仓库的 README。
+Refer to the repository's README for deployment steps.
 
-## 配置
+## Configuration
 
-1. 部署 wecom-mcp-server 并记录服务地址（默认 `http://localhost:8787/mcp`）
-2. 在 `.env` 文件中设置环境变量：
+1. Deploy wecom-mcp-server and note the service URL (default: `http://localhost:8787/mcp`)
+2. Set the environment variable in your `.env` file:
    ```
    WECOM_MCP_SERVER_URL=http://localhost:8787/mcp
    ```
-3. 重启后使用 `connect_mcp_server("wecom-doc")` 连接
+3. After restarting, connect using `connect_mcp_server("wecom-doc")`
 
-## 可用工具
+## Available Tools
 
-连接后工具会自动发现，以下为主要工具参考：
+Tools are auto-discovered upon connection. The following is a reference for the main tools:
 
-### 文档
+### Documents
 
-| 工具 | 功能 |
-|------|------|
-| create_doc | 新建文档或智能表格（doc_type=3 文档，10 智能表格） |
-| edit_doc_content | 编辑文档内容（Markdown 格式） |
+| Tool | Function |
+|------|----------|
+| create_doc | Create a document or smart table (doc_type=3 for document, 10 for smart table) |
+| edit_doc_content | Edit document content (Markdown format) |
 
-### 智能表格
+### Smart Tables
 
-| 工具 | 功能 |
-|------|------|
-| smartsheet_get_sheet | 查询工作表基本信息 |
-| smartsheet_add_sheet | 添加子表 |
-| smartsheet_get_fields | 获取字段列表 |
-| smartsheet_add_fields | 添加字段 |
-| smartsheet_update_fields | 更新字段 |
-| smartsheet_add_records | 添加记录 |
-| smartsheet_get_records | 查询记录 |
-| smartsheet_update_records | 更新记录 |
-| smartsheet_delete_records | 删除记录 |
+| Tool | Function |
+|------|----------|
+| smartsheet_get_sheet | Query basic worksheet information |
+| smartsheet_add_sheet | Add a sub-sheet |
+| smartsheet_get_fields | Get the list of fields |
+| smartsheet_add_fields | Add fields |
+| smartsheet_update_fields | Update fields |
+| smartsheet_add_records | Add records |
+| smartsheet_get_records | Query records |
+| smartsheet_update_records | Update records |
+| smartsheet_delete_records | Delete records |
 
-### 消息
+### Messaging
 
-| 工具 | 功能 |
-|------|------|
-| send_message | 发送文本/Markdown 消息，支持 @成员 |
-| send_file | 发送文件 |
-| send_image | 发送图片 |
+| Tool | Function |
+|------|----------|
+| send_message | Send text/Markdown messages, supports @mentioning members |
+| send_file | Send a file |
+| send_image | Send an image |
 
-### 待办
+### To-Dos
 
-| 工具 | 功能 |
-|------|------|
-| create_todo | 创建待办 |
-| get_todo_list | 查询待办列表 |
-| update_todo | 更新待办状态 |
+| Tool | Function |
+|------|----------|
+| create_todo | Create a to-do item |
+| get_todo_list | Query the to-do list |
+| update_todo | Update the status of a to-do item |
 
-### 日程
+### Calendar
 
-| 工具 | 功能 |
-|------|------|
-| create_schedule | 创建日程 |
-| get_schedule | 查询日程 |
+| Tool | Function |
+|------|----------|
+| create_schedule | Create a calendar event |
+| get_schedule | Query a calendar event |
 
-### 会议
+### Meetings
 
-| 工具 | 功能 |
-|------|------|
-| create_meeting | 创建会议 |
+| Tool | Function |
+|------|----------|
+| create_meeting | Create a meeting |
 
-### 通讯录
+### Directory
 
-| 工具 | 功能 |
-|------|------|
-| get_user_info | 查询成员信息 |
+| Tool | Function |
+|------|----------|
+| get_user_info | Query member information |
 
-## 注意事项
+## Notes
 
-- 实际可用工具以 MCP Server 实例的 `tools/list` 返回为准
-- 文档操作需要机器人在企业微信后台获得相应权限并由成员授权（有效期 7 天）
-- 创建智能表格后会自带默认子表和字段，建议先 `smartsheet_get_fields` 获取默认字段再重命名
+- Actual available tools are determined by what the MCP Server instance's `tools/list` returns
+- Document operations require the bot to have the appropriate permissions granted in the WeCom admin console, along with member authorization (valid for 7 days)
+- After creating a smart table, a default sub-sheet and fields are included — it is recommended to run `smartsheet_get_fields` first to retrieve the default fields before renaming them

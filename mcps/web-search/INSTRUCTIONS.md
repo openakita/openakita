@@ -1,55 +1,55 @@
 # Web Search MCP Server
 
-基于 DuckDuckGo 的网络搜索服务，无需 API Key。
+A web search service powered by DuckDuckGo — no API key required.
 
-## 可用工具
+## Available Tools
 
-### web_search - 网页搜索
+### web_search - Web Search
 
-搜索网页，返回标题、链接和摘要。
+Search the web and return titles, links, and summaries.
 
-**参数**:
-- `query` (必填): 搜索关键词
-- `max_results`: 结果数量，默认 5，最大 20
-- `region`: 地区代码
-  - `wt-wt`: 全球（默认）
-  - `cn-zh`: 中国
-  - `us-en`: 美国
-- `safesearch`: 安全搜索 (`on`, `moderate`, `off`)
+**Parameters**:
+- `query` (required): Search keywords
+- `max_results`: Number of results, default 5, maximum 20
+- `region`: Region code
+  - `wt-wt`: Global (default)
+  - `cn-zh`: China
+  - `us-en`: United States
+- `safesearch`: Safe search level (`on`, `moderate`, `off`)
 
-**示例**:
+**Example**:
 ```json
-{"query": "Python 异步编程教程", "max_results": 5, "region": "cn-zh"}
+{"query": "Python async programming tutorial", "max_results": 5, "region": "us-en"}
 ```
 
-### news_search - 新闻搜索
+### news_search - News Search
 
-搜索最新新闻，返回标题、来源、日期、链接和摘要。
+Search for the latest news and return titles, sources, dates, links, and summaries.
 
-**参数**:
-- `query` (必填): 搜索关键词
-- `max_results`: 结果数量，默认 5，最大 20
-- `timelimit`: 时间范围
-  - `d`: 最近一天
-  - `w`: 最近一周
-  - `m`: 最近一个月
+**Parameters**:
+- `query` (required): Search keywords
+- `max_results`: Number of results, default 5, maximum 20
+- `timelimit`: Time range
+  - `d`: Past day
+  - `w`: Past week
+  - `m`: Past month
 
-**示例**:
+**Example**:
 ```json
-{"query": "AI 人工智能", "max_results": 5, "timelimit": "w"}
+{"query": "artificial intelligence AI", "max_results": 5, "timelimit": "w"}
 ```
 
-## 使用建议
+## Usage Recommendations
 
-1. **一般信息查询**: 使用 `web_search`
-2. **时效性信息**: 使用 `news_search`
-3. **中文搜索**: 设置 `region: "cn-zh"` 获得更好的中文结果
+1. **General information queries**: Use `web_search`
+2. **Time-sensitive information**: Use `news_search`
+3. **Region-specific results**: Set the appropriate `region` code for better localized results
 
-## 与内置 web_search 的关系
+## Relationship to the Built-in web_search
 
-系统同时存在内置 `web_search` 工具和本 MCP 服务器，二者底层共享同一搜索引擎，但定位不同：
+The system has both a built-in `web_search` tool and this MCP server. They share the same underlying search engine but serve different purposes:
 
-- **内置 web_search** — Agent 直接调用的主路径，响应更快（无需 MCP 连接开销）
-- **本 MCP 服务器** — 供 Org 多节点协作、外部 MCP 客户端集成使用
+- **Built-in web_search** — The primary path for Agent calls; faster response (no MCP connection overhead)
+- **This MCP server** — Used for multi-node Org collaboration and external MCP client integrations
 
-Agent 日常搜索应优先使用内置 `web_search`；本 MCP 在需要通过 MCP 协议对外暴露搜索能力时使用。
+Agents should prefer the built-in `web_search` for everyday searches; this MCP is used when search capability needs to be exposed externally via the MCP protocol.
