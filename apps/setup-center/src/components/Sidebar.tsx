@@ -110,16 +110,26 @@ export function Sidebar({
 
   const [pluginApps, setPluginApps] = useState<PluginUIApp[]>([]);
 
-  const pluginAppsFetchKey = `${httpApiBase}|${serviceRunning}|${view}`;
+  // Refetch the Apps sidebar list. Triggered initially, when backend
+  // availability changes, and on the global "openakita:plugin-apps-changed"
+  // event dispatched by PluginManagerView after install/enable/disable/etc.
   useEffect(() => {
     if (!httpApiBase || !serviceRunning) { setPluginApps([]); return; }
     let cancelled = false;
-    fetch(`${httpApiBase}/api/plugins/ui-apps`)
-      .then(r => r.ok ? r.json() : [])
-      .then(data => { if (!cancelled) setPluginApps(Array.isArray(data) ? data : []); })
-      .catch(() => { if (!cancelled) setPluginApps([]); });
-    return () => { cancelled = true; };
-  }, [pluginAppsFetchKey]);
+    const refetch = () => {
+      fetch(`${httpApiBase}/api/plugins/ui-apps`)
+        .then(r => r.ok ? r.json() : [])
+        .then(data => { if (!cancelled) setPluginApps(Array.isArray(data) ? data : []); })
+        .catch(() => { if (!cancelled) setPluginApps([]); });
+    };
+    refetch();
+    const onChanged = () => refetch();
+    window.addEventListener("openakita:plugin-apps-changed", onChanged);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("openakita:plugin-apps-changed", onChanged);
+    };
+  }, [httpApiBase, serviceRunning]);
 
   const capViews: ViewId[] = ["skills", "mcp", "plugins", "memory", "scheduler"];
   const monViews: ViewId[] = ["token_stats", "security"];

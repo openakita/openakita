@@ -1787,6 +1787,15 @@
     "extCreditsHint": "OpenAkita's tool calling and browser capabilities are enhanced by these open-source projects",
     "extCopied": "Copied"
   },
+  "pluginApp": {
+    "loadingTitle": "Loading {{name}}…",
+    "loadingSlow": "Plugin is taking longer than expected…",
+    "loadFailed": "Failed to load plugin UI",
+    "loading": "Loading plugin…",
+    "errorTitle": "Plugin Load Error",
+    "loadTimeout": "Plugin UI failed to initialize within timeout",
+    "retry": "Retry"
+  },
   "plugins": {
     "title": "Plugins",
     "installed": "{{count}} installed",

@@ -395,6 +395,50 @@ def create_app(
     _avatar_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/api/avatars", _StaticFiles(directory=str(_avatar_dir)), name="avatars")
 
+    # ── Serve plugin SDK shared web assets (bootstrap.js, etc.) ──
+    # Bundled inside the openakita_plugin_sdk wheel under web/.
+    # Plugin UIs reference: <script src="/api/plugins/_sdk/bootstrap.js"></script>
+    # Resolution order:
+    #   1) installed openakita_plugin_sdk package (production)
+    #   2) repo-relative openakita-plugin-sdk/src/openakita_plugin_sdk/web (dev, monorepo)
+    _sdk_web_dir: Path | None = None
+    try:
+        from importlib.resources import files as _res_files
+
+        _candidate = _res_files("openakita_plugin_sdk").joinpath("web")
+        if _candidate.is_dir():
+            _sdk_web_dir = Path(str(_candidate))
+    except (ImportError, ModuleNotFoundError):
+        pass
+    except Exception as _sdk_err:
+        logger.warning("Failed to locate plugin SDK assets via importlib: %s", _sdk_err)
+
+    if _sdk_web_dir is None:
+        _here = Path(__file__).resolve()
+        for _parent in _here.parents:
+            _candidate_dir = (
+                _parent / "openakita-plugin-sdk" / "src" / "openakita_plugin_sdk" / "web"
+            )
+            if _candidate_dir.is_dir():
+                _sdk_web_dir = _candidate_dir
+                break
+
+    if _sdk_web_dir is not None:
+        try:
+            app.mount(
+                "/api/plugins/_sdk",
+                _StaticFiles(directory=str(_sdk_web_dir)),
+                name="plugin-sdk-assets",
+            )
+            logger.info("Mounted plugin SDK assets from %s", _sdk_web_dir)
+        except Exception as _sdk_err:
+            logger.warning("Failed to mount plugin SDK assets: %s", _sdk_err)
+    else:
+        logger.warning(
+            "Plugin SDK web/ directory not found; bootstrap.js disabled. "
+            "Install openakita-plugin-sdk or run from a monorepo checkout."
+        )
+
     # ── Serve versioned user docs ──
     from openakita import get_version_string as _get_ver
 

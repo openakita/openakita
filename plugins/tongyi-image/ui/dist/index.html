@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Tongyi Image Generator</title>
+  <script src="/api/plugins/_sdk/bootstrap.js"></script>
   <style>
     :root {
       --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
@@ -118,6 +119,23 @@
     .style-option:hover { border-color: var(--primary); }
     .style-option.active { border-color: var(--primary); background: var(--primary-light); color: var(--primary); }
     @media (max-width: 860px) { .split-layout { flex-direction: column; } .split-left { width: 100%; min-width: unset; } }
+    /* ── compact overrides ── */
+    .content { padding: 14px 16px; }
+    .card { padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+    .form-row { margin-bottom: 10px; }
+    .label { margin-bottom: 5px; font-size: 12px; }
+    .header { padding: 10px 18px; }
+    .tab { padding: 9px 16px; }
+    .btn { padding: 7px 14px; }
+    /* ── task started modal ── */
+    .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; z-index: 2000; animation: ak-fade-in .15s ease-out; padding: 20px; }
+    .modal-card { background: var(--bg-card); border-radius: 12px; padding: 22px 24px; max-width: 420px; width: 100%; box-shadow: 0 20px 50px rgba(0,0,0,.25); animation: ak-scale-in .15s ease-out; }
+    .modal-icon { width: 42px; height: 42px; border-radius: 50%; background: rgba(34,197,94,.12); color: var(--success, #22c55e); display: flex; align-items: center; justify-content: center; margin-bottom: 14px; font-size: 22px; font-weight: 700; }
+    .modal-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+    .modal-desc { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 18px; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    @keyframes ak-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes ak-scale-in { from { transform: scale(.94); opacity: 0; } to { transform: scale(1); opacity: 1; } }
   </style>
 </head>
 <body>
@@ -257,6 +275,26 @@ const STATUS_MAP = {
   failed: { label: "失败", cls: "tag-red" },
 };
 
+// ─── Task Started Modal ───
+function TaskStartedModal({ open, onClose, onGoToTasks, title, desc }) {
+  if (!open) return null;
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-icon">✓</div>
+        <div className="modal-title">{title || "任务已开始"}</div>
+        <div className="modal-desc">{desc}</div>
+        <div className="modal-actions">
+          <button className="btn" onClick={onClose}>继续创建</button>
+          <button className="btn btn-primary" onClick={() => { onClose(); onGoToTasks && onGoToTasks(); }}>
+            前往任务列表
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── App ───
 function App() {
   const [tab, setTab] = useState("create");
@@ -336,6 +374,8 @@ function CreateTab({ apiReady, goToTasks }) {
   const [ecScenes, setEcScenes] = useState([]);
   const [ecScenePresets, setEcScenePresets] = useState([]);
   const [ecResults, setEcResults] = useState(null);
+  const [taskStartedOpen, setTaskStartedOpen] = useState(false);
+  const [taskStartedDesc, setTaskStartedDesc] = useState("");
 
   useEffect(() => {
     pluginApi("GET", "/models?category=" + mode.replace("text2img", "text2img")).then(r => {
@@ -413,7 +453,8 @@ function CreateTab({ apiReady, goToTasks }) {
         const r = await pluginApi("POST", "/tasks/ecommerce-suite", body);
         if (r.body && r.body.ok) {
           setEcResults(r.body);
-          showToast(`套图生成已启动，共 ${r.body.total} 个任务`);
+          setTaskStartedDesc(`已启动 ${r.body.total} 个套图生成任务，可前往任务列表查看进度。`);
+          setTaskStartedOpen(true);
           const running = r.body.tasks.filter(t => t.status === "running");
           running.forEach(t => pollEcTask(t.id, r.body.group_id));
         } else {
@@ -432,7 +473,8 @@ function CreateTab({ apiReady, goToTasks }) {
         if (r.body && r.body.ok) {
           setResult(r.body.task);
           if (r.body.task.status === "running") {
-            showToast("任务已启动，生成中...");
+            setTaskStartedDesc("图像正在云端生成，约需 15~60 秒。可前往任务列表查看进度与历史结果。");
+            setTaskStartedOpen(true);
             pollTask(r.body.task.id);
           } else if (r.body.task.status === "succeeded") {
             showToast("生成完成！");
@@ -486,6 +528,7 @@ function CreateTab({ apiReady, goToTasks }) {
   };
 
   return (
+    <>
     <div className="split-layout">
       <div className="split-left">
         <div className="card">
@@ -815,6 +858,13 @@ function CreateTab({ apiReady, goToTasks }) {
         )}
       </div>
     </div>
+    <TaskStartedModal
+      open={taskStartedOpen}
+      onClose={() => setTaskStartedOpen(false)}
+      onGoToTasks={goToTasks}
+      desc={taskStartedDesc}
+    />
+    </>
   );
 }
 

@@ -1787,6 +1787,15 @@
     "extCreditsHint": "OpenAkita 的工具调用和浏览器访问能力得益于以下开源项目",
     "extCopied": "已复制"
   },
+  "pluginApp": {
+    "loadingTitle": "正在加载 {{name}}…",
+    "loadingSlow": "插件启动较慢，请稍候…",
+    "loadFailed": "插件 UI 加载失败",
+    "loading": "正在加载插件…",
+    "errorTitle": "插件加载错误",
+    "loadTimeout": "插件 UI 在超时前未能完成初始化",
+    "retry": "重试"
+  },
   "plugins": {
     "title": "插件",
     "installed": "已安装 {{count}} 个",

@@ -261,6 +261,14 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     delete:  { ok: t("plugins.toastUninstalled"), err: t("plugins.toastUninstallFail") },
   };
 
+  // Notify the Sidebar (and any other listener) that the set of plugin UI apps
+  // may have changed, so they can refetch /api/plugins/ui-apps without a restart.
+  const notifyAppsChanged = () => {
+    try {
+      window.dispatchEvent(new CustomEvent("openakita:plugin-apps-changed"));
+    } catch { /* ignore */ }
+  };
+
   const handleAction = async (id: string, action: "enable" | "disable" | "delete") => {
     try {
       const method = action === "delete" ? "DELETE" : "POST";
@@ -275,6 +283,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
         updatePluginLocal(id, { enabled: action === "enable" });
       }
       showToast(ACTION_LABELS[action]?.ok ?? "OK");
+      notifyAppsChanged();
     } catch (e: any) {
       const msg = ACTION_LABELS[action]?.err ?? e.message;
       showToast(`${msg}: ${e.message}`, "err");
@@ -295,6 +304,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
       setInstallUrl("");
       showToast(t("plugins.toastInstalled"));
       await fetchPlugins(false);
+      notifyAppsChanged();
     } catch (e: any) {
       showToast(e.message, "err");
       setError(e.message);
@@ -378,6 +388,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
         body: JSON.stringify({ permissions: perms, reload: true }),
       });
       await fetchPlugins(false);
+      notifyAppsChanged();
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -394,6 +405,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
         body: JSON.stringify({ permissions: [perm], reload: true }),
       });
       await fetchPlugins(false);
+      notifyAppsChanged();
     } catch (e: any) {
       setError(e.message);
     } finally {

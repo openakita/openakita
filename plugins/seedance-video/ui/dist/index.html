@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Seedance Video Generator</title>
+  <script src="/api/plugins/_sdk/bootstrap.js"></script>
   <style>
     :root {
       --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
@@ -117,6 +118,23 @@
     .ico { display: inline-flex; align-items: center; justify-content: center; width: 1em; height: 1em; vertical-align: -0.125em; flex-shrink: 0; }
     .ico svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
     .ico-sm { width: 14px; height: 14px; }
+    /* ── compact overrides ── */
+    .content { padding: 14px 16px; }
+    .card { padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+    .form-row { margin-bottom: 10px; }
+    .label { margin-bottom: 5px; font-size: 12px; }
+    .header { padding: 10px 18px; }
+    .tab { padding: 9px 16px; }
+    .btn { padding: 7px 14px; }
+    /* ── task started modal ── */
+    .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; z-index: 2000; animation: ak-fade-in .15s ease-out; padding: 20px; }
+    .modal-card { background: var(--bg-card); border-radius: 12px; padding: 22px 24px; max-width: 420px; width: 100%; box-shadow: 0 20px 50px rgba(0,0,0,.25); animation: ak-scale-in .15s ease-out; }
+    .modal-icon { width: 42px; height: 42px; border-radius: 50%; background: rgba(34,197,94,.12); color: var(--success); display: flex; align-items: center; justify-content: center; margin-bottom: 14px; font-size: 22px; }
+    .modal-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+    .modal-desc { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 18px; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    @keyframes ak-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes ak-scale-in { from { transform: scale(.94); opacity: 0; } to { transform: scale(1); opacity: 1; } }
   </style>
 </head>
 <body>
@@ -358,6 +376,26 @@ const I = {
 };
 function Ico({ name, style: s }) { return <span className="ico" style={s}>{I[name]}</span>; }
 
+// ── Task Started Modal ──
+function TaskStartedModal({ open, onClose, onGoToTasks, title, desc }) {
+  if (!open) return null;
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-icon"><Ico name="check"/></div>
+        <div className="modal-title">{title || "任务已开始"}</div>
+        <div className="modal-desc">{desc}</div>
+        <div className="modal-actions">
+          <button className="btn" onClick={onClose}>继续创建</button>
+          <button className="btn btn-primary" onClick={() => { onClose(); onGoToTasks && onGoToTasks(); }}>
+            前往任务列表
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Constants ──
 const MODES = [
   { id: "t2v", label: "文生视频" },
@@ -586,11 +624,11 @@ function CreateTab({ models, onGoToTasks }) {
   }, [model]);
 
   const [createError, setCreateError] = useState("");
-  const [createSuccess, setCreateSuccess] = useState(null);
+  const [taskStartedOpen, setTaskStartedOpen] = useState(false);
+  const [taskStartedDesc, setTaskStartedDesc] = useState("");
   const handleCreate = async () => {
     setLoading(true);
     setCreateError("");
-    setCreateSuccess(null);
     try {
       const r = await pluginApi("POST", draft ? "/tasks/draft" : "/tasks", {
         prompt, mode, model, ratio, duration, resolution, n: 1,
@@ -599,7 +637,14 @@ function CreateTab({ models, onGoToTasks }) {
       });
       if (r.ok && r.body?.task) {
         setActiveTask(r.body.task);
-        setCreateSuccess(r.body.task);
+        setTaskStartedDesc(
+          draft
+            ? "样片预览正在生成，通常需要 30 秒~1 分钟。可前往任务列表查看进度。"
+            : serviceTier === "flex"
+              ? "离线任务已提交，半价模式通常需要 5~30 分钟。可前往任务列表查看进度。"
+              : "视频正在云端异步生成，通常需要 1~3 分钟。可前往任务列表查看生成进度。"
+        );
+        setTaskStartedOpen(true);
       } else {
         var msg = r.body?.detail || r.body?.error || "请求失败 (HTTP " + r.status + ")";
         setCreateError(msg);
@@ -629,6 +674,7 @@ function CreateTab({ models, onGoToTasks }) {
   };
 
   return (
+    <>
     <div className="split-layout">
       <div className="split-left">
         <div className="card">
@@ -746,31 +792,34 @@ function CreateTab({ models, onGoToTasks }) {
               <button className={`mode-btn ${serviceTier==="flex"?"active":""}`} onClick={() => setServiceTier("flex")}><Ico name="offline"/> 离线半价</button>
             </div>
           </div>
-          <div className="grid-2" style={{marginTop:8}}>
-            <div className="flex items-center justify-between">
-              <span className="text-sm">声音</span>
-              <div className={`switch ${audio?"on":""}`} onClick={() => setAudio(!audio)} />
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm">水印</span>
-              <div className={`switch ${watermark?"on":""}`} onClick={() => setWatermark(!watermark)} />
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-sm">返回尾帧</span>
-              <div className={`switch ${returnLastFrame?"on":""}`} onClick={() => setReturnLastFrame(!returnLastFrame)} />
-            </div>
-            {canDraft && (
+          <div style={{borderTop:"1px solid var(--border)", marginTop:12, paddingTop:10}}>
+            <div className="label" style={{marginBottom:8, fontWeight:600, color:"var(--text)", fontSize:12}}>高级选项</div>
+            <div className="grid-2">
               <div className="flex items-center justify-between">
-                <span className="text-sm">样片模式</span>
-                <div className={`switch ${draft?"on":""}`} onClick={() => setDraft(!draft)} />
+                <span className="text-sm">声音</span>
+                <div className={`switch ${audio?"on":""}`} onClick={() => setAudio(!audio)} />
               </div>
-            )}
-            {canWebSearch && (
               <div className="flex items-center justify-between">
-                <span className="text-sm">联网搜索</span>
-                <div className={`switch ${webSearch?"on":""}`} onClick={() => setWebSearch(!webSearch)} />
+                <span className="text-sm">水印</span>
+                <div className={`switch ${watermark?"on":""}`} onClick={() => setWatermark(!watermark)} />
               </div>
-            )}
+              <div className="flex items-center justify-between">
+                <span className="text-sm">返回尾帧</span>
+                <div className={`switch ${returnLastFrame?"on":""}`} onClick={() => setReturnLastFrame(!returnLastFrame)} />
+              </div>
+              {canDraft && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">样片模式</span>
+                  <div className={`switch ${draft?"on":""}`} onClick={() => setDraft(!draft)} />
+                </div>
+              )}
+              {canWebSearch && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">联网搜索</span>
+                  <div className={`switch ${webSearch?"on":""}`} onClick={() => setWebSearch(!webSearch)} />
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -784,22 +833,6 @@ function CreateTab({ models, onGoToTasks }) {
           {loading ? <span className="spinner" style={{width:16,height:16}}/> : null}
           {draft ? "生成样片预览" : serviceTier==="flex" ? "提交离线任务" : "生成视频"}
         </button>
-        {createSuccess && (
-          <div style={{marginTop:10,padding:"12px 14px",background:"var(--bg-success,#f0fdf4)",border:"1px solid var(--border-success,#86efac)",borderRadius:8,color:"var(--text-success,#16a34a)",fontSize:13}}>
-            <div style={{fontWeight:600,marginBottom:4}}>
-              <Ico name="check"/> 任务已提交
-            </div>
-            <div style={{color:"var(--text-dim)",fontSize:12,lineHeight:"1.6"}}>
-              视频正在云端异步生成，通常需要 1~3 分钟。
-              请前往
-              <a href="#" onClick={(e) => { e.preventDefault(); onGoToTasks && onGoToTasks(); }}
-                style={{color:"var(--primary)",fontWeight:500,textDecoration:"underline",margin:"0 3px"}}>
-                任务列表
-              </a>
-              查看生成进度和结果。
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="split-right">
@@ -812,6 +845,13 @@ function CreateTab({ models, onGoToTasks }) {
         )}
       </div>
     </div>
+    <TaskStartedModal
+      open={taskStartedOpen}
+      onClose={() => setTaskStartedOpen(false)}
+      onGoToTasks={onGoToTasks}
+      desc={taskStartedDesc}
+    />
+    </>
   );
 }
 
@@ -1719,8 +1759,9 @@ function App() {
       <div className="header">
         <h1><Ico name="video"/> Seedance 视频生成</h1>
         <div className="header-right">
-          {keyStatus && <span title={keyStatus} style={{cursor:"default"}}>API Key: {keyStatus.length > 12 ? keyStatus.slice(0,4)+"..."+keyStatus.slice(-4) : keyStatus}</span>}
-          <button className="btn btn-sm" onClick={() => setActiveTab(5)}><Ico name="settings"/> 设置</button>
+          {keyStatus
+            ? <span title={keyStatus} style={{cursor:"default"}}>API Key: {keyStatus.length > 12 ? keyStatus.slice(0,4)+"..."+keyStatus.slice(-4) : keyStatus}</span>
+            : <span className="text-warning text-xs" style={{display:"inline-flex",alignItems:"center",gap:4}}><Ico name="warn"/> 请先配置 API Key</span>}
         </div>
       </div>
       <div className="tabs">

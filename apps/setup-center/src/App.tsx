@@ -4815,6 +4815,7 @@ function MainApp() {
       const pluginId = view.slice("plugin_app:".length);
       return (
         <PluginAppHost
+          key={pluginId}
           pluginId={pluginId}
           apiBase={httpApiBase()}
           onViewChange={(v) => setView(v)}
