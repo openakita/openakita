@@ -18,8 +18,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     # ── General-purpose ──────────────────────────────────────────────
     AgentProfile(
         id="default",
-        name="小秋",
-        description="通用全能助手，拥有所有技能",
+        name="Akita",
+        description="General-purpose assistant with all skills",
         type=AgentType.SYSTEM,
         skills=[],
         skills_mode=SkillsMode.ALL,
@@ -38,8 +38,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     # ── Content creation ─────────────────────────────────────────────
     AgentProfile(
         id="content-creator",
-        name="自媒体达人",
-        description="多平台内容策划与发布，擅长小红书/公众号/抖音文案",
+        name="Content Creator",
+        description="Multi-platform content planning, Xiaohongshu/WeChat/Douyin",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@xiaohongshu-creator",
@@ -77,8 +77,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     ),
     AgentProfile(
         id="video-planner",
-        name="视频策划",
-        description="短视频/长视频脚本策划与分镜",
+        name="Video Planner",
+        description="Video script planning and storyboarding",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@douyin-tool",
@@ -109,8 +109,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     ),
     AgentProfile(
         id="seo-writer",
-        name="SEO 写手",
-        description="搜索引擎优化内容写作，提升搜索排名",
+        name="SEO Writer",
+        description="SEO content writing for better search rankings",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@content-research-writer",
@@ -139,8 +139,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     ),
     AgentProfile(
         id="novelist",
-        name="小说作家",
-        description="中文长篇小说/故事创作，人物塑造与情节构建",
+        name="Novelist",
+        description="Chinese novel and story writing",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@chinese-novelist",
@@ -169,8 +169,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     # ── Enterprise / office ──────────────────────────────────────────
     AgentProfile(
         id="office-doc",
-        name="文助",
-        description="办公文档处理专家，擅长 Word/PPT/Excel",
+        name="DocHelper",
+        description="Office document specialist for Word/PPT/Excel",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@docx",
@@ -200,8 +200,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     ),
     AgentProfile(
         id="hr-assistant",
-        name="人事助理",
-        description="招聘/考勤/制度起草，企业人力资源管理",
+        name="HR Assistant",
+        description="HR management: recruitment, attendance, policy drafting",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@docx",
@@ -229,8 +229,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     ),
     AgentProfile(
         id="legal-advisor",
-        name="法务顾问",
-        description="合同审查/合规分析/法规检索",
+        name="Legal Advisor",
+        description="Contract review, compliance analysis, legal research",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@docx",
@@ -259,8 +259,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     ),
     AgentProfile(
         id="marketing-planner",
-        name="营销策划",
-        description="品牌推广/活动策划/市场分析",
+        name="Marketing Planner",
+        description="Brand promotion, campaign planning, market analysis",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@content-research-writer",
@@ -293,8 +293,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     ),
     AgentProfile(
         id="customer-support",
-        name="客服专员",
-        description="智能客服/FAQ/工单处理",
+        name="Customer Support",
+        description="Customer service, FAQ management, ticket handling",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@knowledge-capture",
@@ -321,8 +321,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     ),
     AgentProfile(
         id="project-manager",
-        name="项目经理",
-        description="项目计划/进度追踪/周报管理",
+        name="Project Manager",
+        description="Project planning, progress tracking, weekly reports",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@xlsx",
@@ -353,8 +353,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     # ── Education ────────────────────────────────────────────────────
     AgentProfile(
         id="language-tutor",
-        name="语言教练",
-        description="外语学习/翻译/口语练习",
+        name="Language Tutor",
+        description="Language learning, translation, speaking practice",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@translate-pdf",
@@ -382,8 +382,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     ),
     AgentProfile(
         id="academic-assistant",
-        name="学术助手",
-        description="论文写作/文献综述/引用管理",
+        name="Academic Assistant",
+        description="Paper writing, literature review, citation management",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@content-research-writer",
@@ -414,8 +414,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     ),
     AgentProfile(
         id="math-tutor",
-        name="数学辅导",
-        description="数学解题/公式推导/概念讲解",
+        name="Math Tutor",
+        description="Math problem solving, formula derivation, concept explanation",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@pretty-mermaid",
@@ -443,8 +443,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     # ── Lifestyle / productivity ─────────────────────────────────────
     AgentProfile(
         id="schedule-manager",
-        name="日程管家",
-        description="日程安排/提醒/会议纪要",
+        name="Schedule Manager",
+        description="Schedule management, reminders, meeting notes",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@todoist-task",
@@ -473,8 +473,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     ),
     AgentProfile(
         id="knowledge-manager",
-        name="知识管理",
-        description="读书笔记/知识库整理/Obsidian 管理",
+        name="Knowledge Manager",
+        description="Reading notes, knowledge base organization, Obsidian vault",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@obsidian-skills",
@@ -505,8 +505,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     ),
     AgentProfile(
         id="yuque-assistant",
-        name="语雀助手",
-        description="语雀文档/知识库/周报管理",
+        name="Yuque Assistant",
+        description="Yuque docs, knowledge base, weekly reports",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@yuque-skills",
@@ -534,8 +534,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     # ── Development / DevOps ─────────────────────────────────────────
     AgentProfile(
         id="code-assistant",
-        name="码哥",
-        description="代码开发助手，擅长编码、调试和 Git 操作",
+        name="CodeBro",
+        description="Coding assistant for development, debugging and Git",
         type=AgentType.SYSTEM,
         skills=[
             "obra/superpowers@using-superpowers",
@@ -576,8 +576,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     ),
     AgentProfile(
         id="browser-agent",
-        name="网探",
-        description="网络浏览与信息采集专家",
+        name="WebScout",
+        description="Web browsing and information gathering specialist",
         type=AgentType.SYSTEM,
         skills=[
             "news-search",
@@ -618,8 +618,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     ),
     AgentProfile(
         id="data-analyst",
-        name="数析",
-        description="数据分析师，擅长数据处理、可视化和统计",
+        name="DataPro",
+        description="Data analyst for processing, visualization and statistics",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@xlsx",
@@ -652,8 +652,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     ),
     AgentProfile(
         id="devops-engineer",
-        name="DevOps 工程师",
-        description="CI/CD 流水线、容器编排、监控告警",
+        name="DevOps Engineer",
+        description="CI/CD pipelines, container orchestration, monitoring",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@github-automation",
@@ -685,8 +685,8 @@ SYSTEM_PRESETS: list[AgentProfile] = [
     ),
     AgentProfile(
         id="architect",
-        name="架构师",
-        description="系统设计/架构图/技术选型",
+        name="Architect",
+        description="System design, architecture diagrams, tech stack selection",
         type=AgentType.SYSTEM,
         skills=[
             "openakita/skills@pretty-mermaid",
