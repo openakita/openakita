@@ -93,7 +93,9 @@ class ToolCatalog:
 Missing a capability? Search installed skills -> search web -> install or create -> continue task.
 Never tell user "I can't do this" — acquire the capability and proceed.
 
-Use `get_tool_info(tool_name)` to see full parameters before calling.
+Use `tool_search(query="...")` to discover full parameters of deferred tools
+(标有 [DEFERRED] 的工具). Calling them directly is allowed and will auto-promote,
+but with full schema you'll fill arguments more reliably.
 
 {tool_list}
 """

@@ -10,8 +10,16 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     """Chat request body."""
 
-    message: str = Field("", description="User message text")
-    conversation_id: str | None = Field(None, description="Conversation ID for context")
+    # 32 KB 上限：覆盖正常对话/Markdown 长文，又能挡住意外/恶意大 payload。
+    # 超长走 attachments（文件上传），不走 message 文本通道。
+    message: str = Field("", description="User message text", max_length=32_768)
+    # 允许字母/数字/下划线/连字符/点/冒号/@（覆盖 UUID、IM 群 chatroom@xxx 等）
+    conversation_id: str | None = Field(
+        None,
+        description="Conversation ID for context",
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_\-:.@]{0,128}$",
+    )
     mode: Literal["ask", "plan", "agent"] = Field(
         "agent",
         description="Interaction mode: ask (read-only), plan (plan then execute), agent (full execution)",

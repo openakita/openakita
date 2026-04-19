@@ -207,6 +207,47 @@ USER_PROFILE_ITEMS = [
         priority=3,
         category="persona",
     ),
+    # === 通用消费者/运营场景 (优先级 2-3，覆盖非程序员用户) ===
+    UserProfileItem(
+        key="industry",
+        name="行业",
+        description="所处行业（如美妆/教育/电商/餐饮等）",
+        question="你目前主要在哪个行业工作？",
+        priority=2,
+        category="business",
+    ),
+    UserProfileItem(
+        key="role_in_industry",
+        name="行业角色",
+        description="在所在行业里担任的角色（如博主/运营/店主/品牌方）",
+        question="你在这个行业里主要扮演什么角色？",
+        priority=2,
+        category="business",
+    ),
+    UserProfileItem(
+        key="channels",
+        name="主要渠道",
+        description="主要运营/工作的渠道平台（如小红书/抖音/微信/淘宝）",
+        question="你主要在哪些平台上做运营或对接客户？",
+        priority=3,
+        category="business",
+    ),
+    UserProfileItem(
+        key="audience_size",
+        name="受众规模",
+        description="粉丝量/客户量/团队规模等量级描述",
+        question="你目前的粉丝/客户/团队大致是什么规模？",
+        priority=3,
+        category="business",
+    ),
+    UserProfileItem(
+        key="kpi_focus",
+        name="核心指标",
+        description="最关心的业务指标（如 GMV/复购率/CTR/留资量）",
+        question="你目前最关注哪个业务指标？",
+        priority=3,
+        category="business",
+    ),
 ]
 
 
@@ -502,6 +543,14 @@ This file is automatically learned and updated by OpenAkita to record the user's
 - **Primary language**: English
 - **Timezone**: {get_value("timezone")}
 
+## Business / Domain
+
+- **行业**: {get_value("industry")}
+- **行业角色**: {get_value("role_in_industry")}
+- **主要渠道**: {get_value("channels")}
+- **受众规模**: {get_value("audience_size")}
+- **核心指标**: {get_value("kpi_focus")}
+
 ## Technical Stack
 
 ### Preferred Languages
@@ -591,7 +640,7 @@ This file is automatically learned and updated by OpenAkita to record the user's
 
         summary = f"Collected {collected}/{total} user information items\n\n"
 
-        for category in ["basic", "tech", "communication", "habits"]:
+        for category in ["basic", "tech", "communication", "habits", "business", "personal", "persona"]:
             category_items = [item for item in self.items.values() if item.category == category]
             summary += f"**{category.title()}**:\n"
             for item in category_items:

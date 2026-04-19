@@ -184,12 +184,23 @@ class MemoryHandler:
             pass
 
         try:
-            profile = getattr(self.agent, "user_profile", None)
-            if profile:
-                profile_data = profile.to_dict() if hasattr(profile, "to_dict") else {}
-                profile_text = str(profile_data).lower()
+            # Agent 上挂的属性是 profile_manager（UserProfileManager），
+            # 不是 user_profile。旧代码 getattr(self.agent, "user_profile", None)
+            # 永远拿到 None，导致这段去重永远失效。同时支持任一字段以保持兼容。
+            profile_mgr = getattr(self.agent, "profile_manager", None) or getattr(
+                self.agent, "user_profile", None
+            )
+            if profile_mgr is not None:
+                if hasattr(profile_mgr, "state") and hasattr(
+                    profile_mgr.state, "collected_items"
+                ):
+                    profile_text = str(profile_mgr.state.collected_items).lower()
+                elif hasattr(profile_mgr, "to_dict"):
+                    profile_text = str(profile_mgr.to_dict()).lower()
+                else:
+                    profile_text = ""
                 core_fact = content.strip()[:60].lower()
-                if core_fact and core_fact in profile_text:
+                if core_fact and profile_text and core_fact in profile_text:
                     return "✅ This information already exists in the user profile; no need to add a duplicate memory."
         except Exception:
             pass

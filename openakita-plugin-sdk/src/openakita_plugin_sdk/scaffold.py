@@ -8,7 +8,7 @@ Usage::
         target_dir="./my-plugin",
         plugin_id="my-plugin",
         plugin_name="My Plugin",
-        plugin_type="tool",      # tool | channel | rag | memory | llm | hook | skill | mcp
+        plugin_type="tool",      # tool | channel | rag | memory | llm | hook | skill | mcp | ui
         author="Your Name",
     )
 
@@ -24,7 +24,7 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
-from .version import MIN_OPENAKITA_VERSION, PLUGIN_API_VERSION, SDK_VERSION
+from .version import MIN_OPENAKITA_VERSION, PLUGIN_API_VERSION, PLUGIN_UI_API_VERSION, SDK_VERSION
 
 PLUGIN_TEMPLATES: dict[str, dict[str, Any]] = {
     "tool": {
@@ -306,13 +306,74 @@ PLUGIN_TEMPLATES: dict[str, dict[str, Any]] = {
         """),
     },
     "mcp": {
-        "permissions": ["tools.register"],
+        "permissions": [],
         "category": "tool",
         "mcp_config": {
             "command": "npx",
             "args": ["-y", "@example/mcp-server"],
             "env": {},
+            "transport": "stdio",
         },
+    },
+    "ui": {
+        "permissions": ["tools.register", "config.read", "config.write", "data.own", "api_routes.register"],
+        "provides": {"routes": True},
+        "category": "app",
+        "ui_config": {
+            "entry": "ui/dist/index.html",
+            "title": "My App",
+            "sidebar_group": "apps",
+        },
+        "code": textwrap.dedent('''\
+            """Example full-stack UI plugin for OpenAkita (Plugin 2.0)."""
+
+            from __future__ import annotations
+
+            from fastapi import APIRouter
+            from openakita_plugin_sdk import PluginBase, PluginAPI
+
+            router = APIRouter()
+
+
+            @router.get("/status")
+            async def status():
+                return {"ok": True, "message": "Plugin is running"}
+
+
+            class Plugin(PluginBase):
+                def on_load(self, api: PluginAPI) -> None:
+                    self.api = api
+                    api.register_api_routes(router)
+                    api.log("UI plugin loaded")
+
+                def on_unload(self) -> None:
+                    pass
+        '''),
+        "html": textwrap.dedent('''\
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>My Plugin</title>
+              <style>
+                body { font-family: system-ui, sans-serif; margin: 0; padding: 24px; }
+                h1 { font-size: 1.5rem; }
+              </style>
+            </head>
+            <body>
+              <h1>My Plugin</h1>
+              <p id="status">Loading...</p>
+              <script>
+                const API_BASE = window._ctx?.apiBase || '';
+                fetch(`${API_BASE}/status`)
+                  .then(r => r.json())
+                  .then(d => document.getElementById('status').textContent = d.message)
+                  .catch(e => document.getElementById('status').textContent = 'Error: ' + e);
+              </script>
+            </body>
+            </html>
+        '''),
     },
 }
 
@@ -332,7 +393,7 @@ def scaffold_plugin(
         target_dir: Where to create the plugin directory.
         plugin_id: Stable plugin identifier (e.g. ``my-plugin``).
         plugin_name: Human-readable name.
-        plugin_type: One of: tool, channel, rag, memory, llm, hook, skill, mcp.
+        plugin_type: One of: tool, channel, rag, memory, llm, hook, skill, mcp, ui.
         author: Author name.
         description: Short description.
         version: Semver version string.
@@ -352,6 +413,10 @@ def scaffold_plugin(
 
     is_skill = plugin_type == "skill"
     is_mcp = plugin_type == "mcp"
+    is_ui = plugin_type == "ui"
+
+    type_map = {"skill": "skill", "mcp": "mcp"}
+    entry_map = {"skill": "SKILL.md", "mcp": "mcp_config.json"}
 
     manifest: dict[str, Any] = {
         "id": plugin_id,
@@ -360,8 +425,8 @@ def scaffold_plugin(
         "description": description or f"A {plugin_type} plugin for OpenAkita",
         "author": author,
         "license": "MIT",
-        "type": "skill" if is_skill else ("mcp" if is_mcp else "python"),
-        "entry": "SKILL.md" if is_skill else ("mcp_config.json" if is_mcp else "plugin.py"),
+        "type": type_map.get(plugin_type, "python"),
+        "entry": entry_map.get(plugin_type, "plugin.py"),
         "permissions": template.get("permissions", []),
         "category": template.get("category", ""),
         "tags": [plugin_type, "example"],
@@ -372,6 +437,9 @@ def scaffold_plugin(
         "sdk": f">={SDK_VERSION}",
         "python": ">=3.11",
     }
+    if is_ui:
+        manifest["requires"]["plugin_ui_api"] = f"~{PLUGIN_UI_API_VERSION.split('.')[0]}"
+        manifest["ui"] = template.get("ui_config", {})
     if "provides" in template:
         manifest["provides"] = template["provides"]
 
@@ -389,6 +457,11 @@ def scaffold_plugin(
             json.dumps(template.get("mcp_config", {}), indent=2) + "\n",
             encoding="utf-8",
         )
+    elif is_ui:
+        (target / "plugin.py").write_text(template["code"], encoding="utf-8")
+        ui_dir = target / "ui" / "dist"
+        ui_dir.mkdir(parents=True, exist_ok=True)
+        (ui_dir / "index.html").write_text(template["html"], encoding="utf-8")
     else:
         (target / "plugin.py").write_text(template["code"], encoding="utf-8")
 

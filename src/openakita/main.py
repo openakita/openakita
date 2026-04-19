@@ -2432,6 +2432,92 @@ def plugin_validate(
         console.print("\n[bold green]✓ Validation passed; all good![/bold green]")
 
 
+@app.command(name="plugin-scaffold")
+def plugin_scaffold(
+    name: str = typer.Argument(..., help="Plugin ID (e.g. my-tool)"),
+    out: str = typer.Option(".", "--out", "-o", help="Parent directory for the new plugin"),
+    ui: bool = typer.Option(False, "--ui", help="Include frontend UI scaffolding (Plugin 2.0)"),
+):
+    """Generate a new plugin project skeleton."""
+    import json as _json
+
+    plugin_dir = Path(out).resolve() / name
+    if plugin_dir.exists():
+        console.print(f"[bold red]✗[/bold red] Directory already exists: {plugin_dir}")
+        raise typer.Exit(1)
+
+    plugin_dir.mkdir(parents=True)
+
+    manifest: dict = {
+        "id": name,
+        "name": name.replace("-", " ").title(),
+        "version": "0.1.0",
+        "type": "python",
+        "entry": "plugin.py",
+        "description": f"OpenAkita plugin: {name}",
+        "permissions": ["tools.register", "routes.register"],
+        "provides": {"tools": []},
+    }
+
+    if ui:
+        manifest["ui"] = {
+            "entry": "ui/dist/index.html",
+            "icon": "",
+            "title": manifest["name"],
+            "sidebar_group": "apps",
+            "permissions": ["theme", "notification", "download"],
+        }
+        manifest["requires"] = {"plugin_ui_api": "~1"}
+
+    (plugin_dir / "plugin.json").write_text(
+        _json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+    plugin_py = '''"""Plugin entry point."""
+from openakita.plugins.api import PluginAPI, PluginBase
+
+
+class Plugin(PluginBase):
+    def on_load(self, api: PluginAPI) -> None:
+        api.log("Plugin loaded")
+
+    def on_unload(self) -> None:
+        pass
+'''
+    (plugin_dir / "plugin.py").write_text(plugin_py, encoding="utf-8")
+
+    if ui:
+        ui_dist = plugin_dir / "ui" / "dist"
+        ui_dist.mkdir(parents=True)
+        index_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>{manifest['name']}</title>
+  <script type="module">
+    // Replace with: import {{ PluginBridge }} from "@openakita/plugin-ui-sdk";
+    const bridge = {{ init: () => window.parent.postMessage({{ __akita_bridge: true, version: 1, type: "bridge:ready" }}, "*") }};
+    bridge.init();
+  </script>
+</head>
+<body>
+  <h1>{manifest['name']}</h1>
+  <p>Plugin UI scaffold — replace this with your frontend app.</p>
+</body>
+</html>
+"""
+        (ui_dist / "index.html").write_text(index_html, encoding="utf-8")
+
+        ui_src = plugin_dir / "ui-src"
+        ui_src.mkdir()
+        (ui_src / ".gitkeep").write_text("", encoding="utf-8")
+
+    console.print(f"[bold green]✓[/bold green] Plugin scaffolded at: {plugin_dir}")
+    if ui:
+        console.print("  Includes frontend UI template (ui/dist/index.html)")
+    console.print(f"  Next: copy to data/plugins/{name}/ and restart OpenAkita")
+
+
 @app.command(name="run-mcp-module", hidden=True)
 def run_mcp_module(
     module_path: str = typer.Argument(..., help="Python module path for MCP server"),

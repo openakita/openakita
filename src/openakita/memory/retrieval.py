@@ -777,7 +777,13 @@ class RetrievalEngine:
                 c.score *= 0.3
 
         ranked = sorted(candidates, key=lambda c: c.score, reverse=True)
-        return [c for c in ranked if c.score >= self.MIN_RERANK_SCORE]
+        # 冷启动豁免：刚写入 1 小时内的记忆（recency_score >= 0.99 ≈ 1 小时），
+        # 即便综合分低于 MIN_RERANK_SCORE 也保留，避免新加事实被一刀切。
+        return [
+            c
+            for c in ranked
+            if c.score >= self.MIN_RERANK_SCORE or c.recency_score >= 0.99
+        ]
 
     # ==================================================================
     # Scoring Helpers

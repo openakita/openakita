@@ -706,29 +706,32 @@ class ToolExecutor:
                         None,
                     )
 
-            # Blind-call guard: intercept calls to deferred tools that haven't
-            # been discovered via tool_search yet.
+            # Auto-promote deferred tools (formerly blind-call guard).
+            #
+            # 旧逻辑：直接报错强制 LLM 用 tool_search 跨轮重试，
+            #         在小白消费者场景导致首轮必失败、token 浪费。
+            # 新逻辑：发现 LLM 直接调用 deferred 工具时，**当轮**自动 promote：
+            #   1) 加入 _discovered_tools，下一轮拿到完整 schema
+            #   2) 立即清除当前 tool_def 的 _deferred 标记
+            #   3) Fall-through 继续执行，handler 一般无需完整 schema 即可工作
+            # 失败回退：handler 报参数错时由 LLM 在下一轮自行修正
+            #         （此时已具备完整 schema），不会陷入死循环。
             _agent = self._agent_ref
             if _agent and hasattr(_agent, "_discovered_tools"):
                 _all_tools = getattr(_agent, "_tools", [])
                 _tool_def = next((t for t in _all_tools if t.get("name") == tool_name), None)
                 if _tool_def and _tool_def.get("_deferred"):
-                    return (
-                        idx,
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_use_id,
-                            "content": (
-                                f"⚠️ Tool '{tool_name}' is deferred. "
-                                'You must first call tool_search(query="...") '
-                                "to load its full parameters, then call it in "
-                                "the NEXT turn."
-                            ),
-                            "is_error": True,
-                        },
-                        None,
-                        None,
-                    )
+                    try:
+                        _agent._discovered_tools.add(tool_name)
+                        _tool_def.pop("_deferred", None)
+                        logger.info(
+                            f"[ToolExec] Auto-promoted deferred tool '{tool_name}' "
+                            f"on direct call (discovered={len(_agent._discovered_tools)})"
+                        )
+                    except Exception as _promote_err:
+                        logger.debug(
+                            f"[ToolExec] Auto-promote failed for '{tool_name}': {_promote_err}"
+                        )
 
             # Build a minimal policy_result-like object for execute_tool_with_policy
             policy_result = perm_decision

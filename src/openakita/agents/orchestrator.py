@@ -1055,10 +1055,36 @@ class AgentOrchestrator:
                     logger.warning(f"[Orchestrator] Failed to forward artifact receipts: {e}")
 
                 profile = getattr(agent, "_agent_profile", None)
+
+                # 子 Agent 输出守卫：数值/统计任务但 trace 中未真实跑代码时，
+                # 在结论尾部追加 ⚠️ 数据未经代码执行验证，避免 P0 幻觉。
+                _guarded_text = result or ""
+                if is_sub_agent:
+                    try:
+                        from openakita.core.agent_output_guard import (
+                            validate_no_fabricated_numbers,
+                        )
+
+                        _triggered, _guarded_text = validate_no_fabricated_numbers(
+                            task_text=message,
+                            output_text=_guarded_text,
+                            tools_used=tools_used,
+                        )
+                        if _triggered:
+                            logger.warning(
+                                "[Orchestrator] Sub-agent output guard triggered: "
+                                "numeric task without code execution "
+                                f"(profile={getattr(profile, 'id', '?')}, tools={tools_used})"
+                            )
+                    except Exception as _guard_err:
+                        logger.debug(
+                            f"[Orchestrator] Output guard skipped (non-fatal): {_guard_err}"
+                        )
+
                 delegation_result = DelegationResult(
                     agent_id=getattr(profile, "id", "unknown"),
                     profile_id=getattr(profile, "id", "unknown"),
-                    text=result or "",
+                    text=_guarded_text,
                     tools_used=tools_used,
                     artifacts=artifacts,
                     elapsed_s=round(time.time() - _start, 2),

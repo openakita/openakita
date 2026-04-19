@@ -7,6 +7,7 @@ Each handler method receives tool_name, arguments, context(org_id, node_id) and 
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -275,6 +276,100 @@ class OrgToolHandler:
                 index_by_key[key] = len(result)
                 result.append(att)
         return result
+
+    # Filename sanitisation: strip path separators, control characters, and platform-reserved
+    # characters to prevent LLM-supplied titles containing ../ or :*?"<>| from escaping
+    # the workspace directory via path traversal.
+    _DELIVERABLE_NAME_FORBIDDEN = set('\\/:*?"<>|\r\n\t')
+
+    # Minimum character count for auto-persisting a deliverable to disk.
+    # Shorter strings are typically conversational replies ("Done"), which add noise when
+    # materialised as attachments. Real LLM-authored documents (with markdown headings or
+    # lists) are generally >= 300 characters; empirical cases ~476 characters.
+    _DELIVERABLE_AUTO_PERSIST_MIN_CHARS = 300
+
+    @classmethod
+    def _slugify_deliverable_title(cls, title: str) -> str:
+        cleaned = "".join(
+            ch for ch in (title or "") if ch not in cls._DELIVERABLE_NAME_FORBIDDEN
+        ).strip()
+        cleaned = cleaned.replace(" ", "_")
+        if len(cleaned) > 60:
+            cleaned = cleaned[:60].rstrip("_- ")
+        return cleaned or "deliverable"
+
+    @staticmethod
+    def _looks_like_structured_document(body: str) -> bool:
+        """Heuristic to decide whether a deliverable string is a 'document'
+        worth materialising as an attachment.
+
+        True if ANY of:
+          - Has at least one ATX markdown heading (`#`..`######`) at line start
+          - Has at least 3 bullet list items (`- ` or `* `) at line start
+          - Contains a fenced code block (```)
+
+        Designed to be conservative so plain conversational replies like
+        "Done" do not trigger auto-persist.
+        """
+        if not body:
+            return False
+        import re
+        if re.search(r"(?m)^\s{0,3}#{1,6}\s", body):
+            return True
+        bullet_lines = re.findall(r"(?m)^\s{0,3}[-*]\s+\S", body)
+        if len(bullet_lines) >= 3:
+            return True
+        if "```" in body:
+            return True
+        return False
+
+    def _auto_persist_deliverable(
+        self,
+        *,
+        workspace,
+        chain_id: str,
+        title: str,
+        body: str,
+    ):
+        """Persist a long inline deliverable to ``<workspace>/deliverables/``.
+
+        Returns the absolute Path on success, or None on any failure (caller
+        only logs a warning and continues; this is a best-effort fallback).
+        Resolved path is verified to stay strictly inside the workspace
+        ``deliverables`` folder so that a malicious / careless LLM-supplied
+        title cannot escape via path-traversal.
+        """
+        from pathlib import Path
+        from datetime import datetime
+
+        try:
+            base_ws = Path(workspace).resolve()
+        except Exception:
+            return None
+        deliverables_dir = (base_ws / "deliverables").resolve()
+        try:
+            deliverables_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            return None
+
+        slug = self._slugify_deliverable_title(title)
+        chain_short = (chain_id or "chain").split(":")[-1][:12] or "chain"
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        candidate = (deliverables_dir / f"{chain_short}_{slug}_{ts}.md").resolve()
+
+        try:
+            deliverables_dir_str = str(deliverables_dir)
+            if not str(candidate).startswith(deliverables_dir_str):
+                return None
+        except Exception:
+            return None
+
+        header = f"# {title.strip() or 'Deliverable'}\n\n" if title else ""
+        try:
+            candidate.write_text(header + (body or ""), encoding="utf-8")
+        except Exception:
+            return None
+        return candidate
 
     def _link_project_task(
         self, org_id: str, chain_id: str, *,
@@ -549,12 +644,79 @@ class OrgToolHandler:
     # Communication tools
     # ------------------------------------------------------------------
 
+    # ── Coordinator antipattern heuristic guard ──
+    # Coordinators (nodes with direct reports) often mistakenly use
+    # ``org_send_message(question)`` to hand tasks to subordinates, bypassing
+    # ``org_delegate_task``'s chain registration, which causes:
+    #   1) UserCommandTracker cannot see the sub-task and prematurely declares the command complete
+    #   2) Sub-task has no deadline and no acceptance closure
+    # Triggers when: sender has direct reports + msg_type=question + content contains clear task wording.
+    # When triggered, the send is rejected with guidance to use org_delegate_task instead.
+    # Controlled by the ``org_question_task_guard`` flag; can be disabled in one step.
+    _TASK_INTENT_PATTERNS: tuple[str, ...] = (
+        "撰写", "编写", "起草", "草拟", "拟定",
+        "优化", "改写", "重写",
+        "产出", "给出", "生成", "制作", "做一份", "做一版",
+        "完成", "完成一份", "完成一版",
+        "整理一份", "整理出", "提供一份", "提供一版",
+        "出一份", "出一版", "出一稿",
+        "写一篇", "写一份", "写一版", "写一稿",
+        "给我一份", "给我一稿", "给我一版",
+    )
+
+    def _looks_like_task_assignment(self, content: str) -> bool:
+        if not content:
+            return False
+        return any(p in content for p in self._TASK_INTENT_PATTERNS)
+
     async def _handle_org_send_message(
         self, args: dict, org_id: str, node_id: str
     ) -> str:
         messenger = self._runtime.get_messenger(org_id)
         if not messenger:
             return self._org_not_running_error(org_id)
+
+        # Antipattern guard: coordinator dispatching tasks via question (controlled by flag)
+        try:
+            from openakita.config import settings as _settings_sm
+            _guard_enabled = bool(getattr(
+                _settings_sm, "org_question_task_guard", True,
+            ))
+        except Exception:
+            _guard_enabled = True
+
+        if _guard_enabled:
+            raw_msg_type = args.get("msg_type", "question")
+            content_preview = (args.get("content") or "")[:2000]
+            org_for_guard = self._runtime.get_org(org_id)
+            sender_has_children = False
+            if org_for_guard:
+                try:
+                    sender_has_children = bool(
+                        org_for_guard.get_children(node_id)
+                    )
+                except Exception:
+                    sender_has_children = False
+            if (
+                raw_msg_type == "question"
+                and sender_has_children
+                and self._looks_like_task_assignment(content_preview)
+            ):
+                logger.info(
+                    "[ToolHandler] block question-as-task by=%s to=%s",
+                    node_id, args.get("to_node", ""),
+                )
+                return (
+                    "[org_send_message blocked] Detected: you are using msg_type=question "
+                    "to dispatch a real task to a subordinate (content contains task-intent keywords "
+                    "such as 'write', 'produce', 'complete', 'optimize', etc.). "
+                    "This bypasses task-chain tracking and causes the system to declare your command "
+                    "complete prematurely. "
+                    "Use org_delegate_task to formally assign the task instead (one call per subordinate; "
+                    "multiple parallel calls are fine). After the subordinate delivers, use "
+                    "org_accept_deliverable to accept. "
+                    "To block until delivery, call org_wait_for_deliverable."
+                )
 
         metadata: dict = {}
 
@@ -675,11 +837,34 @@ class OrgToolHandler:
 
         org = self._runtime.get_org(org_id)
 
-        chain_id = (
-            args.get("task_chain_id")
-            or self._runtime.get_current_chain_id(org_id, node_id)
-            or _now_iso() + ":" + node_id[:8]
-        )
+        # chain_id assignment strategy (controlled by ``org_chain_parent_enforced`` flag):
+        #   - flag=True (default, new behaviour): every delegate creates a new sub-chain and
+        #     attaches it as a child of the caller's current_chain, allowing
+        #     UserCommandTracker to walk the subtree and determine true "whole-tree closed".
+        #   - flag=False (legacy behaviour): reuse the caller's existing current_chain if one
+        #     exists, so the entire call-tree shares one chain_id. This is the
+        #     backward-compat path that predates the parent-tracking bug fix.
+        # An explicit ``task_chain_id`` supplied by the LLM always takes priority
+        # (used for intentional re-delegation or chain continuation scenarios).
+        try:
+            from openakita.config import settings as _settings_dt
+            _chain_parent_enforced = bool(getattr(
+                _settings_dt, "org_chain_parent_enforced", True,
+            ))
+        except Exception:
+            _chain_parent_enforced = True
+
+        caller_chain = self._runtime.get_current_chain_id(org_id, node_id)
+        explicit_chain = args.get("task_chain_id") or None
+        if explicit_chain:
+            chain_id = explicit_chain
+            parent_chain = caller_chain if caller_chain != chain_id else None
+        elif _chain_parent_enforced:
+            chain_id = _now_iso() + ":" + node_id[:8]
+            parent_chain = caller_chain or None
+        else:
+            chain_id = caller_chain or (_now_iso() + ":" + node_id[:8])
+            parent_chain = None
 
         # Soft barrier: if the current chain has been accepted/rejected/cancelled, block further delegation.
         # This is one of the core interception points preventing "the org continues to self-dispatch work after task completion".
@@ -717,11 +902,41 @@ class OrgToolHandler:
 
         to_node = args["to_node"]
 
+        # task_affinity semantics: "subsequent messages on the same chain are routed to
+        # the same clone instance". Used by messenger.send (see the affinity_node !=
+        # to_node and != from_node anti-self-reference guard in messenger.send).
+        # On the delegate path, unconditionally overwriting to_node with existing_affinity
+        # caused a fatal self-reference: after CEO delegates chain X to CPO,
+        # affinity[X]=CPO; when CPO then re-delegates chain X down to PM, to_node=pm
+        # would be overwritten back to cpo, immediately triggering "cannot delegate to yourself".
+        # We only apply the affinity rewrite when all three conditions hold:
+        #   1) existing_affinity is not the caller itself (avoids self-reference)
+        #   2) existing_affinity is not the current explicit to_node (no rewrite needed)
+        #   3) existing_affinity and to_node belong to the same clone group
+        # This preserves the intent of "clone routing" without blocking normal up/downstream delegation.
         existing_affinity = messenger.get_task_affinity(chain_id)
-        if existing_affinity:
-            if org:
-                affinity_node = org.get_node(existing_affinity)
-                if affinity_node and affinity_node.status not in (NodeStatus.FROZEN, NodeStatus.OFFLINE):
+        if (
+            existing_affinity
+            and existing_affinity != node_id
+            and existing_affinity != to_node
+            and org
+        ):
+            affinity_node = org.get_node(existing_affinity)
+            target_node = org.get_node(to_node)
+            if (
+                affinity_node
+                and target_node
+                and affinity_node.status not in (NodeStatus.FROZEN, NodeStatus.OFFLINE)
+            ):
+                same_clone_group = (
+                    affinity_node.clone_source == target_node.id
+                    or target_node.clone_source == affinity_node.id
+                    or (
+                        affinity_node.clone_source is not None
+                        and affinity_node.clone_source == target_node.clone_source
+                    )
+                )
+                if same_clone_group:
                     to_node = existing_affinity
 
         if org:
@@ -838,6 +1053,29 @@ class OrgToolHandler:
 
         messenger.bind_task_affinity(chain_id, to_node)
         self._runtime._chain_delegation_depth[chain_id] = chain_depth + 1
+
+        # Maintain chain parent-child relationship (used when org_chain_parent_enforced is active).
+        # parent_chain was determined in the chain_id calculation block above:
+        # it equals caller_chain when a new sub-chain is created, and None on all other paths.
+        try:
+            if parent_chain and parent_chain != chain_id:
+                self._runtime._chain_parent.setdefault(chain_id, parent_chain)
+            else:
+                self._runtime._chain_parent.setdefault(chain_id, None)
+        except Exception:
+            logger.debug(
+                "[ToolHandler] chain_parent register failed", exc_info=True,
+            )
+
+        # Register a chain-closed event for org_wait_for_deliverable to block on.
+        # Re-delegating the same chain reuses the existing event.
+        try:
+            if chain_id not in self._runtime._chain_events:
+                self._runtime._chain_events[chain_id] = asyncio.Event()
+        except Exception:
+            logger.debug(
+                "[ToolHandler] chain_event create failed", exc_info=True,
+            )
 
         # User command lifecycle tracking: if an active UserCommandTracker exists on this org
         # and this delegation originates from the tracker's root or descendants, register the new chain
@@ -1355,8 +1593,35 @@ class OrgToolHandler:
         to_node = args.get("to_node", "")
         deliverable = args.get("deliverable", "")
         summary = args.get("summary", "")
-        chain_id = args.get("task_chain_id") or _now_iso()
         raw_file_attachments = args.get("file_attachments") or []
+
+        # chain_id enforcement policy (active when org_chain_parent_enforced=True):
+        # on submit, the caller's current incoming chain (the chain assigned to it by its
+        # superior) must be used. This is the fix for "LLM omits task_chain_id on submit,
+        # opening a new chain and breaking the whole-tree chain relationship". If the LLM
+        # passes the wrong value it is overridden with caller's current_chain (with a warning);
+        # if the caller has no current_chain, fall back to the LLM value or a new chain
+        # (backward-compat path for edge cases such as root node accidentally calling submit).
+        try:
+            from openakita.config import settings as _settings_sd
+            _enforce_sd = bool(getattr(
+                _settings_sd, "org_chain_parent_enforced", True,
+            ))
+        except Exception:
+            _enforce_sd = True
+
+        explicit_chain_sd = args.get("task_chain_id") or None
+        caller_chain_sd = self._runtime.get_current_chain_id(org_id, node_id)
+        if _enforce_sd and caller_chain_sd:
+            if explicit_chain_sd and explicit_chain_sd != caller_chain_sd:
+                logger.warning(
+                    "[ToolHandler] submit_deliverable chain_id mismatch: "
+                    "node=%s LLM_passed=%s overridden_to=%s",
+                    node_id, explicit_chain_sd, caller_chain_sd,
+                )
+            chain_id = caller_chain_sd
+        else:
+            chain_id = explicit_chain_sd or _now_iso()
 
         if not to_node:
             org = self._runtime.get_org(org_id)
@@ -1443,6 +1708,66 @@ class OrgToolHandler:
                         "[ToolHandler] submit_deliverable skipped unregistrable "
                         "attachment: %s (file missing?)", fp,
                     )
+
+        # Auto-attachment fallback: roles without filesystem tools (CPO, PM, etc.) often
+        # embed entire markdown documents in the deliverable field. The front-end then shows
+        # it as a long chat message with no downloadable attachment and nothing on the
+        # blackboard. When there are no explicit file_attachments, the deliverable looks
+        # like a structured document (markdown headings / lists / code blocks), and it meets
+        # the minimum character threshold, auto-persist it to
+        # `<workspace>/deliverables/<chain_short>_<title>.md`, then register it via the
+        # shared _register_file_output entry point (same as write_file / generate_image) to
+        # ensure no duplicate blackboard writes (runtime.py). Any exception is only a warning
+        # and does not affect the main submit_deliverable flow.
+        deliverable_stripped = (deliverable or "").strip()
+        should_auto_persist = (
+            not registered_attachments
+            and deliverable_stripped
+            and len(deliverable_stripped) >= self._DELIVERABLE_AUTO_PERSIST_MIN_CHARS
+            and self._looks_like_structured_document(deliverable_stripped)
+        )
+        if should_auto_persist:
+            try:
+                org_for_auto = self._runtime.get_org(org_id)
+                workspace_auto = (
+                    self._runtime._resolve_org_workspace(org_for_auto)
+                    if org_for_auto else None
+                )
+                if workspace_auto is not None:
+                    auto_path = self._auto_persist_deliverable(
+                        workspace=workspace_auto,
+                        chain_id=chain_id,
+                        title=summary or args.get("task_title") or "deliverable",
+                        body=deliverable,
+                    )
+                    if auto_path is not None:
+                        try:
+                            registered = self._runtime._register_file_output(
+                                org_id, node_id,
+                                chain_id=chain_id or None,
+                                filename=auto_path.name,
+                                file_path=str(auto_path),
+                                workspace=workspace_auto,
+                            )
+                        except Exception:
+                            logger.warning(
+                                "submit-deliverable auto-attachment register failed",
+                                exc_info=True,
+                            )
+                            registered = None
+                        if registered:
+                            registered_attachments.append(registered)
+                            logger.info(
+                                "[ToolHandler] auto-persisted deliverable to %s "
+                                "(node=%s chain=%s len=%d)",
+                                auto_path, node_id, chain_id,
+                                len(deliverable),
+                            )
+            except Exception:
+                logger.warning(
+                    "submit-deliverable auto-attachment persist failed",
+                    exc_info=True,
+                )
 
         metadata: dict = {
             "deliverable": deliverable[:2000],
@@ -1683,6 +2008,146 @@ class OrgToolHandler:
                 logger.debug("cleanup_accepted_chain on reject failed: %s", exc)
 
         return f"Rejected {from_node}'s deliverable, reason: {reason[:50]}"
+
+    async def _handle_org_wait_for_deliverable(
+        self, args: dict, org_id: str, node_id: str
+    ) -> str:
+        """Block until a subordinate task is delivered, avoiding polling-loop deadlocks.
+
+        Multi-event wait to prevent deadlocks — wakes on the first of:
+          - Any specified chain closing (accepted/rejected/cancelled)
+          - A question/escalate message arriving in the node's inbox (coordinator must handle it immediately)
+          - Timeout expiry (default 60 s, max 300 s)
+          - The whole organisation being soft-stopped or the command being cancelled
+        All exit paths call ``_touch_trackers_for_org`` to prevent the command watchdog from misfiring.
+        """
+        try:
+            from openakita.config import settings as _s_wait
+            if not getattr(_s_wait, "org_wait_primitive_enabled", True):
+                return (
+                    "[org_wait_for_deliverable disabled] "
+                    "Use org_list_delegated_tasks to check progress instead."
+                )
+        except Exception:
+            pass
+
+        try:
+            timeout = int(args.get("timeout") or 60)
+        except (TypeError, ValueError):
+            timeout = 60
+        timeout = max(1, min(300, timeout))
+
+        runtime = self._runtime
+        my_chain = runtime.get_current_chain_id(org_id, node_id)
+        explicit_chains_raw = args.get("chain_ids")
+        if isinstance(explicit_chains_raw, list):
+            explicit_chains = [
+                c for c in explicit_chains_raw if isinstance(c, str) and c
+            ]
+        else:
+            explicit_chains = []
+
+        if explicit_chains:
+            target_chains = explicit_chains
+        else:
+            # Reverse-lookup _chain_parent: all sub-chains whose parent is my_chain
+            target_chains = [
+                c for c, p in runtime._chain_parent.items() if p == my_chain
+            ]
+
+        # Filter out already-closed chains (no longer meaningful to wait on)
+        open_targets = [
+            c for c in target_chains
+            if not runtime.is_chain_closed(org_id, c)
+        ]
+        if not open_targets:
+            return (
+                "No open sub-chains to wait on. Subordinates may have already delivered — "
+                "check your inbox for deliverable messages and use org_accept_deliverable to accept, "
+                "or call org_list_delegated_tasks to confirm status."
+            )
+
+        # Prepare chain events (create on demand for any that are missing)
+        chain_events: list[tuple[str, asyncio.Event]] = []
+        for c in open_targets:
+            ev = runtime._chain_events.get(c)
+            if ev is None:
+                ev = asyncio.Event()
+                runtime._chain_events[c] = ev
+            chain_events.append((c, ev))
+
+        # Node inbox event: reset on every wait call so we only care about new messages
+        # that arrive during this wait window
+        inbox_key = f"{org_id}:{node_id}"
+        inbox_event = runtime._node_inbox_events.get(inbox_key)
+        if inbox_event is None:
+            inbox_event = asyncio.Event()
+            runtime._node_inbox_events[inbox_key] = inbox_event
+        inbox_event.clear()
+
+        runtime._touch_trackers_for_org(org_id)
+
+        waiters: list[asyncio.Task] = []
+        for c, ev in chain_events:
+            waiters.append(
+                asyncio.create_task(ev.wait(), name=f"wait_chain:{c[:24]}")
+            )
+        waiters.append(
+            asyncio.create_task(inbox_event.wait(), name=f"wait_inbox:{node_id}")
+        )
+
+        try:
+            done, _pending = await asyncio.wait(
+                waiters, timeout=timeout,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for w in waiters:
+                if not w.done():
+                    w.cancel()
+            for w in waiters:
+                try:
+                    await w
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+        runtime._touch_trackers_for_org(org_id)
+
+        # Re-check chain state (multiple chains may have closed simultaneously when asyncio.wait returns)
+        closed_chains_now = [
+            c for c, _ in chain_events
+            if runtime.is_chain_closed(org_id, c)
+        ]
+        inbox_triggered = inbox_event.is_set()
+
+        if not done:
+            return (
+                f"[Wait timed out] No new deliverable or message received within {timeout}s. "
+                f"Still-open sub-chains: {open_targets[:5]}{'...' if len(open_targets) > 5 else ''}. "
+                "Suggestions: use org_list_delegated_tasks to check detailed progress, "
+                "or call org_wait_for_deliverable again to wait another round; "
+                "if you have been waiting a long time and genuinely need to move forward, "
+                "output a progress summary to the user."
+            )
+
+        parts: list[str] = []
+        if closed_chains_now:
+            preview = closed_chains_now[:5]
+            extra = "..." if len(closed_chains_now) > 5 else ""
+            parts.append(
+                f"The following sub-chains have closed — check their deliverables: {preview}{extra}"
+            )
+        if inbox_triggered:
+            parts.append(
+                "A subordinate has sent a new message (question/escalate) that requires your immediate attention — "
+                "handle the inbox message first, then resume org_wait_for_deliverable for any remaining sub-chains."
+            )
+        if not parts:
+            parts.append(
+                "[wait returned] No specific trigger identified; the command may have been cancelled "
+                "or the event was consumed by a race condition. Check organisation state before deciding next steps."
+            )
+        return " | ".join(parts)
 
     # ------------------------------------------------------------------
     # Meeting tools

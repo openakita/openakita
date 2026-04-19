@@ -432,6 +432,38 @@ ORG_NODE_TOOLS: list[dict] = [
             "required": ["task_chain_id", "from_node", "reason"],
         },
     },
+    {
+        "name": "org_wait_for_deliverable",
+        "description": (
+            "Block and wait for delegated subordinate tasks (dispatched via org_delegate_task) to complete. "
+            "Far more efficient than polling with org_list_delegated_tasks — returns immediately on any of:\n"
+            "  1) Any specified sub-task chain closes (accepted, rejected, or cancelled by you)\n"
+            "  2) A subordinate sends a new message (question/escalation) requiring your immediate attention\n"
+            "  3) The timeout expires (default 60 seconds)\n"
+            "  4) The user cancels the entire command\n"
+            "The return value indicates which sub-chains have closed, whether a message interrupted the wait, and whether it timed out. "
+            "Recommended usage: call wait immediately after dispatching a batch of parallel tasks; "
+            "after a timeout, use org_list_delegated_tasks to check progress, then decide whether to continue waiting or emit an interim summary."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "chain_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Specific task chain IDs to wait for (optional). "
+                        "If omitted, automatically waits for all open sub-chains you most recently dispatched."
+                    ),
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Maximum wait time in seconds (default 60, max 300).",
+                    "default": 60,
+                },
+            },
+        },
+    },
     # -- Policy proposals --
     {
         "name": "org_propose_policy",

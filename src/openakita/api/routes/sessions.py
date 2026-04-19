@@ -8,13 +8,29 @@ Provides desktop session restoration: the frontend can load conversation lists a
 from __future__ import annotations
 
 import logging
+import re
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# 会话/频道/用户 ID 白名单：允许字母、数字、下划线、短横线、点、冒号、@；
+# 上限 128 字节。挡住路径穿越/控制字符/SQL 元字符等异常输入。
+# 与 schemas.ChatRequest.conversation_id 模式保持一致（UUID/IM chatroom@xxx 都覆盖）。
+_ID_PATTERN = re.compile(r"^[A-Za-z0-9_\-:.@]{1,128}$")
+
+
+def _validate_id(value: str, field: str) -> None:
+    """对会话/频道/用户 ID 进行白名单校验，不通过即 422。"""
+    if not isinstance(value, str) or not _ID_PATTERN.match(value):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid {field}: must match {_ID_PATTERN.pattern}",
+        )
 
 
 async def _broadcast_session_event(event: str, data: dict) -> None:
@@ -39,6 +55,7 @@ async def list_sessions(request: Request, channel: str = "desktop"):
 
     Returns a list of conversations with metadata, ordered by last_active desc.
     """
+    _validate_id(channel, "channel")
     session_manager = getattr(request.app.state, "session_manager", None)
     if not session_manager or not getattr(session_manager, "_sessions_loaded", False):
         wac = getattr(request.app.state, "web_access_config", None)
@@ -107,6 +124,10 @@ async def get_session_history(
 
     Returns messages in a format compatible with the frontend ChatMessage type.
     """
+    _validate_id(conversation_id, "conversation_id")
+    _validate_id(channel, "channel")
+    _validate_id(user_id, "user_id")
+
     session_manager = getattr(request.app.state, "session_manager", None)
     if not session_manager:
         return {"messages": []}
@@ -184,6 +205,10 @@ async def delete_session(
     the session manager. Conversation history in memory DB is preserved
     for potential recovery.
     """
+    _validate_id(conversation_id, "conversation_id")
+    _validate_id(channel, "channel")
+    _validate_id(user_id, "user_id")
+
     session_manager = getattr(request.app.state, "session_manager", None)
     if not session_manager:
         return {"ok": False, "error": "session_manager not available"}
@@ -274,6 +299,10 @@ async def append_session_messages(
     Used by OrgChatPanel and other embedded chat UIs to persist messages
     through the same session backend as the main ChatView.
     """
+    _validate_id(conversation_id, "conversation_id")
+    _validate_id(channel, "channel")
+    _validate_id(user_id, "user_id")
+
     session_manager = getattr(request.app.state, "session_manager", None)
     if not session_manager:
         return {"ok": False, "error": "session_manager not available"}

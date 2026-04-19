@@ -79,9 +79,10 @@ def hook(hook_name: str) -> Callable:
         async def setup(**kwargs):
             print("Plugin initialized!")
 
-    Valid hook names: on_init, on_shutdown, on_message_received,
-    on_message_sending, on_retrieve, on_tool_result, on_session_start,
-    on_session_end, on_prompt_build, on_schedule.
+    Valid hook names: on_init, on_shutdown, on_schedule, on_config_change,
+    on_error, on_message_received, on_message_sending, on_session_start,
+    on_session_end, on_retrieve, on_tool_result, on_before_tool_use,
+    on_after_tool_use, on_prompt_build.
     """
     from .hooks import HOOK_NAMES
 

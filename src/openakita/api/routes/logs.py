@@ -103,12 +103,39 @@ def _rotate_frontend_log(path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_tail_bytes(
+    tail_bytes: int,
+    tail: int | None,
+    *,
+    upper: int = 400_000,
+) -> int:
+    """Resolve the effective byte count from the ``tail_bytes`` / ``tail`` parameters.
+
+    - ``tail_bytes`` takes precedence (legacy contract, used by existing callers).
+    - ``tail`` is accepted as an alias (convenient for CLI testing and new callers),
+      interpreted the same way — as a byte count.
+    - Out-of-range values (negative or above ``upper``) are clamped to ``[0, upper]``
+      to avoid 422 errors from FastAPI's own validator.
+    """
+    raw = tail_bytes if tail is None else tail
+    try:
+        n = int(raw)
+    except Exception:
+        n = 60_000
+    if n < 0:
+        n = 0
+    if n > upper:
+        n = upper
+    return n
+
+
 @router.get("/api/logs/service")
 async def service_log(
     tail_bytes: int = Query(default=60000, ge=0, le=400000, description="Number of tail bytes to read"),
+    tail: int | None = Query(default=None, description="Alias for tail_bytes; convenient for CLI and ad-hoc usage"),
 ):
     """Read the tail of the backend service log file."""
-    return _read_log_tail(_log_file_path(), tail_bytes)
+    return _read_log_tail(_log_file_path(), _resolve_tail_bytes(tail_bytes, tail))
 
 
 class FrontendLogPayload(BaseModel):
@@ -153,20 +180,23 @@ async def receive_frontend_log(request: Request):
 @router.get("/api/logs/frontend")
 async def frontend_log(
     tail_bytes: int = Query(default=60000, ge=0, le=400000, description="Number of tail bytes to read"),
+    tail: int | None = Query(default=None, description="Alias for tail_bytes; convenient for CLI and ad-hoc usage"),
 ):
     """Read the tail of the frontend log file."""
-    return _read_log_tail(_frontend_log_path(), tail_bytes)
+    return _read_log_tail(_frontend_log_path(), _resolve_tail_bytes(tail_bytes, tail))
 
 
 @router.get("/api/logs/combined")
 async def combined_log(
     tail_bytes: int = Query(default=60000, ge=0, le=200000, description="Tail bytes to read per section"),
+    tail: int | None = Query(default=None, description="Alias for tail_bytes; convenient for CLI and ad-hoc usage"),
 ):
     """
     Return combined tail of backend service log + frontend log,
     for the frontend's exportLogs() to fetch in a single request.
     """
+    n = _resolve_tail_bytes(tail_bytes, tail, upper=200_000)
     return {
-        "backend": _read_log_tail(_log_file_path(), tail_bytes),
-        "frontend": _read_log_tail(_frontend_log_path(), tail_bytes),
+        "backend": _read_log_tail(_log_file_path(), n),
+        "frontend": _read_log_tail(_frontend_log_path(), n),
     }

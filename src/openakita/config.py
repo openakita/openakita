@@ -608,6 +608,60 @@ class Settings(BaseSettings):
         description="Whether to auto-send a [Notification] to the parent node on task completion: False means do not proactively wake the parent",
     )
 
+    # === Organization orchestration · Multi-level command governance (org-orchestration-fix) ===
+    # This group of switches governs multi-level command scenarios such as
+    # "CEO -> CMO -> multiple executors -> CMO summary -> CEO response", addressing root causes:
+    #   1) Child chain_id defaults to _now_iso(), breaking parent-child chain linkage and making
+    #      the tracker blind to subtrees
+    #   2) Coordinators use org_send_message(question) to dispatch tasks, bypassing chain registration
+    #   3) Supervisor misidentifies legitimate polling as an infinite loop and issues TERMINATE
+    #   4) No blocking-wait primitive forces coordinators to spin-poll
+    #   5) Completion detection is a one-shot set, preventing CEO from receiving the final summary
+    # All enabled by default; set any item to false to revert that code path to the old behavior.
+    org_chain_parent_enforced: bool = Field(
+        default=True,
+        description=(
+            "Enforce chain parent-child relationships: on delegate, create a new child chain "
+            "attached under the caller's current chain; on submit, force-reuse the caller's "
+            "current chain; tracker completion walks the entire subtree. "
+            "Disable to revert to the old 'reuse caller chain' semantics."
+        ),
+    )
+    org_question_task_guard: bool = Field(
+        default=True,
+        description=(
+            "Block the anti-pattern of coordinators dispatching tasks via org_send_message(question): "
+            "if the sender has subordinates and the message text contains task-oriented wording "
+            "(e.g. 'write', 'optimize', 'produce', 'complete', 'provide', 'generate'), "
+            "reject the send and prompt the coordinator to use org_delegate_task instead."
+        ),
+    )
+    org_supervisor_poll_whitelist: bool = Field(
+        default=True,
+        description=(
+            "Raise the repetition threshold for legitimate polling/waiting tools such as "
+            "org_list_delegated_tasks and org_wait_for_deliverable, and cap the action at NUDGE — "
+            "never TERMINATE."
+        ),
+    )
+    org_wait_primitive_enabled: bool = Field(
+        default=True,
+        description=(
+            "Enable the org_wait_for_deliverable tool: after dispatching tasks a coordinator can "
+            "block and wait for subordinate deliveries, avoiding the spin-poll pattern that "
+            "triggers the Supervisor dead-loop detector."
+        ),
+    )
+    org_root_post_summary: bool = Field(
+        default=True,
+        description=(
+            "Two-phase state machine for user-command completion: when all child chains are closed "
+            "and root is IDLE, first push a task_complete event to the root inbox to wake root and "
+            "produce the final summary; mark completed only after root becomes IDLE a second time. "
+            "Disable to revert to one-phase completion detection."
+        ),
+    )
+
     # === Organization orchestration · User command lifecycle watchdog ===
     # After the user dispatches a top-level command via send_command, completion is event-driven
     # (all delegation chains closed + root IDLE + root inbox empty). The time parameters below

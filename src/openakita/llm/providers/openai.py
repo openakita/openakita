@@ -18,6 +18,7 @@ from json import JSONDecodeError
 
 import httpx
 
+from ..cache import build_cached_system_blocks
 from ..converters.messages import convert_messages_to_openai
 from ..converters.tools import (
     convert_tool_calls_from_openai,
@@ -25,6 +26,7 @@ from ..converters.tools import (
     has_text_tool_calls,
     parse_text_tool_calls,
 )
+from ..model_registry import get_model_capabilities
 from ..types import (
     AuthenticationError,
     EndpointConfig,
@@ -798,6 +800,31 @@ class OpenAIProvider(LLMProvider):
             if _tv is not None and (not isinstance(_tv, int) or _tv <= 0):
                 body.pop(_tk, None)
 
+        # ── DashScope Explicit Prompt Cache ──
+        # DashScope OpenAI 兼容模式支持 Anthropic 风格的 cache_control 字段，
+        # 命中后输入 token 按 20% 计费、TTFT 显著降低。激活条件：
+        #   1) provider == "dashscope"
+        #   2) 模型在 model_registry 中标记 supports_cache=True
+        #   3) system prompt 含 SYSTEM_PROMPT_DYNAMIC_BOUNDARY 切割标记
+        # 仅切割 system 一处即可（DashScope cache 走 message content blocks，
+        # tools 数组层面不接受 cache_control）。命中情况通过 _parse_response /
+        # 流式 chunk_usage 中的 prompt_tokens_details.cached_tokens 统计。
+        if self.config.provider == "dashscope":
+            try:
+                _caps = get_model_capabilities(self.config.model)
+                if _caps.supports_cache and body.get("messages"):
+                    _msgs = body["messages"]
+                    if _msgs and _msgs[0].get("role") == "system":
+                        _sys_content = _msgs[0].get("content")
+                        if isinstance(_sys_content, str) and _sys_content:
+                            _blocks = build_cached_system_blocks(_sys_content)
+                            if _blocks:
+                                _msgs[0] = {"role": "system", "content": _blocks}
+            except Exception as _cache_err:
+                logger.debug(
+                    f"[CACHE] DashScope cache_control injection skipped: {_cache_err}"
+                )
+
         return body
 
     def _parse_response(self, data: dict) -> LLMResponse:
@@ -949,9 +976,23 @@ class OpenAIProvider(LLMProvider):
 
         # Parse usage statistics
         usage_data = data.get("usage", {})
+        # OpenAI 兼容协议（DashScope/OpenAI/部分 OpenAI 兼容网关）通过
+        # prompt_tokens_details.cached_tokens 暴露 prompt cache 命中数。
+        # 部分模型（如 DashScope 新加坡区 / qwen3-vl-*）直接放在 usage.cached_tokens。
+        _details = usage_data.get("prompt_tokens_details") or {}
+        _cached = 0
+        if isinstance(_details, dict):
+            _cached = int(_details.get("cached_tokens") or 0)
+        if not _cached:
+            _cached = int(usage_data.get("cached_tokens") or 0)
+        _cache_creation = 0
+        if isinstance(_details, dict):
+            _cache_creation = int(_details.get("cache_creation_input_tokens") or 0)
         usage = Usage(
             input_tokens=usage_data.get("prompt_tokens", 0),
             output_tokens=usage_data.get("completion_tokens", 0),
+            cache_read_input_tokens=_cached,
+            cache_creation_input_tokens=_cache_creation,
         )
 
         return LLMResponse(
@@ -973,12 +1014,23 @@ class OpenAIProvider(LLMProvider):
         if not choices:
             usage = event.get("usage")
             if usage:
+                _det = usage.get("prompt_tokens_details") or {}
+                _cached = 0
+                if isinstance(_det, dict):
+                    _cached = int(_det.get("cached_tokens") or 0)
+                if not _cached:
+                    _cached = int(usage.get("cached_tokens") or 0)
+                _create = 0
+                if isinstance(_det, dict):
+                    _create = int(_det.get("cache_creation_input_tokens") or 0)
                 return {
                     "type": "message_delta",
                     "delta": {},
                     "usage": {
                         "input_tokens": usage.get("prompt_tokens", 0),
                         "output_tokens": usage.get("completion_tokens", 0),
+                        "cache_read_input_tokens": _cached,
+                        "cache_creation_input_tokens": _create,
                     },
                 }
             return {"type": "ping"}
@@ -1037,9 +1089,20 @@ class OpenAIProvider(LLMProvider):
             }
             chunk_usage = event.get("usage")
             if chunk_usage:
+                _det2 = chunk_usage.get("prompt_tokens_details") or {}
+                _cached2 = 0
+                if isinstance(_det2, dict):
+                    _cached2 = int(_det2.get("cached_tokens") or 0)
+                if not _cached2:
+                    _cached2 = int(chunk_usage.get("cached_tokens") or 0)
+                _create2 = 0
+                if isinstance(_det2, dict):
+                    _create2 = int(_det2.get("cache_creation_input_tokens") or 0)
                 stop_evt["usage"] = {
                     "input_tokens": chunk_usage.get("prompt_tokens", 0),
                     "output_tokens": chunk_usage.get("completion_tokens", 0),
+                    "cache_read_input_tokens": _cached2,
+                    "cache_creation_input_tokens": _create2,
                 }
             events.append(stop_evt)
 

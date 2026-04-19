@@ -993,9 +993,10 @@ class Brain:
                         name=name,
                         description=(
                             f"[DEFERRED] {short_desc} — "
-                            "Do NOT call this tool directly. "
-                            'You must first call tool_search(query="...") to load '
-                            "its full parameters, then call it in the NEXT turn."
+                            "Recommended: call `tool_search(query=\"...\")` first "
+                            "to load full parameters. Direct calls are still "
+                            "accepted (auto-promoted) but argument validation may "
+                            "fail without full schema."
                         ),
                         input_schema={"type": "object", "properties": {}},
                     )

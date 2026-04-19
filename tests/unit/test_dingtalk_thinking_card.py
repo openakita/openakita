@@ -250,7 +250,7 @@ class TestSendMessageConsumesCard:
         adapter._thinking_cards[sk] = _CardState(card_id="biz_002", is_ai_card=False)
         adapter._http_client.put = AsyncMock(return_value=_mock_card_response(success=False))
         adapter._http_client.post = AsyncMock(return_value=_mock_webhook_response())
-        adapter._session_webhooks["conv_group"] = "https://fake-webhook"
+        adapter._save_webhook("conv_group", "https://fake-webhook", None)
 
         msg = OutgoingMessage.text("conv_group", "fallback text")
         result = await adapter.send_message(msg)
@@ -266,7 +266,7 @@ class TestSendMessageConsumesCard:
         post_mock = AsyncMock(return_value=_mock_webhook_response())
         adapter._http_client.put = put_mock
         adapter._http_client.post = post_mock
-        adapter._session_webhooks["conv_group"] = "https://fake-webhook"
+        adapter._save_webhook("conv_group", "https://fake-webhook", None)
 
         content = MessageContent(
             text="look at this",
@@ -284,7 +284,7 @@ class TestSendMessageConsumesCard:
     @pytest.mark.asyncio
     async def test_no_card_normal_flow(self, adapter):
         adapter._http_client.post = AsyncMock(return_value=_mock_webhook_response())
-        adapter._session_webhooks["conv_group"] = "https://fake-webhook"
+        adapter._save_webhook("conv_group", "https://fake-webhook", None)
         msg = OutgoingMessage.text("conv_group", "no card here")
 
         result = await adapter.send_message(msg)
@@ -374,7 +374,7 @@ class TestTypingLifecycle:
     async def test_fast_response_no_card(self, adapter):
         """Agent responds before send_typing runs."""
         adapter._http_client.post = AsyncMock(return_value=_mock_webhook_response())
-        adapter._session_webhooks["conv_group"] = "https://fake-webhook"
+        adapter._save_webhook("conv_group", "https://fake-webhook", None)
 
         msg = OutgoingMessage.text("conv_group", "instant response")
         result = await adapter.send_message(msg)
@@ -387,7 +387,7 @@ class TestTypingLifecycle:
         """Single chat without staffId: no card, no error."""
         adapter._conversation_users.pop("conv_private", None)
         adapter._http_client.post = AsyncMock(return_value=_mock_webhook_response())
-        adapter._session_webhooks["conv_private"] = "https://fake-webhook"
+        adapter._save_webhook("conv_private", "https://fake-webhook", None)
 
         await adapter.send_typing("conv_private")
         sk = _sk("conv_private")

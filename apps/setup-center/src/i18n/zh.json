@@ -1787,6 +1787,15 @@
     "extCreditsHint": "OpenAkita 的工具调用和浏览器访问能力得益于以下开源项目",
     "extCopied": "已复制"
   },
+  "pluginApp": {
+    "loadingTitle": "正在加载 {{name}}…",
+    "loadingSlow": "插件启动较慢，请稍候…",
+    "loadFailed": "插件 UI 加载失败",
+    "loading": "正在加载插件…",
+    "errorTitle": "插件加载错误",
+    "loadTimeout": "插件 UI 在超时前未能完成初始化",
+    "retry": "重试"
+  },
   "plugins": {
     "title": "插件",
     "installed": "已安装 {{count}} 个",
@@ -1958,7 +1967,13 @@
   "dingtalk": {
     "footerTitle": "卡片底栏",
     "footerElapsed": "显示处理耗时",
-    "footerStatus": "显示处理状态"
+    "footerStatus": "显示处理状态",
+    "guideTitle": "如何获取 Client ID / Secret",
+    "guideStep1": "1. 进入「钉钉开放平台 → 应用开发」，创建企业内部应用",
+    "guideStep2": "2. 在应用能力中添加「机器人」并选择 Stream 模式（无需公网 IP）",
+    "guideStep3": "3. 在「凭证与基础信息」复制 Client ID 与 Client Secret",
+    "guideStep4": "4. 粘贴到下方凭据字段后保存并应用重启",
+    "guideOpenConsole": "打开钉钉开放平台"
   },
   "security": {
     "title": "安全策略",

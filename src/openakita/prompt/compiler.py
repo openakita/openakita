@@ -64,7 +64,7 @@ _OUTPUT_MAP: dict[str, str] = {
     "persona_custom": "persona.custom.md",
 }
 
-_ORPHAN_FILES = ["soul.summary.md", "agent.tooling.md", "agent.core.md", "user.summary.md"]
+_ORPHAN_FILES = ["soul.summary.md", "user.summary.md"]
 
 
 # =========================================================================

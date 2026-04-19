@@ -20,6 +20,7 @@ import os
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -211,8 +212,12 @@ class DingTalkAdapter(ChannelAdapter):
         self._stream_state = DingTalkStreamState.IDLE
         self._stream_metrics = _StreamMetrics()
 
-        # Per-conversation caches: session webhook, sender userId, conversation type
-        self._session_webhooks: dict[str, str] = {}
+        # Per-conversation caches: session webhook, sender userId, conversation type.
+        # session_webhooks stores (url, expires_at_ms); entries are evicted when
+        # expired or when the cache exceeds capacity. DingTalk returns
+        # sessionWebhookExpiredTime as message_time + 2h (ms epoch).
+        self._session_webhooks: OrderedDict[str, tuple[str, int]] = OrderedDict()
+        self._session_webhooks_max = 500
         self._conversation_users: dict[str, str] = {}  # conversationId -> senderId
         self._conversation_types: dict[str, str] = {}  # conversationId -> "1" (direct) / "2" (group)
 
@@ -253,6 +258,90 @@ class DingTalkAdapter(ChannelAdapter):
             if footer_status is not None
             else (os.environ.get("DINGTALK_FOOTER_STATUS", "true").lower() in ("true", "1", "yes"))
         )
+
+    @staticmethod
+    def _normalize_dingtalk_id(raw: str) -> str:
+        """规范化钉钉用户 ID。
+
+        钉钉 senderId 可能以 ``$:LWCP_v1:$`` 等加密前缀返回，这种 ID 不可用于
+        OpenAPI（如 ``oToMessages/batchSend`` 的 ``userIds``、``cardBizId`` 投递等），
+        视作不可用 ID 并返回空串，由调用方走"无 staffId"分支处理。
+
+        正常的企业员工 userId 直接原样返回。
+        """
+        if not raw or not isinstance(raw, str):
+            return ""
+        if raw.startswith("$:LWCP"):
+            return ""
+        return raw
+
+    def _save_webhook(
+        self,
+        conversation_id: str,
+        webhook: str,
+        expired_time_ms: int | None,
+    ) -> None:
+        """保存 session webhook，附带过期时间 + LRU 容量上限。
+
+        - ``expired_time_ms`` 为钉钉回传的过期毫秒时间戳；缺省按 2 小时估算
+        - 容量超 ``_session_webhooks_max`` 时按 LRU 淘汰最旧条目
+        """
+        if not conversation_id or not webhook:
+            return
+        if not expired_time_ms or expired_time_ms <= 0:
+            expired_time_ms = int(time.time() * 1000) + 2 * 60 * 60 * 1000
+        self._session_webhooks[conversation_id] = (webhook, int(expired_time_ms))
+        self._session_webhooks.move_to_end(conversation_id)
+        while len(self._session_webhooks) > self._session_webhooks_max:
+            self._session_webhooks.popitem(last=False)
+
+    # webhook 过期前的安全缓冲：到期前 60s 起即视为不可用，与 token 刷新窗口对齐，
+    # 避免在过期瞬间还命中缓存导致一次必败的 webhook 调用
+    _WEBHOOK_EXPIRY_GUARD_MS = 60_000
+
+    def _get_valid_webhook(self, conversation_id: str) -> str:
+        """获取仍未过期的 session webhook（含 60s 安全缓冲），过期则惰性删除返回空串。"""
+        if not conversation_id:
+            return ""
+        entry = self._session_webhooks.get(conversation_id)
+        if not entry:
+            return ""
+        url, expires_at_ms = entry
+        now_ms = int(time.time() * 1000)
+        if expires_at_ms and now_ms >= expires_at_ms - self._WEBHOOK_EXPIRY_GUARD_MS:
+            self._session_webhooks.pop(conversation_id, None)
+            return ""
+        self._session_webhooks.move_to_end(conversation_id)
+        return url
+
+    @staticmethod
+    def _extract_content_dict(raw_data: dict) -> dict:
+        """提取 audio/video/file 类消息的 content 字典。
+
+        钉钉 SDK 不解析这三类的 content，需要手动从 raw_data 提取：
+        - 优先 ``raw_data["content"]``（可能是 dict 或 JSON 字符串）
+        - 若为空，回退到 ``raw_data["extensions"]["content"]``（部分 SDK 版本会把
+          原始 content 放到 extensions 中，与 AstrBot 实现一致）
+
+        永远返回 dict（解析失败/缺字段时返回空 dict），保证调用方的 ``.get()`` 安全。
+        """
+        content = raw_data.get("content", {})
+        if isinstance(content, str):
+            try:
+                content = json.loads(content)
+            except (json.JSONDecodeError, TypeError):
+                content = {}
+        if not content:
+            ext = raw_data.get("extensions") or {}
+            ext_content = ext.get("content") if isinstance(ext, dict) else None
+            if isinstance(ext_content, str):
+                try:
+                    ext_content = json.loads(ext_content)
+                except (json.JSONDecodeError, TypeError):
+                    ext_content = None
+            if isinstance(ext_content, dict):
+                content = ext_content
+        return content if isinstance(content, dict) else {}
 
     def _make_session_key(self, chat_id: str, thread_id: str | None = None) -> str:
         return f"{chat_id}:{thread_id or ''}"
@@ -655,7 +744,16 @@ class DingTalkAdapter(ChannelAdapter):
 
         # Parse basic fields
         msg_type = raw_data.get("msgtype", "text")
-        sender_id = raw_data.get("senderStaffId") or raw_data.get("senderId", "")
+        # 优先 senderStaffId（企业员工 userId，可用于 OpenAPI）；
+        # 否则用 senderId 但需先剥离 $:LWCP 加密前缀（剥离后若为空表示无可用 ID）。
+        staff_id = raw_data.get("senderStaffId") or ""
+        raw_sender_id = raw_data.get("senderId", "") or ""
+        sender_id = staff_id or self._normalize_dingtalk_id(raw_sender_id)
+        if not sender_id and raw_sender_id:
+            logger.warning(
+                "DingTalk: sender has no usable staffId (encrypted senderId only): %s...",
+                raw_sender_id[:32],
+            )
         conversation_id = raw_data.get("conversationId", "")
         conversation_type = raw_data.get("conversationType", "1")
         msg_id = raw_data.get("msgId", "")
@@ -698,10 +796,15 @@ class DingTalkAdapter(ChannelAdapter):
 
         chat_type = "group" if conversation_type == "2" else "private"
 
-        # Save the session webhook for replies
+        # Save the session webhook for replies (with expiry + LRU cap to avoid memory leaks / using expired URLs)
         session_webhook = raw_data.get("sessionWebhook", "")
+        webhook_expired_time = raw_data.get("sessionWebhookExpiredTime")
+        try:
+            webhook_expired_time = int(webhook_expired_time) if webhook_expired_time else None
+        except (TypeError, ValueError):
+            webhook_expired_time = None
         if session_webhook and conversation_id:
-            self._session_webhooks[conversation_id] = session_webhook
+            self._save_webhook(conversation_id, session_webhook, webhook_expired_time)
         if sender_id and conversation_id:
             self._conversation_users[conversation_id] = sender_id
         if conversation_id and conversation_type:
@@ -736,10 +839,19 @@ class DingTalkAdapter(ChannelAdapter):
         # To respond to non-@ messages in groups, enable "Receive all group messages" in the developer console
         # and set group_response_mode to smart or always.
 
+        # sender_id 为空（仅有加密 senderId 且无 staffId）时，仍需让消息能进入主流程，
+        # 但单聊回复路径会自然失败（OpenAPI 缺少 userId）。用基于会话 ID 的占位 user_id
+        # 保证 UnifiedMessage 有稳定主键，不污染下游基于 dd_ 前缀的统计/日志逻辑。
+        if sender_id:
+            effective_user_id = sender_id
+        elif conversation_id:
+            effective_user_id = f"anon_{conversation_id[:12]}"
+        else:
+            effective_user_id = "anon"
         unified = UnifiedMessage.create(
             channel=self.channel_name,
             channel_message_id=msg_id,
-            user_id=f"dd_{sender_id}",
+            user_id=f"dd_{effective_user_id}",
             channel_user_id=sender_id,
             chat_id=conversation_id,
             content=content,
@@ -1283,10 +1395,10 @@ class DingTalkAdapter(ChannelAdapter):
                 with contextlib.suppress(Exception):
                     await self._finish_card(card_state, "✅ Done")
 
-        # Fetch the webhook
+        # Fetch the webhook (the one in metadata may already be expired, but the cache layer validates expiry)
         session_webhook = message.metadata.get("session_webhook", "")
         if not session_webhook:
-            session_webhook = self._session_webhooks.get(message.chat_id, "")
+            session_webhook = self._get_valid_webhook(message.chat_id)
 
         # Media messages: convert to markdown and send via webhook
         has_media = message.content.images or message.content.files or message.content.voices
@@ -1695,7 +1807,7 @@ class DingTalkAdapter(ChannelAdapter):
             logger.warning(f"OpenAPI image send error: {e}")
 
         # Step 3: fall back to embedding the image via webhook markdown
-        session_webhook = self._session_webhooks.get(chat_id, "")
+        session_webhook = self._get_valid_webhook(chat_id)
         if session_webhook:
             img_ref = media_url or media_id
             md_text = f"![image]({img_ref})"

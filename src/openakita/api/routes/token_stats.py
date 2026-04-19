@@ -63,11 +63,17 @@ def _parse_range(
     start: str | None,
     end: str | None,
     period: str | None,
+    hours: int | None = None,
 ) -> tuple[str, str]:
     """Resolve time range and return as SQLite-compatible UTC timestamp strings.
 
     SQLite CURRENT_TIMESTAMP stores UTC in 'YYYY-MM-DD HH:MM:SS' format (space separator).
     We must query with the same format and timezone to get correct string comparisons.
+
+    新增：兼容前端/CLI 历史调用习惯
+      - hours: 直接给"过去 N 小时"，比 period 别名更直观
+      - period 增加 12h/24h/7d/30d 等更友好的别名
+      - 任何越界（负数/过大）都裁剪到 [1h, 365d]，避免空结果或扫全表
     """
     if start and end:
         try:
@@ -79,15 +85,30 @@ def _parse_range(
 
     now_utc = datetime.now(UTC).replace(tzinfo=None)
 
-    delta_map = {
-        "1d": timedelta(days=1),
-        "3d": timedelta(days=3),
-        "1w": timedelta(weeks=1),
-        "1m": timedelta(days=30),
-        "6m": timedelta(days=180),
-        "1y": timedelta(days=365),
-    }
-    delta = delta_map.get(period or "1d", timedelta(days=1))
+    delta: timedelta | None = None
+    if hours is not None:
+        try:
+            h = int(hours)
+        except Exception:
+            h = 24
+        h = max(1, min(h, 365 * 24))
+        delta = timedelta(hours=h)
+
+    if delta is None:
+        delta_map = {
+            "1h": timedelta(hours=1),
+            "12h": timedelta(hours=12),
+            "24h": timedelta(hours=24),
+            "1d": timedelta(days=1),
+            "3d": timedelta(days=3),
+            "7d": timedelta(days=7),
+            "1w": timedelta(weeks=1),
+            "30d": timedelta(days=30),
+            "1m": timedelta(days=30),
+            "6m": timedelta(days=180),
+            "1y": timedelta(days=365),
+        }
+        delta = delta_map.get(period or "1d", timedelta(days=1))
     start_utc = now_utc - delta
     return start_utc.strftime("%Y-%m-%d %H:%M:%S"), now_utc.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -99,13 +120,14 @@ async def summary(
     period: str | None = Query(None),
     start: str | None = Query(None),
     end: str | None = Query(None),
+    hours: int | None = Query(None, ge=1, le=8760),
     endpoint_name: str | None = Query(None),
     operation_type: str | None = Query(None),
 ):
     db = await _get_db()
     if db is None:
         return {"error": "database not available"}
-    start_str, end_str = _parse_range(start, end, period)
+    start_str, end_str = _parse_range(start, end, period, hours=hours)
     try:
         rows = await db.get_token_usage_summary(
             start_time=start_str,
@@ -128,12 +150,13 @@ async def timeline(
     period: str | None = Query(None),
     start: str | None = Query(None),
     end: str | None = Query(None),
+    hours: int | None = Query(None, ge=1, le=8760),
     endpoint_name: str | None = Query(None),
 ):
     db = await _get_db()
     if db is None:
         return {"error": "database not available"}
-    start_str, end_str = _parse_range(start, end, period)
+    start_str, end_str = _parse_range(start, end, period, hours=hours)
     try:
         rows = await db.get_token_usage_timeline(
             start_time=start_str,
@@ -154,13 +177,14 @@ async def sessions(
     period: str | None = Query(None),
     start: str | None = Query(None),
     end: str | None = Query(None),
-    limit: int = Query(50),
-    offset: int = Query(0),
+    hours: int | None = Query(None, ge=1, le=8760),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
 ):
     db = await _get_db()
     if db is None:
         return {"error": "database not available"}
-    start_str, end_str = _parse_range(start, end, period)
+    start_str, end_str = _parse_range(start, end, period, hours=hours)
     try:
         rows = await db.get_token_usage_sessions(
             start_time=start_str, end_time=end_str, limit=limit, offset=offset
@@ -178,11 +202,12 @@ async def total(
     period: str | None = Query(None),
     start: str | None = Query(None),
     end: str | None = Query(None),
+    hours: int | None = Query(None, ge=1, le=8760),
 ):
     db = await _get_db()
     if db is None:
         return {"error": "database not available"}
-    start_str, end_str = _parse_range(start, end, period)
+    start_str, end_str = _parse_range(start, end, period, hours=hours)
     try:
         row = await db.get_token_usage_total(start_time=start_str, end_time=end_str)
     except Exception as e:
@@ -198,12 +223,13 @@ async def by_agent(
     period: str | None = Query(None),
     start: str | None = Query(None),
     end: str | None = Query(None),
+    hours: int | None = Query(None, ge=1, le=8760),
 ):
     """Token usage grouped by agent_profile_id for multi-agent mode."""
     db = await _get_db()
     if db is None:
         return {"error": "database not available"}
-    start_str, end_str = _parse_range(start, end, period)
+    start_str, end_str = _parse_range(start, end, period, hours=hours)
     try:
         by_agent_data = await db.get_token_usage_by_agent(start_time=start_str, end_time=end_str)
     except Exception as e:

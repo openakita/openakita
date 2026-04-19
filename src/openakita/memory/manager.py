@@ -1065,6 +1065,34 @@ class MemoryManager:
             with contextlib.suppress(Exception):
                 asyncio.get_event_loop().create_task(replace.store(sem.to_dict()))
 
+        # MDRM 同步：高重要性事实立即上图，避免只有等到下一次 quick_encode/
+        # consolidate 时才能被关系召回（小白用户的"再问一次"路径会走这里）。
+        try:
+            if (
+                memory.importance_score >= 0.6
+                and self._get_memory_mode() in ("mode2", "auto")
+                and self._ensure_relational()
+            ):
+                from .relational.types import MemoryNode, NodeType
+
+                _node_type = (
+                    NodeType.FACT
+                    if memory.type.value in ("fact", "preference", "rule")
+                    else NodeType.EVENT
+                )
+                node = MemoryNode(
+                    id=memory.id,
+                    content=memory.content,
+                    node_type=_node_type,
+                    session_id=self._current_session_id or "",
+                    agent_id=self.agent_id or "",
+                    importance=memory.importance_score,
+                    confidence=0.7,
+                )
+                self.relational_store.save_nodes_batch([node])
+        except Exception as _rel_err:
+            logger.debug(f"[Memory] relational upsert skipped (non-fatal): {_rel_err}")
+
         logger.debug(f"Added memory: {memory.id} - {memory.content}")
         return memory.id
 

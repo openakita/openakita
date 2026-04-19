@@ -56,7 +56,9 @@ DEFER_CATEGORIES: frozenset[str] = frozenset(
         "Config",
         "Agent Hub",
         "Skill Store",
-        "Profile",
+        # "Profile" 已移除：用户档案/记忆是消费者首轮高频路径，
+        # 延迟加载导致首轮 update_user_profile 必失败（progressive disclosure
+        # 两轮往返），与产品体验相悖。详见 _exploratory_test_report_20260418.md。
         "Plugin",
         "Org Setup",
         "OpenCLI",

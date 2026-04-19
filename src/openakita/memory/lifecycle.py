@@ -174,22 +174,61 @@ class LifecycleManager:
         return report
 
     def _sync_vector_store(self) -> None:
-        """Rebuild vector store index from current SQLite data."""
+        """Rebuild vector store index from current SQLite data.
+
+        双向同步：
+        - 删 stale：SQLite 已不存在的 id 从向量库剔除
+        - 补 missing：SQLite 有但向量库无的 id 重新嵌入（避免 Chroma 启动期
+          竞态导致的"写入失败 + 后续无补全"洞口，参考 vector_store.py 300s 冷却）
+        """
         try:
             if not hasattr(self.store, "search") or not self.store.search:
                 return
             all_mems = self.store.load_all_memories()
             mem_ids = {m.id for m in all_mems}
             search = self.store.search
+
+            existing_ids: set[str] | None = None
+            if hasattr(search, "_collection"):
+                try:
+                    existing_ids = set(search._collection.get()["ids"])
+                except Exception:
+                    existing_ids = None
+
             if hasattr(search, "delete_not_in"):
                 search.delete_not_in(mem_ids)
                 logger.info(f"[Lifecycle] Vector store synced ({len(mem_ids)} memories)")
-            elif hasattr(search, "_collection"):
-                existing = set(search._collection.get()["ids"])
-                stale = existing - mem_ids
+            elif existing_ids is not None:
+                stale = existing_ids - mem_ids
                 if stale:
                     search._collection.delete(ids=list(stale))
                     logger.info(f"[Lifecycle] Removed {len(stale)} stale vectors")
+
+            if existing_ids is not None and hasattr(search, "add"):
+                missing = [m for m in all_mems if m.id not in existing_ids]
+                if missing:
+                    added = 0
+                    for mem in missing:
+                        try:
+                            search.add(
+                                mem.id,
+                                mem.content,
+                                {
+                                    "type": mem.type.value,
+                                    "priority": mem.priority.value,
+                                    "importance": mem.importance_score,
+                                    "tags": mem.tags,
+                                },
+                            )
+                            added += 1
+                        except Exception as _e:
+                            logger.debug(
+                                f"[Lifecycle] backfill embed failed for {mem.id}: {_e}"
+                            )
+                    if added:
+                        logger.info(
+                            f"[Lifecycle] Backfilled {added}/{len(missing)} missing vectors"
+                        )
         except Exception as e:
             logger.debug(f"[Lifecycle] Vector store sync skipped: {e}")
 

@@ -1,8 +1,8 @@
 # 生命周期钩子 / Lifecycle Hooks
 
-OpenAkita 提供 **10 个钩子**，覆盖插件的完整生命周期：初始化、消息收发、记忆检索、工具调用、会话管理、Prompt 构建和定时任务。
+OpenAkita 提供 **14 个钩子**，覆盖插件的完整生命周期：初始化、关闭、消息收发、会话管理、记忆检索、工具调用（含前后拦截）、Prompt 构建、定时任务、配置变更和错误处理。
 
-OpenAkita provides **10 hooks** covering the full plugin lifecycle: initialization, message I/O, memory retrieval, tool execution, session management, prompt assembly, and scheduled tasks.
+OpenAkita provides **14 hooks** covering the full plugin lifecycle: init, shutdown, message I/O, sessions, memory retrieval, tool execution (with before/after interception), prompt assembly, scheduled tasks, config changes, and error handling.
 
 ```python
 from openakita_plugin_sdk.hooks import HOOK_NAMES, HOOK_SIGNATURES
@@ -14,13 +14,15 @@ from openakita_plugin_sdk.hooks import HOOK_NAMES, HOOK_SIGNATURES
 - 所有回调使用 **关键字参数**（`**kwargs`），不使用位置参数
 - 每个回调有独立的超时保护（默认 5 秒，可在 `plugin.json` 的 `hook_timeout` 中配置）
 - 单个回调异常不影响其他回调的执行
-- 累计错误 5 次的插件会被自动禁用
+- 同一钩子的多个插件回调通过 `asyncio.gather` **并行**调度，执行顺序不保证
+- 5 分钟滑动窗口内累计错误达 10 次的插件会被自动禁用
 
 - Callbacks can be `async def` or plain `def` (sync callbacks run in a thread automatically)
 - All callbacks receive **keyword arguments** (`**kwargs`), never positional
 - Each callback has independent timeout protection (default 5s, configurable via `hook_timeout` in `plugin.json`)
 - A failing callback never blocks the chain
-- Plugins with 5+ accumulated errors are auto-disabled
+- Multiple plugin callbacks for the same hook are dispatched **in parallel** via `asyncio.gather`; execution order is not guaranteed
+- Plugins with 10+ errors within a 5-minute sliding window are auto-disabled
 
 ---
 
@@ -31,12 +33,16 @@ from openakita_plugin_sdk.hooks import HOOK_NAMES, HOOK_SIGNATURES
 | `on_init` | 所有插件加载完成后 / After all plugins loaded | `hooks.basic` | (无 / none) |
 | `on_shutdown` | 系统关闭时 / System shutting down | `hooks.basic` | (无 / none) |
 | `on_schedule` | 定时任务执行前 / Before scheduled task | `hooks.basic` | `task_id` |
+| `on_config_change` | 插件配置变更后 / After plugin config changed | `hooks.basic` | `plugin_id`, `config` |
+| `on_error` | 插件执行出错时 / On plugin execution error | `hooks.basic` | `plugin_id`, `context`, `error` |
 | `on_message_received` | 收到新消息，处理前 / New message, before processing | `hooks.message` | `channel`, `chat_id`, `user_id`, `text`, `message` |
 | `on_message_sending` | 发送回复前 / Before sending reply | `hooks.message` | `channel`, `chat_id`, `text` |
 | `on_session_start` | 新会话创建 / New session created | `hooks.message` | `session_id` |
 | `on_session_end` | 会话关闭 / Session closed | `hooks.message` | `session_id` |
 | `on_retrieve` | 记忆检索后 / After memory retrieval | `hooks.retrieve` | `query`, `candidates` |
 | `on_tool_result` | 工具调用完成后 / After tool execution | `hooks.retrieve` | `tool_name`, `arguments`, `result` |
+| `on_before_tool_use` | 工具调用执行前 / Before tool execution | `hooks.retrieve` | `tool_name`, `arguments` |
+| `on_after_tool_use` | 工具调用执行后 / After tool execution completes | `hooks.retrieve` | `tool_name`, `arguments`, `result` |
 | `on_prompt_build` | 系统 Prompt 组装后 / After prompt assembly | `hooks.retrieve` | `prompt` |
 
 ---
@@ -89,6 +95,41 @@ api.register_hook("on_schedule", on_schedule)
 ```
 
 **权限 / Permission:** `hooks.basic` | **参数 / kwargs:** `task_id: str`
+
+### `on_config_change`
+
+插件配置通过 REST API 或 `set_config` 更新后触发。用于动态重新加载设置。
+
+Fired after plugin config is updated via REST API or `set_config`. Use for dynamic reload of settings.
+
+```python
+async def on_config_change(**kwargs):
+    plugin_id = kwargs.get("plugin_id", "")
+    config = kwargs.get("config", {})
+    api.log(f"配置已更新 / Config updated for {plugin_id}")
+
+api.register_hook("on_config_change", on_config_change)
+```
+
+**权限 / Permission:** `hooks.basic` | **参数 / kwargs:** `plugin_id: str`, `config: dict`
+
+### `on_error`
+
+插件执行过程中发生异常时触发。用于错误监控、告警。
+
+Fired when a plugin encounters an execution error. Use for error monitoring and alerting.
+
+```python
+async def on_error(**kwargs):
+    plugin_id = kwargs.get("plugin_id", "")
+    context = kwargs.get("context", "")
+    error = kwargs.get("error", "")
+    api.log_error(f"插件 {plugin_id} 在 {context} 出错: {error}")
+
+api.register_hook("on_error", on_error)
+```
+
+**权限 / Permission:** `hooks.basic` | **参数 / kwargs:** `plugin_id: str`, `context: str`, `error: str`
 
 ### `on_message_received`
 
@@ -215,6 +256,44 @@ api.register_hook("on_tool_result", on_tool_result)
 
 **参数 / kwargs:** `tool_name: str`, `arguments: dict`, `result: str`
 
+### `on_before_tool_use`
+
+工具调用执行前触发。用于参数校验、审计、权限检查。
+
+Fired before a tool is executed. Use for argument validation, auditing, or access control.
+
+```python
+async def on_before_tool_use(**kwargs):
+    tool_name = kwargs.get("tool_name", "")
+    arguments = kwargs.get("arguments", {})
+    api.log(f"即将调用工具 / About to call tool: {tool_name}")
+
+api.register_hook("on_before_tool_use", on_before_tool_use)
+```
+
+**权限 / Permission:** `hooks.retrieve`
+
+**参数 / kwargs:** `tool_name: str`, `arguments: dict`
+
+### `on_after_tool_use`
+
+工具调用完成后触发（与 `on_tool_result` 类似，但更强调"调用后"语义）。用于结果后处理、日志记录。
+
+Fired after a tool call completes (similar to `on_tool_result`, emphasizing post-execution). Use for post-processing and logging.
+
+```python
+async def on_after_tool_use(**kwargs):
+    tool_name = kwargs.get("tool_name", "")
+    result = kwargs.get("result", "")
+    api.log(f"工具完成 / Tool done: {tool_name}, result: {result[:100]}")
+
+api.register_hook("on_after_tool_use", on_after_tool_use)
+```
+
+**权限 / Permission:** `hooks.retrieve`
+
+**参数 / kwargs:** `tool_name: str`, `arguments: dict`, `result: str`
+
 ### `on_prompt_build`
 
 系统 Prompt 组装完成后触发。**返回字符串**以追加到 Prompt 中，返回 `None` 则不追加。
@@ -256,3 +335,4 @@ print(sig["permission"])     # "hooks.message"
 
 - [api-reference.md](api-reference.md) — `register_hook` 方法说明 / method reference
 - [permissions.md](permissions.md) — `hooks.basic`, `hooks.message`, `hooks.retrieve`, `hooks.all` 权限 / permissions
+- [rest-api.md](rest-api.md) — `on_config_change` 由 REST API 配置更新触发 / triggered by REST API config updates

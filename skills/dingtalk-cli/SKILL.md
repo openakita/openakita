@@ -3,8 +3,8 @@ name: openakita/skills@dingtalk-cli
 description: "DingTalk Workspace CLI (dws) - officially open-sourced cross-platform CLI tool from DingTalk. Provides 86 commands across 12 products: Contact, Chat, Bot, Calendar, Todo, Approval, Attendance, Ding, Report, AITable, Workbench, DevDoc. Built in Go with zero-trust security architecture. Use when user wants to operate DingTalk resources."
 license: Apache-2.0
 metadata:
- author: DingTalk-Real-AI
- version: "1.0.8"
+  author: DingTalk-Real-AI
+  version: "1.0.10"
 ---
 
 # DingTalk CLI Workspace CLI (dws)
@@ -194,11 +194,22 @@ python3 scripts/dws_setup.py status
 ```
 
 ### scripts/dws_quick.py
-. 
+Shortcut script for common DingTalk operations (thin wrapper over `dws`; command paths use `dws schema` output as the single source of truth).
 
 ```bash
-python3 scripts/dws_quick.py send --conversation-id xxx --content ""
-python3 scripts/dws_quick.py contacts
+# Send a message to a group via a bot (--text supports @file references, matching the dws CLI)
+python3 scripts/dws_quick.py send --robot-code <BOT> --group <GID> --text "Hello" --title "Notification"
+
+# Search contacts
+python3 scripts/dws_quick.py contacts --keyword "engineering"
+
+# List calendar events
 python3 scripts/dws_quick.py calendar
-python3 scripts/dws_quick.py todo --title ""
+
+# Create a todo (multiple executors separated by commas)
+python3 scripts/dws_quick.py todo --title "Quarterly report" --executors "userId1,userId2"
+
+# Pass through any dws subcommand (quick discovery of namespaces like attendance/approval)
+python3 scripts/dws_quick.py raw -- attendance --help
+python3 scripts/dws_quick.py raw -- approval instance list --help
 ```

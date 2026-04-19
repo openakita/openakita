@@ -202,13 +202,32 @@ class UnifiedStore:
         scope: str = "global",
         scope_owner: str = "",
     ) -> list[tuple[SemanticMemory, float]]:
-        """Like search_semantic but also returns the raw similarity score."""
-        results = self.search.search(query, limit=limit * 3, filter_type=filter_type)
-        if not results and self._fts5_fallback is not None:
-            results = self._fts5_fallback.search(query, limit=limit * 3, filter_type=filter_type)
+        """Like search_semantic but also returns the raw similarity score.
+
+        当主搜索后端（如 Chroma）启用时，**始终**额外 union 一次 FTS5 结果，
+        避免向量索引尚未补全/异步未刷新时新写入的记忆被静默漏掉。按 id 去重后
+        取最高分，FTS5 结果保留原始分数（FTS5 backend 输出已落在 [0,1]）。
+        """
+        primary = self.search.search(query, limit=limit * 3, filter_type=filter_type)
+        merged: dict[str, float] = {mid: float(s) for mid, s in primary}
+
+        if self._fts5_fallback is not None:
+            try:
+                fts_results = self._fts5_fallback.search(
+                    query, limit=limit * 3, filter_type=filter_type
+                )
+                for mid, s in fts_results:
+                    prev = merged.get(mid)
+                    fs = float(s)
+                    if prev is None or fs > prev:
+                        merged[mid] = fs
+            except Exception as _e:
+                logger.debug(f"[UnifiedStore] FTS5 union skipped (non-fatal): {_e}")
+
+        ordered = sorted(merged.items(), key=lambda kv: kv[1], reverse=True)
 
         scored: list[tuple[SemanticMemory, float]] = []
-        for memory_id, score in results:
+        for memory_id, score in ordered:
             d = self.db.get_memory(memory_id)
             if d:
                 d_scope = d.get("scope") or "global"

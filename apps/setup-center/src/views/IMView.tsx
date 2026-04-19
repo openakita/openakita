@@ -34,7 +34,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { LogoTelegram, LogoFeishu, LogoWework, LogoDingtalk, LogoQQ, LogoOneBot, LogoWechat } from "../icons";
-import { AlertCircle, ArrowLeft, ArrowRight, Bot, BotOff, Check, Dices, Loader2, MoreHorizontal, Pencil, RefreshCw, Sparkles, Terminal, Trash2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, ArrowRight, Bot, BotOff, Check, Dices, ExternalLink, Loader2, MoreHorizontal, Pencil, RefreshCw, Sparkles, Terminal, Trash2, X } from "lucide-react";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -1759,6 +1759,26 @@ export function BotConfigTab({ apiBase, onRequestRestart, venvDir, apiBaseUrl }:
                 {t("im.waQrScan", { defaultValue: "Scan QR to connect WhatsApp" })}
               </Button>
             )}
+            {editingBot.type === "dingtalk" && (
+              <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-3 space-y-2">
+                <p className="text-xs font-medium text-primary">{t("dingtalk.guideTitle")}</p>
+                <ol className="text-[11px] text-muted-foreground leading-relaxed space-y-0.5 list-none">
+                  <li>{t("dingtalk.guideStep1")}</li>
+                  <li>{t("dingtalk.guideStep2")}</li>
+                  <li>{t("dingtalk.guideStep3")}</li>
+                  <li>{t("dingtalk.guideStep4")}</li>
+                </ol>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full border-primary/60 text-primary"
+                  onClick={() => window.open("https://open.dingtalk.com/", "_blank", "noopener,noreferrer")}
+                >
+                  <ExternalLink size={13} className="mr-1.5" />
+                  {t("dingtalk.guideOpenConsole")}
+                </Button>
+              </div>
+            )}
 
             {/* 6b. CLI Skill recommendation */}
             {CLI_SKILL_HINTS[editingBot.type] && (
@@ -2467,6 +2487,28 @@ function BotCreationWizard({
                         <p className="text-[11px] text-muted-foreground leading-relaxed">{t("wechat.hint")}</p>
                       </>
                     )}
+                  </div>
+                )}
+
+                {/* DingTalk: open console guide (no Device Flow available) */}
+                {bot.type === "dingtalk" && (
+                  <div className="rounded-lg border border-dashed border-primary/40 bg-primary/5 p-3 space-y-2">
+                    <p className="text-xs font-medium text-primary">{t("dingtalk.guideTitle")}</p>
+                    <ol className="text-[11px] text-muted-foreground leading-relaxed space-y-0.5 list-none">
+                      <li>{t("dingtalk.guideStep1")}</li>
+                      <li>{t("dingtalk.guideStep2")}</li>
+                      <li>{t("dingtalk.guideStep3")}</li>
+                      <li>{t("dingtalk.guideStep4")}</li>
+                    </ol>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full border-primary/60 text-primary"
+                      onClick={() => window.open("https://open.dingtalk.com/", "_blank", "noopener,noreferrer")}
+                    >
+                      <ExternalLink size={13} className="mr-1.5" />
+                      {t("dingtalk.guideOpenConsole")}
+                    </Button>
                   </div>
                 )}
 

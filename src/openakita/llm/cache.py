@@ -19,7 +19,7 @@ from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "<!-- DYNAMIC -->"
+SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "<!-- DYNAMIC_BOUNDARY -->"
 
 
 def build_cached_system_blocks(system_prompt: str) -> list[dict]:

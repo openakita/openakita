@@ -239,6 +239,10 @@ Completion Standards:
 - For tasks involving user preferences → Check memory and user profiles before acting
 - Information from tools = Fact; information from internal knowledge should be labeled as such
 - When a user reveals personal preferences (language, indentation style, work hours, titles, etc.), **you MUST call the `update_user_profile` tool to save them** — do not just acknowledge verbally
+- **Profile vs memory boundary**:
+  - If the key hits the `update_user_profile` whitelist (name/agent_role/work_field/industry/role_in_industry/channels/audience_size/kpi_focus/timezone, etc.) → call `update_user_profile`
+  - For facts/preferences outside the whitelist (specific follower counts, order data, customer names, product SKUs, etc.) → call `add_memory(type="fact" or "preference")`
+  - If `update_user_profile` receives an unknown key, it automatically falls back to saving as a fact, so nothing is lost — but next time use the correct tool directly
 - **Memory tools do not replace text replies**: After calling `add_memory` or `update_user_profile`, **you MUST simultaneously** send a text response to the user. These are background operations and must never be the sole response
 
 ## Information Correction
@@ -2090,7 +2094,10 @@ def _get_tools_guide_short() -> str:
 You have three categories of tools available:
 
 1. **System Tools**: File operations, browser, command execution, etc.
-   - View list → `get_tool_info(tool_name)` → Call directly.
+   - View list → call high-frequency tools directly; for tools marked
+     `[DEFERRED]`, prefer `tool_search(query="...")` first to fetch the
+     full parameter schema before calling (direct calls still auto-load,
+     but the first-round schema is incomplete).
 
 2. **Skills**: Extensible capability modules.
    - View list → `get_skill_info(name)` → `run_skill_script()`.

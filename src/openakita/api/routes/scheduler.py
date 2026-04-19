@@ -46,6 +46,40 @@ def _get_scheduler(request: Request):
     return None
 
 
+_TASK_NAME_FORBIDDEN = (
+    "..",
+    "/",
+    "\\",
+    "\x00",
+    "<",
+    ">",
+    "|",
+    ":",
+    "*",
+    "?",
+    "\"",
+)
+
+
+def _validate_task_name(name: str | None) -> tuple[bool, str]:
+    """禁止路径穿越/控制字符/Windows 非法文件名字符。
+
+    name 会被用作日志/文件命名（部分实现），过滤后能挡住注入。
+    """
+    if name is None:
+        return True, ""
+    if not isinstance(name, str):
+        return False, "name 必须是字符串"
+    n = name.strip()
+    if not n:
+        return False, "name 不能为空"
+    if len(n) > 200:
+        return False, "name 长度不能超过 200"
+    if any(token in n for token in _TASK_NAME_FORBIDDEN):
+        return False, "name 包含非法字符（路径穿越/控制字符/Windows 保留字符）"
+    return True, ""
+
+
 class TaskCreateRequest(BaseModel):
     name: str
     task_type: str = "reminder"  # reminder | task
@@ -118,6 +152,10 @@ async def create_task(request: Request, body: TaskCreateRequest):
 
     from openakita.scheduler.task import ScheduledTask, TaskSource, TaskType, TriggerType
 
+    _ok, _err = _validate_task_name(body.name)
+    if not _ok:
+        return JSONResponse(status_code=422, content={"error": _err})
+
     try:
         trigger_type = TriggerType(body.trigger_type)
     except ValueError:
@@ -169,6 +207,9 @@ async def update_task(request: Request, task_id: str, body: TaskUpdateRequest):
     updates: dict = {}
 
     if body.name is not None:
+        _ok, _err = _validate_task_name(body.name)
+        if not _ok:
+            return JSONResponse(status_code=422, content={"error": _err})
         updates["name"] = body.name
     if body.reminder_message is not None:
         updates["reminder_message"] = body.reminder_message
