@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import importlib
 import importlib.util
+import inspect
 import json
 import logging
 import sys
@@ -273,12 +275,16 @@ class PluginManager:
         plugin_instance: PluginBase | None = None
         module_name = ""
         sys_path_entry = ""
+        imported_modules: set[str] = set()
 
         try:
             if manifest.plugin_type == "python":
-                plugin_instance, module_name, sys_path_entry = self._load_python_plugin(
-                    manifest, plugin_dir
-                )
+                (
+                    plugin_instance,
+                    module_name,
+                    sys_path_entry,
+                    imported_modules,
+                ) = self._load_python_plugin(manifest, plugin_dir)
                 plugin_instance.on_load(api)
                 self._try_load_plugin_skill(manifest, plugin_dir, api)
             elif manifest.plugin_type == "mcp":
@@ -296,6 +302,7 @@ class PluginManager:
             plugin_dir=plugin_dir,
             module_name=module_name,
             sys_path_entry=sys_path_entry,
+            imported_modules=imported_modules,
         )
 
         plugin_pending = api._host.pop("_pending_plugin_routers", [])
@@ -368,11 +375,13 @@ class PluginManager:
 
     def _load_python_plugin(
         self, manifest: PluginManifest, plugin_dir: Path
-    ) -> tuple[PluginBase, str, str]:
+    ) -> tuple[PluginBase, str, str, set[str]]:
         """Load a Python plugin module.
 
-        Returns (instance, module_name, sys_path_entry) so the caller can
-        record them for cleanup on unload.
+        Returns ``(instance, module_name, sys_path_entry, imported_modules)``.
+        ``imported_modules`` lists submodules newly registered in
+        ``sys.modules`` whose source file lives under ``plugin_dir`` — so the
+        unloader can purge them and avoid stale-module reuse on reinstall.
         """
         entry_path = plugin_dir / manifest.entry
         if not entry_path.exists():
@@ -393,6 +402,13 @@ class PluginManager:
             added_to_path = True
 
         try:
+            plugin_dir_resolved = plugin_dir.resolve()
+        except OSError:
+            plugin_dir_resolved = plugin_dir
+
+        pre_modules = set(sys.modules.keys())
+
+        try:
             spec.loader.exec_module(module)
         except Exception:
             sys.modules.pop(module_name, None)
@@ -403,9 +419,26 @@ class PluginManager:
                     pass
             raise
 
+        # Collect plugin-local submodules pulled into sys.modules during exec.
+        imported_modules: set[str] = set()
+        for new_name in set(sys.modules.keys()) - pre_modules:
+            if new_name == module_name:
+                continue
+            mod = sys.modules.get(new_name)
+            mod_file = getattr(mod, "__file__", None) or ""
+            if not mod_file:
+                continue
+            try:
+                if Path(mod_file).resolve().is_relative_to(plugin_dir_resolved):
+                    imported_modules.add(new_name)
+            except (OSError, ValueError):
+                continue
+
         plugin_class = getattr(module, "Plugin", None)
         if plugin_class is None:
             sys.modules.pop(module_name, None)
+            for m in imported_modules:
+                sys.modules.pop(m, None)
             if added_to_path:
                 try:
                     sys.path.remove(plugin_dir_str)
@@ -415,6 +448,8 @@ class PluginManager:
 
         if not (isinstance(plugin_class, type) and issubclass(plugin_class, PluginBase)):
             sys.modules.pop(module_name, None)
+            for m in imported_modules:
+                sys.modules.pop(m, None)
             if added_to_path:
                 try:
                     sys.path.remove(plugin_dir_str)
@@ -424,7 +459,12 @@ class PluginManager:
                 f"Plugin.Plugin must be a subclass of PluginBase, got {type(plugin_class)}"
             )
 
-        return plugin_class(), module_name, plugin_dir_str if added_to_path else ""
+        return (
+            plugin_class(),
+            module_name,
+            plugin_dir_str if added_to_path else "",
+            imported_modules,
+        )
 
     def _load_mcp_plugin(self, manifest: PluginManifest, plugin_dir: Path, api: PluginAPI) -> None:
         config_path = plugin_dir / manifest.entry
@@ -639,29 +679,94 @@ class PluginManager:
 
     # --- Unloading ---
 
+    @staticmethod
+    async def _invoke_on_unload(instance: PluginBase, plugin_id: str) -> None:
+        """Run ``on_unload`` supporting both sync and async signatures.
+
+        Async coroutines are awaited on the **main** event loop (the one
+        running the request) — this is critical because plugins commonly
+        close ``aiosqlite`` connections / ``httpx.AsyncClient`` instances
+        whose teardown coroutines are bound to that loop.
+
+        Sync ``on_unload`` runs in a worker thread but with a temporary
+        event loop installed on it, so legacy plugins that internally call
+        ``asyncio.get_event_loop().create_task(...)`` still execute their
+        cleanup coroutines (and we wait for those to finish).
+        """
+        handler = instance.on_unload
+        if inspect.iscoroutinefunction(handler):
+            await asyncio.wait_for(handler(), timeout=UNLOAD_TIMEOUT)
+            return
+
+        def _run_sync_on_unload() -> None:
+            loop = asyncio.new_event_loop()
+            try:
+                asyncio.set_event_loop(loop)
+                result = handler()
+                if inspect.iscoroutine(result):
+                    loop.run_until_complete(
+                        asyncio.wait_for(result, timeout=UNLOAD_TIMEOUT)
+                    )
+                # Drain anything the plugin scheduled via create_task() on this loop.
+                pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+                if pending:
+                    loop.run_until_complete(
+                        asyncio.wait(pending, timeout=UNLOAD_TIMEOUT)
+                    )
+            finally:
+                try:
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                except Exception:
+                    pass
+                try:
+                    asyncio.set_event_loop(None)
+                except Exception:
+                    pass
+                loop.close()
+
+        await asyncio.wait_for(
+            asyncio.to_thread(_run_sync_on_unload),
+            timeout=UNLOAD_TIMEOUT + 2.0,
+        )
+
     async def unload_plugin(self, plugin_id: str) -> bool:
         loaded = self._loaded.pop(plugin_id, None)
         if loaded is None:
             return False
 
+        # 1. Plugin's own on_unload — best effort, never blocks the rest.
         try:
             if loaded.instance:
-                await asyncio.wait_for(
-                    asyncio.to_thread(loaded.instance.on_unload),
-                    timeout=UNLOAD_TIMEOUT,
-                )
+                await self._invoke_on_unload(loaded.instance, plugin_id)
         except (TimeoutError, Exception) as e:
             logger.warning("Plugin '%s' on_unload error: %s", plugin_id, e)
 
-        loaded.api._cleanup()
+        # 2. Cancel framework-tracked background tasks, then run async/sync
+        #    capability cleanup (routes, hooks, MCP, etc.) on the main loop.
+        try:
+            await loaded.api.aclose()
+        except Exception as e:
+            logger.warning("Plugin '%s' aclose error: %s", plugin_id, e)
 
+        # 3. Drop plugin module and its plugin-local submodules so a reinstall
+        #    or hot-reload sees fresh code (and releases SQLite/HTTP file handles).
         if loaded.module_name:
             sys.modules.pop(loaded.module_name, None)
+        for mod_name in list(loaded.imported_modules):
+            sys.modules.pop(mod_name, None)
         if loaded.sys_path_entry:
             try:
                 sys.path.remove(loaded.sys_path_entry)
             except ValueError:
                 pass
+
+        # 4. Force a GC pass — some C-extensions (sqlite3, ssl) only release
+        #    OS handles when the Python wrapper is collected. Without this,
+        #    Windows reinstall hits WinError 32 ("file in use").
+        try:
+            gc.collect()
+        except Exception:
+            pass
 
         self._unload_plugin_skills(loaded)
         self._unmount_plugin_ui(plugin_id)
@@ -869,7 +974,15 @@ class PluginManager:
 class _LoadedPlugin:
     """Internal record for a loaded plugin."""
 
-    __slots__ = ("manifest", "api", "instance", "plugin_dir", "module_name", "sys_path_entry")
+    __slots__ = (
+        "manifest",
+        "api",
+        "instance",
+        "plugin_dir",
+        "module_name",
+        "sys_path_entry",
+        "imported_modules",
+    )
 
     def __init__(
         self,
@@ -879,6 +992,7 @@ class _LoadedPlugin:
         plugin_dir: Path,
         module_name: str = "",
         sys_path_entry: str = "",
+        imported_modules: set[str] | None = None,
     ) -> None:
         self.manifest = manifest
         self.api = api
@@ -886,3 +1000,6 @@ class _LoadedPlugin:
         self.plugin_dir = plugin_dir
         self.module_name = module_name
         self.sys_path_entry = sys_path_entry
+        # Submodules imported by the plugin from its own directory; cleared on unload
+        # so reinstall picks up fresh code instead of cached stale modules.
+        self.imported_modules: set[str] = imported_modules or set()

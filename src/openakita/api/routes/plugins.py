@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
@@ -292,7 +292,17 @@ async def _do_install(src: str, plugins_dir: Path, progress: InstallProgress, re
     else:
         local = Path(src)
         if (local / "plugin.json").is_file():
-            plugin_id = await asyncio.to_thread(installer.install_from_path, local, plugins_dir)
+            pm_for_dev = _get_plugin_manager(request)
+            dev_mode_on = bool(
+                pm_for_dev is not None
+                and getattr(pm_for_dev.state, "dev_mode_enabled", False)
+            )
+            plugin_id = await asyncio.to_thread(
+                installer.install_from_path,
+                local,
+                plugins_dir,
+                dev_mode=dev_mode_on,
+            )
         else:
             plugin_id = await asyncio.to_thread(installer.install_bundle, local, plugins_dir)
 
@@ -397,10 +407,29 @@ async def install_progress_sse(install_id: str):
 
 
 @router.delete("/{plugin_id}")
-async def uninstall_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
+async def uninstall_plugin(
+    plugin_id: str,
+    request: Request,
+    purge_data: bool = False,
+) -> dict[str, Any]:
+    """Uninstall a plugin.
+
+    Query params:
+      purge_data: if true, also delete ``data/plugin_data/<id>``
+                  (the plugin's persistent storage). Defaults to false to
+                  avoid surprising data loss.
+
+    Status codes:
+      200 — fully uninstalled (code dir gone; data purged if requested)
+      207 — partially uninstalled (dir survived, but db files cleared so the
+            next install / reinstall will not be blocked); UI should advise
+            the user to retry after restart for a clean state
+      409 — completely failed (e.g. dir locked and even db files are held)
+    """
     _check_plugin_id(plugin_id)
     async with _plugin_op_lock:
         plugins_dir = _plugins_dir()
+        data_root = plugins_dir.parent / "plugin_data"
         state_path = _plugin_state_path()
         pm = _get_plugin_manager(request)
         if pm:
@@ -412,24 +441,75 @@ async def uninstall_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
             state.remove_plugin(plugin_id)
             state.save(state_path)
 
-        await asyncio.to_thread(installer.uninstall, plugin_id, plugins_dir)
-        return {"ok": True, "data": {"plugin_id": plugin_id}}
+        result = await asyncio.to_thread(
+            installer.uninstall,
+            plugin_id,
+            plugins_dir,
+            purge_data=purge_data,
+            data_root=data_root,
+        )
+
+        warnings: list[str] = list(result.get("warnings") or [])
+
+        if result.get("removed"):
+            return {
+                "ok": True,
+                "data": {
+                    "plugin_id": plugin_id,
+                    "purged_data": bool(result.get("purged_data")),
+                    "warnings": warnings,
+                },
+            }
+
+        if result.get("partial"):
+            # 207 Multi-Status — surface the partial outcome to the UI.
+            # Returned via JSONResponse (not HTTPException) so the front-end
+            # treats it as a 2xx response and can read the body normally.
+            return JSONResponse(
+                status_code=207,
+                content={
+                    "ok": False,
+                    "data": {
+                        "plugin_id": plugin_id,
+                        "partial": True,
+                        "purged_data": bool(result.get("purged_data")),
+                        "warnings": warnings,
+                    },
+                    "error": {
+                        "code": PluginErrorCode.UNINSTALL_FAILED.value,
+                        "message": "插件目录无法完全删除",
+                        "guidance": "已尽力清理 db 文件，建议重启后端后重新安装以彻底清理",
+                        "detail": "; ".join(warnings),
+                    },
+                },
+            )
+
+        # Total failure — 409 Conflict (resource is in a state that prevents the op).
+        raise HTTPException(
+            status_code=409,
+            detail=make_error_response(
+                PluginErrorCode.UNINSTALL_FAILED,
+                detail="; ".join(warnings) or "目录无法删除",
+            ),
+        )
 
 
 @router.post("/{plugin_id}/enable")
 async def enable_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
     _check_plugin_id(plugin_id)
-    pm = _require_manager(request)
-    await pm.enable_plugin(plugin_id)
-    return {"ok": True, "data": {"plugin_id": plugin_id, "enabled": True}}
+    async with _plugin_op_lock:
+        pm = _require_manager(request)
+        await pm.enable_plugin(plugin_id)
+        return {"ok": True, "data": {"plugin_id": plugin_id, "enabled": True}}
 
 
 @router.post("/{plugin_id}/disable")
 async def disable_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
     _check_plugin_id(plugin_id)
-    pm = _require_manager(request)
-    await pm.disable_plugin(plugin_id)
-    return {"ok": True, "data": {"plugin_id": plugin_id, "enabled": False}}
+    async with _plugin_op_lock:
+        pm = _require_manager(request)
+        await pm.disable_plugin(plugin_id)
+        return {"ok": True, "data": {"plugin_id": plugin_id, "enabled": False}}
 
 
 def _plugin_config_path(plugin_id: str) -> Path:
@@ -853,5 +933,106 @@ async def update_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
             "code": "NOT_IMPLEMENTED",
             "message": "一键升级功能将在插件市场上线后可用",
             "guidance": "当前请手动重新安装最新版本",
+        },
+    }
+
+
+# --- Developer mode (live-edit local plugins via symlink) -------------------
+
+
+_VALID_DEV_MODES = ("off", "symlink")
+
+
+@router.get("/dev-mode")
+async def get_dev_mode(request: Request) -> dict[str, Any]:
+    """Return current global developer-mode setting.
+
+    Affects how ``install_from_path`` materialises plugins:
+      - ``off``     → copy files (default, stable for prod)
+      - ``symlink`` → symlink the source dir so on-disk edits are seen
+                       after a plain hot-reload, no reinstall required
+    """
+    pm = _get_plugin_manager(request)
+    state_path = _plugin_state_path()
+    state = pm.state if pm is not None else PluginState.load(state_path)
+    return {
+        "ok": True,
+        "data": {
+            "mode": state.dev_mode,
+            "enabled": state.dev_mode_enabled,
+            "supported_modes": list(_VALID_DEV_MODES),
+        },
+    }
+
+
+class DevModeBody(BaseModel):
+    mode: str = Field(..., min_length=1)
+
+
+@router.put("/dev-mode")
+async def set_dev_mode(body: DevModeBody, request: Request) -> dict[str, Any]:
+    """Update global developer-mode setting and persist immediately."""
+    mode = body.mode.strip().lower()
+    if mode not in _VALID_DEV_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=make_error_response(
+                PluginErrorCode.CONFIG_INVALID,
+                detail=f"mode must be one of {list(_VALID_DEV_MODES)}",
+            ),
+        )
+
+    state_path = _plugin_state_path()
+    pm = _get_plugin_manager(request)
+    if pm is not None:
+        pm.state.set_dev_mode(mode)
+        pm.state.save(state_path)
+        new_mode = pm.state.dev_mode
+    else:
+        state = PluginState.load(state_path)
+        state.set_dev_mode(mode)
+        state.save(state_path)
+        new_mode = state.dev_mode
+
+    return {
+        "ok": True,
+        "data": {
+            "mode": new_mode,
+            "enabled": new_mode != "off",
+        },
+    }
+
+
+# --- Background-task diagnostics --------------------------------------------
+
+
+@router.get("/{plugin_id}/tasks")
+async def list_plugin_tasks(plugin_id: str, request: Request) -> dict[str, Any]:
+    """List background tasks the plugin scheduled via ``api.spawn_task``.
+
+    Useful for diagnosing leaks: tasks shown here are guaranteed to be
+    cancelled and awaited during ``unload_plugin``; tasks created via raw
+    ``asyncio.create_task`` are **not** tracked and will not appear.
+    """
+    _check_plugin_id(plugin_id)
+    pm = _require_manager(request)
+    loaded = pm.get_loaded(plugin_id)
+    if loaded is None:
+        raise HTTPException(
+            status_code=404,
+            detail=make_error_response(
+                PluginErrorCode.NOT_FOUND,
+                detail=f"plugin '{plugin_id}' is not currently loaded",
+            ),
+        )
+    tasks = loaded.api.list_spawned_tasks()
+    running = sum(1 for t in tasks if not t["done"])
+    return {
+        "ok": True,
+        "data": {
+            "plugin_id": plugin_id,
+            "running": running,
+            "total": len(tasks),
+            "tasks": tasks,
         },
     }

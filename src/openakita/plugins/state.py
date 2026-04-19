@@ -26,6 +26,9 @@ class PluginStateEntry:
 _SCHEMA_VERSION = 2
 
 
+_VALID_DEV_MODES = ("off", "symlink")
+
+
 @dataclass
 class PluginState:
     """Persistent plugin state, stored in data/plugin_state.json."""
@@ -35,6 +38,21 @@ class PluginState:
     active_backends: dict[str, str] = field(
         default_factory=dict
     )  # reserved for future memory/search backend switching
+    # Developer mode for local-path installs:
+    #   "off"     — copy plugin files (default, production behaviour)
+    #   "symlink" — symlink the source dir so live edits hot-reload
+    dev_mode: str = "off"
+
+    def set_dev_mode(self, mode: str) -> None:
+        if mode not in _VALID_DEV_MODES:
+            raise ValueError(
+                f"Invalid dev_mode {mode!r}; expected one of {_VALID_DEV_MODES}"
+            )
+        self.dev_mode = mode
+
+    @property
+    def dev_mode_enabled(self) -> bool:
+        return self.dev_mode != "off"
 
     def get_entry(self, plugin_id: str) -> PluginStateEntry | None:
         return self.plugins.get(plugin_id)
@@ -94,6 +112,7 @@ class PluginState:
                 for pid, e in self.plugins.items()
             },
             "active_backends": self.active_backends,
+            "dev_mode": self.dev_mode,
         }
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = path.with_suffix(".tmp")
@@ -132,4 +151,13 @@ class PluginState:
                 last_error_time=pdata.get("last_error_time", 0),
             )
         state.active_backends = data.get("active_backends", {})
+        loaded_dev_mode = data.get("dev_mode", "off")
+        if loaded_dev_mode in _VALID_DEV_MODES:
+            state.dev_mode = loaded_dev_mode
+        else:
+            logger.warning(
+                "Unknown dev_mode %r in plugin_state.json; resetting to 'off'",
+                loaded_dev_mode,
+            )
+            state.dev_mode = "off"
         return state

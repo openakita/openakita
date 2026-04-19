@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -96,6 +98,8 @@ class PluginAPI:
         self._registered_llm_slugs: list[str] = []
         self._registered_search_backends: list[str] = []
         self._pending_permissions: set[str] = set()
+        # Background tasks scheduled via spawn_task — cancelled on unload.
+        self._spawned_tasks: set[asyncio.Task[Any]] = set()
 
         self._logger = logging.getLogger(f"openakita.plugin.{plugin_id}")
         if self._logger.level == logging.NOTSET:
@@ -733,30 +737,142 @@ class PluginAPI:
         self._registered_channels.clear()
 
     def _cleanup_mcp(self) -> None:
-        """Disconnect and remove MCP server registered by this plugin."""
+        """Synchronous fallback: just remove the server entry without disconnecting.
+
+        The async variant ``_aclose_mcp`` performs a graceful disconnect.
+        This sync method is kept so the legacy ``_cleanup()`` path
+        (used in error/teardown branches that don't have an event loop) still
+        de-registers the server entry, even if the actual subprocess can't be
+        torn down cleanly here.
+        """
         mcp_client = self._host.get("mcp_client")
         if mcp_client is None:
             return
         server_name = self._plugin_id
         if not hasattr(mcp_client, "get_server") or mcp_client.get_server(server_name) is None:
             return
-        import asyncio
-
-        async def _do_cleanup():
-            try:
-                if hasattr(mcp_client, "disconnect"):
-                    await mcp_client.disconnect(server_name)
-            except Exception:
-                pass
-            if hasattr(mcp_client, "remove_server"):
-                mcp_client.remove_server(server_name)
-
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(_do_cleanup())
         except RuntimeError:
-            if hasattr(mcp_client, "remove_server"):
+            loop = None
+        if loop is not None:
+            # Best-effort schedule; aclose() should be preferred for awaited cleanup.
+            loop.create_task(self._aclose_mcp())
+            return
+        if hasattr(mcp_client, "remove_server"):
+            try:
                 mcp_client.remove_server(server_name)
+            except Exception:
+                pass
+
+    async def _aclose_mcp(self) -> None:
+        """Awaitable MCP cleanup: disconnect subprocess, then drop server entry."""
+        mcp_client = self._host.get("mcp_client")
+        if mcp_client is None:
+            return
+        server_name = self._plugin_id
+        if not hasattr(mcp_client, "get_server") or mcp_client.get_server(server_name) is None:
+            return
+        try:
+            if hasattr(mcp_client, "disconnect"):
+                await mcp_client.disconnect(server_name)
+        except Exception as e:
+            logger.debug("Plugin '%s' MCP disconnect error: %s", self._plugin_id, e)
+        if hasattr(mcp_client, "remove_server"):
+            try:
+                mcp_client.remove_server(server_name)
+            except Exception:
+                pass
+
+    # --- Background task tracking ---
+
+    def spawn_task(
+        self,
+        coro: Coroutine[Any, Any, Any],
+        *,
+        name: str | None = None,
+    ) -> asyncio.Task[Any]:
+        """Schedule a background task tied to this plugin's lifecycle.
+
+        Tasks registered via this helper are cancelled (and awaited) when the
+        plugin is unloaded, preventing leaked workers that keep file handles
+        and network connections alive.
+
+        Plugins **must** use this instead of raw ``asyncio.create_task`` for
+        any long-running background work (poll loops, schedulers, etc.).
+        """
+        if not inspect.iscoroutine(coro):
+            raise TypeError(
+                f"spawn_task expects a coroutine, got {type(coro).__name__}"
+            )
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError as e:
+            raise RuntimeError(
+                f"Plugin '{self._plugin_id}': spawn_task requires a running event loop"
+            ) from e
+        task_name = name or f"plugin:{self._plugin_id}:bg"
+        task = loop.create_task(coro, name=task_name)
+        self._spawned_tasks.add(task)
+        task.add_done_callback(self._spawned_tasks.discard)
+        return task
+
+    async def _cancel_spawned_tasks(self, *, timeout: float = 5.0) -> None:
+        """Cancel all background tasks registered via ``spawn_task``."""
+        if not self._spawned_tasks:
+            return
+        pending = [t for t in list(self._spawned_tasks) if not t.done()]
+        for t in pending:
+            t.cancel()
+        if not pending:
+            return
+        try:
+            await asyncio.wait(pending, timeout=timeout)
+        except Exception as e:
+            logger.debug(
+                "Plugin '%s' background task cancel error: %s", self._plugin_id, e
+            )
+
+    def list_spawned_tasks(self) -> list[dict[str, Any]]:
+        """Diagnostics helper: snapshot of background tasks for this plugin."""
+        out: list[dict[str, Any]] = []
+        for t in list(self._spawned_tasks):
+            coro = t.get_coro()
+            coro_name = (
+                getattr(coro, "__qualname__", None)
+                or getattr(coro, "__name__", "")
+                or repr(coro)
+            )
+            out.append(
+                {
+                    "name": t.get_name(),
+                    "done": t.done(),
+                    "cancelled": t.cancelled(),
+                    "coro": str(coro_name)[:200],
+                }
+            )
+        return out
+
+    async def aclose(self) -> None:
+        """Awaitable, ordered teardown — preferred entry point for unload.
+
+        Steps:
+          1. Cancel & await background tasks scheduled via ``spawn_task``.
+          2. Gracefully disconnect MCP subprocess (if any).
+          3. Run the synchronous ``_cleanup`` for routes/tools/hooks/channels.
+        """
+        try:
+            await self._cancel_spawned_tasks()
+        except Exception as e:
+            logger.debug("Plugin '%s' task cancel error: %s", self._plugin_id, e)
+        try:
+            await self._aclose_mcp()
+        except Exception as e:
+            logger.debug("Plugin '%s' mcp aclose error: %s", self._plugin_id, e)
+        try:
+            self._cleanup()
+        except Exception as e:
+            logger.debug("Plugin '%s' sync cleanup error: %s", self._plugin_id, e)
 
     def __getattr__(self, name: str) -> Any:
         logger.warning(
@@ -811,11 +927,19 @@ class PluginBase(ABC):
 
     Subclass this and implement ``on_load``.
     Optionally override ``on_unload`` for cleanup.
+
+    ``on_unload`` may be either a synchronous method or an ``async def``
+    coroutine — the framework awaits it on the main event loop so plugins can
+    cleanly close database connections, HTTP clients, etc.
     """
 
     @abstractmethod
     def on_load(self, api: PluginAPI) -> None:
         """Called when the plugin is loaded. Register capabilities here."""
 
-    def on_unload(self) -> None:  # noqa: B027
-        """Called when the plugin is being unloaded. Clean up resources."""
+    def on_unload(self) -> Any:  # noqa: B027
+        """Called when the plugin is being unloaded. Clean up resources.
+
+        May return ``None`` (sync cleanup) or an awaitable / coroutine
+        (``async def on_unload``) — the framework will detect and await it.
+        """
