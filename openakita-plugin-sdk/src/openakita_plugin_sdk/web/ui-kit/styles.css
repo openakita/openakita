@@ -4,9 +4,17 @@
  *   <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css">
  */
 
+/*
+ * Variable fallback chain notes:
+ *   --oa-surface intentionally falls back to --bg-card before the literal,
+ *   so plugins that follow the OpenAkita color system (--bg page color,
+ *   --bg-card raised card color) automatically get a contrasting surface
+ *   for oa-preview-area / oa-settings-section / oa-collapse without having
+ *   to declare --surface themselves.
+ */
 :root {
   --oa-bg: var(--bg, #ffffff);
-  --oa-surface: var(--surface, #f8fafc);
+  --oa-surface: var(--surface, var(--bg-card, #f8fafc));
   --oa-text: var(--text, #1e293b);
   --oa-text-muted: var(--text-muted, #64748b);
   --oa-border: var(--border, #e2e8f0);
@@ -16,14 +24,16 @@
   --oa-warning: var(--warning, #f59e0b);
   --oa-danger: var(--danger, #ef4444);
   --oa-radius: 8px;
+  --oa-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 [data-theme="dark"] {
   --oa-bg: var(--bg, #0f172a);
-  --oa-surface: var(--surface, #1e293b);
+  --oa-surface: var(--surface, var(--bg-card, #1e293b));
   --oa-text: var(--text, #f1f5f9);
   --oa-text-muted: var(--text-muted, #94a3b8);
   --oa-border: var(--border, #334155);
+  --oa-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
 body { margin: 0; font-family: -apple-system, "Segoe UI", system-ui, sans-serif; background: var(--oa-bg); color: var(--oa-text); }
@@ -165,6 +175,7 @@ body { margin: 0; font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
   padding: 16px;
   box-sizing: border-box;
   overflow: auto;
+  box-shadow: var(--oa-shadow-sm);
 }
 .oa-preview-area--centered {
   align-items: center; justify-content: center;
@@ -181,13 +192,13 @@ body { margin: 0; font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
 }
 .oa-preview-empty__icon {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 64px; height: 64px;
+  width: 72px; height: 72px;
   border-radius: 50%;
   background: var(--oa-bg);
-  border: 1px solid var(--oa-border);
+  border: 1px dashed var(--oa-border);
   color: var(--oa-text-muted);
-  margin-bottom: 14px;
-  opacity: 0.75;
+  margin-bottom: 16px;
+  opacity: 0.85;
 }
 .oa-preview-empty__icon > svg { width: 32px; height: 32px; }
 .oa-preview-empty__title { font-size: 14px; font-weight: 500; color: var(--oa-text); margin-bottom: 4px; }
@@ -287,6 +298,7 @@ details.oa-collapse[open] > summary.oa-collapse__summary .oa-collapse__chevron {
   background: var(--oa-surface);
   padding: 16px 18px;
   margin-bottom: 14px;
+  box-shadow: var(--oa-shadow-sm);
 }
 .oa-settings-section__title {
   display: flex; align-items: center; gap: 8px;
