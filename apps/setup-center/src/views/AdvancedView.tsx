@@ -902,20 +902,33 @@ function ExtensionsCard({
   httpApiBase: () => string;
 }) {
   const { t, i18n } = useTranslation();
+
+  // Evaluate once per render so we have a stable boolean to put in the dep array.
+  // In web mode serviceStatus is populated asynchronously; by capturing it as a
+  // reactive value we ensure the effect re-runs as soon as the API becomes ready.
+  const apiReady = shouldUseHttpApi();
+
   const [exts, setExts] = useState<ExtInfo[] | null>(null);
   const [error, setError] = useState(false);
   const loadedRef = useRef(false);
 
   useEffect(() => {
+    // Already fetched live data — don't re-fetch.
     if (loadedRef.current) return;
+    // Backend not ready yet — stay in loading state; effect re-runs when apiReady flips.
+    if (!apiReady) return;
+
+    // API is ready — fetch live detection results from the backend.
     loadedRef.current = true;
-    if (!shouldUseHttpApi()) return;
+    setError(false);
     safeFetch(`${httpApiBase()}/api/config/extensions`, { signal: AbortSignal.timeout(5_000) })
       .then((r) => r.json())
       .then((data) => setExts(data.extensions ?? []))
       .catch(() => setError(true));
+  // apiReady is the key reactive dep: when service starts (web mode) this flips
+  // true and triggers the real fetch. httpApiBase is a stable closure ref.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [apiReady]);
 
   const isZh = i18n.language?.startsWith("zh");
 
