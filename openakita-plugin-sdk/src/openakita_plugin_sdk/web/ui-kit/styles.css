@@ -1,0 +1,299 @@
+/* OpenAkita Plugin UI Kit — shared styles
+ * Minimal, theme-aware (uses OpenAkita CSS variables when present).
+ * Plugins include this with:
+ *   <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css">
+ */
+
+:root {
+  --oa-bg: var(--bg, #ffffff);
+  --oa-surface: var(--surface, #f8fafc);
+  --oa-text: var(--text, #1e293b);
+  --oa-text-muted: var(--text-muted, #64748b);
+  --oa-border: var(--border, #e2e8f0);
+  --oa-primary: var(--primary, #4f46e5);
+  --oa-primary-hover: var(--primary-hover, #4338ca);
+  --oa-success: var(--success, #16a34a);
+  --oa-warning: var(--warning, #f59e0b);
+  --oa-danger: var(--danger, #ef4444);
+  --oa-radius: 8px;
+}
+
+[data-theme="dark"] {
+  --oa-bg: var(--bg, #0f172a);
+  --oa-surface: var(--surface, #1e293b);
+  --oa-text: var(--text, #f1f5f9);
+  --oa-text-muted: var(--text-muted, #94a3b8);
+  --oa-border: var(--border, #334155);
+}
+
+body { margin: 0; font-family: -apple-system, "Segoe UI", system-ui, sans-serif; background: var(--oa-bg); color: var(--oa-text); }
+
+.oa-card { background: var(--oa-surface); border: 1px solid var(--oa-border); border-radius: var(--oa-radius); padding: 16px; margin-bottom: 12px; }
+.oa-card h3 { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+.oa-card p  { margin: 0 0 6px; font-size: 13px; color: var(--oa-text-muted); }
+
+.oa-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; font-size: 13px; border-radius: 6px; border: 1px solid var(--oa-border); background: var(--oa-surface); color: var(--oa-text); cursor: pointer; transition: background 120ms ease; }
+.oa-btn:hover { background: var(--oa-border); }
+.oa-btn.oa-btn-primary { background: var(--oa-primary); border-color: var(--oa-primary); color: #fff; }
+.oa-btn.oa-btn-primary:hover { background: var(--oa-primary-hover); }
+.oa-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+.oa-input, .oa-textarea, .oa-select { width: 100%; box-sizing: border-box; padding: 8px 10px; font-size: 13px; border: 1px solid var(--oa-border); border-radius: 6px; background: var(--oa-bg); color: var(--oa-text); }
+.oa-textarea { min-height: 80px; resize: vertical; }
+.oa-label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: var(--oa-text-muted); }
+.oa-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.oa-grid { display: grid; gap: 12px; }
+.oa-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+
+/* ── status pills ── */
+.oa-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.oa-pill.pending  { background: #f1f5f9; color: #64748b; }
+.oa-pill.running  { background: #dbeafe; color: #1d4ed8; }
+.oa-pill.queued   { background: #fef3c7; color: #92400e; }
+.oa-pill.succeeded{ background: #dcfce7; color: #166534; }
+.oa-pill.failed   { background: #fee2e2; color: #b91c1c; }
+.oa-pill.cancelled{ background: #f3f4f6; color: #6b7280; }
+
+/* ── error coach card (CapCut 3-段式) ── */
+.oa-error-coach { border: 1px solid var(--oa-danger); border-left-width: 4px; background: var(--oa-bg); border-radius: var(--oa-radius); padding: 14px; }
+.oa-error-coach.warning { border-color: var(--oa-warning); }
+.oa-error-coach .cause  { font-size: 11px; font-weight: 700; color: var(--oa-text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+.oa-error-coach .why    { font-size: 14px; font-weight: 600; margin-bottom: 8px; color: var(--oa-text); }
+.oa-error-coach .what   { font-size: 13px; margin-bottom: 8px; color: var(--oa-text); }
+.oa-error-coach .what::before { content: "→ "; color: var(--oa-primary); font-weight: 700; }
+.oa-error-coach .tip    { font-size: 12px; color: var(--oa-text-muted); padding-top: 8px; border-top: 1px dashed var(--oa-border); display: flex; align-items: flex-start; gap: 6px; }
+.oa-error-coach .tip > svg { flex-shrink: 0; margin-top: 2px; opacity: 0.75; }
+
+/* ── cost preview ── */
+.oa-cost { padding: 12px; background: var(--oa-surface); border: 1px dashed var(--oa-border); border-radius: var(--oa-radius); }
+.oa-cost .range  { font-size: 18px; font-weight: 700; color: var(--oa-text); }
+.oa-cost .human  { font-size: 12px; color: var(--oa-text-muted); margin-top: 4px; }
+.oa-cost .conf   { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--oa-bg); display: inline-block; margin-top: 6px; color: var(--oa-text-muted); }
+.oa-cost .conf.high   { background: #dcfce7; color: #166534; }
+.oa-cost .conf.medium { background: #fef3c7; color: #92400e; }
+.oa-cost .conf.low    { background: #fee2e2; color: #b91c1c; }
+
+/* ── thinking spinner (independent of upload/render) ── */
+.oa-thinking { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--oa-text-muted); }
+.oa-thinking .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--oa-primary); animation: oa-pulse 1.2s infinite ease-in-out; }
+.oa-thinking .dot:nth-child(2) { animation-delay: 0.15s; }
+.oa-thinking .dot:nth-child(3) { animation-delay: 0.3s; }
+@keyframes oa-pulse { 0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
+
+/* ── confetti container (first success) ── */
+.oa-confetti { position: fixed; inset: 0; pointer-events: none; z-index: 9999; overflow: hidden; }
+.oa-confetti span { position: absolute; width: 8px; height: 14px; opacity: 0; animation: oa-fall 1.6s ease-in forwards; }
+@keyframes oa-fall {
+  0% { transform: translate3d(0, -10vh, 0) rotate(0deg); opacity: 0; }
+  10% { opacity: 1; }
+  100% { transform: translate3d(var(--dx, 0), 110vh, 0) rotate(720deg); opacity: 0; }
+}
+
+/* ── icon helper (use with <span class="oa-icon">{svgString}</span>) ── */
+.oa-icon { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; line-height: 0; flex-shrink: 0; }
+.oa-icon > svg { width: 1em; height: 1em; display: block; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 1) Config banner  — top "API Key not set" notice with jump button.
+ *    Pair with .oa-config-banner__action which calls plugin's setTab(...).
+ * ────────────────────────────────────────────────────────────────────────── */
+.oa-config-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; margin: 0 0 12px;
+  border: 1px solid var(--oa-warning); border-left-width: 4px;
+  border-radius: var(--oa-radius);
+  background: rgba(245, 158, 11, 0.08);
+  font-size: 13px; color: var(--oa-text);
+}
+.oa-config-banner__icon { color: var(--oa-warning); display: inline-flex; flex-shrink: 0; }
+.oa-config-banner__icon > svg { width: 18px; height: 18px; }
+.oa-config-banner__text { flex: 1; line-height: 1.5; }
+.oa-config-banner__text strong { font-weight: 600; }
+.oa-config-banner__action {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 6px 12px;
+  border: 1px solid var(--oa-warning);
+  background: var(--oa-warning); color: #fff;
+  border-radius: 6px; font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: filter 120ms ease, transform 120ms ease;
+}
+.oa-config-banner__action:hover { filter: brightness(0.92); }
+.oa-config-banner__action:active { transform: translateY(1px); }
+.oa-config-banner__action > svg { width: 14px; height: 14px; }
+[data-theme="dark"] .oa-config-banner { background: rgba(245, 158, 11, 0.12); }
+
+/* Variants */
+.oa-config-banner.oa-config-banner--info {
+  border-color: var(--oa-primary); background: rgba(79, 70, 229, 0.06);
+}
+.oa-config-banner.oa-config-banner--info .oa-config-banner__icon { color: var(--oa-primary); }
+.oa-config-banner.oa-config-banner--info .oa-config-banner__action {
+  border-color: var(--oa-primary); background: var(--oa-primary);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 2) Config field callout — highlight the critical KEY input on settings.
+ * ────────────────────────────────────────────────────────────────────────── */
+.oa-config-field-callout {
+  position: relative;
+  padding: 12px 14px 12px 16px;
+  border: 1px solid var(--oa-warning);
+  border-left-width: 4px;
+  border-radius: var(--oa-radius);
+  background: rgba(245, 158, 11, 0.06);
+}
+.oa-config-field-callout[data-callout]::before {
+  content: attr(data-callout);
+  display: block;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+  color: var(--oa-warning); text-transform: uppercase;
+  margin-bottom: 6px;
+}
+[data-theme="dark"] .oa-config-field-callout { background: rgba(245, 158, 11, 0.10); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 3) Preview area — right-side preview canvas with empty state.
+ *    Use as the OUTER frame so users always see a card even before generation.
+ * ────────────────────────────────────────────────────────────────────────── */
+.oa-preview-area {
+  display: flex; flex-direction: column;
+  min-height: 100%;
+  background: var(--oa-surface);
+  border: 1px solid var(--oa-border);
+  border-radius: var(--oa-radius);
+  padding: 16px;
+  box-sizing: border-box;
+  overflow: auto;
+}
+.oa-preview-area--centered {
+  align-items: center; justify-content: center;
+}
+.oa-preview-area--centered > * { max-width: 100%; }
+.oa-preview-empty {
+  flex: 1;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--oa-text-muted);
+  min-height: 280px;
+}
+.oa-preview-empty__icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 64px; height: 64px;
+  border-radius: 50%;
+  background: var(--oa-bg);
+  border: 1px solid var(--oa-border);
+  color: var(--oa-text-muted);
+  margin-bottom: 14px;
+  opacity: 0.75;
+}
+.oa-preview-empty__icon > svg { width: 32px; height: 32px; }
+.oa-preview-empty__title { font-size: 14px; font-weight: 500; color: var(--oa-text); margin-bottom: 4px; }
+.oa-preview-empty__hint  { font-size: 12px; color: var(--oa-text-muted); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 4) Collapse — based on native <details>; default closed; rotating chevron.
+ * ────────────────────────────────────────────────────────────────────────── */
+details.oa-collapse {
+  border: 1px solid var(--oa-border);
+  border-radius: var(--oa-radius);
+  background: var(--oa-surface);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+details.oa-collapse > summary.oa-collapse__summary {
+  list-style: none;
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 13px; font-weight: 600;
+  color: var(--oa-text);
+  user-select: none;
+}
+details.oa-collapse > summary.oa-collapse__summary::-webkit-details-marker { display: none; }
+details.oa-collapse > summary.oa-collapse__summary::marker { content: ""; }
+details.oa-collapse > summary.oa-collapse__summary:hover { background: var(--oa-bg); }
+.oa-collapse__chevron {
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-left: auto;
+  color: var(--oa-text-muted);
+  transition: transform 180ms ease;
+}
+.oa-collapse__chevron > svg { width: 14px; height: 14px; }
+details.oa-collapse[open] > summary.oa-collapse__summary .oa-collapse__chevron {
+  transform: rotate(180deg);
+}
+.oa-collapse__body { padding: 4px 14px 14px; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 5) Markdown content — typography for rendered markdown OR for hand-built
+ *    docs that want a uniform "doc" feel (h2..h4, lists, code, blockquote).
+ * ────────────────────────────────────────────────────────────────────────── */
+.oa-md-content { font-size: 13px; line-height: 1.65; color: var(--oa-text); }
+.oa-md-content h1, .oa-md-content h2, .oa-md-content h3, .oa-md-content h4 {
+  font-weight: 600; color: var(--oa-text);
+  margin: 14px 0 6px; line-height: 1.35;
+}
+.oa-md-content h1 { font-size: 17px; }
+.oa-md-content h2 { font-size: 15px; }
+.oa-md-content h3 { font-size: 14px; }
+.oa-md-content h4 { font-size: 13px; color: var(--oa-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.oa-md-content > *:first-child { margin-top: 0; }
+.oa-md-content p { margin: 6px 0; }
+.oa-md-content ul, .oa-md-content ol { margin: 6px 0; padding-left: 22px; }
+.oa-md-content li { margin: 2px 0; }
+.oa-md-content li > p { margin: 2px 0; }
+.oa-md-content code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 1px 6px;
+  background: var(--oa-bg);
+  border: 1px solid var(--oa-border);
+  border-radius: 4px;
+}
+.oa-md-content pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 10px 12px;
+  background: var(--oa-bg);
+  border: 1px solid var(--oa-border);
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.oa-md-content pre code { padding: 0; background: transparent; border: 0; }
+.oa-md-content blockquote {
+  margin: 8px 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--oa-border);
+  color: var(--oa-text-muted);
+  background: var(--oa-bg);
+  border-radius: 0 6px 6px 0;
+}
+.oa-md-content a { color: var(--oa-primary); text-decoration: none; }
+.oa-md-content a:hover { text-decoration: underline; }
+.oa-md-content strong { font-weight: 600; }
+.oa-md-content em { font-style: italic; }
+.oa-md-content hr { border: 0; border-top: 1px solid var(--oa-border); margin: 12px 0; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 6) Settings section — visual grouping for settings page subsections.
+ * ────────────────────────────────────────────────────────────────────────── */
+.oa-settings-section {
+  border: 1px solid var(--oa-border);
+  border-radius: var(--oa-radius);
+  background: var(--oa-surface);
+  padding: 16px 18px;
+  margin-bottom: 14px;
+}
+.oa-settings-section__title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 14px; font-weight: 600;
+  color: var(--oa-text);
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--oa-border);
+}
+.oa-settings-section__title > .oa-icon { color: var(--oa-text-muted); }

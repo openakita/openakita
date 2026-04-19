@@ -244,6 +244,20 @@ onEvent("task_updated", (data) => {
 });
 ```
 
+> **关于命名空间 / About namespaces**: 后端 `api.broadcast_ui_event(event_type, data)`
+> 在广播时会自动给 `event_type` 加 `plugin:<plugin_id>:` 前缀。
+> 推荐引入 `ui-kit/event-helpers.js`，它提供 `OpenAkita.onEvent("event_name", fn)`，
+> **自动 strip 前缀**且向后兼容老代码（仍可用全名匹配）。
+>
+> ```html
+> <script src="/api/plugins/_sdk/bootstrap.js"></script>
+> <script src="/api/plugins/_sdk/ui-kit/event-helpers.js"></script>
+> <script>
+>   OpenAkita.onEvent("task_updated", (data) => { /* ... */ }); // bare name 自动剥离前缀
+>   OpenAkita.onEvent("plugin:other-plugin:something", fn);     // 全名匹配亦可
+> </script>
+> ```
+
 ### 完整 SDK 模板 / Full SDK Template
 
 ```html
@@ -374,6 +388,12 @@ window.addEventListener("message", function(e) {
       (d.payload.theme || "").includes("dark") ? "dark" : "light");
   }
   // 处理宿主事件 / Handle host events
+  // 注：宿主的 broadcast_ui_event 会自动给 type 加 "plugin:<id>:" 前缀。
+  // 推荐直接用 ui-kit/event-helpers.js 提供的 OpenAkita.onEvent("event_name", fn)，
+  // 它会自动 strip 前缀、向后兼容老代码。
+  // Note: host's broadcast_ui_event prefixes types with "plugin:<id>:".
+  // Prefer using ui-kit/event-helpers.js OpenAkita.onEvent("event_name", fn) which
+  // strips the prefix automatically and is fully backwards compatible.
   if (d.type === "bridge:event" && d.payload) {
     var et = d.payload.eventType;
     ((_eventListeners[et] || []).forEach(function(fn) { fn(d.payload.data); }));

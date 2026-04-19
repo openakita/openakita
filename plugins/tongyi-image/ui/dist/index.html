@@ -5,6 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Tongyi Image Generator</title>
   <script src="/api/plugins/_sdk/bootstrap.js"></script>
+  <!-- OpenAkita Plugin UI Kit (shared, theme-aware; safe oa-* prefix only) -->
+  <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css">
+  <script src="/api/plugins/_sdk/ui-kit/icons.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/markdown-mini.js"></script>
+  <!--
+    Preload CDN deps in parallel (script tags below remain synchronous so
+    React/ReactDOM/Babel still execute in declared order; preload only
+    starts the downloads earlier so they finish faster). The `crossorigin`
+    attribute on the preload links MUST match the script tag — react /
+    react-dom use crossorigin, babel does not.
+  -->
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react@18/umd/react.production.min.js" />
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" />
+  <link rel="preload" as="script" href="https://unpkg.com/@babel/standalone/babel.min.js" />
   <style>
     :root {
       --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
@@ -259,14 +273,20 @@ function showToast(body, type) {
 const { useState, useEffect, useRef, useCallback } = React;
 
 const MODES = [
-  { id: "text2img", name: "文生图", icon: "🎨" },
-  { id: "img_edit", name: "图像编辑", icon: "✏️" },
-  { id: "ecommerce", name: "电商套图", icon: "🛒" },
-  { id: "style_repaint", name: "风格重绘", icon: "🖌️" },
-  { id: "background", name: "背景生成", icon: "🖼️" },
-  { id: "outpaint", name: "画面扩展", icon: "↔️" },
-  { id: "sketch", name: "涂鸦作画", icon: "✍️" },
+  { id: "text2img",      name: "文生图",     iconKey: "palette" },
+  { id: "img_edit",      name: "图像编辑",   iconKey: "image" },
+  { id: "ecommerce",     name: "电商套图",   iconKey: "cart" },
+  { id: "style_repaint", name: "风格重绘",   iconKey: "palette" },
+  { id: "background",    name: "背景生成",   iconKey: "image" },
+  { id: "outpaint",      name: "画面扩展",   iconKey: "arrowRight" },
+  { id: "sketch",        name: "涂鸦作画",   iconKey: "sparkles" },
 ];
+
+// Inline SVG icon helper (uses window.OpenAkitaIcons loaded from /api/plugins/_sdk/ui-kit/icons.js).
+function OAIcon({ name, style }) {
+  const svg = (window.OpenAkitaIcons && window.OpenAkitaIcons[name]) ? window.OpenAkitaIcons[name]() : "";
+  return <span className="oa-icon" style={style} dangerouslySetInnerHTML={{ __html: svg }} />;
+}
 
 const STATUS_MAP = {
   pending: { label: "等待中", cls: "tag-orange" },
@@ -281,7 +301,9 @@ function TaskStartedModal({ open, onClose, onGoToTasks, title, desc }) {
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal-card" onClick={e => e.stopPropagation()}>
-        <div className="modal-icon">✓</div>
+        <div className="modal-icon">
+          <OAIcon name="check" style={{fontSize:24, color:"var(--success)"}} />
+        </div>
         <div className="modal-title">{title || "任务已开始"}</div>
         <div className="modal-desc">{desc}</div>
         <div className="modal-actions">
@@ -314,9 +336,22 @@ function App() {
   return (
     <div className="app">
       <div className="header">
-        <h1>🎨 通义生图</h1>
+        <h1>
+          <span className="oa-icon" style={{color:"var(--primary)", fontSize:18, marginRight:6}}
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.palette() : ""}} />
+          通义生图
+        </h1>
         <div className="header-right">
-          {!apiReady && <span className="text-warning text-xs">⚠ 请先配置 API Key</span>}
+          {!apiReady && (
+            <span className="text-warning text-xs"
+                  onClick={() => setTab("settings")}
+                  style={{display:"inline-flex", alignItems:"center", gap:4, cursor:"pointer"}}
+                  title="点击前往设置页配置 API Key">
+              <span className="oa-icon"
+                    dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.warning() : ""}} />
+              请先配置 API Key
+            </span>
+          )}
         </div>
       </div>
       <div className="tabs">
@@ -330,6 +365,25 @@ function App() {
                onClick={() => setTab(t.id)}>{t.name}</div>
         ))}
       </div>
+      {!apiReady && tab !== "settings" && (
+        <div className="oa-config-banner" role="alert"
+             style={{margin:"12px 20px 0", flexShrink:0}}>
+          <span className="oa-icon oa-config-banner__icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.warning() : ""}} />
+          <div className="oa-config-banner__text">
+            <strong>尚未配置 DashScope API Key</strong>
+            <div style={{fontSize:12, color:"var(--text-muted)", marginTop:2}}>
+              所有创建任务都会失败。请前往设置页填入阿里云百炼 DashScope API Key。
+            </div>
+          </div>
+          <button className="oa-config-banner__action" type="button"
+                  onClick={() => setTab("settings")}>
+            前往配置
+            <span className="oa-icon"
+                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.arrowRight() : ""}} />
+          </button>
+        </div>
+      )}
       <div className="content">
         <div style={{ display: tab === "create" ? "block" : "none", height: "100%" }}>
           <CreateTab apiReady={apiReady} goToTasks={() => setTab("tasks")} />
@@ -538,7 +592,9 @@ function CreateTab({ apiReady, goToTasks }) {
               {MODES.map(m => (
                 <button key={m.id} className={`mode-btn ${mode === m.id ? "active" : ""}`}
                         onClick={() => setMode(m.id)}>
-                  {m.icon} {m.name}
+                  <span style={{display:"inline-flex", alignItems:"center", gap:6}}>
+                    <OAIcon name={m.iconKey} /> {m.name}
+                  </span>
                 </button>
               ))}
             </div>
@@ -597,8 +653,10 @@ function CreateTab({ apiReady, goToTasks }) {
                   {mode === "img_edit" ? "编辑指令" : mode === "sketch" ? "文字描述" : "提示词"}
                 </span>
                 {mode === "text2img" && (
-                  <button className="btn btn-sm" onClick={handleOptimize} disabled={optimizing || !prompt.trim()}>
-                    {optimizing ? <span className="spinner-sm" /> : "✨"} AI 优化
+                  <button className="btn btn-sm" onClick={handleOptimize} disabled={optimizing || !prompt.trim()}
+                          style={{display:"inline-flex", alignItems:"center", gap:6}}>
+                    {optimizing ? <span className="spinner-sm" /> : <OAIcon name="sparkles" />}
+                    AI 优化
                   </button>
                 )}
               </div>
@@ -731,17 +789,27 @@ function CreateTab({ apiReady, goToTasks }) {
 
           <button className="btn btn-primary" style={{width: "100%", justifyContent: "center", padding: "10px"}}
                   onClick={handleCreate} disabled={creating || !apiReady || (mode === "ecommerce" && !productName.trim() && !prompt.trim())}>
-            {creating ? <><span className="spinner-sm" /> 生成中...</> : mode === "ecommerce" ? `🛒 一键生成套图 (${ecScenes.length} 张)` : "✨ 开始生成"}
+            {creating ? <><span className="spinner-sm" /> 生成中...</> : (
+              <span style={{display:"inline-flex", alignItems:"center", gap:6}}>
+                <span className="oa-icon"
+                      dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? (mode === "ecommerce" ? window.OpenAkitaIcons.cart() : window.OpenAkitaIcons.sparkles()) : ""}} />
+                {mode === "ecommerce" ? `一键生成套图 (${ecScenes.length} 张)` : "开始生成"}
+              </span>
+            )}
           </button>
         </div>
       </div>
 
-      <div className="split-right">
+      <div className={"split-right oa-preview-area" + ((!ecResults && !result) ? " oa-preview-area--centered" : "")}>
         {mode === "ecommerce" && ecResults ? (
-          <div>
+          <div style={{width: "100%"}}>
             <div className="card">
               <div className="flex items-center justify-between" style={{marginBottom: 12}}>
-                <span className="card-title" style={{marginBottom: 0}}>🛒 电商套图结果</span>
+                <span className="card-title" style={{marginBottom: 0, display:"inline-flex", alignItems:"center", gap:6}}>
+                  <span className="oa-icon"
+                        dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.cart() : ""}} />
+                  电商套图结果
+                </span>
                 <span className="text-xs text-dim">共 {ecResults.total} 张</span>
               </div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(200px, 1fr))",gap:12}}>
@@ -783,7 +851,7 @@ function CreateTab({ apiReady, goToTasks }) {
             </div>
           </div>
         ) : result ? (
-          <div>
+          <div style={{width: "100%"}}>
             <div className="card">
               <div className="flex items-center justify-between" style={{marginBottom: 12}}>
                 <span className="card-title" style={{marginBottom: 0}}>生成结果</span>
@@ -796,17 +864,19 @@ function CreateTab({ apiReady, goToTasks }) {
                 <div className="empty-state" style={{padding: "40px 20px"}}>
                   <div className="spinner" style={{width: 32, height: 32, marginBottom: 12}} />
                   <span className="text-sm text-muted">图像生成中，请稍候...</span>
-                  <button className="btn btn-sm" style={{marginTop: 12}} onClick={goToTasks}>
-                    📋 在任务列表中查看
+                  <button className="btn btn-sm" style={{marginTop: 12, display:"inline-flex", alignItems:"center", gap:6}} onClick={goToTasks}>
+                    <span className="oa-icon"
+                          dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.listTask() : ""}} />
+                    在任务列表中查看
                   </button>
                 </div>
               )}
 
               {result.status === "succeeded" && (
                 result.image_urls && result.image_urls.length > 0 ? (
-                  <div className="image-gallery">
+                  <div className="image-gallery" style={{justifyItems: "center"}}>
                     {result.image_urls.map((url, i) => (
-                      <div key={i} className="image-card" onClick={() => setLightbox(url)}>
+                      <div key={i} className="image-card" onClick={() => setLightbox(url)} style={{maxWidth: 320, width: "100%"}}>
                         <img src={url} alt={`Generated ${i + 1}`} />
                         <div className="image-card-actions">
                           <button onClick={e => { e.stopPropagation(); downloadImage(result.id, i, result.prompt); }}>下载</button>
@@ -816,15 +886,22 @@ function CreateTab({ apiReady, goToTasks }) {
                   </div>
                 ) : (
                   <div className="empty-state" style={{padding: "30px 20px"}}>
-                    <span style={{fontSize: 28, marginBottom: 8, opacity: .5}}>✓</span>
+                    <span className="oa-icon" style={{fontSize: 28, marginBottom: 8, opacity: .5, color:"var(--success)"}}
+                          dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.check() : ""}} />
                     <span className="text-sm text-muted">任务已完成，图片加载中...</span>
-                    <button className="btn btn-sm" style={{marginTop: 8}} onClick={() => {
+                    <button className="btn btn-sm" style={{marginTop: 8, display:"inline-flex", alignItems:"center", gap:6}} onClick={() => {
                       pluginApi("GET", "/tasks/" + result.id).then(r => {
                         if (r.body && r.body.ok) setResult(r.body.task);
                       });
-                    }}>🔄 刷新结果</button>
-                    <button className="btn btn-sm" style={{marginTop: 4}} onClick={goToTasks}>
-                      📋 在任务列表中查看
+                    }}>
+                      <span className="oa-icon"
+                            dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.refresh() : ""}} />
+                      刷新结果
+                    </button>
+                    <button className="btn btn-sm" style={{marginTop: 4, display:"inline-flex", alignItems:"center", gap:6}} onClick={goToTasks}>
+                      <span className="oa-icon"
+                            dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.listTask() : ""}} />
+                      在任务列表中查看
                     </button>
                   </div>
                 )
@@ -832,7 +909,8 @@ function CreateTab({ apiReady, goToTasks }) {
 
               {result.status === "failed" && (
                 <div className="empty-state" style={{padding: "40px 20px"}}>
-                  <span className="text-danger" style={{fontSize: 32, marginBottom: 8}}>✕</span>
+                  <span className="oa-icon text-danger" style={{fontSize: 32, marginBottom: 8}}
+                        dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.close() : ""}} />
                   <span className="text-sm text-danger">{result.error_message || "生成失败"}</span>
                 </div>
               )}
@@ -845,9 +923,15 @@ function CreateTab({ apiReady, goToTasks }) {
             )}
           </div>
         ) : (
-          <div className="empty-state">
-            <div style={{fontSize: 48, marginBottom: 12, opacity: .4}}>{mode === "ecommerce" ? "🛒" : "🎨"}</div>
-            <div className="text-sm text-dim">{mode === "ecommerce" ? "输入商品信息，一键生成电商套图" : "选择模式，输入描述，开始创作"}</div>
+          <div className="oa-preview-empty">
+            <span className="oa-preview-empty__icon"
+                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? (mode === "ecommerce" ? window.OpenAkitaIcons.cart() : window.OpenAkitaIcons.image()) : ""}} />
+            <div className="oa-preview-empty__title">
+              {mode === "ecommerce" ? "等待生成电商套图" : "等待生成图片"}
+            </div>
+            <div className="oa-preview-empty__hint">
+              {mode === "ecommerce" ? "输入商品信息，一键生成电商套图" : "选择模式，输入描述，开始创作"}
+            </div>
           </div>
         )}
 
@@ -947,7 +1031,11 @@ function TasksTab() {
                   onClick={() => setModeFilter("")}>全部模式</button>
           {MODES.map(m => (
             <button key={m.id} className={`btn btn-sm ${modeFilter === m.id ? "btn-primary" : ""}`}
-                    onClick={() => setModeFilter(m.id)}>{m.icon} {m.name}</button>
+                    onClick={() => setModeFilter(m.id)}>
+              <span style={{display:"inline-flex", alignItems:"center", gap:4}}>
+                <OAIcon name={m.iconKey} /> {m.name}
+              </span>
+            </button>
           ))}
         </div>
 
@@ -985,9 +1073,9 @@ function TasksTab() {
         <div className="text-xs text-dim" style={{marginTop: 8}}>共 {total} 个任务</div>
       </div>
 
-      <div className="split-right">
+      <div className={"split-right oa-preview-area" + (!selected ? " oa-preview-area--centered" : "")}>
         {selected ? (
-          <div>
+          <div style={{width: "100%"}}>
             <div className="card">
               <div className="flex items-center justify-between" style={{marginBottom: 12}}>
                 <span className="card-title" style={{marginBottom:0}}>任务详情</span>
@@ -1001,9 +1089,9 @@ function TasksTab() {
 
               {selected.status === "succeeded" && (
                 selected.image_urls?.length > 0 ? (
-                  <div className="image-gallery">
+                  <div className="image-gallery" style={{justifyItems: "center"}}>
                     {selected.image_urls.map((url, i) => (
-                      <div key={i} className="image-card" onClick={() => setLightbox(url)}>
+                      <div key={i} className="image-card" onClick={() => setLightbox(url)} style={{maxWidth: 320, width: "100%"}}>
                         <img src={url} alt="" />
                         <div className="image-card-actions">
                           <button onClick={e => { e.stopPropagation(); downloadImage(selected.id, i, selected.prompt); }}>下载</button>
@@ -1013,11 +1101,16 @@ function TasksTab() {
                   </div>
                 ) : (
                   <div className="empty-state" style={{padding: "30px 20px"}}>
-                    <span style={{fontSize: 28, marginBottom: 8, opacity: .5}}>✓</span>
+                    <span className="oa-icon" style={{fontSize: 28, marginBottom: 8, opacity: .5, color:"var(--success)"}}
+                          dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.check() : ""}} />
                     <span className="text-sm text-muted">任务已完成，但未找到图片</span>
                     {selected.api_task_id && (
-                      <button className="btn btn-sm btn-primary" style={{marginTop: 8}}
-                              onClick={() => handleRecheck(selected.id)}>🔄 重新获取图片</button>
+                      <button className="btn btn-sm btn-primary" style={{marginTop: 8, display:"inline-flex", alignItems:"center", gap:6}}
+                              onClick={() => handleRecheck(selected.id)}>
+                        <span className="oa-icon"
+                              dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.refresh() : ""}} />
+                        重新获取图片
+                      </button>
                     )}
                   </div>
                 )
@@ -1053,9 +1146,11 @@ function TasksTab() {
             </div>
           </div>
         ) : (
-          <div className="empty-state">
-            <div style={{fontSize: 48, marginBottom: 12, opacity: .4}}>📋</div>
-            <div className="text-sm text-dim">选择任务查看详情</div>
+          <div className="oa-preview-empty">
+            <span className="oa-preview-empty__icon"
+                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.listTask() : ""}} />
+            <div className="oa-preview-empty__title">未选择任务</div>
+            <div className="oa-preview-empty__hint">从左侧列表选择一个任务查看详情</div>
           </div>
         )}
 
@@ -1081,77 +1176,94 @@ function GuideTab() {
 
   if (!guide) return <div className="empty-state"><div className="spinner" /></div>;
 
+  const guideIcon = (name) => (
+    <span className="oa-icon" style={{color:"var(--primary)", marginRight:6, fontSize:15}}
+          dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? (window.OpenAkitaIcons[name] ? window.OpenAkitaIcons[name]() : "") : ""}} />
+  );
+
   return (
     <div style={{maxWidth: 800}}>
+      <div className="text-xs text-dim" style={{marginBottom: 10}}>
+        点击下方任意章节标题展开。所有内容默认折叠，方便预览全部主题。
+      </div>
+
       {/* Mode Formulas */}
-      <Collapsible title="📐 提示词公式" defaultOpen>
-        {Object.entries(guide.mode_formulas || {}).map(([k, v]) => (
-          <div key={k} style={{marginBottom: 12}}>
-            <div className="text-sm" style={{fontWeight: 600, marginBottom: 4}}>
-              {MODES.find(m => m.id === k)?.name || k}
+      <Collapsible title={<><span>{guideIcon("sparkles")}</span>提示词公式</>}>
+        <div className="oa-md-content">
+          {Object.entries(guide.mode_formulas || {}).map(([k, v]) => (
+            <div key={k}>
+              <h3>{MODES.find(m => m.id === k)?.name || k}</h3>
+              {v.basic && <p><strong>基础</strong>: <code>{v.basic}</code></p>}
+              {v.advanced && <p><strong>进阶</strong>: <code>{v.advanced}</code></p>}
+              {v.tips && v.tips.length > 0 && (
+                <ul>{v.tips.map((t, i) => <li key={i}>{t}</li>)}</ul>
+              )}
             </div>
-            {v.basic && <div className="text-xs text-dim">基础: {v.basic}</div>}
-            {v.advanced && <div className="text-xs text-dim">进阶: {v.advanced}</div>}
-            {v.tips && (
-              <div style={{marginTop: 4}}>
-                {v.tips.map((t, i) => <div key={i} className="text-xs text-muted">• {t}</div>)}
-              </div>
-            )}
-          </div>
-        ))}
+          ))}
+        </div>
       </Collapsible>
 
       {/* Templates */}
-      <Collapsible title="📝 提示词模板">
-        {(guide.templates || []).map(t => (
-          <div key={t.id} className="template-card">
-            <h4>{t.name} <span className="text-xs text-dim">{t.name_en}</span></h4>
-            <p>{t.description}</p>
-            {t.example && <div className="text-xs" style={{marginTop: 4, fontStyle: "italic", color: "var(--primary)"}}>{t.example}</div>}
-          </div>
-        ))}
+      <Collapsible title={<><span>{guideIcon("book")}</span>提示词模板</>}>
+        <div className="oa-md-content">
+          {(guide.templates || []).map(t => (
+            <div key={t.id} style={{marginBottom: 14}}>
+              <h4>{t.name} <span className="text-xs text-dim" style={{textTransform:"none", letterSpacing:0}}>{t.name_en}</span></h4>
+              <p>{t.description}</p>
+              {t.example && <blockquote>{t.example}</blockquote>}
+            </div>
+          ))}
+        </div>
       </Collapsible>
 
       {/* Style Keywords */}
-      <Collapsible title="🎨 风格词典">
-        {Object.entries(guide.style_keywords || {}).map(([cat, words]) => (
-          <div key={cat} style={{marginBottom: 8}}>
-            <span className="text-xs text-dim" style={{textTransform: "capitalize"}}>{cat.replace(/_/g, " ")}</span>
-            <div>{words.map((w, i) => <span key={i} className="keyword-tag">{w}</span>)}</div>
-          </div>
-        ))}
+      <Collapsible title={<><span>{guideIcon("palette")}</span>风格词典</>}>
+        <div className="oa-md-content">
+          {Object.entries(guide.style_keywords || {}).map(([cat, words]) => (
+            <div key={cat} style={{marginBottom: 10}}>
+              <h4 style={{textTransform: "capitalize"}}>{cat.replace(/_/g, " ")}</h4>
+              <div>{words.map((w, i) => <span key={i} className="keyword-tag">{w}</span>)}</div>
+            </div>
+          ))}
+        </div>
       </Collapsible>
 
       {/* Lighting Keywords */}
-      <Collapsible title="💡 光线词典">
-        {Object.entries(guide.lighting_keywords || {}).map(([cat, words]) => (
-          <div key={cat} style={{marginBottom: 8}}>
-            <span className="text-xs text-dim" style={{textTransform: "capitalize"}}>{cat.replace(/_/g, " ")}</span>
-            <div>{words.map((w, i) => <span key={i} className="keyword-tag">{w}</span>)}</div>
-          </div>
-        ))}
+      <Collapsible title={<><span>{guideIcon("info")}</span>光线词典</>}>
+        <div className="oa-md-content">
+          {Object.entries(guide.lighting_keywords || {}).map(([cat, words]) => (
+            <div key={cat} style={{marginBottom: 10}}>
+              <h4 style={{textTransform: "capitalize"}}>{cat.replace(/_/g, " ")}</h4>
+              <div>{words.map((w, i) => <span key={i} className="keyword-tag">{w}</span>)}</div>
+            </div>
+          ))}
+        </div>
       </Collapsible>
 
       {/* Composition */}
-      <Collapsible title="📷 构图词典">
-        {Object.entries(guide.composition_keywords || {}).map(([cat, data]) => (
-          <div key={cat} style={{marginBottom: 8}}>
-            <span className="text-xs text-dim">{data.label}</span>
-            <div>{data.keywords.map((kw, i) => (
-              <span key={i} className="keyword-tag" title={kw.desc}>{kw.zh} ({kw.en})</span>
-            ))}</div>
-          </div>
-        ))}
+      <Collapsible title={<><span>{guideIcon("image")}</span>构图词典</>}>
+        <div className="oa-md-content">
+          {Object.entries(guide.composition_keywords || {}).map(([cat, data]) => (
+            <div key={cat} style={{marginBottom: 10}}>
+              <h4>{data.label}</h4>
+              <div>{data.keywords.map((kw, i) => (
+                <span key={i} className="keyword-tag" title={kw.desc}>{kw.zh} ({kw.en})</span>
+              ))}</div>
+            </div>
+          ))}
+        </div>
       </Collapsible>
 
       {/* Negative Presets */}
-      <Collapsible title="🚫 反向提示词预设">
-        {Object.entries(guide.negative_presets || {}).map(([k, v]) => (
-          <div key={k} style={{marginBottom: 8}}>
-            <span className="text-xs" style={{fontWeight: 500}}>{k}</span>
-            <div className="text-xs text-dim" style={{padding: "6px 10px", background: "var(--bg)", borderRadius: 6, marginTop: 4}}>{v}</div>
-          </div>
-        ))}
+      <Collapsible title={<><span>{guideIcon("close")}</span>反向提示词预设</>}>
+        <div className="oa-md-content">
+          {Object.entries(guide.negative_presets || {}).map(([k, v]) => (
+            <div key={k} style={{marginBottom: 10}}>
+              <h4>{k}</h4>
+              <pre style={{whiteSpace:"pre-wrap"}}><code>{v}</code></pre>
+            </div>
+          ))}
+        </div>
       </Collapsible>
     </div>
   );
@@ -1162,8 +1274,9 @@ function Collapsible({ title, children, defaultOpen }) {
   return (
     <div className={`collapsible ${open ? "open" : ""}`}>
       <div className="collapsible-header" onClick={() => setOpen(!open)}>
-        <span>{title}</span>
-        <span className="arrow">▶</span>
+        <span style={{display:"inline-flex", alignItems:"center"}}>{title}</span>
+        <span className="arrow oa-icon"
+              dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.chevronRight() : "&#9656;"}} />
       </div>
       <div className="collapsible-body">{children}</div>
     </div>
@@ -1205,9 +1318,14 @@ function SettingsTab({ onApiKeyChange }) {
 
   return (
     <div style={{maxWidth: 640}}>
-      <div className="setting-section">
-        <h3>🔑 API 配置</h3>
-        <div className="form-row">
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title">
+          <span className="oa-icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.key() : ""}} />
+          API 配置
+        </h3>
+        <div className={"form-row" + (config.dashscope_api_key ? "" : " oa-config-field-callout")}
+             data-callout={config.dashscope_api_key ? undefined : "必填项"}>
           <div className="label">DashScope API Key</div>
           <div className="flex gap-2">
             <input className="input flex-1" type={keyVisible ? "text" : "password"}
@@ -1226,8 +1344,12 @@ function SettingsTab({ onApiKeyChange }) {
         </div>
       </div>
 
-      <div className="setting-section">
-        <h3>⚙️ 默认参数</h3>
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title">
+          <span className="oa-icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.settings() : ""}} />
+          默认参数
+        </h3>
         <div className="grid-2">
           <div className="form-row">
             <div className="label">默认模型</div>
@@ -1276,8 +1398,12 @@ function SettingsTab({ onApiKeyChange }) {
       </div>
 
       {stats && (
-        <div className="setting-section">
-          <h3>💾 存储</h3>
+        <div className="setting-section oa-settings-section">
+          <h3 className="oa-settings-section__title">
+            <span className="oa-icon"
+                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.folder() : ""}} />
+            存储
+          </h3>
           {Object.entries(stats).map(([k, v]) => (
             <div key={k} className="flex items-center justify-between" style={{padding: "8px 0", borderBottom: "1px solid var(--border)"}}>
               <div>
@@ -1295,6 +1421,12 @@ function SettingsTab({ onApiKeyChange }) {
 
 // ─── Mount ───
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+// Tell the host we have rendered the first frame so it can dismiss the
+// loading overlay accurately (instead of guessing from iframe.onLoad,
+// which fires before Babel-standalone compiles this script).
+if (window.OpenAkita && typeof window.OpenAkita.ready === "function") {
+  window.OpenAkita.ready();
+}
 </script>
 </body>
 </html>

@@ -109,6 +109,8 @@
     });
   }
 
+  var renderReadySent = false;
+
   window.OpenAkita = {
     __bootstrapped: true,
     __ready: false,
@@ -137,6 +139,22 @@
       } else {
         window.addEventListener("openakita:ready", function (e) { cb(e.detail); }, { once: true });
       }
+    },
+    /**
+     * Plugins SHOULD call this once their UI has rendered the first frame
+     * (typically right after ReactDOM.createRoot().render(...) for React,
+     * or app.mount() for Vue, or document.body content swap for vanilla JS).
+     *
+     * The host uses this to dismiss the loading overlay accurately, instead
+     * of guessing from iframe.onLoad (which fires before in-page Babel /
+     * SPA bootstrap finishes).
+     *
+     * Idempotent: subsequent calls are no-ops.
+     */
+    ready: function () {
+      if (renderReadySent) return;
+      renderReadySent = true;
+      send("bridge:render-ready");
     },
   };
 

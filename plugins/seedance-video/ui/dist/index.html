@@ -5,6 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Seedance Video Generator</title>
   <script src="/api/plugins/_sdk/bootstrap.js"></script>
+  <!-- OpenAkita Plugin UI Kit (shared, theme-aware; safe oa-* prefix only) -->
+  <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css">
+  <script src="/api/plugins/_sdk/ui-kit/icons.js"></script>
+  <!--
+    Preload CDN deps in parallel (script tags below remain synchronous so
+    React/ReactDOM/Babel still execute in declared order; preload only
+    starts the downloads earlier so they finish faster).
+  -->
+  <link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" />
+  <link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" />
+  <link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js" />
   <style>
     :root {
       --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
@@ -836,13 +847,15 @@ function CreateTab({ models, onGoToTasks }) {
       </div>
 
       <div className="split-right">
-        <VideoPlayer task={activeTask} />
-        {activeTask && (
-          <div className="flex gap-2" style={{marginTop:12}}>
-            <button className="btn btn-sm" onClick={() => downloadFile(`/api/plugins/seedance-video/videos/${activeTask.id}?download=1`, `seedance_${activeTask.prompt?.slice(0,20) || activeTask.id}.mp4`)}><Ico name="download"/> 下载</button>
-            <button className="btn btn-sm" onClick={() => { setActiveTask(null); }}><Ico name="refresh"/> 新建</button>
-          </div>
-        )}
+        <div style={{minHeight:"100%", display:"flex", flexDirection:"column", justifyContent:"center"}}>
+          <VideoPlayer task={activeTask} />
+          {activeTask && (
+            <div className="flex gap-2" style={{marginTop:12}}>
+              <button className="btn btn-sm" onClick={() => downloadFile(`/api/plugins/seedance-video/videos/${activeTask.id}?download=1`, `seedance_${activeTask.prompt?.slice(0,20) || activeTask.id}.mp4`)}><Ico name="download"/> 下载</button>
+              <button className="btn btn-sm" onClick={() => { setActiveTask(null); }}><Ico name="refresh"/> 新建</button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
     <TaskStartedModal
@@ -1616,9 +1629,10 @@ function SettingsTab({ onKeyChange }) {
 
   return (
     <div style={{maxWidth:640}}>
-      <div className="setting-section">
-        <h3><Ico name="key"/> API 配置</h3>
-        <div className="form-row">
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"><Ico name="key"/> API 配置</h3>
+        <div className={"form-row" + (config.ark_api_key ? "" : " oa-config-field-callout")}
+             data-callout={config.ark_api_key ? undefined : "必填项"}>
           <label className="label">ARK API Key</label>
           <div className="flex gap-2">
             <input className="input flex-1" type={showKey?"text":"password"}
@@ -1631,8 +1645,8 @@ function SettingsTab({ onKeyChange }) {
         </div>
       </div>
 
-      <div className="setting-section">
-        <h3><Ico name="settings"/> 默认参数</h3>
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"><Ico name="settings"/> 默认参数</h3>
         <div className="grid-2">
           <div className="form-row">
             <label className="label">默认推理模式</label>
@@ -1664,8 +1678,8 @@ function SettingsTab({ onKeyChange }) {
         </div>
       </div>
 
-      <div className="setting-section">
-        <h3><Ico name="folder"/> 文件夹设置</h3>
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"><Ico name="folder"/> 文件夹设置</h3>
         <div className="form-row">
           <label className="label">视频输出目录</label>
           <div className="folder-row">
@@ -1726,8 +1740,8 @@ function SettingsTab({ onKeyChange }) {
         )}
       </div>
 
-      <div className="setting-section">
-        <h3><Ico name="link"/> Webhook 设置</h3>
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"><Ico name="link"/> Webhook 设置</h3>
         <div className="form-row">
           <label className="label">回调 URL（可选）</label>
           <input className="input" value={config.callback_url || ""} placeholder="https://..."
@@ -1761,7 +1775,11 @@ function App() {
         <div className="header-right">
           {keyStatus
             ? <span title={keyStatus} style={{cursor:"default"}}>API Key: {keyStatus.length > 12 ? keyStatus.slice(0,4)+"..."+keyStatus.slice(-4) : keyStatus}</span>
-            : <span className="text-warning text-xs" style={{display:"inline-flex",alignItems:"center",gap:4}}><Ico name="warn"/> 请先配置 API Key</span>}
+            : <span className="text-warning text-xs" onClick={() => setActiveTab(5)}
+                style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer"}}
+                title="点击前往设置页配置 API Key">
+                <Ico name="warn"/> 请先配置 API Key
+              </span>}
         </div>
       </div>
       <div className="tabs">
@@ -1769,6 +1787,25 @@ function App() {
           <div key={t} className={`tab ${activeTab===i?"active":""}`} onClick={() => setActiveTab(i)}>{t}</div>
         ))}
       </div>
+      {!keyStatus && configLoaded && activeTab !== 5 && (
+        <div className="oa-config-banner" role="alert"
+             style={{margin:"12px 16px 0", flexShrink:0}}>
+          <span className="oa-icon oa-config-banner__icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.warning() : ""}} />
+          <div className="oa-config-banner__text">
+            <strong>尚未配置 ARK API Key</strong>
+            <div style={{fontSize:12, color:"var(--text-muted)", marginTop:2}}>
+              所有创建任务都会失败。请前往设置页填入火山引擎 Volcengine Ark API Key。
+            </div>
+          </div>
+          <button className="oa-config-banner__action" type="button"
+                  onClick={() => setActiveTab(5)}>
+            前往配置
+            <span className="oa-icon"
+                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.arrowRight() : ""}} />
+          </button>
+        </div>
+      )}
       <div className="content">
         {activeTab === 0 && <CreateTab models={models} onGoToTasks={() => setActiveTab(1)} />}
         {activeTab === 1 && <TaskListTab />}
@@ -1782,6 +1819,12 @@ function App() {
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+// Tell the host we have rendered the first frame so it can dismiss the
+// loading overlay accurately (instead of guessing from iframe.onLoad,
+// which fires before Babel-standalone compiles this script).
+if (window.OpenAkita && typeof window.OpenAkita.ready === "function") {
+  window.OpenAkita.ready();
+}
 </script>
 </body>
 </html>

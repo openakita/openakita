@@ -50,10 +50,27 @@ export default defineConfig({
         "../../src/openakita/llm/registries/providers.json",
       ),
     },
-    dedupe: ["three"],
+    // Force a single instance of React + react-dom across the dep graph.
+    // Without this, lazy-loaded views (e.g. PluginManagerView) can end up
+    // calling react-i18next's useTranslation() against a different React copy
+    // than the host renderer, causing "Cannot read properties of null
+    // (reading 'useContext')" at hook-dispatch time.
+    dedupe: ["react", "react-dom", "three"],
   },
   optimizeDeps: {
     include: [
+      // Pre-bundle React + the i18n chain together at server start so they
+      // share a single optimized chunk hash. Otherwise Vite may discover
+      // react-i18next on first plugin-page navigation and generate a
+      // mismatched React reference.
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+      "react-i18next",
+      "i18next",
+      "i18next-browser-languagedetector",
       "react-force-graph-3d",
       "3d-force-graph",
       "three-forcegraph",
@@ -66,6 +83,7 @@ export default defineConfig({
     ? { outDir: "dist-web" }
     : undefined,
   server: {
+    host: "127.0.0.1",
     port: 5173,
     strictPort: true,
     ...(isWebBuild
