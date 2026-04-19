@@ -235,6 +235,33 @@ class OrgRuntime:
         self.max_concurrent_per_node: int = 2
         self._idle_tasks: dict[str, asyncio.Task] = {}
 
+        # ── Idle probe 状态（实例级，跨 IDLE/ACTIVE 切换持久） ──
+        # 解决原实现把 thresholds 作为协程局部变量、节点 IDLE→ACTIVE→IDLE
+        # 切换被 pop 清零导致"自适应增长"实际从未生效的问题。
+        # 所有 key 形式统一为 f"{org_id}:{node_id}"。
+        self._idle_node_thresholds: dict[str, float] = {}
+        self._idle_node_last_probed: dict[str, float] = {}
+        # 独立的"有效行动"时间戳：仅在节点成功 outbound（delegate/send_msg/
+        # reply/submit/escalate）时由 tool_handler 写入。区别于 _node_last_activity
+        # （后者在每次 tool call 都更新，包含 idle_probe 自己触发的活动）。
+        self._node_last_effective: dict[str, float] = {}
+        # 节点收到 inbound（task/message/reply/feedback）的时间戳。由 messenger 写入。
+        self._node_last_inbound: dict[str, float] = {}
+        # 上次 idle_probe 触发时记录的时间，用于下一轮判定是否产生有效行动。
+        self._idle_probe_pending_since: dict[str, float] = {}
+        # 节点累计"无效唤醒次数"。≥ _idle_max_ineffective 时永久暂停 probe，
+        # 直到收到 inbound 才在 _on_inbound_for_node 重置。
+        self._idle_node_ineffective: dict[str, int] = {}
+        # 组织级"全员安静"起始时间。所有节点 IDLE + 无 in-progress chain +
+        # 无 pending message + 无 active user command 的连续起始时间。
+        self._idle_org_quiet_since: dict[str, float] = {}
+        # Idle probe 调参（实例属性而非常量，方便测试覆盖）
+        self._idle_base_threshold: float = 120.0
+        self._idle_max_threshold: float = 600.0
+        self._idle_max_ineffective: int = 2
+        self._idle_org_quiet_grace: float = 300.0   # 5 min 后熔断
+        self._idle_org_silent_interval: float = 1800.0  # 熔断后 30 min 心跳
+
         # 组织级并发控制：限制每个组织同时激活的节点数
         self.max_concurrent_nodes_per_org: int = 5
         self._org_semaphores: dict[str, asyncio.Semaphore] = {}
@@ -359,6 +386,13 @@ class OrgRuntime:
         self._node_current_chain.clear()
         self._chain_delegation_depth.clear()
         self._org_quota_failures.clear()
+        self._idle_node_thresholds.clear()
+        self._idle_node_last_probed.clear()
+        self._node_last_effective.clear()
+        self._node_last_inbound.clear()
+        self._idle_probe_pending_since.clear()
+        self._idle_node_ineffective.clear()
+        self._idle_org_quiet_since.clear()
 
         self._started = False
         logger.info("[OrgRuntime] Shutdown complete.")
@@ -2197,6 +2231,22 @@ class OrgRuntime:
             else:
                 extra = "\n完成后请用 org_submit_deliverable 提交交付物。"
 
+        # 若上游通过 send_message + propagate_chain=true 接力了一条任务链，
+        # 显式提示接收方在交付时复用该 task_chain_id，避免接收方自己造一个
+        # 新链导致整棵任务树断裂（这是修复 delegate 误判 → send_message 兜底
+        # → 链路丢失这条工程上常见的失败模式的最后一环）。
+        if (
+            msg.metadata.get("propagate_chain")
+            and chain_id
+            and msg.msg_type != MsgType.TASK_ASSIGN
+        ):
+            relay_from = msg.metadata.get("relay_from_node") or msg.from_node
+            extra += (
+                f"\n[任务链接力] 上级 {relay_from} 把 task_chain_id={chain_id} 接力给你，"
+                f"完成后请用 org_submit_deliverable(task_chain_id=\"{chain_id}\") 提交，"
+                "不要自己生成新的 task_chain_id。"
+            )
+
         return f"{prefix}:\n{msg.content}{extra}"
 
     # ------------------------------------------------------------------
@@ -3446,17 +3496,81 @@ class OrgRuntime:
                 logger.debug(f"[OrgRuntime] Watchdog error for {org_id}: {e}")
                 await asyncio.sleep(30)
 
+    def _mark_effective_action(self, org_id: str, node_id: str) -> None:
+        """记录节点产生了一次"有效 outbound 行动"。
+
+        由 OrgToolHandler 在 ``org_delegate_task`` / ``org_send_message`` /
+        ``org_reply_message`` / ``org_submit_deliverable`` / ``org_escalate``
+        成功完成后调用。
+
+        作用：
+        1. 重置 ``_idle_node_ineffective`` 计数（节点又"活"过来了）
+        2. 重置 ``_idle_node_thresholds`` 到 base（下一次 idle 重新从 120s 起）
+        3. 清掉 ``_idle_probe_pending_since``（不再把这一轮算成无效唤醒）
+        4. 同步 ``_node_last_effective`` 时间戳
+        5. 节点级"有效"动作意味着组织也活跃，清掉 ``_idle_org_quiet_since``
+        """
+        cache_key = f"{org_id}:{node_id}"
+        now = time.monotonic()
+        self._node_last_effective[cache_key] = now
+        self._idle_node_ineffective.pop(cache_key, None)
+        self._idle_node_thresholds.pop(cache_key, None)
+        self._idle_probe_pending_since.pop(cache_key, None)
+        self._idle_org_quiet_since.pop(org_id, None)
+
+    def _on_inbound_for_node(self, org_id: str, node_id: str) -> None:
+        """节点收到 inbound（task/message/reply/feedback）时调用。
+
+        由 OrgMessenger 在投递成功后回调。语义：节点又有真正的外部输入了，
+        重置无效唤醒计数和 threshold；这是从"已永久暂停"恢复的唯一入口。
+        """
+        cache_key = f"{org_id}:{node_id}"
+        now = time.monotonic()
+        self._node_last_inbound[cache_key] = now
+        self._idle_node_ineffective.pop(cache_key, None)
+        self._idle_node_thresholds.pop(cache_key, None)
+        self._idle_probe_pending_since.pop(cache_key, None)
+        self._idle_org_quiet_since.pop(org_id, None)
+
+    def _has_org_external_work(self, org: Organization) -> bool:
+        """判断组织是否还有"外部"待处理工作（用于组织级熔断决策）。
+
+        条件（任一为真即视为"还有活"）：
+        - 任一节点 status != IDLE / ERROR / FROZEN / OFFLINE
+        - 任一节点 mailbox pending > 0
+        - 存在未关闭的任务 chain（从 _chain_delegation_depth 推断）
+        - 存在 active user command tracker
+        """
+        for node in org.nodes:
+            if node.status not in (
+                NodeStatus.IDLE, NodeStatus.ERROR,
+                NodeStatus.FROZEN, NodeStatus.OFFLINE,
+            ):
+                return True
+        messenger = self.get_messenger(org.id)
+        if messenger:
+            for node in org.nodes:
+                if messenger.get_pending_count(node.id) > 0:
+                    return True
+        for chain_id in self._chain_delegation_depth:
+            if not self.is_chain_closed(org.id, chain_id):
+                return True
+        for (oid, _root), tracker in self._active_user_cmd.items():
+            if oid == org.id and not tracker.completed.is_set():
+                return True
+        return False
+
     async def _idle_probe_loop(self, org_id: str) -> None:
         """Periodically check for idle nodes and prompt them to seek work.
 
-        Uses per-node adaptive thresholds: each node's threshold grows after
-        being probed (120s → 180s → 270s → ... max 600s), and resets when
-        the node becomes busy again (indicating it received work).
+        实例级 threshold：跨 IDLE/ACTIVE 切换持久存在，不会被 status 变化清零。
+        节点级无效唤醒计数：连续被 probe 后既未产生有效 outbound 行动
+        也未收到新 inbound 时累加；达到 ``_idle_max_ineffective`` 后该节点的
+        idle probe 被永久暂停，直到 ``_on_inbound_for_node`` 被调用。
+        组织级熔断：当整个组织已"安静" ``_idle_org_quiet_grace`` 秒（全员 IDLE
+        且无 pending message / 未闭合 chain / 活跃 user command）时，
+        loop 进入 ``_idle_org_silent_interval`` 间隔的低频心跳模式。
         """
-        node_thresholds: dict[str, float] = {}
-        node_last_probed: dict[str, float] = {}
-        base_threshold = 120.0
-
         while True:
             try:
                 await asyncio.sleep(30)
@@ -3465,25 +3579,90 @@ class OrgRuntime:
                     break
 
                 now = time.monotonic()
+
+                # ── 组织级熔断：判断是否进入"全员安静"状态 ──
+                has_work = self._has_org_external_work(org)
+                if has_work:
+                    self._idle_org_quiet_since.pop(org_id, None)
+                else:
+                    quiet_since = self._idle_org_quiet_since.get(org_id)
+                    if quiet_since is None:
+                        self._idle_org_quiet_since[org_id] = now
+                    elif (now - quiet_since) >= self._idle_org_quiet_grace:
+                        # 已熔断：仅 root 节点以低频心跳被探测，其它节点全部跳过。
+                        # 心跳间隔由 _idle_org_silent_interval 控制。
+                        roots = org.get_root_nodes()
+                        for root in roots:
+                            cache_key = f"{org_id}:{root.id}"
+                            last_probe = self._idle_node_last_probed.get(cache_key, 0)
+                            if (now - last_probe) < self._idle_org_silent_interval:
+                                continue
+                            if root.status != NodeStatus.IDLE or root.is_clone:
+                                continue
+                            messenger = self.get_messenger(org_id)
+                            if messenger and messenger.get_pending_count(root.id) > 0:
+                                continue
+                            if self._suppress_post_hook.get(org_id):
+                                continue
+                            self._idle_node_last_probed[cache_key] = now
+                            self._idle_probe_pending_since[cache_key] = now
+                            prompt = (
+                                "[空闲心跳] 组织已长时间无外部任务输入。\n"
+                                "请简要确认当前状态。如无新工作，仅回复一句'保持待命'即可，"
+                                "无需调用任何 org_* 工具。"
+                            )
+                            await self._activate_and_run(
+                                org, root, prompt, activation_origin="idle_probe",
+                            )
+                            break
+                        continue
+
                 for node in org.nodes:
                     if node.status != NodeStatus.IDLE:
-                        node_thresholds.pop(node.id, None)
-                        node_last_probed.pop(node.id, None)
+                        # 注意：刻意不再 pop _idle_node_thresholds —— 上一次
+                        # 自适应增长的状态保留到下次 IDLE，避免 IDLE↔ACTIVE
+                        # 抖动把 threshold 重置回 base 的旧 bug。
                         continue
                     if node.is_clone:
                         continue
 
                     cache_key = f"{org_id}:{node.id}"
+
+                    # 检查：该节点是否已被永久暂停（无效唤醒达到上限）
+                    ineffective = self._idle_node_ineffective.get(cache_key, 0)
+                    if ineffective >= self._idle_max_ineffective:
+                        continue
+
+                    # 上一轮 probe 是否产生了有效行动？（先于本轮 probe 判定）
+                    pending_since = self._idle_probe_pending_since.get(cache_key)
+                    if pending_since is not None and (now - pending_since) >= 30:
+                        last_eff = self._node_last_effective.get(cache_key, 0)
+                        last_inb = self._node_last_inbound.get(cache_key, 0)
+                        if last_eff <= pending_since and last_inb <= pending_since:
+                            self._idle_node_ineffective[cache_key] = ineffective + 1
+                            ineffective += 1
+                            if ineffective >= self._idle_max_ineffective:
+                                logger.info(
+                                    "[OrgRuntime] idle probe paused for %s/%s "
+                                    "after %d ineffective wakeups",
+                                    org_id, node.id, ineffective,
+                                )
+                        self._idle_probe_pending_since.pop(cache_key, None)
+                        if ineffective >= self._idle_max_ineffective:
+                            continue
+
                     last_active = self._node_last_activity.get(cache_key, 0)
                     if last_active <= 0:
                         cached = self._agent_cache.get(cache_key)
                         last_active = cached.last_used if cached else 0
                     idle_secs = now - last_active if last_active > 0 else 0
 
-                    threshold = node_thresholds.get(node.id, base_threshold)
+                    threshold = self._idle_node_thresholds.get(
+                        cache_key, self._idle_base_threshold,
+                    )
 
                     if 0 < idle_secs >= threshold:
-                        last_probe = node_last_probed.get(node.id, 0)
+                        last_probe = self._idle_node_last_probed.get(cache_key, 0)
                         if last_probe > 0 and (now - last_probe) < threshold * 0.8:
                             continue
 
@@ -3507,8 +3686,11 @@ class OrgRuntime:
                                 f"请查看是否有待办工作，或向上级汇报空闲状态以获取新任务。"
                             )
 
-                        node_last_probed[node.id] = now
-                        node_thresholds[node.id] = min(threshold * 1.5, 600)
+                        self._idle_node_last_probed[cache_key] = now
+                        self._idle_node_thresholds[cache_key] = min(
+                            threshold * 1.5, self._idle_max_threshold,
+                        )
+                        self._idle_probe_pending_since[cache_key] = now
                         if self._suppress_post_hook.get(org_id):
                             continue
                         await self._activate_and_run(

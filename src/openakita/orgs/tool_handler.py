@@ -723,6 +723,19 @@ class OrgToolHandler:
             metadata["task_chain_id"] = current_chain
             metadata["chain_closed"] = True
 
+        # ── propagate_chain 接力 ──
+        # delegate 误判时 LLM 可以走 send_message + propagate_chain=true 兜底，
+        # 让接收方在 submit_deliverable 时使用同一 chain_id，整棵 chain 不断裂。
+        # 已关闭的 chain 不接力（避免复活已结束的工作流）。
+        propagate_chain = bool(args.get("propagate_chain", False))
+        if propagate_chain:
+            explicit_chain = (args.get("task_chain_id") or "").strip()
+            relay_chain = explicit_chain or (current_chain or "")
+            if relay_chain and not self._runtime.is_chain_closed(org_id, relay_chain):
+                metadata["task_chain_id"] = relay_chain
+                metadata["propagate_chain"] = True
+                metadata["relay_from_node"] = node_id
+
         raw_type = args.get("msg_type", "question")
         try:
             msg_type = MsgType(raw_type)
@@ -796,6 +809,8 @@ class OrgToolHandler:
                 "msg_type": args.get("msg_type", "question"),
                 "content": args["content"][:_LIM_WS],
             })
+            self._runtime._mark_effective_action(org_id, node_id)
+            self._runtime._on_inbound_for_node(org_id, to_node)
         return f"消息已发送给 {to_node}" if ok else "发送失败"
 
     async def _handle_org_reply_message(
@@ -817,6 +832,8 @@ class OrgToolHandler:
             reply_to=args["reply_to"],
         )
         await messenger.send(msg)
+        self._runtime._mark_effective_action(org_id, node_id)
+        self._runtime._on_inbound_for_node(org_id, to_node)
         return "已回复"
 
     async def _handle_org_delegate_task(
@@ -992,6 +1009,38 @@ class OrgToolHandler:
             child_ids = {c.id for c in children}
             if to_node not in child_ids:
                 if to_node == node_id:
+                    # ── 生产级 trace：记录"自指误判"现场 ──
+                    # pytest 已经证明 static path 不会让 to_node 误指回 caller
+                    # （详见 tests/orgs/test_org_delegate_self_misjudge_repro.py）。
+                    # 这条路径在生产里仍然偶发触发，说明是 dynamic 状态污染，
+                    # 必须把现场所有可疑变量 dump 到 ERROR 日志，下次拿到日志
+                    # 即可定位真正的注入路径（args 改写者、affinity 路由、
+                    # clone 关系、外部 hook 等）。
+                    try:
+                        affinity_dump = messenger.get_task_affinity(chain_id) \
+                            if messenger else None
+                        caller_node_obj = org.get_node(node_id) if org else None
+                        clone_src = (
+                            caller_node_obj.clone_source if caller_node_obj else None
+                        )
+                        children_dump = [c.id for c in children] if children else []
+                        logger.error(
+                            "[delegate-self-misjudge] caller=%s resolved_to_node=%s "
+                            "raw_args=%r resolve_status=%s candidates=%s "
+                            "chain_id=%s caller_chain=%s explicit_chain=%s "
+                            "chain_depth=%s affinity=%s clone_source=%s "
+                            "children=%s",
+                            node_id, to_node, args, status,
+                            [c.id for c in candidates],
+                            chain_id, caller_chain, explicit_chain,
+                            chain_depth, affinity_dump, clone_src,
+                            children_dump,
+                        )
+                    except Exception:
+                        logger.error(
+                            "[delegate-self-misjudge] dump failed",
+                            exc_info=True,
+                        )
                     hint = (
                         f"[org_delegate_task 失败] 你就是 {caller_label}，不能把任务委派给自己。"
                     )
@@ -1007,10 +1056,23 @@ class OrgToolHandler:
                     )
                 if children:
                     child_list = ", ".join(f"{c.role_title}(`{c.id}`)" for c in children)
+                    # 自指分支额外提示 send_message + propagate_chain 兜底，给 LLM
+                    # 一条独立于 delegate 的出口，避免反复重试 delegate 把组织
+                    # 卡死在 Supervisor 看门狗的死循环判定里。
+                    fallback_hint = ""
+                    if to_node == node_id and chain_id:
+                        fallback_hint = (
+                            f" 如确认目标节点合法（参考组织结构里反引号包住的精确 id），"
+                            f"且 delegate 反复失败，可临时改用 "
+                            f"org_send_message(to_node=<下属id>, content=<任务>, "
+                            f"propagate_chain=true, task_chain_id=\"{chain_id}\") "
+                            f"把当前 chain 接力下去，下属交付时会沿用同一 task_chain_id。"
+                        )
                     return (
                         f"{hint} 你的直属下级只有：{child_list}。"
                         f"如果任务本就该由你自己完成，请改用 org_submit_deliverable 交付成果；"
                         f"不要反复调用 org_delegate_task，否则会被 Supervisor 判定死循环并终止。"
+                        f"{fallback_hint}"
                     )
                 return (
                     f"{hint} 你是叶子节点，没有直属下级，根本无法使用 org_delegate_task。"
@@ -1041,6 +1103,8 @@ class OrgToolHandler:
             metadata=metadata,
         )
 
+        self._runtime._mark_effective_action(org_id, node_id)
+        self._runtime._on_inbound_for_node(org_id, to_node)
         messenger.bind_task_affinity(chain_id, to_node)
         self._runtime._chain_delegation_depth[chain_id] = chain_depth + 1
 
@@ -1141,6 +1205,13 @@ class OrgToolHandler:
                 "to_node": result.to_node if hasattr(result, "to_node") else "",
                 "content": args["content"][:_LIM_WS],
             })
+            self._runtime._mark_effective_action(org_id, node_id)
+            try:
+                to_node_e = result.to_node if hasattr(result, "to_node") else ""
+                if to_node_e:
+                    self._runtime._on_inbound_for_node(org_id, to_node_e)
+            except Exception:
+                pass
             return "已上报给上级"
         return "无法上报（没有上级节点）"
 
@@ -1797,6 +1868,8 @@ class OrgToolHandler:
                 f"提交交付物给 {to_node}: {summary[:_LIM_EXEC_LOG]}",
                 node_id,
             )
+            self._runtime._mark_effective_action(org_id, node_id)
+            self._runtime._on_inbound_for_node(org_id, to_node)
             tail = (
                 f"（附带 {len(registered_attachments)} 个文件附件）"
                 if registered_attachments else ""

@@ -11,7 +11,13 @@ ORG_NODE_TOOLS: list[dict] = [
     # ── 通信 ──
     {
         "name": "org_send_message",
-        "description": "向指定同事发送消息。优先通过已有连线关系沟通。",
+        "description": (
+            "向指定同事发送消息。优先通过已有连线关系沟通。"
+            "若你正在推进一条任务链且 org_delegate_task 因故不可用（例如返回了"
+            "'不能委派给自己'之类的误判），可以将 propagate_chain 设为 true 并"
+            "可选传 task_chain_id 把当前任务链 id 接力给接收方，接收方在交付时"
+            "将使用同一 task_chain_id 调用 org_submit_deliverable，确保链路闭合。"
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -31,6 +37,23 @@ ORG_NODE_TOOLS: list[dict] = [
                     "default": "question",
                 },
                 "priority": {"type": "integer", "description": "优先级 0=普通 1=紧急 2=最高", "default": 0},
+                "propagate_chain": {
+                    "type": "boolean",
+                    "description": (
+                        "可选。设为 true 时把你当前的 task_chain_id 接力到接收方，"
+                        "接收方完成后用同一 task_chain_id 提交交付物，链路保持闭合。"
+                        "仅在你确实在推进某条任务链且需要让接收方继续这条链时启用。"
+                        "默认 false（普通对话/咨询不要打开）。"
+                    ),
+                    "default": False,
+                },
+                "task_chain_id": {
+                    "type": "string",
+                    "description": (
+                        "可选。propagate_chain=true 时使用的 task_chain_id；"
+                        "不传则自动使用你当前绑定的 chain。已关闭的 chain 不会被接力。"
+                    ),
+                },
             },
             "required": ["to_node", "content"],
         },
