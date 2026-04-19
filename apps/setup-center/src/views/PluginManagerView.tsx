@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { safeFetch } from "../providers";
 import { showInFolder, downloadFile } from "../platform";
-import { IconCode, IconPlug, IconFileText2, IconPackage, IconBook, IconGear, IconShield, IconFolderOpen, IconDownload, IconTerminal } from "../icons";
+import { IconCode, IconPlug, IconFileText2, IconPackage, IconBook, IconGear, IconShield, IconFolderOpen, IconDownload, IconTerminal, IconHeartPulse } from "../icons";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "../components/ui/card";
@@ -182,6 +182,17 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
   const [logsPanel, setLogsPanel] = useState<string | null>(null);
   const [logsContent, setLogsContent] = useState("");
 
+  const [tasksPanel, setTasksPanel] = useState<string | null>(null);
+  const [tasksData, setTasksData] = useState<{
+    running: number;
+    total: number;
+    tasks: { name: string; done: boolean; cancelled: boolean; coro: string }[];
+  } | null>(null);
+  const [tasksLoading, setTasksLoading] = useState(false);
+
+  const [devMode, setDevMode] = useState<"off" | "symlink">("off");
+  const [devModeSaving, setDevModeSaving] = useState(false);
+
   const [toast, setToast] = useState<{ msg: string; type: "ok" | "err" } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
   const showToast = (msg: string, type: "ok" | "err" = "ok") => {
@@ -201,6 +212,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     setConfigPanel(null);
     setPermDialog(null);
     setLogsPanel(null);
+    setTasksPanel(null);
   };
 
   const scrollToCard = (pluginId: string) => {
@@ -235,13 +247,77 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
 
   refreshRef.current = () => fetchPlugins(false);
 
+  const fetchDevMode = useCallback(async () => {
+    try {
+      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/dev-mode`);
+      const raw = await resp.json();
+      const data = raw.data ?? raw;
+      const m = data?.mode === "symlink" ? "symlink" : "off";
+      setDevMode(m);
+    } catch {
+      // Backend may not yet support dev-mode; leave the toggle off.
+    }
+  }, []);
+
   const mountedRef = useRef(false);
   useEffect(() => {
     if (visible && !mountedRef.current) {
       mountedRef.current = true;
       fetchPlugins(true);
+      fetchDevMode();
     }
-  }, [visible, fetchPlugins]);
+  }, [visible, fetchPlugins, fetchDevMode]);
+
+  const toggleDevMode = async (next: boolean) => {
+    const target: "off" | "symlink" = next ? "symlink" : "off";
+    const prev = devMode;
+    setDevMode(target);
+    setDevModeSaving(true);
+    try {
+      await safeFetch(`${apiBaseRef.current()}/api/plugins/dev-mode`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: target }),
+      });
+      showToast(target === "symlink" ? t("plugins.devModeOnHint") : t("plugins.devModeOffHint"));
+    } catch (e: any) {
+      setDevMode(prev);
+      showToast(e.message, "err");
+    } finally {
+      setDevModeSaving(false);
+    }
+  };
+
+  const toggleTasks = async (pluginId: string) => {
+    if (tasksPanel === pluginId) {
+      setTasksPanel(null);
+      return;
+    }
+    closeAllPanels();
+    setTasksPanel(pluginId);
+    setTasksData(null);
+    scrollToCard(pluginId);
+    await loadTasks(pluginId);
+  };
+
+  const loadTasks = async (pluginId: string) => {
+    setTasksLoading(true);
+    try {
+      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/tasks`);
+      const raw = await resp.json();
+      const data = raw.data ?? raw;
+      setTasksData({
+        running: data?.running ?? 0,
+        total: data?.total ?? 0,
+        tasks: Array.isArray(data?.tasks) ? data.tasks : [],
+      });
+    } catch (e: any) {
+      setTasksData({ running: 0, total: 0, tasks: [] });
+      showToast(e.message, "err");
+    } finally {
+      setTasksLoading(false);
+    }
+  };
 
   const updatePluginLocal = (id: string, patch: Partial<PluginInfo>) => {
     setPlugins((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
@@ -253,6 +329,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     setConfigPanel((prev) => (prev === id ? null : prev));
     setPermDialog((prev) => (prev === id ? null : prev));
     setLogsPanel((prev) => (prev === id ? null : prev));
+    setTasksPanel((prev) => (prev === id ? null : prev));
   };
 
   const ACTION_LABELS: Record<string, { ok: string; err: string }> = {
@@ -276,8 +353,23 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
         action === "delete"
           ? `${apiBaseRef.current()}/api/plugins/${id}`
           : `${apiBaseRef.current()}/api/plugins/${id}/${action}`;
-      await safeFetch(url, { method });
+      const resp = await safeFetch(url, { method });
+
       if (action === "delete") {
+        // Backend may answer 207 Multi-Status (partial uninstall — code dir
+        // could not be fully removed but db files were cleaned). Surface
+        // this as a non-blocking warning so the user understands a restart
+        // may be needed for a fully clean state.
+        let body: any = null;
+        try { body = await resp.json(); } catch { /* ignore */ }
+        if (resp.status === 207 || body?.ok === false) {
+          removePluginLocal(id);
+          const guidance = body?.error?.guidance ?? "";
+          const message = body?.error?.message ?? t("plugins.toastUninstalledPartial");
+          showToast(`${message}${guidance ? `\n${guidance}` : ""}`, "err");
+          notifyAppsChanged();
+          return;
+        }
         removePluginLocal(id);
       } else {
         updatePluginLocal(id, { enabled: action === "enable" });
@@ -551,6 +643,36 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
             </div>
           </div>
 
+          {!notAvailable && (
+            <label
+              className={cn(
+                "flex items-start gap-3 rounded-xl border bg-muted/20 p-4 cursor-pointer transition-colors",
+                devMode === "symlink" && "border-primary/40 bg-primary/5",
+              )}
+            >
+              <Checkbox
+                checked={devMode === "symlink"}
+                onCheckedChange={(v) => toggleDevMode(Boolean(v))}
+                disabled={devModeSaving}
+                className="mt-0.5"
+              />
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
+                  <IconCode size={14} />
+                  {t("plugins.devModeTitle")}
+                  {devMode === "symlink" && (
+                    <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
+                      {t("plugins.devModeOn")}
+                    </Badge>
+                  )}
+                </div>
+                <div className="text-xs leading-5 text-muted-foreground">
+                  {t("plugins.devModeDesc")}
+                </div>
+              </div>
+            </label>
+          )}
+
           {!notAvailable && plugins.length > 0 && (
             <div className="rounded-xl border bg-muted/20 p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
@@ -811,6 +933,15 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                         >
                           <IconTerminal size={14} />
                         </Button>
+                        <Button
+                          size="icon-sm"
+                          variant={tasksPanel === p.id ? "secondary" : "outline"}
+                          title={t("plugins.viewTasks")}
+                          aria-label={t("plugins.viewTasks")}
+                          onClick={() => toggleTasks(p.id)}
+                        >
+                          <IconHeartPulse size={14} />
+                        </Button>
                       </div>
                     </div>
                   </CardHeader>
@@ -1039,6 +1170,80 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                           >
                             {logsContent || t("plugins.loading")}
                           </pre>
+                        </div>
+                      )}
+
+                      {tasksPanel === p.id && (
+                        <div className={PANEL_CARD_CLASS}>
+                          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                              <IconHeartPulse size={14} style={{ color: "var(--muted)" }} />
+                              {t("plugins.tasksTitle")}
+                              {tasksData && (
+                                <Badge variant="outline" className="ml-1 text-xs">
+                                  {t("plugins.tasksRunning", {
+                                    running: tasksData.running,
+                                    total: tasksData.total,
+                                  })}
+                                </Badge>
+                              )}
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => loadTasks(p.id)}
+                              disabled={tasksLoading}
+                            >
+                              {t("plugins.refresh")}
+                            </Button>
+                          </div>
+                          <div className="mb-3 text-xs leading-5 text-muted-foreground">
+                            {t("plugins.tasksDesc")}
+                          </div>
+                          {tasksLoading && !tasksData ? (
+                            <div className="rounded-lg border bg-background p-3 text-xs text-muted-foreground">
+                              {t("plugins.loading")}
+                            </div>
+                          ) : tasksData && tasksData.tasks.length === 0 ? (
+                            <div className="rounded-lg border bg-background p-3 text-xs text-muted-foreground">
+                              {t("plugins.tasksEmpty")}
+                            </div>
+                          ) : tasksData ? (
+                            <div className="space-y-2">
+                              {tasksData.tasks.map((task, idx) => (
+                                <div
+                                  key={`${task.name}-${idx}`}
+                                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-background/80 px-3 py-2 text-xs"
+                                >
+                                  <div className="min-w-0 flex-1">
+                                    <div className="truncate font-medium text-foreground" title={task.name}>
+                                      {task.name}
+                                    </div>
+                                    <div className="mt-0.5 truncate text-muted-foreground" title={task.coro}>
+                                      {task.coro || "-"}
+                                    </div>
+                                  </div>
+                                  <Badge
+                                    variant="outline"
+                                    className={cn(
+                                      "shrink-0 text-[10px]",
+                                      task.cancelled
+                                        ? "border-rose-500/40 bg-rose-500/10 text-rose-600"
+                                        : task.done
+                                        ? "border-slate-400/40 bg-slate-400/10 text-slate-500"
+                                        : "border-emerald-500/40 bg-emerald-500/10 text-emerald-600",
+                                    )}
+                                  >
+                                    {task.cancelled
+                                      ? t("plugins.tasksCancelled")
+                                      : task.done
+                                      ? t("plugins.tasksDone")
+                                      : t("plugins.tasksAlive")}
+                                  </Badge>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
                       )}
                     </CardContent>
