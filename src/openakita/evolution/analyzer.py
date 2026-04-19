@@ -1,7 +1,7 @@
 """
-需求分析器
+Need Analyzer
 
-分析任务需求，识别缺失的能力。
+Analyzes task requirements to identify missing capabilities.
 """
 
 import logging
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class CapabilityGap:
-    """能力缺口"""
+    """Capability Gap"""
 
     name: str
     description: str
@@ -26,7 +26,7 @@ class CapabilityGap:
 
 @dataclass
 class TaskAnalysis:
-    """任务分析结果"""
+    """Task Analysis Result"""
 
     task: str
     required_capabilities: list[str]
@@ -39,10 +39,10 @@ class TaskAnalysis:
 
 class NeedAnalyzer:
     """
-    需求分析器
+    Need Analyzer
 
-    分析任务需要的能力，识别缺失的部分，
-    并建议如何获取这些能力。
+    Analyzes capabilities required for a task, identifies missing parts,
+    and suggests how to acquire these capabilities.
     """
 
     def __init__(
@@ -55,34 +55,34 @@ class NeedAnalyzer:
 
     async def analyze_task(self, task: str) -> TaskAnalysis:
         """
-        分析任务需求
+        Analyze task requirements
 
         Args:
-            task: 任务描述
+            task: Task description
 
         Returns:
             TaskAnalysis
         """
         logger.info(f"Analyzing task: {task}")
 
-        # 使用 LLM 分析任务
-        analysis_prompt = f"""分析以下任务，识别完成它所需的能力：
+        # Use LLM to analyze the task
+        analysis_prompt = f"""Analyze the following task and identify the capabilities required to complete it:
 
-任务: {task}
+Task: {task}
 
-请以 JSON 格式返回分析结果:
+Please return the analysis results in JSON format:
 {{
-    "required_capabilities": ["能力1", "能力2", ...],
-    "complexity": 1-10 的数字,
-    "estimated_steps": 预估步骤数,
-    "suggested_approach": "建议的方法"
+    "required_capabilities": ["Capability 1", "Capability 2", ...],
+    "complexity": number 1-10,
+    "estimated_steps": estimated number of steps,
+    "suggested_approach": "suggested approach"
 }}
 
-只返回 JSON，不要解释。"""
+Return ONLY the JSON, no explanation."""
 
         response = await self.brain.think(analysis_prompt)
 
-        # 解析响应
+        # Parse the response
         import json
 
         try:
@@ -108,7 +108,7 @@ class NeedAnalyzer:
         complexity = data.get("complexity", 5)
         estimated_steps = data.get("estimated_steps", 3)
 
-        # 检查哪些能力已有
+        # Check which capabilities are already available
         available = []
         missing = []
 
@@ -130,15 +130,15 @@ class NeedAnalyzer:
         )
 
     def _has_capability(self, capability: str) -> bool:
-        """检查是否有某能力"""
-        # 检查技能注册表
+        """Check whether a capability is available"""
+        # Check the skill registry
         cap_lower = capability.lower()
 
         for skill in self.skill_registry:
             if cap_lower in skill.name.lower() or cap_lower in skill.description.lower():
                 return True
 
-        # 检查内置工具
+        # Check built-in tools
         builtin_tools = [
             "shell",
             "file",
@@ -154,20 +154,20 @@ class NeedAnalyzer:
         return any(tool in cap_lower for tool in builtin_tools)
 
     async def _analyze_gap(self, capability: str) -> CapabilityGap:
-        """分析能力缺口"""
-        # 使用 LLM 分析如何获取这个能力
-        prompt = f"""我需要"{capability}"这个能力，但目前没有。
+        """Analyze capability gap"""
+        # Use LLM to analyze how to acquire this capability
+        prompt = f"""I need the capability "{capability}", but I don't have it yet.
 
-请分析:
-1. 这是什么类型的能力？(skill/tool/knowledge)
-2. 优先级有多高？(1-10)
-3. 有哪些方式可以获取这个能力？
+Please analyze:
+1. What type of capability is this? (skill/tool/knowledge)
+2. How high is the priority? (1-10)
+3. What are the ways to acquire this capability?
 
-以 JSON 格式返回:
+Return in JSON format:
 {{
     "category": "skill/tool/knowledge",
     "priority": 1-10,
-    "solutions": ["方案1", "方案2", ...]
+    "solutions": ["Solution 1", "Solution 2", ...]
 }}"""
 
         response = await self.brain.think(prompt)
@@ -185,12 +185,12 @@ class NeedAnalyzer:
             data = {
                 "category": "skill",
                 "priority": 5,
-                "solutions": [f"搜索 GitHub 找 {capability} 相关项目", "自己编写实现"],
+                "solutions": [f"Search GitHub for {capability} related projects", "Implement it yourself"],
             }
 
         return CapabilityGap(
             name=capability,
-            description=f"缺少 {capability} 能力",
+            description=f"Missing {capability} capability",
             category=data.get("category", "skill"),
             priority=data.get("priority", 5),
             suggested_solutions=data.get("solutions", []),
@@ -198,13 +198,13 @@ class NeedAnalyzer:
 
     async def suggest_evolution(self, gaps: list[CapabilityGap]) -> list[dict]:
         """
-        根据能力缺口建议进化方案
+        Suggest evolution plans based on capability gaps
 
         Args:
-            gaps: 能力缺口列表
+            gaps: List of capability gaps
 
         Returns:
-            进化建议列表
+            List of evolution suggestions
         """
         suggestions = []
 
@@ -220,14 +220,14 @@ class NeedAnalyzer:
                     suggestion["actions"].append(
                         {
                             "type": "search_install",
-                            "description": f"搜索并安装 {gap.name} 相关技能",
+                            "description": f"Search and install {gap.name} related skills",
                         }
                     )
                 elif "编写" in solution or "实现" in solution:
                     suggestion["actions"].append(
                         {
                             "type": "generate",
-                            "description": f"自动生成 {gap.name} 技能",
+                            "description": f"Auto-generate {gap.name} skill",
                         }
                     )
                 else:

@@ -9,23 +9,23 @@ category: System
 
 # Get Session Logs
 
-获取当前会话的系统日志。
+Get system logs for the current session.
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| count | integer | 否 | 返回的日志条数，默认 20，最大 200 |
-| level | string | 否 | 过滤日志级别：DEBUG, INFO, WARNING, ERROR |
+| count | integer | No | Number of log entries to return, default 20, Maximum 200 |
+| level | string | No | :DEBUG, INFO, WARNING, ERROR |
 
 ## When to Use
 
-1. 命令返回错误码
-2. 操作没有预期效果
-3. 需要了解之前发生了什么
+1. Returns
+2. have
+3. need
 
 ## Returns
 
-- 命令执行详情
-- 错误信息
-- 系统状态
+- Execute
+-
+-

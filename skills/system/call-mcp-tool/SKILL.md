@@ -9,19 +9,19 @@ category: MCP
 
 # Call MCP Tool
 
-调用 MCP 服务器的工具。
+Call MCP .
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| server | string | 是 | MCP 服务器标识符 |
-| tool_name | string | 是 | 工具名称 |
-| arguments | object | 否 | 工具参数，默认 {} |
+| server | string | Yes | MCP Server identifier |
+| tool_name | string | Yes | Tool name |
+| arguments | object | No | Tool arguments, Default {} |
 
 ## Usage
 
-查看系统提示中的 'MCP Servers' 部分了解可用的服务器和工具。
+View 'MCP Servers' Partial and.
 
 ## Examples
 
@@ -35,5 +35,5 @@ category: MCP
 
 ## Related Skills
 
-- `list-mcp-servers`: 列出可用服务器
-- `get-mcp-instructions`: 获取使用说明
+- `list-mcp-servers`: list
+- `get-mcp-instructions`: getUse

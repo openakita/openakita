@@ -1,14 +1,14 @@
 """
-搜索后端抽象层
+Search backend abstraction layer.
 
-三种可插拔的搜索后端:
-- FTS5Backend: SQLite FTS5 全文搜索 (默认, 零外部依赖)
-- ChromaDBBackend: 本地向量搜索 (可选, 需要 chromadb + sentence-transformers)
-- APIEmbeddingBackend: 在线 Embedding API (可选, 需要 API key)
+Three pluggable search backends:
+- FTS5Backend: SQLite FTS5 full-text search (default, zero external dependencies)
+- ChromaDBBackend: Local vector search (optional, requires chromadb + sentence-transformers)
+- APIEmbeddingBackend: Online Embedding API (optional, requires API key)
 
-用法:
+Usage:
     backend = create_search_backend("fts5", storage=storage)
-    results = backend.search("代码风格", limit=10)
+    results = backend.search("code style", limit=10)
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class SearchBackend(Protocol):
-    """搜索后端抽象接口"""
+    """Search backend abstract interface."""
 
     def search(
         self,
@@ -36,7 +36,7 @@ class SearchBackend(Protocol):
         limit: int = 10,
         filter_type: str | None = None,
     ) -> list[tuple[str, float]]:
-        """搜索, 返回 [(memory_id, score), ...], score 越高越相关"""
+        """Search, returning [(memory_id, score), ...]; higher score means more relevant."""
         ...
 
     def add(self, memory_id: str, content: str, metadata: dict | None = None) -> bool: ...
@@ -59,12 +59,12 @@ class SearchBackend(Protocol):
 
 class FTS5Backend:
     """
-    SQLite FTS5 全文搜索后端 (默认)
+    SQLite FTS5 full-text search backend (default).
 
-    - jieba 分词: 写入前将中文文本分词为空格分隔 tokens
-    - BM25 排序: SQLite FTS5 内置 bm25() 函数
-    - 零外部依赖 (jieba 是纯 Python, ~15MB)
-    - 零初始化延迟
+    - jieba tokenization: segments Chinese text into space-separated tokens before writing
+    - BM25 ranking: uses SQLite FTS5 built-in bm25() function
+    - Zero external dependencies (jieba is pure Python, ~15MB)
+    - Zero initialization latency
     """
 
     backend_type = "fts5"
@@ -107,7 +107,7 @@ class FTS5Backend:
         return len(items)
 
     def _segment(self, text: str) -> str:
-        """jieba 中文分词, 回退到原文"""
+        """jieba Chinese tokenization, falls back to raw text."""
         if self._jieba_available is None:
             try:
                 import jieba
@@ -131,9 +131,9 @@ class FTS5Backend:
 
 class ChromaDBBackend:
     """
-    ChromaDB 向量搜索后端 (可选)
+    ChromaDB vector search backend (optional).
 
-    封装现有 VectorStore, 适配 SearchBackend 接口。
+    Wraps the existing VectorStore to adapt to the SearchBackend interface.
     """
 
     backend_type = "chromadb"
@@ -187,10 +187,10 @@ class ChromaDBBackend:
 
 class APIEmbeddingBackend:
     """
-    在线 Embedding API 搜索后端 (可选)
+    Online Embedding API search backend (optional).
 
-    支持 DashScope (text-embedding-v3) 和 OpenAI (text-embedding-3-small)。
-    embedding 结果缓存到 SQLite embedding_cache 表。
+    Supports DashScope (text-embedding-v3) and OpenAI (text-embedding-3-small).
+    Embedding results are cached in the SQLite embedding_cache table.
     """
 
     backend_type = "api_embedding"

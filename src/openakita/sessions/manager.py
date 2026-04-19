@@ -1,11 +1,11 @@
 """
-会话管理器
+Session manager
 
-职责:
-- 根据 (channel, chat_id, user_id) 获取或创建会话
-- 管理会话生命周期
-- 隔离不同会话的上下文
-- 会话持久化
+Responsibilities:
+- Get or create a session by (channel, chat_id, user_id)
+- Manage the session lifecycle
+- Isolate context across different sessions
+- Persist sessions
 """
 
 import asyncio
@@ -27,25 +27,25 @@ logger = logging.getLogger(__name__)
 
 class SessionManager:
     """
-    会话管理器
+    Session manager
 
-    管理所有活跃会话，提供:
-    - 会话的创建和获取
-    - 会话过期清理
-    - 会话持久化
+    Manages all active sessions, providing:
+    - Session creation and retrieval
+    - Expired session cleanup
+    - Session persistence
     """
 
     def __init__(
         self,
         storage_path: Path | None = None,
         default_config: SessionConfig | None = None,
-        cleanup_interval_seconds: int = 300,  # 5 分钟清理一次
+        cleanup_interval_seconds: int = 300,  # Clean up every 5 minutes
     ):
         """
         Args:
-            storage_path: 会话存储目录
-            default_config: 默认会话配置
-            cleanup_interval_seconds: 清理间隔（秒）
+            storage_path: Session storage directory
+            default_config: Default session configuration
+            cleanup_interval_seconds: Cleanup interval (seconds)
         """
         self.storage_path = Path(storage_path) if storage_path else Path("data/sessions")
         self.storage_path.mkdir(parents=True, exist_ok=True)
@@ -53,49 +53,51 @@ class SessionManager:
         self.default_config = default_config or SessionConfig()
         self.cleanup_interval = cleanup_interval_seconds
 
-        # 活跃会话缓存 {session_key: Session}
+        # Active session cache {session_key: Session}
         self._sessions: dict[str, Session] = {}
         self._sessions_lock = threading.RLock()
 
-        # 通道注册表：记录每个 IM 通道最后已知的 chat_id / user_id
-        # 不受 session 过期清理影响，用于定时任务等场景回溯通道目标
-        # 格式: {channel_name: {"chat_id": str, "user_id": str, "last_seen": str}}
+        # Channel registry: records the last known chat_id / user_id for each IM channel.
+        # Not affected by session expiration cleanup; used to resolve channel targets
+        # in scenarios such as scheduled tasks.
+        # Format: {channel_name: {"chat_id": str, "user_id": str, "last_seen": str}}
         self._channel_registry: dict[str, dict[str, str]] = {}
         self._load_channel_registry()
 
         self._plugin_hooks = None
 
-        # 用户管理器
+        # User manager
         self.user_manager = UserManager(self.storage_path / "users")
 
-        # 清理任务
+        # Cleanup task
         self._cleanup_task: asyncio.Task | None = None
         self._save_task: asyncio.Task | None = None
         self._running = False
 
-        # 脏标志和防抖保存
+        # Dirty flag and debounced save
         self._dirty = False
-        self._save_delay_seconds = 5  # 防抖延迟：5 秒内的多次修改只保存一次
+        self._save_delay_seconds = 5  # Debounce delay: multiple edits within 5 seconds trigger one save
 
-        # 可选：从外部存储（SQLite）加载 turns 的回调，用于崩溃恢复时回填
-        # 签名: (safe_session_id: str) -> list[dict]  (每个 dict 含 role, content, timestamp)
+        # Optional: callback to load turns from external storage (SQLite),
+        # used to backfill on crash recovery.
+        # Signature: (safe_session_id: str) -> list[dict]  (each dict contains role, content, timestamp)
         self._turn_loader = None
 
-        # 会话是否已从磁盘加载完毕（API 层用此判断 ready 语义）
+        # Whether sessions have finished loading from disk (API layer uses this for ready semantics)
         self._sessions_loaded = False
 
-        # 加载持久化的会话
+        # Load persisted sessions
         self._load_sessions()
 
     async def start(self) -> None:
-        """启动会话管理器"""
+        """Start the session manager"""
         self._running = True
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
         self._save_task = asyncio.create_task(self._save_loop())
         logger.info("SessionManager started")
 
     def mark_dirty(self) -> None:
-        """标记会话数据已修改，需要保存"""
+        """Mark session data as modified and in need of saving"""
         self._dirty = True
 
     def _dispatch_hook_fire_and_forget(self, hook_name: str, **kwargs) -> None:
@@ -122,20 +124,20 @@ class SessionManager:
             logger.warning("Plugin hook task failed: %s", exc)
 
     def flush(self) -> None:
-        """立即保存所有待写入的会话（绕过防抖延迟）"""
+        """Immediately save all pending sessions (bypassing the debounce delay)"""
         if self._dirty:
             self._dirty = False
             self._save_sessions()
 
     def set_turn_loader(self, loader) -> None:
-        """设置 turn_loader 回调（延迟绑定，Agent 初始化完成后调用）"""
+        """Set the turn_loader callback (late-bound, called after Agent initialization)"""
         self._turn_loader = loader
 
     def backfill_sessions_from_store(self) -> int:
-        """用 turn_loader 回填所有 session 中可能缺失的消息（崩溃恢复）。
+        """Use turn_loader to backfill any messages missing from sessions (crash recovery).
 
         Returns:
-            回填的总 turn 数
+            Total number of turns backfilled
         """
         import re
 
@@ -172,22 +174,22 @@ class SessionManager:
         return total_backfilled
 
     async def stop(self) -> None:
-        """停止会话管理器"""
+        """Stop the session manager"""
         self._running = False
 
-        # 取消清理任务
+        # Cancel cleanup task
         if self._cleanup_task:
             self._cleanup_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._cleanup_task
 
-        # 取消保存任务
+        # Cancel save task
         if self._save_task:
             self._save_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._save_task
 
-        # 最终保存所有会话
+        # Final save of all sessions
         self._save_sessions()
         logger.info("SessionManager stopped")
 
@@ -204,21 +206,21 @@ class SessionManager:
         chat_name: str = "",
     ) -> Session | None:
         """
-        获取或创建会话
+        Get or create a session
 
         Args:
-            channel: 来源通道
-            chat_id: 聊天 ID
-            user_id: 用户 ID
-            thread_id: 话题/线程 ID（可选，用于话题级隔离）
-            create_if_missing: 如果不存在是否创建
-            config: 会话配置（创建时使用）
-            chat_type: 聊天类型 ("group" | "private")
-            display_name: 用户昵称
-            chat_name: 聊天/群组名称
+            channel: Source channel
+            chat_id: Chat ID
+            user_id: User ID
+            thread_id: Topic/thread ID (optional, used for topic-level isolation)
+            create_if_missing: Whether to create if not present
+            config: Session configuration (used on creation)
+            chat_type: Chat type ("group" | "private")
+            display_name: User display name
+            chat_name: Chat/group name
 
         Returns:
-            Session 或 None
+            Session or None
         """
         session_key = f"{channel}:{chat_id}:{user_id}"
         if thread_id:
@@ -230,11 +232,11 @@ class SessionManager:
                 session.touch()
                 return session
 
-        # 磁盘恢复在锁外执行，避免 IO 阻塞其他线程
+        # Disk recovery runs outside the lock to avoid blocking other threads on IO
         recovered = self._try_recover_session_from_disk(session_key)
 
         with self._sessions_lock:
-            # double-check：另一个线程可能已抢先恢复或创建
+            # double-check: another thread may have already recovered or created it
             if session_key in self._sessions:
                 session = self._sessions[session_key]
                 session.touch()
@@ -270,10 +272,11 @@ class SessionManager:
         return None
 
     def _try_recover_session_from_disk(self, session_key: str) -> "Session | None":
-        """尝试从 sessions.json 中恢复指定 session_key 的会话。
+        """Try to recover the session for the given session_key from sessions.json.
 
-        当会话已从内存中移除（如空闲清理、内存压力）但磁盘上仍有记录时，
-        可以通过此方法恢复，避免创建空白会话导致上下文丢失。
+        When a session has been removed from memory (e.g. idle cleanup, memory pressure)
+        but still exists on disk, this method can restore it to avoid losing context
+        by creating an empty session.
         """
         sessions_file = self.storage_path / "sessions.json"
         data = self._try_load_sessions_file(sessions_file)
@@ -293,7 +296,7 @@ class SessionManager:
         return None
 
     def get_session_by_id(self, session_id: str) -> Session | None:
-        """通过 session_id 获取会话"""
+        """Get a session by session_id"""
         with self._sessions_lock:
             for session in self._sessions.values():
                 if session.id == session_id:
@@ -311,8 +314,8 @@ class SessionManager:
         display_name: str = "",
         chat_name: str = "",
     ) -> Session:
-        """创建新会话"""
-        # 合并配置
+        """Create a new session"""
+        # Merge configuration
         session_config = (
             config.merge_with_defaults(self.default_config) if config else self.default_config
         )
@@ -328,16 +331,16 @@ class SessionManager:
             chat_name=chat_name,
         )
 
-        # 设置记忆范围
+        # Set memory scope
         session.context.memory_scope = f"session_{session.id}"
 
-        # 更新通道注册表（持久记录 channel→chat_id 映射，不受 session 过期影响）
+        # Update the channel registry (persistently records the channel->chat_id mapping, unaffected by session expiration)
         self._update_channel_registry(channel, chat_id, user_id)
 
         return session
 
     def close_session(self, session_key: str) -> bool:
-        """关闭会话"""
+        """Close a session"""
         closed_session = None
         with self._sessions_lock:
             if session_key in self._sessions:
@@ -363,12 +366,12 @@ class SessionManager:
         state: SessionState | None = None,
     ) -> list[Session]:
         """
-        列出会话
+        List sessions
 
         Args:
-            channel: 过滤通道
-            user_id: 过滤用户
-            state: 过滤状态
+            channel: Filter by channel
+            user_id: Filter by user
+            state: Filter by state
         """
         with self._sessions_lock:
             sessions = list(self._sessions.values())
@@ -383,7 +386,7 @@ class SessionManager:
         return sessions
 
     def get_session_count(self) -> dict[str, int]:
-        """获取会话统计"""
+        """Get session statistics"""
         with self._sessions_lock:
             all_sessions = list(self._sessions.values())
 
@@ -406,7 +409,7 @@ class SessionManager:
         return stats
 
     async def cleanup_expired(self) -> int:
-        """清理过期会话"""
+        """Clean up expired sessions"""
         with self._sessions_lock:
             expired_keys = [key for key, session in self._sessions.items() if session.is_expired()]
 
@@ -422,12 +425,13 @@ class SessionManager:
         return len(expired_keys)
 
     def purge_channel(self, channel_name: str) -> int:
-        """清理指定通道的所有会话和注册表数据。
+        """Purge all sessions and registry data for the specified channel.
 
-        当 IM bot 被删除时调用，确保 UI 不再显示已删除通道的聊天窗口。
+        Called when an IM bot is removed, to ensure the UI no longer shows
+        chat windows for deleted channels.
 
         Returns:
-            被清理的会话数量
+            Number of sessions purged
         """
         with self._sessions_lock:
             keys_to_remove = [
@@ -450,7 +454,7 @@ class SessionManager:
         return len(keys_to_remove)
 
     async def _cleanup_loop(self) -> None:
-        """定期清理循环（每 24 小时清理 30 天未活跃的僵尸 session）"""
+        """Periodic cleanup loop (every 24 hours, prune zombie sessions inactive for 30 days)"""
         while self._running:
             try:
                 await asyncio.sleep(3600 * 24)
@@ -462,10 +466,10 @@ class SessionManager:
 
     async def _save_loop(self) -> None:
         """
-        防抖保存循环
+        Debounced save loop
 
-        检测到 dirty 标志后，等待一小段时间再保存，
-        这样短时间内的多次修改只会触发一次保存。
+        Once the dirty flag is detected, wait briefly before saving so that
+        multiple edits within a short window only trigger a single save.
         """
         while self._running:
             try:
@@ -477,7 +481,7 @@ class SessionManager:
                         self._dirty = True
 
             except asyncio.CancelledError:
-                # 退出前最后保存一次
+                # Final save before exit
                 if self._dirty:
                     self._save_sessions()
                 break
@@ -485,7 +489,7 @@ class SessionManager:
                 logger.error(f"Error in save loop: {e}")
 
     def _load_sessions(self) -> None:
-        """从文件加载会话，主文件失败时自动回退到 .bak 备份。"""
+        """Load sessions from file, automatically falling back to the .bak backup if the primary file fails."""
         sessions_file = self.storage_path / "sessions.json"
         backup_file = self.storage_path / "sessions.json.bak"
 
@@ -551,7 +555,7 @@ class SessionManager:
 
     @staticmethod
     def _try_load_sessions_file(path: Path) -> list[dict] | None:
-        """尝试读取并解析 sessions JSON 文件，失败返回 None。"""
+        """Try to read and parse the sessions JSON file; return None on failure."""
         if not path.exists():
             return None
         try:
@@ -577,9 +581,9 @@ class SessionManager:
 
     def _clean_large_content_in_messages(self, messages: list[dict]) -> None:
         """
-        清理消息中的大型数据（base64 图片/视频、大段 tool_result 等）
+        Clean large data in messages (base64 images/videos, large tool_result blocks, etc.)
 
-        session 恢复时调用，防止历史 base64 数据导致上下文爆炸。
+        Called on session recovery to prevent historical base64 data from blowing up the context.
         """
         for msg in messages:
             content = msg.get("content")
@@ -594,29 +598,29 @@ class SessionManager:
 
                 block_type = block.get("type", "")
 
-                # 图片/视频/音频块 → 替换为文字占位符
+                # Image/video/audio block -> replace with text placeholder
                 if block_type in self._MEDIA_BLOCK_TYPES:
                     cleaned.append(
                         {
                             "type": "text",
-                            "text": "[历史媒体内容已清理]",
+                            "text": "[Historical media content cleaned]",
                         }
                     )
                     continue
 
-                # image_url 内嵌 data URI → 替换
+                # image_url with embedded data URI -> replace
                 if block_type == "image_url":
                     url = (block.get("image_url") or {}).get("url", "")
                     if url.startswith("data:"):
                         cleaned.append(
                             {
                                 "type": "text",
-                                "text": "[历史图片已清理]",
+                                "text": "[Historical image cleaned]",
                             }
                         )
                         continue
 
-                # tool_result 中的大型内容
+                # Large content in tool_result
                 if block_type == "tool_result":
                     result_content = block.get("content", "")
                     if isinstance(result_content, str) and len(result_content) > 10000:
@@ -624,7 +628,7 @@ class SessionManager:
                             "data:image"
                         ):
                             block = dict(block)
-                            block["content"] = "[图片数据已清理，请重新截图]"
+                            block["content"] = "[Image data cleaned, please take a new screenshot]"
                         else:
                             from openakita.core.tool_executor import smart_truncate
 
@@ -640,10 +644,10 @@ class SessionManager:
 
             msg["content"] = cleaned
 
-    # ==================== 通道注册表 ====================
+    # ==================== Channel registry ====================
 
     def _load_channel_registry(self) -> None:
-        """从文件加载通道注册表"""
+        """Load the channel registry from file"""
         registry_file = self.storage_path / "channel_registry.json"
         if not registry_file.exists():
             return
@@ -658,7 +662,7 @@ class SessionManager:
             logger.warning(f"Failed to load channel registry: {e}")
 
     def _save_channel_registry(self) -> None:
-        """保存通道注册表到文件（原子写入）"""
+        """Save the channel registry to file (atomic write)"""
         registry_file = self.storage_path / "channel_registry.json"
         try:
             atomic_json_write(registry_file, self._channel_registry)
@@ -667,23 +671,24 @@ class SessionManager:
 
     def _update_channel_registry(self, channel: str, chat_id: str, user_id: str) -> None:
         """
-        更新通道注册表
+        Update the channel registry
 
-        每当有新 session 创建时调用，持久记录 channel→chat_id 映射。
-        兼容旧格式（单 dict）和新格式（list of dicts）。
-        同一 channel 保留最近活跃的多个 chat_id（上限 20）。
+        Called whenever a new session is created, to persistently record the
+        channel->chat_id mapping.
+        Compatible with both the legacy format (single dict) and the new format (list of dicts).
+        For the same channel, keeps the most recently active chat_ids (up to 20).
         """
         now = datetime.now().isoformat()
         entry = self._channel_registry.get(channel)
 
-        # 兼容旧格式：将单 dict 升级为 list
+        # Legacy format compatibility: upgrade a single dict to a list
         if isinstance(entry, dict):
             entry = [entry]
 
         if not isinstance(entry, list):
             entry = []
 
-        # 更新或追加
+        # Update or append
         found = False
         for item in entry:
             if item.get("chat_id") == chat_id:
@@ -694,27 +699,27 @@ class SessionManager:
         if not found:
             entry.append({"chat_id": chat_id, "user_id": user_id, "last_seen": now})
 
-        # 按 last_seen 排序，保留最近 20 条
+        # Sort by last_seen, keep the most recent 20
         entry.sort(key=lambda x: x.get("last_seen", ""), reverse=True)
         self._channel_registry[channel] = entry[:20]
         self._save_channel_registry()
 
     def get_known_channel_target(self, channel: str) -> tuple[str, str] | None:
         """
-        从通道注册表查找通道的最后已知 chat_id
+        Look up the last known chat_id for a channel from the channel registry
 
-        用于定时任务等场景：即使当前没有活跃 session，
-        也能通过历史记录找到推送目标。
+        Used in scenarios such as scheduled tasks: even when there is no active session,
+        a push target can still be resolved from historical records.
 
         Returns:
-            (channel_name, chat_id) 或 None
+            (channel_name, chat_id) or None
         """
         entry = self._channel_registry.get(channel)
-        # 兼容旧格式（单 dict）
+        # Legacy format compatibility (single dict)
         if isinstance(entry, dict):
             if entry.get("chat_id"):
                 return (channel, entry["chat_id"])
-        # 新格式（list of dicts）：返回最近活跃的
+        # New format (list of dicts): return the most recently active
         elif isinstance(entry, list) and entry:
             top = entry[0]
             if top.get("chat_id"):
@@ -722,7 +727,7 @@ class SessionManager:
         return None
 
     def get_all_channel_targets(self, channel: str) -> list[tuple[str, str]]:
-        """返回通道的所有已知 chat_id（多群场景）。"""
+        """Return all known chat_ids for the channel (multi-group scenario)."""
         entry = self._channel_registry.get(channel)
         if isinstance(entry, dict):
             if entry.get("chat_id"):
@@ -734,10 +739,11 @@ class SessionManager:
 
     def _save_sessions(self) -> bool:
         """
-        保存会话到文件（原子写入）
+        Save sessions to file (atomic write)
 
-        使用临时文件 + 重命名的方式，确保写入过程中断不会损坏原文件。
-        返回 True 表示保存成功，False 表示失败（调用方应重试）。
+        Uses a temp file + rename approach to ensure that an interrupted write
+        does not corrupt the original file.
+        Returns True on success, False on failure (caller should retry).
         """
         sessions_file = self.storage_path / "sessions.json"
         temp_file = self.storage_path / "sessions.json.tmp"
@@ -746,22 +752,22 @@ class SessionManager:
         try:
             data = [session.to_dict() for session in self._sessions.values()]
 
-            # 1. 先写入临时文件
+            # 1. Write to temp file first
             with open(temp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
 
-            # 2. 验证临时文件可以正确解析
+            # 2. Verify the temp file can be parsed correctly
             with open(temp_file, encoding="utf-8") as f:
-                json.load(f)  # 验证 JSON 格式正确
+                json.load(f)  # Verify JSON format is valid
 
-            # 3. 备份旧文件（如果存在）
+            # 3. Back up the old file (if it exists)
             if sessions_file.exists():
                 try:
                     sessions_file.replace(backup_file)
                 except Exception as e:
                     logger.warning(f"Failed to backup sessions file: {e}")
 
-            # 4. 原子重命名临时文件为正式文件 (replace works on Windows too)
+            # 4. Atomically rename the temp file to the final file (replace works on Windows too)
             temp_file.replace(sessions_file)
 
             logger.debug(f"Saved {len(data)} sessions to storage (atomic)")
@@ -769,17 +775,17 @@ class SessionManager:
 
         except Exception as e:
             logger.error(f"Failed to save sessions: {e}", exc_info=True)
-            # 清理临时文件
+            # Clean up temp file
             if temp_file.exists():
                 with contextlib.suppress(Exception):
                     temp_file.unlink()
             return False
 
     async def _save_sessions_async(self) -> None:
-        """异步保存会话（在线程池中执行同步 I/O）"""
+        """Save sessions asynchronously (synchronous I/O is run in a thread pool)"""
         await asyncio.to_thread(self._save_sessions)
 
-    # ==================== 会话操作快捷方法 ====================
+    # ==================== Session operation shortcuts ====================
 
     def add_message(
         self,
@@ -790,10 +796,10 @@ class SessionManager:
         content: str,
         **metadata,
     ) -> Session:
-        """添加消息到会话"""
+        """Add a message to the session"""
         session = self.get_session(channel, chat_id, user_id)
         session.add_message(role, content, **metadata)
-        self.mark_dirty()  # 标记需要保存
+        self.mark_dirty()  # Mark as needing save
         return session
 
     def get_history(
@@ -803,7 +809,7 @@ class SessionManager:
         user_id: str,
         limit: int | None = None,
     ) -> list[dict]:
-        """获取会话历史"""
+        """Get session history"""
         session = self.get_session(channel, chat_id, user_id, create_if_missing=False)
         if session:
             return session.context.get_messages(limit)
@@ -815,11 +821,11 @@ class SessionManager:
         chat_id: str,
         user_id: str,
     ) -> bool:
-        """清空会话历史"""
+        """Clear session history"""
         session = self.get_session(channel, chat_id, user_id, create_if_missing=False)
         if session:
             session.context.clear_messages()
-            self.mark_dirty()  # 标记需要保存
+            self.mark_dirty()  # Mark as needing save
             return True
         return False
 
@@ -831,11 +837,11 @@ class SessionManager:
         key: str,
         value: Any,
     ) -> bool:
-        """设置会话变量"""
+        """Set a session variable"""
         session = self.get_session(channel, chat_id, user_id, create_if_missing=False)
         if session:
             session.context.set_variable(key, value)
-            self.mark_dirty()  # 标记需要保存
+            self.mark_dirty()  # Mark as needing save
             return True
         return False
 
@@ -847,7 +853,7 @@ class SessionManager:
         key: str,
         default: Any = None,
     ) -> Any:
-        """获取会话变量"""
+        """Get a session variable"""
         session = self.get_session(channel, chat_id, user_id, create_if_missing=False)
         if session:
             return session.context.get_variable(key, default)

@@ -1,7 +1,7 @@
 """
-记忆系统
+Memory system
 
-管理 USER.md 和 MEMORY.md，以及数据库中的记忆。
+Manages USER.md and MEMORY.md, as well as database-stored memories.
 """
 
 import logging
@@ -19,12 +19,12 @@ logger = logging.getLogger(__name__)
 
 class Memory:
     """
-    记忆系统
+    Memory system
 
-    管理:
-    - MEMORY.md - 工作记忆（任务进度、经验）
-    - USER.md - 用户档案（偏好、习惯）
-    - 数据库 - 持久化存储
+    Manages:
+    - MEMORY.md - Working memory (task progress, experience)
+    - USER.md - User profile (preferences, habits)
+    - Database - Persistent storage
     """
 
     def __init__(
@@ -41,11 +41,11 @@ class Memory:
         self._user_cache: str | None = None
 
     async def initialize(self, db: Database | None = None) -> None:
-        """初始化记忆系统"""
+        """Initialize the memory system."""
         if db:
             self.db = db
 
-        # 确保文件存在
+        # Ensure files exist
         if not self.memory_path.exists():
             self._create_default_memory()
 
@@ -55,65 +55,65 @@ class Memory:
         logger.info("Memory system initialized")
 
     def _create_default_memory(self) -> None:
-        """创建默认 MEMORY.md"""
+        """Create the default MEMORY.md."""
         content = f"""# OpenAkita Memory
 
 ## Current Task Progress
 
 ### Active Task
 
-[当前没有活跃任务]
+[No active task]
 
 ## Implementation Plan
 
 ### High Priority
 
-[暂无]
+[None yet]
 
 ## Learned Experiences
 
-[暂无]
+[None yet]
 
 ## Statistics
 
-- **总任务数**: 0
-- **成功任务**: 0
-- **失败任务**: 0
+- **Total tasks**: 0
+- **Successful tasks**: 0
+- **Failed tasks**: 0
 
 ---
-*最后更新: {datetime.now().isoformat()}*
+*Last updated: {datetime.now().isoformat()}*
 """
 
         self.memory_path.write_text(content, encoding="utf-8")
 
     def _create_default_user(self) -> None:
-        """创建默认 USER.md"""
+        """Create the default USER.md."""
         content = f"""# User Profile
 
 ## Basic Information
 
-- **名称**: [待学习]
-- **工作领域**: [待学习]
-- **主要语言**: 中文
+- **Name**: [To be learned]
+- **Work domain**: [To be learned]
+- **Primary language**: Chinese
 
 ## Preferences
 
-[待学习]
+[To be learned]
 
 ## Interaction Patterns
 
-[待学习]
+[To be learned]
 
 ---
-*最后更新: {datetime.now().isoformat()}*
+*Last updated: {datetime.now().isoformat()}*
 """
 
         self.user_path.write_text(content, encoding="utf-8")
 
-    # ===== MEMORY.md 操作 =====
+    # ===== MEMORY.md operations =====
 
     def load_memory(self) -> str:
-        """加载 MEMORY.md"""
+        """Load MEMORY.md."""
         if self.memory_path.exists():
             self._memory_cache = self.memory_path.read_text(encoding="utf-8")
         else:
@@ -122,11 +122,11 @@ class Memory:
         return self._memory_cache
 
     def save_memory(self, content: str) -> None:
-        """保存 MEMORY.md"""
-        # 更新时间戳
+        """Save MEMORY.md."""
+        # Update timestamp
         content = re.sub(
-            r"\*最后更新: .+\*",
-            f"*最后更新: {datetime.now().isoformat()}*",
+            r"\*Last updated: .+\*",
+            f"*Last updated: {datetime.now().isoformat()}*",
             content,
         )
         self.memory_path.write_text(content, encoding="utf-8")
@@ -139,25 +139,25 @@ class Memory:
         status: str,
         attempts: int = 0,
     ) -> None:
-        """更新当前活跃任务"""
+        """Update the current active task."""
         content = self.load_memory()
 
         task_info = f"""### Active Task
 
 - **ID**: {task_id}
-- **描述**: {description}
-- **状态**: {status}
-- **尝试次数**: {attempts}
-- **更新时间**: {datetime.now().isoformat()}
+- **Description**: {description}
+- **Status**: {status}
+- **Attempts**: {attempts}
+- **Updated at**: {datetime.now().isoformat()}
 """
 
-        # 替换 Active Task 部分
+        # Replace the Active Task section
         if "### Active Task" in content:
-            # 找到下一个 ## 或 ### 的位置
+            # Find the position of the next ## or ###
             start = content.find("### Active Task")
             end = start + len("### Active Task")
 
-            # 查找下一个标题
+            # Find the next heading
             next_heading = len(content)
             for pattern in ["## ", "### "]:
                 pos = content.find(pattern, end + 1)
@@ -166,7 +166,7 @@ class Memory:
 
             content = content[:start] + task_info + "\n" + content[next_heading:]
         else:
-            # 在 Current Task Progress 后插入
+            # Insert after Current Task Progress
             insert_pos = content.find("## Current Task Progress")
             if insert_pos != -1:
                 insert_pos = content.find("\n", insert_pos) + 1
@@ -175,12 +175,12 @@ class Memory:
         self.save_memory(content)
 
     def add_experience(self, category: str, content: str) -> None:
-        """添加经验记录"""
+        """Add an experience record."""
         memory = self.load_memory()
 
         entry = f"\n- **[{datetime.now().strftime('%Y-%m-%d %H:%M')}]** [{category}] {content}"
 
-        # 在 Learned Experiences 部分添加
+        # Add to the Learned Experiences section
         section = "## Learned Experiences"
         if section in memory:
             pos = memory.find(section)
@@ -190,23 +190,23 @@ class Memory:
             if end_pos == -1:
                 end_pos = len(memory)
 
-            # 在 [暂无] 后或列表末尾添加
-            insert_pos = memory.find("[暂无]", pos)
+            # Add after [None yet] or at end of list
+            insert_pos = memory.find("[None yet]", pos)
             if insert_pos != -1 and insert_pos < end_pos:
-                # 替换 [暂无]
-                memory = memory[:insert_pos] + entry[1:] + memory[insert_pos + 4 :]
+                # Replace [None yet]
+                memory = memory[:insert_pos] + entry[1:] + memory[insert_pos + 10 :]
             else:
-                # 在部分末尾添加
+                # Add at end of section
                 memory = memory[:end_pos] + entry + "\n" + memory[end_pos:]
 
             self.save_memory(memory)
 
     def update_statistics(self, **kwargs: int) -> None:
-        """更新统计数据"""
+        """Update statistics."""
         memory = self.load_memory()
 
         for key, value in kwargs.items():
-            # 查找并更新统计项
+            # Find and update statistics entry
             pattern = rf"(\*\*{key}\*\*: )(\d+)"
             match = re.search(pattern, memory)
             if match:
@@ -216,10 +216,10 @@ class Memory:
 
         self.save_memory(memory)
 
-    # ===== USER.md 操作 =====
+    # ===== USER.md operations =====
 
     def load_user(self) -> str:
-        """加载 USER.md"""
+        """Load USER.md."""
         if self.user_path.exists():
             self._user_cache = self.user_path.read_text(encoding="utf-8")
         else:
@@ -228,21 +228,21 @@ class Memory:
         return self._user_cache
 
     def save_user(self, content: str) -> None:
-        """保存 USER.md"""
+        """Save USER.md."""
         content = re.sub(
-            r"\*最后更新: .+\*",
-            f"*最后更新: {datetime.now().isoformat()}*",
+            r"\*Last updated: .+\*",
+            f"*Last updated: {datetime.now().isoformat()}*",
             content,
         )
         self.user_path.write_text(content, encoding="utf-8")
         self._user_cache = content
 
     def update_user_field(self, field: str, value: str) -> None:
-        """更新用户档案字段"""
+        """Update a user profile field."""
         content = self.load_user()
 
-        # 查找并更新字段
-        pattern = rf"(\*\*{field}\*\*: )(\[待学习\]|.+?)(\n)"
+        # Find and update the field
+        pattern = rf"(\*\*{field}\*\*: )(\[To be learned\]|.+?)(\n)"
         match = re.search(pattern, content)
         if match:
             content = (
@@ -254,17 +254,17 @@ class Memory:
             self.save_user(content)
 
     def learn_preference(self, key: str, value: Any) -> None:
-        """学习用户偏好"""
-        # 更新 USER.md
+        """Learn a user preference."""
+        # Update USER.md
         self.update_user_field(key, str(value))
 
-        # 保存到数据库
+        # Save to database
         if self.db:
             import asyncio
 
             asyncio.create_task(self.db.set_preference(key, value))
 
-    # ===== 数据库记忆操作 =====
+    # ===== Database memory operations =====
 
     async def remember(
         self,
@@ -274,16 +274,16 @@ class Memory:
         tags: list[str] | None = None,
     ) -> int:
         """
-        记住一条信息
+        Remember a piece of information.
 
         Args:
-            content: 内容
-            category: 分类 (task, experience, discovery, error)
-            importance: 重要性 0-10
-            tags: 标签
+            content: The content to remember
+            category: Category (task, experience, discovery, error)
+            importance: Importance 0-10
+            tags: Tags
 
         Returns:
-            记忆 ID
+            Memory ID
         """
         if not self.db:
             logger.warning("Database not connected, memory not persisted")
@@ -306,15 +306,15 @@ class Memory:
         limit: int = 10,
     ) -> list[MemoryEntry]:
         """
-        回忆信息
+        Recall information.
 
         Args:
-            query: 搜索词
-            category: 分类过滤
-            limit: 结果数量
+            query: Search term
+            category: Category filter
+            limit: Number of results
 
         Returns:
-            记忆列表
+            List of memories
         """
         if not self.db:
             return []
@@ -326,21 +326,21 @@ class Memory:
 
     async def get_context_for_task(self, task_description: str) -> str:
         """
-        获取任务相关的上下文记忆
+        Retrieve context memories relevant to a task.
 
         Args:
-            task_description: 任务描述
+            task_description: Task description
 
         Returns:
-            相关记忆的摘要
+            Summary of relevant memories
         """
-        # 搜索相关记忆
+        # Search for related memories
         memories = await self.recall(task_description, limit=5)
 
         if not memories:
             return ""
 
-        context = "## 相关经验\n\n"
+        context = "## Relevant Experience\n\n"
         for mem in memories:
             context += f"- [{mem.category}] {mem.content}\n"
 

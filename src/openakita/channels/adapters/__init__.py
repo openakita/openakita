@@ -1,15 +1,15 @@
 """
-IM 通道适配器
+IM channel adapters
 
-各平台的具体实现:
+Platform-specific implementations:
 - Telegram
-- 飞书
-- 企业微信（智能机器人 — HTTP 回调）
-- 企业微信（智能机器人 — WebSocket 长连接）
-- 钉钉
-- OneBot (通用协议)
-- QQ 官方机器人
-- 微信个人号（iLink Bot API）
+- Feishu (Lark)
+- WeCom (smart bot — HTTP callback)
+- WeCom (smart bot — WebSocket long connection)
+- DingTalk
+- OneBot (universal protocol)
+- QQ Official Bot
+- WeChat personal account (iLink Bot API)
 """
 
 from .dingtalk import DingTalkAdapter

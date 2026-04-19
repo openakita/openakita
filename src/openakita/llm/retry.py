@@ -1,12 +1,12 @@
 """
-重试与退避策略
+Retry and backoff strategies
 
-参考 Claude Code withRetry.ts 设计:
-- 指数退避: BASE_DELAY * 2^(attempt-1)，上限 32s，加 25% jitter
-- Retry-After 头优先
-- 429 vs 529 区分
-- 连续 529 达 3 次触发 fallback model
-- Persistent 模式: 长等待 + 心跳
+Modeled after Claude Code withRetry.ts design:
+- Exponential backoff: BASE_DELAY * 2^(attempt-1), capped at 32s, with 25% jitter
+- Retry-After header takes precedence
+- 429 vs 529 differentiation
+- 3 consecutive 529s triggers fallback model
+- Persistent mode: long waits + heartbeats
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ FOREGROUND_SOURCES = {"main_loop", "repl_main_thread"}
 
 @dataclass
 class RetryContext:
-    """重试上下文（可变状态，不污染 LLMRequest）"""
+    """Retry context (mutable state, kept separate from LLMRequest)"""
 
     max_tokens_override: int | None = None
     consecutive_529: int = 0
@@ -47,7 +47,7 @@ class RetryContext:
 
 @dataclass
 class RetryEvent:
-    """重试过程中的事件（供 UI/日志消费）"""
+    """Event emitted during retries (consumed by UI / logging)"""
 
     type: str  # 'retry_wait', 'heartbeat', 'fallback_triggered', 'error'
     message: str = ""
@@ -59,15 +59,15 @@ def calculate_retry_delay(
     retry_after: float | None = None,
     persistent: bool = False,
 ) -> float:
-    """计算重试延迟（毫秒）。
+    """Calculate the retry delay in milliseconds.
 
     Args:
-        attempt: 当前尝试次数 (1-based)
-        retry_after: 服务器返回的 Retry-After 秒数
-        persistent: 是否持久模式（长等待）
+        attempt: Current attempt number (1-based)
+        retry_after: Retry-After seconds returned by the server
+        persistent: Whether to use persistent mode (long waits)
 
     Returns:
-        延迟毫秒数
+        Delay in milliseconds
     """
     if retry_after is not None and retry_after > 0:
         return retry_after * 1000
@@ -79,9 +79,9 @@ def calculate_retry_delay(
 
 
 def parse_retry_after(headers: dict | None) -> float | None:
-    """从 HTTP 响应头解析 Retry-After 值。
+    """Parse the Retry-After value from HTTP response headers.
 
-    支持: 秒数 (int/float) 和 HTTP-date 格式。
+    Supports: seconds (int/float) and HTTP-date format.
     """
     if not headers:
         return None
@@ -108,7 +108,7 @@ def should_retry(
     attempt: int,
     max_retries: int = MAX_RETRIES,
 ) -> bool:
-    """判断是否应该重试。"""
+    """Determine whether the request should be retried."""
     if attempt >= max_retries:
         return False
 
@@ -159,15 +159,15 @@ def should_retry(
 
 
 def is_529_error(error: Exception) -> bool:
-    """判断是否为 529 (overloaded) 错误。"""
+    """Check whether the error is a 529 (overloaded) error."""
     return "529" in str(error)
 
 
 def is_context_overflow_error(error: Exception) -> int | None:
-    """检查是否为上下文窗口溢出错误，返回建议的 max_tokens。
+    """Check whether the error is a context-window overflow and return a suggested max_tokens.
 
     Returns:
-        建议的 max_tokens，如果不是溢出错误则返回 None
+        Suggested max_tokens, or None if not an overflow error
     """
     error_str = str(error).lower()
     overflow_indicators = (
@@ -205,16 +205,16 @@ async def retry_with_backoff(
     query_source: str = "",
     persistent: bool = False,
 ) -> AsyncIterator[RetryEvent | Any]:
-    """带退避的重试包装器 (async generator)。
+    """Retry wrapper with backoff (async generator).
 
-    在重试等待期间 yield RetryEvent，成功时 yield 结果。
-    调用方通过 async for 消费。
+    Yields RetryEvent during wait periods; yields the result on success.
+    The caller consumes via ``async for``.
 
     Args:
-        fn: async callable，调用目标
-        max_retries: 最大重试次数
-        query_source: 请求来源（影响 529 策略）
-        persistent: 持久模式
+        fn: Async callable to invoke
+        max_retries: Maximum number of retries
+        query_source: Origin of the request (affects 529 strategy)
+        persistent: Whether to use persistent mode
     """
     ctx = RetryContext()
 

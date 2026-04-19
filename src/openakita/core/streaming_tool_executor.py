@@ -1,12 +1,12 @@
 """
-流式工具执行器
+Streaming Tool Executor
 
-参考 Claude Code 的 StreamingToolExecutor 设计:
-- 模型流式输出时，tool_use 块一到达就排队执行
-- 只读并发安全工具可并行，非安全工具独占
-- getCompletedResults() 在流式过程中返回已完成结果
-- getRemainingResults() 等待全部完成
-- Bash 错误触发 sibling abort
+Inspired by Claude Code's StreamingToolExecutor design:
+- When the model streams output, tool_use blocks are queued for execution as they arrive
+- Read-only concurrency-safe tools run in parallel; non-safe tools run exclusively
+- getCompletedResults() returns finished results during streaming
+- getRemainingResults() waits for all results to complete
+- Bash errors trigger sibling abort
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ MAX_CONCURRENT_SAFE_TOOLS = 5
 
 @dataclass
 class PendingToolCall:
-    """排队中的工具调用"""
+    """Pending tool call"""
 
     tool_use_id: str
     tool_name: str
@@ -36,10 +36,10 @@ class PendingToolCall:
 
 
 class StreamingToolExecutor:
-    """流式工具执行器。
+    """Streaming tool executor.
 
-    在模型流式输出过程中，每当一个 tool_use 块完整到达，
-    立即开始执行。并发安全的工具可以并行执行。
+    During model streaming output, each complete tool_use block is
+    executed immediately. Concurrency-safe tools run in parallel.
 
     Usage:
         executor = StreamingToolExecutor(execute_fn, is_safe_fn)
@@ -70,7 +70,7 @@ class StreamingToolExecutor:
         self._abort_event = asyncio.Event()
 
     def add_tool(self, tool_use_id: str, tool_name: str, tool_input: dict) -> None:
-        """添加一个工具调用到执行队列。"""
+        """Add a tool call to the execution queue."""
         is_safe = self._is_safe_fn(tool_name, tool_input)
         pending = PendingToolCall(
             tool_use_id=tool_use_id,
@@ -82,11 +82,11 @@ class StreamingToolExecutor:
         self._schedule(pending)
 
     def _schedule(self, pending: PendingToolCall) -> None:
-        """调度工具执行任务。"""
+        """Schedule a tool execution task."""
         pending.task = asyncio.create_task(self._run_tool(pending))
 
     async def _run_tool(self, pending: PendingToolCall) -> None:
-        """执行单个工具。"""
+        """Execute a single tool."""
         if self._abort_event.is_set():
             pending.error = "Aborted by sibling error"
             pending.completed = True
@@ -100,7 +100,7 @@ class StreamingToolExecutor:
             await self._execute_one(pending)
 
     async def _execute_one(self, pending: PendingToolCall) -> None:
-        """执行单个工具并记录结果。"""
+        """Execute a single tool and record the result."""
         try:
             result = await self._execute_fn(pending.tool_name, pending.tool_input)
             pending.result = str(result) if result is not None else ""
@@ -118,10 +118,10 @@ class StreamingToolExecutor:
             self._completed.append(pending)
 
     def get_completed_results(self) -> list[dict]:
-        """获取已完成的工具结果（不阻塞）。
+        """Get completed tool results (non-blocking).
 
         Returns:
-            按原始顺序排列的已完成结果列表
+            List of completed results in original order
         """
         results = []
         newly_completed = []
@@ -134,13 +134,13 @@ class StreamingToolExecutor:
         return results
 
     async def get_remaining_results(self, timeout: float = 300.0) -> list[dict]:
-        """等待所有工具执行完成并返回结果。
+        """Wait for all tools to finish and return results.
 
         Args:
-            timeout: 总超时秒数
+            timeout: Total timeout in seconds
 
         Returns:
-            所有工具结果的列表（按原始顺序）
+            List of all tool results (in original order)
         """
         tasks = [p.task for p in self._queue if p.task and not p.completed]
         if tasks:
@@ -164,7 +164,7 @@ class StreamingToolExecutor:
 
     @staticmethod
     def _to_result_dict(pending: PendingToolCall) -> dict:
-        """将 PendingToolCall 转为结果 dict。"""
+        """Convert PendingToolCall to a result dict."""
         return {
             "tool_use_id": pending.tool_use_id,
             "tool_name": pending.tool_name,
@@ -174,5 +174,5 @@ class StreamingToolExecutor:
 
     @staticmethod
     def _is_bash_error(tool_name: str, error: Exception) -> bool:
-        """判断是否为 bash 执行错误（触发 sibling abort）。"""
+        """Check if the error is a bash execution error (triggers sibling abort)."""
         return tool_name in ("run_shell", "bash", "execute_command")

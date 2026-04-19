@@ -14,7 +14,7 @@ Search for Agents on the OpenAkita Platform Agent Store.
 ## When to Use
 
 - User wants to find or browse Agents on the OpenAkita marketplace
-- User asks "有什么 Agent 可以用" or "搜索一个 XX Agent"
+- User asks "have Agent " or "search XX Agent"
 - User wants to discover community-shared Agents by category
 
 ## Workflow
@@ -28,7 +28,7 @@ Search for Agents on the OpenAkita Platform Agent Store.
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `query` | No | Search keyword (e.g. "客服", "project manager") |
+| `query` | No | Search keyword (e.g. "", "project manager") |
 | `category` | No | Filter: customer_service, development, business, creative, education, productivity, general |
 | `sort` | No | Sort by: downloads (default), rating, newest |
 | `page` | No | Page number (default 1, 20 results per page) |

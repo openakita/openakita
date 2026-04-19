@@ -1,5 +1,5 @@
 """
-File 工具 - 文件操作
+File tool - File operations
 """
 
 import logging
@@ -35,19 +35,19 @@ DEFAULT_IGNORE_DIRS = {
 
 
 class FileTool:
-    """文件操作工具"""
+    """File operation tool"""
 
     def __init__(self, base_path: str | None = None):
         self.base_path = Path(base_path) if base_path else Path.cwd()
 
     def _resolve_path(self, path: str) -> Path:
-        """解析路径（支持相对路径和绝对路径）"""
+        """Resolve path (supports relative and absolute paths)"""
         p = Path(path)
         if p.is_absolute():
             return p
         return self.base_path / p
 
-    # 二进制文件扩展名
+    # Binary file extensions
     BINARY_EXTENSIONS = {
         ".png",
         ".jpg",
@@ -91,34 +91,34 @@ class FileTool:
 
     async def read(self, path: str, encoding: str = "utf-8") -> str:
         """
-        读取文件内容
+        Read file content
 
         Args:
-            path: 文件路径
-            encoding: 编码
+            path: File path
+            encoding: Encoding
 
         Returns:
-            文件内容（二进制文件返回提示信息）
+            File content (returns message for binary files)
         """
         file_path = self._resolve_path(path)
         logger.debug(f"Reading file: {file_path}")
 
-        # 检查是否为二进制文件
+        # Check if it is a binary file
         suffix = file_path.suffix.lower()
         if suffix in self.BINARY_EXTENSIONS:
-            # 获取文件大小
+            # Get file size
             stat = await aiofiles.os.stat(file_path)
             size_kb = stat.st_size / 1024
-            return f"[二进制文件: {file_path.name}, 类型: {suffix}, 大小: {size_kb:.1f}KB - 无法作为文本读取]"
+            return f"[Binary file: {file_path.name}, type: {suffix}, size: {size_kb:.1f}KB - cannot be read as text]"
 
         try:
             async with aiofiles.open(file_path, encoding=encoding) as f:
                 return await f.read()
         except UnicodeDecodeError:
-            # 尝试检测编码或返回二进制提示
+            # Try detecting encoding or return binary message
             stat = await aiofiles.os.stat(file_path)
             size_kb = stat.st_size / 1024
-            return f"[无法解码的文件: {file_path.name}, 大小: {size_kb:.1f}KB - 可能是二进制文件或使用了非 {encoding} 编码]"
+            return f"[File cannot be decoded: {file_path.name}, size: {size_kb:.1f}KB - may be a binary file or uses non-{encoding} encoding]"
 
     async def write(
         self,
@@ -128,13 +128,13 @@ class FileTool:
         create_dirs: bool = True,
     ) -> None:
         """
-        写入文件
+        Write file
 
         Args:
-            path: 文件路径
-            content: 内容
-            encoding: 编码
-            create_dirs: 是否自动创建目录
+            path: File path
+            content: Content
+            encoding: Encoding
+            create_dirs: Whether to auto-create directories
         """
         file_path = self._resolve_path(path)
 
@@ -153,12 +153,12 @@ class FileTool:
         encoding: str = "utf-8",
     ) -> None:
         """
-        追加内容到文件
+        Append content to file
 
         Args:
-            path: 文件路径
-            content: 内容
-            encoding: 编码
+            path: File path
+            content: Content
+            encoding: Encoding
         """
         file_path = self._resolve_path(path)
         logger.debug(f"Appending to file: {file_path}")
@@ -167,11 +167,11 @@ class FileTool:
             await f.write(content)
 
     async def _read_preserving_newlines(self, path: str) -> str:
-        """读取文件内容，保留原始换行符（不做 CRLF→LF 转换）。
+        """Read file content, preserve original line breaks (no CRLF→LF conversion).
 
-        普通 ``read()`` 使用 text mode 会将 ``\\r\\n`` 转为 ``\\n``，
-        导致写回时丢失原有换行风格。本方法使用 ``newline=''``
-        保留原始字节级换行符。
+        Normal ``read()`` uses text mode which converts ``\\r\\n`` to ``\\n``,
+        losing the original line ending style when writing back. This method uses ``newline=''``
+        to preserve original byte-level line breaks.
         """
         file_path = self._resolve_path(path)
         suffix = file_path.suffix.lower()
@@ -184,7 +184,7 @@ class FileTool:
             raise ValueError(f"Cannot decode file (non-UTF-8): {file_path.name}") from e
 
     async def _write_preserving_newlines(self, path: str, content: str) -> None:
-        """写入文件内容，保留原始换行符（不做 LF→CRLF 转换）。"""
+        """Write file content, preserve original line breaks (no LF→CRLF conversion)."""
         file_path = self._resolve_path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         async with aiofiles.open(file_path, mode="w", encoding="utf-8", newline="") as f:
@@ -197,12 +197,12 @@ class FileTool:
         new_string: str,
         replace_all: bool = False,
     ) -> dict:
-        """精确字符串替换式编辑（兼容 CRLF/LF）。
+        """Exact string replacement editing (CRLF/LF compatible).
 
-        使用 ``newline=''`` 读写，保留文件原始换行风格。LLM 产生的
-        old_string 换行符始终是 ``\\n``，但 Windows 文件可能使用
-        ``\\r\\n``。本方法先尝试原始匹配，失败后自动将 old_string 中的
-        ``\\n`` 适配为 ``\\r\\n`` 重试，写回时保留文件原有换行风格。
+        Use ``newline=''`` for reading/writing, preserve original file line style.
+        LLM-generated old_string always has ``\\n`` line breaks, but Windows files may use
+        ``\\r\\n``. This method first tries exact matching, and on failure automatically adapts
+        ``\\n`` in old_string to ``\\r\\n`` and retries. Writing preserves original line style.
 
         Returns:
             dict with keys: replaced (int), path (str)
@@ -215,11 +215,11 @@ class FileTool:
 
         raw = await self._read_preserving_newlines(path)
 
-        # Phase 1: 直接匹配（文件本身就是 LF，或 old_string 已包含 CRLF）
+        # Phase 1: Direct match (file is LF, or old_string already contains CRLF)
         count = raw.count(old_string)
 
         if count == 0:
-            # Phase 2: LLM 给的 \n，文件是 \r\n → 适配后重试
+            # Phase 2: LLM-provided \n, file is \r\n → adapt and retry
             if "\r\n" in raw and "\n" in old_string:
                 adapted_old = old_string.replace("\n", "\r\n")
                 count = raw.count(adapted_old)
@@ -260,7 +260,7 @@ class FileTool:
         max_results: int = 50,
         case_insensitive: bool = False,
     ) -> list[dict]:
-        """纯 Python 内容搜索（跨平台，无需外部工具）。
+        """Pure Python content search (cross-platform, no external tools needed).
 
         Returns:
             list of dicts: {file, line, text, context_before, context_after}
@@ -289,17 +289,17 @@ class FileTool:
             if not file_path.is_file():
                 continue
 
-            # 跳过忽略目录
+            # Skip ignored directories
             parts = file_path.relative_to(dir_path).parts
             if any(p in DEFAULT_IGNORE_DIRS for p in parts):
                 continue
-            # 跳过 .xxx 隐藏目录（除 .github 等常用目录）
+            # Skip .xxx hidden directories (except common ones like .github)
             if any(
                 p.startswith(".") and p not in (".github", ".vscode", ".cursor") for p in parts[:-1]
             ):
                 continue
 
-            # 跳过二进制文件
+            # Skip binary files
             if file_path.suffix.lower() in self.BINARY_EXTENSIONS:
                 continue
 
@@ -330,7 +330,7 @@ class FileTool:
         return results
 
     async def delete(self, path: str) -> bool:
-        """删除单个文件或空目录。非空目录一律拒绝。"""
+        """Delete a single file or empty directory. Non-empty directories are rejected."""
         file_path = self._resolve_path(path)
         logger.debug(f"Deleting: {file_path}")
 
@@ -349,17 +349,17 @@ class FileTool:
             return False
 
     async def exists(self, path: str) -> bool:
-        """检查路径是否存在"""
+        """Check if path exists"""
         file_path = self._resolve_path(path)
         return file_path.exists()
 
     async def is_file(self, path: str) -> bool:
-        """检查是否是文件"""
+        """Check if it is a file"""
         file_path = self._resolve_path(path)
         return file_path.is_file()
 
     async def is_dir(self, path: str) -> bool:
-        """检查是否是目录"""
+        """Check if it is a directory"""
         file_path = self._resolve_path(path)
         return file_path.is_dir()
 
@@ -370,15 +370,15 @@ class FileTool:
         recursive: bool = False,
     ) -> list[str]:
         """
-        列出目录内容
+        List directory contents
 
         Args:
-            path: 目录路径
-            pattern: 文件名模式
-            recursive: 是否递归
+            path: Directory path
+            pattern: File name pattern
+            recursive: Whether to recurse
 
         Returns:
-            文件路径列表
+            List of file paths
         """
         dir_path = self._resolve_path(path)
 
@@ -394,15 +394,15 @@ class FileTool:
         content_pattern: str | None = None,
     ) -> list[str]:
         """
-        搜索文件
+        Search files
 
         Args:
-            pattern: 文件名模式
-            path: 搜索路径
-            content_pattern: 内容匹配模式（可选）
+            pattern: File name pattern
+            path: Search path
+            content_pattern: Content match pattern (optional)
 
         Returns:
-            匹配的文件路径列表
+            List of matching file paths
         """
         import re
 
@@ -425,14 +425,14 @@ class FileTool:
 
     async def copy(self, src: str, dst: str) -> bool:
         """
-        复制文件或目录
+        Copy file or directory
 
         Args:
-            src: 源路径
-            dst: 目标路径
+            src: Source path
+            dst: Destination path
 
         Returns:
-            是否成功
+            Whether successful
         """
         src_path = self._resolve_path(src)
         dst_path = self._resolve_path(dst)
@@ -450,14 +450,14 @@ class FileTool:
 
     async def move(self, src: str, dst: str) -> bool:
         """
-        移动文件或目录
+        Move file or directory
 
         Args:
-            src: 源路径
-            dst: 目标路径
+            src: Source path
+            dst: Destination path
 
         Returns:
-            是否成功
+            Whether successful
         """
         src_path = self._resolve_path(src)
         dst_path = self._resolve_path(dst)
@@ -472,14 +472,14 @@ class FileTool:
 
     async def mkdir(self, path: str, parents: bool = True) -> bool:
         """
-        创建目录
+        Create directory
 
         Args:
-            path: 目录路径
-            parents: 是否创建父目录
+            path: Directory path
+            parents: Whether to create parent directories
 
         Returns:
-            是否成功
+            Whether successful
         """
         dir_path = self._resolve_path(path)
 

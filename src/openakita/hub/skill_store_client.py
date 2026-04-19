@@ -1,12 +1,12 @@
 """
-SkillStoreClient — 与 OpenAkita Platform Skill Store 交互的客户端
+SkillStoreClient — Client for interacting with the OpenAkita Platform Skill Store
 
-功能：
-- search: 搜索平台上的 Skill
-- get_detail: 获取 Skill 详情
-- install: 通过 installUrl 下载并安装 Skill 到本地
-- rate: 为 Skill 评分
-- submit_repo: 提交 GitHub 仓库供索引
+Features:
+- search: Search for Skills on the platform
+- get_detail: Get Skill details
+- install: Download and install a Skill locally via installUrl
+- rate: Rate a Skill
+- submit_repo: Submit a GitHub repository for indexing
 """
 
 from __future__ import annotations
@@ -97,7 +97,7 @@ async def _retry_request(
 
 
 class SkillStoreClient:
-    """Skill Store HTTP 客户端"""
+    """Skill Store HTTP client"""
 
     def __init__(self, base_url: str | None = None):
         self.base_url = (base_url or settings.hub_api_url).rstrip("/")
@@ -197,10 +197,10 @@ class SkillStoreClient:
         *,
         skill_id: str | None = None,
     ) -> Path:
-        """安装 Skill 到本地
+        """Install a Skill locally.
 
-        优先从平台缓存下载 ZIP，失败时 fallback 到 git clone。
-        install_url 格式: owner/repo@skill_name 或完整 git URL
+        Prefers downloading a cached ZIP from the platform; falls back to git clone on failure.
+        install_url format: owner/repo@skill_name or a full git URL.
         """
         if target_dir is None:
             target_dir = settings.skills_path

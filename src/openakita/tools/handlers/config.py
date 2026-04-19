@@ -1,12 +1,12 @@
 """
-系统配置处理器
+System configuration handler
 
-统一处理 system_config 工具的所有 action:
-- discover: 内省 Settings.model_fields 动态发现可配置项
-- get: 查看当前配置
-- set: 修改配置 (.env + 热重载)
-- add_endpoint / remove_endpoint / test_endpoint: LLM 端点管理
-- set_ui: UI 偏好 (主题/语言)
+Unifies all actions of the system_config tool:
+- discover: Introspect Settings.model_fields to dynamically discover configurable items
+- get: View current configuration
+- set: Modify configuration (.env + hot reload)
+- add_endpoint / remove_endpoint / test_endpoint: LLM endpoint management
+- set_ui: UI preferences (theme/language)
 """
 
 import json
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# 黑名单: 不允许通过聊天修改的字段
+# Blocklist: fields that cannot be modified via chat
 # ---------------------------------------------------------------------------
 _READONLY_FIELDS = frozenset(
     {
@@ -36,7 +36,7 @@ _READONLY_FIELDS = frozenset(
 )
 
 # ---------------------------------------------------------------------------
-# 需重启才能生效的字段
+# Fields that require a restart to take effect
 # ---------------------------------------------------------------------------
 _RESTART_REQUIRED_FIELDS = frozenset(
     {
@@ -80,12 +80,12 @@ _RESTART_REQUIRED_FIELDS = frozenset(
 )
 
 # ---------------------------------------------------------------------------
-# 敏感字段模式
+# Pattern for sensitive fields
 # ---------------------------------------------------------------------------
 _SENSITIVE_PATTERN = re.compile(r"(api_key|secret|token|password)", re.IGNORECASE)
 
 # ---------------------------------------------------------------------------
-# 分类推断规则: (前缀/字段名元组, 分类名)
+# Category inference rules: (prefix/field-name tuple, category name)
 # ---------------------------------------------------------------------------
 _CATEGORY_RULES: list[tuple[tuple[str, ...], str]] = [
     (("anthropic_", "default_model", "max_tokens"), "LLM"),
@@ -101,47 +101,48 @@ _CATEGORY_RULES: list[tuple[tuple[str, ...], str]] = [
         ),
         "Agent",
     ),
-    (("thinking_",), "Agent/思考模式"),
-    (("im_chain_push",), "IM/思维链推送"),
-    (("progress_timeout", "hard_timeout"), "Agent/超时"),
-    (("log_",), "日志"),
-    (("whisper_",), "语音识别"),
-    (("http_proxy", "https_proxy", "all_proxy", "force_ipv4"), "代理"),
-    (("model_download_",), "模型下载"),
-    (("embedding_", "search_backend"), "Embedding/记忆搜索"),
-    (("memory_",), "记忆"),
+    (("thinking_",), "Agent/Thinking mode"),
+    (("im_chain_push",), "IM/Chain-of-thought push"),
+    (("progress_timeout", "hard_timeout"), "Agent/Timeouts"),
+    (("log_",), "Logging"),
+    (("whisper_",), "Speech recognition"),
+    (("http_proxy", "https_proxy", "all_proxy", "force_ipv4"), "Proxy"),
+    (("model_download_",), "Model download"),
+    (("embedding_", "search_backend"), "Embedding/Memory search"),
+    (("memory_",), "Memory"),
     (("github_",), "GitHub"),
+    (("search_provider", "search_fallback_enabled", "brave_api_key", "tavily_api_key", "exa_api_key"), "Web Search"),
     (("telegram_",), "IM/Telegram"),
-    (("feishu_",), "IM/飞书"),
-    (("wework_",), "IM/企业微信"),
-    (("dingtalk_",), "IM/钉钉"),
+    (("feishu_",), "IM/Feishu"),
+    (("wework_",), "IM/WeCom"),
+    (("dingtalk_",), "IM/DingTalk"),
     (("onebot_",), "IM/OneBot"),
     (("qqbot_",), "IM/QQ"),
-    (("wechat_",), "IM/微信"),
-    (("session_",), "会话"),
-    (("scheduler_",), "定时任务"),
-    (("orchestration_",), "多Agent协同"),
-    (("persona_",), "人格"),
-    (("proactive_",), "活人感"),
-    (("sticker_",), "表情包"),
-    (("desktop_notify_",), "桌面通知"),
-    (("tracing_",), "追踪"),
-    (("evaluation_",), "评估"),
-    (("ui_",), "UI偏好"),
+    (("wechat_",), "IM/WeChat"),
+    (("session_",), "Session"),
+    (("scheduler_",), "Scheduled tasks"),
+    (("orchestration_",), "Multi-agent orchestration"),
+    (("persona_",), "Persona"),
+    (("proactive_",), "Proactive presence"),
+    (("sticker_",), "Stickers"),
+    (("desktop_notify_",), "Desktop notifications"),
+    (("tracing_",), "Tracing"),
+    (("evaluation_",), "Evaluation"),
+    (("ui_",), "UI preferences"),
 ]
 
 
 def _infer_category(field_name: str) -> str:
-    """根据字段名推断配置分类"""
+    """Infer the configuration category from the field name"""
     for patterns, category in _CATEGORY_RULES:
         for p in patterns:
             if field_name == p or field_name.startswith(p):
                 return category
-    return "其他"
+    return "Other"
 
 
 def _get_field_category(field_name: str, field_info: Any) -> str:
-    """获取字段分类，优先读 json_schema_extra 声明"""
+    """Get the field category, preferring the json_schema_extra declaration"""
     extra = getattr(field_info, "json_schema_extra", None) or {}
     if isinstance(extra, dict) and "category" in extra:
         return extra["category"]
@@ -160,7 +161,7 @@ def _needs_restart(field_name: str, field_info: Any) -> bool:
 
 
 def _mask_value(value: Any) -> str:
-    """脱敏处理"""
+    """Mask sensitive values"""
     s = str(value)
     if len(s) > 6:
         return s[:4] + "***" + s[-2:]
@@ -179,7 +180,7 @@ def _unique_env_key(base: str, used: set[str]) -> str:
 
 
 def _update_env_content(existing: str, entries: dict[str, str]) -> str:
-    """合并 entries 到现有 .env 内容（保留注释和顺序）"""
+    """Merge entries into existing .env content (preserves comments and order)"""
     lines = existing.splitlines()
     updated_keys: set[str] = set()
     new_lines: list[str] = []
@@ -226,7 +227,7 @@ def _check_cli_anything_path() -> str | None:
 
 
 class ConfigHandler:
-    """系统配置处理器"""
+    """System configuration handler"""
 
     TOOLS = ["system_config"]
 
@@ -256,16 +257,16 @@ class ConfigHandler:
                 return self._extensions(params)
             else:
                 return (
-                    f"未知的 action: {action}。支持: discover, get, set, "
+                    f"Unknown action: {action}. Supported: discover, get, set, "
                     "add_endpoint, remove_endpoint, test_endpoint, set_ui, "
                     "manage_provider, extensions"
                 )
         except Exception as e:
             logger.error(f"[ConfigHandler] action={action} failed: {e}", exc_info=True)
-            return f"配置操作失败: {type(e).__name__}: {e}"
+            return f"Configuration operation failed: {type(e).__name__}: {e}"
 
     # ------------------------------------------------------------------
-    # discover: 内省 Settings 动态发现可配置项
+    # discover: Introspect Settings to dynamically discover configurable items
     # ------------------------------------------------------------------
     def _discover(self, params: dict) -> str:
         from ...config import Settings, settings
@@ -279,7 +280,7 @@ class ConfigHandler:
 
             cat = _get_field_category(field_name, field_info)
             if category_filter and cat != category_filter:
-                # 模糊匹配: 用户输入 "Agent" 也能匹配 "Agent/思考模式"
+                # Fuzzy match: user input "Agent" should also match "Agent/Thinking mode"
                 if category_filter not in cat:
                     continue
 
@@ -316,31 +317,31 @@ class ConfigHandler:
 
         if not grouped:
             if category_filter:
-                return f'未找到分类 "{category_filter}" 的配置项。调用 action=discover 不带 category 可查看所有分类。'
-            return "未发现可配置项。"
+                return f'No configuration items found for category "{category_filter}". Call action=discover without a category to view all categories.'
+            return "No configurable items found."
 
         lines = [
-            f"## 可配置项（共 {sum(len(v) for v in grouped.values())} 项，{len(grouped)} 个分类）\n"
+            f"## Configurable items ({sum(len(v) for v in grouped.values())} total, {len(grouped)} categories)\n"
         ]
         for cat in sorted(grouped.keys()):
             items = grouped[cat]
             modified_count = sum(1 for it in items if it["is_modified"])
-            lines.append(f"### {cat} ({len(items)} 项, {modified_count} 项已修改)")
+            lines.append(f"### {cat} ({len(items)} items, {modified_count} modified)")
             for it in items:
-                mark = "**[已修改]** " if it["is_modified"] else ""
-                restart_mark = " ⚠️需重启" if it["needs_restart"] else ""
+                mark = "**[modified]** " if it["is_modified"] else ""
+                restart_mark = " ⚠️ restart required" if it["needs_restart"] else ""
                 sensitive_mark = " 🔒" if it["is_sensitive"] else ""
                 lines.append(
                     f"- `{it['env_name']}` ({it['type']}): {it['description']}"
                     f"{sensitive_mark}{restart_mark}"
                 )
-                lines.append(f"  当前: {mark}{it['current']}  |  默认: {it['default']}")
+                lines.append(f"  current: {mark}{it['current']}  |  default: {it['default']}")
             lines.append("")
 
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
-    # get: 查看当前配置
+    # get: View current configuration
     # ------------------------------------------------------------------
     def _get_config(self, params: dict) -> str:
         from ...config import Settings, settings
@@ -350,13 +351,13 @@ class ConfigHandler:
 
         parts: list[str] = []
 
-        # 如果指定了 keys，直接查询
+        # If keys were specified, query them directly
         if keys_filter:
-            parts.append("## 指定配置项\n")
+            parts.append("## Specified configuration items\n")
             for key in keys_filter:
                 field_name = key.lower()
                 if field_name not in Settings.model_fields:
-                    parts.append(f"- `{key}`: ❌ 不存在")
+                    parts.append(f"- `{key}`: ❌ does not exist")
                     continue
                 val = getattr(settings, field_name, None)
                 if _is_sensitive(field_name) and val:
@@ -365,7 +366,7 @@ class ConfigHandler:
                 parts.append(f"- `{field_name.upper()}`: {val}  ({field_info.description or ''})")
             return "\n".join(parts)
 
-        # 按分类返回配置概览
+        # Return configuration overview grouped by category
         grouped: dict[str, list[str]] = {}
         for field_name, field_info in Settings.model_fields.items():
             if field_name in _READONLY_FIELDS:
@@ -378,17 +379,17 @@ class ConfigHandler:
                 val = _mask_value(val)
             grouped.setdefault(cat, []).append(f"- `{field_name.upper()}` = {val}")
 
-        # 追加 LLM 端点概览（当查看 LLM 分类或无过滤时）
+        # Append LLM endpoint overview (when viewing the LLM category or no filter)
         if not category_filter or "LLM" in category_filter:
             ep_lines = self._format_endpoints_summary()
             if ep_lines:
-                grouped.setdefault("LLM/端点", []).extend(ep_lines)
+                grouped.setdefault("LLM/Endpoints", []).extend(ep_lines)
 
         if not grouped:
-            return "未找到匹配的配置项。"
+            return "No matching configuration items found."
 
         parts.append(
-            "## 当前配置" + (f" (分类: {category_filter})" if category_filter else "") + "\n"
+            "## Current configuration" + (f" (category: {category_filter})" if category_filter else "") + "\n"
         )
         for cat in sorted(grouped.keys()):
             parts.append(f"### {cat}")
@@ -398,13 +399,13 @@ class ConfigHandler:
         return "\n".join(parts)
 
     def _format_endpoints_summary(self) -> list[str]:
-        """格式化 LLM 端点摘要"""
+        """Format the LLM endpoint summary"""
         try:
             from ...llm.config import load_endpoints_config
 
             endpoints, compiler_eps, stt_eps, _ = load_endpoints_config()
         except Exception:
-            return ["- ⚠️ 无法读取端点配置"]
+            return ["- ⚠️ Unable to read endpoint configuration"]
 
         lines = []
         for _i, ep in enumerate(endpoints, 1):
@@ -418,24 +419,24 @@ class ConfigHandler:
             )
 
         if compiler_eps:
-            lines.append(f"- Compiler 端点: {len(compiler_eps)} 个")
+            lines.append(f"- Compiler endpoints: {len(compiler_eps)}")
         if stt_eps:
-            lines.append(f"- STT 端点: {len(stt_eps)} 个")
+            lines.append(f"- STT endpoints: {len(stt_eps)}")
         if not endpoints:
-            lines.append("- (无端点)")
+            lines.append("- (no endpoints)")
         return lines
 
     # ------------------------------------------------------------------
-    # set: 修改配置
+    # set: Modify configuration
     # ------------------------------------------------------------------
     def _set_config(self, params: dict) -> str:
         from ...config import Settings, runtime_state, settings
 
         updates = params.get("updates")
         if not updates or not isinstance(updates, dict):
-            return '❌ updates 参数缺失或格式错误，应为 {"KEY": "value"} 字典'
+            return '❌ The updates parameter is missing or malformed; it should be a {"KEY": "value"} dict'
 
-        # 项目根目录
+        # Project root directory
         project_root = Path(settings.project_root)
         env_path = project_root / ".env"
 
@@ -447,19 +448,19 @@ class ConfigHandler:
         for env_key, new_value in updates.items():
             field_name = env_key.lower()
 
-            # 黑名单检查
+            # Blocklist check
             if field_name in _READONLY_FIELDS:
-                errors.append(f"`{env_key}`: 只读字段，不允许修改")
+                errors.append(f"`{env_key}`: read-only field, cannot be modified")
                 continue
 
-            # 检查字段是否存在
+            # Check whether the field exists
             if field_name not in Settings.model_fields:
-                errors.append(f"`{env_key}`: 未知配置项。可用 action=discover 查看可配置项")
+                errors.append(f"`{env_key}`: unknown configuration item. Use action=discover to view configurable items")
                 continue
 
             field_info = Settings.model_fields[field_name]
 
-            # 类型校验和转换
+            # Type validation and conversion
             _, err = self._validate_value(field_name, field_info, new_value)
             if err:
                 errors.append(f"`{env_key}`: {err}")
@@ -482,9 +483,9 @@ class ConfigHandler:
         if errors:
             error_lines = "\n".join(f"  {e}" for e in errors)
             if not changes:
-                return f"❌ 所有修改都被拒绝:\n{error_lines}"
+                return f"❌ All changes were rejected:\n{error_lines}"
 
-        # 写入 .env
+        # Write to .env
         if env_entries:
             existing = ""
             if env_path.exists():
@@ -492,26 +493,26 @@ class ConfigHandler:
             new_content = _update_env_content(existing, env_entries)
             env_path.write_text(new_content, encoding="utf-8")
 
-            # 同步到 os.environ
+            # Sync to os.environ
             for key, value in env_entries.items():
                 if value:
                     os.environ[key] = value
                 elif key in os.environ:
                     del os.environ[key]
 
-            # 热重载 settings（reload 已跳过 _PERSISTABLE_KEYS 字段）
+            # Hot-reload settings (reload already skips _PERSISTABLE_KEYS fields)
             changed_fields = settings.reload()
             logger.info(
                 f"[ConfigHandler] set: updated {len(env_entries)} entries, reloaded fields: {changed_fields}"
             )
 
-            # 双重保险：恢复运行时持久化字段（防止旧版 reload 或异常路径覆盖）
+            # Double-safety: restore runtime-persistable fields (in case an older reload or error path overwrote them)
             try:
                 runtime_state.load()
             except Exception as e:
                 logger.warning(f"[ConfigHandler] runtime_state.load failed: {e}")
 
-            # 持久化 runtime_state（如果修改了可持久化的字段）
+            # Persist runtime_state (if persistable fields were changed)
             try:
                 from ...config import _PERSISTABLE_KEYS
 
@@ -520,22 +521,35 @@ class ConfigHandler:
             except Exception as e:
                 logger.warning(f"[ConfigHandler] runtime_state save failed: {e}")
 
-        # 构建响应
-        result_lines = ["✅ 配置已更新:\n"] + changes
+            # Reset the router singleton when search provider config changes (hot reload)
+            _SEARCH_FIELDS = {
+                "search_provider", "search_fallback_enabled",
+                "brave_api_key", "tavily_api_key", "exa_api_key",
+            }
+            if any(k.lower() in _SEARCH_FIELDS for k in env_entries):
+                try:
+                    from openakita.tools.handlers.search_providers import reset_router
+                    reset_router()
+                    logger.info("[ConfigHandler] Search provider router reset after config change")
+                except Exception as e:
+                    logger.warning(f"[ConfigHandler] search router reset failed: {e}")
+
+        # Build response
+        result_lines = ["✅ Configuration updated:\n"] + changes
 
         if errors:
-            result_lines.append("\n⚠️ 部分字段被拒绝:")
+            result_lines.append("\n⚠️ Some fields were rejected:")
             result_lines.extend(f"  {e}" for e in errors)
 
         if restart_needed:
-            result_lines.append(f"\n⚠️ 以下字段需要重启服务才能生效: {', '.join(restart_needed)}")
+            result_lines.append(f"\n⚠️ The following fields require a service restart to take effect: {', '.join(restart_needed)}")
 
         return "\n".join(result_lines)
 
     _INT_CONSTRAINTS: dict[str, tuple[int | None, int | None, str]] = {
-        "max_iterations": (15, 10000, "最大迭代次数范围 15~10000，推荐 100~300"),
-        "progress_timeout_seconds": (60, None, "无进展超时最小 60 秒"),
-        "tool_max_parallel": (1, 32, "并行工具数范围 1~32"),
+        "max_iterations": (15, 10000, "Max iterations must be in 15~10000; recommended 100~300"),
+        "progress_timeout_seconds": (60, None, "No-progress timeout must be at least 60 seconds"),
+        "tool_max_parallel": (1, 32, "Parallel tool count must be in 1~32"),
     }
 
     def _check_int_constraints(self, field_name: str, value: int) -> str | None:
@@ -544,33 +558,33 @@ class ConfigHandler:
             return None
         lo, hi, msg = spec
         if lo is not None and value < lo:
-            return f"值 {value} 过小。{msg}"
+            return f"Value {value} is too small. {msg}"
         if hi is not None and value > hi:
-            return f"值 {value} 过大。{msg}"
+            return f"Value {value} is too large. {msg}"
         return None
 
     def _validate_value(
         self, field_name: str, field_info: Any, value: Any
     ) -> tuple[Any, str | None]:
-        """校验配置值的类型和合法性。返回 (validated_value, error_or_None)"""
+        """Validate the type and legality of a configuration value. Returns (validated_value, error_or_None)"""
         annotation = field_info.annotation
 
-        # 处理 str
+        # Handle str
         if annotation is str:
             return str(value), None
 
-        # 处理 int
+        # Handle int
         if annotation is int:
             try:
                 v = int(value)
             except (ValueError, TypeError):
-                return None, f"需要整数，但收到: {value}"
+                return None, f"Expected integer, got: {value}"
             constraint_err = self._check_int_constraints(field_name, v)
             if constraint_err:
                 return None, constraint_err
             return v, None
 
-        # 处理 bool
+        # Handle bool
         if annotation is bool:
             if isinstance(value, bool):
                 return value, None
@@ -579,33 +593,33 @@ class ConfigHandler:
                 return True, None
             elif s in ("false", "0", "no", "off"):
                 return False, None
-            return None, f"需要布尔值 (true/false)，但收到: {value}"
+            return None, f"Expected boolean (true/false), got: {value}"
 
-        # 处理 list (如 thinking_keywords)
+        # Handle list (e.g. thinking_keywords)
         if hasattr(annotation, "__origin__") and annotation.__origin__ is list:
             if isinstance(value, list):
                 return value, None
-            return None, f"需要列表类型，但收到: {type(value).__name__}"
+            return None, f"Expected list, got: {type(value).__name__}"
 
-        # 处理 Path
+        # Handle Path
         if annotation is Path:
-            return None, "路径类型不允许通过聊天修改"
+            return None, "Path types cannot be modified via chat"
 
         return str(value), None
 
     # ------------------------------------------------------------------
-    # add_endpoint: 添加 LLM 端点
+    # add_endpoint: Add an LLM endpoint
     # ------------------------------------------------------------------
     def _add_endpoint(self, params: dict) -> str:
         endpoint_data = params.get("endpoint")
         if not endpoint_data or not isinstance(endpoint_data, dict):
-            return "❌ 缺少 endpoint 参数"
+            return "❌ Missing endpoint parameter"
 
         name = endpoint_data.get("name", "").strip()
         provider = endpoint_data.get("provider", "").strip()
         model = endpoint_data.get("model", "").strip()
         if not name or not provider or not model:
-            return "❌ endpoint 必须包含 name, provider, model"
+            return "❌ endpoint must include name, provider, and model"
 
         target = (params.get("target") or "main").strip()
 
@@ -623,7 +637,7 @@ class ConfigHandler:
         if not api_type:
             api_type = "openai"
         if not base_url:
-            return f"❌ 无法推断 {provider} 的 API 地址，请手动提供 base_url"
+            return f"❌ Cannot infer the API URL for {provider}; please provide base_url manually"
 
         api_key = endpoint_data.get("api_key", "").strip()
 
@@ -662,25 +676,25 @@ class ConfigHandler:
         reload_info = self._reload_llm_client()
 
         api_key_env = result.get("api_key_env", "")
-        key_info = f"API Key 已存入 .env ({api_key_env})" if api_key_env else "未配置 API Key"
+        key_info = f"API key stored in .env ({api_key_env})" if api_key_env else "No API key configured"
         return (
-            f"✅ 已添加 LLM 端点:\n"
-            f"- 名称: {name}\n"
-            f"- 服务商: {provider} | 协议: {api_type}\n"
-            f"- API 地址: {base_url}\n"
-            f"- 模型: {model} | 优先级: {ep_dict['priority']}\n"
+            f"✅ LLM endpoint added:\n"
+            f"- Name: {name}\n"
+            f"- Provider: {provider} | Protocol: {api_type}\n"
+            f"- API URL: {base_url}\n"
+            f"- Model: {model} | Priority: {ep_dict['priority']}\n"
             f"- {key_info}\n"
-            f"- 目标: {target}\n"
+            f"- Target: {target}\n"
             f"- {reload_info}"
         )
 
     # ------------------------------------------------------------------
-    # remove_endpoint: 删除端点
+    # remove_endpoint: Delete an endpoint
     # ------------------------------------------------------------------
     def _remove_endpoint(self, params: dict) -> str:
         endpoint_name = (params.get("endpoint_name") or "").strip()
         if not endpoint_name:
-            return "❌ 缺少 endpoint_name 参数"
+            return "❌ Missing endpoint_name parameter"
 
         target = (params.get("target") or "main").strip()
 
@@ -695,19 +709,19 @@ class ConfigHandler:
 
         if removed is None:
             all_eps = mgr.list_endpoints(endpoint_type)
-            available = ", ".join(e.get("name", "") for e in all_eps) or "(无)"
-            return f'❌ 未找到端点 "{endpoint_name}"。当前 {target} 端点: {available}'
+            available = ", ".join(e.get("name", "") for e in all_eps) or "(none)"
+            return f'❌ Endpoint "{endpoint_name}" not found. Current {target} endpoints: {available}'
 
         reload_info = self._reload_llm_client()
-        return f'✅ 已删除端点 "{endpoint_name}" ({target})。{reload_info}'
+        return f'✅ Endpoint "{endpoint_name}" ({target}) removed. {reload_info}'
 
     # ------------------------------------------------------------------
-    # test_endpoint: 测试连通性
+    # test_endpoint: Test connectivity
     # ------------------------------------------------------------------
     async def _test_endpoint(self, params: dict) -> str:
         endpoint_name = (params.get("endpoint_name") or "").strip()
         if not endpoint_name:
-            return "❌ 缺少 endpoint_name 参数"
+            return "❌ Missing endpoint_name parameter"
 
         from ...llm.config import load_endpoints_config
 
@@ -721,19 +735,19 @@ class ConfigHandler:
                 break
 
         if not target_ep:
-            available = ", ".join(ep.name for ep in all_eps) or "(无)"
-            return f'❌ 未找到端点 "{endpoint_name}"。可用端点: {available}'
+            available = ", ".join(ep.name for ep in all_eps) or "(none)"
+            return f'❌ Endpoint "{endpoint_name}" not found. Available endpoints: {available}'
 
         api_key = target_ep.get_api_key()
         if not api_key:
             return (
-                f'❌ 端点 "{endpoint_name}" 未配置 API Key。\n'
-                f"请设置环境变量 {target_ep.api_key_env or '(未指定)'} 或在端点配置中提供 api_key。"
+                f'❌ Endpoint "{endpoint_name}" has no API key configured.\n'
+                f"Please set the environment variable {target_ep.api_key_env or '(unspecified)'} or supply api_key in the endpoint configuration."
             )
 
         import httpx
 
-        # 尝试 list models 请求
+        # Attempt a list-models request
         from openakita.llm.types import normalize_base_url
 
         headers = {"Authorization": f"Bearer {api_key}"}
@@ -755,28 +769,28 @@ class ConfigHandler:
 
                 if resp.status_code < 400:
                     return (
-                        f'✅ 端点 "{endpoint_name}" 连通正常\n'
-                        f"- 状态码: {resp.status_code}\n"
-                        f"- 延迟: {elapsed_ms}ms\n"
-                        f"- 服务商: {target_ep.provider} | 模型: {target_ep.model}"
+                        f'✅ Endpoint "{endpoint_name}" is reachable\n'
+                        f"- Status code: {resp.status_code}\n"
+                        f"- Latency: {elapsed_ms}ms\n"
+                        f"- Provider: {target_ep.provider} | Model: {target_ep.model}"
                     )
                 else:
                     body_preview = (resp.text or "")[:300]
                     return (
-                        f'⚠️ 端点 "{endpoint_name}" 返回错误\n'
-                        f"- 状态码: {resp.status_code}\n"
-                        f"- 延迟: {elapsed_ms}ms\n"
-                        f"- 响应: {body_preview}"
+                        f'⚠️ Endpoint "{endpoint_name}" returned an error\n'
+                        f"- Status code: {resp.status_code}\n"
+                        f"- Latency: {elapsed_ms}ms\n"
+                        f"- Response: {body_preview}"
                     )
         except httpx.ConnectError as e:
-            return f'❌ 端点 "{endpoint_name}" 连接失败: 无法连接到 {target_ep.base_url}\n{e}'
+            return f'❌ Endpoint "{endpoint_name}" connection failed: unable to reach {target_ep.base_url}\n{e}'
         except httpx.TimeoutException:
-            return f'❌ 端点 "{endpoint_name}" 请求超时 (15s)'
+            return f'❌ Endpoint "{endpoint_name}" request timed out (15s)'
         except Exception as e:
-            return f'❌ 端点 "{endpoint_name}" 测试失败: {type(e).__name__}: {e}'
+            return f'❌ Endpoint "{endpoint_name}" test failed: {type(e).__name__}: {e}'
 
     # ------------------------------------------------------------------
-    # set_ui: 设置 UI 偏好
+    # set_ui: Set UI preferences
     # ------------------------------------------------------------------
     def _set_ui(self, params: dict) -> str:
         from ...config import runtime_state, settings
@@ -785,43 +799,43 @@ class ConfigHandler:
         language = (params.get("language") or "").strip()
 
         if not theme and not language:
-            return "❌ 请指定 theme 或 language 参数"
+            return "❌ Please specify a theme or language parameter"
 
         changes: list[str] = []
         ui_pref: dict[str, str] = {}
 
         if theme:
             if theme not in ("light", "dark", "system"):
-                return f"❌ theme 只支持 light/dark/system，收到: {theme}"
+                return f"❌ theme only supports light/dark/system, got: {theme}"
             settings.ui_theme = theme
             ui_pref["theme"] = theme
-            changes.append(f"- 主题: {theme}")
+            changes.append(f"- Theme: {theme}")
 
         if language:
             if language not in ("zh", "en"):
-                return f"❌ language 只支持 zh/en，收到: {language}"
+                return f"❌ language only supports zh/en, got: {language}"
             settings.ui_language = language
             ui_pref["language"] = language
-            changes.append(f"- 语言: {language}")
+            changes.append(f"- Language: {language}")
 
         runtime_state.save()
 
         result = {
             "ok": True,
-            "message": "✅ UI 偏好已更新:\n" + "\n".join(changes),
+            "message": "✅ UI preferences updated:\n" + "\n".join(changes),
             "ui_preference": ui_pref,
         }
 
-        # 检查当前通道
+        # Check current channel
         session = getattr(self.agent, "_current_session", None)
         channel = getattr(session, "channel", None) if session else None
         if channel and channel != "desktop":
-            result["message"] += "\n\n注意: 此设置仅影响桌面客户端 (Desktop)，当前通道为 " + channel
+            result["message"] += "\n\nNote: this setting only affects the desktop client (Desktop); the current channel is " + channel
 
         return json.dumps(result, ensure_ascii=False)
 
     # ------------------------------------------------------------------
-    # manage_provider: 管理 LLM 服务商
+    # manage_provider: Manage LLM providers
     # ------------------------------------------------------------------
 
     _PROVIDER_REQUIRED_FIELDS = ("slug", "name", "api_type", "default_base_url")
@@ -842,9 +856,9 @@ class ConfigHandler:
             return self._remove_custom_provider(slug)
         else:
             return (
-                "❌ manage_provider 需要 operation 参数。\n"
-                "支持: list (列出所有服务商), add (添加自定义服务商), "
-                "update (修改自定义服务商), remove (删除自定义服务商)"
+                "❌ manage_provider requires the operation parameter.\n"
+                "Supported: list (list all providers), add (add custom provider), "
+                "update (modify custom provider), remove (delete custom provider)"
             )
 
     def _list_providers_info(self) -> str:
@@ -853,45 +867,45 @@ class ConfigHandler:
         all_providers = list_providers()
         custom_slugs = {e.get("slug") for e in load_custom_providers()}
 
-        lines = [f"## LLM 服务商列表 (共 {len(all_providers)} 个)\n"]
+        lines = [f"## LLM provider list ({len(all_providers)} total)\n"]
         for p in all_providers:
-            tag = " [自定义]" if p.slug in custom_slugs else ""
-            local_tag = " [本地]" if p.is_local else ""
+            tag = " [custom]" if p.slug in custom_slugs else ""
+            local_tag = " [local]" if p.is_local else ""
             lines.append(
                 f"- **{p.name}**{tag}{local_tag}\n"
-                f"  slug: `{p.slug}` | 协议: {p.api_type} | URL: {p.default_base_url}"
+                f"  slug: `{p.slug}` | Protocol: {p.api_type} | URL: {p.default_base_url}"
             )
         lines.append(
-            "\n自定义服务商文件: data/custom_providers.json\n"
-            "使用 operation=add 添加新服务商，operation=update 修改已有服务商。"
+            "\nCustom providers file: data/custom_providers.json\n"
+            "Use operation=add to add a new provider, and operation=update to modify an existing one."
         )
         return "\n".join(lines)
 
     def _validate_provider_entry(self, entry: dict) -> str | None:
-        """校验服务商条目，返回错误信息或 None"""
+        """Validate a provider entry; returns an error message or None"""
         for field in self._PROVIDER_REQUIRED_FIELDS:
             if not (entry.get(field) or "").strip():
-                return f"缺少必填字段: {field}"
+                return f"Missing required field: {field}"
 
         slug = entry["slug"].strip()
         if not self._PROVIDER_SLUG_PATTERN.match(slug):
             return (
-                f"slug 格式无效: '{slug}'（只允许小写字母、数字、连字符、下划线，不能以符号开头）"
+                f"Invalid slug format: '{slug}' (only lowercase letters, digits, hyphens, and underscores are allowed, and it cannot start with a symbol)"
             )
 
         api_type = entry["api_type"].strip()
         if api_type not in self._PROVIDER_VALID_API_TYPES:
-            return f"api_type 无效: '{api_type}'（只允许 openai 或 anthropic）"
+            return f"Invalid api_type: '{api_type}' (only openai or anthropic are allowed)"
 
         base_url = entry["default_base_url"].strip()
         if not base_url.startswith(("http://", "https://")):
-            return "default_base_url 必须以 http:// 或 https:// 开头"
+            return "default_base_url must start with http:// or https://"
 
         return None
 
     def _add_custom_provider(self, provider_data: dict) -> str:
         if not provider_data or not isinstance(provider_data, dict):
-            return "❌ 缺少 provider 参数（需包含 slug, name, api_type, default_base_url）"
+            return "❌ Missing provider parameter (must include slug, name, api_type, default_base_url)"
 
         err = self._validate_provider_entry(provider_data)
         if err:
@@ -909,8 +923,8 @@ class ConfigHandler:
         existing_slugs = {p.slug for p in list_providers()}
         if slug in existing_slugs:
             return (
-                f"❌ slug '{slug}' 已存在。如需修改，请使用 operation=update；"
-                f"如需覆盖内置服务商的默认配置，也使用 operation=update。"
+                f"❌ slug '{slug}' already exists. To modify, use operation=update; "
+                f"to override the default config of a built-in provider, also use operation=update."
             )
 
         entry = {
@@ -941,21 +955,21 @@ class ConfigHandler:
         count = reload_registries()
 
         return (
-            f"✅ 已添加自定义服务商:\n"
-            f"- 名称: {entry['name']}\n"
+            f"✅ Custom provider added:\n"
+            f"- Name: {entry['name']}\n"
             f"- slug: {slug}\n"
-            f"- 协议: {entry['api_type']} | URL: {entry['default_base_url']}\n"
-            f"- 服务商总数: {count}\n"
-            f"- 保存位置: data/custom_providers.json"
+            f"- Protocol: {entry['api_type']} | URL: {entry['default_base_url']}\n"
+            f"- Total providers: {count}\n"
+            f"- Saved to: data/custom_providers.json"
         )
 
     def _update_custom_provider(self, provider_data: dict) -> str:
         if not provider_data or not isinstance(provider_data, dict):
-            return "❌ 缺少 provider 参数"
+            return "❌ Missing provider parameter"
 
         slug = (provider_data.get("slug") or "").strip()
         if not slug:
-            return "❌ 缺少 slug 字段，用于定位要修改的服务商"
+            return "❌ Missing slug field, which is required to locate the provider to modify"
 
         from ...llm.registries import (
             load_custom_providers,
@@ -966,12 +980,12 @@ class ConfigHandler:
         if "api_type" in provider_data:
             api_type = provider_data["api_type"].strip()
             if api_type not in self._PROVIDER_VALID_API_TYPES:
-                return f"❌ api_type 无效: '{api_type}'"
+                return f"❌ Invalid api_type: '{api_type}'"
 
         if "default_base_url" in provider_data:
             url = provider_data["default_base_url"].strip()
             if not url.startswith(("http://", "https://")):
-                return "❌ default_base_url 必须以 http:// 或 https:// 开头"
+                return "❌ default_base_url must start with http:// or https://"
 
         custom = load_custom_providers()
         found = False
@@ -1000,16 +1014,16 @@ class ConfigHandler:
         save_custom_providers(custom)
         count = reload_registries()
 
-        action = "修改" if found else "添加（覆盖内置配置）"
+        action = "updated" if found else "added (overriding built-in config)"
         return (
-            f"✅ 已{action}服务商 '{slug}':\n"
-            f"- 更新字段: {', '.join(k for k in provider_data if k != 'slug')}\n"
-            f"- 服务商总数: {count}"
+            f"✅ Provider '{slug}' {action}:\n"
+            f"- Updated fields: {', '.join(k for k in provider_data if k != 'slug')}\n"
+            f"- Total providers: {count}"
         )
 
     def _remove_custom_provider(self, slug: str) -> str:
         if not slug:
-            return "❌ 缺少 slug 参数"
+            return "❌ Missing slug parameter"
 
         from ...llm.registries import (
             _BUILTIN_ENTRIES,
@@ -1026,25 +1040,25 @@ class ConfigHandler:
                 custom = [e for e in custom if e.get("slug") != slug]
                 save_custom_providers(custom)
                 reload_registries()
-                return f"✅ 已移除对内置服务商 '{slug}' 的自定义覆盖，恢复为内置默认配置"
-            return f"❌ '{slug}' 是内置服务商，不能删除。如需修改其配置，使用 operation=update"
+                return f"✅ Removed the custom override for built-in provider '{slug}'; reverted to the built-in default configuration"
+            return f"❌ '{slug}' is a built-in provider and cannot be deleted. To modify its configuration, use operation=update"
 
         custom = load_custom_providers()
         original_len = len(custom)
         custom = [e for e in custom if e.get("slug") != slug]
 
         if len(custom) == original_len:
-            return f"❌ 未找到自定义服务商 '{slug}'"
+            return f"❌ Custom provider '{slug}' not found"
 
         save_custom_providers(custom)
         count = reload_registries()
-        return f"✅ 已删除自定义服务商 '{slug}'。服务商总数: {count}"
+        return f"✅ Custom provider '{slug}' deleted. Total providers: {count}"
 
     # ------------------------------------------------------------------
-    # 辅助方法
+    # Helper methods
     # ------------------------------------------------------------------
     def _get_provider_defaults(self, provider_slug: str) -> dict | None:
-        """从 provider registry 获取默认配置"""
+        """Get default configuration from the provider registry"""
         try:
             from ...llm.registries import list_providers
 
@@ -1061,14 +1075,14 @@ class ConfigHandler:
         return None
 
     # ------------------------------------------------------------------
-    # extensions: 外部扩展模块管理
+    # extensions: External extension module management
     # ------------------------------------------------------------------
 
     _EXTENSIONS = [
         {
             "id": "opencli",
             "name": "OpenCLI",
-            "description": "将网站和 Electron 应用转化为 CLI 命令，复用 Chrome 登录态",
+            "description": "Turn websites and Electron apps into CLI commands, reusing Chrome's login state",
             "category": "Web",
             "check": lambda: __import__("shutil").which("opencli"),
             "install": "npm install -g opencli",
@@ -1081,10 +1095,10 @@ class ConfigHandler:
         {
             "id": "cli-anything",
             "name": "CLI-Anything",
-            "description": "为桌面软件（GIMP、Blender、LibreOffice 等）自动生成 CLI 接口",
+            "description": "Auto-generate CLI interfaces for desktop software (GIMP, Blender, LibreOffice, etc.)",
             "category": "Desktop",
             "check": lambda: _check_cli_anything_path(),
-            "install": "pip install cli-anything-gimp  # 按需替换为目标软件",
+            "install": "pip install cli-anything-gimp  # Replace with the target app as needed",
             "upgrade": "pip install --upgrade cli-anything-<app>",
             "setup": None,
             "homepage": "https://github.com/HKUDS/CLI-Anything",
@@ -1102,16 +1116,16 @@ class ConfigHandler:
             return self._ext_credits()
         else:
             return (
-                "❌ extensions 支持的 operation:\n"
-                "- `status`: 查看所有外部扩展模块状态、安装/升级命令\n"
-                "- `credits`: 查看致谢信息"
+                "❌ extensions supports the following operations:\n"
+                "- `status`: View the status and install/upgrade commands for all external extension modules\n"
+                "- `credits`: View acknowledgements"
             )
 
     def _ext_status(self) -> str:
-        lines = ["## 外部扩展模块\n"]
+        lines = ["## External extension modules\n"]
         lines.append(
-            "以下模块为可选外部工具，安装后 OpenAkita 自动检测并启用。\n"
-            "无需重启，下次对话即生效。\n"
+            "The modules below are optional external tools. Once installed, OpenAkita detects and enables them automatically.\n"
+            "No restart is required; they take effect in the next conversation.\n"
         )
 
         for ext in self._EXTENSIONS:
@@ -1121,55 +1135,55 @@ class ConfigHandler:
             lines.append(f"### {icon} {ext['name']} ({ext['category']})")
             lines.append(f"{ext['description']}")
             lines.append(
-                f"- 状态: {'**已安装**' if installed else '未安装'}"
+                f"- Status: {'**installed**' if installed else 'not installed'}"
                 + (f" (`{path}`)" if installed else "")
             )
-            lines.append(f"- 安装: `{ext['install']}`")
-            lines.append(f"- 升级: `{ext['upgrade']}`")
+            lines.append(f"- Install: `{ext['install']}`")
+            lines.append(f"- Upgrade: `{ext['upgrade']}`")
             if ext.get("setup"):
-                lines.append(f"- 首次配置: `{ext['setup']}`")
-            lines.append(f"- 主页: {ext['homepage']}")
+                lines.append(f"- First-time setup: `{ext['setup']}`")
+            lines.append(f"- Homepage: {ext['homepage']}")
             lines.append("")
 
         lines.append("---")
-        lines.append("*安装后无需修改 OpenAkita 配置，系统启动时自动检测 PATH。*")
+        lines.append("*No OpenAkita configuration changes are needed after installation; the system detects PATH at startup.*")
         return "\n".join(lines)
 
     def _ext_credits(self) -> str:
-        lines = ["## 致谢 — 外部扩展模块\n"]
-        lines.append("OpenAkita 的工具调用和浏览器访问能力得益于以下开源项目：\n")
+        lines = ["## Acknowledgements — External extension modules\n"]
+        lines.append("OpenAkita's tool-calling and browser-access capabilities benefit from the following open-source projects:\n")
 
         for ext in self._EXTENSIONS:
             lines.append(f"### {ext['name']}")
             lines.append(f"- {ext['description']}")
-            lines.append(f"- 作者: **{ext['thanks']}**")
-            lines.append(f"- 许可: {ext['license']}")
-            lines.append(f"- 项目: {ext['homepage']}")
+            lines.append(f"- Author: **{ext['thanks']}**")
+            lines.append(f"- License: {ext['license']}")
+            lines.append(f"- Project: {ext['homepage']}")
             lines.append("")
 
         lines.append(
-            "感谢这些项目的贡献者们，让 AI Agent 能够更可靠地与真实世界的网站和桌面软件交互。"
+            "Thanks to the contributors of these projects for enabling AI agents to interact more reliably with real-world websites and desktop software."
         )
         return "\n".join(lines)
 
     def _reload_llm_client(self) -> str:
-        """热重载 LLM client，返回结果描述"""
+        """Hot-reload the LLM client; returns a result description"""
         brain = getattr(self.agent, "brain", None)
         llm_client = getattr(brain, "_llm_client", None) if brain else None
         if llm_client is None:
-            return "⚠️ LLM client 未找到，请手动重启服务"
+            return "⚠️ LLM client not found; please restart the service manually"
 
         try:
             success = llm_client.reload()
             if success:
                 count = len(llm_client.endpoints)
-                return f"已热重载 ({count} 个端点生效)"
-            return "⚠️ 热重载返回 false"
+                return f"Hot-reloaded ({count} endpoints now active)"
+            return "⚠️ Hot reload returned false"
         except Exception as e:
-            return f"⚠️ 热重载失败: {e}"
+            return f"⚠️ Hot reload failed: {e}"
 
 
 def create_handler(agent: "Agent"):
-    """创建配置处理器"""
+    """Create the configuration handler"""
     handler = ConfigHandler(agent)
     return handler.handle

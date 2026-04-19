@@ -1,5 +1,5 @@
 """
-测试运行器
+Test runner
 """
 
 import asyncio
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TestCase:
-    """测试用例"""
+    """Test case"""
 
     id: str
     category: str
@@ -33,7 +33,7 @@ class TestCase:
 
 @dataclass
 class TestResult:
-    """测试结果"""
+    """Test result"""
 
     test_id: str
     passed: bool
@@ -46,7 +46,7 @@ class TestResult:
 
 @dataclass
 class TestReport:
-    """测试报告"""
+    """Test report"""
 
     timestamp: datetime
     category: str | None
@@ -66,9 +66,9 @@ class TestReport:
 
 class TestRunner:
     """
-    测试运行器
+    Test runner
 
-    运行测试用例并生成报告。
+    Runs test cases and generates reports.
     """
 
     def __init__(
@@ -82,19 +82,19 @@ class TestRunner:
         self._executors: dict[str, Callable] = {}
 
     def register_executor(self, category: str, executor: Callable) -> None:
-        """注册测试执行器"""
+        """Register test executor"""
         self._executors[category] = executor
 
     def add_test_case(self, test: TestCase) -> None:
-        """添加测试用例"""
+        """Add test case"""
         self._test_cases.append(test)
 
     def add_test_cases(self, tests: list[TestCase]) -> None:
-        """批量添加测试用例"""
+        """Batch-add test cases"""
         self._test_cases.extend(tests)
 
     def load_test_cases(self) -> int:
-        """从目录加载测试用例"""
+        """Load test cases from directory"""
         if not self.test_dir or not self.test_dir.exists():
             return 0
 
@@ -102,7 +102,7 @@ class TestRunner:
         for category_dir in self.test_dir.iterdir():
             if category_dir.is_dir():
                 for _test_file in category_dir.rglob("*.py"):
-                    # TODO: 实现从文件加载
+                    # TODO: implement loading from file
                     pass
 
         return count
@@ -114,19 +114,19 @@ class TestRunner:
         parallel: bool = False,
     ) -> TestReport:
         """
-        运行所有测试
+        Run all tests
 
         Args:
-            category: 筛选类别
-            tags: 筛选标签
-            parallel: 是否并行执行
+            category: filter by category
+            tags: filter by tags
+            parallel: whether to execute in parallel
 
         Returns:
             TestReport
         """
         start_time = time.time()
 
-        # 筛选测试用例
+        # Filter test cases
         tests = self._test_cases
         if category:
             tests = [t for t in tests if t.category == category]
@@ -141,16 +141,16 @@ class TestRunner:
         skipped = 0
 
         if parallel:
-            # 并行执行
+            # Parallel execution
             tasks = [self._run_test(t) for t in tests]
             results = await asyncio.gather(*tasks)
         else:
-            # 串行执行
+            # Sequential execution
             for test in tests:
                 result = await self._run_test(test)
                 results.append(result)
 
-        # 统计结果
+        # Tally results
         for result in results:
             if result.passed:
                 passed += 1
@@ -180,11 +180,11 @@ class TestRunner:
         return report
 
     async def _run_test(self, test: TestCase) -> TestResult:
-        """运行单个测试"""
+        """Run a single test"""
         start = time.time()
 
         try:
-            # 获取执行器
+            # Get executor
             executor = self._executors.get(test.category)
 
             if not executor:
@@ -194,7 +194,7 @@ class TestRunner:
                     error="skipped",
                 )
 
-            # 执行测试
+            # Execute test
             try:
                 actual = await asyncio.wait_for(
                     executor(test.input),
@@ -208,7 +208,7 @@ class TestRunner:
                     duration_ms=(time.time() - start) * 1000,
                 )
 
-            # 判定结果
+            # Evaluate result
             if test.validator:
                 judge_result = test.validator(actual, test.expected)
                 passed = judge_result if isinstance(judge_result, bool) else judge_result.passed
@@ -238,12 +238,12 @@ class TestRunner:
             )
 
     async def run_single(self, test_id: str) -> TestResult | None:
-        """运行单个测试"""
+        """Run a single test by ID"""
         test = next((t for t in self._test_cases if t.id == test_id), None)
         if test:
             return await self._run_test(test)
         return None
 
     def get_failed_tests(self, report: TestReport) -> list[TestResult]:
-        """获取失败的测试"""
+        """Get failed tests"""
         return [r for r in report.results if not r.passed and r.error != "skipped"]

@@ -14,7 +14,7 @@ Install a Skill from the OpenAkita Platform Skill Store to the local system.
 ## When to Use
 
 - User wants to install a specific Skill from the store
-- User says "安装这个技能" after browsing search results
+- User says "installthis" after browsing search results
 - User provides a Skill ID to install
 
 ## Workflow

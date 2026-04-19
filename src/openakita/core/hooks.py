@@ -1,12 +1,12 @@
 """
-Hook 扩展系统
+Hook extension system
 
-参考 Claude Code 的 28 种生命周期 Hook 事件设计。
-支持:
-- Shell 脚本 hooks
+Modeled after Claude Code's 28 lifecycle hook events.
+Supports:
+- Shell script hooks
 - Python callback hooks
 - HTTP webhook hooks
-- 配置文件声明 + 运行时动态注册
+- Configuration file declaration + runtime dynamic registration
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class HookEvent(StrEnum):
-    """生命周期 Hook 事件"""
+    """Lifecycle hook events"""
 
     # Tool lifecycle
     PRE_TOOL_USE = "pre_tool_use"
@@ -72,7 +72,7 @@ class HookEvent(StrEnum):
 
 @dataclass
 class HookResult:
-    """Hook 执行结果"""
+    """Hook execution result"""
 
     hook_id: str
     event: str
@@ -83,7 +83,7 @@ class HookResult:
 
 
 class HookHandler:
-    """Hook 处理器基类"""
+    """Base class for hook handlers"""
 
     def __init__(self, hook_id: str, events: list[HookEvent]) -> None:
         self.hook_id = hook_id
@@ -94,7 +94,7 @@ class HookHandler:
 
 
 class CallbackHook(HookHandler):
-    """Python 回调 Hook"""
+    """Python callback hook"""
 
     def __init__(
         self,
@@ -133,7 +133,7 @@ class CallbackHook(HookHandler):
 
 
 class ShellHook(HookHandler):
-    """Shell 脚本 Hook"""
+    """Shell script hook"""
 
     def __init__(
         self,
@@ -190,13 +190,13 @@ class ShellHook(HookHandler):
 
 
 class HookExecutor:
-    """Hook 执行器"""
+    """Hook executor"""
 
     def __init__(self) -> None:
         self._handlers: list[HookHandler] = []
 
     def register(self, handler: HookHandler) -> None:
-        """注册一个 Hook 处理器。"""
+        """Register a hook handler."""
         self._handlers.append(handler)
         logger.debug(
             "Registered hook %s for events: %s",
@@ -205,7 +205,7 @@ class HookExecutor:
         )
 
     def unregister(self, hook_id: str) -> None:
-        """取消注册。"""
+        """Unregister a hook handler."""
         self._handlers = [h for h in self._handlers if h.hook_id != hook_id]
 
     def register_callback(
@@ -214,7 +214,7 @@ class HookExecutor:
         events: list[HookEvent],
         callback: Callable,
     ) -> None:
-        """便捷方法：注册 Python 回调 Hook。"""
+        """Convenience method: register a Python callback hook."""
         self.register(CallbackHook(hook_id, events, callback))
 
     def register_shell(
@@ -224,7 +224,7 @@ class HookExecutor:
         command: str,
         timeout: float = 30.0,
     ) -> None:
-        """便捷方法：注册 Shell 脚本 Hook。"""
+        """Convenience method: register a shell script hook."""
         self.register(ShellHook(hook_id, events, command, timeout))
 
     async def execute(
@@ -232,7 +232,7 @@ class HookExecutor:
         event: HookEvent,
         context: dict | None = None,
     ) -> list[HookResult]:
-        """执行指定事件的所有匹配 Hooks。"""
+        """Execute all matching hooks for the given event."""
         context = context or {}
         matching = [h for h in self._handlers if event in h.events]
 
@@ -279,7 +279,7 @@ _global_executor: HookExecutor | None = None
 
 
 def get_hook_executor() -> HookExecutor:
-    """获取全局 Hook 执行器。"""
+    """Get the global hook executor."""
     global _global_executor
     if _global_executor is None:
         _global_executor = HookExecutor()
@@ -287,6 +287,6 @@ def get_hook_executor() -> HookExecutor:
 
 
 def set_hook_executor(executor: HookExecutor) -> None:
-    """替换全局 Hook 执行器（用于测试）。"""
+    """Replace the global hook executor (for testing)."""
     global _global_executor
     _global_executor = executor

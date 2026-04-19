@@ -1,8 +1,8 @@
 """
-系统技能处理器注册表
+System skill handler registry.
 
-管理系统技能（system: true）的执行处理器。
-每个处理器对应一类系统工具（如 browser, filesystem, memory 等）。
+Manages execution handlers for system skills (system: true).
+Each handler corresponds to a category of system tools (e.g., browser, filesystem, memory, etc.).
 """
 
 import logging
@@ -12,7 +12,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-# 处理器类型：同步或异步函数
+# Handler type: sync or async function
 HandlerFunc = Callable[[str, dict], str | Awaitable[str]]
 
 # Per-tool permission callback: (tool_name, tool_input) → PermissionDecision | None
@@ -22,19 +22,19 @@ ToolPermissionCheck = Callable[[str, dict], Any]
 
 class SystemHandlerRegistry:
     """
-    系统技能处理器注册表
+    System skill handler registry.
 
-    注册和管理系统技能的执行处理器。
+    Registers and manages execution handlers for system skills.
 
-    使用方式:
+    Usage:
     ```python
     registry = SystemHandlerRegistry()
 
-    # 注册处理器
+    # Register handlers
     registry.register("browser", browser_handler)
     registry.register("filesystem", filesystem_handler)
 
-    # 执行
+    # Execute
     result = await registry.execute("browser", "browser_navigate", {"url": "..."})
     ```
     """
@@ -46,7 +46,7 @@ class SystemHandlerRegistry:
 
     def __init__(self):
         self._handlers: dict[str, HandlerFunc] = {}
-        self._tool_to_handler: dict[str, str] = {}  # tool_name -> handler_name
+        self._tool_to_handler: dict[str, str] = {}  # tool_name -> handler_name mapping
         self._permission_checks: dict[str, ToolPermissionCheck] = {}  # tool_name -> check fn
         self._concurrency_checks: dict[str, "SystemHandlerRegistry.ConcurrencyCheck"] = {}
 
@@ -58,14 +58,15 @@ class SystemHandlerRegistry:
         check_permissions: ToolPermissionCheck | None = None,
     ) -> None:
         """
-        注册处理器
+        Register a handler.
 
         Args:
-            handler_name: 处理器名称（如 'browser', 'filesystem'）
-            handler: 处理器函数，签名为 (tool_name, params) -> str
-            tool_names: 该处理器处理的工具名称列表。
-                如果为 None，自动从 handler 所属实例的 TOOLS 属性读取
-                （handler 是 bound method 时通过 __self__.TOOLS 获取）。
+            handler_name: Handler name (e.g., 'browser', 'filesystem').
+            handler: Handler function with signature (tool_name, params) -> str.
+            tool_names: List of tool names handled by this handler.
+                If None, automatically read from the TOOLS attribute of the
+                handler's owner instance (via __self__.TOOLS when handler is
+                a bound method).
             check_permissions: Optional per-tool permission callback.
                 Invoked by ToolExecutor.check_permission() after mode+policy
                 checks pass.  Returns PermissionDecision or None.
@@ -81,8 +82,8 @@ class SystemHandlerRegistry:
                 existing = self._tool_to_handler.get(tool_name)
                 if existing and existing != handler_name:
                     logger.warning(
-                        f"[Registry] 工具名冲突: '{tool_name}' 已注册到 '{existing}'，"
-                        f"现被 '{handler_name}' 覆盖"
+                        f"[Registry] Tool name conflict: '{tool_name}' was registered to '{existing}', "
+                        f"now overridden by '{handler_name}'"
                     )
                 self._tool_to_handler[tool_name] = handler_name
         else:
@@ -104,17 +105,17 @@ class SystemHandlerRegistry:
 
     def unregister(self, handler_name: str) -> bool:
         """
-        注销处理器
+        Unregister a handler.
 
         Args:
-            handler_name: 处理器名称
+            handler_name: Handler name.
 
         Returns:
-            是否成功
+            True if successfully unregistered, False otherwise.
         """
         if handler_name in self._handlers:
             del self._handlers[handler_name]
-            # 清理 tool_to_handler 映射
+            # Clean up tool_to_handler mapping
             self._tool_to_handler = {
                 k: v for k, v in self._tool_to_handler.items() if v != handler_name
             }
@@ -123,11 +124,11 @@ class SystemHandlerRegistry:
         return False
 
     def get_handler(self, handler_name: str) -> HandlerFunc | None:
-        """获取处理器"""
+        """Get a handler by name."""
         return self._handlers.get(handler_name)
 
     def get_handler_for_tool(self, tool_name: str) -> HandlerFunc | None:
-        """根据工具名获取处理器"""
+        """Get a handler by tool name."""
         handler_name = self._tool_to_handler.get(tool_name)
         if handler_name:
             return self._handlers.get(handler_name)
@@ -135,11 +136,11 @@ class SystemHandlerRegistry:
 
     def map_tool_to_handler(self, tool_name: str, handler_name: str) -> None:
         """
-        建立工具名到处理器的映射
+        Map a tool name to a handler.
 
         Args:
-            tool_name: 工具名称
-            handler_name: 处理器名称
+            tool_name: Tool name.
+            handler_name: Handler name.
         """
         if handler_name not in self._handlers:
             logger.warning(
@@ -154,18 +155,18 @@ class SystemHandlerRegistry:
         params: dict[str, Any],
     ) -> str:
         """
-        执行处理器
+        Execute a handler.
 
         Args:
-            handler_name: 处理器名称
-            tool_name: 工具名称
-            params: 参数字典
+            handler_name: Handler name.
+            tool_name: Tool name.
+            params: Parameter dictionary.
 
         Returns:
-            执行结果字符串
+            Execution result as a string.
 
         Raises:
-            ValueError: 处理器不存在
+            ValueError: Handler not found.
         """
         handler = self._handlers.get(handler_name)
         if not handler:
@@ -173,7 +174,7 @@ class SystemHandlerRegistry:
 
         logger.debug(f"Executing {handler_name}.{tool_name} with {params}")
 
-        # 执行处理器（支持同步和异步）
+        # Execute handler (supports both sync and async)
         import asyncio
 
         result = handler(tool_name, params)
@@ -189,17 +190,17 @@ class SystemHandlerRegistry:
         params: dict[str, Any],
     ) -> str:
         """
-        根据工具名执行
+        Execute by tool name.
 
         Args:
-            tool_name: 工具名称
-            params: 参数字典
+            tool_name: Tool name.
+            params: Parameter dictionary.
 
         Returns:
-            执行结果字符串
+            Execution result as a string.
 
         Raises:
-            ValueError: 工具未映射到处理器
+            ValueError: Tool not mapped to any handler.
         """
         handler_name = self._tool_to_handler.get(tool_name)
         if not handler_name:
@@ -208,14 +209,14 @@ class SystemHandlerRegistry:
         return await self.execute(handler_name, tool_name, params)
 
     def has_handler(self, handler_name: str) -> bool:
-        """检查处理器是否存在"""
+        """Check if a handler exists."""
         return handler_name in self._handlers
 
     def unmap_tool(self, tool_name: str) -> bool:
-        """移除单个工具名到处理器的映射。
+        """Remove a single tool-to-handler mapping.
 
         Returns:
-            是否成功移除（不存在时返回 False）
+            True if removed, False if the tool was not mapped.
         """
         if tool_name in self._tool_to_handler:
             del self._tool_to_handler[tool_name]
@@ -223,7 +224,7 @@ class SystemHandlerRegistry:
         return False
 
     def has_tool(self, tool_name: str) -> bool:
-        """检查工具是否已映射"""
+        """Check if a tool is mapped."""
         return tool_name in self._tool_to_handler
 
     def get_permission_check(self, tool_name: str) -> ToolPermissionCheck | None:
@@ -231,19 +232,19 @@ class SystemHandlerRegistry:
         return self._permission_checks.get(tool_name)
 
     def list_handlers(self) -> list[str]:
-        """列出所有处理器名称"""
+        """List all handler names."""
         return list(self._handlers.keys())
 
     def list_tools(self) -> list[str]:
-        """列出所有已映射的工具名称"""
+        """List all mapped tool names."""
         return list(self._tool_to_handler.keys())
 
     def get_handler_tools(self, handler_name: str) -> list[str]:
-        """获取某个处理器处理的所有工具"""
+        """Get all tools handled by a given handler."""
         return [tool for tool, handler in self._tool_to_handler.items() if handler == handler_name]
 
     def get_handler_name_for_tool(self, tool_name: str) -> str | None:
-        """获取工具对应的处理器名称（用于并发/互斥策略等）"""
+        """Get the handler name for a tool (used for concurrency/mutex policies, etc.)."""
         return self._tool_to_handler.get(tool_name)
 
     def set_concurrency_check(
@@ -277,16 +278,16 @@ class SystemHandlerRegistry:
 
     @property
     def handler_count(self) -> int:
-        """处理器数量"""
+        """Number of handlers."""
         return len(self._handlers)
 
     @property
     def tool_count(self) -> int:
-        """已映射工具数量"""
+        """Number of mapped tools."""
         return len(self._tool_to_handler)
 
 
-# 全局处理器注册表
+# Global handler registry
 default_handler_registry = SystemHandlerRegistry()
 
 
@@ -295,15 +296,15 @@ def register_handler(
     handler: HandlerFunc,
     tool_names: list[str] | None = None,
 ) -> None:
-    """注册处理器到默认注册表"""
+    """Register a handler to the default registry."""
     default_handler_registry.register(handler_name, handler, tool_names)
 
 
 def get_handler(handler_name: str) -> HandlerFunc | None:
-    """从默认注册表获取处理器"""
+    """Get a handler from the default registry."""
     return default_handler_registry.get_handler(handler_name)
 
 
 async def execute_tool(tool_name: str, params: dict[str, Any]) -> str:
-    """通过默认注册表执行工具"""
+    """Execute a tool via the default registry."""
     return await default_handler_registry.execute_by_tool(tool_name, params)

@@ -135,17 +135,17 @@ class DelegationResult:
         sentinel format is unchanged for backward compatibility.
         """
         header = (
-            f"[任务完成通知] Agent: {self.agent_id}"
-            f" | 状态: {self.exit_reason}"
-            f" | 耗时: {self.elapsed_s}s"
+            f"[Task Completed] Agent: {self.agent_id}"
+            f" | Status: {self.exit_reason}"
+            f" | Elapsed: {self.elapsed_s}s"
         )
         if self.tools_used:
             tools_line = (
-                f"工具调用: {len(self.tools_used)} 次"
+                f"Tool calls: {len(self.tools_used)}"
                 f" ({', '.join(self.tools_used[:8])})"
             )
         else:
-            tools_line = "工具调用: 0 次"
+            tools_line = "Tool calls: 0"
 
         parts = [header, tools_line, "", self.text]
         if self.artifacts:
@@ -347,7 +347,7 @@ class AgentOrchestrator:
         return self._health[agent_id]
 
     def _evict_stale_agents(self) -> None:
-        """淘汰最久未活跃的 agent 条目，防止字典无限增长。"""
+        """Evict the least-recently-active agent entries to prevent unbounded growth."""
         if self._health:
             sorted_ids = sorted(
                 self._health.keys(),
@@ -415,7 +415,7 @@ class AgentOrchestrator:
     ) -> str:
         """Dispatch a message to a specific agent with progress-aware timeout."""
         if depth >= MAX_DELEGATION_DEPTH:
-            return f"⚠️ 委派深度超限 (max={MAX_DELEGATION_DEPTH})"
+            return f"⚠️ Delegation depth exceeded (max={MAX_DELEGATION_DEPTH})"
 
         if depth == 0:
             session.context.delegation_chain = []
@@ -507,7 +507,7 @@ class AgentOrchestrator:
                 agent_profile_id,
                 depth,
                 default=(
-                    f"⏱️ Agent `{agent_profile_id}` 已终止 — 运行 {elapsed_s:.0f}s 后长时间无新进展"
+                    f"⏱️ Agent `{agent_profile_id}` terminated — no progress after {elapsed_s:.0f}s"
                 ),
             )
 
@@ -529,7 +529,7 @@ class AgentOrchestrator:
                         "elapsed_ms": elapsed_ms,
                     }
                 )
-                return "🚫 请求已取消"
+                return "🚫 Request cancelled"
             else:
                 health.last_error = "system_cancelled"
                 self._log_delegation(
@@ -539,7 +539,7 @@ class AgentOrchestrator:
                         "elapsed_ms": elapsed_ms,
                     }
                 )
-                return "⚠️ 任务被系统中断，请稍后重试。"
+                return "⚠️ Task interrupted by the system. Please try again later."
 
         except Exception as e:
             health.failed += 1
@@ -562,7 +562,7 @@ class AgentOrchestrator:
                 message,
                 agent_profile_id,
                 depth,
-                default=f"❌ Agent `{agent_profile_id}` 处理失败: {e}",
+                default=f"❌ Agent `{agent_profile_id}` failed: {e}",
             )
 
     # ------------------------------------------------------------------
@@ -595,13 +595,13 @@ class AgentOrchestrator:
         hard_timeout = float(getattr(settings, "hard_timeout_seconds", 0) or _DEFAULT_HARD_TIMEOUT)
 
         if self._profile_store is None or self._pool is None:
-            return "⚠️ Orchestrator 未正确初始化，请检查日志"
+            return "⚠️ Orchestrator not properly initialised. Check the logs."
 
         profile = self._profile_store.get(agent_profile_id)
         if profile is None:
             profile = self._profile_store.get("default")
         if profile is None:
-            return f"⚠️ 无法找到 Agent Profile: {agent_profile_id}"
+            return f"⚠️ Agent profile not found: {agent_profile_id}"
 
         # Per-profile timeout override
         if getattr(profile, "timeout_seconds", None) is not None:
@@ -1513,12 +1513,12 @@ def _build_work_summary(record: dict) -> str:
     tool_names = list(
         dict.fromkeys(t.get("name", "") for t in record.get("tools_used", []) if t.get("name"))
     )
-    tools_str = ", ".join(tool_names[:8]) if tool_names else "无"
+    tools_str = ", ".join(tool_names[:8]) if tool_names else "none"
 
     result_preview = record.get("result_preview", "")
     _fail_kw = ("❌", "失败", "Failed", "Error", "error", "Traceback")
     failed = any(kw in result_preview for kw in _fail_kw)
-    status = "❌ 失败" if failed else "✅ 完成"
+    status = "❌ Failed" if failed else "✅ Done"
 
     result_brief, _ = smart_truncate(
         result_preview.replace("\n", " ").strip(),
@@ -1530,13 +1530,13 @@ def _build_work_summary(record: dict) -> str:
     output_files = record.get("output_files") or []
 
     lines = [
-        f"[{agent_name}] 任务: {task}",
-        f"状态: {status} | 耗时: {elapsed}秒 | 工具调用: {tools_total}次 ({tools_str})",
+        f"[{agent_name}] Task: {task}",
+        f"Status: {status} | Elapsed: {elapsed}s | Tool calls: {tools_total} ({tools_str})",
     ]
     if output_files:
-        lines.append(f"交付文件: {', '.join(output_files[:5])}")
+        lines.append(f"Delivered files: {', '.join(output_files[:5])}")
     if result_brief:
-        lines.append(f"结果摘要: {result_brief}")
+        lines.append(f"Result summary: {result_brief}")
 
     return "\n".join(lines)
 

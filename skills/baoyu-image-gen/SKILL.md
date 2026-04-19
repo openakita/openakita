@@ -3,173 +3,173 @@ name: jimliu/baoyu-skills@baoyu-image-gen
 description: Generate AI images using multiple providers (OpenAI DALL-E, Google Imagen, DashScope/Tongyi Wanxiang, Replicate). Supports various aspect ratios, quality presets, batch generation, and provider-specific prompt engineering techniques.
 license: MIT
 metadata:
-  author: openakita
-  version: "1.0.0"
+ author: openakita
+ version: "1.0.0"
 ---
 
-# Baoyu Image Gen — AI 图像生成
+# Baoyu Image Gen — AI Generation
 
 ## When to Use
 
-- 用户要求生成图片、插图、海报、封面、图标等视觉内容
-- 需要为文章、PPT、网站创建配图
-- 需要特定比例的图片（社交媒体封面、手机壁纸等）
-- 需要批量生成多张图片并选择
-- 需要针对不同 AI 绘图服务编写优化 prompt
-- 需要将自然语言描述转换为高质量 AI 图片
+- needGenerate image,,,, 
+- need, PPT, Create
+- need (, ) 
+- needGeneration
+- neednot AI prompt
+- need AI
 
 ---
 
 ## Prerequisites
 
-### API 密钥配置
+### API
 
-至少需要配置一个图像生成服务的 API 密钥。在 `.env` 文件或环境变量中设置：
+needGeneration API. in `.env` orSet: 
 
-| 环境变量 | 服务商 | 获取方式 |
+| | | Get |
 |---------|--------|---------|
 | `OPENAI_API_KEY` | OpenAI DALL-E 3 | https://platform.openai.com/api-keys |
 | `GOOGLE_API_KEY` | Google Imagen 3 | https://aistudio.google.com/apikey |
-| `DASHSCOPE_API_KEY` | 通义万象 (阿里云) | https://dashscope.console.aliyun.com/ |
-| `REPLICATE_API_TOKEN` | Replicate (Flux 等) | https://replicate.com/account/api-tokens |
+| `DASHSCOPE_API_KEY` | () | https://dashscope.console.aliyun.com/ |
+| `REPLICATE_API_TOKEN` | Replicate (Flux ) | https://replicate.com/account/api-tokens |
 
-### 必需依赖
+###
 
-| 依赖 | 用途 | 安装方式 |
+| | | |
 |------|------|---------|
-| Python ≥ 3.10 | 运行生成脚本 | 系统预装 |
-| `httpx` | HTTP 请求 | `pip install httpx` |
-| `Pillow` | 图片处理 | `pip install Pillow` |
+| Python ≥ 3.10 | RunGeneration | |
+| `httpx` | HTTP | `pip install httpx` |
+| `Pillow` | | `pip install Pillow` |
 
-### 可选依赖
+### Optional
 
-| 依赖 | 用途 | 安装方式 |
+| | | |
 |------|------|---------|
 | `openai` | OpenAI SDK | `pip install openai` |
 | `google-genai` | Google Gemini/Imagen SDK | `pip install google-genai` |
-| `dashscope` | 通义万象 SDK | `pip install dashscope` |
+| `dashscope` | SDK | `pip install dashscope` |
 | `replicate` | Replicate SDK | `pip install replicate` |
 
 ---
 
 ## Instructions
 
-### 服务商能力对比
+### Service
 
-| 能力 | DALL-E 3 | Imagen 3 | 通义万象 | Replicate (Flux) |
+| | DALL-E 3 | Imagen 3 | | Replicate (Flux) |
 |------|----------|----------|---------|-----------------|
-| 图片质量 | ★★★★★ | ★★★★★ | ★★★★ | ★★★★★ |
-| 中文 prompt | ★★★ | ★★★ | ★★★★★ | ★★ |
-| 文字渲染 | ★★★★ | ★★★★ | ★★★ | ★★★ |
-| 速度 | 中等 | 快 | 快 | 慢 |
-| 价格 | 较贵 | 中等 | 便宜 | 按模型 |
-| 尺寸灵活度 | 3 种固定 | 多种 | 多种 | 自定义 |
-| 风格多样性 | ★★★★★ | ★★★★ | ★★★★ | ★★★★★ |
+| | ★★★★★ | ★★★★★ | ★★★★ | ★★★★★ |
+| prompt | ★★★ | ★★★ | ★★★★★ | ★★ |
+| | ★★★★ | ★★★★ | ★★★ | ★★★ |
+| | | | | |
+| | | | | |
+| | 3 | | | |
+| | ★★★★★ | ★★★★ | ★★★★ | ★★★★★ |
 
-### 服务商自动选择策略
+### ServiceAutomatic
 
-Agent 根据以下规则自动选择最合适的服务商：
+Agent Automatic: 
 
-1. **中文场景优先** — 如果 prompt 是中文或涉及中国文化元素，优先使用通义万象
-2. **文字渲染需求** — 需要在图片中嵌入文字时，优先使用 DALL-E 3 或 Imagen 3
-3. **速度优先** — 用户要求快速生成时，优先使用 Imagen 3 或通义万象
-4. **质量优先** — 用户要求最高质量时，使用 DALL-E 3 或 Flux Pro
-5. **成本优先** — 批量生成时优先使用通义万象
-6. **可用性** — 根据用户已配置的 API Key 选择
+1. **** — prompt Yesor, Use
+2. **** — needin, Use DALL-E 3 or Imagen 3
+3. **** — needQuickGeneration, Use Imagen 3 or
+4. **** — need, Use DALL-E 3 or Flux Pro
+5. **** — GenerationUse
+6. **** — API Key
 
-用户可通过指定服务商名称覆盖自动选择。
+ViaAutomatic. 
 
-### 宽高比速查
+###
 
-| 比例 | 像素（示例） | 适用场景 |
+| | () | |
 |------|-------------|---------|
-| 1:1 | 1024×1024 | 头像、图标、社交媒体帖子 |
-| 16:9 | 1792×1024 | PPT 配图、YouTube 封面、桌面壁纸 |
-| 4:3 | 1365×1024 | 传统幻灯片、相册 |
-| 9:16 | 1024×1792 | 手机壁纸、Instagram Stories、短视频封面 |
-| 3:2 | 1536×1024 | 摄影风格、杂志插图 |
-| 2:3 | 1024×1536 | 海报、书籍封面 |
+| 1:1 | 1024×1024 |,, |
+| 16:9 | 1792×1024 | PPT, YouTube, |
+| 4:3 | 1365×1024 |, |
+| 9:16 | 1024×1792 |, Instagram Stories, |
+| 3:2 | 1536×1024 |, |
+| 2:3 | 1024×1536 |, |
 
-### 质量预设
+### Quality
 
-| 预设 | 说明 | 适用场景 |
+| | Description | |
 |------|------|---------|
-| `draft` | 快速草稿，低分辨率 | 方案探索、快速迭代 |
-| `standard` | 标准质量 | 日常使用、网页配图 |
-| `hd` | 高清，细节丰富 | 正式出版、印刷 |
-| `ultra` | 最高质量，最长等待 | 海报、展览 |
+| `draft` | Quick, |, Quick |
+| `standard` | | Use, |
+| `hd` |, |, |
+| `ultra` |, |, |
 
 ---
 
 ## Workflows
 
-### Workflow 1: 单张图片生成
+### Workflow 1: Generation
 
-**步骤 1 — 理解用户意图**
+** 1 — **
 
-从用户描述中提取以下信息：
+Extract: 
 
-| 要素 | 默认值 | 说明 |
+| need | Default | Description |
 |------|--------|------|
-| 主题 | — | 图片的核心内容 |
-| 风格 | 写实 | 摄影、插画、水彩、赛博朋克、扁平化等 |
-| 比例 | 1:1 | 根据用途自动推断 |
-| 质量 | standard | draft/standard/hd/ultra |
-| 服务商 | auto | 自动选择或用户指定 |
+| | — | |
+| | |,,,, |
+| | 1:1 | Automatic |
+| | standard | draft/standard/hd/ultra |
+| | auto | Automaticor |
 
-**步骤 2 — 构建优化 Prompt**
+** 2 — Prompt**
 
-将用户描述转换为各服务商优化的 prompt（见 Prompt 工程部分）。
+prompt ( Prompt Partial). 
 
-**步骤 3 — 调用生成 API**
+** 3 — CallGeneration API**
 
-根据选择的服务商调用对应 API。
+Call API. 
 
-**步骤 4 — 返回结果**
+** 4 — Returns**
 
-输出生成的图片文件路径，并附上使用的 prompt 和参数。
+Generation File path, Use prompt and. 
 
 ---
 
-### Workflow 2: 批量生成
+### Workflow 2: Generation
 
-一次生成多张图片供用户选择：
+Generation: 
 
-**步骤 1** — 确定批量参数
+** 1** —
 
-| 参数 | 说明 |
+| Parameter | Description |
 |------|------|
-| 数量 | 2-8 张（默认 4） |
-| 变体策略 | same-prompt（同 prompt 不同种子）/ varied-prompt（不同风格变体） |
+| | 2-8 (Default 4) |
+| | same-prompt ( prompt not) / varied-prompt (not) |
 
-**步骤 2** — 生成所有图片
+** 2** — Generationhave
 
-并行调用 API 以加快速度。对于 varied-prompt 模式，为每张图调整 prompt 的风格描述词。
+Call API Quick. varied-prompt, prompt. 
 
-**步骤 3** — 展示结果并让用户选择
-
----
-
-### Workflow 3: Prompt 优化咨询
-
-当用户不确定如何描述想要的图片时：
-
-1. 与用户对话，逐步明确需求
-2. 提供 3-5 个不同方向的 prompt 建议
-3. 用户选择方向后微调 prompt
-4. 生成图片
+** 3** —
 
 ---
 
-## Prompt 工程指南
+### Workflow 3: Prompt
 
-### 通用 Prompt 结构
+notneed: 
+
+1. and, 
+2. Provides 3-5 not prompt
+3. prompt
+4. Generate image
+
+---
+
+## Prompt
+
+### Prompt
 
 ```
-[主体描述], [环境/背景], [风格], [光线], [构图], [色调], [细节描述]
+[], [/], [], [], [], [], []
 ```
 
-**示例**：
+****: 
 
 ```
 A cozy coffee shop interior with warm lighting,
@@ -179,98 +179,98 @@ shot on 35mm film, soft warm tones,
 shallow depth of field, photorealistic
 ```
 
-### DALL-E 3 专用技巧
+### DALL-E 3
 
-1. **自然语言描述** — DALL-E 3 理解长句叙述，不需要关键词堆砌
-2. **风格指定** — 明确说明 "digital art"、"oil painting"、"photograph" 等
-3. **避免否定词** — 说"蓝天"而非"没有云的天空"
-4. **文字嵌入** — 直接写 `with text "Hello"` 可以在图中渲染文字
-5. **revisedPrompt** — DALL-E 3 会重写 prompt，可从返回值获取实际使用的 prompt
+1. **** — DALL-E 3, notneed
+2. **** — "digital art", "oil painting", "photograph"
+3. **No** — ""and"have "
+4. **** — `with text "Hello"` in
+5. **revisedPrompt** — DALL-E 3 will prompt, ReturnsGetUse prompt
 
 ```python
 from openai import OpenAI
 client = OpenAI()
 
 response = client.images.generate(
-    model="dall-e-3",
-    prompt="一只橘猫坐在窗台上看雨，窗外是东京夜景，赛博朋克风格，霓虹灯倒映在雨滴中",
-    size="1792x1024",
-    quality="hd",
-    n=1
+ model="dall-e-3",
+prompt="in, Yes,, in",
+ size="1792x1024",
+ quality="hd",
+ n=1
 )
 image_url = response.data[0].url
 revised_prompt = response.data[0].revised_prompt
 ```
 
-### Google Imagen 3 专用技巧
+### Google Imagen 3
 
-1. **结构化描述** — 主体 + 动作 + 环境 + 风格
-2. **摄影参数** — 可以指定镜头焦段、光圈、ISO 等
-3. **艺术家风格** — 可以参考知名艺术家的风格
-4. **多语言支持** — 支持中文 prompt 但英文效果更佳
+1. **** — + + +
+2. **** —,, ISO
+3. **** —
+4. **Supports** — Supports prompt
 
 ```python
 from google import genai
 client = genai.Client()
 
 response = client.models.generate_images(
-    model='imagen-3.0-generate-002',
-    prompt='A serene Japanese garden in autumn, koi fish swimming in a crystal clear pond, maple trees with red and orange leaves',
-    config=genai.types.GenerateImagesConfig(
-        number_of_images=1,
-        aspect_ratio='16:9'
-    )
+ model='imagen-3.0-generate-002',
+ prompt='A serene Japanese garden in autumn, koi fish swimming in a crystal clear pond, maple trees with red and orange leaves',
+ config=genai.types.GenerateImagesConfig(
+ number_of_images=1,
+ aspect_ratio='16:9'
+ )
 )
 
 for image in response.generated_images:
-    image.image.save('garden.png')
+ image.image.save('garden.png')
 ```
 
-### 通义万象专用技巧
+###
 
-1. **中文 prompt 最优** — 直接使用中文描述效果最佳
-2. **风格参数** — 支持 `<photography>`、`<anime>`、`<3d cartoon>` 等风格标签
-3. **负向提示** — 支持 negative_prompt 排除不想要的元素
-4. **参考图** — 支持 img2img 以图生图
+1. ** prompt ** — Use
+2. **** — Supports `<photography>`, `<anime>`, `<3d cartoon>`
+3. **** — Supports negative_prompt notneed
+4. **** — Supports img2img
 
 ```python
 import dashscope
 
 response = dashscope.ImageSynthesis.call(
-    api_key=os.getenv('DASHSCOPE_API_KEY'),
-    model='wanx-v1',
-    input={
-        'prompt': '一座雪山下的小木屋，温暖的灯光从窗户透出，天空中有极光，油画风格',
-        'negative_prompt': '低质量, 模糊, 变形'
-    },
-    parameters={
-        'size': '1024*1024',
-        'n': 1,
-        'style': '<oil painting>'
-    }
+ api_key=os.getenv('DASHSCOPE_API_KEY'),
+ model='wanx-v1',
+ input={
+'prompt': ',, have, ',
+'negative_prompt': ',, '
+ },
+ parameters={
+ 'size': '1024*1024',
+ 'n': 1,
+ 'style': '<oil painting>'
+ }
 )
 
 image_url = response.output.results[0].url
 ```
 
-### Replicate (Flux) 专用技巧
+### Replicate (Flux)
 
-1. **英文 prompt** — Flux 模型英文效果远优于中文
-2. **极致细节** — 适合描述复杂场景和精细纹理
-3. **风格混搭** — 可以混合多种艺术风格
-4. **自定义参数** — 支持 guidance_scale、steps 等高级参数
+1. ** prompt** — Flux
+2. **** — and
+3. **** —
+4. **** — Supports guidance_scale, steps
 
 ```python
 import replicate
 
 output = replicate.run(
-    "black-forest-labs/flux-1.1-pro",
-    input={
-        "prompt": "An astronaut riding a horse on Mars, cinematic lighting, 8k resolution, hyperdetailed",
-        "aspect_ratio": "16:9",
-        "output_format": "png",
-        "safety_tolerance": 2
-    }
+ "black-forest-labs/flux-1.1-pro",
+ input={
+ "prompt": "An astronaut riding a horse on Mars, cinematic lighting, 8k resolution, hyperdetailed",
+ "aspect_ratio": "16:9",
+ "output_format": "png",
+ "safety_tolerance": 2
+ }
 )
 ```
 
@@ -278,63 +278,63 @@ output = replicate.run(
 
 ## Output Format
 
-### 文件命名
+###
 
 ```
-{描述关键词}_{服务商}_{比例}_{日期时间}.png
+{}_{}_{}_{}.png
 ```
 
-示例：`coffee_shop_dalle3_16x9_20250301_143022.png`
+: `coffee_shop_dalle3_16x9_20250301_143022.png`
 
-### 输出内容
+### Output
 
-每次图片生成后，返回以下信息：
+Generation, Returns: 
 
 ```
-📸 图片已生成
-- 文件：./images/coffee_shop_dalle3_16x9.png
-- 服务商：DALL-E 3
-- 尺寸：1792 × 1024 (16:9)
-- 质量：HD
-- Prompt：[实际使用的 prompt]
-- 耗时：8.3s
-- 费用估算：$0.08
+📸 Generation
+-:./images/coffee_shop_dalle3_16x9.png
+-: DALL-E 3
+-: 1792 × 1024 (16:9)
+-: HD
+- Prompt: [Use prompt]
+-: 8.3s
+-: $0.08
 ```
 
-### 多图对比输出
+###
 
-批量生成时以网格形式对比展示，标注每张的差异（不同风格、不同构图等）。
+Generation, (not, not). 
 
 ---
 
 ## Common Pitfalls
 
-### 1. API Key 未配置
+### 1. API Key
 
-**症状**：调用失败，返回 401/403 错误
-**解决**：检查 `.env` 或环境变量中的 API Key 是否已正确设置
+****: Call, Returns 401/403
+****: `.env` or API Key YesNoSet
 
-### 2. Prompt 过于模糊
+### 2. Prompt
 
-**错误**："画一张好看的图"
-**正确**："一只白色的猫咪趴在阳光下的窗台上，背景是模糊的绿色植物，温暖的暖色调，胶片摄影风格"
+****: " "
+****: " in, Yes,, "
 
-### 3. 比例与用途不匹配
+### 3. andnot
 
-常见错误搭配：
-- PPT 配图用了 1:1 → 应该用 16:9
-- 手机壁纸用了 16:9 → 应该用 9:16
-- 社交媒体头像用了 16:9 → 应该用 1:1
+: 
+- PPT 1:1 → 16:9
+- 16:9 → 9:16
+- 16:9 → 1:1
 
-### 4. 中文 prompt 发给 Flux/Replicate
+### 4. prompt Flux/Replicate
 
-Flux 等模型对中文支持有限，必须先翻译为英文再调用。Agent 应自动完成翻译。
+Flux Supportshave, Call. Agent Automatic. 
 
-### 5. 图片中文字乱码
+### 5.
 
-AI 图像生成模型在渲染中文文字时质量不稳定。如果必须在图片中嵌入中文文字，建议：
-- 先生成不含文字的图片
-- 然后用 Pillow 在图片上叠加中文文字
+AI Generationinnot. in,: 
+- Generationnot
+- Pillow in
 
 ```python
 from PIL import Image, ImageDraw, ImageFont
@@ -342,36 +342,36 @@ from PIL import Image, ImageDraw, ImageFont
 img = Image.open('base_image.png')
 draw = ImageDraw.Draw(img)
 font = ImageFont.truetype('msyh.ttc', size=48)
-draw.text((100, 50), '标题文字', fill='white', font=font)
+draw.text((100, 50), '', fill='white', font=font)
 img.save('final_image.png')
 ```
 
-### 6. 费用失控
+### 6.
 
-批量生成时注意费用：
-| 服务商 | 单张费用（约） |
+Generation: 
+| | () |
 |--------|-------------|
 | DALL-E 3 HD | $0.08 |
 | DALL-E 3 Standard | $0.04 |
 | Imagen 3 | $0.03 |
-| 通义万象 | ¥0.04 |
+| | ¥0.04 |
 | Flux Pro | $0.05 |
 
-生成前提醒用户预估费用。
+Generation. 
 
-### 7. 内容安全限制
+### 7.
 
-所有服务商都有内容安全审查。如果生成被拒绝：
-- 检查 prompt 是否包含敏感词
-- 调整描述方式
-- 不要尝试绕过安全限制
+haveallhave. Generation: 
+- prompt YesNoIncludes
+-
+- notneed
 
 ---
 
-## EXTEND.md 扩展
+## EXTEND.md
 
-用户可在技能同目录下创建 `EXTEND.md` 添加：
-- 首选服务商和默认参数
-- 自定义风格预设模板
-- 品牌相关的 prompt 片段（Logo 描述、品牌色等）
-- 额外的 API 端点或自部署模型地址
+inCreate `EXTEND.md`: 
+- andDefault
+-
+- prompt (Logo, ) 
+- API or

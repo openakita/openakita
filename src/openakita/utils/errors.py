@@ -58,13 +58,13 @@ def classify_error(error: str) -> ErrorCategory:
 
 _CATEGORY_MESSAGES: dict[ErrorCategory, str] = {
     ErrorCategory.CONTENT_FILTER: (
-        "⚠️ 抱歉，处理过程中获取到的部分内容触发了平台安全审核，请换个方式重新提问。"
+        "⚠️ Sorry, some content retrieved during processing triggered the platform safety check. Please try rephrasing your question."
     ),
-    ErrorCategory.AUTH: "⚠️ AI 服务认证失败，请检查 API Key 配置是否正确。",
-    ErrorCategory.QUOTA: "⚠️ AI 服务配额已用尽或请求过于频繁，请稍后重试。",
-    ErrorCategory.TIMEOUT: "⚠️ 处理超时，请稍后重试或简化您的问题。",
-    ErrorCategory.NETWORK: "⚠️ 网络连接失败，请检查网络设置后重试。",
-    ErrorCategory.SERVER: "⚠️ AI 服务暂时不可用，请稍后重试。",
+    ErrorCategory.AUTH: "⚠️ AI service authentication failed. Please check that your API key is configured correctly.",
+    ErrorCategory.QUOTA: "⚠️ AI service quota exhausted or too many requests. Please try again later.",
+    ErrorCategory.TIMEOUT: "⚠️ Processing timed out. Please try again later or simplify your question.",
+    ErrorCategory.NETWORK: "⚠️ Network connection failed. Please check your network settings and try again.",
+    ErrorCategory.SERVER: "⚠️ AI service is temporarily unavailable. Please try again later.",
 }
 
 
@@ -79,4 +79,4 @@ def format_user_friendly_error(error: str) -> str:
     if msg:
         return msg
     short = error[:120].split("\n")[0]
-    return f"⚠️ 处理出错: {short}"
+    return f"⚠️ Error: {short}"

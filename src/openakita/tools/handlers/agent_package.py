@@ -55,14 +55,14 @@ class AgentPackageHandler:
                 return f"Unknown tool: {tool_name}"
         except Exception as e:
             logger.error(f"AgentPackageHandler error ({tool_name}): {e}", exc_info=True)
-            return f"❌ 操作失败: {e}"
+            return f"❌ Operation failed: {e}"
 
     async def _export(self, params: dict[str, Any]) -> str:
         from ...agents.packager import AgentPackager
 
         profile_id = params.get("profile_id", "")
         if not profile_id:
-            return "❌ 需要指定 profile_id"
+            return "❌ profile_id is required"
 
         profile_store, skills_dir, root = _get_stores()
 
@@ -90,11 +90,11 @@ class AgentPackageHandler:
 
         size_kb = output_path.stat().st_size / 1024
         return (
-            f"✅ Agent 已导出！\n\n"
-            f"📦 文件: {output_path}\n"
-            f"📏 大小: {size_kb:.1f} KB\n\n"
-            f"💡 导出路径: `{output_dir}`\n"
-            f"你可以将这个 `.akita-agent` 文件分享给其他用户导入使用。"
+            f"✅ Agent exported!\n\n"
+            f"📦 File: {output_path}\n"
+            f"📏 Size: {size_kb:.1f} KB\n\n"
+            f"💡 Export path: `{output_dir}`\n"
+            f"You can share this `.akita-agent` file with other users for import."
         )
 
     async def _import(self, params: dict[str, Any]) -> str:
@@ -102,7 +102,7 @@ class AgentPackageHandler:
 
         package_path = params.get("package_path", "")
         if not package_path:
-            return "❌ 需要指定 package_path"
+            return "❌ package_path is required"
 
         profile_store, skills_dir, root = _get_stores()
 
@@ -121,12 +121,12 @@ class AgentPackageHandler:
         self._try_reload_skills()
 
         return (
-            f"✅ Agent 导入成功！\n\n"
-            f"🤖 名称: {profile.name}\n"
+            f"✅ Agent imported successfully!\n\n"
+            f"🤖 Name: {profile.name}\n"
             f"🆔 ID: {profile.id}\n"
-            f"📝 描述: {profile.description}\n"
-            f"🔧 技能: {', '.join(profile.skills) if profile.skills else '无'}\n\n"
-            f"Agent 及其技能已安装并自动加载。"
+            f"📝 Description: {profile.description}\n"
+            f"🔧 Skills: {', '.join(profile.skills) if profile.skills else 'None'}\n\n"
+            f"The agent and its skills have been installed and auto-loaded."
         )
 
     async def _list_exportable(self, params: dict[str, Any]) -> str:
@@ -134,17 +134,17 @@ class AgentPackageHandler:
         profiles = profile_store.list_all(include_hidden=False)
 
         if not profiles:
-            return "当前没有可导出的 Agent。"
+            return "No agents available for export."
 
-        lines = ["📋 可导出的 Agent 列表：\n"]
+        lines = ["📋 Exportable agents:\n"]
         for p in profiles:
             skills_count = len(p.skills) if p.skills else 0
-            type_label = "系统" if p.is_system else "自定义"
+            type_label = "System" if p.is_system else "Custom"
             cat = f" [{p.category}]" if p.category else ""
-            lines.append(f"- **{p.name}** (`{p.id}`) — {type_label}{cat}, {skills_count} 个技能")
+            lines.append(f"- **{p.name}** (`{p.id}`) — {type_label}{cat}, {skills_count} skill(s)")
 
-        lines.append(f"\n共 {len(profiles)} 个 Agent 可导出。")
-        lines.append("使用 `export_agent` 工具导出指定 Agent。")
+        lines.append(f"\n{len(profiles)} agent(s) available for export.")
+        lines.append("Use the `export_agent` tool to export a specific agent.")
         return "\n".join(lines)
 
     async def _inspect(self, params: dict[str, Any]) -> str:
@@ -152,7 +152,7 @@ class AgentPackageHandler:
 
         package_path = params.get("package_path", "")
         if not package_path:
-            return "❌ 需要指定 package_path"
+            return "❌ package_path is required"
 
         profile_store, skills_dir, root = _get_stores()
 
@@ -173,37 +173,37 @@ class AgentPackageHandler:
         conflict = info["id_conflict"]
 
         lines = [
-            "📦 Agent 包预览\n",
-            f"**名称**: {manifest.get('name', '?')}",
+            "📦 Agent package preview\n",
+            f"**Name**: {manifest.get('name', '?')}",
             f"**ID**: {manifest.get('id', '?')}",
-            f"**版本**: {manifest.get('version', '?')}",
-            f"**作者**: {manifest.get('author', {}).get('name', '?')}",
-            f"**分类**: {manifest.get('category', '无')}",
-            f"**大小**: {info['package_size'] / 1024:.1f} KB",
+            f"**Version**: {manifest.get('version', '?')}",
+            f"**Author**: {manifest.get('author', {}).get('name', '?')}",
+            f"**Category**: {manifest.get('category', 'None')}",
+            f"**Size**: {info['package_size'] / 1024:.1f} KB",
         ]
 
         if info["bundled_skills"]:
-            lines.append(f"**捆绑技能**: {', '.join(info['bundled_skills'])}")
+            lines.append(f"**Bundled skills**: {', '.join(info['bundled_skills'])}")
         if manifest.get("required_builtin_skills"):
-            lines.append(f"**需要内置技能**: {', '.join(manifest['required_builtin_skills'])}")
+            lines.append(f"**Required built-in skills**: {', '.join(manifest['required_builtin_skills'])}")
 
         ext_skills = manifest.get("required_external_skills", [])
         if ext_skills:
             names = [s.get("id", "?") if isinstance(s, dict) else str(s) for s in ext_skills]
-            lines.append(f"**外部依赖技能**: {', '.join(names)}")
+            lines.append(f"**Required external skills**: {', '.join(names)}")
 
         if errors:
-            lines.append(f"\n⚠️ 校验问题: {'; '.join(errors)}")
+            lines.append(f"\n⚠️ Validation issues: {'; '.join(errors)}")
         if conflict:
-            lines.append(f"\n⚠️ ID 冲突: 本地已存在 `{manifest.get('id')}`，导入时将自动重命名")
+            lines.append(f"\n⚠️ ID conflict: `{manifest.get('id')}` already exists locally — it will be auto-renamed on import")
 
         if profile.get("custom_prompt"):
             prompt_preview = profile["custom_prompt"][:200]
             if len(profile["custom_prompt"]) > 200:
                 prompt_preview += "..."
-            lines.append(f"\n**提示词预览**: {prompt_preview}")
+            lines.append(f"\n**Prompt preview**: {prompt_preview}")
 
-        lines.append("\n使用 `import_agent` 工具导入此 Agent。")
+        lines.append("\nUse the `import_agent` tool to import this agent.")
         return "\n".join(lines)
 
     async def _batch_export(self, params: dict[str, Any]) -> str:
@@ -211,7 +211,7 @@ class AgentPackageHandler:
 
         profile_ids = params.get("profile_ids", [])
         if not profile_ids:
-            return "❌ 需要指定 profile_ids 列表"
+            return "❌ profile_ids list is required"
 
         profile_store, skills_dir, root = _get_stores()
 
@@ -238,18 +238,18 @@ class AgentPackageHandler:
             except Exception as e:
                 errors.append(f"❌ {pid}: {e}")
 
-        lines = [f"📦 批量导出完成 — {len(exported)} 成功, {len(errors)} 失败\n"]
-        lines.append(f"💡 导出路径: `{output_dir}`\n")
+        lines = [f"📦 Batch export complete — {len(exported)} succeeded, {len(errors)} failed\n"]
+        lines.append(f"💡 Export path: `{output_dir}`\n")
         if exported:
-            lines.append("**已导出:**")
+            lines.append("**Exported:**")
             lines.extend(exported)
         if errors:
-            lines.append("\n**失败:**")
+            lines.append("\n**Failed:**")
             lines.extend(errors)
         return "\n".join(lines)
 
     def _try_reload_skills(self) -> None:
-        """Agent 包导入后，走统一刷新入口让附带的技能立刻生效。"""
+        """After an agent package import, refresh via the unified entry point so bundled skills take effect immediately."""
         try:
             from ...skills.events import SkillEvent
 

@@ -1,15 +1,15 @@
 """
-集中策略引擎 (Agent Harness: Policy Engine)
+Centralized Policy Engine (Agent Harness: Policy Engine)
 
-六层安全防护体系的核心决策层：
-- L1: 四区(workspace/controlled/protected/forbidden) + 操作类型矩阵
-- L3: 三平台(Windows/macOS/Linux)危险命令模式匹配与风险分级
+Core decision layer of six-layer security protection system:
+- L1: Four zones (workspace/controlled/protected/forbidden) + operation type matrix
+- L3: Three-platform (Windows/macOS/Linux) dangerous command pattern matching and risk classification
 
-策略类型:
-- ZonePolicy: 路径区域 × 操作类型矩阵判定
-- RiskPolicy: Shell 命令风险分级 (CRITICAL/HIGH/MEDIUM/LOW)
-- ToolPolicy: 工具级策略（允许/禁止、参数限制、需要确认）
-- ScopePolicy: 范围策略（Shell 命令黑名单，兼容旧配置）
+Policy types:
+- ZonePolicy: Path zone × operation type matrix determination
+- RiskPolicy: Shell command risk classification (CRITICAL/HIGH/MEDIUM/LOW)
+- ToolPolicy: Tool-level policy (allow/deny, parameter limits, require confirmation)
+- ScopePolicy: Scope policy (Shell command blacklist, backward-compatible)
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 class PolicyDecision(StrEnum):
-    """策略判定结果"""
+    """Policy decision result"""
 
     ALLOW = "allow"
     DENY = "deny"
@@ -42,7 +42,7 @@ class PolicyDecision(StrEnum):
 
 
 class Zone(StrEnum):
-    """安全区域"""
+    """Security zones"""
 
     WORKSPACE = "workspace"
     CONTROLLED = "controlled"
@@ -51,7 +51,7 @@ class Zone(StrEnum):
 
 
 class OpType(StrEnum):
-    """操作类型"""
+    """Operation types"""
 
     READ = "read"
     CREATE = "create"
@@ -62,7 +62,7 @@ class OpType(StrEnum):
 
 
 class RiskLevel(StrEnum):
-    """Shell 命令风险等级"""
+    """Shell command risk level"""
 
     CRITICAL = "critical"
     HIGH = "high"
@@ -172,13 +172,13 @@ _HIGH_RISK_SHELL_PATTERNS: list[str] = [
     r"wget\s+.*\|\s*(bash|sh)",
 ]
 
-# P1-6: MEDIUM 风险 Shell 模式（需确认但不需沙箱）
+# P1-6: MEDIUM risk Shell patterns (requires confirmation but no sandbox)
 _MEDIUM_RISK_SHELL_PATTERNS: list[str] = [
-    # 删除 / 清理（未匹配 HIGH 的情况）
+    # Delete / cleanup (cases not matching HIGH)
     r"Remove-Item\b",
     r"Clear-Content\b",
     r"Clear-Item\b",
-    # 环境 / 配置修改
+    # Environment / configuration modifications
     r"setx?\s+",
     r"export\s+\w+=",
     r"npm\s+install\s+-g",
@@ -187,14 +187,14 @@ _MEDIUM_RISK_SHELL_PATTERNS: list[str] = [
     r"winget\s+install",
     r"apt\s+install",
     r"brew\s+install",
-    # 网络操作
+    # Network operations
     r"ssh\s+",
     r"scp\s+",
     r"rsync\s+",
     r"git\s+push",
     r"git\s+clone",
     r"docker\s+(run|exec|build)",
-    # 进程管理
+    # Process management
     r"kill\s+",
     r"pkill\s+",
     r"nohup\s+",
@@ -267,7 +267,7 @@ def _default_forbidden_paths() -> list[str]:
 
 @dataclass
 class PolicyResult:
-    """策略引擎判定结果"""
+    """Policy engine decision result"""
 
     decision: PolicyDecision
     reason: str = ""
@@ -277,7 +277,7 @@ class PolicyResult:
 
 @dataclass
 class ZonePolicyConfig:
-    """四区路径配置"""
+    """Four-zone path configuration"""
 
     enabled: bool = True
     workspace: list[str] = field(default_factory=list)
@@ -289,7 +289,7 @@ class ZonePolicyConfig:
 
 @dataclass
 class ConfirmationConfig:
-    """确认门配置"""
+    """Confirmation gate configuration"""
 
     enabled: bool = True
     timeout_seconds: int = 60
@@ -301,7 +301,7 @@ class ConfirmationConfig:
 
 @dataclass
 class UserAllowlistEntry:
-    """持久化白名单条目"""
+    """Persistent allowlist entry"""
 
     pattern: str = ""
     name: str = ""
@@ -313,7 +313,7 @@ class UserAllowlistEntry:
 
 @dataclass
 class UserAllowlistConfig:
-    """用户白名单配置"""
+    """User allowlist configuration"""
 
     commands: list[dict[str, Any]] = field(default_factory=list)
     tools: list[dict[str, Any]] = field(default_factory=list)
@@ -321,7 +321,7 @@ class UserAllowlistConfig:
 
 @dataclass
 class CommandPatternConfig:
-    """命令模式拦截配置"""
+    """Command pattern interception configuration"""
 
     enabled: bool = True
     custom_critical: list[str] = field(default_factory=list)
@@ -332,7 +332,7 @@ class CommandPatternConfig:
 
 @dataclass
 class CheckpointConfig:
-    """文件快照配置"""
+    """File snapshot configuration"""
 
     enabled: bool = True
     max_snapshots: int = 50
@@ -341,7 +341,7 @@ class CheckpointConfig:
 
 @dataclass
 class SelfProtectionConfig:
-    """自保护配置"""
+    """Self-protection configuration"""
 
     enabled: bool = True
     protected_dirs: list[str] = field(
@@ -355,7 +355,7 @@ class SelfProtectionConfig:
 
 @dataclass
 class SandboxConfig:
-    """沙箱配置"""
+    """Sandbox configuration"""
 
     enabled: bool = True
     backend: str = "auto"
@@ -367,7 +367,7 @@ class SandboxConfig:
 
 @dataclass
 class ToolPolicyRule:
-    """工具策略规则 (backward compat)"""
+    """Tool policy rule (backward compat)"""
 
     tool_name: str
     decision: PolicyDecision = PolicyDecision.ALLOW
@@ -379,7 +379,7 @@ class ToolPolicyRule:
 
 @dataclass
 class SecurityConfig:
-    """完整六层安全配置"""
+    """Complete six-layer security configuration"""
 
     enabled: bool = True
     zones: ZonePolicyConfig = field(default_factory=ZonePolicyConfig)
@@ -434,7 +434,7 @@ def _path_matches(normalised_path: str, pattern: str) -> bool:
 def _tool_to_optype(tool_name: str, params: dict[str, Any]) -> OpType:
     """Infer OpType from tool name and params.
 
-    安全原则：未知工具默认归为 CREATE（有副作用），避免误放行。
+    Security principle: Unknown tools default to CREATE (has side effects) to avoid false positives.
     """
     _READ_TOOLS = (
         "read_file",
@@ -495,18 +495,18 @@ def _tool_to_optype(tool_name: str, params: dict[str, Any]) -> OpType:
 
 
 _ZONE_LABELS = {
-    "workspace": "工作区",
-    "controlled": "受控区",
-    "protected": "受保护区",
-    "forbidden": "禁止访问区",
+    "workspace": "workspace",
+    "controlled": "controlled",
+    "protected": "protected",
+    "forbidden": "forbidden",
 }
 _OP_LABELS = {
-    "read": "读取",
-    "create": "创建",
-    "edit": "编辑",
-    "overwrite": "覆盖写入",
-    "delete": "删除",
-    "recursive_delete": "批量删除",
+    "read": "read",
+    "create": "create",
+    "edit": "edit",
+    "overwrite": "overwrite",
+    "delete": "delete",
+    "recursive_delete": "recursive_delete",
 }
 
 
@@ -525,10 +525,10 @@ def _op_label(op: OpType) -> str:
 
 class PolicyEngine:
     """
-    集中策略引擎 — 六层安全防护的 L1+L3 决策核心。
+    Centralized Policy Engine — core decision layer for L1+L3 of six-layer security protection.
 
-    在工具执行前调用 assert_tool_allowed() 检查是否允许执行。
-    所有判定都会记录到审计系统。
+    Call assert_tool_allowed() before tool execution to check if execution is permitted.
+    All decisions are logged to the audit system.
     """
 
     def __init__(self, config: SecurityConfig | None = None) -> None:
@@ -541,14 +541,14 @@ class PolicyEngine:
         self._confirmed_cache: dict[str, dict[str, Any]] = {}
         # Session allowlist: cache_key → {needs_sandbox, pattern}
         self._session_allowlist: dict[str, dict[str, Any]] = {}
-        # P1-5: 并发保护锁
+        # P1-5: Concurrent protection lock
         self._cache_lock = asyncio.Lock()
         # Pending UI confirmations: tool_id → {tool_name, params, ...}
         self._pending_ui_confirms: dict[str, dict[str, Any]] = {}
         self._pending_lock = asyncio.Lock()
         # F7: Temporary allowlists granted by skill activation.
         self._skill_allowlists: dict[str, set[str]] = {}
-        # P3-3: 前端安全模式 (synced to confirmation.mode)
+        # P3-3: Frontend security mode (synced to confirmation.mode)
         self._frontend_mode: str = "smart"
 
     @property
@@ -593,7 +593,7 @@ class PolicyEngine:
     # ----- YAML loading (supports both new "security:" and legacy format) ---
 
     def load_from_yaml(self, path: str | Path) -> None:
-        """从 YAML 文件加载策略配置"""
+        """Load policy configuration from YAML file"""
         path = Path(path)
         if not path.exists():
             logger.debug(f"[Policy] Config file not found: {path}")
@@ -762,7 +762,7 @@ class PolicyEngine:
         params: dict[str, Any] | None = None,
     ) -> PolicyResult:
         """
-        检查工具调用是否被策略允许。
+        Check if tool invocation is permitted by policy.
 
         Returns:
             PolicyResult with decision (ALLOW/DENY/CONFIRM) and metadata.
@@ -776,14 +776,14 @@ class PolicyEngine:
         params = params or {}
 
         if not self._config.enabled:
-            return PolicyResult(decision=PolicyDecision.ALLOW, reason="安全策略已禁用")
+            return PolicyResult(decision=PolicyDecision.ALLOW, reason="Security policy is disabled")
 
         # Bypass CONFIRM if user approved via any allowlist tier
         allowlist_meta = self._check_allowlists(tool_name, params)
         if allowlist_meta is not None:
             return PolicyResult(
                 decision=PolicyDecision.ALLOW,
-                reason="用户已确认此操作",
+                reason="User has already confirmed this operation",
                 metadata=allowlist_meta,
             )
 
@@ -793,7 +793,7 @@ class PolicyEngine:
             if op != OpType.READ:
                 return PolicyResult(
                     decision=PolicyDecision.DENY,
-                    reason="Agent 已进入只读模式（连续操作被拒绝触发死亡开关）",
+                    reason="Agent has entered read-only mode (consecutive operation denials triggered death switch)",
                     policy_name="DeathSwitch",
                 )
 
@@ -819,7 +819,7 @@ class PolicyEngine:
             self._on_allow(tool_name, params)
             return PolicyResult(
                 decision=PolicyDecision.ALLOW,
-                reason="技能临时授权放行",
+                reason="Skill temporary authorization granted",
                 metadata={"skill_allowlist": True},
             )
 
@@ -933,7 +933,7 @@ class PolicyEngine:
             result = PolicyResult(
                 decision=PolicyDecision.DENY,
                 reason=(
-                    f"操作被拒绝: 不允许在{_zone_label(zone)}对该路径执行{_op_label(op_type)}操作 (路径: {path})"
+                    f"Operation denied: not allowed to perform {_op_label(op_type)} in {_zone_label(zone)} on this path (path: {path})"
                 ),
                 policy_name="ZonePolicy",
                 metadata={
@@ -950,7 +950,7 @@ class PolicyEngine:
             result = PolicyResult(
                 decision=PolicyDecision.CONFIRM,
                 reason=(
-                    f"此操作需要您的确认: 在{_zone_label(zone)}执行{_op_label(op_type)} (路径: {path})"
+                    f"This operation requires your confirmation: perform {_op_label(op_type)} in {_zone_label(zone)} (path: {path})"
                 ),
                 policy_name="ZonePolicy",
                 metadata={
@@ -1033,7 +1033,7 @@ class PolicyEngine:
                 if base_cmd == blocked.lower():
                     result = PolicyResult(
                         decision=PolicyDecision.DENY,
-                        reason=f"命令 '{blocked}' 被策略禁止",
+                        reason=f"Command '{blocked}' is blocked by policy",
                         policy_name="CommandPattern",
                     )
                     self._on_deny(tool_name, params, result)
@@ -1051,7 +1051,7 @@ class PolicyEngine:
         if risk == RiskLevel.CRITICAL:
             result = PolicyResult(
                 decision=PolicyDecision.DENY,
-                reason=f"极高风险命令，已自动拦截: {command[:120]}",
+                reason=f"Critical risk command, automatically blocked: {command[:120]}",
                 policy_name="RiskClassification",
                 metadata={"risk_level": risk.value},
             )
@@ -1069,7 +1069,7 @@ class PolicyEngine:
                 )
             result = PolicyResult(
                 decision=PolicyDecision.CONFIRM,
-                reason=f"高风险命令，执行前需要您的确认: {command[:120]}",
+                reason=f"High-risk command, requires your confirmation before execution: {command[:120]}",
                 policy_name="RiskClassification",
                 metadata={"risk_level": risk.value, "needs_sandbox": needs_sandbox},
             )
@@ -1089,7 +1089,7 @@ class PolicyEngine:
                 pass
             result = PolicyResult(
                 decision=PolicyDecision.CONFIRM,
-                reason=f"此命令可能修改系统配置或安装软件，需要确认: {command[:120]}",
+                reason=f"This command may modify system configuration or install software, confirmation required: {command[:120]}",
                 policy_name="RiskClassification",
                 metadata={"risk_level": risk.value},
             )
@@ -1115,7 +1115,7 @@ class PolicyEngine:
                     if norm_dir.lower() in command.lower().replace("\\", "/"):
                         result = PolicyResult(
                             decision=PolicyDecision.DENY,
-                            reason=f"自保护: 禁止对 Agent 关键目录 '{pdir}' 执行高危命令",
+                            reason=f"Self-protection: forbidden to execute high-risk commands on Agent critical directory '{pdir}'",
                             policy_name="SelfProtection",
                         )
                         self._on_deny(tool_name, params, result)
@@ -1129,7 +1129,7 @@ class PolicyEngine:
                     if norm_path == norm_dir or norm_path.startswith(norm_dir.rstrip("/") + "/"):
                         result = PolicyResult(
                             decision=PolicyDecision.DENY,
-                            reason=f"自保护: 禁止删除 Agent 关键目录 '{pdir}' 下的文件",
+                            reason=f"Self-protection: forbidden to delete files under Agent critical directory '{pdir}'",
                             policy_name="SelfProtection",
                         )
                         self._on_deny(tool_name, params, result)
@@ -1153,7 +1153,7 @@ class PolicyEngine:
                         if re.search(pattern, param_str, re.IGNORECASE):
                             result = PolicyResult(
                                 decision=PolicyDecision.DENY,
-                                reason=f"工具 {tool_name} 的参数包含被禁止的内容模式",
+                                reason=f"Tool {tool_name} parameters contain forbidden content patterns",
                                 policy_name="ToolPolicy",
                             )
                             self._on_deny(tool_name, params, result)
@@ -1164,7 +1164,7 @@ class PolicyEngine:
             if rule.decision == PolicyDecision.DENY:
                 result = PolicyResult(
                     decision=PolicyDecision.DENY,
-                    reason=f"工具 '{tool_name}' 已被安全策略禁用",
+                    reason=f"Tool '{tool_name}' is disabled by security policy",
                     policy_name="ToolPolicy",
                 )
                 self._on_deny(tool_name, params, result)
@@ -1173,7 +1173,7 @@ class PolicyEngine:
             if getattr(rule, "require_confirmation", False):
                 return PolicyResult(
                     decision=PolicyDecision.CONFIRM,
-                    reason=f"工具 '{tool_name}' 的安全策略要求用户确认后执行",
+                    reason=f"Tool '{tool_name}' security policy requires user confirmation before execution",
                     policy_name="ToolPolicy",
                 )
 
@@ -1198,8 +1198,8 @@ class PolicyEngine:
         if should_trigger:
             self._readonly_mode = True
             logger.warning(
-                f"[Policy] 死亡开关触发: 连续拒绝={self._consecutive_denials}, "
-                f"累计拒绝={self._total_denials}, Agent 进入只读模式"
+                f"[Policy] Death switch triggered: consecutive_denials={self._consecutive_denials}, "
+                f"total_denials={self._total_denials}, Agent entering read-only mode"
             )
             try:
                 from openakita.api.routes.websocket import broadcast_event
@@ -1224,7 +1224,7 @@ class PolicyEngine:
         """Manually reset the death switch (e.g. after user intervention)."""
         self._readonly_mode = False
         self._consecutive_denials = 0
-        logger.info("[Policy] 只读模式已重置")
+        logger.info("[Policy] Read-only mode has been reset")
 
     # ----- Smart Approval (LLM-assisted risk assessment) ---------------------
 
@@ -1613,7 +1613,7 @@ _global_policy_engine: PolicyEngine | None = None
 
 
 def get_policy_engine() -> PolicyEngine:
-    """获取全局策略引擎实例"""
+    """Get global policy engine instance"""
     global _global_policy_engine
     if _global_policy_engine is None:
         _global_policy_engine = PolicyEngine()
@@ -1628,12 +1628,12 @@ def get_policy_engine() -> PolicyEngine:
 
 
 def set_policy_engine(engine: PolicyEngine) -> None:
-    """设置全局策略引擎实例（用于测试）"""
+    """Set global policy engine instance (for testing)"""
     global _global_policy_engine
     _global_policy_engine = engine
 
 
 def reset_policy_engine() -> None:
-    """重置全局策略引擎（重新加载配置时使用）"""
+    """Reset global policy engine (used when reloading configuration)"""
     global _global_policy_engine
     _global_policy_engine = None

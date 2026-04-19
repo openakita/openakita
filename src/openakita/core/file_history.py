@@ -1,12 +1,12 @@
 """
-文件历史与回滚系统
+File history and rollback system
 
-参考 Claude Code 的 fileHistory.ts 设计:
-- 每次文件编辑前自动备份到 data/file-history/{session_id}/
-- 每轮对话结束时创建快照点
-- 支持按消息 ID 批量回滚到任意历史快照
-- 最多保留 100 个快照
-- 同一快照内同一文件只备份一次
+Modeled after Claude Code's fileHistory.ts design:
+- Before each file edit, automatically back up to data/file-history/{session_id}/
+- Create a snapshot point at the end of each conversation turn
+- Support batch rollback to any historical snapshot by message ID
+- Retain at most 100 snapshots
+- Within a single snapshot, each file is backed up only once
 """
 
 from __future__ import annotations
@@ -24,16 +24,16 @@ HISTORY_BASE_DIR = Path("data/file-history")
 
 @dataclass
 class BackupInfo:
-    """单个文件的备份信息"""
+    """Backup information for a single file."""
 
     original_path: str
     backup_path: str
-    existed: bool  # 文件在备份时是否存在（不存在 = 新创建的文件）
+    existed: bool  # Whether the file existed at backup time (False = newly created file)
 
 
 @dataclass
 class FileSnapshot:
-    """一个快照点"""
+    """A snapshot point."""
 
     snapshot_id: str
     message_id: str
@@ -41,7 +41,7 @@ class FileSnapshot:
 
 
 class FileHistoryManager:
-    """管理文件编辑历史和快照。"""
+    """Manage file edit history and snapshots."""
 
     def __init__(self, session_id: str) -> None:
         self._session_id = session_id
@@ -59,16 +59,17 @@ class FileHistoryManager:
         return len(self._snapshots)
 
     def track_edit(self, file_path: str, snapshot_id: str) -> BackupInfo | None:
-        """在文件编辑前备份。
+        """Back up a file before it is edited.
 
-        同一 snapshot 内同一文件只备份一次（首次编辑时备份原始版本）。
+        Within the same snapshot, each file is backed up only once
+        (the original version is backed up on first edit).
 
         Args:
-            file_path: 被编辑的文件路径
-            snapshot_id: 当前快照 ID
+            file_path: Path of the file being edited
+            snapshot_id: Current snapshot ID
 
         Returns:
-            BackupInfo，如果已备份过则返回 None
+            BackupInfo, or None if the file was already backed up
         """
         if self._current_snapshot_id != snapshot_id:
             self._current_snapshot_id = snapshot_id
@@ -106,13 +107,13 @@ class FileHistoryManager:
             return None
 
     def make_snapshot(self, message_id: str) -> str:
-        """创建一个快照点。
+        """Create a snapshot point.
 
         Args:
-            message_id: 关联的消息 ID
+            message_id: Associated message ID
 
         Returns:
-            快照 ID
+            Snapshot ID
         """
         import uuid
 
@@ -141,15 +142,16 @@ class FileHistoryManager:
         return snapshot_id
 
     def rewind(self, target_message_id: str) -> list[str]:
-        """回滚到目标消息时的文件状态。
+        """Roll back to the file state at the target message.
 
-        找到目标消息之后的所有快照，按逆序恢复文件。
+        Find all snapshots after the target message and restore files
+        in reverse order.
 
         Args:
-            target_message_id: 回滚到此消息时的状态
+            target_message_id: Roll back to the state at this message
 
         Returns:
-            被恢复的文件路径列表
+            List of restored file paths
         """
         target_idx = -1
         for i, snap in enumerate(self._snapshots):
@@ -192,14 +194,14 @@ class FileHistoryManager:
         return restored
 
     def get_snapshot_for_message(self, message_id: str) -> FileSnapshot | None:
-        """获取指定消息关联的快照。"""
+        """Get the snapshot associated with the specified message."""
         for snap in self._snapshots:
             if snap.message_id == message_id:
                 return snap
         return None
 
     def _cleanup_snapshot_files(self, snapshot: FileSnapshot) -> None:
-        """清理快照关联的备份文件。"""
+        """Clean up backup files associated with a snapshot."""
         for info in snapshot.tracked_files.values():
             try:
                 backup = Path(info.backup_path)

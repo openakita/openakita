@@ -7,40 +7,42 @@ metadata:
   version: "1.0.7"
 ---
 
-# 腾讯新闻内容订阅
+# Tencent News Content Subscription
 
-通过 tencent-news-cli 获取腾讯新闻内容，支持热点新闻、早报晚报、实时资讯、新闻榜单、领域新闻查询。
+Get Tencent News content via `tencent-news-cli`. Supports hot news topics, morning/evening briefings, real-time news feeds, news rankings, topic news, and subject queries.
 
-## 配置
+## Configuration
 
-### API Key 获取
-打开 https://news.qq.com/exchange?scene=appkey 获取 API Key。
+### API Key Acquisition
+Visit https://news.qq.com/exchange?scene=appkey to get an API Key.
 
-### 安装 CLI
-下载官方 skill 包并安装 CLI。
+### Install CLI
+Download the official skill package and install the CLI.
 
-### 设置 Key
+### Set Key
+```bash
 "<cliPath>" apikey-set KEY
+```
 
-## 获取新闻
+## Get News
 
-1. 执行 help 查看可用子命令
-2. 理解用户意图，映射子命令
-3. 执行并按格式输出
+1. Execute `help` to view available subcommands
+2. Understand the user's intent and map to the appropriate subcommand
+3. Execute and output in the specified format
 
-## 输出格式
+## Output Format
 
-1. **标题文字**
-   来源：媒体名称
-   摘要内容……
-   [查看原文](https://…)
+1. **Headline text**
+   Source: Media name
+   Summary content...
+   [Read original](https://...)
 
-**来源：腾讯新闻**
+**Source: Tencent News**
 
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/news_cli_setup.py
-腾讯新闻 CLI 安装配置脚本。
+Tencent News CLI installation and configuration script.
 
 ```bash
 python3 scripts/news_cli_setup.py install

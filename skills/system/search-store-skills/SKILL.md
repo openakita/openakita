@@ -14,7 +14,7 @@ Search for Skills on the OpenAkita Platform Skill Store.
 ## When to Use
 
 - User wants to find or browse Skills on the OpenAkita marketplace
-- User asks "有什么技能可以安装" or "搜索一个 XX Skill"
+- User asks "haveinstall" or "search XX Skill"
 - User wants to discover Skills by trust level (official / certified / community)
 
 ## Workflow

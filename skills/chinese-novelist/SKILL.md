@@ -1,437 +1,437 @@
 ---
 name: openakita/skills@chinese-novelist
-description: Guide AI to write Chinese novels and fiction with structured character creation, plot architecture (起承转合), dialog writing, scene description, and genre-specific techniques for 玄幻, 都市, 悬疑, and 言情 genres.
+description: Guide AI to write Chinese novels and fiction with structured character creation, plot architecture (Qi Cheng Zhuan He), dialog writing, scene description, and genre-specific techniques for Xuanhuan, Dushi, Xuanyi, and Yanqing genres.
 license: MIT
 metadata:
   author: openakita
   version: "1.0.0"
 ---
 
-# 中文小说写作助手
+# Chinese Novel Writing Assistant
 
-专为中文小说创作设计的技能，提供角色塑造、情节架构、对话编写、场景描写和长篇一致性管理等全方位指导，支持玄幻、都市、悬疑、言情等多种类型。
+A skill designed for Chinese novel writing, providing comprehensive guidance on character building, plot architecture, dialogue writing, scene description, and long-form consistency management. Supports multiple genres including fantasy (Xuanhuan), urban fiction (Dushi), suspense (Xuanyi), and romance (Yanqing).
 
-## 适用场景
+## When to Use
 
-- 从零开始构建小说大纲和世界观
-- 创建立体的角色档案
-- 编写自然生动的人物对话
-- 构建符合类型规范的情节结构
-- 撰写沉浸感强的场景描写
-- 维护长篇小说的一致性（人物、时间线、设定）
-- 特定类型小说的创作指导
-- 突破写作瓶颈（卡文时的策略）
+- Build a novel outline and worldview from scratch
+- Create three-dimensional character profiles
+- Write natural, vivid character dialogue
+- Build plot structures that conform to genre conventions
+- Write immersive scene descriptions
+- Maintain long-form fiction consistency (characters, timeline, lore)
+- Get genre-specific writing guidance
+- Break through writer's block (strategies when stuck)
 
-## 角色创建指南
+## Character Creation Guide
 
-### 一、角色档案模板
+### 1. Character Profile Template
 
-每个重要角色应建立完整档案：
+Every important character should have a full profile:
 
 ```markdown
-# 角色档案：[角色名]
+# Character Profile: [Character Name]
 
-## 基础信息
-- 姓名/别称：
-- 年龄：
-- 性别：
-- 外貌特征：（3-5 个标志性特征，避免面面俱到）
-- 身份/职业：
-- 社会地位：
+## Basic Information
+- Name/Alias:
+- Age:
+- Gender:
+- Appearance: (3-5 signature traits, avoid describing everything)
+- Identity/Occupation:
+- Social status:
 
-## 性格内核
-- 核心性格：（用 2-3 个词概括，如「骄傲而脆弱」）
-- 表面人格：（别人眼中的他/她）
-- 深层人格：（真正的自己）
-- 性格弱点：（致命缺陷，推动冲突）
-- 性格成长方向：（从 A 到 B 的变化弧线）
+## Character Core
+- Core personality: (2-3 words, e.g., "proud yet fragile")
+- Public persona: (how others see them)
+- True self: (who they really are)
+- Fatal flaw: (drives conflict)
+- Character growth arc: (the change from A to B)
 
-## 背景故事
-- 关键童年事件：（塑造性格的根源）
-- 创伤/秘密：（驱动行为的暗线）
-- 重要关系：（与其他角色的联系）
+## Backstory
+- Formative childhood event: (the root of their personality)
+- Trauma/secret: (the hidden line driving their behavior)
+- Important relationships: (connections to other characters)
 
-## 动机与目标
-- 表面目标：（角色自己认为想要的）
-- 深层需求：（角色真正需要的）
-- 核心恐惧：（最害怕失去/面对的事物）
+## Motivations & Goals
+- Stated goal: (what the character thinks they want)
+- True need: (what the character actually needs)
+- Core fear: (what they most fear losing or facing)
 
-## 行为模式
-- 口头禅/语言特征：
-- 习惯动作：（紧张时转笔、思考时摸下巴等）
-- 决策倾向：（冲动/谨慎/随性）
-- 应对压力的方式：
+## Behavior Patterns
+- Catchphrase/speech pattern:
+- Habitual gesture: (e.g., spinning a pen when nervous, stroking chin when thinking)
+- Decision tendency: (impulsive/cautious/casual)
+- Stress response:
 ```
 
-### 二、角色塑造原则
+### 2. Character Building Principles
 
-**立体感三要素：**
+**Three Elements of Depth:**
 
-| 层次 | 说明 | 示例 |
+| Level | Description | Example |
 |------|------|------|
-| 外在行为 | 可观察的言行举止 | 总是微笑，对所有人彬彬有礼 |
-| 内在动机 | 驱动行为的原因 | 害怕被抛弃，用讨好换取安全感 |
-| 潜意识 | 角色自己都未意识到的 | 童年被父母忽视的创伤 |
+| External behavior | Observable speech and mannerisms | Always smiling, polite to everyone |
+| Internal motivation | What drives their behavior | Fear of abandonment, seeking security through people-pleasing |
+| Subconscious | What the character themselves doesn't realize | Childhood trauma of parental neglect |
 
-**避免的角色陷阱：**
-- **全能型主角**：没有弱点的角色缺乏吸引力。给主角明确的短板
-- **标签化配角**：每个配角都需要独立的动机，而非仅服务于主角
-- **性格前后矛盾**：变化需要事件推动，而非随意转变
-- **对话同质化**：不同角色说话方式应有区别（用词、句式、语气）
+**Character Traps to Avoid:**
+- **Overpowered protagonist**: A character without weaknesses lacks appeal. Give your protagonist clear shortcomings.
+- **Stereotypical sidekick**: Every supporting character needs independent motivation, not just serving the protagonist.
+- **Personality inconsistency**: Changes must be driven by events, not arbitrary shifts.
+- **Homogenized dialogue**: Different characters should speak differently (vocabulary, sentence structure, tone).
 
-### 三、角色对话编写
+### 3. Character Dialogue Writing
 
-**基本原则：**
-1. 对话要推动情节或揭示性格，不能只是「闲聊」
-2. 每个角色有独特的说话方式
-3. 潜台词比明说更有力量
-4. 适度使用「说」的替代词，但不要过度
+**Basic Principles:**
+1. Dialogue should advance the plot or reveal character — not just "small talk"
+2. Each character has a unique way of speaking
+3. Subtext is often more powerful than direct statements
+4. Use alternatives for "said" moderately, but don't overdo it
 
-**对话设计维度：**
+**Dialogue Design Dimensions:**
 
-| 维度 | 说明 | 示例 |
+| Dimension | Description | Example |
 |------|------|------|
-| 用词层次 | 教育程度和性格的体现 | 学者用成语，街头少年用俚语 |
-| 句式长短 | 反映情绪和节奏 | 紧张时短句，放松时长句 |
-| 信息量 | 是否直接表达意图 | 内敛的人说话留余地 |
-| 语气词 | 地域和年龄特征 | 「嘛」「呐」「哎」各有不同 |
-| 停顿/省略 | 犹豫、隐瞒的表现 | `"我其实……算了，没什么。"` |
+| Vocabulary level | Reflects education and personality | Scholar uses idioms; street kid uses slang |
+| Sentence length | Reflects emotion and pacing | Short sentences when tense, long sentences when relaxed |
+| Information density | Whether intent is expressed directly | Reserved people leave room for interpretation |
+| Modal particles | Regional and age characteristics | "ma", "na", "ai" each carry different nuance |
+| Pauses/omissions | Signs of hesitation or concealment | `"I actually... never mind, it's nothing."` |
 
-**潜台词示例：**
+**Subtext Examples:**
 
-差 ❌（太直白）：
+Bad (too explicit):
 ```
-"我很生气，因为你没有告诉我这件事。"
-```
-
-好 ✅（潜台词）：
-```
-她把杯子轻轻放在桌上，声音平稳得可怕："你还有别的事瞒着我吗？"
+"I'm angry because you didn't tell me about this."
 ```
 
-**对话中动作的插入：**
+Good (subtext):
 ```
-"这不公平。"林然转过身，指尖在窗台上划了一下，
-像在擦去看不见的灰尘，"你比谁都清楚。"
+She set the cup down gently on the table, her voice calm to the point of being terrifying: "Is there anything else you're hiding from me?"
 ```
 
-## 情节架构：起承转合
+**Inserting Action into Dialogue:**
+```
+"That's not fair." Lin Ran turned around, his fingertips brushing across the windowsill,
+as if wiping away invisible dust. "You know that better than anyone."
+```
 
-### 四段式结构
+## Plot Architecture: Beginning-Development-Turn-Conclusion
 
-| 阶段 | 比例 | 功能 | 核心任务 |
-|------|------|------|---------|
-| **起** | 15-20% | 开端 | 建立世界观，介绍主角，埋设悬念 |
-| **承** | 30-35% | 发展 | 展开冲突，角色成长，不断升级挑战 |
-| **转** | 30-35% | 高潮 | 核心冲突爆发，最大危机，反转 |
-| **合** | 15-20% | 结局 | 解决冲突，收束伏笔，角色蜕变 |
+### Four-Act Structure
 
-### 起：开端的三种方式
+| Stage | Proportion | Function | Core Tasks |
+|------|------|------|------|------|
+| **Qi (Beginning)** | 15-20% | Setup | Establish worldview, introduce protagonist, plant suspense |
+| **Cheng (Development)** | 30-35% | Rising action | Unfold conflict, character growth, escalating challenges |
+| **Zhuan (Turn)** | 30-35% | Climax | Core conflict erupts, maximum crisis, reversal |
+| **He (Conclusion)** | 15-20% | Resolution | Resolve conflict, tie up loose ends, character transformation |
 
-1. **事件开场**：从一个意外/冲突开始
+### Beginning: Three Opening Methods
+
+1. **Event opening**: Start with a surprise/conflict
    ```
-   陈然推开门的那一刻，整个办公室安静了。
-   所有人都在看着他桌上那封印着红章的信。
-   ```
-
-2. **悬念开场**：抛出谜题，制造好奇
-   ```
-   三年前的那个雨夜，有三个人走进了那栋楼。
-   只有两个人走出来。第三个人，至今没有找到。
+   The moment Chen Ran pushed open the door, the entire office went quiet.
+   Everyone was staring at the letter with the red seal on his desk.
    ```
 
-3. **日常切入**：从平凡生活切入，反衬后续变化
+2. **Suspense opening**: Pose a mystery, create curiosity
    ```
-   叶青每天早上七点起床，坐三站地铁，
-   在便利店买一杯美式。这个习惯保持了两年，
-   直到那天早上，地铁里出现了那个人。
+   Three people walked into that building on that rainy night three years ago.
+   Only two walked out. The third person has never been found.
    ```
 
-### 承：发展阶段的节奏控制
+3. **Slice-of-life opening**: Enter from ordinary life, contrasting with the changes to come
+   ```
+   Ye Qing got up at seven every morning, rode the subway for three stops,
+   and bought an Americano at the convenience store. She had kept this habit for two years,
+   until that morning, when that person appeared on the subway.
+   ```
 
-**张弛交替原则：**
+### Development: Pacing Control
+
+**Tension-Relief Principle:**
 ```
-紧张事件 → 缓冲（日常/回忆/感情线）→ 更紧张的事件 → 缓冲 → 高潮
-```
-
-**升级冲突的方法：**
-- 时间压力（deadline 逼近）
-- 人际压力（信任破裂、关系变化）
-- 信息压力（新线索改变局面）
-- 能力压力（现有能力不足以应对）
-- 道德压力（两难抉择）
-
-### 转：高潮的构建
-
-高潮不只是「大战」，核心是**角色面对最大考验时的选择**。
-
-**高潮公式：**
-```
-角色的核心弱点 × 最大的外部威胁 = 被迫改变/突破
+Tense event → Buffer (daily life/memory/romance) → More tense event → Buffer → Climax
 ```
 
-**反转设计技巧：**
-- 伏笔回收型：前文看似无意的细节在此揭示真相
-- 视角反转型：切换视角后发现真相与想象不同
-- 两难抉择型：没有完美选项，选择即牺牲
-- 身份揭示型：关键人物真实身份曝光
+**Methods to Escalate Conflict:**
+- Time pressure (deadline approaching)
+- Interpersonal pressure (broken trust, relationship changes)
+- Information pressure (new clues change the situation)
+- Capability pressure (current abilities insufficient to cope)
+- Moral pressure (dilemma choices)
 
-### 合：结局的处理
+### Turn: Building Climax
 
-| 结局类型 | 适用场景 | 要点 |
+The climax is not just a "big battle." The core is **the character's choice when facing their ultimate test**.
+
+**Climax Formula:**
+```
+Character's core weakness × Maximum external threat = Forced change/breakthrough
+```
+
+**Reversal Design Techniques:**
+- **Foreshadowing payoff**: Seemingly insignificant details from earlier reveal the truth here
+- **Perspective reversal**: Switching perspective reveals a truth different from what readers imagine
+- **Dilemma choice**: No perfect option — choosing means sacrificing
+- **Identity reveal**: A key character's true identity is exposed
+
+### Conclusion: Handling Endings
+
+| Ending Type | Suitable For | Key Points |
 |---------|---------|------|
-| 圆满结局 | 言情、轻松题材 | 满足读者期待，但不要太简单 |
-| 开放结局 | 文艺、悬疑题材 | 给读者想象空间 |
-| 悲剧结局 | 严肃文学 | 必须有足够的情感铺垫 |
-| 反转结局 | 悬疑、惊悚 | 最后的翻转需有充分伏笔支撑 |
+| Happy ending | Romance, lighthearted genres | Satisfy reader expectations, but don't make it too easy |
+| Open ending | Literary, suspense genres | Leave room for reader imagination |
+| Tragic ending | Serious literature | Must have sufficient emotional buildup |
+| Plot twist ending | Suspense, thriller | The final twist must be well supported by foreshadowing |
 
-## 场景描写技法
+## Scene Description Techniques
 
-### 五感描写法
+### Five Senses Description
 
-每个重要场景至少调动 **3 种以上感官**：
+Every important scene should engage at least **3 of the 5 senses**:
 
-| 感官 | 功能 | 示例 |
+| Sense | Function | Example |
 |------|------|------|
-| 视觉 | 空间感、色彩、光影 | `夕阳把窗框的影子拉成细长的黑线` |
-| 听觉 | 氛围、暗示 | `雨点砸在铁皮棚顶上，像密集的鼓点` |
-| 嗅觉 | 记忆触发、环境真实感 | `空气里弥漫着消毒水和旧木头的气味` |
-| 触觉 | 体感、情绪传递 | `他的手指碰到信封时，纸张的粗糙让他一怔` |
-| 味觉 | 氛围强化 | `嘴里全是铁锈的味道` |
+| Sight | Spatial awareness, color, light and shadow | `The sunset stretched the window frame's shadow into a thin black line` |
+| Hearing | Atmosphere, hints | `Rain pounded the tin roof like dense drumbeats` |
+| Smell | Memory trigger, environmental authenticity | `The air was filled with the smell of disinfectant and old wood` |
+| Touch | Physical sensation, emotional delivery | `When his fingers touched the envelope, the roughness of the paper made him pause` |
+| Taste | Atmosphere reinforcement | `His mouth was full of the taste of rust` |
 
-### 场景与情绪的呼应
+### Scene-Emotion Resonance
 
-环境描写应服务于角色情绪，而非单纯记录场景：
+Environmental description should serve character emotion, not just record the setting:
 
-**焦虑场景：**
+**Anxiety scene:**
 ```
-走廊里的日光灯一闪一闪，发出细微的嗡鸣。
-墙上的时钟走得异常缓慢，秒针每跳一格，
-他都觉得自己的心跳漏了半拍。
-```
-
-**释然场景：**
-```
-风从半开的窗户挤进来，翻动了桌上几张纸。
-远处有人在弹吉他，断断续续的旋律模糊又温柔。
-她终于松开了一直攥着的手。
+The fluorescent lights in the hallway flickered, emitting a faint hum.
+The clock on the wall moved unnaturally slowly, each tick
+making him feel like his heart skipped half a beat.
 ```
 
-### 场景描写的节奏
+**Relief scene:**
+```
+Wind squeezed through the half-open window, rustling several papers on the desk.
+Someone was playing guitar in the distance, the broken melody faint and gentle.
+She finally unclenched her hands.
+```
 
-- **动作场景**：短句，少形容，多动词
-- **氛围场景**：长句，多感官，慢节奏
-- **过渡场景**：简洁交代，一两句带过
-- **情感场景**：内心独白+外部细节交织
+### Scene Description Pacing
 
-## 长篇小说一致性管理
+- **Action scene**: Short sentences, little description, more verbs
+- **Atmosphere scene**: Long sentences, multi-sensory, slow pace
+- **Transition scene**: Brief, one or two lines
+- **Emotional scene**: Interior monologue interwoven with external details
 
-### 设定文档
+## Novel Consistency Management
 
-维护一份随时更新的设定文档：
+### Setting Document
+
+Maintain a living setting document that is updated continuously:
 
 ```markdown
-# 《小说名》设定文档
+# "[Novel Title]" Setting Document
 
-## 时间线
-| 章节 | 时间 | 主要事件 |
-|------|------|---------|
-| 第1章 | 2026年3月 | 主角发现异常 |
-| 第2章 | 2026年3月 | 调查开始 |
+## Timeline
+| Chapter | Time | Main Events |
+|------|------|------|------|
+| Ch. 1 | March 2026 | Protagonist discovers anomaly |
+| Ch. 2 | March 2026 | Investigation begins |
 ...
 
-## 角色关系图
-主角 ←好友→ 角色A
-主角 ←暗恋→ 角色B
-角色A ←竞争→ 角色C
+## Character Relationship Map
+Protagonist ←friends→ Character A
+Protagonist ←crush→ Character B
+Character A ←rivals→ Character C
 
-## 世界观设定
-- 地理：
-- 组织架构：
-- 力量体系：
-- 历史背景：
+## World Building
+- Geography:
+- Organization structure:
+- Power system:
+- Historical background:
 
-## 伏笔追踪
-| 伏笔 | 埋设章节 | 回收章节 | 状态 |
-|------|---------|---------|------|
-| 主角左手的疤 | 第3章 | 第28章 | 已回收 |
-| 黑衣人的真实身份 | 第5章 | - | 待回收 |
+## Foreshadowing Tracker
+| Foreshadowing | Planted Chapter | Resolved Chapter | Status |
+|------|------|------|------|
+| Scar on protagonist's left hand | Ch. 3 | Ch. 28 | Resolved |
+| Black-clad figure's true identity | Ch. 5 | - | Pending |
 
-## 已使用的名称
-[避免重复使用类似名字]
+## Names Already Used
+[Avoid reusing similar names]
 ```
 
-### 一致性检查要点
+### Consistency Checklist
 
-- 角色性格是否前后一致（变化需要事件推动）
-- 时间线是否存在矛盾
-- 地理距离和旅行时间是否合理
-- 伏笔是否全部回收
-- 次要角色是否中途消失
-- 力量/能力体系是否有逻辑漏洞
+- Character personality consistent throughout (changes require events to drive them)
+- Timeline contradictions
+- Geographic distances and travel times reasonable
+- All foreshadowing resolved
+- Secondary characters don't disappear mid-story
+- Power/ability system has no logical loopholes
 
-## 类型化写作指南
+## Genre Writing Guide
 
-### 玄幻小说
+### Fantasy Fiction (Xuanhuan)
 
-**核心要素：**
-- 完整的力量体系（等级分明，晋级有规则）
-- 广阔的世界观（多势力、多地域）
-- 主角成长线（升级节奏和关键战斗）
+**Core Elements:**
+- Complete power system (clear tier system, advancement has rules)
+- Expansive worldview (multiple factions, multiple regions)
+- Protagonist growth arc (upgrade pacing and key battles)
 
-**力量体系设计原则：**
-1. 等级不超过 7-9 层（太多容易混乱）
-2. 每个等级有质变而非量变
-3. 跨级战斗需要合理解释（特殊天赋/秘术/代价）
-4. 战斗描写避免纯数值对比，融入策略和创意
+**Power System Design Principles:**
+1. No more than 7-9 tiers (too many causes confusion)
+2. Each tier has qualitative change, not just quantitative
+3. Cross-tier battles need reasonable explanation (special talent/secret technique/cost)
+4. Battle descriptions should avoid pure number comparison; incorporate strategy and creativity
 
-**节奏控制：**
+**Pacing Control:**
 ```
-小危机（3-5章）→ 突破/升级 → 中危机（10-15章）→ 
-重要突破 → 大危机（20-30章）→ 重大蜕变
-```
-
-**常见问题：**
-- 升级过快导致后期乏力 → 设计平台期和瓶颈
-- 配角沦为NPC → 给重要配角独立的故事线
-- 战斗描写同质化 → 不同境界不同战斗方式
-
-### 都市小说
-
-**核心要素：**
-- 真实可信的都市生活细节
-- 具体的职业描写（行业知识）
-- 人际关系网的复杂性
-- 社会议题的融入
-
-**细节真实感：**
-```
-地铁在早高峰时的拥挤程度、
-特定城市的街道名和地标、
-某个行业的术语和工作流程、
-不同社会阶层的消费习惯
+Minor crisis (3-5 chapters) → Breakthrough/level up → Medium crisis (10-15 chapters) → 
+Major breakthrough → Major crisis (20-30 chapters) → Significant transformation
 ```
 
-**人物关系处理：**
-- 职场关系：上下级、同事竞争、导师
-- 家庭关系：代际冲突、亲情羁绊
-- 感情关系：自然发展，避免强行牵线
-- 社交圈层：不同圈层的价值观碰撞
+**Common Problems:**
+- Leveling up too fast leads to later exhaustion → design plateaus and bottlenecks
+- Supporting characters become NPCs → give important side characters their own story arcs
+- Battle descriptions become homogenized → different tiers fight in different ways
 
-### 悬疑小说
+### Urban Fiction (Dushi)
 
-**核心要素：**
-- 精密的逻辑链
-- 有效的误导和反转
-- 线索的公平呈现
-- 节奏控制（信息释放的时机）
+**Core Elements:**
+- Authentic and believable urban life details
+- Concrete career descriptions (industry knowledge)
+- Complexity of relationship networks
+- Integration of social issues
 
-**线索设计三原则：**
-1. **公平原则**：关键线索必须在揭示真相前呈现给读者
-2. **迷惑原则**：真线索和假线索混合，引导读者误判
-3. **连贯原则**：最终答案必须能串联所有线索
-
-**悬念维持技巧：**
-- 每章结尾留一个小钩子
-- 解答一个疑问的同时抛出新疑问
-- 利用视角限制制造信息差
-- 关键时刻切换视角/时间线
-
-**反转层次：**
+**Detail Authenticity:**
 ```
-第一层反转：推翻读者最初的猜测（第1/3处）
-第二层反转：推翻读者修正后的猜测（第2/3处）
-第三层反转：真相揭示，意料之外情理之中（结尾）
+Crowding on the subway during rush hour,
+Specific city street names and landmarks,
+Industry terminology and workflows,
+Consumption habits across social classes
 ```
 
-### 言情小说
+**Character Relationship Handling:**
+- Workplace: superiors/subordinates, colleague competition, mentors
+- Family: generational conflict, family bonds
+- Romance: natural development, avoid forced matchmaking
+- Social circles: value clashes between different circles
 
-**核心要素：**
-- 让人心动的化学反应
-- 合理的情感发展节奏
-- 有记忆点的互动场景
-- 人物成长与感情线交织
+### Suspense Fiction (Xuanyi)
 
-**感情发展节奏：**
+**Core Elements:**
+- Tight logical chain
+- Effective misdirection and reversals
+- Fair presentation of clues
+- Pacing control (timing of information release)
+
+**Three Principles of Clue Design:**
+1. **Fairness**: Key clues must be presented to readers before the truth is revealed
+2. **Misdirection**: Mix true and false clues to lead readers to wrong judgments
+3. **Coherence**: The final answer must connect all clues
+
+**Suspense Maintenance Techniques:**
+- End each chapter with a small hook
+- When answering one question, raise a new one
+- Use perspective limitations to create information gaps
+- Switch perspective/timeline at critical moments
+
+**Reversal Layers:**
 ```
-相遇（吸引/排斥）→ 接触（了解/误解）→ 亲近（心动/试探）→
-阻碍（误会/外部压力）→ 确认（表白/相互理解）→ 磨合（冲突/成长）→
-稳定（彼此接纳真实的对方）
+First reversal: Overturn the reader's initial guess (at the 1/3 mark)
+Second reversal: Overturn the reader's revised guess (at the 2/3 mark)
+Third reversal: Truth revealed — unexpected yet inevitable (at the end)
 ```
 
-**心动场景设计要点：**
-- 通过细节传递心动（不是直接写「她心跳加速」）
-- 利用日常场景营造氛围（一起做饭比烛光晚餐更动人）
-- 未完成的动作比完成的更撩人
-- 眼神交流和无意触碰比大段心理独白更有效
+### Romance Fiction (Yanqing)
 
-**经典心动场景模式：**
+**Core Elements:**
+- Chemistry that makes hearts flutter
+- Reasonable emotional development pace
+- Memorable interaction scenes
+- Character growth interwoven with romance
 
-| 模式 | 说明 | 示例 |
+**Romance Development Pace:**
+```
+Meeting (attraction/repulsion) → Contact (understanding/misunderstanding) → Closeness (heartbeat/testing) →
+Obstacles (misunderstanding/external pressure) → Confirmation (confession/mutual understanding) → Adjustment (conflict/growth) →
+Stability (accepting each other's true selves)
+```
+
+**Heart-Flutter Scene Design Tips:**
+- Convey heartbeat through details (not just writing "her heart raced")
+- Use everyday scenes to create atmosphere (cooking together is more touching than a candlelit dinner)
+- Unfinished actions are more teasing than completed ones
+- Eye contact and accidental touches are more effective than long internal monologues
+
+**Classic Romantic Scene Patterns:**
+
+| Pattern | Description | Example |
 |------|------|------|
-| 默契时刻 | 异口同声/心有灵犀 | 同时说出一样的话然后对视 |
-| 反差萌 | 平时形象vs特定场景 | 冷面上司认真给猫喂食 |
-| 英雄救美/美救英雄 | 危机时刻的保护 | 不一定是物理危险 |
-| 吃醋/误会 | 情绪波动揭示感情 | 说「没关系」但表情出卖了自己 |
-| 不经意的亲密 | 物理距离突然缩短 | 避雨时共撑一把伞 |
+| Synchronized moment | Speaking in unison / mind connection | Saying the same thing at the same time, then looking at each other |
+| Contrast charm | Usual image vs. specific scenario | Cold-faced boss carefully feeding a cat |
+| Rescue | Protection in a crisis | Not necessarily physical danger |
+| Jealousy/Misunderstanding | Emotional fluctuations reveal feelings | Saying "it's fine" but their expression betrays them |
+| Accidental intimacy | Physical distance suddenly shortened | Sharing an umbrella in the rain |
 
-## 写作瓶颈突破策略
+## Breaking Writer's Block
 
-| 困境 | 策略 |
+| Problem | Strategy |
 |------|------|
-| 不知道下一步写什么 | 回到角色动机，问「TA 下一步会做什么」 |
-| 场景写不下去 | 换视角写同一场景 |
-| 对话写不自然 | 把对话念出声，删掉不会说出口的 |
-| 感觉情节太平淡 | 加入一个意外事件或提前引爆冲突 |
-| 角色扁平 | 给角色加一个秘密或未说出的恐惧 |
-| 世界观太空 | 从一个具体地点的细节开始构建 |
-| 结尾写不好 | 回看开头，让结尾与开头形成呼应 |
+| Don't know what to write next | Return to character motivation — ask "what would they do next?" |
+| Can't write a scene | Switch perspective and write the same scene from another angle |
+| Dialogue feels unnatural | Read it out loud; cut anything they wouldn't actually say |
+| Plot feels flat | Add a surprise event or detonate conflict early |
+| Character feels flat | Give the character a secret or an unspoken fear |
+| Worldview feels empty | Start building from the details of one specific location |
+| Can't nail the ending | Re-read the beginning; make the ending echo it |
 
-## 输出格式
+## Output Format
 
-### 大纲生成格式
+### Outline Generation Format
 
 ```markdown
-## 📖 小说大纲：《书名》
+## 📖 Novel Outline: "[Title]"
 
-### 基本信息
-- 类型：[玄幻/都市/悬疑/言情]
-- 预计字数：[万字]
-- 核心主题：[一句话概括]
+### Basic Info
+- Genre: [Fantasy/Urban/Suspense/Romance]
+- Estimated word count: [in tens of thousands]
+- Core theme: [one-sentence summary]
 
-### 角色表
-[主要角色档案]
+### Character Roster
+[Main character profiles]
 
-### 情节大纲
-#### 起（第1-X章）
-[章节概要]
+### Plot Outline
+#### Qi (Beginning) — Ch. 1 to X
+[Chapter summary]
 
-#### 承（第X-Y章）
-[章节概要]
+#### Cheng (Development) — Ch. X to Y
+[Chapter summary]
 
-#### 转（第Y-Z章）
-[章节概要]
+#### Zhuan (Turn) — Ch. Y to Z
+[Chapter summary]
 
-#### 合（第Z-末章）
-[章节概要]
+#### He (Conclusion) — Ch. Z to final
+[Chapter summary]
 
-### 伏笔设计
-[伏笔列表及回收计划]
+### Foreshadowing Design
+[List of foreshadowing and resolution plan]
 
-### 世界观设定
-[核心设定]
+### World Building
+[Core settings]
 ```
 
-### 章节写作格式
+### Chapter Writing Format
 
 ```markdown
-## 第X章 [章节名]
+## Chapter X [Chapter Title]
 
-[正文内容]
+[Main text content]
 
 ---
-### 创作笔记
-- 本章推进了：[情节/角色/伏笔]
-- 下章计划：[预告]
-- 待检查：[一致性问题]
+### Creation Notes
+- This chapter advanced: [plot/character/foreshadowing]
+- Next chapter plan: [preview]
+- To check: [consistency issues]
 ```

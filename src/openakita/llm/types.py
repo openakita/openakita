@@ -1,9 +1,9 @@
 """
-LLM 统一类型定义
+Unified LLM type definitions
 
-采用 Anthropic 格式作为内部标准：
-- 结构更清晰（system 独立、content blocks 设计）
-- 工具调用参数是 JSON 对象（非字符串，更安全）
+Uses Anthropic format as the internal standard:
+- Clearer structure (system separated, content blocks design)
+- Tool call parameters are JSON objects (not strings, more secure)
 """
 
 from dataclasses import dataclass, field
@@ -19,11 +19,11 @@ _OPENAI_ENDPOINT_SUFFIXES = (
 
 
 def normalize_base_url(url: str, *, extra_suffixes: tuple[str, ...] = ()) -> str:
-    """剥离用户误粘贴的 OpenAI 兼容端点路径后缀，返回干净的 base URL。
+    """Strip OpenAI-compatible endpoint path suffixes mistakenly pasted by user and return clean base URL.
 
-    很多服务商（GitCode AI、火山引擎等）给出的 API 地址是完整端点 URL
-    （如 ``https://xxx/v1/chat/completions``），用户直接粘贴后拼接会产生
-    双重路径导致 404。
+    Many service providers (e.g. GitCode AI, Volcano Engine) provide complete endpoint URLs
+    (e.g. ``https://xxx/v1/chat/completions``). When users paste and concatenate directly,
+    double paths result in 404 errors.
     """
     url = url.rstrip("/")
     for suffix in (*_OPENAI_ENDPOINT_SUFFIXES, *extra_suffixes):
@@ -33,7 +33,7 @@ def normalize_base_url(url: str, *, extra_suffixes: tuple[str, ...] = ()) -> str
 
 
 class StopReason(StrEnum):
-    """停止原因"""
+    """Stop reason"""
 
     END_TURN = "end_turn"
     MAX_TOKENS = "max_tokens"
@@ -42,7 +42,7 @@ class StopReason(StrEnum):
 
 
 class ContentType(StrEnum):
-    """内容类型"""
+    """Content type"""
 
     TEXT = "text"
     TOOL_USE = "tool_use"
@@ -54,7 +54,7 @@ class ContentType(StrEnum):
 
 
 class MessageRole(StrEnum):
-    """消息角色"""
+    """Message role"""
 
     USER = "user"
     ASSISTANT = "assistant"
@@ -64,7 +64,7 @@ class MessageRole(StrEnum):
 
 @dataclass
 class Usage:
-    """Token 使用统计"""
+    """Token usage statistics"""
 
     input_tokens: int = 0
     output_tokens: int = 0
@@ -78,10 +78,10 @@ class Usage:
 
 @dataclass
 class ImageContent:
-    """图片内容"""
+    """Image content"""
 
     media_type: str  # "image/jpeg", "image/png", "image/gif", "image/webp"
-    data: str  # base64 编码
+    data: str  # base64 encoded
 
     @classmethod
     def from_base64(cls, data: str, media_type: str = "image/jpeg") -> "ImageContent":
@@ -89,12 +89,12 @@ class ImageContent:
 
     @classmethod
     def from_url(cls, url: str) -> "ImageContent":
-        """从 URL 创建（需要下载并转换为 base64）"""
-        # 这里只存储 URL，实际下载在转换器中处理
+        """Create from URL (download and convert to base64 needed)"""
+        # Store only the URL; actual download handled in converter
         return cls(media_type="url", data=url)
 
     def to_data_url(self) -> str:
-        """转换为 data URL 格式"""
+        """Convert to data URL format"""
         if self.media_type == "url":
             return self.data
         return f"data:{self.media_type};base64,{self.data}"
@@ -102,10 +102,10 @@ class ImageContent:
 
 @dataclass
 class VideoContent:
-    """视频内容"""
+    """Video content"""
 
     media_type: str  # "video/mp4", "video/webm"
-    data: str  # base64 编码
+    data: str  # base64 encoded
 
     @classmethod
     def from_base64(cls, data: str, media_type: str = "video/mp4") -> "VideoContent":
@@ -113,11 +113,11 @@ class VideoContent:
 
     @classmethod
     def from_url(cls, url: str) -> "VideoContent":
-        """从 URL 创建（存储 URL，由下游转换器处理）"""
+        """Create from URL (URL stored, handled by downstream converter)"""
         return cls(media_type="url", data=url)
 
     def to_data_url(self) -> str:
-        """转换为 data URL 格式"""
+        """Convert to data URL format"""
         if self.media_type == "url":
             return self.data
         return f"data:{self.media_type};base64,{self.data}"
@@ -125,11 +125,11 @@ class VideoContent:
 
 @dataclass
 class AudioContent:
-    """音频内容"""
+    """Audio content"""
 
     media_type: str  # "audio/wav", "audio/mp3", "audio/ogg", etc.
-    data: str  # base64 编码
-    format: str = "wav"  # 音频格式: "wav", "mp3", "pcm16", etc.
+    data: str  # base64 encoded
+    format: str = "wav"  # Audio format: "wav", "mp3", "pcm16", etc.
 
     @classmethod
     def from_base64(
@@ -139,7 +139,7 @@ class AudioContent:
 
     @classmethod
     def from_file(cls, path: str) -> "AudioContent":
-        """从文件创建"""
+        """Create from file"""
         import base64
         from pathlib import Path
 
@@ -158,17 +158,17 @@ class AudioContent:
         return cls(media_type=media_type, data=data, format=suffix)
 
     def to_data_url(self) -> str:
-        """转换为 data URL 格式"""
+        """Convert to data URL format"""
         return f"data:{self.media_type};base64,{self.data}"
 
 
 @dataclass
 class DocumentContent:
-    """文档内容（PDF 等）"""
+    """Document content (PDF, etc.)"""
 
     media_type: str  # "application/pdf"
-    data: str  # base64 编码
-    filename: str = ""  # 原始文件名
+    data: str  # base64 encoded
+    filename: str = ""  # Original filename
 
     @classmethod
     def from_base64(
@@ -178,7 +178,7 @@ class DocumentContent:
 
     @classmethod
     def from_file(cls, path: str) -> "DocumentContent":
-        """从文件创建"""
+        """Create from file"""
         import base64
         from pathlib import Path
 
@@ -192,18 +192,18 @@ class DocumentContent:
 
 @dataclass
 class ContentBlock:
-    """内容块基类"""
+    """Content block base class"""
 
     type: str
 
     def to_dict(self) -> dict:
-        """转换为字典"""
+        """Convert to dictionary"""
         raise NotImplementedError
 
 
 @dataclass
 class TextBlock(ContentBlock):
-    """文本内容块"""
+    """Text content block"""
 
     text: str
     type: str = field(default="text", init=False)
@@ -214,7 +214,7 @@ class TextBlock(ContentBlock):
 
 @dataclass
 class ThinkingBlock(ContentBlock):
-    """思考内容块 (MiniMax M2.1 Interleaved Thinking)"""
+    """Thinking content block (MiniMax M2.1 Interleaved Thinking)"""
 
     thinking: str
     type: str = field(default="thinking", init=False)
@@ -225,12 +225,12 @@ class ThinkingBlock(ContentBlock):
 
 @dataclass
 class ToolUseBlock(ContentBlock):
-    """工具调用内容块"""
+    """Tool use content block"""
 
     id: str
     name: str
-    input: dict  # JSON 对象，非字符串
-    provider_extra: dict | None = None  # provider 透传字段（如 Gemini thought_signature）
+    input: dict  # JSON object, not string
+    provider_extra: dict | None = None  # Provider pass-through fields (e.g. Gemini thought_signature)
     type: str = field(default="tool_use", init=False)
 
     def __post_init__(self) -> None:
@@ -250,25 +250,25 @@ class ToolUseBlock(ContentBlock):
 
 @dataclass
 class ToolResultBlock(ContentBlock):
-    """工具结果内容块
+    """Tool result content block
 
-    content 可以是纯文本字符串，也可以是多模态内容列表（文本 + 图片等）。
-    列表格式示例::
+    content can be plain text string or multimodal content list (text + images, etc.).
+    List format example::
 
         [
-            {"type": "text", "text": "截图已保存到 ..."},
+            {"type": "text", "text": "Screenshot saved to ..."},
             {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},
         ]
     """
 
     tool_use_id: str
-    content: str | list  # 工具执行结果，str 或多模态 content list
+    content: str | list  # Tool execution result, str or multimodal content list
     is_error: bool = False
     type: str = field(default="tool_result", init=False)
 
     @property
     def text_content(self) -> str:
-        """提取纯文本内容（用于压缩、摘要等场景）。"""
+        """Extract plain text content (for compression, summarization, etc.)."""
         if isinstance(self.content, str):
             return self.content
         texts = []
@@ -290,7 +290,7 @@ class ToolResultBlock(ContentBlock):
 
 @dataclass
 class ImageBlock(ContentBlock):
-    """图片内容块"""
+    """Image content block"""
 
     image: ImageContent
     type: str = field(default="image", init=False)
@@ -308,7 +308,7 @@ class ImageBlock(ContentBlock):
 
 @dataclass
 class VideoBlock(ContentBlock):
-    """视频内容块"""
+    """Video content block"""
 
     video: VideoContent
     type: str = field(default="video", init=False)
@@ -326,7 +326,7 @@ class VideoBlock(ContentBlock):
 
 @dataclass
 class AudioBlock(ContentBlock):
-    """音频内容块"""
+    """Audio content block"""
 
     audio: AudioContent
     type: str = field(default="audio", init=False)
@@ -345,7 +345,7 @@ class AudioBlock(ContentBlock):
 
 @dataclass
 class DocumentBlock(ContentBlock):
-    """文档内容块（PDF 等）"""
+    """Document content block (PDF, etc.)"""
 
     document: DocumentContent
     type: str = field(default="document", init=False)
@@ -364,7 +364,7 @@ class DocumentBlock(ContentBlock):
         return result
 
 
-# 内容块联合类型
+# Content block union type
 ContentBlockType = (
     TextBlock
     | ThinkingBlock
@@ -379,11 +379,11 @@ ContentBlockType = (
 
 @dataclass
 class Message:
-    """消息"""
+    """Message"""
 
     role: str  # "user" | "assistant" | "system" | "tool"
     content: str | list[ContentBlockType]
-    reasoning_content: str | None = None  # Kimi 专用：思考内容
+    reasoning_content: str | None = None  # Kimi-specific: thinking content
 
     def to_dict(self) -> dict:
         if isinstance(self.content, str):
@@ -398,7 +398,7 @@ class Message:
 
 @dataclass
 class Tool:
-    """工具定义"""
+    """Tool definition"""
 
     name: str
     description: str
@@ -414,17 +414,17 @@ class Tool:
 
 @dataclass
 class LLMRequest:
-    """统一请求格式"""
+    """Unified request format"""
 
     messages: list[Message]
     system: str = ""
     tools: list[Tool] | None = None
-    max_tokens: int = 0  # 0=不限制（OpenAI 不发送该参数；Anthropic 使用端点配置值或兜底 16384）
+    max_tokens: int = 0  # 0=unlimited (OpenAI doesn't send this param; Anthropic uses endpoint config or default 16384)
     temperature: float = 1.0
     enable_thinking: bool = False
-    thinking_depth: str | None = None  # 思考深度: 'low'/'medium'/'high'
+    thinking_depth: str | None = None  # Thinking depth: 'low'/'medium'/'high'
     stop_sequences: list[str] | None = None
-    extra_params: dict | None = None  # 额外参数（如 enable_thinking 等）
+    extra_params: dict | None = None  # Extra parameters (e.g. enable_thinking)
 
     def to_dict(self) -> dict:
         result = {
@@ -443,19 +443,19 @@ class LLMRequest:
 
 @dataclass
 class LLMResponse:
-    """统一响应格式"""
+    """Unified response format"""
 
     id: str
     content: list[ContentBlockType]
     stop_reason: StopReason
     usage: Usage
     model: str
-    reasoning_content: str | None = None  # Kimi 专用：思考内容
-    endpoint_name: str = ""  # 实际处理此请求的端点名称（由 LLMClient 填充）
+    reasoning_content: str | None = None  # Kimi-specific: thinking content
+    endpoint_name: str = ""  # Actual endpoint name handling this request (populated by LLMClient)
 
     @property
     def text(self) -> str:
-        """获取纯文本内容"""
+        """Get plain text content"""
         texts = []
         for block in self.content:
             if isinstance(block, TextBlock):
@@ -464,12 +464,12 @@ class LLMResponse:
 
     @property
     def tool_calls(self) -> list[ToolUseBlock]:
-        """获取所有工具调用"""
+        """Get all tool calls"""
         return [block for block in self.content if isinstance(block, ToolUseBlock)]
 
     @property
     def has_tool_calls(self) -> bool:
-        """是否有工具调用"""
+        """Whether there are tool calls"""
         return len(self.tool_calls) > 0
 
     def to_dict(self) -> dict:
@@ -489,49 +489,49 @@ class LLMResponse:
 
 @dataclass
 class EndpointConfig:
-    """端点配置"""
+    """Endpoint configuration"""
 
-    name: str  # 端点名称
-    provider: str  # 服务商标识 (anthropic, dashscope, openrouter, ...)
-    api_type: str  # API 类型 ("openai" | "openai_responses" | "anthropic")
-    base_url: str  # API 地址
-    api_key_env: str | None = None  # API Key 环境变量名
-    api_key: str | None = None  # 直接存储的 API Key (不推荐，但支持)
-    model: str = ""  # 模型名称
-    priority: int = 1  # 优先级 (越小越优先)
-    max_tokens: int = 0  # 最大输出 tokens (0=不限制，使用模型默认上限)
-    context_window: int = 200000  # 上下文窗口大小 (输入+输出总 token 上限)，配置缺失时的兜底值
-    timeout: int = 180  # 超时时间 (秒)
-    capabilities: list[str] | None = None  # 能力列表
-    extra_params: dict | None = None  # 额外参数
-    note: str | None = None  # 备注
-    rpm_limit: int = 0  # 每分钟请求数限制 (0=不限流)
+    name: str  # Endpoint name
+    provider: str  # Provider identifier (anthropic, dashscope, openrouter, ...)
+    api_type: str  # API type ("openai" | "openai_responses" | "anthropic")
+    base_url: str  # API address
+    api_key_env: str | None = None  # API Key environment variable name
+    api_key: str | None = None  # Directly stored API Key (not recommended, but supported)
+    model: str = ""  # Model name
+    priority: int = 1  # Priority (smaller = higher priority)
+    max_tokens: int = 0  # Max output tokens (0=unlimited, use model default)
+    context_window: int = 200000  # Context window size (total input+output token limit), fallback when config missing
+    timeout: int = 180  # Timeout in seconds
+    capabilities: list[str] | None = None  # Capability list
+    extra_params: dict | None = None  # Extra parameters
+    note: str | None = None  # Note
+    rpm_limit: int = 0  # Requests per minute limit (0=no rate limit)
     pricing_tiers: list[dict] | None = (
-        None  # 阶梯定价 [{"max_input": 128000, "input_price": 1.2, "output_price": 7.2}, ...]
+        None  # Tiered pricing [{"max_input": 128000, "input_price": 1.2, "output_price": 7.2}, ...]
     )
-    price_currency: str = "CNY"  # 价格货币单位
-    enabled: bool = True  # 是否启用 (false=停用，不参与调用但保留配置)
-    stream_only: bool = False  # 仅流式模式 (某些中转站/relay 要求 stream=true)
+    price_currency: str = "CNY"  # Price currency unit
+    enabled: bool = True  # Whether enabled (false=disabled, not called but config retained)
+    stream_only: bool = False  # Stream-only mode (some relay/middleware require stream=true)
 
     def __post_init__(self):
         if self.capabilities is None:
             self.capabilities = ["text"]
 
     def has_capability(self, capability: str) -> bool:
-        """检查是否有某种能力
+        """Check if certain capability exists
 
-        优先级:
-        1. 显式配置的 capabilities 列表（用户在 JSON 中声明的，最高优先级）
-        2. 兼容推断（基于 extra_params / model 名等线索，作为兜底）
+        Priority:
+        1. Explicitly configured capabilities list (declared by user in JSON, highest priority)
+        2. Compatibility inference (based on extra_params / model name clues, as fallback)
         """
         cap = (capability or "").lower().strip()
         caps = {c.lower() for c in (self.capabilities or [])}
         if cap in caps:
             return True
 
-        # === 兼容/推断能力 ===
-        # 历史配置或手动编辑的 JSON 可能缺少 capabilities 标注，
-        # 但 extra_params/model 名已能反映能力。仅在显式列表未包含时才走推断。
+        # === Compatibility/inference ability ===
+        # Legacy configs or manually-edited JSON may lack capabilities annotation,
+        # but extra_params/model name already reflects ability. Only infer when explicit list doesn't include it.
         model = (self.model or "").lower()
 
         if cap == "thinking":
@@ -541,8 +541,8 @@ class EndpointConfig:
             if extra.get("enable_thinking") is True:
                 return True
 
-        # 仅在 capabilities 仍为默认值 ["text"] 时才做模型名推断兜底
-        # （用户显式配置过 capabilities 的情况下不覆盖其意图）
+        # Only infer model name fallback when capabilities still at default ["text"]
+        # (don't override user intent when they explicitly configured capabilities)
         if caps == {"text"} and model:
             from .capabilities import get_provider_slug_from_base_url, infer_capabilities
 
@@ -556,7 +556,7 @@ class EndpointConfig:
         return False
 
     def get_api_key(self) -> str | None:
-        """获取 API Key (优先使用直接存储的 key，然后从环境变量获取)"""
+        """Get API Key (prefer directly stored key, then from environment variable)"""
         import os
 
         if self.api_key:
@@ -571,11 +571,11 @@ class EndpointConfig:
         output_tokens: int,
         cache_read_tokens: int = 0,
     ) -> float:
-        """根据阶梯定价计算本次请求的费用（单位: price_currency）。
+        """Calculate request cost using tiered pricing (unit: price_currency).
 
-        pricing_tiers 格式: [{"max_input": N, "input_price": P, "output_price": P}, ...]
-        price 为每百万 token 的价格。max_input=-1 表示无上限。
-        按 max_input 升序匹配，取第一个 input_tokens <= max_input 的档位。
+        pricing_tiers format: [{"max_input": N, "input_price": P, "output_price": P}, ...]
+        price is per million tokens. max_input=-1 means unlimited.
+        Match by ascending max_input, use first tier where input_tokens <= max_input.
         """
         tiers = self.pricing_tiers
         if not tiers:
@@ -636,7 +636,7 @@ class EndpointConfig:
             "context_window": self.context_window,
             "timeout": self.timeout,
         }
-        # API Key: 优先使用环境变量名，不保存明文 key 到配置
+        # API Key: prefer environment variable name, don't save plaintext key to config
         if self.api_key_env:
             result["api_key_env"] = self.api_key_env
         elif self.api_key:
@@ -660,9 +660,9 @@ class EndpointConfig:
         return result
 
 
-# 异常类
+# Exception classes
 class LLMError(Exception):
-    """LLM 相关错误基类"""
+    """LLM-related error base class"""
 
     def __init__(self, message: str = "", *, status_code: int | None = None):
         super().__init__(message)
@@ -670,13 +670,13 @@ class LLMError(Exception):
 
 
 class UnsupportedMediaError(LLMError):
-    """不支持的媒体类型错误"""
+    """Unsupported media type error"""
 
     pass
 
 
 class AllEndpointsFailedError(LLMError):
-    """所有端点都失败"""
+    """All endpoints failed"""
 
     def __init__(self, message: str, *, is_structural: bool = False):
         super().__init__(message)
@@ -684,18 +684,18 @@ class AllEndpointsFailedError(LLMError):
 
 
 class ConfigurationError(LLMError):
-    """配置错误"""
+    """Configuration error"""
 
     pass
 
 
 class AuthenticationError(LLMError):
-    """认证错误（不应重试）"""
+    """Authentication error (should not retry)"""
 
     pass
 
 
 class RateLimitError(LLMError):
-    """速率限制错误（可重试）"""
+    """Rate limit error (can retry)"""
 
     pass

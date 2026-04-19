@@ -1,13 +1,13 @@
 """
-消息网关
+Message gateway
 
-统一消息入口/出口:
-- 消息路由
-- 会话管理集成
-- 媒体预处理（图片、语音、视频）
-- Agent 调用
-- 消息中断机制（支持在工具调用间隙插入新消息）
-- 系统级命令拦截（模型切换等）
+Unified message input/output:
+- Message routing
+- Session-management integration
+- Media preprocessing (images, voice, video)
+- Agent invocation
+- Message-interrupt mechanism (allows new messages to be inserted between tool calls)
+- System-level command interception (model switching, etc.)
 """
 
 import asyncio
@@ -51,39 +51,39 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Agent 处理函数类型
+# Agent handler function type
 AgentHandler = Callable[[Session, str], Awaitable[str]]
 
 
 class InterruptPriority(Enum):
-    """中断优先级"""
+    """Interrupt priority"""
 
-    NORMAL = 0  # 普通消息，排队等待
-    HIGH = 1  # 高优先级，在工具间隙插入
-    URGENT = 2  # 紧急，尝试立即中断
+    NORMAL = 0  # regular message, queued
+    HIGH = 1  # high priority, inserted between tools
+    URGENT = 2  # urgent, attempt immediate interrupt
 
 
 @dataclass
 class InterruptMessage:
-    """中断消息封装"""
+    """Interrupt-message wrapper"""
 
     message: UnifiedMessage
     priority: InterruptPriority = InterruptPriority.HIGH
     timestamp: datetime = field(default_factory=datetime.now)
 
     def __lt__(self, other: "InterruptMessage") -> bool:
-        """优先级队列比较：优先级高的先处理，同优先级按时间"""
+        """Priority-queue comparison: higher priority first; same priority ordered by time"""
         if self.priority.value != other.priority.value:
             return self.priority.value > other.priority.value
         return self.timestamp < other.timestamp
 
 
-# ==================== 模型切换命令处理 ====================
+# ==================== Model-switch command handling ====================
 
 
 @dataclass
 class ModelSwitchSession:
-    """模型切换交互会话"""
+    """Model-switch interactive session"""
 
     session_key: str
     mode: str  # "switch" | "priority" | "restore"
@@ -95,49 +95,49 @@ class ModelSwitchSession:
 
     @property
     def is_expired(self) -> bool:
-        """检查会话是否已超时"""
+        """Check whether the session has timed out"""
         return datetime.now() > self.started_at + timedelta(minutes=self.timeout_minutes)
 
 
 class ModelCommandHandler:
     """
-    模型命令处理器
+    Model-command handler
 
-    系统级命令拦截，不经过大模型处理，确保即使模型崩溃也能切换。
+    System-level command interception that bypasses the LLM, ensuring switching works even if the model crashes.
 
-    支持的命令:
-    - /model: 显示当前模型和可用列表
-    - /switch [模型名]: 临时切换模型（12小时）
-    - /priority: 调整模型优先级（永久）
-    - /restore: 恢复默认模型
-    - /cancel: 取消当前操作
+    Supported commands:
+    - /model: show the current model and the available list
+    - /switch [model-name]: temporarily switch model (12 hours)
+    - /priority: adjust model priority (permanent)
+    - /restore: restore the default model
+    - /cancel: cancel the current operation
     """
 
-    # 命令列表
+    # Command list
     MODEL_COMMANDS = {"/model", "/switch", "/priority", "/restore", "/cancel"}
 
     def __init__(self, brain: Optional["Brain"] = None):
         self._brain: Brain | None = brain
-        # 进行中的切换会话 {session_key: ModelSwitchSession}
+        # In-progress switch sessions {session_key: ModelSwitchSession}
         self._switch_sessions: dict[str, ModelSwitchSession] = {}
 
     def set_brain(self, brain: "Brain") -> None:
-        """设置 Brain 实例"""
+        """Set the Brain instance"""
         self._brain = brain
 
     def is_model_command(self, text: str) -> bool:
-        """检查是否是模型相关命令"""
+        """Check whether it is a model-related command"""
         if not text:
             return False
         text_lower = text.lower().strip()
-        # 完整命令或带参数的命令
+        # Full command or command with arguments
         for cmd in self.MODEL_COMMANDS:
             if text_lower == cmd or text_lower.startswith(cmd + " "):
                 return True
         return False
 
     def is_in_session(self, session_key: str) -> bool:
-        """检查是否在交互会话中"""
+        """Check whether an interactive session is in progress"""
         if session_key not in self._switch_sessions:
             return False
         session = self._switch_sessions[session_key]
@@ -148,26 +148,26 @@ class ModelCommandHandler:
 
     async def handle_command(self, session_key: str, text: str) -> str | None:
         """
-        处理模型命令
+        Handle a model command
 
         Args:
-            session_key: 会话标识
-            text: 用户输入
+            session_key: session identifier
+            text: user input
 
         Returns:
-            响应文本，如果不是命令返回 None
+            Response text, or None if it is not a command
         """
         if not self._brain:
-            return "❌ 模型管理功能未初始化"
+            return "❌ Model management not initialized"
 
         text = text.strip()
         text_lower = text.lower()
 
-        # /model - 显示当前模型状态
+        # /model - show current model status
         if text_lower == "/model":
             return self._format_model_status()
 
-        # /switch - 切换模型
+        # /switch - switch model
         if text_lower == "/switch":
             return self._start_switch_session(session_key)
 
@@ -175,15 +175,15 @@ class ModelCommandHandler:
             model_name = text[8:].strip()
             return self._start_switch_session(session_key, model_name)
 
-        # /priority - 调整优先级
+        # /priority - adjust priority
         if text_lower == "/priority":
             return self._start_priority_session(session_key)
 
-        # /restore - 恢复默认
+        # /restore - restore default
         if text_lower == "/restore":
             return self._start_restore_session(session_key)
 
-        # /cancel - 取消操作
+        # /cancel - cancel operation
         if text_lower == "/cancel":
             return self._cancel_session(session_key)
 
@@ -191,31 +191,31 @@ class ModelCommandHandler:
 
     async def handle_input(self, session_key: str, text: str) -> str:
         """
-        处理交互会话中的用户输入
+        Handle user input inside an interactive session
 
         Args:
-            session_key: 会话标识
-            text: 用户输入
+            session_key: session identifier
+            text: user input
 
         Returns:
-            响应文本
+            Response text
         """
         if not self._brain:
-            return "❌ 模型管理功能未初始化"
+            return "❌ Model management not initialized"
 
-        # 检查是否取消
+        # Check whether cancelled
         if text.lower().strip() == "/cancel":
             return self._cancel_session(session_key)
 
         session = self._switch_sessions.get(session_key)
         if not session:
-            return "会话已结束"
+            return "Session has ended"
 
         if session.is_expired:
             del self._switch_sessions[session_key]
-            return "⏰ 操作超时（5分钟），已自动取消"
+            return "⏰ Operation timed out (5 min), auto-cancelled"
 
-        # 根据模式和步骤处理
+        # Handle based on mode and step
         if session.mode == "switch":
             return self._handle_switch_input(session_key, session, text)
         elif session.mode == "priority":
@@ -223,37 +223,37 @@ class ModelCommandHandler:
         elif session.mode == "restore":
             return self._handle_restore_input(session_key, session, text)
 
-        return "未知操作"
+        return "Unknown operation"
 
     def _format_model_status(self) -> str:
-        """格式化模型状态信息"""
+        """Format model status info"""
         models = self._brain.list_available_models()
         override = self._brain.get_override_status()
 
-        lines = ["📋 **模型状态**\n"]
+        lines = ["📋 **Model Status**\n"]
 
         for i, m in enumerate(models):
             status = ""
             if m["is_current"]:
-                status = " ⬅️ 当前（临时）" if m["is_override"] else " ⬅️ 当前"
+                status = " ⬅️ current (temp)" if m["is_override"] else " ⬅️ current"
             health = "✅" if m["is_healthy"] else "❌"
             lines.append(f"{i + 1}. {health} **{m['name']}** ({m['model']}){status}")
 
         if override:
-            lines.append(f"\n⏱️ 临时切换剩余: {override['remaining_hours']:.1f} 小时")
-            lines.append(f"   到期时间: {override['expires_at']}")
+            lines.append(f"\n⏱️ Temp override expires in: {override['remaining_hours']:.1f} hours")
+            lines.append(f"   Expires at: {override['expires_at']}")
 
-        lines.append("\n💡 命令: /switch 切换 | /priority 调整优先级 | /restore 恢复默认")
+        lines.append("\n💡 Commands: /switch [model] | /priority [adjust] | /restore [default]")
 
         return "\n".join(lines)
 
     def _start_switch_session(self, session_key: str, model_name: str = "") -> str:
-        """开始切换会话"""
+        """Begin a switch session"""
         models = self._brain.list_available_models()
 
-        # 如果指定了模型名，跳到确认步骤
+        # If a model name was given, jump to the confirm step
         if model_name:
-            # 查找模型
+            # Look up the model
             target = None
             for m in models:
                 if (
@@ -264,7 +264,7 @@ class ModelCommandHandler:
                     break
 
             if not target:
-                # 尝试数字索引
+                # Try numeric index
                 try:
                     idx = int(model_name) - 1
                     if 0 <= idx < len(models):
@@ -274,9 +274,9 @@ class ModelCommandHandler:
 
             if not target:
                 available = ", ".join(m["name"] for m in models)
-                return f"❌ 未找到模型 '{model_name}'\n可用模型: {available}"
+                return f"❌ Model '{model_name}' not found\nAvailable: {available}"
 
-            # 创建会话并进入确认步骤
+            # Create the session and enter the confirm step
             self._switch_sessions[session_key] = ModelSwitchSession(
                 session_key=session_key,
                 mode="switch",
@@ -285,30 +285,30 @@ class ModelCommandHandler:
             )
 
             return (
-                f"⚠️ 确认切换到 **{target['name']}** ({target['model']})?\n\n"
-                f"临时切换有效期: 12小时\n"
-                f"输入 **yes** 确认，其他任意内容取消"
+                f"⚠️ Confirm switch to **{target['name']}** ({target['model']})?\n\n"
+                f"Temp override duration: 12 hours\n"
+                f"Type **yes** to confirm, anything else to cancel"
             )
 
-        # 没有指定模型，显示选择列表
+        # No model specified; show the selection list
         self._switch_sessions[session_key] = ModelSwitchSession(
             session_key=session_key,
             mode="switch",
             step="select",
         )
 
-        lines = ["📋 **可用模型**\n"]
+        lines = ["📋 **Available Models**\n"]
         for i, m in enumerate(models):
-            status = " ⬅️ 当前" if m["is_current"] else ""
+            status = " ⬅️ current" if m["is_current"] else ""
             health = "✅" if m["is_healthy"] else "❌"
             lines.append(f"{i + 1}. {health} **{m['name']}** ({m['model']}){status}")
 
-        lines.append("\n请输入数字或模型名称选择，/cancel 取消")
+        lines.append("\nEnter a number or model name, /cancel to abort")
 
         return "\n".join(lines)
 
     def _start_priority_session(self, session_key: str) -> str:
-        """开始优先级调整会话"""
+        """Begin a priority-adjustment session"""
         models = self._brain.list_available_models()
 
         self._switch_sessions[session_key] = ModelSwitchSession(
@@ -317,22 +317,22 @@ class ModelCommandHandler:
             step="select",
         )
 
-        lines = ["📋 **当前优先级** (数字越小越优先)\n"]
+        lines = ["📋 **Current Priority** (lower = higher priority)\n"]
         for i, m in enumerate(models):
             lines.append(f"{i}. {m['name']}")
 
-        lines.append("\n请按顺序输入模型名称，用空格分隔")
-        lines.append("例如: claude kimi dashscope minimax")
-        lines.append("/cancel 取消")
+        lines.append("\nEnter model names in priority order, space-separated")
+        lines.append("e.g. claude kimi dashscope minimax")
+        lines.append("/cancel to abort")
 
         return "\n".join(lines)
 
     def _start_restore_session(self, session_key: str) -> str:
-        """开始恢复默认会话"""
+        """Begin a restore-default session"""
         override = self._brain.get_override_status()
 
         if not override:
-            return "当前没有临时切换，已在使用默认模型"
+            return "No active override, using the default model"
 
         self._switch_sessions[session_key] = ModelSwitchSession(
             session_key=session_key,
@@ -341,81 +341,81 @@ class ModelCommandHandler:
         )
 
         return (
-            f"⚠️ 确认恢复默认模型?\n\n"
-            f"当前临时使用: {override['endpoint_name']}\n"
-            f"剩余时间: {override['remaining_hours']:.1f} 小时\n\n"
-            f"输入 **yes** 确认，其他任意内容取消"
+            f"⚠️ Confirm restore default model?\n\n"
+            f"Current override: {override['endpoint_name']}\n"
+            f"Time left: {override['remaining_hours']:.1f} hours\n\n"
+            f"Type **yes** to confirm, anything else to cancel"
         )
 
     def _cancel_session(self, session_key: str) -> str:
-        """取消当前会话"""
+        """Cancel the current session"""
         if session_key in self._switch_sessions:
             del self._switch_sessions[session_key]
-            return "✅ 操作已取消"
-        return "没有进行中的操作"
+            return "✅ Cancelled"
+        return "No active operation"
 
     def _handle_switch_input(self, session_key: str, session: ModelSwitchSession, text: str) -> str:
-        """处理切换会话的输入"""
+        """Handle input for the switch session"""
         text = text.strip()
 
         if session.step == "select":
             models = self._brain.list_available_models()
             target = None
 
-            # 尝试数字索引
+            # Try numeric index
             try:
                 idx = int(text) - 1
                 if 0 <= idx < len(models):
                     target = models[idx]
             except ValueError:
-                # 尝试名称匹配
+                # Try name matching
                 for m in models:
                     if m["name"].lower() == text.lower() or m["model"].lower() == text.lower():
                         target = m
                         break
 
             if not target:
-                return f"❌ 未找到模型 '{text}'，请重新输入或 /cancel 取消"
+                return f"❌ Model '{text}' not found, try again or /cancel"
 
-            # 进入确认步骤
+            # Enter the confirm step
             session.selected_model = target["name"]
             session.step = "confirm"
 
             return (
-                f"⚠️ 确认切换到 **{target['name']}** ({target['model']})?\n\n"
-                f"临时切换有效期: 12小时\n"
-                f"输入 **yes** 确认，其他任意内容取消"
+                f"⚠️ Confirm switch to **{target['name']}** ({target['model']})?\n\n"
+                f"Temp override duration: 12 hours\n"
+                f"Type **yes** to confirm, anything else to cancel"
             )
 
         elif session.step == "confirm":
             if text.lower() == "yes":
-                # 执行切换
+                # Perform the switch
                 success, msg = self._brain.switch_model(
                     session.selected_model, conversation_id=session_key
                 )
                 del self._switch_sessions[session_key]
 
                 if success:
-                    return f"✅ {msg}\n\n发送 /model 查看状态"
+                    return f"✅ {msg}\n\nSend /model to check status"
                 else:
-                    return f"❌ 切换失败: {msg}"
+                    return f"❌ Switch failed: {msg}"
             else:
                 del self._switch_sessions[session_key]
-                return "✅ 操作已取消"
+                return "✅ Cancelled"
 
-        return "未知步骤"
+        return "Unknown step"
 
     def _handle_priority_input(
         self, session_key: str, session: ModelSwitchSession, text: str
     ) -> str:
-        """处理优先级调整的输入"""
+        """Handle input for the priority-adjustment session"""
         text = text.strip()
 
         if session.step == "select":
             models = self._brain.list_available_models()
             model_names = {m["name"].lower(): m["name"] for m in models}
 
-            # 解析用户输入
+            # Parse user input
             input_names = text.split()
             priority_order = []
 
@@ -424,42 +424,42 @@ class ModelCommandHandler:
                 if name_lower in model_names:
                     priority_order.append(model_names[name_lower])
                 else:
-                    return f"❌ 未找到模型 '{name}'，请重新输入或 /cancel 取消"
+                    return f"❌ Model '{name}' not found, try again or /cancel"
 
             if len(priority_order) != len(models):
-                return f"❌ 请输入所有 {len(models)} 个模型的顺序"
+                return f"❌ Please provide all {len(models)} models in order"
 
-            # 进入确认步骤
+            # Enter the confirm step
             session.selected_priority = priority_order
             session.step = "confirm"
 
-            lines = ["⚠️ 确认调整优先级为:\n"]
+            lines = ["⚠️ Confirm priority order:\n"]
             for i, name in enumerate(priority_order):
                 lines.append(f"{i}. {name}")
-            lines.append("\n**这是永久更改！** 输入 **yes** 确认")
+            lines.append("\n**This is permanent!** Type **yes** to confirm")
 
             return "\n".join(lines)
 
         elif session.step == "confirm":
             if text.lower() == "yes":
-                # 执行优先级更新
+                # Perform the priority update
                 success, msg = self._brain.update_model_priority(session.selected_priority)
                 del self._switch_sessions[session_key]
 
                 if success:
                     return f"✅ {msg}"
                 else:
-                    return f"❌ 更新失败: {msg}"
+                    return f"❌ Update failed: {msg}"
             else:
                 del self._switch_sessions[session_key]
-                return "✅ 操作已取消"
+                return "✅ Cancelled"
 
-        return "未知步骤"
+        return "Unknown step"
 
     def _handle_restore_input(
         self, session_key: str, session: ModelSwitchSession, text: str
     ) -> str:
-        """处理恢复默认的输入"""
+        """Handle input for the restore-default session"""
         if text.lower() == "yes":
             success, msg = self._brain.restore_default_model(conversation_id=session_key)
             del self._switch_sessions[session_key]
@@ -470,22 +470,22 @@ class ModelCommandHandler:
                 return f"❌ {msg}"
         else:
             del self._switch_sessions[session_key]
-            return "✅ 操作已取消"
+            return "✅ Cancelled"
 
 
-# ==================== 思考模式命令处理 ====================
+# ==================== Thinking-mode command handling ====================
 
 
 class ThinkingCommandHandler:
     """
-    思考模式命令处理器
+    Thinking-mode command handler
 
-    系统级命令拦截，不经过大模型处理。
+    System-level command interception that bypasses the LLM.
 
-    支持的命令:
-    - /thinking [on|off|auto]: 切换思考模式
-    - /thinking_depth [low|medium|high]: 设置思考深度
-    - /chain [on|off]: 开关思维链进度推送（默认关闭）
+    Supported commands:
+    - /thinking [on|off|auto]: switch thinking mode
+    - /thinking_depth [low|medium|high]: set thinking depth
+    - /chain [on|off]: toggle reasoning-chain progress push (off by default)
     """
 
     THINKING_COMMANDS = {"/thinking", "/thinking_depth", "/chain"}
@@ -494,16 +494,16 @@ class ThinkingCommandHandler:
     VALID_DEPTHS = {"low", "medium", "high"}
 
     DEPTH_LABELS = {
-        "low": "低（快速响应）",
-        "medium": "中（平衡）",
-        "high": "高（深度推理）",
+        "low": "low (fast)",
+        "medium": "medium (balanced)",
+        "high": "high (deep reasoning)",
     }
 
     def __init__(self, session_manager: "SessionManager"):
         self._session_manager = session_manager
 
     def is_thinking_command(self, text: str) -> bool:
-        """检查是否是思考模式相关命令"""
+        """Check whether it is a thinking-mode command"""
         if not text:
             return False
         text_lower = text.lower().strip()
@@ -514,45 +514,45 @@ class ThinkingCommandHandler:
 
     async def handle_command(self, session_key: str, text: str, session: "Session") -> str | None:
         """
-        处理思考模式命令
+        Handle a thinking-mode command
 
         Args:
-            session_key: 会话标识
-            text: 用户输入
-            session: 当前会话对象
+            session_key: session identifier
+            text: user input
+            session: current session object
 
         Returns:
-            响应文本
+            Response text
         """
         text = text.strip()
         text_lower = text.lower()
 
-        # /chain - 查看或设置思维链推送开关
+        # /chain - view or set the reasoning-chain push switch
         if text_lower == "/chain":
             return self._format_chain_status(session)
 
         if text_lower.startswith("/chain "):
             value = text_lower.split(None, 1)[1].strip()
             if value not in {"on", "off"}:
-                return f"❌ 无效的参数: `{value}`\n可选: `on`（开启推送）| `off`（关闭推送）"
+                return f"❌ Invalid value: `{value}`\nOptions: `on` | `off`"
             enabled = value == "on"
             session.set_metadata("chain_push", enabled)
-            label = "开启" if enabled else "关闭"
-            return f"✅ 思维链进度推送已 **{label}**"
+            label = "enabled" if enabled else "disabled"
+            return f"✅ Reasoning chain push is now **{label}**"
 
-        # /thinking - 查看或设置思考模式
+        # /thinking - view or set the thinking mode
         if text_lower == "/thinking":
             return self._format_thinking_status(session)
 
         if text_lower.startswith("/thinking ") and not text_lower.startswith("/thinking_depth"):
             mode = text_lower.split(None, 1)[1].strip()
             if mode not in self.VALID_MODES:
-                return f"❌ 无效的思考模式: `{mode}`\n可选: `on`（开启）| `off`（关闭）| `auto`（自动）"
+                return f"❌ Invalid mode: `{mode}`\nOptions: `on` | `off` | `auto`"
             session.set_metadata("thinking_mode", mode if mode != "auto" else None)
-            mode_label = {"on": "开启", "off": "关闭", "auto": "自动（系统决定）"}
-            return f"✅ 思考模式已设置为: **{mode_label[mode]}**"
+            mode_label = {"on": "on", "off": "off", "auto": "auto (system decides)"}
+            return f"✅ Thinking mode set to: **{mode_label[mode]}**"
 
-        # /thinking_depth - 查看或设置思考深度
+        # /thinking_depth - view or set the thinking depth
         if text_lower == "/thinking_depth":
             return self._format_depth_status(session)
 
@@ -560,84 +560,84 @@ class ThinkingCommandHandler:
             depth = text_lower.split(None, 1)[1].strip()
             if depth not in self.VALID_DEPTHS:
                 return (
-                    f"❌ 无效的思考深度: `{depth}`\n可选: `low`（低）| `medium`（中）| `high`（高）"
+                    f"❌ Invalid depth: `{depth}`\nOptions: `low` | `medium` | `high`"
                 )
             session.set_metadata("thinking_depth", depth)
-            return f"✅ 思考深度已设置为: **{self.DEPTH_LABELS[depth]}**"
+            return f"✅ Thinking depth set to: **{self.DEPTH_LABELS[depth]}**"
 
         return None
 
     def _format_chain_status(self, session: "Session") -> str:
-        """格式化思维链推送状态"""
+        """Format reasoning-chain push state"""
         from openakita.config import settings
 
         current = session.get_metadata("chain_push")
         if current is None:
             current = settings.im_chain_push
-            source = "（跟随全局默认）"
+            source = "(global default)"
         else:
-            source = "（会话级设置）"
+            source = "(session setting)"
 
-        label = "开启" if current else "关闭"
+        label = "enabled" if current else "disabled"
 
         lines = [
-            "📡 **思维链进度推送**\n",
-            f"当前状态: **{label}** {source}\n",
-            "开启后，处理消息时会实时推送思考过程、工具调用进度等中间状态。",
-            "关闭不影响内部推理和数据保存，仅减少消息推送。\n",
-            "**可用命令:**",
-            "`/chain on` — 开启进度推送",
-            "`/chain off` — 关闭进度推送",
+            "📡 **Reasoning Chain Push**\n",
+            f"Status: **{label}** {source}\n",
+            "When enabled, thinking progress and tool activity are streamed in real-time.",
+            "Disabling only reduces message volume — internal reasoning is unaffected.\n",
+            "**Commands:**",
+            "`/chain on` — enable push",
+            "`/chain off` — disable push",
         ]
         return "\n".join(lines)
 
     def _format_thinking_status(self, session: "Session") -> str:
-        """格式化思考模式状态"""
+        """Format thinking-mode state"""
         current_mode = session.get_metadata("thinking_mode")
         current_depth = session.get_metadata("thinking_depth")
 
-        mode_label = "自动（系统决定）"
+        mode_label = "auto (system decides)"
         if current_mode == "on":
-            mode_label = "开启"
+            mode_label = "on"
         elif current_mode == "off":
-            mode_label = "关闭"
+            mode_label = "off"
 
-        depth_label = self.DEPTH_LABELS.get(current_depth or "medium", "中（平衡）")
+        depth_label = self.DEPTH_LABELS.get(current_depth or "medium", "medium (balanced)")
 
         lines = [
-            "🧠 **思考模式设置**\n",
-            f"当前模式: **{mode_label}**",
-            f"思考深度: **{depth_label}**\n",
-            "**可用命令:**",
-            "`/thinking on` — 强制开启深度思考",
-            "`/thinking off` — 关闭深度思考",
-            "`/thinking auto` — 自动决定（默认）",
-            "`/thinking_depth low|medium|high` — 设置思考深度",
+            "🧠 **Thinking Mode Settings**\n",
+            f"Mode: **{mode_label}**",
+            f"Depth: **{depth_label}**\n",
+            "**Commands:**",
+            "`/thinking on` — force deep thinking",
+            "`/thinking off` — disable deep thinking",
+            "`/thinking auto` — auto-decide (default)",
+            "`/thinking_depth low|medium|high` — set depth",
         ]
         return "\n".join(lines)
 
     def _format_depth_status(self, session: "Session") -> str:
-        """格式化思考深度状态"""
+        """Format thinking-depth state"""
         current_depth = session.get_metadata("thinking_depth")
-        depth_label = self.DEPTH_LABELS.get(current_depth or "medium", "中（平衡）")
+        depth_label = self.DEPTH_LABELS.get(current_depth or "medium", "medium (balanced)")
 
         lines = [
-            "📊 **思考深度设置**\n",
-            f"当前深度: **{depth_label}**\n",
+            "📊 **Thinking Depth Settings**\n",
+            f"Current depth: **{depth_label}**\n",
         ]
         for key, label in self.DEPTH_LABELS.items():
             marker = " ⬅️" if key == (current_depth or "medium") else ""
             lines.append(f"• `{key}` — {label}{marker}")
-        lines.append("\n用法: `/thinking_depth low|medium|high`")
+        lines.append("\nUsage: `/thinking_depth low|medium|high`")
         return "\n".join(lines)
 
 
-# ==================== 终极重启命令处理 ====================
+# ==================== Ultimate-restart command handling ====================
 
 
 @dataclass
 class RestartSession:
-    """重启确认会话"""
+    """Restart-confirmation session"""
 
     session_key: str
     confirm_code: str
@@ -657,11 +657,11 @@ class RestartSession:
 
 class RestartCommandHandler:
     """
-    终极重启命令处理器
+    Ultimate-restart command handler
 
-    在 _on_message 最早期拦截，确保即使系统卡死也能响应。
-    流程：/restart → 生成确认码 → 用户回传确认码 → 触发重启。
-    支持倒计时自动取消和手动取消。
+    Intercepted at the earliest point in _on_message, so it responds even if the system is stuck.
+    Flow: /restart -> generate confirmation code -> user sends the code back -> trigger restart.
+    Supports countdown auto-cancel and manual cancel.
     """
 
     RESTART_COMMANDS = {"/restart", "/重启"}
@@ -671,11 +671,11 @@ class RestartCommandHandler:
     def __init__(self) -> None:
         self._pending: dict[str, RestartSession] = {}
         self._timeout_tasks: dict[str, asyncio.Task] = {}
-        # 由 MessageGateway 注入
+        # Injected by MessageGateway
         self._send_feedback_fn: Callable[[UnifiedMessage, str], Awaitable[None]] | None = None
         self._shutdown_event: asyncio.Event | None = None
 
-    # ---------- 命令识别 ----------
+    # ---------- Command recognition ----------
 
     def is_restart_command(self, text: str) -> bool:
         return text.strip().lower() in self.RESTART_COMMANDS
@@ -684,7 +684,7 @@ class RestartCommandHandler:
         return text.strip().lower() in self.CANCEL_COMMANDS
 
     def has_pending_session(self, session_key: str) -> bool:
-        """检查该用户是否有待确认的重启会话"""
+        """Check whether the user has a pending restart-confirmation session"""
         session = self._pending.get(session_key)
         if session is None:
             return False
@@ -694,27 +694,27 @@ class RestartCommandHandler:
         return True
 
     def is_confirm_code(self, session_key: str, text: str) -> bool:
-        """检查文本是否可能是重启确认码（纯6位数字）"""
+        """Check whether text could be a restart-confirmation code (exactly 6 digits)"""
         session = self._pending.get(session_key)
         if session is None:
             return False
         return text.strip().isdigit() and len(text.strip()) == 6
 
-    # ---------- 核心流程 ----------
+    # ---------- Core flow ----------
 
     async def handle_restart_command(
         self,
         session_key: str,
         message: UnifiedMessage,
     ) -> None:
-        """处理 /restart 命令：生成确认码并发送给用户"""
+        """Handle the /restart command: generate a confirmation code and send it to the user"""
         if session_key in self._pending:
             old = self._pending[session_key]
             await self._send(
                 message,
-                f"⚠️ 已有一个待确认的重启请求（确认码 **{old.confirm_code}**，"
-                f"剩余 {old.remaining_seconds}s）。\n"
-                f"发送确认码以确认，或 /cancel_restart 取消。",
+                f"⚠️ A restart request is already pending (code **{old.confirm_code}**, "
+                f"{old.remaining_seconds}s remaining).\n"
+                f"Send the code to confirm, or /cancel_restart to cancel.",
             )
             return
 
@@ -737,10 +737,10 @@ class RestartCommandHandler:
 
         await self._send(
             message,
-            f"🔄 **服务重启确认**\n\n"
-            f"确认码: `{code}`\n\n"
-            f"请在 **{self.CONFIRM_TIMEOUT} 秒** 内回复此确认码以执行重启。\n"
-            f"发送 `/cancel_restart` 取消重启。",
+            f"🔄 **Restart Confirmation**\n\n"
+            f"Code: `{code}`\n\n"
+            f"Reply with this code within **{self.CONFIRM_TIMEOUT} seconds** to restart.\n"
+            f"Send `/cancel_restart` to cancel.",
         )
 
     async def handle_pending_input(
@@ -749,46 +749,46 @@ class RestartCommandHandler:
         message: UnifiedMessage,
     ) -> bool:
         """
-        处理待确认会话中的用户输入。
+        Handle user input during a pending-confirmation session.
 
         Returns:
-            True  — 输入已被消费（调用方应 return，不继续处理）
-            False — 输入与重启无关，调用方应放行给正常流程
+            True  -- input has been consumed (the caller should return and not process further)
+            False -- input is unrelated to restart; the caller should pass it to the normal flow
         """
         text = (message.plain_text or "").strip()
         session = self._pending.get(session_key)
         if session is None:
             return False
 
-        # 取消
+        # Cancel
         if text.lower() in self.CANCEL_COMMANDS or text.lower() == "/cancel":
             self._cleanup(session_key)
             logger.info(f"[Restart] Cancelled by user: {session_key}")
-            await self._send(message, "❌ 重启已取消。")
+            await self._send(message, "❌ Restart cancelled.")
             return True
 
-        # 验证确认码
+        # Verify confirmation code
         if text == session.confirm_code:
             self._cleanup(session_key)
             logger.warning(f"[Restart] Confirmed by {session_key}, triggering restart...")
-            await self._send(message, "✅ 确认码正确，服务将在 3 秒后重启…")
+            await self._send(message, "✅ Code confirmed. Restarting in 3 seconds…")
             await asyncio.sleep(3)
             await self._trigger_restart()
             return True
 
-        # 6位数字但不匹配 → 提示错误
+        # 6-digit number but no match -> report error
         if text.isdigit() and len(text) == 6:
             await self._send(
                 message,
-                f"❌ 确认码不正确（剩余 {session.remaining_seconds}s）。\n"
-                f"请发送 `{session.confirm_code}` 或 `/cancel_restart` 取消。",
+                f"❌ Wrong code ({session.remaining_seconds}s remaining).\n"
+                f"Send `{session.confirm_code}` to confirm or `/cancel_restart` to cancel.",
             )
             return True
 
-        # 非数字输入 → 不消费，放行给正常流程（避免误拦截普通消息）
+        # Non-numeric input -> do not consume; pass it to the normal flow (avoid intercepting regular messages)
         return False
 
-    # ---------- 超时处理 ----------
+    # ---------- Timeout handling ----------
 
     async def _timeout_handler(self, session_key: str) -> None:
         session = self._pending.get(session_key)
@@ -803,9 +803,9 @@ class RestartCommandHandler:
             msg = self._pending[session_key].message
             self._cleanup(session_key)
             logger.info(f"[Restart] Timed out for {session_key}")
-            await self._send(msg, "⏰ 重启确认已超时，已自动取消。")
+            await self._send(msg, "⏰ Restart confirmation timed out, auto-cancelled.")
 
-    # ---------- 重启触发 ----------
+    # ---------- Restart trigger ----------
 
     async def _trigger_restart(self) -> None:
         from openakita import config as cfg
@@ -817,7 +817,7 @@ class RestartCommandHandler:
         else:
             logger.error("[Restart] No shutdown_event available, restart may not work")
 
-    # ---------- 辅助 ----------
+    # ---------- Helpers ----------
 
     def _cleanup(self, session_key: str) -> None:
         self._pending.pop(session_key, None)
@@ -834,16 +834,16 @@ class RestartCommandHandler:
 
 class MessageGateway:
     """
-    统一消息网关
+    Unified message gateway
 
-    职责:
-    - 管理多个通道适配器
-    - 将收到的消息路由到会话
-    - 调用 Agent 处理
-    - 将回复发送回通道
+    Responsibilities:
+    - Manage multiple channel adapters
+    - Route incoming messages to sessions
+    - Invoke the Agent
+    - Send replies back to channels
     """
 
-    # 支持 .en 专用模型的 Whisper 尺寸（large 无 .en 变体）
+    # Whisper sizes that support .en-only models (large has no .en variant)
     _EN_MODEL_SIZES = {"tiny", "base", "small", "medium"}
 
     def __init__(
@@ -856,11 +856,11 @@ class MessageGateway:
     ):
         """
         Args:
-            session_manager: 会话管理器
-            agent_handler: Agent 处理函数 (session, message) -> response
-            whisper_model: Whisper 模型大小 (tiny, base, small, medium, large)，默认 base
-            whisper_language: 语音识别语言 (zh/en/auto/其他语言代码)
-            stt_client: 在线 STT 客户端（可选，用于替代本地 Whisper）
+            session_manager: session manager
+            agent_handler: Agent handler function (session, message) -> response
+            whisper_model: Whisper model size (tiny, base, small, medium, large); defaults to base
+            whisper_language: STT language (zh/en/auto/other language codes)
+            stt_client: online STT client (optional; replaces local Whisper)
         """
         self.session_manager = session_manager
         self.agent_handler = agent_handler
@@ -875,30 +875,30 @@ class MessageGateway:
 
         self.chat_aliases = ChatAliasStore()
 
-        # 注册的适配器 {channel_name: adapter}
+        # Registered adapters {channel_name: adapter}
         self._adapters: dict[str, ChannelAdapter] = {}
 
-        # 消息处理队列
+        # Message processing queue
         self._message_queue: asyncio.Queue[UnifiedMessage] = asyncio.Queue()
 
-        # 处理任务
+        # Processing task
         self._processing_task: asyncio.Task | None = None
         self._running = False
-        self._accepting = True  # False = drain 模式，拒绝新消息
+        self._accepting = True  # False = drain mode; reject new messages
         self._started_adapters: list[str] = []
         self._failed_adapters: list[str] = []
         self._failed_adapter_reasons: dict[str, str] = {}
         self._retry_failed_task: asyncio.Task | None = None
 
-        # 中间件
+        # Middleware
         self._pre_process_hooks: list[Callable[[UnifiedMessage], Awaitable[UnifiedMessage]]] = []
         self._post_process_hooks: list[Callable[[UnifiedMessage, str], Awaitable[str]]] = []
 
         self._plugin_hooks = None  # set by start_im_channels() in main.py
 
-        # Whisper 语音识别模型（延迟加载或启动时预加载）
+        # Whisper STT model (lazy-loaded or preloaded at startup)
         self._whisper_language = whisper_language.lower().strip()
-        # 英语且模型尺寸有 .en 变体时，自动切换到更小更快的 .en 模型
+        # When language is English and the model size has a .en variant, switch to the smaller, faster .en model automatically
         if self._whisper_language == "en" and whisper_model in self._EN_MODEL_SIZES:
             self._whisper_model_name = f"{whisper_model}.en"
             logger.info(
@@ -909,60 +909,60 @@ class MessageGateway:
             self._whisper_model_name = whisper_model
         self._whisper = None
         self._whisper_loaded = False
-        self._whisper_unavailable = False  # ImportError → 本进程内不再重试
+        self._whisper_unavailable = False  # ImportError -> do not retry within this process
 
-        # ==================== 消息中断机制 ====================
-        # 会话级中断队列 {session_key: asyncio.PriorityQueue[InterruptMessage]}
+        # ==================== Message-interrupt mechanism ====================
+        # Per-session interrupt queue {session_key: asyncio.PriorityQueue[InterruptMessage]}
         self._interrupt_queues: dict[str, asyncio.PriorityQueue] = {}
 
-        # 正在处理的会话 {session_key: bool}
+        # Sessions currently being processed {session_key: bool}
         self._processing_sessions: dict[str, bool] = {}
 
-        # 并发会话控制
+        # Concurrent-session control
         _max_concurrent = int(os.environ.get("MAX_CONCURRENT_SESSIONS", "5"))
         self._concurrency_sem = asyncio.Semaphore(_max_concurrent)
         self._session_tasks: dict[str, asyncio.Task] = {}
 
-        # 中断锁（防止并发修改）
+        # Interrupt lock (prevents concurrent modification)
         self._interrupt_lock = asyncio.Lock()
 
-        # 中断处理回调（由 Agent 设置）
+        # Interrupt-handling callback (set by the Agent)
         self._interrupt_callbacks: dict[str, Callable[[], Awaitable[str | None]]] = {}
 
-        # 模型命令处理器（系统级命令拦截）
+        # Model-command handler (system-level command interception)
         self._model_cmd_handler: ModelCommandHandler = ModelCommandHandler()
 
-        # 思考模式命令处理器
+        # Thinking-mode command handler
         self._thinking_cmd_handler: ThinkingCommandHandler = ThinkingCommandHandler(session_manager)
 
-        # 终极重启命令处理器（在 _on_message 最早期拦截，不经过队列/Agent）
+        # Ultimate-restart command handler (intercepted earliest in _on_message, bypassing queue/Agent)
         self._restart_cmd_handler: RestartCommandHandler = RestartCommandHandler()
         self._restart_cmd_handler._send_feedback_fn = self._send_feedback
 
-        # 外部注入的 shutdown_event（由 main.py 调用 set_shutdown_event 设置）
+        # Externally injected shutdown_event (set by main.py via set_shutdown_event)
         self._shutdown_event: asyncio.Event | None = None
 
-        # ==================== 进度事件流（Plan/Deliver 等）====================
-        # 目标：把“执行过程进度展示”下沉到网关侧，避免模型/工具刷屏。
+        # ==================== Progress event stream (Plan/Deliver etc.) ====================
+        # Goal: push 'execution progress display' down to the gateway side to avoid model/tool spam.
         self._progress_buffers: dict[str, list[str]] = {}  # session_key -> [lines]
         self._progress_flush_tasks: dict[str, asyncio.Task] = {}  # session_key -> flush task
-        self._progress_throttle_seconds: float = 2.0  # 默认节流窗口
+        self._progress_throttle_seconds: float = 2.0  # default throttling window
         self._progress_card_accum: dict[
             str, list[str]
         ] = {}  # session_key -> accumulated progress lines (for card PATCH)
 
-        # ==================== DM Pairing 配对授权 ====================
+        # ==================== DM Pairing authorization ====================
         self._dm_pairing: "DMPairingManager | None" = None
 
-        # ==================== 群聊响应策略 ====================
+        # ==================== Group-chat response policy ====================
         self._smart_throttle = SmartModeThrottle()
 
-        # ==================== 群聊上下文缓冲区 ====================
-        # 缓存被过滤的群聊消息（未 @ 时），供后续 @ 消息注入上下文
+        # ==================== Group-chat context buffer ====================
+        # Cache filtered group-chat messages (when not @'ed) so later @ messages can inject them as context
         # key: "channel:chat_id", value: deque of context entries
         self._group_context_buffer: dict[str, collections.deque] = {}
         self._GROUP_CONTEXT_MAX_ITEMS = 20
-        self._GROUP_CONTEXT_TTL = 600  # 10 分钟
+        self._GROUP_CONTEXT_TTL = 600  # 10 minutes
 
     def enable_dm_pairing(self, data_dir: "Path") -> None:
         """Enable DM Pairing authorization."""
@@ -986,26 +986,26 @@ class MessageGateway:
                 created_by=f"{message.channel}:{message.user_id}"
             )
             return (
-                f"🔑 配对码: **{code}**\n\n"
-                f"有效期 1 小时，发送给需要授权的用户即可。"
+                f"🔑 Pairing code: **{code}**\n\n"
+                f"Valid for 1 hour. Share this with the user who needs access."
             )
         elif sub == "list":
             authorized = self._dm_pairing.list_authorized()
             if not authorized:
-                return "当前没有已授权的通道。"
-            return "已授权通道:\n" + "\n".join(f"- {a}" for a in authorized)
+                return "No authorized channels."
+            return "Authorized channels:\n" + "\n".join(f"- {a}" for a in authorized)
         elif sub == "revoke" and len(parts) >= 3:
             target = parts[2]
             parts_t = target.split(":", 1)
             if len(parts_t) == 2:
                 ok = self._dm_pairing.revoke(parts_t[0], parts_t[1])
-                return f"✅ 已撤销授权: {target}" if ok else f"❌ 未找到: {target}"
-            return "用法: /pair revoke channel:chat_id"
+                return f"✅ Revoked: {target}" if ok else f"❌ Not found: {target}"
+            return "Usage: /pair revoke channel:chat_id"
         else:
             return (
-                "/pair generate — 生成配对码\n"
-                "/pair list — 查看已授权通道\n"
-                "/pair revoke channel:chat_id — 撤销授权"
+                "/pair generate — generate pairing code\n"
+                "/pair list — list authorized channels\n"
+                "/pair revoke channel:chat_id — revoke access"
             )
 
     async def _handle_background_command(
@@ -1020,22 +1020,22 @@ class MessageGateway:
         parts = text.split(None, 1)
         if len(parts) < 2:
             return (
-                "用法: `/background <任务描述>`\n\n"
-                "示例:\n"
-                "- `/background 帮我整理今天的会议纪要`\n"
-                "- `/bg 查询最新的项目进度并生成报告`"
+                "Usage: `/background <task description>`\n\n"
+                "Examples:\n"
+                "- `/background summarize today's meeting notes`\n"
+                "- `/bg generate the latest project status report`"
             )
 
         prompt = parts[1].strip()
         if not prompt:
-            return "❌ 请提供要执行的任务描述。"
+            return "❌ Please provide a task description."
 
         session_key = self._get_session_key(message)
         bg_id = f"bg_{session_key}_{int(_time.time())}"
 
         await self._send_feedback(
             message,
-            f"⏳ 后台任务已启动: {prompt[:60]}...\n任务完成后会自动通知你。"
+            f"⏳ Background task started: {prompt[:60]}...\nYou'll be notified when it completes."
         )
 
         async def _run_background():
@@ -1047,7 +1047,7 @@ class MessageGateway:
 
                 task = ScheduledTask(
                     id=bg_id,
-                    name=f"后台任务: {prompt[:30]}",
+                    name=f"background task: {prompt[:30]}",
                     description=prompt,
                     trigger_type=TriggerType.ONCE,
                     trigger_config={},
@@ -1061,8 +1061,8 @@ class MessageGateway:
                 success, result = await executor.execute(task)
 
                 if message.channel and message.chat_id:
-                    status = "✅ 后台任务完成" if success else "❌ 后台任务失败"
-                    result_text = f"{status}\n\n**任务**: {prompt[:80]}\n\n**结果**:\n{result}"
+                    status = "✅ Background task complete" if success else "❌ Background task failed"
+                    result_text = f"{status}\n\n**Task**: {prompt[:80]}\n\n**Result**:\n{result}"
                     try:
                         await self.send(
                             channel=message.channel,
@@ -1078,7 +1078,7 @@ class MessageGateway:
                     await self.send(
                         channel=message.channel,
                         chat_id=message.chat_id,
-                        text=f"❌ 后台任务异常: {e}",
+                        text=f"❌ Background task error: {e}",
                     )
                 except Exception:
                     pass
@@ -1114,22 +1114,22 @@ class MessageGateway:
         if sub == "auth":
             if adapter and hasattr(adapter, "get_auth_url"):
                 url = adapter.get_auth_url()
-                return f"请在浏览器中打开以下链接完成飞书用户授权：\n{url}"
+                return f"Please open the following link in your browser to complete Feishu user auth:\n{url}"
             return "Feishu adapter not available"
 
-        # /feishu 或 /feishu help
+        # /feishu or /feishu help
         return (
-            "/feishu start — 查看适配器状态与版本\n"
-            "/feishu auth  — 获取飞书用户授权链接\n"
-            "/feishu help  — 显示本帮助"
+            "/feishu start — show adapter status and version\n"
+            "/feishu auth  — get Feishu user auth link\n"
+            "/feishu help  — show this help"
         )
 
     async def _handle_mode_command(self, user_text: str) -> str:
-        """处理 /模式 或 /mode 命令：多Agent模式已默认常开。"""
-        return "ℹ️ **多Agent模式已默认常开**，不再支持切换为单Agent模式。"
+        """Handle the /模式 or /mode command: multi-Agent mode is now always on by default."""
+        return "ℹ️ **Multi-agent mode is always on** and cannot be toggled."
 
     def _is_agent_command(self, text: str) -> bool:
-        """检查是否是多Agent相关命令"""
+        """Check whether it is a multi-Agent command"""
         if not text:
             return False
         t = text.strip().lower()
@@ -1141,12 +1141,12 @@ class MessageGateway:
 
     async def _handle_agent_command(self, message: UnifiedMessage, user_text: str) -> str | None:
         """
-        处理多Agent相关命令。
+        Handle multi-Agent commands.
 
-        支持: /切换 /switch /状态 /status /重置 /agent_reset
+        Supports: /切换 /switch /status /重置 /agent_reset
         """
         if getattr(self, "_orchestrator_ref", None) is None:
-            return "多Agent系统正在初始化，请稍后再试。"
+            return "Multi-agent system is initializing, please try again shortly."
 
         session = self.session_manager.get_session(
             channel=message.channel,
@@ -1155,28 +1155,28 @@ class MessageGateway:
             thread_id=message.thread_id,
         )
         if not session:
-            return "❌ 无法获取会话"
+            return "❌ Unable to get session"
 
         self._apply_bot_agent_profile(session, message.channel)
 
         t = user_text.strip().lower()
 
-        # /切换 或 /switch [agent_id]
+        # /切换 or /switch [agent_id]
         if t in ("/切换", "/switch") or t.startswith(("/切换 ", "/switch ")):
             return await self._handle_agent_switch(session, t)
 
-        # /状态 或 /status
+        # /状态 or /status
         if t in ("/状态", "/status"):
             return self._format_agent_status(session)
 
-        # /重置 或 /agent_reset
+        # /重置 or /agent_reset
         if t in ("/重置", "/agent_reset"):
             return self._handle_agent_reset(session)
 
         return None
 
     async def _handle_agent_switch(self, session: Session, user_text: str) -> str:
-        """处理 /切换 [agent_id] 或 /switch [agent_id]"""
+        """Handle /切换 [agent_id] or /switch [agent_id]"""
         from datetime import datetime
 
         from openakita.agents.presets import SYSTEM_PRESETS
@@ -1194,27 +1194,27 @@ class MessageGateway:
         arg = parts[1].strip() if len(parts) > 1 else ""
 
         if not arg:
-            # 无参数：列出可用 Agent
-            lines = ["📋 **可用 Agent**\n"]
+            # No argument: list available Agents
+            lines = ["📋 **Available Agents**\n"]
             current_id = session.context.agent_profile_id
             for p in all_profiles:
-                marker = " ⬅️ 当前" if p.id == current_id else ""
+                marker = " ⬅️ current" if p.id == current_id else ""
                 lines.append(f"• `{p.id}` — {p.icon} {p.name}: {p.description}{marker}")
-            lines.append("\n用法: `/切换 <agent_id>` 或 `/switch <agent_id>`")
+            lines.append("\nUsage: `/switch <agent_id>`")
             return "\n".join(lines)
 
-        # 有参数：切换
+        # Argument present: switch
         agent_id = arg.lower()
         profile_map = {p.id.lower(): p for p in all_profiles}
         if agent_id not in profile_map:
             available = ", ".join(p.id for p in all_profiles)
-            return f"❌ 未找到 Agent `{agent_id}`\n可用: {available}"
+            return f"❌ Agent `{agent_id}` not found\nAvailable: {available}"
 
         ctx = session.context
         p = profile_map[agent_id]
         old_id = ctx.agent_profile_id
         if old_id.lower() == agent_id:
-            return f"ℹ️ 当前已是 **{p.icon} {p.name}**"
+            return f"ℹ️ Already using **{p.icon} {p.name}**"
 
         ctx.agent_switch_history.append(
             {
@@ -1227,19 +1227,19 @@ class MessageGateway:
         self.session_manager.mark_dirty()
         logger.info(f"[IM] Agent switched: {old_id!r} -> {agent_id!r} for {session.session_key}")
 
-        return f"✅ 已切换到 **{p.icon} {p.name}** ({p.description})"
+        return f"✅ Switched to **{p.icon} {p.name}** ({p.description})"
 
     def _format_system_help(self) -> str:
-        """格式化全局 /help 输出（所有模式可用）——基于统一命令注册表"""
+        """Format the global /help output (available in all modes) based on the unified command registry"""
         from ..config import settings
         from .slash_commands import format_help
 
         lines = [
-            "📖 **快捷指令**\n",
-            "**任务控制:**",
-            "  `停止` / `stop` / `/stop` / `kill` — 停止当前任务",
-            "  `跳过` / `skip` / `/skip` — 跳过当前步骤",
-            "  处理中直接发送新消息 — 自动注入当前任务上下文",
+            "📖 **Quick Commands**\n",
+            "**Task control:**",
+            "  `stop` / `/stop` / `kill` — stop current task",
+            "  `skip` / `/skip` — skip current step",
+            "  Send a message while task is running — inject into current task",
             "",
         ]
 
@@ -1247,10 +1247,10 @@ class MessageGateway:
 
         lines.extend(
             [
-                "**多Agent:**",
-                "  `/切换` / `/switch` — 列出或切换 Agent",
-                "  `/状态` / `/status` — 查看当前 Agent 信息",
-                "  `/重置` / `/agent_reset` — 重置为默认 Agent",
+                "**Multi-agent:**",
+                "  `/switch` — list or switch agent",
+                "  `/status` — show current agent info",
+                "  `/agent_reset` — reset to default agent",
                 "",
             ]
         )
@@ -1258,11 +1258,11 @@ class MessageGateway:
         return "\n".join(lines)
 
     def _format_agent_help(self) -> str:
-        """格式化多Agent专用 /help 输出（保留用于内部兼容）"""
+        """Format the multi-Agent-specific /help output (kept for internal compatibility)"""
         return self._format_system_help()
 
     def _format_agent_status(self, session: Session) -> str:
-        """格式化 /状态 输出"""
+        """Format /status output"""
         from openakita.agents.presets import SYSTEM_PRESETS
         from openakita.agents.profile import get_profile_store
 
@@ -1279,11 +1279,11 @@ class MessageGateway:
         p = profile_map.get(current_id.lower())
 
         if p:
-            return f"🤖 **当前 Agent**\n\n**{p.icon} {p.name}** (`{p.id}`)\n{p.description}"
-        return f"🤖 **当前 Agent**\n\nID: `{current_id}`"
+            return f"🤖 **Current Agent**\n\n**{p.icon} {p.name}** (`{p.id}`)\n{p.description}"
+        return f"🤖 **Current Agent**\n\nID: `{current_id}`"
 
     def _handle_agent_reset(self, session: Session) -> str:
-        """处理 /重置：重置为该 bot 绑定的默认 agent（或 "default"）"""
+        """Handle /重置: reset to this bot's bound default agent (or "default")"""
         from datetime import datetime
 
         reset_target = session.get_metadata("_bot_default_agent") or "default"
@@ -1291,8 +1291,8 @@ class MessageGateway:
         ctx = session.context
         old_id = ctx.agent_profile_id
         if old_id == reset_target:
-            label = "默认 Agent" if reset_target == "default" else f"**{reset_target}**"
-            return f"ℹ️ 当前已是{label}"
+            label = "the default agent" if reset_target == "default" else f"**{reset_target}**"
+            return f"ℹ️ Already using {label}"
 
         ctx.agent_switch_history.append(
             {
@@ -1306,8 +1306,8 @@ class MessageGateway:
         logger.info(f"[IM] Agent reset to {reset_target} for {session.session_key}")
 
         if reset_target == "default":
-            return "✅ 已重置为默认 Agent"
-        return f"✅ 已重置为 **{reset_target}**"
+            return "✅ Reset to default agent"
+        return f"✅ Reset to **{reset_target}**"
 
     def _get_bot_default_agent(self, channel: str) -> str:
         """Return the agent_profile_id configured on the adapter for *channel*."""
@@ -1330,7 +1330,7 @@ class MessageGateway:
             self.session_manager.mark_dirty()
             logger.info(f"[IM] Applied bot default agent: {bot_agent} for {session.session_key}")
 
-    # ==================== 自然语言意图检测 ====================
+    # ==================== Natural-language intent detection ====================
 
     import re as _re
 
@@ -1372,9 +1372,9 @@ class MessageGateway:
     def _get_group_response_mode(
         self, channel: str, chat_id: str = "", user_id: str = "*"
     ) -> GroupResponseMode:
-        """获取群聊响应模式。
+        """Get the group-chat response mode.
 
-        优先级: per-chat bot_config > per-bot adapter > 全局 settings > 默认 MENTION_ONLY
+        Priority: per-chat bot_config > per-bot adapter > global settings > default MENTION_ONLY
         """
         if chat_id and hasattr(self, "bot_config"):
             per_chat = self.bot_config.get_response_mode(channel, chat_id, user_id)
@@ -1399,7 +1399,7 @@ class MessageGateway:
             return GroupResponseMode.MENTION_ONLY
 
     def _get_group_allowlist(self, channel: str) -> set[str]:
-        """获取群聊白名单（Per-Bot 配置 > 全局配置）"""
+        """Get the group-chat whitelist (per-bot config > global config)"""
         adapter = self._adapters.get(channel)
         per_bot = getattr(adapter, "_group_allowlist", None)
         if per_bot:
@@ -1411,7 +1411,7 @@ class MessageGateway:
             return set(raw) if not isinstance(raw, set) else raw
         return set()
 
-    # ==================== 群聊上下文缓冲区方法 ====================
+    # ==================== Group-chat context-buffer methods ====================
 
     def _buffer_group_context(
         self,
@@ -1419,10 +1419,10 @@ class MessageGateway:
         *,
         text: str | None = None,
     ) -> None:
-        """将被过滤的群聊消息缓存到上下文缓冲区。
+        """Cache filtered group-chat messages into the context buffer.
 
-        key 为 ``channel:chat_id``（群聊级），每条记录包含时间戳、用户、文本。
-        超出 TTL 或最大条数的旧条目自动淘汰。
+        The key is ``channel:chat_id`` (group-chat level); each record includes a timestamp, user, and text.
+        Old entries beyond TTL or the max-count are evicted automatically.
         """
         buf_key = f"{message.channel}:{message.chat_id}"
         buf = self._group_context_buffer.get(buf_key)
@@ -1431,7 +1431,7 @@ class MessageGateway:
             self._group_context_buffer[buf_key] = buf
 
         now = _time.time()
-        # 淘汰过期条目
+        # Evict expired entries
         while buf and (now - buf[0]["ts"]) > self._GROUP_CONTEXT_TTL:
             buf.popleft()
 
@@ -1456,7 +1456,7 @@ class MessageGateway:
         *,
         max_items: int = 10,
     ) -> list[dict]:
-        """获取群聊上下文缓冲区中的近期消息（已过期的自动淘汰）。"""
+        """Get recent messages from the group-chat context buffer (expired entries are evicted automatically)."""
         buf_key = f"{channel}:{chat_id}"
         buf = self._group_context_buffer.get(buf_key)
         if not buf:
@@ -1469,17 +1469,17 @@ class MessageGateway:
 
     @staticmethod
     def _format_group_context(items: list[dict]) -> str:
-        """将缓冲区条目格式化为可注入 prompt 的文本。
+        """Format buffer entries into text suitable for prompt injection.
 
-        末尾附带条数元信息，AI 可自然地在回复中提及
-        "我注意到了最近 N 条群聊消息的上下文"。
+        Appends a count-metadata suffix so the AI can naturally mention
+        "I noticed the context of the recent N group-chat messages".
         """
         if not items:
             return ""
         n = len(items)
         lines = [
-            f"[群聊近期上下文] 以下是本群中最近 {n} 条未处理消息，供你理解上下文。\n"
-            f"请在回复末尾简要注明 [基于最近 {n} 条群聊消息]："
+            f"[Group context] The following are the {n} most recent unprocessed messages in this group.\n"
+            f"Please briefly note [based on {n} recent group messages] at the end of your response:"
         ]
         for entry in items:
             user = entry.get("user") or entry.get("user_id", "?")
@@ -1488,10 +1488,10 @@ class MessageGateway:
         return "\n".join(lines)
 
     async def _try_smart_reaction(self, message: "UnifiedMessage") -> None:
-        """Smart 模式过滤消息时，尝试在原消息上添加 emoji 反应。
+        """When Smart-mode filters a message, try adding an emoji reaction on the original message.
 
-        行为受 ``SMART_REACTION_ENABLED`` 环境变量控制（默认关闭以避免群内刷屏）。
-        仅当适配器声明 ``add_reaction`` 能力时执行。
+        Behavior is controlled by the ``SMART_REACTION_ENABLED`` env var (off by default to avoid group-chat spam).
+        Only runs when the adapter declares the ``add_reaction`` capability.
         """
         import os
 
@@ -1533,14 +1533,14 @@ class MessageGateway:
             logger.warning(f"[Gateway] Failed to load group policy: {e}")
 
     async def start(self) -> None:
-        """启动网关"""
+        """Start the gateway"""
         self._running = True
         self._accepting = True
 
-        # 预加载 Whisper 语音识别模型（在后台线程中执行，不阻塞启动）
+        # Preload the Whisper STT model (in a background thread so startup is not blocked)
         asyncio.create_task(self._preload_whisper_async())
 
-        # 启动所有适配器
+        # Start all adapters
         started = []
         failed = []
         failed_reasons: dict[str, str] = {}
@@ -1570,10 +1570,10 @@ class MessageGateway:
             },
         )
 
-        # 启动消息处理循环
+        # Start the message-processing loop
         self._processing_task = asyncio.create_task(self._process_loop())
 
-        # 启动 per-session 字典清理任务（每 10 分钟清理不活跃的 session 条目）
+        # Start the per-session dict cleanup task (cleans inactive session entries every 10 minutes)
         self._session_dict_cleanup_task = asyncio.create_task(self._session_dict_cleanup_loop())
 
         if failed:
@@ -1586,19 +1586,19 @@ class MessageGateway:
             logger.info(f"MessageGateway started with {len(started)} adapters")
 
     def get_started_adapters(self) -> list[str]:
-        """获取启动成功的适配器列表。"""
+        """Get the list of successfully-started adapters."""
         return list(self._started_adapters)
 
     def get_failed_adapters(self) -> list[str]:
-        """获取启动失败的适配器列表。"""
+        """Get the list of failed-to-start adapters."""
         return list(self._failed_adapters)
 
     def get_failed_adapter_reasons(self) -> dict[str, str]:
-        """获取启动失败的适配器及其错误原因。"""
+        """Get the failed adapters and their error reasons."""
         return dict(getattr(self, "_failed_adapter_reasons", {}))
 
     def report_adapter_failure(self, name: str, reason: str) -> None:
-        """后台任务中适配器发生致命失败时调用，更新状态并通知前端。"""
+        """Called when a background task's adapter suffers a fatal failure; updates state and notifies the frontend."""
         if name not in self._failed_adapters:
             self._failed_adapters.append(name)
         if name in self._started_adapters:
@@ -1686,7 +1686,7 @@ class MessageGateway:
                     break
 
     async def _preload_whisper_async(self) -> None:
-        """异步预加载 Whisper 模型"""
+        """Asynchronously preload the Whisper model"""
         try:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._load_whisper_model)
@@ -1694,7 +1694,7 @@ class MessageGateway:
             logger.warning(f"Failed to preload Whisper model: {e}")
 
     def _ensure_ffmpeg(self) -> None:
-        """确保 ffmpeg 可用（优先使用系统已有的，否则自动下载静态版本）"""
+        """Ensure ffmpeg is available (prefer the system one; otherwise auto-download a static build)"""
         import shutil
 
         if shutil.which("ffmpeg"):
@@ -1704,27 +1704,27 @@ class MessageGateway:
         try:
             import static_ffmpeg
 
-            static_ffmpeg.add_paths(weak=True)  # weak=True: 不覆盖已有
+            static_ffmpeg.add_paths(weak=True)  # weak=True: do not override existing paths
             logger.info("ffmpeg auto-configured via static-ffmpeg")
         except ImportError as e:
             from openakita.tools._import_helper import import_or_hint
 
             hint = import_or_hint("static_ffmpeg")
-            logger.warning(f"ffmpeg 不可用: {hint}")
-            logger.warning(f"static_ffmpeg ImportError 详情: {e}", exc_info=True)
+            logger.warning(f"ffmpeg unavailable: {hint}")
+            logger.warning(f"static_ffmpeg ImportError details: {e}", exc_info=True)
 
     async def _extract_video_keyframes(
         self, video_path: str, max_frames: int = 6, interval_seconds: int = 10
     ) -> list[tuple[str, str]]:
-        """从视频中截取关键帧（使用 ffmpeg）
+        """Extract keyframes from a video (using ffmpeg)
 
         Args:
-            video_path: 视频文件路径
-            max_frames: 最多截取的帧数
-            interval_seconds: 每隔多少秒截取一帧
+            video_path: video file path
+            max_frames: maximum number of frames to extract
+            interval_seconds: extract one frame every N seconds
 
         Returns:
-            [(base64_data, media_type), ...] 列表
+            List of [(base64_data, media_type), ...]
         """
         import asyncio
         import shutil
@@ -1783,13 +1783,13 @@ class MessageGateway:
         return await loop.run_in_executor(None, _do_extract)
 
     def _load_whisper_model(self) -> None:
-        """加载 Whisper 模型（在线程池中执行）"""
+        """Load the Whisper model (runs on a thread pool)"""
         if self._whisper_loaded or self._whisper_unavailable:
             return
 
-        # 模块可能在服务运行期间安装，路径尚未注入 sys.path。
-        # 在导入前尝试刷新一次（idempotent，不会重复添加已有路径）。
-        # 必须在 _ensure_ffmpeg 之前执行，因为 static_ffmpeg 也在 whisper 模块中。
+        # The module may have been installed while the service was running; the path may not yet be in sys.path.
+        # Refresh once before import (idempotent; will not re-add existing paths).
+        # Must run before _ensure_ffmpeg because static_ffmpeg is inside the whisper module too.
         if "whisper" not in sys.modules:
             try:
                 from openakita.runtime_env import inject_module_paths_runtime
@@ -1798,7 +1798,7 @@ class MessageGateway:
             except Exception:
                 pass
 
-        # 确保 ffmpeg 可用（Whisper 依赖 ffmpeg 解码音频）
+        # Ensure ffmpeg is available (Whisper depends on it to decode audio)
         self._ensure_ffmpeg()
 
         try:
@@ -1810,11 +1810,11 @@ class MessageGateway:
 
             model_name = self._whisper_model_name
 
-            # 获取模型缓存路径
+            # Get the model cache path
             cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "whisper")
             model_file = os.path.join(cache_dir, f"{model_name}.pt")
 
-            # 检查本地模型 hash（仅提醒，不阻塞）
+            # Check the local model's hash (notification only; does not block)
             if os.path.exists(model_file) and os.path.getsize(model_file) > 1000000:
                 model_url = _MODELS.get(model_name, "")
                 if model_url:
@@ -1834,7 +1834,7 @@ class MessageGateway:
                                 f"Delete {model_file} to re-download if needed."
                             )
 
-            # 正常加载
+            # Normal load
             logger.info(f"Loading Whisper model '{model_name}'...")
             self._whisper = whisper.load_model(model_name)
             self._whisper_loaded = True
@@ -1844,17 +1844,17 @@ class MessageGateway:
             from openakita.tools._import_helper import import_or_hint
 
             hint = import_or_hint("whisper")
-            logger.warning(f"Whisper 不可用（本进程内不再重试）: {hint}")
+            logger.warning(f"Whisper unavailable (will not retry within this process): {hint}")
             self._whisper_unavailable = True
         except Exception as e:
             logger.error(f"Failed to load Whisper model: {e}", exc_info=True)
 
     async def drain(self, timeout: float = 30.0) -> None:
         """
-        优雅排空：停止接收新消息，等待进行中任务完成后再停止。
+        Graceful drain: stop accepting new messages and wait for in-progress tasks before stopping.
 
         Args:
-            timeout: 等待进行中任务的最大秒数，超时后强制停止
+            timeout: maximum seconds to wait for in-progress tasks before force-stopping
         """
         self._accepting = False
         logger.info("[Shutdown] Gateway entering drain mode, no longer accepting new messages")
@@ -1886,7 +1886,7 @@ class MessageGateway:
         await self.stop()
 
     async def stop(self) -> None:
-        """停止网关（立即停止，不等待进行中任务）"""
+        """Stop the gateway (stop immediately; do not wait for in-progress tasks)"""
         if self._plugin_hooks:
             try:
                 await self._plugin_hooks.dispatch("on_shutdown", gateway=self)
@@ -1896,26 +1896,26 @@ class MessageGateway:
         self._running = False
         self._accepting = False
 
-        # 停止处理循环
+        # Stop the processing loop
         if self._processing_task:
             self._processing_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._processing_task
 
-        # 停止失败适配器重试任务
+        # Stop the failed-adapter retry task
         if self._retry_failed_task and not self._retry_failed_task.done():
             self._retry_failed_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._retry_failed_task
 
-        # 停止 per-session 字典清理任务
+        # Stop the per-session dict cleanup task
         cleanup_task = getattr(self, "_session_dict_cleanup_task", None)
         if cleanup_task:
             cleanup_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await cleanup_task
 
-        # 取消所有活跃的 session tasks
+        # Cancel all active session tasks
         for _skey, task in list(self._session_tasks.items()):
             if not task.done():
                 task.cancel()
@@ -1925,7 +1925,7 @@ class MessageGateway:
                     await task
         self._session_tasks.clear()
 
-        # 停止所有适配器
+        # Stop all adapters
         for name, adapter in self._adapters.items():
             try:
                 await adapter.stop()
@@ -1936,10 +1936,10 @@ class MessageGateway:
         logger.info("MessageGateway stopped")
 
     async def _session_dict_cleanup_loop(self) -> None:
-        """定期清理 per-session 字典中不活跃的条目，防止内存泄漏。"""
+        """Periodically clean inactive entries in per-session dicts to prevent memory leaks."""
         while self._running:
             try:
-                await asyncio.sleep(600)  # 每 10 分钟清理一次
+                await asyncio.sleep(600)  # clean every 10 minutes
                 self._cleanup_stale_session_dicts()
             except asyncio.CancelledError:
                 break
@@ -1947,14 +1947,14 @@ class MessageGateway:
                 logger.warning(f"[Gateway] Session dict cleanup error: {e}")
 
     def _cleanup_stale_session_dicts(self) -> None:
-        """清理不再活跃的 session 对应的字典条目。
+        """Clean dict entries for sessions that are no longer active.
 
-        只清理当前未在处理中的 session_key，保留正在活跃的。
+        Only cleans session_keys that are currently not being processed; keeps active ones.
         """
         active_keys = {k for k, v in self._processing_sessions.items() if v}
         cleaned = 0
 
-        # 清理 _interrupt_queues 中空闲且非活跃的条目
+        # Clean idle and inactive entries in _interrupt_queues
         stale = [k for k in self._interrupt_queues if k not in active_keys]
         for k in stale:
             q = self._interrupt_queues[k]
@@ -1962,43 +1962,43 @@ class MessageGateway:
                 del self._interrupt_queues[k]
                 cleaned += 1
 
-        # 清理 _processing_sessions 中 False 值的条目
+        # Clean False-valued entries in _processing_sessions
         stale = [k for k, v in self._processing_sessions.items() if not v]
         for k in stale:
             del self._processing_sessions[k]
             cleaned += 1
 
-        # 清理 _interrupt_callbacks 中非活跃的条目
+        # Clean inactive entries in _interrupt_callbacks
         stale = [k for k in self._interrupt_callbacks if k not in active_keys]
         for k in stale:
             del self._interrupt_callbacks[k]
             cleaned += 1
 
-        # 清理 _progress_buffers 中空的条目
+        # Clean empty entries in _progress_buffers
         stale = [k for k, v in self._progress_buffers.items() if not v]
         for k in stale:
             del self._progress_buffers[k]
             cleaned += 1
 
-        # 清理 _progress_flush_tasks 中已完成的条目
+        # Clean completed entries in _progress_flush_tasks
         stale = [k for k, t in self._progress_flush_tasks.items() if t.done()]
         for k in stale:
             del self._progress_flush_tasks[k]
             cleaned += 1
 
-        # 清理 _progress_card_accum 中非活跃的条目
+        # Clean inactive entries in _progress_card_accum
         stale = [k for k in self._progress_card_accum if k not in active_keys]
         for k in stale:
             del self._progress_card_accum[k]
             cleaned += 1
 
-        # 清理 _session_tasks 中已完成的条目
+        # Clean completed entries in _session_tasks
         stale = [k for k, t in self._session_tasks.items() if t.done()]
         for k in stale:
             del self._session_tasks[k]
             cleaned += 1
 
-        # 清理 ModelCommandHandler 中过期的切换会话
+        # Clean expired switch-sessions in ModelCommandHandler
         stale = [k for k, s in self._model_cmd_handler._switch_sessions.items() if s.is_expired]
         for k in stale:
             del self._model_cmd_handler._switch_sessions[k]
@@ -2009,28 +2009,28 @@ class MessageGateway:
 
     def set_brain(self, brain: "Brain") -> None:
         """
-        设置 Brain 实例（用于模型切换命令）
+        Set the Brain instance (used for model-switch commands)
 
         Args:
-            brain: Brain 实例
+            brain: Brain instance
         """
         self._model_cmd_handler.set_brain(brain)
         logger.info("ModelCommandHandler brain set")
 
     def set_shutdown_event(self, event: asyncio.Event) -> None:
-        """注入 shutdown_event（供终极重启指令使用）"""
+        """Inject shutdown_event (used by the ultimate-restart command)"""
         self._shutdown_event = event
         self._restart_cmd_handler._shutdown_event = event
         logger.debug("RestartCommandHandler shutdown_event set")
 
-    # ==================== 适配器管理 ====================
+    # ==================== Adapter management ====================
 
     async def register_adapter(self, adapter: ChannelAdapter) -> None:
         """
-        注册适配器
+        Register an adapter
 
         Args:
-            adapter: 通道适配器
+            adapter: channel adapter
         """
         name = adapter.channel_name
 
@@ -2038,26 +2038,26 @@ class MessageGateway:
             logger.warning(f"Adapter {name} already registered, replacing")
             await self._adapters[name].stop()
 
-        # 设置消息回调
+        # Set message callback
         adapter.on_message(self._on_message)
         adapter.on_failure(self.report_adapter_failure)
 
         self._adapters[name] = adapter
         logger.info(f"Registered adapter: {name}")
 
-        # 如果网关已运行，启动适配器
+        # If the gateway is already running, start the adapter
         if self._running:
             await adapter.start()
 
     async def unregister_adapter(self, name: str) -> bool:
         """
-        注销并停止指定适配器。
+        Unregister and stop the specified adapter.
 
         Args:
-            name: 适配器的 channel_name
+            name: adapter's channel_name
 
         Returns:
-            True 表示成功注销，False 表示未找到该适配器
+            True if successfully unregistered, False if the adapter was not found
         """
         adapter = self._adapters.pop(name, None)
         if adapter is None:
@@ -2073,23 +2073,23 @@ class MessageGateway:
         return True
 
     def get_adapter(self, channel: str) -> ChannelAdapter | None:
-        """获取适配器"""
+        """Get an adapter"""
         return self._adapters.get(channel)
 
     def list_adapters(self) -> list[str]:
-        """列出所有适配器"""
+        """List all adapters"""
         return list(self._adapters.keys())
 
-    # ==================== 消息处理 ====================
+    # ==================== Message handling ====================
 
     async def _on_message(self, message: UnifiedMessage) -> None:
         """
-        消息回调（由适配器调用）
+        Message callback (invoked by adapters)
 
-        如果该会话正在处理中，根据消息类型做不同处理：
-        - STOP: 触发全局任务取消（cancel_event）
-        - SKIP: 触发当前步骤跳过（skip_event），不终止任务
-        - INSERT: 将用户消息注入任务上下文，让 LLM 决策如何处理
+        If the session is currently processing, handle by message type:
+        - STOP: trigger global task cancellation (cancel_event)
+        - SKIP: trigger current-step skip (skip_event) without terminating the task
+        - INSERT: inject the user message into the task context and let the LLM decide how to handle it
         """
         if not self._accepting:
             logger.debug(
@@ -2106,9 +2106,9 @@ class MessageGateway:
         session_key = self._get_session_key(message)
         _raw_text = (message.plain_text or "").strip()
 
-        # ==================== 终极重启指令拦截 ====================
-        # 在所有逻辑之前拦截，确保即使系统卡死也能响应。
-        # 不经过消息队列、不进入 Agent、不污染会话上下文。
+        # ==================== Ultimate-restart interception ====================
+        # Intercepted before all logic so it responds even when the system is stuck.
+        # Bypasses the message queue, does not enter the Agent, does not pollute the session context.
         if self._restart_cmd_handler.has_pending_session(session_key):
             consumed = await self._restart_cmd_handler.handle_pending_input(
                 session_key,
@@ -2120,20 +2120,20 @@ class MessageGateway:
         if self._restart_cmd_handler.is_restart_command(_raw_text):
             await self._restart_cmd_handler.handle_restart_command(session_key, message)
             return
-        # ==================== /终极重启指令拦截 ====================
+        # ==================== /end ultimate-restart interception ====================
 
-        # ==================== 中断快路径（无锁检测） ====================
-        # 在获取 interrupt_lock 之前做低成本文本检测，减少锁竞争
+        # ==================== Interrupt fast path (lock-free detection) ====================
+        # Do cheap text detection before acquiring interrupt_lock to reduce lock contention
         if self._processing_sessions.get(session_key, False) and self._is_abort_text(_raw_text):
             await self._cancel_session(session_key, message, _raw_text)
             return
 
         async with self._interrupt_lock:
             if self._processing_sessions.get(session_key, False):
-                # 会话正在处理中
+                # Session is currently processing
                 user_text = (message.plain_text or "").strip()
 
-                # 群聊响应模式过滤（防止未 @ 的群消息通过中断路径注入上下文）
+                # Group-chat response-mode filter (prevents non-@'ed group messages from injecting context via the interrupt path)
                 if message.chat_type == "group" and not message.is_direct_message:
                     _irq_mode = self._get_group_response_mode(
                         message.channel, message.chat_id, message.user_id
@@ -2152,8 +2152,8 @@ class MessageGateway:
                             )
                             return
 
-                # 会话隔离校验：只有当 agent 正在处理本会话的任务时，
-                # cancel/skip/insert 操作才应生效（防止 A 用户误杀 B 用户的任务）
+                # session isolation check: cancel/skip/insert only applies when the agent is processing this session's task,
+                # preventing user A from accidentally killing user B's task
                 _agent_ref = (
                     getattr(self.agent_handler, "_agent_ref", None) if self.agent_handler else None
                 )
@@ -2171,7 +2171,7 @@ class MessageGateway:
                     if msg_type == "stop":
                         if _resolved_sid:
                             self.agent_handler.cancel_current_task(
-                                f"用户发送停止指令: {user_text}",
+                                f"User sent stop command: {user_text}",
                                 session_id=_resolved_sid,
                             )
                         else:
@@ -2180,28 +2180,28 @@ class MessageGateway:
                                 f"cancelling current_task as fallback"
                             )
                             self.agent_handler.cancel_current_task(
-                                f"用户发送停止指令: {user_text}",
+                                f"User sent stop command: {user_text}",
                             )
                         logger.info(
                             f"[Interrupt] STOP command, cancelling task for {session_key} "
                             f"(resolved={_resolved_sid}): {user_text}"
                         )
-                        await self._send_feedback(message, "✅ 收到，正在停止当前任务…")
+                        await self._send_feedback(message, "✅ Got it, stopping current task…")
                     elif msg_type == "skip":
                         ok = self.agent_handler.skip_current_step(
-                            f"用户发送跳过指令: {user_text}",
+                            f"User sent skip command: {user_text}",
                             session_id=_resolved_sid,
                         )
                         if ok:
-                            await self._send_feedback(message, "⏭️ 收到，正在跳过当前步骤…")
+                            await self._send_feedback(message, "⏭️ Got it, skipping current step…")
                         else:
-                            await self._send_feedback(message, "⚠️ 当前没有可跳过的步骤。")
+                            await self._send_feedback(message, "⚠️ No active step to skip.")
                         logger.info(
                             f"[Interrupt] SKIP handled directly (not queued) for {session_key}: {user_text}"
                         )
                     else:
-                        # 补录到 session 历史（INSERT 路径原本不写历史，
-                        # 导致桌面端 IM 界面看不到这条消息）
+                        # Also record into session history (the INSERT path normally doesn't write to history,
+                        # which causes the desktop IM UI to miss this message)
                         _ins_session = self.session_manager.get_session(
                             channel=message.channel,
                             chat_id=message.chat_id,
@@ -2228,7 +2228,7 @@ class MessageGateway:
                                 },
                             )
 
-                        # --- 中断路径：下载媒体/文件并增强注入文本 ---
+                        # --- Interrupt path: download media/files and enrich the injected text ---
                         _insert_text = user_text
                         _has_media = bool(
                             getattr(message.content, "files", None)
@@ -2246,7 +2246,7 @@ class MessageGateway:
                                 if _fil.local_path and Path(_fil.local_path).exists():
                                     _fname = _fil.filename or Path(_fil.local_path).name
                                     _file_parts.append(
-                                        f"[文件已下载: {_fname}, 本地路径: {_fil.local_path}]"
+                                        f"[File downloaded: {_fname}, local path: {_fil.local_path}]"
                                     )
                                     logger.info(
                                         f"[Interrupt] File downloaded for insert: {_fil.local_path}"
@@ -2254,19 +2254,19 @@ class MessageGateway:
                             for _img in getattr(message.content, "images", []) or []:
                                 if _img.local_path and Path(_img.local_path).exists():
                                     _file_parts.append(
-                                        f"[图片已下载: {_img.filename or Path(_img.local_path).name}, "
-                                        f"本地路径: {_img.local_path}]"
+                                        f"[Image downloaded: {_img.filename or Path(_img.local_path).name}, "
+                                        f"local path: {_img.local_path}]"
                                     )
                             for _vid in getattr(message.content, "videos", []) or []:
                                 if _vid.local_path and Path(_vid.local_path).exists():
                                     _file_parts.append(
-                                        f"[视频已下载: {_vid.filename or Path(_vid.local_path).name}, "
-                                        f"本地路径: {_vid.local_path}]"
+                                        f"[Video downloaded: {_vid.filename or Path(_vid.local_path).name}, "
+                                        f"local path: {_vid.local_path}]"
                                     )
                             if _file_parts:
                                 _insert_text = _insert_text + "\n" + "\n".join(_file_parts)
 
-                            # 同步设置 pending_files 供 Agent 的下一轮迭代使用
+                            # Set pending_files synchronously for the Agent's next iteration to consume
                             if _ins_session:
                                 _pf = self._build_pending_files(message)
                                 if _pf:
@@ -2283,20 +2283,20 @@ class MessageGateway:
                             )
                             if ok:
                                 await self._send_feedback(
-                                    message, "💬 收到，已将消息注入当前任务。"
+                                    message, "💬 Got it, message injected into current task."
                                 )
                             else:
                                 await self._send_feedback(
-                                    message, "⚠️ 当前没有正在执行的任务，消息未能注入。"
+                                    message, "⚠️ No active task running, message was not injected."
                                 )
                         except Exception as e:
                             logger.error(f"[Interrupt] INSERT failed for {session_key}: {e}")
-                            await self._send_feedback(message, "❌ 消息注入失败，请稍后再试。")
+                            await self._send_feedback(message, "❌ Message injection failed, please try again.")
                         logger.info(
                             f"[Interrupt] INSERT handled for {session_key}: {_insert_text[:80]}"
                         )
                 elif self.agent_handler and not _session_matches:
-                    # Agent 不在处理当前用户的任务（可能空闲或在处理其他用户）
+                    # The Agent is not processing the current user's task (it may be idle or processing another user)
                     await self._add_interrupt_message(session_key, message)
                     logger.info(
                         f"[Interrupt] Session mismatch: resolved_sid={_resolved_sid!r}, "
@@ -2304,14 +2304,14 @@ class MessageGateway:
                         f"queued for later: {user_text[:50]}"
                     )
                 else:
-                    # agent_handler 不可用时，fallback 入中断队列
+                    # If agent_handler is unavailable, fall back to enqueueing on the interrupt queue
                     await self._add_interrupt_message(session_key, message)
                     logger.warning(
                         f"[Interrupt] No agent_handler, queued as interrupt for {session_key}: {user_text[:50]}"
                     )
                 return
 
-        # ==================== DM Pairing 配对授权检查 ====================
+        # ==================== DM Pairing authorization check ====================
         if self._dm_pairing:
             channel = message.channel
             chat_id = message.chat_id
@@ -2329,14 +2329,14 @@ class MessageGateway:
                     else:
                         await self._send_feedback(
                             message,
-                            f"🔒 未授权。请输入配对码或联系管理员获取。({result[1]})"
+                            f"🔒 Unauthorized. Contact the admin or enter a pairing code. ({result[1]})"
                         )
                     return
 
-        # 正常入队
+        # Normal enqueue
         await self._message_queue.put(message)
 
-    # ==================== 中断快路径 ====================
+    # ==================== Interrupt fast path ====================
 
     _ABORT_TRIGGERS = frozenset(
         {
@@ -2391,12 +2391,12 @@ class MessageGateway:
         if self.agent_handler:
             if _resolved_sid:
                 self.agent_handler.cancel_current_task(
-                    f"用户发送停止指令(fast-path): {user_text}",
+                    f"User sent stop command (fast-path): {user_text}",
                     session_id=_resolved_sid,
                 )
             else:
                 self.agent_handler.cancel_current_task(
-                    f"用户发送停止指令(fast-path): {user_text}",
+                    f"User sent stop command (fast-path): {user_text}",
                 )
 
         # Cancel the asyncio task if it exists
@@ -2405,9 +2405,9 @@ class MessageGateway:
             task.cancel()
 
         logger.info(f"[Abort-FastPath] Session {session_key} cancelled: {user_text}")
-        await self._send_feedback(message, "✅ 收到，正在停止当前任务…")
+        await self._send_feedback(message, "✅ Got it, stopping current task…")
 
-    # ==================== 中断机制 ====================
+    # ==================== Interrupt mechanism ====================
 
     async def _add_interrupt_message(
         self,
@@ -2416,12 +2416,12 @@ class MessageGateway:
         priority: InterruptPriority = InterruptPriority.HIGH,
     ) -> None:
         """
-        添加中断消息到会话队列
+        Add an interrupt message to the session queue
 
         Args:
-            session_key: 会话标识
-            message: 消息
-            priority: 优先级
+            session_key: session identifier
+            message: message
+            priority: priority
         """
         if session_key not in self._interrupt_queues:
             self._interrupt_queues[session_key] = asyncio.PriorityQueue()
@@ -2432,7 +2432,7 @@ class MessageGateway:
         logger.debug(f"[Interrupt] Added to queue: {session_key}, priority={priority.name}")
 
     def _get_session_key(self, message: UnifiedMessage) -> str:
-        """获取会话标识（话题消息会追加 thread_id 实现话题级隔离）"""
+        """Get the session identifier (topic messages append thread_id for topic-level isolation)"""
         key = f"{message.channel}:{message.chat_id}:{message.user_id}"
         if message.thread_id:
             key += f":{message.thread_id}"
@@ -2441,15 +2441,15 @@ class MessageGateway:
     @staticmethod
     def _resolve_task_session_id(session_key: str, agent_ref: object) -> str | None:
         """
-        根据 gateway session_key 找到 AgentState._tasks 中匹配的 task session_id。
+        Find the matching task session_id in AgentState._tasks given a gateway session_key.
 
-        session_key 格式:
-          三段式: "telegram:1241684312:tg_1241684312"  (channel:chat_id:user_id)
-          四段式: "telegram:1241684312:tg_1241684312:thread_abc"  (channel:chat_id:user_id:thread_id)
+        session_key format:
+          3-part: "telegram:1241684312:tg_1241684312"  (channel:chat_id:user_id)
+          4-part: "telegram:1241684312:tg_1241684312:thread_abc"  (channel:chat_id:user_id:thread_id)
 
-        task key 格式为 _resolve_conversation_id 的返回值（即传入的 session_id）:
-          IM 路径: session.id 格式 "telegram_1241684312_20260219031213_xxx"（下划线分隔）
-          CLI 路径: "cli_<uuid>" 格式
+        task key format is the return value of _resolve_conversation_id (i.e., the passed-in session_id):
+          IM path: session.id format "telegram_1241684312_20260219031213_xxx" (underscore-separated)
+          CLI path: "cli_<uuid>" format
         """
         if not agent_ref:
             return None
@@ -2493,20 +2493,20 @@ class MessageGateway:
         return None
 
     def _mark_session_processing(self, session_key: str, processing: bool) -> None:
-        """标记会话处理状态"""
+        """Mark the session's processing state"""
         self._processing_sessions[session_key] = processing
         if not processing and session_key in self._interrupt_callbacks:
             del self._interrupt_callbacks[session_key]
 
     async def check_interrupt(self, session_key: str) -> UnifiedMessage | None:
         """
-        检查会话是否有待处理的中断消息
+        Check whether the session has any pending interrupt messages
 
         Args:
-            session_key: 会话标识
+            session_key: session identifier
 
         Returns:
-            待处理的消息，如果没有则返回 None
+            The pending message, or None if none
         """
         queue = self._interrupt_queues.get(session_key)
         if not queue or queue.empty():
@@ -2523,26 +2523,26 @@ class MessageGateway:
 
     def has_pending_interrupt(self, session_key: str) -> bool:
         """
-        检查会话是否有待处理的中断消息
+        Check whether the session has any pending interrupt messages
 
         Args:
-            session_key: 会话标识
+            session_key: session identifier
 
         Returns:
-            是否有待处理消息
+            Whether there is a pending message
         """
         queue = self._interrupt_queues.get(session_key)
         return queue is not None and not queue.empty()
 
     def get_interrupt_count(self, session_key: str) -> int:
         """
-        获取待处理的中断消息数量
+        Get the count of pending interrupt messages
 
         Args:
-            session_key: 会话标识
+            session_key: session identifier
 
         Returns:
-            待处理消息数量
+            Count of pending messages
         """
         queue = self._interrupt_queues.get(session_key)
         return queue.qsize() if queue else 0
@@ -2553,22 +2553,22 @@ class MessageGateway:
         callback: Callable[[], Awaitable[str | None]],
     ) -> None:
         """
-        注册中断检查回调（由 Agent 调用）
+        Register an interrupt-check callback (invoked by the Agent)
 
-        当工具调用间隙，Agent 会调用此回调检查是否需要处理新消息
+        Between tool calls, the Agent invokes this callback to check whether new messages need handling
 
         Args:
-            session_key: 会话标识
-            callback: 回调函数，返回需要插入的消息文本或 None
+            session_key: session identifier
+            callback: the function that returns the text to insert, or None
         """
         self._interrupt_callbacks[session_key] = callback
         logger.debug(f"[Interrupt] Registered callback for {session_key}")
 
     async def _process_loop(self) -> None:
-        """消息处理循环（per-session-key 并发调度）
+        """Message-processing loop (per-session-key concurrent dispatch)
 
-        不同 session_key 的消息并发处理（受 MAX_CONCURRENT_SESSIONS 限制），
-        同一 session_key 内的消息由中断机制保证顺序。
+        Messages across different session_keys are processed concurrently (subject to MAX_CONCURRENT_SESSIONS),
+        while messages within the same session_key are ordered by the interrupt mechanism.
         """
         while self._running:
             try:
@@ -2598,7 +2598,7 @@ class MessageGateway:
                 logger.error(f"Error in process_loop dispatch: {e}", exc_info=True)
 
     async def _session_dispatch(self, message: UnifiedMessage) -> None:
-        """带并发控制的单条消息处理"""
+        """Single-message processing with concurrency control"""
         async with self._concurrency_sem:
             try:
                 await self._handle_message(message)
@@ -2607,20 +2607,20 @@ class MessageGateway:
 
     async def _handle_message(self, message: UnifiedMessage) -> None:
         """
-        处理单条消息
+        Process a single message
         """
         session_key = self._get_session_key(message)
         user_text = message.plain_text.strip() if message.plain_text else ""
 
         logger.info(
-            f"[IM] <<< 收到消息: channel={message.channel}, user={message.user_id}, "
+            f"[IM] <<< message received: channel={message.channel}, user={message.user_id}, "
             f'text="{user_text[:100]}"'
         )
 
         typing_task: asyncio.Task | None = None
         session = None
         try:
-            # ==================== 群聊响应过滤 ====================
+            # ==================== Group-chat response filtering ====================
             if message.chat_type == "group" and not message.is_direct_message:
                 mode = self._get_group_response_mode(
                     message.channel, message.chat_id, message.user_id
@@ -2657,7 +2657,7 @@ class MessageGateway:
                     if not self._smart_throttle.should_process(message.chat_id):
                         with contextlib.suppress(Exception):
                             self._buffer_group_context(message, text=user_text)
-                        # Smart 模式过滤时，尝试添加 emoji 反应表示"已收到"
+                        # In Smart filter mode, try adding an emoji reaction to mean "received"
                         await self._try_smart_reaction(message)
                         logger.debug(
                             f"[IM] Group message throttled (smart), buffered: {user_text[:50]}"
@@ -2666,30 +2666,30 @@ class MessageGateway:
                     self._smart_throttle.record_process(message.chat_id)
                     message.metadata["group_smart_mode"] = True
 
-            # 标记会话开始处理
+            # Mark the session as processing
             async with self._interrupt_lock:
                 self._mark_session_processing(session_key, True)
 
-            # ==================== 系统级命令拦截 ====================
-            # 在处理 Agent 之前，检查是否是模型切换相关命令
-            # 这确保即使大模型崩溃也能执行切换操作
+            # ==================== System-level command interception ====================
+            # Before invoking the Agent, check whether it is a model-switch command
+            # This ensures switching works even if the LLM is down
 
-            # 检查是否在模型切换交互会话中
+            # Check whether a model-switch interactive session is in progress
             if self._model_cmd_handler.is_in_session(session_key):
                 response_text = await self._model_cmd_handler.handle_input(session_key, user_text)
                 await self._send_response(message, response_text)
                 return
 
-            # 检查是否是模型相关命令
+            # Check whether it is a model-related command
             if self._model_cmd_handler.is_model_command(user_text):
                 response_text = await self._model_cmd_handler.handle_command(session_key, user_text)
                 if response_text:
                     await self._send_response(message, response_text)
                     return
 
-            # 检查是否是思考模式相关命令
+            # Check whether it is a thinking-mode command
             if self._thinking_cmd_handler.is_thinking_command(user_text):
-                # 需要获取 session 来读写 thinking 设置
+                # Need the session to read/write thinking settings
                 _thinking_session = self.session_manager.get_session(
                     channel=message.channel,
                     chat_id=message.chat_id,
@@ -2705,14 +2705,14 @@ class MessageGateway:
                     await self._send_response(message, response_text)
                     return
 
-            # 检查是否是模式查看命令（/模式 始终可用）
+            # Check whether it is a mode-view command (/模式 is always available)
             _cmd_lower = user_text.lower().strip()
             if _cmd_lower in ("/模式", "/mode") or _cmd_lower.startswith(("/模式 ", "/mode ")):
                 response_text = await self._handle_mode_command(user_text)
                 await self._send_response(message, response_text)
                 return
 
-            # /feishu 命令族（仅飞书渠道生效）
+            # /feishu command family (only active on the Feishu channel)
             if _cmd_lower.startswith("/feishu") and message.channel.split(":")[0] in (
                 "feishu",
                 "lark",
@@ -2722,34 +2722,34 @@ class MessageGateway:
                     await self._send_response(message, feishu_resp)
                     return
 
-            # /pair 命令（DM Pairing 配对授权）
+            # /pair command (DM Pairing authorization)
             if _cmd_lower.startswith("/pair"):
                 pair_resp = await self._handle_pair_command(_cmd_lower, message)
                 if pair_resp is not None:
                     await self._send_response(message, pair_resp)
                     return
 
-            # /background 命令：后台执行任务
+            # /background command: run task in the background
             if _cmd_lower.startswith("/background") or _cmd_lower.startswith("/bg"):
                 bg_resp = await self._handle_background_command(user_text, message)
                 if bg_resp:
                     await self._send_response(message, bg_resp)
                 return
 
-            # 全局帮助指令（所有模式可用）
+            # Global help command (available in all modes)
             if _cmd_lower in ("/help", "/帮助"):
                 response_text = self._format_system_help()
                 await self._send_response(message, response_text)
                 return
 
-            # 检查是否是多Agent相关命令（/切换 /switch /状态 /status /重置 /agent_reset）
+            # Check whether it is a multi-Agent command (/切换 /switch /status /重置 /agent_reset)
             if self._is_agent_command(user_text):
                 response_text = await self._handle_agent_command(message, user_text)
                 if response_text is not None:
                     await self._send_response(message, response_text)
                     return
 
-            # 自然语言切换多Agent模式 / 切换Agent
+            # Natural-language multi-Agent mode switching / Agent switching
             _nlu = self._detect_agent_natural_language(user_text)
             if _nlu is not None:
                 action, arg = _nlu
@@ -2771,7 +2771,7 @@ class MessageGateway:
                     await self._send_response(message, resp)
                     return
 
-            # 检查是否是上下文重置命令（开启新话题）
+            # Check whether it is a context-reset command (start a new topic)
             _CONTEXT_RESET_COMMANDS = {"/new", "/reset", "/clear", "/新话题", "/新任务", "新对话"}
             _user_cmd = user_text.strip()
             if _user_cmd in _CONTEXT_RESET_COMMANDS or _user_cmd.lower() in _CONTEXT_RESET_COMMANDS:
@@ -2789,7 +2789,7 @@ class MessageGateway:
                     _reset_session.context.variables.pop("task_description", None)
                     _reset_session.context.variables.pop("task_status", None)
                     self.session_manager.mark_dirty()
-                    # 同步清理 SQLite 中的 conversation_turns，防止 getChatHistory 兜底加载旧数据
+                    # Also clean conversation_turns in SQLite, so getChatHistory's fallback does not re-load old data
                     try:
                         _agent_ref = (
                             getattr(self.agent_handler, "_agent_ref", None)
@@ -2805,31 +2805,31 @@ class MessageGateway:
                         f"[IM] Context reset for {session_key}: cleared {_old_count} messages"
                     )
                 await self._send_response(
-                    message, "好的，已开启新话题。之前的对话上下文已清除，请说说你的新需求吧~"
+                    message, "New conversation started. Previous context has been cleared."
                 )
                 return
 
-            # 停止/跳过指令兜底（非处理中状态下收到这些指令，直接返回提示）
+            # Stop/skip fallback: when these commands arrive outside processing, return a hint directly
             _IDLE_STOP_CMDS = {"/stop", "/停止", "/cancel", "/abort", "/skip", "/跳过"}
             if _cmd_lower in _IDLE_STOP_CMDS:
                 await self._send_response(
-                    message, "当前没有正在执行的任务。发送 `/help` 查看可用指令。"
+                    message, "No active task. Send `/help` to see available commands."
                 )
                 return
 
-            # ==================== 正常消息处理流程 ====================
+            # ==================== Normal message-processing flow ====================
 
-            # 0. Bot 开关检查（必须在 typing 之前，避免禁用会话触发 typing）
+            # 0. Bot-switch check (must happen before typing, so disabled sessions don't trigger typing)
             if not self.bot_config.is_enabled(message.channel, message.chat_id, message.user_id):
                 logger.debug(
                     f"[Gateway] Bot disabled for {message.channel}:{message.chat_id}:{message.user_id}, skipping"
                 )
                 return
 
-            # 1. 启动持续 typing 状态（覆盖预处理 + Agent 全流程）
+            # 1. Start continuous typing state (covers preprocessing + the entire Agent flow)
             typing_task = asyncio.create_task(self._keep_typing(message))
 
-            # 2. 预处理钩子
+            # 2. Preprocessing hooks
             for hook in self._pre_process_hooks:
                 try:
                     message = await hook(message)
@@ -2838,10 +2838,10 @@ class MessageGateway:
                         f"[Gateway] Pre-process hook {hook.__qualname__} failed: {hook_err}"
                     )
 
-            # 3. 媒体预处理（下载图片、语音转文字）
+            # 3. Media preprocessing (download images, STT voice)
             await self._preprocess_media(message)
 
-            # 4. 获取或创建会话
+            # 4. Get or create the session
             _msg_sender_name = (message.metadata or {}).get("sender_name", "")
             _msg_chat_name = (message.metadata or {}).get("chat_name", "")
             session = self.session_manager.get_session(
@@ -2854,7 +2854,7 @@ class MessageGateway:
                 chat_name=_msg_chat_name,
             )
 
-            # 4.0.1 惰性更新 chat_type / display_name / chat_name（已有 session 可能缺失）
+            # 4.0.1 Lazily update chat_type / display_name / chat_name (an existing session may lack them)
             if message.chat_type and session.chat_type != message.chat_type:
                 session.chat_type = message.chat_type
             if _msg_sender_name and not session.display_name:
@@ -2862,10 +2862,10 @@ class MessageGateway:
             if _msg_chat_name and session.chat_name != _msg_chat_name:
                 session.chat_name = _msg_chat_name
 
-            # 4.1 多Bot绑定：将 adapter 配置的 agent_profile_id 写入新 session
+            # 4.1 Multi-bot binding: write the adapter-configured agent_profile_id into the new session
             self._apply_bot_agent_profile(session, message.channel)
 
-            # 4.2 注入 IM 环境上下文（平台、聊天类型、机器人身份、能力列表）
+            # 4.2 Inject the IM environment context (platform, chat type, bot identity, capability list)
             adapter = self._adapters.get(message.channel)
             if adapter:
                 im_env = {
@@ -2879,11 +2879,11 @@ class MessageGateway:
                 session.set_metadata("_im_environment", im_env)
                 session.set_metadata("chat_type", message.chat_type)
 
-            # 4.5 推送未送达的自检报告（每天第一条消息时触发，最多一次）
+            # 4.5 Push the undelivered self-check report (triggered on the first message each day, at most once)
             await self._maybe_deliver_pending_selfcheck_report(message)
 
-            # 4.6 时间间隔自动上下文边界标记
-            # 如果距离上一条消息超过阈值，插入边界标记帮助 LLM 区分新旧话题
+            # 4.6 Auto-mark context boundaries by time interval
+            # If the gap since the last message exceeds the threshold, insert a boundary marker to help the LLM distinguish old/new topics
             _CONTEXT_BOUNDARY_MINUTES = 30
             if session.context.messages:
                 _last_ts_str = session.context.messages[-1].get("timestamp")
@@ -2894,14 +2894,14 @@ class MessageGateway:
                         if _elapsed_min > _CONTEXT_BOUNDARY_MINUTES:
                             _hours = _elapsed_min / 60
                             if _hours >= 1:
-                                _time_desc = f"{_hours:.1f} 小时"
+                                _time_desc = f"{_hours:.1f} hours"
                             else:
-                                _time_desc = f"{int(_elapsed_min)} 分钟"
+                                _time_desc = f"{int(_elapsed_min)} minutes"
                             session.context.add_message(
                                 "system",
-                                f"[上下文边界] 距上次对话已过去 {_time_desc}，"
-                                f"以下是新的对话，可能是新话题。"
-                                f"请优先关注边界之后的内容。",
+                                f"[Context boundary] {_time_desc} since the last conversation;"
+                                f"what follows is a new conversation that may be a new topic."
+                                f"Please focus on content after the boundary.",
                             )
                             session.context.mark_topic_boundary()
                             logger.info(
@@ -2911,7 +2911,7 @@ class MessageGateway:
                     except (ValueError, TypeError):
                         pass
 
-            # 4.8 注入待处理的关键事件（@所有人、群公告变更等）
+            # 4.8 Inject pending key events (@everyone, group-announcement changes, etc.)
             if adapter:
                 pending_events = adapter.get_pending_events(message.chat_id)
                 if pending_events:
@@ -2919,24 +2919,24 @@ class MessageGateway:
                     for evt in pending_events:
                         evt_type = evt.get("type", "unknown")
                         if evt_type == "at_all":
-                            event_lines.append(f"- @所有人消息: {evt.get('text', '')[:100]}")
+                            event_lines.append(f"- @everyone message: {evt.get('text', '')[:100]}")
                         elif evt_type == "chat_updated":
                             changes = evt.get("changes", {})
-                            event_lines.append(f"- 群聊信息更新: {changes}")
+                            event_lines.append(f"- Group chat info updated: {changes}")
                         elif evt_type == "bot_added":
-                            event_lines.append("- 机器人已被添加到群聊")
+                            event_lines.append("- Bot was added to the group chat")
                         elif evt_type == "bot_removed":
-                            event_lines.append("- 机器人已被移出群聊")
+                            event_lines.append("- Bot was removed from the group chat")
                         else:
-                            event_lines.append(f"- 事件: {evt_type}")
+                            event_lines.append(f"- event: {evt_type}")
                     if event_lines:
-                        event_text = "[系统提示] 以下是最近发生的重要事件，请注意：\n" + "\n".join(
+                        event_text = "[System notice] Important events just occurred; please note:\n" + "\n".join(
                             event_lines
                         )
                         session.context.add_message("system", event_text)
 
-            # 4.9 群聊上下文注入：将近期被过滤的群消息作为上下文注入
-            # 使用 "user" 角色确保 history build 不会过滤掉（system 会被跳过）
+            # 4.9 Group-chat context injection: use recent filtered group messages as context
+            # Use the "user" role so history-build does not filter it out (system messages are skipped)
             if message.chat_type == "group" and not message.is_direct_message:
                 try:
                     _ctx_items = self._get_group_context(
@@ -2951,20 +2951,20 @@ class MessageGateway:
                             f"[IM] Injected {len(_ctx_items)} buffered group context items "
                             f"for {session_key}"
                         )
-                        # 注入后清空缓冲区，避免重复注入
+                        # Clear the buffer after injecting to avoid re-injection
                         _buf_key = f"{message.channel}:{message.chat_id}"
                         self._group_context_buffer.pop(_buf_key, None)
                 except Exception as _ctx_err:
                     logger.debug(f"[IM] Group context injection failed (non-critical): {_ctx_err}")
 
-            # 5. 记录消息到会话
+            # 5. Record the message to the session
             session.add_message(
                 role="user",
                 content=message.plain_text,
                 message_id=message.id,
                 channel_message_id=message.channel_message_id,
             )
-            self.session_manager.mark_dirty()  # 触发保存
+            self.session_manager.mark_dirty()  # trigger save
             _notify_im_event(
                 "im:new_message",
                 {
@@ -2976,10 +2976,10 @@ class MessageGateway:
                 },
             )
 
-            # 6. 调用 Agent 处理（支持中断检查 + 流式输出）
+            # 6. Invoke the Agent (supports interrupt checks + streaming output)
             response_text, streamed_ok = await self._call_agent(session, message)
 
-            # 7. 后处理钩子
+            # 7. Postprocessing hooks
             for hook in self._post_process_hooks:
                 try:
                     response_text = await hook(message, response_text)
@@ -2988,17 +2988,17 @@ class MessageGateway:
                         f"[Gateway] Post-process hook {hook.__qualname__} failed: {hook_err}"
                     )
 
-            # 7.5 空回复保护
+            # 7.5 Empty-reply protection
             if not response_text or not response_text.strip():
                 logger.warning(
                     f"[IM] Agent returned empty response for message {message.id} "
                     f"(channel={message.channel}, user={message.user_id}), "
                     f"raw={response_text!r}"
                 )
-                response_text = "⚠️ 处理完成，但未生成有效回复。请重试。"
+                response_text = "⚠️ Processing complete but no reply was generated. Please retry."
                 streamed_ok = False
 
-            # 8. 记录响应到会话（含思维链摘要 + 工具执行摘要）
+            # 8. Record the response into the session (including reasoning-chain summary + tool-execution summary)
             _chain_summary = None
             try:
                 _chain_summary = session.get_metadata("_last_chain_summary")
@@ -3033,9 +3033,9 @@ class MessageGateway:
                 },
             )
 
-            # 9. 发送响应（流式已通过卡片 PATCH 送达则跳过）
+            # 9. Send the response (skip if streaming already delivered it via card PATCH)
             logger.info(
-                f"[IM] >>> 回复完成: channel={message.channel}, user={message.user_id}, "
+                f"[IM] >>> reply complete: channel={message.channel}, user={message.user_id}, "
                 f"len={len(response_text)}, streamed={streamed_ok}, "
                 f'preview="{response_text[:80]}"'
             )
@@ -3077,7 +3077,7 @@ class MessageGateway:
 
                 await self._send_response(message, response_text)
 
-            # 10. 处理剩余的中断消息
+            # 10. Handle remaining interrupt messages
             await self._process_pending_interrupts(session_key, session)
 
         except Exception as e:
@@ -3086,20 +3086,20 @@ class MessageGateway:
                 f"(channel={message.channel}, user={message.user_id}): {e}",
                 exc_info=True,
             )
-            # 补录 assistant 错误响应，防止会话中出现孤立 user 消息
-            # (孤立 user 消息会导致下一轮连续同角色 → 模型混乱 / 工具重复执行)
+            # Record an assistant-error response to avoid orphan user messages in the session
+            # (orphan user messages would cause consecutive same-role messages next turn -> model confusion / repeated tool execution)
             try:
                 if session and session.context.messages:
                     _last = session.context.messages[-1]
                     if _last.get("role") == "user":
                         session.add_message(
                             role="assistant",
-                            content=f"[处理出错: {str(e)[:200]}]",
+                            content=f"[Processing error: {str(e)[:200]}]",
                         )
                         self.session_manager.mark_dirty()
             except Exception:
                 pass
-            # 发送错误提示
+            # Send an error notice
             await self._send_error(message, str(e))
         finally:
             if typing_task is not None:
@@ -3119,7 +3119,7 @@ class MessageGateway:
                         _adapter._make_session_key(message.chat_id, message.thread_id),
                         None,
                     )
-            # 标记会话处理完成
+            # Mark the session as done processing
             async with self._interrupt_lock:
                 self._mark_session_processing(session_key, False)
 
@@ -3127,9 +3127,9 @@ class MessageGateway:
 
     async def _process_pending_interrupts(self, session_key: str, session: Session) -> None:
         """
-        处理会话中剩余的中断消息
+        Handle remaining interrupt messages for the session
 
-        在当前消息处理完成后，继续处理排队的中断消息
+        After the current message is processed, continue processing the queued interrupt messages
         """
         iterations = 0
         while self.has_pending_interrupt(session_key):
@@ -3147,27 +3147,27 @@ class MessageGateway:
             logger.info(f"[Interrupt] Processing pending message for {session_key}")
 
             try:
-                # 预处理媒体
+                # Preprocess media
                 await self._preprocess_media(interrupt_msg)
 
-                # 记录到会话
+                # Record to the session
                 session.add_message(
                     role="user",
                     content=interrupt_msg.plain_text,
                     message_id=interrupt_msg.id,
                     channel_message_id=interrupt_msg.channel_message_id,
-                    is_interrupt=True,  # 标记为中断消息
+                    is_interrupt=True,  # mark as an interrupt message
                 )
-                self.session_manager.mark_dirty()  # 触发保存
+                self.session_manager.mark_dirty()  # trigger save
 
-                # 调用 Agent 处理（typing 由外层 typing_task 覆盖，中断不走流式）
+                # Invoke the Agent (typing is covered by the outer typing_task; interrupts skip streaming)
                 response_text, _ = await self._call_agent(
                     session,
                     interrupt_msg,
                     allow_streaming=False,
                 )
 
-                # 后处理钩子
+                # Postprocessing hooks
                 for hook in self._post_process_hooks:
                     try:
                         response_text = await hook(interrupt_msg, response_text)
@@ -3176,7 +3176,7 @@ class MessageGateway:
                             f"[Gateway] Post-process hook {hook.__qualname__} failed: {hook_err}"
                         )
 
-                # 记录响应（含思维链摘要 + 工具执行摘要）
+                # Record the response (including reasoning-chain summary + tool-execution summary)
                 _int_chain = None
                 try:
                     _int_chain = session.get_metadata("_last_chain_summary")
@@ -3196,9 +3196,9 @@ class MessageGateway:
                 if _int_tool_summary:
                     _int_meta["tool_summary"] = _int_tool_summary
                 session.add_message(role="assistant", content=response_text, **_int_meta)
-                self.session_manager.mark_dirty()  # 触发保存
+                self.session_manager.mark_dirty()  # trigger save
 
-                # 发送响应
+                # Send the response
                 await self._send_response(interrupt_msg, response_text)
 
             except Exception as e:
@@ -3207,7 +3207,7 @@ class MessageGateway:
 
     async def _preprocess_media(self, message: UnifiedMessage) -> None:
         """
-        预处理媒体文件（下载语音、图片到本地，语音自动转文字）
+        Preprocess media files (download voice, images; auto-STT voice)
         """
         adapter = self._adapters.get(message.channel)
         if not adapter:
@@ -3215,7 +3215,7 @@ class MessageGateway:
 
         import asyncio
 
-        # 并发下载/转写（避免多媒体消息逐个串行导致延迟叠加）
+        # Concurrent download/transcription (avoids latency stacking when multiple media arrive serially)
         sem = asyncio.Semaphore(4)
 
         async def _process_voice(voice) -> None:
@@ -3238,13 +3238,13 @@ class MessageGateway:
                         voice.transcription = transcription
                         logger.info(f"Voice transcribed: {transcription}")
                     else:
-                        voice.transcription = "[语音识别失败]"
+                        voice.transcription = "[STT failed]"
             except (asyncio.TimeoutError, TimeoutError):
                 logger.error(f"Voice processing timed out: {voice.filename}")
-                voice.transcription = "[语音处理超时]"
+                voice.transcription = "[Voice processing timed out]"
             except Exception as e:
                 logger.error(f"Failed to process voice: {e}")
-                voice.transcription = "[语音处理失败]"
+                voice.transcription = "[Voice processing failed]"
 
         async def _process_image(img) -> None:
             try:
@@ -3257,7 +3257,7 @@ class MessageGateway:
                     logger.info(f"Image downloaded: {img.local_path}")
             except Exception as e:
                 img.status = MediaStatus.FAILED
-                img.description = f"下载失败: {e}"
+                img.description = f"Download failed: {e}"
                 logger.error(f"Failed to download image: {e}")
 
         async def _process_video(vid) -> None:
@@ -3271,7 +3271,7 @@ class MessageGateway:
                     logger.info(f"Video downloaded: {vid.local_path}")
             except Exception as e:
                 vid.status = MediaStatus.FAILED
-                vid.description = f"下载失败: {e}"
+                vid.description = f"Download failed: {e}"
                 logger.error(f"Failed to download video: {e}")
 
         async def _process_file(fil) -> None:
@@ -3285,7 +3285,7 @@ class MessageGateway:
                     logger.info(f"File downloaded: {fil.local_path}")
             except Exception as e:
                 fil.status = MediaStatus.FAILED
-                fil.description = f"下载失败: {e}"
+                fil.description = f"Download failed: {e}"
                 logger.error(f"Failed to download file: {e}")
 
         tasks = []
@@ -3302,7 +3302,7 @@ class MessageGateway:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     def _build_pending_files(self, message: UnifiedMessage) -> list[dict]:
-        """从已下载的 message 附件构建 pending_files 列表（供 Agent 消费）。"""
+        """Build the pending_files list from downloaded message attachments (for the Agent to consume)."""
         files_data: list[dict] = []
         for fil in getattr(message.content, "files", []) or []:
             if not (fil.local_path and Path(fil.local_path).exists()):
@@ -3340,19 +3340,19 @@ class MessageGateway:
 
     async def _transcribe_voice_local(self, audio_path: str) -> str | None:
         """
-        使用本地 Whisper 进行语音转文字
+        Use local Whisper to transcribe voice
 
-        使用预加载的模型，避免每次都重新加载
+        Uses the preloaded model to avoid reloading each time
         """
         import asyncio
 
         try:
-            # 检查文件是否存在
+            # Check whether the file exists
             if not Path(audio_path).exists():
                 logger.error(f"Audio file not found: {audio_path}")
                 return None
 
-            # 确保模型已加载
+            # Ensure the model is loaded
             if not self._whisper_loaded and not self._whisper_unavailable:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self._load_whisper_model)
@@ -3362,7 +3362,7 @@ class MessageGateway:
                     logger.error("Whisper model not available")
                 return None
 
-            # 在线程池中运行转写（避免阻塞事件循环）
+            # Run transcription on a thread pool (to avoid blocking the event loop)
             whisper_lang = self._whisper_language
 
             def transcribe():
@@ -3377,7 +3377,7 @@ class MessageGateway:
                 if whisper_lang and whisper_lang != "auto":
                     kwargs["language"] = whisper_lang
 
-                # 对已转换的 WAV 尝试直接 numpy 加载，绕过 ffmpeg 依赖
+                # For pre-converted WAVs, try loading via numpy directly to bypass the ffmpeg dependency
                 if compatible_path.endswith(".wav"):
                     audio_array = load_wav_as_numpy(compatible_path)
                     if audio_array is not None:
@@ -3387,7 +3387,7 @@ class MessageGateway:
                 result = self._whisper.transcribe(compatible_path, **kwargs)
                 return result["text"].strip()
 
-            # 异步执行
+            # Run async
             loop = asyncio.get_event_loop()
             text = await loop.run_in_executor(None, transcribe)
 
@@ -3398,16 +3398,16 @@ class MessageGateway:
             return None
 
     async def _send_typing(self, message: UnifiedMessage) -> None:
-        """发送正在输入状态"""
+        """Send a typing state"""
         adapter = self._adapters.get(message.channel)
         if adapter and hasattr(adapter, "send_typing"):
             try:
                 await adapter.send_typing(message.chat_id, thread_id=message.thread_id)
             except Exception:
-                pass  # 忽略 typing 发送失败
+                pass  # ignore typing-send failures
 
     async def _send_feedback(self, message: UnifiedMessage, text: str) -> None:
-        """向 IM 用户发送轻量反馈消息（中断操作确认等）"""
+        """Send a lightweight feedback message to the IM user (interrupt confirmations, etc.)"""
         adapter = self._adapters.get(message.channel)
         if adapter and hasattr(adapter, "send_text"):
             try:
@@ -3429,7 +3429,7 @@ class MessageGateway:
     async def _call_agent_with_typing(
         self, session: Session, message: UnifiedMessage
     ) -> tuple[str, bool]:
-        """调用 Agent 处理消息，期间持续发送 typing 状态"""
+        """Invoke the Agent to handle the message, continuously sending typing state throughout"""
         import asyncio
 
         typing_task = asyncio.create_task(self._keep_typing(message))
@@ -3442,12 +3442,12 @@ class MessageGateway:
                 await typing_task
 
     async def _keep_typing(self, message: UnifiedMessage) -> None:
-        """持续发送 typing 状态（每 4 秒一次）"""
+        """Continuously send typing state (once every 4 seconds)"""
         import asyncio
 
         while True:
             await self._send_typing(message)
-            await asyncio.sleep(4)  # Telegram typing 状态持续约 5 秒
+            await asyncio.sleep(4)  # Telegram typing state lasts ~5 seconds
 
     async def _call_agent(
         self,
@@ -3457,24 +3457,24 @@ class MessageGateway:
         allow_streaming: bool = True,
     ) -> tuple[str, bool]:
         """
-        调用 Agent 处理消息（支持多模态：图片、语音）
+        Invoke the Agent to handle the message (supports multimodal: image, voice)
 
         Returns:
-            (response_text, streamed_ok) — streamed_ok=True 表示已通过流式卡片
-            发送给用户，调用方应跳过 _send_response。
+            (response_text, streamed_ok) -- streamed_ok=True means it was already delivered via a streaming card
+            to the user; the caller should skip _send_response.
         """
         if not self.agent_handler:
             return ("Agent handler not configured", False)
 
         try:
-            # 构建输入（文本 + 图片 + 语音）
+            # Build input (text + images + voice)
             input_text = message.plain_text
             _has_voice = bool(message.content.voices)
 
-            # 处理语音文件 - 双路策略：保留原始音频 + Whisper 转写
+            # Handle voice files - dual-path strategy: keep raw audio + Whisper transcription
             audio_data_list = []
             for voice in message.content.voices:
-                # 双路保留：始终存储原始音频路径到 pending_audio
+                # Dual-path retention: always store raw audio paths in pending_audio
                 if voice.local_path and Path(voice.local_path).exists():
                     audio_data_list.append(
                         {
@@ -3482,21 +3482,21 @@ class MessageGateway:
                             "mime_type": voice.mime_type or "audio/wav",
                             "duration": voice.duration,
                             "transcription": voice.transcription
-                            if voice.transcription not in (None, "", "[语音识别失败]")
+                            if voice.transcription not in (None, "", "[STT failed]")
                             else None,
                             "_media_ref": voice,
                         }
                     )
 
-                if voice.transcription and voice.transcription not in ("[语音识别失败]", ""):
-                    # 语音已转写，用转写文字作为输入（保底）
+                if voice.transcription and voice.transcription not in ("[STT failed]", ""):
+                    # Voice transcribed; use transcript as input (fallback)
                     if not input_text.strip() or "[语音:" in input_text:
-                        input_text = f"[来源:语音转写] {voice.transcription}"
+                        input_text = f"[source: voice-transcription] {voice.transcription}"
                         logger.info(f"Using voice transcription as input: {input_text}")
                     else:
-                        input_text = f"{input_text}\n\n[语音内容: {voice.transcription}]"
+                        input_text = f"{input_text}\n\n[Voice content: {voice.transcription}]"
                 elif voice.local_path:
-                    # 语音未转写成功，保存路径供 Agent 手动处理
+                    # Voice was not successfully transcribed; save the path for the Agent to handle manually
                     session.set_metadata(
                         "pending_voices",
                         [
@@ -3508,16 +3508,16 @@ class MessageGateway:
                     )
                     if not input_text.strip() or "[语音:" in input_text:
                         input_text = (
-                            f"[用户发送了语音消息，但自动识别失败。文件路径: {voice.local_path}]"
+                            f"[User sent a voice message, but auto-STT failed. File path: {voice.local_path}]"
                         )
                     logger.info(f"Voice transcription failed, file: {voice.local_path}")
 
-            # 存储原始音频数据到 session（供 Agent 做三级决策）
+            # Store raw audio data in the session (for the Agent's three-tier decision)
             if audio_data_list:
                 session.set_metadata("pending_audio", audio_data_list)
                 logger.info(f"Stored {len(audio_data_list)} raw audio files for Agent decision")
 
-            # 处理图片文件 - 多模态输入
+            # Handle image files - multimodal input
             images_data = []
             for img in message.content.images:
                 if img.local_path and Path(img.local_path).exists():
@@ -3547,29 +3547,29 @@ class MessageGateway:
                     except Exception as e:
                         logger.error(f"Failed to read image: {e}")
 
-            # 检查图片下载失败
+            # Check for image-download failures
             failed_images = [
                 img for img in message.content.images if img.status == MediaStatus.FAILED
             ]
             if failed_images:
-                reasons = "; ".join(img.description or "未知原因" for img in failed_images)
-                notice = f"[用户发送了{len(failed_images)}张图片，但下载失败: {reasons}]"
+                reasons = "; ".join(img.description or "unknown reason" for img in failed_images)
+                notice = f"[User sent {len(failed_images)} image(s), but download failed: {reasons}]"
                 input_text = f"{input_text}\n\n{notice}" if input_text.strip() else notice
                 logger.warning(f"Image download failed, notifying agent: {reasons}")
 
-            # 如果有图片，构建多模态输入
+            # If images are present, build multimodal input
             if images_data:
-                # 存储图片数据到 session，供 Agent 使用
+                # Store image data in the session for the Agent to use
                 session.set_metadata("pending_images", images_data)
                 if not input_text.strip():
-                    input_text = "[用户发送了图片]"
+                    input_text = "[User sent an image]"
                 logger.info(f"Processing multimodal message with {len(images_data)} images")
 
-            # 处理视频文件 - 多模态输入
+            # Handle video files - multimodal input
             videos_data = []
             VIDEO_SIZE_LIMIT = (
                 7 * 1024 * 1024
-            )  # 7MB (base64 后 ~9.3MB，低于 DashScope 10MB data-uri 限制)
+            )  # 7MB (after base64 ~9.3MB, under DashScope's 10MB data-uri limit)
             for vid in message.content.videos:
                 if vid.local_path and Path(vid.local_path).exists():
                     try:
@@ -3592,7 +3592,7 @@ class MessageGateway:
                                 f"Video encoded as base64: {vid.local_path} ({file_size / 1024 / 1024:.1f}MB)"
                             )
                         else:
-                            # 视频超过大小限制，用 ffmpeg 截取关键帧降级为图片
+                            # Video exceeds size limit; extract keyframes via ffmpeg as image fallback
                             logger.info(
                                 f"Video too large ({file_size / 1024 / 1024:.1f}MB > 7MB), "
                                 f"extracting keyframes: {vid.local_path}"
@@ -3611,7 +3611,7 @@ class MessageGateway:
                                             "local_path": vid.local_path,
                                         }
                                     )
-                                # 更新 pending_images
+                                # Update pending_images
                                 session.set_metadata("pending_images", images_data)
                                 logger.info(f"Extracted {len(keyframes)} keyframes from video")
                             else:
@@ -3621,15 +3621,15 @@ class MessageGateway:
                     except Exception as e:
                         logger.error(f"Failed to process video: {e}")
 
-            # 检查视频下载失败
+            # Check for video-download failures
             failed_videos = [
                 vid for vid in message.content.videos if vid.status == MediaStatus.FAILED
             ]
             if failed_videos:
-                reasons = "; ".join(vid.description or "未知原因" for vid in failed_videos)
+                reasons = "; ".join(vid.description or "unknown reason" for vid in failed_videos)
                 notice = (
-                    f"[用户发送了{len(failed_videos)}个视频，但下载失败: {reasons}。"
-                    f"请告知用户视频下载失败，建议发送较小的视频文件。]"
+                    f"[User sent {len(failed_videos)} video(s), but download failed: {reasons}."
+                    f"Please tell the user the video download failed and suggest sending a smaller video file.]"
                 )
                 input_text = f"{input_text}\n\n{notice}" if input_text.strip() else notice
                 logger.warning(f"Video download failed, notifying agent: {reasons}")
@@ -3637,10 +3637,10 @@ class MessageGateway:
             if videos_data:
                 session.set_metadata("pending_videos", videos_data)
                 if not input_text.strip():
-                    input_text = "[用户发送了视频]"
+                    input_text = "[User sent a video]"
                 logger.info(f"Processing multimodal message with {len(videos_data)} videos")
 
-            # 处理文件 - PDF 等文档的多模态输入
+            # Handle files - multimodal input for PDFs and other documents
             files_data = []
             for fil in message.content.files:
                 if fil.local_path and Path(fil.local_path).exists():
@@ -3718,15 +3718,15 @@ class MessageGateway:
                                     errors="replace",
                                 )
                                 input_text += (
-                                    f"\n\n--- 文件: {_fname} ---\n{_content}\n--- 文件结束 ---"
+                                    f"\n\n--- File: {_fname} ---\n{_content}\n--- End of file ---"
                                 )
                                 logger.info(
                                     f"Text file injected: {fil.local_path} ({len(_content)} chars)"
                                 )
                             else:
                                 input_text += (
-                                    f"\n[附件: {_fname} ({mime or suffix}), "
-                                    f"文件过大无法内联，本地路径: {fil.local_path}]"
+                                    f"\n[Attachment: {_fname} ({mime or suffix}), "
+                                    f"file too large to inline, local path: {fil.local_path}]"
                                 )
                                 logger.info(
                                     f"Text file too large for inline, "
@@ -3734,34 +3734,34 @@ class MessageGateway:
                                 )
                         else:
                             input_text += (
-                                f"\n[附件: {_fname} ({mime or suffix}), 本地路径: {fil.local_path}]"
+                                f"\n[Attachment: {_fname} ({mime or suffix}), local path: {fil.local_path}]"
                             )
                     except Exception as e:
                         logger.error(f"Failed to process file: {e}")
 
-            # 检查文件下载失败
+            # Check for file-download failures
             failed_files = [
                 fil for fil in message.content.files if fil.status == MediaStatus.FAILED
             ]
             if failed_files:
-                reasons = "; ".join(fil.description or "未知原因" for fil in failed_files)
-                notice = f"[用户发送了{len(failed_files)}个文件，但下载失败: {reasons}]"
+                reasons = "; ".join(fil.description or "unknown reason" for fil in failed_files)
+                notice = f"[User sent {len(failed_files)} file(s), but download failed: {reasons}]"
                 input_text = f"{input_text}\n\n{notice}" if input_text.strip() else notice
                 logger.warning(f"File download failed, notifying agent: {reasons}")
 
             if files_data:
                 session.set_metadata("pending_files", files_data)
                 if not input_text.strip():
-                    input_text = "[用户发送了文件]"
+                    input_text = "[User sent a file]"
                 logger.info(f"Processing multimodal message with {len(files_data)} files")
 
-            # === 中断机制：传递 gateway 引用和会话标识 ===
+            # === Interrupt mechanism: pass the gateway reference and session identifier ===
             session_key = self._get_session_key(message)
             session.set_metadata("_gateway", self)
             session.set_metadata("_session_key", session_key)
             session.set_metadata("_current_message", message)
 
-            # === 流式 / 非流式分支 ===
+            # === Streaming / non-streaming branch ===
             adapter = self._adapters.get(message.channel)
             is_group = message.chat_type == "group"
             from ..config import settings as _cfg
@@ -3786,8 +3786,8 @@ class MessageGateway:
                     adapter,
                 )
             elif _has_orchestrator:
-                # Orchestrator 自带 idle_timeout + hard_timeout 进度监控，
-                # 不再套 wait_for 墙钟超时，避免活跃任务被误杀
+                # The Orchestrator has its own idle_timeout + hard_timeout progress monitoring,
+                # so we no longer wrap in a wait_for wall-clock timeout that would mistakenly kill active tasks
                 response = await self.agent_handler(session, input_text)
             else:
                 _AGENT_TIMEOUT = float(os.environ.get("AGENT_HANDLER_TIMEOUT", "1200"))
@@ -3798,7 +3798,7 @@ class MessageGateway:
                     )
                 except (asyncio.TimeoutError, TimeoutError):
                     logger.error(f"[Gateway] Agent handler timed out after {_AGENT_TIMEOUT}s")
-                    response = f"⚠️ 处理超时（{int(_AGENT_TIMEOUT)}秒），请稍后重试或简化您的问题。"
+                    response = f"⚠️ Processing timed out ({int(_AGENT_TIMEOUT)}s), please retry or simplify your request."
 
             return (response, streamed_ok)
 
@@ -3895,14 +3895,14 @@ class MessageGateway:
                 elif etype == "tool_call_start":
                     tool_name = event.get("name", "unknown")
                     if chain_push:
-                        await self.emit_progress_event(session, f"🔧 正在调用工具: {tool_name}")
+                        await self.emit_progress_event(session, f"Calling tool: {tool_name}")
                 elif etype == "tool_call_end":
                     tool_name = event.get("name", "unknown")
                     tool_ok = event.get("success", True)
                     if chain_push:
                         status = "✅" if tool_ok else "❌"
                         await self.emit_progress_event(
-                            session, f"{status} 工具 {tool_name} 执行完成"
+                            session, f"{status} tool {tool_name} finished"
                         )
                 elif etype == "ask_user":
                     if not reply_text:
@@ -3921,7 +3921,7 @@ class MessageGateway:
         except (asyncio.TimeoutError, TimeoutError):
             logger.error(f"[IM] Streaming agent timed out after {_STREAM_TIMEOUT}s")
             if not reply_text:
-                reply_text = f"⚠️ 处理超时（{int(_STREAM_TIMEOUT)}秒），请稍后重试或简化您的问题。"
+                reply_text = f"WARNING: processing timed out ({int(_STREAM_TIMEOUT)}s); please retry later or simplify your question."
         except Exception as e:
             logger.error(f"[IM] Streaming agent error: {e}", exc_info=True)
             if not reply_text:
@@ -3950,15 +3950,15 @@ class MessageGateway:
         )
         return (reply_text, ok)
 
-    # 各渠道单条消息最大字符数（留余量）
-    # - telegram: API 硬限制 4096，留余量 → 4000
-    # - wework:   流式/response_url 模式下 send_message 会覆写而非追加，不应分片
-    # - dingtalk:  Webhook 文本/Markdown ≈20000
-    # - feishu:    卡片消息 ≈30000
-    # - onebot/qqbot: 一般无严格限制
+    # Maximum characters per message per channel (with headroom)
+    # - telegram: API hard limit 4096; leave headroom -> 4000
+    # - wework:   in streaming/response_url mode, send_message overwrites instead of appending; do not chunk
+    # - dingtalk: Webhook text/Markdown ~20000
+    # - feishu: card messages ~30000
+    # - onebot/qqbot: generally no strict limit
     _CHANNEL_MAX_LENGTH: dict[str, int] = {
         "telegram": 4000,
-        "wework": 0,  # 0 = 不分片，整条发送
+        "wework": 0,  # 0 = no chunking, send as one message
         "dingtalk": 18000,
         "feishu": 28000,
         "lark": 28000,
@@ -3968,15 +3968,15 @@ class MessageGateway:
     }
     _DEFAULT_MAX_LENGTH = 4000
 
-    # 分片间发送间隔（秒），避免触发平台限流
+    # Delay (seconds) between chunk sends, to avoid hitting platform rate limits
     _SPLIT_SEND_INTERVAL: dict[str, float] = {
         "telegram": 0.5,
         "wechat": 2.5,
     }
     _DEFAULT_SPLIT_INTERVAL = 0.15
 
-    # 进度消息节流间隔（秒）— 不支持卡片更新的平台需要更高的节流间隔
-    # QQ/OneBot 设置较高节流：减少刷屏，降低 msg_id 被动回复窗口的消耗速度
+    # Progress-message throttle interval (seconds) -- platforms without card-update support need higher throttling
+    # QQ/OneBot gets higher throttling: reduces noise and slows consumption of the msg_id passive-reply window
     _CHANNEL_PROGRESS_THROTTLE: dict[str, float] = {
         "wechat": 12.0,
         "qqbot": 10.0,
@@ -3986,8 +3986,8 @@ class MessageGateway:
     @staticmethod
     def _split_text(text: str, max_length: int) -> list[str]:
         """
-        将长文本按换行符分割为不超过 max_length 的分片，
-        尽量保持段落完整；超长单行会按字符强制切断。
+        Split long text on newlines into chunks no longer than max_length;
+        try to keep paragraphs intact; overlong single lines are hard-cut by characters.
         """
         if max_length <= 0 or len(text) <= max_length:
             return [text]
@@ -4000,12 +4000,12 @@ class MessageGateway:
                 current = candidate
                 continue
 
-            # 当前缓冲区已有内容 → 先入列
+            # The buffer already has content -> flush first
             if current:
                 chunks.append(current.rstrip())
                 current = ""
 
-            # 单行本身就超长 → 按字符强制切断
+            # A single line is over-long -> hard-cut by characters
             if len(line) + 1 > max_length:
                 while line:
                     chunks.append(line[:max_length])
@@ -4019,16 +4019,16 @@ class MessageGateway:
 
     async def _send_response(self, original: UnifiedMessage, response: str) -> None:
         """
-        发送响应（带重试、按渠道分割长消息、分片间限流保护）
+        Send the response (with retries, per-channel long-message splitting, and inter-chunk rate protection)
 
-        分片失败策略：
-        - 首次以 Markdown 分片发送
-        - 任一分片 3 次重试仍失败 → 中止剩余分片，改用纯文本整体重发
-        - 纯文本重发也失败 → 发送失败通知
+        Chunk-failure strategy:
+        - First send as Markdown chunks
+        - If any chunk still fails after 3 retries -> abort remaining chunks and resend the whole thing as plain text
+        - If plain-text resend also fails -> send a failure notice
 
-        媒体补发：
-        - 在发送文本前解析回复中的 ![](path)、MEDIA: 行、裸路径
-        - 先发清理后的文本，再逐个补发图片/文件
+        Media follow-ups:
+        - Before sending text, parse ![](path), MEDIA: lines, and bare paths from the reply
+        - Send the cleaned text first, then send images/files one by one
         """
         import asyncio
 
@@ -4047,7 +4047,7 @@ class MessageGateway:
             logger.error(f"No adapter for channel: {original.channel}")
             return
 
-        # 解析文本中的媒体引用
+        # Parse media references from the text
         media_result = parse_media_from_text(response)
         text_to_send = media_result.cleaned_text
 
@@ -4061,7 +4061,7 @@ class MessageGateway:
             estimate_number_prefix_len,
         )
 
-        # 预留分片序号长度：先做一次粗估（假设最多 10 片），分片后再精确添加
+        # Reserve space for the chunk ordinal: make a rough estimate (assume at most 10 chunks), then add exact numbering after chunking
         _est_prefix = estimate_number_prefix_len(10)
         _effective_max = (
             max(max_length - _est_prefix, max_length // 2) if max_length > 0 else max_length
@@ -4118,7 +4118,7 @@ class MessageGateway:
             await self._send_extracted_media(adapter, original, media_result, outgoing_meta)
             return
 
-        # 分片发送失败 → 仅将失败及后续分片以纯文本重发，避免已送达的部分重复
+        # Chunk-send failed -> only resend the failed chunk and what follows as plain text (avoid duplicating already-delivered parts)
         remaining = messages[failed_at:]
         logger.info(
             f"[SendResponse] Split send failed at part {failed_at + 1}/{len(messages)}, "
@@ -4141,9 +4141,9 @@ class MessageGateway:
                 logger.error(f"Plain-text fallback also failed for part {failed_at + j + 1}: {e2}")
                 _sent_count = failed_at + j
                 _fail_hint = (
-                    f"消息发送失败（已送达 {_sent_count}/{len(messages)} 段），请稍后重试。"
+                    f"Message send failed ({_sent_count}/{len(messages)} segments delivered); please retry later."
                     if _sent_count > 0
-                    else "消息发送失败，请稍后重试。"
+                    else "Message send failed; please retry later."
                 )
                 with contextlib.suppress(Exception):
                     await adapter.send_text(
@@ -4164,7 +4164,7 @@ class MessageGateway:
         media_result: "MediaParseResult",
         outgoing_meta: dict,
     ) -> None:
-        """补发从回复文本中解析出的图片/文件"""
+        """Send images/files parsed from the reply text as follow-ups"""
         reply_to = original.thread_id or original.channel_message_id
 
         if adapter.has_capability("send_image"):
@@ -4233,7 +4233,7 @@ class MessageGateway:
 
     async def _send_error(self, original: UnifiedMessage, error: str) -> None:
         """
-        发送错误提示（对用户展示友好消息，技术细节仅保留在日志中）
+        Send an error notice (show a friendly message to the user; keep technical details only in logs)
         """
         adapter = self._adapters.get(original.channel)
         if not adapter:
@@ -4253,17 +4253,17 @@ class MessageGateway:
         except Exception as e:
             logger.error(f"Failed to send error message: {e}")
 
-    # ==================== 待推送自检报告 ====================
+    # ==================== Pending self-check report ====================
 
     async def _maybe_deliver_pending_selfcheck_report(self, message: UnifiedMessage) -> None:
         """
-        检查并推送未送达的自检报告
+        Check for and push any undelivered self-check reports
 
-        自检在凌晨 4:00 运行，但此时通常没有活跃会话（30 分钟超时），
-        报告会以 reported=false 状态保存在 data/selfcheck/ 目录下。
-        当用户发消息时，这里会把未送达的报告补推给用户。
+        Self-check runs at 4:00 AM, but there's usually no active session at that time (30-minute timeout),
+        so reports are saved under data/selfcheck/ with reported=false.
+        When the user sends a message, this method pushes the undelivered reports to them.
 
-        去重由报告 JSON 的 reported 字段保证，无需额外的日期锁。
+        Deduplication is guaranteed by the report JSON's reported field; no separate date lock is needed.
         """
         try:
             await self._deliver_pending_selfcheck_report(message)
@@ -4272,10 +4272,10 @@ class MessageGateway:
 
     async def _deliver_pending_selfcheck_report(self, message: UnifiedMessage) -> None:
         """
-        读取 data/selfcheck/ 中未推送的报告并发送给用户
+        Read unpushed reports from data/selfcheck/ and send them to the user
 
-        检查今天和昨天的报告文件，找到第一个 reported=false 的报告推送。
-        直接通过适配器发送，不写入会话上下文（避免污染对话历史）。
+        Check today's and yesterday's report files; push the first one with reported=false.
+        Send directly via the adapter, without writing to the session context (to avoid polluting conversation history).
         """
         import json
         from datetime import date as date_type
@@ -4287,7 +4287,7 @@ class MessageGateway:
             return
 
         today = date_type.today()
-        # 检查今天和昨天的报告（自检在凌晨 4:00 生成当天日期的报告）
+        # Check today's and yesterday's reports (self-check at 4:00 AM produces the current day's report)
         candidates = [
             today.isoformat(),
             (today - timedelta(days=1)).isoformat(),
@@ -4304,7 +4304,7 @@ class MessageGateway:
                 with open(json_file, encoding="utf-8") as f:
                     data = json.load(f)
 
-                # 已推送过则跳过
+                # Skip if already pushed
                 if data.get("reported"):
                     continue
 
@@ -4317,12 +4317,12 @@ class MessageGateway:
                 if not report_md.strip():
                     continue
 
-                # 通过适配器直接发送（不写入会话上下文）
+                # Send directly via the adapter (no session-context write)
                 adapter = self._adapters.get(message.channel)
                 if not adapter or not adapter.is_running:
                     continue
 
-                header = f"📋 每日系统自检报告（{report_date}）\n\n"
+                header = f"Daily system self-check report ({report_date})\n\n"
                 full_text = header + report_md
                 _meta = {
                     "is_group": (message.metadata or {}).get(
@@ -4330,7 +4330,7 @@ class MessageGateway:
                     )
                 }
 
-                # 分段发送（兼容 Telegram 4096 限制）
+                # Send in segments (compatible with Telegram's 4096 limit)
                 max_len = 3500
                 text = full_text
                 while text:
@@ -4343,7 +4343,7 @@ class MessageGateway:
                     await adapter.send_text(message.chat_id, text[:cut].rstrip(), metadata=_meta)
                     text = text[cut:].lstrip()
 
-                # 标记为已推送
+                # Mark as pushed
                 data["reported"] = True
                 with open(json_file, "w", encoding="utf-8") as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
@@ -4352,12 +4352,12 @@ class MessageGateway:
                     f"Delivered pending selfcheck report for {report_date} "
                     f"to {message.channel}/{message.chat_id}"
                 )
-                break  # 只推送最近一份未读报告
+                break  # only push the most recent unread report
 
             except Exception as e:
                 logger.error(f"Failed to deliver pending selfcheck report for {report_date}: {e}")
 
-    # ==================== 主动发送 ====================
+    # ==================== Proactive send ====================
 
     async def send(
         self,
@@ -4369,17 +4369,17 @@ class MessageGateway:
         **kwargs,
     ) -> str | None:
         """
-        主动发送消息
+        Send a message proactively
 
         Args:
-            channel: 目标通道
-            chat_id: 目标聊天
-            text: 消息文本
-            record_to_session: 是否记录到会话历史
-            user_id: 发送者标识
+            channel: target channel
+            chat_id: target chat
+            text: message text
+            record_to_session: whether to record to session history
+            user_id: sender identifier
 
         Returns:
-            消息 ID 或 None
+            The message ID or None
         """
         adapter = self._adapters.get(channel)
         if not adapter:
@@ -4387,7 +4387,7 @@ class MessageGateway:
             return None
 
         try:
-            # 标记为中间消息，防止飞书思考卡片被提前消费
+            # Mark as intermediate to prevent Feishu thinking cards from being consumed prematurely
             _meta = kwargs.pop("metadata", None) or {}
             _meta = dict(_meta) if isinstance(_meta, dict) else {}
             _meta.setdefault("_interim", True)
@@ -4395,14 +4395,14 @@ class MessageGateway:
 
             result = await adapter.send_text(chat_id, text, **kwargs)
 
-            # 记录到 session 历史
+            # Record to session history
             if record_to_session and self.session_manager:
                 try:
                     self.session_manager.add_message(
                         channel=channel,
                         chat_id=chat_id,
                         user_id=user_id,
-                        role="system",  # 系统发送的消息
+                        role="system",  # message sent by the system
                         content=text,
                         source="gateway.send",
                     )
@@ -4422,10 +4422,10 @@ class MessageGateway:
         **kwargs,
     ) -> str | None:
         """
-        发送消息到会话
+        Send a message to a session
         """
-        # 话题感知：session 关联了话题且调用者未显式指定 reply_to 时，
-        # 自动使用 thread_id 使消息留在话题内（飞书等平台需要 reply 才能定位到话题）
+        # Topic-aware: if the session is associated with a topic and the caller did not explicitly set reply_to,
+        # use thread_id automatically so the message stays within the topic (platforms like Feishu require a reply to locate the topic)
         if session.thread_id and "reply_to" not in kwargs:
             kwargs["reply_to"] = session.thread_id
 
@@ -4433,15 +4433,15 @@ class MessageGateway:
             channel=session.channel,
             chat_id=session.chat_id,
             text=text,
-            record_to_session=False,  # 下面手动记录
+            record_to_session=False,  # recorded manually below
             **kwargs,
         )
 
-        # 记录到 session 历史（用指定的 role）；发送失败时不记录，避免上下文不一致
+        # Record to session history (with the specified role); do not record on send failure to avoid context inconsistency
         if self.session_manager and result is not None:
             try:
                 session.add_message(role=role, content=text, source="send_to_session")
-                self.session_manager.mark_dirty()  # 触发保存
+                self.session_manager.mark_dirty()  # trigger save
             except Exception as e:
                 logger.warning(f"Failed to record message to session: {e}")
 
@@ -4464,20 +4464,20 @@ class MessageGateway:
             return
 
         text = (
-            f"⚠️ **安全确认**\n\n"
-            f"工具: `{tool_name}`\n"
-            f"风险等级: **{risk_level}**\n"
-            f"原因: {reason}\n\n"
-            f"请回复: **允许** / **拒绝**"
+            f"WARNING: **Safety confirmation**\n\n"
+            f"Tool: `{tool_name}`\n"
+            f"Risk level: **{risk_level}**\n"
+            f"Reason: {reason}\n\n"
+            f"Please reply: **allow** / **deny**"
         )
 
         if hasattr(adapter, "build_simple_card") and hasattr(adapter, "send_card"):
             card = adapter.build_simple_card(
-                title=f"⚠️ 安全确认 — {risk_level}",
-                content=(f"**工具**: {tool_name}\n**原因**: {reason}"),
+                title=f"WARNING: Safety confirmation — {risk_level}",
+                content=(f"**Tool**: {tool_name}\n**Reason**: {reason}"),
                 buttons=[
-                    {"text": "✅ 允许", "value": "security_allow"},
-                    {"text": "❌ 拒绝", "value": "security_deny"},
+                    {"text": "Allow", "value": "security_allow"},
+                    {"text": "Deny", "value": "security_deny"},
                 ],
             )
             try:
@@ -4553,10 +4553,10 @@ class MessageGateway:
         session: Session,
         new_lines: list[str],
     ) -> bool:
-        """尝试将进度文本 PATCH 到思考卡片（不消费卡片）。
+        """Try PATCHing progress text into the thinking card (without consuming it).
 
-        非流式路径下，进度消息通过此方法直接更新占位卡片，
-        避免发送独立灰色文本消息。卡片由最终回复消费（pop）。
+        On the non-streaming path, progress messages update the placeholder card via this method,
+        avoiding separate gray text messages. The card is consumed (popped) by the final reply.
 
         Returns True if PATCH succeeded.
         """
@@ -4586,7 +4586,7 @@ class MessageGateway:
             return False
 
         if hasattr(adapter, "_typing_status"):
-            adapter._typing_status[sk] = "调用工具"
+            adapter._typing_status[sk] = "calling tool"
 
         session_key = session.session_key
         accum = self._progress_card_accum.setdefault(session_key, [])
@@ -4610,17 +4610,17 @@ class MessageGateway:
         force: bool = False,
     ) -> None:
         """
-        发出“进度事件”并由网关节流/合并后发送。
+        Emit a 'progress event' which the gateway throttles/merges before sending.
 
-        - 受 im_chain_push 全局开关和会话级 chain_push 元数据控制。
-        - 多条事件会在节流窗口内合并为一条，避免刷屏。
-        - 进度消息默认以 system role 记录到 session（不影响模型对话历史）。
-        - 传 force=True 可绕过 chain_push 检查（仅用于必须送达的系统通知）。
+        - Controlled by the global im_chain_push switch and the per-session chain_push metadata.
+        - Multiple events are merged into one within the throttling window to avoid noise.
+        - Progress messages are recorded into the session with the system role by default (does not affect the model's conversation history).
+        - Pass force=True to bypass the chain_push check (only for system notifications that must be delivered).
         """
         if not session or not text:
             return
 
-        # chain_push 开关守卫
+        # chain_push switch guard
         if not force:
             from ..config import settings as _s
 
@@ -4642,7 +4642,7 @@ class MessageGateway:
 
         buf = self._progress_buffers.setdefault(session_key, [])
         if buf and buf[-1] == text:
-            return  # 连续相同消息去重
+            return  # de-duplicate consecutive identical messages
         buf.append(text)
 
         # For adapters with native <think> support, accumulate only — no
@@ -4695,9 +4695,9 @@ class MessageGateway:
 
     async def flush_progress(self, session: Session) -> None:
         """
-        立即 flush 指定 session 的进度缓冲区。
+        Immediately flush the given session's progress buffer.
 
-        在最终回答发送前调用，确保思维链消息先于回答到达。
+        Called before the final answer is sent, ensuring reasoning-chain messages arrive before the answer.
         """
         if not session:
             return
@@ -4711,7 +4711,7 @@ class MessageGateway:
 
         session_key = session.session_key
 
-        # 等待已运行的 flush task 完成，确保进度消息在回复前送达
+        # Wait for any already-running flush task to finish, so progress messages arrive before the reply
         existing = self._progress_flush_tasks.pop(session_key, None)
         if existing and not existing.done():
             existing.cancel()
@@ -4755,27 +4755,27 @@ class MessageGateway:
         user_ids: list[str] | None = None,
     ) -> dict[str, int]:
         """
-        广播消息
+        Broadcast a message
 
         Args:
-            text: 消息文本
-            channels: 目标通道列表（None 表示所有）
-            user_ids: 目标用户列表（None 表示所有）
+            text: message text
+            channels: list of target channels (None = all)
+            user_ids: list of target users (None = all)
 
         Returns:
             {channel: sent_count}
         """
         results = {}
 
-        # 获取目标会话
+        # Get target sessions
         sessions = self.session_manager.list_sessions()
 
         for session in sessions:
-            # 过滤通道
+            # Filter by channel
             if channels and session.channel not in channels:
                 continue
 
-            # 过滤用户
+            # Filter by user
             if user_ids and session.user_id not in user_ids:
                 continue
 
@@ -4787,16 +4787,16 @@ class MessageGateway:
 
         return results
 
-    # ==================== 中间件 ====================
+    # ==================== Middleware ====================
 
     def add_pre_process_hook(
         self,
         hook: Callable[[UnifiedMessage], Awaitable[UnifiedMessage]],
     ) -> None:
         """
-        添加预处理钩子
+        Add a preprocessing hook
 
-        在消息处理前调用，可以修改消息
+        Called before message processing; may modify the message
         """
         self._pre_process_hooks.append(hook)
 
@@ -4805,16 +4805,16 @@ class MessageGateway:
         hook: Callable[[UnifiedMessage, str], Awaitable[str]],
     ) -> None:
         """
-        添加后处理钩子
+        Add a postprocessing hook
 
-        在 Agent 响应后调用，可以修改响应
+        Called after the Agent response; may modify the response
         """
         self._post_process_hooks.append(hook)
 
-    # ==================== 统计 ====================
+    # ==================== Statistics ====================
 
     def get_stats(self) -> dict:
-        """获取网关统计"""
+        """Get gateway statistics"""
         return {
             "running": self._running,
             "adapters": {name: adapter.is_running for name, adapter in self._adapters.items()},

@@ -1,9 +1,10 @@
 """
-ToolSearch 工具处理器
+ToolSearch tool handler
 
-参考 CC ToolSearchTool：接受自然语言查询，在所有工具（含延迟加载的）中
-搜索匹配项，返回完整 schema，并将发现的工具注册到 discovered 集合，
-使其在后续请求中自动以完整 schema 加载。
+Modeled after CC ToolSearchTool: accepts a natural-language query, searches
+across all tools (including lazy-loaded ones), returns full schemas, and
+registers discovered tools in the discovered set so they are automatically
+loaded with full schemas in subsequent requests.
 """
 
 import json
@@ -46,7 +47,7 @@ def _score_tool(query_tokens: set[str], hint: str) -> float:
 
 
 class ToolSearchHandler:
-    """ToolSearch 工具处理器"""
+    """ToolSearch tool handler"""
 
     TOOLS = ["tool_search"]
 

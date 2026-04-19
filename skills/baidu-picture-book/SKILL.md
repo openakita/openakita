@@ -9,26 +9,26 @@ requires:
   env: [BAIDU_API_KEY]
 ---
 
-# AI 绘本生成
+# AI Picture Book Generator
 
-将简短的文字描述转化为连贯的绘本故事与画面构思，激发创意与视觉化表达。
+Transforms short text descriptions into coherent picture book stories and visual scene concepts, inspiring creativity and visual expression.
 
-## 配置
+## Configuration
 
 export BAIDU_API_KEY="your_key"
 
-## 功能
+## Features
 
-- 文字转绘本故事
-- 画面构思与描述
-- 连续情节生成
-- 多风格支持
+- Text-to-picture-book story conversion
+- Scene concept and visual description
+- Continuous narrative generation
+- Multi-style support
 
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/picture_book.py
-文字转绘本（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+Text to picture book generation (Baidu Qianfan AppBuilder). Requires setting APPBUILDER_TOKEN.
 
 ```bash
-python3 scripts/picture_book.py generate "小兔子找妈妈的故事"
+python3 scripts/picture_book.py generate "The story of a little rabbit looking for its mother"
 ```

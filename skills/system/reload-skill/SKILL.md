@@ -9,34 +9,34 @@ category: skills-management
 
 # reload-skill
 
-重新加载已存在的技能，以应用对 SKILL.md 或脚本的修改。
+Loadin ,  SKILL.md or .
 
-## 使用场景
+## Use Cases
 
-- 修改了技能的 SKILL.md 后
-- 更新了技能的脚本后
-- 需要刷新技能配置时
+- SKILL.md
+- Update
+- need
 
-## 使用方法
+## Usage
 
 ```
 reload_skill(skill_name="my-skill")
 ```
 
-## 参数
+## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |------|------|------|------|
-| skill_name | string | 是 | 技能名称 |
+| skill_name | string | Yes | Skill name |
 
-## 工作原理
+##
 
-1. 卸载原有技能
-2. 重新解析 SKILL.md
-3. 重新注册到系统
+1. have
+2. SKILL.md
+3.
 
-## 注意事项
+## Notes
 
-- 只能重新加载已加载过的技能
-- 如果是新技能，请使用 `load_skill`
-- 重新加载后，技能的所有修改立即生效
+- LoadLoad
+- Yes, Use `load_skill`
+- Load,  have

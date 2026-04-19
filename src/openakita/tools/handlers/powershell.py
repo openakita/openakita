@@ -1,11 +1,11 @@
 """
-PowerShell 工具处理器
+PowerShell tool handler
 
-独立的 PowerShell 执行处理器，参考 CC PowerShellTool 设计：
-- PS 版本检测（Desktop 5.1 vs Core 7+）
-- 版本感知的语法指导注入
-- EncodedCommand 沙箱执行
-- 只读 cmdlet 识别
+Standalone PowerShell execution handler, modeled after CC PowerShellTool design:
+- PS version detection (Desktop 5.1 vs Core 7+)
+- Version-aware syntax guidance injection
+- EncodedCommand sandbox execution
+- Read-only cmdlet recognition
 """
 
 import asyncio
@@ -21,10 +21,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# PS 版本检测结果缓存
+# PS version detection result cache
 _ps_version_cache: dict[str, Any] | None = None
 
-# 只读 cmdlet 前缀（参考 CC readOnlyValidation.ts CMDLET_ALLOWLIST）
+# Read-only cmdlet prefixes (modeled after CC readOnlyValidation.ts CMDLET_ALLOWLIST)
 READ_ONLY_PREFIXES = frozenset(
     {
         "Get-",
@@ -42,7 +42,7 @@ READ_ONLY_PREFIXES = frozenset(
     }
 )
 
-# 只读 cmdlet 完全匹配
+# Read-only cmdlet exact matches
 READ_ONLY_EXACT = frozenset(
     {
         "Where-Object",
@@ -62,9 +62,9 @@ READ_ONLY_EXACT = frozenset(
 
 
 def detect_ps_version() -> dict[str, Any]:
-    """检测系统 PowerShell 版本信息。
+    """Detect system PowerShell version information.
 
-    返回格式:
+    Return format:
         {
             "available": bool,
             "edition": "Core" | "Desktop" | None,
@@ -85,7 +85,7 @@ def detect_ps_version() -> dict[str, Any]:
         "executable": None,
     }
 
-    # 优先检测 PowerShell Core (pwsh)
+    # Prefer PowerShell Core (pwsh)
     for exe in ("pwsh", "powershell"):
         path = shutil.which(exe)
         if not path:
@@ -137,7 +137,7 @@ def detect_ps_version() -> dict[str, Any]:
 
 
 def get_ps_syntax_guidance() -> str:
-    """根据 PS 版本生成语法指导（参考 CC prompt.ts getEditionSection）。"""
+    """Generate syntax guidance based on PS version (modeled after CC prompt.ts getEditionSection)."""
     info = detect_ps_version()
     if not info["available"]:
         return ""
@@ -164,7 +164,7 @@ def get_ps_syntax_guidance() -> str:
 
 
 def is_read_only_command(command: str) -> bool:
-    """判断 PowerShell 命令是否为只读操作（参考 CC isReadOnlyCommand）。"""
+    """Determine whether a PowerShell command is a read-only operation (modeled after CC isReadOnlyCommand)."""
     stripped = command.strip()
     if not stripped:
         return False
@@ -178,7 +178,7 @@ def is_read_only_command(command: str) -> bool:
 
 
 class PowerShellHandler:
-    """PowerShell 工具处理器"""
+    """PowerShell tool handler"""
 
     TOOLS = ["run_powershell"]
 

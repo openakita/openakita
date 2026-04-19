@@ -110,66 +110,66 @@ def validate_identity_file(name: str, content: str) -> dict[str, list[str]]:
             if data is None:
                 pass  # empty file is ok
             elif not isinstance(data, dict):
-                errors.append("根节点必须是 YAML 字典")
+                errors.append("Root node must be a YAML dictionary")
             else:
                 allowed_keys = {"tool_policies", "scope_policy", "auto_confirm"}
                 unknown = set(data.keys()) - allowed_keys
                 if unknown:
-                    errors.append(f"未知的顶层键: {', '.join(sorted(unknown))}")
+                    errors.append(f"Unknown top-level keys: {', '.join(sorted(unknown))}")
                 tp = data.get("tool_policies")
                 if tp is not None:
                     if not isinstance(tp, list):
-                        errors.append("tool_policies 必须是列表")
+                        errors.append("tool_policies must be a list")
                     else:
                         for i, item in enumerate(tp):
                             if not isinstance(item, dict):
-                                errors.append(f"tool_policies[{i}] 必须是字典")
+                                errors.append(f"tool_policies[{i}] must be a dictionary")
                             elif "tool_name" not in item:
-                                errors.append(f"tool_policies[{i}] 缺少必需的 tool_name 字段")
+                                errors.append(f"tool_policies[{i}] missing required field: tool_name")
                 sp = data.get("scope_policy")
                 if sp is not None and not isinstance(sp, dict):
-                    errors.append("scope_policy 必须是字典")
+                    errors.append("scope_policy must be a dictionary")
                 ac = data.get("auto_confirm")
                 if ac is not None and not isinstance(ac, bool):
-                    errors.append("auto_confirm 必须是布尔值")
+                    errors.append("auto_confirm must be a boolean")
         except ImportError:
-            warnings.append("PyYAML 未安装，无法校验 YAML 结构")
+            warnings.append("PyYAML is not installed; cannot validate YAML structure")
         except Exception as e:
-            errors.append(f"YAML 语法错误: {e}")
+            errors.append(f"YAML syntax error: {e}")
 
     elif name == "MEMORY.md":
         from openakita.memory.types import MEMORY_MD_MAX_CHARS
 
         if len(content) > MEMORY_MD_MAX_CHARS:
             warnings.append(
-                f"内容超出 {MEMORY_MD_MAX_CHARS} 字符限制"
-                f"（当前 {len(content)}），保存后将被自动截断"
+                f"Content exceeds the {MEMORY_MD_MAX_CHARS} character limit"
+                f" (currently {len(content)}); it will be automatically truncated after saving"
             )
 
     elif name == "USER.md":
         bold_fields = re.findall(r"\*\*(.+?)\*\*:", content)
         if content.strip() and not bold_fields:
-            warnings.append("未检测到 **字段名**: 格式，系统自动学习功能可能失效")
+            warnings.append("No **fieldname**: pattern detected; automatic learning may not work")
 
     elif name.startswith("personas/") and name.endswith(".md"):
-        known_sections = {"性格特征", "沟通风格", "提示词片段", "表情包配置"}
+        known_sections = {"Personality", "Communication Style", "Prompt Fragments", "Sticker Config"}
         found = re.findall(r"^## (.+)", content, re.MULTILINE)
         unknown_sections = [s.strip() for s in found if s.strip() not in known_sections]
         if unknown_sections:
             warnings.append(
-                f"包含非标准段落: {', '.join(unknown_sections)}，不影响保存但可能不被系统识别"
+                f"Contains non-standard sections: {', '.join(unknown_sections)}; saving is unaffected but they may not be recognized by the system"
             )
 
     elif name == "prompts/policies.md":
         system_titles = {
-            "三条红线（必须遵守）",
-            "意图声明（每次纯文本回复必须遵守）",
-            "切换模型的工具上下文隔离",
+            "Three Red Lines (Must Follow)",
+            "Intent Declaration (Must Follow for Every Plain-Text Reply)",
+            "Tool Context Isolation on Model Switch",
         }
         found = re.findall(r"^## (.+)", content, re.MULTILINE)
         overridden = [s.strip() for s in found if s.strip() in system_titles]
         if overridden:
-            warnings.append(f"以下段落会被系统内置策略覆盖: {', '.join(overridden)}")
+            warnings.append(f"The following sections will be overridden by built-in policies: {', '.join(overridden)}")
 
     return {"errors": errors, "warnings": warnings}
 
@@ -270,7 +270,7 @@ async def write_identity_file(req: FileWriteRequest, request: Request):
         raise HTTPException(
             400,
             detail={
-                "message": "格式校验失败",
+                "message": "Validation failed",
                 "errors": result["errors"],
                 "warnings": result["warnings"],
             },
@@ -431,38 +431,38 @@ async def compile_status():
 # ─── Persona import / template ───────────────────────────────────────────
 
 _PERSONA_TEMPLATE = """\
-# 自定义人格名称
+# Custom Persona Name
 
-> 预设角色: 用一句话描述这个角色
+> Preset role: Describe this character in one sentence
 
-## 性格特征
-- 特征1：描述
-- 特征2：描述
-- 特征3：描述
+## Personality
+- Trait 1: Description
+- Trait 2: Description
+- Trait 3: Description
 
-## 沟通风格
-- 正式程度: neutral（可选 formal / neutral / casual）
-- 幽默感: occasional（可选 none / occasional / frequent）
-- 回复长度: adaptive（可选 brief / moderate / adaptive / detailed）
-- 情感距离: friendly（可选 professional / friendly / intimate）
-- 称呼: 默认使用用户设定的称呼
+## Communication Style
+- Formality: neutral (options: formal / neutral / casual)
+- Humor: occasional (options: none / occasional / frequent)
+- Response length: adaptive (options: brief / moderate / adaptive / detailed)
+- Emotional distance: friendly (options: professional / friendly / intimate)
+- Address: Use the user-configured form of address by default
 
-## 主动行为
-- 描述角色会主动做哪些事
-- 主动提醒、建议等行为模式
+## Proactive Behaviors
+- Describe what the persona proactively does
+- Behavioral patterns such as reminders, suggestions, etc.
 
-## 活人感配置
-- 主动消息: 低频 / 中频 / 高频（每日最多 N 条）
-- 消息类型: 任务提醒、关心问候等
-- 闲聊问候: 低频主动发起
+## Liveliness Config
+- Proactive messages: low / medium / high (max N per day)
+- Message types: task reminders, caring greetings, etc.
+- Casual chat: occasionally initiate
 
-## 表情包配置
-- 使用频率: rare / occasional / frequent
-- 偏好分类: 通用
-- 使用场景: 任务完成、鼓励等
+## Sticker Config
+- Usage frequency: rare / occasional / frequent
+- Preferred category: general
+- Usage scenarios: task completion, encouragement, etc.
 
-## 提示词片段
-你是一个[角色描述]，[核心行为准则]。[沟通风格要求]。
+## Prompt Fragments
+You are a [role description], [core behavioral guidelines]. [Communication style requirements].
 """
 
 
@@ -485,7 +485,7 @@ async def import_persona_file(file: UploadFile = File(...)):
     No strict validation — the file is saved as-is.
     """
     if not file.filename:
-        raise HTTPException(400, "文件名不能为空")
+        raise HTTPException(400, "Filename cannot be empty")
 
     fname = file.filename
     if not fname.endswith(".md"):
@@ -493,13 +493,13 @@ async def import_persona_file(file: UploadFile = File(...)):
 
     safe_name = re.sub(r"[^\w\-.]", "_", fname)
     if safe_name.startswith(".") or "/" in safe_name or "\\" in safe_name:
-        raise HTTPException(400, "非法文件名")
+        raise HTTPException(400, "Invalid filename")
 
     content_bytes = await file.read()
     try:
         content = content_bytes.decode("utf-8")
     except UnicodeDecodeError:
-        raise HTTPException(400, "文件编码必须为 UTF-8")
+        raise HTTPException(400, "File encoding must be UTF-8")
 
     personas_dir = _identity_dir() / "personas"
     personas_dir.mkdir(parents=True, exist_ok=True)

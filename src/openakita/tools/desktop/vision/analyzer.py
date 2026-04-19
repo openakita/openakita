@@ -1,7 +1,7 @@
 """
-Windows 桌面自动化 - 视觉分析器
+Windows desktop automation - Vision analyzer
 
-基于 DashScope Qwen-VL 实现 UI 视觉识别
+UI visual recognition powered by DashScope Qwen-VL
 """
 
 import json
@@ -19,7 +19,7 @@ from ..types import (
 )
 from .prompts import PromptTemplates
 
-# 平台检查
+# Platform check
 if sys.platform != "win32":
     raise ImportError(
         f"Desktop automation module is Windows-only. Current platform: {sys.platform}"
@@ -30,9 +30,9 @@ logger = logging.getLogger(__name__)
 
 class VisionAnalyzer:
     """
-    视觉分析器
+    Vision analyzer
 
-    使用 DashScope Qwen-VL 分析截图，识别 UI 元素
+    Analyzes screenshots using DashScope Qwen-VL to identify UI elements
     """
 
     def __init__(
@@ -41,14 +41,14 @@ class VisionAnalyzer:
     ):
         """
         Args:
-            capture: 截图实例，None 使用全局实例
+            capture: Screen capture instance; None uses the global instance
         """
         self._capture = capture or get_capture()
         self._llm_client = None
 
     @property
     def llm_client(self):
-        """懒加载 LLM 客户端"""
+        """Lazy-load the LLM client."""
         if self._llm_client is None:
             from openakita.llm.client import get_default_client
 
@@ -61,14 +61,14 @@ class VisionAnalyzer:
         image: Image.Image,
     ) -> str:
         """
-        调用视觉模型（模型由 LLM 端点配置决定）
+        Call the vision model (model determined by LLM endpoint configuration).
 
         Args:
-            prompt: 提示词
-            image: 图片
+            prompt: Prompt text
+            image: Image
 
         Returns:
-            模型响应文本
+            Model response text
         """
         from openakita.llm.types import ImageBlock, ImageContent, Message, TextBlock
 
@@ -99,22 +99,22 @@ class VisionAnalyzer:
 
     def _parse_json_response(self, text: str) -> dict | None:
         """
-        解析模型返回的 JSON
+        Parse JSON returned by the model.
 
         Args:
-            text: 模型响应文本
+            text: Model response text
 
         Returns:
-            解析后的 JSON 对象
+            Parsed JSON object
         """
-        # 尝试提取 JSON 块
+        # Try to extract a JSON block
         json_match = re.search(r"```json\s*([\s\S]*?)\s*```", text)
         if json_match:
             json_str = json_match.group(1)
         else:
-            # 尝试直接解析
+            # Try to parse directly
             json_str = text.strip()
-            # 尝试找到 JSON 对象
+            # Try to locate a JSON object
             start = json_str.find("{")
             end = json_str.rfind("}") + 1
             if start >= 0 and end > start:
@@ -133,14 +133,14 @@ class VisionAnalyzer:
         image: Image.Image | None = None,
     ) -> ElementLocation | None:
         """
-        根据描述查找 UI 元素
+        Find a UI element by description.
 
         Args:
-            description: 元素描述（如"保存按钮"、"红色图标"）
-            image: 截图，None 则自动截取当前屏幕
+            description: Element description (e.g. "save button", "red icon")
+            image: Screenshot; if None, captures the current screen automatically
 
         Returns:
-            找到的元素位置，未找到返回 None
+            Found element location, or None if not found
         """
         if image is None:
             image = self._capture.capture(use_cache=False)
@@ -186,13 +186,13 @@ class VisionAnalyzer:
         image: Image.Image | None = None,
     ) -> list[ElementLocation]:
         """
-        查找所有可点击元素
+        Find all clickable elements.
 
         Args:
-            image: 截图
+            image: Screenshot
 
         Returns:
-            可点击元素列表
+            List of clickable elements
         """
         if image is None:
             image = self._capture.capture(use_cache=False)
@@ -236,13 +236,13 @@ class VisionAnalyzer:
         image: Image.Image | None = None,
     ) -> list[ElementLocation]:
         """
-        查找所有输入元素
+        Find all input elements.
 
         Args:
-            image: 截图
+            image: Screenshot
 
         Returns:
-            输入元素列表
+            List of input elements
         """
         if image is None:
             image = self._capture.capture(use_cache=False)
@@ -286,13 +286,13 @@ class VisionAnalyzer:
         image: Image.Image | None = None,
     ) -> VisionResult:
         """
-        分析页面内容
+        Analyze page content.
 
         Args:
-            image: 截图
+            image: Screenshot
 
         Returns:
-            分析结果
+            Analysis result
         """
         if image is None:
             image = self._capture.capture(use_cache=False)
@@ -311,7 +311,7 @@ class VisionAnalyzer:
                     raw_response=response,
                 )
 
-            # 提取区域作为元素
+            # Extract regions as elements
             elements = []
             for region in result.get("regions", []):
                 bbox_data = region.get("bbox")
@@ -350,14 +350,14 @@ class VisionAnalyzer:
         image: Image.Image | None = None,
     ) -> VisionResult:
         """
-        回答关于截图的问题
+        Answer a question about a screenshot.
 
         Args:
-            question: 问题
-            image: 截图
+            question: Question
+            image: Screenshot
 
         Returns:
-            回答结果
+            Answer result
         """
         if image is None:
             image = self._capture.capture(use_cache=False)
@@ -369,7 +369,7 @@ class VisionAnalyzer:
             result = self._parse_json_response(response)
 
             if not result:
-                # 如果 JSON 解析失败，直接返回原始响应
+                # If JSON parsing fails, return the raw response directly
                 return VisionResult(
                     success=True,
                     query=question,
@@ -377,7 +377,7 @@ class VisionAnalyzer:
                     raw_response=response,
                 )
 
-            # 提取相关元素
+            # Extract relevant elements
             elements = []
             for elem_data in result.get("relevant_elements", []):
                 bbox_data = elem_data.get("bbox")
@@ -415,15 +415,15 @@ class VisionAnalyzer:
         image: Image.Image | None = None,
     ) -> VisionResult:
         """
-        从截图中提取文本（OCR）
+        Extract text from a screenshot (OCR).
 
-        使用专用 OCR 模型 (qwen-vl-ocr) 进行文本提取
+        Uses a dedicated OCR model (qwen-vl-ocr) for text extraction.
 
         Args:
-            image: 截图
+            image: Screenshot
 
         Returns:
-            提取结果
+            Extraction result
         """
         if image is None:
             image = self._capture.capture(use_cache=False)
@@ -442,7 +442,7 @@ class VisionAnalyzer:
                     raw_response=response,
                 )
 
-            # 提取文本元素
+            # Extract text elements
             elements = []
             for text_data in result.get("texts", []):
                 bbox_data = text_data.get("bbox")
@@ -483,20 +483,20 @@ class VisionAnalyzer:
         expected_result: str,
     ) -> VisionResult:
         """
-        验证操作是否成功
+        Verify whether an action succeeded.
 
-        对比操作前后的截图，判断操作是否成功
+        Compares before and after screenshots to determine if the action was successful.
 
         Args:
-            before_image: 操作前截图
-            after_image: 操作后截图
-            action_description: 操作描述
-            expected_result: 预期结果
+            before_image: Screenshot before the action
+            after_image: Screenshot after the action
+            action_description: Action description
+            expected_result: Expected result
 
         Returns:
-            验证结果
+            Verification result
         """
-        # 将两张图片合并（左右排列）
+        # Merge the two images side by side
         total_width = before_image.width + after_image.width
         max_height = max(before_image.height, after_image.height)
         combined = Image.new("RGB", (total_width, max_height))
@@ -533,12 +533,12 @@ class VisionAnalyzer:
             )
 
 
-# 全局实例
+# Global instance
 _analyzer: VisionAnalyzer | None = None
 
 
 def get_vision_analyzer() -> VisionAnalyzer:
-    """获取全局视觉分析器"""
+    """Get the global vision analyzer."""
     global _analyzer
     if _analyzer is None:
         _analyzer = VisionAnalyzer()

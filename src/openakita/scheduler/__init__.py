@@ -1,11 +1,11 @@
 """
-定时任务调度模块
+Scheduled task module
 
-提供定时任务管理能力:
-- ScheduledTask: 任务定义
-- TaskScheduler: 调度器
-- 支持 once/interval/cron 三种触发类型
-- ConsolidationTracker: 整理时间追踪
+Provides scheduled task management:
+- ScheduledTask: Task definitions
+- TaskScheduler: Scheduler
+- Supports three trigger types: once/interval/cron
+- ConsolidationTracker: Consolidation time tracking
 """
 
 from .consolidation_tracker import ConsolidationTracker

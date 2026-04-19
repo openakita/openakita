@@ -1,5 +1,5 @@
 """
-OpenAkita 存储模块
+OpenAkita Storage Module
 """
 
 from .database import Database

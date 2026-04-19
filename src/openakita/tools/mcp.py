@@ -1,13 +1,13 @@
 """
-MCP (Model Context Protocol) 客户端
+MCP (Model Context Protocol) client
 
-遵循 MCP 规范 (modelcontextprotocol.io/specification/2025-11-25)
-支持连接 MCP 服务器，调用工具、获取资源和提示词
+Follows the MCP specification (modelcontextprotocol.io/specification/2025-11-25).
+Supports connecting to MCP servers, calling tools, and fetching resources and prompts.
 
-支持的传输协议:
-- stdio: 标准输入输出（默认）
-- streamable_http: Streamable HTTP (用于 mcp-chrome 等)
-- sse: Server-Sent Events (兼容旧版 MCP 服务器)
+Supported transports:
+- stdio: standard input/output (default)
+- streamable_http: Streamable HTTP (used by mcp-chrome, etc.)
+- sse: Server-Sent Events (compatible with legacy MCP servers)
 """
 
 import asyncio
@@ -22,7 +22,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# anyio 连接断开相关异常（MCP SDK 底层依赖 anyio）
+# anyio connection-loss exceptions (the MCP SDK relies on anyio under the hood)
 _CONNECTION_ERRORS: tuple[type[BaseException], ...] = (ConnectionError, EOFError, OSError)
 try:
     import anyio
@@ -37,7 +37,7 @@ try:
 except ImportError:
     pass
 
-# ── MCP SDK 导入（支持懒加载重试 + 自动安装） ──
+# ── MCP SDK import (supports lazy retry + auto-install) ──
 
 MCP_SDK_AVAILABLE = False
 MCP_HTTP_AVAILABLE = False
@@ -47,7 +47,7 @@ _mcp_auto_install_attempted = False
 
 
 def _try_import_mcp() -> bool:
-    """尝试导入 MCP SDK，更新全局可用性标志。成功返回 True。"""
+    """Try to import the MCP SDK and update the global availability flags. Returns True on success."""
     global MCP_SDK_AVAILABLE, MCP_HTTP_AVAILABLE, MCP_SSE_AVAILABLE, _mcp_import_attempted
     _mcp_import_attempted = True
 
@@ -79,7 +79,7 @@ def _try_import_mcp() -> bool:
 
 
 def _auto_install_mcp() -> bool:
-    """尝试自动安装 MCP SDK，返回是否成功。"""
+    """Try to auto-install the MCP SDK. Returns whether the install succeeded."""
     global _mcp_auto_install_attempted
     if _mcp_auto_install_attempted:
         return False
@@ -141,7 +141,7 @@ def _auto_install_mcp() -> bool:
 
 
 def ensure_mcp_sdk() -> bool:
-    """确保 MCP SDK 可用。首次调用时导入，失败则尝试自动安装。"""
+    """Ensure the MCP SDK is available. Import on first call; fall back to auto-install on failure."""
     if MCP_SDK_AVAILABLE:
         return True
     if not _mcp_import_attempted:
@@ -152,10 +152,10 @@ def ensure_mcp_sdk() -> bool:
     return False
 
 
-# 首次导入尝试
+# Initial import attempt
 _try_import_mcp()
 
-# 保持向后兼容的 try/except 占位
+# Backward-compatible try/except placeholders
 try:
     if MCP_SDK_AVAILABLE:
         from mcp import ClientSession, StdioServerParameters  # noqa: F811
@@ -178,7 +178,7 @@ except ImportError:
 
 @dataclass
 class MCPTool:
-    """MCP 工具"""
+    """MCP tool"""
 
     name: str
     description: str
@@ -187,7 +187,7 @@ class MCPTool:
 
 @dataclass
 class MCPResource:
-    """MCP 资源"""
+    """MCP resource"""
 
     uri: str
     name: str
@@ -197,7 +197,7 @@ class MCPResource:
 
 @dataclass
 class MCPPrompt:
-    """MCP 提示词"""
+    """MCP prompt"""
 
     name: str
     description: str
@@ -209,22 +209,22 @@ VALID_TRANSPORTS = {"stdio", "streamable_http", "sse"}
 
 @dataclass
 class MCPServerConfig:
-    """MCP 服务器配置"""
+    """MCP server configuration"""
 
     name: str
-    command: str = ""  # stdio 模式使用
+    command: str = ""  # used in stdio mode
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     description: str = ""
     transport: str = "stdio"  # "stdio" | "streamable_http" | "sse"
-    url: str = ""  # streamable_http / sse 模式使用
+    url: str = ""  # used in streamable_http / sse mode
     headers: dict[str, str] = field(default_factory=dict)
-    cwd: str = ""  # stdio 模式的工作目录（为空则继承父进程）
+    cwd: str = ""  # working directory for stdio mode (empty inherits the parent process)
 
 
 @dataclass
 class MCPCallResult:
-    """MCP 调用结果"""
+    """MCP call result"""
 
     success: bool
     data: Any = None
@@ -234,7 +234,7 @@ class MCPCallResult:
 
 @dataclass
 class MCPConnectResult:
-    """MCP 连接结果（包含详细错误信息）"""
+    """MCP connect result (includes detailed error information)"""
 
     success: bool
     error: str | None = None
@@ -243,29 +243,29 @@ class MCPConnectResult:
 
 class MCPClient:
     """
-    MCP 客户端
+    MCP client
 
-    连接 MCP 服务器并调用其功能
+    Connects to MCP servers and invokes their capabilities.
     """
 
     def __init__(self):
         self._servers: dict[str, MCPServerConfig] = {}
-        self._connections: dict[str, Any] = {}  # 活跃连接
+        self._connections: dict[str, Any] = {}  # active connections
         self._tools: dict[str, MCPTool] = {}
         self._resources: dict[str, MCPResource] = {}
         self._prompts: dict[str, MCPPrompt] = {}
         self._load_timeouts()
 
     def add_server(self, config: MCPServerConfig) -> None:
-        """添加服务器配置"""
+        """Add a server configuration"""
         self._servers[config.name] = config
         logger.info(f"Added MCP server config: {config.name}")
 
     def load_servers_from_config(self, config_path: Path) -> int:
         """
-        从配置文件加载服务器
+        Load servers from a configuration file.
 
-        配置文件格式 (JSON):
+        Config file format (JSON):
         {
             "mcpServers": {
                 "server-name": {
@@ -286,7 +286,7 @@ class MCPClient:
 
             for name, server_data in servers.items():
                 transport = server_data.get("transport", "stdio")
-                # 兼容多种格式
+                # Handle multiple formats
                 stype = server_data.get("type", "")
                 if stype == "streamableHttp":
                     transport = "streamable_http"
@@ -313,30 +313,30 @@ class MCPClient:
 
     async def connect(self, server_name: str) -> MCPConnectResult:
         """
-        连接到 MCP 服务器
+        Connect to an MCP server.
 
-        支持 stdio、streamable_http、sse 三种传输协议。
+        Supports stdio, streamable_http, and sse transports.
 
         Args:
-            server_name: 服务器名称
+            server_name: server name
 
         Returns:
-            MCPConnectResult 包含成功状态、错误详情、发现的工具数
+            MCPConnectResult with success flag, error details, and discovered tool count.
         """
         if not MCP_SDK_AVAILABLE:
             if not ensure_mcp_sdk():
                 msg = (
-                    "MCP SDK 未安装且自动安装失败。\n"
-                    "请在 OpenAkita 的 Python 环境中手动安装:\n"
+                    "MCP SDK is not installed and auto-install failed.\n"
+                    "Please install it manually in the OpenAkita Python environment:\n"
                     f"  {sys.executable} -m pip install mcp\n"
-                    "安装后重启 OpenAkita 即可生效。"
+                    "Restart OpenAkita after installation for the change to take effect."
                 )
                 logger.error(msg)
                 return MCPConnectResult(success=False, error=msg)
             logger.info("[MCP] SDK became available after lazy install, re-importing...")
 
         if server_name not in self._servers:
-            msg = f"服务器未配置: {server_name}"
+            msg = f"Server not configured: {server_name}"
             logger.error(msg)
             return MCPConnectResult(success=False, error=msg)
 
@@ -346,14 +346,14 @@ class MCPClient:
 
         config = self._servers[server_name]
 
-        # stdio 模式预检查命令是否存在
-        # ``python -m openakita.*`` 会在 _connect_stdio 中被适配为当前运行环境，
-        # 避免误用系统 Python 导致内置模块不可导入。
+        # Pre-check that the stdio command exists.
+        # ``python -m openakita.*`` will be adapted to the current runtime in _connect_stdio
+        # to avoid accidentally using the system Python, which may fail to import bundled modules.
         if config.transport == "stdio" and config.command:
             if not self._adapt_openakita_module_command(config) and not self._resolve_command(
                 config
             ):
-                msg = f"启动命令 '{config.command}' 未找到。请确认已安装并在 PATH 中可访问。"
+                msg = f"Startup command '{config.command}' not found. Make sure it is installed and on PATH."
                 logger.error(f"MCP connect pre-check failed for {server_name}: {msg}")
                 return MCPConnectResult(success=False, error=msg)
 
@@ -372,18 +372,18 @@ class MCPClient:
 
     @staticmethod
     def _resolve_command(config: MCPServerConfig) -> str | None:
-        """在子进程实际使用的 PATH / cwd 下查找命令，避免误判 'not found'。"""
+        """Look up the command using the PATH / cwd the child process will actually use, avoiding false 'not found'."""
         from ..utils.path_helper import which_command
 
         cmd = config.command
 
-        # 1) 相对路径 + cwd：直接在目标 cwd 下判断文件是否存在
+        # 1) Relative path + cwd: check whether the file exists under the target cwd directly
         if config.cwd and (cmd.startswith("./") or cmd.startswith(".\\")):
             candidate = Path(config.cwd) / cmd
             if candidate.is_file():
                 return str(candidate.resolve())
 
-        # 2) 用子进程的 env.PATH 查找（含 macOS login shell PATH 回退）
+        # 2) Search using the child's env.PATH (with macOS login shell PATH fallback)
         search_path = None
         if config.env:
             search_path = config.env.get("PATH") or config.env.get("Path")
@@ -392,7 +392,7 @@ class MCPClient:
         if found:
             return found
 
-        # 3) 如果有 cwd，也在 cwd 下做一次绝对搜索
+        # 3) If cwd is set, also perform an absolute search under cwd
         if config.cwd:
             candidate = Path(config.cwd) / cmd
             if candidate.is_file():
@@ -404,15 +404,17 @@ class MCPClient:
     def _adapt_openakita_module_command(
         config: MCPServerConfig,
     ) -> tuple[str, list[str]] | None:
-        """将 ``python -m openakita.*`` 适配为当前 OpenAkita 运行环境。
+        """Adapt ``python -m openakita.*`` to the current OpenAkita runtime environment.
 
-        - 打包环境: 使用 ``sys.executable run-mcp-module <module>``，
-          让冻结主程序自身作为 MCP 服务器宿主，避免裸解释器无法导入内置模块。
-        - 开发环境: 使用当前虚拟环境的 Python 解释器，而不是 PATH 里的系统 Python，
-          避免 ``python -m openakita.*`` 落到错误环境中。
+        - Packaged builds: use ``sys.executable run-mcp-module <module>``,
+          so the frozen main program itself hosts the MCP server, avoiding a bare
+          interpreter that cannot import the bundled modules.
+        - Development: use the current virtualenv's Python interpreter instead of
+          the system Python on PATH, so ``python -m openakita.*`` doesn't land in
+          the wrong environment.
 
         Returns:
-            (command, args) 如果需要适配；否则 None。
+            (command, args) when adaptation is needed; otherwise None.
         """
         from ..runtime_env import IS_FROZEN, get_python_executable
 
@@ -442,7 +444,7 @@ class MCPClient:
     _CALL_TIMEOUT: int = 60
 
     def _load_timeouts(self) -> None:
-        """从配置加载超时参数（settings → 环境变量 → 默认值）"""
+        """Load timeout parameters from config (settings → environment variable → default)."""
         try:
             from ..config import settings
 
@@ -452,7 +454,7 @@ class MCPClient:
             pass
 
     async def _connect_stdio(self, server_name: str, config: MCPServerConfig) -> MCPConnectResult:
-        """通过 stdio 连接到 MCP 服务器"""
+        """Connect to an MCP server via stdio."""
         adapted = self._adapt_openakita_module_command(config)
         if adapted:
             command, args = adapted
@@ -465,7 +467,7 @@ class MCPClient:
         else:
             command = config.command
             args = list(config.args)
-            # 连接前二次解析：如果 args 中有相对路径且 cwd 已知，尝试解析
+            # Secondary resolution before connecting: if args contain relative paths and cwd is known, try to resolve them
             if config.cwd:
                 cwd_path = Path(config.cwd)
                 for i, arg in enumerate(args):
@@ -474,15 +476,16 @@ class MCPClient:
                         if candidate.is_file():
                             args[i] = str(candidate.resolve())
 
-        # macOS GUI 应用的 PATH 不含 Homebrew/NVM/Volta 等用户工具路径，
-        # 需要通过 login shell 获取完整 PATH 传递给 MCP 子进程
+        # On macOS, GUI apps inherit a PATH that excludes Homebrew/NVM/Volta
+        # and other user tool paths; fetch the full PATH via a login shell
+        # and pass it to the MCP subprocess.
         from ..utils.path_helper import get_macos_enriched_env
 
         subprocess_env: dict | None = dict(config.env) if config.env else None
         subprocess_env = get_macos_enriched_env(subprocess_env)
 
-        # Windows PyInstaller: _internal/ 目录下的 python.exe 是裸解释器,
-        # 会影响外部脚本的 python 命令解析 — 从 PATH 中移除
+        # Windows PyInstaller: the python.exe under _internal/ is a bare interpreter
+        # that can interfere with external scripts' python resolution — remove it from PATH.
         if sys.platform == "win32" and getattr(sys, "frozen", False):
             if subprocess_env is None:
                 subprocess_env = dict(os.environ)
@@ -536,20 +539,20 @@ class MCPClient:
         except (asyncio.TimeoutError, TimeoutError):
             stderr_hint = self._try_capture_stdio_stderr(stdio_cm)
             msg = (
-                f"连接超时（{self._CONNECT_TIMEOUT}s）。"
-                f"命令: {command} {' '.join(args)}{stderr_hint}"
+                f"Connection timed out ({self._CONNECT_TIMEOUT}s). "
+                f"Command: {command} {' '.join(args)}{stderr_hint}"
             )
             logger.error("Timeout connecting to %s via stdio%s", server_name, stderr_hint)
             await self._cleanup_cms(client_cm, stdio_cm)
             return MCPConnectResult(success=False, error=msg)
         except FileNotFoundError:
-            msg = f"启动命令未找到: '{command}'。请确认已安装。"
+            msg = f"Startup command not found: '{command}'. Make sure it is installed."
             logger.error(f"Command not found for {server_name}: {command}")
             await self._cleanup_cms(client_cm, stdio_cm)
             return MCPConnectResult(success=False, error=msg)
         except BaseException as e:
             stderr_hint = self._try_capture_stdio_stderr(stdio_cm)
-            msg = f"stdio 连接失败: {type(e).__name__}: {e}{stderr_hint}"
+            msg = f"stdio connection failed: {type(e).__name__}: {e}{stderr_hint}"
             logger.error(f"Failed to connect to {server_name} via stdio: {e}")
             await self._cleanup_cms(client_cm, stdio_cm)
             return MCPConnectResult(success=False, error=msg)
@@ -557,16 +560,16 @@ class MCPClient:
     async def _connect_streamable_http(
         self, server_name: str, config: MCPServerConfig
     ) -> MCPConnectResult:
-        """通过 Streamable HTTP 连接到 MCP 服务器"""
+        """Connect to an MCP server over Streamable HTTP."""
         if not MCP_HTTP_AVAILABLE:
             ensure_mcp_sdk()
         if not MCP_HTTP_AVAILABLE:
-            msg = "Streamable HTTP 传输不可用，请升级 MCP SDK: pip install 'mcp>=1.2.0'"
+            msg = "Streamable HTTP transport is not available. Please upgrade the MCP SDK: pip install 'mcp>=1.2.0'"
             logger.error(msg)
             return MCPConnectResult(success=False, error=msg)
 
         if not config.url:
-            msg = f"未配置 URL（streamable_http 模式必填）: {server_name}"
+            msg = f"URL not configured (required for streamable_http mode): {server_name}"
             logger.error(msg)
             return MCPConnectResult(success=False, error=msg)
 
@@ -614,14 +617,14 @@ class MCPClient:
             )
             return MCPConnectResult(success=True, tool_count=tool_count)
         except (asyncio.TimeoutError, TimeoutError):
-            msg = f"HTTP 连接超时（{self._CONNECT_TIMEOUT}s）。URL: {config.url}"
+            msg = f"HTTP connection timed out ({self._CONNECT_TIMEOUT}s). URL: {config.url}"
             logger.error(f"Timeout connecting to {server_name} via streamable HTTP")
             await self._cleanup_cms(client_cm, http_cm)
             if _managed_http_client:
                 await _managed_http_client.aclose()
             return MCPConnectResult(success=False, error=msg)
         except BaseException as e:
-            msg = f"HTTP 连接失败: {type(e).__name__}: {e}"
+            msg = f"HTTP connection failed: {type(e).__name__}: {e}"
             logger.error(f"Failed to connect to {server_name} via streamable HTTP: {e}")
             await self._cleanup_cms(client_cm, http_cm)
             if _managed_http_client:
@@ -629,16 +632,16 @@ class MCPClient:
             return MCPConnectResult(success=False, error=msg)
 
     async def _connect_sse(self, server_name: str, config: MCPServerConfig) -> MCPConnectResult:
-        """通过 SSE (Server-Sent Events) 连接到 MCP 服务器"""
+        """Connect to an MCP server over SSE (Server-Sent Events)."""
         if not MCP_SSE_AVAILABLE:
             ensure_mcp_sdk()
         if not MCP_SSE_AVAILABLE:
-            msg = "SSE 传输不可用，请升级 MCP SDK: pip install 'mcp>=1.2.0'"
+            msg = "SSE transport is not available. Please upgrade the MCP SDK: pip install 'mcp>=1.2.0'"
             logger.error(msg)
             return MCPConnectResult(success=False, error=msg)
 
         if not config.url:
-            msg = f"未配置 URL（sse 模式必填）: {server_name}"
+            msg = f"URL not configured (required for sse mode): {server_name}"
             logger.error(msg)
             return MCPConnectResult(success=False, error=msg)
 
@@ -675,19 +678,19 @@ class MCPClient:
             )
             return MCPConnectResult(success=True, tool_count=tool_count)
         except (asyncio.TimeoutError, TimeoutError):
-            msg = f"SSE 连接超时（{self._CONNECT_TIMEOUT}s）。URL: {config.url}"
+            msg = f"SSE connection timed out ({self._CONNECT_TIMEOUT}s). URL: {config.url}"
             logger.error(f"Timeout connecting to {server_name} via SSE")
             await self._cleanup_cms(client_cm, sse_cm)
             return MCPConnectResult(success=False, error=msg)
         except BaseException as e:
-            msg = f"SSE 连接失败: {type(e).__name__}: {e}"
+            msg = f"SSE connection failed: {type(e).__name__}: {e}"
             logger.error(f"Failed to connect to {server_name} via SSE: {e}")
             await self._cleanup_cms(client_cm, sse_cm)
             return MCPConnectResult(success=False, error=msg)
 
     @staticmethod
     async def _cleanup_cms(*cms: Any) -> None:
-        """安全清理 context managers"""
+        """Safely clean up context managers."""
         for cm in cms:
             if cm is None:
                 continue
@@ -697,8 +700,8 @@ class MCPClient:
                 pass
 
     async def _discover_capabilities(self, server_name: str, client: Any) -> None:
-        """发现 MCP 服务器的能力（工具、资源、提示词）"""
-        # 获取工具
+        """Discover an MCP server's capabilities (tools, resources, prompts)."""
+        # Fetch tools
         tools_result = await client.list_tools()
         for tool in tools_result.tools:
             self._tools[f"{server_name}:{tool.name}"] = MCPTool(
@@ -707,7 +710,7 @@ class MCPClient:
                 input_schema=tool.inputSchema or {},
             )
 
-        # 获取资源（可选）
+        # Fetch resources (optional)
         with contextlib.suppress(Exception):
             resources_result = await client.list_resources()
             for resource in resources_result.resources:
@@ -718,7 +721,7 @@ class MCPClient:
                     mime_type=resource.mimeType or "",
                 )
 
-        # 获取提示词（可选）
+        # Fetch prompts (optional)
         with contextlib.suppress(Exception):
             prompts_result = await client.list_prompts()
             for prompt in prompts_result.prompts:
@@ -729,28 +732,30 @@ class MCPClient:
                 )
 
     async def disconnect(self, server_name: str) -> None:
-        """断开服务器连接
+        """Disconnect from a server.
 
-        MCP SDK 的 stdio_client 内部使用 anyio cancel scope。如果 disconnect()
-        与 connect() 不在同一个 asyncio task 中执行（例如 connect 在初始化 task，
-        disconnect 在工具执行 task），__aexit__ 会触发:
+        The MCP SDK's stdio_client uses an anyio cancel scope internally. If
+        disconnect() and connect() are not executed in the same asyncio task
+        (for example, connect runs in an init task while disconnect runs in a
+        tool-execution task), __aexit__ raises:
             RuntimeError: Attempted to exit cancel scope in a different task
-        该错误会在异步生成器清理阶段传播到事件循环，导致整个后端进程崩溃。
+        That error propagates out of async-generator cleanup into the event
+        loop and crashes the entire backend process.
 
-        修复策略:
-        1. 对 stdio 连接先终止子进程，避免管道断裂问题
-        2. 将 CM 清理放到独立后台 task 中执行并隔离异常
-        3. 主调用方只等待有限时间，不会因清理失败而阻塞或崩溃
+        Mitigation:
+        1. For stdio connections, terminate the subprocess first to avoid broken-pipe issues.
+        2. Run CM cleanup on an isolated background task so exceptions are contained.
+        3. The caller only waits a bounded time and will not hang or crash on cleanup failure.
         """
         if server_name in self._connections:
             conn = self._connections.pop(server_name)
 
-            # 对 stdio 连接，先终止子进程再清理 CM
+            # For stdio connections, terminate the subprocess before cleaning up the CM
             if conn.get("transport") == "stdio":
                 await self._terminate_stdio_subprocess(conn.get("_stdio_cm"))
 
-            # 在独立后台 task 中清理 context managers，
-            # 隔离 anyio cancel scope 跨任务错误
+            # Clean up context managers on an isolated background task
+            # to contain anyio cross-task cancel-scope errors.
             task = asyncio.create_task(
                 self._isolated_cm_cleanup(server_name, conn),
                 name=f"mcp-cleanup-{server_name}",
@@ -777,7 +782,7 @@ class MCPClient:
                     with contextlib.suppress(BaseException):
                         await task
 
-            # 清理该服务器的工具/资源/提示词
+            # Clean up this server's tools/resources/prompts
             self._tools = {
                 k: v for k, v in self._tools.items() if not k.startswith(f"{server_name}:")
             }
@@ -791,10 +796,11 @@ class MCPClient:
 
     @staticmethod
     async def _terminate_stdio_subprocess(stdio_cm: Any) -> None:
-        """终止 stdio_client 管理的子进程。
+        """Terminate the subprocess managed by stdio_client.
 
-        通过 async generator 的 frame locals 访问子进程句柄并直接终止，
-        避免后续 __aexit__ 时因管道断裂导致 Windows ProactorEventLoop 异常。
+        Access the subprocess handle via the async generator's frame locals and
+        terminate it directly, preventing broken-pipe errors in Windows
+        ProactorEventLoop during subsequent __aexit__.
         """
         if stdio_cm is None:
             return
@@ -807,7 +813,7 @@ class MCPClient:
                 return
             if hasattr(proc, "terminate"):
                 proc.terminate()
-                # 等待子进程退出，超时则强杀
+                # Wait for the subprocess to exit; force-kill on timeout
                 if hasattr(proc, "wait"):
                     try:
                         wait_coro = proc.wait()
@@ -853,17 +859,17 @@ class MCPClient:
                 return ""
             if data:
                 text = data.decode("utf-8", errors="replace").strip()[:500]
-                return f"\n子进程 stderr: {text}"
+                return f"\nSubprocess stderr: {text}"
         except Exception:
             pass
         return ""
 
     @staticmethod
     async def _isolated_cm_cleanup(server_name: str, conn: dict) -> None:
-        """在独立 task 中逐个清理 context managers。
+        """Clean up context managers one at a time on a dedicated task.
 
-        即使 anyio 抛出 RuntimeError（跨任务 cancel scope），
-        也不会传播到主事件循环。
+        Even if anyio raises RuntimeError (cross-task cancel scope),
+        the error does not propagate to the main event loop.
         """
         for cm_key in ("_client_cm", "_stdio_cm", "_http_cm", "_sse_cm"):
             cm = conn.get(cm_key)
@@ -890,7 +896,7 @@ class MCPClient:
 
     @staticmethod
     def _extract_content(items: list) -> list:
-        """从 MCP 响应中提取所有 content 块的文本/数据表示。"""
+        """Extract text/data representations of all content blocks from an MCP response."""
         content = []
         for item in items:
             if hasattr(item, "text"):
@@ -905,7 +911,7 @@ class MCPClient:
 
     @staticmethod
     def _is_connection_error(exc: BaseException) -> bool:
-        """判断异常是否表示底层连接已断开（服务端关闭 / 管道断裂等）"""
+        """Check whether the exception indicates the underlying connection is gone (server closed / broken pipe, etc.)."""
         if isinstance(exc, _CONNECTION_ERRORS):
             return True
         name = type(exc).__name__
@@ -914,7 +920,7 @@ class MCPClient:
         return False
 
     async def _reconnect(self, server_name: str) -> bool:
-        """清理死连接并重新建立连接，成功返回 True"""
+        """Clean up a dead connection and reconnect. Returns True on success."""
         logger.info("Attempting to reconnect MCP server: %s", server_name)
 
         old_conn = self._connections.pop(server_name, None)
@@ -936,8 +942,8 @@ class MCPClient:
         if server_name not in self._servers:
             return False
 
-        # 先清理旧的工具/资源/提示词注册，让 _discover_capabilities 从干净状态写入。
-        # 如果重连失败，这些条目本来也不可用（连接已死）。
+        # Clear the old tool/resource/prompt registrations so _discover_capabilities starts clean.
+        # If the reconnect fails, these entries would have been unusable anyway (connection is dead).
         prefix = f"{server_name}:"
         self._tools = {k: v for k, v in self._tools.items() if not k.startswith(prefix)}
         self._resources = {k: v for k, v in self._resources.items() if not k.startswith(prefix)}
@@ -961,12 +967,12 @@ class MCPClient:
         arguments: dict,
     ) -> MCPCallResult:
         """
-        调用 MCP 工具
+        Call an MCP tool.
 
         Args:
-            server_name: 服务器名称
-            tool_name: 工具名称
-            arguments: 参数
+            server_name: server name
+            tool_name: tool name
+            arguments: arguments
 
         Returns:
             MCPCallResult
@@ -976,7 +982,7 @@ class MCPClient:
                 return MCPCallResult(
                     success=False,
                     error=(
-                        f"MCP SDK 未安装且自动安装失败。请运行: {sys.executable} -m pip install mcp"
+                        f"MCP SDK is not installed and auto-install failed. Please run: {sys.executable} -m pip install mcp"
                     ),
                 )
 
@@ -1064,11 +1070,11 @@ class MCPClient:
         uri: str,
     ) -> MCPCallResult:
         """
-        读取 MCP 资源
+        Read an MCP resource.
 
         Args:
-            server_name: 服务器名称
-            uri: 资源 URI
+            server_name: server name
+            uri: resource URI
 
         Returns:
             MCPCallResult
@@ -1137,12 +1143,12 @@ class MCPClient:
         arguments: dict | None = None,
     ) -> MCPCallResult:
         """
-        获取 MCP 提示词
+        Fetch an MCP prompt.
 
         Args:
-            server_name: 服务器名称
-            prompt_name: 提示词名称
-            arguments: 参数
+            server_name: server name
+            prompt_name: prompt name
+            arguments: arguments
 
         Returns:
             MCPCallResult
@@ -1205,22 +1211,22 @@ class MCPClient:
 
         return MCPCallResult(success=False, error="Unexpected: retry loop exhausted")
 
-    # ==================== 公共状态查询 / 管理 ====================
+    # ==================== Public state queries / management ====================
 
     def has_server(self, name: str) -> bool:
-        """检查服务器是否已配置"""
+        """Check whether a server is configured."""
         return name in self._servers
 
     def is_connected(self, name: str) -> bool:
-        """检查服务器是否已连接"""
+        """Check whether a server is currently connected."""
         return name in self._connections
 
     def get_server_config(self, name: str) -> MCPServerConfig | None:
-        """获取服务器配置（只读）"""
+        """Get a server configuration (read-only)."""
         return self._servers.get(name)
 
     def remove_server(self, name: str) -> None:
-        """移除服务器配置及其关联的工具/资源/提示词（不断开连接，需先调 disconnect）"""
+        """Remove the server configuration and its associated tools/resources/prompts (does not disconnect; call disconnect first)."""
         self._servers.pop(name, None)
         self._connections.pop(name, None)
         prefix = f"{name}:"
@@ -1229,7 +1235,7 @@ class MCPClient:
         self._prompts = {k: v for k, v in self._prompts.items() if not k.startswith(prefix)}
 
     async def reset(self) -> None:
-        """断开所有连接并清空全部状态（用于重载配置）"""
+        """Disconnect all servers and clear all state (used when reloading configuration)."""
         for name in list(self._connections):
             try:
                 await self.disconnect(name)
@@ -1242,36 +1248,36 @@ class MCPClient:
         self._prompts.clear()
 
     def list_servers(self) -> list[str]:
-        """列出所有配置的服务器"""
+        """List all configured servers."""
         return list(self._servers.keys())
 
     def list_connected(self) -> list[str]:
-        """列出已连接的服务器"""
+        """List currently connected servers."""
         return list(self._connections.keys())
 
     def list_tools(self, server_name: str | None = None) -> list[MCPTool]:
-        """列出工具"""
+        """List tools."""
         if server_name:
             prefix = f"{server_name}:"
             return [t for k, t in self._tools.items() if k.startswith(prefix)]
         return list(self._tools.values())
 
     def list_resources(self, server_name: str | None = None) -> list[MCPResource]:
-        """列出资源"""
+        """List resources."""
         if server_name:
             prefix = f"{server_name}:"
             return [r for k, r in self._resources.items() if k.startswith(prefix)]
         return list(self._resources.values())
 
     def list_prompts(self, server_name: str | None = None) -> list[MCPPrompt]:
-        """列出提示词"""
+        """List prompts."""
         if server_name:
             prefix = f"{server_name}:"
             return [p for k, p in self._prompts.items() if k.startswith(prefix)]
         return list(self._prompts.values())
 
     def get_tool_schemas(self) -> list[dict]:
-        """获取所有工具的 LLM 调用 schema"""
+        """Get the LLM call schema for every tool."""
         schemas = []
         for key, tool in self._tools.items():
             server_name = key.split(":")[0]
@@ -1285,21 +1291,21 @@ class MCPClient:
         return schemas
 
 
-# 全局客户端
+# Global client
 mcp_client = MCPClient()
 
 
-# 便捷函数
+# Convenience helpers
 async def connect_mcp_server(name: str) -> MCPConnectResult:
-    """连接 MCP 服务器"""
+    """Connect to an MCP server."""
     return await mcp_client.connect(name)
 
 
 async def call_mcp_tool(server: str, tool: str, args: dict) -> MCPCallResult:
-    """调用 MCP 工具"""
+    """Call an MCP tool."""
     return await mcp_client.call_tool(server, tool, args)
 
 
 def get_mcp_tool_schemas() -> list[dict]:
-    """获取 MCP 工具 schema"""
+    """Get MCP tool schemas."""
     return mcp_client.get_tool_schemas()

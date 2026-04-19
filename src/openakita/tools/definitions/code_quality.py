@@ -1,8 +1,8 @@
 """
-Code Quality 工具定义
+Code Quality tool definitions
 
-包含代码质量检查相关工具：
-- read_lints: 读取 linter 诊断
+Contains code quality check tools:
+- read_lints: Read linter diagnostics
 """
 
 CODE_QUALITY_TOOLS = [
@@ -27,7 +27,8 @@ CODE_QUALITY_TOOLS = [
                     "type": "array",
                     "items": {"type": "string"},
                     "description": (
-                        "文件或目录路径列表。不填则检查整个工作区（慎用，可能返回大量预先存在的错误）"
+                        "List of file or directory paths. Omit to check the entire workspace "
+                        "(use with caution, may return many pre-existing errors)"
                     ),
                 },
             },

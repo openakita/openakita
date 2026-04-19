@@ -1,8 +1,8 @@
 """
-OrgInbox — 统一消息收件箱
+OrgInbox — Unified Message Inbox
 
-聚合组织内各类事件（任务完成、进度变更、审批请求等），
-支持优先级排序和内联审批功能。
+Aggregates various organizational events (task completion, progress changes,
+approval requests, etc.) with priority sorting and inline approval support.
 """
 
 from __future__ import annotations
@@ -100,7 +100,7 @@ class OrgInbox:
     ) -> InboxMessage:
         return self.push(
             org_id,
-            title=f"任务完成: {task_name}",
+            title=f"Task completed: {task_name}",
             body=result_summary[:500],
             source_node=node_id,
             category="task_complete",

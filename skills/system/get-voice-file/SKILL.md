@@ -9,20 +9,20 @@ category: IM Channel
 
 # Get Voice File
 
-获取用户发送的语音消息的本地文件路径。
+Get the local file path of a voice message sent by the user.
 
 ## Parameters
 
-无参数。
+No parameters.
 
 ## Workflow
 
-1. 用户发送语音消息
-2. 系统自动下载到本地
-3. 使用此工具获取文件路径
-4. 用语音识别脚本处理
+1. Send
+2. System automatically downloads
+3. UseGetFile path
+4. Process with speech recognition script
 
 ## Related Skills
 
-- `get-image-file`: 获取图片文件
-- `deliver-artifacts`: 发送文件给用户
+- `get-image-file`: Get
+- `deliver-artifacts`: Send

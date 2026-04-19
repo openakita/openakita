@@ -1,315 +1,233 @@
 ---
 name: openakita/skills@xiaohongshu-creator
-description: Create engaging Xiaohongshu (RED/小红书) content including titles, body text, hashtags, and image style recommendations. Supports multiple content types such as product reviews, tutorials, lifestyle sharing, and shopping guides with platform-specific optimization.
+description: Create engaging Xiaohongshu (RED/Xiaohongshu) content including titles, body text, hashtags, and image style recommendations. Supports multiple content types such as product reviews, tutorials, lifestyle sharing, and shopping guides with platform-specific optimization.
 license: MIT
 metadata:
   author: openakita
   version: "1.0.0"
 ---
 
-# 小红书内容创作助手
+# Xiaohongshu Content Creation Assistant
 
-专为小红书平台打造的内容创作技能，帮助你生成符合平台调性的高质量笔记，涵盖标题、正文、话题标签和配图建议。
+A content creation skill designed for the Xiaohongshu (RED) platform, helping you generate high-quality notes that match the platform's tone, covering titles, body text, hashtag recommendations, and image suggestions.
 
-## 适用场景
+## When to Use
 
-- 撰写种草笔记（好物推荐、购物分享）
-- 撰写产品测评笔记
-- 撰写教程类笔记（美妆、穿搭、美食、DIY）
-- 撰写生活分享笔记（旅行、日常、打卡）
-- 品牌合作内容创作
-- 小红书账号运营内容规划
-- 批量生成笔记框架
+- Writing recommendation notes (product recommendations, shopping shares)
+- Writing product review notes
+- Writing tutorial notes (beauty, fashion, cooking, DIY)
+- Writing lifestyle sharing notes (travel, daily life, check-ins)
+- Brand collaboration content creation
+- Xiaohongshu account operation content planning
+- Batch generation of note frameworks
 
-## 核心创作规范
+## Core Creation Guidelines
 
-### 一、标题规则
+### 1. Title Rules
 
-标题是笔记的第一印象，直接决定点击率。
+The title is the first impression of a note and directly determines its click-through rate.
 
-**硬性要求：**
-- 字数限制：**不超过 20 个字符**
-- Emoji 数量：**1-2 个**，放在标题开头或结尾
-- 禁止使用：感叹号堆叠（`!!!`）、全大写字母
+**Hard requirements:**
+- Character limit: **no more than 20 characters**
+- Emoji count: **1-2**, placed at the beginning or end of the title
+- Prohibited: Stacked exclamation marks (`!!!`), ALL CAPS
 
-**钩子元素（至少使用 1 种）：**
+**Hook elements (use at least 1):**
 
-| 钩子类型 | 说明 | 示例 |
+| Hook type | Description | Example |
 |----------|------|------|
-| 数字法 | 用数字制造具体感 | `3步搞定通勤妆🌟` |
-| 反差法 | 制造意外感 | `月薪3K穿出3W的感觉✨` |
-| 痛点法 | 直击目标人群痛点 | `黄皮亲妈色号合集🎨` |
-| 悬念法 | 引发好奇心 | `这个习惯让我瘦了20斤💪` |
-| 对比法 | 前后/AB对比 | `早C晚A一个月的变化🔥` |
-| 权威法 | 借势专业背书 | `皮肤科医生推荐的面霜💊` |
-| 场景法 | 具体使用场景 | `约会前30分钟急救妆容💄` |
-| 共鸣法 | 引发情感共鸣 | `打工人的高效早餐方案☀️` |
+| Number method | Create a sense of specificity with numbers | `3 steps to nail your commute makeup look 🌟` |
+| Contrast method | Create surprise | `Earning 3K but looking like you earn 30K ✨` |
+| Pain point method | Target audience pain points directly | `Holy grail shades for warm skin tones 🎨` |
+| Suspense method | Spark curiosity | `This habit helped me lose 20 jin 💪` |
+| Comparison method | Before/after or A/B comparison | `Changes after a month of morning C & night A 🔥` |
+| Authority method | Leverage professional backing | `Dermatologist-recommended moisturizer 💊` |
+| Scene method | Specific usage scenario | `30-minute emergency makeup before a date 💄` |
+| Resonance method | Emotional resonance | `Efficient breakfast plans for office workers ☀️` |
 
-**标题模板：**
+**Title templates:**
 ```
-[数字] + [核心关键词] + [利益点] + [emoji]
-[身份标签] + [动作] + [结果] + [emoji]
-[场景] + [解决方案] + [emoji]
-```
-
-### 二、正文结构
-
-正文长度控制在 **300-500 字符**，遵循四段式结构：
-
-```
-🔥 Hook（开头钩子）  —— 1-2 句，抓住注意力
-📝 Core（核心内容）  —— 主体信息，有价值的干货
-📌 Summary（总结）   —— 精炼要点
-👉 CTA（行动号召）   —— 引导互动
+[Number] + [Core keyword] + [Benefit] + [emoji]
+[Identity label] + [Action] + [Result] + [emoji]
+[Scenario] + [Solution] + [emoji]
 ```
 
-**Hook 写法：**
-- 提问式：`你们有没有这种烦恼？`
-- 共鸣式：`每个打工人都需要这个！`
-- 悬念式：`用了三年终于找到了最好用的...`
-- 成果式：`坚持30天，效果太惊人了`
+### 2. Body Structure
 
-**Core 写法要点：**
-- 使用 emoji 分点（📍🔸💡等）替代纯文字列表
-- 每个要点控制在 1-2 行
-- 穿插个人体验和感受（增加真实感）
-- 重要信息加【】或「」标注
-- 适当使用换行，避免大段文字
+Body text should be **300-500 characters**, following a four-part structure:
 
-**CTA 常用句式：**
-- `觉得有用的话记得点赞收藏哦～`
-- `你们还想看什么类型的分享？评论区告诉我`
-- `有同款的姐妹举个手🙋‍♀️`
-- `关注我，持续分享[领域]干货`
+```
+🔥 Hook (opening hook)  — 1-2 sentences, grab attention
+📝 Core (core content)  — main information, valuable substance
+📌 Summary (summary)    — concise key points
+👉 CTA (call to action) — encourage engagement
+```
 
-### 三、话题标签规则
+**Hook writing styles:**
+- Question style: `Have you ever had this problem?`
+- Resonance style: `Every office worker needs this!`
+- Suspense style: `After three years of trying, I finally found the best...`
+- Achievement style: `After 30 days, the results were amazing`
 
-每篇笔记配 **8 个话题标签**，按以下比例分配：
+**Core writing guidelines:**
+- Use emojis (📍🔸💡 etc.) instead of plain text lists
+- Keep each point to 1-2 lines
+- Intersperse personal experiences and feelings (adds authenticity)
+- Highlight important information with[]or""
+- Use line breaks appropriately, avoid walls of text
 
-| 类别 | 数量 | 说明 | 示例 |
+**Common CTA phrases:**
+- `If you found this useful, remember to like and save~`
+- `What kind of content do you want to see next? Let me know in the comments`
+- `Any fellow sisters with the same experience? Raise your hand 🙋‍♀️`
+- `Follow me for more [topic] content`
+
+### 3. Hashtag Rules
+
+Each note should include **8 hashtags**, distributed as follows:
+
+| Category | Count | Description | Example |
 |------|------|------|------|
-| 核心词 | 2 个 | 笔记主题精准关键词 | `#面膜推荐` `#保湿面膜` |
-| 品类词 | 2 个 | 所属品类/领域 | `#护肤` `#美妆好物` |
-| 场景词 | 2 个 | 使用场景/人群 | `#学生党护肤` `#换季护肤` |
-| 热门词 | 2 个 | 平台热门话题 | `#好物分享` `#我的爱用物` |
+| Core keywords | 2 | Precise keywords for the note's topic | `#MaskRecommendations` `#HydratingMask` |
+| Category words | 2 | Broader category/domain | `#Skincare` `#BeautyProducts` |
+| Scenario words | 2 | Usage scenario/target audience | `#StudentSkincare` `#SeasonalSkincare` |
+| Trending words | 2 | Platform trending topics | `#GoodThingsSharing` `#MyFavorites` |
 
-**选择原则：**
-- 优先选择搜索量大但竞争适中的标签
-- 避免过于宽泛的标签（如 `#生活`）
-- 包含长尾关键词提升搜索曝光
-- 关注平台当前热门话题榜
+**Selection principles:**
+- Prioritize tags with high search volume but moderate competition
+- Avoid overly broad tags (e.g., `#Life`)
+- Include long-tail keywords to boost search visibility
+- Follow the platform's current trending topic list
 
-### 四、配图风格建议
+### 4. Image Style Recommendations
 
-小红书是视觉驱动平台，封面决定 80% 的点击率。
+Xiaohongshu is a visually driven platform — the cover image determines 80% of the click-through rate.
 
-**10 种推荐视觉风格：**
+**10 recommended visual styles:**
 
-| 编号 | 风格 | 适用类型 | 要点 |
+| # | Style | Best for | Key points |
 |------|------|---------|------|
-| 1 | 对比拼图 | 测评/效果展示 | 左右或上下对比，标注差异 |
-| 2 | 清单图 | 好物合集/推荐 | 白底九宫格产品陈列 |
-| 3 | 教程步骤图 | 教程类 | 编号标注步骤，清晰易跟 |
-| 4 | 文字封面 | 干货分享 | 大字标题+简洁背景色 |
-| 5 | 场景氛围图 | 生活分享/穿搭 | 自然光，生活感强 |
-| 6 | 数据图表 | 测评/科普 | 简化数据可视化 |
-| 7 | 手绘/插画风 | 知识科普 | 可爱风格信息图 |
-| 8 | Vlog截图 | 日常分享 | 视频关键帧+文字标注 |
-| 9 | 实拍特写 | 产品种草 | 高清细节，突出质感 |
-| 10 | Ins风简约 | 穿搭/家居 | 低饱和度，高级感 |
+| 1 | Split-screen comparison | Reviews/results showcase | Side-by-side or top-bottom comparison, label differences |
+| 2 | List image | Product roundups/recommendations | White background 9-grid product display |
+| 3 | Tutorial step image | Tutorials | Numbered steps, clear and easy to follow |
+| 4 | Text cover | Knowledge sharing | Large title + clean background color |
+| 5 | Lifestyle atmosphere shot | Lifestyle sharing/outfits | Natural light, authentic feel |
+| 6 | Data chart | Reviews/science | Simplified data visualization |
+| 7 | Hand-drawn/illustration style | Knowledge popularization | Cute-style infographics |
+| 8 | Vlog screenshot | Daily sharing | Key video frame + text annotation |
+| 9 | Close-up product shot | Product recommendations | HD detail, highlight texture |
+| 10 | Instagram-style minimal | Fashion/home | Low saturation, premium feel |
 
-**封面设计通用原则：**
-- 尺寸比例：**3:4**（1080×1440px）最佳
-- 文字不超过封面面积的 **20%**
-- 核心信息放在画面上半部分（feed 流裁剪安全区）
-- 色彩鲜明、对比度高
-- 避免过度 P 图，保持真实感
+**Cover design general principles:**
+- Aspect ratio: **3:4** (1080×1440px) is best
+- Text should not exceed **20%** of the cover area
+- Place core information in the upper half of the image (feed stream crop safe zone)
+- Vibrant colors, high contrast
+- Avoid excessive retouching, keep it authentic
 
-## 内容类型工作流
+## Content Type Workflows
 
-### 工作流一：种草笔记
-
-```
-输入 → 产品名称、品类、价格、目标人群
-  ↓
-Step 1: 生成 3 个标题方案（痛点法/数字法/场景法各一）
-  ↓
-Step 2: 撰写正文
-  - Hook：个人使用感受/发现契机
-  - Core：产品亮点（3-5个）、使用方法、适合人群
-  - Summary：一句话总结推荐理由
-  - CTA：引导收藏和讨论
-  ↓
-Step 3: 生成 8 个话题标签
-  ↓
-Step 4: 封面建议（推荐风格 9 实拍特写 或 风格 2 清单图）
-  ↓
-输出 → 完整笔记（可直接发布）
-```
-
-### 工作流二：测评笔记
+### Workflow 1: Product Recommendation Note
 
 ```
-输入 → 产品列表（2-5 个）、测评维度
+Input → Product name, category, price, target audience
   ↓
-Step 1: 标题使用对比法或数字法
+Step 1: Generate 3 title options (pain point / number / scene method)
   ↓
-Step 2: 撰写正文
-  - Hook：测评动机/痛点引入
-  - Core：逐项对比（成分/价格/使用感/性价比）
-  - Summary：各产品评分或排名
-  - CTA：`你们用过哪个？评论区聊聊`
+Step 2: Write body text
+  - Hook: Personal usage experience / how I discovered it
+  - Core: Product highlights (3-5), usage method, suitable audience
+  - Summary: One-sentence recommendation reason
+  - CTA: Encourage saving and discussion
   ↓
-Step 3: 话题标签（增加品牌词标签）
+Step 3: Generate 8 hashtags
   ↓
-Step 4: 封面建议（推荐风格 1 对比拼图 或 风格 6 数据图表）
+Step 4: Cover suggestion (recommended style 9 close-up or style 2 list image)
   ↓
-输出 → 完整测评笔记
+Output → Complete note (ready to publish)
 ```
 
-### 工作流三：教程笔记
+### Workflow 2: Review Note
 
 ```
-输入 → 教程主题、难度、目标人群
+Input → Product list (2-5), review dimensions
   ↓
-Step 1: 标题使用数字法（`X步学会...`）
+Step 1: Title uses comparison or number method
   ↓
-Step 2: 撰写正文
-  - Hook：学会后的效果/价值
-  - Core：分步骤讲解（每步 1-2 句）
-  - Summary：关键注意事项
-  - CTA：`学会的打个✅`
+Step 2: Write body text
+  - Hook: Review motivation/pain point introduction
+  - Core: Item-by-item comparison (ingredients/price/usage/value)
+  - Summary: Scoring or ranking for each product
+  - CTA: `Which one have you used? Chat in the comments`
   ↓
-Step 3: 话题标签（增加 `#教程` `#手把手教学` 等）
+Step 3: Hashtags (add brand-related tags)
   ↓
-Step 4: 封面建议（推荐风格 3 步骤图 或 风格 4 文字封面）
+Step 4: Cover suggestion (recommended style 1 split comparison or style 6 data chart)
   ↓
-输出 → 完整教程笔记 + 多图建议（每步一张图）
+Output → Complete review note
 ```
 
-### 工作流四：生活分享笔记
+### Workflow 3: Tutorial Note
 
 ```
-输入 → 分享主题、场景、情绪基调
+Input → Tutorial topic, difficulty level, target audience
   ↓
-Step 1: 标题使用共鸣法或场景法
+Step 1: Title uses number method (`Master X in ... steps`)
   ↓
-Step 2: 撰写正文
-  - Hook：故事开头/情感切入
-  - Core：分享细节、个人感受、实用信息
-  - Summary：感悟或建议
-  - CTA：`你们有类似的经历吗？`
+Step 2: Write body text
+  - Hook: The value/result after learning
+  - Core: Step-by-step guide (1-2 sentences per step)
+  - Summary: Key notes/precautions
+  - CTA: `Drop a ✅ if you got it`
   ↓
-Step 3: 话题标签（增加情感/生活方式标签）
+Step 3: Hashtags (add `#Tutorial` `#StepByStep` etc.)
   ↓
-Step 4: 封面建议（推荐风格 5 场景氛围图 或 风格 8 Vlog截图）
+Step 4: Cover suggestion (recommended style 3 step image or style 4 text cover)
   ↓
-输出 → 完整分享笔记
+Output → Complete tutorial note + multi-image suggestions (one image per step)
 ```
 
-## 完整示例
-
-### 示例：护肤种草笔记
-
-**用户输入：** `帮我写一篇关于珂润面霜的种草笔记，目标人群是敏感肌学生党`
-
-**输出：**
-
-**标题方案：**
-1. `敏感肌救星！这罐面霜用了3年回购🧴`
-2. `学生党百元面霜天花板💰`
-3. `换季烂脸？皮肤科医生同款面霜🏥`
-
-**正文（选用标题1）：**
+### Workflow 4: Lifestyle Sharing Note
 
 ```
-姐妹们！！敏感肌的福音真的来了
-
-作为一个烂脸三年的敏感肌 终于找到了真正好用的面霜
-
-📍珂润面霜使用感受：
-🔸质地：乳白色霜状 不厚重 好推开
-🔸保湿：神经酰胺成分 修护屏障一绝
-🔸温和度：无香精无酒精 敏感期也能用
-🔸性价比：百元出头 学生党无压力
-
-💡使用tips：
-1️⃣ 先乳后霜 吸收更好
-2️⃣ 换季加量使用 厚涂当睡眠面膜
-3️⃣ 搭配同系列化妆水效果翻倍
-
-用了整整三年 每次回购都是囤两罐的节奏
-敏感肌姐妹真的可以闭眼入！
-
-觉得有用记得收藏💕 还想看什么评论区告诉我～
+Input → Sharing topic, scenario, emotional tone
+  ↓
+Step 1: Title uses resonance or scene method
+  ↓
+Step 2: Write body text
+  - Hook: Story opening / emotionalentry
+  - Core: Sharing details, personal feelings, practical info
+  - Summary: Takeaway or reflection
+  - CTA: `Have similar experiences? Share in the comments`
+  ↓
+Step 3: Hashtags (scene-based + emotional tags)
+  ↓
+Step 4: Cover suggestion (recommended style 5 lifestyle atmosphere or style 8 Vlog screenshot)
+  ↓
+Output → Complete lifestyle sharing note
 ```
 
-**话题标签：**
-`#珂润面霜` `#敏感肌护肤` `#学生党护肤` `#平价面霜推荐` `#神经酰胺` `#换季护肤` `#好物分享` `#护肤干货`
+## Quality Checklist
 
-**封面建议：** 风格 9（实拍特写），自然光下拍摄面霜质地细节图，辅以手写标注关键成分。
+Before publishing, verify:
 
-## 高级技巧
+- [ ] Title within 20 characters, 1-2 emoji, no `!!!`
+- [ ] Body has Hook → Core → Summary → CTA structure
+- [ ] 8 hashtags with proper category distribution (2+2+2+2)
+- [ ] Image aspect ratio 3:4, text under 20% of cover
+- [ ] Content feels authentic and personal
+- [ ] No exaggerated or misleading claims
+- [ ] Hashtags include core, category, scenario, and trending words
 
-### 发布时间建议
-
-| 时段 | 说明 |
-|------|------|
-| 7:00-9:00 | 通勤高峰，碎片化浏览 |
-| 12:00-14:00 | 午休时间，浏览高峰 |
-| 18:00-20:00 | 下班后休闲浏览 |
-| 21:00-23:00 | 睡前黄金时段，互动率最高 |
-
-### SEO 优化
-
-- 标题和正文前 50 字包含核心关键词
-- 使用平台搜索下拉词作为参考
-- 正文自然融入 3-5 个相关关键词（避免堆砌）
-- 评论区补充关键词（自评增加曝光）
-
-### 互动率提升
-
-- 正文中设置互动问题（`你们觉得呢？`）
-- 结尾提供选择题（`A还是B？评论区投票`）
-- 24 小时内回复所有评论
-- 置顶评论放重要补充信息
-
-## 常见误区
-
-| 误区 | 正确做法 |
-|------|---------|
-| 标题过长（超20字） | 精炼到 20 字以内，信息密度优先 |
-| 正文大段不分行 | 每 2-3 行空一行，用 emoji 分隔 |
-| 标签太宽泛 | 组合使用泛词+精准词+长尾词 |
-| 封面文字太多 | 封面突出视觉冲击，详细信息放正文 |
-| 纯广告无真实感 | 加入个人体验和真实细节 |
-| 内容同质化严重 | 找到独特切入角度（身份/场景/反差） |
-| 忽略评论区运营 | 主动回复并引导二次互动 |
-
-## 输出格式规范
-
-每次生成内容时，严格按以下格式输出：
+## Output Format
 
 ```markdown
-## 📝 小红书笔记
+# [Title with emoji]
 
-### 标题方案
-1. [方案一]
-2. [方案二]
-3. [方案三]
+[Body text following Hook → Core → Summary → CTA structure]
 
-### 正文
-[完整正文内容]
+---
+#hashtag1 #hashtag2 #hashtag3 #hashtag4 #hashtag5 #hashtag6 #hashtag7 #hashtag8
 
-### 话题标签
-[8个标签]
-
-### 封面建议
-- 推荐风格：[编号+名称]
-- 具体建议：[详细说明]
-- 配色方案：[色系建议]
-
-### 发布建议
-- 推荐时段：[具体时间]
-- 注意事项：[补充说明]
+**Cover suggestion**: Style [#] — [brief description]
 ```

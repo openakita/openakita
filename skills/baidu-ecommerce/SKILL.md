@@ -1,30 +1,40 @@
 ---
 name: openakita/skills@baidu-ecommerce
-description: "Baidu E-commerce skill for cross-platform price comparison, review analysis, and purchase knowledge. Complete workflow from product discovery to purchase decision. Use when user wants to compare prices, read reviews, or make purchase decisions."
+description: "Cross-platform e-commerce skill for product comparison, review analysis, and purchase knowledge retrieval. Empowers agents with structured capabilities for price comparison, review analysis, and purchase guidance — a one-stop solution from product search to final purchase."
 license: MIT
 metadata:
-  author: baidu
+  author: openakita
   version: "1.0.0"
+requires:
+  env: [APPBUILDER_TOKEN, BAIDU_CLOUD_API_KEY, BAIDU_CLOUD_SECRET_KEY]
 ---
 
-# 百度电商
+# Baidu E-Commerce
 
-赋予智能体跨平台比价、口碑分析、选购知识等结构化能力，一站式完成从找货到决策到下单的全流程电商任务。
+Empowers agents with structured capabilities for cross-platform price comparison, review analysis, and purchase knowledge — a one-stop solution for the complete e-commerce workflow, from product discovery to decision-making to checkout.
 
-## 功能
+## When to Use
 
-- 跨平台商品比价
-- 用户口碑与评价分析
-- 选购知识与推荐
-- 从找货到下单的完整链路
+- Cross-platform product price comparison
+- User review and sentiment analysis
+- Purchase guidance and product recommendations
+- End-to-end workflow from product search to order placement
 
-## 预置脚本
+## Prerequisites
 
-### scripts/ecommerce.py
-商品比价/口碑分析（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+Product price comparison and review analysis (Baidu Qianfan AppBuilder) requires setting `APPBUILDER_TOKEN`.
+
+Product recommendations require setting `BAIDU_CLOUD_API_KEY` and `BAIDU_CLOUD_SECRET_KEY` (for Baidu Cloud APIs).
 
 ```bash
-python3 scripts/ecommerce.py compare "iPhone 16 Pro"
-python3 scripts/ecommerce.py review "戴森吹风机"
-python3 scripts/ecommerce.py recommend "降噪耳机"
+export APPBUILDER_TOKEN="your_token_here"
+export BAIDU_CLOUD_API_KEY="your_api_key_here"
+export BAIDU_CLOUD_SECRET_KEY="your_secret_key_here"
+```
+
+## Quick Start
+
+```bash
+python3 scripts/ecommerce.py review "Dyson Hair Dryer"
+python3 scripts/ecommerce.py recommend "Noise-Canceling Headphones"
 ```

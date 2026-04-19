@@ -1,36 +1,29 @@
 ---
 name: openakita/skills@baidu-paddleocr-doc
-description: "PaddleOCR document parsing skill based on PaddleOCR-VL-1.5. Provides SOTA-level document understanding with ultra-high precision recognition and parsing. Use when user needs to parse, extract, or understand document content."
+description: "PaddleOCR document parsing skill based on PaddleOCR-VL-1.5. Provides SOTA-level document parsing including layout analysis, table extraction, formula recognition, and multi-modal document understanding. Use when user needs intelligent document parsing."
 license: MIT
 metadata:
   author: baidu
   version: "1.0.0"
-requires:
-  env: [BAIDU_API_KEY]
 ---
 
-# 文心衍生 · PaddleOCR 文档解析
+# Baidu PaddleOCR Document Parsing
 
-基于 SOTA 文档解析模型 PaddleOCR-VL-1.5 构建，为 Agent 加上"眼睛"，对文档进行超高精度识别、解析。
+Based on the SOTA document parsing model PaddleOCR-VL-1.5, providing comprehensive document structure analysis and multi-modal understanding.
 
-## 配置
+## Features
 
-export BAIDU_API_KEY="your_key"
+- Layout analysis and element detection
+- Table structure extraction
+- Formula recognition
+- Multi-modal document understanding
 
-## 功能
-
-- 文档结构识别
-- 表格提取与还原
-- 公式识别
-- 图文混排解析
-- 多语言文档支持
-
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/baidu_ocr_doc.py
-百度文档/表格 OCR 识别，需设置 BAIDU_OCR_AK 和 BAIDU_OCR_SK。
+Document parsing. Requires setting BAIDU_OCR_AK and BAIDU_OCR_SK.
 
 ```bash
-python3 scripts/baidu_ocr_doc.py doc /path/to/document.jpg
-python3 scripts/baidu_ocr_doc.py table /path/to/table.png
+python3 scripts/baidu_ocr_doc.py parse /path/to/document.pdf
+python3 scripts/baidu_ocr_doc.py parse /path/to/invoice.jpg
 ```

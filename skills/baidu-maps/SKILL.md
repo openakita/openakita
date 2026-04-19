@@ -7,29 +7,29 @@ metadata:
   version: "1.0.2"
 ---
 
-# 百度地图
+# Baidu Maps
 
-让 AI 像专家一样写地图代码，适用于出行、文旅、商业、智能车载等多场景。
+Enable AI to write map code like a professional, suitable for travel, culture and tourism, business, smart in-vehicle, and more scenarios.
 
-## 功能
+## Features
 
-- 地址搜索：关键词搜索地点
-- 附近搜索：基于位置搜索周边
-- 地理编码：地址与坐标互转
-- 路径规划：驾车/步行路线
-- 天气查询：城市天气信息
+- **Address Search**: Search places by keyword
+- **Nearby Search**: Search surroundings based on location
+- **Geocoding**: Convert between addresses and coordinates
+- **Route Planning**: Driving/walking routes
+- **Weather Query**: City weather information
 
-## 配置
+## Configuration
 
-需要百度地图 Web 服务 API Key。
+Requires Baidu Maps Web Service API Key.
 
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/baidu_maps.py
-百度地图 Web 服务 API 封装，需设置 BAIDU_MAP_AK。
+Baidu Maps Web Service API wrapper. Requires BAIDU_MAP_AK to be set.
 
 ```bash
-python3 scripts/baidu_maps.py geocode "北京市海淀区"
-python3 scripts/baidu_maps.py poi "火锅" --region 成都
+python3 scripts/baidu_maps.py geocode "Haidian District, Beijing"
+python3 scripts/baidu_maps.py poi "Hotpot" --region Chengdu
 python3 scripts/baidu_maps.py route --origin 39.9,116.4 --dest 40.0,116.5
 ```

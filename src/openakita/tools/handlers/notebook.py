@@ -1,8 +1,8 @@
 """
-Notebook 处理器
+Notebook Handler
 
-Jupyter Notebook (.ipynb) 编辑：
-- edit_notebook: 编辑或创建 cell
+Jupyter Notebook (.ipynb) editing:
+- edit_notebook: edit or create cells
 """
 
 import json
@@ -45,21 +45,21 @@ class NotebookHandler:
         new_string = params.get("new_string", "")
 
         if not path:
-            return "❌ edit_notebook 缺少必要参数 'path'。"
+            return "❌ edit_notebook missing required parameter 'path'."
         if cell_idx is None:
-            return "❌ edit_notebook 缺少必要参数 'cell_idx'。"
+            return "❌ edit_notebook missing required parameter 'cell_idx'."
         if new_string is None:
-            return "❌ edit_notebook 缺少必要参数 'new_string'。"
+            return "❌ edit_notebook missing required parameter 'new_string'."
 
         nb_path = Path(path)
         if nb_path.suffix != ".ipynb":
-            return f"❌ 文件不是 Jupyter Notebook（.ipynb）: {path}"
+            return f"❌ File is not a Jupyter Notebook (.ipynb): {path}"
 
         if is_new_cell:
             return await self._create_cell(nb_path, cell_idx, cell_language, new_string)
         else:
             if not old_string:
-                return "❌ 编辑现有 cell 时 old_string 不能为空。"
+                return "❌ old_string must not be empty when editing an existing cell."
             return await self._edit_cell(nb_path, cell_idx, old_string, new_string)
 
     async def _load_notebook(self, path: Path) -> dict | None:
@@ -110,13 +110,13 @@ class NotebookHandler:
     async def _edit_cell(self, path: Path, cell_idx: int, old_string: str, new_string: str) -> str:
         nb = await self._load_notebook(path)
         if nb is None:
-            return f"❌ Notebook 不存在: {path}"
+            return f"❌ Notebook does not exist: {path}"
 
         cells = nb.get("cells", [])
         if cell_idx < 0 or cell_idx >= len(cells):
             return (
-                f"❌ cell_idx={cell_idx} 超出范围（共 {len(cells)} 个 cell，"
-                f"索引范围 0-{len(cells) - 1}）"
+                f"❌ cell_idx={cell_idx} out of range (total {len(cells)} cells, "
+                f"index range 0-{len(cells) - 1})"
             )
 
         cell = cells[cell_idx]
@@ -125,15 +125,15 @@ class NotebookHandler:
 
         if old_string not in source:
             return (
-                f"❌ old_string 在 cell {cell_idx} 中未找到。"
-                "请检查文本是否精确匹配（包括空格和换行）。"
+                f"❌ old_string not found in cell {cell_idx}. "
+                "Please check that the text matches exactly (including whitespace and newlines)."
             )
 
         count = source.count(old_string)
         if count > 1:
             return (
-                f"❌ old_string 在 cell {cell_idx} 中匹配到 {count} 处。"
-                "请包含更多上下文使 old_string 唯一。"
+                f"❌ old_string matched {count} times in cell {cell_idx}. "
+                "Please include more context to make old_string unique."
             )
 
         new_source = source.replace(old_string, new_string, 1)

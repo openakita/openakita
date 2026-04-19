@@ -7,421 +7,421 @@ metadata:
   version: "1.0.0"
 ---
 
-# 抖音视频工具
+# Douyin Video Toolkit
 
-抖音短视频全流程工具包，涵盖视频脚本撰写、BGM 推荐、字幕文案生成、热点话题分析和视频信息提取，帮助你高效创作和运营抖音内容。
+An end-to-end Douyin short video toolkit covering video script writing, BGM recommendations, subtitle/caption generation, trending topic analysis, and video info extraction to help you efficiently create and operate Douyin content.
 
-## 适用场景
+## When to Use
 
-- 编写短视频拍摄脚本（15秒/60秒/3分钟）
-- 提取抖音视频信息（标题、标签、音乐等）
-- 下载抖音视频去水印
-- 生成视频字幕和文案
-- 分析抖音热点话题和趋势
-- 规划 BGM 选择策略
-- 短视频内容矩阵规划
-- 视频文案 A/B 测试方案
+- Writing short video scripts (15s / 60s / 3min)
+- Extracting Douyin video information (title, tags, music, etc.)
+- Downloading Douyin videos without watermarks
+- Generating video subtitles and copy
+- Analyzing Douyin trending topics and trends
+- Planning BGM selection strategies
+- Short video content matrix planning
+- Video copy A/B testing strategies
 
-## 视频脚本撰写
+## Video Script Writing
 
-### 一、黄金 3 秒法则
+### 1. The Golden 3-Second Rule
 
-抖音用户的平均判断时间只有 **3 秒**。开头必须立刻抓住注意力。
+Douyin users take only **3 seconds** on average to decide whether to keep watching. The opening must grab attention immediately.
 
-**7 种开头钩子模板：**
+**7 Hook Templates:**
 
-| 编号 | 钩子类型 | 模板 | 示例 |
-|------|---------|------|------|
-| 1 | 反常识 | `[大多数人不知道]...` | `90% 的人洗脸方式都是错的` |
-| 2 | 数字冲击 | `[数字]+[惊人结果]` | `只花了 50 块，装出了 5 万块的效果` |
-| 3 | 痛点直击 | `如果你也[痛点]...` | `如果你也总是存不住钱，看完这个` |
-| 4 | 悬念挑逗 | `看到最后你会[惊喜]...` | `千万别滑走，结尾有反转` |
-| 5 | 身份召唤 | `[目标人群]必看` | `打工人必看的 5 个摸鱼神器` |
-| 6 | 争议引发 | `[A和B] 到底哪个好？` | `iPhone 和小米到底哪个值得买？` |
-| 7 | 成果展示 | 先展示最终效果 | 先放改造后的效果，再讲过程 |
+| # | Hook Type | Template | Example |
+|---|-----------|----------|---------|
+| 1 | Counterintuitive | `[Most people don't know]...` | `90% of people wash their faces wrong` |
+| 2 | Number impact | `[Number] + [shocking result]` | `Spent only 50 yuan, looks like 50,000` |
+| 3 | Pain point strike | `If you also [pain point]...` | `If you can never save money, watch this` |
+| 4 | Suspense teaser | `Watch till the end and you'll [surprise]...` | `Don't scroll away, there's a twist at the end` |
+| 5 | Identity call-out | `[Target audience] must watch` | `5 productivity apps every office worker needs` |
+| 6 | Controversy starter | `Which is better, [A or B]?` | `iPhone or Xiaomi — which one is worth buying?` |
+| 7 | Result showcase | Show the final result first | Show the transformed result, then explain the process |
 
-### 二、脚本结构模板
+### 2. Script Structure Templates
 
-**15 秒视频（单一信息点）：**
+**15-second video (single message):**
 ```
-[0-3s]  Hook：一句话抓住注意力
-[3-12s] Core：核心信息/演示/展示
-[12-15s] CTA：引导互动（「关注了解更多」）
-```
-
-**60 秒视频（标准教程/种草）：**
-```
-[0-3s]   Hook：痛点或成果展示
-[3-10s]  背景：为什么需要/简短引入
-[10-45s] 核心：分步讲解/产品展示（3-5 个要点）
-[45-55s] 总结：核心价值重申
-[55-60s] CTA：「点赞收藏，下次用得上」
+[0-3s]   Hook: Grab attention in one sentence
+[3-12s]  Core: Key information / demo / showcase
+[12-15s] CTA: Guide interaction ("Follow to learn more")
 ```
 
-**3 分钟视频（深度内容/故事）：**
+**60-second video (standard tutorial/recommendation):**
 ```
-[0-3s]    Hook：最精彩的片段前置
-[3-20s]   引入：背景故事/问题陈述
-[20-60s]  展开：第一个核心观点+案例
-[60-100s] 深入：第二个观点+转折
-[100-140s] 高潮：最有价值的信息/反转
-[140-165s] 总结 + CTA
-[165-180s] 彩蛋/预告下期（可选）
+[0-3s]   Hook: Pain point or result showcase
+[3-10s]  Background: Why this is needed / brief intro
+[10-45s] Core: Step-by-step explanation / product demo (3-5 key points)
+[45-55s] Summary: Restate core value
+[55-60s] CTA: "Like and save — you'll need this later"
 ```
 
-### 三、脚本写作规范
+**3-minute video (deep content / story):**
+```
+[0-3s]    Hook: Most exciting clip upfront
+[3-20s]   Intro: Background story / problem statement
+[20-60s]  Develop: First core point + case study
+[60-100s] Deepen: Second point + twist
+[100-140s] Climax: Most valuable info / reversal
+[140-165s] Summary + CTA
+[165-180s] Bonus / next episode teaser (optional)
+```
 
-**语言风格：**
-- 口语化，像和朋友聊天
-- 短句为主，每句不超过 15 个字
-- 使用第二人称（`你`）拉近距离
-- 避免书面语和文绉绉的表达
-- 适当使用网络流行用语（但不过度）
+### 3. Script Writing Standards
 
-**节奏控制：**
-- 语速：每秒 3-4 个字（普通话）
-- 15 秒视频约 45-60 字
-- 60 秒视频约 180-240 字
-- 3 分钟视频约 540-720 字
+**Language style:**
+- Conversational, like chatting with a friend
+- Use short sentences, each no more than 15 characters
+- Use second person ("you") to create closeness
+- Avoid formal and overly literary expressions
+- Use current internet slang appropriately (but not excessively)
 
-**脚本格式：**
+**Pacing control:**
+- Speaking rate: 3-4 characters per second (standard Mandarin)
+- 15s video: approximately 45-60 characters
+- 60s video: approximately 180-240 characters
+- 3min video: approximately 540-720 characters
+
+**Script format:**
 ```markdown
-## 视频脚本：[标题]
+## Video Script: [Title]
 
-### 基本信息
-- 时长：[X秒]
-- 类型：[教程/种草/故事/搞笑]
-- 目标人群：[描述]
+### Basic Info
+- Duration: [X seconds]
+- Type: [Tutorial / Recommendation / Story / Comedy]
+- Target audience: [description]
 
-### 分镜脚本
+### Storyboard
 
-| 时间 | 画面 | 台词/字幕 | 音效/BGM |
-|------|------|----------|---------|
-| 0-3s | 特写/面对镜头 | [开头钩子] | BGM 渐入 |
-| 3-10s | [场景描述] | [台词] | [音效] |
+| Time | Scene | Dialogue/Subtitle | Sound/BGM |
+|------|-------|-------------------|-----------|
+| 0-3s | Close-up / face-to-camera | [Opening hook] | BGM fades in |
+| 3-10s | [Scene description] | [Dialogue] | [Sound effect] |
 | ... | ... | ... | ... |
 
-### 字幕重点
-[需要加粗/变色的关键字幕]
+### Subtitle Highlights
+[Keywords that need bolding / color changes]
 
-### 拍摄提示
-[机位、灯光、道具等建议]
+### Shooting Tips
+[Camera angle, lighting, props, etc.]
 ```
 
-## BGM 推荐策略
+## BGM Recommendation Strategy
 
-### 一、BGM 选择原则
+### 1. BGM Selection Principles
 
-| 原则 | 说明 |
-|------|------|
-| **匹配内容情绪** | 教程用轻快BGM，故事用情感BGM |
-| **跟随热榜** | 使用抖音当前热门音乐提升推荐率 |
-| **节奏卡点** | BGM 节奏点与画面切换同步 |
-| **音量平衡** | BGM 音量不超过人声的 30% |
-| **版权安全** | 优先使用抖音音乐库中的音乐 |
+| Principle | Description |
+|-----------|-------------|
+| **Match content mood** | Light BGM for tutorials, emotional BGM for stories |
+| **Follow trending charts** | Use currently popular Douyin music to boost recommendations |
+| **Rhythm sync points** | Sync BGM beat drops with scene transitions |
+| **Volume balance** | BGM volume should not exceed 30% of vocals |
+| **Copyright safety** | Prioritize music from Douyin's music library |
 
-### 二、内容类型与 BGM 风格匹配
+### 2. Content Type and BGM Style Matching
 
-| 内容类型 | BGM 风格 | 节奏 | 推荐查找方式 |
-|---------|---------|------|------------|
-| 教程/干货 | 轻快电子/Lo-fi | 100-120 BPM | 搜索「教程背景音乐」 |
-| 美食制作 | 清新吉他/轻音乐 | 80-100 BPM | 搜索「美食BGM」 |
-| 运动健身 | 动感电子/Hip-hop | 120-140 BPM | 搜索「运动音乐」 |
-| 情感故事 | 钢琴/弦乐 | 60-80 BPM | 搜索「情感配乐」 |
-| 搞笑/整蛊 | 魔性/反差音效 | 不固定 | 搜索当前热梗音乐 |
-| 穿搭/变装 | 节奏感强的流行乐 | 100-130 BPM | 参考变装热门视频 |
-| 旅行/Vlog | 轻松民谣/Indie | 90-110 BPM | 搜索「旅行BGM」 |
-| 宠物 | 可爱/活泼 | 100-120 BPM | 搜索「萌宠音乐」 |
+| Content Type | BGM Style | Tempo | Recommended Search Method |
+|--------------|-----------|-------|--------------------------|
+| Tutorial / tips | Light electronic / Lo-fi | 100-120 BPM | Search "tutorial background music" |
+| Food cooking | Acoustic guitar / light music | 80-100 BPM | Search "food BGM" |
+| Fitness / sports | Energetic electronic / Hip-hop | 120-140 BPM | Search "workout music" |
+| Emotional story | Piano / strings | 60-80 BPM | Search "emotional soundtrack" |
+| Comedy / prank | Catchy / contrast sound effects | Variable | Search current meme music |
+| Fashion / transformation | Rhythmic pop | 100-130 BPM | Reference trending transformation videos |
+| Travel / Vlog | Folk / indie | 90-110 BPM | Search "travel BGM" |
+| Pets | Cute / lively | 100-120 BPM | Search "cute pet music" |
 
-### 三、热门 BGM 追踪方法
+### 3. Tracking Hot BGM Methods
 
 ```
-Step 1: 打开抖音 → 搜索 → 音乐榜
+Step 1: Open Douyin → Search → Music Chart
   ↓
-Step 2: 记录当周 Top 20 热门音乐
+Step 2: Record this week's Top 20 popular tracks
   ↓
-Step 3: 筛选与内容类型匹配的 3-5 首
+Step 3: Filter 3-5 tracks that match your content type
   ↓
-Step 4: 试听选择节奏最合适的
+Step 4: Preview and select the best rhythm match
   ↓
-Step 5: 记录音乐名和使用量（判断是否仍在上升期）
+Step 5: Note the track name and usage count (to assess if trending upward)
 ```
 
-**最佳使用时机：** 音乐使用量在 10 万-100 万之间时为最佳窗口期。低于 10 万可能未起势，超过 100 万可能已过热。
+**Optimal timing:** Best window is when usage is between 100K-1M. Below 100K may not have traction; above 1M may be overused.
 
-## 字幕/文案生成
+## Subtitle/Copy Generation
 
-### 一、字幕规范
+### 1. Subtitle Standards
 
-**字幕样式建议：**
+**Styling recommendations:**
 
-| 参数 | 推荐值 |
-|------|--------|
-| 字体 | 思源黑体/苹方 |
-| 字号 | 屏幕宽度的 5-7% |
-| 颜色 | 白色 + 黑色描边 |
-| 位置 | 画面下方 1/4 处 |
-| 每行字数 | 不超过 15 字 |
-| 显示时长 | 每字 0.25-0.3 秒 |
+| Parameter | Recommended Value |
+|-----------|-------------------|
+| Font | Source Han Sans / PingFang |
+| Size | 5-7% of screen width |
+| Color | White with black stroke |
+| Position | Lower 1/4 of the frame |
+| Chars per line | No more than 15 |
+| Display duration | 0.25-0.3 seconds per character |
 
-**关键字幕强调：**
-- 重点数字使用黄色/红色
-- 关键词使用放大效果
-- 转折词使用动画效果（如抖动）
-- 品牌名/产品名使用特殊颜色
+**Key subtitle emphasis:**
+- Use yellow/red for key numbers
+- Use zoom effect for keywords
+- Use animation effects (e.g., shake) for transition words
+- Use special colors for brand/product names
 
-### 二、视频标题文案
+### 2. Video Title Copy
 
-**标题结构公式：**
+**Title structure formula:**
 ```
-[钩子词] + [核心信息] + [利益点/悬念]
-```
-
-**高效标题模板：**
-
-| 模板 | 示例 |
-|------|------|
-| `震惊！[意外发现]` | `震惊！原来空调这样用能省一半电费` |
-| `[数字]个[人群]都不知道的[秘密]` | `5 个上班族都不知道的Excel技巧` |
-| `千万别[错误做法]` | `千万别空腹吃这 3 种水果` |
-| `[时间]前 vs [时间]后` | `健身 100 天前 vs 100 天后` |
-| `[价格对比]+[结果]` | `9.9 和 999 的面膜区别有多大` |
-| `原来[常见事物]还能这样用` | `原来手机计算器还有这个隐藏功能` |
-
-### 三、评论区文案
-
-**引导互动的评论模板：**
-
-```
-置顶评论：
-「第 [X] 个你们肯定不知道！快去试试看 👀」
-「你们还想看什么类型的？评论区留言 📝」
-「同款链接在主页橱窗，自己去找 🔍」
-
-互动评论：
-「1 表示想看 [A类内容]，2 表示想看 [B类内容]」
-「你的城市叫什么？评论区接龙 🏙️」
-「猜猜这个多少钱？猜对的我私信告诉他在哪买」
+[Hook word] + [Core message] + [Benefit / suspense]
 ```
 
-## 热点话题分析工作流
+**High-performing title templates:**
 
-### 分析流程
+| Template | Example |
+|----------|---------|
+| `Shocking! [Unexpected discovery]` | `Shocking! Using your AC this way saves half the electricity bill` |
+| `[Number] things [audience] don't know about [topic]` | `5 Excel tricks office workers don't know about` |
+| `Never [wrong approach]` | `Never eat these 3 fruits on an empty stomach` |
+| `[Before] vs [After]` | `100 days before vs 100 days after fitness` |
+| `[Price comparison] + [Result]` | `What's the difference between a 9.9 and 999 facial mask?` |
+| `Turns out [common thing] can also be used this way` | `Turns out your phone calculator has this hidden feature` |
+
+### 3. Comment Section Copy
+
+**Engagement-driving comment templates:**
 
 ```
-Step 1: 信息收集
-  - 抖音热搜榜（每日更新）
-  - 抖音创作灵感页面
-  - 行业垂直领域热点
-  - 节日/季节性话题日历
+Pinned comment:
+"Bet you didn't know about #[X]! Go try it 👀"
+"What type of content do you want to see next? Leave a comment 📝"
+"Same-style product link is in our showcase, find it yourself 🔍"
+
+Engagement comments:
+"Type 1 for [content type A], type 2 for [content type B]"
+"What's your city called? Reply below 🏙️"
+"Guess how much this costs? Closest guess gets a DM on where to buy"
+```
+
+## Trending Topic Analysis Workflow
+
+### Analysis Process
+
+```
+Step 1: Information Gathering
+  - Douyin hot search list (updated daily)
+  - Douyin content inspiration page
+  - Industry-specific trending topics
+  - Holiday/seasonal topic calendar
   ↓
-Step 2: 话题筛选
-  筛选维度：
-  - 与账号定位的相关度（>70%）
-  - 话题热度（上升趋势优先）
-  - 竞争程度（避免过度饱和话题）
-  - 时效性（能否在热度期内产出）
+Step 2: Topic Filtering
+  Filter dimensions:
+  - Relevance to account positioning (>70%)
+  - Topic popularity (upward trends prioritized)
+  - Competition level (avoid oversaturated topics)
+  - Timeliness (can produce content within the trend window)
   ↓
-Step 3: 内容角度挖掘
-  对每个话题寻找差异化角度：
-  - 反向观点（大家都说好，你说有坑）
-  - 垂直深挖（通用话题+专业视角）
-  - 个人经验（亲测/踩坑/对比）
-  - 数据分析（用数据说话）
+Step 3: Content Angle Discovery
+  Find differentiated angles for each topic:
+  - Contrarian view (everyone says good, you point out flaws)
+  - Vertical deep dive (general topic + professional perspective)
+  - Personal experience (tested / lessons learned / comparison)
+  - Data-driven analysis (speak with numbers)
   ↓
-Step 4: 内容规划
-  制定 3-7 天的内容发布计划
-  - 1 个蹭热点视频（时效性）
-  - 2 个常青内容（长期价值）
-  - 1 个互动视频（提升互动率）
+Step 4: Content Planning
+  Create a 3-7 day content publishing schedule
+  - 1 trend-chasing video (timely)
+  - 2 evergreen content pieces (long-term value)
+  - 1 engagement video (boost interaction rate)
 ```
 
-### 话题日历模板
+### Topic Calendar Template
 
 ```markdown
-## [月份] 抖音内容日历
+## [Month] Douyin Content Calendar
 
-### 固定节点
-| 日期 | 节点 | 内容方向 |
-|------|------|---------|
-| 3/8 | 妇女节 | 女性力量/好物推荐 |
-| 3/12 | 植树节 | 环保/绿植/户外 |
-| 3/15 | 消费者日 | 避坑指南/维权科普 |
+### Fixed Events
+| Date | Event | Content Direction |
+|------|-------|-------------------|
+| 3/8 | Women's Day | Female empowerment / recommended products |
+| 3/12 | Arbor Day | Eco-friendly / plants / outdoors |
+| 3/15 | Consumer Rights Day | Pitfall avoidance guide / rights awareness |
 
-### 季节性话题
-- 换季护肤
-- 春季穿搭
-- 春游攻略
+### Seasonal Topics
+- Seasonal skincare
+- Spring fashion
+- Spring outing guide
 
-### 行业周期性话题
-[根据垂直领域补充]
+### Industry Cycle Topics
+[Fill in based on your vertical sector]
 ```
 
-## 视频下载与信息提取
+## Video Download & Info Extraction
 
-### 一、视频信息提取
+### 1. Video Info Extraction
 
-从抖音视频链接中提取以下信息：
+Extract the following information from a Douyin video link:
 
 ```markdown
-## 视频信息
+## Video Information
 
-### 基础信息
-- 标题：[视频标题/文案]
-- 作者：[昵称] (@[抖音号])
-- 发布时间：[日期]
-- 时长：[X秒]
+### Basic Info
+- Title: [Video title / caption]
+- Author: [Nickname] (@[Douyin ID])
+- Published: [Date]
+- Duration: [X seconds]
 
-### 互动数据
-- 点赞：[数量]
-- 评论：[数量]
-- 收藏：[数量]
-- 转发：[数量]
+### Engagement Data
+- Likes: [count]
+- Comments: [count]
+- Saves: [count]
+- Shares: [count]
 
-### 内容标签
-- 话题标签：[#标签列表]
-- 音乐：[音乐名 - 歌手]
-- 挑战赛：[如有]
+### Content Tags
+- Hashtags: [#tag list]
+- Music: [Track name - Artist]
+- Challenge: [If applicable]
 
-### 文案全文
-[完整文案内容]
+### Full Caption
+[Full caption text]
 ```
 
-### 二、视频下载工作流
+### 2. Video Download Workflow
 
-**方法一：API 工具调用**
+**Method 1: API Tool Call**
 
-如果系统中已安装相关 MCP 工具（如视频下载器），可直接调用：
+If relevant MCP tools (e.g., video downloader) are installed, call directly:
 
 ```
-Step 1: 获取视频分享链接
-  - 抖音 App 内点击「分享」→ 「复制链接」
-  - 链接格式如：https://v.douyin.com/xxxxx/
+Step 1: Get the share link
+  - In Douyin app, click "Share" → "Copy Link"
+  - Link format: https://v.douyin.com/xxxxx/
   ↓
-Step 2: 解析真实视频地址
-  - 解析短链接获取视频 ID
-  - 请求视频信息 API 获取无水印地址
+Step 2: Resolve the actual video URL
+  - Parse short link to get video ID
+  - Request video info API to get watermark-free URL
   ↓
-Step 3: 下载视频文件
-  - 使用无水印地址下载
-  - 保存到指定目录
+Step 3: Download the video file
+  - Use the watermark-free URL to download
+  - Save to the specified directory
 ```
 
-**方法二：手动操作指导**
+**Method 2: Manual Instructions**
 
 ```
-Step 1: 复制抖音分享链接
-Step 2: 在浏览器中打开链接
-Step 3: 使用浏览器开发者工具（F12）→ Network 面板
-Step 4: 筛选 video 类型请求
-Step 5: 找到 .mp4 资源地址
-Step 6: 右键 → 新标签页打开 → 另存为
+Step 1: Copy the Douyin share link
+Step 2: Open the link in a browser
+Step 3: Use browser DevTools (F12) → Network panel
+Step 4: Filter for video type requests
+Step 5: Find the .mp4 resource URL
+Step 6: Right-click → Open in new tab → Save As
 ```
 
-### 三、批量分析
+### 3. Batch Analysis
 
-对竞品或同类型账号的视频进行批量分析：
+Batch analysis of competitor or similar account videos:
 
 ```markdown
-## 竞品视频分析报告
+## Competitor Video Analysis Report
 
-### 账号概览
-- 账号名：
-- 粉丝数：
-- 平均点赞：
-- 发布频率：
+### Account Overview
+- Account name:
+- Followers:
+- Average likes:
+- Posting frequency:
 
-### 高赞视频 Top 10 分析
-| 排名 | 标题 | 点赞 | 开头类型 | BGM | 时长 |
-|------|------|------|---------|-----|------|
-| 1 | ... | ... | 反常识 | ... | 15s |
-| 2 | ... | ... | 数字冲击 | ... | 60s |
+### Top 10 Liked Videos Analysis
+| Rank | Title | Likes | Opening Type | BGM | Duration |
+|------|-------|-------|-------------|-----|----------|
+| 1 | ... | ... | Counterintuitive | ... | 15s |
+| 2 | ... | ... | Number impact | ... | 60s |
 
-### 规律总结
-- 高赞内容的共同特征：
-- 最佳发布时间：
-- 最受欢迎的内容类型：
-- BGM 使用规律：
+### Pattern Summary
+- Common traits of high-performing content:
+- Best posting time:
+- Most popular content type:
+- BGM usage patterns:
 
-### 可借鉴的方向
-1. [方向一]
-2. [方向二]
-3. [方向三]
+### Actionable Directions
+1. [Direction 1]
+2. [Direction 2]
+3. [Direction 3]
 ```
 
-## 发布优化建议
+## Publishing Optimization
 
-### 最佳发布时间
+### Best Posting Times
 
-| 时段 | 适合内容 | 说明 |
-|------|---------|------|
-| 7:00-9:00 | 知识/新闻/早安 | 通勤时间，碎片浏览 |
-| 12:00-13:00 | 轻松/美食/娱乐 | 午休时间 |
-| 17:00-19:00 | 教程/种草/测评 | 下班时间，有耐心看长内容 |
-| 20:00-22:00 | 所有类型 | 晚间黄金时段，流量最大 |
-| 22:00-23:30 | 情感/故事/深度 | 睡前时段，适合走心内容 |
+| Time Slot | Suitable Content | Description |
+|-----------|-----------------|-------------|
+| 7:00-9:00 | Knowledge / news / morning greeting | Commute time, fragment browsing |
+| 12:00-13:00 | Light / food / entertainment | Lunch break |
+| 17:00-19:00 | Tutorial / recommendation / review | After work, patient for longer content |
+| 20:00-22:00 | All types | Prime evening slot, maximum traffic |
+| 22:00-23:30 | Emotional / story / deep content | Pre-sleep, suitable for heartfelt content |
 
-### DOU+ 投放策略
+### DOU+ Promotion Strategy
 
-| 阶段 | 预算 | 策略 |
-|------|------|------|
-| 测试期 | ¥100 | 观察 6 小时自然数据后决定是否投 |
-| 加速期 | ¥300-500 | 自然流量表现好的视频加投 |
-| 爆发期 | ¥1000+ | 已验证的爆款内容重点投放 |
+| Stage | Budget | Strategy |
+|-------|--------|----------|
+| Testing | ¥100 | Observe 6h of organic data before deciding to promote |
+| Acceleration | ¥300-500 | Boost videos showing strong organic performance |
+| Explosion | ¥1000+ | Heavy promotion on proven viral content |
 
-**投放判断标准：**
-- 完播率 > 30%：值得投放
-- 点赞率 > 3%：有爆款潜力
-- 评论率 > 0.5%：互动性好
-- 转发率 > 0.3%：传播性强
+**Promotion criteria:**
+- Completion rate > 30%: Worth promoting
+- Like rate > 3%: Viral potential
+- Comment rate > 0.5%: Good engagement
+- Share rate > 0.3%: Strong spreadability
 
-## 常见误区
+## Common Mistakes
 
-| 误区 | 正确做法 |
-|------|---------|
-| 前 3 秒没有钩子 | 第一句话/第一帧就要抓人 |
-| 视频太长信息太散 | 一个视频只讲一个核心点 |
-| 背景音乐太吵 | BGM 音量控制在人声的 20-30% |
-| 字幕太小看不清 | 字号至少占屏幕宽度 5% |
-| 不看数据就发下一条 | 每条视频发布后分析 24 小时数据 |
-| 跟风不考虑定位 | 只蹭与账号定位相关的热点 |
-| 发布后不管评论区 | 前 30 分钟积极回复评论带动互动 |
+| Mistake | Correct Approach |
+|---------|-----------------|
+| No hook in the first 3 seconds | First word / frame must grab attention |
+| Videos too long and scattered | Each video covers only one core point |
+- Background music too loud | Keep BGM at 20-30% of vocal volume |
+- Subtitles too small | Font size at least 5% of screen width |
+- Publishing next video without checking analytics | Analyze 24h data after each video |
+- Chasing trends regardless of positioning | Only hop on trends relevant to your positioning |
+- Ignoring comments after posting | Actively reply to comments in the first 30 minutes |
 
-## 输出格式
+## Output Format
 
-每次生成抖音内容时，按以下结构输出：
+When generating Douyin content, use the following output structure:
 
 ```markdown
-## 🎬 抖音视频方案
+## 🎬 Douyin Video Proposal
 
-### 基本信息
-- 视频类型：[教程/种草/故事/其他]
-- 建议时长：[X秒]
-- 目标人群：[描述]
+### Basic Info
+- Video type: [Tutorial / Recommendation / Story / Other]
+- Suggested duration: [X seconds]
+- Target audience: [description]
 
-### 标题方案（3选1）
-1. [方案一]
-2. [方案二]
-3. [方案三]
+### Title Options (pick 1 of 3)
+1. [Option 1]
+2. [Option 2]
+3. [Option 3]
 
-### 分镜脚本
-| 时间 | 画面 | 台词 | 音效/BGM |
-|------|------|------|---------|
+### Storyboard
+| Time | Scene | Dialogue | Sound/BGM |
+|------|-------|----------|-----------|
 | ... | ... | ... | ... |
 
-### 字幕重点
-[需要强调的关键字幕]
+### Subtitle Highlights
+[Key subtitles to emphasize]
 
-### 话题标签
-[6-8 个标签]
+### Hashtags
+[6-8 tags]
 
-### BGM 建议
-- 风格：[描述]
-- 推荐搜索关键词：[关键词]
-- 节奏：[BPM范围]
+### BGM Recommendation
+- Style: [description]
+- Recommended search keyword: [keyword]
+- Tempo: [BPM range]
 
-### 发布建议
-- 推荐时间：[具体时段]
-- 封面帧：[建议使用第几秒的画面]
-- 评论区互动：[引导语]
+### Publishing Suggestions
+- Recommended time: [specific time slot]
+- Cover frame: [suggest which second's frame to use]
+- Comment engagement: [prompt phrase]
 ```

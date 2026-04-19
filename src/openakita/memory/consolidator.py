@@ -1,12 +1,12 @@
 """
-记忆整合器 - 批量整理对话历史
+Memory Consolidator - Batch process conversation history
 
-实现用户的想法:
-1. 保存一整天的对话上下文
-2. 空闲时段 (如凌晨) 自动整理
-3. 归纳精华存入 MEMORY.md
+Implements the user's idea:
+1. Save an entire day's conversation context
+2. Auto-consolidate during idle times (e.g., early morning)
+3. Distill key insights into MEMORY.md
 
-参考:
+References:
 - Claude-Mem Worker Service
 - LangMem Background Manager
 """
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class MemoryConsolidator:
-    """记忆整合器 - 批量处理对话历史"""
+    """Memory Consolidator - Batch process conversation history"""
 
     def __init__(
         self,
@@ -33,9 +33,9 @@ class MemoryConsolidator:
     ):
         """
         Args:
-            data_dir: 数据目录 (存放对话历史)
-            brain: LLM 大脑实例
-            extractor: 记忆提取器
+            data_dir: Data directory (stores conversation history)
+            brain: LLM brain instance
+            extractor: Memory extractor
         """
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -43,11 +43,11 @@ class MemoryConsolidator:
         self.brain = brain
         self.extractor = extractor or MemoryExtractor(brain)
 
-        # 对话历史存储目录
+        # Conversation history storage directory
         self.history_dir = self.data_dir / "conversation_history"
         self.history_dir.mkdir(exist_ok=True)
 
-        # 已整理的会话
+        # Processed sessions
         self.summaries_file = self.data_dir / "session_summaries.json"
 
     def save_conversation_turn(
@@ -56,9 +56,9 @@ class MemoryConsolidator:
         turn: ConversationTurn,
     ) -> None:
         """
-        保存对话轮次 (实时保存)
+        Save conversation turn (real-time save)
 
-        每个会话一个文件，追加写入
+        One file per session, append writes
         """
         session_file = self.history_dir / f"{session_id}.jsonl"
 
@@ -66,7 +66,7 @@ class MemoryConsolidator:
             f.write(json.dumps(turn.to_dict(), ensure_ascii=False) + "\n")
 
     def load_session_history(self, session_id: str) -> list[ConversationTurn]:
-        """加载会话历史"""
+        """Load session history"""
         session_file = self.history_dir / f"{session_id}.jsonl"
 
         if not session_file.exists():
@@ -89,12 +89,12 @@ class MemoryConsolidator:
         return turns
 
     def get_today_sessions(self) -> list[str]:
-        """获取今天的所有会话 ID"""
+        """Get all session IDs from today"""
         today = datetime.now().date()
         sessions = []
 
         for file in self.history_dir.glob("*.jsonl"):
-            # 检查文件修改时间
+            # Check file modification time
             mtime = datetime.fromtimestamp(file.stat().st_mtime)
             if mtime.date() == today:
                 sessions.append(file.stem)
@@ -102,8 +102,8 @@ class MemoryConsolidator:
         return sessions
 
     def get_unprocessed_sessions(self) -> list[str]:
-        """获取未处理的会话"""
-        # 加载已处理的会话
+        """Get unprocessed sessions"""
+        # Load processed sessions
         processed = set()
         if self.summaries_file.exists():
             with open(self.summaries_file, encoding="utf-8") as f:
@@ -112,7 +112,7 @@ class MemoryConsolidator:
                         summary = json.loads(line)
                         processed.add(summary["session_id"])
 
-        # 找出未处理的
+        # Find unprocessed sessions
         unprocessed = []
         for file in self.history_dir.glob("*.jsonl"):
             if file.stem not in processed:
@@ -125,51 +125,51 @@ class MemoryConsolidator:
         session_id: str,
     ) -> tuple[SessionSummary, list[Memory]]:
         """
-        整理单个会话
+        Consolidate a single session
 
-        1. 加载对话历史
-        2. 生成会话摘要
-        3. 提取记忆
+        1. Load conversation history
+        2. Generate session summary
+        3. Extract memories
         """
         turns = self.load_session_history(session_id)
 
         if not turns:
             return None, []
 
-        # 生成会话摘要
+        # Generate session summary
         summary = await self._generate_summary(session_id, turns)
 
-        # 提取记忆
+        # Extract memories
         memories = []
 
-        # 基于规则提取
+        # Rule-based extraction
         for turn in turns:
             extracted = self.extractor.extract_from_turn(turn)
             memories.extend(extracted)
 
-        # 使用 LLM 高级提取
+        # Advanced extraction using LLM
         if self.brain:
             llm_memories = await self.extractor.extract_with_llm(
-                turns, context=f"会话摘要: {summary.task_description}"
+                turns, context=f"Session summary: {summary.task_description}"
             )
             memories.extend(llm_memories)
 
-        # 去重
+        # Deduplicate
         memories = self.extractor.deduplicate(memories, [])
 
-        # 更新摘要中的记忆 ID
+        # Update memory IDs in summary
         summary.memories_created = [m.id for m in memories]
 
-        # 保存摘要
+        # Save summary
         self._save_summary(summary)
 
         return summary, memories
 
     async def consolidate_all_unprocessed(self) -> tuple[list[SessionSummary], list[Memory]]:
         """
-        整理所有未处理的会话
+        Consolidate all unprocessed sessions
 
-        适合在空闲时段 (如凌晨) 批量执行
+        Suitable for batch execution during idle periods (e.g., early morning)
         """
         unprocessed = self.get_unprocessed_sessions()
 
@@ -193,14 +193,14 @@ class MemoryConsolidator:
         session_id: str,
         turns: list[ConversationTurn],
     ) -> SessionSummary:
-        """使用 LLM 生成会话摘要"""
+        """Generate session summary using LLM"""
 
         start_time = turns[0].timestamp if turns else datetime.now()
         end_time = turns[-1].timestamp if turns else datetime.now()
 
-        # 简单摘要 (不用 LLM)
+        # Simple summary (without LLM)
         if not self.brain or len(turns) < 3:
-            # 从用户消息提取任务描述
+            # Extract task description from user messages
             user_messages = [t.content for t in turns if t.role == "user"]
             task_desc = user_messages[0][:200] if user_messages else "Unknown task"
 
@@ -212,7 +212,7 @@ class MemoryConsolidator:
                 outcome="completed",
             )
 
-        # 使用 LLM 生成详细摘要
+        # Generate detailed summary using LLM
         from openakita.core.tool_executor import smart_truncate as _st
 
         conv_text = "\n".join(
@@ -222,26 +222,26 @@ class MemoryConsolidator:
             ]
         )
 
-        prompt = f"""总结以下对话会话:
+        prompt = f"""Summarize the following conversation session:
 
 {conv_text}
 
-请提供:
-1. task_description: 用户的主要任务是什么 (一句话)
-2. outcome: 任务结果 (success/partial/failed)
-3. key_actions: 关键操作 (最多5个)
-4. learnings: 值得记住的经验 (最多3个)
-5. errors: 遇到的错误 (如果有)
+Please provide:
+1. task_description: What was the user's main task? (one sentence)
+2. outcome: Task result (success/partial/failed)
+3. key_actions: Key actions taken (max 5)
+4. learnings: Lessons worth remembering (max 3)
+5. errors: Any errors encountered (if any)
 
-用 JSON 格式输出。
+Output in JSON format.
 """
 
         try:
             response = await self.brain.think(
-                prompt, system="你是一个会话分析专家，擅长提取关键信息。只输出 JSON，不要其他内容。"
+                prompt, system="You are a conversation analysis expert skilled at extracting key information. Output only JSON, no other content."
             )
 
-            # 解析 JSON
+            # Parse JSON
             import re
 
             json_match = re.search(r"\{.*\}", response.content, re.DOTALL)
@@ -260,7 +260,7 @@ class MemoryConsolidator:
         except Exception as e:
             logger.error(f"LLM summary generation failed: {e}")
 
-        # 回退到简单摘要
+        # Fallback to simple summary
         user_messages = [t.content for t in turns if t.role == "user"]
         return SessionSummary(
             session_id=session_id,
@@ -271,12 +271,12 @@ class MemoryConsolidator:
         )
 
     def _save_summary(self, summary: SessionSummary) -> None:
-        """保存会话摘要"""
+        """Save session summary"""
         with open(self.summaries_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(summary.to_dict(), ensure_ascii=False) + "\n")
 
     def get_recent_summaries(self, days: int = 7) -> list[SessionSummary]:
-        """获取最近N天的会话摘要"""
+        """Get session summaries from the last N days"""
         if not self.summaries_file.exists():
             return []
 
@@ -307,9 +307,9 @@ class MemoryConsolidator:
 
     def cleanup_old_history(self, days: int = 30) -> int:
         """
-        清理旧的对话历史文件（按天数）
+        Clean up old conversation history files (by days)
 
-        保留摘要和记忆，删除原始对话
+        Preserve summaries and memories, delete raw conversations
         """
         cutoff = datetime.now() - timedelta(days=days)
         deleted = 0
@@ -323,34 +323,34 @@ class MemoryConsolidator:
 
         return deleted
 
-    # ==================== 容量限制清理 ====================
+    # ==================== Capacity-limited cleanup ====================
 
-    # 配置常量
-    MAX_HISTORY_DAYS = 30  # 最多保留 30 天
-    MAX_HISTORY_FILES = 1000  # 最多保留 1000 个文件
-    MAX_HISTORY_SIZE_MB = 500  # 最多占用 500MB
+    # Configuration constants
+    MAX_HISTORY_DAYS = 30  # Keep at most 30 days
+    MAX_HISTORY_FILES = 1000  # Keep at most 1000 files
+    MAX_HISTORY_SIZE_MB = 500  # Use at most 500MB
 
     def cleanup_history(self) -> dict:
         """
-        清理历史对话，防止磁盘爆炸
+        Clean up conversation history to prevent disk overflow
 
-        策略（按优先级）:
-        1. 删除超过 MAX_HISTORY_DAYS 天的文件
-        2. 如果文件数超过 MAX_HISTORY_FILES，删除最旧的
-        3. 如果总大小超过 MAX_HISTORY_SIZE_MB，删除最旧的
+        Strategy (by priority):
+        1. Delete files older than MAX_HISTORY_DAYS
+        2. If file count exceeds MAX_HISTORY_FILES, delete oldest
+        3. If total size exceeds MAX_HISTORY_SIZE_MB, delete oldest
 
         Returns:
-            清理统计 {"by_age": n, "by_count": n, "by_size": n}
+            Cleanup stats {"by_age": n, "by_count": n, "by_size": n}
         """
         deleted = {"by_age": 0, "by_count": 0, "by_size": 0}
 
-        # 1. 按天数清理
+        # 1. Cleanup by age
         deleted["by_age"] = self.cleanup_old_history(days=self.MAX_HISTORY_DAYS)
 
-        # 获取所有历史文件，按修改时间排序（最旧的在前）
+        # Get all history files sorted by modification time (oldest first)
         files = sorted(self.history_dir.glob("*.jsonl"), key=lambda f: f.stat().st_mtime)
 
-        # 2. 按文件数清理
+        # 2. Cleanup by file count
         if len(files) > self.MAX_HISTORY_FILES:
             to_delete = files[: len(files) - self.MAX_HISTORY_FILES]
             for f in to_delete:
@@ -361,10 +361,10 @@ class MemoryConsolidator:
                 except Exception as e:
                     logger.error(f"Failed to delete {f.name}: {e}")
 
-            # 更新文件列表
+            # Update file list
             files = files[len(to_delete) :]
 
-        # 3. 按大小清理
+        # 3. Cleanup by size
         max_size = self.MAX_HISTORY_SIZE_MB * 1024 * 1024
         total_size = sum(f.stat().st_size for f in files)
 
@@ -387,10 +387,10 @@ class MemoryConsolidator:
 
     def get_history_stats(self) -> dict:
         """
-        获取历史对话统计信息
+        Get conversation history statistics
 
         Returns:
-            统计信息字典
+            Statistics dictionary
         """
         files = list(self.history_dir.glob("*.jsonl"))
         total_size = sum(f.stat().st_size for f in files)

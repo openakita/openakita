@@ -1,6 +1,6 @@
 ---
 name: glob
-description: Find files by glob pattern recursively. Results sorted by modification time (newest first). Auto-skips .git, node_modules and other common ignore directories.
+description: Find files by glob pattern recursively. Results sorted by modification time (newest first). Auto-skips.git, node_modules and other common ignore directories.
 system: true
 handler: filesystem
 tool-name: glob
@@ -9,44 +9,44 @@ category: File System
 
 # Glob
 
-按文件名模式递归搜索文件。
+search. 
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| pattern | string | 是 | Glob 模式（如 "*.py"、"**/test_*.ts"） |
-| path | string | 否 | 搜索根目录（默认当前目录） |
+| pattern | string | Yes | Glob ( "*.py", "**/test_*.ts") |
+| path | string | No | search (Default) |
 
 ## Examples
 
-**查找所有 Python 文件**:
+**Findhave Python **:
 ```json
 {"pattern": "*.py"}
 ```
 
-**查找测试文件**:
+**Find**:
 ```json
 {
-  "pattern": "test_*.py",
-  "path": "tests/"
+ "pattern": "test_*.py",
+ "path": "tests/"
 }
 ```
 
-**查找配置文件**:
+**Find**:
 ```json
 {"pattern": "*config*"}
 ```
 
 ## Notes
 
-- 不以 `**/` 开头的 pattern 会自动加 `**/` 前缀进行递归搜索
-- 自动跳过 .git、node_modules、__pycache__ 等目录
-- 结果按修改时间降序排序（最新的在前）
-- 返回相对路径列表
+- not `**/` pattern willAutomatic `**/` search
+- Automatic.git, node_modules, __pycache__
+- ( in) 
+- Returns
 
 ## Related Skills
 
-- `grep`: 按内容搜索文件
-- `list-directory`: 列出目录内容
-- `read-file`: 读取找到的文件
+- `grep`: search
+- `list-directory`: list
+- `read-file`: Read

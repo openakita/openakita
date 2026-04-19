@@ -511,8 +511,8 @@ interface:
 
 i18n:
   zh:
-    name: "我的技能"
-    description: "技能功能的中文描述"
+name: " "
+description: " "
 ```
 
 The `interface` block follows the standard openai.yaml schema (display_name, short_description, default_prompt, icon_small, icon_large, brand_color). The `i18n` block is OpenAkita-specific — it provides localized names and descriptions shown to Chinese-speaking users in the UI. When `init_skill.py` runs in an OpenAkita environment, it auto-generates the `i18n` section with TODO placeholders.

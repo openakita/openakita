@@ -1,7 +1,7 @@
 """
-核心追踪器
+Core Tracer
 
-提供 Trace / Span 数据模型和 AgentTracer 追踪管理器。
+Provides Trace / Span data models and AgentTracer tracing manager.
 """
 
 import logging
@@ -17,25 +17,25 @@ logger = logging.getLogger(__name__)
 
 
 class SpanType(Enum):
-    """Span 类型"""
+    """Span type"""
 
-    LLM = "llm"  # LLM 调用
-    TOOL = "tool"  # 工具执行
-    TOOL_BATCH = "tool_batch"  # 工具批量执行
-    MEMORY = "memory"  # 记忆操作
-    CONTEXT = "context"  # 上下文管理（压缩等）
-    REASONING = "reasoning"  # 推理循环
-    PROMPT = "prompt"  # 提示词构建
-    TASK = "task"  # 完整任务
-    # Agent Harness: 决策追踪扩展
-    DECISION = "decision"  # 决策节点（工具选择/策略选择）
-    VERIFICATION = "verification"  # 验证节点（任务完成验证/Plan 步骤验证）
-    SUPERVISION = "supervision"  # 监督节点（循环检测/干预决策）
-    DELEGATION = "delegation"  # 委派节点（多 Agent 委派）
+    LLM = "llm"  # LLM call
+    TOOL = "tool"  # Tool execution
+    TOOL_BATCH = "tool_batch"  # Batch tool execution
+    MEMORY = "memory"  # Memory operation
+    CONTEXT = "context"  # Context management (compression, etc.)
+    REASONING = "reasoning"  # Reasoning loop
+    PROMPT = "prompt"  # Prompt construction
+    TASK = "task"  # Complete task
+    # Agent Harness: decision tracing extension
+    DECISION = "decision"  # Decision node (tool selection / strategy selection)
+    VERIFICATION = "verification"  # Verification node (task completion verification / plan step verification)
+    SUPERVISION = "supervision"  # Supervision node (loop detection / intervention decision)
+    DELEGATION = "delegation"  # Delegation node (multi-agent delegation)
 
 
 class SpanStatus(Enum):
-    """Span 状态"""
+    """Span status"""
 
     OK = "ok"
     ERROR = "error"
@@ -45,10 +45,10 @@ class SpanStatus(Enum):
 @dataclass
 class Span:
     """
-    单个操作的追踪记录。
+    Trace record for a single operation.
 
-    一个 Span 代表一次 LLM 调用、一次工具执行、一次记忆检索等。
-    Span 可以嵌套形成父子关系。
+    A Span represents an LLM call, tool execution, memory retrieval, etc.
+    Spans can be nested to form parent-child relationships.
     """
 
     span_id: str
@@ -63,28 +63,28 @@ class Span:
 
     @property
     def duration_ms(self) -> float | None:
-        """耗时（毫秒）"""
+        """Duration in milliseconds"""
         if self.end_time is None:
             return None
         return (self.end_time - self.start_time) * 1000
 
     def set_attribute(self, key: str, value: Any) -> None:
-        """设置属性"""
+        """Set attribute"""
         self.attributes[key] = value
 
     def set_error(self, message: str) -> None:
-        """标记为错误"""
+        """Mark as error"""
         self.status = SpanStatus.ERROR
         self.error_message = message
 
     def finish(self, status: SpanStatus | None = None) -> None:
-        """结束 Span"""
+        """End Span"""
         self.end_time = time.time()
         if status is not None:
             self.status = status
 
     def to_dict(self) -> dict[str, Any]:
-        """序列化为字典"""
+        """Serialize to dict"""
         result = {
             "span_id": self.span_id,
             "name": self.name,
@@ -106,9 +106,10 @@ class Span:
 @dataclass
 class Trace:
     """
-    一次完整的用户请求追踪。
+    Trace of a complete user request.
 
-    一个 Trace 包含多个 Span，代表从接收用户消息到返回响应的全过程。
+    A Trace contains multiple Spans, representing the entire process from receiving
+    a user message to returning a response.
     """
 
     trace_id: str
@@ -120,26 +121,26 @@ class Trace:
 
     @property
     def duration_ms(self) -> float | None:
-        """总耗时（毫秒）"""
+        """Total duration in milliseconds"""
         if self.end_time is None:
             return None
         return (self.end_time - self.start_time) * 1000
 
     @property
     def span_count(self) -> int:
-        """Span 数量"""
+        """Span count"""
         return len(self.spans)
 
     def add_span(self, span: Span) -> None:
-        """添加 Span"""
+        """Add Span"""
         self.spans.append(span)
 
     def finish(self) -> None:
-        """结束 Trace"""
+        """End Trace"""
         self.end_time = time.time()
 
     def get_summary(self) -> dict[str, Any]:
-        """获取追踪摘要"""
+        """Get trace summary"""
         llm_spans = [s for s in self.spans if s.span_type == SpanType.LLM]
         tool_spans = [s for s in self.spans if s.span_type == SpanType.TOOL]
 
@@ -162,7 +163,7 @@ class Trace:
         }
 
     def to_dict(self) -> dict[str, Any]:
-        """序列化为字典"""
+        """Serialize to dict"""
         return {
             "trace_id": self.trace_id,
             "session_id": self.session_id,
@@ -177,9 +178,9 @@ class Trace:
 
 class AgentTracer:
     """
-    Agent 追踪器。
+    Agent tracer.
 
-    管理 Trace 和 Span 的生命周期，支持嵌套 Span 和多种导出器。
+    Manages the lifecycle of Traces and Spans, supports nested Spans and multiple exporters.
 
     Usage:
         tracer = AgentTracer()
@@ -206,18 +207,18 @@ class AgentTracer:
         self._enabled = enabled
 
     def add_exporter(self, exporter: Any) -> None:
-        """添加追踪导出器"""
+        """Add trace exporter"""
         self._exporters.append(exporter)
 
     @contextmanager
     def start_trace(self, session_id: str, **metadata: Any) -> Generator[Trace, None, None]:
         """
-        开始一个新的 Trace。
+        Start a new Trace.
 
-        作为上下文管理器使用，退出时自动结束并导出。
+        Use as a context manager; automatically finishes and exports on exit.
         """
         if not self._enabled:
-            # 返回一个空 Trace，不记录
+            # Return an empty Trace without recording
             yield Trace(trace_id="", session_id=session_id, start_time=time.time())
             return
 
@@ -249,9 +250,9 @@ class AgentTracer:
         **attributes: Any,
     ) -> Span:
         """
-        创建并开始一个新的 Span。
+        Create and start a new Span.
 
-        如果不指定 parent，自动使用 span stack 栈顶作为 parent。
+        If no parent is specified, the top of the span stack is used as parent.
         """
         if not self._enabled:
             return Span(span_id="", name=name, span_type=span_type, start_time=time.time())
@@ -277,7 +278,7 @@ class AgentTracer:
         return span
 
     def end_span(self, span: Span, status: SpanStatus | None = None) -> None:
-        """结束一个 Span"""
+        """End a Span"""
         if not self._enabled or not span.span_id:
             return
         span.finish(status)
@@ -290,9 +291,9 @@ class AgentTracer:
         **attributes: Any,
     ) -> Generator[Span, None, None]:
         """
-        通用 Span 上下文管理器。
+        Generic Span context manager.
 
-        自动管理开始/结束和 span stack。
+        Automatically manages start/end and the span stack.
         """
         span = self.start_span(name, span_type, **attributes)
         self._span_stack.append(span)
@@ -308,54 +309,54 @@ class AgentTracer:
 
     @contextmanager
     def llm_span(self, model: str = "", **attributes: Any) -> Generator[Span, None, None]:
-        """LLM 调用 Span"""
+        """LLM call Span"""
         attrs = {"model": model, **attributes}
         with self.span("llm.call", SpanType.LLM, **attrs) as s:
             yield s
 
     @contextmanager
     def tool_span(self, tool_name: str = "", **attributes: Any) -> Generator[Span, None, None]:
-        """工具执行 Span"""
+        """Tool execution Span"""
         attrs = {"tool_name": tool_name, **attributes}
         with self.span("tool.execute", SpanType.TOOL, **attrs) as s:
             yield s
 
     @contextmanager
     def tool_batch_span(self, count: int = 0, **attributes: Any) -> Generator[Span, None, None]:
-        """工具批量执行 Span"""
+        """Batch tool execution Span"""
         attrs = {"tool_count": count, **attributes}
         with self.span("tool.batch", SpanType.TOOL_BATCH, **attrs) as s:
             yield s
 
     @contextmanager
     def memory_span(self, operation: str = "", **attributes: Any) -> Generator[Span, None, None]:
-        """记忆操作 Span"""
+        """Memory operation Span"""
         attrs = {"operation": operation, **attributes}
         with self.span("memory." + operation, SpanType.MEMORY, **attrs) as s:
             yield s
 
     @contextmanager
     def context_span(self, operation: str = "", **attributes: Any) -> Generator[Span, None, None]:
-        """上下文操作 Span"""
+        """Context operation Span"""
         attrs = {"operation": operation, **attributes}
         with self.span("context." + operation, SpanType.CONTEXT, **attrs) as s:
             yield s
 
     @contextmanager
     def reasoning_span(self, iteration: int = 0, **attributes: Any) -> Generator[Span, None, None]:
-        """推理循环 Span"""
+        """Reasoning loop Span"""
         attrs = {"iteration": iteration, **attributes}
         with self.span("reasoning.iteration", SpanType.REASONING, **attrs) as s:
             yield s
 
     @contextmanager
     def task_span(self, session_id: str = "", **attributes: Any) -> Generator[Span, None, None]:
-        """完整任务 Span"""
+        """Complete task Span"""
         attrs = {"session_id": session_id, **attributes}
         with self.span("agent.task", SpanType.TASK, **attrs) as s:
             yield s
 
-    # ==================== Agent Harness: 决策追踪 ====================
+    # ==================== Agent Harness: Decision tracing ====================
 
     @contextmanager
     def decision_span(
@@ -364,7 +365,7 @@ class AgentTracer:
         reasoning: str = "",
         **attributes: Any,
     ) -> Generator[Span, None, None]:
-        """决策节点 Span（工具选择/策略选择/任务分解）"""
+        """Decision node Span (tool selection / strategy selection / task decomposition)"""
         attrs = {
             "decision_type": decision_type,
             "reasoning": reasoning[:500] if reasoning else "",
@@ -379,7 +380,7 @@ class AgentTracer:
         verification_type: str = "",
         **attributes: Any,
     ) -> Generator[Span, None, None]:
-        """验证节点 Span（任务完成验证/Plan 步骤验证）"""
+        """Verification node Span (task completion check / plan step verification)"""
         attrs = {"verification_type": verification_type, **attributes}
         with self.span(f"verification.{verification_type}", SpanType.VERIFICATION, **attrs) as s:
             yield s
@@ -391,7 +392,7 @@ class AgentTracer:
         level: str = "",
         **attributes: Any,
     ) -> Generator[Span, None, None]:
-        """监督节点 Span（循环检测/干预决策）"""
+        """Supervision node Span (loop detection / intervention decision)"""
         attrs = {"pattern": pattern, "level": level, **attributes}
         with self.span(f"supervision.{pattern}", SpanType.SUPERVISION, **attrs) as s:
             yield s
@@ -403,7 +404,7 @@ class AgentTracer:
         to_agent: str = "",
         **attributes: Any,
     ) -> Generator[Span, None, None]:
-        """委派节点 Span（多 Agent 委派）"""
+        """Delegation node Span (multi-agent delegation)"""
         attrs = {"from_agent": from_agent, "to_agent": to_agent, **attributes}
         with self.span("delegation.agent", SpanType.DELEGATION, **attrs) as s:
             yield s
@@ -415,7 +416,7 @@ class AgentTracer:
         outcome: str = "",
         **metadata: Any,
     ) -> None:
-        """快速记录一个决策事件（非上下文管理器，用于轻量追踪模式）"""
+        """Quickly record a decision event (non-context-manager, for lightweight tracing)"""
         if not self._enabled:
             return
         span = self.start_span(
@@ -428,15 +429,15 @@ class AgentTracer:
         )
         span.finish()
 
-    # ==================== 非上下文管理器 API ====================
-    # 用于 run() 等多返回路径的场景
+    # ==================== Non-context-manager API ====================
+    # For multi-return-path scenarios like run()
 
     def begin_trace(self, session_id: str, metadata: dict[str, Any] | None = None) -> Trace | None:
         """
-        开始一个新的 Trace（非上下文管理器版本）。
+        Start a new Trace (non-context-manager version).
 
-        必须手动调用 end_trace() 来结束。
-        适合多 return 路径的长方法。
+        Must be paired with a manual end_trace() call.
+        Suitable for long methods with multiple return paths.
         """
         if not self._enabled:
             return None
@@ -457,9 +458,9 @@ class AgentTracer:
 
     def end_trace(self, metadata: dict[str, Any] | None = None) -> None:
         """
-        结束当前 Trace（非上下文管理器版本）。
+        End the current Trace (non-context-manager version).
 
-        与 begin_trace() 配对使用。
+        Must be paired with begin_trace().
         """
         if not self._enabled or not self._current_trace:
             return
@@ -478,7 +479,7 @@ class AgentTracer:
             self._span_stack = []
 
     def _export_trace(self, trace: Trace) -> None:
-        """导出 Trace 到所有已注册的导出器"""
+        """Export Trace to all registered exporters"""
         for exporter in self._exporters:
             try:
                 exporter.export(trace)
@@ -488,19 +489,19 @@ class AgentTracer:
                 )
 
 
-# 全局 tracer 实例
+# Global tracer instance
 _global_tracer: AgentTracer | None = None
 
 
 def get_tracer() -> AgentTracer:
-    """获取全局 tracer 实例"""
+    """Get the global tracer instance"""
     global _global_tracer
     if _global_tracer is None:
-        _global_tracer = AgentTracer(enabled=False)  # 默认禁用，需要显式启用
+        _global_tracer = AgentTracer(enabled=False)  # Disabled by default; must be explicitly enabled
     return _global_tracer
 
 
 def set_tracer(tracer: AgentTracer) -> None:
-    """设置全局 tracer 实例"""
+    """Set the global tracer instance"""
     global _global_tracer
     _global_tracer = tracer

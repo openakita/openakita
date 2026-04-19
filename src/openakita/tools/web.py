@@ -1,5 +1,5 @@
 """
-Web 工具 - 网络请求
+Web tool — HTTP requests.
 """
 
 import contextlib
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Response:
-    """HTTP 响应"""
+    """HTTP response."""
 
     status_code: int
     headers: dict = field(default_factory=dict)
@@ -32,7 +32,7 @@ class Response:
 
 @dataclass
 class SearchResult:
-    """搜索结果"""
+    """Search result."""
 
     title: str
     url: str
@@ -40,7 +40,7 @@ class SearchResult:
 
 
 class WebTool:
-    """Web 工具 - 网络请求"""
+    """Web tool — HTTP requests."""
 
     def __init__(
         self,
@@ -52,7 +52,7 @@ class WebTool:
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """获取 HTTP 客户端"""
+        """Get the HTTP client."""
         if self._client is None:
             from ..llm.providers.proxy_utils import get_httpx_client_kwargs
             self._client = httpx.AsyncClient(
@@ -63,7 +63,7 @@ class WebTool:
         return self._client
 
     async def close(self) -> None:
-        """关闭客户端"""
+        """Close the client."""
         if self._client:
             await self._client.aclose()
             self._client = None
@@ -75,12 +75,12 @@ class WebTool:
         headers: dict | None = None,
     ) -> Response:
         """
-        发送 GET 请求
+        Send a GET request.
 
         Args:
             url: URL
-            params: 查询参数
-            headers: 请求头
+            params: Query parameters
+            headers: Request headers
 
         Returns:
             Response
@@ -117,13 +117,13 @@ class WebTool:
         headers: dict | None = None,
     ) -> Response:
         """
-        发送 POST 请求
+        Send a POST request.
 
         Args:
             url: URL
-            data: 表单数据
-            json: JSON 数据
-            headers: 请求头
+            data: Form data
+            json: JSON data
+            headers: Request headers
 
         Returns:
             Response
@@ -159,15 +159,15 @@ class WebTool:
         chunk_size: int = 8192,
     ) -> bool:
         """
-        下载文件
+        Download a file.
 
         Args:
             url: URL
-            path: 保存路径
-            chunk_size: 块大小
+            path: Save path
+            chunk_size: Chunk size
 
         Returns:
-            是否成功
+            Whether the download succeeded.
         """
         client = await self._get_client()
 
@@ -179,7 +179,7 @@ class WebTool:
                     logger.error(f"Download failed: {resp.status_code}")
                     return False
 
-                # 确保目录存在
+                # Ensure the directory exists
                 Path(path).parent.mkdir(parents=True, exist_ok=True)
 
                 with open(path, "wb") as f:
@@ -201,16 +201,16 @@ class WebTool:
         limit: int = 10,
     ) -> list[SearchResult]:
         """
-        搜索 GitHub 仓库
+        Search GitHub repositories.
 
         Args:
-            query: 搜索词
-            language: 编程语言
-            sort: 排序方式
-            limit: 结果数量
+            query: Search query
+            language: Programming language
+            sort: Sort order
+            limit: Number of results
 
         Returns:
-            搜索结果列表
+            List of search results.
         """
         q = query
         if language:
@@ -249,16 +249,16 @@ class WebTool:
         branch: str = "main",
     ) -> str | None:
         """
-        获取 GitHub 文件内容
+        Fetch a GitHub file's content.
 
         Args:
-            owner: 仓库所有者
-            repo: 仓库名
-            path: 文件路径
-            branch: 分支
+            owner: Repository owner
+            repo: Repository name
+            path: File path
+            branch: Branch name
 
         Returns:
-            文件内容或 None
+            File content or None.
         """
         url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"
 

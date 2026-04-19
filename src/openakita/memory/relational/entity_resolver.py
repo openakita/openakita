@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Common Chinese-English term pairs for rule-based normalization
+# Common Chinese-to-English term pairs for rule-based normalization
 _ZH_EN_MAP: dict[str, str] = {
     "记忆": "memory",
     "记忆模块": "memory_module",
@@ -90,14 +90,14 @@ class EntityResolver:
 
         if self.language == "zh":
             prompt = (
-                "以下是从对话中提取的实体名称，"
-                "请将指代相同概念的名称归为一组。\n\n"
-                f"实体列表: {unique}\n\n"
-                '输出 JSON: {{"groups": [["规范名", "别名1", "别名2"], ...]}}\n'
-                "每组第一个元素是规范名称（保留原文语言）。"
-                "只有一个成员的组不需要列出。"
+                "Below are entity names extracted from conversations. "
+                "Group together names that refer to the same concept.\n\n"
+                f"Entity list: {unique}\n\n"
+                'Output JSON: {{"groups": [["canonical_name", "alias1", "alias2"], ...]}}\n'
+                "The first element in each group is the canonical name (preserve the original language). "
+                "Groups with only one member need not be listed."
             )
-            system = "你是实体消歧专家。只输出合法的 JSON。"
+            system = "You are an entity disambiguation expert. Output only valid JSON."
         else:
             prompt = (
                 "Given these entity names extracted from conversations, "

@@ -1,13 +1,14 @@
 """
-Bash 沙箱: 命令执行权限控制
+Bash sandbox: command execution permission control.
 
-参考 Claude Code 的 sandbox 设计:
-- 限制文件系统访问范围
-- 限制网络访问
-- 命令白名单/黑名单
-- 超时强制终止
+Inspired by Claude Code's sandbox design:
+- Restrict filesystem access scope
+- Restrict network access
+- Command allowlist / denylist
+- Force-kill on timeout
 
-此模块为规则引擎部分，实际 OS 级隔离需配合 Docker/seatbelt/landlock。
+This module provides the rule-engine layer; actual OS-level isolation
+requires Docker / seatbelt / landlock.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SandboxPolicy:
-    """沙箱策略定义"""
+    """Sandbox policy definition."""
 
     allowed_dirs: list[str] = field(default_factory=list)
     denied_dirs: list[str] = field(
@@ -62,7 +63,7 @@ class SandboxPolicy:
 
 @dataclass
 class SandboxVerdict:
-    """沙箱检查结果"""
+    """Sandbox check result."""
 
     allowed: bool
     reason: str = ""
@@ -70,9 +71,9 @@ class SandboxVerdict:
 
 
 class CommandSandbox:
-    """命令执行沙箱。
+    """Command execution sandbox.
 
-    在实际执行命令前，检查是否符合安全策略。
+    Checks commands against the security policy before actual execution.
     """
 
     def __init__(
@@ -88,7 +89,7 @@ class CommandSandbox:
             self._policy.writable_dirs = [self._project_root]
 
     def check_command(self, command: str) -> SandboxVerdict:
-        """检查命令是否被允许执行。"""
+        """Check whether a command is allowed to execute."""
         # Check denied commands (exact match / glob)
         for denied in self._policy.denied_commands:
             if fnmatch.fnmatch(command.strip(), denied):
@@ -127,7 +128,7 @@ class CommandSandbox:
         return SandboxVerdict(allowed=True)
 
     def check_command_zh(self, command: str) -> SandboxVerdict:
-        """check_command 的中文化封装，将英文 reason 翻译为用户可见中文。"""
+        """Chinese-localized wrapper around check_command, translating English reasons to user-visible Chinese."""
         verdict = self.check_command(command)
         if not verdict.allowed and verdict.reason:
             if "deny rule" in verdict.reason:
@@ -147,7 +148,7 @@ class CommandSandbox:
         return verdict
 
     def _check_dir_access(self, command: str) -> str:
-        """检查命令中引用的路径是否在允许范围内。"""
+        """Check whether paths referenced in the command are within the allowed scope."""
         try:
             parts = shlex.split(command)
         except ValueError:
@@ -169,13 +170,13 @@ class CommandSandbox:
 
 
 # ---------------------------------------------------------------------------
-# P1-1: SandboxExecutor — subprocess 隔离执行
+# P1-1: SandboxExecutor -- subprocess-isolated execution
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class SandboxResult:
-    """沙箱执行结果"""
+    """Sandbox execution result."""
 
     stdout: str
     stderr: str
@@ -184,9 +185,9 @@ class SandboxResult:
 
 
 class SandboxExecutor:
-    """轻量沙箱执行器 — 基于 subprocess 的基础隔离。
+    """Lightweight sandbox executor based on subprocess isolation.
 
-    未来可扩展为 Docker/seatbelt/landlock 后端。
+    Can be extended to Docker / seatbelt / landlock backends in the future.
     """
 
     def __init__(self, sandbox: CommandSandbox | None = None) -> None:
@@ -199,12 +200,12 @@ class SandboxExecutor:
         cwd: str | None = None,
         timeout: float = 120,
     ) -> SandboxResult:
-        """在沙箱中异步执行命令。"""
+        """Execute a command asynchronously inside the sandbox."""
         verdict = self._sandbox.check_command(command)
         if not verdict.allowed:
             return SandboxResult(
                 stdout="",
-                stderr=f"沙箱拒绝执行: {verdict.reason}",
+                stderr=f"Sandbox denied execution: {verdict.reason}",
                 returncode=-1,
                 backend="sandbox_denied",
             )
@@ -237,14 +238,14 @@ class SandboxExecutor:
                 pass
             return SandboxResult(
                 stdout="",
-                stderr=f"命令执行超时 ({effective_timeout}s)，已强制终止",
+                stderr=f"Command timed out ({effective_timeout}s), forcefully terminated",
                 returncode=-2,
                 backend="timeout",
             )
         except Exception as e:
             return SandboxResult(
                 stdout="",
-                stderr=f"沙箱执行异常: {e}",
+                stderr=f"Sandbox execution error: {e}",
                 returncode=-3,
                 backend="error",
             )
@@ -254,7 +255,7 @@ _global_sandbox_executor: SandboxExecutor | None = None
 
 
 def get_sandbox_executor() -> SandboxExecutor:
-    """获取全局沙箱执行器单例。"""
+    """Return the global sandbox executor singleton."""
     global _global_sandbox_executor
     if _global_sandbox_executor is None:
         _global_sandbox_executor = SandboxExecutor()

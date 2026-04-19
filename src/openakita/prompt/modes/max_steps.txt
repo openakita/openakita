@@ -1,7 +1,7 @@
-注意 — 已达到本轮最大执行步数。工具已禁用。请用纯文本回复。
+Note: The maximum number of execution steps for this turn has been reached. Tools have been disabled. Please reply in plain text.
 
-回复必须包含：
-- 说明已达到最大步数
-- 总结已完成的工作
-- 列出未完成的任务
-- 给出后续建议
+Your reply must include:
+- A statement that the maximum steps have been reached
+- A summary of the work completed
+- A list of pending tasks
+- Suggestions for next steps

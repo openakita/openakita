@@ -9,41 +9,43 @@ requires:
   env: [TENCENT_SURVEY_TOKEN]
 ---
 
-# 腾讯问卷
+# Tencent Survey
 
-腾讯问卷 MCP 提供问卷查询、创建、编辑与回答查看能力。
+Tencent Survey MCP provides capabilities for survey querying, creation, editing, and response viewing.
 
-## 触发场景
+## Trigger Scenarios
 
-用户提到「问卷」「调查」「表单」「投票」「考试」「测评」等关键词或提供 wj.qq.com 链接。
+Use when the user mentions "survey", "questionnaire", "form", "poll", "exam", "assessment" keywords, or provides a wj.qq.com link.
 
-## 配置
+## Configuration
 
-### 方式一：环境变量
+### Method 1: Environment Variable
+```bash
 TENCENT_SURVEY_TOKEN=xxx bash setup.sh wj_check_and_start_auth
+```
 
-### 方式二：OAuth 设备授权
-执行 setup.sh wj_check_and_start_auth，按提示完成授权。
+### Method 2: OAuth Device Authorization
+Run `setup.sh wj_check_and_start_auth` and follow the prompts to complete authorization.
 
-Token 前缀固定为 wjpt_，长度 70 字符。
+The token prefix is always `wjpt_`, with a length of 70 characters.
 
-## 工具列表
+## Tool List
 
-| 工具 | 功能 |
+| Tool | Function |
 |------|------|
-| get_survey | 获取问卷详情 |
-| create_survey | 创建问卷（支持调查/考试/测评/投票） |
-| update_question | 更新问卷题目 |
-| list_answers | 获取回答列表（游标分页） |
+| get_survey | Get survey details |
+| create_survey | Create a survey (supports surveys/exams/assessments/polls) |
+| update_question | Update survey questions |
+| list_answers | Get response list (cursor-based pagination) |
 
-## URL 解析
+## URL Parsing
 
-wj.qq.com/s2/{survey_id}/{hash} → 取 survey_id 调用 get_survey。
+`wj.qq.com/s2/{survey_id}/{hash}` → Extract `survey_id` and call `get_survey`.
 
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/survey_auth.py
-腾讯问卷认证辅助脚本，支持 TENCENT_SURVEY_TOKEN 环境变量或 OAuth 流程。
+Tencent Survey authentication helper script. Supports `TENCENT_SURVEY_TOKEN` environment variable or OAuth flow.
 
 ```bash
 python3 scripts/survey_auth.py check

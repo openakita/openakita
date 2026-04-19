@@ -1,13 +1,13 @@
 """
-Markdown 感知的文本分块工具
+Markdown-aware text chunking tool
 
-将长回复文本按平台限制拆分为多条消息，同时保持 Markdown 语法完整性：
-- 代码块围栏 (```) 不会被拆散到不同消息
-- 优先在段落（空行）边界切分
-- 超长单段落 / 代码块做二次拆分并补齐围栏
-- 提供 UTF-8 字节安全切分（企微等按字节计算长度的平台）
-- 分片序号标记 ([1/N]) 帮助用户识别消息顺序
-- 微信等纯文本平台的 Markdown 降级（保留结构）
+Split long reply text into multiple messages per platform limits while preserving Markdown syntax:
+- Code block fences (```) won't be split across messages
+- Prefer splitting at paragraph boundaries (blank lines)
+- Over-long single paragraphs/code blocks are split and fences are re-added
+- Provide UTF-8 byte-safe splitting (for platforms like WeChat that count by bytes)
+- Fragment sequence markers ([1/N]) help users identify message order
+- Markdown degradation to plaintext for text-only platforms (preserves structure)
 """
 
 from __future__ import annotations
@@ -18,10 +18,10 @@ _RE_FENCE = re.compile(r"^(`{3,}|~{3,})", re.MULTILINE)
 
 
 def _find_segments(text: str) -> list[str]:
-    """将文本拆分为「代码块」和「普通文本」两种 segment。
+    """Split text into "code blocks" and "plain text" segments.
 
-    保证每个代码块（含围栏行）是一个完整 segment，不会被进一步
-    按段落切分时拆散。
+    Ensures each code block (including fence lines) is a complete segment that won't
+    be split further when dividing by paragraphs.
     """
     segments: list[str] = []
     pos = 0
@@ -56,7 +56,7 @@ def _find_segments(text: str) -> list[str]:
 
 
 def _split_paragraph(text: str, max_length: int) -> list[str]:
-    """按段落（双换行）→ 单行 → 字符 三级策略拆分普通文本。"""
+    """Split plain text using three-tier strategy: paragraphs (double newlines) → lines → characters."""
     if len(text) <= max_length:
         return [text]
 
@@ -84,7 +84,7 @@ def _split_paragraph(text: str, max_length: int) -> list[str]:
 
 
 def _split_by_lines(text: str, max_length: int) -> list[str]:
-    """按行合并，超长行做字符级截断。"""
+    """Merge by lines, truncate over-long lines at character level."""
     chunks: list[str] = []
     current = ""
     for line in text.split("\n"):
@@ -107,7 +107,7 @@ def _split_by_lines(text: str, max_length: int) -> list[str]:
 
 
 def _split_code_block(segment: str, max_length: int) -> list[str]:
-    """拆分超长代码块，为每段补齐围栏行。"""
+    """Split over-long code blocks, re-add fence lines for each chunk."""
     lines = segment.split("\n")
     if not lines:
         return [segment]
@@ -145,18 +145,18 @@ def chunk_markdown_text(
     text: str,
     max_length: int = 4000,
 ) -> list[str]:
-    """将 Markdown 文本按 max_length 拆分为多条消息。
+    """Split Markdown text into multiple messages by max_length.
 
-    - 代码块（fenced code blocks）作为原子单元，不会在围栏中间被拆散
-    - 普通文本优先在段落边界（双换行）处拆分
-    - 超长代码块会二次拆分并为每段补齐围栏
+    - Fenced code blocks are atomic units and won't be split in the middle
+    - Plain text is split preferentially at paragraph boundaries (double newlines)
+    - Over-long code blocks are split and fences are re-added for each chunk
 
     Args:
-        text: 待拆分的 Markdown 文本
-        max_length: 每条消息的最大字符长度
+        text: Markdown text to split
+        max_length: Maximum character length per message
 
     Returns:
-        拆分后的文本列表
+        List of split text
     """
     if not text or not text.strip():
         return []
@@ -198,7 +198,7 @@ def chunk_markdown_text(
 
 
 def utf8_safe_truncate(text: str, max_bytes: int) -> str:
-    """将文本截断到不超过 max_bytes 个 UTF-8 字节，保证不截断多字节字符。"""
+    """Truncate text to not exceed max_bytes of UTF-8 bytes, ensuring no multi-byte characters are split."""
     encoded = text.encode("utf-8")
     if len(encoded) <= max_bytes:
         return text
@@ -210,17 +210,17 @@ def chunk_text_by_bytes(
     text: str,
     max_bytes: int,
 ) -> list[str]:
-    """按 UTF-8 字节长度拆分文本。
+    """Split text by UTF-8 byte length.
 
-    适用于企业微信等按字节计算消息长度的平台。
-    优先在换行符处切分，超长行做字节级截断。
+    Suitable for platforms like WeChat that measure message length in bytes.
+    Prefer splitting at newlines; over-long lines are truncated at byte level.
 
     Args:
-        text: 待拆分文本
-        max_bytes: 每条消息最大字节数
+        text: Text to split
+        max_bytes: Maximum bytes per message
 
     Returns:
-        拆分后的文本列表
+        List of split text
     """
     if not text or not text.strip():
         return []
@@ -258,7 +258,7 @@ def chunk_text_by_bytes(
 
 
 # ---------------------------------------------------------------------------
-# 分片序号标记
+# Fragment sequence markers
 # ---------------------------------------------------------------------------
 
 _DEFAULT_NUMBER_FMT = "[{i}/{n}] "
@@ -281,17 +281,17 @@ def add_fragment_numbers(
     *,
     fmt: str = "bracket",
 ) -> list[str]:
-    """为多条分片消息添加序号前缀。
+    """Add sequence number prefixes to fragmented messages.
 
-    仅当 ``len(chunks) > 1`` 时添加序号；单条消息原样返回。
+    Only adds sequence numbers when ``len(chunks) > 1``; single messages are returned unchanged.
 
     Args:
-        chunks: 已拆分的消息列表
-        fmt: 序号格式 - ``"bracket"`` → ``[1/3]``，
-             ``"paren"`` → ``(1/3)``，``"emoji"`` → ``1️⃣/3``
+        chunks: List of split messages
+        fmt: Sequence format - ``"bracket"`` → ``[1/3]``,
+             ``"paren"`` → ``(1/3)``, ``"emoji"`` → ``1️⃣/3``
 
     Returns:
-        添加序号后的消息列表
+        List of messages with sequence numbers added
     """
     if len(chunks) <= 1:
         return chunks
@@ -311,7 +311,7 @@ def add_fragment_numbers(
 
 
 def estimate_number_prefix_len(total: int, fmt: str = "bracket") -> int:
-    """预估分片序号前缀的最大字符长度，用于分片前预留空间。"""
+    """Estimate maximum character length of fragment sequence prefix for pre-allocation."""
     if total <= 1:
         return 0
     template = _NUMBER_FORMATS.get(fmt, _DEFAULT_NUMBER_FMT)
@@ -323,7 +323,7 @@ def estimate_number_prefix_len(total: int, fmt: str = "bracket") -> int:
 
 
 # ---------------------------------------------------------------------------
-# Markdown → 纯文本降级（保留代码结构和链接 URL）
+# Markdown → plaintext degradation (preserve code structure and link URLs)
 # ---------------------------------------------------------------------------
 
 _RE_MD_LINK = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
@@ -338,10 +338,10 @@ _RE_MD_BLOCKQUOTE = re.compile(r"^>\s?", re.MULTILINE)
 
 
 def markdown_to_plaintext(text: str) -> str:
-    """将 Markdown 转为纯文本，保留代码缩进结构和链接 URL。
+    """Convert Markdown to plaintext while preserving code indentation structure and link URLs.
 
-    比简单 strip 更智能：代码块保留缩进，链接保留 URL，
-    列表保留编号/缩进结构。
+    Smarter than simple strip: code blocks preserve indentation, links preserve URLs,
+    lists preserve numbering/indentation structure.
     """
     if not text:
         return text
@@ -373,7 +373,7 @@ def markdown_to_plaintext(text: str) -> str:
             result_lines.append(line)
             continue
 
-        line = _RE_MD_IMG.sub(r"[图片: \1](\2)", line)
+        line = _RE_MD_IMG.sub(r"[image: \1](\2)", line)
         line = _RE_MD_LINK.sub(r"\1 (\2)", line)
         heading_match = _RE_MD_HEADING.match(line)
         if heading_match:

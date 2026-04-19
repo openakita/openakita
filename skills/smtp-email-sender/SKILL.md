@@ -5,104 +5,104 @@ description: Send emails via SMTP (Gmail, Outlook, etc.). Supports attachments, 
 
 # SMTP Email Sender
 
-通过 SMTP 协议发送邮件，支持 Gmail、Outlook、企业邮箱等。
+Via SMTP Send, Supports Gmail, Outlook,. 
 
-## 前置要求
+## need
 
-### 1. Gmail 用户
+### 1. Gmail
 
-如果使用 Gmail，需要：
-1. 启用两步验证
-2. 创建应用专用密码（App Password）
-   - 访问：https://myaccount.google.com/apppasswords
-   - 选择"邮件"和应用名称
-   - 复制生成的 16 位密码
+Use Gmail, need: 
+1. Enable
+2. Create (App Password) 
+-: https://myaccount.google.com/apppasswords
+- ""and
+- Generation 16
 
-### 2. Outlook/Hotmail 用户
+### 2. Outlook/Hotmail
 
-1. 启用两步验证
-2. 创建应用密码：https://account.microsoft.com/security
-3. 或使用普通密码（如果允许）
+1. Enable
+2. Create: https://account.microsoft.com/security
+3. orUse (Allows) 
 
-### 3. 企业邮箱用户
+### 3.
 
-联系 IT 部门获取：
-- SMTP 服务器地址
-- SMTP 端口（通常 587 或 465）
-- 是否需要 SSL/TLS
+IT Get: 
+- SMTP
+- SMTP ( 587 or 465) 
+- YesNoneed SSL/TLS
 
-## 配置
+## Configuration
 
-在 `.env` 文件中添加以下环境变量：
+in `.env`: 
 
 ```bash
-# SMTP 配置
+# SMTP
 SMTP_SERVER=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USERNAME=your_email@gmail.com
-SMTP_PASSWORD=your_app_password  # Gmail 使用应用专用密码
+SMTP_PASSWORD=your_app_password # Gmail Use
 SMTP_USE_TLS=true
 ```
 
-或者首次使用时运行配置脚本。
+orUseRun. 
 
-## 使用方法
+## Usage
 
-### 基本用法
+###
 
-调用 `send_email.py` 脚本：
+Call `send_email.py`: 
 
 ```bash
 python scripts/send_email.py \
-  --to recipient@example.com \
-  --subject "邮件主题" \
-  --body "邮件正文"
+ --to recipient@example.com \
+--subject "" \
+--body ""
 ```
 
-### 完整参数
+### Full
 
-| 参数 | 必需 | 说明 |
+| Parameter | | Description |
 |------|------|------|
-| `--to` | 是 | 收件人邮箱（多个用逗号分隔） |
-| `--subject` | 是 | 邮件主题 |
-| `--body` | 是 | 邮件正文 |
-| `--cc` | 否 | 抄送邮箱（多个用逗号分隔） |
-| `--bcc` | 否 | 密送邮箱（多个用逗号分隔） |
-| `--attachment` | 否 | 附件路径（多个用逗号分隔） |
-| `--is_html` | 否 | 正文是否为 HTML 格式（默认 false） |
-| `--from_name` | 否 | 发件人显示名称 |
+| `--to` | Yes | () |
+| `--subject` | Yes | |
+| `--body` | Yes | |
+| `--cc` | No | () |
+| `--bcc` | No | () |
+| `--attachment` | No | () |
+| `--is_html` | No | YesNo HTML (Default false) |
+| `--from_name` | No | Display |
 
-### 示例
+### Examples
 
-**发送简单邮件**：
+**Send**: 
 ```bash
 python scripts/send_email.py \
-  --to friend@example.com \
-  --subject "周末聚会" \
-  --body "这周末有空吗？一起吃饭吧！"
+ --to friend@example.com \
+--subject "will" \
+--body "thishave?! "
 ```
 
-**发送 HTML 邮件带附件**：
+**Send HTML **: 
 ```bash
 python scripts/send_email.py \
-  --to boss@company.com \
-  --subject "项目报告" \
-  --body "<h1>项目进度报告</h1><p>详见附件...</p>" \
-  --is_html true \
-  --attachment "report.pdf,chart.xlsx" \
-  --from_name "张三"
+ --to boss@company.com \
+--subject "" \
+--body "<h1></h1><p>...</p>" \
+ --is_html true \
+ --attachment "report.pdf,chart.xlsx" \
+--from_name ""
 ```
 
-**发送给多人**：
+**Send**: 
 ```bash
 python scripts/send_email.py \
-  --to "alice@example.com,bob@example.com" \
-  --cc "manager@example.com" \
-  --subject "会议纪要" \
-  --body "今天的会议纪要如下..."
+ --to "alice@example.com,bob@example.com" \
+ --cc "manager@example.com" \
+--subject "willneed" \
+--body " willneed..."
 ```
 
-## 支持的 SMTP 配置
+## Supports SMTP
 
 ### Gmail
 ```
@@ -118,69 +118,69 @@ SMTP_PORT=587
 SMTP_USE_TLS=true
 ```
 
-### QQ 邮箱
+### QQ
 ```
 SMTP_SERVER=smtp.qq.com
 SMTP_PORT=587
 SMTP_USE_TLS=true
 ```
 
-### 163 邮箱
+### 163
 ```
 SMTP_SERVER=smtp.163.com
 SMTP_PORT=587
 SMTP_USE_TLS=true
 ```
 
-### 企业邮箱（示例）
+### Enterprise () 
 ```
 SMTP_SERVER=smtp.company.com
 SMTP_PORT=587
 SMTP_USE_TLS=true
 ```
 
-## 常见问题
+## FAQ
 
-### 1. 认证失败
+### 1.
 
-**Gmail**：
-- 确保启用了两步验证
-- 使用应用专用密码，不是普通密码
-- 检查是否开启了"不够安全的应用"访问（不推荐）
+**Gmail**: 
+- Enable
+- Use, notYes
+- YesNo "not " (notRecommendations) 
 
-**Outlook**：
-- 检查是否需要应用密码
-- 确认 SMTP 地址正确
+**Outlook**: 
+- YesNoneed
+- SMTP
 
-### 2. 连接超时
+### 2.
 
-- 检查防火墙设置
-- 尝试端口 465（SSL）代替 587（TLS）
-- 确认 SMTP 服务器地址正确
+- Set
+- 465 (SSL) 587 (TLS) 
+- SMTP
 
-### 3. 附件太大
+### 3.
 
-- Gmail 限制 25MB
-- Outlook 限制 20MB
-- 大文件建议使用云盘链接
+- Gmail 25MB
+- Outlook 20MB
+- Use
 
-## 安全建议
+## Secure
 
-1. **永远不要**在代码中硬编码密码
-2. 使用环境变量或加密的配置文件
-3. 定期更换应用专用密码
-4. 不要在公共网络使用 SMTP 发送敏感信息
+1. **notneed**in
+2. Useor
+3.
+4. notneedinUse SMTP Send
 
-## 故障排除
+## Troubleshooting
 
-运行测试脚本验证配置：
+Run: 
 
 ```bash
 python scripts/test_smtp.py
 ```
 
-如果测试失败，检查：
-1. `.env` 文件配置是否正确
-2. 网络连接是否正常
-3. 邮箱账号密码是否正确
-4. 防火墙是否阻止 SMTP 端口
+,: 
+1. `.env` YesNo
+2. YesNo
+3. YesNo
+4. YesNo SMTP

@@ -1,70 +1,74 @@
 ---
 name: openakita/skills@datetime-tool
-description: Get current time, format dates, calculate date differences, and convert timezones. Use this skill when the user asks about time, dates, timezone conversions, weekdays, or needs date calculations and formatting in any locale.
+description: Get current time, format dates, calculate date differences, and convert timezones.
 license: MIT
 metadata:
-  author: myagent
+  author: openakita
   version: "1.0.0"
 ---
 
 # DateTime Tool
 
-处理时间和日期相关的操作。
+Handle time and date-related operations.
 
 ## When to Use
 
-- 用户询问当前时间或日期
-- 需要格式化日期输出
-- 计算两个日期之间的差值
-- 时区转换
-- 获取星期几、月份名称等
+- User asks for the current time or date
+- Format dates into specific formats
+- Calculate the difference between two dates
+- Convert between timezones
+- Natural language time expressions (e.g., "what time is it 3 hours from now")
+- Calculate week numbers, day of week, etc.
 
-## Instructions
+## Pre-built Scripts
 
-### 获取当前时间
-
-运行脚本获取当前时间:
+### scripts/get_time.py
+Get the current time and date.
 
 ```bash
 python scripts/get_time.py
 ```
 
-支持的参数:
-- `--timezone <tz>`: 指定时区 (如 Asia/Shanghai, UTC)
-- `--format <fmt>`: 日期格式 (如 %Y-%m-%d %H:%M:%S)
-
-### 计算日期差值
+### scripts/format_date.py
+Format a date string.
 
 ```bash
-python scripts/get_time.py --diff "2024-01-01" "2024-12-31"
+python scripts/format_date.py --date "2024-01-15" --format "%Y-%m-%d"
 ```
 
-### 时区转换
+### scripts/date_diff.py
+Calculate the difference between two dates.
 
 ```bash
-python scripts/get_time.py --convert "2024-01-01 12:00:00" --from-tz UTC --to-tz Asia/Shanghai
+python scripts/date_diff.py --start "2024-01-01" --end "2024-12-31"
+```
+
+### scripts/timezone_convert.py
+Convert time between timezones.
+
+```bash
+python scripts/timezone_convert.py --time "2024-01-15 10:30:00" --from "Asia/Shanghai" --to "America/New_York"
 ```
 
 ## Output Format
 
-脚本输出 JSON 格式:
+All scripts return JSON format:
 
 ```json
 {
-  "datetime": "2024-01-15 10:30:00",
-  "date": "2024-01-15",
-  "time": "10:30:00",
-  "timezone": "Asia/Shanghai",
-  "weekday": "Monday",
-  "timestamp": 1705285800
+  "success": true,
+  "operation": "get_time",
+  "data": {
+    "current_time": "2024-01-15 10:30:00",
+    "timezone": "Asia/Shanghai",
+    "unix_timestamp": 1705289400
+  }
 }
 ```
 
-## Common Formats
+## Notes
 
-| 格式 | 示例 |
-|------|------|
-| ISO | 2024-01-15T10:30:00+08:00 |
-| 中文 | 2024年01月15日 10:30:00 |
-| 美式 | 01/15/2024 |
-| 欧式 | 15/01/2024 |
+- All times default to the system timezone
+- Timezone names follow the IANA timezone database
+- Date difference returns both days and a human-readable format
+- Supported date formats: YYYY-MM-DD, YYYY/MM/DD, DD-MM-YYYY, and more

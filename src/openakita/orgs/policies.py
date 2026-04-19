@@ -1,7 +1,8 @@
 """
-OrgPolicies — 制度管理 + 索引生成 + 关键词搜索
+OrgPolicies — policy management + index generation + keyword search.
 
-管理组织的制度文件（Markdown），自动维护索引，提供关键词搜索。
+Manages an organization's policy documents (Markdown), automatically maintains
+an index, and provides keyword search.
 """
 
 from __future__ import annotations
@@ -130,9 +131,9 @@ class OrgPolicies:
     def _rebuild_index(self) -> None:
         """Rebuild the policies/README.md index file."""
         lines = [
-            "# 制度索引\n",
-            "> 此文件由系统自动维护，请勿手动编辑。\n",
-            "| 文件 | 标题 | 适用范围 | 大小 |",
+            "# Policy Index\n",
+            "> This file is automatically maintained by the system; do not edit manually.\n",
+            "| File | Title | Scope | Size |",
             "|------|------|---------|------|",
         ]
 
@@ -200,132 +201,132 @@ class OrgPolicies:
 
 POLICY_TEMPLATES: dict[str, dict[str, str]] = {
     "default": {
-        "communication-guidelines.md": """# 沟通规范
+        "communication-guidelines.md": """# Communication Guidelines
 
-## 1. 基本原则
-- 优先通过组织连线关系沟通
-- 跨级沟通需先通知直属上级
-- 紧急事项可直接上报
+## 1. Basic Principles
+- Prioritize communication through organization structure
+- Cross-level communication requires notifying direct supervisor first
+- Urgent matters can be escalated directly
 
-## 2. 消息格式
-- 任务分配：明确目标、截止日期、验收标准
-- 工作汇报：进展、阻塞、下一步计划
-- 问题上报：问题描述、影响范围、建议方案
+## 2. Message Format
+- Task assignment: clear objectives, deadlines, acceptance criteria
+- Work reports: progress, blockers, next steps
+- Issue reporting: issue description, impact scope, suggested solutions
 
-## 3. 响应时效
-- 紧急消息：15分钟内响应
-- 普通消息：1小时内响应
-- 非紧急消息：当天内响应
+## 3. Response Time
+- Urgent messages: respond within 15 minutes
+- Regular messages: respond within 1 hour
+- Non-urgent messages: respond same day
 """,
-        "task-management.md": """# 任务管理规范
+        "task-management.md": """# Task Management Guidelines
 
-## 1. 任务分配
-- 任务需包含明确的目标描述
-- 指定负责人和协作人
-- 设定合理的截止日期
+## 1. Task Assignment
+- Tasks must include clear objective descriptions
+- Designate responsible person and collaborators
+- Set reasonable deadlines
 
-## 2. 进度汇报
-- 重大进展及时汇报
-- 遇到阻塞立即上报
-- 任务完成后提交成果总结
+## 2. Progress Reporting
+- Report major progress promptly
+- Report blockers immediately
+- Submit summary upon completion
 
-## 3. 质量要求
-- 交付物需满足验收标准
-- 重要决策记录到组织黑板
-- 经验教训写入部门记忆
+## 3. Quality Requirements
+- Deliverables must meet acceptance criteria
+- Important decisions recorded to organization board
+- Lessons learned documented in department memory
 """,
-        "scaling-policy.md": """# 人员扩编制度
+        "scaling-policy.md": """# Personnel Scaling Policy
 
-## 1. 克隆申请（加人手）
-- 需说明当前工作量和瓶颈
-- 指定要克隆的岗位
-- 审批流程：上级 -> 用户确认
+## 1. Cloning Request (Add Resources)
+- Explain current workload and bottlenecks
+- Specify position to clone
+- Approval workflow: Supervisor -> User confirmation
 
-## 2. 招募申请（新岗位）
-- 需说明岗位职责和目标
-- 说明与现有岗位的关系
-- 审批流程：上级 -> 用户确认
+## 2. Recruitment Request (New Position)
+- Explain role responsibilities and goals
+- Clarify relationship to existing positions
+- Approval workflow: Supervisor -> User confirmation
 
-## 3. 冻结与裁撤
-- 冻结：保留数据，暂停活动
-- 裁撤：仅限临时节点，记忆归档到部门
+## 3. Freeze and Termination
+- Freeze: retain data, pause activities
+- Termination: only for temporary nodes, archive memory to department
 """,
     },
     "software-team": {
-        "code-review.md": """# 代码审查规范
+        "code-review.md": """# Code Review Guidelines
 
-## 1. 审查流程
-- 所有代码变更需经过审查
-- 前端变更由前端组长审查
-- 后端变更由后端组长审查
-- 跨组变更由技术负责人审查
+## 1. Review Process
+- All code changes require review
+- Frontend changes reviewed by frontend lead
+- Backend changes reviewed by backend lead
+- Cross-team changes reviewed by tech lead
 
-## 2. 审查标准
-- 代码风格一致性
-- 逻辑正确性
-- 性能影响评估
-- 测试覆盖率
+## 2. Review Standards
+- Code style consistency
+- Logic correctness
+- Performance impact assessment
+- Test coverage
 
-## 3. 合并条件
-- 至少一位审查者批准
-- 所有自动化测试通过
-- 无未解决的评论
+## 3. Merge Conditions
+- At least one reviewer approval
+- All automated tests pass
+- No unresolved comments
 """,
-        "deployment-process.md": """# 部署流程
+        "deployment-process.md": """# Deployment Process
 
-## 1. 环境管理
-- 开发环境：自动部署
-- 测试环境：QA 验证后部署
-- 生产环境：技术负责人审批后部署
+## 1. Environment Management
+- Dev environment: auto-deploy
+- Test environment: deploy after QA validation
+- Production environment: deploy after tech lead approval
 
-## 2. 发布流程
-1. 功能分支合并到主干
-2. 自动化测试通过
-3. QA 回归测试
-4. 生产环境部署
-5. 部署后监控
+## 2. Release Workflow
+1. Merge feature branch to main
+2. Automated tests pass
+3. QA regression testing
+4. Production deployment
+5. Post-deployment monitoring
 
-## 3. 回滚策略
-- 发现严重问题立即回滚
-- 回滚后复盘分析
+## 3. Rollback Strategy
+- Rollback immediately on critical issues
+- Post-rollback analysis
 """,
     },
     "content-ops": {
-        "content-standards.md": """# 内容标准
+        "content-standards.md": """# Content Standards
 
-## 1. 质量要求
-- 原创内容，禁止抄袭
-- 事实准确，数据有来源
-- 语言通顺，逻辑清晰
+## 1. Quality Requirements
+- Original content, no plagiarism
+- Factually accurate, data sourced
+- Clear language, logical flow
 
-## 2. 发布流程
-1. 选题策划（策划编辑）
-2. 初稿撰写（写手）
-3. SEO 优化（SEO 优化师）
-4. 主编审核
-5. 发布
+## 2. Publishing Workflow
+1. Topic planning (planning editor)
+2. Draft writing (writer)
+3. SEO optimization (SEO specialist)
+4. Editor review
+5. Publish
 
-## 3. 内容排期
-- 每周至少 3 篇内容
-- 热点内容 24 小时内发布
-- 长文提前一周准备
+## 3. Content Schedule
+- At least 3 pieces per week
+- Hot topics published within 24 hours
+- Long-form content prepared one week ahead
 """,
-        "brand-guidelines.md": """# 品牌规范
+        "brand-guidelines.md": """# Brand Guidelines
 
-## 1. 语气风格
-- 专业但不生硬
-- 友好但不随意
-- 简洁明了
+## 1. Tone and Style
+- Professional but not rigid
+- Friendly but not casual
+- Clear and concise
 
-## 2. 视觉规范
-- 统一配色方案
-- 标准 logo 使用规范
-- 配图风格一致
+## 2. Visual Standards
+- Consistent color scheme
+- Standard logo usage guidelines
+- Consistent image style
 
-## 3. 禁忌事项
-- 不涉及敏感话题
-- 不做虚假承诺
-- 不贬低竞争对手
+## 3. Prohibited Actions
+- Do not cover sensitive topics
+- Do not make false promises
+- Do not disparage competitors
 """,
     },
 }

@@ -1,11 +1,11 @@
 """
-用户管理
+User management
 
-提供跨平台用户管理:
-- 统一用户 ID
-- 多平台绑定
-- 用户偏好
-- 权限管理
+Provides cross-platform user management:
+- Unified user ID
+- Multi-platform binding
+- User preferences
+- Permission management
 """
 
 import json
@@ -22,34 +22,34 @@ logger = logging.getLogger(__name__)
 @dataclass
 class User:
     """
-    用户对象
+    User object
 
-    代表一个跨平台的统一用户
+    Represents a unified cross-platform user
     """
 
-    id: str  # 统一用户 ID
+    id: str  # Unified user ID
 
-    # 各平台绑定 {channel: channel_user_id}
+    # Platform bindings {channel: channel_user_id}
     bindings: dict[str, str] = field(default_factory=dict)
 
-    # 偏好设置
+    # Preferences
     preferences: dict[str, Any] = field(default_factory=dict)
 
-    # 权限
+    # Permissions
     permissions: list[str] = field(default_factory=lambda: ["user"])
 
-    # 元数据
+    # Metadata
     display_name: str | None = None
     avatar_url: str | None = None
 
-    # 统计
+    # Statistics
     created_at: datetime = field(default_factory=datetime.now)
     last_seen: datetime = field(default_factory=datetime.now)
     total_messages: int = 0
 
     @classmethod
     def create(cls, channel: str, channel_user_id: str) -> "User":
-        """创建新用户"""
+        """Create a new user"""
         user_id = f"user_{uuid.uuid4().hex[:12]}"
         return cls(
             id=user_id,
@@ -57,12 +57,12 @@ class User:
         )
 
     def bind_channel(self, channel: str, channel_user_id: str) -> None:
-        """绑定新通道"""
+        """Bind to a new channel"""
         self.bindings[channel] = channel_user_id
         logger.info(f"User {self.id} bound to {channel}:{channel_user_id}")
 
     def unbind_channel(self, channel: str) -> bool:
-        """解绑通道"""
+        """Unbind from a channel"""
         if channel in self.bindings:
             del self.bindings[channel]
             logger.info(f"User {self.id} unbound from {channel}")
@@ -70,54 +70,54 @@ class User:
         return False
 
     def get_channel_user_id(self, channel: str) -> str | None:
-        """获取通道用户 ID"""
+        """Get the channel user ID"""
         return self.bindings.get(channel)
 
     def is_bound_to(self, channel: str) -> bool:
-        """检查是否绑定到通道"""
+        """Check if bound to a channel"""
         return channel in self.bindings
 
     def touch(self) -> None:
-        """更新活跃时间"""
+        """Update last active time"""
         self.last_seen = datetime.now()
 
     def increment_messages(self) -> None:
-        """增加消息计数"""
+        """Increment message count"""
         self.total_messages += 1
         self.touch()
 
-    # 偏好管理
+    # Preference management
     def set_preference(self, key: str, value: Any) -> None:
-        """设置偏好"""
+        """Set a preference"""
         self.preferences[key] = value
 
     def get_preference(self, key: str, default: Any = None) -> Any:
-        """获取偏好"""
+        """Get a preference"""
         return self.preferences.get(key, default)
 
-    # 权限管理
+    # Permission management
     def has_permission(self, permission: str) -> bool:
-        """检查权限"""
+        """Check permission"""
         return permission in self.permissions or "admin" in self.permissions
 
     def add_permission(self, permission: str) -> None:
-        """添加权限"""
+        """Add a permission"""
         if permission not in self.permissions:
             self.permissions.append(permission)
 
     def remove_permission(self, permission: str) -> bool:
-        """移除权限"""
+        """Remove a permission"""
         if permission in self.permissions:
             self.permissions.remove(permission)
             return True
         return False
 
     def is_admin(self) -> bool:
-        """是否管理员"""
+        """Check if user is an admin"""
         return "admin" in self.permissions
 
     def to_dict(self) -> dict:
-        """序列化"""
+        """Serialize to dict"""
         return {
             "id": self.id,
             "bindings": self.bindings,
@@ -132,7 +132,7 @@ class User:
 
     @classmethod
     def from_dict(cls, data: dict) -> "User":
-        """反序列化"""
+        """Deserialize from dict"""
         return cls(
             id=data["id"],
             bindings=data.get("bindings", {}),
@@ -148,41 +148,40 @@ class User:
 
 class UserManager:
     """
-    用户管理器
+    User manager
 
-    管理跨平台用户:
-    - 根据 (channel, channel_user_id) 获取或创建用户
-    - 用户绑定和解绑
-    - 用户数据持久化
+    Manages cross-platform users:
+    - Get or create users by (channel, channel_user_id)
+    - Bind and unbind users
+    - Persist user data
     """
 
     def __init__(self, storage_path: Path | None = None):
         """
         Args:
-            storage_path: 用户数据存储目录
+            storage_path: Directory for storing user data
         """
         self.storage_path = Path(storage_path) if storage_path else Path("data/users")
         self.storage_path.mkdir(parents=True, exist_ok=True)
 
-        # 用户缓存 {user_id: User}
+        # User cache {user_id: User}
         self._users: dict[str, User] = {}
 
-        # 通道绑定索引 {channel:channel_user_id: user_id}
+        # Channel binding index {channel:channel_user_id: user_id}
         self._binding_index: dict[str, str] = {}
 
-        # 加载用户数据
-        self._load_users()
+        # Load user data
 
     def get_or_create(self, channel: str, channel_user_id: str) -> User:
         """
-        获取或创建用户
+        Get or create a user
 
-        如果 (channel, channel_user_id) 已绑定到用户，返回该用户
-        否则创建新用户并绑定
+        If (channel, channel_user_id) is already bound to a user, return that user.
+        Otherwise create a new user and bind it.
         """
         binding_key = f"{channel}:{channel_user_id}"
 
-        # 检查是否已绑定
+        # Check if already bound
         if binding_key in self._binding_index:
             user_id = self._binding_index[binding_key]
             user = self._users.get(user_id)
@@ -190,7 +189,7 @@ class UserManager:
                 user.touch()
                 return user
 
-        # 创建新用户
+        # Create new user
         user = User.create(channel, channel_user_id)
         self._users[user.id] = user
         self._binding_index[binding_key] = user.id
@@ -201,11 +200,11 @@ class UserManager:
         return user
 
     def get_user(self, user_id: str) -> User | None:
-        """通过用户 ID 获取用户"""
+        """Get user by user ID"""
         return self._users.get(user_id)
 
     def get_user_by_binding(self, channel: str, channel_user_id: str) -> User | None:
-        """通过通道绑定获取用户"""
+        """Get user by channel binding"""
         binding_key = f"{channel}:{channel_user_id}"
         user_id = self._binding_index.get(binding_key)
         if user_id:
@@ -219,10 +218,10 @@ class UserManager:
         channel_user_id: str,
     ) -> bool:
         """
-        绑定用户到新通道
+        Bind a user to a new channel
 
         Returns:
-            是否成功
+            Whether the binding was successful
         """
         user = self._users.get(user_id)
         if not user:
@@ -230,7 +229,7 @@ class UserManager:
 
         binding_key = f"{channel}:{channel_user_id}"
 
-        # 检查是否已被其他用户绑定
+        # Check if already bound to another user
         if binding_key in self._binding_index:
             existing_user_id = self._binding_index[binding_key]
             if existing_user_id != user_id:
@@ -239,7 +238,7 @@ class UserManager:
                 )
                 return False
 
-        # 绑定
+        # Bind
         user.bind_channel(channel, channel_user_id)
         self._binding_index[binding_key] = user_id
         self._save_users()
@@ -247,7 +246,7 @@ class UserManager:
         return True
 
     def unbind_channel(self, user_id: str, channel: str) -> bool:
-        """解绑用户的通道"""
+        """Unbind a user's channel"""
         user = self._users.get(user_id)
         if not user:
             return False
@@ -258,7 +257,7 @@ class UserManager:
 
         binding_key = f"{channel}:{channel_user_id}"
 
-        # 解绑
+        # Unbind
         user.unbind_channel(channel)
         if binding_key in self._binding_index:
             del self._binding_index[binding_key]
@@ -268,9 +267,9 @@ class UserManager:
 
     def merge_users(self, primary_user_id: str, secondary_user_id: str) -> bool:
         """
-        合并用户
+        Merge users
 
-        将 secondary 的绑定合并到 primary，然后删除 secondary
+        Merge secondary's bindings into primary, then delete secondary.
         """
         primary = self._users.get(primary_user_id)
         secondary = self._users.get(secondary_user_id)
@@ -278,22 +277,21 @@ class UserManager:
         if not primary or not secondary:
             return False
 
-        # 合并绑定
-        for channel, channel_user_id in secondary.bindings.items():
+        # Merge bindings
             if channel not in primary.bindings:
                 primary.bind_channel(channel, channel_user_id)
                 binding_key = f"{channel}:{channel_user_id}"
                 self._binding_index[binding_key] = primary_user_id
 
-        # 合并偏好（primary 优先）
+        # Merge preferences (primary takes priority)
         for key, value in secondary.preferences.items():
             if key not in primary.preferences:
                 primary.preferences[key] = value
 
-        # 合并统计
+        # Merge statistics
         primary.total_messages += secondary.total_messages
 
-        # 删除 secondary
+        # Delete secondary
         del self._users[secondary_user_id]
 
         logger.info(f"Merged user {secondary_user_id} into {primary_user_id}")
@@ -302,7 +300,7 @@ class UserManager:
         return True
 
     def update_preferences(self, user_id: str, preferences: dict) -> bool:
-        """更新用户偏好"""
+        """Update user preferences"""
         user = self._users.get(user_id)
         if not user:
             return False
@@ -318,7 +316,7 @@ class UserManager:
         channel: str | None = None,
         has_permission: str | None = None,
     ) -> list[User]:
-        """列出用户"""
+        """List users"""
         users = list(self._users.values())
 
         if channel:
@@ -329,7 +327,7 @@ class UserManager:
         return users
 
     def get_stats(self) -> dict:
-        """获取统计"""
+        """Get statistics"""
         stats = {
             "total_users": len(self._users),
             "total_bindings": len(self._binding_index),
@@ -346,7 +344,7 @@ class UserManager:
         return stats
 
     def _load_users(self) -> None:
-        """加载用户数据"""
+        """Load user data"""
         users_file = self.storage_path / "users.json"
 
         if not users_file.exists():
@@ -361,7 +359,7 @@ class UserManager:
                     user = User.from_dict(item)
                     self._users[user.id] = user
 
-                    # 重建绑定索引
+                    # Rebuild binding index
                     for channel, channel_user_id in user.bindings.items():
                         binding_key = f"{channel}:{channel_user_id}"
                         self._binding_index[binding_key] = user.id
@@ -375,7 +373,7 @@ class UserManager:
             logger.error(f"Failed to load users: {e}")
 
     def _save_users(self) -> None:
-        """保存用户数据"""
+        """Save user data"""
         users_file = self.storage_path / "users.json"
 
         try:

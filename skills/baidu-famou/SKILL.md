@@ -7,23 +7,23 @@ metadata:
   version: "1.0.0"
 ---
 
-# 百度伏谋 (FaMou)
+# Baidu FaMou (Fumo - AI Strategy Assistant)
 
-轻松高效调用伏谋算法自演化能力，提供实验管理和可视化能力，帮助用户极致调优完成复杂的算法实验。
+Easily and efficiently use FaMou algorithm self-evolution capabilities, providing experiment management and visualization features to help users achieve optimal tuning for complex algorithm experiments.
 
-## 功能
+## Features
 
-- 算法自演化
-- 实验管理
-- 可视化分析
-- 参数调优
+- Algorithm self-evolution
+- Experiment management
+- Visualization analysis
+- Parameter tuning
 
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/famou.py
-算法实验管理（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+Algorithm experiment management (Baidu Qianfan AppBuilder). Requires APPBUILDER_TOKEN to be set.
 
 ```bash
-python3 scripts/famou.py experiment "图像分类模型调优"
-python3 scripts/famou.py optimize "超参数搜索"
+python3 scripts/famou.py experiment "Image classification model optimization"
+python3 scripts/famou.py optimize "Hyperparameter search"
 ```

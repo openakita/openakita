@@ -1,12 +1,12 @@
 """
-Windows 桌面自动化 - 截图模块
+Windows Desktop Automation - Screenshot module
 
-基于 mss 实现高性能截图，支持：
-- 全屏/指定显示器截图
-- 区域截图
-- 窗口截图
-- 自动压缩/缩放
-- 截图缓存
+High-performance screenshot implementation based on mss, supporting:
+- Full screen / specified monitor screenshot
+- Region screenshot
+- Window screenshot
+- Automatic compression / scaling
+- Screenshot caching
 """
 
 import base64
@@ -19,7 +19,7 @@ from PIL import Image
 from .config import get_config
 from .types import BoundingBox, ScreenshotInfo
 
-# 平台检查
+# Platform check
 if sys.platform != "win32":
     raise ImportError(
         f"Desktop automation module is Windows-only. Current platform: {sys.platform}"
@@ -79,12 +79,12 @@ def _restore_window(hwnd: int) -> None:
 
 class ScreenCapture:
     """
-    屏幕截图类
+    Screen capture class
 
-    使用 mss 库实现高性能截图。
-    安全增强（参考 CC Computer Use）：
-    - 截屏时自动排除自身窗口
-    - 坐标系与截屏尺寸一致
+    High-performance screenshot implementation using the mss library.
+    Safety enhancements (inspired by CC Computer Use):
+    - Automatically excludes its own window during capture
+    - Coordinate system consistent with screenshot dimensions
     """
 
     def __init__(self):
@@ -96,28 +96,28 @@ class ScreenCapture:
 
     @property
     def sct(self) -> mss.mss:
-        """获取 mss 实例（懒加载）"""
+        """Get the mss instance (lazy-loaded)"""
         if self._sct is None:
             self._sct = mss.mss()
         return self._sct
 
     def get_monitors(self) -> list[dict]:
         """
-        获取所有显示器信息
+        Get all monitor information
 
         Returns:
-            显示器列表，每个包含 left, top, width, height
-            索引 0 是所有显示器的组合区域
-            索引 1+ 是各个独立显示器
+            List of monitors, each containing left, top, width, height.
+            Index 0 is the combined area of all monitors.
+            Index 1+ are individual monitors.
         """
         return list(self.sct.monitors)
 
     def get_screen_size(self, monitor: int = 0) -> tuple[int, int]:
         """
-        获取屏幕尺寸
+        Get screen dimensions
 
         Args:
-            monitor: 显示器索引，0 表示所有显示器组合
+            monitor: Monitor index; 0 means all monitors combined.
 
         Returns:
             (width, height)
@@ -135,32 +135,32 @@ class ScreenCapture:
         use_cache: bool = True,
     ) -> Image.Image:
         """
-        截取屏幕
+        Capture the screen
 
         Args:
-            monitor: 显示器索引，None 使用默认配置
-            region: 区域 (x, y, width, height)，None 表示全屏
-            use_cache: 是否使用缓存（短时间内重复截图返回缓存）
+            monitor: Monitor index; None uses default configuration.
+            region: Region (x, y, width, height); None means full screen.
+            use_cache: Whether to use cache (repeated captures within a short interval return cached result).
 
         Returns:
-            PIL Image 对象
+            PIL Image object
         """
         config = get_config().capture
 
-        # 检查缓存
+        # Check cache
         if use_cache and self._last_screenshot is not None:
             cache_age = time.time() - self._last_screenshot_time
             if cache_age < config.cache_ttl:
-                # 如果请求的是同样的区域，返回缓存
+                # If requesting the same region, return cached result
                 if self._last_screenshot_info and (
                     monitor == self._last_screenshot_info.monitor
                     and region == self._last_screenshot_info.region
                 ):
                     return self._last_screenshot.copy()
 
-        # 确定截图区域
+        # Determine capture area
         if region is not None:
-            # 使用指定区域
+            # Use specified region
             x, y, w, h = region
             capture_area = {
                 "left": x,
@@ -169,14 +169,14 @@ class ScreenCapture:
                 "height": h,
             }
         else:
-            # 使用显示器
+            # Use monitor
             mon_idx = monitor if monitor is not None else config.default_monitor
             monitors = self.sct.monitors
             if mon_idx >= len(monitors):
                 mon_idx = 0
             capture_area = monitors[mon_idx]
 
-        # Hide self window before capture (参考 CC prepareForAction)
+        # Hide self window before capture (inspired by CC prepareForAction)
         hidden_hwnd = None
         if self._exclude_self:
             hidden_hwnd = _hide_self_window()
@@ -187,14 +187,14 @@ class ScreenCapture:
             if hidden_hwnd:
                 _restore_window(hidden_hwnd)
 
-        # 转换为 PIL Image
+        # Convert to PIL Image
         img = Image.frombytes(
             "RGB",
             (sct_img.width, sct_img.height),
             sct_img.rgb,
         )
 
-        # 更新缓存
+        # Update cache
         self._last_screenshot = img.copy()
         self._last_screenshot_time = time.time()
         self._last_screenshot_info = ScreenshotInfo(
@@ -212,19 +212,19 @@ class ScreenCapture:
         window_title: str | None = None,
     ) -> Image.Image:
         """
-        截取指定窗口区域
+        Capture a specified window region
 
         Args:
-            bbox: 窗口边界框
-            window_title: 窗口标题（用于记录）
+            bbox: Window bounding box
+            window_title: Window title (for logging)
 
         Returns:
-            PIL Image 对象
+            PIL Image object
         """
         region = bbox.to_region()  # (x, y, width, height)
         img = self.capture(region=region, use_cache=False)
 
-        # 更新截图信息
+        # Update screenshot info
         if self._last_screenshot_info:
             self._last_screenshot_info.window_title = window_title
 
@@ -238,14 +238,14 @@ class ScreenCapture:
         height: int,
     ) -> Image.Image:
         """
-        截取指定区域
+        Capture a specified region
 
         Args:
-            x, y: 左上角坐标
-            width, height: 宽高
+            x, y: Top-left corner coordinates
+            width, height: Width and height
 
         Returns:
-            PIL Image 对象
+            PIL Image object
         """
         return self.capture(region=(x, y, width, height), use_cache=False)
 
@@ -256,32 +256,32 @@ class ScreenCapture:
         max_height: int | None = None,
     ) -> Image.Image:
         """
-        为 API 调用调整图片大小
+        Resize image for API calls
 
-        保持宽高比，缩放到不超过最大尺寸
+        Maintains aspect ratio, scaling down to fit within max dimensions.
 
         Args:
-            img: 原始图片
-            max_width: 最大宽度，None 使用配置
-            max_height: 最大高度，None 使用配置
+            img: Original image
+            max_width: Maximum width; None uses configuration.
+            max_height: Maximum height; None uses configuration.
 
         Returns:
-            调整后的图片
+            Resized image
         """
         config = get_config().capture
         max_w = max_width or config.max_width
         max_h = max_height or config.max_height
 
-        # 如果图片已经足够小，直接返回
+        # If image is already small enough, return as-is
         if img.width <= max_w and img.height <= max_h:
             return img
 
-        # 计算缩放比例
+        # Calculate scale ratio
         ratio = min(max_w / img.width, max_h / img.height)
         new_width = int(img.width * ratio)
         new_height = int(img.height * ratio)
 
-        # 使用高质量缩放
+        # High-quality resize
         return img.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
     def to_base64(
@@ -292,34 +292,34 @@ class ScreenCapture:
         resize_for_api: bool = True,
     ) -> str:
         """
-        将图片转换为 base64 编码
+        Convert image to base64 encoding
 
         Args:
-            img: PIL Image 对象
-            format: 图片格式 (JPEG, PNG)
-            quality: JPEG 质量，None 使用配置
-            resize_for_api: 是否自动缩放以节省 API 成本
+            img: PIL Image object
+            format: Image format (JPEG, PNG)
+            quality: JPEG quality; None uses configuration.
+            resize_for_api: Whether to auto-resize to save API cost.
 
         Returns:
-            base64 编码的字符串
+            Base64-encoded string
         """
         config = get_config().capture
 
-        # 可选缩放
+        # Optional resize
         if resize_for_api:
             img = self.resize_for_api(img)
 
-        # 转换为字节
+        # Convert to bytes
         buffer = io.BytesIO()
         if format.upper() == "JPEG":
-            # 转换为 RGB（JPEG 不支持 alpha 通道）
+            # Convert to RGB (JPEG does not support alpha channel)
             if img.mode in ("RGBA", "P"):
                 img = img.convert("RGB")
             img.save(buffer, format="JPEG", quality=quality or config.compression_quality)
         else:
             img.save(buffer, format=format)
 
-        # 编码为 base64
+        # Encode to base64
         return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
     def to_data_url(
@@ -330,18 +330,18 @@ class ScreenCapture:
         resize_for_api: bool = True,
     ) -> str:
         """
-        将图片转换为 data URL 格式
+        Convert image to data URL format
 
-        适用于需要 data:image/... 格式的 API
+        Suitable for APIs requiring data:image/... format.
 
         Args:
-            img: PIL Image 对象
-            format: 图片格式
-            quality: JPEG 质量
-            resize_for_api: 是否自动缩放
+            img: PIL Image object
+            format: Image format
+            quality: JPEG quality
+            resize_for_api: Whether to auto-resize
 
         Returns:
-            data URL 字符串
+            Data URL string
         """
         b64 = self.to_base64(img, format, quality, resize_for_api)
         mime_type = "image/jpeg" if format.upper() == "JPEG" else f"image/{format.lower()}"
@@ -355,16 +355,16 @@ class ScreenCapture:
         quality: int | None = None,
     ) -> str:
         """
-        保存截图到文件
+        Save screenshot to file
 
         Args:
-            img: PIL Image 对象
-            path: 保存路径
-            format: 图片格式，None 则从路径推断
-            quality: JPEG 质量
+            img: PIL Image object
+            path: Save path
+            format: Image format; None infers from path.
+            quality: JPEG quality
 
         Returns:
-            保存的文件路径
+            Saved file path
         """
         config = get_config().capture
 
@@ -378,13 +378,13 @@ class ScreenCapture:
         return path
 
     def clear_cache(self) -> None:
-        """清除截图缓存"""
+        """Clear screenshot cache"""
         self._last_screenshot = None
         self._last_screenshot_time = 0
         self._last_screenshot_info = None
 
     def close(self) -> None:
-        """释放资源"""
+        """Release resources"""
         if self._sct is not None:
             self._sct.close()
             self._sct = None
@@ -397,12 +397,12 @@ class ScreenCapture:
         self.close()
 
 
-# 全局实例
+# Global instance
 _capture: ScreenCapture | None = None
 
 
 def get_capture() -> ScreenCapture:
-    """获取全局截图实例"""
+    """Get the global screen capture instance"""
     global _capture
     if _capture is None:
         _capture = ScreenCapture()
@@ -414,14 +414,14 @@ def screenshot(
     region: tuple[int, int, int, int] | None = None,
 ) -> Image.Image:
     """
-    便捷函数：截取屏幕
+    Convenience function: capture the screen
 
     Args:
-        monitor: 显示器索引
-        region: 区域 (x, y, width, height)
+        monitor: Monitor index
+        region: Region (x, y, width, height)
 
     Returns:
-        PIL Image 对象
+        PIL Image object
     """
     return get_capture().capture(monitor=monitor, region=region)
 
@@ -432,15 +432,15 @@ def screenshot_base64(
     resize: bool = True,
 ) -> str:
     """
-    便捷函数：截取屏幕并返回 base64
+    Convenience function: capture the screen and return base64
 
     Args:
-        monitor: 显示器索引
-        region: 区域
-        resize: 是否缩放以节省 API 成本
+        monitor: Monitor index
+        region: Region
+        resize: Whether to resize to save API cost
 
     Returns:
-        base64 编码字符串
+        Base64-encoded string
     """
     capture = get_capture()
     img = capture.capture(monitor=monitor, region=region)

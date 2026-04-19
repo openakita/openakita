@@ -9,36 +9,36 @@ category: Scheduled Tasks
 
 # List Scheduled Tasks
 
-列出所有定时任务。
+List all scheduled tasks.
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| enabled_only | boolean | 否 | 是否只列出启用的任务，默认 false |
+| enabled_only | boolean | No | Whether to only list enabled tasks, Default false |
 
 ## Returns
 
-- 任务 ID
-- 名称
-- 类型（reminder/task）
-- 状态（enabled/disabled）
-- 下次执行时间
+- Task ID
+-
+- (reminder/task)
+- (enabled/disabled)
+- Execute
 
 ## Examples
 
-**列出所有任务**:
+**List all**:
 ```json
 {}
 ```
 
-**只列出启用的任务**:
+**ListEnable **:
 ```json
 {"enabled_only": true}
 ```
 
 ## Related Skills
 
-- `schedule-task`: 创建新任务
-- `cancel-scheduled-task`: 取消任务
-- `update-scheduled-task`: 更新任务设置
+- `schedule-task`: Create
+- `cancel-scheduled-task`:
+- `update-scheduled-task`: UpdateSet

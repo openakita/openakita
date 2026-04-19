@@ -1,5 +1,5 @@
 """
-代码修复器
+Code fixer
 """
 
 import logging
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class FixResult:
-    """修复结果"""
+    """Fix result"""
 
     success: bool
     test_id: str
@@ -23,9 +23,9 @@ class FixResult:
 
 class CodeFixer:
     """
-    代码修复器
+    Code fixer
 
-    根据失败的测试自动修复代码。
+    Automatically fixes code based on failed tests.
     """
 
     def __init__(self, brain=None, project_root: Path | None = None):
@@ -34,10 +34,10 @@ class CodeFixer:
 
     async def fix(self, result: TestResult) -> FixResult:
         """
-        修复失败的测试
+        Fix a failed test
 
         Args:
-            result: 失败的测试结果
+            result: The failed test result
 
         Returns:
             FixResult
@@ -59,7 +59,7 @@ class CodeFixer:
                 error="Brain not available",
             )
 
-        # 分析错误
+        # Analyze the error
         analysis = await self._analyze_failure(result)
 
         if not analysis:
@@ -70,32 +70,32 @@ class CodeFixer:
                 error="Failed to analyze error",
             )
 
-        # 尝试修复
+        # Attempt the fix
         fix_result = await self._apply_fix(result, analysis)
 
         return fix_result
 
     async def _analyze_failure(self, result: TestResult) -> dict | None:
-        """分析失败原因"""
-        prompt = f"""分析以下测试失败:
+        """Analyze the cause of failure"""
+        prompt = f"""Analyze the following test failure:
 
-测试 ID: {result.test_id}
-错误: {result.error}
-实际结果: {result.actual}
-预期结果: {result.expected}
+Test ID: {result.test_id}
+Error: {result.error}
+Actual result: {result.actual}
+Expected result: {result.expected}
 
-请分析:
-1. 失败的根本原因
-2. 可能涉及的代码文件
-3. 建议的修复方法
+Please analyze:
+1. Root cause of the failure
+2. Code files that may be involved
+3. Suggested fix approach
 
-以 JSON 格式返回:
+Return in JSON format:
 {{
-    "cause": "根本原因",
-    "files": ["可能的文件1.py", "文件2.py"],
-    "fix_strategy": "修复策略",
+    "cause": "Root cause",
+    "files": ["possible_file1.py", "file2.py"],
+    "fix_strategy": "Fix strategy",
     "code_changes": [
-        {{"file": "文件路径", "description": "修改描述"}}
+        {{"file": "File path", "description": "Description of the change"}}
     ]
 }}"""
 
@@ -114,7 +114,7 @@ class CodeFixer:
             return None
 
     async def _apply_fix(self, result: TestResult, analysis: dict) -> FixResult:
-        """应用修复"""
+        """Apply the fix"""
         changes = []
 
         for change in analysis.get("code_changes", []):
@@ -130,14 +130,14 @@ class CodeFixer:
                 logger.warning(f"File not found: {full_path}")
                 continue
 
-            # 读取当前代码
+            # Read current code
             try:
                 current_code = full_path.read_text(encoding="utf-8")
             except Exception as e:
                 logger.error(f"Failed to read {full_path}: {e}")
                 continue
 
-            # 生成修复后的代码
+            # Generate the fixed code
             fixed_code = await self._generate_fix(
                 current_code,
                 description,
@@ -145,7 +145,7 @@ class CodeFixer:
             )
 
             if fixed_code and fixed_code != current_code:
-                # 备份并写入
+                # Back up and write
                 backup_path = full_path.with_suffix(".bak")
                 backup_path.write_text(current_code, encoding="utf-8")
 
@@ -166,18 +166,18 @@ class CodeFixer:
         fix_description: str,
         error: str,
     ) -> str | None:
-        """生成修复后的代码"""
-        prompt = f"""请根据以下描述修复代码:
+        """Generate the fixed code"""
+        prompt = f"""Please fix the code according to the following description:
 
-修复描述: {fix_description}
-错误信息: {error}
+Fix description: {fix_description}
+Error message: {error}
 
-当前代码:
+Current code:
 ```python
 {current_code}
 ```
 
-请输出修复后的完整代码。只输出代码，不要解释。"""
+Output the complete fixed code. Output only code, no explanations."""
 
         response = await self.brain.think(prompt)
 
@@ -191,7 +191,7 @@ class CodeFixer:
         return code if code else None
 
     async def batch_fix(self, results: list[TestResult]) -> list[FixResult]:
-        """批量修复"""
+        """Fix multiple failures in batch"""
         fix_results = []
 
         for result in results:

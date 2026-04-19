@@ -1,13 +1,13 @@
 """
-Setup Center Bridge
+Setup Center Bridge.
 
-该模块用于给 Setup Center（Tauri App）提供一个稳定的 Python 入口：
+This module provides a stable Python entrypoint for Setup Center (the Tauri app):
 
 - `python -m openakita.setup_center.bridge list-providers`
 - `python -m openakita.setup_center.bridge list-models --api-type ... --base-url ... [--provider-slug ...]`
 - `python -m openakita.setup_center.bridge list-skills --workspace-dir ...`
 
-输出均为 JSON（stdout），错误输出到 stderr 并以非 0 退出码返回。
+All output is JSON on stdout; errors go to stderr and return a non-zero exit code.
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
         return is_qianfan and "coding" in b
 
     def _minimax_fallback_models() -> list[dict]:
-        # MiniMax Anthropic/OpenAI 兼容文档仅列出固定模型，且未提供 /models 列表接口。
+        # The MiniMax Anthropic/OpenAI-compatible docs only list a fixed model set and provide no /models endpoint.
         ids = [
             "MiniMax-M2.5",
             "MiniMax-M2.5-highspeed",
@@ -184,14 +184,14 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
     if _is_longcat_provider():
         return _longcat_fallback_models()
 
-    # MiniMax 兼容接口无模型列表端点，直接返回文档内置候选，避免无效探测和误报。
+    # The MiniMax-compatible endpoint has no model list endpoint; return the documented built-in candidates to avoid useless probes and false positives.
     if _is_minimax_provider():
         return _minimax_fallback_models()
 
     from openakita.llm.types import normalize_base_url
 
     url = normalize_base_url(base_url) + "/models"
-    # 本地服务（Ollama/LM Studio 等）不需要真实 API Key，使用 placeholder
+    # Local services (Ollama/LM Studio, etc.) don't need a real API key; use a placeholder.
     effective_key = api_key.strip() or "local"
     auth_header = f"Bearer {effective_key}"
 
@@ -213,9 +213,9 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
             if "json" not in ct:
                 preview = resp.text[:200].strip()
                 raise ValueError(
-                    f"API 返回了非 JSON 响应 (content-type: {ct})。"
-                    f"请检查 Base URL 是否正确（通常需要以 /v1 结尾）。"
-                    f"\n响应预览: {preview}"
+                    f"The API returned a non-JSON response (content-type: {ct}). "
+                    f"Please check that the Base URL is correct (it usually needs to end with /v1)."
+                    f"\nResponse preview: {preview}"
                 )
             data = resp.json()
         except httpx.HTTPStatusError:
@@ -368,7 +368,7 @@ async def _list_models_anthropic(
     if _is_longcat_provider():
         return _longcat_fallback_models()
 
-    # MiniMax 兼容接口无模型列表端点，直接返回文档内置候选，避免无效探测和误报。
+    # The MiniMax-compatible endpoint has no model list endpoint; return the documented built-in candidates to avoid useless probes and false positives.
     if _is_minimax_provider():
         return _minimax_fallback_models()
 
@@ -386,7 +386,7 @@ async def _list_models_anthropic(
                 url,
                 headers={
                     "x-api-key": api_key,
-                    # 部分 Anthropic 兼容网关仅识别 Bearer。
+                    # Some Anthropic-compatible gateways only recognize Bearer.
                     "Authorization": f"Bearer {api_key}",
                     "anthropic-version": "2023-06-01",
                 },
@@ -417,11 +417,11 @@ async def list_models(
     api_type = (api_type or "").strip().lower()
     base_url = (base_url or "").strip()
     if not api_type:
-        raise ValueError("--api-type 不能为空")
+        raise ValueError("--api-type cannot be empty")
     if not base_url:
-        raise ValueError("--base-url 不能为空")
-    # 本地服务商（Ollama/LM Studio 等）不需要 API Key，允许空值
-    # 前端会传入 placeholder key，但也兼容完全为空的情况
+        raise ValueError("--base-url cannot be empty")
+    # Local providers (Ollama/LM Studio, etc.) don't need an API key; allow empty.
+    # The frontend passes a placeholder key, but a fully empty value is also tolerated.
 
     if api_type in ("openai", "openai_responses"):
         _json_print(await _list_models_openai(api_key, base_url, provider_slug))
@@ -430,11 +430,11 @@ async def list_models(
         _json_print(await _list_models_anthropic(api_key, base_url, provider_slug))
         return
 
-    raise ValueError(f"不支持的 api-type: {api_type}")
+    raise ValueError(f"Unsupported api-type: {api_type}")
 
 
 async def health_check_endpoint(workspace_dir: str, endpoint_name: str | None) -> None:
-    """检测 LLM 端点连通性，同时更新业务状态（cooldown/mark_healthy）"""
+    """Probe LLM endpoint connectivity while updating business state (cooldown/mark_healthy)."""
     import time
 
     from openakita.llm.client import LLMClient
@@ -442,7 +442,7 @@ async def health_check_endpoint(workspace_dir: str, endpoint_name: str | None) -
     wd = Path(workspace_dir).expanduser().resolve()
     config_path = wd / "data" / "llm_endpoints.json"
     if not config_path.exists():
-        raise ValueError(f"端点配置文件不存在: {config_path}")
+        raise ValueError(f"Endpoint config file not found: {config_path}")
 
     env_path = wd / ".env"
     if env_path.exists():
@@ -464,7 +464,7 @@ async def health_check_endpoint(workspace_dir: str, endpoint_name: str | None) -
     if endpoint_name:
         targets = [(n, p) for n, p in targets if n == endpoint_name]
         if not targets:
-            raise ValueError(f"未找到端点: {endpoint_name}")
+            raise ValueError(f"Endpoint not found: {endpoint_name}")
 
     for name, provider in targets:
         t0 = time.time()
@@ -504,7 +504,7 @@ async def health_check_endpoint(workspace_dir: str, endpoint_name: str | None) -
 
 
 async def health_check_im(workspace_dir: str, channel: str | None) -> None:
-    """检测 IM 通道连通性"""
+    """Probe IM channel connectivity."""
     import httpx
 
     wd = Path(workspace_dir).expanduser().resolve()
@@ -529,19 +529,19 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
         },
         {
             "id": "feishu",
-            "name": "飞书",
+            "name": "Feishu",
             "enabled_key": "FEISHU_ENABLED",
             "required_keys": ["FEISHU_APP_ID", "FEISHU_APP_SECRET"],
         },
         {
             "id": "wework",
-            "name": "企业微信",
+            "name": "WeCom",
             "enabled_key": "WEWORK_ENABLED",
             "required_keys": ["WEWORK_CORP_ID", "WEWORK_TOKEN", "WEWORK_ENCODING_AES_KEY"],
         },
         {
             "id": "dingtalk",
-            "name": "钉钉",
+            "name": "DingTalk",
             "enabled_key": "DINGTALK_ENABLED",
             "required_keys": ["DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET"],
         },
@@ -549,23 +549,23 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
             "id": "onebot",
             "name": "OneBot",
             "enabled_key": "ONEBOT_ENABLED",
-            "required_keys": [],  # 动态：forward 需要 WS_URL，reverse 需要端口
+            "required_keys": [],  # Dynamic: forward needs WS_URL, reverse needs a port
         },
         {
             "id": "qqbot",
-            "name": "QQ 官方机器人",
+            "name": "QQ Official Bot",
             "enabled_key": "QQBOT_ENABLED",
             "required_keys": ["QQBOT_APP_ID", "QQBOT_APP_SECRET"],
         },
         {
             "id": "wework_ws",
-            "name": "企业微信(WS)",
+            "name": "WeCom (WS)",
             "enabled_key": "WEWORK_WS_ENABLED",
             "required_keys": ["WEWORK_WS_BOT_ID", "WEWORK_WS_SECRET"],
         },
         {
             "id": "wechat",
-            "name": "微信",
+            "name": "WeChat",
             "enabled_key": "WECHAT_ENABLED",
             "required_keys": ["WECHAT_TOKEN"],
         },
@@ -577,7 +577,7 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
     if channel:
         targets = [c for c in targets if c["id"] == channel]
         if not targets:
-            raise ValueError(f"未知 IM 通道: {channel}")
+            raise ValueError(f"Unknown IM channel: {channel}")
 
     results = []
     for ch in targets:
@@ -601,13 +601,13 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
                     "channel": ch["id"],
                     "name": ch["name"],
                     "status": "unhealthy",
-                    "error": f"缺少配置: {', '.join(missing)}",
+                    "error": f"Missing configuration: {', '.join(missing)}",
                     "last_checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 }
             )
             continue
 
-        # 实际连通性测试
+        # Actual connectivity test
         try:
             from openakita.llm.providers.proxy_utils import get_httpx_client_kwargs
 
@@ -619,7 +619,7 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
                     resp.raise_for_status()
                     data = resp.json()
                     if not data.get("ok"):
-                        raise Exception(data.get("description", "Telegram API 返回错误"))
+                        raise Exception(data.get("description", "Telegram API returned an error"))
                 elif ch["id"] == "feishu":
                     app_id = env["FEISHU_APP_ID"]
                     app_secret = env["FEISHU_APP_SECRET"]
@@ -630,10 +630,10 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
                     resp.raise_for_status()
                     data = resp.json()
                     if data.get("code", -1) != 0:
-                        raise Exception(data.get("msg", "飞书验证失败"))
+                        raise Exception(data.get("msg", "Feishu verification failed"))
                 elif ch["id"] == "wework":
-                    # 智能机器人模式不需要 secret/access_token，无法通过 API 验证
-                    # 只检查必填参数是否完整
+                    # Smart bot mode doesn't need secret/access_token and can't be verified via API.
+                    # Only check that required parameters are complete.
                     corp_id = env.get("WEWORK_CORP_ID", "").strip()
                     token = env.get("WEWORK_TOKEN", "").strip()
                     aes_key = env.get("WEWORK_ENCODING_AES_KEY", "").strip()
@@ -645,7 +645,7 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
                             missing.append("WEWORK_TOKEN")
                         if not aes_key:
                             missing.append("WEWORK_ENCODING_AES_KEY")
-                        raise Exception(f"缺少必填参数: {', '.join(missing)}")
+                        raise Exception(f"Missing required parameters: {', '.join(missing)}")
                 elif ch["id"] == "dingtalk":
                     client_id = env["DINGTALK_CLIENT_ID"]
                     client_secret = env["DINGTALK_CLIENT_SECRET"]
@@ -656,13 +656,13 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
                     resp.raise_for_status()
                     data = resp.json()
                     if not data.get("accessToken"):
-                        raise Exception(data.get("message", "钉钉验证失败"))
+                        raise Exception(data.get("message", "DingTalk verification failed"))
                 elif ch["id"] == "onebot":
                     ob_mode = env.get("ONEBOT_MODE", "reverse").strip().lower()
                     if ob_mode == "forward":
                         ws_url = env.get("ONEBOT_WS_URL", "")
                         if not ws_url.startswith(("ws://", "wss://")):
-                            raise Exception(f"无效的 WebSocket URL: {ws_url}")
+                            raise Exception(f"Invalid WebSocket URL: {ws_url}")
                         http_url = ws_url.replace("ws://", "http://").replace("wss://", "https://")
                         resp = await client.get(http_url, timeout=5)
                     else:
@@ -672,9 +672,9 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
                             if not (1 <= port <= 65535):
                                 raise ValueError
                         except (ValueError, TypeError):
-                            raise Exception(f"无效的端口: {port_str}")
+                            raise Exception(f"Invalid port: {port_str}")
                 elif ch["id"] == "qqbot":
-                    # QQ 官方机器人：验证 AppID/AppSecret 能获取 Access Token
+                    # QQ Official Bot: verify AppID/AppSecret by fetching an access token.
                     app_id = env["QQBOT_APP_ID"]
                     app_secret = env["QQBOT_APP_SECRET"]
                     resp = await client.post(
@@ -684,7 +684,7 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
                     resp.raise_for_status()
                     data = resp.json()
                     if not data.get("access_token"):
-                        raise Exception(data.get("message", "QQ 机器人验证失败"))
+                        raise Exception(data.get("message", "QQ bot verification failed"))
                 elif ch["id"] == "wework_ws":
                     bot_id = env.get("WEWORK_WS_BOT_ID", "").strip()
                     secret = env.get("WEWORK_WS_SECRET", "").strip()
@@ -694,11 +694,11 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
                             missing_ws.append("WEWORK_WS_BOT_ID")
                         if not secret:
                             missing_ws.append("WEWORK_WS_SECRET")
-                        raise Exception(f"缺少必填参数: {', '.join(missing_ws)}")
+                        raise Exception(f"Missing required parameters: {', '.join(missing_ws)}")
                 elif ch["id"] == "wechat":
                     token = env.get("WECHAT_TOKEN", "").strip()
                     if not token:
-                        raise Exception("缺少必填参数: WECHAT_TOKEN")
+                        raise Exception("Missing required parameter: WECHAT_TOKEN")
 
             results.append(
                 {
@@ -724,7 +724,7 @@ async def health_check_im(workspace_dir: str, channel: str | None) -> None:
 
 
 def ensure_channel_deps(workspace_dir: str) -> None:
-    """检查已启用 IM 通道的 Python 依赖，缺失的自动 pip install。"""
+    """Check Python dependencies for enabled IM channels and auto pip install any that are missing."""
     import importlib
     import subprocess
 
@@ -844,7 +844,7 @@ def ensure_channel_deps(workspace_dir: str) -> None:
                     missing.append(pip_name)
 
     if not missing:
-        _json_print({"status": "ok", "installed": [], "message": "所有依赖已就绪"})
+        _json_print({"status": "ok", "installed": [], "message": "All dependencies are ready"})
         return
 
     py = get_python_executable() or sys.executable
@@ -867,12 +867,12 @@ def ensure_channel_deps(workspace_dir: str) -> None:
                 "status": "error",
                 "installed": [],
                 "missing": missing,
-                "message": f"Python 运行时异常（无法导入 encodings/pip）: {probe}",
+                "message": f"Python runtime error (cannot import encodings/pip): {probe}",
             }
         )
         return
 
-    # 离线优先（若安装包内置了 wheels）
+    # Prefer offline install (when the installer ships bundled wheels)
     wheels_dir = _find_offline_wheels(py_path)
     if wheels_dir is not None:
         try:
@@ -906,14 +906,14 @@ def ensure_channel_deps(workspace_dir: str) -> None:
                     {
                         "status": "ok",
                         "installed": missing,
-                        "message": f"已安装(offline): {', '.join(missing)}",
+                        "message": f"Installed (offline): {', '.join(missing)}",
                     }
                 )
                 return
         except Exception:
             pass
 
-    # 在线镜像回退
+    # Online mirror fallback
     user_index = os.environ.get("PIP_INDEX_URL", "").strip()
     mirrors: list[tuple[str, str]] = []
     if user_index:
@@ -963,7 +963,7 @@ def ensure_channel_deps(workspace_dir: str) -> None:
                     {
                         "status": "ok",
                         "installed": missing,
-                        "message": f"已安装: {', '.join(missing)}",
+                        "message": f"Installed: {', '.join(missing)}",
                     }
                 )
                 return
@@ -976,13 +976,13 @@ def ensure_channel_deps(workspace_dir: str) -> None:
             "status": "error",
             "installed": [],
             "missing": missing,
-            "message": f"安装失败: {last_err}",
+            "message": f"Installation failed: {last_err}",
         }
     )
 
 
 async def feishu_onboard_start(domain: str) -> None:
-    """启动飞书 Device Flow：init 握手 + begin 获取 device_code 和 QR URL"""
+    """Start the Feishu Device Flow: init handshake + begin to get device_code and QR URL."""
     from openakita.setup.feishu_onboard import FeishuOnboard
 
     ob = FeishuOnboard(domain=domain)
@@ -998,7 +998,7 @@ async def feishu_onboard_start(domain: str) -> None:
 
 
 async def feishu_onboard_poll(domain: str, device_code: str) -> None:
-    """单次轮询 Device Flow 授权状态"""
+    """Poll the Device Flow authorization status once."""
     from openakita.setup.feishu_onboard import FeishuOnboard
 
     ob = FeishuOnboard(domain=domain)
@@ -1007,7 +1007,7 @@ async def feishu_onboard_poll(domain: str, device_code: str) -> None:
 
 
 async def feishu_validate(app_id: str, app_secret: str, domain: str) -> None:
-    """验证飞书凭证有效性"""
+    """Validate Feishu credentials."""
     from openakita.setup.feishu_onboard import validate_credentials
 
     result = await validate_credentials(app_id, app_secret, domain=domain)
@@ -1015,7 +1015,7 @@ async def feishu_validate(app_id: str, app_secret: str, domain: str) -> None:
 
 
 async def wecom_onboard_start() -> None:
-    """生成企微扫码配置二维码，返回 auth_url + scode"""
+    """Generate the WeCom QR onboarding code and return auth_url + scode."""
     from openakita.setup.wecom_onboard import WecomOnboard
 
     ob = WecomOnboard()
@@ -1028,7 +1028,7 @@ async def wecom_onboard_start() -> None:
 
 
 async def wecom_onboard_poll(scode: str) -> None:
-    """单次轮询企微扫码配置结果"""
+    """Poll the WeCom QR onboarding result once."""
     from openakita.setup.wecom_onboard import WecomOnboard
 
     ob = WecomOnboard()
@@ -1037,7 +1037,7 @@ async def wecom_onboard_poll(scode: str) -> None:
 
 
 async def qqbot_onboard_start() -> None:
-    """创建 QQ 登录会话，返回 session_id 和 QR URL"""
+    """Create a QQ login session and return session_id and QR URL."""
     from openakita.setup.qqbot_onboard import QQBotOnboard
 
     ob = QQBotOnboard()
@@ -1049,7 +1049,7 @@ async def qqbot_onboard_start() -> None:
 
 
 async def qqbot_onboard_poll(session_id: str) -> None:
-    """单次轮询 QQ 扫码登录状态"""
+    """Poll the QQ QR login status once."""
     from openakita.setup.qqbot_onboard import QQBotOnboard
 
     ob = QQBotOnboard()
@@ -1061,7 +1061,7 @@ async def qqbot_onboard_poll(session_id: str) -> None:
 
 
 async def qqbot_onboard_create() -> None:
-    """创建 QQ 机器人，返回 app_id / app_secret"""
+    """Create a QQ bot and return app_id / app_secret."""
     from openakita.setup.qqbot_onboard import QQBotOnboard
 
     ob = QQBotOnboard()
@@ -1073,7 +1073,7 @@ async def qqbot_onboard_create() -> None:
 
 
 async def qqbot_onboard_poll_and_create(session_id: str) -> None:
-    """原子操作：poll 确认登录态 + 创建机器人（同一 httpx 客户端保持 cookie）"""
+    """Atomic operation: poll to confirm login state and create the bot (reuses the same httpx client so cookies persist)."""
     from openakita.setup.qqbot_onboard import QQBotOnboard
 
     ob = QQBotOnboard()
@@ -1085,7 +1085,7 @@ async def qqbot_onboard_poll_and_create(session_id: str) -> None:
 
 
 async def qqbot_validate(app_id: str, app_secret: str) -> None:
-    """验证 QQ 机器人凭证有效性"""
+    """Validate QQ bot credentials."""
     from openakita.setup.qqbot_onboard import validate_credentials
 
     result = await validate_credentials(app_id, app_secret)
@@ -1093,7 +1093,7 @@ async def qqbot_validate(app_id: str, app_secret: str) -> None:
 
 
 async def wechat_onboard_start() -> None:
-    """获取微信 iLink Bot 登录二维码，返回 uuid 和 qrcode_url"""
+    """Fetch the WeChat iLink Bot login QR code and return uuid and qrcode_url."""
     from openakita.setup.wechat_onboard import WeChatOnboard
 
     ob = WeChatOnboard()
@@ -1105,7 +1105,7 @@ async def wechat_onboard_start() -> None:
 
 
 async def wechat_onboard_poll(qrcode: str) -> None:
-    """单次轮询微信扫码登录状态"""
+    """Poll the WeChat QR login status once."""
     from openakita.setup.wechat_onboard import WeChatOnboard
 
     ob = WeChatOnboard()
@@ -1121,12 +1121,12 @@ def list_skills(workspace_dir: str) -> None:
 
     wd = Path(workspace_dir).expanduser().resolve()
     if not wd.exists() or not wd.is_dir():
-        raise ValueError(f"--workspace-dir 不存在或不是目录: {workspace_dir}")
+        raise ValueError(f"--workspace-dir does not exist or is not a directory: {workspace_dir}")
 
-    # 外部技能启用状态（Setup Center 用于展示“可启用/禁用”的开关）
-    # 文件：<workspace>/data/skills.json
-    # - 不存在 / 无 external_allowlist => 外部技能全部启用（兼容历史行为）
-    # - external_allowlist: [] => 禁用所有外部技能
+    # External-skill enablement state (Setup Center uses this to render the "enable/disable" toggle).
+    # File: <workspace>/data/skills.json
+    # - Missing / no external_allowlist => all external skills enabled (legacy behavior)
+    # - external_allowlist: [] => all external skills disabled
     external_allowlist: set[str] | None = None
     try:
         cfg_path = wd / "data" / "skills.json"
@@ -1174,17 +1174,17 @@ def list_skills(workspace_dir: str) -> None:
 
 
 def _looks_like_github_shorthand(url: str) -> bool:
-    """判断 URL 是否为 GitHub 简写格式，如 'owner/repo' 或 'owner/repo@skill'。
+    """Return True if the URL is GitHub shorthand like 'owner/repo' or 'owner/repo@skill'.
 
-    排除本地路径（包含反斜杠、以 . 或 / 开头、包含盘符如 C:）。
+    Excludes local paths (containing backslashes, starting with '.' or '/', or a drive letter like C:).
     """
     if " " in url:
         return False
     if url.startswith((".", "/", "~")) or "\\" in url:
         return False
     if len(url) > 1 and url[1] == ":":
-        return False  # Windows 盘符路径，如 C:\\...
-    # 至少包含一个 / 分隔 owner/repo
+        return False  # Windows drive-letter path, e.g. C:\\...
+    # Must contain at least one '/' separating owner/repo.
     parts = url.split("@")[0] if "@" in url else url
     return "/" in parts and len(parts.split("/")) == 2
 
@@ -1199,10 +1199,11 @@ def _sanitize_skill_dir_name(name: str) -> str:
 
 
 def _resolve_skills_dir(workspace_dir: str) -> Path:
-    """计算技能安装目录。
+    """Compute the skill installation directory.
 
-    优先使用 Tauri 传入的 workspace_dir（支持多工作区），
-    若参数为空则使用 OPENAKITA_ROOT 环境变量确定根目录，最后回退到默认路径。
+    Prefer the workspace_dir passed in from Tauri (supports multiple workspaces);
+    if it's empty, use the OPENAKITA_ROOT environment variable to determine the root,
+    then finally fall back to a default path.
     """
     if workspace_dir and workspace_dir.strip():
         return Path(workspace_dir).expanduser().resolve() / "skills"
@@ -1215,7 +1216,7 @@ def _resolve_skills_dir(workspace_dir: str) -> Path:
 
 
 def _has_git() -> bool:
-    """检查系统是否安装了 git。"""
+    """Check whether git is installed on the system."""
     import shutil
 
     return shutil.which("git") is not None
@@ -1277,9 +1278,9 @@ def _try_platform_skill_download(skill_id: str, dest_dir: Path) -> bool:
 
 
 def _download_github_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> None:
-    """通过 GitHub Archive API 下载仓库 ZIP 并解压到 dest_dir（不依赖 git）。
+    """Download a repo ZIP via the GitHub Archive API and extract it to dest_dir (no git required).
 
-    自动尝试 main/master 分支，并在直连失败时回退到国内 CDN 镜像。
+    Automatically tries the main/master branches and falls back to domestic CDN mirrors if the direct connection fails.
     """
     import io
     import shutil
@@ -1305,7 +1306,7 @@ def _download_github_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> Non
 
     if data is None:
         raise RuntimeError(
-            f"无法下载仓库 {repo_owner}/{repo_name}，请检查网络或安装 Git。（最后错误: {last_err}）"
+            f"Unable to download repository {repo_owner}/{repo_name}. Check your network or install Git. (Last error: {last_err})"
         )
 
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
@@ -1336,7 +1337,7 @@ def _validate_zip_members(zf: zipfile.ZipFile) -> None:
 
 
 def _git_clone(args: list[str]) -> None:
-    """执行 git clone，git 不可用时抛出友好错误。"""
+    """Run git clone, raising a friendly error when git is not available."""
     import subprocess
 
     try:
@@ -1354,14 +1355,14 @@ def _git_clone(args: list[str]) -> None:
         )
     except FileNotFoundError:
         raise FileNotFoundError(
-            "未找到 git 命令。请安装 Git (https://git-scm.com) 或使用 GitHub 简写格式安装技能"
+            "git command not found. Install Git (https://git-scm.com) or use the GitHub shorthand format to install the skill."
         )
 
 
 def _parse_github_url(url: str) -> tuple[str, str, str | None] | None:
-    """从 HTTPS GitHub URL 中提取 (owner, repo, subdir)，非 GitHub URL 返回 None。
+    """Extract (owner, repo, subdir) from an HTTPS GitHub URL; return None for non-GitHub URLs.
 
-    委托给 skills.source_url 的统一解析器，保持 bridge 接口为 plain tuple。
+    Delegates to the unified parser in skills.source_url, keeping the bridge interface as a plain tuple.
     """
     from openakita.skills.source_url import parse_github_source
 
@@ -1372,7 +1373,7 @@ def _parse_github_url(url: str) -> tuple[str, str, str | None] | None:
 
 
 def _parse_gitee_url(url: str) -> tuple[str, str] | None:
-    """从 HTTPS Gitee URL 中提取 (owner, repo)，非 Gitee URL 返回 None。"""
+    """Extract (owner, repo) from an HTTPS Gitee URL; return None for non-Gitee URLs."""
     import re
 
     m = re.match(r"https?://gitee\.com/([^/]+)/([^/.]+)", url)
@@ -1382,7 +1383,7 @@ def _parse_gitee_url(url: str) -> tuple[str, str] | None:
 
 
 def _download_gitee_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> None:
-    """通过 Gitee Archive API 下载仓库 ZIP 并解压到 dest_dir（不依赖 git）。"""
+    """Download a repo ZIP via the Gitee Archive API and extract it to dest_dir (no git required)."""
     import io
     import shutil
     import tempfile
@@ -1405,7 +1406,7 @@ def _download_gitee_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> None
 
     if data is None:
         raise RuntimeError(
-            f"无法下载 Gitee 仓库 {repo_owner}/{repo_name}，请检查网络。（最后错误: {last_err}）"
+            f"Unable to download Gitee repository {repo_owner}/{repo_name}. Check your network. (Last error: {last_err})"
         )
 
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
@@ -1421,12 +1422,12 @@ def _download_gitee_zip(repo_owner: str, repo_name: str, dest_dir: Path) -> None
 
 
 def _is_valid_skill_dir(d: Path) -> bool:
-    """目录存在且包含 SKILL.md（排除残留空目录）。"""
+    """Return True if the directory exists and contains SKILL.md (excludes stale empty directories)."""
     return d.is_dir() and (d / "SKILL.md").exists()
 
 
 def _read_skill_source(d: Path) -> str:
-    """读取技能目录的安装来源标记。"""
+    """Read the install-source marker from a skill directory."""
     try:
         return (d / ".openakita-source").read_text(encoding="utf-8").strip()
     except Exception:
@@ -1434,19 +1435,19 @@ def _read_skill_source(d: Path) -> str:
 
 
 def _cleanup_broken_skill_dir(d: Path) -> None:
-    """清理残留的无效技能目录（无 SKILL.md）。清理失败则抛出异常。"""
+    """Clean up a stale invalid skill directory (no SKILL.md). Raises on failure."""
     import shutil
 
     shutil.rmtree(d)
 
 
 def _ensure_target_available(target: Path, url: str) -> None:
-    """确保安装目标目录可用：不存在、或是残留目录则清理。
+    """Ensure the install target directory is usable: not existing, or clean up if stale.
 
-    - 目录不存在 → 直接返回
-    - 目录存在但无 SKILL.md（残留） → 清理后返回
-    - 目录存在且有 SKILL.md + 相同来源 → raise "该技能已安装"
-    - 目录存在且有 SKILL.md + 不同来源 → raise "技能目录名称冲突"
+    - Directory doesn't exist → return immediately.
+    - Directory exists but has no SKILL.md (stale) → clean up and return.
+    - Directory exists with SKILL.md + same source → raise "skill already installed".
+    - Directory exists with SKILL.md + different source → raise "skill directory name conflict".
     """
     if not target.exists():
         return
@@ -1454,11 +1455,11 @@ def _ensure_target_available(target: Path, url: str) -> None:
         try:
             _cleanup_broken_skill_dir(target)
         except Exception:
-            raise ValueError(f"无法清理残留目录，请手动删除: {target}")
+            raise ValueError(f"Unable to clean up stale directory; please remove it manually: {target}")
         return
     if _read_skill_source(target) == url:
-        raise ValueError(f"该技能已安装: {target}")
-    raise ValueError(f"技能目录名称冲突: {target}")
+        raise ValueError(f"Skill already installed: {target}")
+    raise ValueError(f"Skill directory name conflict: {target}")
 
 
 _CMD_PREFIXES = re.compile(
@@ -1468,10 +1469,10 @@ _CMD_PREFIXES = re.compile(
 
 
 def install_skill(workspace_dir: str, url: str) -> None:
-    """安装技能（从 Git URL、GitHub 简写或本地目录）"""
+    """Install a skill from a Git URL, GitHub shorthand, or local directory."""
     url = _CMD_PREFIXES.sub("", url.strip()).strip()
     if not url:
-        raise ValueError("请输入有效的技能地址，如 owner/repo 或 Git URL")
+        raise ValueError("Please provide a valid skill address, e.g. owner/repo or a Git URL")
 
     skills_dir = _resolve_skills_dir(workspace_dir)
     skills_dir.mkdir(parents=True, exist_ok=True)
@@ -1480,7 +1481,7 @@ def install_skill(workspace_dir: str, url: str) -> None:
         # github:user/repo/path -> clone from GitHub
         parts = url.replace("github:", "").split("/")
         if len(parts) < 2:
-            raise ValueError(f"无效的 GitHub URL: {url}")
+            raise ValueError(f"Invalid GitHub URL: {url}")
         owner, repo = parts[0], parts[1]
         skill_name = parts[-1] if len(parts) > 2 else repo
         target = skills_dir / skill_name
@@ -1498,7 +1499,7 @@ def install_skill(workspace_dir: str, url: str) -> None:
         ge = _parse_gitee_url(url)
 
         if gh:
-            # GitHub URL（含 blob/tree）— 始终用规范化的仓库 URL 克隆
+            # GitHub URL (including blob/tree) — always clone using the canonical repo URL
             owner, repo, gh_subdir = gh
             skill_name = (gh_subdir or "").rsplit("/", 1)[-1] if gh_subdir else repo
             skill_name = _sanitize_skill_dir_name(skill_name)
@@ -1506,7 +1507,7 @@ def install_skill(workspace_dir: str, url: str) -> None:
             _ensure_target_available(target, url)
 
             if gh_subdir:
-                # 有子路径：克隆到临时目录，再提取子目录
+                # Has a subpath: clone to a temp directory, then extract the subdirectory.
                 import shutil
                 import tempfile
 
@@ -1520,7 +1521,7 @@ def install_skill(workspace_dir: str, url: str) -> None:
                         _download_github_zip(owner, repo, tmp_dir)
                     source_dir = tmp_dir / gh_subdir
                     if not source_dir.is_dir():
-                        raise ValueError(f"仓库 {owner}/{repo} 中未找到子目录: {gh_subdir}")
+                        raise ValueError(f"Subdirectory not found in repo {owner}/{repo}: {gh_subdir}")
                     shutil.copytree(str(source_dir), str(target))
                 finally:
                     shutil.rmtree(str(tmp_parent), ignore_errors=True)
@@ -1545,7 +1546,7 @@ def install_skill(workspace_dir: str, url: str) -> None:
             _git_clone(["git", "clone", "--depth", "1", url, str(target)])
 
     elif _looks_like_github_shorthand(url):
-        # GitHub 简写格式: "owner/repo@skill-name" 或 "owner/repo"
+        # GitHub shorthand format: "owner/repo@skill-name" or "owner/repo"
         import shutil
         import tempfile
 
@@ -1564,10 +1565,10 @@ def install_skill(workspace_dir: str, url: str) -> None:
 
         if target.exists():
             if _is_valid_skill_dir(target) and _read_skill_source(target) != url:
-                # 不同来源的同名技能，用 owner 前缀消歧
+                # Same skill name from a different source: disambiguate by prepending the owner.
                 skill_name = _sanitize_skill_dir_name(f"{owner}-{requested_skill}")
                 target = skills_dir / skill_name
-            # 无论原始目录还是消歧目录，统一检查
+            # Whether the original path or the disambiguated one, check uniformly below.
         _ensure_target_available(target, url)
 
         # Strategy 1: Try platform cache first
@@ -1591,7 +1592,7 @@ def install_skill(workspace_dir: str, url: str) -> None:
             else:
                 _download_github_zip(owner, repo, tmp_dir)
 
-            # 支持 skillId 为子路径（如 "skills/web-search"）
+            # Support a skillId that is a subpath (e.g. "skills/web-search")
             preferred_rel_paths: list[str] = []
             if requested_skill:
                 preferred_rel_paths.append(requested_skill)
@@ -1616,11 +1617,11 @@ def install_skill(workspace_dir: str, url: str) -> None:
                     source_dir = candidate
                     break
 
-            # 若未命中子目录，则按“整个仓库就是一个技能”处理
+            # If no subdirectory matched, treat the whole repo as a single skill.
             source_dir = source_dir or tmp_dir
             shutil.copytree(str(source_dir), str(target))
             if source_dir == tmp_dir:
-                # 清理克隆产生的 .git 目录
+                # Clean up the .git directory produced by cloning.
                 git_dir = target / ".git"
                 if git_dir.exists():
                     shutil.rmtree(str(git_dir), ignore_errors=True)
@@ -1630,9 +1631,9 @@ def install_skill(workspace_dir: str, url: str) -> None:
         # Local path — copy into workspace skills directory
         src = Path(url).expanduser().resolve()
         if not src.exists():
-            raise ValueError(f"源路径不存在: {url}")
+            raise ValueError(f"Source path does not exist: {url}")
         if not src.is_dir():
-            raise ValueError(f"源路径不是目录: {url}")
+            raise ValueError(f"Source path is not a directory: {url}")
         import shutil
 
         target = skills_dir / src.name
@@ -1650,76 +1651,76 @@ def install_skill(workspace_dir: str, url: str) -> None:
 
 
 def uninstall_skill(workspace_dir: str, skill_name: str) -> None:
-    """卸载技能"""
+    """Uninstall a skill."""
     import shutil
 
     skills_dir = _resolve_skills_dir(workspace_dir)
     target = (skills_dir / skill_name).resolve()
 
     if not target.exists():
-        raise ValueError(f"技能不存在: {skill_name}")
+        raise ValueError(f"Skill not found: {skill_name}")
 
-    # 防止路径穿越：确保解析后的路径仍在 skills_dir 下
-    # 使用 relative_to 而不是 str.startswith（避免前缀碰撞，如 skills_evil/）
+    # Prevent path traversal: make sure the resolved path is still inside skills_dir.
+    # Use relative_to instead of str.startswith to avoid prefix collisions (e.g. skills_evil/).
     try:
         target.relative_to(skills_dir.resolve())
     except ValueError:
-        raise ValueError(f"不允许删除非工作区技能: {target}")
+        raise ValueError(f"Refusing to delete a skill outside the workspace: {target}")
 
-    # 检查是否为系统技能（SKILL.md 中 system: true）
+    # Check whether it's a system skill (SKILL.md contains system: true).
     skill_md = target / "SKILL.md"
     if skill_md.exists():
         content = skill_md.read_bytes().decode("utf-8", errors="replace")
         if "system: true" in content.lower()[:500]:
-            raise ValueError(f"不允许删除系统技能: {skill_name}")
+            raise ValueError(f"Refusing to delete a system skill: {skill_name}")
 
     shutil.rmtree(str(target))
     _json_print({"status": "ok", "removed": skill_name})
 
 
 def list_marketplace() -> None:
-    """列出市场可用技能（从注册表或 GitHub）"""
-    # TODO: 从真实的注册表 API 获取
-    # 暂返回硬编码的示例列表
+    """List skills available in the marketplace (from the registry or GitHub)."""
+    # TODO: fetch from the real registry API.
+    # For now, return a hard-coded sample list.
     marketplace = [
         {
             "name": "web-search",
-            "description": "使用 Serper/Google 进行网络搜索",
+            "description": "Web search via Serper/Google",
             "author": "openakita",
             "url": "github:openakita/skills/web-search",
             "stars": 42,
-            "tags": ["搜索", "网络"],
+            "tags": ["search", "web"],
         },
         {
             "name": "code-interpreter",
-            "description": "Python 代码解释器，支持数据分析和可视化",
+            "description": "Python code interpreter with data analysis and visualization support",
             "author": "openakita",
             "url": "github:openakita/skills/code-interpreter",
             "stars": 38,
-            "tags": ["代码", "数据分析"],
+            "tags": ["code", "data-analysis"],
         },
         {
             "name": "browser-use",
-            "description": "浏览器自动化，支持网页操作和数据抓取",
+            "description": "Browser automation for web interaction and data scraping",
             "author": "openakita",
             "url": "github:openakita/skills/browser-use",
             "stars": 25,
-            "tags": ["浏览器", "自动化"],
+            "tags": ["browser", "automation"],
         },
         {
             "name": "image-gen",
-            "description": "AI 图片生成，支持 DALL-E / Stable Diffusion",
+            "description": "AI image generation with DALL-E / Stable Diffusion support",
             "author": "openakita",
             "url": "github:openakita/skills/image-gen",
             "stars": 19,
-            "tags": ["图片", "生成"],
+            "tags": ["image", "generation"],
         },
     ]
     _json_print(marketplace)
 
 
 def get_skill_config(workspace_dir: str, skill_name: str) -> None:
-    """获取技能的配置 schema"""
+    """Get the configuration schema for a skill."""
     from openakita.skills.loader import SkillLoader
 
     wd = Path(workspace_dir).expanduser().resolve()
@@ -1728,7 +1729,7 @@ def get_skill_config(workspace_dir: str, skill_name: str) -> None:
 
     entry = loader.registry.get(skill_name)
     if entry is None:
-        raise ValueError(f"技能未找到: {skill_name}")
+        raise ValueError(f"Skill not found: {skill_name}")
 
     _json_print(
         {
@@ -1744,78 +1745,78 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="openakita.setup_center.bridge")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("list-providers", help="列出服务商（JSON）")
+    sub.add_parser("list-providers", help="List LLM providers (JSON)")
 
-    pm = sub.add_parser("list-models", help="拉取模型列表（JSON）")
+    pm = sub.add_parser("list-models", help="Fetch the model list (JSON)")
     pm.add_argument("--api-type", required=True, help="openai | anthropic")
-    pm.add_argument("--base-url", required=True, help="API Base URL（openai 通常是 .../v1）")
-    pm.add_argument("--provider-slug", default="", help="可选：用于能力推断与注册表命中")
+    pm.add_argument("--base-url", required=True, help="API Base URL (for openai, usually ends with /v1)")
+    pm.add_argument("--provider-slug", default="", help="Optional: used for capability inference and registry matching")
 
-    ps = sub.add_parser("list-skills", help="列出技能（JSON）")
+    ps = sub.add_parser("list-skills", help="List skills (JSON)")
     ps.add_argument(
-        "--workspace-dir", required=True, help="工作区目录（用于扫描 skills/.cursor/skills 等）"
+        "--workspace-dir", required=True, help="Workspace directory (used to scan skills/.cursor/skills, etc.)"
     )
 
-    ph = sub.add_parser("health-check-endpoint", help="检测 LLM 端点健康度（JSON）")
-    ph.add_argument("--workspace-dir", required=True, help="工作区目录")
-    ph.add_argument("--endpoint-name", default="", help="可选：仅检测指定端点（为空=全部）")
+    ph = sub.add_parser("health-check-endpoint", help="Check LLM endpoint health (JSON)")
+    ph.add_argument("--workspace-dir", required=True, help="Workspace directory")
+    ph.add_argument("--endpoint-name", default="", help="Optional: only check the given endpoint (empty = all)")
 
-    pi = sub.add_parser("health-check-im", help="检测 IM 通道连通性（JSON）")
-    pi.add_argument("--workspace-dir", required=True, help="工作区目录")
-    pi.add_argument("--channel", default="", help="可选：仅检测指定通道 ID（为空=全部）")
+    pi = sub.add_parser("health-check-im", help="Check IM channel connectivity (JSON)")
+    pi.add_argument("--workspace-dir", required=True, help="Workspace directory")
+    pi.add_argument("--channel", default="", help="Optional: only check the given channel id (empty = all)")
 
-    p_ecd = sub.add_parser("ensure-channel-deps", help="检查并自动安装已启用 IM 通道的依赖（JSON）")
-    p_ecd.add_argument("--workspace-dir", required=True, help="工作区目录")
+    p_ecd = sub.add_parser("ensure-channel-deps", help="Check and auto-install dependencies for enabled IM channels (JSON)")
+    p_ecd.add_argument("--workspace-dir", required=True, help="Workspace directory")
 
-    p_inst = sub.add_parser("install-skill", help="安装技能（从 URL/路径）")
-    p_inst.add_argument("--workspace-dir", required=True, help="工作区目录")
-    p_inst.add_argument("--url", required=True, help="技能来源 URL 或路径")
+    p_inst = sub.add_parser("install-skill", help="Install a skill (from URL or path)")
+    p_inst.add_argument("--workspace-dir", required=True, help="Workspace directory")
+    p_inst.add_argument("--url", required=True, help="Skill source URL or path")
 
-    p_uninst = sub.add_parser("uninstall-skill", help="卸载技能")
-    p_uninst.add_argument("--workspace-dir", required=True, help="工作区目录")
-    p_uninst.add_argument("--skill-name", required=True, help="技能名称")
+    p_uninst = sub.add_parser("uninstall-skill", help="Uninstall a skill")
+    p_uninst.add_argument("--workspace-dir", required=True, help="Workspace directory")
+    p_uninst.add_argument("--skill-name", required=True, help="Skill name")
 
-    sub.add_parser("list-marketplace", help="列出市场可用技能（JSON）")
+    sub.add_parser("list-marketplace", help="List marketplace skills (JSON)")
 
-    p_cfg = sub.add_parser("get-skill-config", help="获取技能配置 schema（JSON）")
-    p_cfg.add_argument("--workspace-dir", required=True, help="工作区目录")
-    p_cfg.add_argument("--skill-name", required=True, help="技能名称")
+    p_cfg = sub.add_parser("get-skill-config", help="Get the skill configuration schema (JSON)")
+    p_cfg.add_argument("--workspace-dir", required=True, help="Workspace directory")
+    p_cfg.add_argument("--skill-name", required=True, help="Skill name")
 
-    p_fos = sub.add_parser("feishu-onboard-start", help="启动飞书 Device Flow 扫码建应用（JSON）")
+    p_fos = sub.add_parser("feishu-onboard-start", help="Start the Feishu Device Flow QR onboarding (JSON)")
     p_fos.add_argument("--domain", default="feishu", help="feishu | lark")
 
-    p_fop = sub.add_parser("feishu-onboard-poll", help="轮询飞书 Device Flow 授权状态（JSON）")
+    p_fop = sub.add_parser("feishu-onboard-poll", help="Poll the Feishu Device Flow authorization status (JSON)")
     p_fop.add_argument("--domain", default="feishu", help="feishu | lark")
-    p_fop.add_argument("--device-code", required=True, help="init 返回的 device_code")
+    p_fop.add_argument("--device-code", required=True, help="The device_code returned by init")
 
-    p_fv = sub.add_parser("feishu-validate", help="验证飞书凭证有效性（JSON）")
-    p_fv.add_argument("--app-id", required=True, help="飞书 App ID")
-    p_fv.add_argument("--app-secret", required=True, help="飞书 App Secret")
+    p_fv = sub.add_parser("feishu-validate", help="Validate Feishu credentials (JSON)")
+    p_fv.add_argument("--app-id", required=True, help="Feishu App ID")
+    p_fv.add_argument("--app-secret", required=True, help="Feishu App Secret")
     p_fv.add_argument("--domain", default="feishu", help="feishu | lark")
 
-    sub.add_parser("wecom-onboard-start", help="生成企微扫码配置二维码（JSON）")
+    sub.add_parser("wecom-onboard-start", help="Generate the WeCom QR onboarding code (JSON)")
 
-    p_wop = sub.add_parser("wecom-onboard-poll", help="轮询企微扫码配置结果（JSON）")
-    p_wop.add_argument("--scode", required=True, help="generate 返回的 scode")
+    p_wop = sub.add_parser("wecom-onboard-poll", help="Poll the WeCom QR onboarding result (JSON)")
+    p_wop.add_argument("--scode", required=True, help="The scode returned by generate")
 
-    sub.add_parser("qqbot-onboard-start", help="创建 QQ 登录会话（JSON）")
+    sub.add_parser("qqbot-onboard-start", help="Create a QQ login session (JSON)")
 
-    p_qop = sub.add_parser("qqbot-onboard-poll", help="轮询 QQ 扫码登录状态（JSON）")
-    p_qop.add_argument("--session-id", required=True, help="create_session 返回的 session_id")
+    p_qop = sub.add_parser("qqbot-onboard-poll", help="Poll the QQ QR login status (JSON)")
+    p_qop.add_argument("--session-id", required=True, help="The session_id returned by create_session")
 
-    sub.add_parser("qqbot-onboard-create", help="创建 QQ 机器人（JSON）")
+    sub.add_parser("qqbot-onboard-create", help="Create a QQ bot (JSON)")
 
-    p_qpc = sub.add_parser("qqbot-onboard-poll-and-create", help="原子 poll+create（JSON）")
-    p_qpc.add_argument("--session-id", required=True, help="create_session 返回的 session_id")
+    p_qpc = sub.add_parser("qqbot-onboard-poll-and-create", help="Atomic poll+create (JSON)")
+    p_qpc.add_argument("--session-id", required=True, help="The session_id returned by create_session")
 
-    p_qv = sub.add_parser("qqbot-validate", help="验证 QQ 机器人凭证有效性（JSON）")
-    p_qv.add_argument("--app-id", required=True, help="QQ 机器人 App ID")
-    p_qv.add_argument("--app-secret", required=True, help="QQ 机器人 App Secret")
+    p_qv = sub.add_parser("qqbot-validate", help="Validate QQ bot credentials (JSON)")
+    p_qv.add_argument("--app-id", required=True, help="QQ bot App ID")
+    p_qv.add_argument("--app-secret", required=True, help="QQ bot App Secret")
 
-    sub.add_parser("wechat-onboard-start", help="获取微信登录二维码（JSON）")
+    sub.add_parser("wechat-onboard-start", help="Fetch the WeChat login QR code (JSON)")
 
-    p_wcp = sub.add_parser("wechat-onboard-poll", help="轮询微信扫码登录状态（JSON）")
-    p_wcp.add_argument("--qrcode", required=True, help="get_bot_qrcode 返回的 qrcode")
+    p_wcp = sub.add_parser("wechat-onboard-poll", help="Poll the WeChat QR login status (JSON)")
+    p_wcp.add_argument("--qrcode", required=True, help="The qrcode returned by get_bot_qrcode")
 
     args = p.parse_args(argv)
 

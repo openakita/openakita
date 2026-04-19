@@ -1,16 +1,16 @@
 """
-记忆类型定义
+Memory type definitions
 
-参考:
+References:
 - Mem0: https://docs.mem0.ai/v0x/core-concepts/memory-types
 - LangMem: https://langchain-ai.github.io/langmem/
 - Memori: https://memorilabs.ai/docs/core-concepts/agents/
 
-v2 新增:
-- SemanticMemory: 实体-属性结构, 支持更新链
-- Episode: 情节记忆, 保留完整交互故事
-- ActionNode: 工具调用链节点
-- Scratchpad: 跨 session 工作记忆草稿本
+v2 additions:
+- SemanticMemory: Entity-attribute structure, supports update chains
+- Episode: Episodic memory, preserves complete interaction stories
+- ActionNode: Tool call chain nodes
+- Scratchpad: Cross-session working memory notepad
 """
 
 from __future__ import annotations
@@ -40,20 +40,20 @@ _normalize_tags = normalize_tags
 
 
 class MemoryType(Enum):
-    """记忆类型"""
+    """Memory type"""
 
     FACT = "fact"
     PREFERENCE = "preference"
     SKILL = "skill"
-    CONTEXT = "context"  # 保留向后兼容, 新系统中转为情节记忆
+    CONTEXT = "context"  # Kept for backward compatibility, converted to episodic memory in new systems
     RULE = "rule"
     ERROR = "error"
     PERSONA_TRAIT = "persona_trait"
-    EXPERIENCE = "experience"  # 任务经验教训（可复用的流程/方法/踩坑总结）
+    EXPERIENCE = "experience"  # Task lessons learned (reusable processes/methods/pitfall summaries)
 
 
 class MemoryPriority(Enum):
-    """记忆优先级 (决定保留时长)"""
+    """Memory priority (determines retention duration)"""
 
     TRANSIENT = "transient"
     SHORT_TERM = "short_term"
@@ -62,11 +62,11 @@ class MemoryPriority(Enum):
 
 
 class MemoryScope(StrEnum):
-    """记忆作用域"""
+    """Memory scope"""
 
-    GLOBAL = "global"  # 全局共享（当前行为）
-    AGENT = "agent"  # Agent 私有
-    SESSION = "session"  # 会话私有
+    GLOBAL = "global"  # Globally shared (current behavior)
+    AGENT = "agent"  # Agent-private
+    SESSION = "session"  # Session-private
 
 
 def _short_uuid() -> str:
@@ -74,23 +74,23 @@ def _short_uuid() -> str:
 
 
 # ---------------------------------------------------------------------------
-# MEMORY.md 大小管理
+# MEMORY.md size management
 # ---------------------------------------------------------------------------
 
 MEMORY_MD_MAX_CHARS = 1500
-"""MEMORY.md 统一大小上限（字符），写入端和读取端共用。"""
+"""MEMORY.md unified size limit (characters), shared by write and read endpoints."""
 
-_RULE_SECTION_KEYWORDS = frozenset({"重要规则", "规则", "rules", "行为规则", "用户规则"})
+_RULE_SECTION_KEYWORDS = frozenset({"important rules", "rules", "rules", "behavior rules", "user rules"})
 
 
 def truncate_memory_md(content: str, max_chars: int = MEMORY_MD_MAX_CHARS) -> str:
-    """按段落优先级截断 MEMORY.md 内容。
+    """Truncate MEMORY.md content by section priority.
 
-    策略：
-    1. 按 ``## `` 拆分段落
-    2. 将段落分为高优先级（规则类）和普通优先级
-    3. 先填充高优先级段落（规则），再填充普通段落
-    4. 超出预算时截断普通段落，规则段落尽量保留
+    Strategy:
+    1. Split sections by ``## ``
+    2. Categorize sections as high-priority (rules) and normal-priority
+    3. Fill high-priority sections (rules) first, then normal sections
+    4. When over budget, truncate normal sections while preserving rule sections
     """
     content = content.strip()
     if not content or len(content) <= max_chars:
@@ -129,7 +129,7 @@ def truncate_memory_md(content: str, max_chars: int = MEMORY_MD_MAX_CHARS) -> st
         else:
             remaining = max_chars - current_len - 20
             if remaining > 50:
-                result_parts.append(section[:remaining] + "\n...(规则被截断)")
+                result_parts.append(section[:remaining] + "\n...(rules truncated)")
             break
 
     for section in normal_priority:
@@ -141,13 +141,13 @@ def truncate_memory_md(content: str, max_chars: int = MEMORY_MD_MAX_CHARS) -> st
 
 
 # ---------------------------------------------------------------------------
-# SemanticMemory (v2, 取代旧 Memory)
+# SemanticMemory (v2, replaces old Memory)
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class SemanticMemory:
-    """语义记忆 — 实体-属性结构, 支持更新链"""
+    """Semantic memory — Entity-attribute structure, supports update chains"""
 
     id: str = field(default_factory=_short_uuid)
     type: MemoryType = MemoryType.FACT
@@ -155,7 +155,7 @@ class SemanticMemory:
     content: str = ""
     source: str = ""
 
-    # v2: 实体-属性结构
+    # v2: Entity-attribute structure
     subject: str = ""
     predicate: str = ""
 
@@ -165,20 +165,20 @@ class SemanticMemory:
     access_count: int = 0
     importance_score: float = 0.5
 
-    # v2: 置信度与衰减
+    # v2: Confidence and decay
     confidence: float = 0.5
     decay_rate: float = 0.1
     last_accessed_at: datetime | None = None
 
-    # v2: 更新链与溯源
+    # v2: Update chain and provenance
     superseded_by: str | None = None
     source_episode_id: str | None = None
 
-    # v3: 记忆分层
+    # v3: Memory hierarchy
     scope: str = "global"  # MemoryScope value
     scope_owner: str = ""  # agent_profile_id or session_id
 
-    # v4: 多 Agent 记忆隔离
+    # v4: Multi-agent memory isolation
     agent_id: str = ""
 
     # v2: retention / TTL
@@ -252,18 +252,18 @@ class SemanticMemory:
         return f"- {prefix}{subj} {self.content}" + (f" (tags: {tags_str})" if tags_str else "")
 
 
-# 向后兼容别名
+# Backward compatibility alias
 Memory = SemanticMemory
 
 
 # ---------------------------------------------------------------------------
-# Episode (v2, 情节记忆)
+# Episode (v2, Episodic memory)
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class ActionNode:
-    """情节中的单个动作节点 — 一次工具调用"""
+    """Single action node in an episode — one tool invocation"""
 
     tool_name: str = ""
     key_params: dict = field(default_factory=dict)
@@ -301,7 +301,7 @@ class ActionNode:
 
 @dataclass
 class Episode:
-    """情节记忆 — 完整的交互故事"""
+    """Episodic memory — Complete interaction story"""
 
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str = ""
@@ -370,27 +370,27 @@ class Episode:
 
     def to_markdown(self) -> str:
         lines = [
-            f"### 历史操作记录: {self.goal or self.summary[:50]}",
-            f"- 结果: {self.outcome}",
-            f"- 时间: {self.started_at.strftime('%Y-%m-%d %H:%M')} - {self.ended_at.strftime('%H:%M')}",
+            f"### Historical action log: {self.goal or self.summary[:50]}",
+            f"- Outcome: {self.outcome}",
+            f"- Time: {self.started_at.strftime('%Y-%m-%d %H:%M')} - {self.ended_at.strftime('%H:%M')}",
         ]
         if self.summary:
-            lines.append(f"- 摘要: {self.summary}")
+            lines.append(f"- Summary: {self.summary}")
         if self.tools_used:
-            lines.append(f"- 使用工具: {', '.join(self.tools_used)}")
+            lines.append(f"- Tools used: {', '.join(self.tools_used)}")
         if self.entities:
-            lines.append(f"- 相关实体: {', '.join(self.entities[:5])}")
+            lines.append(f"- Related entities: {', '.join(self.entities[:5])}")
         return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
-# Scratchpad (v2, 工作记忆草稿本)
+# Scratchpad (v2, Working memory notepad)
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class Scratchpad:
-    """跨 session 持久化的工作记忆草稿本"""
+    """Cross-session persistent working memory notepad"""
 
     user_id: str = "default"
     content: str = ""
@@ -429,32 +429,32 @@ class Scratchpad:
         """Render scratchpad as markdown for system prompt injection."""
         lines: list[str] = []
         if self.current_focus:
-            lines.append(f"## 当前任务\n{self.current_focus}")
+            lines.append(f"## Current Task\n{self.current_focus}")
         if self.active_projects:
-            lines.append("## 近期完成\n" + "\n".join(f"- {p}" for p in self.active_projects[:5]))
+            lines.append("## Recently Completed\n" + "\n".join(f"- {p}" for p in self.active_projects[:5]))
         return "\n\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
-# Attachment (v2, 文件/媒体记忆)
+# Attachment (v2, File/media memory)
 # ---------------------------------------------------------------------------
 
 
 class AttachmentDirection(Enum):
-    """附件方向"""
+    """Attachment direction"""
 
-    INBOUND = "inbound"  # 用户发送给 agent
-    OUTBOUND = "outbound"  # agent 生成/发送给用户
+    INBOUND = "inbound"  # User sent to agent
+    OUTBOUND = "outbound"  # Agent generated/sent to user
 
 
 @dataclass
 class Attachment:
-    """文件/媒体附件记忆 — 追踪用户发送和 agent 生成的文件
+    """File/media attachment memory — Tracks files sent by users and generated by agents
 
-    场景:
-    - 用户发了一张猫的图片 → direction=inbound, description="一只橘猫..."
-    - agent 生成了一份报告 → direction=outbound, description="用户要求的销售报告"
-    - 用户发了一段语音 → direction=inbound, transcription="明天帮我..."
+    Scenarios:
+    - User sent a cat image → direction=inbound, description="An orange cat..."
+    - Agent generated a report → direction=outbound, description="Sales report requested by user"
+    - User sent audio → direction=inbound, transcription="Please help me tomorrow..."
     """
 
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:12])
@@ -466,19 +466,19 @@ class Attachment:
     mime_type: str = ""
     file_size: int = 0
 
-    # 存储位置 (至少一个非空)
-    local_path: str = ""  # 本地磁盘路径
-    url: str = ""  # 远程 URL (IM 平台等)
+    # Storage location (at least one non-empty)
+    local_path: str = ""  # Local disk path
+    url: str = ""  # Remote URL (IM platform, etc.)
 
     direction: AttachmentDirection = AttachmentDirection.INBOUND
 
-    # 内容理解 — 由 LLM / OCR / STT 生成
-    description: str = ""  # 图片/视频/文件的自然语言描述
-    transcription: str = ""  # 语音/视频转写文本
-    extracted_text: str = ""  # 从文档提取的文本摘要
+    # Content understanding — Generated by LLM / OCR / STT
+    description: str = ""  # Natural language description of image/video/file
+    transcription: str = ""  # Speech/video transcription text
+    extracted_text: str = ""  # Text summary extracted from document
     tags: list[str] = field(default_factory=list)
 
-    # 关联
+    # Association
     linked_memory_ids: list[str] = field(default_factory=list)
 
     created_at: datetime = field(default_factory=datetime.now)
@@ -533,7 +533,7 @@ class Attachment:
 
     @property
     def searchable_text(self) -> str:
-        """合并所有可搜索文本字段"""
+        """Merge all searchable text fields"""
         parts = [
             self.description,
             self.transcription,
@@ -568,13 +568,13 @@ class Attachment:
 
 
 # ---------------------------------------------------------------------------
-# 保留旧类型 (向后兼容)
+# Retained old types (backward compatibility)
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class ConversationTurn:
-    """对话轮次"""
+    """Conversation turn"""
 
     role: str  # user/assistant
     content: str
@@ -594,7 +594,7 @@ class ConversationTurn:
 
 @dataclass
 class SessionSummary:
-    """会话摘要"""
+    """Session summary"""
 
     session_id: str
     start_time: datetime
@@ -622,16 +622,16 @@ class SessionSummary:
     def to_markdown(self) -> str:
         lines = [
             f"### Session: {self.session_id}",
-            f"- 时间: {self.start_time.strftime('%Y-%m-%d %H:%M')} - {self.end_time.strftime('%H:%M')}",
-            f"- 任务: {self.task_description}",
-            f"- 结果: {self.outcome}",
+            f"- Time: {self.start_time.strftime('%Y-%m-%d %H:%M')} - {self.end_time.strftime('%H:%M')}",
+            f"- Task: {self.task_description}",
+            f"- Outcome: {self.outcome}",
         ]
         if self.key_actions:
-            lines.append("- 关键操作:")
+            lines.append("- Key actions:")
             for action in self.key_actions[:5]:
                 lines.append(f"  - {action}")
         if self.learnings:
-            lines.append("- 学习:")
+            lines.append("- Learnings:")
             for learning in self.learnings[:3]:
                 lines.append(f"  - {learning}")
         return "\n".join(lines)

@@ -1,8 +1,9 @@
 """
-统一 Slash 命令注册表
+Unified Slash Command Registry
 
-跨 CLI 和 IM Gateway 的命令定义，确保两端命令行为一致。
-每个命令声明适用范围（cli/im/both）和所需权限级别。
+Command definitions shared across CLI and IM Gateway, ensuring consistent
+behavior on both sides. Each command declares its applicable scope
+(cli/im/both) and required permission level.
 """
 
 from __future__ import annotations
@@ -39,68 +40,68 @@ COMMAND_REGISTRY: list[SlashCommand] = [
     SlashCommand(
         name="/help",
         aliases=["/帮助"],
-        description="查看所有可用指令",
+        description="Show all available commands",
         category="general",
     ),
     SlashCommand(
         name="/new",
         aliases=["/新话题", "/reset"],
-        description="开启新话题，清除对话上下文",
+        description="Start a new topic, clear conversation context",
         category="conversation",
     ),
     SlashCommand(
         name="/model",
         aliases=[],
-        description="查看当前模型和可用列表",
+        description="Show current model and available models",
         category="model",
     ),
     SlashCommand(
         name="/switch",
         aliases=[],
-        description="临时切换模型",
+        description="Temporarily switch model",
         category="model",
     ),
     SlashCommand(
         name="/restore",
         aliases=[],
-        description="恢复默认模型",
+        description="Restore default model",
         category="model",
     ),
     SlashCommand(
         name="/thinking",
         aliases=[],
-        description="切换思考模式 [on|off|auto]",
+        description="Toggle thinking mode [on|off|auto]",
         category="thinking",
     ),
     SlashCommand(
         name="/thinking_depth",
         aliases=[],
-        description="设置思考深度 [low|medium|high]",
+        description="Set thinking depth [low|medium|high]",
         category="thinking",
     ),
     SlashCommand(
         name="/chain",
         aliases=[],
-        description="思维链进度推送开关 [on|off]",
+        description="Chain-of-thought progress push toggle [on|off]",
         category="thinking",
     ),
     SlashCommand(
         name="/mode",
         aliases=["/模式"],
-        description="查看当前多Agent模式说明",
+        description="Show current multi-agent mode description",
         category="agent",
         scope=CommandScope.IM,
     ),
     SlashCommand(
         name="/persona",
         aliases=["/人格"],
-        description="切换人格预设",
+        description="Switch persona preset",
         category="persona",
     ),
     SlashCommand(
         name="/pair",
         aliases=[],
-        description="DM 配对授权管理",
+        description="DM pairing authorization management",
         category="security",
         scope=CommandScope.IM,
         admin_only=True,
@@ -108,21 +109,21 @@ COMMAND_REGISTRY: list[SlashCommand] = [
     SlashCommand(
         name="/background",
         aliases=["/bg"],
-        description="在后台执行任务（不阻塞当前对话）",
+        description="Run a task in the background (without blocking current conversation)",
         category="task",
         scope=CommandScope.IM,
     ),
     SlashCommand(
         name="/restart",
         aliases=[],
-        description="重启 Agent 服务",
+        description="Restart the agent service",
         category="system",
         admin_only=True,
     ),
     SlashCommand(
         name="/feishu",
         aliases=[],
-        description="飞书适配器管理",
+        description="Feishu adapter management",
         category="adapter",
         scope=CommandScope.IM,
     ),
@@ -158,19 +159,19 @@ def format_help(scope: str = "im") -> str:
         categories.setdefault(cmd.category, []).append(cmd)
 
     category_labels = {
-        "general": "通用",
-        "conversation": "对话管理",
-        "model": "模型管理",
-        "thinking": "思考模式",
-        "agent": "多Agent",
-        "persona": "人格",
-        "security": "安全",
-        "task": "任务",
-        "system": "系统",
-        "adapter": "适配器",
+        "general": "General",
+        "conversation": "Conversation",
+        "model": "Model Management",
+        "thinking": "Thinking Mode",
+        "agent": "Multi-Agent",
+        "persona": "Persona",
+        "security": "Security",
+        "task": "Tasks",
+        "system": "System",
+        "adapter": "Adapters",
     }
 
-    lines = ["**可用指令:**\n"]
+    lines = ["**Available Commands:**\n"]
     for cat, cmds in categories.items():
         label = category_labels.get(cat, cat)
         lines.append(f"**{label}:**")

@@ -1,12 +1,13 @@
 """
-表情包引擎 (Sticker Engine)
+Sticker Engine
 
-基于 ChineseBQB 开源表情包库，提供关键词搜索、情绪映射、本地缓存和发送功能。
+Based on the ChineseBQB open-source sticker library, provides keyword search,
+mood mapping, local caching, and sending functionality.
 
-数据源: https://github.com/zhaoolee/ChineseBQB
-JSON 索引: https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/chinesebqb_github.json
+Data source: https://github.com/zhaoolee/ChineseBQB
+JSON index: https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/chinesebqb_github.json
 
-发送链路: search -> download_and_cache -> deliver_artifacts(type="image")
+Send pipeline: search -> download_and_cache -> deliver_artifacts(type="image")
 """
 
 import hashlib
@@ -18,7 +19,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# ── 情绪-关键词映射 ───────────────────────────────────────────────
+# ── Mood-keyword mapping ───────────────────────────────────────────────
 
 MOOD_KEYWORDS = {
     "happy": ["开心", "高兴", "哈哈", "笑", "鼓掌", "庆祝", "耶", "棒"],
@@ -33,15 +34,15 @@ MOOD_KEYWORDS = {
 
 
 class StickerEngine:
-    """表情包引擎"""
+    """Sticker Engine"""
 
     INDEX_URL = (
         "https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/chinesebqb_github.json"
     )
     _GITHUB_RAW_PREFIX = "https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/"
 
-    # 内置镜像列表：GitHub 代理（国内友好）+ CDN 镜像
-    # 每个条目 + 相对路径即可得到完整 URL（代理条目中已包含原始前缀）
+    # Built-in mirror list: GitHub proxies (China-friendly) + CDN mirrors
+    # Each entry + relative path yields the full URL (proxy entries already include the original prefix)
     _BUILTIN_MIRRORS: list[str] = [
         "https://ghp.ci/https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/",
         "https://gh-proxy.com/https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/",
@@ -58,7 +59,7 @@ class StickerEngine:
         self._category_index: dict[str, list[int]] = {}  # category -> [sticker indices]
         self._initialized = False
 
-        # 用户配置的镜像优先，然后是内置镜像（去重保序）
+        # User-configured mirrors first, then built-in mirrors (deduplicated, order-preserving)
         seen: set[str] = set()
         self._mirrors: list[str] = []
         for m in list(mirrors or []) + self._BUILTIN_MIRRORS:
@@ -68,9 +69,9 @@ class StickerEngine:
 
     async def initialize(self) -> bool:
         """
-        初始化：加载索引 + 构建关键词映射
+        Initialize: load index + build keyword mapping.
 
-        如果本地索引不存在，则尝试下载。
+        Downloads the index if no local copy exists.
         """
         if self._initialized:
             return True
@@ -78,7 +79,7 @@ class StickerEngine:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # 加载本地索引
+        # Load local index
         if self.index_file.exists():
             try:
                 data = json.loads(self.index_file.read_text(encoding="utf-8"))
@@ -90,7 +91,7 @@ class StickerEngine:
             except Exception as e:
                 logger.warning(f"Failed to load local sticker index: {e}")
 
-        # 尝试下载索引
+        # Attempt to download the index
         success = await self._download_index()
         if success:
             self._build_indices()
@@ -103,21 +104,21 @@ class StickerEngine:
 
     @staticmethod
     def _extract_sticker_list(data) -> list[dict]:
-        """从 JSON 数据中提取 sticker 列表，兼容多种格式"""
-        # ChineseBQB 格式: {"status": 1000, "info": "...", "data": [...]}
+        """Extract sticker list from JSON data, compatible with multiple formats."""
+        # ChineseBQB format: {"status": 1000, "info": "...", "data": [...]}
         if isinstance(data, list):
             return data
         if isinstance(data, dict):
-            # 优先尝试 "data" 键（ChineseBQB 官方格式）
+            # Try "data" key first (ChineseBQB official format)
             if "data" in data:
                 return data["data"] if isinstance(data["data"], list) else []
-            # 备选 "stickers" 键
+            # Fallback "stickers" key
             if "stickers" in data:
                 return data["stickers"] if isinstance(data["stickers"], list) else []
         return []
 
     async def _download_index(self) -> bool:
-        """下载 ChineseBQB 索引 JSON，自动尝试镜像。"""
+        """Download ChineseBQB index JSON, automatically trying mirrors."""
         index_urls = [self.INDEX_URL]
         relative = "chinesebqb_github.json"
         for mirror in self._mirrors:
@@ -141,7 +142,7 @@ class StickerEngine:
         return False
 
     def _build_indices(self) -> None:
-        """从 sticker 数据构建关键词和分类索引"""
+        """Build keyword and category indices from sticker data."""
         self._keyword_index.clear()
         self._category_index.clear()
 
@@ -149,22 +150,22 @@ class StickerEngine:
             name = sticker.get("name", "")
             category = sticker.get("category", "")
 
-            # 分类索引
+            # Category index
             if category:
-                # 提取中文分类名
+                # Extract Chinese category name
                 cat_cn = re.sub(r"^\d+\w*_", "", category)
                 if cat_cn not in self._category_index:
                     self._category_index[cat_cn] = []
                 self._category_index[cat_cn].append(idx)
 
-            # 从文件名提取关键词
-            # 格式示例: "滑稽大佬00012-鼓掌.gif"
-            # 去掉扩展名
+            # Extract keywords from filename
+            # Example format: "滑稽大佬00012-鼓掌.gif"
+            # Remove extension
             base_name = re.sub(r"\.\w+$", "", name)
-            # 按 - 分割
+            # Split by - or _
             parts = re.split(r"[-_]", base_name)
             for part in parts:
-                # 提取中文字符序列
+                # Extract Chinese character sequences
                 cn_matches = re.findall(r"[\u4e00-\u9fff]+", part)
                 for kw in cn_matches:
                     if len(kw) >= 1:
@@ -184,17 +185,17 @@ class StickerEngine:
         limit: int = 5,
     ) -> list[dict]:
         """
-        关键词搜索表情包（带相关性评分）
+        Keyword search for stickers (with relevance scoring).
 
-        匹配优先级：精确匹配 > query是kw子串 > kw是query子串(len>=2) > 单字回退
+        Match priority: exact match > query is substring of kw > kw is substring of query (len>=2) > single-char fallback
 
         Args:
-            query: 搜索关键词
-            category: 可选分类限制
-            limit: 返回数量上限
+            query: Search keyword
+            category: Optional category filter
+            limit: Maximum number of results
 
         Returns:
-            匹配的 sticker 信息列表 [{"name", "category", "url"}, ...]
+            List of matching sticker info dicts [{"name", "category", "url"}, ...]
         """
         if not self._initialized:
             await self.initialize()
@@ -222,7 +223,7 @@ class StickerEngine:
                     for idx in self._keyword_index[char]:
                         scored[idx] = max(scored.get(idx, 0), 0.5)
 
-        # 分类过滤
+        # Category filter
         if category:
             cat_indices = set()
             for cat_name, indices in self._category_index.items():
@@ -234,7 +235,7 @@ class StickerEngine:
                     for idx in cat_indices:
                         scored[idx] = 0.1
 
-        # 按分数分组，同分组内随机打散，高分优先
+        # Sort by score (highest first), randomize within same score tier
         sorted_indices = sorted(
             scored.keys(),
             key=lambda i: (-scored[i], random.random()),
@@ -245,19 +246,19 @@ class StickerEngine:
 
     async def get_random_by_mood(self, mood: str) -> dict | None:
         """
-        按情绪随机获取一张表情包
+        Get a random sticker by mood.
 
         Args:
-            mood: 情绪类型 (happy/sad/angry/greeting/encourage/love/tired/surprise)
+            mood: Mood type (happy/sad/angry/greeting/encourage/love/tired/surprise)
 
         Returns:
-            sticker 信息 或 None
+            Sticker info dict or None
         """
         keywords = MOOD_KEYWORDS.get(mood, [])
         if not keywords:
             return None
 
-        # 收集所有匹配的 sticker
+        # Collect all matching stickers
         all_candidates: list[dict] = []
         for kw in keywords:
             results = await self.search(kw, limit=10)
@@ -270,13 +271,13 @@ class StickerEngine:
 
     async def download_and_cache(self, url: str) -> Path | None:
         """
-        下载表情包到本地缓存
+        Download sticker to local cache.
 
         Args:
-            url: 表情包 URL
+            url: Sticker URL
 
         Returns:
-            本地缓存文件路径 或 None
+            Local cache file path or None
         """
         url_hash = hashlib.md5(url.encode()).hexdigest()
         ext = url.rsplit(".", 1)[-1] if "." in url else "gif"
@@ -302,7 +303,7 @@ class StickerEngine:
 
     @staticmethod
     async def _download_bytes(url: str, timeout: float = 15) -> bytes | None:
-        """尝试下载 URL 内容，返回 bytes 或 None。"""
+        """Try to download URL content, returns bytes or None."""
         try:
             try:
                 import aiohttp

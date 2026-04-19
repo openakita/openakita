@@ -51,7 +51,7 @@ class AgentHubHandler:
                 return f"Unknown tool: {tool_name}"
         except Exception as e:
             logger.error(f"AgentHubHandler error ({tool_name}): {e}", exc_info=True)
-            return f"❌ 操作失败: {e}"
+            return f"Operation failed: {e}"
 
     async def _search(self, params: dict[str, Any]) -> str:
         client = self._get_client()
@@ -64,11 +64,11 @@ class AgentHubHandler:
             )
         except Exception as e:
             return (
-                f"❌ 无法连接到远程 Agent Hub: {e}\n\n"
-                f"💡 远程市场暂不可用，但你仍可以：\n"
-                f"- 使用 `list_exportable_agents` 查看本地 Agent\n"
-                f"- 使用 `export_agent` / `import_agent` 通过 .akita-agent 文件分享\n"
-                f"- 在 Setup Center「Agent 管理」中导入导出"
+                f"Unable to connect to remote Agent Hub: {e}\n\n"
+                f"The remote marketplace is temporarily unavailable, but you can still:\n"
+                f"- Use `list_exportable_agents` to view local agents\n"
+                f"- Use `export_agent` / `import_agent` to share via .akita-agent files\n"
+                f"- Import/export via Setup Center \"Agent Management\""
             )
 
         agents = result.get("agents", result.get("data", []))
@@ -77,10 +77,10 @@ class AgentHubHandler:
         if not agents:
             query = params.get("query", "")
             if query:
-                return f"未找到匹配「{query}」的 Agent。"
-            return "Agent Store 暂无可用 Agent。"
+                return f"No agents found matching \"{query}\"."
+            return "No agents available in the Agent Store yet."
 
-        lines = [f"🔍 搜索结果（共 {total} 个）：\n"]
+        lines = [f"Search results ({total} total):\n"]
         for a in agents[:10]:
             stars = f"⭐{a.get('avgRating', 0):.1f}" if a.get("avgRating") else ""
             downloads = f"📥{a.get('downloads', 0)}"
@@ -91,15 +91,15 @@ class AgentHubHandler:
             )
 
         if total > 10:
-            lines.append(f"\n…还有 {total - 10} 个结果，使用 page 参数翻页查看。")
+            lines.append(f"\n...and {total - 10} more results. Use the page parameter to browse.")
 
-        lines.append("\n使用 `install_hub_agent` 安装感兴趣的 Agent。")
+        lines.append("\nUse `install_hub_agent` to install an agent you are interested in.")
         return "\n".join(lines)
 
     async def _install(self, params: dict[str, Any]) -> str:
         agent_id = params.get("agent_id", "")
         if not agent_id:
-            return "❌ 需要指定 agent_id"
+            return "agent_id is required"
 
         client = self._get_client()
 
@@ -107,8 +107,8 @@ class AgentHubHandler:
             package_path = await client.download(agent_id)
         except Exception as e:
             return (
-                f"❌ 从 Hub 下载失败: {e}\n\n"
-                f"💡 如果你已有 .akita-agent 文件，可以使用 `import_agent` 工具直接本地导入。"
+                f"Download from Hub failed: {e}\n\n"
+                f"If you already have a .akita-agent file, use the `import_agent` tool to import it locally."
             )
 
         from ...agents.packager import AgentInstaller
@@ -128,7 +128,7 @@ class AgentHubHandler:
             force = params.get("force", False)
             profile = installer.install(package_path, force=force)
         except Exception as e:
-            return f"❌ 安装失败: {e}"
+            return f"Installation failed: {e}"
 
         from datetime import datetime
 
@@ -146,18 +146,18 @@ class AgentHubHandler:
         self._try_reload_skills()
 
         return (
-            f"✅ Agent 从 Hub 安装成功！\n\n"
-            f"🤖 名称: {profile.name}\n"
-            f"🆔 ID: {profile.id}\n"
-            f"📝 描述: {profile.description}\n"
-            f"🔧 技能: {', '.join(profile.skills) if profile.skills else '无'}\n\n"
-            f"你现在可以在 Agent 列表中找到并使用这个 Agent。"
+            f"Agent installed from Hub successfully!\n\n"
+            f"Name: {profile.name}\n"
+            f"ID: {profile.id}\n"
+            f"Description: {profile.description}\n"
+            f"Skills: {', '.join(profile.skills) if profile.skills else 'None'}\n\n"
+            f"You can now find and use this agent in the agent list."
         )
 
     async def _publish(self, params: dict[str, Any]) -> str:
         profile_id = params.get("profile_id", "")
         if not profile_id:
-            return "❌ 需要指定 profile_id"
+            return "profile_id is required"
 
         from ...agents.packager import AgentPackager
         from ...agents.profile import get_profile_store
@@ -177,17 +177,17 @@ class AgentHubHandler:
         try:
             package_path = packager.package(profile_id=profile_id)
         except Exception as e:
-            return f"❌ 打包失败: {e}"
+            return f"Packaging failed: {e}"
 
         return (
-            f"📦 Agent 已打包: {package_path}\n\n"
-            f"⚠️ 自动发布功能需要平台账号认证。\n"
-            f"请访问 https://openakita.ai 登录后在「我的 Agent」页面手动上传，\n"
-            f"或通过 Setup Center 的 Agent Store 页面发布。"
+            f"Agent packaged: {package_path}\n\n"
+            f"Automatic publishing requires platform account authentication.\n"
+            f"Please visit https://openakita.ai, sign in, and upload manually from \"My Agents\",\n"
+            f"or publish via the Agent Store page in Setup Center."
         )
 
     def _try_reload_skills(self) -> None:
-        """Hub Agent 安装后，走统一刷新入口让附带的技能立刻生效。"""
+        """After Hub agent installation, trigger unified skill reload so bundled skills take effect immediately."""
         try:
             from ...skills.events import SkillEvent
 
@@ -200,33 +200,33 @@ class AgentHubHandler:
     async def _get_detail(self, params: dict[str, Any]) -> str:
         agent_id = params.get("agent_id", "")
         if not agent_id:
-            return "❌ 需要指定 agent_id"
+            return "agent_id is required"
 
         client = self._get_client()
         try:
             detail = await client.get_detail(agent_id)
         except Exception as e:
-            return f"❌ 获取详情失败: {e}"
+            return f"Failed to get details: {e}"
 
         a = detail.get("agent", detail)
         lines = [
-            "📋 Agent 详情\n",
-            f"**名称**: {a.get('name', '?')}",
+            "Agent Details\n",
+            f"**Name**: {a.get('name', '?')}",
             f"**ID**: {a.get('id', '?')}",
-            f"**版本**: {a.get('latestVersion', a.get('version', '?'))}",
-            f"**作者**: {a.get('authorName', '?')}",
-            f"**分类**: {a.get('category', '无')}",
-            f"**下载量**: {a.get('downloads', 0)}",
+            f"**Version**: {a.get('latestVersion', a.get('version', '?'))}",
+            f"**Author**: {a.get('authorName', '?')}",
+            f"**Category**: {a.get('category', 'None')}",
+            f"**Downloads**: {a.get('downloads', 0)}",
         ]
 
         if a.get("avgRating"):
-            lines.append(f"**评分**: ⭐{a['avgRating']:.1f} ({a.get('ratingCount', 0)} 人评价)")
+            lines.append(f"**Rating**: {a['avgRating']:.1f} ({a.get('ratingCount', 0)} reviews)")
         if a.get("description"):
-            lines.append(f"\n**描述**: {a['description']}")
+            lines.append(f"\n**Description**: {a['description']}")
         if a.get("tags"):
-            lines.append(f"**标签**: {', '.join(normalize_tags(a['tags']))}")
+            lines.append(f"**Tags**: {', '.join(normalize_tags(a['tags']))}")
 
-        lines.append("\n使用 `install_hub_agent` 安装此 Agent。")
+        lines.append("\nUse `install_hub_agent` to install this agent.")
         return "\n".join(lines)
 
 

@@ -1,8 +1,8 @@
 """
-OrgMessenger — 组织内消息路由与冲突解决
+OrgMessenger — Intra-organization message routing and conflict resolution
 
-负责节点间消息投递、优先级队列、超时管理、死锁检测。
-每个节点拥有独立的异步消息信箱。
+Handles inter-node message delivery, priority queuing, TTL management,
+and deadlock detection. Each node has its own async message mailbox.
 """
 
 from __future__ import annotations

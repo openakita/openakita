@@ -7,41 +7,41 @@ metadata:
   version: "1.0.0"
 ---
 
-# 百度网盘
+# Baidu NetDisk
 
-个人和企业的专属云端数字助手，文件上传下载、备份、分享、管理一句话搞定。
+A dedicated cloud digital assistant for individuals and enterprises — file upload/download, backup, sharing, and management, all in one command.
 
-## 安装
+## Installation
 
 npx skills add https://github.com/baidu-netdisk/bdpan-storage --skill bdpan-storage
 
-## 认证
+## Authentication
 
-bdpan login — 使用 OAuth 流程在浏览器中授权。令牌存储在 ~/.config/bdpan/config.json。
+bdpan login — Use the OAuth flow to authorize in a browser. Tokens are stored in ~/.config/bdpan/config.json.
 
-## 功能
+## Features
 
-- 上传文件到网盘
-- 下载网盘文件到本地
-- 转存分享链接中的文件
-- 创建分享链接
-- 列出目录文件
-- 登录/注销管理
+- Upload files to NetDisk
+- Download NetDisk files to local machine
+- Save files from shared links
+- Create share links
+- List directory contents
+- Login/logout management
 
-所有操作限制在 /apps/bdpan/ 目录内。
+All operations are restricted to the /apps/bdpan/ directory.
 
-## 安全
+## Security
 
-- 不要在公开频道分享认证码
-- 共享环境使用后执行 bdpan logout
+- Do not share authentication codes in public channels
+- After using shared environments, run bdpan logout
 
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/bdpan.py
-百度网盘 Open API 封装，需设置 BAIDU_NETDISK_TOKEN。
+Baidu NetDisk Open API wrapper. Requires BAIDU_NETDISK_TOKEN environment variable.
 
 ```bash
 python3 scripts/bdpan.py ls /apps/
-python3 scripts/bdpan.py search "报告"
+python3 scripts/bdpan.py search "report"
 python3 scripts/bdpan.py info
 ```

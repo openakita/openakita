@@ -1,8 +1,8 @@
 """
 Anthropic Provider
 
-支持 Claude 系列模型的 API 调用。
-增强: SSE 规范解析、Prompt Cache 支持、流式 Usage 完整性。
+Supports API calls to Claude model series.
+Enhancements: SSE spec parsing, Prompt Cache support, streaming Usage completeness.
 """
 
 import logging
@@ -49,25 +49,25 @@ class AnthropicProvider(LLMProvider):
     def __init__(self, config: EndpointConfig):
         super().__init__(config)
         self._client: httpx.AsyncClient | None = None
-        self._client_loop_id: int | None = None  # 记录创建客户端时的事件循环 ID
+        self._client_loop_id: int | None = None  # Record event loop ID when client was created
 
     @property
     def api_key(self) -> str:
-        """获取 API Key"""
+        """Get API Key"""
         return self.config.get_api_key() or ""
 
     @property
     def base_url(self) -> str:
-        """获取 base URL"""
+        """Get base URL"""
         return self.config.base_url.rstrip("/")
 
     def _messages_url(self) -> str:
-        """构建 messages API URL，避免 /v1 重复拼接。"""
+        """Build messages API URL, avoiding /v1 duplicate concatenation."""
         b = self.base_url
         return f"{b}/messages" if b.endswith("/v1") else f"{b}/v1/messages"
 
     def _is_local_endpoint(self) -> bool:
-        """检查是否为本地端点"""
+        """Check if the endpoint is local"""
         url = self.base_url.lower()
         return any(
             host in url
@@ -80,7 +80,7 @@ class AnthropicProvider(LLMProvider):
         )
 
     def _get_validated_api_key(self) -> str:
-        """获取并验证 API Key，空 key 时提前抛出有意义的错误而非让 API 返回模糊 401。"""
+        """Get and validate API Key, raising a meaningful error early when empty rather than letting API return vague 401."""
         api_key = (self.api_key or "").strip()
         if not api_key:
             if self._is_local_endpoint():
@@ -95,10 +95,10 @@ class AnthropicProvider(LLMProvider):
         return api_key
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """获取或创建 HTTP 客户端
+        """Get or create HTTP client
 
-        注意：httpx.AsyncClient 绑定到创建时的事件循环。
-        如果事件循环变化（如定时任务创建新循环），需要重新创建客户端。
+        Note: httpx.AsyncClient is bound to the event loop at creation time.
+        If the event loop changes (e.g., scheduled tasks create a new loop), the client must be recreated.
         """
         import asyncio
 
@@ -108,7 +108,7 @@ class AnthropicProvider(LLMProvider):
         except RuntimeError:
             current_loop_id = None
 
-        # 检查是否需要重新创建客户端
+        # Check if client needs to be recreated
         need_recreate = (
             self._client is None
             or self._client.is_closed
@@ -116,16 +116,16 @@ class AnthropicProvider(LLMProvider):
         )
 
         if need_recreate:
-            # 安全关闭旧客户端
+            # Safely close old client
             if self._client is not None and not self._client.is_closed:
                 try:
                     await self._client.aclose()
                 except Exception:
-                    pass  # 忽略关闭错误
+                    pass  # Ignore close errors
 
-            # 获取代理和网络配置
+            # Get proxy and network configuration
             proxy = get_proxy_config()
-            transport = get_httpx_transport()  # IPv4-only 支持
+            transport = get_httpx_transport()  # IPv4-only support
 
             is_local = self._is_local_endpoint()
 
@@ -141,9 +141,8 @@ class AnthropicProvider(LLMProvider):
                     request.headers["Authorization"] = f"Bearer {api_key_for_hook}"
                     request.headers["x-api-key"] = api_key_for_hook
 
-            # trust_env=False: 代理由 get_proxy_config() 显式管理（含可达性验证）。
-            # 避免 macOS/Windows 残留系统代理（Clash/V2Ray 等）导致请求被路由到
-            # 不存在的代理端口而失败。
+            # trust_env=False: proxies are explicitly managed by get_proxy_config() (with reachability checks).
+            # Avoid routing requests to non-existent proxy ports due to leftover system proxies (Clash/V2Ray, etc.) on macOS/Windows.
             client_kwargs = {
                 "timeout": build_httpx_timeout(self.config.timeout, default=60.0),
                 "follow_redirects": True,
@@ -164,15 +163,15 @@ class AnthropicProvider(LLMProvider):
         return self._client
 
     async def chat(self, request: LLMRequest) -> LLMResponse:
-        """发送聊天请求"""
+        """Send chat request"""
         self._get_validated_api_key()
         await self.acquire_rate_limit()
         client = await self._get_client()
 
-        # 构建请求体
+        # Build request body
         body = self._build_request_body(request)
 
-        # 发送请求
+        # Send request
         try:
             response = await client.post(
                 self._messages_url(),
@@ -204,9 +203,9 @@ class AnthropicProvider(LLMProvider):
             raise LLMError(f"Request failed: {detail}")
 
     async def chat_stream(self, request: LLMRequest) -> AsyncIterator[dict]:
-        """流式聊天请求。
+        """Streaming chat request.
 
-        增强: 使用符合 SSE 规范的解析器，带 finally 资源清理。
+        Enhancements: Uses SSE spec-compliant parser with finally resource cleanup.
         """
         self._get_validated_api_key()
         await self.acquire_rate_limit()
@@ -241,7 +240,7 @@ class AnthropicProvider(LLMProvider):
                     status_code=response.status_code,
                 )
 
-            # 使用符合 SSE 规范的解析器
+            # Use SSE spec-compliant parser
             async for event in parse_sse_stream(response):
                 yield event
 
@@ -260,12 +259,12 @@ class AnthropicProvider(LLMProvider):
                 await response.aclose()
 
     def _build_headers(self) -> dict:
-        """构建请求头"""
+        """Build request headers"""
         key = (self.api_key or "").strip()
         return {
             "Content-Type": "application/json",
             "x-api-key": key,
-            # 部分 Anthropic 兼容网关仅识别 Bearer，保留 x-api-key 以兼容官方 Anthropic。
+            # Some Anthropic-compatible gateways only recognize Bearer; keep x-api-key for compatibility with official Anthropic.
             "Authorization": f"Bearer {key}",
             "anthropic-version": self.ANTHROPIC_VERSION,
         }
@@ -291,14 +290,14 @@ class AnthropicProvider(LLMProvider):
         return blocks
 
     def _build_request_body(self, request: LLMRequest) -> dict:
-        """构建请求体。
+        """Build request body.
 
-        增强: 使用模型注册表查询能力，支持 Prompt Cache。
+        Enhancements: Uses model registry to query capabilities, supports Prompt Cache.
         """
         thinking_enabled = request.enable_thinking and self.config.has_capability("thinking")
         messages = self._serialize_messages(request.messages, thinking_enabled)
 
-        # 使用模型注册表查询 max_tokens，替代硬编码
+        # Use model registry to query max_tokens, replacing hardcoded values
         caps = get_model_capabilities(self.config.model)
         max_tokens = request.max_tokens or self.config.max_tokens or caps.default_output_tokens
 
@@ -308,14 +307,14 @@ class AnthropicProvider(LLMProvider):
             "messages": messages,
         }
 
-        # 系统提示: 分段缓存 (静态部分标记 cache_control)
+        # System prompt: segmented caching (static part marked with cache_control)
         if request.system:
             if caps.supports_cache:
                 body["system"] = self._build_system_blocks(request.system)
             else:
                 body["system"] = request.system
 
-        # 工具 schema: 排序 + 缓存标记
+        # Tools schema: sorted + cache marked
         if request.tools:
             tools = convert_tools_to_anthropic(request.tools)
             tools = sort_tools_for_cache_stability(tools)
@@ -329,17 +328,17 @@ class AnthropicProvider(LLMProvider):
         if request.stop_sequences:
             body["stop_sequences"] = request.stop_sequences
 
-        # 额外参数
+        # Extra parameters
         if self.config.extra_params:
             body.update(self.config.extra_params)
         if request.extra_params:
             body.update(request.extra_params)
 
-        # 消息缓存断点: 最后 1-2 条消息添加 cache_control
+        # Message cache breakpoints: add cache_control to last 1-2 messages
         if caps.supports_cache and messages:
             body["messages"] = add_message_cache_breakpoints(messages, max_breakpoints=2)
 
-        # Anthropic 扩展思考 (Extended Thinking)
+        # Anthropic extended thinking (Extended Thinking)
         if thinking_enabled:
             budget = get_thinking_budget(self.config.model, request.thinking_depth)
             if budget <= 0:
@@ -357,15 +356,15 @@ class AnthropicProvider(LLMProvider):
 
     @staticmethod
     def _serialize_messages(messages: list, thinking_enabled: bool) -> list[dict]:
-        """序列化消息列表，确保 thinking 模式下格式合规。
+        """Serialize message list ensuring compliance with thinking mode format.
 
-        当 thinking 启用时，某些 Anthropic 兼容代理（如云雾 AI 转发 Kimi/Qwen 等）
-        要求所有含 tool_use 的 assistant 消息都包含 thinking 块，否则返回 400:
+        When thinking is enabled, some Anthropic-compatible proxies (e.g., YunWu AI forwarding Kimi/Qwen)
+        require all assistant messages containing tool_use to include a thinking block, otherwise returning 400:
         "thinking is enabled but reasoning_content is missing in assistant tool call message"
 
-        对话历史中可能存在没有 thinking 块的 assistant 消息（例如 failover 前由
-        非 thinking 端点生成，或 thinking 是中途开启的），这里为它们补一个占位
-        thinking 块以满足 API 校验。
+        The conversation history may contain assistant messages without thinking blocks (e.g., generated by
+        non-thinking endpoints before failover, or thinking enabled mid-conversation). A placeholder
+        thinking block is inserted to satisfy API validation.
         """
         result = []
         for msg in messages:
@@ -390,27 +389,27 @@ class AnthropicProvider(LLMProvider):
         return result
 
     def _parse_response(self, data: dict) -> LLMResponse:
-        """解析响应
+        """Parse response
 
-        支持 MiniMax M2.1 的 Interleaved Thinking：
-        - 解析 thinking 块并保留在 content 中
-        - 确保多轮工具调用时思维链的连续性
+        Supports MiniMax M2.1 Interleaved Thinking:
+        - Parses thinking blocks and preserves them in content
+        - Ensures continuity of thought chain across multiple tool calls
 
-        支持文本格式工具调用（MiniMax 兼容）：
-        - 检测并解析 <minimax:tool_call> 格式
-        - 转换为标准的 ToolUseBlock
+        Supports text-format tool calls (MiniMax compatible):
+        - Detects and parses <minimax:tool_call> format
+        - Converts to standard ToolUseBlock
         """
         content_blocks = []
         has_tool_calls = False
-        text_content = ""  # 收集文本内容，用于检测文本格式工具调用
-        thinking_content = ""  # 收集 thinking 内容，检测嵌入的工具调用
+        text_content = ""  # Collect text content for detecting text-format tool calls
+        thinking_content = ""  # Collect thinking content, detect embedded tool calls
 
         for block in data.get("content", []):
             block_type = block.get("type")
 
             if block_type == "thinking":
-                # MiniMax M2.1 Interleaved Thinking 支持
-                # 必须完整保留 thinking 块以保持思维链连续性
+                # MiniMax M2.1 Interleaved Thinking support
+                # Must preserve thinking blocks completely to maintain thought chain continuity
                 raw_thinking = block.get("thinking", "")
                 thinking_content += raw_thinking
                 content_blocks.append(ThinkingBlock(thinking=raw_thinking))
@@ -428,9 +427,9 @@ class AnthropicProvider(LLMProvider):
                 )
                 has_tool_calls = True
 
-        # === 文本格式工具调用解析（MiniMax 兼容） ===
-        # 当模型返回文本格式的工具调用（如 <minimax:tool_call>）时，解析并转换
-        # 同时检查 thinking 块内是否嵌入了工具调用（MiniMax-M2.5 已知行为）
+        # === Text-format tool call parsing (MiniMax compatible) ===
+        # When the model returns text-format tool calls (e.g., <minimax:tool_call>), parse and convert
+        # Also check if tool calls are embedded in thinking blocks (MiniMax-M2.5 known behavior)
         combined_text_for_tool_check = text_content
         if not has_tool_calls and not text_content and thinking_content:
             if has_text_tool_calls(thinking_content):
@@ -448,18 +447,18 @@ class AnthropicProvider(LLMProvider):
             clean_text, text_tool_calls = parse_text_tool_calls(combined_text_for_tool_check)
 
             if text_tool_calls:
-                # 移除包含工具调用的文本块，替换为清理后的文本
+                # Remove text blocks containing tool calls, replace with cleaned text
                 content_blocks = [
                     b
                     for b in content_blocks
                     if not (isinstance(b, TextBlock) and has_text_tool_calls(b.text))
                 ]
 
-                # 添加清理后的文本（如果有）
+                # Add cleaned text (if any)
                 if clean_text.strip():
                     content_blocks.append(TextBlock(text=clean_text.strip()))
 
-                # 添加解析出的工具调用
+                # Add parsed tool calls
                 content_blocks.extend(text_tool_calls)
                 has_tool_calls = True
                 logger.info(
@@ -467,7 +466,7 @@ class AnthropicProvider(LLMProvider):
                     f"from {'thinking block' if combined_text_for_tool_check != text_content else 'text'}"
                 )
 
-        # 解析停止原因
+        # Parse stop reason
         stop_reason_str = data.get("stop_reason", "end_turn")
         if has_tool_calls:
             stop_reason = StopReason.TOOL_USE
@@ -480,7 +479,7 @@ class AnthropicProvider(LLMProvider):
             }
             stop_reason = stop_reason_map.get(stop_reason_str, StopReason.END_TURN)
 
-        # 解析使用统计
+        # Parse usage statistics
         usage_data = data.get("usage", {})
         usage = Usage(
             input_tokens=usage_data.get("input_tokens", 0),
@@ -498,7 +497,7 @@ class AnthropicProvider(LLMProvider):
         )
 
     async def close(self):
-        """关闭客户端"""
+        """Close client"""
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             self._client = None

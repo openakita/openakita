@@ -1,9 +1,9 @@
 """
-AgentFactory — 根据 AgentProfile 创建差异化 Agent 实例
-AgentInstancePool — per-session + per-profile 实例管理 + 空闲回收
+AgentFactory -- Creates differentiated Agent instances according to AgentProfile
+AgentInstancePool -- per-session + per-profile instance management + idle reclamation
 
-Pool key 格式: ``{session_id}::{profile_id}``
-同一会话可持有多个不同 profile 的 Agent 实例并行运行。
+Pool key format: ``{session_id}::{profile_id}``
+Same session can hold multiple Agent instances with different profiles running in parallel.
 """
 
 from __future__ import annotations
@@ -20,12 +20,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_IDLE_TIMEOUT_SECONDS = 30 * 60  # 30 分钟空闲回收
-_REAP_INTERVAL_SECONDS = 60  # 每分钟检查一次
+_IDLE_TIMEOUT_SECONDS = 30 * 60  # 30 minute idle reclamation
+_REAP_INTERVAL_SECONDS = 60  # Check every minute
 
-# INCLUSIVE 模式下始终保留的基础系统工具。
-# 所有子 Agent（含用户手动创建的）都需要这些工具才能正常工作。
-# 只有浏览器、桌面控制、MCP、定时任务等专用工具需在 profile.skills 显式列出。
+# Base system tools always kept in INCLUSIVE mode.
+# All child Agents (including user-created ones) need these tools to function properly.
+# Only specialized tools like browser, desktop control, MCP, scheduled tasks need explicit listing in profile.skills.
 ESSENTIAL_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "run_shell",
@@ -52,30 +52,30 @@ ESSENTIAL_TOOL_NAMES: frozenset[str] = frozenset(
 
 ESSENTIAL_SYSTEM_SKILLS: frozenset[str] = frozenset(
     {
-        # 规划（多步任务的核心）
+        # Planning (core of multi-step tasks)
         "create-todo",
         "update-todo-step",
         "get-todo-status",
         "complete-todo",
-        # 技能发现（渐进式披露入口 — 外部技能必须先 get_skill_info 读指令）
+        # Skill discovery (progressive disclosure entry — external skills must call get_skill_info first)
         "get-skill-info",
         "list-skills",
-        # 文件系统（外部技能执行的基础 — 读指令→写代码→run-shell 执行）
+        # File system (foundation for external skill execution — read instructions → write code → run-shell)
         "run-shell",
         "read-file",
         "write-file",
         "list-directory",
-        # IM 通道（接收用户输入、交付文件）
+        # IM channel (receive user input, deliver files)
         "deliver-artifacts",
         "get-chat-history",
         "get-image-file",
         "get-voice-file",
-        # 记忆
+        # Memory
         "search-memory",
         "add-memory",
-        # 信息检索
+        # Information retrieval
         "web-search",
-        # 系统
+        # System
         "get-tool-info",
         "set-task-timeout",
     }
@@ -115,11 +115,11 @@ class _GlobalStoreSource:
 
 class AgentFactory:
     """
-    根据 AgentProfile 创建 Agent 实例。
+    Create Agent instances according to AgentProfile.
 
-    - 按 profile 配置过滤技能
-    - 注入自定义提示词
-    - 设置 agent name/icon
+    - Filter skills based on profile configuration
+    - Inject custom prompts
+    - Set agent name/icon
     """
 
     async def create(
@@ -150,7 +150,7 @@ class AgentFactory:
             pa._mcp_catalog = agent.mcp_catalog
 
         # Rebuild the initial system prompt so it reflects the filtered catalogs.
-        # INCLUSIVE 模式无论 skills 是否为空都需要重建（空列表 = 隐藏全部非必要技能）。
+        # INCLUSIVE mode always needs rebuild (empty list = hide all non-essential skills).
         needs_rebuild = (
             (profile.tools_mode != "all" and profile.tools)
             or (profile.mcp_mode != "all" and profile.mcp_servers)
@@ -160,15 +160,15 @@ class AgentFactory:
         if needs_rebuild and hasattr(agent, "_context"):
             agent._context.system = agent._build_system_prompt()
 
-        # ── 身份隔离 ──
+        # ── Identity isolation ──
         if profile.identity_mode == "custom":
             self._apply_identity_override(agent, profile)
 
-        # ── 记忆隔离 ──
+        # ── Memory isolation ──
         if profile.memory_mode == "isolated":
             self._apply_memory_isolation(agent, profile)
 
-        # ── 权限规则注入 (MA1) ──
+        # ── Permission rule injection (MA1) ──
         if profile.permission_rules:
             try:
                 from ..core.permission import from_config
@@ -209,16 +209,16 @@ class AgentFactory:
 
     @staticmethod
     def _normalize_skill_name(name: str) -> str:
-        """归一化技能名：下划线转连字符、统一小写"""
+        """Normalize skill name: underscores to hyphens, lowercase."""
         return name.lower().replace("_", "-")
 
     @staticmethod
     def _build_skill_match_set(names: list[str]) -> tuple[set[str], set[str]]:
-        """构建技能名匹配集，同时支持完整命名空间和短名匹配。
+        """Build skill name match set, supporting both full namespace and short name matching.
 
         Returns:
-            (exact_set, short_set) — exact_set 包含完整归一化名称，
-            short_set 包含 ``@`` 后的短名（用于跨格式回退匹配）。
+            (exact_set, short_set) — exact_set contains fully normalized names,
+            short_set contains short names after ``@`` (for cross-format fallback matching).
         """
         n = AgentFactory._normalize_skill_name
         exact: set[str] = set()
@@ -231,7 +231,7 @@ class AgentFactory:
 
     @staticmethod
     def _skill_in_set(skill_name: str, exact_set: set[str], short_set: set[str]) -> bool:
-        """判断技能名是否在匹配集中（兼容命名空间和短名）。"""
+        """Check if a skill name is in the match set (compatible with namespace and short name)."""
         norm = AgentFactory._normalize_skill_name(skill_name)
         if norm in exact_set:
             return True
@@ -239,7 +239,7 @@ class AgentFactory:
 
     @staticmethod
     def _is_essential(skill_name: str) -> bool:
-        """判断是否为基础设施系统工具（INCLUSIVE 模式始终保留）。"""
+        """Check if this is an essential system tool (always retained in INCLUSIVE mode)."""
         return AgentFactory._normalize_skill_name(skill_name) in ESSENTIAL_SYSTEM_SKILLS
 
     @staticmethod
@@ -256,8 +256,8 @@ class AgentFactory:
         changed = 0
 
         if profile.skills_mode == SkillsMode.INCLUSIVE:
-            # INCLUSIVE: 渐进式披露 — 未勾选的技能从 L1（系统提示目录）隐藏，
-            # 但保留在注册表中，LLM 可通过 list_skills / get_skill_info 按需发现。
+            # INCLUSIVE: progressive disclosure — unselected skills are hidden from L1 (system prompt catalog),
+            # but remain in the registry; LLM can discover them on-demand via list_skills / get_skill_info.
             if profile.skills:
                 exact, short = AgentFactory._build_skill_match_set(profile.skills)
             else:
@@ -270,14 +270,14 @@ class AgentFactory:
                     registry.set_catalog_hidden(skill_name, True)
                     changed += 1
 
-            # 显式选择的技能即使全局 disabled 也应在此 Agent 上可用
+            # Explicitly selected skills should be available on this Agent even if globally disabled
             if profile.skills:
                 for skill in registry.list_all(include_disabled=True):
                     if skill.disabled and AgentFactory._skill_in_set(skill.skill_id, exact, short):
                         skill.disabled = False
 
         elif profile.skills_mode == SkillsMode.EXCLUSIVE:
-            # EXCLUSIVE: 完全移除黑名单中的技能（不可发现）
+            # EXCLUSIVE: completely remove blacklisted skills (not discoverable)
             exact, short = AgentFactory._build_skill_match_set(profile.skills)
             for skill_name in all_skills:
                 if AgentFactory._is_essential(skill_name):
@@ -293,10 +293,10 @@ class AgentFactory:
 
     @staticmethod
     def _apply_tool_filter(agent: Agent, profile: AgentProfile) -> None:
-        """按 profile.tools + tools_mode 过滤 Agent 的工具列表。
+        """Filter agent tools by profile.tools + tools_mode.
 
-        tools 字段支持类目名（如 "research"）和具体工具名的混合。
-        INCLUSIVE 模式下 ESSENTIAL_TOOL_NAMES 始终保留。
+        The tools field supports a mix of category names (e.g. "research") and specific tool names.
+        ESSENTIAL_TOOL_NAMES are always retained in INCLUSIVE mode.
         """
         if profile.tools_mode == "all" or not profile.tools:
             return
@@ -329,10 +329,10 @@ class AgentFactory:
 
     @staticmethod
     def _apply_mcp_filter(agent: Agent, profile: AgentProfile) -> None:
-        """按 profile.mcp_servers + mcp_mode 过滤 Agent 的 MCP catalog。
+        """Filter agent MCP catalog by profile.mcp_servers + mcp_mode.
 
-        创建一个 filtered clone 替换 agent.mcp_catalog，
-        使 call_mcp_tool handler 只能访问 clone 中的 server。
+        Creates a filtered clone to replace agent.mcp_catalog,
+        so call_mcp_tool handler can only access servers in the clone.
         """
         if profile.mcp_mode == "all" or not profile.mcp_servers:
             return
@@ -351,7 +351,7 @@ class AgentFactory:
 
     @staticmethod
     def _apply_identity_override(agent: Agent, profile: AgentProfile) -> None:
-        """加载 Profile 专属身份文件，覆盖 agent.identity 并重建 system prompt。"""
+        """Load profile-specific identity files, override agent.identity, and rebuild system prompt."""
         from .identity_resolver import ProfileIdentityResolver
         from .profile import get_profile_store
 
@@ -376,7 +376,7 @@ class AgentFactory:
 
     @staticmethod
     def _apply_memory_isolation(agent: Agent, profile: AgentProfile) -> None:
-        """替换 agent.memory_manager 为独立的 MemoryManager 实例。"""
+        """Replace agent.memory_manager with an isolated MemoryManager instance."""
         from ..config import settings
         from ..memory.manager import MemoryManager
         from .profile import get_profile_store
@@ -418,9 +418,9 @@ class AgentFactory:
 
     @staticmethod
     async def _apply_plugin_filter(agent: Agent, profile: AgentProfile) -> None:
-        """按 profile.plugins + plugins_mode 过滤 Agent 的插件。
+        """Filter agent plugins by profile.plugins + plugins_mode.
 
-        对不应保留的插件执行 unload，清理其 hooks、tools、channels。
+        Unload plugins that should not be retained, cleaning up their hooks, tools, and channels.
         """
         if profile.plugins_mode == "all" or not profile.plugins:
             return
@@ -469,12 +469,12 @@ class _PoolEntry:
 
 class AgentInstancePool:
     """
-    Agent 实例池 — per-session + per-profile 绑定 + 空闲自动回收。
+    Agent instance pool — per-session + per-profile binding + idle auto-reclamation.
 
-    Pool key 格式: ``{session_id}::{profile_id}``
+    Pool key format: ``{session_id}::{profile_id}``
 
-    同一会话可同时持有多个不同 profile 的 Agent 实例。
-    例如 session_123 可以同时运行 default, browser-agent, data-analyst。
+    A single session can hold multiple Agent instances with different profiles.
+    For example, session_123 can run default, browser-agent, and data-analyst simultaneously.
     """
 
     def __init__(
@@ -525,7 +525,7 @@ class AgentInstancePool:
         logger.info("AgentInstancePool stopped")
 
     def notify_skills_changed(self) -> None:
-        """全局技能变更通知 — 递增版本号使池中已有 Agent 在下次使用时重建。"""
+        """Global skill change notification — increment version so existing pooled Agents are rebuilt on next use."""
         self._skills_version += 1
         logger.info(f"Pool skills version bumped to {self._skills_version}")
 
@@ -555,14 +555,14 @@ class AgentInstancePool:
         session_id: str,
         profile: AgentProfile,
     ) -> Agent:
-        """获取已有实例或创建新实例。
+        """Get an existing instance or create a new one.
 
-        Key = session_id::profile_id，同 session 不同 profile 各自独立。
+        Key = session_id::profile_id; different profiles within the same session are independent.
         All dict operations are safe under asyncio's single-threaded event loop;
         only the async create_lock is needed to serialize factory.create() calls.
 
-        当全局技能版本变更时，旧的 Agent 会被丢弃并重建，
-        确保技能安装/卸载/启禁用等操作能同步到所有池 Agent。
+        When the global skills version changes, old Agents are discarded and rebuilt,
+        ensuring skill install/uninstall/enable/disable operations are synced to all pooled Agents.
         """
         key = self._make_key(session_id, profile.id)
         current_version = self._skills_version
@@ -648,7 +648,7 @@ class AgentInstancePool:
         return [e for e in self._pool.values() if e.session_id == session_id]
 
     def release(self, session_id: str, profile_id: str | None = None) -> None:
-        """标记实例进入空闲等待回收。"""
+        """Mark instances as idle, awaiting reclamation."""
         if profile_id:
             key = self._make_key(session_id, profile_id)
             entry = self._pool.get(key)

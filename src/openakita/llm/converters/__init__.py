@@ -1,7 +1,7 @@
 """
-格式转换器
+Format converters
 
-负责在内部格式（Anthropic-like）和各种外部格式之间转换。
+Handles conversion between the internal format (Anthropic-like) and various external formats.
 """
 
 from .messages import (

@@ -1,46 +1,46 @@
 """
-Browser 工具定义
+Browser tool definitions
 
-包含浏览器自动化相关的工具（遵循 tool-definition-spec.md 规范，全部基于 Playwright）：
-- browser_open: 启动浏览器 + 状态查询
-- browser_navigate: 导航到 URL（搜索类任务推荐直接拼 URL 参数）
-- browser_click: 点击页面元素
-- browser_type: 输入文本
-- browser_scroll: 滚动页面
-- browser_wait: 等待元素出现
-- browser_execute_js: 执行 JavaScript
-- browser_get_content: 获取页面内容
-- browser_screenshot: 截取页面截图
-- browser_list_tabs / browser_switch_tab / browser_new_tab: 标签页管理
-- view_image: 查看/分析本地图片
-- browser_close: 关闭浏览器
+Contains browser automation tools (all based on Playwright, following tool-definition-spec.md):
+- browser_open: Launch browser + status query
+- browser_navigate: Navigate to URL (recommended to pass URL params directly for search tasks)
+- browser_click: Click page element
+- browser_type: Type text
+- browser_scroll: Scroll page
+- browser_wait: Wait for element to appear
+- browser_execute_js: Execute JavaScript
+- browser_get_content: Get page content
+- browser_screenshot: Take page screenshot
+- browser_list_tabs / browser_switch_tab / browser_new_tab: Tab management
+- view_image: View/analyze local image
+- browser_close: Close browser
 """
 
 from .base import build_detail
 
-# ==================== 工具定义 ====================
+# ==================== Tool Definitions ====================
 
 BROWSER_TOOLS = [
-    # ---------- browser_open ---------- (合并了 browser_status)
+    # ---------- browser_open ---------- (merged with browser_status)
     {
         "name": "browser_open",
         "category": "Browser",
         "description": "Launch browser OR check browser status. Always returns current state (is_open, url, title, tab_count). If browser is already running, returns status without restarting. If not running, starts it. Call this before any browser operation to ensure browser is ready. Browser state resets on service restart.",
         "detail": build_detail(
-            summary="启动浏览器或检查浏览器状态。始终返回当前状态（是否打开、URL、标题、tab 数）。",
+            summary="Launch browser or check browser status. Always returns current state (is_open, URL, title, tab count).",
             scenarios=[
-                "开始 Web 自动化任务前确认浏览器状态",
-                "启动浏览器",
-                "检查浏览器是否正常运行",
+                "Confirm browser status before starting a web automation task",
+                "Launch the browser",
+                "Check whether the browser is running normally",
             ],
             params_desc={
-                "visible": "True=显示浏览器窗口（用户可见），False=后台运行（不可见）",
+                "visible": "True=show browser window (visible to user), False=run in background (hidden)",
             },
             notes=[
-                "⚠️ 每次浏览器任务前建议调用此工具确认状态",
-                "如果浏览器已在运行，直接返回当前状态，不会重复启动",
-                "服务重启后浏览器会关闭，不能假设已打开",
-                "默认显示浏览器窗口",
+                "⚠️ Call this tool before each browser task to confirm status",
+                "If the browser is already running, returns the current status without relaunching",
+                "The browser closes on service restart; do not assume it is open",
+                "Shows the browser window by default",
             ],
         ),
         "triggers": [
@@ -54,17 +54,17 @@ BROWSER_TOOLS = [
         ],
         "examples": [
             {
-                "scenario": "检查浏览器状态并启动",
+                "scenario": "Check browser status and launch",
                 "params": {},
                 "expected": "Returns {is_open: true/false, url: '...', title: '...', tab_count: N}. Starts browser if not running.",
             },
             {
-                "scenario": "启动可见浏览器",
+                "scenario": "Launch visible browser",
                 "params": {"visible": True},
                 "expected": "Browser window opens and is visible to user, returns status",
             },
             {
-                "scenario": "后台模式启动",
+                "scenario": "Launch in background mode",
                 "params": {"visible": False},
                 "expected": "Browser runs in background without visible window, returns status",
             },
@@ -72,17 +72,17 @@ BROWSER_TOOLS = [
         "related_tools": [
             {
                 "name": "browser_navigate",
-                "relation": "打开后导航到目标 URL（搜索任务推荐直接拼 URL 参数）",
+                "relation": "Navigate to target URL after opening (for search tasks, pass URL params directly)",
             },
-            {"name": "browser_click", "relation": "点击页面元素进行交互"},
-            {"name": "browser_close", "relation": "使用完毕后关闭"},
+            {"name": "browser_click", "relation": "Click page elements to interact"},
+            {"name": "browser_close", "relation": "Close after use"},
         ],
         "input_schema": {
             "type": "object",
             "properties": {
                 "visible": {
                     "type": "boolean",
-                    "description": "True=显示浏览器窗口, False=后台运行。默认 True",
+                    "description": "True=show browser window, False=run in background. Default True",
                     "default": True,
                 },
             },
@@ -95,28 +95,28 @@ BROWSER_TOOLS = [
         "category": "Browser",
         "description": "Navigate browser to URL. **Recommended for search tasks** - directly use URL with query params (e.g. https://www.baidu.com/s?wd=keyword, https://image.baidu.com/search/index?tn=baiduimage&word=keyword, https://www.google.com/search?q=keyword). Auto-starts browser if not running.",
         "detail": build_detail(
-            summary="导航到指定 URL。搜索类任务推荐直接拼 URL 参数。",
+            summary="Navigate to the specified URL. For search tasks, pass URL params directly.",
             scenarios=[
-                "搜索类任务：直接用 URL 参数（如 baidu.com/s?wd=关键词）",
-                "打开网页查看内容",
-                "Web 自动化任务的第一步",
-                "切换到新页面",
+                "Search tasks: use URL params directly (e.g. baidu.com/s?wd=keyword)",
+                "Open a webpage to view content",
+                "First step of a web automation task",
+                "Switch to a new page",
             ],
             params_desc={
-                "url": "要访问的完整 URL（必须包含协议，如 https://）",
+                "url": "Full URL to visit (must include protocol, e.g. https://)",
             },
             workflow_steps=[
-                "调用此工具导航到目标页面",
-                "等待页面加载",
-                "使用 browser_get_content 获取内容 或 browser_screenshot 截图",
+                "Call this tool to navigate to the target page",
+                "Wait for the page to load",
+                "Use browser_get_content to get content or browser_screenshot to capture a screenshot",
             ],
             notes=[
-                "⚠️ 搜索类任务优先用此工具，直接在 URL 中带搜索参数",
-                "常用搜索 URL 模板：百度搜索 https://www.baidu.com/s?wd=关键词",
-                "百度图片 https://image.baidu.com/search/index?tn=baiduimage&word=关键词",
+                "⚠️ For search tasks, prefer this tool and include search params directly in the URL",
+                "Common search URL templates: Baidu search https://www.baidu.com/s?wd=keyword",
+                "Baidu image https://image.baidu.com/search/index?tn=baiduimage&word=keyword",
                 "Google https://www.google.com/search?q=keyword",
-                "如果浏览器未启动会自动启动",
-                "URL 必须包含协议（http:// 或 https://）",
+                "The browser is launched automatically if not running",
+                "The URL must include the protocol (http:// or https://)",
             ],
         ),
         "triggers": [
@@ -128,28 +128,28 @@ BROWSER_TOOLS = [
         "warnings": [],
         "examples": [
             {
-                "scenario": "打开搜索引擎",
+                "scenario": "Open a search engine",
                 "params": {"url": "https://www.google.com"},
                 "expected": "Browser navigates to Google homepage",
             },
             {
-                "scenario": "打开本地文件",
+                "scenario": "Open a local file",
                 "params": {"url": "file:///C:/Users/test.html"},
                 "expected": "Browser opens local HTML file",
             },
         ],
         "related_tools": [
-            {"name": "browser_get_content", "relation": "导航后获取页面文本内容"},
-            {"name": "browser_click", "relation": "导航后点击页面元素"},
-            {"name": "browser_screenshot", "relation": "导航后截图"},
-            {"name": "view_image", "relation": "截图后查看图片内容，验证页面状态"},
+            {"name": "browser_get_content", "relation": "Get page text content after navigation"},
+            {"name": "browser_click", "relation": "Click page elements after navigation"},
+            {"name": "browser_screenshot", "relation": "Take a screenshot after navigation"},
+            {"name": "view_image", "relation": "View screenshot contents to verify page state"},
         ],
         "input_schema": {
             "type": "object",
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "要访问的 URL（必须包含协议）。搜索类任务直接在 URL 中带参数",
+                    "description": "URL to visit (must include protocol). For search tasks, include params directly in the URL",
                 },
             },
             "required": ["url"],
@@ -161,21 +161,21 @@ BROWSER_TOOLS = [
         "category": "Browser",
         "description": "Extract page content and element text from current webpage. When you need to: (1) Read page information, (2) Get element values, (3) Scrape data, (4) Verify page content.",
         "detail": build_detail(
-            summary="获取页面内容（文本或 HTML）。",
+            summary="Get page content (text or HTML).",
             scenarios=[
-                "读取页面信息",
-                "获取元素值",
-                "抓取数据",
-                "验证页面内容",
+                "Read page information",
+                "Get element values",
+                "Scrape data",
+                "Verify page content",
             ],
             params_desc={
-                "selector": "元素选择器（可选，不填则获取整个页面）",
-                "format": "返回格式：text（纯文本，默认）或 html（HTML 源码）",
+                "selector": "Element selector (optional; omit to get the entire page)",
+                "format": "Return format: text (plain text, default) or html (HTML source)",
             },
             notes=[
-                "不指定 selector：获取整个页面文本",
-                "指定 selector：获取特定元素的文本",
-                "format 默认为 text，如需 HTML 源码请指定为 html",
+                "No selector: get the full page text",
+                "With selector: get text of the specific element",
+                "format defaults to text; specify html to get the HTML source",
             ],
         ),
         "triggers": [
@@ -189,17 +189,17 @@ BROWSER_TOOLS = [
         "warnings": [],
         "examples": [
             {
-                "scenario": "获取整个页面内容",
+                "scenario": "Get the full page content",
                 "params": {},
                 "expected": "Returns full page text content",
             },
             {
-                "scenario": "获取特定元素内容",
+                "scenario": "Get content of a specific element",
                 "params": {"selector": ".article-body"},
                 "expected": "Returns text content of article body",
             },
             {
-                "scenario": "获取页面 HTML 源码",
+                "scenario": "Get page HTML source",
                 "params": {"format": "html"},
                 "expected": "Returns full page HTML content",
             },
@@ -213,17 +213,17 @@ BROWSER_TOOLS = [
             "properties": {
                 "selector": {
                     "type": "string",
-                    "description": "元素选择器（可选，不填则获取整个页面）",
+                    "description": "Element selector (optional; omit to get the entire page)",
                 },
                 "format": {
                     "type": "string",
                     "enum": ["text", "html"],
-                    "description": "返回格式：text（纯文本，默认）或 html（HTML 源码）",
+                    "description": "Return format: text (plain text, default) or html (HTML source)",
                     "default": "text",
                 },
                 "max_length": {
                     "type": "integer",
-                    "description": "最大返回字符数，默认 12000。超出部分保存到溢出文件，可用 read_file 分页读取",
+                    "description": "Maximum characters to return, default 12000. Excess is saved to an overflow file, which can be read page-by-page via read_file",
                     "default": 12000,
                 },
             },
@@ -236,21 +236,21 @@ BROWSER_TOOLS = [
         "category": "Browser",
         "description": "Capture browser page screenshot (webpage content only, not desktop). When you need to: (1) Show page state to user, (2) Document web results, (3) Debug page issues. For desktop/application screenshots, use desktop_screenshot instead.",
         "detail": build_detail(
-            summary="截取当前页面截图。",
+            summary="Capture a screenshot of the current page.",
             scenarios=[
-                "向用户展示页面状态",
-                "记录网页操作结果",
-                "调试页面问题",
+                "Show page state to the user",
+                "Document the results of a web operation",
+                "Debug page issues",
             ],
             params_desc={
-                "full_page": "是否截取整个页面（包含滚动区域），默认 False 只截取可视区域",
-                "path": "保存路径（可选，不填自动生成）",
+                "full_page": "Whether to capture the full page (including scrollable areas); defaults to False (visible area only)",
+                "path": "Save path (optional; auto-generated if omitted)",
             },
             notes=[
-                "仅截取浏览器页面内容",
-                "如需截取桌面或其他应用，请使用 desktop_screenshot",
-                "full_page=True 会截取页面的完整内容（包含需要滚动才能看到的部分）",
-                "IM 场景下截图保存在服务器本地，需通过 `deliver_artifacts` 交付给用户才可见",
+                "Captures browser page content only",
+                "Use desktop_screenshot for the desktop or other applications",
+                "full_page=True captures the full page (including content that requires scrolling)",
+                "In IM scenarios, the screenshot is saved locally on the server; use `deliver_artifacts` to deliver it to the user",
             ],
         ),
         "triggers": [
@@ -264,17 +264,17 @@ BROWSER_TOOLS = [
         "warnings": [],
         "examples": [
             {
-                "scenario": "截取当前页面",
+                "scenario": "Capture the current page",
                 "params": {},
                 "expected": "Saves screenshot with auto-generated filename",
             },
             {
-                "scenario": "截取完整页面",
+                "scenario": "Capture the full page",
                 "params": {"full_page": True},
                 "expected": "Saves full-page screenshot including scrollable content",
             },
             {
-                "scenario": "保存到指定路径",
+                "scenario": "Save to a specified path",
                 "params": {"path": "C:/screenshots/result.png"},
                 "expected": "Saves screenshot to specified path",
             },
@@ -291,10 +291,10 @@ BROWSER_TOOLS = [
             "properties": {
                 "full_page": {
                     "type": "boolean",
-                    "description": "是否截取整个页面（包含滚动区域），默认只截取可视区域",
+                    "description": "Whether to capture the full page (including scrollable areas); defaults to visible area only",
                     "default": False,
                 },
-                "path": {"type": "string", "description": "保存路径（可选，不填自动生成）"},
+                "path": {"type": "string", "description": "Save path (optional; auto-generated if omitted)"},
             },
             "required": [],
         },
@@ -305,20 +305,20 @@ BROWSER_TOOLS = [
         "category": "Browser",
         "description": "Click an element on the current page. Use CSS selector or visible text to identify the target element.",
         "detail": build_detail(
-            summary="点击页面上的元素。支持 CSS 选择器或可见文本定位。",
+            summary="Click an element on the page. Supports CSS selector or visible text targeting.",
             scenarios=[
-                "点击按钮、链接",
-                "选择下拉菜单选项",
-                "点击表单控件",
+                "Click buttons and links",
+                "Select dropdown menu options",
+                "Click form controls",
             ],
             params_desc={
-                "selector": "CSS 选择器（如 'button.submit', '#login-btn', 'a.product-link'）",
-                "text": "元素的可见文本（如 '提交', '登录'）。selector 和 text 至少提供一个",
+                "selector": "CSS selector (e.g. 'button.submit', '#login-btn', 'a.product-link')",
+                "text": "Visible text of the element (e.g. 'Submit', 'Log in'). At least one of selector or text is required",
             },
             notes=[
-                "selector 和 text 至少提供一个",
-                "优先使用 selector 精确定位，text 用于模糊匹配",
-                "点击前建议先用 browser_get_content 确认元素存在",
+                "At least one of selector or text must be provided",
+                "Prefer selector for precise targeting; text is for fuzzy matching",
+                "Before clicking, verify the element exists using browser_get_content",
             ],
         ),
         "triggers": [
@@ -329,30 +329,30 @@ BROWSER_TOOLS = [
         "warnings": [],
         "examples": [
             {
-                "scenario": "点击提交按钮",
+                "scenario": "Click the submit button",
                 "params": {"selector": "button[type='submit']"},
                 "expected": "Clicks the submit button",
             },
             {
-                "scenario": "点击文本链接",
-                "params": {"text": "登录"},
-                "expected": "Clicks element containing text '登录'",
+                "scenario": "Click a text link",
+                "params": {"text": "Log in"},
+                "expected": "Clicks element containing text 'Log in'",
             },
         ],
         "related_tools": [
-            {"name": "browser_get_content", "relation": "点击前确认页面元素"},
-            {"name": "browser_screenshot", "relation": "点击后截图验证"},
+            {"name": "browser_get_content", "relation": "Verify page elements before clicking"},
+            {"name": "browser_screenshot", "relation": "Capture a screenshot after clicking to verify"},
         ],
         "input_schema": {
             "type": "object",
             "properties": {
                 "selector": {
                     "type": "string",
-                    "description": "CSS 选择器（如 'button.submit', '#login-btn'）",
+                    "description": "CSS selector (e.g. 'button.submit', '#login-btn')",
                 },
                 "text": {
                     "type": "string",
-                    "description": "元素的可见文本（如 '提交', '登录'）",
+                    "description": "Visible text of the element (e.g. 'Submit', 'Log in')",
                 },
             },
             "required": [],
@@ -364,20 +364,20 @@ BROWSER_TOOLS = [
         "category": "Browser",
         "description": "Type text into an input field on the current page. Identifies the field by CSS selector.",
         "detail": build_detail(
-            summary="在输入框中输入文本。",
+            summary="Type text into an input field.",
             scenarios=[
-                "填写搜索框",
-                "填写表单字段（用户名、密码、邮箱等）",
-                "在文本区域输入内容",
+                "Fill in a search box",
+                "Fill form fields (username, password, email, etc.)",
+                "Enter content in a text area",
             ],
             params_desc={
-                "selector": "输入框的 CSS 选择器（如 'input[name=\"username\"]', '#search-box'）",
-                "text": "要输入的文本",
-                "clear": "是否先清空输入框（默认 True）",
+                "selector": "CSS selector of the input field (e.g. 'input[name=\"username\"]', '#search-box')",
+                "text": "Text to input",
+                "clear": "Whether to clear the input field first (default True)",
             },
             notes=[
-                "默认会先清空输入框再输入",
-                "设置 clear=False 可追加文本",
+                "Clears the input field before typing by default",
+                "Set clear=False to append text",
             ],
         ),
         "triggers": [
@@ -388,28 +388,28 @@ BROWSER_TOOLS = [
         "warnings": [],
         "examples": [
             {
-                "scenario": "在搜索框输入",
-                "params": {"selector": "#search-box", "text": "机械键盘"},
-                "expected": "Types '机械键盘' into the search box",
+                "scenario": "Type into a search box",
+                "params": {"selector": "#search-box", "text": "mechanical keyboard"},
+                "expected": "Types 'mechanical keyboard' into the search box",
             },
         ],
         "related_tools": [
-            {"name": "browser_click", "relation": "输入后可能需要点击提交按钮"},
+            {"name": "browser_click", "relation": "You may need to click a submit button after typing"},
         ],
         "input_schema": {
             "type": "object",
             "properties": {
                 "selector": {
                     "type": "string",
-                    "description": "输入框的 CSS 选择器",
+                    "description": "CSS selector of the input field",
                 },
                 "text": {
                     "type": "string",
-                    "description": "要输入的文本",
+                    "description": "Text to input",
                 },
                 "clear": {
                     "type": "boolean",
-                    "description": "是否先清空输入框（默认 True）",
+                    "description": "Whether to clear the input field first (default True)",
                     "default": True,
                 },
             },
@@ -422,15 +422,15 @@ BROWSER_TOOLS = [
         "category": "Browser",
         "description": "Scroll the page up or down by a specified amount of pixels.",
         "detail": build_detail(
-            summary="滚动页面。",
+            summary="Scroll the page.",
             scenarios=[
-                "查看页面下方内容",
-                "滚动到特定区域",
-                "浏览长页面",
+                "View content below the fold",
+                "Scroll to a specific area",
+                "Browse long pages",
             ],
             params_desc={
-                "direction": "滚动方向：'up' 或 'down'（默认 'down'）",
-                "amount": "滚动像素数（默认 500）",
+                "direction": "Scroll direction: 'up' or 'down' (default 'down')",
+                "amount": "Number of pixels to scroll (default 500)",
             },
         ),
         "triggers": [
@@ -441,7 +441,7 @@ BROWSER_TOOLS = [
         "warnings": [],
         "examples": [
             {
-                "scenario": "向下滚动",
+                "scenario": "Scroll down",
                 "params": {"direction": "down", "amount": 500},
                 "expected": "Scrolls down 500 pixels",
             },
@@ -452,12 +452,12 @@ BROWSER_TOOLS = [
                 "direction": {
                     "type": "string",
                     "enum": ["up", "down"],
-                    "description": "滚动方向",
+                    "description": "Scroll direction",
                     "default": "down",
                 },
                 "amount": {
                     "type": "integer",
-                    "description": "滚动像素数",
+                    "description": "Number of pixels to scroll",
                     "default": 500,
                 },
             },
@@ -470,15 +470,15 @@ BROWSER_TOOLS = [
         "category": "Browser",
         "description": "Wait for a specific element to appear on the page. Useful after navigation or clicks that trigger dynamic content loading.",
         "detail": build_detail(
-            summary="等待页面元素出现。适用于动态加载内容的场景。",
+            summary="Wait for a page element to appear. Useful for dynamically loaded content.",
             scenarios=[
-                "等待页面加载完成",
-                "等待 AJAX 请求完成后元素出现",
-                "等待弹窗出现",
+                "Wait for a page to finish loading",
+                "Wait for an element to appear after an AJAX request",
+                "Wait for a popup to appear",
             ],
             params_desc={
-                "selector": "要等待的元素的 CSS 选择器",
-                "timeout": "超时时间（毫秒），默认 30000（30秒）",
+                "selector": "CSS selector of the element to wait for",
+                "timeout": "Timeout in milliseconds, default 30000 (30s)",
             },
         ),
         "triggers": [
@@ -489,7 +489,7 @@ BROWSER_TOOLS = [
         "warnings": [],
         "examples": [
             {
-                "scenario": "等待搜索结果加载",
+                "scenario": "Wait for search results to load",
                 "params": {"selector": ".search-results", "timeout": 10000},
                 "expected": "Waits up to 10s for search results to appear",
             },
@@ -499,11 +499,11 @@ BROWSER_TOOLS = [
             "properties": {
                 "selector": {
                     "type": "string",
-                    "description": "要等待的元素的 CSS 选择器",
+                    "description": "CSS selector of the element to wait for",
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "超时时间（毫秒），默认 30000",
+                    "description": "Timeout in milliseconds, default 30000",
                     "default": 30000,
                 },
             },
@@ -516,19 +516,19 @@ BROWSER_TOOLS = [
         "category": "Browser",
         "description": "Execute JavaScript code on the current page. Returns the evaluation result.",
         "detail": build_detail(
-            summary="在当前页面执行 JavaScript 代码。",
+            summary="Execute JavaScript code on the current page.",
             scenarios=[
-                "获取页面上的特定数据",
-                "修改页面状态",
-                "调用页面上的 JavaScript 函数",
-                "获取 DOM 元素属性",
+                "Get specific data from the page",
+                "Modify the page state",
+                "Call JavaScript functions on the page",
+                "Get DOM element attributes",
             ],
             params_desc={
-                "script": "要执行的 JavaScript 代码",
+                "script": "JavaScript code to execute",
             },
             notes=[
-                "代码在页面上下文中执行",
-                "可以返回序列化的结果",
+                "The code runs in the page context",
+                "Can return serializable results",
             ],
         ),
         "triggers": [
@@ -539,12 +539,12 @@ BROWSER_TOOLS = [
         "warnings": ["Be careful with destructive JS operations"],
         "examples": [
             {
-                "scenario": "获取页面标题",
+                "scenario": "Get the page title",
                 "params": {"script": "document.title"},
                 "expected": "Returns the page title",
             },
             {
-                "scenario": "获取所有链接",
+                "scenario": "Get all links",
                 "params": {
                     "script": "Array.from(document.querySelectorAll('a')).map(a => ({text: a.textContent.trim(), href: a.href})).slice(0, 20)"
                 },
@@ -556,7 +556,7 @@ BROWSER_TOOLS = [
             "properties": {
                 "script": {
                     "type": "string",
-                    "description": "要执行的 JavaScript 代码",
+                    "description": "JavaScript code to execute",
                 },
             },
             "required": ["script"],
@@ -568,14 +568,14 @@ BROWSER_TOOLS = [
         "category": "Browser",
         "description": "List all open browser tabs with their URLs and titles.",
         "detail": build_detail(
-            summary="列出所有打开的浏览器标签页。",
-            scenarios=["查看当前打开了哪些页面", "在多标签操作中定位目标标签"],
+            summary="List all open browser tabs.",
+            scenarios=["See which pages are currently open", "Locate the target tab in multi-tab operations"],
         ),
         "triggers": ["When managing multiple tabs"],
         "prerequisites": ["Browser must be running"],
         "warnings": [],
         "examples": [
-            {"scenario": "列出所有标签", "params": {}, "expected": "Returns list of tabs"},
+            {"scenario": "List all tabs", "params": {}, "expected": "Returns list of tabs"},
         ],
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
@@ -585,16 +585,16 @@ BROWSER_TOOLS = [
         "category": "Browser",
         "description": "Switch to a specific browser tab by index (0-based).",
         "detail": build_detail(
-            summary="切换到指定索引的标签页（从 0 开始）。",
-            scenarios=["在多标签操作中切换页面"],
-            params_desc={"index": "标签页索引（从 0 开始）"},
+            summary="Switch to the tab at the specified index (0-based).",
+            scenarios=["Switch pages in multi-tab operations"],
+            params_desc={"index": "Tab index (0-based)"},
         ),
         "triggers": ["When switching between tabs"],
         "prerequisites": ["Browser must be running with multiple tabs"],
         "warnings": [],
         "examples": [
             {
-                "scenario": "切换到第二个标签",
+                "scenario": "Switch to the second tab",
                 "params": {"index": 1},
                 "expected": "Switches to tab at index 1",
             },
@@ -604,7 +604,7 @@ BROWSER_TOOLS = [
             "properties": {
                 "index": {
                     "type": "integer",
-                    "description": "标签页索引（从 0 开始）",
+                    "description": "Tab index (0-based)",
                     "default": 0,
                 },
             },
@@ -617,16 +617,16 @@ BROWSER_TOOLS = [
         "category": "Browser",
         "description": "Open a new browser tab, optionally navigating to a URL.",
         "detail": build_detail(
-            summary="打开新标签页，可选导航到指定 URL。",
-            scenarios=["需要在新标签页中打开链接", "保留当前页面同时查看其他内容"],
-            params_desc={"url": "要在新标签页打开的 URL（可选，不填则打开空白页）"},
+            summary="Open a new tab, optionally navigating to a specified URL.",
+            scenarios=["Open a link in a new tab", "Keep the current page while viewing other content"],
+            params_desc={"url": "URL to open in the new tab (optional; opens a blank page if omitted)"},
         ),
         "triggers": ["When opening a link in a new tab"],
         "prerequisites": ["Browser must be running"],
         "warnings": [],
         "examples": [
             {
-                "scenario": "新标签打开页面",
+                "scenario": "Open a page in a new tab",
                 "params": {"url": "https://www.baidu.com"},
                 "expected": "Opens Baidu in new tab",
             },
@@ -634,7 +634,7 @@ BROWSER_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "url": {"type": "string", "description": "要打开的 URL（可选）"},
+                "url": {"type": "string", "description": "URL to open (optional)"},
             },
             "required": [],
         },
@@ -645,21 +645,21 @@ BROWSER_TOOLS = [
         "category": "Browser",
         "description": "View/analyze a local image file. Load the image and send it to the LLM for visual understanding. Use this when you need to: (1) Verify browser screenshots show the expected content, (2) Analyze any local image file, (3) Understand what's in an image before deciding next steps. The image content will be embedded in the tool result so the LLM can SEE it directly.",
         "detail": build_detail(
-            summary="查看/分析本地图片文件。将图片加载并嵌入到工具结果中，让 LLM 能直接看到图片内容。",
+            summary="View/analyze a local image file. Loads the image and embeds it into the tool result so the LLM can see the image content directly.",
             scenarios=[
-                "截图验证：截图后查看截图内容，确认页面状态是否符合预期",
-                "分析任意本地图片文件",
-                "在决策前理解图片内容",
+                "Screenshot verification: after a screenshot, view its contents to confirm whether the page state matches expectations",
+                "Analyze any local image file",
+                "Understand image content before making a decision",
             ],
             params_desc={
-                "path": "图片文件路径（支持 png/jpg/jpeg/gif/webp）",
-                "question": "可选，关于图片的具体问题（如'搜索结果有多少条？'）",
+                "path": "Image file path (supports png/jpg/jpeg/gif/webp)",
+                "question": "Optional, a specific question about the image (e.g. 'How many search results are there?')",
             },
             notes=[
-                "⚠️ 重要：browser_screenshot 截图后，如果需要确认页面内容，一定要用此工具查看截图",
-                "支持格式: PNG, JPEG, GIF, WebP",
-                "图片会被自动缩放以适配 LLM 上下文限制",
-                "如果当前模型不支持视觉，将使用 VL 模型生成文字描述",
+                "⚠️ Important: after browser_screenshot, use this tool to view the screenshot when you need to confirm page content",
+                "Supported formats: PNG, JPEG, GIF, WebP",
+                "Images are automatically scaled to fit LLM context limits",
+                "If the current model does not support vision, a VL model is used to generate a textual description",
             ],
         ),
         "triggers": [
@@ -672,15 +672,15 @@ BROWSER_TOOLS = [
         "warnings": [],
         "examples": [
             {
-                "scenario": "验证浏览器截图",
+                "scenario": "Verify a browser screenshot",
                 "params": {"path": "data/screenshots/screenshot_20260224_015625.png"},
                 "expected": "Returns the image embedded in tool result, LLM can see and analyze the page content",
             },
             {
-                "scenario": "带问题的图片分析",
+                "scenario": "Image analysis with a question",
                 "params": {
                     "path": "data/screenshots/screenshot.png",
-                    "question": "页面是否显示了搜索结果？搜索关键词是什么？",
+                    "question": "Does the page show search results? What is the search keyword?",
                 },
                 "expected": "LLM sees the image and can answer the specific question",
             },
@@ -696,11 +696,11 @@ BROWSER_TOOLS = [
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "图片文件路径（支持 png/jpg/jpeg/gif/webp/bmp）",
+                    "description": "Image file path (supports png/jpg/jpeg/gif/webp/bmp)",
                 },
                 "question": {
                     "type": "string",
-                    "description": "关于图片的具体问题（可选，留空则返回图片让 LLM 自行分析）",
+                    "description": "Specific question about the image (optional; leave empty to return the image for the LLM to analyze on its own)",
                 },
             },
             "required": ["path"],
@@ -712,15 +712,15 @@ BROWSER_TOOLS = [
         "category": "Browser",
         "description": "Close the browser and release resources. Call when browser automation is complete and no longer needed. This frees memory and system resources.",
         "detail": build_detail(
-            summary="关闭浏览器，释放资源。",
+            summary="Close the browser and release resources.",
             scenarios=[
-                "浏览器任务全部完成后",
-                "需要释放系统资源",
-                "需要重新启动浏览器（先关闭再打开）",
+                "After all browser tasks are complete",
+                "When system resources need to be released",
+                "When the browser needs to be restarted (close before reopening)",
             ],
             notes=[
-                "关闭后需要再次调用 browser_open 才能使用浏览器",
-                "所有标签页都会关闭",
+                "After closing, you must call browser_open again to use the browser",
+                "All tabs will be closed",
             ],
         ),
         "triggers": [
@@ -734,7 +734,7 @@ BROWSER_TOOLS = [
         ],
         "examples": [
             {
-                "scenario": "任务完成后关闭浏览器",
+                "scenario": "Close browser after task completion",
                 "params": {},
                 "expected": "Browser closes and resources are freed",
             },

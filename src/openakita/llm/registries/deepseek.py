@@ -1,8 +1,9 @@
 """
-DeepSeek 服务商注册表（OpenAI 兼容）。
+DeepSeek provider registry (OpenAI-compatible).
 
-DeepSeek 官方提供 OpenAI 兼容协议，通常支持 `/v1/models`。
-如果 API 拉取失败，则回退到预置模型列表（用于离线/网络受限/权限不足场景）。
+DeepSeek provides an OpenAI-compatible API, typically supporting `/v1/models`.
+Falls back to a preset model list when the API call fails (useful for offline,
+network-restricted, or insufficient-permission scenarios).
 """
 
 from ..capabilities import infer_capabilities
@@ -10,7 +11,7 @@ from .base import ModelInfo, ProviderInfo, ProviderRegistry, get_registry_client
 
 
 class DeepSeekRegistry(ProviderRegistry):
-    """DeepSeek 注册表"""
+    """DeepSeek registry"""
 
     info = ProviderInfo(
         name="DeepSeek",

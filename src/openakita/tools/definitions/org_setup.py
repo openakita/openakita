@@ -9,27 +9,27 @@ _EDGE_SCHEMA = {
     "properties": {
         "source": {
             "type": "string",
-            "description": "起点节点的 role_title 或 node_id",
+            "description": "role_title or node_id of the source node",
         },
         "target": {
             "type": "string",
-            "description": "终点节点的 role_title 或 node_id",
+            "description": "role_title or node_id of the target node",
         },
         "edge_type": {
             "type": "string",
             "enum": ["collaborate", "escalate", "consult"],
             "description": (
-                "连线类型（不含 hierarchy，层级关系请用节点的 parent_role_title）："
-                "collaborate=协作, escalate=上报, consult=咨询"
+                "Edge type (excluding hierarchy; for hierarchical relationships use a node's parent_role_title): "
+                "collaborate=collaboration, escalate=escalation, consult=consultation"
             ),
         },
         "label": {
             "type": "string",
-            "description": "连线标签（如 '需求沟通'、'数据传递'）",
+            "description": "Edge label (e.g., 'requirements discussion', 'data handoff')",
         },
         "bidirectional": {
             "type": "boolean",
-            "description": "是否双向通信（默认 true）",
+            "description": "Whether communication is bidirectional (default true)",
         },
     },
     "required": ["source", "target", "edge_type"],
@@ -40,49 +40,49 @@ _NODE_SCHEMA = {
     "properties": {
         "node_id": {
             "type": "string",
-            "description": "现有节点 ID（修改时必填，用于精确匹配；新增时留空）",
+            "description": "Existing node ID (required on update for precise matching; leave empty when adding new)",
         },
         "role_title": {
             "type": "string",
-            "description": "岗位名称（必填，如 CEO、CTO、前端开发）",
+            "description": "Role title (required, e.g., CEO, CTO, Frontend Developer)",
         },
         "role_goal": {
             "type": "string",
-            "description": "岗位目标（如：制定技术路线，保障系统稳定）",
+            "description": "Role goal (e.g., define the technical roadmap and ensure system stability)",
         },
         "department": {
             "type": "string",
-            "description": "所属部门（如：技术部、产品部）",
+            "description": "Department (e.g., Engineering, Product)",
         },
         "level": {
             "type": "integer",
-            "description": "层级（0=最高层/根，1=中层，2=基层）",
+            "description": "Hierarchy level (0=top/root, 1=middle, 2=ground level)",
         },
         "agent_profile_id": {
             "type": "string",
             "description": (
-                "关联的 Agent Profile ID（可选）。"
-                "从 get_resources 返回的 agents/custom_agents 列表中选择，"
-                "或留空并用 custom_prompt 直接定义全新角色"
+                "Associated Agent Profile ID (optional). "
+                "Choose from the agents/custom_agents list returned by get_resources, "
+                "or leave empty and use custom_prompt to define a brand-new role directly."
             ),
         },
         "parent_role_title": {
             "type": "string",
-            "description": "上级岗位名称（用于自动创建层级关系。根节点不需要填写）",
+            "description": "Parent role title (used to automatically create hierarchy. Not required for root node)",
         },
         "external_tools": {
             "type": "array",
             "items": {"type": "string"},
             "description": (
-                "外部工具（类目名或工具名，如 "
-                "'research'、'filesystem'、'planning'、'browser'）"
+                "External tools (category or tool name, e.g., "
+                "'research', 'filesystem', 'planning', 'browser')"
             ),
         },
         "custom_prompt": {
             "type": "string",
             "description": (
-                "自定义提示词。可独立使用（不设 agent_profile_id）来创建全新角色，"
-                "也可与 agent_profile_id 配合使用来追加指令"
+                "Custom prompt. Can be used alone (without agent_profile_id) to create a brand-new role, "
+                "or combined with agent_profile_id to append instructions."
             ),
         },
     },
@@ -105,35 +105,35 @@ ORG_SETUP_TOOLS = [
             "then update_org with incremental changes."
         ),
         "detail": (
-            "通过自然语言创建和管理组织编排架构。\n\n"
-            "## 创建流程\n\n"
-            "1. **get_resources** — 获取可用 Agent（预设+用户自建）、模板、工具类目\n"
-            "2. **向用户了解需求** — 信息不足时主动询问\n"
-            "3. **为每个节点配置角色** — 选择现有 Agent（agent_profile_id），"
-            "或用 custom_prompt 直接定义全新角色\n"
-            "4. **preview** — 展示草案给用户确认\n"
-            "5. **create** — 用户确认后正式创建\n\n"
-            "## 修改流程\n\n"
-            "1. **list_orgs** — 列出现有组织，确定要修改的目标\n"
-            "2. **get_org** — 获取完整结构（节点 ID、Agent、工具、连线等）\n"
-            "3. **理解用户修改意图** — 确认要增删改哪些节点或连线\n"
-            "4. **向用户描述变更方案** — 先用文本说明，让用户确认\n"
-            "5. **update_org** — 提交增量修改（保留现有节点 ID）\n\n"
-            "## 连线类型\n\n"
-            "组织支持 4 种连线关系：\n"
-            "- **hierarchy** — 层级（上下级），通过节点的 parent_role_title 自动创建\n"
-            "- **collaborate** — 协作，子节点之间的横向协作关系\n"
-            "- **escalate** — 上报，跨层级的问题上报通道\n"
-            "- **consult** — 咨询，向特定节点请求专业意见\n\n"
-            "层级关系由 parent_role_title 管理；"
-            "其他三种关系通过 edges（创建时）或 add_edges（修改时）添加。\n\n"
-            "## 关键注意事项\n"
-            "- 修改时**必须保留现有节点 ID**，因为 ID 关联了任务、记忆、身份文件\n"
-            "- update_org 是**增量更新**：只传要改的字段，未提及的节点原样保留\n"
-            "- 删除节点用 remove_nodes 参数，会同时清理关联边\n"
-            "- 删除连线用 remove_edges 参数（传 edge ID，从 get_org 获取）\n"
-            "- remove_edges 仅可删除非层级连线；层级关系请通过修改 parent_role_title\n"
-            "- 信息不足时**主动询问**，不要猜测用户意图"
+            "Create and manage organizational orchestration structures through natural language.\n\n"
+            "## Creation flow\n\n"
+            "1. **get_resources** — fetch available Agents (presets + user-built), templates, and tool categories\n"
+            "2. **Gather requirements from the user** — actively ask questions when information is incomplete\n"
+            "3. **Configure a role for each node** — pick an existing Agent (agent_profile_id), "
+            "or use custom_prompt to define a brand-new role directly\n"
+            "4. **preview** — show the draft to the user for confirmation\n"
+            "5. **create** — formally create after user confirmation\n\n"
+            "## Modification flow\n\n"
+            "1. **list_orgs** — list existing organizations and identify the target to modify\n"
+            "2. **get_org** — fetch the full structure (node IDs, Agents, tools, edges, etc.)\n"
+            "3. **Understand the user's intended changes** — confirm which nodes or edges to add/remove/modify\n"
+            "4. **Describe the change plan to the user** — explain in text first and ask for confirmation\n"
+            "5. **update_org** — submit the incremental update (preserve existing node IDs)\n\n"
+            "## Edge types\n\n"
+            "The organization supports 4 kinds of relationships:\n"
+            "- **hierarchy** — reporting line (parent/child); auto-created via a node's parent_role_title\n"
+            "- **collaborate** — collaboration between sibling nodes\n"
+            "- **escalate** — cross-level escalation channel\n"
+            "- **consult** — request expert input from a specific node\n\n"
+            "Hierarchy is managed via parent_role_title; "
+            "the other three types are added via edges (on create) or add_edges (on update).\n\n"
+            "## Key considerations\n"
+            "- On modification, **existing node IDs must be preserved**, because IDs are linked to tasks, memories, and identity files\n"
+            "- update_org is an **incremental update**: only pass fields that change; unmentioned nodes remain as-is\n"
+            "- Use remove_nodes to delete nodes; associated edges are cleaned up as well\n"
+            "- Use remove_edges to delete edges (pass edge IDs obtained from get_org)\n"
+            "- remove_edges can only delete non-hierarchy edges; modify parent_role_title to change hierarchy\n"
+            "- **Actively ask questions** when information is incomplete; do not guess the user's intent"
         ),
         "input_schema": {
             "type": "object",
@@ -146,91 +146,91 @@ ORG_SETUP_TOOLS = [
                         "update_org", "delete_org",
                     ],
                     "description": (
-                        "操作类型："
-                        "get_resources=获取可用资源清单；"
-                        "list_orgs=列出现有组织；"
-                        "get_org=获取组织完整结构；"
-                        "preview=预览新组织架构（不创建）；"
-                        "create=创建组织；"
-                        "create_from_template=从模板创建；"
-                        "update_org=修改现有组织（增量）；"
-                        "delete_org=删除组织"
+                        "Action type: "
+                        "get_resources=fetch the list of available resources; "
+                        "list_orgs=list existing organizations; "
+                        "get_org=fetch an organization's full structure; "
+                        "preview=preview a new organization structure (no creation); "
+                        "create=create an organization; "
+                        "create_from_template=create from a template; "
+                        "update_org=modify an existing organization (incremental); "
+                        "delete_org=delete an organization"
                     ),
                 },
                 "org_id": {
                     "type": "string",
-                    "description": "组织 ID（get_org/update_org/delete_org 时必填）",
+                    "description": "Organization ID (required for get_org/update_org/delete_org)",
                 },
                 "name": {
                     "type": "string",
-                    "description": "组织名称（create/preview 时必填，update_org 时可选）",
+                    "description": "Organization name (required for create/preview, optional for update_org)",
                 },
                 "description": {
                     "type": "string",
-                    "description": "组织描述",
+                    "description": "Organization description",
                 },
                 "core_business": {
                     "type": "string",
-                    "description": "核心业务描述（如：跨境电商运营、SaaS 产品研发）",
+                    "description": "Core business description (e.g., cross-border e-commerce operations, SaaS product R&D)",
                 },
                 "nodes": {
                     "type": "array",
                     "items": _NODE_SCHEMA,
-                    "description": "节点列表（create/preview 时必填）",
+                    "description": "Node list (required for create/preview)",
                 },
                 "edges": {
                     "type": "array",
                     "items": _EDGE_SCHEMA,
                     "description": (
-                        "非层级连线列表（create/preview 时可选）。"
-                        "用于定义子节点之间的协作/上报/咨询关系。"
-                        "层级关系不需要在此指定，由节点的 parent_role_title 自动生成"
+                        "Non-hierarchy edge list (optional on create/preview). "
+                        "Defines collaboration/escalation/consult relationships between sibling nodes. "
+                        "Hierarchy does not need to be specified here — it is generated automatically from each node's parent_role_title."
                     ),
                 },
                 "template_id": {
                     "type": "string",
-                    "description": "模板 ID（create_from_template 时必填）",
+                    "description": "Template ID (required for create_from_template)",
                 },
                 "overrides": {
                     "type": "object",
-                    "description": "模板覆盖字段（create_from_template 时可选）",
+                    "description": "Template override fields (optional for create_from_template)",
                 },
                 "update_nodes": {
                     "type": "array",
                     "items": _NODE_SCHEMA,
                     "description": (
-                        "要修改或新增的节点（update_org 时使用）。"
-                        "有 node_id 匹配现有节点则更新，否则按 role_title 匹配或作为新节点添加"
+                        "Nodes to update or add (used by update_org). "
+                        "If node_id matches an existing node it is updated; otherwise matched by role_title or added as a new node."
                     ),
                 },
                 "remove_nodes": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "要删除的节点 ID 或 role_title 列表（update_org 时使用）",
+                    "description": "List of node IDs or role_titles to remove (used by update_org)",
                 },
                 "add_edges": {
                     "type": "array",
                     "items": _EDGE_SCHEMA,
                     "description": (
-                        "要添加的非层级连线（update_org 时使用）。"
-                        "source/target 可用 node_id 或 role_title。"
-                        "仅支持 collaborate/escalate/consult 类型"
+                        "Non-hierarchy edges to add (used by update_org). "
+                        "source/target may be either node_id or role_title. "
+                        "Only collaborate/escalate/consult types are supported."
                     ),
                 },
                 "remove_edges": {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": (
-                        "要删除的连线 edge ID 列表（update_org 时使用，"
-                        "从 get_org 返回的连线列表中获取 ID）。"
-                        "仅可删除非层级连线"
+                        "List of edge IDs to delete (used by update_org; "
+                        "get the IDs from the edge list returned by get_org). "
+                        "Only non-hierarchy edges can be removed."
                     ),
                 },
                 "update_fields": {
                     "type": "object",
                     "description": (
-                        "组织级字段更新（update_org 时使用），"
-                        "如 name、description、core_business、heartbeat_enabled 等"
+                        "Organization-level field updates (used by update_org), "
+                        "e.g., name, description, core_business, heartbeat_enabled"
                     ),
                 },
             },
@@ -238,41 +238,41 @@ ORG_SETUP_TOOLS = [
         },
         "examples": [
             {
-                "scenario": "获取可用资源",
+                "scenario": "Fetch available resources",
                 "params": {"action": "get_resources"},
-                "expected": "返回 Agent 列表、模板列表、工具类目",
+                "expected": "Returns Agent list, template list, and tool categories",
             },
             {
-                "scenario": "列出现有组织",
+                "scenario": "List existing organizations",
                 "params": {"action": "list_orgs"},
-                "expected": "返回组织摘要列表（ID、名称、状态、节点数）",
+                "expected": "Returns a list of organization summaries (ID, name, status, node count)",
             },
             {
-                "scenario": "查看组织结构",
+                "scenario": "View organization structure",
                 "params": {"action": "get_org", "org_id": "org_xxx"},
-                "expected": "返回组织完整结构：节点列表、连线关系（含 edge ID）、元数据",
+                "expected": "Returns the full organization structure: node list, edges (with edge IDs), metadata",
             },
             {
-                "scenario": "修改组织：给电商团队加一个数据分析师",
+                "scenario": "Modify organization: add a data analyst to the e-commerce team",
                 "params": {
                     "action": "update_org",
                     "org_id": "org_xxx",
                     "update_nodes": [
                         {
-                            "role_title": "数据分析师",
-                            "role_goal": "数据埋点、报表分析、增长策略",
-                            "department": "运营部",
+                            "role_title": "Data Analyst",
+                            "role_goal": "Data instrumentation, reporting, growth strategy",
+                            "department": "Operations",
                             "level": 1,
                             "agent_profile_id": "data-analyst",
-                            "parent_role_title": "运营总监",
+                            "parent_role_title": "Head of Operations",
                             "external_tools": ["research", "filesystem"],
                         }
                     ],
                 },
-                "expected": "新增节点并自动创建层级关系",
+                "expected": "Adds the node and automatically creates the hierarchy relationship",
             },
             {
-                "scenario": "修改组织：更换节点的 Agent",
+                "scenario": "Modify organization: swap the Agent on a node",
                 "params": {
                     "action": "update_org",
                     "org_id": "org_xxx",
@@ -283,37 +283,37 @@ ORG_SETUP_TOOLS = [
                         }
                     ],
                 },
-                "expected": "只更新指定字段，其余保持不变",
+                "expected": "Only updates the specified fields; everything else remains unchanged",
             },
             {
-                "scenario": "修改组织：删除节点",
+                "scenario": "Modify organization: remove a node",
                 "params": {
                     "action": "update_org",
                     "org_id": "org_xxx",
-                    "remove_nodes": ["客服主管"],
+                    "remove_nodes": ["Customer Support Lead"],
                 },
-                "expected": "删除节点并清理关联边",
+                "expected": "Removes the node and cleans up associated edges",
             },
             {
-                "scenario": "修改组织：在子节点之间添加协作连线",
+                "scenario": "Modify organization: add a collaboration edge between sibling nodes",
                 "params": {
                     "action": "update_org",
                     "org_id": "org_xxx",
                     "add_edges": [
                         {
-                            "source": "数据分析师",
-                            "target": "风控专员",
+                            "source": "Data Analyst",
+                            "target": "Risk Control Officer",
                             "edge_type": "collaborate",
-                            "label": "数据共享",
+                            "label": "data sharing",
                         }
                     ],
                 },
-                "expected": "在两个子节点之间建立协作连线",
+                "expected": "Establishes a collaboration edge between two sibling nodes",
             },
             {
-                "scenario": "删除组织",
+                "scenario": "Delete organization",
                 "params": {"action": "delete_org", "org_id": "org_xxx"},
-                "expected": "永久删除组织及其所有数据",
+                "expected": "Permanently deletes the organization and all its data",
             },
         ],
     },

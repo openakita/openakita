@@ -1,7 +1,8 @@
 """
-CLI-Anything 工具定义
+CLI-Anything tool definitions
 
-通过 CLI-Anything 生成的 CLI 接口控制桌面软件（GIMP、Blender、LibreOffice 等）。
+Control desktop software (GIMP, Blender, LibreOffice, etc.) via CLI-Anything
+generated CLI interfaces.
 """
 
 from .base import build_detail
@@ -17,13 +18,13 @@ CLI_ANYTHING_TOOLS = [
             "controlled via CLI."
         ),
         "detail": build_detail(
-            summary="扫描系统 PATH，发现已安装的 cli-anything 桌面软件 CLI 工具。",
+            summary="Scan system PATH to discover installed cli-anything desktop software CLI tools.",
             scenarios=[
-                "查看哪些桌面软件可以通过 CLI 控制",
-                "首次使用前发现可用工具",
+                "Check which desktop software can be controlled via CLI",
+                "Discover available tools before first use",
             ],
             params_desc={
-                "refresh": "是否刷新缓存（默认 False）",
+                "refresh": "Whether to refresh the cache (default False)",
             },
         ),
         "triggers": [
@@ -34,21 +35,21 @@ CLI_ANYTHING_TOOLS = [
         "warnings": [],
         "examples": [
             {
-                "scenario": "发现已安装工具",
+                "scenario": "Discover installed tools",
                 "params": {},
                 "expected": "Returns list of installed cli-anything-* tools",
             },
         ],
         "related_tools": [
-            {"name": "cli_anything_help", "relation": "发现工具后查看帮助"},
-            {"name": "cli_anything_run", "relation": "发现工具后执行命令"},
+            {"name": "cli_anything_help", "relation": "View help after discovering tools"},
+            {"name": "cli_anything_run", "relation": "Run commands after discovering tools"},
         ],
         "input_schema": {
             "type": "object",
             "properties": {
                 "refresh": {
                     "type": "boolean",
-                    "description": "是否刷新缓存",
+                    "description": "Whether to refresh the cache",
                     "default": False,
                 },
             },
@@ -66,24 +67,24 @@ CLI_ANYTHING_TOOLS = [
             "cli-anything harness installed. Much more reliable than GUI automation."
         ),
         "detail": build_detail(
-            summary="执行 cli-anything 命令控制桌面软件。直接调用软件后端 API，比 GUI 自动化可靠。",
+            summary="Execute cli-anything commands to control desktop software. Directly calls the application backend API, more reliable than GUI automation.",
             scenarios=[
-                "用 GIMP 处理图片",
-                "用 Blender 渲染 3D 场景",
-                "用 LibreOffice 生成文档或 PDF",
-                "用 Audacity 处理音频",
+                "Process images with GIMP",
+                "Render 3D scenes with Blender",
+                "Generate documents or PDFs with LibreOffice",
+                "Process audio with Audacity",
             ],
             params_desc={
-                "app": "软件名称（如 'gimp', 'blender', 'libreoffice'）",
-                "subcommand": "子命令（如 'image resize', 'render scene'）",
-                "args": "命令参数列表",
-                "json_output": "是否请求 JSON 输出（默认 True）",
+                "app": "Application name (e.g. 'gimp', 'blender', 'libreoffice')",
+                "subcommand": "Subcommand (e.g. 'image resize', 'render scene')",
+                "args": "Command argument list",
+                "json_output": "Whether to request JSON output (default True)",
             },
             notes=[
-                "先用 cli_anything_discover 查看已安装的工具",
-                "先用 cli_anything_help 查看可用子命令和参数",
-                "目标软件必须安装在系统上",
-                "生成的文件保存在服务器本地，IM 场景下需通过 `deliver_artifacts` 交付给用户",
+                "Use cli_anything_discover first to check installed tools",
+                "Use cli_anything_help first to check available subcommands and parameters",
+                "Target software must be installed on the system",
+                "Generated files are saved on the server locally; in IM scenarios, deliver to user via `deliver_artifacts`",
             ],
         ),
         "triggers": [
@@ -100,7 +101,7 @@ CLI_ANYTHING_TOOLS = [
         ],
         "examples": [
             {
-                "scenario": "GIMP 调整图片大小",
+                "scenario": "Resize image with GIMP",
                 "params": {
                     "app": "gimp",
                     "subcommand": "image resize",
@@ -109,7 +110,7 @@ CLI_ANYTHING_TOOLS = [
                 "expected": "Image resized via GIMP backend",
             },
             {
-                "scenario": "LibreOffice 导出 PDF",
+                "scenario": "Export PDF with LibreOffice",
                 "params": {
                     "app": "libreoffice",
                     "subcommand": "document export-pdf",
@@ -119,30 +120,30 @@ CLI_ANYTHING_TOOLS = [
             },
         ],
         "related_tools": [
-            {"name": "cli_anything_help", "relation": "执行前查看可用子命令"},
-            {"name": "cli_anything_discover", "relation": "查看已安装工具"},
-            {"name": "desktop_click", "relation": "无 CLI 时的降级 GUI 方案"},
+            {"name": "cli_anything_help", "relation": "View available subcommands before running"},
+            {"name": "cli_anything_discover", "relation": "View installed tools"},
+            {"name": "desktop_click", "relation": "Fallback GUI option when no CLI is available"},
         ],
         "input_schema": {
             "type": "object",
             "properties": {
                 "app": {
                     "type": "string",
-                    "description": "软件名称（如 'gimp', 'blender', 'libreoffice'）",
+                    "description": "Application name (e.g. 'gimp', 'blender', 'libreoffice')",
                 },
                 "subcommand": {
                     "type": "string",
-                    "description": "子命令（如 'image resize', 'document export-pdf'）",
+                    "description": "Subcommand (e.g. 'image resize', 'document export-pdf')",
                 },
                 "args": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "命令参数列表",
+                    "description": "Command argument list",
                     "default": [],
                 },
                 "json_output": {
                     "type": "boolean",
-                    "description": "是否请求 JSON 输出（默认 True）",
+                    "description": "Whether to request JSON output (default True)",
                     "default": True,
                 },
             },
@@ -158,14 +159,14 @@ CLI_ANYTHING_TOOLS = [
             "Always check help before running a command for the first time."
         ),
         "detail": build_detail(
-            summary="获取 cli-anything 工具的帮助文档。",
+            summary="Get help documentation for a cli-anything tool.",
             scenarios=[
-                "首次使用某个工具前了解可用命令",
-                "查看子命令的参数说明",
+                "Learn available commands before using a tool for the first time",
+                "View parameter descriptions for a subcommand",
             ],
             params_desc={
-                "app": "软件名称（如 'gimp', 'blender'）",
-                "subcommand": "子命令（可选，不填则显示顶层帮助）",
+                "app": "Application name (e.g. 'gimp', 'blender')",
+                "subcommand": "Subcommand (optional; if omitted, shows top-level help)",
             },
         ),
         "triggers": [
@@ -176,29 +177,29 @@ CLI_ANYTHING_TOOLS = [
         "warnings": [],
         "examples": [
             {
-                "scenario": "查看 GIMP CLI 帮助",
+                "scenario": "View GIMP CLI help",
                 "params": {"app": "gimp"},
                 "expected": "Shows top-level commands for cli-anything-gimp",
             },
             {
-                "scenario": "查看特定子命令帮助",
+                "scenario": "View help for a specific subcommand",
                 "params": {"app": "gimp", "subcommand": "image resize"},
                 "expected": "Shows parameters for the resize subcommand",
             },
         ],
         "related_tools": [
-            {"name": "cli_anything_run", "relation": "了解参数后执行"},
+            {"name": "cli_anything_run", "relation": "Run after reviewing parameters"},
         ],
         "input_schema": {
             "type": "object",
             "properties": {
                 "app": {
                     "type": "string",
-                    "description": "软件名称",
+                    "description": "Application name",
                 },
                 "subcommand": {
                     "type": "string",
-                    "description": "子命令（可选）",
+                    "description": "Subcommand (optional)",
                 },
             },
             "required": ["app"],

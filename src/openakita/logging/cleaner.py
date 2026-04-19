@@ -1,10 +1,10 @@
 """
-日志清理器
+Log Cleaner
 
-功能:
-- 按保留天数清理旧日志
-- 按总大小清理（防止磁盘爆满）
-- 可集成到每日定时任务
+Features:
+- Clean old logs by retention days
+- Clean by total size (prevent disk from filling up)
+- Can be integrated into daily scheduled tasks
 """
 
 import logging
@@ -16,11 +16,11 @@ logger = logging.getLogger(__name__)
 
 class LogCleaner:
     """
-    日志清理器
+    Log Cleaner
 
-    清理策略:
-    1. 删除超过 retention_days 天的日志文件
-    2. 如果总大小超过 max_total_size_mb，删除最旧的文件
+    Cleanup strategy:
+    1. Delete log files older than retention_days
+    2. If total size exceeds max_total_size_mb, delete the oldest files
     """
 
     def __init__(
@@ -31,9 +31,9 @@ class LogCleaner:
     ):
         """
         Args:
-            log_dir: 日志目录
-            retention_days: 保留天数
-            max_total_size_mb: 最大总大小（MB）
+            log_dir: Log directory
+            retention_days: Retention period in days
+            max_total_size_mb: Maximum total size (MB)
         """
         self.log_dir = Path(log_dir)
         self.retention_days = retention_days
@@ -41,10 +41,10 @@ class LogCleaner:
 
     def cleanup(self) -> dict:
         """
-        执行清理
+        Run cleanup
 
         Returns:
-            清理统计 {"by_age": n, "by_size": n, "freed_mb": float}
+            Cleanup stats {"by_age": n, "by_size": n, "freed_mb": float}
         """
         result = {
             "by_age": 0,
@@ -55,12 +55,12 @@ class LogCleaner:
         if not self.log_dir.exists():
             return result
 
-        # 1. 按天数清理
+        # 1. Cleanup by age
         deleted_by_age, freed_by_age = self._cleanup_by_age()
         result["by_age"] = deleted_by_age
         result["freed_mb"] += freed_by_age
 
-        # 2. 按大小清理
+        # 2. Cleanup by size
         deleted_by_size, freed_by_size = self._cleanup_by_size()
         result["by_size"] = deleted_by_size
         result["freed_mb"] += freed_by_size
@@ -75,10 +75,10 @@ class LogCleaner:
 
     def _cleanup_by_age(self) -> tuple[int, float]:
         """
-        按天数清理
+        Cleanup by age
 
         Returns:
-            (删除数量, 释放大小 MB)
+            (number deleted, freed size in MB)
         """
         cutoff = datetime.now() - timedelta(days=self.retention_days)
         deleted = 0
@@ -100,17 +100,17 @@ class LogCleaner:
 
     def _cleanup_by_size(self) -> tuple[int, float]:
         """
-        按大小清理（删除最旧的文件直到总大小低于限制）
+        Cleanup by size (delete oldest files until total size is below limit)
 
         Returns:
-            (删除数量, 释放大小 MB)
+            (number deleted, freed size in MB)
         """
         max_size_bytes = self.max_total_size_mb * 1024 * 1024
 
-        # 获取所有日志文件，按修改时间排序（最旧的在前）
+        # Get all log files, sorted by modification time (oldest first)
         files = sorted(self._get_log_files(), key=lambda f: f.stat().st_mtime)
 
-        # 计算总大小
+        # Calculate total size
         total_size = sum(f.stat().st_size for f in files)
 
         if total_size <= max_size_bytes:
@@ -119,7 +119,7 @@ class LogCleaner:
         deleted = 0
         freed_bytes = 0
 
-        # 删除最旧的文件直到总大小低于限制
+        # Delete oldest files until total size is below limit
         for file in files:
             if total_size <= max_size_bytes:
                 break
@@ -138,9 +138,9 @@ class LogCleaner:
 
     def _get_log_files(self) -> list[Path]:
         """
-        获取所有日志文件
+        Get all log files
 
-        排除当前正在使用的日志文件（不带日期后缀的）
+        Excludes the currently active log file (one without a date suffix)
         """
         files = []
 
@@ -151,10 +151,10 @@ class LogCleaner:
 
     def get_stats(self) -> dict:
         """
-        获取日志统计信息
+        Get log statistics
 
         Returns:
-            统计信息字典
+            Statistics dictionary
         """
         if not self.log_dir.exists():
             return {
@@ -176,7 +176,7 @@ class LogCleaner:
 
         total_size = sum(f.stat().st_size for f in files)
 
-        # 按修改时间排序
+        # Sort by modification time
         files_sorted = sorted(files, key=lambda f: f.stat().st_mtime)
 
         return {

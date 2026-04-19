@@ -1,8 +1,9 @@
 """
-运行时环境检测 - 兼容 PyInstaller 打包和常规 Python 环境
+Runtime environment detection — compatible with both PyInstaller bundles and regular Python environments.
 
-PyInstaller 打包后 sys.executable 指向 openakita-server.exe 而非 Python 解释器，
-本模块提供统一的运行时环境检测层，确保 pip install / 脚本执行等功能正常工作。
+When frozen by PyInstaller, sys.executable points to openakita-server.exe rather than the Python interpreter.
+This module provides a unified runtime-environment detection layer so that pip install, script execution,
+and similar features keep working.
 """
 
 import logging
@@ -12,11 +13,11 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 IS_FROZEN = getattr(sys, "frozen", False)
-"""是否在 PyInstaller 打包环境中运行"""
+"""Whether we are running inside a PyInstaller bundle."""
 
 
 def _find_python_in_dir(directory: Path) -> Path | None:
-    """在给定目录中查找 Python 可执行文件"""
+    """Look for a Python executable inside the given directory."""
     if sys.platform == "win32":
         candidates = ["python.exe", "python3.exe"]
     else:
@@ -26,7 +27,7 @@ def _find_python_in_dir(directory: Path) -> Path | None:
         py = directory / name
         if py.exists():
             return py
-    # 也检查 bin/ 或 Scripts/ 子目录
+    # Also check the bin/ and Scripts/ subdirectories
     for sub in ("bin", "Scripts"):
         sub_dir = directory / sub
         if sub_dir.is_dir():
@@ -38,21 +39,23 @@ def _find_python_in_dir(directory: Path) -> Path | None:
 
 
 def _is_windows_store_stub(path: str) -> bool:
-    """快速检查是否为 Windows Store 的重定向桩（App Execution Alias）。
+    """Quick check for the Windows Store redirect stub (App Execution Alias).
 
-    AppInstallerPythonRedirector 是微软用来引导用户安装 Python 的假桩，
-    运行时返回 exit code 9009，不是真正的 Python。
-    注意：WindowsApps 目录下也可能有真正的 Microsoft Store 安装的 Python，
-    不能仅凭路径排除，必须通过 verify_python_executable() 进一步验证。
+    AppInstallerPythonRedirector is Microsoft's fake stub that prompts users to install
+    Python; at runtime it returns exit code 9009 and is not a real Python.
+    Note: the WindowsApps directory may also contain a real Microsoft Store Python
+    installation, so we cannot exclude purely by path — must verify via
+    verify_python_executable().
     """
     return "AppInstallerPythonRedirector" in path
 
 
 def verify_python_executable(path: str) -> bool:
-    """验证一个 Python 可执行文件是否真正可用。
+    """Verify that a Python executable is actually usable.
 
-    实际运行 ``python --version``，确认返回码为 0 且输出以 ``Python 3.`` 开头。
-    可排除 Windows Store 假桩（exit 9009）、损坏的安装、以及非 Python 3 的旧版本。
+    Runs ``python --version`` and confirms the return code is 0 and the output starts
+    with ``Python 3.``. This filters out Windows Store stubs (exit 9009), broken
+    installs, and legacy non-Python-3 versions.
     """
     import subprocess
 
@@ -62,28 +65,30 @@ def verify_python_executable(path: str) -> bool:
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         result = subprocess.run([path, "--version"], **kwargs)
         if result.returncode != 0:
-            logger.debug("Python 验证失败 (exit %d): %s", result.returncode, path)
+            logger.debug("Python verification failed (exit %d): %s", result.returncode, path)
             return False
         output = (result.stdout + result.stderr).strip()
         if output.startswith("Python 3."):
-            logger.debug("Python 验证通过: %s → %s", path, output)
+            logger.debug("Python verified: %s -> %s", path, output)
             return True
-        logger.debug("Python 版本不符 (需要 3.x): %s → %s", path, output)
+        logger.debug("Python version mismatch (requires 3.x): %s -> %s", path, output)
         return False
     except (subprocess.TimeoutExpired, OSError, FileNotFoundError) as exc:
-        logger.debug("Python 验证异常: %s → %s", path, exc)
+        logger.debug("Python verification error: %s -> %s", path, exc)
         return False
 
 
 # NOTE: _which_real_python / _scan_common_python_dirs / _get_python_from_env_var
-# 已移除 — 不再搜索用户系统中的 Python，只使用项目自带/自行安装的 Python。
-# 这消除了因用户 Anaconda、Windows Store 假桩、版本不一致等导致的冲突。
+# have been removed — we no longer search the user's system Python and only use
+# Python that ships with the project or is installed by the project itself.
+# This eliminates conflicts caused by user Anaconda installs, Windows Store stubs,
+# version mismatches, etc.
 
 
 def get_configured_venv_path() -> str | None:
-    """获取虚拟环境路径（供提示词构建等模块使用）。
+    """Get the virtual environment path (used by prompt building and similar modules).
 
-    优先级: 从当前 Python 解释器路径推断。
+    Priority: inferred from the current Python interpreter path.
     """
     if not IS_FROZEN:
         if sys.prefix != sys.base_prefix:
@@ -104,9 +109,9 @@ def get_configured_venv_path() -> str | None:
 
 
 def _get_openakita_root() -> Path:
-    """获取 OpenAkita 根目录路径 (避免循环导入 config)。
+    """Get the OpenAkita root directory path (avoids a circular import of config).
 
-    优先使用 OPENAKITA_ROOT 环境变量，默认 ~/.openakita。
+    Prefers the OPENAKITA_ROOT environment variable; defaults to ~/.openakita.
     """
     import os
 
@@ -117,10 +122,11 @@ def _get_openakita_root() -> Path:
 
 
 def _get_bundled_internal_python() -> str | None:
-    """查找 PyInstaller 打包时捆绑在 _internal/ 目录中的 Python 解释器。
+    """Locate the Python interpreter bundled in the _internal/ directory by PyInstaller.
 
-    构建时 openakita.spec 会将 sys.executable 和 pip 一起复制到 _internal/，
-    因此该 Python 版本与构建环境完全一致，不会产生兼容性问题。
+    At build time, openakita.spec copies sys.executable and pip into _internal/, so
+    this Python version matches the build environment exactly and will not cause
+    compatibility issues.
     """
     if not IS_FROZEN:
         return None
@@ -135,74 +141,75 @@ def _get_bundled_internal_python() -> str | None:
     for name in candidates:
         py = internal_dir / name
         if py.exists() and verify_python_executable(str(py)):
-            logger.debug("使用打包内置 Python (_internal): %s", py)
+            logger.debug("Using bundled Python (_internal): %s", py)
             return str(py)
     return None
 
 
 def get_python_executable() -> str | None:
-    """获取可用的 Python 解释器路径。
+    """Return an available Python interpreter path.
 
-    **只使用项目自带或项目自行安装的 Python，不使用用户系统 Python。**
+    **Only uses Python that ships with the project or is installed by the project;
+    never uses the user's system Python.**
 
-    PyInstaller 环境下查找优先级:
-      1. 工作区 venv ({project_root}/data/venv/)
-      2. 全局 venv (~/.openakita/venv/)
-      3. 打包内置 Python (_internal/python.exe)
+    Lookup order in a PyInstaller environment:
+      1. Workspace venv ({project_root}/data/venv/)
+      2. Global venv (~/.openakita/venv/)
+      3. Bundled Python (_internal/python.exe)
 
-    常规开发环境下: 返回 sys.executable
+    In a regular development environment: returns sys.executable.
     """
     if not IS_FROZEN:
         return sys.executable
 
-    # 1. 检查 {project_root}/data/venv/ — 工作区虚拟环境
+    # 1. Check {project_root}/data/venv/ — workspace virtual environment
     try:
         from .config import settings
 
         workspace_venv = settings.project_root / "data" / "venv"
         py = _find_python_in_dir(workspace_venv)
         if py and verify_python_executable(str(py)):
-            logger.debug(f"使用工作区 venv Python: {py}")
+            logger.debug(f"Using workspace venv Python: {py}")
             return str(py)
         elif py:
-            logger.warning(f"工作区 venv Python 存在但验证失败，跳过: {py}")
+            logger.warning(f"Workspace venv Python exists but failed verification, skipping: {py}")
     except Exception:
         pass
 
     root = _get_openakita_root()
 
-    # 2. 检查 ~/.openakita/venv/
+    # 2. Check ~/.openakita/venv/
     if sys.platform == "win32":
         venv_python = root / "venv" / "Scripts" / "python.exe"
     else:
         venv_python = root / "venv" / "bin" / "python"
     if venv_python.exists():
         if verify_python_executable(str(venv_python)):
-            logger.debug(f"使用 venv Python: {venv_python}")
+            logger.debug(f"Using venv Python: {venv_python}")
             return str(venv_python)
         else:
-            logger.warning(f"全局 venv Python 验证失败，跳过: {venv_python}")
+            logger.warning(f"Global venv Python failed verification, skipping: {venv_python}")
 
-    # 3. 打包内置 Python（_internal/ 目录，构建时捆绑的同版本 Python + pip）
+    # 3. Bundled Python (in _internal/; same-version Python + pip bundled at build time)
     bundled = _get_bundled_internal_python()
     if bundled:
         return bundled
 
     logger.warning(
-        "未找到项目自带的 Python 解释器。"
-        "已搜索: 工作区 venv → ~/.openakita/venv → "
-        "打包内置 Python。"
-        "请重新安装 OpenAkita，确保安装包资源完整。"
+        "No project-bundled Python interpreter found. "
+        "Searched: workspace venv -> ~/.openakita/venv -> "
+        "bundled Python. "
+        "Please reinstall OpenAkita and make sure the installer resources are complete."
     )
     return None
 
 
 def can_pip_install() -> bool:
-    """检查当前环境是否支持 pip install"""
+    """Check whether the current environment supports pip install."""
     py = get_python_executable()
     if not py:
         return False
-    # PyInstaller 打包环境需要外置 Python 才能 pip install
+    # PyInstaller bundles need an external Python to run pip install
     if IS_FROZEN:
         return py != sys.executable
     return True
@@ -213,14 +220,14 @@ _DEFAULT_PIP_TRUSTED_HOST = "mirrors.aliyun.com"
 
 
 def get_pip_command(packages: list[str], *, index_url: str | None = None) -> list[str] | None:
-    """获取 pip install 命令列表（默认使用国内镜像源）。
+    """Build a pip install command list (defaults to a domestic mirror).
 
     Args:
-        packages: 要安装的包名列表
-        index_url: 自定义镜像源 URL，为 None 时使用阿里云镜像
+        packages: List of package names to install
+        index_url: Custom mirror URL; when None, uses the Aliyun mirror
 
     Returns:
-        命令参数列表，若不支持则返回 None。
+        Command argument list, or None if not supported.
     """
     import os
 
@@ -248,31 +255,33 @@ def get_pip_command(packages: list[str], *, index_url: str | None = None) -> lis
 
 
 def get_channel_deps_dir() -> Path:
-    """获取 IM 通道依赖的隔离安装目录。
+    """Return the isolated install directory for IM channel dependencies.
 
-    路径: ~/.openakita/modules/channel-deps/site-packages
-    该目录会被 inject_module_paths() 自动扫描并注入到 sys.path。
+    Path: ~/.openakita/modules/channel-deps/site-packages
+    This directory is automatically scanned and injected into sys.path by
+    inject_module_paths().
     """
     return _get_openakita_root() / "modules" / "channel-deps" / "site-packages"
 
 
 def ensure_ssl_certs() -> None:
-    """确保 SSL 证书在 PyInstaller 环境下可用。
+    """Ensure an SSL certificate bundle is available in a PyInstaller environment.
 
-    httpx 默认 trust_env=True，优先读取 SSL_CERT_FILE 环境变量。
-    Conda/Anaconda 安装后会在系统环境变量中设置 SSL_CERT_FILE 指向
-    Conda 自己的 cacert.pem（如 Anaconda3/Library/ssl/cacert.pem），
-    但在非 Conda 环境中该路径不存在，导致 httpx 创建 SSL 上下文时
-    抛出 FileNotFoundError: [Errno 2] No such file or directory。
+    httpx uses trust_env=True by default and prefers the SSL_CERT_FILE environment
+    variable. Conda/Anaconda installs set SSL_CERT_FILE in the system environment to
+    Conda's own cacert.pem (e.g. Anaconda3/Library/ssl/cacert.pem), but in non-Conda
+    environments that path does not exist and httpx raises
+    FileNotFoundError: [Errno 2] No such file or directory when creating an SSL context.
 
-    此函数检测并修正 SSL_CERT_FILE，确保它指向一个实际存在的证书文件。
+    This function detects and repairs SSL_CERT_FILE so it points to a certificate file
+    that actually exists.
     """
     if not IS_FROZEN:
         return
 
     import os
 
-    # 如果 SSL_CERT_FILE 已设置且文件确实存在，则无需干预
+    # If SSL_CERT_FILE is already set and the file really exists, nothing to do
     existing = os.environ.get("SSL_CERT_FILE", "").strip()
     if existing and Path(existing).is_file():
         return
@@ -283,7 +292,7 @@ def ensure_ssl_certs() -> None:
             f"(likely set by Conda/Anaconda). Overriding with bundled CA bundle."
         )
 
-    # 方式 1: certifi 模块可用且路径有效
+    # Option 1: certifi module is available and its path is valid
     try:
         import certifi
 
@@ -295,7 +304,7 @@ def ensure_ssl_certs() -> None:
     except ImportError:
         pass
 
-    # 方式 2: 在 PyInstaller _internal/ 目录中查找
+    # Option 2: look inside the PyInstaller _internal/ directory
     internal_dir = Path(sys.executable).parent
     if internal_dir.name != "_internal":
         internal_dir = internal_dir / "_internal"
@@ -309,7 +318,7 @@ def ensure_ssl_certs() -> None:
             logger.info(f"SSL_CERT_FILE set from bundled path: {candidate}")
             return
 
-    # 方式 3: 清除无效的 SSL_CERT_FILE，让 httpx 回退到 certifi.where()
+    # Option 3: clear an invalid SSL_CERT_FILE so httpx falls back to certifi.where()
     if existing:
         del os.environ["SSL_CERT_FILE"]
         logger.warning("Removed invalid SSL_CERT_FILE. httpx will fall back to certifi default.")
@@ -322,12 +331,14 @@ def ensure_ssl_certs() -> None:
 
 
 def _sanitize_sys_path() -> None:
-    """检测并清理 sys.path 中可能由外部环境泄漏的路径（纵深防御）。
+    """Detect and remove externally leaked paths from sys.path (defense in depth).
 
-    即使 Tauri 端已在启动时清除了 PYTHONPATH 等有害环境变量，
-    仍可能有路径通过其他途径被注入（如 .pth 文件、site-packages 钩子等）。
-    此函数移除不属于项目自有路径的 site-packages 目录，
-    防止用户 Anaconda、系统 Python 等环境中的包覆盖内置模块。
+    Even though the Tauri side clears harmful environment variables (such as
+    PYTHONPATH) at startup, paths may still be injected via other mechanisms
+    (.pth files, site-packages hooks, etc.). This function removes any
+    site-packages directories that are not owned by the project, preventing
+    packages from the user's Anaconda or system Python from overriding the
+    bundled modules.
     """
     if not IS_FROZEN:
         return
@@ -341,20 +352,20 @@ def _sanitize_sys_path() -> None:
     for p in list(sys.path):
         if not p:
             continue
-        # 允许: PyInstaller 内部路径
+        # Allow: PyInstaller internal paths
         if meipass and p.startswith(meipass):
             continue
-        # 允许: 项目数据目录 (~/.openakita/)
+        # Allow: the project data directory (~/.openakita/)
         if p.startswith(openakita_root):
             continue
-        # 允许: 当前工作目录 ('' 或 '.')
+        # Allow: the current working directory ('' or '.')
         if p in ("", "."):
             continue
-        # 允许: 临时目录（部分运行时动态生成）
+        # Allow: temp directory (some runtimes generate paths here dynamically)
         tmp = os.environ.get("TEMP", os.environ.get("TMPDIR", ""))
         if tmp and p.startswith(tmp):
             continue
-        # 检测: 含有 site-packages 的外部路径是危险信号
+        # Flag: external paths containing site-packages are a danger signal
         p_lower = p.lower().replace("\\", "/")
         if "site-packages" in p_lower or "dist-packages" in p_lower:
             suspicious.append(p)
@@ -363,38 +374,42 @@ def _sanitize_sys_path() -> None:
         for p in suspicious:
             sys.path.remove(p)
         logger.warning(
-            f"已清理 {len(suspicious)} 个外部 site-packages 路径 "
-            f"(可能来自用户 Anaconda/系统 Python): {suspicious[:5]}"
+            f"Removed {len(suspicious)} external site-packages path(s) "
+            f"(likely from the user's Anaconda/system Python): {suspicious[:5]}"
         )
 
 
 def inject_module_paths() -> None:
-    """将可选模块的 site-packages 目录注入 sys.path。
+    """Inject the site-packages directories of optional modules into sys.path.
 
-    路径来源（按优先级）：
-    1. OPENAKITA_MODULE_PATHS 环境变量 — Tauri 端通过此变量传递已安装模块路径
-    2. 扫描 ~/.openakita/modules/*/site-packages — 兜底机制
+    Path sources (in priority order):
+    1. The OPENAKITA_MODULE_PATHS environment variable — the Tauri side uses
+       this variable to pass the paths of installed modules.
+    2. Scanning ~/.openakita/modules/*/site-packages — fallback mechanism.
 
-    重要：必须使用 sys.path.append() 而非 insert(0)！
-    PyInstaller 打包环境中，内置模块（如 pydantic）位于 _MEIPASS/_internal 目录
-    且在 sys.path 前端。如果外部模块路径被插入到前面，外部的 pydantic 会覆盖
-    内置版本，其 C 扩展 pydantic_core._pydantic_core 与 PyInstaller 环境不兼容，
-    导致进程在 import 阶段直接崩溃。
+    Important: must use sys.path.append(), not insert(0)!
+    In a PyInstaller environment, bundled modules (like pydantic) live under
+    _MEIPASS/_internal and are at the front of sys.path. If external module
+    paths are inserted at the front, an external pydantic can shadow the
+    bundled version, and its C extension pydantic_core._pydantic_core is not
+    compatible with the PyInstaller environment, causing the process to crash
+    outright during import.
 
-    注意：Tauri 端不使用 PYTHONPATH 注入模块路径，因为 Python 启动时
-    PYTHONPATH 会被自动插入到 sys.path 最前面，无法保证内置模块优先。
+    Note: the Tauri side does not use PYTHONPATH to inject module paths, because
+    Python automatically inserts PYTHONPATH at the very front of sys.path at
+    startup, which cannot guarantee that bundled modules win.
     """
     if not IS_FROZEN:
         return
 
-    # 先清理外部路径泄漏，再注入项目自有路径
+    # First scrub external path leaks, then inject project-owned paths
     _sanitize_sys_path()
 
     import os
 
     injected = []
 
-    # 来源 1：从 OPENAKITA_MODULE_PATHS 环境变量读取（Tauri 端设置）
+    # Source 1: read from the OPENAKITA_MODULE_PATHS environment variable (set by Tauri)
     env_paths = os.environ.get("OPENAKITA_MODULE_PATHS", "")
     if env_paths:
         sep = ";" if sys.platform == "win32" else ":"
@@ -404,8 +419,9 @@ def inject_module_paths() -> None:
                 sys.path.append(p)
                 injected.append(Path(p).parent.name)
 
-    # 来源 2：扫描 ~/.openakita/modules/*/site-packages（兜底）
-    # 跳过已内置到 core 包的模块，避免外部旧版本与内置版本冲突
+    # Source 2: scan ~/.openakita/modules/*/site-packages (fallback)
+    # Skip modules that are already bundled into the core package to avoid
+    # conflicts between external older versions and the bundled version.
     _BUILTIN_MODULE_IDS = {"browser"}
     modules_base = _get_openakita_root() / "modules"
     if modules_base.exists():
@@ -420,27 +436,28 @@ def inject_module_paths() -> None:
                 injected.append(module_dir.name)
 
     if injected:
-        logger.info(f"已注入模块路径（追加到 sys.path 末尾）: {', '.join(injected)}")
+        logger.info(f"Injected module paths (appended to the end of sys.path): {', '.join(injected)}")
 
-    # Windows 下为含有 C 扩展 DLL 的模块（如 torch）添加 DLL 搜索路径。
-    # Python 3.8+ 在 Windows 上不再将 sys.path 用于 DLL 解析，必须通过
-    # os.add_dll_directory() 显式注册，否则 torch._C 等 PYD 的依赖 DLL
-    # （c10.dll, torch_cpu.dll 等）无法被找到，导致 ImportError: DLL load failed。
+    # On Windows, register DLL search paths for modules that include C-extension DLLs
+    # (such as torch). Python 3.8+ on Windows no longer uses sys.path for DLL
+    # resolution; they must be registered explicitly via os.add_dll_directory(),
+    # otherwise the dependent DLLs of PYDs like torch._C (c10.dll, torch_cpu.dll, etc.)
+    # cannot be located, producing "ImportError: DLL load failed".
     if sys.platform == "win32":
         _register_dll_directories(os)
 
 
 def _register_dll_directories(os_module) -> None:
-    """在 Windows 上为 sys.path 中含有 C 扩展 DLL 的目录注册 DLL 搜索路径。
+    """Register DLL search paths on Windows for sys.path entries containing C-extension DLLs.
 
-    扫描 sys.path 中的每个路径，检查是否存在已知的 DLL 子目录
-    （如 torch/lib/），然后通过 os.add_dll_directory() 注册。
-    同时将 DLL 路径追加到 PATH 环境变量作为兜底。
+    Walk each path in sys.path, check for known DLL subdirectories (such as
+    torch/lib/), and register them via os.add_dll_directory(). Also append
+    the DLL path to the PATH environment variable as a fallback.
     """
-    # 已知需要注册 DLL 目录的包及其 DLL 子路径
+    # Known packages that need DLL directory registration, and their DLL subpaths
     _DLL_SUBDIRS = [
         ("torch", "lib"),  # PyTorch: c10.dll, torch_cpu.dll, libiomp5md.dll
-        ("torch", "bin"),  # PyTorch 某些版本把 DLL 放在 bin/
+        ("torch", "bin"),  # Some PyTorch versions place DLLs under bin/
     ]
 
     registered = []
@@ -456,31 +473,31 @@ def _register_dll_directories(os_module) -> None:
                     os_module.add_dll_directory(dll_str)
                     registered.append(dll_str)
                 except OSError as e:
-                    logger.warning(f"添加 DLL 路径失败: {dll_dir} - {e}")
-                # 兜底：将 DLL 目录追加到 PATH（某些旧版 Python 或特殊环境）
+                    logger.warning(f"Failed to add DLL path: {dll_dir} - {e}")
+                # Fallback: append the DLL directory to PATH (for some older Python or special environments)
                 current_path = os_module.environ.get("PATH", "")
                 if dll_str not in current_path:
                     os_module.environ["PATH"] = dll_str + ";" + current_path
 
     if registered:
-        logger.info(f"已注册 Windows DLL 搜索路径: {', '.join(registered)}")
+        logger.info(f"Registered Windows DLL search paths: {', '.join(registered)}")
 
 
 def inject_module_paths_runtime() -> int:
-    """运行时重新扫描并注入模块路径（不要求 IS_FROZEN）。
+    """Re-scan and inject module paths at runtime (does not require IS_FROZEN).
 
-    用于模块安装后无需重启即可加载新模块。
-    与 inject_module_paths() 不同，此函数不检查 IS_FROZEN，
-    可在任何环境下调用。
+    Used so newly installed modules can be loaded without a restart.
+    Unlike inject_module_paths(), this function does not check IS_FROZEN
+    and can be called in any environment.
 
     Returns:
-        新注入的路径数量
+        The number of newly injected paths.
     """
     import os
 
     injected = []
 
-    # 扫描 ~/.openakita/modules/*/site-packages
+    # Scan ~/.openakita/modules/*/site-packages
     modules_base = _get_openakita_root() / "modules"
     if modules_base.exists():
         for module_dir in modules_base.iterdir():
@@ -492,9 +509,9 @@ def inject_module_paths_runtime() -> int:
                 injected.append(module_dir.name)
 
     if injected:
-        logger.info(f"[Runtime] 已注入模块路径: {', '.join(injected)}")
+        logger.info(f"[Runtime] Injected module paths: {', '.join(injected)}")
 
-    # Windows DLL 目录
+    # Windows DLL directories
     if sys.platform == "win32":
         _register_dll_directories(os)
 

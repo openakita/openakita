@@ -26,19 +26,21 @@ _injected_browser_urls: dict[str, str] = {}
 
 
 async def prepare_chrome_devtools_args(client: MCPClient, server_name: str) -> None:
-    """连接前为 chrome-devtools MCP 注入 ``--browser-url``（幂等）。
+    """Inject ``--browser-url`` for chrome-devtools MCP before connecting (idempotent).
 
-    chrome-devtools-mcp 默认通过 ``DevToolsActivePort`` 文件发现 Chrome，
-    但当 Chrome 以固定端口启动时不会创建该文件，导致连接失败。
-    此函数在连接前探测 CDP 端口，若发现可用则自动注入参数。
+    chrome-devtools-mcp discovers Chrome via the ``DevToolsActivePort`` file by default,
+    but when Chrome is launched with a fixed port this file is not created, causing
+    connection failures.  This function probes the CDP port before connecting and
+    automatically injects the argument if a usable port is found.
 
-    仅当以下条件同时满足时才生效：
-    - 服务器 args 中包含 ``chrome-devtools-mcp``（npm 包名）
-    - 未手动配置过 ``--browser-url`` / ``--wsEndpoint`` 等参数
-    - 本机有可用的 Chrome CDP 端口
+    Only takes effect when ALL of the following conditions are met:
+    - Server args contain ``chrome-devtools-mcp`` (npm package name)
+    - No ``--browser-url`` / ``--wsEndpoint`` etc. have been manually configured
+    - A Chrome CDP port is available on the local machine
 
-    多次调用安全：通过 ``_injected_browser_urls`` 精确追踪自动注入的参数，
-    重连时先撤除上次注入的再重新探测，不会误删用户手动配置的参数。
+    Safe to call repeatedly: ``_injected_browser_urls`` tracks auto-injected args
+    precisely.  On reconnect, the previous injection is removed before re-probing,
+    so user-configured arguments are never mistakenly deleted.
     """
     config = client.get_server_config(server_name)
     if config is None:

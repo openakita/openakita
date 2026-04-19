@@ -9,28 +9,30 @@ requires:
   env: [BAIDU_API_KEY]
 ---
 
-# 视频 AI 笔记
+# Video AI Notes
 
-支持进行视频解析、生成 AI 笔记的工具，可满足学习、会议等视频内容提取、总结场景。
+A tool that supports video parsing and AI note generation, suitable for extracting and summarizing video content for learning, meetings, and other scenarios.
 
-## 配置
+## Configuration
 
+```bash
 export BAIDU_API_KEY="your_key"
+```
 
-## 功能
+## Features
 
-- 视频内容解析
-- 关键信息提取
-- 结构化笔记生成
-- 时间戳标注
-- 要点摘要
+- Video content parsing
+- Key information extraction
+- Structured note generation
+- Timestamp annotation
+- Key point summaries
 
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/video_notes.py
-视频解析笔记生成（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+Video parsing and note generation (Baidu Qianfan AppBuilder). Requires `APPBUILDER_TOKEN`.
 
 ```bash
 python3 scripts/video_notes.py analyze "https://example.com/video.mp4"
-python3 scripts/video_notes.py notes "视频内容总结"
+python3 scripts/video_notes.py notes "Video content summary"
 ```

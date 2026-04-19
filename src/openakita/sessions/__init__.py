@@ -1,10 +1,10 @@
 """
-会话管理模块
+Session management module
 
-提供统一的会话管理能力:
-- Session: 会话对象，包含上下文和配置
-- SessionManager: 会话生命周期管理
-- UserManager: 跨平台用户管理
+Provides unified session management:
+- Session: Session object containing context and configuration
+- SessionManager: Session lifecycle management
+- UserManager: Cross-platform user management
 """
 
 from .manager import SessionManager

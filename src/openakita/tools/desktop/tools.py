@@ -1,14 +1,14 @@
 """
-Windows 桌面自动化 - Agent 工具定义
+Windows desktop automation — Agent tool definitions
 
-定义供 OpenAkita Agent 使用的工具
+Defines the tools used by the OpenAkita Agent.
 """
 
 import logging
 import sys
 from typing import Any
 
-# 平台检查
+# Platform check
 if sys.platform != "win32":
     raise ImportError(
         f"Desktop automation module is Windows-only. Current platform: {sys.platform}"
@@ -17,53 +17,53 @@ if sys.platform != "win32":
 logger = logging.getLogger(__name__)
 
 
-# ==================== 工具定义 ====================
+# ==================== Tool definitions ====================
 
 DESKTOP_TOOLS = [
     {
         "name": "desktop_screenshot",
         "category": "Desktop",
         "description": "Capture Windows desktop screenshot with automatic file saving. When you need to: (1) Show user the desktop state, (2) Capture application windows, (3) Record operation results. IMPORTANT: Must actually call this tool - never say 'screenshot done' without calling. Returns file_path for deliver_artifacts. For browser-only screenshots, use browser_screenshot instead.",
-        "detail": """截取 Windows 桌面屏幕截图并保存到文件。
+        "detail": """Capture a Windows desktop screenshot and save it to a file.
 
-⚠️ **重要警告**：
-- 用户要求截图时，必须实际调用此工具
-- 禁止不调用就说"截图完成"
+**Important warning**:
+- When the user asks for a screenshot, you must actually call this tool
+- Do not claim "screenshot done" without calling it
 
-**使用流程**：
-1. 调用此工具截图
-2. 获取返回的 file_path
-3. 用 deliver_artifacts(artifacts=[{type:"image", path:file_path, caption:"..."}]) 交付给用户
+**Workflow**:
+1. Call this tool to capture a screenshot
+2. Get the returned file_path
+3. Use deliver_artifacts(artifacts=[{type:"image", path:file_path, caption:"..."}]) to deliver it to the user
 
-**适用场景**：
-- 桌面应用操作
-- 查看整个桌面状态
-- 桌面和浏览器混合操作
+**Use cases**:
+- Desktop application operations
+- Viewing the overall desktop state
+- Mixed desktop-and-browser operations
 
-**可选功能**：
-- window_title: 只截取指定窗口
-- analyze: 用视觉模型分析截图内容
+**Optional features**:
+- window_title: capture only the specified window
+- analyze: analyze the screenshot with a vision model
 
-**注意**：如果只涉及浏览器内的网页操作，请使用 browser_screenshot。""",
+**Note**: If the task only involves in-browser web operations, use browser_screenshot instead.""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "保存路径（可选），不填则自动生成 desktop_screenshot_YYYYMMDD_HHMMSS.png",
+                    "description": "Save path (optional). When omitted, auto-generates desktop_screenshot_YYYYMMDD_HHMMSS.png.",
                 },
                 "window_title": {
                     "type": "string",
-                    "description": "可选，只截取指定窗口（模糊匹配标题）",
+                    "description": "Optional; capture only the specified window (fuzzy title match).",
                 },
                 "analyze": {
                     "type": "boolean",
                     "default": False,
-                    "description": "是否用视觉模型分析截图内容",
+                    "description": "Whether to analyze the screenshot with a vision model.",
                 },
                 "analyze_query": {
                     "type": "string",
-                    "description": "分析查询，如'找到所有按钮'（需要 analyze=true）",
+                    "description": "Analysis query, e.g. 'find all buttons' (requires analyze=true).",
                 },
             },
             "required": [],
@@ -73,38 +73,38 @@ DESKTOP_TOOLS = [
         "name": "desktop_find_element",
         "category": "Desktop",
         "description": "Find desktop UI elements using UIAutomation (fast, accurate) or vision recognition (fallback). When you need to: (1) Locate buttons/menus/icons, (2) Get element positions before clicking, (3) Verify UI state. Supports: natural language ('save button'), name: prefix, id: prefix, type: prefix. For browser webpage elements, use browser_* tools instead.",
-        "detail": """查找桌面 UI 元素。优先使用 UIAutomation（快速准确），失败时用视觉识别（通用）。
+        "detail": """Find a desktop UI element. Prefers UIAutomation (fast and accurate); falls back to vision recognition (generic) on failure.
 
-**支持的查找格式**：
-- 自然语言："保存按钮"、"红色图标"
-- 按名称："name:保存"
-- 按 ID："id:btn_save"
-- 按类型："type:Button"
+**Supported query formats**:
+- Natural language: "save button", "red icon"
+- By name: "name:Save"
+- By ID: "id:btn_save"
+- By type: "type:Button"
 
-**查找方法**：
-- auto: 自动选择（推荐）
-- uia: 只用 UIAutomation
-- vision: 只用视觉识别
+**Lookup methods**:
+- auto: automatic selection (recommended)
+- uia: UIAutomation only
+- vision: vision recognition only
 
-**返回信息**：
-- 元素位置（x, y）
-- 元素大小
-- 元素属性
+**Returned information**:
+- Element position (x, y)
+- Element size
+- Element attributes
 
-**注意**：如果操作的是浏览器内的网页元素，请使用 browser_* 工具。""",
+**Note**: If the target is an in-browser web element, use the browser_* tools instead.""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "target": {
                     "type": "string",
-                    "description": "元素描述，如'保存按钮'、'name:文件'、'id:btn_ok'",
+                    "description": "Element description, e.g. 'save button', 'name:File', 'id:btn_ok'.",
                 },
-                "window_title": {"type": "string", "description": "可选，限定在某个窗口内查找"},
+                "window_title": {"type": "string", "description": "Optional; restrict the search to a specific window."},
                 "method": {
                     "type": "string",
                     "enum": ["auto", "uia", "vision"],
                     "default": "auto",
-                    "description": "查找方法：auto 自动选择，uia 只用 UIAutomation，vision 只用视觉",
+                    "description": "Lookup method: auto picks automatically, uia uses UIAutomation only, vision uses vision only.",
                 },
             },
             "required": ["target"],
@@ -114,41 +114,41 @@ DESKTOP_TOOLS = [
         "name": "desktop_click",
         "category": "Desktop",
         "description": "Click desktop elements or coordinates. When you need to: (1) Click buttons/icons in applications, (2) Select menu items, (3) Interact with desktop UI. Supports: element description ('save button'), name: prefix, coordinates ('100,200'). Left/right/middle button and double-click supported. For browser webpage elements, use browser tools (browser_navigate, browser_get_content, etc.).",
-        "detail": """点击桌面上的 UI 元素或指定坐标。
+        "detail": """Click a UI element on the desktop or click specific coordinates.
 
-**支持的目标格式**：
-- 元素描述："保存按钮"、"name:确定"
-- 坐标："100,200"
+**Supported target formats**:
+- Element description: "save button", "name:OK"
+- Coordinates: "100,200"
 
-**点击选项**：
+**Click options**:
 - button: left/right/middle
-- double: 是否双击
+- double: whether to double-click
 
-**元素查找方法**：
-- auto: 自动选择（推荐）
-- uia: 只用 UIAutomation
-- vision: 只用视觉识别
+**Element lookup method**:
+- auto: automatic selection (recommended)
+- uia: UIAutomation only
+- vision: vision recognition only
 
-**注意**：如果点击的是浏览器内的网页元素，请使用浏览器工具（browser_navigate、browser_get_content 等）。""",
+**Note**: If you are clicking an in-browser web element, use the browser tools (browser_navigate, browser_get_content, etc.).""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "target": {
                     "type": "string",
-                    "description": "元素描述（如'确定按钮'）或坐标（如'100,200'）",
+                    "description": "Element description (e.g. 'OK button') or coordinates (e.g. '100,200').",
                 },
                 "button": {
                     "type": "string",
                     "enum": ["left", "right", "middle"],
                     "default": "left",
-                    "description": "鼠标按钮",
+                    "description": "Mouse button.",
                 },
-                "double": {"type": "boolean", "default": False, "description": "是否双击"},
+                "double": {"type": "boolean", "default": False, "description": "Whether to double-click."},
                 "method": {
                     "type": "string",
                     "enum": ["auto", "uia", "vision"],
                     "default": "auto",
-                    "description": "元素查找方法",
+                    "description": "Element lookup method.",
                 },
             },
             "required": ["target"],
@@ -158,29 +158,29 @@ DESKTOP_TOOLS = [
         "name": "desktop_type",
         "category": "Desktop",
         "description": "Type text at current cursor position in desktop applications. When you need to: (1) Enter text in application dialogs, (2) Fill input fields, (3) Type in text editors. Supports Chinese input. Use clear_first=true to replace existing text. For browser webpage forms, use browser tools.",
-        "detail": """在当前焦点位置输入文本。
+        "detail": """Type text at the current focus.
 
-**功能特点**：
-- 支持中文输入
-- 支持先清空再输入
+**Features**:
+- Supports Chinese input
+- Optionally clear the field before typing
 
-**参数说明**：
-- text: 要输入的文本
-- clear_first: 是否先清空（Ctrl+A 后输入）
+**Parameters**:
+- text: the text to type
+- clear_first: whether to clear first (Ctrl+A then type)
 
-**使用建议**：
-- 先点击目标输入框获得焦点
-- 再调用此工具输入
+**Usage tip**:
+- Click the target input field to give it focus first
+- Then call this tool to type
 
-**注意**：如果输入的是浏览器内的网页表单，请使用浏览器工具（browser_navigate、browser_get_content 等）。""",
+**Note**: If you are typing into an in-browser web form, use the browser tools (browser_navigate, browser_get_content, etc.).""",
         "input_schema": {
             "type": "object",
             "properties": {
-                "text": {"type": "string", "description": "要输入的文本"},
+                "text": {"type": "string", "description": "Text to type."},
                 "clear_first": {
                     "type": "boolean",
                     "default": False,
-                    "description": "是否先清空现有内容（Ctrl+A 后输入）",
+                    "description": "Whether to clear existing content first (Ctrl+A then type).",
                 },
             },
             "required": ["text"],
@@ -190,29 +190,29 @@ DESKTOP_TOOLS = [
         "name": "desktop_hotkey",
         "category": "Desktop",
         "description": "Execute keyboard shortcuts. When you need to: (1) Copy/paste (Ctrl+C/V), (2) Save files (Ctrl+S), (3) Close windows (Alt+F4), (4) Undo/redo (Ctrl+Z/Y), (5) Select all (Ctrl+A). Common shortcuts: ['ctrl','c'], ['ctrl','v'], ['ctrl','s'], ['alt','f4'], ['ctrl','z'].",
-        "detail": """执行键盘快捷键。
+        "detail": """Execute a keyboard shortcut.
 
-**常用快捷键**：
-- ['ctrl', 'c']: 复制
-- ['ctrl', 'v']: 粘贴
-- ['ctrl', 'x']: 剪切
-- ['ctrl', 's']: 保存
-- ['ctrl', 'z']: 撤销
-- ['ctrl', 'y']: 重做
-- ['ctrl', 'a']: 全选
-- ['alt', 'f4']: 关闭窗口
-- ['alt', 'tab']: 切换窗口
-- ['win', 'd']: 显示桌面
+**Common shortcuts**:
+- ['ctrl', 'c']: copy
+- ['ctrl', 'v']: paste
+- ['ctrl', 'x']: cut
+- ['ctrl', 's']: save
+- ['ctrl', 'z']: undo
+- ['ctrl', 'y']: redo
+- ['ctrl', 'a']: select all
+- ['alt', 'f4']: close window
+- ['alt', 'tab']: switch window
+- ['win', 'd']: show desktop
 
-**参数格式**：
-keys 是按键数组，如 ['ctrl', 'c']""",
+**Parameter format**:
+keys is an array of key names, e.g. ['ctrl', 'c'].""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "keys": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "按键组合，如 ['ctrl', 'c']、['alt', 'f4']",
+                    "description": "Key combination, e.g. ['ctrl', 'c'] or ['alt', 'f4'].",
                 }
             },
             "required": ["keys"],
@@ -222,31 +222,31 @@ keys 是按键数组，如 ['ctrl', 'c']""",
         "name": "desktop_scroll",
         "category": "Desktop",
         "description": "Scroll mouse wheel in specified direction. When you need to: (1) Scroll page/document content, (2) Navigate long lists, (3) Zoom in/out (with Ctrl). Directions: up/down/left/right. Default amount is 3 scroll units.",
-        "detail": """滚动鼠标滚轮。
+        "detail": """Scroll the mouse wheel.
 
-**支持方向**：
-- up: 向上滚动
-- down: 向下滚动
-- left: 向左滚动
-- right: 向右滚动
+**Supported directions**:
+- up: scroll up
+- down: scroll down
+- left: scroll left
+- right: scroll right
 
-**参数说明**：
-- direction: 滚动方向
-- amount: 滚动格数（默认 3）
+**Parameters**:
+- direction: scroll direction
+- amount: number of scroll units (default 3)
 
-**适用场景**：
-- 滚动页面/文档内容
-- 浏览长列表
-- 配合 Ctrl 键缩放""",
+**Use cases**:
+- Scroll page/document content
+- Browse long lists
+- Zoom when combined with the Ctrl key""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "direction": {
                     "type": "string",
                     "enum": ["up", "down", "left", "right"],
-                    "description": "滚动方向",
+                    "description": "Scroll direction.",
                 },
-                "amount": {"type": "integer", "default": 3, "description": "滚动格数"},
+                "amount": {"type": "integer", "default": 3, "description": "Number of scroll units."},
             },
             "required": ["direction"],
         },
@@ -255,33 +255,33 @@ keys 是按键数组，如 ['ctrl', 'c']""",
         "name": "desktop_window",
         "category": "Desktop",
         "description": "Window management operations. When you need to: (1) List all open windows, (2) Switch to a specific window, (3) Minimize/maximize/restore windows, (4) Close windows. Actions: list, switch, minimize, maximize, restore, close. Use title parameter for targeting specific window (fuzzy match).",
-        "detail": """窗口管理操作。
+        "detail": """Window management operations.
 
-**支持的操作**：
-- list: 列出所有窗口
-- switch: 切换到指定窗口（激活并置顶）
-- minimize: 最小化窗口
-- maximize: 最大化窗口
-- restore: 恢复窗口
-- close: 关闭窗口
+**Supported actions**:
+- list: list all windows
+- switch: switch to the specified window (activate and bring to front)
+- minimize: minimize the window
+- maximize: maximize the window
+- restore: restore the window
+- close: close the window
 
-**参数说明**：
-- action: 操作类型（必填）
-- title: 窗口标题（模糊匹配），list 操作不需要
+**Parameters**:
+- action: action type (required)
+- title: window title (fuzzy match); not required for the list action
 
-**返回信息**（list 操作）：
-- 窗口标题
-- 窗口句柄
-- 窗口位置和大小""",
+**Returned information** (list action):
+- Window title
+- Window handle
+- Window position and size""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
                     "enum": ["list", "switch", "minimize", "maximize", "restore", "close"],
-                    "description": "操作类型",
+                    "description": "Action type.",
                 },
-                "title": {"type": "string", "description": "窗口标题（模糊匹配），list 操作不需要"},
+                "title": {"type": "string", "description": "Window title (fuzzy match); not required for the list action."},
             },
             "required": ["action"],
         },
@@ -290,36 +290,36 @@ keys 是按键数组，如 ['ctrl', 'c']""",
         "name": "desktop_wait",
         "category": "Desktop",
         "description": "Wait for UI element or window to appear. When you need to: (1) Wait for dialog to open, (2) Wait for loading to complete, (3) Synchronize with application state before next action. Target types: element (UI element), window (window title). Default timeout is 10 seconds.",
-        "detail": """等待某个 UI 元素或窗口出现。
+        "detail": """Wait for a UI element or window to appear.
 
-**适用场景**：
-- 等待对话框打开
-- 等待加载完成
-- 在下一步操作前同步应用状态
+**Use cases**:
+- Wait for a dialog to open
+- Wait for loading to finish
+- Synchronize with application state before the next action
 
-**目标类型**：
-- element: 等待 UI 元素
-- window: 等待窗口
+**Target types**:
+- element: wait for a UI element
+- window: wait for a window
 
-**参数说明**：
-- target: 元素描述或窗口标题
-- target_type: 目标类型（默认 element）
-- timeout: 超时时间（默认 10 秒）
+**Parameters**:
+- target: element description or window title
+- target_type: target type (default: element)
+- timeout: timeout (default: 10 seconds)
 
-**返回结果**：
-- 成功: 元素/窗口信息
-- 超时: 错误信息""",
+**Result**:
+- Success: element/window info
+- Timeout: error message""",
         "input_schema": {
             "type": "object",
             "properties": {
-                "target": {"type": "string", "description": "元素描述或窗口标题"},
+                "target": {"type": "string", "description": "Element description or window title."},
                 "target_type": {
                     "type": "string",
                     "enum": ["element", "window"],
                     "default": "element",
-                    "description": "目标类型",
+                    "description": "Target type.",
                 },
-                "timeout": {"type": "integer", "default": 10, "description": "超时时间（秒）"},
+                "timeout": {"type": "integer", "default": 10, "description": "Timeout in seconds."},
             },
             "required": ["target"],
         },
@@ -328,31 +328,31 @@ keys 是按键数组，如 ['ctrl', 'c']""",
         "name": "desktop_inspect",
         "category": "Desktop",
         "description": "Inspect window UI element tree structure for debugging and understanding interface layout. When you need to: (1) Debug UI automation issues, (2) Understand application structure, (3) Find correct element identifiers for clicking/typing. Returns element names, types, and IDs at specified depth.",
-        "detail": """检查窗口的 UI 元素树结构（用于调试和了解界面结构）。
+        "detail": """Inspect a window's UI element tree (for debugging and understanding the interface).
 
-**适用场景**：
-- 调试 UI 自动化问题
-- 了解应用程序界面结构
-- 查找正确的元素标识符
+**Use cases**:
+- Debug UI automation issues
+- Understand an application's UI structure
+- Find the correct element identifiers
 
-**参数说明**：
-- window_title: 窗口标题（不填则检查当前活动窗口）
-- depth: 元素树遍历深度（默认 2）
+**Parameters**:
+- window_title: window title (when omitted, inspects the currently active window)
+- depth: traversal depth of the element tree (default: 2)
 
-**返回信息**：
-- 元素名称
-- 元素类型
-- 元素 ID
-- 元素位置
-- 子元素列表""",
+**Returned information**:
+- Element name
+- Element type
+- Element ID
+- Element position
+- Child element list""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "window_title": {
                     "type": "string",
-                    "description": "窗口标题，不填则检查当前活动窗口",
+                    "description": "Window title; when omitted, inspects the currently active window.",
                 },
-                "depth": {"type": "integer", "default": 2, "description": "元素树遍历深度"},
+                "depth": {"type": "integer", "default": 2, "description": "Traversal depth of the element tree."},
             },
             "required": [],
         },
@@ -401,14 +401,14 @@ keys 是按键数组，如 ['ctrl', 'c']""",
 ]
 
 
-# ==================== 工具处理器 ====================
+# ==================== Tool handler ====================
 
 
 class DesktopToolHandler:
     """
-    桌面工具处理器
+    Desktop tool handler.
 
-    处理 Agent 的工具调用请求
+    Handles tool-call requests from the Agent.
     """
 
     def __init__(self):
@@ -416,7 +416,7 @@ class DesktopToolHandler:
 
     @property
     def controller(self):
-        """懒加载控制器"""
+        """Lazily load the controller."""
         if self._controller is None:
             from .controller import get_controller
 
@@ -425,14 +425,14 @@ class DesktopToolHandler:
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
         """
-        处理工具调用
+        Handle a tool call.
 
         Args:
-            tool_name: 工具名称
-            params: 参数字典
+            tool_name: tool name
+            params: parameter dict
 
         Returns:
-            结果字典
+            result dict
         """
         try:
             if tool_name == "desktop_screenshot":
@@ -462,7 +462,7 @@ class DesktopToolHandler:
             return {"error": str(e)}
 
     async def _handle_screenshot(self, params: dict) -> dict:
-        """处理截图请求"""
+        """Handle a screenshot request."""
         import os
         from datetime import datetime
 
@@ -471,22 +471,22 @@ class DesktopToolHandler:
         analyze = params.get("analyze", False)
         analyze_query = params.get("analyze_query")
 
-        # 截图
+        # Capture
         img = self.controller.screenshot(window_title=window_title)
 
-        # 生成保存路径
+        # Generate save path
         if not path:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"desktop_screenshot_{timestamp}.png"
-            # 保存到用户桌面
+            # Save to the user's desktop
             desktop_path = os.path.join(os.path.expanduser("~"), "Desktop")
             if os.path.exists(desktop_path):
                 path = os.path.join(desktop_path, filename)
             else:
-                # 如果桌面不存在，保存到当前目录
+                # If the desktop directory doesn't exist, save to the current directory
                 path = filename
 
-        # 保存截图
+        # Save the screenshot
         self.controller.capture.save(img, path)
         abs_path = os.path.abspath(path)
 
@@ -497,7 +497,7 @@ class DesktopToolHandler:
             "height": img.height,
         }
 
-        # 可选分析
+        # Optional analysis
         if analyze:
             analysis = await self.controller.analyze_screen(
                 window_title=window_title,
@@ -508,7 +508,7 @@ class DesktopToolHandler:
         return result
 
     async def _handle_find_element(self, params: dict) -> dict:
-        """处理查找元素请求"""
+        """Handle a find-element request."""
         target = params.get("target")
         window_title = params.get("window_title")
         method = params.get("method", "auto")
@@ -533,7 +533,7 @@ class DesktopToolHandler:
             }
 
     async def _handle_click(self, params: dict) -> dict:
-        """处理点击请求"""
+        """Handle a click request."""
         target = params.get("target")
         button = params.get("button", "left")
         double = params.get("double", False)
@@ -549,7 +549,7 @@ class DesktopToolHandler:
         return result.to_dict()
 
     def _handle_type(self, params: dict) -> dict:
-        """处理输入请求"""
+        """Handle a type request."""
         text = params.get("text", "")
         clear_first = params.get("clear_first", False)
 
@@ -557,7 +557,7 @@ class DesktopToolHandler:
         return result.to_dict()
 
     def _handle_hotkey(self, params: dict) -> dict:
-        """处理快捷键请求"""
+        """Handle a hotkey request."""
         keys = params.get("keys", [])
 
         if not keys:
@@ -567,7 +567,7 @@ class DesktopToolHandler:
         return result.to_dict()
 
     def _handle_scroll(self, params: dict) -> dict:
-        """处理滚动请求"""
+        """Handle a scroll request."""
         direction = params.get("direction", "down")
         amount = params.get("amount", 3)
 
@@ -575,7 +575,7 @@ class DesktopToolHandler:
         return result.to_dict()
 
     def _handle_window(self, params: dict) -> dict:
-        """处理窗口操作请求"""
+        """Handle a window-action request."""
         action = params.get("action")
         title = params.get("title")
 
@@ -591,7 +591,7 @@ class DesktopToolHandler:
         return result.to_dict()
 
     async def _handle_wait(self, params: dict) -> dict:
-        """处理等待请求"""
+        """Handle a wait request."""
         target = params.get("target")
         target_type = params.get("target_type", "element")
         timeout = params.get("timeout", 10)
@@ -620,7 +620,7 @@ class DesktopToolHandler:
                 }
 
     def _handle_inspect(self, params: dict) -> dict:
-        """处理检查请求"""
+        """Handle an inspect request."""
         window_title = params.get("window_title")
         depth = params.get("depth", 2)
 
@@ -636,7 +636,7 @@ class DesktopToolHandler:
     async def _handle_batch(self, params: dict) -> dict:
         """Execute multiple desktop actions atomically in sequence.
 
-        参考 CC computer_batch：原子化批量执行。
+        Modeled after CC computer_batch: atomic batch execution.
         """
         actions = params.get("actions", [])
         if not actions:
@@ -672,12 +672,12 @@ class DesktopToolHandler:
         }
 
 
-# 全局工具处理器
+# Global tool handler
 _handler: DesktopToolHandler | None = None
 
 
 def get_tool_handler() -> DesktopToolHandler:
-    """获取全局工具处理器"""
+    """Get the global tool handler."""
     global _handler
     if _handler is None:
         _handler = DesktopToolHandler()
@@ -686,18 +686,18 @@ def get_tool_handler() -> DesktopToolHandler:
 
 def register_desktop_tools(agent: Any) -> None:
     """
-    注册桌面工具到 Agent
+    Register the desktop tools with the Agent.
 
     Args:
-        agent: OpenAkita Agent 实例
+        agent: OpenAkita Agent instance
     """
     handler = get_tool_handler()
 
-    # 注册工具定义
+    # Register tool definitions
     if hasattr(agent, "register_tools"):
         agent.register_tools(DESKTOP_TOOLS)
 
-    # 注册处理器
+    # Register the handler
     if hasattr(agent, "register_tool_handler"):
         for tool in DESKTOP_TOOLS:
             agent.register_tool_handler(tool["name"], handler.handle)

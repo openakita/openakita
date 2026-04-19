@@ -1,15 +1,16 @@
 """
 OpenAI Responses API Provider
 
-继承 OpenAIProvider，覆写请求构建和响应解析以适配 Responses API 格式。
-共享 HTTP 客户端、认证、超时、健康检查等基础设施。
+Extends OpenAIProvider, overriding request building and response parsing to
+adapt to the Responses API format. Shares HTTP client, authentication, timeout,
+and health-check infrastructure from the base class.
 
-Responses API 与 Chat Completions 的核心差异：
-- 端点: /v1/responses (非 /v1/chat/completions)
-- 输入: input (items 数组) + instructions (系统提示)
-- 输出: output (items 数组) 而非 choices[0].message
-- 工具定义: internally-tagged, strict 默认开启
-- 流式事件: 语义化事件名 (response.output_text.delta 等)
+Key differences from Chat Completions:
+- Endpoint: /v1/responses (not /v1/chat/completions)
+- Input: input (items array) + instructions (system prompt)
+- Output: output (items array) instead of choices[0].message
+- Tool definitions: internally-tagged, strict mode on by default
+- Streaming events: semantic event names (response.output_text.delta, etc.)
 """
 
 import json
@@ -42,16 +43,18 @@ logger = logging.getLogger(__name__)
 class OpenAIResponsesProvider(OpenAIProvider):
     """OpenAI Responses API Provider
 
-    覆写以下方法以适配 Responses API，其余全部继承自 OpenAIProvider：
-    - _api_url: 端点路径 (/responses)
-    - _estimate_request_timeout: 基于 input items 估算超时
-    - _chat_non_stream: 非流式请求（验证 output 而非 choices）
-    - _build_request_body: 请求体格式
-    - _parse_response: 响应解析
-    - _convert_stream_event: 流式事件解析
-    - _iter_sse_events: SSE 传输（适配 named events 格式）
+    Overrides the following methods to adapt to the Responses API; everything
+    else is inherited from OpenAIProvider:
+    - _api_url: endpoint path (/responses)
+    - _estimate_request_timeout: estimate timeout based on input items
+    - _chat_non_stream: non-streaming request (validates output, not choices)
+    - _build_request_body: request body format
+    - _parse_response: response parsing
+    - _convert_stream_event: streaming event parsing
+    - _iter_sse_events: SSE transport (adapted for named-events format)
 
-    chat() 和 _chat_via_stream() 继承自 OpenAIProvider（统一的 stream-only 检测逻辑）。
+    chat() and _chat_via_stream() are inherited from OpenAIProvider
+    (unified stream-only detection logic).
     """
 
     def __init__(self, config: EndpointConfig):
@@ -62,7 +65,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
         return f"{self.base_url}/responses"
 
     def _estimate_request_timeout(self, body: dict):  # -> httpx.Timeout | None
-        """Responses API 使用 input 而非 messages，需适配 token 估算。"""
+        """Responses API uses input instead of messages, so token estimation needs adaptation."""
         input_items = body.get("input", [])
         body_chars = sum(
             len(str(item.get("content", "")))
@@ -99,9 +102,12 @@ class OpenAIResponsesProvider(OpenAIProvider):
         )
 
     async def _chat_non_stream(self, request: LLMRequest) -> LLMResponse:
-        """Responses API 非流式请求实现。调用方须已获取 rate limit。
+        """Non-streaming request implementation for the Responses API.
 
-        Responses API 返回 output 而非 choices，因此需要独立的响应验证逻辑。
+        The caller must have already acquired the rate limit.
+
+        The Responses API returns output instead of choices, so it requires
+        its own response validation logic.
         """
         client = await self._get_client()
 
@@ -202,7 +208,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
         if instructions:
             body["instructions"] = instructions
 
-        # max_tokens → max_output_tokens (Responses API 字段名)
+        # max_tokens -> max_output_tokens (Responses API field name)
         _max_tokens = request.max_tokens
         if _max_tokens and _max_tokens > 0:
             body["max_output_tokens"] = _max_tokens
@@ -210,31 +216,28 @@ class OpenAIResponsesProvider(OpenAIProvider):
             _fallback = self.config.max_tokens or 16384
             body["max_output_tokens"] = _fallback
 
-        # 工具
-        if request.tools:
+        # Tools
             body["tools"] = convert_tools_to_responses(request.tools)
 
-        # 温度
-        if request.temperature != 1.0:
+        # Temperature
             body["temperature"] = request.temperature
 
-        # 不使用服务端状态管理，每次发送完整上下文
-        body["store"] = False
+        # Do not use server-side state management; send full context each time
 
-        # 思考模式 (reasoning)
+        # Thinking mode (reasoning)
         if request.enable_thinking and self.config.has_capability("thinking"):
             if request.thinking_depth:
                 body["reasoning"] = {"effort": request.thinking_depth}
             else:
                 body["reasoning"] = {"effort": "medium"}
 
-        # 额外参数
+        # Extra parameters
         if self.config.extra_params:
             body.update(self.config.extra_params)
         if request.extra_params:
             body.update(request.extra_params)
 
-        # 清理 Chat Completions 专有字段（可能经 extra_params 泄漏）
+        # Remove Chat Completions-specific fields (may leak via extra_params)
         for _cc_key in (
             "max_tokens",
             "max_completion_tokens",
@@ -247,7 +250,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
         ):
             body.pop(_cc_key, None)
 
-        # 请求体卫生检查
+        # Request body sanity check
         for key in ("max_output_tokens",):
             val = body.get(key)
             if val is not None and (not isinstance(val, int) or val <= 0):
@@ -265,7 +268,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
             item_type = item.get("type", "")
 
             if item_type == "message":
-                # 从 message item 中提取文本
+                # Extract text from message item
                 for part in item.get("content", []):
                     if part.get("type") in ("output_text", "text"):
                         text_content += part.get("text", "")
@@ -276,7 +279,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
                     content_blocks.extend(converted)
                     has_tool_calls = True
 
-        # 文本格式工具调用降级解析
+        # Fallback: parse text-format tool calls
         if not has_tool_calls and text_content and has_text_tool_calls(text_content):
             logger.info(f"[TEXT_TOOL_PARSE] Detected text-based tool calls from {self.name}")
             clean_text, text_tool_calls = parse_text_tool_calls(text_content)
@@ -288,8 +291,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
         if text_content:
             content_blocks.insert(0, TextBlock(text=text_content))
 
-        # 停止原因
-        status = data.get("status", "completed")
+        # Stop reason
         if status == "failed":
             err_detail = data.get("last_error") or {}
             err_msg = (
@@ -321,19 +323,19 @@ class OpenAIResponsesProvider(OpenAIProvider):
         )
 
     def _convert_stream_event(self, event: dict) -> dict:
-        """将 Responses API 流式事件转换为内部统一格式。
+        """Convert Responses API streaming events to the internal unified format.
 
-        Responses API 流式事件结构：
-        - response.output_text.delta: 文本增量
-        - response.function_call_arguments.delta: 工具调用参数增量
-        - response.output_item.added: 新 output item 开始
-        - response.completed / response.done: 正常完成
-        - response.incomplete: max_output_tokens 截断
-        - response.failed / error: API 级别错误
+        Responses API streaming event types:
+        - response.output_text.delta: text delta
+        - response.function_call_arguments.delta: tool call argument delta
+        - response.output_item.added: new output item started
+        - response.completed / response.done: normal completion
+        - response.incomplete: truncated due to max_output_tokens
+        - response.failed / error: API-level error
         """
         event_type = event.get("type", "")
 
-        # ── 错误事件 ──
+        # -- Error events --
         if event_type in ("error", "response.failed"):
             err_msg = event.get("message") or event.get("error", {}).get("message", "")
             return {
@@ -341,14 +343,14 @@ class OpenAIResponsesProvider(OpenAIProvider):
                 "error": err_msg or f"Responses API stream error: {event_type}",
             }
 
-        # ── 文本增量 ──
+        # -- Text delta --
         if event_type == "response.output_text.delta":
             return {
                 "type": "content_block_delta",
                 "delta": {"type": "text", "text": event.get("delta", "")},
             }
 
-        # ── 工具调用：参数增量 ──
+        # -- Tool call: argument delta --
         if event_type == "response.function_call_arguments.delta":
             return {
                 "type": "content_block_delta",
@@ -360,7 +362,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
                 },
             }
 
-        # ── 工具调用：完成 ──
+        # -- Tool call: done --
         if event_type == "response.function_call_arguments.done":
             return {
                 "type": "content_block_delta",
@@ -372,21 +374,21 @@ class OpenAIResponsesProvider(OpenAIProvider):
                 },
             }
 
-        # ── 正常完成 ──
+        # -- Normal completion --
         if event_type in ("response.completed", "response.done"):
             return {
                 "type": "message_stop",
                 "stop_reason": "stop",
             }
 
-        # ── 截断（max_output_tokens 达到上限）──
+        # -- Truncation (max_output_tokens reached) --
         if event_type == "response.incomplete":
             return {
                 "type": "message_stop",
                 "stop_reason": "length",
             }
 
-        # ── 新 output item（函数调用的首个事件，含 name 和 call_id）──
+        # -- New output item (first event for a function call, includes name and call_id) --
         if event_type == "response.output_item.added":
             item = event.get("item", {})
             if item.get("type") == "function_call":
@@ -400,14 +402,14 @@ class OpenAIResponsesProvider(OpenAIProvider):
                     },
                 }
 
-        # 其他事件（content_part.added 等）
+        # Other events (content_part.added, etc.)
         return {"type": "ping"}
 
     async def _iter_sse_events(self, body: dict) -> AsyncIterator[dict]:
-        """Responses API SSE 传输层。
+        """Responses API SSE transport layer.
 
-        适配 Responses API 的 named SSE events (event: + data:) 格式，
-        并处理 Responses API 特有的流式错误事件。
+        Adapts to the Responses API named SSE events (event: + data:) format,
+        and handles Responses API-specific streaming error events.
         """
         client = await self._get_client()
         req_timeout = self._estimate_request_timeout(body)
@@ -510,7 +512,7 @@ class OpenAIResponsesProvider(OpenAIProvider):
             raise
 
     async def chat_stream(self, request: LLMRequest) -> AsyncIterator[dict]:
-        """流式聊天请求"""
+        """Streaming chat request"""
         await self.acquire_rate_limit()
         body = self._build_request_body(request)
         body["stream"] = True

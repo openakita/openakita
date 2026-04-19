@@ -1,13 +1,13 @@
 """
-技能级 Hook 系统
+Skill-level Hook System
 
-支持 SKILL.md frontmatter 中声明的生命周期钩子：
-- on_activate:   技能被激活时（首次 get_skill_info 或 execute_skill）
-- on_deactivate: 技能被卸载/禁用时
-- before_execute: fork 执行前
-- after_execute:  fork 执行后
+Supports lifecycle hooks declared in SKILL.md frontmatter:
+- on_activate:   When the skill is activated (first get_skill_info or execute_skill)
+- on_deactivate: When the skill is unloaded/disabled
+- before_execute: Before fork execution
+- after_execute:  After fork execution
 
-钩子值为技能目录下的脚本路径，由 SkillHookRunner 安全执行。
+Hook values are script paths relative to the skill directory, safely executed by SkillHookRunner.
 """
 
 from __future__ import annotations

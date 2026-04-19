@@ -1,8 +1,8 @@
 """
-结构化工具错误
+Structured tool errors
 
-提供 ToolError 异常类和 ErrorType 枚举，
-让 LLM 能根据错误类型决定：重试 / 换方案 / 报告用户。
+Provides the ToolError exception class and ErrorType enum,
+allowing the LLM to decide based on error type: retry / try another approach / report to user.
 
 Usage:
     from openakita.tools.errors import ToolError, ErrorType
@@ -13,8 +13,8 @@ Usage:
         raise ToolError(
             error_type=ErrorType.TIMEOUT,
             tool_name="run_shell",
-            message="命令执行超时",
-            retry_suggestion="请增加 timeout 参数后重试",
+            message="Command execution timed out",
+            retry_suggestion="Please increase the timeout parameter and retry",
         )
 """
 
@@ -27,37 +27,37 @@ logger = logging.getLogger(__name__)
 
 
 class ErrorType(Enum):
-    """工具错误类型"""
+    """Tool error types"""
 
-    TRANSIENT = "transient"  # 暂时性错误（网络超时、服务不可用等），可重试
-    PERMANENT = "permanent"  # 永久性错误（逻辑错误、不支持的操作），需换方案
-    PERMISSION = "permission"  # 权限错误，不可操作
-    TIMEOUT = "timeout"  # 超时，可增加超时时间重试
-    VALIDATION = "validation"  # 参数验证失败，需修正参数
-    RESOURCE_NOT_FOUND = "not_found"  # 资源不存在（文件、URL 等）
-    RATE_LIMIT = "rate_limit"  # 速率限制，需等待后重试
-    DEPENDENCY = "dependency"  # 依赖缺失（缺少命令、库等）
+    TRANSIENT = "transient"  # Transient error (network timeout, service unavailable, etc.), retryable
+    PERMANENT = "permanent"  # Permanent error (logic error, unsupported operation), try another approach
+    PERMISSION = "permission"  # Permission error, operation not allowed
+    TIMEOUT = "timeout"  # Timeout, may retry with a longer timeout
+    VALIDATION = "validation"  # Parameter validation failed, fix parameters
+    RESOURCE_NOT_FOUND = "not_found"  # Resource not found (file, URL, etc.)
+    RATE_LIMIT = "rate_limit"  # Rate limit exceeded, retry after waiting
+    DEPENDENCY = "dependency"  # Dependency missing (missing command, library, etc.)
 
 
-# LLM 友好的错误类型说明，注入到 tool_result 中帮助 LLM 决策
+# LLM-friendly error type hints, injected into tool_result to help the LLM decide
 _ERROR_TYPE_HINTS: dict[ErrorType, str] = {
-    ErrorType.TRANSIENT: "暂时性错误，可以直接重试",
-    ErrorType.PERMANENT: "永久性错误，请换一种方法或工具",
-    ErrorType.PERMISSION: "权限不足，无法执行此操作",
-    ErrorType.TIMEOUT: "执行超时，可以增加 timeout 参数后重试",
-    ErrorType.VALIDATION: "参数有误，请检查并修正参数后重试",
-    ErrorType.RESOURCE_NOT_FOUND: "目标资源不存在，请确认路径/URL 后重试",
-    ErrorType.RATE_LIMIT: "请求频率过高，请等待几秒后重试",
-    ErrorType.DEPENDENCY: "缺少依赖（命令或库），请先安装后重试",
+    ErrorType.TRANSIENT: "Transient error, you can retry directly",
+    ErrorType.PERMANENT: "Permanent error, please try a different method or tool",
+    ErrorType.PERMISSION: "Insufficient permissions, unable to perform this operation",
+    ErrorType.TIMEOUT: "Execution timed out, you can increase the timeout parameter and retry",
+    ErrorType.VALIDATION: "Invalid parameters, please check and correct the parameters before retrying",
+    ErrorType.RESOURCE_NOT_FOUND: "Target resource not found, please confirm the path/URL and retry",
+    ErrorType.RATE_LIMIT: "Request rate too high, please wait a few seconds and retry",
+    ErrorType.DEPENDENCY: "Missing dependency (command or library), please install it first and retry",
 }
 
 
 class ToolError(Exception):
     """
-    结构化工具错误。
+    Structured tool error.
 
-    包含错误类型、重试建议、替代工具等信息，
-    序列化后以 JSON 格式返回给 LLM，帮助其做出更好的决策。
+    Contains error type, retry suggestion, alternative tools, and other info,
+    serialized as JSON and returned to the LLM to help it make better decisions.
     """
 
     def __init__(
@@ -79,7 +79,7 @@ class ToolError(Exception):
         super().__init__(message)
 
     def to_dict(self) -> dict[str, Any]:
-        """序列化为字典"""
+        """Serialize to dictionary"""
         result: dict[str, Any] = {
             "error": True,
             "error_type": self.error_type.value,
@@ -97,9 +97,9 @@ class ToolError(Exception):
 
     def to_tool_result(self) -> str:
         """
-        序列化为 tool_result 字符串。
+        Serialize as a tool_result string.
 
-        以 JSON 格式返回，LLM 可以解析 error_type 字段来决策。
+        Returned in JSON format so the LLM can parse the error_type field for decision-making.
         """
         return json.dumps(self.to_dict(), ensure_ascii=False)
 
@@ -109,15 +109,15 @@ def classify_error(
     tool_name: str = "",
 ) -> ToolError:
     """
-    将通用异常分类为结构化 ToolError。
+    Classify a generic exception as a structured ToolError.
 
-    根据异常类型自动推断 ErrorType：
+    Automatically infers ErrorType based on exception type:
     - TimeoutError -> TIMEOUT
     - FileNotFoundError -> RESOURCE_NOT_FOUND
     - PermissionError -> PERMISSION
     - ValueError -> VALIDATION
     - ConnectionError -> TRANSIENT
-    - 其他 -> PERMANENT
+    - Other -> PERMANENT
     """
     error_msg = str(error)
 
@@ -129,7 +129,7 @@ def classify_error(
             error_type=ErrorType.TIMEOUT,
             tool_name=tool_name,
             message=error_msg,
-            retry_suggestion="增加 timeout 参数后重试",
+            retry_suggestion="Increase the timeout parameter and retry",
         )
 
     if isinstance(error, FileNotFoundError):
@@ -137,7 +137,7 @@ def classify_error(
             error_type=ErrorType.RESOURCE_NOT_FOUND,
             tool_name=tool_name,
             message=error_msg,
-            retry_suggestion="请确认文件路径是否正确",
+            retry_suggestion="Please confirm the file path is correct",
         )
 
     if isinstance(error, PermissionError):
@@ -152,21 +152,21 @@ def classify_error(
             error_type=ErrorType.VALIDATION,
             tool_name=tool_name,
             message=error_msg,
-            retry_suggestion="请检查参数格式和取值范围",
+            retry_suggestion="Please check the parameter format and value range",
         )
 
     if isinstance(error, (ConnectionError, OSError)):
-        # 检查是否是连接/网络相关
+        # Check if it's connection/network related
         lower_msg = error_msg.lower()
         if any(kw in lower_msg for kw in ("connect", "network", "refused", "timeout", "dns")):
             return ToolError(
                 error_type=ErrorType.TRANSIENT,
                 tool_name=tool_name,
                 message=error_msg,
-                retry_suggestion="网络问题，请稍后重试",
+                retry_suggestion="Network issue, please retry later",
             )
 
-    # 检查常见的错误模式
+    # Check common error patterns
     lower_msg = error_msg.lower()
 
     if "rate limit" in lower_msg or "too many requests" in lower_msg or "429" in lower_msg:
@@ -174,7 +174,7 @@ def classify_error(
             error_type=ErrorType.RATE_LIMIT,
             tool_name=tool_name,
             message=error_msg,
-            retry_suggestion="请等待 5 秒后重试",
+            retry_suggestion="Please wait 5 seconds and retry",
         )
 
     if "not found" in lower_msg or "no such file" in lower_msg or "does not exist" in lower_msg:
@@ -189,10 +189,10 @@ def classify_error(
             error_type=ErrorType.DEPENDENCY,
             tool_name=tool_name,
             message=error_msg,
-            retry_suggestion="请先安装所需的命令或工具",
+            retry_suggestion="Please install the required command or tool first",
         )
 
-    # 默认为永久性错误
+    # Default to permanent error
     return ToolError(
         error_type=ErrorType.PERMANENT,
         tool_name=tool_name,

@@ -1,8 +1,9 @@
-"""LLM 错误分类枚举。
+"""LLM error classification enum.
 
-将原先散落在 LLMProvider._classify_error (字符串返回) 和
-LLMClient._resolve_providers_with_fallback / _friendly_error_hint (字符串比较)
-中的错误分类统一为枚举，消除拼写风险并提供单一分类入口。
+Consolidates error categories previously scattered across
+LLMProvider._classify_error (string return) and
+LLMClient._resolve_providers_with_fallback / _friendly_error_hint (string comparison)
+into a single enum, eliminating typo risks and providing a single classification entry point.
 """
 
 from __future__ import annotations
@@ -11,10 +12,11 @@ from enum import StrEnum
 
 
 class FailoverReason(StrEnum):
-    """LLM 端点错误分类。
+    """LLM endpoint error classification.
 
-    值与原 ``LLMProvider._error_category`` 字符串保持一致，
-    确保 ``mark_unhealthy(category=...)`` 等现有调用无需改签名。
+    Values are kept consistent with the original ``LLMProvider._error_category``
+    strings so that existing calls like ``mark_unhealthy(category=...)`` require
+    no signature changes.
     """
 
     QUOTA = "quota"

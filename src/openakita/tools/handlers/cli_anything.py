@@ -1,10 +1,10 @@
 """
-CLI-Anything 处理器
+CLI-Anything Handler
 
-通过 CLI-Anything 生成的 CLI 控制桌面软件：
-- cli_anything_discover: 扫描 PATH 中已安装的 cli-anything-* 工具
-- cli_anything_run: 执行 cli-anything-<app> 子命令
-- cli_anything_help: 获取工具/子命令的帮助文档
+Control desktop applications via CLI-Anything generated CLIs:
+- cli_anything_discover: scan PATH for installed cli-anything-* tools
+- cli_anything_run: execute a cli-anything-<app> subcommand
+- cli_anything_help: get help docs for a tool/subcommand
 """
 
 import asyncio
@@ -24,7 +24,7 @@ _CLI_PREFIX = "cli-anything-"
 
 
 class CLIAnythingHandler:
-    """CLI-Anything 处理器 — 通过 CLI 控制桌面软件。"""
+    """CLI-Anything Handler — control desktop applications via CLI."""
 
     TOOLS = ["cli_anything_discover", "cli_anything_run", "cli_anything_help"]
 
@@ -66,9 +66,9 @@ class CLIAnythingHandler:
                 proc.kill()  # type: ignore[possibly-undefined]
             except Exception:
                 pass
-            return -1, "", f"命令超时（{timeout}秒）"
+            return -1, "", f"Command timed out ({timeout}s)"
         except FileNotFoundError:
-            return -1, "", f"命令未找到: {cmd[0]}"
+            return -1, "", f"Command not found: {cmd[0]}"
         except Exception as e:
             return -1, "", str(e)
 
@@ -116,17 +116,17 @@ class CLIAnythingHandler:
 
         if not self._cache:
             return (
-                "未发现已安装的 cli-anything 工具。\n"
-                "安装方式：\n"
-                "1. pip install cli-anything-gimp（从 CLI-Hub 安装）\n"
-                "2. 使用 CLI-Anything 为你的软件生成 CLI\n"
-                "详情: https://github.com/HKUDS/CLI-Anything"
+                "No installed cli-anything tools found.\n"
+                "Installation:\n"
+                "1. pip install cli-anything-gimp (install from CLI-Hub)\n"
+                "2. Use CLI-Anything to generate a CLI for your software\n"
+                "Details: https://github.com/HKUDS/CLI-Anything"
             )
 
-        lines = [f"发现 {len(self._cache)} 个 cli-anything 工具：\n"]
+        lines = [f"Found {len(self._cache)} cli-anything tool(s):\n"]
         for item in self._cache:
             lines.append(f"- **{item['app']}** (`{item['command']}`)")
-        lines.append("\n使用 cli_anything_help 查看具体命令，cli_anything_run 执行。")
+        lines.append("\nUse cli_anything_help for details, cli_anything_run to execute.")
         return "\n".join(lines)
 
     async def _run(self, params: dict[str, Any]) -> str:
@@ -134,13 +134,13 @@ class CLIAnythingHandler:
         subcommand = params.get("subcommand", "").strip()
 
         if not app:
-            return "cli_anything_run 缺少必要参数 'app'（如 'gimp', 'blender'）。"
+            return "cli_anything_run missing required parameter 'app' (e.g. 'gimp', 'blender')."
         if not subcommand:
-            return "cli_anything_run 缺少必要参数 'subcommand'。请先用 cli_anything_help 查看可用子命令。"
+            return "cli_anything_run missing required parameter 'subcommand'. Use cli_anything_help first to see available subcommands."
 
         cmd_name = f"{_CLI_PREFIX}{app}"
         if not shutil.which(cmd_name):
-            return f"{cmd_name} 未安装。运行 cli_anything_discover 查看已安装的工具。"
+            return f"{cmd_name} is not installed. Run cli_anything_discover to see installed tools."
 
         args = params.get("args", [])
         use_json = params.get("json_output", True)
@@ -153,8 +153,8 @@ class CLIAnythingHandler:
 
         rc, stdout, stderr = await self._run_cmd(cmd_parts)
         if rc != 0:
-            error_msg = stderr.strip() or stdout.strip() or "未知错误"
-            return f"{cmd_name} {subcommand} 失败 (exit {rc}): {error_msg}"
+            error_msg = stderr.strip() or stdout.strip() or "unknown error"
+            return f"{cmd_name} {subcommand} failed (exit {rc}): {error_msg}"
 
         if use_json and stdout.strip():
             try:
@@ -163,16 +163,16 @@ class CLIAnythingHandler:
             except json.JSONDecodeError:
                 pass
 
-        return stdout.strip() or "命令执行完成（无输出）"
+        return stdout.strip() or "Command completed (no output)"
 
     async def _help(self, params: dict[str, Any]) -> str:
         app = params.get("app", "").strip()
         if not app:
-            return "cli_anything_help 缺少必要参数 'app'（如 'gimp', 'blender'）。"
+            return "cli_anything_help missing required parameter 'app' (e.g. 'gimp', 'blender')."
 
         cmd_name = f"{_CLI_PREFIX}{app}"
         if not shutil.which(cmd_name):
-            return f"{cmd_name} 未安装。运行 cli_anything_discover 查看已安装的工具。"
+            return f"{cmd_name} is not installed. Run cli_anything_discover to see installed tools."
 
         subcommand = params.get("subcommand", "").strip()
         cmd_parts = [cmd_name]
@@ -181,8 +181,8 @@ class CLIAnythingHandler:
         cmd_parts.append("--help")
 
         rc, stdout, stderr = await self._run_cmd(cmd_parts)
-        output = stdout.strip() or stderr.strip() or "（无帮助输出）"
-        return f"`{' '.join(cmd_parts)}` 帮助文档:\n\n{output}"
+        output = stdout.strip() or stderr.strip() or "(no help output)"
+        return f"`{' '.join(cmd_parts)}` help:\n\n{output}"
 
 
 def is_available() -> bool:

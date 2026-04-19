@@ -1,6 +1,6 @@
 """
-地图 API 适配器
-支持高德地图和百度地图
+Map API adapters
+Supports Amap (Gaode) and Baidu Maps
 """
 
 from typing import Any
@@ -11,7 +11,7 @@ from . import APIError, BaseAPIAdapter
 
 
 class AMapAdapter(BaseAPIAdapter):
-    """高德地图 API 适配器"""
+    """Amap (Gaode) Map API adapter"""
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
@@ -31,28 +31,28 @@ class AMapAdapter(BaseAPIAdapter):
             ) as response:
                 result = await response.json()
                 if result.get("status") != "1":
-                    raise APIError(f"高德地图 API 错误：{result.get('info')}")
+                    raise APIError(f"Amap API error: {result.get('info')}")
                 return result
 
     async def geocode(self, address: str, city: str | None = None) -> dict:
-        """地理编码：地址转坐标"""
+        """Geocoding: address to coordinates"""
         params = {"address": address}
         if city:
             params["city"] = city
         return await self.call("/geocode/geo", params=params)
 
     async def regeocode(self, location: str) -> dict:
-        """逆地理编码：坐标转地址"""
+        """Reverse geocoding: coordinates to address"""
         return await self.call("/geocode/regeo", params={"location": location})
 
     async def weather(self, city: str, extensions: str = "base") -> dict:
-        """获取天气信息"""
+        """Get weather information"""
         return await self.call(
             "/weather/weatherInfo", params={"city": city, "extensions": extensions}
         )
 
     async def direction_driving(self, origin: str, destination: str) -> dict:
-        """路径规划：驾车"""
+        """Route planning: driving"""
         return await self.call(
             "/direction/driving", params={"origin": origin, "destination": destination}
         )
@@ -60,7 +60,7 @@ class AMapAdapter(BaseAPIAdapter):
     async def place_search(
         self, keywords: str, city: str | None = None, types: str | None = None
     ) -> dict:
-        """POI 搜索"""
+        """POI search"""
         params = {"keywords": keywords}
         if city:
             params["city"] = city
@@ -70,7 +70,7 @@ class AMapAdapter(BaseAPIAdapter):
 
 
 class BaiduMapAdapter(BaseAPIAdapter):
-    """百度地图 API 适配器"""
+    """Baidu Map API adapter"""
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
@@ -91,26 +91,26 @@ class BaiduMapAdapter(BaseAPIAdapter):
             ) as response:
                 result = await response.json()
                 if result.get("status") != 0:
-                    raise APIError(f"百度地图 API 错误：{result.get('message')}")
+                    raise APIError(f"Baidu Map API error: {result.get('message')}")
                 return result
 
     async def geocode(self, address: str, city: str | None = None) -> dict:
-        """地理编码"""
+        """Geocoding"""
         params = {"address": address}
         if city:
             params["city"] = city
         return await self.call("/geocoding/v3/", params=params)
 
     async def regeocode(self, location: str) -> dict:
-        """逆地理编码"""
+        """Reverse geocoding"""
         return await self.call("/reverse_geocoding/v3/", params={"location": location})
 
     async def weather(self, location: str) -> dict:
-        """天气查询"""
+        """Weather query"""
         return await self.call("/weather/v1", params={"location": location})
 
     async def direction_driving(self, origin: str, destination: str) -> dict:
-        """驾车路径规划"""
+        """Driving route planning"""
         return await self.call(
             "/direction/v2/driving", params={"origin": origin, "destination": destination}
         )
@@ -118,7 +118,7 @@ class BaiduMapAdapter(BaseAPIAdapter):
     async def place_search(
         self, query: str, scope: str = "1", page_size: int = 10, page_num: int = 0
     ) -> dict:
-        """POI 检索"""
+        """POI search"""
         return await self.call(
             "/place/v2/search",
             params={"query": query, "scope": scope, "page_size": page_size, "page_num": page_num},
@@ -128,5 +128,5 @@ class BaiduMapAdapter(BaseAPIAdapter):
 def create_map_adapter(provider: str, config: dict[str, Any]) -> BaseAPIAdapter:
     providers = {"amap": AMapAdapter, "baidu": BaiduMapAdapter}
     if provider not in providers:
-        raise ValueError(f"不支持的地图提供商：{provider}")
+        raise ValueError(f"Unsupported map provider: {provider}")
     return providers[provider](config)

@@ -9,34 +9,34 @@ requires:
   env: [BAIDU_QIANFAN_AK, BAIDU_QIANFAN_SK]
 ---
 
-# 百度搜索
+# Baidu Search
 
-赋予智能体实时检索全网信息的能力，突破静态知识库限制，获取最新资讯与答案。ClawHub 全球下载量第一的搜索引擎 Skill。
+Enables the agent to search the web in real time, breaking through static knowledge base limits to get the latest news and answers. The #1 downloaded search engine skill on ClawHub.
 
-## 配置
+## Configuration
 
-申请百度千帆 API Key: https://console.bce.baidu.com/qianfan/ais/console/apikey
+Apply for Baidu Qianfan API Key: https://console.bce.baidu.com/qianfan/ais/console/apikey
 
 export BAIDU_QIANFAN_AK="your_ak"
 export BAIDU_QIANFAN_SK="your_sk"
 
-## 安装
+## Installation
 
 clawhub install baidu-search --no-input
 
-## 功能
+## Features
 
-- 网页搜索：实时检索全网信息
-- 图片搜索：图搜相似图多模态检索
-- 时效筛选：按发布时间过滤结果
-- 权威度评级：结果附带相关度和权威度评级
+- Web search: real-time retrieval of web information
+- Image search: similar image search via multimodal retrieval
+- Time filtering: filter results by publication date
+- Authority rating: results include relevance and authority scores
 
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/baidu_search.py
-百度搜索 API 封装，需设置 BAIDU_QIANFAN_AK 和 BAIDU_QIANFAN_SK。
+Baidu Search API wrapper. Requires BAIDU_QIANFAN_AK and BAIDU_QIANFAN_SK to be set.
 
 ```bash
-python3 scripts/baidu_search.py web "Python 异步编程"
-python3 scripts/baidu_search.py image "风景壁纸"
+python3 scripts/baidu_search.py web "Python async programming"
+python3 scripts/baidu_search.py image "landscape wallpaper"
 ```

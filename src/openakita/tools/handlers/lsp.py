@@ -1,13 +1,13 @@
 """
-LSP 工具处理器
+LSP tool handler
 
-通过 Language Server Protocol 提供代码智能功能。
-启动一个 LSP 子进程，通过 stdin/stdout JSON-RPC 通信。
+Provides code intelligence features via the Language Server Protocol.
+Spawns an LSP subprocess communicating through stdin/stdout JSON-RPC.
 
-安全设计：
-- 每个语言服务器独立 asyncio.Lock 防并发竞态
-- 响应读取循环匹配 request id，跳过中间 notification/log
-- 10MB 文件大小限制
+Safety design:
+- Each language server has its own asyncio.Lock to prevent concurrent races
+- Response read loop matches request id, skipping intermediate notifications/logs
+- 10 MB file size limit
 """
 
 import asyncio
@@ -172,7 +172,7 @@ _connections: dict[str, _LSPConnection] = {}
 
 
 class LSPHandler:
-    """LSP 工具处理器"""
+    """LSP tool handler"""
 
     TOOLS = ["lsp"]
 

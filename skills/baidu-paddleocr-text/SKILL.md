@@ -7,21 +7,21 @@ metadata:
   version: "1.0.0"
 ---
 
-# 文心衍生 · PaddleOCR 文字识别
+# Baidu PaddleOCR Text Recognition
 
-集成 SOTA 级轻量化 OCR 模型 PP-OCRv5，支持自然场景及复杂文档的文字检测与识别。
+Based on the state-of-the-art PP-OCRv5 lightweight model, providing text detection and recognition for natural scenes and complex documents.
 
-## 功能
+## Features
 
-- 自然场景文字识别
-- 复杂文档 OCR
-- 多语言支持
-- 轻量化推理
+- Natural scene text recognition
+- Document OCR text extraction
+- Handwriting recognition support
+- High accuracy on Chinese and English text
 
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/baidu_ocr_text.py
-百度通用文字 OCR 识别，需设置 BAIDU_OCR_AK 和 BAIDU_OCR_SK。
+OCR text recognition. Requires setting BAIDU_OCR_AK and BAIDU_OCR_SK.
 
 ```bash
 python3 scripts/baidu_ocr_text.py general /path/to/image.jpg

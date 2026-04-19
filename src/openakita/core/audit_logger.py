@@ -1,8 +1,8 @@
 """
-L5: 持久化审计日志
+L5: Persistent audit log
 
-将安全策略判定记录追加写入 JSONL 文件，
-确保即使进程崩溃也不丢失审计记录。
+Appends security policy decision records to a JSONL file,
+ensuring audit records are not lost even if the process crashes.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ _SENSITIVE_KEYS = frozenset(
 
 
 def _mask_sensitive(text: str, max_len: int = 200) -> str:
-    """对 params_preview 中可能包含的敏感信息进行脱敏。"""
+    """Mask sensitive information that may appear in params_preview."""
     if not text:
         return text
     masked = text[:max_len]

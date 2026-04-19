@@ -1,8 +1,8 @@
 """
-SKILL.md 解析器
+SKILL.md parser
 
-遵循 Agent Skills 规范 (agentskills.io/specification)
-解析 SKILL.md 文件的 YAML frontmatter 和 Markdown body
+Follows Agent Skills specification (agentskills.io/specification)
+Parses YAML frontmatter and Markdown body of SKILL.md files
 """
 
 import logging
@@ -18,24 +18,24 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SkillMetadata:
     """
-    技能元数据 (来自 YAML frontmatter)
+    Skill metadata (from YAML frontmatter)
 
-    必需字段:
-    - name: 技能名称 (1-64字符, 小写字母/数字/连字符)
-    - description: 技能描述 (1-1024字符)
+    Required fields:
+    - name: Skill name (1-64 characters, lowercase letters/numbers/hyphens)
+    - description: Skill description (1-1024 characters)
 
-    可选字段:
-    - license: 许可证
-    - compatibility: 环境要求
-    - metadata: 额外元数据
-    - allowed_tools: 预授权工具列表
-    - disable_model_invocation: 是否禁用自动调用
+    Optional fields:
+    - license: License
+    - compatibility: Environment requirements
+    - metadata: Additional metadata
+    - allowed_tools: Pre-authorized tools list
+    - disable_model_invocation: Whether to disable auto invocation
 
-    系统技能字段 (system: true):
-    - system: 是否为系统技能（内置，不可卸载）
-    - handler: 处理器模块名（如 'browser', 'filesystem'）
-    - tool_name: 原工具名称（用于兼容，如 'browser_navigate'）
-    - category: 工具分类（如 'Browser', 'File System'）
+    System skill fields (system: true):
+    - system: Whether it is a system skill (built-in, not unloadable)
+    - handler: Handler module name (e.g. 'browser', 'filesystem')
+    - tool_name: Original tool name (for compatibility, e.g. 'browser_navigate')
+    - category: Tool category (e.g. 'Browser', 'File System')
     """
 
     name: str
@@ -47,23 +47,23 @@ class SkillMetadata:
     allowed_tools: list[str] = field(default_factory=list)
     disable_model_invocation: bool = False
 
-    # 系统技能专用字段
-    system: bool = False  # 是否为系统技能
-    handler: str | None = None  # 处理器模块名
-    tool_name: str | None = None  # 原工具名称（用于兼容）
-    category: str | None = None  # 工具分类
+    # System skill-only fields
+    system: bool = False  # Whether it is a system skill
+    handler: str | None = None  # Handler module name
+    tool_name: str | None = None  # Original tool name (for compatibility)
+    category: str | None = None  # Tool category
 
     # metadata.openakita structured fields
     supported_os: list[str] = field(default_factory=list)
     required_bins: list[str] = field(default_factory=list)
     required_env: list[str] = field(default_factory=list)
 
-    # 配置 schema（供 Setup Center 自动生成配置表单）
-    # 每个元素: {"key": str, "label": str, "type": "text"|"secret"|"number"|"select"|"bool",
-    #            "required": bool, "help": str, "default": Any, "options": list, "min": num, "max": num}
+    # Config schema (for Setup Center to auto-generate config forms)
+    # Each element: {"key": str, "label": str, "type": "text"|"secret"|"number"|"select"|"bool",
+    #                "required": bool, "help": str, "default": Any, "options": list, "min": num, "max": num}
     config: list[dict] = field(default_factory=list)
 
-    # --- F1: 新增 9 个 frontmatter 字段 ---
+    # --- F1: 9 new frontmatter fields added ---
     when_to_use: str = ""
     keywords: list[str] = field(default_factory=list)
     arguments: list[dict] = field(default_factory=list)
@@ -75,30 +75,30 @@ class SkillMetadata:
     model: str | None = None
     fallback_for_toolsets: list[str] = field(default_factory=list)
 
-    # 国际化（由 agents/openai.yaml i18n 字段注入，兼容旧的 .openakita-i18n.json）
-    # key 为语言代码 (如 "zh")，value 为该语言的显示名/描述
+    # Internationalization (injected from agents/openai.yaml i18n field, compatible with legacy .openakita-i18n.json)
+    # key is language code (e.g. "zh"), value is display name/description in that language
     name_i18n: dict[str, str] = field(default_factory=dict)
     description_i18n: dict[str, str] = field(default_factory=dict)
 
     def get_display_name(self, lang: str = "zh") -> str:
-        """按语言返回显示名称，找不到则回退到 name"""
+        """Return display name by language, fall back to name if not found"""
         return self.name_i18n.get(lang, self.name)
 
     def get_display_description(self, lang: str = "zh") -> str:
-        """按语言返回显示描述，找不到则回退到 description"""
+        """Return display description by language, fall back to description if not found"""
         return self.description_i18n.get(lang, self.description)
 
     def __post_init__(self):
-        """验证字段"""
+        """Validate fields"""
         self._validate_name()
         self._validate_description()
 
     def _validate_name(self):
-        """验证 name 字段。
+        """Validate name field.
 
-        支持两种格式:
-        - 简单名:  ``my-skill``
-        - 命名空间: ``owner/repo@skill-name``
+        Supports two formats:
+        - Simple name: ``my-skill``
+        - Namespaced: ``owner/repo@skill-name``
         """
         if not self.name:
             raise ValueError("name field is required")
@@ -116,7 +116,7 @@ class SkillMetadata:
             )
 
     def _validate_description(self):
-        """验证 description 字段"""
+        """Validate description field"""
         if not self.description:
             raise ValueError("description field is required")
 
@@ -127,29 +127,29 @@ class SkillMetadata:
 @dataclass
 class ParsedSkill:
     """
-    解析后的技能
+    Parsed skill
 
-    包含元数据和完整的 SKILL.md 内容
+    Contains metadata and complete SKILL.md content
     """
 
     metadata: SkillMetadata
     body: str  # Markdown body
-    path: Path  # SKILL.md 文件路径
+    path: Path  # SKILL.md file path
 
-    # 可选目录
+    # Optional directories
     scripts_dir: Path | None = None
     references_dir: Path | None = None
     assets_dir: Path | None = None
 
     @property
     def skill_dir(self) -> Path:
-        """技能根目录"""
+        """Skill root directory"""
         return self.path.parent
 
     _SCRIPT_SUFFIXES = {".py", ".sh", ".bash", ".js"}
 
     def get_scripts(self) -> list[Path]:
-        """获取所有可用脚本（scripts/ 目录优先，兼容根目录放置脚本的外部技能）"""
+        """Get all available scripts (scripts/ directory takes priority, compatible with external skills with scripts in root)"""
         if self.scripts_dir and self.scripts_dir.exists():
             return list(self.scripts_dir.iterdir())
         return [
@@ -157,13 +157,13 @@ class ParsedSkill:
         ]
 
     def get_references(self) -> list[Path]:
-        """获取 references/ 目录下的所有文档"""
+        """Get all documents under references/ directory"""
         if self.references_dir and self.references_dir.exists():
             return [f for f in self.references_dir.iterdir() if f.suffix == ".md"]
         return []
 
     def get_assets(self) -> list[Path]:
-        """获取 assets/ 目录下的所有资源"""
+        """Get all resources under assets/ directory"""
         if self.assets_dir and self.assets_dir.exists():
             return list(self.assets_dir.iterdir())
         return []
@@ -171,12 +171,12 @@ class ParsedSkill:
 
 class SkillParser:
     """
-    SKILL.md 解析器
+    SKILL.md parser
 
-    解析符合 Agent Skills 规范的 SKILL.md 文件
+    Parses SKILL.md files compliant with Agent Skills specification
     """
 
-    # YAML frontmatter 正则
+    # YAML frontmatter regex
     FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", re.DOTALL)
 
     # F13: mtime-based parse cache — key: (resolved_path, mtime), value: ParsedSkill
@@ -184,17 +184,17 @@ class SkillParser:
 
     def parse_file(self, path: Path) -> ParsedSkill:
         """
-        解析 SKILL.md 文件
+        Parse SKILL.md file
 
         Args:
-            path: SKILL.md 文件路径
+            path: SKILL.md file path
 
         Returns:
-            ParsedSkill 对象
+            ParsedSkill object
 
         Raises:
-            ValueError: 解析失败
-            FileNotFoundError: 文件不存在
+            ValueError: Parsing failed
+            FileNotFoundError: File not found
         """
         if not path.exists():
             raise FileNotFoundError(f"SKILL.md not found: {path}")
@@ -221,16 +221,16 @@ class SkillParser:
 
     def parse_content(self, content: str, path: Path) -> ParsedSkill:
         """
-        解析 SKILL.md 内容
+        Parse SKILL.md content
 
         Args:
-            content: 文件内容
-            path: 文件路径 (用于定位相关目录)
+            content: File content
+            path: File path (used to locate related directories)
 
         Returns:
-            ParsedSkill 对象
+            ParsedSkill object
         """
-        # 解析 frontmatter
+        # Parse frontmatter
         match = self.FRONTMATTER_PATTERN.match(content)
         if not match:
             raise ValueError(f"Invalid SKILL.md format: missing YAML frontmatter in {path}")
@@ -238,16 +238,16 @@ class SkillParser:
         yaml_content = match.group(1)
         body = match.group(2).strip()
 
-        # 解析 YAML
+        # Parse YAML
         try:
             data = yaml.safe_load(yaml_content) or {}
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid YAML frontmatter in {path}: {e}")
 
-        # 构建元数据（body 用于 description 自动提取回退）
+        # Build metadata (body used as fallback for auto-extraction of description)
         metadata = self._build_metadata(data, path, body=body)
 
-        # 验证目录名匹配（命名空间格式取 @ 后部分比较）
+        # Validate directory name match (for namespaced format, compare part after @)
         skill_dir = path.parent
         expected_dir = metadata.name.split("@", 1)[-1] if "@" in metadata.name else metadata.name
         if skill_dir.name != expected_dir:
@@ -256,7 +256,7 @@ class SkillParser:
                 f"expected '{expected_dir}' (from skill name '{metadata.name}') in {path}"
             )
 
-        # 查找可选目录
+        # Find optional directories
         scripts_dir = skill_dir / "scripts"
         references_dir = skill_dir / "references"
         assets_dir = skill_dir / "assets"
@@ -271,8 +271,8 @@ class SkillParser:
         )
 
     def _build_metadata(self, data: dict, path: Path, body: str = "") -> SkillMetadata:
-        """从 YAML 数据构建元数据"""
-        # 必需字段
+        """Build metadata from YAML data."""
+        # Required fields
         name = data.get("name")
         description = data.get("description", "")
 
@@ -286,22 +286,22 @@ class SkillParser:
         if not description:
             raise ValueError(f"Missing required 'description' field in {path}")
 
-        # 处理 allowed-tools (连字符转下划线)
+        # Process allowed-tools (hyphens to underscores)
         allowed_tools = data.get("allowed-tools", "")
         if isinstance(allowed_tools, str):
             allowed_tools = allowed_tools.split() if allowed_tools else []
 
-        # 系统技能字段
+        # System skill fields
         system = data.get("system", False)
         handler = data.get("handler")
-        tool_name = data.get("tool-name") or data.get("tool_name")  # 支持两种格式
+        tool_name = data.get("tool-name") or data.get("tool_name")  # Support both formats
         category = data.get("category")
 
-        # 如果是系统技能但没有指定 tool_name，从 name 生成
+        # If system skill but no tool_name specified, generate from name
         if system and not tool_name:
             tool_name = name.replace("-", "_")
 
-        # 配置 schema
+        # Config schema
         config_raw = data.get("config", [])
         config: list[dict] = []
         if isinstance(config_raw, list):
@@ -347,7 +347,7 @@ class SkillParser:
                 if isinstance(env_val, list):
                     required_env = [str(e) for e in env_val]
 
-        # F1: 新字段解析
+        # F1: Parse new fields
         when_to_use = str(data.get("when-to-use", "") or "")
         keywords_raw = data.get("keywords", [])
         if isinstance(keywords_raw, list):
@@ -408,23 +408,23 @@ class SkillParser:
 
     def parse_directory(self, skill_dir: Path) -> ParsedSkill:
         """
-        解析技能目录
+        Parse a skill directory
 
         Args:
-            skill_dir: 技能目录路径
+            skill_dir: Skill directory path
 
         Returns:
-            ParsedSkill 对象
+            ParsedSkill object
         """
         skill_md = skill_dir / "SKILL.md"
         return self.parse_file(skill_md)
 
     def validate(self, skill: ParsedSkill) -> list[str]:
         """
-        验证技能
+        Validate a skill
 
         Returns:
-            错误消息列表 (空列表表示验证通过)
+            List of error messages (empty list means validation passed)
         """
         import shutil as _shutil
 
@@ -486,15 +486,15 @@ class SkillParser:
         return errors
 
 
-# 全局解析器实例
+# Global parser instance
 skill_parser = SkillParser()
 
 
 def parse_skill(path: Path) -> ParsedSkill:
-    """便捷函数：解析技能"""
+    """Convenience function: parse a skill"""
     return skill_parser.parse_file(path)
 
 
 def parse_skill_directory(skill_dir: Path) -> ParsedSkill:
-    """便捷函数：解析技能目录"""
+    """Convenience function: parse a skill directory"""
     return skill_parser.parse_directory(skill_dir)

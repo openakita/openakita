@@ -1,7 +1,7 @@
 """
-Windows 桌面自动化 - 视觉识别模块
+Windows Desktop Automation — Vision Recognition Module
 
-基于 DashScope Qwen-VL 实现 UI 视觉识别
+UI visual recognition powered by DashScope Qwen-VL.
 """
 
 from .analyzer import VisionAnalyzer, get_vision_analyzer

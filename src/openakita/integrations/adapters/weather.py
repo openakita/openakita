@@ -1,6 +1,6 @@
 """
-天气 API 适配器
-支持和风天气和心知天气
+Weather API adapters
+Supports QWeather and Seniverse (Heartly) weather services
 """
 
 from typing import Any
@@ -11,7 +11,7 @@ from . import APIError, BaseAPIAdapter
 
 
 class QWeatherAdapter(BaseAPIAdapter):
-    """和风天气 API 适配器"""
+    """QWeather API adapter"""
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
@@ -31,28 +31,28 @@ class QWeatherAdapter(BaseAPIAdapter):
             ) as response:
                 result = await response.json()
                 if result.get("code") != "200":
-                    raise APIError(f"和风天气 API 错误：{result.get('msg')}")
+                    raise APIError(f"QWeather API error: {result.get('msg')}")
                 return result
 
     async def get_weather(self, location: str, type: str = "now") -> dict:
-        """获取天气信息"""
+        """Get weather information"""
         return await self.call(f"/weather/{type}", params={"location": location})
 
     async def get_forecast(self, location: str, days: int = 3) -> dict:
-        """获取天气预报"""
+        """Get weather forecast"""
         return await self.call("/weather/3d", params={"location": location})
 
     async def get_indices(self, location: str, type: str = "1,2,3") -> dict:
-        """获取生活指数"""
+        """Get living indices"""
         return await self.call("/indices/1d", params={"location": location, "type": type})
 
     async def get_city_info(self, location: str) -> dict:
-        """获取城市信息"""
+        """Get city information"""
         return await self.call("/city/lookup", params={"location": location})
 
 
 class HeartlyAdapter(BaseAPIAdapter):
-    """心知天气 API 适配器"""
+    """Seniverse (Heartly) Weather API adapter"""
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
@@ -72,28 +72,28 @@ class HeartlyAdapter(BaseAPIAdapter):
             ) as response:
                 result = await response.json()
                 if "status" in result and result["status"] != "ok":
-                    raise APIError(f"心知天气 API 错误：{result.get('status')}")
+                    raise APIError(f"Seniverse Weather API error: {result.get('status')}")
                 return result
 
     async def get_weather(self, location: str) -> dict:
-        """获取实时天气"""
+        """Get current weather"""
         return await self.call("/weather/now.json", params={"location": location})
 
     async def get_forecast(self, location: str, days: int = 3) -> dict:
-        """获取天气预报"""
+        """Get weather forecast"""
         return await self.call("/weather/daily.json", params={"location": location, "days": days})
 
     async def get_life_indices(self, location: str) -> dict:
-        """获取生活指数"""
+        """Get living indices"""
         return await self.call("/life/suggestion.json", params={"location": location})
 
     async def get_air_quality(self, location: str) -> dict:
-        """获取空气质量"""
+        """Get air quality"""
         return await self.call("/air/now.json", params={"location": location})
 
 
 def create_weather_adapter(provider: str, config: dict[str, Any]) -> BaseAPIAdapter:
     providers = {"qweather": QWeatherAdapter, "heartly": HeartlyAdapter}
     if provider not in providers:
-        raise ValueError(f"不支持的天气提供商：{provider}")
+        raise ValueError(f"Unsupported weather provider: {provider}")
     return providers[provider](config)

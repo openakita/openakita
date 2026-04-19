@@ -1,16 +1,16 @@
 """
-OpenAkita 记忆系统 (v2)
+OpenAkita Memory System (v2)
 
-架构:
-- UnifiedStore: SQLite (主存储+FTS5) + SearchBackend (可插拔搜索)
-- RetrievalEngine: 多路召回 + 重排序
-- LifecycleManager: 归纳 + 衰减 + 去重
-- MemoryExtractor: AI 提取 (v2: 工具感知/实体-属性)
+Architecture:
+- UnifiedStore: SQLite (primary storage + FTS5) + SearchBackend (pluggable search)
+- RetrievalEngine: multi-path recall + reranking
+- LifecycleManager: consolidation + decay + deduplication
+- MemoryExtractor: AI extraction (v2: tool-aware / entity-attribute)
 
-记忆类型:
-- SemanticMemory: 语义记忆 (实体-属性结构)
-- Episode: 情节记忆 (完整交互故事)
-- Scratchpad: 工作记忆草稿本 (跨 session 持久化)
+Memory types:
+- SemanticMemory: semantic memory (entity-attribute structure)
+- Episode: episodic memory (full interaction stories)
+- Scratchpad: working-memory scratchpad (persisted across sessions)
 """
 
 from .consolidator import MemoryConsolidator

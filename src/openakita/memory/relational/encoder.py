@@ -230,7 +230,7 @@ class MemoryEncoder:
         prompt = self._build_encoding_prompt(conversation_text)
 
         system = (
-            "你是记忆图谱编码器。只输出合法的 JSON。"
+            "You are a memory graph encoder. Output valid JSON only."
             if self.language == "zh"
             else "You are a memory graph encoder. Output valid JSON only."
         )

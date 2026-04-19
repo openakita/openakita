@@ -1,17 +1,17 @@
 """
-MCP Server 模式
+MCP Server Mode
 
-将 OpenAkita 的核心能力暴露为 MCP 服务器，
-允许其他 AI Agent（如 Claude Desktop、Cursor 等）通过 MCP 协议调用。
+Exposes OpenAkita's core capabilities as an MCP server,
+allowing other AI Agents (e.g., Claude Desktop, Cursor) to call them via the MCP protocol.
 
-暴露的工具:
-- openakita_chat: 与 OpenAkita 对话
-- openakita_memory_search: 搜索记忆
-- openakita_schedule_task: 创建定时任务
-- openakita_list_skills: 列出可用技能
-- openakita_execute_skill: 执行技能
+Exposed tools:
+- openakita_chat: Chat with OpenAkita
+- openakita_memory_search: Search memory
+- openakita_schedule_task: Create scheduled tasks
+- openakita_list_skills: List available skills
+- openakita_execute_skill: Execute a skill
 
-启动方式:
+Usage:
     python -m openakita.mcp_server [--port 8765]
 """
 

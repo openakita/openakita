@@ -1,8 +1,8 @@
 """
-StructuredOutput 工具定义
+StructuredOutput tool definition
 
-参考 CC SyntheticOutputTool：仅在 API/SDK 模式下启用，
-让模型以指定 JSON Schema 格式输出结构化数据。
+Modeled after CC SyntheticOutputTool: only enabled in API/SDK mode,
+allowing the model to output structured data conforming to a specified JSON Schema.
 """
 
 STRUCTURED_OUTPUT_TOOLS: list[dict] = [

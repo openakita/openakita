@@ -1,5 +1,5 @@
 """
-OpenAkita 自我进化模块
+OpenAkita Self-Evolution Module
 """
 
 from .analyzer import NeedAnalyzer

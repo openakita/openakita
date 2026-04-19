@@ -1,12 +1,12 @@
 """
-URL 安全检查（SSRF 防护）
+URL Safety Checks (SSRF Protection)
 
-防止通过 web_fetch / MCP 等工具访问内部网络：
-- 阻止 private IP（10.x, 172.16-31.x, 192.168.x, 127.x, ::1, fd00::）
-- 阻止 link-local（169.254.x, fe80::）
-- 阻止 CGNAT（100.64-127.x）
-- 阻止云元数据端点（169.254.169.254, metadata.google.internal 等）
-- DNS 解析后二次检查（防止 DNS rebinding）
+Prevent access to internal networks via web_fetch / MCP and similar tools:
+- Block private IPs (10.x, 172.16-31.x, 192.168.x, 127.x, ::1, fd00::)
+- Block link-local addresses (169.254.x, fe80::)
+- Block CGNAT range (100.64-127.x)
+- Block cloud metadata endpoints (169.254.169.254, metadata.google.internal, etc.)
+- Re-check after DNS resolution (prevents DNS rebinding)
 """
 
 from __future__ import annotations

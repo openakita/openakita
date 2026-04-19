@@ -9,45 +9,45 @@ category: Desktop
 
 # Desktop Wait
 
-等待某个 UI 元素或窗口出现。
+UI or. 
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |------|------|------|------|
-| target | string | 是 | 元素描述或窗口标题 |
-| target_type | string | 否 | 目标类型：element（默认）/ window |
-| timeout | integer | 否 | 超时时间（秒），默认 10 |
+| target | string | Yes | or |
+| target_type | string | No |: element (Default) / window |
+| timeout | integer | No | Timeout duration (), Default 10 |
 
 ## Target Types
 
-- `element`: 等待 UI 元素出现
-- `window`: 等待窗口出现
+- `element`: UI
+- `window`:
 
 ## Use Cases
 
-- 等待对话框打开
-- 等待加载完成
-- 在下一步操作前同步应用状态
+- Open
+- Load
+- in
 
 ## Examples
 
-**等待保存对话框**:
+**Save**:
 ```json
-{"target": "另存为", "target_type": "window"}
+{"target": "", "target_type": "window"}
 ```
 
-**等待确定按钮**:
+****:
 ```json
-{"target": "确定按钮", "timeout": 5}
+{"target": "", "timeout": 5}
 ```
 
 ## Returns
 
-- 成功：元素/窗口信息
-- 超时：错误信息
+-: /
+-: 
 
 ## Related Skills
 
-- `desktop-click`: 等待后点击
-- `desktop-find-element`: 查找元素
+- `desktop-click`: Click
+- `desktop-find-element`: Find

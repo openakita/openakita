@@ -141,7 +141,7 @@ async def list_sessions(request: Request, channel: str = Query("")):
         msg_count = 0
         last_msg = None
 
-        # 消息存储在 sess.context.messages（而非 sess.history/sess.messages）
+        # Messages are stored in sess.context.messages (not sess.history/sess.messages)
         ctx = getattr(sess, "context", None)
         history = getattr(ctx, "messages", []) if ctx else []
         if history:
@@ -152,7 +152,7 @@ async def list_sessions(request: Request, channel: str = Query("")):
             else:
                 last_msg = str(getattr(last_item, "content", ""))[:100]
 
-        # SessionState 是 Enum，需要取 .value 才能 JSON 序列化
+        # SessionState is an Enum; use .value for JSON serialization
         state = getattr(sess, "state", "active")
         state_str = state.value if hasattr(state, "value") else str(state)
 

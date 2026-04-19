@@ -2,7 +2,7 @@
 Sessions route: GET /api/sessions, GET /api/sessions/{conversation_id}/history,
 DELETE /api/sessions/{conversation_id}, POST /api/sessions/generate-title
 
-提供桌面端 session 恢复能力：前端启动时可从后端加载对话列表和历史消息。
+Provides desktop session restoration: the frontend can load conversation lists and message history from the backend on startup.
 """
 
 from __future__ import annotations
@@ -44,9 +44,9 @@ async def _broadcast_session_event(event: str, data: dict) -> None:
 
 
 class GenerateTitleRequest(BaseModel):
-    message: str = Field(..., description="用户第一条消息")
-    reply: str = Field("", description="AI 回复摘要（可选）")
-    conversation_id: str = Field("", description="会话 ID（用于跨设备标题同步）")
+    message: str = Field(..., description="User's first message")
+    reply: str = Field("", description="AI reply summary (optional)")
+    conversation_id: str = Field("", description="Conversation ID (for cross-device title sync)")
 
 
 @router.get("/api/sessions")
@@ -62,7 +62,7 @@ async def list_sessions(request: Request, channel: str = "desktop"):
         return {"sessions": [], "data_epoch": wac.data_epoch if wac else "", "ready": False}
 
     sessions = session_manager.list_sessions(channel=channel)
-    # org_* sessions belong to OrgChatPanel (指挥台), not the main chat UI.
+    # org_* sessions belong to OrgChatPanel, not the main chat UI.
     sessions = [s for s in sessions if not s.chat_id.startswith("org_")]
     sessions.sort(key=lambda s: s.last_active, reverse=True)
 
@@ -97,7 +97,7 @@ async def list_sessions(request: Request, channel: str = "desktop"):
         result.append(
             {
                 "id": s.chat_id,
-                "title": title or "对话",
+                "title": title or "Conversation",
                 "lastMessage": last_msg_content,
                 "timestamp": int(s.last_active.timestamp() * 1000),
                 "messageCount": len(visible_msgs),
@@ -213,7 +213,7 @@ async def delete_session(
     if not session_manager:
         return {"ok": False, "error": "session_manager not available"}
 
-    # 关闭前先通过公开 API 获取 session，用于取消关联任务
+    # Retrieve the session before closing, so we can cancel associated tasks
     session = session_manager.get_session(
         channel, conversation_id, user_id, create_if_missing=False
     )
@@ -251,25 +251,25 @@ def _cancel_tasks_for_session(request: Request, conversation_id: str, session_id
     """
     from .chat import _get_existing_agent, _resolve_agent
 
-    # Agent 级：协作式取消（设置 cancel_event，任务在下一个检查点退出）
+    # Agent level: cooperative cancel (set cancel_event; task exits at next checkpoint)
     try:
         agent = _get_existing_agent(request, conversation_id)
         actual_agent = _resolve_agent(agent) if agent else None
         if actual_agent is not None:
-            actual_agent.cancel_current_task("对话已删除", session_id=conversation_id)
+            actual_agent.cancel_current_task("Conversation deleted", session_id=conversation_id)
             logger.info(f"[Sessions] Cancelled agent task: conv={conversation_id}")
     except Exception as e:
         logger.debug(f"[Sessions] Agent cancel skipped: {e}")
 
-    # Orchestrator 级：强制取消 asyncio Task（兜底，确保任务停止）
+    # Orchestrator level: force-cancel asyncio Task (fallback to ensure task stops)
     try:
         orchestrator = getattr(request.app.state, "orchestrator", None)
         if orchestrator is not None:
             if orchestrator.cancel_request(session_id):
                 logger.info(f"[Sessions] Cancelled orchestrator tasks: sid={session_id}")
-            # Desktop 路径的任务不经过 orchestrator.handle_message，
-            # 所以 cancel_request 可能不命中 _active_tasks。
-            # 用 conversation_id 再做一次 purge 确保子 Agent 状态被清理。
+            # Desktop-path tasks do not go through orchestrator.handle_message,
+            # so cancel_request may not hit _active_tasks.
+            # Purge by conversation_id as well to ensure sub-agent state is cleaned up.
             if conversation_id != session_id:
                 orchestrator.purge_session_states(conversation_id)
     except Exception as e:
@@ -331,30 +331,30 @@ async def generate_title(request: Request, body: GenerateTitleRequest):
     """Use LLM to generate a concise conversation title from the first message."""
     agent = getattr(request.app.state, "agent", None)
     if not agent:
-        return {"title": body.message[:20] or "新对话"}
+        return {"title": body.message[:20] or "New Conversation"}
 
     from .chat import _resolve_agent
 
     actual_agent = _resolve_agent(agent)
     if not actual_agent or not actual_agent.brain:
-        return {"title": body.message[:20] or "新对话"}
+        return {"title": body.message[:20] or "New Conversation"}
 
     brain = actual_agent.brain
-    prompt_parts = [f"用户: {body.message[:200]}"]
+    prompt_parts = [f"User: {body.message[:200]}"]
     if body.reply:
         prompt_parts.append(f"AI: {body.reply[:200]}")
     conversation_text = "\n".join(prompt_parts)
 
     prompt = (
-        "请根据以下对话内容生成一个简洁的会话标题。\n"
-        "要求：4-10个字，不加标点符号，不加引号，直接输出标题文字。\n\n"
+        "Generate a concise conversation title from the following dialogue.\n"
+        "Requirements: 4-10 characters, no punctuation, no quotation marks, output only the title text.\n\n"
         f"{conversation_text}"
     )
 
     try:
         response = await brain.think_lightweight(
             prompt,
-            system="你是标题生成助手。只输出标题文字，不要任何额外内容。",
+            system="You are a title generation assistant. Output only the title text, nothing else.",
             max_tokens=50,
         )
         title = (
@@ -363,7 +363,7 @@ async def generate_title(request: Request, body: GenerateTitleRequest):
             .strip()
         )  # noqa: B005
         if not title or len(title) > 30:
-            title = body.message[:20] or "新对话"
+            title = body.message[:20] or "New Conversation"
         if body.conversation_id:
             await _broadcast_session_event(
                 "chat:title_update",
@@ -375,4 +375,4 @@ async def generate_title(request: Request, body: GenerateTitleRequest):
         return {"title": title}
     except Exception as e:
         logger.warning(f"[Sessions] Title generation failed: {e}")
-        return {"title": body.message[:20] or "新对话"}
+        return {"title": body.message[:20] or "New Conversation"}

@@ -1,8 +1,9 @@
 """
-图片预处理 — 确保图片在嵌入 LLM 上下文前处于安全大小。
+Image preprocessing — ensures images are at a safe size before being embedded into LLM context.
 
-所有将图片 base64 注入消息的入口（view_image、browser_screenshot、IM 图片、
-media handler 等）都应调用 prepare_image_for_context() 而非自行编码。
+All entry points that inject base64-encoded images into messages (view_image,
+browser_screenshot, IM images, media handler, etc.) should call
+prepare_image_for_context() rather than encoding images themselves.
 """
 
 import base64
@@ -11,8 +12,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-MAX_BASE64_BYTES = 800_000  # base64 产出上限 ~800KB（解码后 ~600KB）
-MAX_PIXELS = 1_200_000  # 像素上限 ~1280×940
+MAX_BASE64_BYTES = 800_000  # base64 output cap ~800KB (~600KB decoded)
+MAX_PIXELS = 1_200_000  # pixel cap ~1280x940
 JPEG_INITIAL_QUALITY = 85
 JPEG_MIN_QUALITY = 40
 _QUALITY_STEP = 10
@@ -26,11 +27,11 @@ def prepare_image_for_context(
     max_pixels: int = MAX_PIXELS,
 ) -> tuple[str, str, int, int] | None:
     """
-    将原始图片字节处理为适合 LLM 上下文的 base64 数据。
+    Process raw image bytes into base64 data suitable for LLM context.
 
     Returns:
-        (base64_data, media_type, width, height)  成功
-        None                                       无法压缩到安全大小
+        (base64_data, media_type, width, height)  on success
+        None                                       if the image cannot be compressed to a safe size
     """
     estimated_b64_size = (len(raw_bytes) * 4 + 2) // 3
     if estimated_b64_size > max_base64_bytes:
@@ -54,7 +55,7 @@ def prepare_image_file_for_context(
     max_base64_bytes: int = MAX_BASE64_BYTES,
     max_pixels: int = MAX_PIXELS,
 ) -> tuple[str, str, int, int] | None:
-    """从文件路径加载并预处理图片。"""
+    """Load and preprocess an image from a file path."""
     p = Path(file_path)
     if not p.exists() or not p.is_file():
         return None
@@ -89,7 +90,7 @@ def _compress_with_pil(
     max_base64_bytes: int,
     max_pixels: int,
 ) -> tuple[str, str, int, int] | None:
-    """使用 PIL 迭代压缩图片直到 base64 大小满足限制。"""
+    """Iteratively compress an image using PIL until the base64 size meets the limit."""
     try:
         import io
 
@@ -123,7 +124,7 @@ def _compress_with_pil(
             return b64, "image/jpeg", w, h
         quality -= _QUALITY_STEP
 
-    # 质量已最低仍超限，进一步缩小分辨率
+    # Quality at minimum but still over limit; further shrink resolution
     for shrink in (0.7, 0.5, 0.3):
         sw, sh = int(w * shrink), int(h * shrink)
         if sw < 100 or sh < 100:
@@ -144,7 +145,7 @@ def _compress_with_pil(
 
 
 def _probe_dimensions(raw_bytes: bytes) -> tuple[int, int]:
-    """尝试获取图片尺寸，失败返回 (0, 0)。"""
+    """Try to get image dimensions; returns (0, 0) on failure."""
     try:
         import io
 

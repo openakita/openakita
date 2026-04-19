@@ -94,7 +94,7 @@ def _get_mcp_catalog(request: Request):
 
 
 def _sync_tools_to_catalog(request: Request, server_name: str, client):
-    """连接成功后将运行时工具同步到 catalog（MCPCatalog 内部缓存自动失效）"""
+    """Sync runtime tools to catalog after successful connection (MCPCatalog internal cache auto-invalidated)."""
     catalog = _get_mcp_catalog(request)
     if catalog:
         sync_tools_after_connect(server_name, client, catalog)
@@ -219,7 +219,7 @@ async def connect_mcp_server(request: Request, body: MCPConnectRequest):
                     "status": "config_incomplete",
                     "server": body.server_name,
                     "missing_fields": missing,
-                    "message": f"请先完成配置：缺少 {labels}",
+                    "message": f"Please complete the configuration first: missing {labels}",
                 }
 
     from openakita.tools.mcp_workspace import prepare_chrome_devtools_args
@@ -240,7 +240,7 @@ async def connect_mcp_server(request: Request, body: MCPConnectRequest):
         return {
             "status": "failed",
             "server": body.server_name,
-            "error": result.error or "连接失败（未知原因）",
+            "error": result.error or "Connection failed (unknown reason)",
         }
 
 
@@ -301,18 +301,18 @@ async def add_mcp_server(request: Request, body: MCPServerAddRequest):
     from openakita.tools.mcp import VALID_TRANSPORTS
 
     if not body.name.strip():
-        return {"status": "error", "message": "服务器名称不能为空"}
+        return {"status": "error", "message": "Server name cannot be empty"}
     if not re.match(r"^[a-zA-Z0-9_-]+$", body.name.strip()):
-        return {"status": "error", "message": "服务器名称只能包含字母、数字、连字符和下划线"}
+        return {"status": "error", "message": "Server name can only contain letters, digits, hyphens, and underscores"}
     if body.transport not in VALID_TRANSPORTS:
         return {
             "status": "error",
-            "message": f"不支持的传输协议: {body.transport}（支持: {', '.join(sorted(VALID_TRANSPORTS))}）",
+            "message": f"Unsupported transport protocol: {body.transport} (supported: {', '.join(sorted(VALID_TRANSPORTS))})",
         }
     if body.transport == "stdio" and not body.command.strip():
-        return {"status": "error", "message": "stdio 模式需要填写启动命令"}
+        return {"status": "error", "message": "stdio mode requires a startup command"}
     if body.transport in ("streamable_http", "sse") and not body.url.strip():
-        return {"status": "error", "message": f"{body.transport} 模式需要填写 URL"}
+        return {"status": "error", "message": f"{body.transport} mode requires a URL"}
 
     client = _get_mcp_client(request)
     catalog = _get_mcp_catalog(request)

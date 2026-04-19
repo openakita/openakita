@@ -1,8 +1,9 @@
 """
-OrgManager — 组织 CRUD、持久化、模板管理
+OrgManager — Organization CRUD, persistence, template management
 
-负责组织的创建/读取/更新/删除，以及持久化目录结构初始化。
-不涉及运行时逻辑（由 OrgRuntime 负责）。
+Handles creating, reading, updating, and deleting organizations, as well as
+initializing the persistent directory structure. Runtime logic is handled by
+OrgRuntime, not here.
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class OrgManager:
-    """组织持久化管理器"""
+    """Organization persistence manager."""
 
     def __init__(self, data_dir: Path) -> None:
         self._orgs_dir = data_dir / "orgs"
@@ -192,7 +193,7 @@ class OrgManager:
         src = self._load(org_id)
         data = src.to_dict()
         data["id"] = _new_id("org_")
-        data["name"] = new_name or f"{src.name} (副本)"
+        data["name"] = new_name or f"{src.name} (copy)"
         data["status"] = OrgStatus.DORMANT.value
         data["created_at"] = _now_iso()
         data["updated_at"] = data["created_at"]
@@ -399,9 +400,9 @@ class OrgManager:
         readme = base / "policies" / "README.md"
         if not readme.exists():
             readme.write_text(
-                "# 制度索引\n\n> 此文件由系统自动维护。\n\n"
-                "| 文件 | 标题 | 适用范围 | 最后更新 |\n"
-                "|------|------|---------|--------|\n",
+                "# Policy Index\n\n> This file is automatically maintained by the system.\n\n"
+                "| File | Title | Scope | Last Updated |\n"
+                "|------|-------|-------|-------------|\n",
                 encoding="utf-8",
             )
 

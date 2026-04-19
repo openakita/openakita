@@ -1,14 +1,15 @@
 """
-子目录上下文渐进注入
+Subdirectory context progressive injection.
 
-当工具访问某个子目录时，自动发现该目录下的 AGENTS.md / .cursorrules
-等上下文文件，将其内容追加到工具返回结果中。
+When a tool accesses a subdirectory, automatically discovers context files
+such as AGENTS.md / .cursorrules in that directory and appends their content
+to the tool's return value.
 
-与系统 prompt 中的根目录 AGENTS.md 互补：
-- 根目录 AGENTS.md → 系统 prompt（全局规范）
-- 子目录 AGENTS.md → 工具结果注入（局部规范，按需加载）
+Complements the root-level AGENTS.md in the system prompt:
+- Root AGENTS.md -> system prompt (global rules)
+- Subdirectory AGENTS.md -> tool result injection (local rules, loaded on demand)
 
-这样可以保持系统 prompt 精简，同时为 LLM 提供目录级的上下文。
+This keeps the system prompt concise while providing directory-level context to the LLM.
 """
 
 import logging

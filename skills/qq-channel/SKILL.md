@@ -7,35 +7,35 @@ metadata:
   version: "1.0.0"
 ---
 
-# QQ 频道管理
+# QQ Channel Management
 
-通过 QQ 机器人 API 管理腾讯频道/QQ 频道的消息、成员和内容。
+Manage Tencent QQ Channel messages, members, and content via the QQ Bot API.
 
-## 前置条件
+## Prerequisites
 
-- 在 QQ 机器人开放平台 https://bot.q.qq.com 注册并创建机器人
-- 获取 AppID 和 Token
-- 设置 QQBot 鉴权头信息
+- Register and create a bot at the QQ Bot Open Platform: https://bot.q.qq.com
+- Obtain AppID and Token
+- Configure QQBot authentication headers
 
-## 核心能力
+## Core Capabilities
 
-| 功能 | 说明 |
+| Feature | Description |
 |------|------|
-| 频道管理 | 获取频道列表、频道详情 |
-| 子频道管理 | 创建/修改/删除子频道 |
-| 消息发送 | 发送文本/图片/Markdown 消息 |
-| 成员管理 | 成员列表、身份组权限 |
-| 公告管理 | 创建/删除公告 |
-| 日程管理 | 创建/查询日程 |
+| Channel Management | Get channel list, channel details |
+| Sub-channel Management | Create/modify/delete sub-channels |
+| Message Sending | Send text/image/Markdown messages |
+| Member Management | Member list, role group permissions |
+| Announcement Management | Create/delete announcements |
+| Schedule Management | Create/query schedules |
 
-## API 鉴权
+## API Authentication
 
-使用 getAppAccessToken 获取 Token，请求头携带 Authorization: QQBot {token}。
+Use `getAppAccessToken` to obtain a Token. Include `Authorization: QQBot {token}` in request headers.
 
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/qq_bot.py
-QQ 频道机器人 API 封装，需设置 QQ_BOT_APPID 和 QQ_BOT_TOKEN。
+QQ Channel Bot API wrapper. Requires `QQ_BOT_APPID` and `QQ_BOT_TOKEN`.
 
 ```bash
 python3 scripts/qq_bot.py guilds

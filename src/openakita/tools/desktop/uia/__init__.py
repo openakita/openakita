@@ -1,7 +1,7 @@
 """
-Windows 桌面自动化 - UIAutomation 模块
+Windows desktop automation - UIAutomation module
 
-基于 pywinauto 实现 Windows UIAutomation 功能
+Implements Windows UIAutomation functionality via pywinauto.
 """
 
 from .client import UIAClient, get_uia_client

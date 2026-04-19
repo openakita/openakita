@@ -9,18 +9,18 @@ category: File System
 
 # Write File
 
-写入文件内容。
+Write content to a file.
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| path | string | 是 | 文件路径 |
-| content | string | 是 | 文件内容 |
+| path | string | Yes | File path |
+| content | string | Yes | File content |
 
 ## Examples
 
-**创建配置文件**:
+**Create**:
 ```json
 {
   "path": "config.json",
@@ -28,7 +28,7 @@ category: File System
 }
 ```
 
-**写入代码文件**:
+**Write**:
 ```json
 {
   "path": "hello.py",
@@ -38,11 +38,11 @@ category: File System
 
 ## Notes
 
-- 会覆盖已存在的文件
-- 自动创建父目录（如果不存在）
-- 使用 UTF-8 编码
+- willin
+- AutomaticCreate(notin)
+- Use UTF-8
 
 ## Related Skills
 
-- `read-file`: 读取文件
-- `run-shell`: 执行脚本
+- `read-file`: Read
+- `run-shell`: Execute

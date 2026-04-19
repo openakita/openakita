@@ -1,11 +1,11 @@
 """
-用户档案管理模块
+User profile management module
 
-负责:
-- 跟踪用户信息收集状态
-- 首次使用引导
-- 日常渐进式信息收集
-- 更新 USER.md 文件
+Responsible for:
+- Tracking user information collection state
+- First-use onboarding
+- Progressive day-to-day information collection
+- Updating the USER.md file
 """
 
 import json
@@ -22,188 +22,188 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class UserProfileItem:
-    """用户档案项"""
+    """A single user profile item"""
 
-    key: str  # 键名
-    name: str  # 显示名称
-    description: str  # 描述
-    question: str  # 询问用户时的问题
-    priority: int = 1  # 优先级 (1-5，1最高)
-    category: str = "basic"  # 分类
-    value: str | None = None  # 当前值
-    collected_at: str | None = None  # 收集时间
+    key: str  # Key name
+    name: str  # Display name
+    description: str  # Description
+    question: str  # Question to ask the user
+    priority: int = 1  # Priority (1-5, 1 is highest)
+    category: str = "basic"  # Category
+    value: str | None = None  # Current value
+    collected_at: str | None = None  # Collection timestamp
 
     @property
     def is_collected(self) -> bool:
-        """是否已收集"""
-        return self.value is not None and self.value not in ["", "[待学习]", None]
+        """Whether the item has been collected"""
+        return self.value is not None and self.value not in ["", "[to be learned]", None]
 
 
-# 定义要收集的用户信息项
+# Definition of user information items to collect
 USER_PROFILE_ITEMS = [
-    # === 基础信息 (优先级 1，首次使用时询问) ===
+    # === Basic info (priority 1, asked on first use) ===
     UserProfileItem(
         key="name",
-        name="称呼",
-        description="用户希望被如何称呼",
-        question="我该怎么称呼你呢？（你可以告诉我你的名字、昵称，或者直接跳过）",
+        name="Name",
+        description="How the user would like to be addressed",
+        question="What should I call you? (You can share your name or nickname, or skip this)",
         priority=1,
         category="basic",
     ),
     UserProfileItem(
         key="agent_role",
-        name="Agent角色",
-        description="Agent 扮演的角色",
-        question="你希望我扮演什么角色呢？比如：工作助手、学习伙伴、私人管家、技术顾问等（可以跳过）",
+        name="Agent role",
+        description="The role the agent plays",
+        question="What role would you like me to play? For example: work assistant, study buddy, personal butler, technical advisor, etc. (optional)",
         priority=1,
         category="basic",
     ),
     UserProfileItem(
         key="work_field",
-        name="工作领域",
-        description="用户的工作或学习领域",
-        question="你平时主要从事什么领域的工作或学习呢？（可以跳过）",
+        name="Work field",
+        description="The user's field of work or study",
+        question="What field do you primarily work or study in? (optional)",
         priority=2,
         category="basic",
     ),
-    # === 技术偏好 (优先级 2) ===
+    # === Technical preferences (priority 2) ===
     UserProfileItem(
         key="preferred_language",
-        name="编程语言",
-        description="常用的编程语言",
-        question="你平时主要使用什么编程语言呢？",
+        name="Programming language",
+        description="The programming language the user primarily uses",
+        question="What programming language do you mainly use?",
         priority=2,
         category="tech",
     ),
     UserProfileItem(
         key="os",
-        name="操作系统",
-        description="使用的操作系统",
-        question="你使用的是什么操作系统？（Windows/Mac/Linux）",
+        name="Operating system",
+        description="The operating system in use",
+        question="Which operating system are you using? (Windows/Mac/Linux)",
         priority=3,
         category="tech",
     ),
     UserProfileItem(
         key="ide",
-        name="开发工具",
-        description="常用的 IDE 或编辑器",
-        question="你平时用什么 IDE 或编辑器写代码？",
+        name="Development tool",
+        description="The IDE or editor the user commonly uses",
+        question="Which IDE or editor do you normally write code in?",
         priority=3,
         category="tech",
     ),
-    # === 交流偏好 (优先级 3) ===
+    # === Communication preferences (priority 3) ===
     UserProfileItem(
         key="detail_level",
-        name="详细程度",
-        description="回复的详细程度偏好",
-        question="你喜欢我的回复详细一些，还是简洁一些？",
+        name="Detail level",
+        description="Preferred level of detail in replies",
+        question="Do you prefer my replies to be more detailed or more concise?",
         priority=3,
         category="communication",
     ),
     UserProfileItem(
         key="code_comment_lang",
-        name="代码注释语言",
-        description="代码注释使用的语言",
-        question="你希望我写的代码注释用中文还是英文？",
+        name="Code comment language",
+        description="Language used for code comments",
+        question="Would you like the code comments I write to be in Chinese or English?",
         priority=4,
         category="communication",
     ),
     UserProfileItem(
         key="indent_style",
-        name="缩进风格",
-        description="代码缩进偏好（如 2空格/4空格/tab）",
-        question="你写代码时习惯用 2 空格、4 空格还是 Tab 缩进？",
+        name="Indentation style",
+        description="Preferred code indentation (e.g. 2 spaces / 4 spaces / tab)",
+        question="Do you prefer 2-space, 4-space, or tab indentation when writing code?",
         priority=5,
         category="communication",
     ),
     UserProfileItem(
         key="code_style",
-        name="代码风格",
-        description="代码格式化/风格偏好（如 PEP8, Google Style, Prettier 等）",
-        question="你习惯遵循哪种代码风格规范？",
+        name="Code style",
+        description="Code formatting/style preferences (e.g. PEP8, Google Style, Prettier)",
+        question="Which code style convention do you usually follow?",
         priority=5,
         category="communication",
     ),
-    # === 工作习惯 (优先级 4) ===
+    # === Work habits (priority 4) ===
     UserProfileItem(
         key="work_hours",
-        name="工作时间",
-        description="通常的工作时间段",
-        question="你通常在什么时间段工作或学习？",
+        name="Working hours",
+        description="Typical working hours",
+        question="What hours do you typically work or study?",
         priority=4,
         category="habits",
     ),
     UserProfileItem(
         key="timezone",
-        name="时区",
-        description="用户所在时区",
-        question="你在哪个时区？（比如：北京时间、东京时间等）",
+        name="Timezone",
+        description="The user's timezone",
+        question="Which timezone are you in? (e.g. Beijing time, Tokyo time)",
         priority=4,
         category="habits",
     ),
     UserProfileItem(
         key="confirm_preference",
-        name="确认偏好",
-        description="执行操作前是否需要确认",
-        question="执行重要操作前，你希望我先确认还是直接执行？",
+        name="Confirmation preference",
+        description="Whether confirmation is needed before taking actions",
+        question="Before important actions, would you prefer I confirm first or just proceed?",
         priority=4,
         category="habits",
     ),
-    # === 个人信息 (优先级 3-4，日常渐进收集) ===
+    # === Personal info (priority 3-4, collected gradually over time) ===
     UserProfileItem(
         key="hobbies",
-        name="兴趣爱好",
-        description="用户的兴趣爱好",
-        question="你平时有什么兴趣爱好吗？",
+        name="Hobbies",
+        description="The user's hobbies",
+        question="Do you have any hobbies?",
         priority=3,
         category="personal",
     ),
     UserProfileItem(
         key="health_habits",
-        name="健康习惯",
-        description="用户的作息和运动习惯",
-        question="你的作息规律吗？有运动习惯吗？",
+        name="Health habits",
+        description="The user's routine and exercise habits",
+        question="Do you have a regular routine? Do you exercise?",
         priority=4,
         category="personal",
     ),
-    # === 人格偏好 (优先级 2-3，与 persona 系统联动) ===
+    # === Persona preferences (priority 2-3, integrated with the persona system) ===
     UserProfileItem(
         key="communication_style",
-        name="沟通风格",
-        description="偏好的沟通风格",
-        question="你喜欢我说话正式还是随意？",
+        name="Communication style",
+        description="Preferred communication style",
+        question="Would you like me to speak formally or casually?",
         priority=2,
         category="persona",
     ),
     UserProfileItem(
         key="humor_preference",
-        name="幽默偏好",
-        description="是否喜欢幽默",
-        question="你希望我偶尔开玩笑吗？",
+        name="Humor preference",
+        description="Whether the user enjoys humor",
+        question="Would you like me to crack a joke now and then?",
         priority=2,
         category="persona",
     ),
     UserProfileItem(
         key="proactive_preference",
-        name="主动消息偏好",
-        description="是否喜欢主动消息",
-        question="你希望我主动给你发消息吗？比如问候、提醒之类的",
+        name="Proactive message preference",
+        description="Whether the user enjoys proactive messages",
+        question="Would you like me to send you proactive messages? Things like greetings, reminders, and so on",
         priority=2,
         category="persona",
     ),
     UserProfileItem(
         key="emoji_preference",
-        name="表情偏好",
-        description="是否喜欢表情和表情包",
-        question="你喜欢我在回复中使用表情吗？",
+        name="Emoji preference",
+        description="Whether the user likes emojis and stickers",
+        question="Do you like me to use emojis in my replies?",
         priority=3,
         category="persona",
     ),
     UserProfileItem(
         key="care_topics",
-        name="关心话题",
-        description="希望被特别关注的话题",
-        question="有什么话题你希望我特别关注？比如健康提醒、项目进度之类的",
+        name="Topics of interest",
+        description="Topics the user wants extra attention on",
+        question="Are there topics you want me to pay special attention to? Things like health reminders or project progress",
         priority=3,
         category="persona",
     ),
@@ -253,14 +253,14 @@ USER_PROFILE_ITEMS = [
 
 @dataclass
 class UserProfileState:
-    """用户档案状态"""
+    """User profile state"""
 
     is_first_use: bool = True
     onboarding_completed: bool = False
     last_question_date: str | None = None
     questions_asked_today: list = field(default_factory=list)
     collected_items: dict = field(default_factory=dict)  # key -> value
-    skipped_items: list = field(default_factory=list)  # 用户跳过的项
+    skipped_items: list = field(default_factory=list)  # Items the user skipped
 
     def to_dict(self) -> dict:
         return {
@@ -286,16 +286,16 @@ class UserProfileState:
 
 class UserProfileManager:
     """
-    用户档案管理器
+    User profile manager
 
-    负责:
-    - 跟踪用户信息收集状态
-    - 生成首次使用引导提示
-    - 生成日常询问提示
-    - 更新 USER.md 文件
+    Responsible for:
+    - Tracking user information collection state
+    - Generating first-use onboarding prompts
+    - Generating daily question prompts
+    - Updating the USER.md file
     """
 
-    MAX_QUESTIONS_PER_DAY = 2  # 每天最多询问的问题数
+    MAX_QUESTIONS_PER_DAY = 2  # Maximum questions asked per day
 
     def __init__(self, data_dir: Path | None = None, user_md_path: Path | None = None):
         self.data_dir = data_dir or (settings.project_root / "data" / "user")
@@ -304,13 +304,13 @@ class UserProfileManager:
         self.user_md_path = user_md_path or settings.user_path
         self.state_file = self.data_dir / "profile_state.json"
 
-        # 加载状态
+        # Load state
         self.state = self._load_state()
 
-        # 初始化档案项
+        # Initialize profile items
         self.items = {item.key: item for item in USER_PROFILE_ITEMS}
 
-        # 将已收集的值填充到档案项
+        # Populate collected values into profile items
         for key, value in self.state.collected_items.items():
             if key in self.items:
                 self.items[key].value = value
@@ -320,7 +320,7 @@ class UserProfileManager:
         )
 
     def _load_state(self) -> UserProfileState:
-        """加载状态"""
+        """Load state"""
         if self.state_file.exists():
             try:
                 with open(self.state_file, encoding="utf-8") as f:
@@ -331,7 +331,7 @@ class UserProfileManager:
         return UserProfileState()
 
     def _save_state(self) -> None:
-        """保存状态"""
+        """Save state"""
         try:
             with open(self.state_file, "w", encoding="utf-8") as f:
                 json.dump(self.state.to_dict(), f, ensure_ascii=False, indent=2)
@@ -339,20 +339,20 @@ class UserProfileManager:
             logger.error(f"Failed to save profile state: {e}")
 
     def is_first_use(self) -> bool:
-        """是否是首次使用"""
+        """Whether this is the first use"""
         return self.state.is_first_use
 
     def get_onboarding_prompt(self) -> str:
         """
-        获取首次使用引导提示
+        Get the first-use onboarding prompt
 
         Returns:
-            引导提示文本（添加到系统提示中）
+            Onboarding prompt text (to be appended to the system prompt)
         """
         if not self.state.is_first_use:
             return ""
 
-        # 获取优先级为 1 的未收集项
+        # Get uncollected items with priority 1
         priority_items = [
             item
             for item in self.items.values()
@@ -362,7 +362,7 @@ class UserProfileManager:
         ]
 
         if not priority_items:
-            # 首次引导已完成
+            # First-use onboarding is already complete
             self.state.is_first_use = False
             self.state.onboarding_completed = True
             self._save_state()
@@ -371,32 +371,32 @@ class UserProfileManager:
         questions = [f"- {item.question}" for item in priority_items]
 
         return f"""
-## 首次使用引导
+## First-use onboarding
 
-这是用户第一次使用，请友好地欢迎用户，并自然地了解以下信息（不要强硬要求，用户可以跳过）:
+This is the user's first time using the assistant. Please welcome them warmly and naturally gather the following information (do not be pushy; the user can skip any of them):
 
 {chr(10).join(questions)}
 
-**重要**:
-- 保持对话自然，不要像问卷一样逐个询问
-- 如果用户不想回答，尊重用户的选择，继续帮助用户完成当前任务
-- 收集到信息后，使用 update_user_profile 工具保存
+**Important**:
+- Keep the conversation natural; do not ask like a questionnaire one by one
+- If the user doesn't want to answer, respect their choice and continue helping them with the current task
+- After collecting information, use the update_user_profile tool to save it
 """
 
     def get_daily_question_prompt(self) -> str:
         """
-        获取日常询问提示
+        Get the daily question prompt
 
-        每天选择性地询问 1-2 个未收集的信息
+        Optionally asks 1-2 uncollected pieces of information per day.
 
         Returns:
-            询问提示文本（添加到系统提示中）
+            Question prompt text (to be appended to the system prompt)
         """
-        # 检查今天是否已经问过足够的问题
+        # Check whether enough questions have already been asked today
         today = date.today().isoformat()
 
         if self.state.last_question_date != today:
-            # 新的一天，重置计数
+            # New day, reset the counter
             self.state.last_question_date = today
             self.state.questions_asked_today = []
             self._save_state()
@@ -404,7 +404,7 @@ class UserProfileManager:
         if len(self.state.questions_asked_today) >= self.MAX_QUESTIONS_PER_DAY:
             return ""
 
-        # 获取未收集且未跳过的项
+        # Get uncollected and non-skipped items
         uncollected = [
             item
             for item in self.items.values()
@@ -416,52 +416,52 @@ class UserProfileManager:
         if not uncollected:
             return ""
 
-        # 按优先级排序，选择一个
+        # Sort by priority and pick one
         uncollected.sort(key=lambda x: x.priority)
 
-        # 随机选择一个（在同优先级中）
+        # Randomly pick one from the highest-priority group
         top_priority = uncollected[0].priority
         same_priority = [item for item in uncollected if item.priority == top_priority]
         selected = random.choice(same_priority)
 
         return f"""
-## 日常信息收集（可选）
+## Daily information gathering (optional)
 
-如果对话氛围合适，可以自然地了解:
+If the conversation flows naturally, you may ask:
 - {selected.question} (key: {selected.key})
 
-**重要**:
-- 只在对话自然过渡时才询问，不要刻意打断用户
-- 如果用户不想回答，完全没问题，继续当前话题
-- 收集到信息后，使用 update_user_profile 工具保存
+**Important**:
+- Only ask when the conversation transitions naturally; do not interrupt the user abruptly
+- If the user doesn't want to answer, that is perfectly fine; continue the current topic
+- After collecting information, use the update_user_profile tool to save it
 """
 
     def update_profile(self, key: str, value: str) -> bool:
         """
-        更新用户档案
+        Update the user profile
 
         Args:
-            key: 档案项键名
-            value: 值
+            key: Profile item key name
+            value: Value
 
         Returns:
-            是否成功
+            Whether the update succeeded
         """
         if key not in self.items:
             logger.warning(f"Unknown profile key: {key}")
             return False
 
-        # 更新状态
+        # Update state
         self.state.collected_items[key] = value
         self.items[key].value = value
         self.items[key].collected_at = datetime.now().isoformat()
 
-        # 记录今天询问过
+        # Record that we asked today
         today = date.today().isoformat()
         if self.state.last_question_date == today and key not in self.state.questions_asked_today:
             self.state.questions_asked_today.append(key)
 
-        # 检查是否完成首次引导
+        # Check whether first-use onboarding is complete
         priority_1_items = [item for item in self.items.values() if item.priority == 1]
         all_collected = all(
             item.is_collected or item.key in self.state.skipped_items for item in priority_1_items
@@ -472,7 +472,7 @@ class UserProfileManager:
 
         self._save_state()
 
-        # 更新 USER.md
+        # Update USER.md
         self._update_user_md()
 
         logger.info(f"Updated user profile: {key} = {value}")
@@ -480,15 +480,15 @@ class UserProfileManager:
 
     def skip_question(self, key: str) -> None:
         """
-        跳过某个问题
+        Skip a given question
 
         Args:
-            key: 档案项键名
+            key: Profile item key name
         """
         if key not in self.state.skipped_items:
             self.state.skipped_items.append(key)
 
-        # 记录今天询问过
+        # Record that we asked today
         today = date.today().isoformat()
         if self.state.last_question_date == today and key not in self.state.questions_asked_today:
             self.state.questions_asked_today.append(key)
@@ -497,16 +497,16 @@ class UserProfileManager:
         logger.info(f"User skipped question: {key}")
 
     def mark_onboarding_complete(self) -> None:
-        """标记首次引导完成"""
+        """Mark first-use onboarding as complete"""
         self.state.is_first_use = False
         self.state.onboarding_completed = True
         self._save_state()
         logger.info("Onboarding marked as complete")
 
     def _update_user_md(self) -> None:
-        """更新 USER.md 文件"""
+        """Update the USER.md file"""
         try:
-            # 生成新的 USER.md 内容
+            # Generate new USER.md content
             content = self._generate_user_md()
 
             with open(self.user_md_path, "w", encoding="utf-8") as f:
@@ -518,30 +518,30 @@ class UserProfileManager:
             logger.error(f"Failed to update USER.md: {e}")
 
     def _generate_user_md(self) -> str:
-        """生成 USER.md 内容"""
+        """Generate USER.md content"""
 
         def get_value(key: str) -> str:
             item = self.items.get(key)
             if item and item.is_collected:
                 return item.value
-            return "[待学习]"
+            return "[to be learned]"
 
         return f"""# User Profile
 <!--
-参考来源:
+References:
 - GitHub Copilot Memory: https://docs.github.com/en/copilot/concepts/agents/copilot-memory
 - ai-agent-memory-system: https://github.com/trose/ai-agent-memory-system
 
-此文件由 OpenAkita 自动学习和更新，记录用户的偏好和习惯。
+This file is automatically learned and updated by OpenAkita to record the user's preferences and habits.
 -->
 
 ## Basic Information
 
-- **称呼**: {get_value("name")}
-- **工作领域**: {get_value("work_field")}
-- **Agent角色**: {get_value("agent_role")}
-- **主要语言**: 中文
-- **时区**: {get_value("timezone")}
+- **Name**: {get_value("name")}
+- **Work field**: {get_value("work_field")}
+- **Agent role**: {get_value("agent_role")}
+- **Primary language**: English
+- **Timezone**: {get_value("timezone")}
 
 ## Business / Domain
 
@@ -559,86 +559,86 @@ class UserProfileManager:
 
 ### Frameworks & Tools
 
-[待学习]
+[to be learned]
 
 ### Development Environment
 
 - **OS**: {get_value("os")}
 - **IDE**: {get_value("ide")}
-- **Shell**: [待学习]
+- **Shell**: [to be learned]
 
 ## Preferences
 
 ### Communication Style
 
-- **详细程度**: {get_value("detail_level")}
-- **代码注释**: {get_value("code_comment_lang")}
-- **解释方式**: [待学习]
+- **Detail level**: {get_value("detail_level")}
+- **Code comments**: {get_value("code_comment_lang")}
+- **Explanation style**: [to be learned]
 
 ### Code Style
 
-- **命名约定**: [待学习]
-- **格式化工具**: [待学习]
-- **测试框架**: [待学习]
+- **Naming conventions**: [to be learned]
+- **Formatter**: [to be learned]
+- **Test framework**: [to be learned]
 
 ### Work Habits
 
-- **工作时间**: {get_value("work_hours")}
-- **响应速度偏好**: [待学习]
-- **确认需求**: {get_value("confirm_preference")}
+- **Working hours**: {get_value("work_hours")}
+- **Response speed preference**: [to be learned]
+- **Confirmation requirements**: {get_value("confirm_preference")}
 
 ## Interaction Patterns
 
 ### Common Task Types
 
-| 任务类型 | 次数 | 最后执行 |
-|----------|------|----------|
-| [待统计] | - | - |
+| Task type | Count | Last executed |
+|-----------|-------|---------------|
+| [to be tracked] | - | - |
 
 ### Frequently Used Commands
 
-[待学习]
+[to be learned]
 
 ### Common Questions
 
-[待学习]
+[to be learned]
 
 ## Project Context
 
 ### Active Projects
 
-[待学习]
+[to be learned]
 
 ### Code Conventions
 
-[待学习 - Agent 会从用户的代码中学习]
+[to be learned — the agent will learn from the user's code]
 
 ## Learning History
 
 ### Successful Interactions
 
-[Agent 会记录成功的交互模式]
+[The agent will record successful interaction patterns]
 
 ### Corrections Received
 
-[Agent 会记录用户的纠正，避免重复错误]
+[The agent will record the user's corrections to avoid repeating mistakes]
 
 ## Notes
 
-[其他需要记住的用户相关信息]
+[Any other user-related information worth remembering]
 
 ---
 
-*此文件由 OpenAkita 自动维护。用户也可以手动编辑以提供更准确的信息。*
-*最后更新: {datetime.now().strftime("%Y-%m-%d %H:%M")}*
+*This file is maintained automatically by OpenAkita. Users may also edit it manually to provide more accurate information.*
+*Last updated: {datetime.now().strftime("%Y-%m-%d %H:%M")}*
 """
 
     def get_profile_summary(self) -> str:
-        """获取档案摘要"""
+        """Get a summary of the profile"""
         collected = len([item for item in self.items.values() if item.is_collected])
         total = len(self.items)
 
-        summary = f"已收集 {collected}/{total} 项用户信息\n\n"
+        summary = f"Collected {collected}/{total} user information items\n\n"
 
         for category in ["basic", "tech", "communication", "habits", "business", "personal", "persona"]:
             category_items = [item for item in self.items.values() if item.category == category]
@@ -652,16 +652,16 @@ class UserProfileManager:
         return summary
 
     def get_available_keys(self) -> list[str]:
-        """获取所有可用的键名"""
+        """Get all available key names"""
         return list(self.items.keys())
 
 
-# 全局实例
+# Global instance
 _profile_manager: UserProfileManager | None = None
 
 
 def get_profile_manager() -> UserProfileManager:
-    """获取全局 UserProfileManager 实例"""
+    """Get the global UserProfileManager instance"""
     global _profile_manager
     if _profile_manager is None:
         _profile_manager = UserProfileManager()

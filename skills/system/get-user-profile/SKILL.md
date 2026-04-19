@@ -9,19 +9,19 @@ category: User Profile
 
 # Get User Profile
 
-获取当前用户档案信息摘要。
+getcurrent userneed.
 
 ## Parameters
 
-无参数。
+No parameters.
 
 ## Returns
 
-- 已填写的档案项
-- 用户偏好设置
-- 工作相关信息
+-
+- Set
+-
 
 ## Related Skills
 
-- `update-user-profile`: 更新档案
-- `skip-profile-question`: 跳过问题
+- `update-user-profile`: update
+- `skip-profile-question`:

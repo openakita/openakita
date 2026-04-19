@@ -1,16 +1,16 @@
 """
-Desktop Handler - 桌面自动化工具处理器
+Desktop Handler - Desktop automation tool handler
 
-处理 Windows 桌面自动化相关的工具调用：
-- desktop_screenshot: 截图
-- desktop_find_element: 查找元素
-- desktop_click: 点击
-- desktop_type: 输入文本
-- desktop_hotkey: 快捷键
-- desktop_scroll: 滚动
-- desktop_window: 窗口管理
-- desktop_wait: 等待元素/窗口
-- desktop_inspect: 检查元素树
+Handles tool calls related to Windows desktop automation:
+- desktop_screenshot: Take a screenshot
+- desktop_find_element: Find an element
+- desktop_click: Click
+- desktop_type: Type text
+- desktop_hotkey: Keyboard shortcuts
+- desktop_scroll: Scroll
+- desktop_window: Window management
+- desktop_wait: Wait for element/window
+- desktop_inspect: Inspect element tree
 """
 
 import logging
@@ -19,7 +19,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# 桌面工具列表
+# Desktop tool list
 DESKTOP_TOOLS = [
     "desktop_screenshot",
     "desktop_find_element",
@@ -34,7 +34,7 @@ DESKTOP_TOOLS = [
 
 
 class DesktopHandler:
-    """桌面自动化工具处理器"""
+    """Desktop automation tool handler"""
 
     TOOLS = DESKTOP_TOOLS
 
@@ -45,7 +45,7 @@ class DesktopHandler:
 
     @property
     def desktop_handler(self):
-        """懒加载桌面工具处理器"""
+        """Lazily initialize the desktop tool handler"""
         if self._desktop_handler is None and self._available:
             try:
                 from ..desktop.tools import DesktopToolHandler
@@ -61,84 +61,84 @@ class DesktopHandler:
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
         """
-        处理桌面工具调用
+        Handle a desktop tool call
 
         Args:
-            tool_name: 工具名称
-            params: 工具参数
+            tool_name: Tool name
+            params: Tool parameters
 
         Returns:
-            执行结果字符串
+            Execution result string
         """
         if not self._available:
             from openakita.tools._import_helper import import_or_hint
 
             hint = import_or_hint("pyautogui")
             if hint:
-                return f"桌面工具不可用: {hint}"
-            return "桌面工具仅在 Windows 上可用"
+                return f"Desktop tools unavailable: {hint}"
+            return "Desktop tools are only available on Windows"
 
         handler = self.desktop_handler
         if handler is None:
-            return "桌面工具处理器未初始化"
+            return "Desktop tool handler not initialized"
 
         try:
             result = await handler.handle(tool_name, params)
             return self._format_result(tool_name, result)
         except Exception as e:
             logger.error(f"Desktop tool error: {e}", exc_info=True)
-            return f"桌面工具错误: {str(e)}"
+            return f"Desktop tool error: {str(e)}"
 
     def _format_result(self, tool_name: str, result: Any) -> str:
-        """格式化工具执行结果"""
+        """Format tool execution result"""
         if isinstance(result, dict):
             if result.get("success"):
-                # 截图结果
+                # Screenshot result
                 if result.get("file_path"):
-                    output = f"截图已保存: {result.get('file_path')} ({result.get('width')}x{result.get('height')})"
+                    output = f"Screenshot saved: {result.get('file_path')} ({result.get('width')}x{result.get('height')})"
                     if result.get("analysis"):
-                        output += f"\n\n分析结果:\n{result['analysis'].get('answer', '')}"
+                        output += f"\n\nAnalysis result:\n{result['analysis'].get('answer', '')}"
                     return output
 
-                # 元素查找结果
+                # Element search result
                 if result.get("found") is not None:
                     if result.get("found"):
                         elem = result.get("element", {})
-                        return f"找到元素: {elem.get('name', 'unknown')} @ {elem.get('center', 'unknown')}"
+                        return f"Element found: {elem.get('name', 'unknown')} @ {elem.get('center', 'unknown')}"
                     else:
-                        return f"未找到元素: {result.get('message', '')}"
+                        return f"Element not found: {result.get('message', '')}"
 
-                # 窗口列表
+                # Window list
                 if result.get("windows"):
                     windows = result["windows"]
-                    output = f"找到 {len(windows)} 个窗口:\n"
+                    output = f"Found {len(windows)} windows:\n"
                     for i, w in enumerate(windows[:10], 1):
                         output += f"  {i}. {w.get('title', 'unknown')}\n"
                     if len(windows) > 10:
-                        output += f"  ... 还有 {len(windows) - 10} 个\n"
+                        output += f"  ... and {len(windows) - 10} more\n"
                     return output
 
-                # 元素树
+                # Element tree
                 if result.get("tree"):
-                    return f"元素树:\n```\n{result.get('text', '')}\n```"
+                    return f"Element tree:\n```\n{result.get('text', '')}\n```"
 
-                # 通用成功
-                return f"{result.get('message', '操作成功')}"
+                # Generic success
+                return f"{result.get('message', 'Operation succeeded')}"
             else:
-                return f"错误: {result.get('error', '操作失败')}"
+                return f"Error: {result.get('error', 'Operation failed')}"
         else:
             return str(result)
 
 
 def create_handler(agent) -> callable:
     """
-    创建桌面处理器的 handle 方法
+    Create the desktop handler's handle method
 
     Args:
-        agent: Agent 实例
+        agent: Agent instance
 
     Returns:
-        处理器的 handle 方法
+        Handler's handle method
     """
     handler = DesktopHandler(agent)
     return handler.handle

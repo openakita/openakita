@@ -1,8 +1,8 @@
 """
-Search 工具定义
+Search tool definitions
 
-包含语义搜索相关工具：
-- semantic_search: 按语义搜索文件内容
+Contains semantic search related tools:
+- semantic_search: Search file content by semantic meaning
 """
 
 SEARCH_TOOLS = [
@@ -29,16 +29,16 @@ SEARCH_TOOLS = [
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "完整的问题（如 'Where is user authentication handled?'）",
+                    "description": "A complete question (e.g., 'Where is user authentication handled?')",
                 },
                 "path": {
                     "type": "string",
-                    "description": "搜索范围目录或文件路径。空字符串搜索整个工作区",
+                    "description": "Directory or file path to scope the search. Empty string searches the entire workspace",
                     "default": "",
                 },
                 "max_results": {
                     "type": "integer",
-                    "description": "最大返回结果数（1-15，默认 10）",
+                    "description": "Maximum number of results to return (1-15, default 10)",
                     "default": 10,
                 },
             },

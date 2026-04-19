@@ -8,558 +8,313 @@ metadata:
   upstream: alfredang/skills/notebooklm
 ---
 
-# NotebookLM 研究技能
+# NotebookLM Research Skill
 
-利用 NotebookLM 的深度研究能力，从上传文档中提取知识、生成引用驱动的答案，并将研究成果转化为高质量的信息图风格演示文稿和结构化输出。
-
----
-
-## 核心能力
-
-1. **深度研究** — 基于上传文档进行多轮深度问答，生成引用溯源的答案
-2. **信息图生成** — 将研究发现转化为视觉层次清晰的信息图演示
-3. **引用追溯** — 每个结论和数据点都链接到原始文档来源
-4. **多格式输出** — 支持 Markdown、HTML/reveal.js、Mermaid 图表等格式
-5. **综合分析** — 跨文档交叉分析，识别共性、差异和趋势
+Leverage NotebookLM's deep research capabilities to extract knowledge from uploaded documents, generate citation-backed answers, and transform findings into high-quality infographic-style presentations and structured output.
 
 ---
 
-## 研究工作流
+## Core Capabilities
 
-### 完整流程
+1. **Deep Research** — Based on uploaded documents, conduct multi-round deep Q&A with citation-traceable answers
+2. **Infographic Generation** — Transform research findings into visually structured presentations
+3. **Knowledge Synthesis** — Cross-reference and synthesize insights from multiple sources
+4. **Multi-Format Output** — Supports Markdown, HTML/reveal.js, and Mermaid diagram output
+5. **Comparative Analysis** — Analyze documents to identify similarities, differences, and trends
+
+---
+
+## Workflow
+
+### Full Pipeline
 
 ```
-上传文档 → 初始查询 → 深度追问 → 综合分析 → 结构化输出 → 演示呈现
+Upload → Research → Query → Analyze → Synthesize → Output
    │          │          │          │          │          │
    ▼          ▼          ▼          ▼          ▼          ▼
- 来源准备   问题设计   迭代探索   交叉对比   格式选择   视觉设计
+ Sources   Deep Q&A   Citation   MECE     Insights   Visual
 ```
 
-### 阶段一：文档上传与准备
+### Phase 1: Upload and Document Setup
 
-#### 支持的文档类型
+#### Supported Source Types
 
-| 类型 | 格式 | 最佳实践 |
-|------|------|---------|
-| PDF | 学术论文、报告 | 确保文字可选（非扫描图片） |
-| 网页 | URL 链接 | 选择内容完整的页面 |
-| 文本 | TXT、Markdown | 结构清晰的纯文本 |
-| Google Docs | 在线文档 | 确保共享权限 |
-| Google Slides | 演示文稿 | 含备注的幻灯片更佳 |
-| YouTube | 视频链接 | 需有字幕/转录 |
-| 音频 | MP3、WAV | 需有转录文本 |
+| Format | Content | Notes |
+|--------|---------|-------|
+| PDF | Academic papers, reports | Best quality (OCR) |
+| Web URLs | Articles, blog posts | Full page content |
+| Text files | TXT, Markdown | Plain text |
+| Google Docs | In Drive | Auto-sync |
+| Google Slides | Presentation slides | Extracts text |
+| YouTube Videos | Educational content | Has transcript / No transcript |
+| Audio files | MP3, WAV | Has transcription |
 
-#### 文档准备清单
+#### Documentation Steps
 
-1. **筛选相关文档** — 只上传与研究问题直接相关的文档
-2. **检查文档质量** — 确保文字清晰、结构完整
-3. **控制数量** — 单个 Notebook 建议 5-50 个来源
-4. **标注来源** — 记录每个文档的元数据（作者、日期、来源）
-5. **预分类** — 按主题对文档分组
+1. **Upload sources** — Upload and register documents in Notebook
+2. **Verify extraction** — Confirm full text extraction, check for errors
+3. **Create study guide** — Organize Notebook with 5-50 sources
+4. **Group sources** — By topic, date, or research perspective
+5. **Record source metadata** — Author, date, publisher, type
 
-#### 来源管理模板
+#### Source Management
 
 ```markdown
-## 研究来源清单
+## Sources
 
-| # | 文档标题 | 类型 | 作者/来源 | 日期 | 关键主题 |
-|---|---------|------|----------|------|---------|
-| 1 |  | PDF/URL/... |  |  |  |
-| 2 |  |  |  |  |  |
-| 3 |  |  |  |  |  |
-
-### 来源分组
-- **组 A: [主题]** — 来源 #1, #3, #5
-- **组 B: [主题]** — 来源 #2, #4
+| # | Title | Type | Author / Publisher | Date | Status |
+|---|-------|------|-------------------|------|--------|
+| 1 | Title | PDF/URL/... | Author | 2024 | Active |
 ```
 
-### 阶段二：查询与深度研究
+### Phase 2: Query and Research
 
-#### 查询设计原则
+#### Query Types
 
-**有效的查询应该：**
-- 具体且有明确的范围边界
-- 能通过上传文档回答
-- 能产生可引用的结论
+**Three research depths:**
+- Shallow — Quick fact verification
+- Medium — Multi-source synthesis via uploaded documents
+- Deep — Full analysis with comprehensive comparison
 
-**查询类型与示例：**
+**Query types and examples:**
 
-| 查询类型 | 描述 | 示例 |
+| Type | Description | Example |
 |---------|------|------|
-| **事实查询** | 提取特定数据点 | "文档中提到的年均增长率是多少？" |
-| **比较查询** | 跨文档对比 | "论文 A 和论文 B 在方法论上有何区别？" |
-| **综合查询** | 多来源综合分析 | "综合所有来源，影响用户留存的前三大因素是什么？" |
-| **因果查询** | 探索因果关系 | "根据报告，什么因素导致了市场份额下降？" |
-| **趋势查询** | 识别时间变化 | "从 2020 到 2025 年，该领域的研究重点如何变化？" |
-| **矛盾查询** | 发现分歧 | "不同来源对该技术的效果评估有何矛盾？" |
+| **Fact extraction** | Extract specific data or claims | "What is the market share of [product]?" |
+| **Comparison** | Compare concepts, approaches, or results | "What are the differences between Method A and Method B in the literature?" |
+| **Trend analysis** | Analyze changes over time | "Based on the literature, what is the trend of [topic]?" |
+| **Definition** | Clarify concepts and terms | "What exactly is [concept]? How is it defined in different sources?" |
+| **Temporal research** | Track changes across a time period | "From 2020 to 2025, how has the [field] evolved?" |
+| **Gap identification** | Find what is missing | "What aspects have not been covered in the sources?" |
 
-#### 迭代深度追问策略
+#### Deep Research Dialogue
 
 ```
-第一轮：广泛探索
-  "关于 [主题]，这些文档中的核心发现是什么？"
+Round 1 (Broad):
+"What are the main findings in [topic] in these sources?"
        │
        ▼
-第二轮：聚焦细节
-  "详细解释 [具体发现]，引用具体数据和来源。"
+Round 2 (Deepening):
+"In [specific area], what methodologies and evidence are discussed?"
        │
        ▼
-第三轮：交叉验证
-  "其他文档是否支持或反驳 [这个结论]？"
+Round 3 (Challenge):
+"Which sources contradict or do not support [this claim]?"
        │
        ▼
-第四轮：综合提炼
-  "综合所有发现，提出 3 个关键结论和依据。"
+Round 4 (Synthesis):
+"Based on all discussions, summarize 3 key insights and remaining questions."
 ```
 
-### 阶段三：综合分析
+### Phase 3: Analysis and Synthesis
 
-#### 分析框架
+#### MECE Analysis Framework
 
-**MECE 分析法（Mutually Exclusive, Collectively Exhaustive）：**
+**MECE Analysis (Mutually Exclusive, Collectively Exhaustive):**
 
 ```markdown
-## 研究主题: [主题名称]
+## Analysis: [Topic]
 
-### 维度 1: [分类名称]
-- 发现 1.1 [来源: Doc A, p.12]
-- 发现 1.2 [来源: Doc B, §3]
+### Dimension 1: [Category Name]
+- 1.1 [Sub-point]: Doc A, p.12
+- 1.2 [Sub-point]: Doc B, §3
 
-### 维度 2: [分类名称]
-- 发现 2.1 [来源: Doc C, Fig.3]
-- 发现 2.2 [来源: Doc A, p.45]
+### Dimension 2: [Category Name]
+- 2.1 [Sub-point]: Doc C, Fig.3
+- 2.2 [Sub-point]: Doc A, p.45
 
-### 交叉发现
-- 来源 A 和 C 在 [方面] 一致
-- 来源 B 与 A 在 [方面] 存在矛盾
+### Cross-Source Insights
+- Points A and C converge on [finding]
+- Points B and A diverge on [aspect]
 
-### 信息空白
-- 关于 [方面] 缺乏数据
-- [方面] 需要更多来源验证
+### Missing Info
+- [Aspect] is not covered by any source
+- [Methodology] needs further research
 ```
 
-#### 引用与溯源规范
+#### Citation Standards
 
-所有研究输出必须包含引用，格式遵循以下标准：
+When citing, follow these formats:
 
-**行内引用：**
+**Footnote style:**
 ```markdown
-用户留存率在第 30 天平均为 23.5%[^1]，显著低于行业基准 35%[^2]。
+In the past 30 days, [product] grew 23.5%[^1], with a user retention rate of 35%[^2].
 
-[^1]: 《2025 移动应用留存报告》, App Annie, p.18
-[^2]: 《SaaS Metrics Benchmark》, OpenView Partners, Table 3.2
+[^1]: "2025 Mobile App Report", App Annie, p.18
+[^2]: "SaaS Metrics Benchmark", OpenView Partners, Table 3.2
 ```
 
-**引用块：**
+**Inline citation:**
 ```markdown
-> "深度学习在小样本场景下的泛化能力仍然有限，需要结合领域知识进行模型设计。"
+> "Current LLMs have significant limitations in logical reasoning, requiring further research on interpretability."
 > — Zhang et al., 2024, "Few-Shot Learning: A Survey", §4.3
 ```
 
-**引用汇总表：**
+**Summary table:**
 ```markdown
-| 引用 # | 来源 | 位置 | 相关发现 |
+| # | Source | Publisher | Key Page |
 |--------|------|------|---------|
-| [^1] | App Annie 报告 | p.18 | 留存率数据 |
-| [^2] | OpenView 基准 | Table 3.2 | 行业基准对比 |
+| [^1] | App Annie | Industry Report | p.18 |
+| [^2] | OpenView | Research Report | Table 3.2 |
 ```
 
-### 阶段四：结构化输出
+### Phase 4: Output Generation
 
-#### 输出格式选择指南
+#### Output Format Selection
 
-| 格式 | 适用场景 | 优势 |
-|------|---------|------|
-| **Markdown** | 文档、Wiki、笔记 | 通用性强、版本控制友好 |
-| **HTML/reveal.js** | 演示、分享 | 视觉丰富、交互式 |
-| **Mermaid 图表** | 流程、关系、架构 | 纯文本生成、易维护 |
-| **信息图 Markdown** | 一页式总结 | 信息密度高、易扫读 |
+| Format | Best For | Features |
+|--------|---------|------|
+| **Markdown** | Reports, Wiki, academic papers | Citations, links |
+| **HTML/reveal.js** | Presentations, pitches | Animation, slides |
+| **Mermaid diagrams** | Flowcharts, mind maps, Gantt charts | Visual structure |
+| **Hybrid Markdown** | Complex reports | Text + diagrams |
 
 ---
 
-## 信息图设计规范
+## Infographic Designer
 
-### 视觉层次体系
+### Visual Hierarchy
 
-信息图的核心是建立清晰的视觉层次（Visual Hierarchy），引导读者的视线流动。
+Follow visual hierarchy principles — the most important information should be the most prominent.
 
-#### 层次结构
+#### Information Levels
 
 ```
-Level 0: 主标题 — 一句话概括全文核心
+Level 0: Title — One line, states the core message
    ↓
-Level 1: 核心数据/结论 — 最大字号、最醒目颜色、居中布局
+Level 1: Key metrics / Core findings — Largest size, bold, accent color
    ↓
-Level 2: 分类/维度标题 — 中等字号、分区色块
+Level 2: Supporting data / Secondary insights — Medium size, subheadings
    ↓
-Level 3: 具体发现/数据点 — 标准字号、图标辅助
+Level 3: Explanations / Context — Text blocks, descriptions
    ↓
-Level 4: 来源引用/注释 — 小字号、浅色调
+Level 4: Footnotes / References — Smallest size, auxiliary info
 ```
 
-#### 色彩系统
+#### Colors
 
 ```markdown
-### 推荐配色方案
+### Color Palette Recommendations
 
-**方案 A: 专业蓝（商业/技术报告）**
-- 主色: #2563EB (蓝色)
-- 强调: #F59E0B (琥珀)
-- 成功: #10B981 (绿色)
-- 警告: #EF4444 (红色)
-- 背景: #F8FAFC
-- 文字: #1E293B
+**Palette A: Business/Data (trustworthy, professional)**
+- Primary: #2563EB (blue)
+- Accent: #F59E0B (amber)
+- Success: #10B981 (green)
+- Alert: #EF4444 (red)
+- Background: #F8FAFC
+- Text: #1E293B
 
-**方案 B: 学术绿（研究/学术报告）**
-- 主色: #059669 (绿色)
-- 强调: #7C3AED (紫色)
-- 辅助: #0891B2 (青色)
-- 背景: #F0FDF4
-- 文字: #1A2E05
+**Palette B: Nature/Growth (fresh, positive)**
+- Primary: #059669 (emerald)
+- Accent: #7C3AED (purple)
+- Secondary: #0891B2 (teal)
+- Background: #F0FDF4
+- Text: #1A2E05
 
-**方案 C: 暗色主题（技术/数据报告）**
-- 主色: #60A5FA (亮蓝)
-- 强调: #FBBF24 (金色)
-- 成功: #34D399 (亮绿)
-- 背景: #0F172A
-- 文字: #E2E8F0
+**Palette C: Tech/Modern (cool, energetic)**
+- Primary: #60A5FA (light blue)
+- Accent: #FBBF24 (gold)
+- Secondary: #34D399 (mint)
+- Background: #0F172A
+- Text: #E2E8F0
 ```
 
-#### 排版规格
+#### Typography
 
 ```markdown
-### 字号规格（rem 基准）
+### Typography (rem equivalent)
 
-| 元素 | 字号 | 行高 | 字重 |
-|------|------|------|------|
-| 主标题 | 2.5rem (40px) | 1.2 | 800 |
-| 核心数据 | 3.5rem (56px) | 1.0 | 900 |
-| 分区标题 | 1.5rem (24px) | 1.3 | 700 |
-| 正文 | 1rem (16px) | 1.6 | 400 |
-| 引用/注释 | 0.75rem (12px) | 1.4 | 300 |
-
-### 间距系统
-
-| 层级 | 间距 |
-|------|------|
-| 主区块间距 | 48px |
-| 子区块间距 | 24px |
-| 元素内间距 | 16px |
-| 紧凑间距 | 8px |
+| Element | Size | Line Height | Weight |
+|---------|------|------------|--------|
+| Main title | 2.5rem (40px) | 1.2 | 800 |
+| Slide title | 3.5rem (56px) | 1.0 | 900 |
+| Section heading | 1.5rem (24px) | 1.3 | 700 |
+| Body text | 1rem (16px) | 1.6 | 400 |
+| Footnote / Note | 0.75rem (12px) | 1.4 | 300 |
 ```
 
-### 信息图布局模式
+### Info Layout Templates
 
-#### 模式一：数据驱动摘要
+#### Template 1: Report Style
 
 ```markdown
 ┌──────────────────────────────────────────┐
-│         📊 [研究主题]                     │
-│     一句话核心发现                         │
+│ 📊 [Report Title]                         │
+│                                          │
 ├──────────────────────────────────────────┤
 │  ┌──────┐  ┌──────┐  ┌──────┐           │
 │  │ 3.5x │  │ 78%  │  │ #1   │           │
-│  │增长率 │  │采纳率 │  │市场份额│          │
+│  │ Growth│  │Share │  │ Rank│           │
 │  └──────┘  └──────┘  └──────┘           │
 ├──────────────────────────────────────────┤
-│  发现 1          │  发现 2                │
-│  详细说明...     │  详细说明...           │
-│  [来源 A, B]     │  [来源 C]             │
+│ Finding 1       │ Finding 2              │
+│ ...             │ ...                    │
+│ [Source A, B]   │ [Source C]             │
 ├──────────────────────────────────────────┤
-│  📈 趋势图 / 时间线                       │
+│ 📈 Trend / Timeline                       │
 ├──────────────────────────────────────────┤
-│  结论 & 建议                              │
-│  来源列表                                 │
+│ Comparison & Recommendations              │
+│                                          │
 └──────────────────────────────────────────┘
 ```
 
-#### 模式二：对比分析
+#### Template 2: Comparison Mode
 
 ```markdown
 ┌──────────────────────────────────────────┐
-│         ⚖️ [对比主题]                     │
+│ ⚖️ [Comparison Title]                     │
 ├───────────────────┬──────────────────────┤
-│    选项 A          │    选项 B            │
+│ Option A          │ Option B             │
 ├───────────────────┼──────────────────────┤
-│  维度 1: ✅ 优     │  维度 1: ⚠️ 中       │
-│  维度 2: ⚠️ 中     │  维度 2: ✅ 优       │
-│  维度 3: ❌ 弱     │  维度 3: ✅ 优       │
+│ Point 1: ✅       │ Point 1: ⚠️          │
+│ Point 2: ⚠️       │ Point 2: ✅          │
+│ Point 3: ❌       │ Point 3: ✅          │
 ├───────────────────┴──────────────────────┤
-│  综合评估与推荐                            │
-│  引用来源                                 │
+│ Summary and Recommendations               │
+│                                          │
 └──────────────────────────────────────────┘
 ```
 
-#### 模式三：流程/时间线
+#### Template 3: Process/Timeline
 
 ```markdown
 ┌──────────────────────────────────────────┐
-│         🔄 [流程/历程主题]                 │
+│ 🔄 [Process/Timeline Title]               │
 ├──────────────────────────────────────────┤
 │  ①──────→②──────→③──────→④              │
-│  阶段一    阶段二    阶段三    阶段四       │
-│  说明      说明      说明      说明        │
-│  [来源]    [来源]    [来源]    [来源]      │
+│                                          │
+│ Details:                                  │
+│ Phase ①: [Description] [Source]          │
+│ Phase ②: [Description] [Source]          │
 ├──────────────────────────────────────────┤
-│  关键转折点与洞察                          │
-│  引用来源                                 │
+│ Key metrics at each stage                 │
 └──────────────────────────────────────────┘
 ```
 
 ---
 
-## 输出格式详细规范
+## Quality Standards
 
-### Markdown 输出
+### Content Requirements
+- Every claim must be traceable to at least one source
+- Numbers, dates, and statistics must be cited
+- Mark any uncertain information
+- Clearly mark conflicting information from different sources
 
-适用于知识库、文档系统、Git 仓库。
-
-```markdown
-# 研究报告: [主题]
-
-> **核心发现**: 一句话总结
-
-## 执行摘要
-简要概述研究背景、方法和核心结论。
-
-## 关键发现
-
-### 发现 1: [标题]
-详细描述，包含数据支撑。
-> 引用: [来源, 位置]
-
-### 发现 2: [标题]
-详细描述。
-> 引用: [来源, 位置]
-
-## 数据分析
-
-| 指标 | 数值 | 来源 | 趋势 |
-|------|------|------|------|
-|  |  |  | ↑/↓/→ |
-
-## 结论与建议
-1. 建议一
-2. 建议二
-
-## 参考来源
-1. [来源 1 完整信息]
-2. [来源 2 完整信息]
-```
-
-### HTML/reveal.js 幻灯片输出
-
-适用于演示、分享、汇报。
-
-```html
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>研究报告: [主题]</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/theme/white.css">
-  <style>
-    :root {
-      --primary: #2563EB;
-      --accent: #F59E0B;
-      --text: #1E293B;
-      --bg: #F8FAFC;
-    }
-    .reveal h1 { color: var(--primary); font-size: 2.5em; }
-    .reveal h2 { color: var(--primary); font-size: 1.8em; }
-    .stat-number {
-      font-size: 3.5em;
-      font-weight: 900;
-      color: var(--primary);
-    }
-    .stat-label {
-      font-size: 1em;
-      color: #64748B;
-    }
-    .citation {
-      font-size: 0.7em;
-      color: #94A3B8;
-      text-align: right;
-    }
-    .highlight-box {
-      background: var(--bg);
-      border-left: 4px solid var(--primary);
-      padding: 1em;
-      margin: 1em 0;
-    }
-  </style>
-</head>
-<body>
-  <div class="reveal">
-    <div class="slides">
-
-      <!-- 标题页 -->
-      <section>
-        <h1>研究主题</h1>
-        <p>核心发现的一句话总结</p>
-        <p class="citation">基于 N 个来源的综合分析 | YYYY-MM-DD</p>
-      </section>
-
-      <!-- 核心数据页 -->
-      <section>
-        <h2>核心发现</h2>
-        <div style="display:flex;justify-content:space-around;">
-          <div>
-            <div class="stat-number">3.5x</div>
-            <div class="stat-label">增长率</div>
-          </div>
-          <div>
-            <div class="stat-number">78%</div>
-            <div class="stat-label">采纳率</div>
-          </div>
-        </div>
-        <p class="citation">来源: 文档 A, p.12; 文档 B, §3</p>
-      </section>
-
-      <!-- 详细发现页 -->
-      <section>
-        <h2>发现一</h2>
-        <div class="highlight-box">
-          <p>关键发现的详细描述，包含数据支撑和引用。</p>
-        </div>
-        <p class="citation">来源: 文档 C, Table 2</p>
-      </section>
-
-      <!-- 结论页 -->
-      <section>
-        <h2>结论与建议</h2>
-        <ol>
-          <li>建议一</li>
-          <li>建议二</li>
-          <li>建议三</li>
-        </ol>
-      </section>
-
-    </div>
-  </div>
-  <script src="https://cdn.jsdelivr.net/npm/reveal.js@5/dist/reveal.js"></script>
-  <script>Reveal.initialize();</script>
-</body>
-</html>
-```
-
-### Mermaid 图表输出
-
-适用于流程、关系、架构的可视化。
-
-**流程图：**
-````markdown
-```mermaid
-graph TB
-    A[文档上传] --> B[初始查询]
-    B --> C{发现足够?}
-    C -->|否| D[深度追问]
-    D --> B
-    C -->|是| E[综合分析]
-    E --> F[结构化输出]
-    F --> G[Markdown]
-    F --> H[HTML/reveal.js]
-    F --> I[Mermaid 图表]
-```
-````
-
-**思维导图：**
-````markdown
-```mermaid
-mindmap
-  root((研究主题))
-    发现一
-      数据点 A
-      数据点 B
-    发现二
-      论据 C
-      论据 D
-    发现三
-      趋势 E
-      对比 F
-```
-````
-
-**时间线：**
-````markdown
-```mermaid
-timeline
-    title 技术发展时间线
-    2020 : 基础模型出现
-         : GPT-3 发布
-    2022 : ChatGPT 引爆市场
-         : 指令微调成为标准
-    2024 : 多模态模型成熟
-         : Agent 架构兴起
-    2025 : 端侧推理普及
-         : MCP 协议标准化
-```
-````
-
-**实体关系图：**
-````markdown
-```mermaid
-erDiagram
-    RESEARCH ||--o{ DOCUMENT : "基于"
-    DOCUMENT ||--o{ FINDING : "包含"
-    FINDING ||--o{ CITATION : "引用自"
-    RESEARCH ||--o{ CONCLUSION : "得出"
-    CONCLUSION }o--|| FINDING : "基于"
-```
-````
+### Output Quality Checklist
+- [ ] All data points have source citations
+- [ ] Infographic follows the visual hierarchy levels
+- [ ] Key metrics are highlighted at Level 1
+- [ ] Color palette is consistent throughout
+- [ ] Font sizes follow the typography guide
+- [ ] Output can stand alone as a report/presentation
 
 ---
 
-## 研究质量检查清单
+## EXTEND.md
 
-### 输出前自检
-
-| 检查项 | 标准 | ✅ |
-|--------|------|---|
-| **引用覆盖** | 每个核心发现都有引用 | |
-| **来源多样** | 不依赖单一来源 | |
-| **数据准确** | 数字和引文与原文一致 | |
-| **逻辑连贯** | 发现之间逻辑自洽 | |
-| **信息空白** | 已标注缺失或不确定的部分 | |
-| **视觉层次** | 信息图有清晰的阅读路径 | |
-| **可操作性** | 结论包含具体建议 | |
-| **格式规范** | 输出格式正确、可渲染 | |
-
-### 研究可信度评估
-
-```markdown
-## 可信度评估
-
-### 来源质量
-- 学术同行评审: X 篇
-- 行业权威报告: X 篇
-- 一手数据: X 篇
-- 二手分析: X 篇
-
-### 发现一致性
-- 多来源支持的发现: X 条
-- 单来源发现: X 条
-- 来源间矛盾: X 处
-
-### 局限性
-- 时间范围: YYYY 至 YYYY
-- 地理范围: 
-- 样本局限: 
-- 方法论局限: 
-
-### 综合可信度: 高 / 中 / 低
-```
-
----
-
-## 注意事项
-
-- **尊重版权** — 引用应遵循合理使用原则，不大段复制原文
-- **标注不确定性** — 推测性结论应明确标注为"推测"或"需进一步验证"
-- **区分事实与观点** — 文档中的事实和作者观点应有区分标识
-- **保持中立** — 呈现多方观点，避免选择性引用
-- **检查时效性** — 标注数据的采集时间，提醒读者时效风险
-- **注意文档质量** — 上传前确认文档可读，OCR 文档可能有识别错误
-- **迭代优化** — 第一轮输出后审查引用准确性，必要时回查原文
-- **格式兼容** — reveal.js 幻灯片需确保 CDN 资源可访问
+Create `EXTEND.md` in the skill directory for:
+- Detailed Mermaid syntax examples
+- Reveal.js slide configuration
+- Advanced citation formatting
+- Multi-language source handling

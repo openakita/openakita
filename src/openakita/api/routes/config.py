@@ -219,7 +219,8 @@ class SecurityConfirmRequest(BaseModel):
 async def workspace_info():
     """Return current workspace path and basic info.
 
-    路径脱敏：对外只返回相对路径，不暴露用户名和完整目录结构。
+    Path sanitization: only relative paths are returned externally, avoiding
+    exposure of usernames and full directory structure.
     """
     root = _project_root()
     ep_path = _endpoints_config_path()
@@ -233,7 +234,7 @@ async def workspace_info():
 
 
 def _sanitize_path(full_path: Path, workspace_root: Path) -> str:
-    """将绝对路径转换为相对于工作区的路径，避免泄露系统目录结构。"""
+    """Convert an absolute path to a workspace-relative path to avoid leaking system directory structure."""
     try:
         return str(full_path.relative_to(workspace_root))
     except ValueError:
@@ -509,13 +510,13 @@ async def reload_config(request: Request):
     try:
         success = llm_client.reload()
 
-        # 同时刷新编译端点（Brain 对象上的 compiler_client）
+        # Also refresh the compiler endpoint (compiler_client on the Brain object)
         compiler_reloaded = False
-        brain_obj = brain  # 上面已经解析过的 brain 对象
+        brain_obj = brain  # brain object already resolved above
         if brain_obj and hasattr(brain_obj, "reload_compiler_client"):
             compiler_reloaded = brain_obj.reload_compiler_client()
 
-        # 同时刷新 STT 端点（Gateway 上的 stt_client）
+        # Also refresh the STT endpoint (stt_client on the Gateway)
         stt_reloaded = False
         gateway = getattr(request.app.state, "gateway", None)
         if gateway and hasattr(gateway, "stt_client") and gateway.stt_client:
@@ -546,10 +547,11 @@ async def reload_config(request: Request):
 
 @router.post("/api/config/restart")
 async def restart_service(request: Request):
-    """触发服务优雅重启。
+    """Trigger a graceful service restart.
 
-    流程：设置重启标志 → 触发 shutdown_event → serve() 主循环检测标志后重新初始化。
-    前端应在调用后轮询 /api/health 直到服务恢复。
+    Flow: set restart flag -> trigger shutdown_event -> serve() main loop detects
+    the flag and re-initializes. The frontend should poll /api/health after
+    calling until the service is back up.
     """
     from openakita import config as cfg
 
@@ -582,13 +584,18 @@ async def read_skills_config():
 async def write_skills_config(body: SkillsWriteRequest, request: Request):
     """Write data/skills.json.
 
-    写入后统一走 ``Agent.propagate_skill_change``：
-      - Parser/Loader 缓存失效，外部技能 allowlist 按新文件重算
-      - SkillCatalog / ``_skill_catalog_text`` 重建，CLI 系统提示重刷
-      - Handler 映射同步 + AgentInstancePool 版本号自增（下一条桌面端请求拿到新 Agent）
-      - HTTP ``_skills_cache`` 通过事件回调失效，WebSocket 广播 SkillEvent.ENABLE
+    After writing, everything is routed through ``Agent.propagate_skill_change``:
+      - Parser/Loader caches are invalidated; the external skill allowlist is
+        recomputed from the new file.
+      - SkillCatalog / ``_skill_catalog_text`` is rebuilt; the CLI system prompt
+        is refreshed.
+      - Handler mappings are synced and the AgentInstancePool version is bumped
+        (the next desktop request gets a new Agent).
+      - The HTTP ``_skills_cache`` is invalidated via event callback and
+        SkillEvent.ENABLE is broadcast over WebSocket.
 
-    若 request 中尚无 agent（启动前调用），则仅写盘，刷新将在 Agent 初始化时自然发生。
+    If the request does not yet have an agent (called before startup), this only
+    writes to disk; the refresh will happen naturally when the Agent initializes.
     """
     import asyncio as _asyncio
 
@@ -597,8 +604,10 @@ async def write_skills_config(body: SkillsWriteRequest, request: Request):
     content = body.content if isinstance(body.content, dict) else {}
     al = content.get("external_allowlist") if isinstance(content, dict) else None
 
-    # 优先走唯一写入点；若 payload 不是标准 allowlist 结构，回退到旧的整文件覆盖，
-    # 以保持前端「原样写入」的兼容（例如把非 allowlist 字段写进去）。
+    # Prefer the single canonical write path; if the payload is not a standard
+    # allowlist structure, fall back to the legacy whole-file overwrite to keep
+    # compatibility with the frontend's "write as-is" semantics (e.g. writing
+    # non-allowlist fields).
     if isinstance(al, list):
         overwrite_allowlist({str(x).strip() for x in al if str(x).strip()})
     else:
@@ -609,7 +618,7 @@ async def write_skills_config(body: SkillsWriteRequest, request: Request):
             encoding="utf-8",
         )
 
-    # 触发统一刷新（rescan=False：仅重算 allowlist+catalog+pool，无需再扫盘）
+    # Trigger unified refresh (rescan=False: only recompute allowlist+catalog+pool, no disk rescan needed)
     try:
         from openakita.core.agent import Agent
         from openakita.skills.events import SkillEvent
@@ -655,7 +664,7 @@ async def write_disabled_views(body: DisabledViewsRequest):
 
 @router.get("/api/config/agent-mode")
 async def read_agent_mode():
-    """返回多Agent模式状态（已默认常开）"""
+    """Return the multi-agent mode status (always on by default)."""
     return {"multi_agent_enabled": True}
 
 
@@ -698,7 +707,7 @@ def _hot_patch_agent_tools(request: Request, *, enable: bool) -> None:
 
 @router.post("/api/config/agent-mode")
 async def write_agent_mode(body: AgentModeRequest, request: Request):
-    """多Agent模式已默认常开，此端点保留以兼容旧客户端。"""
+    """Multi-agent mode is always on by default; this endpoint is kept for legacy client compatibility."""
     from openakita.config import settings
 
     old = settings.multi_agent_enabled
@@ -726,7 +735,7 @@ async def write_agent_mode(body: AgentModeRequest, request: Request):
 
         _hot_patch_agent_tools(request, enable=True)
 
-    # 通知 pool 刷新版本号，旧会话的 Agent 下次请求时自动重建
+    # Notify the pool to bump the version so Agents in old sessions are automatically rebuilt on the next request
     pool = getattr(request.app.state, "agent_pool", None)
     if pool is not None:
         pool.notify_skills_changed()
@@ -746,7 +755,7 @@ class ToolLoadingRequest(BaseModel):
 
 @router.get("/api/config/tool-loading")
 async def read_tool_loading(request: Request):
-    """读取工具常驻加载配置。"""
+    """Read the always-load tool configuration."""
     from openakita.config import settings
 
     available_categories: list[str] = []
@@ -766,7 +775,7 @@ async def read_tool_loading(request: Request):
 
 @router.post("/api/config/tool-loading")
 async def write_tool_loading(body: ToolLoadingRequest, request: Request):
-    """更新工具常驻加载配置。立即生效并持久化。"""
+    """Update the always-load tool configuration. Takes effect immediately and is persisted."""
     from openakita.config import runtime_state, settings
 
     settings.always_load_tools = body.always_load_tools
@@ -786,10 +795,10 @@ async def write_tool_loading(body: ToolLoadingRequest, request: Request):
 
 @router.get("/api/config/providers")
 async def list_providers_api():
-    """返回后端已注册的 LLM 服务商列表。
+    """Return the list of LLM providers registered on the backend.
 
-    前端可在后端运行时通过此 API 获取最新的 provider 列表，
-    确保前后端数据一致。
+    The frontend can call this API at runtime to get the latest provider list,
+    ensuring frontend/backend data consistency.
     """
     try:
         from openakita.llm.registries import list_providers
@@ -821,9 +830,10 @@ async def list_providers_api():
 
 @router.post("/api/config/list-models")
 async def list_models_api(body: ListModelsRequest):
-    """拉取 LLM 端点的模型列表（远程模式替代 Tauri openakita_list_models 命令）。
+    """Fetch the model list for an LLM endpoint (remote-mode replacement for the Tauri openakita_list_models command).
 
-    直接复用 bridge.list_models 的逻辑，在后端进程内异步调用，无需 subprocess。
+    Directly reuses the bridge.list_models logic, called asynchronously within
+    the backend process without a subprocess.
     """
     try:
         from openakita.setup_center.bridge import (
@@ -837,10 +847,10 @@ async def list_models_api(body: ListModelsRequest):
         provider_slug = (body.provider_slug or "").strip() or None
 
         if not api_type:
-            return {"error": "api_type 不能为空", "models": []}
+            return {"error": "api_type cannot be empty", "models": []}
         if not base_url:
-            return {"error": "base_url 不能为空", "models": []}
-        # 本地服务商（Ollama/LM Studio 等）不需要 API Key，允许空值
+            return {"error": "base_url cannot be empty", "models": []}
+        # Local providers (Ollama / LM Studio, etc.) do not require an API key; empty is allowed
         if not api_key:
             api_key = "local"  # placeholder for local providers
 
@@ -849,23 +859,23 @@ async def list_models_api(body: ListModelsRequest):
         elif api_type == "anthropic":
             models = await _list_models_anthropic(api_key, base_url, provider_slug)
         else:
-            return {"error": f"不支持的 api_type: {api_type}", "models": []}
+            return {"error": f"Unsupported api_type: {api_type}", "models": []}
 
         return {"models": models}
     except Exception as e:
         logger.error(f"[Config API] list-models failed: {e}", exc_info=True)
-        # 将原始 Python 异常转为用户友好的提示
+        # Convert the raw Python exception into a user-friendly message
         raw = str(e).lower()
         friendly = str(e)
         if "errno 2" in raw or "no such file" in raw:
-            friendly = "SSL 证书文件缺失，请重新安装或更新应用"
+            friendly = "SSL certificate file missing; please reinstall or update the app"
         elif (
             "connect" in raw
             or "connection refused" in raw
             or "no route" in raw
             or "unreachable" in raw
         ):
-            friendly = "无法连接到服务商，请检查 API 地址和网络连接"
+            friendly = "Unable to connect to the provider; please check the API URL and network connection"
             try:
                 from openakita.llm.providers.proxy_utils import format_proxy_hint
 
@@ -880,13 +890,13 @@ async def list_models_api(body: ListModelsRequest):
             or "invalid api key" in raw
             or "authentication" in raw
         ):
-            friendly = "API Key 无效或已过期，请检查后重试"
+            friendly = "API key is invalid or expired; please check and retry"
         elif "403" in raw or "forbidden" in raw or "permission" in raw:
-            friendly = "API Key 权限不足，请确认已开通模型访问权限"
+            friendly = "API key lacks permissions; please confirm model access is enabled"
         elif "404" in raw or "not found" in raw:
-            friendly = "该服务商不支持模型列表查询，您可以手动输入模型名称"
+            friendly = "This provider does not support model listing; you may enter the model name manually"
         elif "timeout" in raw or "timed out" in raw:
-            friendly = "请求超时，请检查网络或稍后重试"
+            friendly = "Request timed out; please check your network or retry later"
         elif len(friendly) > 150:
             friendly = friendly[:150] + "…"
         return {"error": friendly, "models": []}
@@ -909,20 +919,20 @@ def _read_policies_yaml() -> dict | None:
     try:
         return yaml.safe_load(policies_path.read_text(encoding="utf-8")) or {}
     except Exception as e:
-        logger.error(f"[Config] 无法读取 POLICIES.yaml: {e}")
+        logger.error(f"[Config] Failed to read POLICIES.yaml: {e}")
         return None
 
 
 def _write_policies_yaml(data: dict) -> bool:
     """Write dict to identity/POLICIES.yaml.
 
-    Returns False if the write was refused (P1-9: 防止配置文件覆盖丢失).
+    Returns False if the write was refused (P1-9: prevent config file overwrite data loss).
     """
     import yaml
 
     existing = _read_policies_yaml()
     if existing is None:
-        logger.error("[Config] 拒绝写入 POLICIES.yaml: 当前文件无法正确读取，写入可能导致数据丢失")
+        logger.error("[Config] Refusing to write POLICIES.yaml: current file cannot be read correctly; writing may cause data loss")
         return False
     policies_path = _project_root() / "identity" / "POLICIES.yaml"
     policies_path.parent.mkdir(parents=True, exist_ok=True)
@@ -938,7 +948,7 @@ async def read_security_config():
     """Read the full security policy configuration."""
     data = _read_policies_yaml()
     if data is None:
-        return {"security": {}, "_warning": "配置文件读取失败"}
+        return {"security": {}, "_warning": "Failed to read config file"}
     return {"security": data.get("security", {})}
 
 
@@ -947,10 +957,10 @@ async def write_security_config(body: SecurityConfigUpdate):
     """Write the full security policy configuration."""
     data = _read_policies_yaml()
     if data is None:
-        return {"status": "error", "message": "无法读取当前配置文件，写入已取消以防止数据丢失"}
+        return {"status": "error", "message": "Unable to read current config file; write cancelled to prevent data loss"}
     data["security"] = body.security
     if not _write_policies_yaml(data):
-        return {"status": "error", "message": "配置写入失败"}
+        return {"status": "error", "message": "Failed to write config"}
     try:
         from openakita.core.policy import reset_policy_engine
 
@@ -982,7 +992,7 @@ async def write_security_zones(body: SecurityZonesUpdate):
     """Update zone path configuration."""
     data = _read_policies_yaml()
     if data is None:
-        return {"status": "error", "message": "无法读取当前配置文件，写入已取消以防止数据丢失"}
+        return {"status": "error", "message": "Unable to read current config file; write cancelled to prevent data loss"}
     if "security" not in data:
         data["security"] = {}
     if "zones" not in data["security"]:
@@ -1023,7 +1033,7 @@ async def write_security_commands(body: SecurityCommandsUpdate):
     """Update command pattern configuration."""
     data = _read_policies_yaml()
     if data is None:
-        return {"status": "error", "message": "无法读取当前配置文件，写入已取消以防止数据丢失"}
+        return {"status": "error", "message": "Unable to read current config file; write cancelled to prevent data loss"}
     if "security" not in data:
         data["security"] = {}
     if "command_patterns" not in data["security"]:
@@ -1063,7 +1073,7 @@ async def write_security_sandbox(body: SecuritySandboxUpdate):
     """Update sandbox configuration."""
     data = _read_policies_yaml()
     if data is None:
-        return {"status": "error", "message": "无法读取当前配置文件，写入已取消以防止数据丢失"}
+        return {"status": "error", "message": "Unable to read current config file; write cancelled to prevent data loss"}
     if "security" not in data:
         data["security"] = {}
     if "sandbox" not in data["security"]:
@@ -1090,7 +1100,7 @@ async def write_security_sandbox(body: SecuritySandboxUpdate):
 
 @router.get("/api/config/permission-mode")
 async def read_permission_mode():
-    """读取当前安全模式（前端 cautious/smart/trust 与后端同步）。"""
+    """Read the current permission mode (frontend cautious/smart/trust synced with backend)."""
     try:
         from openakita.core.policy import get_policy_engine
 
@@ -1108,13 +1118,13 @@ class _PermissionModeBody(BaseModel):
 
 @router.post("/api/config/permission-mode")
 async def write_permission_mode(body: _PermissionModeBody):
-    """设置安全模式并持久化到 YAML。"""
+    """Set the permission mode and persist it to YAML."""
     mode = body.mode
     # accept legacy "trust" as alias for "yolo"
     if mode == "trust":
         mode = "yolo"
     if mode not in ("cautious", "smart", "yolo"):
-        return {"status": "error", "message": f"无效的安全模式: {mode}"}
+        return {"status": "error", "message": f"Invalid permission mode: {mode}"}
     try:
         from openakita.core.policy import get_policy_engine
 
@@ -1250,13 +1260,13 @@ async def write_security_confirmation(body: _ConfirmationUpdate):
     """Update confirmation config (PATCH semantics)."""
     data = _read_policies_yaml()
     if data is None:
-        return {"status": "error", "message": "无法读取配置"}
+        return {"status": "error", "message": "Unable to read config"}
     sec = data.setdefault("security", {})
     conf = sec.setdefault("confirmation", {})
     if body.mode is not None:
         m = "yolo" if body.mode == "trust" else body.mode
         if m not in ("cautious", "smart", "yolo"):
-            return {"status": "error", "message": f"无效 mode: {body.mode}"}
+            return {"status": "error", "message": f"Invalid mode: {body.mode}"}
         conf["mode"] = m
         conf.pop("auto_confirm", None)
     if body.timeout_seconds is not None:
@@ -1326,7 +1336,7 @@ async def write_self_protection(body: _SelfProtectionUpdate):
     """Update self-protection config (PATCH semantics)."""
     data = _read_policies_yaml()
     if data is None:
-        return {"status": "error", "message": "无法读取配置"}
+        return {"status": "error", "message": "Unable to read config"}
     sec = data.setdefault("security", {})
     sp = sec.setdefault("self_protection", {})
     if body.enabled is not None:
@@ -1392,7 +1402,7 @@ async def delete_allowlist_entry(entry_type: str, index: int):
         from openakita.core.policy import get_policy_engine
 
         ok = get_policy_engine().remove_allowlist_entry(entry_type, index)
-        return {"status": "ok" if ok else "error", "message": "" if ok else "无效索引"}
+        return {"status": "ok" if ok else "error", "message": "" if ok else "Invalid index"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 

@@ -9,21 +9,21 @@ category: Memory
 
 # Get Memory Stats
 
-获取记忆系统统计信息。
+get.
 
 ## Parameters
 
-无参数。
+No parameters.
 
 ## Returns
 
-- 总记忆数量
-- 今日会话数
-- 待处理会话数
-- 按类型分布
-- 按优先级分布
+-
+- will
+- handlewill
+-
+-
 
 ## Related Skills
 
-- `add-memory`: 添加记忆
-- `search-memory`: 搜索记忆
+- `add-memory`:
+- `search-memory`: search

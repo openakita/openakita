@@ -1,7 +1,8 @@
 """
-多模态内容转换器
+Multimodal content converter
 
-负责在内部格式和各种外部格式之间转换图片、视频等多媒体内容。
+Converts multimedia content such as images and videos between the internal
+format and various external formats.
 """
 
 import base64
@@ -24,48 +25,48 @@ from ..types import (
 
 _converter_logger = _multimodal_logging.getLogger(__name__)
 
-# 图片格式检测
+# Image format detection
 IMAGE_SIGNATURES = {
     b"\xff\xd8\xff": "image/jpeg",
     b"\x89PNG\r\n\x1a\n": "image/png",
     b"GIF87a": "image/gif",
     b"GIF89a": "image/gif",
-    b"RIFF": "image/webp",  # WebP 以 RIFF 开头
+    b"RIFF": "image/webp",  # WebP starts with RIFF
 }
 
 
 def detect_media_type(data: bytes) -> str:
     """
-    从二进制数据检测媒体类型
+    Detect the media type from binary data.
 
     Args:
-        data: 二进制数据
+        data: binary data
 
     Returns:
-        媒体类型字符串，如 "image/jpeg"
+        Media type string, e.g. "image/jpeg"
     """
     for signature, media_type in IMAGE_SIGNATURES.items():
         if data.startswith(signature):
             return media_type
 
-    # WebP 需要额外检查
+    # WebP needs an extra check
     if len(data) > 12 and data[8:12] == b"WEBP":
         return "image/webp"
 
-    # 视频格式检测
+    # Video format detection
     if data.startswith(b"\x00\x00\x00") and b"ftyp" in data[:12]:
         return "video/mp4"
     if data.startswith(b"\x1a\x45\xdf\xa3"):
         return "video/webm"
 
-    # 默认为 JPEG
+    # Default to JPEG
     return "image/jpeg"
 
 
 def detect_media_type_from_base64(data: str) -> str:
-    """从 base64 数据检测媒体类型"""
+    """Detect the media type from base64-encoded data."""
     try:
-        decoded = base64.b64decode(data[:100])  # 只解码前 100 字节
+        decoded = base64.b64decode(data[:100])  # Only decode the first 100 bytes
         return detect_media_type(decoded)
     except Exception:
         return "image/jpeg"
@@ -73,9 +74,9 @@ def detect_media_type_from_base64(data: str) -> str:
 
 def convert_image_to_openai(image: ImageContent) -> dict:
     """
-    将内部图片格式转换为 OpenAI 格式
+    Convert the internal image format to OpenAI format.
 
-    内部格式:
+    Internal format:
     {
         "type": "image",
         "source": {
@@ -85,7 +86,7 @@ def convert_image_to_openai(image: ImageContent) -> dict:
         }
     }
 
-    OpenAI 格式:
+    OpenAI format:
     {
         "type": "image_url",
         "image_url": {
@@ -103,11 +104,11 @@ def convert_image_to_openai(image: ImageContent) -> dict:
 
 def convert_openai_image_to_internal(item: dict) -> ImageContent | None:
     """
-    将 OpenAI 图片格式转换为内部格式
+    Convert the OpenAI image format to the internal format.
 
-    支持两种输入:
+    Supports two input forms:
     1. data URL: "data:image/jpeg;base64,..."
-    2. 远程 URL: "https://..."
+    2. Remote URL: "https://..."
     """
     image_url = item.get("image_url", {})
     url = image_url.get("url", "")
@@ -116,27 +117,27 @@ def convert_openai_image_to_internal(item: dict) -> ImageContent | None:
         return None
 
     if url.startswith("data:"):
-        # 解析 data URL
+        # Parse the data URL
         match = re.match(r"data:([^;]+);base64,(.+)", url)
         if match:
             media_type = match.group(1)
             data = match.group(2)
             return ImageContent(media_type=media_type, data=data)
     else:
-        # 远程 URL
+        # Remote URL
         return ImageContent.from_url(url)
 
     return None
 
 
-_DASHSCOPE_MAX_DATA_URI_BYTES = 10 * 1024 * 1024  # DashScope API 限制 10MB per data-uri
-_KIMI_MAX_DATA_URI_BYTES = 10 * 1024 * 1024  # Kimi 保守按 10MB 限制
+_DASHSCOPE_MAX_DATA_URI_BYTES = 10 * 1024 * 1024  # DashScope API limit: 10MB per data-uri
+_KIMI_MAX_DATA_URI_BYTES = 10 * 1024 * 1024  # Kimi: conservatively capped at 10MB
 
 
 def _check_video_data_uri_size(
     video: VideoContent, provider_name: str, max_bytes: int
 ) -> str | None:
-    """检查视频 data URL 是否超过 provider 大小限制，超过则返回降级文本"""
+    """Check whether the video data URL exceeds the provider size limit; if so return a degraded text."""
     if video.media_type == "url":
         return None
     data_url = video.to_data_url()
@@ -150,17 +151,18 @@ def _check_video_data_uri_size(
             f"Degrading to text."
         )
         return (
-            f"[视频内容：视频文件约 {size_mb:.1f}MB，编码后超过 {provider_name} "
-            f"的 {limit_mb:.0f}MB data-uri 限制，已跳过。请发送更小的视频。]"
+            f"[Video content: the video file is about {size_mb:.1f}MB, which after encoding "
+            f"exceeds {provider_name}'s {limit_mb:.0f}MB data-uri limit and has been skipped. "
+            f"Please send a smaller video.]"
         )
     return None
 
 
 def convert_video_to_kimi(video: VideoContent) -> dict:
     """
-    将内部视频格式转换为 Kimi 格式
+    Convert the internal video format to Kimi format.
 
-    Kimi 使用 video_url 类型（私有扩展）:
+    Kimi uses the video_url type (a private extension):
     {
         "type": "video_url",
         "video_url": {
@@ -181,9 +183,9 @@ def convert_video_to_kimi(video: VideoContent) -> dict:
 
 def convert_video_to_gemini(video: VideoContent) -> dict:
     """
-    将内部视频格式转换为 Gemini 格式
+    Convert the internal video format to Gemini format.
 
-    Gemini 使用 inline_data 格式（通过 OpenAI 兼容层时可能透传）:
+    Gemini uses the inline_data format (may be passed through when going via the OpenAI compatibility layer):
     {
         "type": "image_url",
         "image_url": {
@@ -191,8 +193,8 @@ def convert_video_to_gemini(video: VideoContent) -> dict:
         }
     }
 
-    注意: 通过 OpenAI 兼容层调用 Gemini 时，视频作为 data URL 传递
-    大文件应使用 Gemini Files API（在 gemini_files.py 中实现）
+    Note: when calling Gemini through the OpenAI compatibility layer, videos are passed as data URLs.
+    Large files should use the Gemini Files API (implemented in gemini_files.py).
     """
     return {
         "type": "image_url",
@@ -204,9 +206,9 @@ def convert_video_to_gemini(video: VideoContent) -> dict:
 
 def convert_video_to_dashscope(video: VideoContent) -> dict:
     """
-    将内部视频格式转换为 DashScope (Qwen-VL) 格式
+    Convert the internal video format to DashScope (Qwen-VL) format.
 
-    DashScope Qwen-VL 使用 video_url 类型（同 Kimi 格式）:
+    DashScope Qwen-VL uses the video_url type (same shape as Kimi):
     {
         "type": "video_url",
         "video_url": {
@@ -214,7 +216,7 @@ def convert_video_to_dashscope(video: VideoContent) -> dict:
         }
     }
 
-    注意: DashScope 限制单个 data-uri 不超过 10MB
+    Note: DashScope limits a single data-uri to at most 10MB.
     """
     degraded = _check_video_data_uri_size(video, "DashScope", _DASHSCOPE_MAX_DATA_URI_BYTES)
     if degraded:
@@ -229,9 +231,9 @@ def convert_video_to_dashscope(video: VideoContent) -> dict:
 
 def convert_audio_to_openai(audio: AudioContent) -> dict:
     """
-    将内部音频格式转换为 OpenAI input_audio 格式
+    Convert the internal audio format to OpenAI's input_audio format.
 
-    OpenAI 格式:
+    OpenAI format:
     {
         "type": "input_audio",
         "input_audio": {
@@ -251,9 +253,9 @@ def convert_audio_to_openai(audio: AudioContent) -> dict:
 
 def convert_audio_to_gemini(audio: AudioContent) -> dict:
     """
-    将内部音频格式转换为 Gemini 格式（通过 OpenAI 兼容层）
+    Convert the internal audio format to Gemini format (via the OpenAI compatibility layer).
 
-    使用 data URL 传递，与图片/视频一致
+    Passed as a data URL, consistent with image/video.
     """
     return {
         "type": "image_url",
@@ -265,9 +267,9 @@ def convert_audio_to_gemini(audio: AudioContent) -> dict:
 
 def convert_audio_to_dashscope(audio: AudioContent) -> dict:
     """
-    将内部音频格式转换为 DashScope (Qwen-Audio) 格式
+    Convert the internal audio format to DashScope (Qwen-Audio) format.
 
-    DashScope 使用 audio_url:
+    DashScope uses audio_url:
     {
         "type": "audio_url",
         "audio_url": {
@@ -285,9 +287,9 @@ def convert_audio_to_dashscope(audio: AudioContent) -> dict:
 
 def convert_document_to_anthropic(document: DocumentContent) -> dict:
     """
-    将内部文档格式转换为 Anthropic document 格式
+    Convert the internal document format to the Anthropic document format.
 
-    Anthropic 格式:
+    Anthropic format:
     {
         "type": "document",
         "source": {
@@ -309,9 +311,9 @@ def convert_document_to_anthropic(document: DocumentContent) -> dict:
 
 def convert_document_to_gemini(document: DocumentContent) -> dict:
     """
-    将内部文档格式转换为 Gemini 格式
+    Convert the internal document format to Gemini format.
 
-    通过 OpenAI 兼容层时使用 data URL
+    Uses a data URL when going through the OpenAI compatibility layer.
     """
     return {
         "type": "image_url",
@@ -321,9 +323,9 @@ def convert_document_to_gemini(document: DocumentContent) -> dict:
     }
 
 
-# ── 策略表：按服务商分发多模态转换器 ──
-# 每种媒体类型对应一个 provider -> converter 映射
-# 不在表中的 provider 将走降级链
+# -- Strategy tables: dispatch multimodal converters by provider --
+# Each media type has its own provider -> converter mapping.
+# Providers not in the table fall through the degradation chain.
 
 VIDEO_CONVERTERS: dict[str, object] = {
     "moonshot": convert_video_to_kimi,
@@ -344,22 +346,22 @@ DOCUMENT_CONVERTERS: dict[str, object] = {
 
 
 def _degrade_video(block: VideoBlock) -> dict:
-    """视频降级: 不支持视频的端点 → 文本描述"""
+    """Video degradation: endpoints that don't support video -> text description."""
     _converter_logger.warning("Video content degraded to text (provider not supported)")
-    return {"type": "text", "text": "[视频内容：该端点不支持视频输入，视频已被跳过]"}
+    return {"type": "text", "text": "[Video content: this endpoint does not support video input; the video has been skipped]"}
 
 
 def _degrade_audio(block: AudioBlock) -> dict:
-    """音频降级: 不支持音频的端点 → 文本描述"""
+    """Audio degradation: endpoints that don't support audio -> text description."""
     _converter_logger.warning("Audio content degraded to text (provider not supported)")
-    return {"type": "text", "text": "[音频内容：该端点不支持音频输入，已跳过]"}
+    return {"type": "text", "text": "[Audio content: this endpoint does not support audio input; skipped]"}
 
 
 def _degrade_document(block: DocumentBlock) -> dict:
-    """文档降级: 不支持文档的端点 → 文本描述"""
+    """Document degradation: endpoints that don't support documents -> text description."""
     fname = block.document.filename or "unknown"
     _converter_logger.warning(f"Document '{fname}' degraded to text (provider not supported)")
-    return {"type": "text", "text": f"[文档内容：该端点不支持文档输入。文件名: {fname}]"}
+    return {"type": "text", "text": f"[Document content: this endpoint does not support document input. Filename: {fname}]"}
 
 
 def convert_content_blocks(
@@ -367,22 +369,22 @@ def convert_content_blocks(
     provider: str = "openai",
 ) -> str | list[dict]:
     """
-    统一内容块转换器（策略表分发 + 优雅降级）
+    Unified content-block converter (strategy-table dispatch + graceful degradation).
 
-    根据 provider 从策略表中选择对应的转换器。
-    如果 provider 不在策略表中，自动走降级链。
+    Selects a converter from the strategy table based on the provider.
+    If the provider is not in the strategy table, automatically falls through the degradation chain.
 
-    降级链:
-    - 视频不支持 → 文本描述 "[视频内容：该端点不支持视频输入]"
-    - 音频不支持 → 文本描述 "[音频内容：该端点不支持音频输入]"
-    - 文档不支持 → 文本描述 "[文档内容：该端点不支持文档输入]"
+    Degradation chain:
+    - Video unsupported -> text description "[Video content: this endpoint does not support video input]"
+    - Audio unsupported -> text description "[Audio content: this endpoint does not support audio input]"
+    - Document unsupported -> text description "[Document content: this endpoint does not support document input]"
 
     Args:
-        blocks: 内容块列表
-        provider: 服务商标识
+        blocks: list of content blocks
+        provider: provider identifier
 
     Returns:
-        如果只有一个文本块，返回字符串；否则返回列表
+        A string if there is only a single text block; otherwise a list.
     """
     if len(blocks) == 1 and isinstance(blocks[0], TextBlock):
         return blocks[0].text
@@ -431,43 +433,43 @@ def convert_content_blocks(
     return result
 
 
-# 向后兼容别名
+# Backward-compatible alias
 convert_content_blocks_to_openai = convert_content_blocks
 
 
 def has_images(content: str | list[ContentBlock]) -> bool:
-    """检查内容是否包含图片"""
+    """Check whether the content contains images."""
     if isinstance(content, str):
         return False
     return any(isinstance(block, ImageBlock) for block in content)
 
 
 def has_videos(content: str | list[ContentBlock]) -> bool:
-    """检查内容是否包含视频"""
+    """Check whether the content contains videos."""
     if isinstance(content, str):
         return False
     return any(isinstance(block, VideoBlock) for block in content)
 
 
 def has_audio(content: str | list[ContentBlock]) -> bool:
-    """检查内容是否包含音频"""
+    """Check whether the content contains audio."""
     if isinstance(content, str):
         return False
     return any(isinstance(block, AudioBlock) for block in content)
 
 
 def has_documents(content: str | list[ContentBlock]) -> bool:
-    """检查内容是否包含文档"""
+    """Check whether the content contains documents."""
     if isinstance(content, str):
         return False
     return any(isinstance(block, DocumentBlock) for block in content)
 
 
 def extract_images(content: list[ContentBlock]) -> list[ImageContent]:
-    """提取所有图片内容"""
+    """Extract all image content."""
     return [block.image for block in content if isinstance(block, ImageBlock)]
 
 
 def extract_videos(content: list[ContentBlock]) -> list[VideoContent]:
-    """提取所有视频内容"""
+    """Extract all video content."""
     return [block.video for block in content if isinstance(block, VideoBlock)]

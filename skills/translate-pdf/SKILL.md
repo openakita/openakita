@@ -7,138 +7,138 @@ metadata:
   version: "1.0.0"
 ---
 
-# Translate PDF — PDF 文档翻译
+# Translate PDF — PDF Document Translation
 
 ## When to Use
 
-- 用户需要将英文 PDF 翻译为中文（或其他语言）
-- 需要保留 PDF 的原始排版、表格、图片和格式
-- 需要翻译学术论文、技术文档、商业报告
-- 需要双语对照的 PDF 输出
-- 需要批量翻译多个 PDF 文件
+- User needs to translate an English PDF to Chinese (or another language)
+- Need to preserve the PDF's original layout, tables, images, and formatting
+- Need to translate academic papers, technical documents, or business reports
+- Need bilingual PDF output
+- Need to batch translate multiple PDF files
 
 ---
 
 ## Prerequisites
 
-### 必需依赖
+### Required Dependencies
 
-| 依赖 | 用途 | 安装方式 |
-|------|------|---------|
-| Python ≥ 3.10 | 运行翻译脚本 | 系统预装 |
-| `PyMuPDF` (fitz) | PDF 解析与重建 | `pip install PyMuPDF` |
-| `httpx` | HTTP API 调用 | `pip install httpx` |
+| Dependency | Purpose | Installation |
+|------------|---------|-------------|
+| Python ≥ 3.10 | Run translation scripts | Pre-installed |
+| `PyMuPDF` (fitz) | PDF parsing and reconstruction | `pip install PyMuPDF` |
+| `httpx` | HTTP API calls | `pip install httpx` |
 
-### 可选依赖
+### Optional Dependencies
 
-| 依赖 | 用途 | 安装方式 |
-|------|------|---------|
-| `pdf2image` | PDF 转图片（OCR 场景） | `pip install pdf2image` |
-| `pytesseract` | OCR 文字识别 | `pip install pytesseract` |
-| `pdfplumber` | 表格提取 | `pip install pdfplumber` |
-| `reportlab` | PDF 生成 | `pip install reportlab` |
-| `deep-translator` | 多引擎翻译 | `pip install deep-translator` |
-| `openai` | GPT 翻译 | `pip install openai` |
+| Dependency | Purpose | Installation |
+|------------|---------|-------------|
+| `pdf2image` | PDF to image (OCR scenarios) | `pip install pdf2image` |
+| `pytesseract` | OCR text recognition | `pip install pytesseract` |
+| `pdfplumber` | Table extraction | `pip install pdfplumber` |
+| `reportlab` | PDF generation | `pip install reportlab` |
+| `deep-translator` | Multi-engine translation | `pip install deep-translator` |
+| `openai` | GPT translation | `pip install openai` |
 
-### 系统级依赖
+### System-Level Dependencies
 
-| 工具 | 用途 | 说明 |
-|------|------|------|
-| Poppler | pdf2image 的后端 | Windows: 下载 poppler-utils; macOS: `brew install poppler` |
-| Tesseract | OCR 引擎 | Windows: 下载安装包; macOS: `brew install tesseract` |
-| 中文字体 | PDF 中文渲染 | 系统需安装中文字体（微软雅黑、思源黑体等） |
+| Tool | Purpose | Description |
+|------|---------|-------------|
+| Poppler | pdf2image backend | Windows: Download poppler-utils; macOS: `brew install poppler` |
+| Tesseract | OCR engine | Windows: Download installer; macOS: `brew install tesseract` |
+| Chinese fonts | Chinese text rendering in PDF | System needs Chinese fonts installed (Microsoft YaHei, Noto Sans CJK, etc.) |
 
-### 验证安装
+### Verify Installation
 
 ```bash
 python -c "import fitz; print('PyMuPDF', fitz.version)"
 python -c "import pdfplumber; print('pdfplumber OK')"
 ```
 
-### LLM API 配置
+### LLM API Configuration
 
-翻译引擎首选 LLM（GPT-4 / Claude），在 `.env` 中配置：
+The translation engine prefers LLM (GPT-4 / Claude). Configure in `.env`:
 
 ```
 OPENAI_API_KEY=sk-xxxxx
 ```
 
-如果未配置 LLM API，将回退到 `deep-translator`（Google Translate / DeepL）。
+If no LLM API is configured, it will fall back to `deep-translator` (Google Translate / DeepL).
 
 ---
 
 ## Instructions
 
-### 支持的语言
+### Supported Languages
 
-| 语言代码 | 语言 | 翻译质量 |
-|---------|------|---------|
-| `zh-CN` | 简体中文 | ★★★★★ |
-| `zh-TW` | 繁体中文 | ★★★★★ |
-| `en` | 英文 | ★★★★★ |
-| `ja` | 日文 | ★★★★ |
-| `ko` | 韩文 | ★★★★ |
-| `fr` | 法文 | ★★★★ |
-| `de` | 德文 | ★★★★ |
-| `es` | 西班牙文 | ★★★★ |
-| `ru` | 俄文 | ★★★ |
-| `ar` | 阿拉伯文 | ★★★ |
+| Language Code | Language | Translation Quality |
+|--------------|----------|--------------------|
+| `zh-CN` | Simplified Chinese | ★★★★★ |
+| `zh-TW` | Traditional Chinese | ★★★★★ |
+| `en` | English | ★★★★★ |
+| `ja` | Japanese | ★★★★ |
+| `ko` | Korean | ★★★★ |
+| `fr` | French | ★★★★ |
+| `de` | German | ★★★★ |
+| `es` | Spanish | ★★★★ |
+| `ru` | Russian | ★★★ |
+| `ar` | Arabic | ★★★ |
 
-### 翻译引擎优先级
+### Translation Engine Priority
 
-| 优先级 | 引擎 | 特点 |
-|--------|------|------|
-| 1 | LLM (GPT-4/Claude) | 最高质量，理解上下文，术语一致 |
-| 2 | DeepL API | 高质量机器翻译 |
-| 3 | Google Translate | 免费，覆盖语种广 |
+| Priority | Engine | Characteristics |
+|----------|--------|----------------|
+| 1 | LLM (GPT-4/Claude) | Highest quality, understands context, consistent terminology |
+| 2 | DeepL API | High-quality machine translation |
+| 3 | Google Translate | Free, wide language coverage |
 
-Agent 按照优先级自动选择可用的翻译引擎。用户可以指定使用特定引擎。
+The agent automatically selects the available translation engine by priority. Users can specify a particular engine.
 
-### PDF 元素处理策略
+### PDF Element Processing Strategy
 
-| 元素 | 处理方式 |
-|------|---------|
-| 正文文本 | 翻译并保留字体大小、颜色、粗体/斜体 |
-| 标题 | 翻译并保留层级和样式 |
-| 表格 | 翻译单元格内容，保留表格结构 |
-| 图片 | 保留原图不动 |
-| 图片中的文字 | 可选 OCR 识别后翻译 |
-| 页眉/页脚 | 翻译并保持位置 |
-| 页码 | 保持不变 |
-| 脚注/尾注 | 翻译内容，保留编号 |
-| 目录 | 翻译条目，页码不变 |
-| 书签 | 翻译标题 |
-| 链接/URL | 保持不变 |
-| 数学公式 | 保持不变 |
-| 代码块 | 保持不变（仅翻译注释） |
-| 水印 | 保留原样 |
+| Element | Processing Method |
+|---------|-------------------|
+| Body text | Translate while preserving font size, color, bold/italic |
+| Headings | Translate while preserving hierarchy and style |
+| Tables | Translate cell content, preserve table structure |
+| Images | Keep images unchanged |
+| Text within images | Optional OCR recognition then translation |
+| Headers/footers | Translate and maintain position |
+| Page numbers | Keep unchanged |
+| Footnotes/endnotes | Translate content, preserve numbering |
+| Table of contents | Translate entries, keep page numbers |
+| Bookmarks | Translate titles |
+| Links/URLs | Keep unchanged |
+| Math formulas | Keep unchanged |
+| Code blocks | Keep unchanged (only translate comments) |
+| Watermarks | Keep as-is |
 
 ---
 
 ## Workflows
 
-### Workflow 1: 标准 PDF 翻译
+### Workflow 1: Standard PDF Translation
 
-**步骤 1 — 解析 PDF 结构**
+**Step 1 — Parse PDF Structure**
 
 ```python
 import fitz
 
 doc = fitz.open("input.pdf")
-print(f"总页数: {doc.page_count}")
-print(f"元数据: {doc.metadata}")
+print(f"Total pages: {doc.page_count}")
+print(f"Metadata: {doc.metadata}")
 
 for page_num in range(min(3, doc.page_count)):
     page = doc[page_num]
     text = page.get_text("dict")
-    print(f"第 {page_num + 1} 页: {len(text['blocks'])} 个文本块")
+    print(f"Page {page_num + 1}: {len(text['blocks'])} text blocks")
 ```
 
-**步骤 2 — 逐页提取文本块**
+**Step 2 — Extract Text Blocks Page by Page**
 
 ```python
 def extract_text_blocks(page):
-    """提取页面中所有文本块及其位置和样式"""
+    """Extract all text blocks from the page along with their positions and styles"""
     blocks = []
     text_dict = page.get_text("dict")
 
@@ -157,9 +157,9 @@ def extract_text_blocks(page):
     return blocks
 ```
 
-**步骤 3 — 批量翻译**
+**Step 3 — Batch Translation**
 
-将提取的文本按段落分组，批量发送给翻译引擎：
+Group extracted text into paragraphs and send batches to the translation engine:
 
 ```python
 async def translate_blocks(blocks, target_lang="zh-CN"):
@@ -174,29 +174,29 @@ async def translate_blocks(blocks, target_lang="zh-CN"):
     return translated
 ```
 
-**LLM 翻译 Prompt**
+**LLM Translation Prompt**
 
 ```
-你是一位专业的文档翻译师。请将以下文本从{source_lang}翻译为{target_lang}。
+You are a professional document translator. Please translate the following text from {source_lang} to {target_lang}.
 
-要求：
-1. 保持专业术语的准确性和一致性
-2. 保持段落结构不变
-3. 对于技术术语，首次出现时附上原文：如"卷积神经网络（CNN）"
-4. 不翻译代码、公式、URL、人名（除非有通用中文译名）
-5. 保持原文的语气和风格
+Requirements:
+1. Maintain accuracy and consistency of technical terminology
+2. Preserve paragraph structure
+3. For technical terms, include the original term on first occurrence, e.g., "Convolutional Neural Network (CNN)"
+4. Do not translate code, formulas, URLs, or personal names (unless a common Chinese translation exists)
+5. Preserve the tone and style of the original
 
-待翻译文本：
+Text to translate:
 ---
 {text}
 ---
 ```
 
-**步骤 4 — 重建 PDF**
+**Step 4 — Rebuild PDF**
 
 ```python
 def rebuild_pdf(original_doc, translated_blocks, output_path):
-    """用翻译后的文本替换原文，保留排版"""
+    """Replace original text with translated text, preserving layout"""
     new_doc = fitz.open()
 
     for page_num in range(original_doc.page_count):
@@ -206,10 +206,10 @@ def rebuild_pdf(original_doc, translated_blocks, output_path):
             height=orig_page.rect.height
         )
 
-        # 复制图片和非文本元素
+        # Copy images and non-text elements
         new_page.show_pdf_page(new_page.rect, original_doc, page_num)
 
-        # 覆盖原文区域并写入译文
+        # Cover original text areas and write translations
         for block in translated_blocks[page_num]:
             rect = fitz.Rect(block["bbox"])
             new_page.draw_rect(rect, color=None, fill=(1, 1, 1))
@@ -224,27 +224,27 @@ def rebuild_pdf(original_doc, translated_blocks, output_path):
     new_doc.save(output_path)
 ```
 
-**步骤 5 — 质量检查**
+**Step 5 — Quality Check**
 
-翻译完成后执行自动检查：
-- 页数与原文一致
-- 无空白页面
-- 翻译覆盖率（已翻译文本 / 总文本 ≥ 95%）
-- 字体渲染正常
+After translation completes, automatically check:
+- Page count matches the original
+- No blank pages
+- Translation coverage (translated text / total text ≥ 95%)
+- Font rendering is correct
 
 ---
 
-### Workflow 2: 双语对照 PDF
+### Workflow 2: Bilingual PDF
 
-生成左右/上下对照的双语 PDF：
+Generate side-by-side or top/bottom bilingual PDF:
 
-**布局选项**
+**Layout Options**
 
-| 布局 | 说明 | 适用场景 |
-|------|------|---------|
-| 左右对照 | 左页原文、右页译文 | 学术论文、对比审阅 |
-| 上下对照 | 段落级交替显示 | 学习材料 |
-| 注释模式 | 译文作为侧边注释 | 保留原文为主 |
+| Layout | Description | Use Case |
+|--------|-------------|----------|
+| Side-by-side | Left page original, right page translation | Academic papers, comparison review |
+| Top/bottom | Paragraph-level alternating display | Learning materials |
+| Annotation mode | Translation as side annotations | Preserve original as primary |
 
 ```python
 def create_bilingual_pdf(original_doc, translated_blocks, output_path, layout="side-by-side"):
@@ -259,12 +259,12 @@ def create_bilingual_pdf(original_doc, translated_blocks, output_path, layout="s
                 width=new_width,
                 height=orig_page.rect.height
             )
-            # 左侧放原文
+            # Original on the left
             new_page.show_pdf_page(
                 fitz.Rect(0, 0, orig_page.rect.width, orig_page.rect.height),
                 original_doc, page_num
             )
-            # 右侧放译文
+            # Translation on the right
             insert_translated_page(
                 new_page,
                 translated_blocks[page_num],
@@ -276,15 +276,15 @@ def create_bilingual_pdf(original_doc, translated_blocks, output_path, layout="s
 
 ---
 
-### Workflow 3: 扫描版 PDF 翻译（OCR）
+### Workflow 3: Scanned PDF Translation (OCR)
 
-处理扫描件或图片型 PDF：
+Process scanned or image-based PDFs:
 
-**步骤 1 — 检测 PDF 类型**
+**Step 1 — Detect PDF Type**
 
 ```python
 def is_scanned_pdf(doc):
-    """检测 PDF 是否为扫描件"""
+    """Detect whether the PDF is a scan"""
     for page_num in range(min(3, doc.page_count)):
         page = doc[page_num]
         text = page.get_text().strip()
@@ -294,7 +294,7 @@ def is_scanned_pdf(doc):
     return False
 ```
 
-**步骤 2 — OCR 识别**
+**Step 2 — OCR Recognition**
 
 ```python
 from pdf2image import convert_from_path
@@ -303,15 +303,15 @@ import pytesseract
 images = convert_from_path("scanned.pdf", dpi=300)
 for i, img in enumerate(images):
     text = pytesseract.image_to_string(img, lang='eng')
-    # 使用 image_to_data 获取文字位置信息
+    # Use image_to_data to get text position information
     data = pytesseract.image_to_data(img, lang='eng', output_type=pytesseract.Output.DICT)
 ```
 
-**步骤 3** — 对 OCR 结果执行 Workflow 1 的翻译和重建流程
+**Step 3** — Apply Workflow 1 translation and rebuild process to OCR results
 
 ---
 
-### Workflow 4: 批量 PDF 翻译
+### Workflow 4: Batch PDF Translation
 
 ```python
 import glob
@@ -319,14 +319,14 @@ import asyncio
 
 async def batch_translate_pdfs(input_dir, output_dir, target_lang="zh-CN"):
     pdf_files = glob.glob(f"{input_dir}/*.pdf")
-    print(f"发现 {len(pdf_files)} 个 PDF 文件")
+    print(f"Found {len(pdf_files)} PDF files")
 
     for pdf_path in pdf_files:
         output_path = os.path.join(
             output_dir,
             os.path.basename(pdf_path).replace('.pdf', f'_{target_lang}.pdf')
         )
-        print(f"翻译: {pdf_path} -> {output_path}")
+        print(f"Translating: {pdf_path} -> {output_path}")
         await translate_single_pdf(pdf_path, output_path, target_lang)
 ```
 
@@ -334,141 +334,141 @@ async def batch_translate_pdfs(input_dir, output_dir, target_lang="zh-CN"):
 
 ## Output Format
 
-### 文件命名
+### File Naming
 
 ```
-{原文件名}_{目标语言}.pdf
+{original_filename}_{target_language}.pdf
 ```
 
-示例：
-- `research_paper_zh-CN.pdf`（翻译版）
-- `research_paper_bilingual.pdf`（双语版）
+Examples:
+- `research_paper_zh-CN.pdf` (translated version)
+- `research_paper_bilingual.pdf` (bilingual version)
 
-### 输出报告
+### Output Report
 
 ```
-📄 PDF 翻译完成
-- 原文件：research_paper.pdf (25 页)
-- 译文件：research_paper_zh-CN.pdf (25 页)
-- 源语言：English → 目标语言：简体中文
-- 翻译引擎：GPT-4
-- 翻译覆盖率：98.5%
-- 表格数量：12 个（已翻译）
-- 图片数量：8 张（已保留）
-- 耗时：3 分 42 秒
-- 费用估算：$0.85
+📄 PDF Translation Complete
+- Original file: research_paper.pdf (25 pages)
+- Translated file: research_paper_zh-CN.pdf (25 pages)
+- Source language: English → Target language: Simplified Chinese
+- Translation engine: GPT-4
+- Translation coverage: 98.5%
+- Tables: 12 (translated)
+- Images: 8 (preserved)
+- Time taken: 3 min 42 sec
+- Estimated cost: $0.85
 ```
 
 ---
 
 ## Common Pitfalls
 
-### 1. 中文字体缺失导致乱码
+### 1. Garbled Text Due to Missing Chinese Fonts
 
-**症状**：翻译后的 PDF 中文显示为方框或乱码
-**解决**：确保系统安装了中文字体，并在 PyMuPDF 中注册：
+**Symptom**: Chinese text displays as boxes or garbled characters in the translated PDF
+**Solution**: Ensure Chinese fonts are installed on the system and registered in PyMuPDF:
 
 ```python
 import fitz
 
-# PyMuPDF 支持的中文字体
-# "china-ss" = 思源宋体 (简体)
-# "china-ts" = 思源宋体 (繁体)
-# 或使用自定义字体
+# Chinese fonts supported by PyMuPDF
+# "china-ss" = Source Han Sans (Simplified)
+# "china-ts" = Source Han Sans (Traditional)
+# Or use custom fonts
 page.insert_font(fontname="custom-zh", fontfile="/path/to/NotoSansCJK-Regular.ttf")
 ```
 
-### 2. 表格翻译后错位
+### 2. Misaligned Tables After Translation
 
-**症状**：表格内容溢出单元格
-**原因**：中文译文通常比英文短，但某些情况下可能更长
-**解决**：
-- 动态调整字体大小以适应单元格
-- 允许文本自动换行
-- 对于复杂表格，使用 pdfplumber 提取后单独翻译
+**Symptom**: Table content overflows cells
+**Cause**: Chinese translations are typically shorter than English, but can sometimes be longer
+**Solution**:
+- Dynamically adjust font size to fit cells
+- Allow automatic text wrapping
+- For complex tables, use pdfplumber to extract and translate separately
 
-### 3. 数学公式被错误翻译
+### 3. Math Formulas Incorrectly Translated
 
-**症状**：公式被当作文本翻译
-**解决**：在翻译前识别并标记数学公式区域，跳过翻译：
+**Symptom**: Formulas are treated as regular text and translated
+**Solution**: Identify and mark math formula regions before translation, skip them:
 
 ```python
 import re
 
 def should_skip_translation(text):
-    """判断文本是否应跳过翻译"""
-    # 数学公式模式
+    """Determine if text should be skipped during translation"""
+    # Math formula pattern
     if re.match(r'^[\s\d\+\-\*\/\=\(\)\[\]\{\}\^\_\\\$]+$', text):
         return True
-    # LaTeX 公式
+    # LaTeX formulas
     if text.strip().startswith('\\') and not text.strip().startswith('\\text'):
         return True
-    # 代码块
+    # Code blocks
     if re.match(r'^(def |class |import |from |const |let |var |function )', text.strip()):
         return True
     return False
 ```
 
-### 4. 大文件内存溢出
+### 4. Memory Overflow with Large Files
 
-**症状**：处理超过 100 页的大型 PDF 时内存不足
-**解决**：逐页处理而非一次性加载：
+**Symptom**: Out of memory when processing large PDFs with 100+ pages
+**Solution**: Process page by page instead of loading everything at once:
 
 ```python
 for page_num in range(doc.page_count):
     page = doc[page_num]
-    # 处理当前页
+    # Process current page
     process_page(page)
-    # 释放内存
+    # Free memory
     page = None
 ```
 
-### 5. OCR 识别率低
+### 5. Low OCR Accuracy
 
-**症状**：扫描版 PDF 的文字识别错误多
-**解决**：
-- 提高扫描 DPI（≥ 300）
-- 预处理图片（二值化、去噪、倾斜校正）
-- 使用语言包：`pytesseract.image_to_string(img, lang='eng+chi_sim')`
+**Symptom**: High error rate in text recognition from scanned PDFs
+**Solution**:
+- Increase scan DPI (≥ 300)
+- Preprocess images (binarization, noise removal, skew correction)
+- Use language packs: `pytesseract.image_to_string(img, lang='eng+chi_sim')`
 
-### 6. 翻译术语不一致
+### 6. Inconsistent Terminology in Translation
 
-**症状**：同一术语在不同页面有不同翻译
-**解决**：
-- 第一遍扫描时建立术语表
-- 将术语表作为上下文传递给 LLM
-- 翻译后用脚本检查术语一致性
+**Symptom**: Same term translated differently across pages
+**Solution**:
+- Build a glossary during the first pass scan
+- Pass the glossary as context to the LLM
+- Check terminology consistency with a script after translation
 
 ```python
 glossary = {
-    "machine learning": "机器学习",
-    "neural network": "神经网络",
-    "gradient descent": "梯度下降",
-    "backpropagation": "反向传播",
+    "machine learning": "machine learning",
+    "neural network": "neural network",
+    "gradient descent": "gradient descent",
+    "backpropagation": "backpropagation",
 }
 ```
 
-### 7. 页眉页脚重复翻译
+### 7. Repeated Translation of Headers and Footers
 
-**症状**：每页的页眉页脚翻译结果微有差异
-**解决**：先识别页眉页脚模式，统一翻译一次后应用到所有页面
+**Symptom**: Header and footer translations vary slightly on each page
+**Solution**: Identify header/footer patterns first, translate once uniformly, then apply to all pages
 
 ---
 
-## 高级配置
+## Advanced Configuration
 
-### 翻译质量等级
+### Translation Quality Levels
 
-| 等级 | 方式 | 速度 | 质量 | 费用 |
-|------|------|------|------|------|
-| 快速 | Google Translate | ★★★★★ | ★★★ | 免费 |
-| 标准 | DeepL | ★★★★ | ★★★★ | $$ |
-| 专业 | GPT-4 | ★★★ | ★★★★★ | $$$ |
-| 人机协作 | GPT-4 + 人工审校 | ★★ | ★★★★★+ | $$$$ |
+| Level | Method | Speed | Quality | Cost |
+|-------|--------|-------|---------|------|
+| Quick | Google Translate | ★★★★★ | ★★★ | Free |
+| Standard | DeepL | ★★★★ | ★★★★ | $$ |
+| Professional | GPT-4 | ★★★ | ★★★★★ | $$$ |
+| Human-in-the-Loop | GPT-4 + human review | ★★ | ★★★★★+ | $$$$ |
 
-### 自定义术语表
+### Custom Glossary
 
-用户可提供术语表文件（CSV/JSON）确保特定术语的翻译一致：
+Users can provide a glossary file (CSV/JSON) to ensure consistent translation of specific terms:
 
 ```json
 {
@@ -476,20 +476,20 @@ glossary = {
   "target_lang": "zh-CN",
   "terms": {
     "OpenAkita": "OpenAkita",
-    "Agent": "智能体",
-    "fine-tuning": "微调",
-    "prompt engineering": "提示词工程"
+    "Agent": "Agent",
+    "fine-tuning": "fine-tuning",
+    "prompt engineering": "prompt engineering"
   }
 }
 ```
 
 ---
 
-## EXTEND.md 扩展
+## EXTEND.md Extension
 
-用户可在技能同目录下创建 `EXTEND.md` 添加：
-- 行业专用术语表
-- 首选翻译引擎和质量等级
-- 自定义字体路径
-- PDF 模板和样式覆盖规则
-- 特定文档类型的预处理规则
+Users can create `EXTEND.md` in the same directory as the skill to add:
+- Industry-specific glossaries
+- Preferred translation engine and quality level
+- Custom font paths
+- PDF template and style override rules
+- Preprocessing rules for specific document types

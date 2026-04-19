@@ -30,7 +30,7 @@ class IntentType(Enum):
 
 @dataclass
 class ComplexitySignal:
-    """复杂任务信号，用于判断是否建议切换到 Plan 模式"""
+    """Complexity signal used to decide whether to suggest switching to Plan mode."""
 
     multi_file_change: bool = False
     cross_module: bool = False
@@ -86,52 +86,52 @@ _DEFAULT_RESULT = IntentResult(
 )
 
 INTENT_ANALYZER_SYSTEM = """\
-你是 Intent Analyzer。根据用户消息判断意图和复杂度，只输出 YAML，不要解释。
+You are the Intent Analyzer. Based on the user's message, determine the intent and complexity. Output YAML only, no explanations.
 
-意图类型：
-- task: 需要执行操作（写文件、搜索、查看目录、创建、发送消息、运行命令等）
-- query: 知识问答，不需要工具就能回答
-- chat: 纯闲聊、寒暄、感谢、告别
-- follow_up: 追问或修改上一轮结果
-- command: 以 / 开头的系统指令
+Intent types:
+- task: requires performing an operation (write file, search, list directory, create, send message, run command, etc.)
+- query: knowledge question that can be answered without tools
+- chat: pure small talk, greetings, thanks, farewells
+- follow_up: follow-up question or modification of the previous result
+- command: system instruction starting with /
 
-task_type 可选值: question/action/creation/analysis/reminder/compound/other
+task_type options: question/action/creation/analysis/reminder/compound/other
 
-tool_hints 可选值: File System, Browser, Web Search, IM Channel, Desktop, Agent, Organization, Config（空列表=仅基础工具）
+tool_hints options: File System, Browser, Web Search, IM Channel, Desktop, Agent, Organization, Config (empty list = only basic tools)
 
-complexity 字段说明（仅 intent=task 时需要填写，其他意图可省略）：
-- destructive: 操作是否不可逆或影响系统关键资源。true 的典型场景：删除文件/数据、格式化磁盘、DROP TABLE、force push、修改系统配置文件（如 hosts）、终止进程、覆盖重要数据等
-- scope: narrow=仅影响单个文件或局部区域，broad=影响多文件/多模块/全局/整个项目
-- suggest_plan: 是否建议先制定计划再执行。当 destructive=true 或 scope=broad 时通常为 true
+complexity fields (only fill in when intent=task; may be omitted for other intents):
+- destructive: whether the operation is irreversible or affects critical system resources. Typical true cases: deleting files/data, formatting disks, DROP TABLE, force push, modifying system config files (e.g. hosts), killing processes, overwriting important data, etc.
+- scope: narrow=affects only a single file or local area; broad=affects multiple files/modules/globally/the whole project
+- suggest_plan: whether to suggest planning before execution. Usually true when destructive=true or scope=broad
 
-输出格式（严格遵循）：
+Output format (strictly follow):
 ```yaml
-intent: <类型>
-task_type: <类型>
-goal: <一句话描述>
-tool_hints: [<工具分类>]
-memory_keywords: [<记忆关键词>]
+intent: <type>
+task_type: <type>
+goal: <one-sentence description>
+tool_hints: [<tool category>]
+memory_keywords: [<memory keywords>]
 destructive: <true/false>
 scope: <narrow/broad>
 suggest_plan: <true/false>
 ```
 
-示例：
-用户: "帮我查看项目里有哪些Python文件" → intent: task, task_type: action, goal: 列出项目中的Python文件, tool_hints: [File System], destructive: false, scope: narrow, suggest_plan: false
-用户: "帮我把所有 .bak 文件删掉" → intent: task, task_type: action, goal: 删除所有.bak文件, tool_hints: [File System], destructive: true, scope: broad, suggest_plan: true
-用户: "帮我修改 /etc/hosts" → intent: task, task_type: action, goal: 修改hosts文件, tool_hints: [File System], destructive: true, scope: narrow, suggest_plan: true
-用户: "git push --force origin main" → intent: task, task_type: action, goal: 强制推送到main分支, tool_hints: [File System], destructive: true, scope: broad, suggest_plan: true
-用户: "Python的GIL是什么" → intent: query, task_type: question, goal: 解释Python GIL机制, tool_hints: []
-用户: "你好" → intent: chat, task_type: other, goal: 用户打招呼, tool_hints: []
-用户: "改成UTF-8编码" → intent: follow_up, task_type: action, goal: 修改编码为UTF-8, tool_hints: [File System], destructive: false, scope: narrow, suggest_plan: false
+Examples:
+User: "Show me which Python files are in the project" -> intent: task, task_type: action, goal: list Python files in the project, tool_hints: [File System], destructive: false, scope: narrow, suggest_plan: false
+User: "Delete all .bak files for me" -> intent: task, task_type: action, goal: delete all .bak files, tool_hints: [File System], destructive: true, scope: broad, suggest_plan: true
+User: "Modify /etc/hosts for me" -> intent: task, task_type: action, goal: modify the hosts file, tool_hints: [File System], destructive: true, scope: narrow, suggest_plan: true
+User: "git push --force origin main" -> intent: task, task_type: action, goal: force push to main branch, tool_hints: [File System], destructive: true, scope: broad, suggest_plan: true
+User: "What is Python's GIL" -> intent: query, task_type: question, goal: explain Python GIL mechanism, tool_hints: []
+User: "Hello" -> intent: chat, task_type: other, goal: user greeting, tool_hints: []
+User: "Change it to UTF-8 encoding" -> intent: follow_up, task_type: action, goal: change encoding to UTF-8, tool_hints: [File System], destructive: false, scope: narrow, suggest_plan: false
 
-关键判断原则：
-- 数学计算、日期时间、概念解释、常识问答 → 一律是 query，不是 task
-- 只有需要**实际操作外部系统**（读写文件、执行命令、搜索网络、发送消息）的请求才是 task
-- 不确定时，如果不需要工具就能回答，选 query
-- destructive 判断要基于语义分析，理解操作的实际后果，而不是简单匹配关键词
+Key principles:
+- Math calculations, date/time, concept explanations, general-knowledge questions -> always query, not task
+- Only requests that require **actually operating on external systems** (read/write files, run commands, search the web, send messages) are task
+- When unsure, if it can be answered without tools, choose query
+- The destructive judgment should be based on semantic analysis of the operation's real consequences, not simple keyword matching
 
-重要：你必须分析用户的实际消息内容来判断意图，不要复制上面的示例。"""
+Important: you must analyze the user's actual message content to judge intent; do not copy the examples above."""
 
 
 def _strip_thinking_tags(text: str) -> str:

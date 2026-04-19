@@ -1,15 +1,15 @@
 """
-Todo & Plan 工具定义
+Todo & Plan tool definitions
 
-Todo 工具（Agent 模式下的任务执行跟踪）：
-- create_todo: 创建任务执行计划
-- update_todo_step: 更新步骤状态
-- get_todo_status: 获取计划执行状态
-- complete_todo: 完成计划
+Todo tools (task execution tracking in Agent mode):
+- create_todo: Create task execution plan
+- update_todo_step: Update step status
+- get_todo_status: Get plan execution status
+- complete_todo: Complete plan
 
-Plan 模式工具：
-- create_plan_file: 创建结构化 Plan 文件
-- exit_plan_mode: 退出 Plan 模式
+Plan mode tools:
+- create_plan_file: Create structured Plan file
+- exit_plan_mode: Exit Plan mode
 """
 
 PLAN_TOOLS = [
@@ -31,60 +31,60 @@ PLAN_TOOLS = [
             "IMPORTANT: Mark steps complete IMMEDIATELY after finishing each one. "
             "Only ONE step should be in_progress at a time."
         ),
-        "detail": """创建任务执行计划。
+        "detail": """Create a task execution plan.
 
-**何时使用**：
-- 任务需要超过 2 步完成时
-- 用户请求中有"然后"、"接着"、"之后"等词
-- 涉及多个工具协作
+**When to use**:
+- Task requires more than 2 steps
+- User request contains words like "then", "next", "after", etc.
+- Involves multiple tool collaboration
 
-**使用流程**：
-1. create_todo → 2. 执行步骤 → 3. update_todo_step → 4. ... → 5. complete_todo
+**Usage flow**:
+1. create_todo → 2. Execute steps → 3. update_todo_step → 4. ... → 5. complete_todo
 
-**步骤字段说明**：
-- `id` + `description`: 必填
-- `tool`: 可选，预计使用的工具名
-- `skills`: 可选，关联的技能名称列表（用于追踪）
-- `depends_on`: 可选，前置依赖步骤
+**Step field descriptions**:
+- `id` + `description`: Required
+- `tool`: Optional, expected tool name
+- `skills`: Optional, list of related skill names (for tracking)
+- `depends_on`: Optional, prerequisite steps
 
-**示例**：
-用户："打开百度搜索天气并截图发我"
-→ create_todo(steps=[打开百度, 输入关键词, 点击搜索, 截图, 发送])""",
+**Example**:
+User: "Open Baidu, search weather, take a screenshot and send it to me"
+→ create_todo(steps=[Open Baidu, Enter keywords, Click search, Take screenshot, Send])""",
         "input_schema": {
             "type": "object",
             "properties": {
-                "task_summary": {"type": "string", "description": "任务的一句话总结"},
+                "task_summary": {"type": "string", "description": "One-line summary of the task"},
                 "steps": {
                     "type": "array",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "id": {"type": "string", "description": "步骤ID，如 step_1, step_2"},
-                            "description": {"type": "string", "description": "步骤描述"},
-                            "tool": {"type": "string", "description": "预计使用的工具（可选）"},
+                            "id": {"type": "string", "description": "Step ID, e.g., step_1, step_2"},
+                            "description": {"type": "string", "description": "Step description"},
+                            "tool": {"type": "string", "description": "Expected tool to use (optional)"},
                             "skills": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "本步骤关联的 skill 名称列表（可选，用于追踪）",
+                                "description": "List of skill names associated with this step (optional, for tracking)",
                             },
                             "depends_on": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "依赖的步骤ID（可选）",
+                                "description": "Dependent step IDs (optional)",
                             },
                             "blocks": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "此步骤完成后才能开始的步骤ID列表（可选）",
+                                "description": "List of step IDs that can only start after this step completes (optional)",
                             },
                             "owner": {
                                 "type": "string",
-                                "description": "负责执行此步骤的 agent ID（可选，多代理协作时使用）",
+                                "description": "Agent ID responsible for executing this step (optional, for multi-agent collaboration)",
                             },
                         },
                         "required": ["id", "description"],
                     },
-                    "description": "步骤列表",
+                    "description": "List of steps",
                 },
             },
             "required": ["task_summary", "steps"],
@@ -94,30 +94,30 @@ PLAN_TOOLS = [
         "name": "update_todo_step",
         "category": "Todo",
         "description": "Update the status of a todo step. MUST call after completing each step to track progress.",
-        "detail": """更新计划中某个步骤的状态。
+        "detail": """Update the status of a step in the plan.
 
-**每完成一步必须调用此工具！**
+**Must call this tool after completing each step!**
 
-**状态值**：
-- pending: 待执行
-- in_progress: 执行中
-- completed: 已完成
-- failed: 执行失败
-- skipped: 已跳过
+**Status values**:
+- pending: Waiting to execute
+- in_progress: Executing
+- completed: Completed
+- failed: Execution failed
+- skipped: Skipped
 
-**示例**：
-执行完 browser_navigate 后：
-→ update_todo_step(step_id="step_1", status="completed", result="已打开百度首页")""",
+**Example**:
+After completing browser_navigate:
+→ update_todo_step(step_id="step_1", status="completed", result="Opened Baidu homepage")""",
         "input_schema": {
             "type": "object",
             "properties": {
-                "step_id": {"type": "string", "description": "步骤ID"},
+                "step_id": {"type": "string", "description": "Step ID"},
                 "status": {
                     "type": "string",
                     "enum": ["pending", "in_progress", "completed", "failed", "skipped"],
-                    "description": "步骤状态",
+                    "description": "Step status",
                 },
-                "result": {"type": "string", "description": "执行结果或错误信息"},
+                "result": {"type": "string", "description": "Execution result or error message"},
             },
             "required": ["step_id", "status"],
         },
@@ -126,30 +126,30 @@ PLAN_TOOLS = [
         "name": "get_todo_status",
         "category": "Todo",
         "description": "Get the current todo execution status. Shows all steps and their completion status.",
-        "detail": """获取当前计划的执行状态。
+        "detail": """Get the current plan's execution status.
 
-返回信息包括：
-- 计划总览
-- 各步骤状态
-- 已完成/待执行数量
-- 执行日志""",
+Returns information including:
+- Plan overview
+- Each step's status
+- Completed/pending count
+- Execution log""",
         "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "complete_todo",
         "category": "Todo",
         "description": "Mark the todo as completed and generate a summary report. Call when ALL steps are done.",
-        "detail": """标记计划完成，生成最终报告。
+        "detail": """Mark the plan as completed and generate a final report.
 
-**在所有步骤完成后调用**
+**Call after all steps are completed**
 
-**返回**：
-- 执行摘要
-- 成功/失败统计
-- 总耗时""",
+**Returns**:
+- Execution summary
+- Success/failure statistics
+- Total time elapsed""",
         "input_schema": {
             "type": "object",
-            "properties": {"summary": {"type": "string", "description": "完成总结"}},
+            "properties": {"summary": {"type": "string", "description": "Completion summary"}},
             "required": ["summary"],
         },
     },
@@ -164,49 +164,49 @@ PLAN_TOOLS = [
             "The plan name should only be specified on the first call. On subsequent updates "
             "via edit_file, the filename stays stable."
         ),
-        "detail": """创建结构化 Plan 文件（YAML frontmatter + Markdown body）。
+        "detail": """Create a structured Plan file (YAML frontmatter + Markdown body).
 
-**用于 Plan 模式**：生成一个用户可审阅的计划文件。
+**For Plan mode**: Generate a plan file that users can review.
 
-**文件格式**：
+**File format**:
 ```yaml
 ---
 name: Plan Name
-overview: 简要描述
+overview: Brief description
 todos:
   - id: step_1
-    content: "步骤描述"
+    content: "Step description"
     status: pending
 isProject: true
 ---
 ```
 
-后面跟详细的 Markdown 内容（方案分析、文件列表、风险评估等）。""",
+Followed by detailed Markdown content (solution analysis, file lists, risk assessment, etc).""",
         "input_schema": {
             "type": "object",
             "properties": {
-                "name": {"type": "string", "description": "计划名称"},
-                "overview": {"type": "string", "description": "计划概要（1-2 句话）"},
+                "name": {"type": "string", "description": "Plan name"},
+                "overview": {"type": "string", "description": "Plan summary (1-2 sentences)"},
                 "todos": {
                     "type": "array",
                     "items": {
                         "type": "object",
                         "properties": {
-                            "id": {"type": "string", "description": "步骤 ID"},
-                            "content": {"type": "string", "description": "步骤描述"},
+                            "id": {"type": "string", "description": "Step ID"},
+                            "content": {"type": "string", "description": "Step description"},
                             "status": {
                                 "type": "string",
                                 "enum": ["pending", "in_progress", "completed"],
-                                "description": "初始状态（通常为 pending）",
+                                "description": "Initial status (usually pending)",
                             },
                         },
                         "required": ["id", "content"],
                     },
-                    "description": "步骤列表",
+                    "description": "List of steps",
                 },
                 "body": {
                     "type": "string",
-                    "description": "Markdown 格式的详细计划内容（方案分析、文件列表、风险评估等）",
+                    "description": "Detailed plan content in Markdown (solution analysis, file lists, risk assessment, etc.)",
                 },
             },
             "required": ["name", "todos"],
@@ -216,20 +216,20 @@ isProject: true
         "name": "exit_plan_mode",
         "category": "Plan",
         "description": "Signal that planning is complete. Triggers the approval UI for the user to review and approve the plan before execution.",
-        "detail": """退出 Plan 模式，通知系统规划已完成。
+        "detail": """Exit Plan mode and notify the system that planning is complete.
 
-**在完成 create_plan_file 后调用此工具**。
+**Call this after completing create_plan_file**.
 
-调用后系统会：
-1. 通知前端展示 Plan 审批界面
-2. 等待用户审批
-3. 用户批准后自动切换到 Agent 模式执行""",
+After calling, the system will:
+1. Notify the frontend to display the Plan approval UI
+2. Wait for user approval
+3. Automatically switch to Agent mode for execution after approval""",
         "input_schema": {
             "type": "object",
             "properties": {
                 "summary": {
                     "type": "string",
-                    "description": "规划完成的简要说明",
+                    "description": "Brief description of the completed plan",
                 },
             },
         },

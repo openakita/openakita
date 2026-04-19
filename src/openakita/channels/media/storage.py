@@ -1,10 +1,10 @@
 """
-媒体存储
+Media Storage
 
-管理媒体文件的存储和缓存:
-- 本地文件存储
-- 文件清理
-- 缓存管理
+Manages storage and caching of media files:
+- Local file storage
+- File cleanup
+- Cache management
 """
 
 import hashlib
@@ -20,12 +20,12 @@ logger = logging.getLogger(__name__)
 
 class MediaStorage:
     """
-    媒体存储管理
+    Media storage manager
 
-    功能:
-    - 按通道组织存储
-    - 自动清理过期文件
-    - 文件去重（基于 hash）
+    Features:
+    - Organize storage by channel
+    - Automatic cleanup of expired files
+    - File deduplication (hash-based)
     """
 
     def __init__(
@@ -36,9 +36,9 @@ class MediaStorage:
     ):
         """
         Args:
-            base_path: 存储根目录
-            max_age_days: 文件最大保留天数
-            max_size_mb: 最大存储空间（MB）
+            base_path: Storage root directory
+            max_age_days: Maximum days to retain files
+            max_size_mb: Maximum storage space in MB
         """
         self.base_path = Path(base_path) if base_path else Path("data/media")
         self.base_path.mkdir(parents=True, exist_ok=True)
@@ -46,14 +46,14 @@ class MediaStorage:
         self.max_age_days = max_age_days
         self.max_size_mb = max_size_mb
 
-        # 索引文件
+        # Index file
         self.index_file = self.base_path / "index.json"
         self._index: dict[str, dict] = {}
 
         self._load_index()
 
     def get_path(self, channel: str, filename: str) -> Path:
-        """获取文件存储路径"""
+        """Get the storage path for a file"""
         channel_dir = self.base_path / channel
         channel_dir.mkdir(parents=True, exist_ok=True)
         return channel_dir / filename
@@ -65,20 +65,20 @@ class MediaStorage:
         data: bytes,
     ) -> Path:
         """
-        存储媒体文件
+        Store a media file.
 
         Args:
-            media: 媒体文件信息
-            channel: 来源通道
-            data: 文件数据
+            media: Media file information
+            channel: Source channel
+            data: File data
 
         Returns:
-            存储路径
+            Storage path
         """
-        # 计算 hash 用于去重
+        # Compute hash for deduplication
         file_hash = hashlib.md5(data).hexdigest()
 
-        # 检查是否已存在相同文件
+        # Check if an identical file already exists
         existing = self._find_by_hash(file_hash)
         if existing:
             logger.debug(f"File already exists: {existing}")
@@ -86,19 +86,19 @@ class MediaStorage:
             media.status = MediaStatus.READY
             return Path(existing)
 
-        # 生成文件名（避免冲突）
+        # Generate filename (avoid collisions)
         ext = media.extension
         filename = f"{media.id}.{ext}"
 
-        # 存储文件
+        # Write the file
         path = self.get_path(channel, filename)
         path.write_bytes(data)
 
-        # 更新媒体信息
+        # Update media info
         media.local_path = str(path)
         media.status = MediaStatus.READY
 
-        # 更新索引
+        # Update index
         self._index[media.id] = {
             "path": str(path),
             "hash": file_hash,
@@ -113,13 +113,13 @@ class MediaStorage:
 
     async def retrieve(self, media_id: str) -> bytes | None:
         """
-        获取媒体文件数据
+        Retrieve media file data.
 
         Args:
-            media_id: 媒体 ID
+            media_id: Media ID
 
         Returns:
-            文件数据或 None
+            File data, or None if not found
         """
         info = self._index.get(media_id)
         if not info:
@@ -135,13 +135,13 @@ class MediaStorage:
 
     async def delete(self, media_id: str) -> bool:
         """
-        删除媒体文件
+        Delete a media file.
 
         Args:
-            media_id: 媒体 ID
+            media_id: Media ID
 
         Returns:
-            是否成功
+            Whether the deletion succeeded
         """
         info = self._index.get(media_id)
         if not info:
@@ -159,7 +159,7 @@ class MediaStorage:
 
     async def cleanup(self) -> dict[str, int]:
         """
-        清理过期和超限文件
+        Clean up expired and oversized files.
 
         Returns:
             {deleted_count, freed_bytes}
@@ -169,7 +169,7 @@ class MediaStorage:
 
         cutoff_date = datetime.now() - timedelta(days=self.max_age_days)
 
-        # 清理过期文件
+        # Clean up expired files
         for media_id, info in list(self._index.items()):
             created_at = datetime.fromisoformat(info["created_at"])
 
@@ -184,16 +184,16 @@ class MediaStorage:
                 del self._index[media_id]
                 deleted_count += 1
 
-        # 检查总大小
+        # Check total size
         total_size = sum(info.get("size", 0) for info in self._index.values())
         max_bytes = self.max_size_mb * 1024 * 1024
 
         if total_size > max_bytes:
-            # 按创建时间排序，删除最老的
+            # Sort by creation time, delete the oldest first
             sorted_items = sorted(self._index.items(), key=lambda x: x[1]["created_at"])
 
             for media_id, info in sorted_items:
-                if total_size <= max_bytes * 0.8:  # 清理到 80%
+                if total_size <= max_bytes * 0.8:  # Clean down to 80%
                     break
 
                 path = Path(info["path"])
@@ -219,7 +219,7 @@ class MediaStorage:
         }
 
     def get_stats(self) -> dict:
-        """获取存储统计"""
+        """Get storage statistics"""
         total_size = sum(info.get("size", 0) for info in self._index.values())
 
         by_channel = {}
@@ -236,7 +236,7 @@ class MediaStorage:
         }
 
     def _find_by_hash(self, file_hash: str) -> str | None:
-        """通过 hash 查找已存在的文件"""
+        """Find an existing file by hash"""
         for info in self._index.values():
             if info.get("hash") == file_hash:
                 path = Path(info["path"])
@@ -245,7 +245,7 @@ class MediaStorage:
         return None
 
     def _load_index(self) -> None:
-        """加载索引"""
+        """Load the index"""
         if not self.index_file.exists():
             return
 
@@ -257,7 +257,7 @@ class MediaStorage:
             logger.error(f"Failed to load media index: {e}")
 
     def _save_index(self) -> None:
-        """保存索引"""
+        """Save the index"""
         try:
             with open(self.index_file, "w", encoding="utf-8") as f:
                 json.dump(self._index, f, ensure_ascii=False, indent=2)

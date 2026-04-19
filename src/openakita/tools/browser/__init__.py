@@ -1,14 +1,14 @@
 """
-浏览器自动化模块
+Browser automation module
 
-核心组件：
-- BrowserManager: 浏览器生命周期管理（状态机 + 多策略启动）
-- PlaywrightTools: 基于 Playwright 的直接页面操作
-- chrome_finder: Chrome 检测与 Profile 管理工具函数
+Core components:
+- BrowserManager: browser lifecycle management (state machine + multi-strategy launch)
+- PlaywrightTools: Playwright-based direct page operations
+- chrome_finder: Chrome detection and profile management utilities
 
-WebMCP 预留接口：
-- discover_webmcp_tools: 在页面上发现 WebMCP 工具
-- call_webmcp_tool: 调用页面上的 WebMCP 工具
+WebMCP reserved interface:
+- discover_webmcp_tools: discover WebMCP tools on a page
+- call_webmcp_tool: invoke a WebMCP tool on a page
 """
 
 from .chrome_finder import detect_chrome_installation

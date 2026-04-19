@@ -1,7 +1,7 @@
 """
-AgentOrg — 组织编排系统
+AgentOrg — Organization Orchestration System
 
-多层级 Agent 组织架构编排与运行引擎。
+Multi-level agent organization architecture orchestration and runtime engine.
 """
 
 from .manager import OrgManager

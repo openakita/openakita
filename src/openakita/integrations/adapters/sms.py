@@ -1,6 +1,6 @@
 """
-短信 API 适配器
-支持阿里云短信和腾讯云短信
+SMS API adapter
+Supports Alibaba Cloud SMS and Tencent Cloud SMS
 """
 
 import hashlib
@@ -14,7 +14,7 @@ from . import APIError, BaseAPIAdapter
 
 
 class AliyunSMSAdapter(BaseAPIAdapter):
-    """阿里云短信适配器"""
+    """Alibaba Cloud SMS adapter"""
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
@@ -58,12 +58,12 @@ class AliyunSMSAdapter(BaseAPIAdapter):
             async with session.get(self.endpoint, params=params) as response:
                 result = await response.json()
                 if result.get("Code") != "OK":
-                    raise APIError(f"发送失败：{result.get('Message')}")
+                    raise APIError(f"Send failed: {result.get('Message')}")
                 return result
 
 
 class TencentSMSAdapter(BaseAPIAdapter):
-    """腾讯云短信适配器"""
+    """Tencent Cloud SMS adapter"""
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
@@ -112,12 +112,12 @@ class TencentSMSAdapter(BaseAPIAdapter):
             async with session.post(self.endpoint, headers=headers, data=body) as response:
                 result = await response.json()
                 if response.status >= 400:
-                    raise APIError(f"发送失败：{result}")
+                    raise APIError(f"Send failed: {result}")
                 return result
 
 
 def create_sms_adapter(provider: str, config: dict[str, Any]) -> BaseAPIAdapter:
     providers = {"aliyun": AliyunSMSAdapter, "tencent": TencentSMSAdapter}
     if provider not in providers:
-        raise ValueError(f"不支持的短信提供商：{provider}")
+        raise ValueError(f"Unsupported SMS provider: {provider}")
     return providers[provider](config)

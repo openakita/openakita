@@ -1,5 +1,5 @@
 """
-结果判定器
+Result judge
 """
 
 import logging
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class JudgeResult:
-    """判定结果"""
+    """Judgment result"""
 
     passed: bool
     reason: str = ""
@@ -22,14 +22,14 @@ class JudgeResult:
 
 class Judge:
     """
-    结果判定器
+    Result judge
 
-    判断测试执行结果是否符合预期。
-    支持多种判定方式。
+    Determines whether test execution results match expectations.
+    Supports multiple judgment strategies.
     """
 
     def __init__(self, brain=None):
-        self.brain = brain  # 用于 LLM 判定
+        self.brain = brain  # Used for LLM-based judgment
 
     async def evaluate(
         self,
@@ -38,19 +38,19 @@ class Judge:
         description: str = "",
     ) -> JudgeResult:
         """
-        评估结果
+        Evaluate a result
 
         Args:
-            actual: 实际结果
-            expected: 预期结果
-            description: 测试描述
+            actual: Actual result
+            expected: Expected result
+            description: Test description
 
         Returns:
             JudgeResult
         """
-        # 根据 expected 的类型选择判定方式
+        # Choose judgment strategy based on the type of expected
         if expected is None:
-            # 只要有结果就算通过
+            # Pass as long as there is any result
             return self._judge_not_none(actual)
 
         if isinstance(expected, str):
@@ -71,11 +71,11 @@ class Judge:
         if callable(expected):
             return self._judge_callable(actual, expected)
 
-        # 默认精确匹配
+        # Default: exact match
         return self._judge_exact(actual, expected)
 
     def _judge_not_none(self, actual: Any) -> JudgeResult:
-        """判断非空"""
+        """Check that the value is non-empty"""
         passed = actual is not None and actual != ""
         return JudgeResult(
             passed=passed,
@@ -84,10 +84,10 @@ class Judge:
         )
 
     def _judge_string(self, actual: Any, expected: str) -> JudgeResult:
-        """字符串判定"""
+        """String judgment"""
         actual_str = str(actual) if actual is not None else ""
 
-        # 检查特殊判定规则
+        # Check special judgment rules
         if expected.startswith("contains:"):
             pattern = expected[9:]
             passed = pattern in actual_str
@@ -135,7 +135,7 @@ class Judge:
                 score=1.0 if passed else 0.0,
             )
 
-        # 默认精确匹配（忽略前后空白）
+        # Default: exact match (ignoring leading/trailing whitespace)
         passed = actual_str.strip() == expected.strip()
         return JudgeResult(
             passed=passed,
@@ -144,10 +144,10 @@ class Judge:
         )
 
     def _judge_number(self, actual: Any, expected: float) -> JudgeResult:
-        """数字判定"""
+        """Numeric judgment"""
         try:
             actual_num = float(actual)
-            # 允许小误差
+            # Allow small tolerance
             passed = abs(actual_num - expected) < 0.001
             return JudgeResult(
                 passed=passed,
@@ -164,7 +164,7 @@ class Judge:
             )
 
     def _judge_bool(self, actual: Any, expected: bool) -> JudgeResult:
-        """布尔判定"""
+        """Boolean judgment"""
         actual_bool = bool(actual)
         passed = actual_bool == expected
         return JudgeResult(
@@ -176,7 +176,7 @@ class Judge:
         )
 
     def _judge_dict(self, actual: Any, expected: dict) -> JudgeResult:
-        """字典判定"""
+        """Dict judgment"""
         if not isinstance(actual, dict):
             return JudgeResult(
                 passed=False,
@@ -184,7 +184,7 @@ class Judge:
                 score=0.0,
             )
 
-        # 检查所有期望的键是否存在且值匹配
+        # Check that all expected keys exist and their values match
         missing_keys = []
         wrong_values = []
 
@@ -209,7 +209,7 @@ class Judge:
         )
 
     def _judge_list(self, actual: Any, expected: list) -> JudgeResult:
-        """列表判定"""
+        """List judgment"""
         if not isinstance(actual, (list, tuple)):
             return JudgeResult(
                 passed=False,
@@ -219,7 +219,7 @@ class Judge:
 
         actual_list = list(actual)
 
-        # 检查长度
+        # Check length
         if len(actual_list) != len(expected):
             return JudgeResult(
                 passed=False,
@@ -227,7 +227,7 @@ class Judge:
                 score=0.0,
             )
 
-        # 检查元素
+        # Check elements
         for i, (a, e) in enumerate(zip(actual_list, expected, strict=False)):
             if a != e:
                 return JudgeResult(
@@ -243,7 +243,7 @@ class Judge:
         )
 
     def _judge_callable(self, actual: Any, validator: callable) -> JudgeResult:
-        """使用自定义验证函数"""
+        """Use a custom validator function"""
         try:
             result = validator(actual)
             if isinstance(result, JudgeResult):
@@ -262,7 +262,7 @@ class Judge:
             )
 
     def _judge_exact(self, actual: Any, expected: Any) -> JudgeResult:
-        """精确匹配"""
+        """Exact match"""
         passed = actual == expected
         return JudgeResult(
             passed=passed,
@@ -276,7 +276,7 @@ class Judge:
         expected: str,
         context: str = "",
     ) -> JudgeResult:
-        """使用 LLM 判定"""
+        """Use LLM for judgment"""
         if not self.brain:
             return JudgeResult(
                 passed=False,
@@ -284,17 +284,17 @@ class Judge:
                 score=0.0,
             )
 
-        prompt = f"""请判断以下结果是否符合预期:
+        prompt = f"""Please determine whether the following result matches the expectation:
 
-预期: {expected}
-实际结果: {actual}
-{f"上下文: {context}" if context else ""}
+Expected: {expected}
+Actual result: {actual}
+{f"Context: {context}" if context else ""}
 
-请以 JSON 格式回答:
+Please respond in JSON format:
 {{
     "passed": true/false,
-    "reason": "判断理由",
-    "score": 0-1 的置信度
+    "reason": "Reasoning for the judgment",
+    "score": 0-1 confidence level
 }}"""
 
         response = await self.brain.think(prompt)

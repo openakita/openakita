@@ -29,5 +29,5 @@ Use this skill when the user wants to:
 
 ## Examples
 
-- "把我的客服 Agent 发布到 Hub"
-- "分享这个 Agent 到社区"
+- " Agent Hub"
+- "this Agent "

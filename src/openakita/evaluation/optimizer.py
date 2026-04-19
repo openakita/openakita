@@ -1,13 +1,13 @@
 """
-评估反馈优化器
+Evaluation Feedback Optimizer
 
-基于评估结果自动驱动系统优化:
-1. 记忆反馈: 将失败模式和成功经验写入记忆系统
-2. 技能反馈: 触发新技能生成或改进现有技能
-3. Prompt 反馈: 调整 Agent 指导原则
-4. 工具反馈: 更新工具描述中的警告信息
+Automatically drive system optimization based on evaluation results:
+1. Memory feedback: Write failure patterns and success experiences to memory system
+2. Skill feedback: Trigger new skill generation or improve existing skills
+3. Prompt feedback: Adjust Agent guidance principles
+4. Tool feedback: Update warning information in tool descriptions
 
-通过闭环反馈实现 Agent 的持续自我改进。
+Achieve continuous self-improvement of Agent through closed-loop feedback.
 """
 
 import json
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class OptimizationAction:
-    """优化动作记录"""
+    """Optimization action record"""
 
     action_type: str  # "memory", "skill", "prompt", "tool"
     description: str
@@ -35,17 +35,17 @@ class OptimizationAction:
 
 class FeedbackAnalyzer:
     """
-    反馈分析器。
+    Feedback analyzer.
 
-    分析评估结果，识别改进机会，
-    生成具体的优化建议。
+    Analyze evaluation results, identify improvement opportunities,
+    and generate concrete optimization recommendations.
     """
 
-    # 阈值配置
-    COMPLETION_THRESHOLD = 0.8  # 完成率低于此值触发分析
-    TOOL_ACCURACY_THRESHOLD = 0.7  # 工具准确率低于此值触发分析
-    JUDGE_SCORE_THRESHOLD = 0.6  # Judge 评分低于此值关注
-    LOOP_RATE_THRESHOLD = 0.1  # 循环率高于此值告警
+    # Threshold configuration
+    COMPLETION_THRESHOLD = 0.8  # Trigger analysis if completion rate below this value
+    TOOL_ACCURACY_THRESHOLD = 0.7  # Trigger analysis if tool accuracy below this value
+    JUDGE_SCORE_THRESHOLD = 0.6  # Focus if Judge score below this value
+    LOOP_RATE_THRESHOLD = 0.1  # Alert if loop rate above this value
 
     def analyze(
         self,
@@ -53,22 +53,22 @@ class FeedbackAnalyzer:
         results: list[EvalResult],
     ) -> list[OptimizationAction]:
         """
-        分析评估结果，生成优化动作。
+        Analyze evaluation results and generate optimization actions.
 
         Returns:
-            优化动作列表
+            List of optimization actions
         """
         actions: list[OptimizationAction] = []
 
-        # 1. 任务完成率分析
+        # 1. Task completion rate analysis
         if metrics.task_completion_rate < self.COMPLETION_THRESHOLD:
             failure_analysis = self._analyze_failures(results)
             actions.append(
                 OptimizationAction(
                     action_type="memory",
                     description=(
-                        f"任务完成率 ({metrics.task_completion_rate:.1%}) 低于阈值 "
-                        f"({self.COMPLETION_THRESHOLD:.0%})，需要记录失败模式"
+                        f"Task completion rate ({metrics.task_completion_rate:.1%}) below threshold "
+                        f"({self.COMPLETION_THRESHOLD:.0%}), need to record failure patterns"
                     ),
                     details={
                         "completion_rate": metrics.task_completion_rate,
@@ -77,15 +77,15 @@ class FeedbackAnalyzer:
                 )
             )
 
-        # 2. 工具准确率分析
+        # 2. Tool accuracy analysis
         if metrics.tool_selection_accuracy < self.TOOL_ACCURACY_THRESHOLD:
             tool_analysis = self._analyze_tool_errors(results)
             actions.append(
                 OptimizationAction(
                     action_type="tool",
                     description=(
-                        f"工具准确率 ({metrics.tool_selection_accuracy:.1%}) 低于阈值，"
-                        f"需要更新工具描述"
+                        f"Tool accuracy ({metrics.tool_selection_accuracy:.1%}) below threshold, "
+                        f"need to update tool descriptions"
                     ),
                     details={
                         "accuracy": metrics.tool_selection_accuracy,
@@ -94,13 +94,13 @@ class FeedbackAnalyzer:
                 )
             )
 
-        # 3. 循环检测率分析
+        # 3. Loop detection rate analysis
         if metrics.loop_detection_rate > self.LOOP_RATE_THRESHOLD:
             actions.append(
                 OptimizationAction(
                     action_type="prompt",
                     description=(
-                        f"循环检测率 ({metrics.loop_detection_rate:.1%}) 过高，需要调整推理指导"
+                        f"Loop detection rate ({metrics.loop_detection_rate:.1%}) too high, need to adjust reasoning guidance"
                     ),
                     details={
                         "loop_rate": metrics.loop_detection_rate,
@@ -109,25 +109,25 @@ class FeedbackAnalyzer:
                 )
             )
 
-        # 4. 效率分析
+        # 4. Efficiency analysis
         if metrics.avg_iterations > 15:
             actions.append(
                 OptimizationAction(
                     action_type="prompt",
                     description=(
-                        f"平均迭代次数 ({metrics.avg_iterations:.1f}) 过高，需要优化推理效率"
+                        f"Average iterations ({metrics.avg_iterations:.1f}) too high, need to optimize reasoning efficiency"
                     ),
                     details={"avg_iterations": metrics.avg_iterations},
                 )
             )
 
-        # 5. Judge 建议汇总
+        # 5. Judge suggestions summary
         all_suggestions: list[str] = []
         for r in results:
             all_suggestions.extend(r.judge_suggestions)
 
         if all_suggestions:
-            # 去重并取出现频率高的建议
+            # Deduplicate and get frequently suggested suggestions
             suggestion_count: dict[str, int] = {}
             for s in all_suggestions:
                 suggestion_count[s] = suggestion_count.get(s, 0) + 1
@@ -142,7 +142,7 @@ class FeedbackAnalyzer:
                 actions.append(
                     OptimizationAction(
                         action_type="skill",
-                        description="Judge 频繁建议的能力改进",
+                        description="Frequently suggested ability improvements by Judge",
                         details={"suggestions": frequent},
                     )
                 )
@@ -150,11 +150,11 @@ class FeedbackAnalyzer:
         return actions
 
     def _analyze_failures(self, results: list[EvalResult]) -> list[dict]:
-        """分析失败模式。"""
+        """Analyze failure patterns."""
         failed = [r for r in results if not r.metrics.task_completed]
         patterns: list[dict] = []
 
-        # 按标签分组统计
+        # Group and count by tags
         tag_counts: dict[str, int] = {}
         for r in failed:
             for tag in r.tags:
@@ -172,7 +172,7 @@ class FeedbackAnalyzer:
         return patterns
 
     def _analyze_tool_errors(self, results: list[EvalResult]) -> list[dict]:
-        """分析工具错误分布。"""
+        """Analyze tool error distribution."""
         tool_error_count: dict[str, int] = {}
         tool_total_count: dict[str, int] = {}
 
@@ -180,7 +180,7 @@ class FeedbackAnalyzer:
             for tool in r.metrics.tools_used:
                 tool_total_count[tool] = tool_total_count.get(tool, 0) + 1
 
-        # 简化: 按 trace 级别统计有错误的工具
+        # Simplified: count tools with errors at trace level
         for r in results:
             if r.metrics.tool_errors > 0:
                 for tool in set(r.metrics.tools_used):
@@ -202,12 +202,12 @@ class FeedbackAnalyzer:
 
 class FeedbackOptimizer:
     """
-    反馈优化器。
+    Feedback optimizer.
 
-    执行 FeedbackAnalyzer 生成的优化动作:
-    - 将经验写入记忆系统 (MEMORY.md / memory storage)
-    - 更新工具描述
-    - 生成改进建议报告
+    Execute optimization actions generated by FeedbackAnalyzer:
+    - Write experiences to memory system (MEMORY.md / memory storage)
+    - Update tool descriptions
+    - Generate improvement recommendation report
     """
 
     def __init__(
@@ -226,14 +226,14 @@ class FeedbackOptimizer:
         dry_run: bool = False,
     ) -> list[OptimizationAction]:
         """
-        执行优化动作。
+        Execute optimization actions.
 
         Args:
-            actions: 优化动作列表
-            dry_run: 如果为 True，只记录不实际执行
+            actions: List of optimization actions
+            dry_run: If True, only log without actual execution
 
         Returns:
-            已执行的动作列表
+            List of executed actions
         """
         applied = []
 
@@ -254,7 +254,7 @@ class FeedbackOptimizer:
             except Exception as e:
                 logger.error(f"[Optimizer] Failed to apply action '{action.action_type}': {e}")
 
-        # 保存动作记录
+        # Save action log
         await self._save_action_log(applied)
         self._applied_actions.extend(applied)
 
@@ -265,32 +265,32 @@ class FeedbackOptimizer:
         action: OptimizationAction,
         dry_run: bool = False,
     ) -> None:
-        """将失败经验写入记忆文件。"""
+        """Write failure experiences to memory file."""
         patterns = action.details.get("failure_patterns", [])
         if not patterns:
             return
 
         memory_entry = [
             "",
-            f"## 评估反馈 ({time.strftime('%Y-%m-%d')})",
+            f"## Evaluation Feedback ({time.strftime('%Y-%m-%d')})",
             "",
-            f"任务完成率: {action.details.get('completion_rate', 0):.1%}",
+            f"Task completion rate: {action.details.get('completion_rate', 0):.1%}",
             "",
-            "### 失败模式分析",
+            "### Failure Pattern Analysis",
             "",
         ]
         for p in patterns:
             memory_entry.append(
-                f"- **{p['pattern']}**: 出现 {p['count']} 次 (占比 {p['percentage']:.0%})"
+                f"- **{p['pattern']}**: occurred {p['count']} times (proportion {p['percentage']:.0%})"
             )
 
         memory_entry.extend(
             [
                 "",
-                "### 改进方向",
+                "### Improvement Direction",
                 "",
-                "- 针对高频失败模式优化推理策略",
-                "- 加强工具错误后的恢复能力",
+                "- Optimize reasoning strategy for high-frequency failure patterns",
+                "- Strengthen recovery ability after tool errors",
                 "",
             ]
         )
@@ -301,7 +301,7 @@ class FeedbackOptimizer:
             logger.info(f"[Optimizer][DryRun] Would append to {self._memory_file}:\n{content}")
             return
 
-        # 追加到 MEMORY.md
+        # Append to MEMORY.md
         os.makedirs(os.path.dirname(self._memory_file), exist_ok=True)
         with open(self._memory_file, "a", encoding="utf-8") as f:
             f.write(content)
@@ -313,18 +313,18 @@ class FeedbackOptimizer:
         action: OptimizationAction,
         dry_run: bool = False,
     ) -> None:
-        """记录工具改进建议。"""
+        """Record tool improvement suggestions."""
         error_tools = action.details.get("error_tools", [])
         if not error_tools:
             return
 
-        # 保存工具反馈报告
+        # Save tool feedback report
         report = {
             "type": "tool_feedback",
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "accuracy": action.details.get("accuracy", 0),
             "error_tools": error_tools,
-            "recommendations": [f"检查工具 '{t['tool']}' 的错误处理逻辑" for t in error_tools[:5]],
+            "recommendations": [f"Check error handling logic of tool '{t['tool']}'" for t in error_tools[:5]],
         }
 
         if dry_run:
@@ -348,7 +348,7 @@ class FeedbackOptimizer:
         action: OptimizationAction,
         dry_run: bool = False,
     ) -> None:
-        """记录 Prompt 改进建议。"""
+        """Record Prompt improvement suggestions."""
         report = {
             "type": "prompt_feedback",
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -366,7 +366,7 @@ class FeedbackOptimizer:
             f"prompt_feedback_{time.strftime('%Y%m%d')}.json",
         )
 
-        # 追加模式 (同一天可能有多次反馈)
+        # Append mode (multiple feedbacks may occur in one day)
         existing = []
         if os.path.exists(feedback_path):
             try:
@@ -388,7 +388,7 @@ class FeedbackOptimizer:
         action: OptimizationAction,
         dry_run: bool = False,
     ) -> None:
-        """记录技能改进建议。"""
+        """Record skill improvement suggestions."""
         suggestions = action.details.get("suggestions", [])
         if not suggestions:
             return
@@ -414,7 +414,7 @@ class FeedbackOptimizer:
         logger.info(f"[Optimizer] Saved skill feedback to {feedback_path}")
 
     async def _save_action_log(self, actions: list[OptimizationAction]) -> None:
-        """保存优化动作日志。"""
+        """Save optimization action log."""
         if not actions:
             return
 
@@ -424,7 +424,7 @@ class FeedbackOptimizer:
             f"optimization_log_{time.strftime('%Y%m%d')}.json",
         )
 
-        # 追加模式
+        # Append mode
         existing: list[dict] = []
         if os.path.exists(log_path):
             try:
@@ -449,9 +449,9 @@ class FeedbackOptimizer:
 
 class DailyEvaluator:
     """
-    每日自动评估器。
+    Daily auto-evaluator.
 
-    与自检系统 (selfcheck) 集成，自动运行评估流水线并执行反馈闭环。
+    Integrate with self-check system (selfcheck), automatically run evaluation pipeline and execute feedback loop.
 
     Usage:
         evaluator = DailyEvaluator(brain=brain)
@@ -479,32 +479,32 @@ class DailyEvaluator:
         )
 
     def set_brain(self, brain: Any) -> None:
-        """设置 LLM 客户端"""
+        """Set LLM client"""
         self._judge.set_brain(brain)
 
     async def run_daily_eval(self, dry_run: bool = False) -> dict[str, Any]:
         """
-        运行每日评估。
+        Run daily evaluation.
 
         Returns:
-            评估摘要 dict
+            Evaluation summary dict
         """
         logger.info("[DailyEval] Starting daily evaluation...")
 
-        # 1. 运行评估
+        # 1. Run evaluation
         metrics, results = await self._runner.run_evaluation()
 
         if not results:
             logger.info("[DailyEval] No traces to evaluate")
             return {"status": "no_data"}
 
-        # 2. 保存报告
+        # 2. Save report
         report_path = await self._reporter.save(metrics, results)
 
-        # 3. 分析改进机会
+        # 3. Analyze improvement opportunities
         actions = self._analyzer.analyze(metrics, results)
 
-        # 4. 执行优化
+        # 4. Execute optimization
         applied = await self._optimizer.apply_actions(actions, dry_run=dry_run)
 
         summary = {

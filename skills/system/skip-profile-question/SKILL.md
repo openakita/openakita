@@ -9,21 +9,21 @@ category: User Profile
 
 # Skip Profile Question
 
-跳过档案问题（以后不再询问）。
+(not).
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| key | string | 是 | 要跳过的档案项键名 |
+| key | string | Yes | need |
 
 ## When to Use
 
-- 用户说"不想回答"
-- 用户说"跳过这个问题"
-- 用户表示不愿透露某信息
+- "not"
+- "this"
+- not
 
 ## Related Skills
 
-- `update-user-profile`: 更新档案
-- `get-user-profile`: 获取档案
+- `update-user-profile`: update
+- `get-user-profile`: get

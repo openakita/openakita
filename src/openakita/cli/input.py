@@ -26,7 +26,7 @@ class SlashCommandCompleter(Completer):
     """Completes slash commands with descriptions."""
 
     def __init__(self, commands: Sequence[tuple[str, str]] = ()):
-        """commands: sequence of (name, description) tuples, e.g. ("/help", "显示帮助")"""
+        """commands: sequence of (name, description) tuples, e.g. ("/help", "Show help")"""
         self._commands = list(commands)
 
     def set_commands(self, commands: Sequence[tuple[str, str]]) -> None:

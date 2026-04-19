@@ -9,30 +9,30 @@ category: Browser
 
 # Browser List Tabs
 
-列出所有打开的标签页。
+listhaveOpen. 
 
 ## Parameters
 
-无参数。
+No parameters.
 
 ## Returns
 
-每个标签页的信息：
-- 索引（从 0 开始）
+: 
+- ( 0 ) 
 - URL
-- 页面标题
+-
 
 ## Related Skills
 
-- `browser-switch-tab`: 切换标签页
-- `browser-new-tab`: 新建标签页
+- `browser-switch-tab`: Switch tab
+- `browser-new-tab`:
 
 
-## 推荐
+## Recommendations
 
-对于多步骤的浏览器任务，建议优先使用 `browser_task` 工具。它可以自动规划和执行复杂的浏览器操作，无需手动逐步调用各个工具。
+, Use `browser_task`. AutomaticandExecute Browser operations, ManualCall. 
 
-示例：
+: 
 ```python
-browser_task(task="打开百度搜索福建福州并截图")
+browser_task(task="Opensearch")
 ```

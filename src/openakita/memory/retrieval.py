@@ -1,14 +1,14 @@
 """
-记忆检索引擎
+Memory retrieval engine
 
-多路召回 + 重排序:
-- 语义搜索 (SearchBackend)
-- 情节搜索 (实体/工具名关联)
-- 时间搜索 (最近 N 天)
-- 附件搜索 (文件/媒体)
-- LLM 查询拆解 (compiler model): 自然语言 → 搜索关键词
-- 综合排序: relevance × recency × importance × access_freq
-- Token 预算控制
+Multi-way recall + reranking:
+- Semantic search (SearchBackend)
+- Episode search (entity/tool name association)
+- Time-based search (last N days)
+- Attachment search (files/media)
+- LLM query decomposition (compiler model): natural language → search keywords
+- Composite ranking: relevance × recency × importance × access_freq
+- Token budget control
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class RetrievalCandidate:
-    """检索候选项, 带综合评分"""
+    """Retrieval candidate with composite score"""
 
     memory_id: str = ""
     content: str = ""
@@ -47,9 +47,9 @@ class RetrievalCandidate:
 
 
 class RetrievalEngine:
-    """多路召回 + 重排序的记忆检索引擎"""
+    """Memory retrieval engine with multi-way recall and reranking"""
 
-    # 排序权重
+    # Ranking weights
     W_RELEVANCE = 0.40
     W_RECENCY = 0.20
     W_IMPORTANCE = 0.20
@@ -58,17 +58,17 @@ class RetrievalEngine:
     MIN_RERANK_SCORE = 0.35
 
     QUERY_DECOMPOSE_PROMPT = (
-        "从用户消息中提取用于记忆检索的搜索关键词。\n\n"
-        "用户消息: {query}\n"
+        "Extract search keywords from user messages for memory retrieval.\n\n"
+        "User message: {query}\n"
         "{context_hint}"
-        "\n规则:\n"
-        "1. 提取核心实体、名称、主题词，去掉语气词/助词/代词\n"
-        '2. 如果涉及文件/图片/视频，提取描述性关键词（如"猫""报告"）和可能的文件名\n'
-        "3. 保留专有名词、技术术语原样\n"
-        '4. 输出 JSON: {{"keywords": ["关键词1", "关键词2", ...], '
+        "\nRules:\n"
+        "1. Extract core entities, names, subject terms; remove particles/pronouns\n"
+        '2. For files/images/videos, extract descriptive keywords (e.g., "cat", "report") and possible filenames\n'
+        "3. Preserve proper nouns and technical terms as-is\n"
+        '4. Output JSON: {{"keywords": ["keyword1", "keyword2", ...], '
         '"intent": "search_memory|search_file|general"}}\n'
-        "5. keywords 最多 6 个，每个 1-4 个词\n"
-        "只输出 JSON，不要其他内容。"
+        "5. At most 6 keywords, each 1-4 words\n"
+        "Output JSON only, no other content."
     )
 
     def __init__(self, store: UnifiedStore, brain=None) -> None:
@@ -86,10 +86,10 @@ class RetrievalEngine:
         max_tokens: int = 700,
     ) -> str:
         """
-        检索并格式化要注入的记忆上下文
+        Retrieve and format memory context for injection
 
         Returns:
-            格式化的记忆文本, 适合注入 system prompt
+            Formatted memory text suitable for system prompt injection
         """
         decomposed = self._decompose_query(query, recent_messages)
         search_keywords = decomposed.get("keywords", [])
@@ -314,31 +314,31 @@ class RetrievalEngine:
         return candidates
 
     _MEDIA_KEYWORDS = (
-        "图片",
-        "照片",
-        "图",
+        "image",
+        "photo",
+        "picture",
         "photo",
         "image",
         "picture",
-        "视频",
+        "video",
         "video",
         "clip",
-        "文件",
-        "文档",
+        "file",
+        "document",
         "file",
         "document",
         "doc",
         "pdf",
-        "音频",
-        "语音",
         "audio",
         "voice",
-        "发给你的",
-        "给你的",
-        "上次的",
-        "那个",
-        "那张",
-        "那份",
+        "audio",
+        "voice",
+        "sent to you",
+        "for you",
+        "last time",
+        "that one",
+        "that picture",
+        "that file",
     )
 
     def _search_attachments(
@@ -348,9 +348,9 @@ class RetrievalEngine:
         intent: str = "general",
         limit: int = 5,
     ) -> list[RetrievalCandidate]:
-        """搜索文件/媒体附件 — 用户问"给我那张猫图"时触发.
+        """Search for file/media attachments — triggered when user asks "give me that cat picture".
 
-        使用 LLM 拆解后的关键词逐词搜索，合并去重。
+        Uses keywords from LLM decomposition to search word-by-word, merge and deduplicate.
         """
         has_media_hint = intent == "search_file" or any(
             kw in raw_query.lower() for kw in self._MEDIA_KEYWORDS
@@ -373,14 +373,14 @@ class RetrievalEngine:
         candidates = []
         for att in list(seen.values())[:limit]:
             desc_parts = []
-            direction_label = "用户发送" if att.direction.value == "inbound" else "AI生成"
-            desc_parts.append(f"[{direction_label}的文件] {att.filename}")
+            direction_label = "User-sent" if att.direction.value == "inbound" else "AI-generated"
+            desc_parts.append(f"[{direction_label} file] {att.filename}")
             if att.description:
                 desc_parts.append(att.description)
             if att.transcription:
-                desc_parts.append(f"(转写: {att.transcription[:100]})")
+                desc_parts.append(f"(Transcription: {att.transcription[:100]})")
             if att.local_path:
-                desc_parts.append(f"路径: {att.local_path}")
+                desc_parts.append(f"Path: {att.local_path}")
             elif att.url:
                 desc_parts.append(f"URL: {att.url}")
             content = " | ".join(desc_parts)
@@ -404,44 +404,44 @@ class RetrievalEngine:
     def _get_attachment_search_terms(
         raw_query: str, search_keywords: list[str] | None
     ) -> list[str]:
-        """从拆解关键词中筛选适合附件搜索的词（过滤掉媒体类型词本身）."""
+        """Filter keywords suitable for attachment search from decomposed keywords (filter out media type words)."""
         _STOP_WORDS = {
-            "图片",
-            "照片",
-            "图",
+            "image",
+            "photo",
+            "picture",
             "photo",
             "image",
             "picture",
-            "视频",
+            "video",
             "video",
             "clip",
-            "文件",
-            "文档",
+            "file",
+            "document",
             "file",
             "document",
             "doc",
             "pdf",
-            "音频",
-            "语音",
             "audio",
             "voice",
-            "发给你的",
-            "给你的",
-            "上次的",
-            "那个",
-            "那张",
-            "那份",
-            "给我",
-            "找到",
-            "一下",
-            "看看",
-            "的",
-            "了",
-            "吧",
-            "呢",
-            "在哪",
-            "哪里",
-            "怎么",
+            "audio",
+            "voice",
+            "sent to you",
+            "for you",
+            "last time",
+            "that one",
+            "that picture",
+            "that file",
+            "give me",
+            "find",
+            "briefly",
+            "look",
+            "of",
+            "ed",
+            "ok",
+            "huh",
+            "where",
+            "here",
+            "how",
         }
 
         def _is_valid(token: str) -> bool:
@@ -475,10 +475,10 @@ class RetrievalEngine:
         query: str,
         recent_messages: list[dict] | None = None,
     ) -> dict:
-        """用 LLM (compiler model) 把自然语言拆解为搜索关键词.
+        """Use LLM (compiler model) to decompose natural language into search keywords.
 
-        返回 {"keywords": [...], "intent": "search_memory|search_file|general"}
-        无 brain 时降级为规则提取。
+        Returns {"keywords": [...], "intent": "search_memory|search_file|general"}
+        Degrades to rule-based extraction when no brain is available.
         """
         if not query or len(query.strip()) < 3:
             return {"keywords": [query.strip()], "intent": "general"}
@@ -487,9 +487,9 @@ class RetrievalEngine:
         if cache_key in self._decompose_cache:
             return self._decompose_cache[cache_key]
 
-        # 防止缓存无限增长
+        # Prevent unbounded cache growth
         if len(self._decompose_cache) > 500:
-            # 清掉一半（FIFO 近似：dict 保持插入顺序）
+            # Clear half (FIFO approximation: dict maintains insertion order)
             keys = list(self._decompose_cache.keys())
             for k in keys[:250]:
                 del self._decompose_cache[k]
@@ -509,7 +509,7 @@ class RetrievalEngine:
         query: str,
         recent_messages: list[dict] | None = None,
     ) -> dict | None:
-        """调用 think_lightweight (compiler model) 做查询拆解."""
+        """Call think_lightweight (compiler model) for query decomposition."""
         from openakita.core.tool_executor import smart_truncate as _st
 
         context_hint = ""
@@ -521,7 +521,7 @@ class RetrievalEngine:
                     hint, _ = _st(c, 300, save_full=False, label="retrieval_hint")
                     recent_texts.append(f"[{msg.get('role', '?')}]: {hint}")
             if recent_texts:
-                context_hint = f"近期对话:\n{''.join(recent_texts)}\n"
+                context_hint = f"Recent conversation:\n{''.join(recent_texts)}\n"
 
         query_trunc, _ = _st(query, 500, save_full=False, label="retrieval_query")
         prompt = self.QUERY_DECOMPOSE_PROMPT.format(
@@ -548,10 +548,10 @@ class RetrievalEngine:
                 import concurrent.futures
 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(asyncio.run, think_fn(prompt, system="只输出JSON"))
+                    future = pool.submit(asyncio.run, think_fn(prompt, system="Output JSON only"))
                     response = future.result(timeout=10)
             else:
-                response = asyncio.run(think_fn(prompt, system="只输出JSON"))
+                response = asyncio.run(think_fn(prompt, system="Output JSON only"))
 
             text = (getattr(response, "content", None) or str(response)).strip()
 
@@ -581,53 +581,35 @@ class RetrievalEngine:
 
     @staticmethod
     def _decompose_with_rules(query: str) -> dict:
-        """规则降级: 正则 + 停用词过滤."""
+        """Rule-based fallback: regex + stopword filtering."""
         _STOP = {
-            "的",
-            "了",
-            "吗",
-            "吧",
-            "呢",
-            "啊",
-            "哦",
-            "嗯",
-            "是",
-            "在",
-            "有",
-            "和",
-            "与",
-            "或",
-            "但",
-            "不",
-            "也",
-            "都",
-            "就",
-            "还",
-            "要",
-            "会",
-            "能",
-            "可以",
-            "这个",
-            "那个",
-            "什么",
-            "怎么",
-            "为什么",
-            "哪个",
-            "哪里",
-            "多少",
-            "一下",
-            "一些",
-            "the",
-            "a",
-            "an",
+            "of",
+            "ed",
+            "q",
+            "ok",
+            "huh",
+            "uh",
+            "oh",
+            "mm",
             "is",
-            "are",
-            "was",
-            "were",
-            "be",
-            "been",
-            "this",
-            "that",
+            "in",
+            "have",
+            "and",
+            "with",
+            "or",
+            "but",
+            "not",
+            "also",
+            "all",
+            "just",
+            "still",
+            "want",
+            "will",
+            "can",
+            "could",
+            "should",
+            "this one",
+            "that one",
             "what",
             "how",
             "where",
@@ -642,26 +624,26 @@ class RetrievalEngine:
             "can",
             "could",
             "should",
-            "给我",
-            "帮我",
-            "请",
-            "看看",
-            "找到",
-            "告诉我",
+            "give me",
+            "help me",
+            "please",
+            "look",
+            "find",
+            "tell me",
         }
 
         keywords = []
         intent = "general"
 
         _FILE_HINTS = {
-            "图片",
-            "照片",
-            "图",
-            "文件",
-            "文档",
-            "视频",
-            "音频",
-            "语音",
+            "image",
+            "photo",
+            "picture",
+            "file",
+            "document",
+            "video",
+            "audio",
+            "voice",
             "photo",
             "image",
             "file",
@@ -708,7 +690,7 @@ class RetrievalEngine:
         recent_messages: list[dict] | None = None,
         search_keywords: list[str] | None = None,
     ) -> str:
-        """构建增强查询: 原始 query + LLM 拆解关键词 + 近期上下文."""
+        """Build enhanced query: original query + LLM decomposed keywords + recent context."""
         parts = [query]
         if search_keywords:
             for kw in search_keywords:
@@ -755,23 +737,23 @@ class RetrievalEngine:
 
     _ACTION_WORDS = frozenset(
         {
-            "打开",
-            "关闭",
-            "运行",
-            "执行",
-            "安装",
-            "部署",
-            "启动",
-            "停止",
-            "创建",
-            "删除",
-            "修改",
-            "搜索",
-            "下载",
-            "上传",
-            "去",
-            "进入",
-            "访问",
+            "open",
+            "close",
+            "run",
+            "execute",
+            "install",
+            "deploy",
+            "start",
+            "stop",
+            "create",
+            "delete",
+            "modify",
+            "search",
+            "download",
+            "upload",
+            "go",
+            "enter",
+            "visit",
         }
     )
 

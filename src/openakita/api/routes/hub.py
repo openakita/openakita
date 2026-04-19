@@ -137,7 +137,7 @@ async def batch_export_agents(req: BatchExportRequest):
     if not req.profile_ids:
         raise HTTPException(status_code=400, detail="profile_ids is required")
     if len(req.profile_ids) > 20:
-        raise HTTPException(status_code=400, detail="最多同时导出 20 个 Agent")
+        raise HTTPException(status_code=400, detail="Cannot export more than 20 agents at once")
 
     profile_store, skills_dir, root = _get_stores()
     output_dir = root / "data" / "agent_packages"
@@ -163,7 +163,7 @@ async def batch_export_agents(req: BatchExportRequest):
             errors.append(f"{pid}: {e}")
 
     if not exported:
-        raise HTTPException(status_code=400, detail=f"没有可导出的 Agent: {'; '.join(errors)}")
+        raise HTTPException(status_code=400, detail=f"No agents to export: {'; '.join(errors)}")
 
     if len(exported) == 1:
         return FileResponse(
@@ -232,7 +232,7 @@ async def batch_export_agents_json(req: BatchExportJsonRequest):
     if not req.profile_ids:
         raise HTTPException(status_code=400, detail="profile_ids is required")
     if len(req.profile_ids) > 50:
-        raise HTTPException(status_code=400, detail="最多同时导出 50 个 Agent")
+        raise HTTPException(status_code=400, detail="Cannot export more than 50 agents at once")
 
     profile_store, _, _ = _get_stores()
     exported = []
@@ -284,7 +284,7 @@ async def import_agent(
         try:
             data = _json.loads(content)
         except (ValueError, UnicodeDecodeError) as e:
-            raise HTTPException(400, f"无效的 JSON 文件: {e}")
+            raise HTTPException(400, f"Invalid JSON file: {e}")
 
         if data.get("format") == "akita-agent-batch":
             agents_data = data.get("agents", [])
@@ -293,7 +293,7 @@ async def import_agent(
         elif isinstance(data.get("profile"), dict):
             agents_data = [data["profile"]]
         else:
-            raise HTTPException(400, "无法识别的 JSON 格式，缺少 profile 或 agents 字段")
+            raise HTTPException(400, "Unrecognized JSON format: missing profile or agents field")
 
         imported = []
         skipped = []
@@ -319,9 +319,9 @@ async def import_agent(
             imported.append(profile.to_dict())
 
         _reload_skills(request)
-        msg = f"导入成功: {len(imported)} 个 Agent"
+        msg = f"Import successful: {len(imported)} agent(s)"
         if skipped:
-            msg += f"（{len(skipped)} 个 ID 冲突已重命名: {', '.join(skipped)}）"
+            msg += f" ({len(skipped)} ID conflict(s) renamed: {', '.join(skipped)})"
         return {
             "message": msg,
             "profile": imported[0] if len(imported) == 1 else None,
@@ -439,7 +439,7 @@ async def hub_search_agents(
         logger.warning(f"Hub search agents unavailable (remote platform may be offline): {e}")
         raise HTTPException(
             status_code=502,
-            detail="远程 Agent Store 暂不可用。本地 Agent 导入导出功能不受影响。",
+            detail="Remote Agent Store is temporarily unavailable. Local agent import/export is not affected.",
         )
     finally:
         await client.close()
@@ -453,7 +453,7 @@ async def hub_agent_detail(agent_id: str):
         return await client.get_detail(agent_id)
     except Exception as e:
         logger.warning(f"Hub agent detail unavailable: {e}")
-        raise HTTPException(status_code=502, detail="远程 Agent Store 暂不可用")
+        raise HTTPException(status_code=502, detail="Remote Agent Store is temporarily unavailable")
     finally:
         await client.close()
 
@@ -468,7 +468,7 @@ async def hub_install_agent(request: Request, agent_id: str, force: bool = False
         logger.warning(f"Hub download unavailable: {e}")
         raise HTTPException(
             status_code=502,
-            detail="远程 Agent Store 暂不可用，无法下载。可通过 .akita-agent 文件本地导入。",
+            detail="Remote Agent Store is temporarily unavailable; cannot download. You can import locally via .akita-agent files.",
         )
     finally:
         await client.close()
@@ -527,7 +527,7 @@ async def hub_search_skills(
         logger.warning(f"Hub search skills unavailable (remote platform may be offline): {e}")
         raise HTTPException(
             status_code=502,
-            detail="远程 Skill Store 暂不可用。本地技能管理和 skills.sh 市场不受影响。",
+            detail="Remote Skill Store is temporarily unavailable. Local skill management and skills.sh marketplace are not affected.",
         )
     finally:
         await client.close()
@@ -541,7 +541,7 @@ async def hub_skill_detail(skill_id: str):
         return await client.get_detail(skill_id)
     except Exception as e:
         logger.warning(f"Hub skill detail unavailable: {e}")
-        raise HTTPException(status_code=502, detail="远程 Skill Store 暂不可用")
+        raise HTTPException(status_code=502, detail="Remote Skill Store is temporarily unavailable")
     finally:
         await client.close()
 
@@ -556,19 +556,19 @@ async def hub_install_skill(request: Request, skill_id: str):
         logger.warning(f"Hub skill install - cannot reach platform: {e}")
         raise HTTPException(
             status_code=502,
-            detail="远程 Skill Store 暂不可用。可在「技能管理 → 浏览市场」通过 skills.sh 安装，或使用 install_skill 从 GitHub 安装。",
+            detail="Remote Skill Store is temporarily unavailable. You can install via skills.sh in Skill Management > Browse Marketplace, or use install_skill from GitHub.",
         )
 
     skill = detail.get("skill", detail)
     install_url = skill.get("installUrl", "")
     if not install_url:
         await client.close()
-        raise HTTPException(status_code=400, detail="该 Skill 没有安装地址")
+        raise HTTPException(status_code=400, detail="This skill has no install URL")
 
     try:
         skill_dir = await client.install_skill(install_url, skill_id=skill_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"安装失败: {e}")
+        raise HTTPException(status_code=500, detail=f"Installation failed: {e}")
     finally:
         await client.close()
 

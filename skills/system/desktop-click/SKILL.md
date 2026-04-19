@@ -9,57 +9,58 @@ category: Desktop
 
 # Desktop Click
 
-点击桌面上的 UI 元素或指定坐标。
+Click on desktop UI elements or screen coordinates.
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| target | string | 是 | 元素描述或坐标（如 '确定按钮' 或 '100,200'） |
-| button | string | 否 | 鼠标按钮：left, right, middle，默认 left |
-| double | boolean | 否 | 是否双击，默认 false |
-| method | string | 否 | 查找方法：auto, uia, vision，默认 auto |
+| target | string | Yes | Element description or coordinates (e.g. `'Save File'` or `'100,200'`) |
+| button | string | No | Mouse button: left, right, middle. Default: left |
+| double | boolean | No | Double-click. Default: false |
+| method | string | No | Find method: auto, uia, vision. Default: auto |
 
 ## Target Formats
 
-- 元素描述：`"保存按钮"`、`"name:确定"`
-- 坐标：`"100,200"`
+- Element description: `"Save"`, `"name:Close"`
+- Coordinates: `"100,200"`
 
 ## Find Methods
 
-- `auto`: 自动选择（推荐）
-- `uia`: 只用 UIAutomation
-- `vision`: 只用视觉识别
+- `auto`: Automatic detection (recommended)
+- `uia`: UI Automation (faster, Windows)
+- `vision`: Visual screenshot matching (cross-platform)
 
 ## Examples
 
-**点击按钮（元素描述）**:
+**Click by element description**:
 ```json
-{"target": "确定按钮"}
+{"target": "Save"}
 ```
 
-**点击坐标**:
+**Click by coordinates**:
 ```json
 {"target": "100,200"}
 ```
 
-**右键点击**:
+**Right-click**:
 ```json
-{"target": "文件图标", "button": "right"}
+{"target": "file.txt", "button": "right"}
 ```
 
-**双击打开**:
+**Double-click to open**:
 ```json
-{"target": "文档.txt", "double": true}
+{"target": "readme.txt", "double": true}
 ```
 
 ## Notes
 
-- 如果点击的是浏览器内的网页元素，请使用 `browser_click`
-- 优先使用 UIAutomation（快速准确），失败时用视觉识别
+- For browser page elements, use `browser_click` instead
+- Use UI Automation for faster detection on Windows
+- Vision mode works across all platforms but is slower
 
 ## Related Skills
 
-- `browser-click`: 点击浏览器网页元素
-- `desktop-type`: 输入文本
-- `desktop-find-element`: 先查找元素
+- `browser-click`: Click browser page elements
+- `desktop-type`: Type text on desktop
+- `desktop-find-element`: Find desktop UI elements

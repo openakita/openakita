@@ -1,8 +1,9 @@
 """
-OrgHeartbeat — 心跳调度、晨会/周报生成
+OrgHeartbeat — Heartbeat scheduling, standup/report generation
 
-定期触发顶层 Agent 审视组织状态，支持晨会和周报自动生成。
-通过 heartbeat_max_cascade_depth 限制级联 LLM 调用深度。
+Periodically triggers the top-level Agent to review organization status,
+supporting automatic standup meetings and report generation.
+Cascaded LLM call depth is limited via heartbeat_max_cascade_depth.
 """
 
 from __future__ import annotations
@@ -171,7 +172,7 @@ class OrgHeartbeat:
             messenger = self._runtime.get_messenger(org.id)
             pending = messenger.get_pending_count(n.id) if messenger else 0
             node_summaries.append(
-                f"- {n.role_title}({n.department}): 状态={n.status.value}, 待处理消息={pending}"
+                f"- {n.role_title}({n.department}): status={n.status.value}, pending_messages={pending}"
             )
 
         blackboard_summary = bb.get_org_summary() if bb else ""
@@ -184,71 +185,71 @@ class OrgHeartbeat:
 
         if mode == "command":
             action_guidance = (
-                "## 请按以下步骤思考和行动\n\n"
-                "1. **健康检查**：查看各节点状态，是否有 ERROR 或阻塞需要关注\n"
-                "2. **进度回顾**：查看黑板（org_read_blackboard）了解项目进展和待办\n"
-                "3. **简要汇报**：将当前项目进度和健康状况写入黑板，供负责人查阅\n"
-                "4. **等待指令**：本组织为指令模式，不主动启动新任务，等待负责人下达指令\n\n"
-                "如果一切正常，简要说明当前状态即可。"
+                "## Please follow these steps\n\n"
+                "1. **Health check**: Review node statuses for any ERROR or blockage that needs attention\n"
+                "2. **Progress review**: Check the blackboard (org_read_blackboard) for project progress and pending items\n"
+                "3. **Brief report**: Write current project progress and health status to the blackboard for the manager to review\n"
+                "4. **Await instructions**: This organization is in command mode — do not start new tasks proactively; await manager instructions\n\n"
+                "If everything is normal, briefly describe the current status."
             )
             review_intro = (
-                f"[健康检查] 当前时间: {_now_iso()}\n\n"
-                f"组织: {org.name}\n\n"
-                f"这是定期健康检查，请关注项目进度和节点健康状况：\n"
+                f"[Health Check] Current time: {_now_iso()}\n\n"
+                f"Organization: {org.name}\n\n"
+                f"This is a periodic health check. Please review project progress and node health:\n"
             )
         else:
             action_guidance = (
-                "## 请按以下步骤思考和行动\n\n"
-                "1. **回顾**：查看黑板上的当前目标和进展（org_read_blackboard）\n"
-                "2. **评估**：各节点状态是否正常？有无阻塞需要干预？\n"
-                "3. **决策**：是否需要启动新任务、调整优先级、或分配调研工作？\n"
+                "## Please follow these steps\n\n"
+                "1. **Review**: Check current goals and progress on the blackboard (org_read_blackboard)\n"
+                "2. **Assess**: Are all nodes healthy? Any blockages needing intervention?\n"
+                "3. **Decide**: Should you start new tasks, adjust priorities, or assign research work?\n"
             )
             if has_external:
                 action_guidance += (
-                    "4. **执行**：使用 org_delegate_task 分配任务给下属，"
-                    "或自己使用 create_plan 制定计划、web_search 搜索信息\n"
+                    "4. **Execute**: Use org_delegate_task to assign tasks to subordinates, "
+                    "or use create_plan to make a plan, web_search to search for information\n"
                 )
             else:
                 action_guidance += (
-                    "4. **执行**：使用 org_delegate_task 分配任务，org_broadcast 发布公告\n"
+                    "4. **Execute**: Use org_delegate_task to assign tasks, org_broadcast to post announcements\n"
                 )
             action_guidance += (
-                "5. **记录**：将决策和下一步行动写入黑板（org_write_blackboard）\n\n"
-                "如果一切正常且无需新行动，简要说明当前状态即可。"
+                "5. **Record**: Write decisions and next steps to the blackboard (org_write_blackboard)\n\n"
+                "If everything is normal and no new actions are needed, briefly describe the current status."
             )
 
-            persona_label = org.user_persona.label if org.user_persona else "用户"
+            persona_label = org.user_persona.label if org.user_persona else "User"
             biz_section = ""
             if org.core_business:
-                biz_section = f"## 核心业务目标\n{org.core_business}\n\n"
+                biz_section = f"## Core Business Objectives\n{org.core_business}\n\n"
             if org.core_business:
                 review_intro = (
-                    f"[经营复盘] 当前时间: {_now_iso()}\n\n"
-                    f"组织: {org.name}\n\n"
+                    f"[Operations Review] Current time: {_now_iso()}\n\n"
+                    f"Organization: {org.name}\n\n"
                     f"{biz_section}"
-                    f"这是定期经营复盘，请回顾进展并推进下一阶段工作：\n"
-                    f"1. 先查看黑板（org_read_blackboard）了解上次的决策和进展\n"
-                    f"2. 评估各节点执行情况，识别阻塞和偏差\n"
-                    f"3. 调整策略、分配新任务、推进未完成的工作\n"
-                    f"4. 将本轮复盘结论和下一步计划写入黑板\n\n"
+                    f"This is a periodic operations review. Please review progress and advance next-phase work:\n"
+                    f"1. First check the blackboard (org_read_blackboard) for previous decisions and progress\n"
+                    f"2. Assess node execution status and identify blockages and deviations\n"
+                    f"3. Adjust strategy, assign new tasks, and advance unfinished work\n"
+                    f"4. Write this review's conclusions and next-step plans to the blackboard\n\n"
                 )
             else:
                 review_intro = (
-                    f"[心跳检查] 当前时间: {_now_iso()}\n\n"
-                    f"组织: {org.name}\n"
-                    f"心跳提示: {org.heartbeat_prompt}\n\n"
+                    f"[Heartbeat Check] Current time: {_now_iso()}\n\n"
+                    f"Organization: {org.name}\n"
+                    f"Heartbeat prompt: {org.heartbeat_prompt}\n\n"
                 )
 
-        persona_label = org.user_persona.label if org.user_persona else "用户"
+        persona_label = org.user_persona.label if org.user_persona else "User"
 
         prompt = (
             f"{review_intro}"
-            f"## 各节点状态\n{nl.join(node_summaries)}\n\n"
-            f"## 组织黑板摘要\n{blackboard_summary}\n\n"
+            f"## Node Statuses\n{nl.join(node_summaries)}\n\n"
+            f"## Organization Blackboard Summary\n{blackboard_summary}\n\n"
             f"{action_guidance}\n\n"
-            f"注意：本次心跳级联深度限制为 {org.heartbeat_max_cascade_depth} 层，"
-            f"请谨慎控制委派深度。\n"
-            f"重要决策和进展应主动写入黑板，以便{persona_label}在查看组织状态时了解最新情况。"
+            f"Note: This heartbeat cascade depth is limited to {org.heartbeat_max_cascade_depth} levels. "
+            f"Please control delegation depth carefully.\n"
+            f"Important decisions and progress should be written to the blackboard proactively so that {persona_label} can stay informed when reviewing organization status."
         )
 
         es.emit("heartbeat_triggered", "system", {
@@ -395,7 +396,7 @@ class OrgHeartbeat:
                             evt_parts.append(f"{etype}: {detail[:50]}")
                         else:
                             evt_parts.append(etype)
-                    parts_detail.append("事件: " + "; ".join(evt_parts))
+                    parts_detail.append("Events: " + "; ".join(evt_parts))
             except Exception:
                 pass
             try:
@@ -404,28 +405,28 @@ class OrgHeartbeat:
                     for pe in node_entries:
                         content = pe.content if hasattr(pe, "content") else str(pe)
                         if content:
-                            parts_detail.append(f"工作记录: {content[:80]}")
+                            parts_detail.append(f"Work log: {content[:80]}")
             except Exception:
                 pass
             messenger = self._runtime.get_messenger(org.id)
             pending = messenger.get_pending_count(n.id) if messenger else 0
-            line = f"- {n.role_title}({n.department}): 状态={n.status.value}, 待处理={pending}"
+            line = f"- {n.role_title}({n.department}): status={n.status.value}, pending={pending}"
             if parts_detail:
                 line += "\n    " + "\n    ".join(parts_detail)
             node_reports.append(line)
 
         nl = "\n"
         prompt = (
-            f"[晨会] 当前时间: {_now_iso()}\n\n"
-            f"组织: {org.name}\n"
-            f"晨会议程: {org.standup_agenda}\n\n"
-            f"## 团队成员状态\n{nl.join(node_reports)}\n\n"
-            f"请主持今日晨会：\n"
-            f"1. 点评各节点进展\n"
-            f"2. 识别阻塞和问题\n"
-            f"3. 调配资源（如需要）\n"
-            f"4. 生成简要晨会纪要\n\n"
-            f"将关键结论写入组织黑板（org_write_blackboard）。"
+            f"[Standup] Current time: {_now_iso()}\n\n"
+            f"Organization: {org.name}\n"
+            f"Standup agenda: {org.standup_agenda}\n\n"
+            f"## Team Member Status\n{nl.join(node_reports)}\n\n"
+            f"Please run today's standup meeting:\n"
+            f"1. Review each node's progress\n"
+            f"2. Identify blockages and issues\n"
+            f"3. Reallocate resources if needed\n"
+            f"4. Generate a brief standup summary\n\n"
+            f"Write key conclusions to the organization blackboard (org_write_blackboard)."
         )
 
         es.emit("standup_started", "system")
@@ -445,9 +446,9 @@ class OrgHeartbeat:
         report_path = self._runtime._manager._org_dir(org.id) / "reports" / f"standup_{now.strftime('%Y-%m-%d')}.md"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_content = (
-            f"# 晨会纪要 {now.strftime('%Y-%m-%d %H:%M')}\n\n"
-            f"**组织**: {org.name}\n\n"
-            f"## 结论\n{result.get('result', '无')}\n"
+            f"# Standup Summary {now.strftime('%Y-%m-%d %H:%M')}\n\n"
+            f"**Organization**: {org.name}\n\n"
+            f"## Conclusions\n{result.get('result', 'None')}\n"
         )
         await asyncio.to_thread(report_path.write_text, report_content, encoding="utf-8")
 

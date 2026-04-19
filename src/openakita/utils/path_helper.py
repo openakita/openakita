@@ -1,12 +1,13 @@
 """
-跨平台命令查找工具
+Cross-platform command lookup utility.
 
-macOS GUI 应用（Finder/Dock 启动的 .app）只继承系统最小 PATH:
+macOS GUI apps (Finder/Dock-launched .app) only inherit the system minimum PATH:
   /usr/bin:/bin:/usr/sbin:/sbin
-不含 Homebrew、NVM、Volta 等工具管理器注入的路径。
+This lacks paths injected by tool managers like Homebrew, NVM, and Volta.
 
-本模块提供统一的命令查找接口，在 macOS 上自动使用 login shell PATH 回退，
-供 MCP 连接、系统提示构建、Chrome DevTools 检测等场景复用。
+This module provides a unified command lookup interface that automatically falls
+back to the login shell PATH on macOS, used by MCP connections, system prompt
+construction, Chrome DevTools detection, and other scenarios.
 """
 
 import functools
@@ -21,14 +22,15 @@ logger = logging.getLogger(__name__)
 
 @functools.lru_cache(maxsize=1)
 def resolve_macos_login_shell_path() -> str | None:
-    """通过 login shell 获取 macOS 用户的完整 PATH。
+    """Retrieve the full macOS user PATH via the login shell.
 
-    Finder/Dock 启动的 .app 只拿到 /usr/bin:/bin:/usr/sbin:/sbin，
-    不含 Homebrew、NVM、Volta 等工具管理器注入的路径。
-    此函数运行一次用户的 login shell 并提取完整 PATH，结果由 lru_cache 缓存。
+    Finder/Dock-launched .app only gets /usr/bin:/bin:/usr/sbin:/sbin,
+    missing paths injected by tool managers like Homebrew, NVM, and Volta.
+    This function runs the user's login shell once to extract the full PATH,
+    with the result cached by lru_cache.
 
-    如果 login shell 失败（如 .zshrc 有语法错误、初始化超时），
-    会回退到 macOS path_helper 读取 /etc/paths 和 /etc/paths.d/ 配置。
+    If the login shell fails (e.g. .zshrc syntax error, init timeout),
+    it falls back to the macOS path_helper reading /etc/paths and /etc/paths.d/.
     """
     if sys.platform != "darwin":
         return None
@@ -48,14 +50,14 @@ def resolve_macos_login_shell_path() -> str | None:
 
 
 def which_command(cmd: str, extra_path: str | None = None) -> str | None:
-    """查找命令，macOS GUI 环境下自动回退到 login shell PATH。
+    """Look up a command, falling back to the login shell PATH in macOS GUI environments.
 
     Args:
-        cmd: 要查找的命令名
-        extra_path: 额外的搜索路径（优先使用，如 MCP 配置中的自定义 PATH）
+        cmd: The command name to look up.
+        extra_path: Extra search path (used first, e.g. a custom PATH from MCP config).
 
     Returns:
-        命令的绝对路径，未找到返回 None
+        The absolute path to the command, or None if not found.
     """
     found = shutil.which(cmd, path=extra_path)
     if found:
@@ -70,14 +72,15 @@ def which_command(cmd: str, extra_path: str | None = None) -> str | None:
 
 
 def get_macos_enriched_env(base_env: dict[str, str] | None = None) -> dict[str, str] | None:
-    """为 macOS 子进程构建包含完整 PATH 的环境变量字典。
+    """Build an environment variable dict with the full PATH for macOS subprocesses.
 
     Args:
-        base_env: 基础环境变量（如 MCP 配置中的 env）。
-                  为 None 或空 dict 时使用 os.environ 作为基础。
+        base_env: Base environment variables (e.g. env from MCP config).
+                  If None or empty dict, os.environ is used as the base.
 
     Returns:
-        包含完整 PATH 的环境变量字典。非 macOS 或无需修改时返回 base_env。
+        An environment variable dict with the full PATH.
+        Returns base_env unchanged on non-macOS or when no modification is needed.
     """
     if sys.platform != "darwin":
         return base_env
@@ -96,12 +99,12 @@ def get_macos_enriched_env(base_env: dict[str, str] | None = None) -> dict[str, 
 
 
 # ---------------------------------------------------------------------------
-# 内部实现
+# Internal implementation
 # ---------------------------------------------------------------------------
 
 
 def _resolve_via_login_shell() -> str | None:
-    """方法 1: 通过 login shell 获取 PATH（最完整，包含 nvm/volta 等动态路径）"""
+    """Method 1: Retrieve PATH via the login shell (most complete, includes nvm/volta dynamic paths)."""
     shell = os.environ.get("SHELL", "/bin/zsh")
     try:
         proc = subprocess.run(
@@ -146,10 +149,10 @@ def _resolve_via_login_shell() -> str | None:
 
 
 def _resolve_via_path_helper() -> str | None:
-    """方法 2: 通过 /usr/libexec/path_helper 获取 PATH。
+    """Method 2: Retrieve PATH via /usr/libexec/path_helper.
 
-    读取 /etc/paths 和 /etc/paths.d/ 的静态配置。
-    不包含 nvm/volta 等动态路径，但能覆盖 Homebrew 路径。
+    Reads static configuration from /etc/paths and /etc/paths.d/.
+    Does not include nvm/volta dynamic paths, but covers Homebrew paths.
     """
     try:
         proc = subprocess.run(
@@ -161,7 +164,7 @@ def _resolve_via_path_helper() -> str | None:
         )
         if proc.returncode != 0:
             return None
-        # path_helper 输出格式: PATH="..."; export PATH;
+        # path_helper output format: PATH="..."; export PATH;
         output = proc.stdout.strip()
         if output.startswith('PATH="') and '";' in output:
             path = output.split('"')[1]

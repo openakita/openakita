@@ -1,7 +1,7 @@
 """
-代理和网络配置工具
+Proxy and network configuration utilities
 
-从环境变量或配置中获取代理设置，以及 IPv4 强制配置。
+Get proxy settings and IPv4 force configuration from environment variables or configuration.
 """
 
 import logging
@@ -13,14 +13,14 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# 缓存：避免重复打印日志
+# Cache: avoid duplicate log printing
 _ipv4_logged = False
 _proxy_logged = False
 _transport_cache: httpx.AsyncHTTPTransport | None = None
 
-# 代理可达性缓存：(proxy_url, reachable, timestamp)
+# Proxy reachability cache: (proxy_url, reachable, timestamp)
 _proxy_reachable_cache: tuple[str, bool, float] | None = None
-_PROXY_CHECK_TTL = 30.0  # 缓存 30 秒
+_PROXY_CHECK_TTL = 30.0  # Cache for 30 seconds
 
 
 def _is_truthy_env(name: str) -> bool:
@@ -28,12 +28,12 @@ def _is_truthy_env(name: str) -> bool:
 
 
 def is_proxy_disabled() -> bool:
-    """是否禁用代理
+    """Whether proxy is disabled
 
-    用于排查“明明没配代理但所有端点都超时”的情况：
-    某些 Windows 环境会全局注入 HTTP(S)_PROXY/ALL_PROXY，导致请求被强制走代理。
+    Used to troubleshoot "no proxy configured but all endpoints timeout" situations:
+    Some Windows environments globally inject HTTP(S)_PROXY/ALL_PROXY, forcing requests through proxy.
 
-    支持的开关（任一为真即禁用）：
+    Supported switches (any true disables proxy):
     - LLM_DISABLE_PROXY=1
     - OPENAKITA_DISABLE_PROXY=1
     - DISABLE_PROXY=1
@@ -46,13 +46,13 @@ def is_proxy_disabled() -> bool:
 
 
 def _redact_proxy_url(proxy: str) -> str:
-    """脱敏 proxy URL（避免日志泄露账号密码）"""
+    """Redact proxy URL (prevent credential leaks in logs)"""
     try:
         from urllib.parse import urlsplit, urlunsplit
 
         parts = urlsplit(proxy)
         if parts.username or parts.password:
-            # 组装 netloc：***:***@host:port
+            # Build netloc: ***:***@host:port
             host = parts.hostname or ""
             port = f":{parts.port}" if parts.port else ""
             netloc = f"***:***@{host}{port}"
@@ -63,11 +63,11 @@ def _redact_proxy_url(proxy: str) -> str:
 
 
 def build_httpx_timeout(timeout_value: object, default: float = 60.0) -> httpx.Timeout:
-    """从配置构造 httpx.Timeout
+    """Construct httpx.Timeout from configuration
 
-    兼容：
-    - int/float：视作“读超时”（整体上限），并给 connect/write/pool 合理的更小默认值
-    - dict：支持字段 connect/read/write/pool/total（秒）
+    Compatible with:
+    - int/float: treated as "read timeout" (overall limit), with smaller reasonable defaults for connect/write/pool
+    - dict: supports fields connect/read/write/pool/total (seconds)
     """
 
     def _to_float_or_none(v: object) -> float | None:
@@ -86,7 +86,7 @@ def build_httpx_timeout(timeout_value: object, default: float = 60.0) -> httpx.T
         except Exception:
             return None
 
-    # dict 形式：{"connect":10,"read":300,"write":30,"pool":30,"total":300}
+    # dict form: {"connect":10,"read":300,"write":30,"pool":30,"total":300}
     if isinstance(timeout_value, dict):
         total = _to_float_or_none(timeout_value.get("total"))  # type: ignore[union-attr]
         connect = _to_float_or_none(timeout_value.get("connect"))  # type: ignore[union-attr]
@@ -106,12 +106,12 @@ def build_httpx_timeout(timeout_value: object, default: float = 60.0) -> httpx.T
         if pool is not None:
             kwargs["pool"] = pool
 
-        # 若 dict 无有效字段，回退到默认
+        # If dict has no valid fields, fall back to default
         if not kwargs:
             return httpx.Timeout(default)
         return httpx.Timeout(**kwargs)
 
-    # 数值形式：默认将 read 设为 t，connect/write/pool 设为较小值，避免“连接阶段卡满 t”
+    # Numeric form: by default set read to t, set connect/write/pool to smaller values to avoid "connection phase maxed out at t"
     try:
         t = float(timeout_value)  # type: ignore[arg-type]
     except Exception:
@@ -127,18 +127,18 @@ def build_httpx_timeout(timeout_value: object, default: float = 60.0) -> httpx.T
 
 
 def _check_proxy_reachable(proxy_url: str, timeout: float = 2.0) -> bool:
-    """检测代理是否可达（TCP 连接测试）
+    """Check if proxy is reachable (TCP connection test)
 
     Args:
-        proxy_url: 代理地址，如 socks5://127.0.0.1:7897 或 http://proxy:8080
-        timeout: 连接超时（秒）
+        proxy_url: Proxy address, e.g. socks5://127.0.0.1:7897 or http://proxy:8080
+        timeout: Connection timeout (seconds)
 
     Returns:
-        True 表示可达，False 表示不可达
+        True if reachable, False if not
     """
     global _proxy_reachable_cache
 
-    # 缓存命中
+    # Cache hit
     if _proxy_reachable_cache:
         cached_url, cached_result, cached_time = _proxy_reachable_cache
         if cached_url == proxy_url and (time.monotonic() - cached_time) < _PROXY_CHECK_TTL:
@@ -168,10 +168,10 @@ def _check_proxy_reachable(proxy_url: str, timeout: float = 2.0) -> bool:
 
 
 def _detect_proxy_source() -> tuple[str, str] | None:
-    """检测代理配置来源（不做可达性检查）
+    """Detect proxy configuration source (no reachability check)
 
     Returns:
-        (proxy_url, source_description) 或 None
+        (proxy_url, source_description) or None
     """
     for env_var in [
         "ALL_PROXY",
@@ -202,20 +202,20 @@ def _detect_proxy_source() -> tuple[str, str] | None:
 
 
 def get_proxy_config() -> str | None:
-    """获取代理配置（带可达性验证）
+    """Get proxy configuration (with reachability verification)
 
-    优先级（从高到低）:
-    1. ALL_PROXY 环境变量
-    2. HTTPS_PROXY 环境变量
-    3. HTTP_PROXY 环境变量
-    4. 配置文件中的 all_proxy
-    5. 配置文件中的 https_proxy
-    6. 配置文件中的 http_proxy
+    Priority (high to low):
+    1. ALL_PROXY environment variable
+    2. HTTPS_PROXY environment variable
+    3. HTTP_PROXY environment variable
+    4. all_proxy in config file
+    5. https_proxy in config file
+    6. http_proxy in config file
 
-    当代理不可达时自动降级为直连，避免 Clash/V2Ray 等残留配置导致所有请求失败。
+    Automatically fall back to direct connection when proxy is unreachable, avoiding request failures from leftover Clash/V2Ray configurations.
 
     Returns:
-        代理地址或 None
+        Proxy address or None
     """
     global _proxy_logged
 
@@ -247,15 +247,15 @@ def get_proxy_config() -> str | None:
 
 
 def is_ipv4_only() -> bool:
-    """检查是否强制使用 IPv4
+    """Check if IPv4-only mode is forced
 
-    通过环境变量 FORCE_IPV4=true 或配置文件 force_ipv4=true 启用
+    Enabled via environment variable FORCE_IPV4=true or config file force_ipv4=true
     """
-    # 检查环境变量
+    # Check environment variable
     if os.environ.get("FORCE_IPV4", "").lower() in ("true", "1", "yes"):
         return True
 
-    # 检查配置文件
+    # Check config file
     try:
         from ...config import settings
 
@@ -267,31 +267,31 @@ def is_ipv4_only() -> bool:
 
 
 def get_httpx_transport() -> httpx.AsyncHTTPTransport | None:
-    """获取 httpx transport（支持 IPv4-only 模式）
+    """Get httpx transport (supports IPv4-only mode)
 
-    当 FORCE_IPV4=true 时，创建强制使用 IPv4 的 transport。
-    这对于某些 VPN（如 LetsTAP）不支持 IPv6 的情况很有用。
+    When FORCE_IPV4=true, create transport that forces IPv4 use.
+    Useful for VPNs (like LetsTAP) that don't support IPv6.
 
     Returns:
-        httpx.AsyncHTTPTransport 或 None
+        httpx.AsyncHTTPTransport or None
     """
     global _ipv4_logged
 
     if is_ipv4_only():
-        # 只在第一次打印日志
+        # Only log on first time
         if not _ipv4_logged:
             logger.info("[Network] IPv4-only mode enabled (FORCE_IPV4=true)")
             _ipv4_logged = True
-        # local_address="0.0.0.0" 强制使用 IPv4
+        # local_address="0.0.0.0" forces IPv4 use
         return httpx.AsyncHTTPTransport(local_address="0.0.0.0")
     return None
 
 
 def get_httpx_proxy_mounts() -> dict | None:
-    """获取 httpx 代理配置
+    """Get httpx proxy configuration
 
     Returns:
-        httpx 代理 mounts 字典或 None
+        httpx proxy mounts dict or None
     """
     proxy = get_proxy_config()
     if proxy:
@@ -303,15 +303,15 @@ def get_httpx_proxy_mounts() -> dict | None:
 
 
 def get_httpx_client_kwargs(*, timeout: float = 30.0, is_local: bool = False) -> dict:
-    """获取 httpx.AsyncClient 通用 kwargs
+    """Get common httpx.AsyncClient kwargs
 
-    统一处理代理、trust_env、超时、transport 等配置。
-    始终设置 trust_env=False，避免 macOS/Windows 残留系统代理导致请求失败。
-    包含 IPv4-only transport（FORCE_IPV4=true 时），与 LLM 客户端行为一致。
+    Unified handling of proxy, trust_env, timeout, transport configuration.
+    Always set trust_env=False to avoid request failures from leftover system proxy on macOS/Windows.
+    Includes IPv4-only transport (when FORCE_IPV4=true), consistent with LLM client behavior.
 
     Args:
-        timeout: 请求超时（秒）
-        is_local: 是否为本地端点（本地端点不使用代理）
+        timeout: Request timeout (seconds)
+        is_local: Whether endpoint is local (local endpoints don't use proxy)
     """
     kwargs: dict = {
         "timeout": timeout,
@@ -331,13 +331,13 @@ def get_httpx_client_kwargs(*, timeout: float = 30.0, is_local: bool = False) ->
 
 
 def extract_connection_error(exc: BaseException, max_depth: int = 5) -> str:
-    """遍历异常链，提取底层错误信息。
+    """Traverse exception chain and extract underlying error message.
 
-    httpx 的 ConnectError 经常包装了真正的 OSError/SSL 错误，
-    直接 str(e) 只得到空字符串。此函数走到链底提取有用信息。
-    同时检查 __cause__（显式链）和 __context__（隐式链）。
+    httpx's ConnectError often wraps real OSError/SSL errors,
+    str(e) only gets empty string. This function goes to chain bottom to extract useful info.
+    Also checks __cause__ (explicit chain) and __context__ (implicit chain).
 
-    设计参考: claude-code errorUtils.ts extractConnectionErrorDetails()
+    Design reference: claude-code errorUtils.ts extractConnectionErrorDetails()
     """
     best: str = ""
     current: BaseException | None = exc
@@ -366,9 +366,9 @@ def extract_connection_error(exc: BaseException, max_depth: int = 5) -> str:
 
 
 def format_proxy_hint() -> str:
-    """生成代理诊断提示（用于错误信息）
+    """Generate proxy diagnostic hint (for error messages)
 
-    当用户已通过 DISABLE_PROXY=1 禁用代理时，不返回提示，避免误导。
+    When user already disabled proxy via DISABLE_PROXY=1, don't return hint to avoid misleading.
     """
     if is_proxy_disabled():
         return ""
@@ -379,9 +379,9 @@ def format_proxy_hint() -> str:
 
     proxy, source = detected
     reachable = _check_proxy_reachable(proxy)
-    status = "可达" if reachable else "不可达"
+    status = "reachable" if reachable else "unreachable"
     return (
-        f"\n[代理诊断] 检测到代理 {_redact_proxy_url(proxy)} (来源: {source}), "
-        f"状态: {status}。"
-        f"{'如果您未使用代理，请清除对应环境变量或设置 DISABLE_PROXY=1' if not reachable else ''}"
+        f"\n[Proxy Diagnosis] Detected proxy {_redact_proxy_url(proxy)} (source: {source}), "
+        f"status: {status}. "
+        f"{'If you are not using a proxy, clear the corresponding environment variable or set DISABLE_PROXY=1' if not reachable else ''}"
     )

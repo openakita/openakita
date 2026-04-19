@@ -63,7 +63,7 @@ class TestChainParentPropagation:
             {"to_node": "node_dev", "task": "实现登录"},
             persisted_org.id, "node_cto",
         )
-        assert "任务已分配" in result
+        assert "Task assigned" in result
         # 应至少存在一条以 chain_X 为父的子 chain
         children = [
             c for c, p in mock_runtime_full._chain_parent.items()
@@ -180,7 +180,7 @@ class TestQuestionTaskGuard:
             },
             persisted_org.id, "node_ceo",
         )
-        assert "拦截" in result
+        assert "blocked" in result
         assert "org_delegate_task" in result
 
     @pytest.mark.asyncio
@@ -196,7 +196,7 @@ class TestQuestionTaskGuard:
             },
             persisted_org.id, "node_ceo",
         )
-        assert "拦截" not in result
+        assert "blocked" not in result
 
     @pytest.mark.asyncio
     async def test_allow_leaf_node_question_with_task_intent(
@@ -212,7 +212,7 @@ class TestQuestionTaskGuard:
             },
             persisted_org.id, "node_dev",
         )
-        assert "拦截" not in result
+        assert "blocked" not in result
 
     @pytest.mark.asyncio
     async def test_flag_off_disables_guard(
@@ -228,7 +228,7 @@ class TestQuestionTaskGuard:
             },
             persisted_org.id, "node_ceo",
         )
-        assert "拦截" not in result
+        assert "blocked" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +324,7 @@ class TestWaitForDeliverable:
         )
         await closer
         assert "child_A" in result
-        assert "已关闭" in result
+        assert "closed" in result
 
     @pytest.mark.asyncio
     async def test_wait_returns_on_inbox_event(
@@ -349,7 +349,7 @@ class TestWaitForDeliverable:
             {"timeout": 5}, persisted_org.id, "node_cto",
         )
         await pusher
-        assert "新消息" in result
+        assert "new message" in result
 
     @pytest.mark.asyncio
     async def test_wait_timeout_returns_useful_hint(
@@ -364,7 +364,7 @@ class TestWaitForDeliverable:
         result = await handler._handle_org_wait_for_deliverable(
             {"timeout": 1}, persisted_org.id, "node_cto",
         )
-        assert "等待超时" in result
+        assert "Wait timed out" in result
         assert "org_list_delegated_tasks" in result
 
     @pytest.mark.asyncio
@@ -379,7 +379,7 @@ class TestWaitForDeliverable:
         result = await handler._handle_org_wait_for_deliverable(
             {"timeout": 5}, persisted_org.id, "node_cto",
         )
-        assert "没有需要等待" in result
+        assert "No open sub-chains" in result
 
     @pytest.mark.asyncio
     async def test_wait_disabled_when_flag_off(
@@ -390,7 +390,7 @@ class TestWaitForDeliverable:
         result = await handler._handle_org_wait_for_deliverable(
             {"timeout": 5}, persisted_org.id, "node_cto",
         )
-        assert "已禁用" in result
+        assert "disabled" in result
 
 
 # ---------------------------------------------------------------------------

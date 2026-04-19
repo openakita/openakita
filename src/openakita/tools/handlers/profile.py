@@ -1,10 +1,10 @@
 """
-用户档案处理器
+User profile handler
 
-处理用户档案相关的系统技能：
-- update_user_profile: 更新档案
-- skip_profile_question: 跳过问题
-- get_user_profile: 获取档案
+Handles system skills related to user profiles:
+- update_user_profile: update profile
+- skip_profile_question: skip question
+- get_user_profile: get profile
 """
 
 import logging
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class ProfileHandler:
-    """用户档案处理器"""
+    """User profile handler"""
 
     TOOLS = [
         "update_user_profile",
@@ -29,7 +29,7 @@ class ProfileHandler:
         self.agent = agent
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
-        """处理工具调用"""
+        """Handle tool invocation"""
         if tool_name == "update_user_profile":
             return self._update_profile(params)
         elif tool_name == "skip_profile_question":
@@ -40,14 +40,16 @@ class ProfileHandler:
             return f"❌ Unknown profile tool: {tool_name}"
 
     def _update_profile(self, params: dict) -> str:
-        """更新用户档案。
+        """Update user profile.
 
-        - 已知 key 直接落档
-        - 未知 key 自动 fallback 到 add_memory，作为 fact 存入语义记忆，
-          避免小白用户/非程序员场景因白名单卡死（旧版直接报错的 P0 问题）
+        - Known keys are persisted directly to the profile.
+        - Unknown keys automatically fall back to add_memory, stored as a
+          fact in semantic memory, so non-technical users don't hit a dead
+          end when the whitelist doesn't cover their input.
         """
         available_keys = self.agent.profile_manager.get_available_keys()
 
+        # LLM may pass {name: "Xiao Ming", age: "28"} instead of {key: "name", value: "Xiao Ming"}
         if "key" not in params:
             updated: list[str] = []
             saved_as_memory: list[str] = []
@@ -60,17 +62,17 @@ class ProfileHandler:
                         saved_as_memory.append(f"{k} = {v}")
             parts: list[str] = []
             if updated:
-                parts.append(f"✅ 已更新档案: {', '.join(updated)}")
+                parts.append(f"✅ Profile updated: {', '.join(updated)}")
             if saved_as_memory:
                 parts.append(
-                    f"📝 以下信息不在档案白名单内，已作为长期记忆保存: "
+                    f"📝 The following were not in the profile whitelist and were saved as long-term memory: "
                     f"{', '.join(saved_as_memory)}"
                 )
             if parts:
                 return "\n".join(parts)
             return (
-                f"❌ 参数格式错误，正确用法: {{\"key\": \"name\", \"value\": \"小明\"}}\n"
-                f"可用的键: {', '.join(available_keys)}"
+                f"❌ Invalid parameter format. Correct usage: {{\"key\": \"name\", \"value\": \"value\"}}\n"
+                f"Available keys: {', '.join(available_keys)}"
             )
 
         key = params["key"]
@@ -79,18 +81,18 @@ class ProfileHandler:
         if key not in available_keys:
             if self._save_unknown_as_memory(key, value):
                 return (
-                    f"📝 档案白名单不含 `{key}`，已作为长期记忆保存: {key} = {value}\n"
-                    f"（如需正式建档请联系管理员扩展 USER_PROFILE_ITEMS）"
+                    f"📝 The profile whitelist does not include `{key}`; saved as long-term memory: {key} = {value}\n"
+                    f"(To formalize this field, ask an admin to extend USER_PROFILE_ITEMS.)"
                 )
-            return f"❌ 未知的档案项: {key}\n可用的键: {', '.join(available_keys)}"
+            return f"❌ Unknown profile key: {key}\nAvailable keys: {', '.join(available_keys)}"
 
         self.agent.profile_manager.update_profile(key, value)
-        return f"✅ 已更新档案: {key} = {value}"
+        return f"✅ Profile updated: {key} = {value}"
 
     def _save_unknown_as_memory(self, key: str, value: Any) -> bool:
-        """把白名单外的 key=value 当作 fact 落入语义记忆。
+        """Save an out-of-whitelist key=value into semantic memory as a fact.
 
-        失败返回 False，由调用方决定是否报错。
+        Returns False on failure; the caller decides whether to surface an error.
         """
         try:
             mm = getattr(self.agent, "memory_manager", None)
@@ -98,7 +100,7 @@ class ProfileHandler:
                 return False
             from ...memory.types import Memory, MemoryPriority, MemoryType
 
-            content = f"用户档案补充: {key} = {value}"
+            content = f"User profile supplement: {key} = {value}"
             mem = Memory(
                 content=content,
                 type=MemoryType.FACT,
@@ -114,22 +116,22 @@ class ProfileHandler:
             return False
 
     def _skip_question(self, params: dict) -> str:
-        """跳过档案问题"""
+        """Skip profile question"""
         key = params["key"]
         self.agent.profile_manager.skip_question(key)
-        return f"✅ 已跳过问题: {key}"
+        return f"✅ Question skipped: {key}"
 
     def _get_profile(self, params: dict) -> str:
-        """获取用户档案"""
+        """Get user profile"""
         summary = self.agent.profile_manager.get_profile_summary()
 
         if not summary:
-            return "用户档案为空\n\n提示: 通过对话中分享信息来建立档案"
+            return "User profile is empty\n\nTip: Share information in conversation to build your profile"
 
         return summary
 
 
 def create_handler(agent: "Agent"):
-    """创建用户档案处理器"""
+    """Create user profile handler"""
     handler = ProfileHandler(agent)
     return handler.handle

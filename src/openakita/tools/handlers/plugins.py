@@ -1,9 +1,9 @@
 """
-插件查询处理器
+Plugin query handler
 
-处理插件管理相关的 LLM 工具调用：
-- list_plugins: 列出所有已安装插件
-- get_plugin_info: 获取单个插件的详细信息
+Handles LLM tool calls related to plugin management:
+- list_plugins: list all installed plugins
+- get_plugin_info: get detailed info for a single plugin
 """
 
 import json
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class PluginsHandler:
-    """插件查询处理器"""
+    """Plugin query handler"""
 
     TOOLS = ["list_plugins", "get_plugin_info"]
 
@@ -38,7 +38,7 @@ class PluginsHandler:
     def _list_plugins(self) -> str:
         pm = self._get_pm()
         if pm is None:
-            return "插件系统未初始化。"
+            return "Plugin system not initialized."
 
         loaded = pm.list_loaded()
         failed = pm.list_failed()
@@ -57,9 +57,9 @@ class PluginsHandler:
                     disabled_ids.append(entry.plugin_id)
 
         if not loaded and not failed and not disabled_ids:
-            return "当前未安装任何插件。"
+            return "No plugins installed."
 
-        lines: list[str] = ["# 已安装插件", ""]
+        lines: list[str] = ["# Installed Plugins", ""]
 
         if loaded:
             by_category: dict[str, list[dict]] = {}
@@ -74,15 +74,15 @@ class PluginsHandler:
                     skills = self._get_plugin_skills(p["id"])
                     provides_parts = []
                     if tools:
-                        provides_parts.append(f"工具: {', '.join(tools)}")
+                        provides_parts.append(f"tools: {', '.join(tools)}")
                     if skills:
-                        provides_parts.append(f"技能: {', '.join(skills)}")
-                    provides_str = f" | 提供: {'; '.join(provides_parts)}" if provides_parts else ""
+                        provides_parts.append(f"skills: {', '.join(skills)}")
+                    provides_str = f" | provides: {'; '.join(provides_parts)}" if provides_parts else ""
 
                     pending = p.get("pending_permissions", [])
-                    status = "已加载"
+                    status = "loaded"
                     if pending:
-                        status += f"（待授权: {', '.join(pending)}）"
+                        status += f" (pending authorization: {', '.join(pending)})"
 
                     lines.append(
                         f"- **{p.get('name', p['id'])}** (`{p['id']}`) "
@@ -91,13 +91,13 @@ class PluginsHandler:
                 lines.append("")
 
         if failed:
-            lines.append("## 加载失败")
+            lines.append("## Failed to Load")
             for pid, err in failed.items():
                 lines.append(f"- `{pid}`: {err}")
             lines.append("")
 
         if disabled_ids:
-            lines.append("## 已禁用")
+            lines.append("## Disabled")
             for pid in disabled_ids:
                 lines.append(f"- `{pid}`")
             lines.append("")
@@ -107,54 +107,54 @@ class PluginsHandler:
     def _get_plugin_info(self, params: dict[str, Any]) -> str:
         plugin_id = params.get("plugin_id", "")
         if not plugin_id:
-            return "错误: 需要提供 plugin_id 参数。"
+            return "Error: plugin_id parameter is required."
 
         pm = self._get_pm()
         if pm is None:
-            return "插件系统未初始化。"
+            return "Plugin system not initialized."
 
         loaded = pm.get_loaded(plugin_id)
         if loaded is None:
             failed = pm.list_failed()
             if plugin_id in failed:
-                return f"# 插件: {plugin_id}\n\n**状态**: 加载失败\n**错误**: {failed[plugin_id]}"
-            return f"未找到插件 '{plugin_id}'。"
+                return f"# Plugin: {plugin_id}\n\n**Status**: Failed to load\n**Error**: {failed[plugin_id]}"
+            return f"Plugin '{plugin_id}' not found."
 
         manifest = loaded.manifest
         lines: list[str] = [
-            f"# 插件: {manifest.name}",
+            f"# Plugin: {manifest.name}",
             "",
             f"- **ID**: {manifest.id}",
-            f"- **版本**: {manifest.version}",
-            f"- **类型**: {manifest.plugin_type}",
-            f"- **分类**: {manifest.category}",
-            f"- **作者**: {manifest.author or '未知'}",
-            "- **状态**: 已加载",
+            f"- **Version**: {manifest.version}",
+            f"- **Type**: {manifest.plugin_type}",
+            f"- **Category**: {manifest.category}",
+            f"- **Author**: {manifest.author or 'Unknown'}",
+            "- **Status**: Loaded",
         ]
 
         if manifest.description:
-            lines += ["", "## 描述", "", manifest.description]
+            lines += ["", "## Description", "", manifest.description]
 
         tools = self._get_plugin_tools(plugin_id)
         if tools:
-            lines += ["", "## 注册的工具", ""]
+            lines += ["", "## Registered Tools", ""]
             for t in tools:
                 lines.append(f"- `{t}`")
 
         skills = self._get_plugin_skills(plugin_id)
         if skills:
-            lines += ["", "## 提供的技能", ""]
+            lines += ["", "## Provided Skills", ""]
             for s in skills:
                 lines.append(f"- `{s}`")
 
         granted = list(loaded.api._granted_permissions)
         pending = list(loaded.api._pending_permissions) if loaded.api._pending_permissions else []
         if granted or pending:
-            lines += ["", "## 权限"]
+            lines += ["", "## Permissions"]
             if granted:
-                lines.append(f"- **已授权**: {', '.join(granted)}")
+                lines.append(f"- **Granted**: {', '.join(granted)}")
             if pending:
-                lines.append(f"- **待授权**: {', '.join(pending)}")
+                lines.append(f"- **Pending**: {', '.join(pending)}")
 
         readme_path = loaded.plugin_dir / "README.md"
         if readme_path.exists():
@@ -167,7 +167,7 @@ class PluginsHandler:
         config = loaded.api.get_config()
         if config:
             safe_config = self._mask_sensitive(config, loaded.plugin_dir)
-            lines += ["", "## 当前配置", ""]
+            lines += ["", "## Current Configuration", ""]
             lines.append(f"```json\n{json.dumps(safe_config, indent=2, ensure_ascii=False)}\n```")
 
         return "\n".join(lines)

@@ -1,11 +1,12 @@
 """
-上下文文件注入扫描
+Context file injection scanning
 
-检测被注入到系统 prompt 的文件（如 AGENTS.md、SKILL.md、MCP 返回值等）
-中是否包含 prompt injection 攻击模式。
+Detects prompt injection attack patterns in files injected into the system prompt
+(e.g. AGENTS.md, SKILL.md, MCP return values, etc.).
 
-检测到威胁时不阻止加载，而是在内容前注入警告标记，
-让 LLM 意识到该内容可能包含恶意指令。
+When a threat is detected, loading is not blocked; instead, a warning marker is
+prepended to the content so the LLM is aware the content may contain malicious
+instructions.
 """
 
 import re

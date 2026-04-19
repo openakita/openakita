@@ -1,12 +1,12 @@
 """
-OpenAkita 日志系统
+OpenAkita logging system
 
-功能:
-- 日志文件输出（按天轮转 + 按大小轮转）
-- 分离 error.log（只记录 ERROR/CRITICAL）
-- 自动清理过期日志
-- 支持控制台彩色输出
-- 会话级日志缓存（供 AI 查询）
+Features:
+- Log file output (daily rotation + size-based rotation)
+- Separate error.log (ERROR/CRITICAL only)
+- Automatic cleanup of expired logs
+- Console color output support
+- Session-level log buffer (for AI queries)
 """
 
 from .cleaner import LogCleaner

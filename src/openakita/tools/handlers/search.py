@@ -1,7 +1,7 @@
 """
-Semantic Search 处理器
+Semantic Search Handler
 
-基于向量相似度的语义搜索 — 按含义搜索文件内容。
+Vector-similarity-based semantic search — search file contents by meaning.
 """
 
 import logging
@@ -27,7 +27,7 @@ class SearchHandler:
     async def _semantic_search(self, params: dict) -> str:
         query = params.get("query", "").strip()
         if not query:
-            return "❌ semantic_search 缺少必要参数 'query'。"
+            return "❌ semantic_search requires the 'query' parameter."
 
         search_path = params.get("path", "")
         max_results = params.get("max_results", 10)
@@ -57,7 +57,7 @@ class SearchHandler:
             keywords = query.split()[:3]
 
         if not keywords:
-            return f"❌ 无法从查询中提取有效关键词: '{query}'"
+            return f"❌ Could not extract valid keywords from query: '{query}'"
 
         all_results = []
         for keyword in keywords[:3]:

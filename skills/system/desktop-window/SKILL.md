@@ -9,50 +9,50 @@ category: Desktop
 
 # Desktop Window
 
-窗口管理操作。
+manage. 
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |------|------|------|------|
-| action | string | 是 | 操作类型：list/switch/minimize/maximize/restore/close |
-| title | string | 否 | 窗口标题（模糊匹配），list 操作不需要 |
+| action | string | Yes |: list/switch/minimize/maximize/restore/close |
+| title | string | No | (), list notneed |
 
 ## Actions
 
-| 操作 | 说明 | 需要 title |
+| | Description | need title |
 |------|------|-----------|
-| list | 列出所有窗口 | 否 |
-| switch | 切换到指定窗口（激活并置顶） | 是 |
-| minimize | 最小化窗口 | 是 |
-| maximize | 最大化窗口 | 是 |
-| restore | 恢复窗口 | 是 |
-| close | 关闭窗口 | 是 |
+| list | listhave | No |
+| switch | Switch () | Yes |
+| minimize | Minimum | Yes |
+| maximize | Maximum | Yes |
+| restore | Resume | Yes |
+| close | Close | Yes |
 
 ## Examples
 
-**列出所有窗口**:
+**listhave**:
 ```json
 {"action": "list"}
 ```
 
-**切换到记事本**:
+**Switch**:
 ```json
-{"action": "switch", "title": "记事本"}
+{"action": "switch", "title": ""}
 ```
 
-**最大化 Chrome**:
+**Maximum Chrome**:
 ```json
 {"action": "maximize", "title": "Chrome"}
 ```
 
 ## Returns (list action)
 
-- 窗口标题
-- 窗口句柄
-- 窗口位置和大小
+-
+-
+- and
 
 ## Related Skills
 
-- `desktop-screenshot`: 截取窗口
-- `desktop-inspect`: 检查窗口结构
+- `desktop-screenshot`: Capture
+- `desktop-inspect`: Inspect window

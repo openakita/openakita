@@ -1,13 +1,13 @@
 """
-Microcompact — 请求前轻量上下文清理
+Microcompact — lightweight context cleanup before requests
 
-零 LLM 调用成本的上下文瘦身策略，在发送 API 请求前执行:
-1. 过期工具结果清空（按时间阈值）
-2. 大工具结果替换为摘要预览
-3. 旧 thinking 块移除
-4. 旧 tool_use 参数裁剪
+A zero LLM-cost context trimming strategy executed before sending API requests:
+1. Clear expired tool results (by time threshold)
+2. Replace large tool results with summary previews
+3. Remove old thinking blocks
+4. Trim old tool_use parameters
 
-参考 Claude Code 的 microcompact 策略。
+Modeled after Claude Code's microcompact strategy.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import time
 
 logger = logging.getLogger(__name__)
 
-TOOL_RESULT_EXPIRY_SECONDS = 600  # 10 分钟
+TOOL_RESULT_EXPIRY_SECONDS = 600  # 10 minutes
 LARGE_RESULT_PREVIEW_CHARS = 500
 LARGE_RESULT_THRESHOLD_CHARS = 8000
 
@@ -30,20 +30,20 @@ def microcompact(
     preview_chars: int = LARGE_RESULT_PREVIEW_CHARS,
     current_time: float | None = None,
 ) -> list[dict]:
-    """对消息列表执行轻量清理。
+    """Perform lightweight cleanup on the message list.
 
-    注意：这是浅拷贝操作，会修改传入的消息列表。
-    调用方应在需要时提前深拷贝。
+    Note: This is a shallow-copy operation that mutates the passed-in list.
+    The caller should deep-copy beforehand if needed.
 
     Args:
-        messages: 消息列表
-        tool_result_expiry_s: 工具结果过期秒数
-        large_result_threshold: 大结果阈值字符数
-        preview_chars: 预览保留字符数
-        current_time: 当前时间（测试用）
+        messages: message list
+        tool_result_expiry_s: tool result expiry in seconds
+        large_result_threshold: character threshold for large results
+        preview_chars: number of characters to keep as preview
+        current_time: current time (for testing)
 
     Returns:
-        清理后的消息列表（原地修改）
+        cleaned message list (mutated in place)
     """
     now = current_time or time.time()
     cleaned = 0
@@ -101,18 +101,18 @@ def snip_old_segments(
     max_groups: int = 50,
     snip_count: int = 5,
 ) -> tuple[list[dict], int]:
-    """直接丢弃最早的 N 组对话段（History Snip）。
+    """Drop the earliest N conversation groups (History Snip).
 
-    零 LLM 调用成本，适用于超长对话的快速上下文释放。
-    通过 user/assistant 消息对分组，移除最早的 N 组。
+    Zero LLM cost, suitable for fast context release in very long conversations.
+    Groups messages by user/assistant pairs and removes the earliest N groups.
 
     Args:
-        messages: 消息列表
-        max_groups: 当组数超过此值时触发裁剪
-        snip_count: 每次裁剪的组数
+        messages: message list
+        max_groups: trigger pruning when the group count exceeds this value
+        snip_count: number of groups to prune each time
 
     Returns:
-        (裁剪后的消息列表, 被移除的消息数量)
+        (pruned message list, number of messages removed)
     """
     groups = _group_messages(messages)
     if len(groups) <= max_groups:
@@ -143,9 +143,10 @@ def snip_old_segments(
 
 
 def _group_messages(messages: list[dict]) -> list[list[dict]]:
-    """将消息按 user→assistant 对话轮次分组。
+    """Group messages by user-assistant conversation turns.
 
-    每组以 user 消息开始，包含紧随的 assistant 消息和相关 tool_result。
+    Each group starts with a user message and includes the following
+    assistant message and related tool_result blocks.
     """
     groups: list[list[dict]] = []
     current: list[dict] = []

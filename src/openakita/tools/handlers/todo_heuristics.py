@@ -1,4 +1,4 @@
-"""多步骤任务启发式检测"""
+"""Heuristic detection for multi-step tasks."""
 
 import re as _re
 
@@ -7,15 +7,16 @@ __all__ = ["should_require_todo"]
 
 def should_require_todo(user_message: str) -> bool:
     """
-    检测用户请求是否需要 Todo 模式（多步骤任务检测）
+    Detect whether a user request should use Todo mode (multi-step task detection).
 
-    建议 18：提高阈值，只在"多工具协作或明显多步"时启用
-    简单任务直接执行，不要过度计划
+    Recommendation 18: raise the threshold so Todo is only enabled for
+    multi-tool collaboration or clearly multi-step tasks. Execute simple
+    tasks directly without over-planning.
 
-    触发条件：
-    1. 包含 5+ 个动作词（明显的复杂任务）
-    2. 包含 3+ 个动作词 + 连接词（明确的多步骤）
-    3. 包含 3+ 个动作词 + 逗号分隔（明确的多步骤）
+    Trigger conditions:
+    1. Contains 5+ action words (clearly a complex task)
+    2. Contains 3+ action words + a connector (clearly multi-step)
+    3. Contains 3+ action words + comma separation (clearly multi-step)
     """
     if not user_message:
         return False

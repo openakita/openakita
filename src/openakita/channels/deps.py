@@ -1,12 +1,12 @@
-"""IM 通道可选依赖映射（纯数据，无业务导入）。
+"""IM channel optional dependency mapping (pure data, no business imports).
 
-被以下模块引用:
+Referenced by:
 - openakita.main (_ensure_channel_deps)
 - openakita.setup.wizard (_check_channel_deps)
 - openakita.setup_center.bridge (ensure-channel-deps)
 """
 
-# 通道名 → [(import_name, pip_package), ...]
+# channel name -> [(import_name, pip_package), ...]
 CHANNEL_DEPS: dict[str, list[tuple[str, str]]] = {
     "feishu": [("lark_oapi", "lark-oapi")],
     "lark": [("lark_oapi", "lark-oapi")],
@@ -19,7 +19,7 @@ CHANNEL_DEPS: dict[str, list[tuple[str, str]]] = {
     "wechat": [("httpx", "httpx"), ("Crypto", "pycryptodome")],
 }
 
-# 通道名 → pyproject.toml extras 名称（用于 pip install openakita[xxx] 提示）
+# channel name -> pyproject.toml extras name (used for pip install openakita[xxx] hints)
 CHANNEL_EXTRAS: dict[str, str] = {
     "feishu": "feishu",
     "lark": "feishu",

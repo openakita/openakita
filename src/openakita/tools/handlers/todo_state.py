@@ -1,10 +1,10 @@
 """
-Session Todo 状态管理 + 生命周期函数
+Session Todo state management + lifecycle functions
 
-从 plan.py 拆分而来，负责：
-- 模块级字典管理（_session_active_todos / _session_todo_required / _session_handlers）
-- 注册、注销、查询、清理函数
-- auto_close_todo / cancel_todo / force_close_plan 等生命周期函数
+Split from plan.py, responsible for:
+- Module-level dict management (_session_active_todos / _session_todo_required / _session_handlers)
+- Register, unregister, query, cleanup functions
+- Lifecycle functions like auto_close_todo / cancel_todo / force_close_plan
 
 ADR: Persistence Architecture (TD3)
 ------------------------------------
@@ -67,23 +67,23 @@ __all__ = [
 ]
 
 # ============================================
-# Session Todo 状态管理（模块级别）
+# Session Todo state management (module level)
 # ============================================
 
 _MAX_SESSIONS = 100
 
-# 记录哪些 session 被标记为需要 Todo（compound 任务）
+# Record which sessions are marked as requiring Todo (compound tasks)
 _session_todo_required: dict[str, bool] = {}
 
-# 记录 session 的活跃 Todo（session_id -> plan_id）
+# Record active Todos for sessions (session_id -> plan_id)
 _session_active_todos: dict[str, str] = {}
 
-# 存储 session -> PlanHandler 实例的映射（用于任务完成判断时查询 Plan 状态）
+# Store mapping of session -> PlanHandler instances (for querying Plan state during task completion)
 _session_handlers: dict[str, "PlanHandler"] = {}
 
 
 def _prune_oldest_sessions() -> None:
-    """当任一模块级字典超过 _MAX_SESSIONS 时，淘汰最早注册的条目。"""
+    """Prune oldest entries when any module-level dict exceeds _MAX_SESSIONS."""
     all_ids = set(_session_todo_required) | set(_session_active_todos) | set(_session_handlers)
     if len(all_ids) <= _MAX_SESSIONS:
         return
@@ -107,36 +107,36 @@ def cleanup_session(session_id: str) -> None:
 
 
 def require_todo_for_session(session_id: str, required: bool) -> None:
-    """标记 session 是否需要 Todo（由 Prompt Compiler 调用）"""
+    """Mark whether session requires Todo (called by Prompt Compiler)"""
     _prune_oldest_sessions()
     _session_todo_required[session_id] = required
     logger.info(f"[Plan] Session {session_id} todo_required={required}")
 
 
 def is_todo_required(session_id: str) -> bool:
-    """检查 session 是否被标记为需要 Todo"""
+    """Check whether session is marked as requiring Todo"""
     return _session_todo_required.get(session_id, False)
 
 
 def has_active_todo(session_id: str) -> bool:
-    """检查 session 是否有活跃的 Todo"""
+    """Check whether session has active Todo"""
     return session_id in _session_active_todos
 
 
 def get_active_plan_id(session_id: str) -> str | None:
-    """获取 session 当前活跃 Todo 的 plan_id（供 SSE 事件同步用）"""
+    """Get plan_id of session's currently active Todo (for SSE event sync)"""
     return _session_active_todos.get(session_id)
 
 
 def register_active_todo(session_id: str, plan_id: str) -> None:
-    """注册活跃的 Todo"""
+    """Register active Todo"""
     _prune_oldest_sessions()
     _session_active_todos[session_id] = plan_id
     logger.info(f"[Plan] Registered active todo {plan_id} for session {session_id}")
 
 
 def unregister_active_todo(session_id: str) -> None:
-    """注销活跃的 Todo（保留 handler 以支持后续新建 todo）"""
+    """Unregister active Todo (keep handler to support future todos)"""
     if session_id in _session_active_todos:
         todo_id = _session_active_todos.pop(session_id)
         logger.info(f"[Todo] Unregistered todo {todo_id} for session {session_id}")
@@ -145,14 +145,14 @@ def unregister_active_todo(session_id: str) -> None:
 
 
 def clear_session_todo_state(session_id: str) -> None:
-    """清除 session 的所有 Todo 状态（会话结束时调用）"""
+    """Clear all Todo state for session (called when session ends)"""
     _session_todo_required.pop(session_id, None)
     _session_active_todos.pop(session_id, None)
     _session_handlers.pop(session_id, None)
 
 
 def get_active_todo_sessions() -> dict[str, str]:
-    """返回所有活跃 todo 的 {session_id: plan_id} 副本（只读）"""
+    """Return read-only copy of all active todos as {session_id: plan_id}"""
     return dict(_session_active_todos)
 
 
@@ -161,7 +161,7 @@ iter_active_todo_sessions = get_active_todo_sessions
 
 
 def _emit_todo_lifecycle_event(session_id: str, event_type: str, plan: dict | None = None) -> None:
-    """通过 WebSocket 广播 todo 生命周期事件（供非流式路径使用）"""
+    """Broadcast todo lifecycle event via WebSocket (for non-streaming paths)"""
     try:
         from ...api.routes.websocket import broadcast_event
         from ...core.engine_bridge import fire_in_api
@@ -177,18 +177,18 @@ def _emit_todo_lifecycle_event(session_id: str, event_type: str, plan: dict | No
 
 def auto_close_todo(session_id: str) -> bool:
     """
-    自动关闭指定 session 的活跃 Todo（任务结束时调用）。
+    Auto-close the active Todo for a session (called when task ends).
 
-    当一轮 ReAct 循环结束但 LLM 未显式调用 complete_todo 时，
-    此函数确保 Todo 被正确收尾。
+    When a ReAct loop ends but LLM doesn't explicitly call complete_todo,
+    this function ensures the Todo is properly finalized.
 
-    **多轮计划保护**: 如果计划中仍有 pending 步骤（尚未开始执行），
-    说明这是一个跨多轮的计划，本轮只是完成了部分步骤。此时不关闭
-    计划，仅将 in_progress 步骤标记为 completed，保留 pending 步骤
-    供下一轮继续执行。
+    **Multi-turn plan protection**: If the plan still has pending steps (not yet executed),
+    it's a multi-turn plan and this turn only completed some steps. In this case, don't close
+    the plan, just mark in_progress steps as completed, and keep pending steps
+    for the next turn to continue.
 
     Returns:
-        True 如果有 Todo 被关闭，False 如果没有活跃 Todo（或计划被保留）
+        True if a Todo was closed, False if no active Todo (or plan was preserved)
     """
     if not has_active_todo(session_id):
         return False
@@ -218,7 +218,7 @@ def auto_close_todo(session_id: str) -> bool:
                 if current_turn and step_turn == current_turn:
                     continue
                 step["status"] = "completed"
-                step["result"] = step.get("result") or "(本轮自动标记完成)"
+                step["result"] = step.get("result") or "(auto-marked completed this turn)"
                 step["completed_at"] = _now
         # Persist intermediate state
         if hasattr(handler, "_store"):
@@ -240,12 +240,12 @@ def auto_close_todo(session_id: str) -> bool:
 
 def cancel_todo(session_id: str) -> bool:
     """
-    用户主动取消时关闭活跃 Todo。
+    Close active Todo when user cancels.
 
-    与 auto_close_todo 不同，此函数将计划和未完成步骤标记为 cancelled。
+    Unlike auto_close_todo, this function marks plan and incomplete steps as cancelled.
 
     Returns:
-        True 如果有 Todo 被取消，False 如果没有活跃 Todo
+        True if a Todo was cancelled, False if no active Todo
     """
     if not has_active_todo(session_id):
         return False
@@ -266,14 +266,14 @@ def cancel_todo(session_id: str) -> bool:
 
 def force_close_plan(session_id: str) -> bool:
     """
-    强制关闭指定 session 的 Plan 状态（死锁恢复用）。
+    Force-close Plan state for a session (for deadlock recovery).
 
-    无条件清除所有与该 session 关联的 Plan 模块级状态，
-    无论 handler 实例或 plan 数据是否可达。
-    用于打破 todo_required=True + has_active_todo=False 的死锁。
+    Unconditionally clear all Plan module-level state associated with the session,
+    whether handler instances or plan data are reachable or not.
+    Used to break deadlock where todo_required=True + has_active_todo=False.
 
     Returns:
-        True 如果清理了任何状态
+        True if any state was cleaned up
     """
     had_state = False
     if session_id in _session_active_todos:
@@ -301,23 +301,23 @@ def force_close_plan(session_id: str) -> bool:
 
 
 def register_plan_handler(session_id: str, handler: "PlanHandler") -> None:
-    """注册 PlanHandler 实例"""
+    """Register a PlanHandler instance"""
     _prune_oldest_sessions()
     _session_handlers[session_id] = handler
     logger.debug(f"[Plan] Registered handler for session {session_id}")
 
 
 def get_todo_handler_for_session(session_id: str) -> Optional["PlanHandler"]:
-    """获取 session 对应的 PlanHandler 实例"""
+    """Get the PlanHandler instance for the given session"""
     return _session_handlers.get(session_id)
 
 
 def get_active_todo_prompt(session_id: str) -> str:
     """
-    获取 session 对应的活跃 Todo 提示词段落（注入 system_prompt 用）。
+    Get the active Todo prompt section for the session (for injection into system_prompt).
 
-    返回紧凑格式的计划摘要，包含所有步骤及其当前状态。
-    如果没有活跃 Todo 或 Todo 已完成，返回空字符串。
+    Returns a compact plan summary including all steps and their current status.
+    Returns an empty string if there is no active Todo or the Todo is completed.
     """
     handler = get_todo_handler_for_session(session_id)
     if handler:

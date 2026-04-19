@@ -7,346 +7,265 @@ metadata:
   version: "1.0.0"
 ---
 
-# 中文写作规范
+# Chinese Writing Standards
 
-系统化的中文写作规范技能，确保所有中文输出遵循统一的语言风格、排版规则和表达习惯。适用于技术文档、博客文章、UI 文本、错误提示等多种写作场景。
+A systematic Chinese writing skill that ensures all Chinese output follows unified language style, formatting rules, and expression conventions. Suitable for technical documentation, blog posts, UI text, error messages, and various other writing scenarios.
 
-## 适用场景
+## When to Use
 
-- 撰写中文技术文档和 README
-- 编写产品 UI 文案（按钮、提示、说明文字）
-- 撰写博客文章和教程
-- 生成错误信息和异常提示
-- 翻译英文内容为规范中文
-- 校对和修正已有中文文本
-- 编写产品更新日志（Changelog）
-- 撰写邮件和通知文案
+- Writing Chinese technical documentation and README files
+- Crafting product UI copy (buttons, prompts, descriptions)
+- Writing blog posts and tutorials
+- Generating error messages and exception messages
+- Translating English content into standardized Chinese
+- Proofreading and editing existing Chinese text
+- Writing product changelogs
+- Drafting emails and notification copy
 
-## 核心语调
+## Core Tone
 
-所有中文输出应遵循以下三个语调特征：
+All Chinese output should follow these three tone characteristics:
 
-| 特征 | 说明 | 正面示例 | 反面示例 |
+| Characteristic | Description | Good Example | Bad Example |
 |------|------|---------|---------|
-| **有帮助的** | 提供实用信息，解决用户问题 | `点击「设置」可修改默认值` | `请查看文档` |
-| **清晰的** | 表述准确无歧义，逻辑顺畅 | `文件大小不能超过 10 MB` | `文件不要太大` |
-| **温和的** | 友好但不过度亲昵 | `操作已完成，是否继续？` | `恭喜！你太棒了！！！` |
+| **Helpful** | Provides practical information, solves user problems | Click "Settings" to modify defaults | Please check the documentation |
+| **Clear** | Accurate and unambiguous, logically smooth | File size must not exceed 10 MB | The file should not be too big |
+| **Friendly** | Warm but not overly familiar | Operation completed. Continue? | Congratulations! You are amazing!!! |
 
-**禁止的语调：**
-- 过度热情（堆叠感叹号、滥用 emoji）
-- 冷漠生硬（`不允许`、`错误`、`失败`）
-- 模糊笼统（`某些情况下`、`可能会`）
-- 过度谦卑（`不好意思打扰了`）
+**Prohibited tones:**
+- Overly enthusiastic (stacking exclamation marks, abusing emoji)
+- Cold and stiff
+- Vague and general (e.g. "in some cases", "might possibly")
+- Overly humble (e.g. "sorry to bother you")
 
-## 盘古之白：中英文间距规则
+## Pangu's Whitespace: Chinese-English Spacing Rules
 
-中文（CJK 字符）与半角字符（ASCII 字母、数字）之间**必须**加一个空格，这被称为「盘古之白」。
+A space must be inserted between Chinese characters (CJK) and half-width characters (ASCII letters, numbers).
 
-### 空格规则详表
+### Spacing Rules Table
 
-| 规则 | 正确 ✅ | 错误 ❌ |
+| Rule | Correct | Incorrect |
 |------|--------|--------|
-| 中文与英文之间 | `使用 Python 编写` | `使用Python编写` |
-| 中文与数字之间 | `共有 5 个选项` | `共有5个选项` |
-| 数字与单位之间 | `容量为 10 GB` | `容量为10GB` |
-| 数字与百分号 | `增长了 30%` | `增长了30 %` |
-| 全角标点与英文之间 | `使用了 React，性能提升` | `使用了 React ，性能提升` |
-| 英文内部标点 | `如 �Mr.�Smith` | `如 Mr .Smith` |
-| 链接前后 | `详见 https://example.com 页面` | `详见https://example.com页面` |
-| 路径前后 | `位于 /usr/local 目录` | `位于/usr/local目录` |
-| 代码前后 | `` 执行 `npm install` 命令 `` | `` 执行`npm install`命令 `` |
-| 品牌名称 | `下载 VS Code 编辑器` | `下载VSCode编辑器` |
+| Chinese and English | [space between] | [no space] |
+| Chinese and numbers | [space between] | [no space] |
+| Numbers and units | capacity of 10 GB | capacity of 10GB |
+| Numbers and percent | increased by 30% | increased by 30 % |
+| Full-width punct and English | [use full-width] | [half-width after English] |
+| Internal English punct | e.g. Mr. Smith | e.g. Mr .Smith |
+| Around links | See https://example.com page | [no space around URL] |
+| Around paths | Located in /usr/local directory | [no space around path] |
+| Around code | Execute `npm install` command | [no space around code] |
+| Brand names | Download VS Code editor | [no space around branding] |
 
-### 不加空格的情况
+### Cases Where No Space Is Needed
 
-| 情况 | 正确 ✅ | 错误 ❌ |
-|------|--------|--------|
-| 全角标点前后不加空格 | `你好，世界` | `你好 ，世界` |
-| 数字与度数符号 | `旋转 45°` | `旋转 45 °` |
-| 货币符号在数字前 | `价格为 ¥99` | `价格为 ¥ 99` |
-| 全角括号内侧 | `（见附录）` | `（ 见附录 ）` |
+| Case | Rule |
+|------|------|
+| Around full-width punctuation | No extra space around Chinese punctuation |
+| Numbers and degree symbols | 45 degrees symbol -- no space |
+| Currency symbols before numbers | Yen dollar sign directly before number |
+| Inside full-width parentheses | No spaces inside full-width brackets |
 
-### 自动检查要点
+### Auto-Check Points
 
-生成中文文本后，自检以下模式：
-1. `[汉字][A-Za-z]` → 之间需要加空格
-2. `[A-Za-z][汉字]` → 之间需要加空格
-3. `[汉字][0-9]` → 之间需要加空格
-4. `[0-9][汉字]` → 之间需要加空格
-5. `[汉字] [，。！？；：]` → 全角标点前不要有空格
+After generating Chinese text, self-check:
+1. Chinese char + letter: needs space between
+2. Letter + Chinese char: needs space between
+3. Chinese char + digit: needs space between
+4. Digit + Chinese char: needs space between
+5. Chinese char before full-width punctuation: no space
 
-## 标点符号规范
+## Punctuation Standards
 
-### 全角与半角
+### Full-Width vs Half-Width
 
-中文语境下使用**全角标点**，英文/代码语境下使用**半角标点**。
+Use full-width punctuation in Chinese contexts and half-width in English or code contexts.
 
-| 标点 | 全角（中文） | 半角（英文） | 使用规则 |
+| Punctuation | Full-Width (Chinese) | Half-Width (English) | Rule |
 |------|------------|------------|---------|
-| 逗号 | ， | , | 中文句中用全角 |
-| 句号 | 。 | . | 中文句末用全角 |
-| 冒号 | ： | : | 中文用全角 |
-| 分号 | ； | ; | 中文用全角 |
-| 感叹号 | ！ | ! | 中文用全角，且不重复使用 |
-| 问号 | ？ | ? | 中文用全角 |
-| 引号 | 「」『』 | "" '' | 中文优先用直角引号 |
-| 括号 | （） | () | 中文文本用全角，代码/英文用半角 |
-| 省略号 | …… | ... | 中文用两个全角省略号 |
-| 破折号 | —— | -- | 中文用两个全角破折号 |
-| 书名号 | 《》〈〉 | 无 | 中文特有 |
+| Comma | CJK comma | Comma | Use full-width in Chinese |
+| Period | CJK period | Dot | Use full-width at end of Chinese sentences |
+| Colon | CJK colon | Colon | Use full-width in Chinese |
+| Semicolon | CJK semicolon | Semicolon | Use full-width in Chinese |
+| Exclamation | CJK exclamation | Exclamation | Full-width in Chinese; do not repeat |
+| Question | CJK question mark | Question mark | Full-width in Chinese |
+| Quotation marks | Corner brackets | Straight quotes | Prefer corner brackets for Chinese |
+| Parentheses | Full-width | Half-width | Full-width for Chinese text; half-width for code |
+| Ellipsis | Double full-width ellipsis | Triple dot | Use two CJK ellipsis characters |
+| Em dash | Double CJK dash | Double hyphen | Use two CJK dash characters |
+| Title marks | Chinese title brackets | N/A | Chinese-specific |
 
-### 引号使用规范
+### Quotation Mark Usage
 
-优先使用直角引号，嵌套时交替使用：
+Prefer corner brackets. Alternate when nesting:
+- First level: corner brackets
+- Second level: double corner brackets inside
+- Third level: standard quotes inside double brackets
 
-```
-第一层：「引用内容」
-第二层：「他说『这是重点』」
-第三层：「他说『她提到「那个方案」很好』」
-```
+**Special scenarios:**
+- UI element names use corner brackets: click the "Confirm" button
+- File names and paths use backticks
+- Emphatic words can use bold
 
-**特殊场景：**
-- UI 元素名称使用直角引号：`点击「确定」按钮`
-- 文件名/路径使用反引号：`` 打开 `config.json` 文件 ``
-- 强调词汇可用粗体：`这是一个**重要**功能`
+### Punctuation Prohibitions
 
-### 标点禁则
-
-| 禁止 | 说明 |
+| Prohibited | Description |
 |------|------|
-| `！！！` | 不重复使用感叹号 |
-| `。。。` | 省略号用 `……` 而非句号堆叠 |
-| `~` | 避免在正式文本中使用波浪号 |
-| `,` 在中文句中 | 中文句子中不使用半角逗号 |
-| `.` 结尾中文句 | 中文句末用 `。` 不用 `.` |
+| Triple exclamation marks | Do not repeat exclamation marks |
+| Triple periods | Use ellipsis, not stacked periods |
+| Tilde in formal text | Avoid tilde in formal writing |
+| Half-width comma in Chinese | Use full-width comma in Chinese sentences |
+| Dot ending Chinese sentences | Use full-width period, not half-width |
 
-## 段落结构规范
+## Paragraph Structure Standards
 
-### 段落长度
+### Paragraph Length
 
-- 每段控制在 **3-5 行**（约 100-200 字）
-- 超过 5 行的段落考虑拆分
-- 单句不成段（除非是强调句）
+- Each paragraph: **3-5 lines** (approximately 100-200 characters)
+- Split paragraphs exceeding 5 lines
+- Single-sentence paragraphs only for emphasis
 
-### 段落组织原则
+### Organization Principles
 
-1. **一段一主题**：每段围绕一个核心观点展开
-2. **首句概括**：段落第一句点明要旨
-3. **逻辑递进**：段落间有清晰的逻辑关系
-4. **过渡自然**：使用连接词衔接段落
+1. **One theme per paragraph**: Each paragraph focuses on one core idea
+2. **Opening summary**: First sentence states the main point
+3. **Logical progression**: Clear logic between paragraphs
+4. **Natural transitions**: Use connectives to link paragraphs
 
-**常用过渡词：**
+**Common transitional words:**
 
-| 关系 | 过渡词 |
+| Relationship | Transitional Words |
 |------|--------|
-| 递进 | 此外、另外、不仅如此、更重要的是 |
-| 转折 | 然而、不过、但是、尽管如此 |
-| 因果 | 因此、所以、由于、基于此 |
-| 并列 | 同时、与此同时、一方面……另一方面 |
-| 总结 | 总之、综上所述、简而言之 |
-| 举例 | 例如、比如、以……为例 |
+| Progressive | Additionally, moreover, more importantly |
+| Contrast | However, but, nevertheless |
+| Cause-effect | Therefore, as a result, based on this |
+| Parallel | Meanwhile, on one hand... on the other |
+| Summary | In conclusion, in short |
+| Examples | For example, for instance, take X as an example |
 
-### 列表使用规范
+### List Usage Standards
 
-- 3 项以上的并列内容使用列表
-- 有序列表用于步骤或优先级
-- 无序列表用于并列项目
-- 列表项句末不加句号（除非是完整句子）
-- 列表项保持结构一致（都用动词开头，或都用名词开头）
+- Use lists for 3 or more parallel items
+- Ordered lists for steps or priorities
+- Unordered lists for parallel items
+- No period at end of list items unless they are full sentences
+- List items maintain consistent structure (all verbs or all nouns)
 
-## 主动语态优先
+## Active Voice Priority
 
-中文写作优先使用主动语态，被动语态仅在主语不重要或无法确定时使用。
+Prefer active voice. Passive voice only when subject is unimportant or unknown.
 
-| 被动（避免） ❌ | 主动（推荐） ✅ |
+| Passive (Avoid) | Active (Recommended) |
 |---------------|---------------|
-| `文件被成功上传` | `文件上传成功` |
-| `配置被保存到磁盘` | `系统已保存配置` |
-| `错误被检测到` | `检测到错误` |
-| `密码被修改` | `密码修改成功` |
-| `该功能被设计用于...` | `该功能用于...` |
+| File was successfully uploaded | File uploaded successfully |
+| Config was saved to disk | System has saved the configuration |
+| Error was detected | Error detected |
+| Password was modified | Password changed successfully |
+| This feature was designed for... | This feature is used for... |
 
-## 场景化写作指南
+## Scenario-Based Writing Guide
 
-### 场景一：博客文章
+### 1. Blog Posts
 
-**风格要求：**
-- 语调亲切但不随意
-- 可以使用第一人称（`我`、`我们`）
-- 适当使用口语化表达增加可读性
-- 技术名词保留英文原文
+- Friendly but casual tone
+- First person is acceptable
+- Appropriate colloquial expressions for readability
+- Technical terms kept in English
 
-**结构模板：**
-```
-标题（明确+吸引）
-引言（为什么写这篇/背景）
-正文章节（3-5 个，有小标题）
-总结（核心要点回顾）
-延伸阅读/参考链接
-```
+**Structure:** Title -> Intro (why write this) -> Main sections (3-5 with subheadings) -> Conclusion -> Further reading
 
-**示例对比：**
+### 2. Error Messages
 
-差 ❌：
-```
-本文将会对 React 18 的并发特性进行一个详细的介绍和分析，
-希望能够对读者有所帮助。
-```
+**Core principle:** Tell the user what happened, why, and how to fix it.
 
-好 ✅：
-```
-React 18 引入了并发渲染，这是自 Fiber 架构以来最大的变化。
-本文通过实际案例，带你理解它的工作原理和应用场景。
-```
+**Format:** `[What happened]. [Why (optional)]. [Suggested fix].`
 
-### 场景二：错误提示信息
-
-**核心原则：** 告诉用户发生了什么 + 为什么 + 怎么解决
-
-**格式模板：**
-```
-[现象描述]。[原因说明（可选）]。[解决建议]。
-```
-
-**示例对比：**
-
-| 差 ❌ | 好 ✅ |
+**Examples:**
+| Bad | Good |
 |------|------|
-| `错误：操作失败` | `保存失败：文件大小超过 10 MB 限制。请压缩文件后重试。` |
-| `网络错误` | `无法连接到服务器，请检查网络连接后重试。` |
-| `无效输入` | `用户名仅支持字母、数字和下划线，长度 3-20 位。` |
-| `权限不足` | `你没有编辑权限。请联系管理员获取「编辑者」角色。` |
-| `未知错误` | `出了点问题，请稍后重试。如果问题持续，请联系支持团队。` |
+| "Error: Operation failed" | "Save failed: File exceeds 10 MB limit. Compress and retry." |
+| "Network error" | "Cannot connect to server. Check your network and retry." |
+| "Invalid input" | "Username supports letters, numbers, and underscores. 3-20 chars." |
+| "Insufficient permissions" | "You do not have edit access. Contact admin for Editor role." |
+| "Unknown error" | "Something went wrong. Please retry later. Contact support if it persists." |
 
-**错误信息禁忌：**
-- 不使用技术术语（`NullPointerException`）
-- 不使用全大写（`ERROR`）
-- 不使用叹号（`失败！`）
-- 不使用消极否定（`不能`→`暂时无法`）
-- 不归咎用户（`你的操作有误`→`输入格式不匹配`）
+**Taboos:**
+- No technical jargon (e.g. NullPointerException)
+- No all caps (ERROR)
+- No exclamation marks
+- No negative denial (use "temporarily unavailable" vs "cannot")
+- Do not blame the user ("your operation is wrong" -> "input format does not match")
 
-### 场景三：UI 文案
+### 3. UI Copy
 
-**核心原则：** 简短、明确、可操作
+**Core principle:** Short, clear, actionable.
 
-**按钮文案：**
-
-| 场景 | 推荐 ✅ | 避免 ❌ |
+| Scenario | Recommended | Avoid |
 |------|--------|--------|
-| 确认操作 | `确定` / `保存` | `是的` / `OK` |
-| 取消操作 | `取消` | `算了` / `No` |
-| 删除操作 | `删除` | `移除` / `清除`（除非语义不同） |
-| 提交表单 | `提交` / `发布` | `点击提交` |
-| 下一步 | `下一步` / `继续` | `Next` / `GO` |
+| Confirm | Confirm / Save | Yes / OK |
+| Cancel | Cancel | No / Whatever |
+| Delete | Delete | Remove / Clear (unless semantically different) |
+| Submit | Submit / Publish | "Click to submit" |
+| Next step | Next / Continue | Next / GO (in English) |
 
-**提示文案：**
+**Prompt templates:**
 
-| 类型 | 模板 | 示例 |
+| Type | Template | Example |
 |------|------|------|
-| 成功提示 | `[操作]成功` | `保存成功` |
-| 加载提示 | `正在[操作]……` | `正在加载……` |
-| 确认对话框 | `确定要[操作]吗？[后果说明]` | `确定要删除吗？删除后无法恢复。` |
-| 空状态 | `暂无[内容]，[引导操作]` | `暂无项目，点击右上角创建` |
-| 输入提示 | `请输入[内容]` | `请输入邮箱地址` |
+| Success | [Action] successful | Save successful |
+| Loading | [Action] in progress | Loading |
+| Confirmation | Are you sure you want to [action]? [Consequence] | Delete? Cannot be undone. |
+| Empty state | No [content] yet. [Guide action] | No projects. Tap upper right to create. |
+| Placeholder | Please enter [content] | Please enter email address |
 
-**文案长度限制：**
+### 4. Technical Documentation
 
-| 元素 | 最大字数 |
-|------|---------|
-| 按钮 | 4 字 |
-| Toast 提示 | 15 字 |
-| 对话框标题 | 10 字 |
-| 对话框正文 | 50 字 |
-| 输入框占位符 | 20 字 |
+- Third person or subjectless sentences
+- Objective, neutral tone
+- Technical terms: provide translation on first use
+- Wrap code and commands in backticks
 
-### 场景四：技术文档
+## Numbers and Units Standards
 
-**风格要求：**
-- 使用第三人称或无主语句（`配置完成后，重启服务`）
-- 保持客观中立的语调
-- 所有技术名词首次出现时给出中文翻译
-- 代码和命令使用反引号包裹
-
-**术语处理：**
-
-| 规则 | 示例 |
-|------|------|
-| 首次出现注明英文 | `依赖注入（Dependency Injection）` |
-| 通用缩写直接使用 | `API`、`URL`、`JSON` |
-| 不翻译专有名词 | `Docker`、`Kubernetes`、`React` |
-| 翻译通用概念 | `容器（Container）`、`中间件（Middleware）` |
-
-**文档结构：**
-```
-# 标题
-> 一句话描述功能
-
-## 概述
-简要说明用途和适用场景
-
-## 前置要求
-- 环境要求
-- 依赖项
-
-## 快速开始
-最小可用示例
-
-## 详细配置
-完整参数说明
-
-## 常见问题
-FAQ
-
-## 参考
-相关链接
-```
-
-## 数字和单位规范
-
-| 规则 | 正确 ✅ | 错误 ❌ |
+| Rule | Correct | Incorrect |
 |------|--------|--------|
-| 阿拉伯数字用于数据 | `共 128 条记录` | `共一百二十八条记录` |
-| 中文数字用于惯用语 | `三心二意`、`一目了然` | `3心2意` |
-| 数字范围用半角 | `3-5 个工作日` | `3～5 个工作日` |
-| 日期格式 | `2026 年 3 月 1 日` | `2026年3月1日`（缺空格） |
-| 时间格式 | `14:30` 或 `下午 2:30` | `14点30分` |
-| 千分位 | `1,000,000` | `1000000` |
+| Arabic numerals for data | 128 records | [Chinese numerals for large numbers] |
+| Chinese numerals for idioms | [Fixed idioms use Chinese numerals] | [Arabic in idioms] |
+| Number ranges | 3-5 business days | [tilde-based ranges] |
+| Date format | Year Month Day (with spaces) | [no spaces] |
+| Time format | 24h or afternoon notation | [verbose Chinese time] |
+| Thousands separator | 1,000,000 | 1000000 |
 
-## 常见错误自查清单
+## Common Error Self-Check List
 
-生成中文内容后，按以下清单逐项检查：
+- [ ] Space between Chinese and English (Pangu spacing)
+- [ ] Space between Chinese and numbers
+- [ ] Full-width punctuation used in Chinese context
+- [ ] Quotation marks use corner brackets
+- [ ] No consecutive exclamation or question marks
+- [ ] Paragraphs within 3-5 lines
+- [ ] Active voice used
+- [ ] List items structurally consistent
+- [ ] Error prompts include solutions
+- [ ] Technical terms have annotations on first use
 
-- [ ] 中英文之间有空格（盘古之白）
-- [ ] 中文与数字之间有空格
-- [ ] 使用全角标点（中文语境下）
-- [ ] 引号使用直角引号「」
-- [ ] 没有连续感叹号或问号
-- [ ] 段落长度在 3-5 行以内
-- [ ] 使用主动语态
-- [ ] 列表项结构一致
-- [ ] 错误提示包含解决建议
-- [ ] 技术名词首次出现有中文注释
+## Output Example
 
-## 输出示例
-
-### 输入
-
+### Input
 ```
-Write an error message when the user's upload exceeds the file size limit.
+Write an error message for upload exceeding file size limit.
 ```
 
-### 输出
-
+### Output
 ```
-上传失败：文件大小为 25 MB，超过了 10 MB 的限制。
+Upload failed: File is 25 MB, exceeding the 10 MB limit.
 
-请压缩文件或拆分为多个小文件后重新上传。支持的格式：JPG、PNG、PDF。
+Please compress or split into smaller files and retry. Supported formats: JPG, PNG, PDF.
 ```
 
-### 分析
-
-- ✅ 盘古之白：`25 MB`、`10 MB`
-- ✅ 全角标点：`：`、`。`
-- ✅ 主动语态
-- ✅ 包含现象+原因+解决方案
-- ✅ 具体数值（25 MB → 10 MB）
+### Analysis
+- Pangu spacing: 25 MB, 10 MB
+- Full-width punctuation used
+- Active voice
+- Includes phenomenon, reason, and solution
+- Specific values shown

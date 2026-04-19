@@ -1,9 +1,9 @@
 """
-Kimi（月之暗面 / Moonshot）服务商注册表（OpenAI 兼容）
+Kimi (Moonshot AI) provider registry (OpenAI-compatible)
 
-说明：
-- 国内区常见：api.moonshot.cn
-- 国际区常见：api.moonshot.ai
+Notes:
+- China region: api.moonshot.cn
+- International region: api.moonshot.ai
 """
 
 from ..capabilities import infer_capabilities
@@ -12,7 +12,7 @@ from .base import ModelInfo, ProviderInfo, ProviderRegistry, get_registry_client
 
 class KimiChinaRegistry(ProviderRegistry):
     info = ProviderInfo(
-        name="Kimi（月之暗面·中国区）",
+        name="Kimi (Moonshot AI · China)",
         slug="kimi-cn",
         api_type="openai",
         default_base_url="https://api.moonshot.cn/v1",
@@ -47,7 +47,7 @@ class KimiChinaRegistry(ProviderRegistry):
 
 class KimiInternationalRegistry(ProviderRegistry):
     info = ProviderInfo(
-        name="Kimi（月之暗面·国际区）",
+        name="Kimi (Moonshot AI · International)",
         slug="kimi-int",
         api_type="openai",
         default_base_url="https://api.moonshot.ai/v1",

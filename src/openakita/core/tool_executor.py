@@ -1,14 +1,14 @@
 """
-工具执行引擎
+Tool execution engine.
 
-从 agent.py 提取的工具执行逻辑，负责:
-- 单工具执行 (execute_tool)
-- 批量工具执行 (execute_batch)
-- 并行/串行策略
-- Handler 互斥锁管理 (browser/desktop/mcp)
-- 结构化错误处理 (ToolError)
-- Plan 模式检查
-- 通用截断守卫 (大结果自动截断 + 溢出文件)
+Tool execution logic extracted from agent.py; responsible for:
+- Single tool execution (execute_tool)
+- Batch tool execution (execute_batch)
+- Parallel/serial strategy
+- Handler mutex management (browser/desktop/mcp)
+- Structured error handling (ToolError)
+- Plan mode checks
+- Generic truncation guard (auto-truncate large results + overflow file)
 """
 
 import asyncio
@@ -33,24 +33,24 @@ logger = logging.getLogger(__name__)
 
 
 class ToolSkipped(Exception):
-    """用户主动跳过当前工具执行（非错误，仅中断单步）。"""
+    """User proactively skipped the current tool execution (not an error, only interrupts a single step)."""
 
-    def __init__(self, reason: str = "用户请求跳过"):
+    def __init__(self, reason: str = "User requested skip"):
         self.reason = reason
         super().__init__(reason)
 
 
-# ========== 通用截断守卫常量 ==========
-MAX_TOOL_RESULT_CHARS = 16000  # 通用截断阈值 (~8000 tokens)
-OVERFLOW_MARKER = "[OUTPUT_TRUNCATED]"  # 截断标记，已含此标记的不二次截断
+# ========== Generic truncation guard constants ==========
+MAX_TOOL_RESULT_CHARS = 16000  # Generic truncation threshold (~8000 tokens)
+OVERFLOW_MARKER = "[OUTPUT_TRUNCATED]"  # Truncation marker; content already containing this is not truncated again
 _OVERFLOW_DIR = Path("data/tool_overflow")
-_OVERFLOW_MAX_FILES = 50  # 溢出目录保留的最大文件数
+_OVERFLOW_MAX_FILES = 50  # Maximum number of files kept in the overflow directory
 
 
 def save_overflow(tool_name: str, content: str) -> str:
-    """将大输出保存到溢出文件，返回文件路径。
+    """Save large output to an overflow file and return the file path.
 
-    供 tool_executor 和各 handler 共用。
+    Shared by tool_executor and individual handlers.
     """
     try:
         _OVERFLOW_DIR.mkdir(parents=True, exist_ok=True)
@@ -63,7 +63,7 @@ def save_overflow(tool_name: str, content: str) -> str:
         return str(filepath)
     except Exception as exc:
         logger.warning(f"[Overflow] Failed to save overflow file: {exc}")
-        return "(溢出文件保存失败)"
+        return "(failed to save overflow file)"
 
 
 def smart_truncate(
@@ -74,14 +74,14 @@ def smart_truncate(
     save_full: bool = True,
     head_ratio: float = 0.65,
 ) -> tuple[str, bool]:
-    """智能截断：首尾保留 + 溢出文件 + 截断标记。
+    """Smart truncation: keep head and tail + overflow file + truncation marker.
 
     Args:
-        content: 原始文本
-        limit: 截断字符上限
-        label: 溢出文件名前缀
-        save_full: 是否保存完整内容到溢出文件（验证类调用设为 False）
-        head_ratio: 保留头部的比例
+        content: Original text.
+        limit: Maximum number of characters to keep.
+        label: Prefix for the overflow file name.
+        save_full: Whether to save the full content to an overflow file (set False for validation-style calls).
+        head_ratio: Proportion of characters to keep at the head.
 
     Returns:
         (result_text, was_truncated)
@@ -97,9 +97,9 @@ def smart_truncate(
     overflow_ref = ""
     if save_full:
         path = save_overflow(label, content)
-        overflow_ref = f", 完整内容: {path}, 可用 read_file 查看"
+        overflow_ref = f", full content: {path}, use read_file to view"
 
-    marker = f"\n[已截断, 原文{len(content)}字{overflow_ref}]\n"
+    marker = f"\n[truncated, original {len(content)} chars{overflow_ref}]\n"
 
     if tail > 0:
         return content[:head] + marker + content[-tail:], True
@@ -107,7 +107,7 @@ def smart_truncate(
 
 
 def _cleanup_overflow_files(directory: Path, max_files: int) -> None:
-    """清理溢出目录，只保留最近 max_files 个文件。"""
+    """Clean up the overflow directory, keeping only the most recent max_files files."""
     try:
         files = sorted(directory.glob("*.txt"), key=lambda f: f.stat().st_mtime)
         if len(files) > max_files:
@@ -119,10 +119,10 @@ def _cleanup_overflow_files(directory: Path, max_files: int) -> None:
 
 class ToolExecutor:
     """
-    工具执行引擎。
+    Tool execution engine.
 
-    管理工具的串行/并行执行、Handler 互斥锁、
-    结构化错误处理和 Plan 模式检查。
+    Manages serial/parallel tool execution, handler mutexes,
+    structured error handling, and Plan mode checks.
     """
 
     _TOOL_ALIASES: dict[str, str] = {
@@ -147,11 +147,11 @@ class ToolExecutor:
         self._agent_ref: Any = None  # set by Agent after construction
         self._plugin_hooks: Any = None  # HookRegistry, set by Agent after construction
 
-        # 并行控制
+        # Parallelism control
         self._semaphore = asyncio.Semaphore(max(1, max_parallel))
         self._max_parallel = max_parallel
 
-        # 状态型工具互斥锁（browser/desktop/mcp 等不能并发执行）
+        # Mutex locks for stateful tools (browser/desktop/mcp, etc. cannot run concurrently)
         self._handler_locks: dict[str, asyncio.Lock] = {}
         for handler_name in ("browser", "desktop", "mcp"):
             self._handler_locks[handler_name] = asyncio.Lock()
@@ -169,7 +169,7 @@ class ToolExecutor:
         # Extra permission rules injected by AgentFactory (profile rules)
         self._extra_permission_rules: list | None = None
 
-    # 并发安全工具: 这些工具的只读操作可以并行执行
+    # Concurrency-safe tools: their read-only operations can execute in parallel
     _CONCURRENCY_SAFE_TOOLS: set[str] = {
         "read_file",
         "list_files",
@@ -180,8 +180,8 @@ class ToolExecutor:
         "list_resources",
     }
 
-    # 长时间运行工具的硬超时（秒），防止工具卡死拖垮整个 agent 循环
-    # 值为 0 表示不设硬超时（由工具自身的进度监控负责，如 Orchestrator 的 idle-timeout）
+    # Hard timeout (seconds) for long-running tools to prevent a stuck tool from dragging down the whole agent loop.
+    # A value of 0 means no hard timeout (tool-owned progress monitoring handles it, e.g. Orchestrator idle-timeout).
     _TOOL_HARD_TIMEOUT: int = 120
 
     _LONG_RUNNING_TOOLS: dict[str, int] = {
@@ -196,7 +196,7 @@ class ToolExecutor:
     }
 
     def get_handler_name(self, tool_name: str) -> str | None:
-        """获取工具对应的 handler 名称"""
+        """Get the handler name for a given tool."""
         try:
             return self._handler_registry.get_handler_name_for_tool(tool_name)
         except Exception:
@@ -215,7 +215,7 @@ class ToolExecutor:
         return self._canonicalize_tool_name(tool_name)
 
     def _suggest_similar_tool(self, tool_name: str) -> str:
-        """为未知工具名生成带相似推荐的错误信息。"""
+        """Generate an error message with similar-name suggestions for an unknown tool."""
         all_tools = self._handler_registry.list_tools()
         candidates: list[tuple[float, str]] = []
         name_lower = tool_name.lower()
@@ -234,18 +234,18 @@ class ToolExecutor:
                 candidates.append((score, t))
         candidates.sort(key=lambda x: -x[0])
         top = [name for _, name in candidates[:5]]
-        msg = f"❌ 未知工具: {tool_name}。"
+        msg = f"❌ Unknown tool: {tool_name}."
         if top:
-            msg += f" 你是否想使用: {', '.join(top)}？"
+            msg += f" Did you mean: {', '.join(top)}?"
         else:
-            msg += " 请检查工具名称是否正确。"
+            msg += " Please check that the tool name is correct."
         return msg
 
     def _is_concurrency_safe(self, tool_name: str, tool_input: dict) -> bool:
-        """判断工具在给定输入下是否并发安全。
+        """Determine whether a tool is concurrency-safe for the given input.
 
-        优先询问 handler 级回调（可根据 tool_input 细粒度判断），
-        回调返回 None 时回退到静态 ``_CONCURRENCY_SAFE_TOOLS`` 集合。
+        Asks the handler-level callback first (which can make fine-grained decisions based on tool_input);
+        falls back to the static ``_CONCURRENCY_SAFE_TOOLS`` set when the callback returns None.
         """
         override = self._handler_registry.check_concurrency_safe(tool_name, tool_input)
         if override is not None:
@@ -258,10 +258,10 @@ class ToolExecutor:
         return False
 
     def _partition_tool_calls(self, tool_calls: list[dict]) -> list[dict]:
-        """将工具调用分区为并发安全批次和串行批次。
+        """Partition tool calls into concurrency-safe batches and serial batches.
 
-        连续的并发安全工具合批并行，非安全工具独立串行。
-        每个 tool_call 标记 _idx 用于排序恢复。
+        Consecutive concurrency-safe tools are batched and run in parallel; non-safe tools run serially on their own.
+        Each tool_call is tagged with _idx for order restoration.
         """
         batches: list[dict] = []
         current_safe: list[dict] = []
@@ -291,12 +291,12 @@ class ToolExecutor:
         tool_name: str,
     ) -> str:
         """
-        执行工具协程，同时监听 cancel_event / skip_event / 硬超时 三路竞速。
+        Run the tool coroutine while racing against cancel_event / skip_event / hard timeout.
 
-        - cancel_event 触发 → 返回中断错误（终止整个任务）
-        - skip_event 触发 → 抛出 ToolSkipped（仅跳过当前工具）
-        - 硬超时 → 返回超时错误
-        - hard_timeout=0 表示不设硬超时
+        - cancel_event fires → return an interruption error (terminates the whole task).
+        - skip_event fires → raise ToolSkipped (skips only the current tool).
+        - Hard timeout → return a timeout error.
+        - hard_timeout=0 means no hard timeout is set.
         """
         tool_task = asyncio.ensure_future(coro)
 
@@ -328,14 +328,14 @@ class ToolExecutor:
             if tool_task in done:
                 return tool_task.result()
 
-            # skip_event 先于 cancel 检查（skip 只中断当前步骤，不终止任务）
+            # skip_event checked before cancel (skip only interrupts the current step, not the task)
             if skip_future and skip_future in done:
                 tool_task.cancel()
                 try:
                     await tool_task
                 except (asyncio.CancelledError, Exception):
                     pass
-                skip_reason = getattr(state, "skip_reason", "") or "用户请求跳过"
+                skip_reason = getattr(state, "skip_reason", "") or "User requested skip"
                 if state and hasattr(state, "clear_skip"):
                     state.clear_skip()
                 logger.info(f"[ToolExecutor] Tool '{tool_name}' skipped: {skip_reason}")
@@ -343,10 +343,10 @@ class ToolExecutor:
 
             reason = ""
             if cancel_future and cancel_future in done:
-                reason = "用户请求取消任务"
+                reason = "User requested task cancellation"
                 logger.warning(f"[ToolExecutor] Tool '{tool_name}' cancelled by user")
             else:
-                reason = f"工具执行超时 ({hard_timeout}s)"
+                reason = f"Tool execution timed out ({hard_timeout}s)"
                 logger.error(f"[ToolExecutor] Tool '{tool_name}' timed out after {hard_timeout}s")
 
             tool_task.cancel()
@@ -355,7 +355,7 @@ class ToolExecutor:
             except (asyncio.CancelledError, Exception):
                 pass
 
-            return f"⚠️ 工具执行被中断: {reason}。工具 '{tool_name}' 已停止。"
+            return f"⚠️ Tool execution interrupted: {reason}. Tool '{tool_name}' has been stopped."
 
         finally:
             for t in [tool_task, timeout_task]:
@@ -381,18 +381,18 @@ class ToolExecutor:
         session_id: str | None = None,
     ) -> str:
         """
-        执行单个工具调用。
+        Execute a single tool call.
 
-        优先使用 handler_registry 执行，
-        捕获异常后返回结构化 ToolError。
+        Executes via handler_registry by preference and, on exception,
+        returns a structured ToolError.
 
         Args:
-            tool_name: 工具名称
-            tool_input: 工具输入参数
-            session_id: 当前会话 ID（用于 Plan 检查）
+            tool_name: Name of the tool.
+            tool_input: Tool input parameters.
+            session_id: Current session ID (used for Plan checks).
 
         Returns:
-            工具执行结果字符串
+            Tool execution result string.
         """
         tool_name = self._canonicalize_tool_name(tool_name)
         if isinstance(tool_input, dict):
@@ -426,8 +426,8 @@ class ToolExecutor:
         """Execute a tool after todo / permission gates have been handled."""
         logger.info(f"Executing tool: {tool_name} with {tool_input}")
 
-        # ★ 拦截 JSON 解析失败的工具调用（参数被 API 截断）
-        # convert_tool_calls_from_openai() 在 JSON 解析失败时会注入 __parse_error__
+        # ★ Intercept tool calls with JSON parse failures (arguments truncated by the API).
+        # convert_tool_calls_from_openai() injects __parse_error__ when JSON parsing fails.
         from ..llm.converters.tools import PARSE_ERROR_KEY
 
         if isinstance(tool_input, dict) and PARSE_ERROR_KEY in tool_input:
@@ -441,7 +441,7 @@ class ToolExecutor:
             "on_before_tool_use", tool_name=tool_name, tool_input=tool_input
         )
 
-        # 导入日志缓存
+        # Import the log buffer
         from ..logging import get_session_log_buffer
 
         log_buffer = get_session_log_buffer()
@@ -451,7 +451,7 @@ class ToolExecutor:
         tracer = get_tracer()
         with tracer.tool_span(tool_name=tool_name, input_data=tool_input) as span:
             try:
-                # 通过 handler_registry 执行
+                # Execute via handler_registry
                 if self._handler_registry.has_tool(tool_name):
                     result = await self._handler_registry.execute_by_tool(tool_name, tool_input)
                 else:
@@ -466,7 +466,7 @@ class ToolExecutor:
                     )
                     return suggestion
 
-                # 获取执行期间产生的新日志（WARNING/ERROR/CRITICAL）
+                # Collect new logs produced during execution (WARNING/ERROR/CRITICAL)
                 all_logs = log_buffer.get_logs(count=500)
                 new_logs = [
                     log
@@ -474,13 +474,13 @@ class ToolExecutor:
                     if log["level"] in ("WARNING", "ERROR", "CRITICAL")
                 ]
 
-                # 如果有警告/错误日志，附加到结果
+                # If there are warning/error logs, append them to the result
                 if new_logs:
-                    result += "\n\n[执行日志]:\n"
+                    result += "\n\n[Execution log]:\n"
                     for log in new_logs[-10:]:
                         result += f"[{log['level']}] {log['module']}: {log['message']}\n"
 
-                # ★ 通用截断守卫：工具自身未做截断时的安全网
+                # ★ Generic truncation guard: safety net when the tool itself did not truncate
                 result = self._guard_truncate(tool_name, result)
 
                 span.set_attribute("result_length", len(result))
@@ -571,7 +571,7 @@ class ToolExecutor:
             timeout = tool_input.get("timeout", 60)
             sb_result = await sandbox.execute(command, cwd=cwd, timeout=float(timeout))
             sandbox_output = (
-                f"[沙箱执行 backend={sb_result.backend}]\nExit code: {sb_result.returncode}\n"
+                f"[Sandbox execution backend={sb_result.backend}]\nExit code: {sb_result.returncode}\n"
             )
             if sb_result.stdout:
                 sandbox_output += f"stdout:\n{sb_result.stdout}\n"
@@ -591,19 +591,19 @@ class ToolExecutor:
         capture_delivery_receipts: bool = False,
     ) -> tuple[list[dict], list[str], list | None]:
         """
-        执行一批工具调用，返回 tool_results。
+        Execute a batch of tool calls and return tool_results.
 
-        并行策略：
-        - 默认串行（max_parallel=1 或启用中断检查时）
-        - 当 max_parallel>1 时允许并行执行
-        - browser/desktop/mcp handler 默认互斥锁
+        Parallelism strategy:
+        - Serial by default (max_parallel=1, or when interrupt checks are enabled).
+        - Parallel execution is allowed when max_parallel>1.
+        - browser/desktop/mcp handlers use mutex locks by default.
 
         Args:
-            tool_calls: 工具调用列表 [{id, name, input}, ...]
-            state: 任务状态（用于取消检查）
-            task_monitor: 任务监控器
-            allow_interrupt_checks: 是否允许中断检查
-            capture_delivery_receipts: 是否捕获交付回执
+            tool_calls: List of tool calls [{id, name, input}, ...].
+            state: Task state (used for cancellation checks).
+            task_monitor: Task monitor.
+            allow_interrupt_checks: Whether interrupt checks are allowed.
+            capture_delivery_receipts: Whether to capture delivery receipts.
 
         Returns:
             (tool_results, executed_tool_names, delivery_receipts)
@@ -614,7 +614,7 @@ class ToolExecutor:
         if not tool_calls:
             return [], executed_tool_names, delivery_receipts
 
-        # 并行策略决策
+        # Parallelism strategy decision
         allow_parallel_with_interrupts = bool(
             getattr(settings, "allow_parallel_tools_with_interrupt_checks", False)
         )
@@ -632,14 +632,14 @@ class ToolExecutor:
             if isinstance(tool_input, dict):
                 tool_input = normalize_tool_input(tool_name, tool_input)
 
-            # 检查取消
+            # Check for cancellation
             if state and state.cancelled:
                 return (
                     idx,
                     {
                         "type": "tool_result",
                         "tool_use_id": tool_use_id,
-                        "content": "[任务已被用户停止]",
+                        "content": "[Task stopped by user]",
                         "is_error": True,
                     },
                     None,
@@ -655,7 +655,7 @@ class ToolExecutor:
                     {
                         "type": "tool_result",
                         "tool_use_id": tool_use_id,
-                        "content": f"⚠️ 策略拒绝: {perm_decision.reason}",
+                        "content": f"⚠️ Policy denied: {perm_decision.reason}",
                         "is_error": True,
                     },
                     None,
@@ -681,7 +681,7 @@ class ToolExecutor:
                     risk = perm_decision.metadata.get("risk_level", "")
                     sandbox_hint = ""
                     if perm_decision.metadata.get("needs_sandbox"):
-                        sandbox_hint = "\n注意: 此命令将在沙箱中执行以保护系统安全。"
+                        sandbox_hint = "\nNote: this command will run in a sandbox to protect system security."
 
                     return (
                         idx,
@@ -689,10 +689,10 @@ class ToolExecutor:
                             "type": "tool_result",
                             "tool_use_id": tool_use_id,
                             "content": (
-                                f"⚠️ 需要用户确认: {perm_decision.reason}"
+                                f"⚠️ User confirmation required: {perm_decision.reason}"
                                 f"{sandbox_hint}\n"
-                                "已向用户发送确认请求，请等待用户通过界面做出决定后再继续。"
-                                "不要使用 ask_user 工具重复询问。"
+                                "A confirmation request has been sent to the user. Wait for the user's decision via the UI before proceeding. "
+                                "Do not use the ask_user tool to repeat the question."
                             ),
                             "is_error": True,
                             "_security_confirm": {
@@ -778,11 +778,11 @@ class ToolExecutor:
                             tool_name,
                         )
 
-                result_str = str(result) if result is not None else "操作已完成"
+                result_str = str(result) if result is not None else "Operation completed"
 
-                # execute_tool 内部捕获所有异常并返回字符串，不会抛到这里。
-                # 对于 PARSE_ERROR_KEY（参数截断）路径，需要在此修正 success
-                # 标志，使 tool_result 的 is_error 正确传播到 reasoning_engine。
+                # execute_tool internally catches all exceptions and returns a string, so none reach here.
+                # For the PARSE_ERROR_KEY (arguments truncation) path, we need to fix up the success
+                # flag here so that tool_result's is_error is correctly propagated to reasoning_engine.
                 from ..llm.converters.tools import PARSE_ERROR_KEY
 
                 if isinstance(tool_input, dict) and PARSE_ERROR_KEY in tool_input:
@@ -796,19 +796,19 @@ class ToolExecutor:
                     except Exception:
                         pass
 
-                # 终端输出工具返回结果（便于调试与观察）
+                # Print tool result to the terminal (for debugging/observation)
                 _preview = (
-                    result_str if len(result_str) <= 800 else result_str[:800] + "\n... (已截断)"
+                    result_str if len(result_str) <= 800 else result_str[:800] + "\n... (truncated)"
                 )
                 try:
                     logger.info(f"[Tool] {tool_name} → {_preview}")
                 except (UnicodeEncodeError, OSError):
                     logger.info(f"[Tool] {tool_name} → (result logged, {len(result_str)} chars)")
 
-                # 捕获交付回执：deliver_artifacts 直接交付；org_accept_deliverable
-                # 作为"中继交付"——父节点验收了下级节点已经带文件的交付物，
-                # receipts 状态为 "relayed"。两者都认为是有效的交付证据，
-                # 让 TaskVerify 不再将中继场景误判为 INCOMPLETE。
+                # Capture delivery receipts: deliver_artifacts delivers directly; org_accept_deliverable
+                # acts as "relayed delivery" — the parent node accepts a deliverable from a subordinate
+                # node that already includes files, with receipts status "relayed". Both are considered
+                # valid delivery evidence so TaskVerify no longer misclassifies relay scenarios as INCOMPLETE.
                 if (
                     capture_delivery_receipts
                     and tool_name in ("deliver_artifacts", "org_accept_deliverable")
@@ -817,10 +817,10 @@ class ToolExecutor:
                     try:
                         import json as _json
 
-                        # execute_one 可能在 JSON 后追加 "[执行日志]" 警告文本，
-                        # 需要先剥离才能正确解析 JSON
+                        # execute_one may append "[Execution log]" warning text after the JSON,
+                        # which must be stripped before JSON can be parsed correctly.
                         json_str = result_str
-                        log_marker = "\n\n[执行日志]"
+                        log_marker = "\n\n[Execution log]"
                         if log_marker in json_str:
                             json_str = json_str[: json_str.index(log_marker)]
 
@@ -832,8 +832,8 @@ class ToolExecutor:
                         pass
 
             except ToolSkipped as e:
-                skip_reason = e.reason or "用户请求跳过"
-                result_str = f"[用户跳过了此步骤: {skip_reason}]"
+                skip_reason = e.reason or "User requested skip"
+                result_str = f"[User skipped this step: {skip_reason}]"
                 logger.info(f"[SkipStep] Tool {tool_name} skipped: {skip_reason}")
                 elapsed = time.time() - t0
                 if use_parallel_safe_monitor and task_monitor:
@@ -856,11 +856,11 @@ class ToolExecutor:
                 tool_error = classify_error(e, tool_name=tool_name)
                 result_str = tool_error.to_tool_result()
                 logger.error(f"Tool batch execution error: {tool_name}: {e}")
-                logger.info(f"[Tool] {tool_name} ❌ 错误: {result_str}")
+                logger.info(f"[Tool] {tool_name} ❌ Error: {result_str}")
 
             elapsed = time.time() - t0
 
-            # 记录到 task_monitor
+            # Record to task_monitor
             if use_parallel_safe_monitor and task_monitor:
                 task_monitor.record_tool_call(tool_name, tool_input, elapsed, success)
             elif (not parallel_enabled) and task_monitor:
@@ -876,7 +876,7 @@ class ToolExecutor:
 
             return idx, tool_result, tool_name if success else None, receipts
 
-        # 执行: 使用分区策略（并发安全工具可并行，其他串行）
+        # Execute: use the partitioning strategy (concurrency-safe tools run in parallel, others serially)
         if parallel_enabled and len(tool_calls) > 1:
             batches = self._partition_tool_calls(tool_calls)
             results = []
@@ -895,15 +895,15 @@ class ToolExecutor:
                         results.append(result)
             results = sorted(results, key=lambda x: x[0])
         else:
-            # 串行执行
+            # Serial execution
             results = []
             for i, tc in enumerate(tool_calls):
                 result = await _run_one(tc, i)
                 results.append(result)
 
-                # 串行模式下检查中断和取消
+                # In serial mode, check for interruption and cancellation
                 if state and state.cancelled:
-                    # 为剩余工具生成取消结果
+                    # Generate cancellation results for the remaining tools
                     for j in range(i + 1, len(tool_calls)):
                         remaining_tc = tool_calls[j]
                         results.append(
@@ -912,7 +912,7 @@ class ToolExecutor:
                                 {
                                     "type": "tool_result",
                                     "tool_use_id": remaining_tc.get("id", ""),
-                                    "content": "[任务已被用户停止]",
+                                    "content": "[Task stopped by user]",
                                     "is_error": True,
                                 },
                                 None,
@@ -921,7 +921,7 @@ class ToolExecutor:
                         )
                     break
 
-        # 整理结果
+        # Collate results
         tool_results = []
         for _, tool_result, name, receipts_item in results:
             tool_results.append(tool_result)
@@ -934,24 +934,24 @@ class ToolExecutor:
 
     @staticmethod
     def _guard_truncate(tool_name: str, result: str) -> str:
-        """通用截断守卫：如果工具自身未截断且结果超长，在此兜底。
+        """Generic truncation guard: fallback when the tool itself does not truncate and the result is too long.
 
-        - 已含 OVERFLOW_MARKER 的跳过（工具自行处理过了）
-        - 超限时保存完整输出到溢出文件，截断并附加分页提示
+        - Results already containing OVERFLOW_MARKER are skipped (the tool handled it itself).
+        - When over the limit, save the full output to the overflow file, truncate, and append a pagination hint.
         """
         if not result or len(result) <= MAX_TOOL_RESULT_CHARS:
             return result
         if OVERFLOW_MARKER in result:
-            return result  # 工具自己已处理
+            return result  # Already handled by the tool itself
 
         overflow_path = save_overflow(tool_name, result)
         total_chars = len(result)
         truncated = result[:MAX_TOOL_RESULT_CHARS]
         hint = (
-            f"\n\n{OVERFLOW_MARKER} 工具 '{tool_name}' 输出共 {total_chars} 字符，"
-            f"已截断到前 {MAX_TOOL_RESULT_CHARS} 字符。\n"
-            f"完整输出已保存到: {overflow_path}\n"
-            f'使用 read_file(path="{overflow_path}", offset=1, limit=300) 查看完整内容。'
+            f"\n\n{OVERFLOW_MARKER} Tool '{tool_name}' produced {total_chars} characters of output, "
+            f"truncated to the first {MAX_TOOL_RESULT_CHARS} characters.\n"
+            f"Full output saved to: {overflow_path}\n"
+            f'Use read_file(path="{overflow_path}", offset=1, limit=300) to view the complete content.'
         )
         logger.info(
             f"[Guard] Truncated {tool_name} output: {total_chars} → {MAX_TOOL_RESULT_CHARS} chars, "
@@ -961,15 +961,15 @@ class ToolExecutor:
 
     def _check_todo_required(self, tool_name: str, session_id: str | None) -> str | None:
         """
-        检查是否需要先创建 Todo（仅 Agent 模式下的 todo 跟踪）。
+        Check whether a Todo must be created first (applies only to todo tracking in Agent mode).
 
-        如果当前 session 被标记为需要 Todo（compound 任务），
-        但还没有创建 Todo，则拒绝执行其他工具。
+        If the current session is marked as requiring a Todo (compound task) but no Todo has
+        been created yet, refuse to execute other tools.
 
-        Plan/Ask 模式下跳过此检查（由模式提示词和工具过滤控制）。
+        This check is skipped in Plan/Ask modes (controlled by the mode prompt and tool filtering).
 
         Returns:
-            阻止消息字符串，或 None（允许执行）
+            A block-message string, or None (execution allowed).
         """
         if self._current_mode in ("plan", "ask"):
             return None
@@ -988,16 +988,16 @@ class ToolExecutor:
 
             if session_id and is_todo_required(session_id) and not has_active_todo(session_id):
                 return (
-                    "⚠️ **这是一个多步骤任务，建议先创建 Todo！**\n\n"
-                    "请先调用 `create_todo` 工具创建任务计划，然后再执行具体操作。\n\n"
-                    "示例：\n"
+                    "⚠️ **This is a multi-step task; please create a Todo first!**\n\n"
+                    "Please call the `create_todo` tool to create a task plan before performing concrete operations.\n\n"
+                    "Example:\n"
                     "```\n"
                     "create_todo(\n"
-                    "  task_summary='写脚本获取时间并显示',\n"
+                    "  task_summary='Write a script to get and display the time',\n"
                     "  steps=[\n"
-                    "    {id: 'step1', description: '创建Python脚本', tool: 'write_file'},\n"
-                    "    {id: 'step2', description: '执行脚本', tool: 'run_shell'},\n"
-                    "    {id: 'step3', description: '读取结果', tool: 'read_file'}\n"
+                    "    {id: 'step1', description: 'Create Python script', tool: 'write_file'},\n"
+                    "    {id: 'step2', description: 'Run the script', tool: 'run_shell'},\n"
+                    "    {id: 'step3', description: 'Read the result', tool: 'read_file'}\n"
                     "  ]\n"
                     ")\n"
                     "```"
@@ -1028,7 +1028,7 @@ class ToolExecutor:
             logger.error(f"[Permission] Unexpected error in check_permission: {e}")
             decision = PermissionDecision(
                 behavior="deny",
-                reason="权限检查异常，已阻止操作。",
+                reason="Permission check raised an exception; operation blocked.",
                 reason_detail=str(e),
             )
 
@@ -1098,8 +1098,8 @@ class ToolExecutor:
             return None
         if decision.behavior == "confirm":
             return (
-                f"⚠️ 需要用户确认: {decision.reason}\n"
-                "已向用户发送确认请求，请等待用户通过界面做出决定后再继续。"
-                "不要使用 ask_user 工具重复询问。"
+                f"⚠️ User confirmation required: {decision.reason}\n"
+                "A confirmation request has been sent to the user. Wait for the user's decision via the UI before proceeding. "
+                "Do not use the ask_user tool to repeat the question."
             )
         return decision.reason

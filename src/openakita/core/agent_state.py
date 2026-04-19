@@ -1,11 +1,11 @@
 """
-Agent 状态管理模块
+Agent state management module
 
-提供结构化的状态管理，替代 agent.py 中分散的实例变量。
-包含:
-- TaskStatus: 任务执行状态枚举（显式 ReAct 循环）
-- TaskState: 单次任务的完整执行状态
-- AgentState: Agent 全局状态管理 + 状态机转换验证
+Provides structured state management, replacing scattered instance variables in agent.py.
+Contains:
+- TaskStatus: Task execution status enum (explicit ReAct loop)
+- TaskState: Complete execution state for a single task
+- AgentState: Global Agent state management + state machine transition validation
 """
 
 import asyncio
@@ -44,22 +44,22 @@ def _safe_event_clear(event: asyncio.Event) -> None:
 
 
 class TaskStatus(Enum):
-    """任务执行状态（对应 ReAct 循环的各阶段）"""
+    """Task execution status (corresponds to phases of the ReAct loop)"""
 
-    IDLE = "idle"  # 空闲，等待新任务
-    COMPILING = "compiling"  # Prompt Compiler 阶段
-    REASONING = "reasoning"  # LLM 推理决策阶段
-    ACTING = "acting"  # 工具执行阶段
-    OBSERVING = "observing"  # 观察工具结果阶段
-    VERIFYING = "verifying"  # 任务完成度验证阶段
-    MODEL_SWITCHING = "model_switching"  # 模型切换中
-    WAITING_USER = "waiting_user"  # 等待用户回复（ask_user 工具触发）
-    COMPLETED = "completed"  # 任务完成
-    FAILED = "failed"  # 任务失败
-    CANCELLED = "cancelled"  # 任务被取消
+    IDLE = "idle"  # Idle, waiting for a new task
+    COMPILING = "compiling"  # Prompt Compiler phase
+    REASONING = "reasoning"  # LLM reasoning/decision phase
+    ACTING = "acting"  # Tool execution phase
+    OBSERVING = "observing"  # Observing tool results phase
+    VERIFYING = "verifying"  # Task completion verification phase
+    MODEL_SWITCHING = "model_switching"  # Switching model
+    WAITING_USER = "waiting_user"  # Waiting for user reply (triggered by ask_user tool)
+    COMPLETED = "completed"  # Task completed
+    FAILED = "failed"  # Task failed
+    CANCELLED = "cancelled"  # Task cancelled
 
 
-# 合法的状态转换表
+# Valid state transition table
 _VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.IDLE: {TaskStatus.COMPILING, TaskStatus.REASONING, TaskStatus.CANCELLED},
     TaskStatus.COMPILING: {TaskStatus.REASONING, TaskStatus.CANCELLED, TaskStatus.FAILED},
@@ -75,7 +75,7 @@ _VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     },
     TaskStatus.ACTING: {
         TaskStatus.OBSERVING,
-        TaskStatus.REASONING,  # 恢复路径：上次任务卡在 ACTING 后新消息需回到 REASONING
+        TaskStatus.REASONING,  # Recovery path: if a previous task was stuck in ACTING, a new message returns to REASONING
         TaskStatus.WAITING_USER,
         TaskStatus.CANCELLED,
         TaskStatus.FAILED,
@@ -102,10 +102,10 @@ _VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
 @dataclass
 class TaskState:
     """
-    单次任务的完整执行状态。
+    Complete execution state for a single task.
 
-    每次 chat_with_session() 调用创建一个新的 TaskState，
-    任务结束后通过 AgentState.reset_task() 清理。
+    Each call to chat_with_session() creates a new TaskState,
+    cleaned up after the task ends via AgentState.reset_task().
     """
 
     task_id: str
@@ -113,72 +113,72 @@ class TaskState:
     conversation_id: str = ""
     status: TaskStatus = TaskStatus.IDLE
 
-    # 任务定义（来自 Prompt Compiler）
+    # Task definition (from Prompt Compiler)
     task_definition: str = ""
     task_query: str = ""
 
-    # 取消机制
+    # Cancellation mechanism
     cancelled: bool = False
     cancel_reason: str = ""
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
 
-    # 单步跳过机制
+    # Single-step skip mechanism
     skip_event: asyncio.Event = field(default_factory=asyncio.Event)
     skip_reason: str = ""
 
-    # 用户消息插入队列（任务执行期间用户发送的非指令消息）
+    # User message insertion queue (non-command messages sent by the user during task execution)
     pending_user_inserts: list[str] = field(default_factory=list)
     _insert_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
-    # 模型状态
+    # Model state
     current_model: str = ""
 
-    # 推理-行动循环状态
+    # Reasoning-action loop state
     iteration: int = 0
     consecutive_tool_rounds: int = 0
     tools_executed: list[str] = field(default_factory=list)
     tools_executed_in_task: bool = False
     delivery_receipts: list[dict] = field(default_factory=list)
 
-    # ForceToolCall 控制
+    # ForceToolCall control
     no_tool_call_count: int = 0
 
-    # 任务验证控制
+    # Task verification control
     verify_incomplete_count: int = 0
     no_confirmation_text_count: int = 0
 
-    # 循环检测
+    # Loop detection
     recent_tool_signatures: list[str] = field(default_factory=list)
     tool_pattern_window: int = 8
     llm_self_check_interval: int = 10
     extreme_safety_threshold: int = 50
     last_browser_url: str = ""
 
-    # 原始用户消息（用于模型切换时重置上下文）
+    # Original user messages (used to reset context on model switch)
     original_user_messages: list[dict] = field(default_factory=list)
 
     def transition(self, new_status: TaskStatus) -> None:
         """
-        执行状态转换，带合法性验证。
+        Execute a state transition with validity checking.
 
         Args:
-            new_status: 目标状态
+            new_status: Target state
 
         Raises:
-            ValueError: 非法状态转换
+            ValueError: Invalid state transition
         """
         valid_targets = _VALID_TRANSITIONS.get(self.status, set())
         if new_status not in valid_targets:
             raise ValueError(
-                f"非法状态转换: {self.status.value} -> {new_status.value}. "
-                f"合法目标: {[s.value for s in valid_targets]}"
+                f"Invalid state transition: {self.status.value} -> {new_status.value}. "
+                f"Valid targets: {[s.value for s in valid_targets]}"
             )
         old_status = self.status
         self.status = new_status
         logger.debug(f"[State] {old_status.value} -> {new_status.value} (task={self.task_id[:8]})")
 
-    def cancel(self, reason: str = "用户请求停止") -> None:
-        """取消任务，同时触发 cancel_event 通知所有等待方（跨循环安全）"""
+    def cancel(self, reason: str = "User requested stop") -> None:
+        """Cancel the task and trigger cancel_event to notify all waiters (cross-loop safe)"""
         prev_status = self.status.value if hasattr(self.status, "value") else str(self.status)
         self.cancelled = True
         self.cancel_reason = reason
@@ -198,74 +198,74 @@ class TaskState:
             f"reason={reason!r}"
         )
 
-    def request_skip(self, reason: str = "用户请求跳过当前步骤") -> None:
-        """请求跳过当前正在执行的工具/步骤（不终止整个任务，跨循环安全）"""
+    def request_skip(self, reason: str = "User requested skipping the current step") -> None:
+        """Request to skip the currently executing tool/step (does not terminate the whole task, cross-loop safe)"""
         self.skip_reason = reason
         _safe_event_set(self.skip_event)
         logger.info(f"[State] Task {self.task_id[:8]} skip requested: {reason}")
 
     def clear_skip(self) -> None:
-        """重置跳过标志（每次工具执行开始时调用，跨循环安全）"""
+        """Reset skip flag (called at the start of each tool execution, cross-loop safe)"""
         _safe_event_clear(self.skip_event)
         self.skip_reason = ""
 
     async def add_user_insert(self, text: str) -> None:
-        """线程安全地添加用户插入消息"""
+        """Thread-safely add a user-inserted message"""
         async with self._insert_lock:
             self.pending_user_inserts.append(text)
             logger.info(f"[State] User insert queued: {text[:50]}...")
 
     async def drain_user_inserts(self) -> list[str]:
-        """取出所有待处理的用户插入消息（清空队列）"""
+        """Drain all pending user-inserted messages (clears the queue)"""
         async with self._insert_lock:
             msgs = list(self.pending_user_inserts)
             self.pending_user_inserts.clear()
             return msgs
 
     async def process_post_tool_signals(self, working_messages: list[dict]) -> None:
-        """工具执行后的统一信号处理：skip 反思提示 + 用户插入消息注入。
+        """Unified signal handling after tool execution: skip reflection prompt + user-insert message injection.
 
-        各执行循环在每轮工具执行完毕后调用此方法，
-        避免在 4+ 个地方重复同样的逻辑。
+        Each execution loop calls this method after finishing a round of tool execution,
+        avoiding duplication of the same logic in 4+ places.
 
         Args:
-            working_messages: 当前工作消息列表（会被就地追加）
+            working_messages: Current working messages list (will be appended to in place)
         """
-        # 1) 检查 skip: 如果本轮有工具被跳过，注入反思提示
+        # 1) Check skip: if any tool was skipped this round, inject a reflection prompt
         if self.skip_event.is_set():
-            _skip_reason = self.skip_reason or "用户认为该步骤耗时过长或不正确"
+            _skip_reason = self.skip_reason or "User felt the step was taking too long or was incorrect"
             self.clear_skip()
             working_messages.append(
                 {
                     "role": "user",
                     "content": (
-                        f"[系统提示-用户跳过步骤] 用户跳过了上述工具执行。原因: {_skip_reason}\n"
-                        "请反思: 该步骤是否有问题？是否需要换个方法继续？"
-                        "请整理思路后继续完成任务。"
+                        f"[System notice - user skipped step] The user skipped the above tool execution. Reason: {_skip_reason}\n"
+                        "Please reflect: Is something wrong with that step? Do you need a different approach? "
+                        "Gather your thoughts and continue with the task."
                     ),
                 }
             )
             logger.info(f"[SkipReflect] Injected skip reflection prompt: {_skip_reason}")
 
-        # 2) 检查用户插入消息
+        # 2) Check for user-inserted messages
         _inserts = await self.drain_user_inserts()
         for _ins_text in _inserts:
             working_messages.append(
                 {
                     "role": "user",
                     "content": (
-                        f"[用户插入消息] {_ins_text}\n"
-                        "[系统提示] 以上是用户在任务执行期间插入的消息。"
-                        "请判断: 1) 这是对当前任务的补充（融入决策继续）"
-                        "还是 2) 一个全新任务（告知用户收到，完成当前任务后执行）。"
-                        "如不确定，使用 ask_user 工具向用户确认。"
+                        f"[User-inserted message] {_ins_text}\n"
+                        "[System notice] The above is a message the user inserted during task execution. "
+                        "Please decide: 1) Is this a supplement to the current task (incorporate it into your decision and continue), "
+                        "or 2) is it an entirely new task (acknowledge to the user, complete the current task first, then execute it)? "
+                        "If unsure, use the ask_user tool to confirm with the user."
                     ),
                 }
             )
             logger.info(f"[UserInsert] Injected user insert into context: {_ins_text[:60]}")
 
     def reset_for_model_switch(self) -> None:
-        """模型切换时重置循环相关状态"""
+        """Reset loop-related state when switching models"""
         self.no_tool_call_count = 0
         self.tools_executed_in_task = False
         self.verify_incomplete_count = 0
@@ -275,20 +275,20 @@ class TaskState:
         self.no_confirmation_text_count = 0
 
     def record_tool_execution(self, tool_names: list[str]) -> None:
-        """记录工具执行"""
+        """Record tool execution"""
         if tool_names:
             self.tools_executed_in_task = True
             self.tools_executed.extend(tool_names)
 
     def record_tool_signature(self, signature: str) -> None:
-        """记录工具签名用于循环检测"""
+        """Record tool signature for loop detection"""
         self.recent_tool_signatures.append(signature)
         if len(self.recent_tool_signatures) > self.tool_pattern_window:
             self.recent_tool_signatures = self.recent_tool_signatures[-self.tool_pattern_window :]
 
     @property
     def is_active(self) -> bool:
-        """任务是否处于活跃状态（包含 WAITING_USER，因为 IM 模式下仍在等待回复）"""
+        """Whether the task is active (includes WAITING_USER, since IM mode is still waiting for a reply)"""
         return self.status not in (
             TaskStatus.IDLE,
             TaskStatus.COMPLETED,
@@ -298,7 +298,7 @@ class TaskState:
 
     @property
     def is_terminal(self) -> bool:
-        """任务是否处于终态（WAITING_USER 不算终态，IM 模式下可继续）"""
+        """Whether the task is in a terminal state (WAITING_USER is not terminal; IM mode may continue)"""
         return self.status in (
             TaskStatus.COMPLETED,
             TaskStatus.FAILED,
@@ -308,13 +308,13 @@ class TaskState:
 
 class AgentState:
     """
-    Agent 全局状态管理。
+    Global Agent state management.
 
-    集中管理所有散落在 Agent 实例中的状态变量，
-    提供带验证的状态转换方法。
+    Centrally manages all state variables that were scattered across Agent instances,
+    and provides state transition methods with validation.
 
-    支持多会话并发任务：通过 _tasks 字典按 session_id 隔离，
-    current_task 属性保持向后兼容（返回最近创建的任务）。
+    Supports concurrent tasks across multiple sessions: isolated by session_id via the _tasks dict;
+    the current_task property is kept for backward compatibility (returns the most recently created task).
     """
 
     def __init__(self) -> None:
@@ -331,7 +331,7 @@ class AgentState:
 
     @property
     def current_task(self) -> TaskState | None:
-        """向后兼容：返回最近创建 / 唯一的任务"""
+        """Backward compatible: returns the most recently created / only task"""
         with self._tasks_lock:
             if self._last_task_key and self._last_task_key in self._tasks:
                 return self._tasks[self._last_task_key]
@@ -341,7 +341,7 @@ class AgentState:
 
     @current_task.setter
     def current_task(self, value: TaskState | None) -> None:
-        """向后兼容：直接赋值（仅用于旧代码 / reset_task）"""
+        """Backward compatible: direct assignment (only for legacy code / reset_task)"""
         with self._tasks_lock:
             if value is None:
                 if self._last_task_key in self._tasks:
@@ -353,7 +353,7 @@ class AgentState:
                 self._last_task_key = key
 
     def get_task_for_session(self, session_id: str) -> TaskState | None:
-        """获取指定会话的任务"""
+        """Get the task for the given session"""
         with self._tasks_lock:
             return self._tasks.get(session_id)
 
@@ -364,17 +364,18 @@ class AgentState:
         task_id: str | None = None,
     ) -> TaskState:
         """
-        开始新任务，创建 TaskState。
+        Start a new task, creating a TaskState.
 
-        如果同一 session_id 已有旧任务，先清理它（不影响其他 session 的任务）。
+        If a previous task already exists for the same session_id, clean it up first
+        (without affecting tasks in other sessions).
 
         Args:
-            session_id: 会话 ID
-            conversation_id: 对话 ID
-            task_id: 任务 ID（可选，默认自动生成）
+            session_id: Session ID
+            conversation_id: Conversation ID
+            task_id: Task ID (optional, auto-generated by default)
 
         Returns:
-            新创建的 TaskState
+            The newly created TaskState
         """
         _tid = task_id or str(uuid.uuid4())
         key = session_id or _tid
@@ -411,7 +412,7 @@ class AgentState:
         return task
 
     def reset_task(self, session_id: str | None = None) -> None:
-        """重置任务状态（任务结束后调用）"""
+        """Reset task state (call after a task ends)"""
         session_id = session_id or None
         with self._tasks_lock:
             if session_id and session_id in self._tasks:
@@ -435,8 +436,8 @@ class AgentState:
                     )
         self.current_task_monitor = None
 
-    def cancel_task(self, reason: str = "用户请求停止", session_id: str | None = None) -> None:
-        """取消任务。如果指定 session_id，仅取消该会话的任务。"""
+    def cancel_task(self, reason: str = "User requested stop", session_id: str | None = None) -> None:
+        """Cancel a task. If session_id is specified, cancel only that session's task."""
         session_id = session_id or None
         with self._tasks_lock:
             if session_id:
@@ -455,9 +456,9 @@ class AgentState:
                 self.current_task.cancel(reason)
 
     def skip_current_step(
-        self, reason: str = "用户请求跳过当前步骤", session_id: str | None = None
+        self, reason: str = "User requested skipping the current step", session_id: str | None = None
     ) -> None:
-        """跳过当前正在执行的步骤（不终止任务）"""
+        """Skip the currently executing step (does not terminate the task)"""
         session_id = session_id or None
         with self._tasks_lock:
             task = self._tasks.get(session_id) if session_id else self.current_task
@@ -470,7 +471,7 @@ class AgentState:
             )
 
     async def insert_user_message(self, text: str, session_id: str | None = None) -> None:
-        """向任务注入用户消息"""
+        """Inject a user message into the task"""
         session_id = session_id or None
         with self._tasks_lock:
             task = self._tasks.get(session_id) if session_id else self.current_task
@@ -484,17 +485,17 @@ class AgentState:
 
     @property
     def is_task_cancelled(self) -> bool:
-        """当前任务是否已取消"""
+        """Whether the current task has been cancelled"""
         return self.current_task is not None and self.current_task.cancelled
 
     @property
     def task_cancel_reason(self) -> str:
-        """当前任务的取消原因（无任务时返回空字符串）"""
+        """Cancellation reason for the current task (empty string if no task)"""
         if self.current_task and self.current_task.cancelled:
             return self.current_task.cancel_reason
         return ""
 
     @property
     def has_active_task(self) -> bool:
-        """是否有活跃任务"""
+        """Whether there is an active task"""
         return self.current_task is not None and self.current_task.is_active

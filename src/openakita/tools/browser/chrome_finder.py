@@ -1,8 +1,9 @@
 """
-Chrome 检测与 Profile 管理
+Chrome Detection and Profile Management
 
-提供 Chrome 安装检测、OpenAkita 专用 profile 管理、Cookie 同步等工具函数。
-从原 browser_mcp.py 提取，供 BrowserManager 启动流程使用。
+Provides utilities for Chrome installation detection, OpenAkita-specific profile
+management, cookie syncing, and more. Extracted from the original browser_mcp.py
+for use by BrowserManager startup flow.
 """
 
 import logging
@@ -17,11 +18,11 @@ logger = logging.getLogger(__name__)
 
 def detect_chrome_installation() -> tuple[str | None, str | None]:
     """
-    检测系统上的 Chrome 安装
+    Detect Chrome installation on the system.
 
     Returns:
-        (executable_path, user_data_dir) - 如果找到 Chrome
-        (None, None) - 如果未找到
+        (executable_path, user_data_dir) - if Chrome is found
+        (None, None) - if not found
     """
     system = platform.system()
 
@@ -89,8 +90,8 @@ def detect_chrome_installation() -> tuple[str | None, str | None]:
 
 def get_openakita_chrome_profile() -> str:
     """
-    获取 OpenAkita 专用的 Chrome profile 目录。
-    独立于用户的 Chrome，可以在用户 Chrome 运行时使用。
+    Get the OpenAkita-specific Chrome profile directory.
+    Independent of the user's Chrome, can be used while user Chrome is running.
     """
     import tempfile
 
@@ -110,8 +111,8 @@ def get_openakita_chrome_profile() -> str:
 
 def sync_chrome_cookies(src_user_data: str, dst_profile: str) -> bool:
     """
-    同步用户 Chrome 的 cookies 到 OpenAkita profile。
-    只复制关键文件以保持登录状态。
+    Sync cookies from the user's Chrome to the OpenAkita profile.
+    Only copies key files to preserve login state.
     """
     src_default = Path(src_user_data) / "Default"
     dst_default = Path(dst_profile) / "Default"
@@ -156,7 +157,7 @@ def sync_chrome_cookies(src_user_data: str, dst_profile: str) -> bool:
 
 
 def detect_chrome_devtools_mcp() -> dict:
-    """检测 Chrome DevTools MCP 是否可用"""
+    """Check whether Chrome DevTools MCP is available."""
     result: dict[str, Any] = {
         "available": False,
         "npx_available": False,
@@ -175,15 +176,16 @@ def detect_chrome_devtools_mcp() -> dict:
     if result["npx_available"] and result["chrome_available"]:
         result["available"] = True
         result["suggestion"] = (
-            "Chrome DevTools MCP 可用。建议在 Chrome 中访问 chrome://inspect/#remote-debugging "
-            "开启远程调试，以便 AI Agent 连接到您的浏览器（保留登录状态和密码管理器）。"
+            "Chrome DevTools MCP is available. Open chrome://inspect/#remote-debugging in "
+            "Chrome to enable remote debugging so the AI Agent can connect to your browser "
+            "(preserving login state and password manager)."
         )
     elif not result["npx_available"]:
         result["suggestion"] = (
-            "Chrome DevTools MCP 需要 Node.js。请安装 Node.js v20.19+ 以启用此功能。"
+            "Chrome DevTools MCP requires Node.js. Please install Node.js v20.19+ to enable this feature."
         )
     elif not result["chrome_available"]:
-        result["suggestion"] = "未检测到 Chrome 浏览器。请安装 Chrome 以使用 Chrome DevTools MCP。"
+        result["suggestion"] = "Chrome not detected. Please install Chrome to use Chrome DevTools MCP."
 
     return result
 
@@ -192,7 +194,7 @@ async def detect_chrome_cdp_port(
     ports: tuple[int, ...] = (9222, 9223, 9225),
     timeout: float = 2.0,
 ) -> int | None:
-    """探测本机 Chrome CDP 调试端口，返回第一个可用端口号，没有则返回 None。"""
+    """Probe local Chrome CDP debugging ports, returning the first available port or None."""
     try:
         import httpx
 
@@ -213,7 +215,7 @@ async def detect_chrome_cdp_port(
 
 
 async def check_mcp_chrome_extension(port: int = 12306, timeout: float = 2.0) -> bool:
-    """检测 mcp-chrome 扩展是否正在运行"""
+    """Check whether the mcp-chrome extension is running."""
     try:
         import httpx
 

@@ -1,7 +1,7 @@
 """
-Web Fetch 工具定义
+Web Fetch tool definition
 
-轻量 URL 内容获取，对齐 Cursor 的 WebFetch 工具。
+Lightweight URL content fetching, aligned with Cursor's WebFetch tool.
 """
 
 WEB_FETCH_TOOLS = [
@@ -24,19 +24,19 @@ WEB_FETCH_TOOLS = [
             "- browser: Interactive tasks (login, form filling, clicking, screenshots)"
         ),
         "related_tools": [
-            {"name": "web_search", "relation": "没有具体 URL 时用 web_search 搜索"},
-            {"name": "browser_navigate", "relation": "需要与页面交互时用 browser"},
+            {"name": "web_search", "relation": "Use web_search when you don't have a specific URL"},
+            {"name": "browser_navigate", "relation": "Use browser when you need to interact with a page"},
         ],
         "input_schema": {
             "type": "object",
             "properties": {
                 "url": {
                     "type": "string",
-                    "description": "完整 URL（必须包含 https:// 等协议前缀）",
+                    "description": "Full URL (must include a protocol prefix such as https://)",
                 },
                 "max_length": {
                     "type": "integer",
-                    "description": "最大返回字符数，默认 15000",
+                    "description": "Maximum number of characters to return, default 15000",
                     "default": 15000,
                 },
             },

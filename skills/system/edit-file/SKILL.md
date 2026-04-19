@@ -9,48 +9,48 @@ category: File System
 
 # Edit File
 
-精确字符串替换式编辑文件。
+Edit. 
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| path | string | 是 | 文件路径 |
-| old_string | string | 是 | 要替换的原文本（须精确匹配） |
-| new_string | string | 是 | 替换后的新文本 |
-| replace_all | boolean | 否 | 是否替换所有匹配项（默认 false） |
+| path | string | Yes | File path |
+| old_string | string | Yes | need () |
+| new_string | string | Yes | |
+| replace_all | boolean | No | YesNohave (Default false) |
 
 ## Examples
 
-**修改函数名**:
+****:
 ```json
 {
-  "path": "src/main.py",
-  "old_string": "def old_name():",
-  "new_string": "def new_name():"
+ "path": "src/main.py",
+ "old_string": "def old_name():",
+ "new_string": "def new_name():"
 }
 ```
 
-**批量替换变量名**:
+****:
 ```json
 {
-  "path": "src/config.py",
-  "old_string": "old_var",
-  "new_string": "new_var",
-  "replace_all": true
+ "path": "src/config.py",
+ "old_string": "old_var",
+ "new_string": "new_var",
+ "replace_all": true
 }
 ```
 
 ## Notes
 
-- 修改前请先用 read_file 确认文件内容
-- old_string 必须精确匹配（包括缩进和空格）
-- 如果 old_string 匹配多处且未设 replace_all，会报错
-- 自动兼容 Windows CRLF 和 Unix LF 换行符
-- 优先使用此工具而非 write_file 来编辑现有文件
+- read_file File content
+- old_string (and) 
+- old_string replace_all, will
+- Automatic Windows CRLF and Unix LF
+- Useand write_file Edithave
 
 ## Related Skills
 
-- `read-file`: 先读取文件确认内容
-- `write-file`: 创建新文件或完全覆盖
-- `grep`: 搜索要编辑的内容位置
+- `read-file`: Read
+- `write-file`: createor
+- `grep`: searchneedEdit

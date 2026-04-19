@@ -1,10 +1,10 @@
 """
-OpenCLI 处理器
+OpenCLI handler
 
-通过调用 opencli CLI 将网站/Electron 应用转化为结构化命令：
-- opencli_list: 发现可用命令（含网站 adapter 列表）
-- opencli_run: 执行命令，返回 JSON 结果
-- opencli_doctor: 诊断 Browser Bridge 连通性
+Transforms websites/Electron apps into structured commands via the opencli CLI:
+- opencli_list: discover available commands (including website adapter list)
+- opencli_run: execute a command, returns JSON result
+- opencli_doctor: diagnose Browser Bridge connectivity
 """
 
 import asyncio
@@ -28,7 +28,7 @@ def _find_opencli() -> str | None:
 
 
 class OpenCLIHandler:
-    """OpenCLI 处理器 — 复用用户 Chrome 登录态操作网站。"""
+    """OpenCLI handler — operates websites using the user's Chrome login session."""
 
     TOOLS = ["opencli_list", "opencli_run", "opencli_doctor"]
 
@@ -41,8 +41,8 @@ class OpenCLIHandler:
             self._opencli_path = _find_opencli()
             if not self._opencli_path:
                 return (
-                    "opencli 未安装。请运行: npm install -g opencli\n"
-                    "详情: https://github.com/anthropics/opencli"
+                    "opencli is not installed. Please run: npm install -g opencli\n"
+                    "Details: https://github.com/anthropics/opencli"
                 )
 
         if tool_name == "opencli_list":
@@ -78,9 +78,9 @@ class OpenCLIHandler:
                 proc.kill()  # type: ignore[possibly-undefined]
             except Exception:
                 pass
-            return -1, "", f"命令超时（{timeout}秒）"
+            return -1, "", f"command timed out ({timeout}s)"
         except FileNotFoundError:
-            return -1, "", "opencli 可执行文件未找到"
+            return -1, "", "opencli executable not found"
         except Exception as e:
             return -1, "", str(e)
 
@@ -88,13 +88,13 @@ class OpenCLIHandler:
         fmt = params.get("format", "json")
         rc, stdout, stderr = await self._run_cmd(["list", "-f", fmt])
         if rc != 0:
-            return f"opencli list 失败 (exit {rc}): {stderr or stdout}"
+            return f"opencli list failed (exit {rc}): {stderr or stdout}"
 
         if fmt == "json":
             try:
                 data = json.loads(stdout)
                 if isinstance(data, list):
-                    lines = [f"共 {len(data)} 个可用命令：\n"]
+                    lines = [f"{len(data)} available commands:\n"]
                     for item in data:
                         name = item.get("name", item.get("command", "?"))
                         desc = item.get("description", "")
@@ -103,12 +103,12 @@ class OpenCLIHandler:
             except json.JSONDecodeError:
                 pass
 
-        return stdout.strip() or "（无输出）"
+        return stdout.strip() or "(no output)"
 
     async def _run(self, params: dict[str, Any]) -> str:
         command = params.get("command", "").strip()
         if not command:
-            return "opencli_run 缺少必要参数 'command'。"
+            return "opencli_run missing required parameter 'command'."
 
         args_list = params.get("args", [])
         use_json = params.get("json_output", True)
@@ -124,8 +124,8 @@ class OpenCLIHandler:
             timeout=_OPENCLI_TASK_TIMEOUT,
         )
         if rc != 0:
-            error_msg = stderr.strip() or stdout.strip() or "未知错误"
-            return f"opencli 命令失败 (exit {rc}): {error_msg}"
+            error_msg = stderr.strip() or stdout.strip() or "unknown error"
+            return f"opencli command failed (exit {rc}): {error_msg}"
 
         if use_json and stdout.strip():
             try:
@@ -134,7 +134,7 @@ class OpenCLIHandler:
             except json.JSONDecodeError:
                 pass
 
-        return stdout.strip() or "命令执行完成（无输出）"
+        return stdout.strip() or "command completed (no output)"
 
     async def _doctor(self, params: dict[str, Any]) -> str:
         live = params.get("live", False)
@@ -143,10 +143,10 @@ class OpenCLIHandler:
             cmd_args.append("--live")
 
         rc, stdout, stderr = await self._run_cmd(cmd_args)
-        output = stdout.strip() or stderr.strip() or "（无输出）"
+        output = stdout.strip() or stderr.strip() or "(no output)"
         if rc != 0:
-            return f"opencli doctor 诊断发现问题 (exit {rc}):\n{output}"
-        return f"opencli 环境诊断:\n{output}"
+            return f"opencli doctor found issues (exit {rc}):\n{output}"
+        return f"opencli environment diagnostics:\n{output}"
 
 
 def is_available() -> bool:

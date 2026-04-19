@@ -9,20 +9,20 @@ category: MCP
 
 # List MCP Servers
 
-列出所有配置的 MCP 服务器及其连接状态。
+listhave MCP .
 
 ## Parameters
 
-无参数。
+No parameters.
 
 ## Returns
 
-- 服务器标识符
-- 服务器名称
-- 连接状态
-- 可用工具数量
+- Server identifier
+-
+-
+-
 
 ## Related Skills
 
-- `call-mcp-tool`: 调用 MCP 工具
-- `get-mcp-instructions`: 获取使用说明
+- `call-mcp-tool`: Call MCP tool
+- `get-mcp-instructions`: getUse

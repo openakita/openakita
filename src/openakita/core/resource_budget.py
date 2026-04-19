@@ -1,20 +1,21 @@
 """
-任务级资源预算管理 (Agent Harness: Resource Budget)
+Task-level Resource Budget Management (Agent Harness: Resource Budget)
 
-像操作系统管理进程资源一样，为每个任务分配和强制执行预算。
-当预算接近耗尽时自动采取分级措施。
+Allocate and enforce budgets for each task, similar to how an OS
+manages process resources. Graduated actions are taken automatically
+as the budget approaches exhaustion.
 
-预算维度:
-- max_tokens: 单次任务最大 token 消耗
-- max_cost_usd: 单次任务最大成本
-- max_duration_seconds: 单次任务最大时长
-- max_iterations: 最大迭代次数
-- max_tool_calls: 最大工具调用次数
+Budget dimensions:
+- max_tokens: max token consumption per task
+- max_cost_usd: max cost per task
+- max_duration_seconds: max wall-clock duration per task
+- max_iterations: max iteration count
+- max_tool_calls: max tool invocation count
 
-预算策略:
-- Warning (80%): 注入预算警告
-- Downgrade (90%): 切换到更便宜的模型
-- Pause (100%): 暂停执行，通知用户
+Budget policy:
+- Warning (80%): inject budget warning
+- Downgrade (90%): switch to a cheaper model
+- Pause (100%): pause execution and notify the user
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class BudgetAction(Enum):
-    """预算动作（值为严重程度，越大越严重）"""
+    """Budget action (value indicates severity; higher is more severe)."""
 
     OK = 0
     WARNING = 1
@@ -38,7 +39,7 @@ class BudgetAction(Enum):
 
 
 class BudgetExceeded(Exception):
-    """预算耗尽异常"""
+    """Budget exceeded exception."""
 
     def __init__(self, dimension: str, used: float, limit: float):
         self.dimension = dimension
@@ -49,19 +50,19 @@ class BudgetExceeded(Exception):
 
 @dataclass
 class BudgetConfig:
-    """预算配置"""
+    """Budget configuration."""
 
-    max_tokens: int = 0  # 0 = 不限制
-    max_cost_usd: float = 0.0  # 0 = 不限制
-    max_duration_seconds: int = 0  # 0 = 不限制
-    max_iterations: int = 0  # 0 = 不限制
-    max_tool_calls: int = 0  # 0 = 不限制
+    max_tokens: int = 0  # 0 = no limit
+    max_cost_usd: float = 0.0  # 0 = no limit
+    max_duration_seconds: int = 0  # 0 = no limit
+    max_iterations: int = 0  # 0 = no limit
+    max_tool_calls: int = 0  # 0 = no limit
 
     warning_threshold: float = 0.80
     downgrade_threshold: float = 0.90
     pause_threshold: float = 1.0
 
-    # 超出预算时的默认策略: "warning", "downgrade", "pause"
+    # Default policy when budget is exceeded: "warning", "downgrade", "pause"
     exceed_policy: str = "pause"
 
     @property
@@ -79,7 +80,7 @@ class BudgetConfig:
 
 @dataclass
 class BudgetStatus:
-    """预算状态快照"""
+    """Budget status snapshot."""
 
     action: BudgetAction
     dimension: str = ""
@@ -90,10 +91,10 @@ class BudgetStatus:
 
 class ResourceBudget:
     """
-    任务级资源预算管理器。
+    Task-level resource budget manager.
 
-    每个任务开始时创建，随任务执行累加消耗。
-    ReasoningEngine 每轮迭代调用 check() 检查预算。
+    Created at task start; consumption accumulates as the task executes.
+    ReasoningEngine calls check() each iteration to inspect the budget.
     """
 
     def __init__(
@@ -103,13 +104,13 @@ class ResourceBudget:
         self._parent: ResourceBudget | None = parent
         self._start_time: float = 0.0
 
-        # 累计消耗
+        # Cumulative consumption
         self._tokens_used: int = 0
         self._cost_used: float = 0.0
         self._iterations_used: int = 0
         self._tool_calls_used: int = 0
 
-        # 预算警告已触发标记（避免重复告警）
+        # Budget warning fired flags (avoid duplicate alerts)
         self._warning_fired: set[str] = set()
         self._downgrade_fired: bool = False
 
@@ -132,7 +133,7 @@ class ResourceBudget:
         return time.time() - self._start_time
 
     def start(self) -> None:
-        """任务开始时调用"""
+        """Called when the task starts."""
         self._start_time = time.time()
         self._tokens_used = 0
         self._cost_used = 0.0
@@ -142,31 +143,31 @@ class ResourceBudget:
         self._downgrade_fired = False
 
     def record_tokens(self, input_tokens: int = 0, output_tokens: int = 0) -> None:
-        """记录 token 消耗"""
+        """Record token consumption."""
         self._tokens_used += input_tokens + output_tokens
         if self._parent is not None:
             self._parent.record_tokens(input_tokens, output_tokens)
 
     def record_cost(self, cost_usd: float) -> None:
-        """记录成本"""
+        """Record cost."""
         self._cost_used += cost_usd
         if self._parent is not None:
             self._parent.record_cost(cost_usd)
 
     def record_iteration(self) -> None:
-        """记录迭代"""
+        """Record an iteration."""
         self._iterations_used += 1
         if self._parent is not None:
             self._parent.record_iteration()
 
     def record_tool_calls(self, count: int = 1) -> None:
-        """记录工具调用"""
+        """Record tool calls."""
         self._tool_calls_used += count
         if self._parent is not None:
             self._parent.record_tool_calls(count)
 
     def allocate_sub_budget(self, ratio: float = 0.5) -> ResourceBudget:
-        """为子任务/委派分配预算（按比例缩减）"""
+        """Allocate a sub-budget for a subtask/delegation (scaled by ratio)."""
         ratio = max(0.1, min(1.0, ratio))
         sub_config = BudgetConfig(
             max_tokens=int(self._config.max_tokens * ratio) if self._config.max_tokens else 0,
@@ -191,9 +192,9 @@ class ResourceBudget:
 
     def check(self) -> BudgetStatus:
         """
-        检查预算状态，返回最严重的预算状态。
+        Check budget status and return the most severe status.
 
-        应在每轮迭代开始时调用。
+        Should be called at the start of each iteration.
         """
         if not self._config.has_any_limit:
             return BudgetStatus(action=BudgetAction.OK)
@@ -233,7 +234,7 @@ class ResourceBudget:
         return ""
 
     def get_summary(self) -> dict[str, Any]:
-        """获取预算摘要"""
+        """Return a budget summary."""
         return {
             "tokens_used": self._tokens_used,
             "cost_used": round(self._cost_used, 6),
@@ -249,10 +250,10 @@ class ResourceBudget:
             },
         }
 
-    # ==================== 内部方法 ====================
+    # ==================== Internal methods ====================
 
     def _check_all_dimensions(self) -> list[BudgetStatus]:
-        """检查所有预算维度"""
+        """Check all budget dimensions."""
         results: list[BudgetStatus] = []
 
         if self._config.max_tokens > 0:
@@ -308,7 +309,7 @@ class ResourceBudget:
         used: float,
         limit: float,
     ) -> BudgetStatus:
-        """检查单个维度"""
+        """Check a single dimension."""
         if limit <= 0:
             return BudgetStatus(action=BudgetAction.OK, dimension=dimension)
 
@@ -346,7 +347,7 @@ class ResourceBudget:
 
 
 def create_budget_from_settings() -> ResourceBudget:
-    """从 settings 创建预算管理器"""
+    """Create a budget manager from settings."""
     try:
         from ..config import settings
 

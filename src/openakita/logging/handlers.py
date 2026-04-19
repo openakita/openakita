@@ -1,10 +1,10 @@
 """
-自定义日志处理器
+Custom log handlers
 
-功能:
-- ErrorOnlyHandler: 只记录 ERROR/CRITICAL 级别日志
-- ColoredConsoleHandler: 彩色控制台输出
-- SessionLogHandler: 会话级日志缓存，供 AI 查询
+Features:
+- ErrorOnlyHandler: Only logs ERROR/CRITICAL level messages
+- ColoredConsoleHandler: Colored console output
+- SessionLogHandler: Per-session log buffering for AI queries
 """
 
 import logging
@@ -18,47 +18,49 @@ from .session_buffer import get_session_log_buffer
 
 class ErrorOnlyHandler(TimedRotatingFileHandler):
     """
-    只记录 ERROR 和 CRITICAL 级别日志的处理器
+    Log handler that only records ERROR and CRITICAL level messages.
 
-    继承 TimedRotatingFileHandler，按天轮转
+    Inherits TimedRotatingFileHandler for daily log rotation.
     """
 
     def emit(self, record: logging.LogRecord) -> None:
-        """只处理 ERROR 及以上级别"""
+        """Only process ERROR and above."""
         if record.levelno >= logging.ERROR:
             super().emit(record)
 
 
 class ColoredConsoleHandler(logging.StreamHandler):
     """
-    彩色控制台日志处理器
+    Colored console log handler.
 
-    不同级别使用不同颜色:
-    - DEBUG: 灰色
-    - INFO: 默认
-    - WARNING: 黄色
-    - ERROR: 红色
-    - CRITICAL: 红色加粗
+    Different log levels use different colors:
+    - DEBUG: gray
+    - INFO: default
+    - WARNING: yellow
+    - ERROR: red
+    - CRITICAL: bold red
 
-    Windows 特殊处理:
-    - 强制使用 UTF-8 编码输出，避免 GBK 编码导致 emoji 等 Unicode 字符
-      触发 UnicodeEncodeError，从而中断 SSE 流式输出引发前端白屏。
+    Windows special handling:
+    - Forces UTF-8 encoding on output to prevent GBK encoding from causing
+      UnicodeEncodeError with emoji and other Unicode characters, which would
+      break SSE streaming and cause blank pages on the frontend.
     """
 
-    # ANSI 颜色码
+    # ANSI color codes
     COLORS = {
-        logging.DEBUG: "\033[90m",  # 灰色
-        logging.INFO: "\033[0m",  # 默认
-        logging.WARNING: "\033[93m",  # 黄色
-        logging.ERROR: "\033[91m",  # 红色
-        logging.CRITICAL: "\033[91;1m",  # 红色加粗
+        logging.DEBUG: "\033[90m",  # gray
+        logging.INFO: "\033[0m",  # default
+        logging.WARNING: "\033[93m",  # yellow
+        logging.ERROR: "\033[91m",  # red
+        logging.CRITICAL: "\033[91;1m",  # bold red
     }
     RESET = "\033[0m"
 
     def __init__(self, stream: TextIO = None):
         output_stream = stream or sys.stdout
-        # 双保险：即使 _ensure_utf8 已全局 reconfigure stdout，这里仍对 handler 自身
-        # 的 stream 做 UTF-8 包装，防止 logging 在 _ensure_utf8 导入之前初始化的极端场景。
+        # Belt-and-suspenders: even if _ensure_utf8 has already globally reconfigured stdout,
+        # wrap the handler's own stream with UTF-8 to guard against edge cases where logging
+        # is initialized before _ensure_utf8 is imported.
         if sys.platform == "win32" and hasattr(output_stream, "buffer"):
             import io
 
@@ -66,18 +68,18 @@ class ColoredConsoleHandler(logging.StreamHandler):
                 output_stream.buffer, encoding="utf-8", errors="replace", line_buffering=True
             )
         super().__init__(output_stream)
-        # 检测是否支持颜色（Windows 需要特殊处理）
+        # Detect color support (Windows requires special handling)
         self._supports_color = self._check_color_support()
 
     def _check_color_support(self) -> bool:
-        """检测终端是否支持颜色"""
-        # 如果是 Windows，尝试启用 ANSI 支持
+        """Detect whether the terminal supports color."""
+        # On Windows, try to enable ANSI support
         if sys.platform == "win32":
             try:
                 import ctypes
 
                 kernel32 = ctypes.windll.kernel32
-                # 启用虚拟终端处理
+                # Enable virtual terminal processing
                 kernel32.SetConsoleMode(
                     kernel32.GetStdHandle(-11),  # STD_OUTPUT_HANDLE
                     7,  # ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING
@@ -86,15 +88,15 @@ class ColoredConsoleHandler(logging.StreamHandler):
             except Exception:
                 return False
 
-        # Unix/Linux/Mac 默认支持
+        # Unix/Linux/Mac: supported by default
         return hasattr(self.stream, "isatty") and self.stream.isatty()
 
     def emit(self, record: logging.LogRecord) -> None:
-        """输出日志记录，确保 Unicode 字符不会导致异常"""
+        """Emit a log record, ensuring Unicode characters do not cause exceptions."""
         try:
             super().emit(record)
         except UnicodeEncodeError:
-            # 最后兜底：如果仍然出现编码错误，用 replace 策略重试
+            # Last resort: if encoding errors still occur, retry with replace strategy
             try:
                 msg = self.format(record)
                 safe_msg = msg.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
@@ -104,7 +106,7 @@ class ColoredConsoleHandler(logging.StreamHandler):
                 pass
 
     def format(self, record: logging.LogRecord) -> str:
-        """格式化日志记录，添加颜色"""
+        """Format a log record, adding color."""
         message = super().format(record)
 
         if self._supports_color:
@@ -116,44 +118,45 @@ class ColoredConsoleHandler(logging.StreamHandler):
 
 class SessionLogHandler(logging.Handler):
     """
-    会话日志处理器
+    Session log handler.
 
-    将日志记录到内存缓存中，按 session_id 分组，供 AI 查询当前会话的日志。
+    Buffers log records in memory, grouped by session_id, so the AI can query logs
+    for the current session.
 
-    使用方式:
-    1. 在日志时通过 extra 传入 session_id:
+    Usage:
+    1. Pass session_id via extra when logging:
        logger.info("message", extra={"session_id": "telegram_123_..."})
 
-    2. 或者预先设置当前 session:
+    2. Or pre-set the current session:
        get_session_log_buffer().set_current_session(session_id)
-       logger.info("message")  # 自动关联到当前 session
+       logger.info("message")  # automatically associated with current session
     """
 
     def __init__(self, level: int = logging.DEBUG):
         """
-        初始化会话日志处理器
+        Initialize the session log handler.
 
         Args:
-            level: 最低日志级别（默认 DEBUG，记录所有级别）
+            level: Minimum log level (default DEBUG, records all levels)
         """
         super().__init__(level)
         self._buffer = get_session_log_buffer()
 
     def emit(self, record: logging.LogRecord) -> None:
         """
-        处理日志记录
+        Process a log record.
 
         Args:
-            record: 日志记录对象
+            record: Log record object
         """
         try:
-            # 尝试从 extra 获取 session_id
+            # Try to get session_id from extra
             session_id = getattr(record, "session_id", None)
 
-            # 格式化消息
+            # Format the message
             message = self.format(record) if self.formatter else record.getMessage()
 
-            # 添加到缓存
+            # Add to buffer
             self._buffer.add_log(
                 level=record.levelname,
                 module=record.name,
@@ -164,5 +167,5 @@ class SessionLogHandler(logging.Handler):
                 ],
             )
         except Exception:
-            # 日志处理器不应该抛出异常
+            # Log handlers should never raise exceptions
             self.handleError(record)

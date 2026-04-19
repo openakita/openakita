@@ -1,16 +1,16 @@
 """
-浏览器工具测试用例 (预留，需要 Playwright 支持)
+Browser tool test cases (placeholder, requires Playwright support)
 """
 
 from openakita.testing.runner import TestCase
 
 BROWSER_TESTS = [
-    # 页面导航
+    # Page navigation
     TestCase(
         id="tool_browser_001",
         category="tools",
         subcategory="browser",
-        description="导航到页面",
+        description="Navigate to page",
         input={
             "action": "navigate",
             "url": "https://example.com",
@@ -23,7 +23,7 @@ BROWSER_TESTS = [
         id="tool_browser_002",
         category="tools",
         subcategory="browser",
-        description="获取页面标题",
+        description="Get page title",
         input={
             "action": "get_title",
             "url": "https://example.com",
@@ -36,7 +36,7 @@ BROWSER_TESTS = [
         id="tool_browser_003",
         category="tools",
         subcategory="browser",
-        description="获取页面文本",
+        description="Get page text",
         input={
             "action": "get_text",
             "url": "https://example.com",
@@ -45,12 +45,12 @@ BROWSER_TESTS = [
         tags=["browser", "text"],
         timeout=30,
     ),
-    # 元素交互（预留）
+    # Element interaction (placeholder)
     TestCase(
         id="tool_browser_010",
         category="tools",
         subcategory="browser",
-        description="查找元素",
+        description="Find element",
         input={
             "action": "find_element",
             "url": "https://example.com",
@@ -60,12 +60,12 @@ BROWSER_TESTS = [
         tags=["browser", "element"],
         timeout=30,
     ),
-    # 截图（预留）
+    # Screenshot (placeholder)
     TestCase(
         id="tool_browser_020",
         category="tools",
         subcategory="browser",
-        description="页面截图",
+        description="Take page screenshot",
         input={
             "action": "screenshot",
             "url": "https://example.com",

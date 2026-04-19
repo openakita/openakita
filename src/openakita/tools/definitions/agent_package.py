@@ -1,11 +1,11 @@
 """
-Agent Package 工具定义
+Agent Package tool definitions
 
-提供 Agent 导入导出相关工具：
-- export_agent: 导出 Agent 为 .akita-agent 包
-- import_agent: 从 .akita-agent 包导入 Agent
-- list_exportable_agents: 列出可导出的 Agent
-- inspect_agent_package: 预览包内容
+Provides Agent import/export tools:
+- export_agent: Export an Agent as a .akita-agent package
+- import_agent: Import an Agent from a .akita-agent package
+- list_exportable_agents: List exportable Agents
+- inspect_agent_package: Preview package contents
 """
 
 AGENT_PACKAGE_TOOLS = [
@@ -35,7 +35,7 @@ AGENT_PACKAGE_TOOLS = [
                 },
                 "output_dir": {
                     "type": "string",
-                    "description": "导出文件保存目录（可选，默认保存到 data/agent_packages/）。用户可以指定路径如 ~/Desktop",
+                    "description": "Directory to save the exported file (optional, defaults to data/agent_packages/). You can specify a path like ~/Desktop",
                 },
             },
             "required": ["profile_id"],
@@ -94,11 +94,11 @@ AGENT_PACKAGE_TOOLS = [
                 "profile_ids": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "要导出的 Agent Profile ID 列表",
+                    "description": "List of Agent Profile IDs to export",
                 },
                 "output_dir": {
                     "type": "string",
-                    "description": "导出文件保存目录（用户可以指定路径如 ~/Desktop）",
+                    "description": "Directory to save exported files (you can specify a path like ~/Desktop)",
                 },
             },
             "required": ["profile_ids"],

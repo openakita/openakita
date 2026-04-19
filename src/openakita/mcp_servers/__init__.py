@@ -1,8 +1,8 @@
 """
-OpenAkita MCP 服务器模块
+OpenAkita MCP server module
 
-包含内置的 MCP 服务器实现：
-- web_search: 基于 DuckDuckGo 的网络搜索
+Built-in MCP server implementations:
+- web_search: web search based on DuckDuckGo
 """
 
 from .web_search import mcp as web_search_mcp

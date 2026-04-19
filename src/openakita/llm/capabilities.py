@@ -1,26 +1,26 @@
 """
-预置模型能力表
+Preset model capability table
 
-七种能力:
-- text: 是否支持文本输入/输出（所有模型都支持）
-- vision: 是否支持图片输入（image_url 类型，OpenAI 标准格式）
-- video: 是否支持视频输入（video_url 类型，Kimi 私有扩展 / DashScope 兼容）
-- tools: 是否支持工具调用 (function calling)
-- thinking: 是否支持思考模式 (深度推理)
-- audio: 是否支持音频原生输入（input_audio / inline_data 等）
-- pdf: 是否支持 PDF 文档原生输入（document content block）
+Seven capabilities:
+- text: whether text input/output is supported (all models support this)
+- vision: whether image input is supported (image_url type, OpenAI standard format)
+- video: whether video input is supported (video_url type, Kimi private extension / DashScope compatible)
+- tools: whether tool calling (function calling) is supported
+- thinking: whether thinking mode (deep reasoning) is supported
+- audio: whether native audio input is supported (input_audio / inline_data, etc.)
+- pdf: whether native PDF document input is supported (document content block)
 
-注意：不同服务商提供的相同模型可能能力不同
-结构: MODEL_CAPABILITIES[provider_slug][model_name] = {...}
+Note: the same model from different providers may have different capabilities.
+Structure: MODEL_CAPABILITIES[provider_slug][model_name] = {...}
 """
 
-# 预置模型能力表
+# Preset model capability table
 MODEL_CAPABILITIES = {
     # ============================================================
-    # 官方服务商 (Official Providers)
+    # Official Providers
     # ============================================================
     "openai": {
-        # OpenAI 官方
+        # OpenAI official
         "gpt-5": {"text": True, "vision": True, "video": False, "tools": True, "thinking": False},
         "gpt-5.2": {"text": True, "vision": True, "video": False, "tools": True, "thinking": False},
         "gpt-4o": {"text": True, "vision": True, "video": False, "tools": True, "thinking": False},
@@ -72,7 +72,7 @@ MODEL_CAPABILITIES = {
         },
     },
     "anthropic": {
-        # Anthropic 官方 — 所有 Claude 3+ 模型支持 PDF 原生输入
+        # Anthropic official — all Claude 3+ models support native PDF input
         "claude-opus-4.5": {
             "text": True,
             "vision": True,
@@ -139,7 +139,7 @@ MODEL_CAPABILITIES = {
         },
     },
     "deepseek": {
-        # DeepSeek 官方
+        # DeepSeek official
         "deepseek-v3.2": {
             "text": True,
             "vision": False,
@@ -208,8 +208,8 @@ MODEL_CAPABILITIES = {
         },
     },
     "moonshot": {
-        # Kimi / Moonshot AI 官方
-        # 注意：Kimi 是目前少数支持视频理解的模型，视频请求优先路由到这里
+        # Kimi / Moonshot AI official
+        # Note: Kimi is one of the few models currently supporting video understanding; video requests are routed here preferentially
         "kimi-k2.5": {
             "text": True,
             "vision": True,
@@ -241,7 +241,7 @@ MODEL_CAPABILITIES = {
         },
     },
     "dashscope": {
-        # 阿里云 DashScope (通义千问官方)
+        # Alibaba Cloud DashScope (Tongyi Qianwen official)
         "qwen3-vl": {"text": True, "vision": True, "video": True, "tools": True, "thinking": True},
         "qwen2.5-vl": {
             "text": True,
@@ -251,7 +251,7 @@ MODEL_CAPABILITIES = {
             "thinking": False,
         },
         "qwen3": {"text": True, "vision": False, "video": False, "tools": True, "thinking": True},
-        # 商业版
+        # Commercial versions
         "qwen-max": {
             "text": True,
             "vision": False,
@@ -301,7 +301,7 @@ MODEL_CAPABILITIES = {
             "tools": True,
             "thinking": True,
         },
-        # Qwen3.5 系列 - 双模（支持 enable_thinking 切换）
+        # Qwen3.5 series - dual mode (supports enable_thinking toggle)
         "qwen3.5-plus": {
             "text": True,
             "vision": True,
@@ -316,7 +316,7 @@ MODEL_CAPABILITIES = {
             "tools": True,
             "thinking": True,
         },
-        # Qwen3 开源 - 仅思考模式
+        # Qwen3 open-source - thinking-only mode
         "qwen3-235b-a22b-thinking": {
             "text": True,
             "vision": False,
@@ -333,7 +333,7 @@ MODEL_CAPABILITIES = {
             "thinking": True,
             "thinking_only": True,
         },
-        # Qwen3 开源 - 仅非思考模式
+        # Qwen3 open-source - non-thinking mode only
         "qwen3-235b-a22b-instruct": {
             "text": True,
             "vision": False,
@@ -348,7 +348,7 @@ MODEL_CAPABILITIES = {
             "tools": True,
             "thinking": False,
         },
-        # 视觉模型（Qwen-VL 系列支持视频输入）
+        # Vision models (Qwen-VL series supports video input)
         "qwen-vl-max": {
             "text": True,
             "vision": True,
@@ -391,7 +391,7 @@ MODEL_CAPABILITIES = {
             "tools": True,
             "thinking": True,
         },
-        # 音频模型
+        # Audio models
         "qwen-audio-turbo": {
             "text": True,
             "vision": False,
@@ -408,7 +408,7 @@ MODEL_CAPABILITIES = {
             "thinking": False,
             "audio": True,
         },
-        # QwQ 推理模型
+        # QwQ reasoning models
         "qwq-plus": {
             "text": True,
             "vision": False,
@@ -433,7 +433,7 @@ MODEL_CAPABILITIES = {
             "thinking": True,
             "thinking_only": True,
         },
-        # DashScope 第三方模型 — MiniMax（thinking-only，不接受 enable_thinking=False）
+        # DashScope third-party models — MiniMax (thinking-only, does not accept enable_thinking=False)
         "MiniMax-M2.5": {
             "text": True,
             "vision": False,
@@ -458,7 +458,7 @@ MODEL_CAPABILITIES = {
             "thinking": True,
             "thinking_only": True,
         },
-        # DashScope 第三方模型 — Kimi / GLM（支持 enable_thinking 切换）
+        # DashScope third-party models — Kimi / GLM (supports enable_thinking toggle)
         "kimi-k2.5": {
             "text": True,
             "vision": True,
@@ -469,8 +469,8 @@ MODEL_CAPABILITIES = {
         "glm-5": {"text": True, "vision": False, "video": False, "tools": True, "thinking": False},
     },
     "minimax": {
-        # MiniMax 官方（不支持 /v1/models 端点）
-        # M2+ 系列均为 thinking-only 模型，不接受 enable_thinking=False
+        # MiniMax official (does not support the /v1/models endpoint)
+        # M2+ series are all thinking-only models; they do not accept enable_thinking=False
         "minimax-m2.5": {
             "text": True,
             "vision": False,
@@ -527,8 +527,8 @@ MODEL_CAPABILITIES = {
         },
     },
     "zhipu": {
-        # 智谱 AI 官方 (Z.AI / BigModel)
-        # ── GLM-5 系列（最新旗舰） ──
+        # Zhipu AI official (Z.AI / BigModel)
+        # ── GLM-5 series (latest flagship) ──
         "glm-5": {
             "text": True,
             "vision": False,
@@ -543,7 +543,7 @@ MODEL_CAPABILITIES = {
             "tools": True,
             "thinking": True,
         },
-        # ── GLM-4.7 系列 ──
+        # ── GLM-4.7 series ──
         "glm-4.7": {
             "text": True,
             "vision": False,
@@ -551,7 +551,7 @@ MODEL_CAPABILITIES = {
             "tools": True,
             "thinking": True,
         },
-        # ── GLM-4.6 系列 ──
+        # ── GLM-4.6 series ──
         "glm-4.6v": {
             "text": True,
             "vision": True,
@@ -559,7 +559,7 @@ MODEL_CAPABILITIES = {
             "tools": True,
             "thinking": False,
         },
-        # ── GLM-4.5 系列 ──
+        # ── GLM-4.5 series ──
         "glm-4.5v": {
             "text": True,
             "vision": True,
@@ -567,7 +567,7 @@ MODEL_CAPABILITIES = {
             "tools": True,
             "thinking": False,
         },
-        # ── GLM-4 系列 ──
+        # ── GLM-4 series ──
         "glm-4": {"text": True, "vision": False, "video": False, "tools": True, "thinking": False},
         "glm-4-plus": {
             "text": True,
@@ -626,7 +626,7 @@ MODEL_CAPABILITIES = {
             "tools": True,
             "thinking": True,
         },
-        # ── 特殊模型 ──
+        # ── Special models ──
         "autoglm-phone": {
             "text": True,
             "vision": True,
@@ -643,7 +643,7 @@ MODEL_CAPABILITIES = {
         },
     },
     "google": {
-        # Google Gemini 官方 — 支持视频、音频原生输入和 PDF
+        # Google Gemini official — supports native video, audio input, and PDF
         "gemini-3-pro": {
             "text": True,
             "vision": True,
@@ -718,15 +718,15 @@ MODEL_CAPABILITIES = {
         },
     },
     # ============================================================
-    # 中转服务商 (Third-party Providers)
-    # 中转服务商的模型能力可能与官方不同，需单独维护
+    # Third-party Providers
+    # Third-party providers may offer different capabilities than the official ones; maintained separately
     # ============================================================
     "openrouter": {
-        # OpenRouter 会从 API 返回能力信息，此处为备用
+        # OpenRouter returns capability info from the API; this is a fallback
     },
     "siliconflow": {
-        # 硅基流动 - 主要提供开源模型
-        # 天然思考模型（始终思考，不支持 enable_thinking 切换）
+        # SiliconFlow - mainly provides open-source models
+        # Native thinking models (always thinking, does not support enable_thinking toggle)
         "moonshotai/Kimi-K2-Thinking": {
             "text": True,
             "vision": False,
@@ -751,7 +751,7 @@ MODEL_CAPABILITIES = {
             "thinking": True,
             "thinking_only": True,
         },
-        # 可切换思考模式的模型（支持 enable_thinking）
+        # Models with toggleable thinking mode (supports enable_thinking)
         "Qwen/Qwen3-235B-A22B": {
             "text": True,
             "vision": False,
@@ -817,7 +817,7 @@ MODEL_CAPABILITIES = {
         },
     },
     "volcengine": {
-        # 火山引擎 (Volcengine / 火山方舟 Ark) - 字节跳动
+        # Volcengine (Volcengine / Volcano Ark) - ByteDance
         "doubao-seed-1-6": {
             "text": True,
             "vision": True,
@@ -932,12 +932,12 @@ MODEL_CAPABILITIES = {
         },
     },
     "yunwu": {
-        # 云雾 API - 中转服务
+        # Yunwu API - third-party gateway
     },
 }
 
 
-# URL 到服务商的映射
+# URL to provider mapping
 URL_TO_PROVIDER = {
     "api.openai.com": "openai",
     "api.anthropic.com": "anthropic",
@@ -964,22 +964,23 @@ def infer_capabilities(
     model_name: str, provider_slug: str | None = None, user_config: dict | None = None
 ) -> dict:
     """
-    推断模型能力
+    Infer model capabilities
 
     Args:
-        model_name: 模型名称
-        provider_slug: 服务商标识（如 "dashscope", "openai", "openrouter"）
-        user_config: 用户在配置中声明的能力（可选）
+        model_name: model name
+        provider_slug: provider identifier (e.g. "dashscope", "openai", "openrouter")
+        user_config: capabilities declared by the user in config (optional)
 
     Returns:
         {"text": bool, "vision": bool, "video": bool, "tools": bool, "thinking": bool, "audio": bool, "pdf": bool}
 
-    ⚠ 维护提示：前端有此函数的简化版 (apps/setup-center/src/App.tsx → inferCapabilities)，
-    用于打包模式下前端直连服务商 API 拉取模型列表时的 capability 推断。
-    如果修改了下方的关键词规则（第 4 步"基于模型名关键词智能推断"），
-    需要同步更新前端的 inferCapabilities 函数。
+    ⚠ Maintenance note: the frontend has a simplified version of this function
+    (apps/setup-center/src/App.tsx → inferCapabilities), used in bundled mode
+    when the frontend directly calls provider APIs to fetch model lists and infer capabilities.
+    If you modify the keyword rules below (step 4 "Infer capabilities from model-name keywords"),
+    update the frontend inferCapabilities function accordingly.
     """
-    # 确保结果始终包含所有能力字段的辅助函数
+    # Helper to ensure the result always contains all capability fields
     _ALL_CAPS = {
         "text": False,
         "vision": False,
@@ -995,29 +996,31 @@ def infer_capabilities(
         result.update(caps)
         return result
 
-    # 1. 优先使用用户配置
+    # 1. Prefer user config
     if user_config:
         return _normalize(user_config)
 
     model_lower = model_name.lower()
 
-    # 2. 按服务商+模型名精确匹配
+    # 2. Exact match by provider + model name
     if provider_slug and provider_slug in MODEL_CAPABILITIES:
         provider_models = MODEL_CAPABILITIES[provider_slug]
 
-        # 精确匹配
+        # Exact match
         if model_name in provider_models:
             return _normalize(provider_models[model_name])
 
-        # 前缀匹配（处理版本号等）
+        # Prefix match (handles version numbers, etc.)
         for model_key, caps in provider_models.items():
             if model_lower.startswith(model_key.lower()):
                 return _normalize(caps)
 
-    # 3. 跨服务商模糊匹配（用于中转服务商等场景）
-    # 本地推理服务（Ollama/LMStudio 等）的模型名常带 `:NB` 变体后缀
-    # （如 deepseek-r1:8b），这些蒸馏/量化版本的能力通常与同名官方大模型不同，
-    # 跨服务商前缀匹配会导致小模型错误继承大模型的能力标记。
+    # 3. Cross-provider fuzzy match (used for third-party gateways, etc.)
+    # Model names for local inference services (Ollama/LMStudio, etc.) often carry `:NB`
+    # variant suffixes (like deepseek-r1:8b). These distilled/quantized versions typically
+    # have different capabilities than the same-name official large model, so
+    # cross-provider prefix matching would make small models incorrectly inherit the
+    # capability flags of big models.
     _is_local = provider_slug in ("ollama", "local", "lmstudio")
     _is_variant = ":" in model_name
     if not (_is_local and _is_variant):
@@ -1026,7 +1029,7 @@ def infer_capabilities(
                 if model_lower.startswith(model_key.lower()):
                     return _normalize(caps)
 
-    # 4. 基于模型名关键词智能推断
+    # 4. Infer capabilities from model-name keywords
     caps = {
         "text": True,
         "vision": False,
@@ -1037,37 +1040,38 @@ def infer_capabilities(
         "pdf": False,
     }
 
-    # Vision 推断（图片）
+    # Vision inference (images)
     if any(kw in model_lower for kw in ["vl", "vision", "visual", "image", "-v-", "4v"]):
         caps["vision"] = True
 
-    # Video 推断（视频）- 保守策略，仅 kimi/gemini/qwen-vl 明确支持
+    # Video inference - conservative strategy; only kimi/gemini/qwen-vl are explicitly supported
     if any(kw in model_lower for kw in ["kimi", "gemini"]):
         caps["video"] = True
-    # Qwen-VL 系列明确支持视频
+    # Qwen-VL series explicitly supports video
     if "vl" in model_lower and any(kw in model_lower for kw in ["qwen", "dashscope"]):
         caps["video"] = True
 
-    # Audio 推断（音频原生输入）- 非常保守
+    # Audio inference (native audio input) - very conservative
     if any(kw in model_lower for kw in ["audio", "gemini"]):
         caps["audio"] = True
 
-    # PDF 推断（文档原生输入）- 保守策略
+    # PDF inference (native document input) - conservative strategy
     if any(kw in model_lower for kw in ["claude", "gemini"]):
         caps["pdf"] = True
 
-    # Thinking 推断
+    # Thinking inference
     if any(kw in model_lower for kw in ["thinking", "r1", "qwq", "qvq", "o1", "reasoner"]):
         caps["thinking"] = True
-        # 天然思考模型：名称含 -Thinking 后缀、R1、QwQ、Reasoner 等，始终处于思考模式
-        # 这些模型不支持通过 API 参数切换思考开关（如 SiliconFlow 的 enable_thinking）
+        # Native thinking models: names containing -Thinking suffix, R1, QwQ, Reasoner, etc.
+        # are always in thinking mode. These models do not support toggling thinking via
+        # API parameters (such as SiliconFlow's enable_thinking).
         if any(
             kw in model_lower
             for kw in ["-thinking", "-r1", "/r1", "qwq", "qvq", "o1-", "o3-", "reasoner"]
         ):
             caps["thinking_only"] = True
 
-    # Tools 推断 (大部分主流模型都支持)
+    # Tools inference (supported by most mainstream models)
     if any(
         kw in model_lower
         for kw in [
@@ -1090,7 +1094,7 @@ def infer_capabilities(
 
 def get_provider_slug_from_base_url(base_url: str) -> str | None:
     """
-    从 base_url 推断服务商标识
+    Infer provider identifier from base_url
 
     Examples:
         "https://api.openai.com/v1" -> "openai"
@@ -1103,7 +1107,7 @@ def get_provider_slug_from_base_url(base_url: str) -> str | None:
         if domain in base_url:
             return slug
 
-    # 本地端点检测：基于端口号区分 Ollama / LM Studio
+    # Local endpoint detection: distinguish Ollama / LM Studio by port number
     url_lower = base_url.lower()
     local_hosts = ("localhost", "127.0.0.1", "0.0.0.0", "[::1]")
     if any(host in url_lower for host in local_hosts):
@@ -1111,29 +1115,29 @@ def get_provider_slug_from_base_url(base_url: str) -> str | None:
             return "ollama"
         if ":1234" in url_lower:
             return "lmstudio"
-        # 其他本地端口 → 通用本地标识
+        # Other local ports → generic local identifier
         return "local"
 
     return None
 
 
 def get_all_providers() -> list[str]:
-    """获取所有已知的服务商"""
+    """Get all known providers"""
     return list(MODEL_CAPABILITIES.keys())
 
 
 def get_models_by_provider(provider_slug: str) -> list[str]:
-    """获取指定服务商的所有已知模型"""
+    """Get all known models for the given provider"""
     return list(MODEL_CAPABILITIES.get(provider_slug, {}).keys())
 
 
 def supports_capability(model_name: str, capability: str, provider_slug: str | None = None) -> bool:
-    """检查模型是否支持某种能力"""
+    """Check whether the model supports a given capability"""
     caps = infer_capabilities(model_name, provider_slug)
     return caps.get(capability, False)
 
 
 def is_thinking_only(model_name: str, provider_slug: str | None = None) -> bool:
-    """检查模型是否仅支持思考模式"""
+    """Check whether the model only supports thinking mode"""
     caps = infer_capabilities(model_name, provider_slug)
     return caps.get("thinking_only", False)

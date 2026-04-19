@@ -1,14 +1,14 @@
 """
-记忆提取器 (v2)
+Memory Extractor (v2)
 
-功能:
-1. AI 判断提取 (v2: 工具感知, 实体-属性结构, 更新检测)
-2. 情节生成: 从对话轮次生成 Episode
-3. 草稿本更新: 基于最新 Episode 更新 Scratchpad
-4. 快速规则提取: 上下文压缩前低延迟提取
-5. 任务完成提取 (保留)
-6. 批量整理提取 (保留)
-7. 去重合并 (保留)
+Features:
+1. AI-driven extraction (v2: tool-aware, entity-attribute structure, update detection)
+2. Episode generation: generate Episode from conversation turns
+3. Scratchpad update: update Scratchpad based on the latest Episode
+4. Quick rule extraction: low-latency extraction before context compression
+5. Task completion extraction (retained)
+6. Batch consolidation extraction (retained)
+7. Deduplication and merging (retained)
 """
 
 from __future__ import annotations
@@ -33,64 +33,64 @@ logger = logging.getLogger(__name__)
 
 
 class MemoryExtractor:
-    """AI 驱动的记忆提取器 (v2)"""
+    """AI-driven memory extractor (v2)"""
 
-    EXTRACTION_PROMPT_V2 = """分析这轮对话，判断是否包含值得长期记住的信息。
+    EXTRACTION_PROMPT_V2 = """Analyze this conversation turn and determine whether it contains information worth remembering long-term.
 
-对话内容:
+Conversation content:
 [{role}]: {content}
 {tool_context}
 {extra_context}
 
-### 核心原则：区分「用户是谁」和「用户要做什么」
+### Core Principle: Distinguish "who the user is" from "what the user wants to do"
 
-**记忆只存「用户是谁」**（身份、性格、长期偏好），**不存「用户要做什么」**（任务、指令、请求）。
+**Memory only stores "who the user is"** (identity, personality, long-term preferences), **not "what the user wants to do"** (tasks, commands, requests).
 
-判断方法：问自己「这条信息在一个月后的新对话中还有用吗？」
-- "用户喜欢简洁风格" → 有用 → 记录
-- "用户需要苹果照片" → 没用（那是当时的任务） → 不记录
-- "用户偏好通过Telegram接收通知" → 有用 → 记录
-- "用户希望创建Word报告" → 没用（那是当时的任务） → 不记录
+Judgment method: Ask yourself "Will this information still be useful in a new conversation a month from now?"
+- "User likes concise style" -> useful -> record
+- "User needs apple photos" -> not useful (that was a one-off task) -> don't record
+- "User prefers to receive notifications via Telegram" -> useful -> record
+- "User wants to create a Word report" -> not useful (that was a one-off task) -> don't record
 
-### 值得记录的（真正的长期信息）
-- 用户身份：名字、称呼、职业、时区
-- 用户性格偏好：沟通风格、语言习惯、审美取向
-- 行为规则：用户对 AI 行为的持久要求（提炼为结构化规则）
-- 技术环境：常用技术栈、开发工具、OS 信息
-- 可复用经验：解决特定类型问题的通用方法
-- 失败教训：需要长期避免的操作模式
+### Worth recording (truly long-term information)
+- User identity: name, title, profession, time zone
+- User personality preferences: communication style, language habits, aesthetic preferences
+- Behavioral rules: user's persistent requirements for AI behavior (distilled into structured rules)
+- Technical environment: common tech stack, dev tools, OS info
+- Reusable experience: general methods for solving specific types of problems
+- Failure lessons: operation patterns to avoid long-term
 
-### 绝对不要记录的
-- **一次性任务请求**：「下载X」「搜索Y」「帮我找Z」「整理XX」「生成XX文档」
-- **任务产物细节**：文件大小、分辨率、下载链接、具体报告内容
-- **临时性需求**：「需要XX照片」「希望获取XX」「想要XX」（这些是当前任务，不是长期偏好）
-- **任务执行参数**：在哪个文件夹、几点提醒、发送到哪个渠道（除非用户明确表示这是长期规则）
-- 打招呼、寒暄、确认、感谢
-- 系统状态、错误堆栈、调试信息
-- AI 的回复内容、任务完成报告
+### Absolutely do not record
+- **One-off task requests**: "download X", "search Y", "help me find Z", "organize XX", "generate XX document"
+- **Task output details**: file size, resolution, download links, specific report content
+- **Temporary needs**: "need XX photos", "want to get XX", "want XX" (these are current tasks, not long-term preferences)
+- **Task execution parameters**: which folder, reminder time, which channel to send to (unless user explicitly says this is a long-term rule)
+- Greetings, small talk, acknowledgments, thanks
+- System status, error stack traces, debug info
+- AI's reply content, task completion reports
 
-### 常见误判示例（不要犯这些错误）
-× "用户需要苹果和香蕉照片" → 这是任务请求，不是偏好！
-× "用户希望在D盘创建报告" → 这是任务指令，不是规则！
-× "图片800x600，150KB" → 这是任务产物细节！
-× "整理10条AI新闻" → 这是一次性任务！
-× "生成Word文档并保存" → 这是任务指令！
-✓ "用户偏好 Jarvis 人格风格" → 这是长期性格偏好
-✓ "用户操作系统为Windows" → 这是持久环境事实
-✓ "禁止虚报执行结果" → 这是行为规则
+### Common misjudgment examples (don't make these mistakes)
+X "User needs apple and banana photos" -> This is a task request, not a preference!
+X "User wants to create a report on D drive" -> This is a task command, not a rule!
+X "Image 800x600, 150KB" -> This is task output detail!
+X "Organize 10 AI news items" -> This is a one-off task!
+X "Generate Word document and save" -> This is a task command!
+OK "User prefers Jarvis persona style" -> This is a long-term personality preference
+OK "User's OS is Windows" -> This is a persistent environment fact
+OK "Do not misreport execution results" -> This is a behavioral rule
 
-### 规则提炼指导
-如果用户表达了对 AI 行为的持久要求（如"不要骗我"、"必须认真做"），
-应提炼为结构化 RULE。注意：只有「你以后每次都要这样做」的才是规则，
-「这次帮我生成Word」不是规则。
+### Rule distillation guidance
+If the user expresses a persistent requirement for AI behavior (e.g. "don't lie to me", "must do it carefully"),
+distill into a structured RULE. Note: only "you must do this every time from now on" is a rule,
+"help me generate Word this time" is not a rule.
 
-对于每条值得记录的信息，用 JSON 输出:
+For each piece of information worth recording, output JSON:
 [
   {{
     "type": "FACT|PREFERENCE|RULE|SKILL|ERROR",
-    "subject": "实体主语 (谁/什么)",
-    "predicate": "属性/关系 (偏好/版本/位于/...)",
-    "content": "完整描述（精炼表达，不照抄原文）",
+    "subject": "entity subject (who/what)",
+    "predicate": "attribute/relation (preference/version/located at/...)",
+    "content": "complete description (refined expression, do not copy original text)",
     "importance": 0.5-1.0,
     "duration": "permanent|7d|24h|session",
     "is_update": false,
@@ -98,86 +98,86 @@ class MemoryExtractor:
   }}
 ]
 
-duration 参考:
-- permanent: 用户身份、长期偏好、行为规则
-- 7d: 错误教训、技能经验
-- 24h: 任务特定的临时上下文（极少使用）
-- session: 仅当前会话有效（极少使用）
+duration reference:
+- permanent: user identity, long-term preferences, behavioral rules
+- 7d: error lessons, skill experience
+- 24h: task-specific temporary context (rarely used)
+- session: valid only for current session (rarely used)
 
-如果没有值得记录的信息, 只输出: NONE
+If no information is worth recording, only output: NONE
 
-注意:
-- subject 是"关于谁/什么"的, 如 "用户", "项目X", "Python"
-- predicate 是属性关系, 如 "偏好", "版本", "使用工具"
-- content 要精简, 不要照抄原文
-- is_update: 如果是对已知事实的更新(如版本升级), 设为 true
-- 最多输出 2 条记忆（宁少勿多）
-- 绝大部分对话不需要记录任何信息，输出 NONE 是最常见的正确答案"""
+Notes:
+- subject is "about whom/what", e.g. "user", "project X", "Python"
+- predicate is the attribute relation, e.g. "preference", "version", "uses tool"
+- content should be concise, do not copy original text
+- is_update: set true if this is an update to a known fact (e.g. version upgrade)
+- Output at most 2 memories (better fewer than more)
+- Most conversations do not need to record any info; outputting NONE is the most common correct answer"""
 
-    EPISODE_PROMPT = """基于以下对话轮次，生成一个情节摘要。
+    EPISODE_PROMPT = """Based on the following conversation turns, generate an episode summary.
 
-对话:
+Conversation:
 {conversation}
 
-请用 JSON 格式输出:
+Output in JSON format:
 {{
-  "summary": "一段话描述发生了什么 (100-200字)",
-  "goal": "用户的目标/意图",
+  "summary": "a paragraph describing what happened (100-200 chars)",
+  "goal": "user's goal/intent",
   "outcome": "success|partial|failed|ongoing",
-  "entities": ["涉及的实体: 文件路径、项目名、概念等"],
-  "tools_used": ["使用的工具名列表"]
+  "entities": ["entities involved: file paths, project names, concepts, etc."],
+  "tools_used": ["list of tool names used"]
 }}"""
 
-    SCRATCHPAD_PROMPT = """你是 AI agent 的工作记忆管理器。基于最新的交互情节，更新工作记忆草稿本。
+    SCRATCHPAD_PROMPT = """You are the working memory manager for an AI agent. Based on the latest interaction episode, update the working memory scratchpad.
 
-当前草稿本内容:
+Current scratchpad content:
 {current_scratchpad}
 
-最新情节:
+Latest episode:
 {episode_summary}
 
-请输出更新后的完整草稿本 (Markdown 格式, 不超过 2000 字符):
+Output the updated complete scratchpad (Markdown format, no more than 2000 chars):
 
-## 当前项目
+## Current Projects
 - ...
 
-## 近期进展
+## Recent Progress
 - ...
 
-## 未解决的问题
+## Open Questions
 - ...
 
-## 下一步
+## Next Steps
 - ..."""
 
-    # 保留 v1 prompt 用于向后兼容
-    EXTRACTION_PROMPT = """分析这轮对话，判断是否包含值得长期记住的信息。
+    # Retain v1 prompt for backward compatibility
+    EXTRACTION_PROMPT = """Analyze this conversation turn and determine whether it contains information worth remembering long-term.
 
-对话内容:
+Conversation content:
 [{role}]: {content}
 
 {context}
 
-只有以下情况才值得记录:
-1. 用户明确表达的偏好或习惯（如"我喜欢..."、"我习惯..."）
-2. 用户设定的规则或约束（如"不要..."、"必须..."、"永远不要..."）
-3. 重要的事实信息（如用户身份、项目信息、账号信息）
-4. 成功解决问题的关键方法（如果是 assistant 消息）
-5. 需要避免的错误或教训
+Only record in the following cases:
+1. Preferences or habits the user explicitly expresses (e.g. "I like...", "I usually...")
+2. Rules or constraints set by the user (e.g. "don't...", "must...", "never...")
+3. Important factual information (e.g. user identity, project info, account info)
+4. Key methods that successfully solved a problem (if it's an assistant message)
+5. Errors or lessons to be avoided
 
-**大部分日常对话都不需要记录**，只记录真正重要的信息。
+**Most everyday conversations don't need to be recorded**; only record truly important information.
 
-如果没有值得记录的信息，只输出: NONE
+If there's no information worth recording, only output: NONE
 
-如果有值得记录的信息，用 JSON 格式输出:
+If there's information worth recording, output in JSON format:
 [
-  {{"type": "PREFERENCE|RULE|FACT|SKILL|ERROR", "content": "精简的记忆内容", "importance": 0.5-1.0}}
+  {{"type": "PREFERENCE|RULE|FACT|SKILL|ERROR", "content": "concise memory content", "importance": 0.5-1.0}}
 ]
 
-注意:
-- content 要精简，不要照抄原文
-- importance: 0.5=一般, 0.7=重要, 0.9=非常重要
-- 最多输出 3 条记忆"""
+Notes:
+- content should be concise, don't copy original text
+- importance: 0.5=normal, 0.7=important, 0.9=very important
+- Output at most 3 memories"""
 
     def __init__(self, brain=None):
         self.brain = brain
@@ -192,7 +192,7 @@ duration 参考:
         context: str = "",
     ) -> list[dict]:
         """
-        v2 提取: 感知工具调用, 输出实体-属性结构
+        v2 extraction: tool-call aware, outputs entity-attribute structure
 
         Returns:
             List of dicts with keys: type, subject, predicate, content,
@@ -206,7 +206,7 @@ duration 参考:
             return []
 
         tool_context = self._build_tool_context(turn.tool_calls, turn.tool_results)
-        extra = f"上下文: {context}" if context else ""
+        extra = f"Context: {context}" if context else ""
 
         prompt = self.EXTRACTION_PROMPT_V2.format(
             role=turn.role,
@@ -218,7 +218,7 @@ duration 参考:
         try:
             response = await self._call_brain_main(
                 prompt,
-                system="你是记忆提取专家。只输出 NONE 或 JSON 数组。",
+                system="You are a memory extraction expert. Output only NONE or a JSON array.",
             )
 
             text = (getattr(response, "content", None) or str(response)).strip()
@@ -271,102 +271,102 @@ duration 参考:
             logger.error(f"[Extractor v2] Extraction failed: {e}")
             return []
 
-    CONVERSATION_EXTRACTION_PROMPT = """回顾整段对话，提取所有值得长期记住的信息。
+    CONVERSATION_EXTRACTION_PROMPT = """Review the entire conversation and extract all information worth remembering long-term.
 
-## 完整对话
+## Full Conversation
 {conversation}
 
-### 核心原则：主动记录事实
+### Core Principle: Proactively record facts
 
-你的职责是**主动发现并保存**对话中出现的有价值信息。宁可多记也不要漏记。
+Your job is to **proactively discover and save** valuable information that appears in the conversation. Better to record too much than to miss something.
 
-### 必须记录的（遇到就记）
-- 用户身份：名字、称呼、职业、公司、时区
-- 用户偏好：沟通风格、语言习惯、审美取向、技术偏好
-- 行为规则：用户对 AI 行为的要求（「每次先做X」「不要Y」）
-- 技术环境：常用技术栈、开发工具、OS、运行环境
-- **账号和配置**：邮箱地址、API endpoint、端口号、认证方式、服务商（不含密码/密钥原文）
-- **验证有效的技术方案**：经过测试确认可用的配置、参数组合、代码模式
-- **创建的文件/Skill/工具**：文件路径、skill 名称、用途、关键参数
-- **重要的事实发现**：调试过程中发现的环境特性、兼容性、限制条件
+### Must record (record whenever seen)
+- User identity: name, title, profession, company, time zone
+- User preferences: communication style, language habits, aesthetic preferences, technical preferences
+- Behavioral rules: user's requirements for AI behavior ("always do X first", "don't Y")
+- Technical environment: common tech stack, dev tools, OS, runtime environment
+- **Accounts and configuration**: email addresses, API endpoints, port numbers, authentication methods, service providers (not including raw passwords/keys)
+- **Verified working technical solutions**: tested and confirmed configurations, parameter combinations, code patterns
+- **Created files/Skills/tools**: file paths, skill names, purposes, key parameters
+- **Important factual discoveries**: environment characteristics, compatibility, limitations found during debugging
 
-### 不要记录的
-- 打招呼、寒暄、确认、感谢
-- 密码、API Key、Token 等敏感凭证原文
+### Do not record
+- Greetings, small talk, acknowledgments, thanks
+- Raw sensitive credentials such as passwords, API keys, tokens
 
-对于每条值得记录的信息，用 JSON 输出:
+For each piece of information worth recording, output JSON:
 [
   {{
     "type": "FACT|PREFERENCE|RULE|SKILL|ERROR",
-    "subject": "实体主语 (谁/什么)",
-    "predicate": "属性/关系 (偏好/版本/位于/配置为/...)",
-    "content": "完整描述（包含具体的值、路径、参数，可直接复用）",
+    "subject": "entity subject (who/what)",
+    "predicate": "attribute/relation (preference/version/located at/configured as/...)",
+    "content": "complete description (including specific values, paths, parameters; directly reusable)",
     "importance": 0.5-1.0,
     "duration": "permanent|7d|24h|session"
   }}
 ]
 
-如果确实没有任何有价值的信息，输出: NONE
+If there's truly no valuable information, output: NONE
 
-注意:
-- 最多输出 8 条记忆
-- 对话中多次提到同一信息只提取一次
-- content 必须包含具体值（端口号、路径、参数等），不要用模糊描述"""
+Notes:
+- Output at most 8 memories
+- Extract the same information only once even if mentioned multiple times
+- content must include concrete values (port numbers, paths, parameters, etc.); don't use vague descriptions"""
 
-    EXPERIENCE_EXTRACTION_PROMPT = """回顾整段对话，提取所有**任务经验、操作结果和教训**。
+    EXPERIENCE_EXTRACTION_PROMPT = """Review the entire conversation and extract all **task experience, operation results, and lessons learned**.
 
-## 完整对话
+## Full Conversation
 {conversation}
 
-### 核心原则：完整记录做了什么、结果如何、怎么做成的
+### Core Principle: Completely record what was done, the results, and how it was accomplished
 
-你必须把对话中发生的关键事件和结论记录下来。下次遇到类似任务时，这些记录能让你直接复用成功方案、避开已知错误。
+You must record key events and conclusions that occurred in the conversation. Next time you encounter a similar task, these records will let you directly reuse successful approaches and avoid known errors.
 
-### 必须记录的
-- **成功的操作和方法**：什么操作最终成功了？用了什么配置/参数/步骤？（必须记录具体值）
-- **失败的尝试和原因**：哪些方法失败了？报了什么错？原因是什么？
-- **错误→修复的完整路径**：从错误到成功的关键转折（改了什么、为什么管用）
-- **环境和配置发现**：调试过程中发现的系统特性、版本兼容性、端口、路径等
-- **工具/Skill 使用经验**：用了哪个工具、怎么调用的、效果如何
-- **Skill 封装经验**：创建了什么 skill、放在哪里、核心逻辑是什么、注意事项
-- **最终产物**：最终生成了什么文件、部署在哪里、怎么使用
+### Must record
+- **Successful operations and methods**: which operations ultimately succeeded? What configuration/parameters/steps were used? (must record specific values)
+- **Failed attempts and reasons**: which methods failed? What errors were reported? What was the cause?
+- **Error -> fix complete paths**: key turning points from error to success (what was changed, why it worked)
+- **Environment and configuration discoveries**: system features, version compatibility, ports, paths found during debugging
+- **Tool/Skill usage experience**: which tool was used, how it was called, what the effect was
+- **Skill packaging experience**: what skills were created, where they are, what the core logic is, caveats
+- **Final artifacts**: what files were ultimately generated, where they are deployed, how to use them
 
-### 不要记录的
-- 打招呼、寒暄、感谢
-- 用户身份信息（那属于用户画像记忆）
+### Do not record
+- Greetings, small talk, thanks
+- User identity information (that belongs to user profile memory)
 
-对于每条记录，用 JSON 输出:
+For each record, output JSON:
 [
   {{
     "type": "EXPERIENCE|SKILL|ERROR",
-    "subject": "主题 (什么任务/什么操作)",
-    "predicate": "属性 (成功方法/失败原因/踩坑教训/Skill封装/最终配置/...)",
-    "content": "详细描述（包含具体的参数、路径、配置值、错误信息，确保下次可直接复用）",
+    "subject": "subject (what task/what operation)",
+    "predicate": "attribute (successful method/failure reason/pitfall lesson/Skill packaging/final config/...)",
+    "content": "detailed description (including specific parameters, paths, config values, error info; ensure it can be directly reused next time)",
     "importance": 0.5-1.0,
     "duration": "permanent|7d"
   }}
 ]
 
-如果对话中确实没有任何操作或经验，输出: NONE
+If there's truly no operation or experience in the conversation, output: NONE
 
-注意:
-- 最多输出 8 条
-- **宁可多记也不要漏记**——漏掉一条成功经验，下次就要重新踩一遍坑
-- content 必须足够具体，让下次看到这条记忆就能直接操作"""
+Notes:
+- Output at most 8
+- **Better to record too much than to miss something** - missing a successful experience means stepping into the same pit next time
+- content must be specific enough that seeing this memory next time allows direct action"""
 
     CITATION_SCORING_SECTION = """
 
-## 本次对话中检索过的记忆（请评分）
+## Memories retrieved during this conversation (please score)
 
-以下是本次对话中被检索到的历史记忆，请逐条评判它对本次任务是否有实际帮助：
+Below are the historical memories retrieved during this conversation. Judge each one on whether it actually helped with this task:
 {cited_memories}
 
-在你的 JSON 输出中，增加一个 "citation_scores" 字段：
+In your JSON output, add a "citation_scores" field:
 "citation_scores": [
   {{"memory_id": "xxx", "useful": true/false}}
 ]
-如果该记忆确实帮助了本次任务的执行（提供了有用的信息、避免了错误等），标记 useful=true。
-如果该记忆与本次任务无关或没有实际帮助，标记 useful=false。"""
+If the memory actually helped execute this task (provided useful info, avoided errors, etc.), mark useful=true.
+If the memory is unrelated to this task or didn't actually help, mark useful=false."""
 
     async def extract_from_conversation(
         self,
@@ -393,7 +393,7 @@ duration 参考:
 
         conv_lines = []
         for t in turns[-30:]:
-            role_label = "用户" if t.role == "user" else "助手"
+            role_label = "user" if t.role == "user" else "assistant"
             content, _ = _st(t.content or "", 1500, save_full=False, label="mem_conv")
             if content.strip():
                 conv_lines.append(f"[{role_label}]: {content}")
@@ -413,12 +413,12 @@ duration 参考:
                 f"- ID={m['id']} | {m.get('content', '')[:150]}" for m in cited_memories
             )
             prompt += self.CITATION_SCORING_SECTION.format(cited_memories=cited_text)
-            prompt += '\n\n最终输出格式: {"memories": [...], "citation_scores": [...]}\n如果没有要提取的记忆，memories 为空数组。只输出 JSON。'
+            prompt += '\n\nFinal output format: {"memories": [...], "citation_scores": [...]}\nIf no memories need extracting, memories is an empty array. Output only JSON.'
             system_msg = (
-                "你是记忆提取+评分专家。输出 JSON 对象，包含 memories 和 citation_scores 两个字段。"
+                "You are a memory extraction + scoring expert. Output a JSON object containing memories and citation_scores fields."
             )
         else:
-            system_msg = "你是记忆提取专家。只输出 NONE 或 JSON 数组。"
+            system_msg = "You are a memory extraction expert. Output only NONE or a JSON array."
 
         try:
             response = await self._call_brain_main(prompt, system=system_msg)
@@ -475,7 +475,7 @@ duration 参考:
 
         conv_lines = []
         for t in turns[-30:]:
-            role_label = "用户" if t.role == "user" else "助手"
+            role_label = "user" if t.role == "user" else "assistant"
             content, _ = _st(t.content or "", 1500, save_full=False, label="mem_conv")
             if content.strip():
                 conv_lines.append(f"[{role_label}]: {content}")
@@ -492,7 +492,7 @@ duration 参考:
         try:
             response = await self._call_brain_main(
                 prompt,
-                system="你是任务经验总结专家。只输出 NONE 或 JSON 数组。",
+                system="You are a task experience summarization expert. Output only NONE or a JSON array.",
             )
             text = (getattr(response, "content", None) or str(response)).strip()
             if "NONE" in text.upper() or not text:
@@ -557,7 +557,7 @@ duration 参考:
         if not tool_calls:
             return ""
 
-        lines = ["\n工具调用:"]
+        lines = ["\nTool calls:"]
         from openakita.core.tool_executor import smart_truncate as _st
 
         for tc in (tool_calls or [])[:5]:
@@ -582,7 +582,7 @@ duration 参考:
                 is_err = tr.get("is_error", False)
                 raw = content if isinstance(content, str) else str(content)
                 summary, _ = _st(raw, 300, save_full=False, label="mem_tool_result")
-                prefix = "错误" if is_err else "结果"
+                prefix = "Error" if is_err else "Result"
                 lines.append(f"  {prefix}: {summary}")
 
         return "\n".join(lines)
@@ -597,7 +597,7 @@ duration 参考:
         session_id: str,
         source: str = "session_end",
     ) -> Episode | None:
-        """从对话轮次生成情节记忆"""
+        """Generate episode memory from conversation turns"""
         if not turns:
             return None
 
@@ -607,7 +607,7 @@ duration 参考:
 
         def _episode_line(t):
             c, _ = _st(t.content or "", 600, save_full=False, label="mem_episode")
-            suffix = f" [调用了 {len(t.tool_calls)} 个工具]" if t.tool_calls else ""
+            suffix = f" [called {len(t.tool_calls)} tools]" if t.tool_calls else ""
             return f"[{t.role}]: {c}{suffix}"
 
         conv_text = "\n".join(_episode_line(t) for t in turns[-20:])
@@ -624,7 +624,7 @@ duration 参考:
         if self.brain:
             try:
                 prompt = self.EPISODE_PROMPT.format(conversation=conv_text)
-                resp = await self._call_brain(prompt, system="你是交互情节分析专家。只输出 JSON。")
+                resp = await self._call_brain(prompt, system="You are an interaction episode analysis expert. Output only JSON.")
                 text = (getattr(resp, "content", None) or str(resp)).strip()
                 json_match = re.search(r"\{[\s\S]*\}", text)
                 if json_match:
@@ -689,8 +689,8 @@ duration 参考:
     def _generate_fallback_summary(self, turns: list[ConversationTurn]) -> str:
         user_msgs = [t.content[:100] for t in turns if t.role == "user" and t.content]
         if user_msgs:
-            return f"对话涉及: {'; '.join(user_msgs[:3])}"
-        return f"共 {len(turns)} 轮对话"
+            return f"Conversation covered: {'; '.join(user_msgs[:3])}"
+        return f"{len(turns)} total turns"
 
     def _extract_entities(self, turns: list[ConversationTurn]) -> list[str]:
         entities = set()
@@ -711,8 +711,8 @@ duration 参考:
         current: Scratchpad | None,
         episode: Episode,
     ) -> Scratchpad:
-        """基于最新情节更新草稿本"""
-        current_content = current.content if current else "(空白)"
+        """Update scratchpad based on latest episode"""
+        current_content = current.content if current else "(empty)"
         user_id = current.user_id if current else "default"
 
         if self.brain:
@@ -730,10 +730,10 @@ duration 参考:
                 return Scratchpad(
                     user_id=user_id,
                     content=sp_content,
-                    active_projects=self._parse_list_section(text, "当前项目"),
-                    current_focus=self._parse_first_item(text, "当前项目"),
-                    open_questions=self._parse_list_section(text, "未解决的问题"),
-                    next_steps=self._parse_list_section(text, "下一步"),
+                    active_projects=self._parse_list_section(text, "Current Projects"),
+                    current_focus=self._parse_first_item(text, "Current Projects"),
+                    open_questions=self._parse_list_section(text, "Open Questions"),
+                    next_steps=self._parse_list_section(text, "Next Steps"),
                     updated_at=datetime.now(),
                 )
             except Exception as e:
@@ -743,7 +743,7 @@ duration 参考:
         if episode.summary:
             date_str = episode.ended_at.strftime("%m/%d")
             progress = f"- {date_str}: {episode.summary[:100]}"
-            pad.content = self._append_to_section(pad.content, "近期进展", progress)
+            pad.content = self._append_to_section(pad.content, "Recent Progress", progress)
         pad.updated_at = datetime.now()
         return pad
 
@@ -788,10 +788,10 @@ duration 参考:
     ]
 
     def extract_quick_facts(self, messages: list[dict]) -> list[SemanticMemory]:
-        """轻量级规则扫描 — 上下文压缩前调用，不使用 LLM。
+        """Lightweight rule scan - called before context compression, no LLM used.
 
-        仅提取用户消息中含有强规则信号的语句，
-        生成 RULE 类型 PERMANENT 优先级的 SemanticMemory。
+        Only extracts statements in user messages containing strong rule signals,
+        generating RULE type SemanticMemory with PERMANENT priority.
         """
         from datetime import datetime as _dt
 
@@ -838,7 +838,7 @@ duration 参考:
         turn: ConversationTurn,
         context: str = "",
     ) -> list[Memory]:
-        """v1 兼容: 使用 AI 判断是否应该提取记忆"""
+        """v1 compatibility: use AI to determine whether to extract memory"""
         if not self.brain:
             return []
 
@@ -846,7 +846,7 @@ duration 参考:
             return []
 
         try:
-            context_text = f"上下文: {context}" if context else ""
+            context_text = f"Context: {context}" if context else ""
             prompt = self.EXTRACTION_PROMPT.format(
                 role=turn.role,
                 content=turn.content,
@@ -855,7 +855,7 @@ duration 参考:
 
             response = await self._call_brain_main(
                 prompt,
-                system="你是记忆提取专家。只输出 NONE 或 JSON 数组，不要其他内容。",
+                system="You are a memory extraction expert. Output only NONE or a JSON array, nothing else.",
             )
 
             response_text = (getattr(response, "content", "") or str(response)).strip()
@@ -892,7 +892,7 @@ duration 参考:
         return await self.brain.think(prompt, **kwargs)
 
     def extract_from_turn(self, turn: ConversationTurn) -> list[Memory]:
-        """同步规则提取 (向后兼容)"""
+        """Synchronous rule-based extraction (backward compatible)"""
         if turn.role != "user":
             return []
 
@@ -936,7 +936,7 @@ duration 参考:
                 Memory(
                     type=MemoryType.FACT,
                     priority=MemoryPriority.LONG_TERM,
-                    content=f"用户提到路径: {m.group(0)}",
+                    content=f"User mentioned path: {m.group(0)}",
                     source="turn_sync",
                     importance_score=0.6,
                     tags=["path", "fact"],
@@ -952,7 +952,7 @@ duration 参考:
         tool_calls: list[dict],
         errors: list[str],
     ) -> list[Memory]:
-        """Deprecated: Episode 已接管会话总结，不再自动创建低质量 skill 记忆。"""
+        """Deprecated: Episode has taken over session summarization; no longer auto-creates low-quality skill memories."""
         return []
 
     async def extract_with_llm(
@@ -960,38 +960,38 @@ duration 参考:
         conversation: list[ConversationTurn],
         context: str = "",
     ) -> list[Memory]:
-        """使用 LLM 批量提取 (保留)"""
+        """Batch extraction using LLM (retained)"""
         if not self.brain or not conversation:
             return []
 
         conv_text = "\n".join(f"[{t.role}]: {t.content}" for t in conversation[-30:])
 
-        prompt = f"""分析以下对话，提取值得长期记住的信息。
+        prompt = f"""Analyze the following conversation and extract information worth remembering long-term.
 
-对话内容:
+Conversation content:
 {conv_text}
 
-{f"上下文: {context}" if context else ""}
+{f"Context: {context}" if context else ""}
 
-请提取以下类型的信息:
-1. **用户偏好** (PREFERENCE)
-2. **事实信息** (FACT)
-3. **成功模式** (SKILL)
-4. **错误教训** (ERROR)
-5. **规则约束** (RULE)
+Extract the following types of information:
+1. **User preferences** (PREFERENCE)
+2. **Factual information** (FACT)
+3. **Successful patterns** (SKILL)
+4. **Error lessons** (ERROR)
+5. **Rule constraints** (RULE)
 
-用 JSON 格式输出:
+Output in JSON format:
 [
-  {{"type": "类型", "content": "精简的记忆内容", "importance": 0.5-1.0}}
+  {{"type": "type", "content": "concise memory content", "importance": 0.5-1.0}}
 ]
 
-如果没有值得记录的信息，输出空数组: []
-最多输出 10 条记忆"""
+If there's no information worth recording, output an empty array: []
+Output at most 10 memories"""
 
         try:
             response = await self.brain.think(
                 prompt,
-                system="你是记忆提取专家。只输出 JSON 数组。",
+                system="You are a memory extraction expert. Output only a JSON array.",
                 max_tokens=1000,
             )
             return self._parse_json_response(response.content)
@@ -1062,7 +1062,7 @@ duration 参考:
         return memories
 
     def deduplicate(self, memories: list[Memory], existing: list[Memory]) -> list[Memory]:
-        """去重合并记忆 (保留)"""
+        """Deduplicate and merge memories (retained)"""
         unique = []
         existing_contents = {m.content.lower() for m in existing}
         for memory in memories:

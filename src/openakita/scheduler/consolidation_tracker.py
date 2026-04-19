@@ -1,10 +1,12 @@
 """
-整理时间追踪器
+Consolidation Time Tracker
 
-记录每次记忆整理和系统自检的时间戳，供下次运行时
-确定需要处理的时间范围（上次整理到当前时间）。
+Records the timestamp of each memory consolidation and system self-check,
+so that the next run can determine the time range to process
+(from the last consolidation to the current time).
 
-同时追踪安装时间，判断是否处于新用户适应期。
+Also tracks installation time to determine whether the user is in the
+new-user onboarding period.
 """
 
 import json
@@ -19,9 +21,9 @@ logger = logging.getLogger(__name__)
 
 class ConsolidationTracker:
     """
-    整理时间追踪器
+    Consolidation Time Tracker
 
-    持久化到 data/scheduler/consolidation_tracker.json
+    Persisted to data/scheduler/consolidation_tracker.json
     """
 
     def __init__(self, data_dir: Path):
@@ -54,7 +56,7 @@ class ConsolidationTracker:
 
     @property
     def install_time(self) -> datetime:
-        """首次安装/使用时间"""
+        """First installation / usage time"""
         ts = self._state.get("install_time")
         if ts:
             try:
@@ -67,20 +69,20 @@ class ConsolidationTracker:
         return now
 
     def is_onboarding(self, onboarding_days: int = 7) -> bool:
-        """是否处于新用户适应期"""
+        """Whether the user is in the new-user onboarding period"""
         elapsed = datetime.now() - self.install_time
         return elapsed < timedelta(days=onboarding_days)
 
     def get_onboarding_elapsed_days(self) -> float:
-        """距离安装已经过了多少天"""
+        """Number of days elapsed since installation"""
         elapsed = datetime.now() - self.install_time
         return elapsed.total_seconds() / 86400
 
-    # ==================== 记忆整理 ====================
+    # ==================== Memory Consolidation ====================
 
     @property
     def last_memory_consolidation(self) -> datetime | None:
-        """上次记忆整理时间"""
+        """Time of the last memory consolidation"""
         ts = self._state.get("last_memory_consolidation")
         if ts:
             try:
@@ -90,7 +92,7 @@ class ConsolidationTracker:
         return None
 
     def record_memory_consolidation(self, result: dict | None = None) -> None:
-        """记录一次记忆整理"""
+        """Record a memory consolidation run"""
         now = datetime.now()
         self._state["last_memory_consolidation"] = now.isoformat()
 
@@ -118,18 +120,18 @@ class ConsolidationTracker:
 
     def get_memory_consolidation_time_range(self) -> tuple[datetime | None, datetime]:
         """
-        获取本次记忆整理应处理的时间范围
+        Get the time range this memory consolidation run should process.
 
         Returns:
-            (since, until) — since=None 表示首次运行，处理全部
+            (since, until) — since=None means first run, process everything
         """
         return self.last_memory_consolidation, datetime.now()
 
-    # ==================== 系统自检 ====================
+    # ==================== System Self-Check ====================
 
     @property
     def last_selfcheck(self) -> datetime | None:
-        """上次系统自检时间"""
+        """Time of the last system self-check"""
         ts = self._state.get("last_selfcheck")
         if ts:
             try:
@@ -139,7 +141,7 @@ class ConsolidationTracker:
         return None
 
     def record_selfcheck(self, result: dict | None = None) -> None:
-        """记录一次系统自检"""
+        """Record a system self-check run"""
         now = datetime.now()
         self._state["last_selfcheck"] = now.isoformat()
 
@@ -160,14 +162,14 @@ class ConsolidationTracker:
 
     def get_selfcheck_time_range(self) -> tuple[datetime | None, datetime]:
         """
-        获取本次自检应分析的日志时间范围
+        Get the log time range this self-check should analyze.
 
         Returns:
-            (since, until) — since=None 表示首次运行
+            (since, until) — since=None means first run
         """
         return self.last_selfcheck, datetime.now()
 
-    # ==================== 适应期整理间隔判断 ====================
+    # ==================== Onboarding Consolidation Interval ====================
 
     def should_consolidate_now(
         self,
@@ -175,10 +177,10 @@ class ConsolidationTracker:
         onboarding_interval_hours: int = 3,
     ) -> bool:
         """
-        判断现在是否应该执行记忆整理
+        Determine whether memory consolidation should run now.
 
-        适应期内: 每 onboarding_interval_hours 小时一次
-        正常期: 由 cron 控制（此方法不做判断，返回 True）
+        During onboarding: once every onboarding_interval_hours hours.
+        After onboarding: controlled by cron (this method always returns True).
         """
         if not self.is_onboarding(onboarding_days):
             return True

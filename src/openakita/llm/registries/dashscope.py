@@ -1,17 +1,17 @@
 """
-阿里云 DashScope (百炼) 服务商注册表
+Alibaba Cloud DashScope (Bailian) provider registry
 
-采用混合方案：API 获取模型列表 + 预置能力表补充能力信息
+Uses a hybrid approach: API-fetched model list + preset capability table for supplemental info
 
-说明：
-- 国内区: https://dashscope.aliyuncs.com/compatible-mode/v1
-- 国际区: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+Notes:
+- China region: https://dashscope.aliyuncs.com/compatible-mode/v1
+- International region: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
 """
 
 from ..capabilities import infer_capabilities
 from .base import ModelInfo, ProviderInfo, ProviderRegistry, get_registry_client
 
-# 预置模型列表（国内/国际共用）
+# Preset model list (shared by China/International)
 _PRESET_MODELS = [
     "qwen3-max",
     "qwen3-max-preview",
@@ -33,16 +33,16 @@ _PRESET_MODELS = [
 
 
 class _DashScopeBase(ProviderRegistry):
-    """DashScope 基类（国内/国际共用逻辑）"""
+    """DashScope base class (shared logic for China/International)."""
 
     async def list_models(self, api_key: str) -> list[ModelInfo]:
         """
-        获取 DashScope 模型列表
+        Fetch DashScope model list.
 
-        使用混合方案：
-        1. 调用 API 获取最新的可用模型列表
-        2. 从预置能力表查找每个模型的能力
-        3. 如果预置表没有该模型，使用智能推断
+        Hybrid approach:
+        1. Call API to get the latest available models
+        2. Look up each model's capabilities from the preset table
+        3. Fall back to intelligent inference if the model is not in the preset table
         """
         client = get_registry_client()
         try:
@@ -76,12 +76,12 @@ class _DashScopeBase(ProviderRegistry):
             return self._get_preset_models()
 
     def get_model_capabilities(self, model_id: str) -> dict:
-        """获取模型能力"""
+        """Get model capabilities."""
         return infer_capabilities(model_id, provider_slug="dashscope")
 
     @staticmethod
     def _get_preset_models() -> list[ModelInfo]:
-        """返回预置模型列表"""
+        """Return preset model list."""
         return [
             ModelInfo(
                 id=model_id,
@@ -93,10 +93,10 @@ class _DashScopeBase(ProviderRegistry):
 
 
 class DashScopeRegistry(_DashScopeBase):
-    """阿里云 DashScope 注册表（中国区）"""
+    """Alibaba Cloud DashScope registry (China region)."""
 
     info = ProviderInfo(
-        name="阿里云 DashScope（中国区）",
+        name="Alibaba Cloud DashScope (China)",
         slug="dashscope",
         api_type="openai",
         default_base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -107,7 +107,7 @@ class DashScopeRegistry(_DashScopeBase):
 
 
 class DashScopeInternationalRegistry(_DashScopeBase):
-    """阿里云 DashScope 注册表（国际区）"""
+    """Alibaba Cloud DashScope registry (International)."""
 
     info = ProviderInfo(
         name="Alibaba DashScope (International)",

@@ -1,10 +1,11 @@
 """
-统一流式事件协议
+Unified streaming event protocol
 
-解决 Anthropic / OpenAI provider 输出格式不一致的根本问题。
-所有 provider 的 chat_stream 都应该 yield StreamEvent 而非原始 dict。
+Solves the fundamental problem of inconsistent output formats between
+Anthropic / OpenAI providers. All provider chat_stream methods should
+yield StreamEvent instead of raw dicts.
 
-参考 Claude Code 的 BetaRawMessageStreamEvent 设计。
+Modeled after Claude Code's BetaRawMessageStreamEvent design.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ StreamEventType = Literal[
 
 @dataclass
 class StreamEvent:
-    """统一的流式事件"""
+    """Unified streaming event."""
 
     type: StreamEventType
     data: dict = field(default_factory=dict)
@@ -37,7 +38,7 @@ class StreamEvent:
 
     @classmethod
     def from_anthropic_raw(cls, raw: dict) -> StreamEvent | None:
-        """从 Anthropic API 原始 SSE 事件转换。"""
+        """Convert from Anthropic API raw SSE event."""
         event_type = raw.get("type", "")
 
         if event_type == "message_start":
@@ -112,7 +113,7 @@ class StreamEvent:
 
     @classmethod
     def from_openai_chunk(cls, chunk: dict) -> StreamEvent | None:
-        """从 OpenAI Chat Completions streaming chunk 转换。"""
+        """Convert from OpenAI Chat Completions streaming chunk."""
         choices = chunk.get("choices", [])
         if not choices:
             usage = chunk.get("usage")

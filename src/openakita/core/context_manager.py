@@ -1,13 +1,13 @@
 """
-上下文管理器
+Context manager
 
-从 agent.py 提取的上下文压缩/管理逻辑，负责:
-- 估算 token 数量
-- 消息分组（保证 tool_calls/tool_result 配对完整）
-- LLM 分块摘要压缩
-- 递归压缩
-- 硬截断保底
-- 动态上下文窗口计算
+Context compression/management logic extracted from agent.py. Responsibilities:
+- Estimate token counts
+- Group messages (preserve tool_calls/tool_result pairing)
+- LLM chunked summary compression
+- Recursive compression
+- Hard-truncation safety net
+- Dynamic context window calculation
 """
 
 import asyncio
@@ -23,30 +23,31 @@ from .token_tracking import TokenTrackingContext, reset_tracking_context, set_tr
 from .tool_executor import OVERFLOW_MARKER
 
 logger = logging.getLogger(__name__)
-CHARS_PER_TOKEN = 2  # JSON 序列化后约 2 字符 = 1 token
-CHUNK_MAX_TOKENS = 30000  # 每次发给 LLM 压缩的单块上限
-CONTEXT_BOUNDARY_MARKER = "[上下文边界]"  # 话题切换边界标记
+CHARS_PER_TOKEN = 2  # After JSON serialization approximately 2 chars = 1 token
+CHUNK_MAX_TOKENS = 30000  # Upper bound per chunk sent to LLM for compression
+CONTEXT_BOUNDARY_MARKER = "[Context boundary]"  # Topic-switch boundary marker
 
 
 class _CancelledError(Exception):
-    """ContextManager 内部使用的取消信号，向上传播后由 Agent 层转换为 UserCancelledError。"""
+    """Internal cancellation signal used by ContextManager; propagated up and converted to UserCancelledError at the Agent layer."""
 
     pass
 
 
 class ContextManager:
     """
-    上下文压缩和管理器。
+    Context compression and management.
 
-    负责在对话上下文接近 LLM 上下文窗口限制时，
-    使用 LLM 分块摘要压缩早期对话，保留最近的工具交互完整性。
+    When conversation context approaches the LLM's context window limit,
+    uses LLM chunked summaries to compress earlier conversation while preserving
+    the integrity of recent tool interactions.
     """
 
     def __init__(self, brain: Any, cancel_event: asyncio.Event | None = None) -> None:
         """
         Args:
-            brain: Brain 实例，用于 LLM 调用
-            cancel_event: 可选的取消事件，set 时中断压缩 LLM 调用
+            brain: Brain instance used for LLM calls
+            cancel_event: Optional cancel event; when set, interrupts the compression LLM call
         """
         self._brain = brain
         self._cancel_event = cancel_event
@@ -55,12 +56,12 @@ class ContextManager:
         self._previous_summary: str = ""
 
     def set_cancel_event(self, event: asyncio.Event | None) -> None:
-        """更新 cancel_event（每次任务开始时由 Agent 设置）"""
+        """Update cancel_event (set by the Agent at the start of each task)."""
         self._cancel_event = event
 
     async def _cancellable_llm(self, **kwargs):
-        """可被 cancel_event 中断的 LLM 调用（直接 await，不创建线程）"""
-        logger.debug("[ContextManager] _cancellable_llm 发起 LLM 调用")
+        """LLM call that can be interrupted by cancel_event (direct await, no thread)."""
+        logger.debug("[ContextManager] _cancellable_llm issuing LLM call")
         coro = self._brain.messages_create_async(**kwargs)
         if not self._cancel_event:
             return await coro
@@ -77,31 +78,31 @@ class ContextManager:
             except (asyncio.CancelledError, Exception):
                 pass
         if task in done:
-            logger.debug("[ContextManager] _cancellable_llm LLM 调用完成")
+            logger.debug("[ContextManager] _cancellable_llm LLM call completed")
             return task.result()
-        logger.info("[ContextManager] _cancellable_llm 被用户取消")
+        logger.info("[ContextManager] _cancellable_llm cancelled by user")
         raise _CancelledError("Context compression cancelled by user")
 
     def get_max_context_tokens(self, conversation_id: str | None = None) -> int:
-        """动态获取当前模型的可用上下文 token 数。
+        """Dynamically get the available context token count for the current model.
 
-        Fallback 链（从精确到宽泛）：
-        1. 按端点名精确匹配 → 读取 context_window 并计算可用预算
-        2. 名称匹配失败时，取最高优先级端点的 context_window 计算
-        3. 以上均失败时返回 DEFAULT_MAX_CONTEXT_TOKENS (160K)
+        Fallback chain (precise to broad):
+        1. Exact match by endpoint name -> read context_window and compute usable budget
+        2. If name match fails, use the context_window of the highest-priority endpoint
+        3. If all the above fail, return DEFAULT_MAX_CONTEXT_TOKENS (160K)
 
-        计算公式：(context_window - output_reserve) * 0.95
-        - context_window < 8192 视为无效，使用兜底值 200000
+        Formula: (context_window - output_reserve) * 0.95
+        - context_window < 8192 is considered invalid; uses fallback value 200000
         - output_reserve = min(max_tokens or 4096, context_window / 3)
 
         Args:
-            conversation_id: 对话 ID（用于识别 per-conversation 端点覆盖）
+            conversation_id: Conversation ID (used to identify per-conversation endpoint overrides)
         """
         return _shared_get_max_context_tokens(self._brain, conversation_id=conversation_id)
 
     @staticmethod
     def _calc_context_budget(ep, fallback_window: int) -> int:
-        """从端点配置计算可用上下文预算。"""
+        """Compute the available context budget from endpoint configuration."""
         ctx = getattr(ep, "context_window", 0) or 0
         if ctx < 8192:
             ctx = fallback_window
@@ -113,12 +114,12 @@ class ContextManager:
         return result
 
     def estimate_tokens(self, text: str) -> int:
-        """估算文本的 token 数量（中英文感知）。"""
+        """Estimate the token count of text (CJK-aware)."""
         return _shared_estimate_tokens(text)
 
     @staticmethod
     def static_estimate_tokens(text: str) -> int:
-        """静态版 estimate_tokens，供外部模块无需实例即可调用。"""
+        """Static version of estimate_tokens for callers without an instance."""
         return _shared_estimate_tokens(text)
 
     _IMAGE_TOKEN_ESTIMATE = 1600
@@ -126,11 +127,11 @@ class ContextManager:
 
     def estimate_messages_tokens(self, messages: list[dict]) -> int:
         """
-        估算消息列表的 token 数量（with content-hash caching）。
+        Estimate the token count of a message list (with content-hash caching).
 
-        对每条消息的 content 使用与 estimate_tokens 相同的中英文感知算法，
-        并为每条消息加固定结构开销（role / tool_use_id 等约 10 tokens）。
-        多媒体块（图片/视频）使用固定估算值，避免对 base64 数据做文本 token 计算。
+        For each message's content, uses the same CJK-aware algorithm as estimate_tokens,
+        and adds a fixed structural overhead per message (role / tool_use_id etc., ~10 tokens).
+        Multimedia blocks (images/videos) use fixed estimates to avoid running text-token math on base64 data.
         """
         total = 0
         for msg in messages:
@@ -177,7 +178,7 @@ class ContextManager:
                             )
                 elif isinstance(item, str):
                     tokens += self.estimate_tokens(item)
-        tokens += 10  # 每条消息的结构开销
+        tokens += 10  # Per-message structural overhead
 
         if cache_key is not None and len(self._token_cache) < 10000:
             self._token_cache[cache_key] = tokens
@@ -186,11 +187,11 @@ class ContextManager:
     @staticmethod
     def group_messages(messages: list[dict]) -> list[list[dict]]:
         """
-        将消息列表分组为"工具交互组"，保证 tool_calls/tool 配对不被拆散。
+        Group messages into "tool interaction groups" so that tool_calls/tool pairs are not split.
 
-        分组规则：
-        - assistant 消息含 tool_use → 和后续 tool_result 消息归为同一组
-        - 其他消息各自独立成组
+        Grouping rules:
+        - An assistant message containing tool_use -> grouped with the following tool_result messages
+        - Other messages each form their own group
         """
         if not messages:
             return []
@@ -243,19 +244,19 @@ class ContextManager:
         return groups
 
     def pre_request_cleanup(self, messages: list[dict]) -> list[dict]:
-        """请求前轻量清理 (microcompact)。
+        """Lightweight pre-request cleanup (microcompact).
 
-        零 LLM 调用成本: 过期工具结果清空、大结果预览、旧 thinking 移除。
-        在 compress_if_needed 之前调用。
+        Zero LLM call cost: clear expired tool results, preview large results, remove old thinking.
+        Called before compress_if_needed.
         """
         from .microcompact import microcompact
 
         return microcompact(messages)
 
     def snip_old_segments(self, messages: list[dict]) -> tuple[list[dict], int]:
-        """直接丢弃最早的对话段 (History Snip)。
+        """Drop the earliest conversation segment directly (History Snip).
 
-        零 LLM 调用成本，适用于超长对话。
+        Zero LLM call cost; suitable for very long conversations.
         """
         from .microcompact import snip_old_segments
 
@@ -269,9 +270,9 @@ class ContextManager:
         tools: list | None = None,
         conversation_id: str | None = None,
     ) -> list[dict]:
-        """API 返回 413/prompt-too-long 后的紧急压缩。
+        """Emergency compression after the API returns 413/prompt-too-long.
 
-        比 compress_if_needed 更激进: 先 snip 再压缩，确保能放进上下文窗口。
+        More aggressive than compress_if_needed: snip first, then compress, to ensure it fits the context window.
         """
         logger.warning("[ReactiveCompact] 413/overflow triggered, performing emergency compaction")
 
@@ -305,30 +306,30 @@ class ContextManager:
         conversation_id: str | None = None,
     ) -> list[dict]:
         """
-        如果上下文接近限制，执行压缩 (autocompact)。
+        Compress the context if it is near the limit (autocompact).
 
-        三层压缩策略:
-        - Layer 0 (microcompact): 调用方在请求前手动调用 pre_request_cleanup()
-        - Layer 1 (autocompact): 本方法 — 阈值触发的 LLM 摘要压缩
-        - Layer 2 (reactive): API 返回 413 时调用 reactive_compact()
+        Three-layer compression strategy:
+        - Layer 0 (microcompact): caller manually invokes pre_request_cleanup() before the request
+        - Layer 1 (autocompact): this method — threshold-triggered LLM summary compression
+        - Layer 2 (reactive): reactive_compact() invoked when the API returns 413
 
-        策略:
-        0. 压缩前: 快速规则提取 + 通知 MemoryManager
-        1. 先对单条过大的 tool_result 独立 LLM 压缩
-        2. 按工具交互组分组
-        3. 保留最近组，早期组 LLM 摘要压缩
-        4. 递归压缩 / 硬截断保底
+        Strategy:
+        0. Pre-compression: quick rule-based extraction + notify MemoryManager
+        1. Independently LLM-compress individual oversized tool_result items first
+        2. Group by tool interaction groups
+        3. Keep recent groups; LLM-summarize the early groups
+        4. Recursive compression / hard-truncation safety net
 
         Args:
-            messages: 消息列表
-            system_prompt: 系统提示词（用于估算 token 占用）
-            tools: 工具定义列表（用于估算 token 占用）
-            max_tokens: 最大 token 数
-            memory_manager: MemoryManager 实例 (v2: 压缩前提取记忆)
-            conversation_id: 对话 ID（用于识别 per-conversation 端点覆盖）
+            messages: Message list
+            system_prompt: System prompt (used to estimate token usage)
+            tools: Tool definition list (used to estimate token usage)
+            max_tokens: Maximum token count
+            memory_manager: MemoryManager instance (v2: extract memory before compression)
+            conversation_id: Conversation ID (used to identify per-conversation endpoint overrides)
 
         Returns:
-            压缩后的消息列表
+            The compressed message list.
         """
         max_tokens = max_tokens or self.get_max_context_tokens(conversation_id=conversation_id)
 
@@ -369,14 +370,14 @@ class ContextManager:
 
         logger.info(
             f"[Compress] Budget: max_ctx={max_tokens}, system={system_tokens}, "
-            f"tools={tools_tokens}({len(tools) if tools else 0}个), "
-            f"hard={hard_limit}, soft={soft_limit}, msgs={current_tokens}({len(messages)}条)"
+            f"tools={tools_tokens}({len(tools) if tools else 0} items), "
+            f"hard={hard_limit}, soft={soft_limit}, msgs={current_tokens}({len(messages)} msgs)"
         )
 
         if current_tokens <= soft_limit:
             return messages
 
-        # v2: 压缩前记忆提取 — 确保即将被压缩的消息先保存到记忆
+        # v2: pre-compression memory extraction — ensures messages about to be compressed are saved to memory first
         if memory_manager is not None:
             try:
                 on_compressing = getattr(memory_manager, "on_context_compressing", None)
@@ -399,7 +400,7 @@ class ContextManager:
         )
 
         def _end_ctx_span(result_msgs: list[dict]) -> list[dict]:
-            """结束 ctx_span，修复 tool 配对，并返回结果"""
+            """End ctx_span, fix tool pairing, and return the result."""
             result_msgs = self._sanitize_tool_pairs(result_msgs)
             result_tokens = self.estimate_messages_tokens(result_msgs)
             ctx_span.set_attribute("tokens_after", result_tokens)
@@ -407,7 +408,7 @@ class ContextManager:
             tracer.end_span(ctx_span)
             return result_msgs
 
-        # Step 1: 对单条过大的 tool_result 独立压缩
+        # Step 1: independently compress individual oversized tool_result items
         if _settings.context_enable_tool_compression:
             messages = await self._compress_large_tool_results(messages)
             current_tokens = self.estimate_messages_tokens(messages)
@@ -415,18 +416,18 @@ class ContextManager:
                 logger.info(f"After tool_result compression: {current_tokens} tokens, within limit")
                 return _end_ctx_span(messages)
 
-        # Step 1.5: 上下文边界感知 — 如果存在边界标记，对旧话题使用更激进的压缩
+        # Step 1.5: context-boundary awareness — if a boundary marker exists, apply more aggressive compression to the old topic
         messages = await self._compress_across_boundary(messages, soft_limit, memory_manager)
         current_tokens = self.estimate_messages_tokens(messages)
         if current_tokens <= soft_limit:
             logger.info(f"After boundary compression: {current_tokens} tokens, within limit")
             return _end_ctx_span(messages)
 
-        # Step 2: 按工具交互组分组
+        # Step 2: group by tool interaction groups
         groups = self.group_messages(messages)
 
-        # 末尾问答对保护：如果最后 2 个 group 是 [assistant text, user short text]，
-        # 合并为一组以防止 AI 的提问被压掉而用户的简短回答变成孤立无头信息
+        # Trailing Q&A protection: if the last 2 groups are [assistant text, user short text],
+        # merge them so the AI's question isn't compressed while the user's short answer is left orphaned
         if (
             len(groups) >= 2
             and len(groups[-1]) == 1
@@ -464,7 +465,7 @@ class ContextManager:
             f"Split into {len(early_groups)} early groups and {len(recent_groups)} recent groups"
         )
 
-        # Step 3: LLM 分块摘要早期对话（支持迭代式更新）
+        # Step 3: LLM chunked summarization of early conversation (supports iterative updates)
         early_tokens = self.estimate_messages_tokens(early_messages)
         target_summary_tokens = max(int(early_tokens * _settings.context_compression_ratio), 200)
         summary = await self._summarize_messages_chunked(
@@ -488,11 +489,11 @@ class ContextManager:
             logger.info(f"Compressed context from {current_tokens} to {compressed_tokens} tokens")
             return _end_ctx_span(compressed)
 
-        # Step 4: 递归压缩
+        # Step 4: recursive compression
         logger.warning(f"Context still large ({compressed_tokens} tokens), compressing further...")
         compressed = await self._compress_further(compressed, soft_limit)
 
-        # Step 5: 硬保底
+        # Step 5: hard safety net
         return _end_ctx_span(
             self._hard_truncate_if_needed(
                 compressed,
@@ -504,7 +505,7 @@ class ContextManager:
 
     @staticmethod
     def _find_last_boundary_index(messages: list[dict]) -> int:
-        """找到消息列表中最后一个上下文边界标记的位置，返回 -1 表示未找到。"""
+        """Find the position of the last context boundary marker in the message list; returns -1 if not found."""
         for i in range(len(messages) - 1, -1, -1):
             content = messages[i].get("content", "")
             if isinstance(content, str) and CONTEXT_BOUNDARY_MARKER in content:
@@ -517,10 +518,10 @@ class ContextManager:
         soft_limit: int,
         memory_manager: object | None = None,
     ) -> list[dict]:
-        """上下文边界感知压缩：对边界之前的旧话题使用更激进的压缩策略。
+        """Context-boundary-aware compression: apply a more aggressive strategy to the old topic before the boundary.
 
-        如果消息中包含 [上下文边界] 标记，将边界之前的消息压缩为极简摘要（5%），
-        仅保留可能对当前话题有用的关键信息。
+        If the messages contain a [Context boundary] marker, compress messages before the boundary into an extreme summary (5%),
+        keeping only key information that may still be useful for the current topic.
         """
         boundary_idx = self._find_last_boundary_index(messages)
         if boundary_idx <= 0:
@@ -549,7 +550,7 @@ class ContextManager:
             result.append(
                 {
                     "role": "user",
-                    "content": f"[旧话题摘要]\n{summary}",
+                    "content": f"[Old topic summary]\n{summary}",
                 }
             )
 
@@ -565,9 +566,9 @@ class ContextManager:
     async def _summarize_messages_chunked_for_boundary(
         self, messages: list[dict], target_tokens: int
     ) -> str:
-        """针对上下文边界前的旧话题消息，使用更激进的摘要策略。
+        """Use a more aggressive summary strategy for old-topic messages before the context boundary.
 
-        与普通摘要不同，这里强调"只保留可能对新话题有用的关键信息"。
+        Unlike the normal summary, this emphasizes "keep only key information that may still be useful for the new topic".
         """
         if not messages:
             return ""
@@ -582,7 +583,7 @@ class ContextManager:
 
         if self.estimate_tokens(combined) > CHUNK_MAX_TOKENS:
             max_chars = CHUNK_MAX_TOKENS * CHARS_PER_TOKEN
-            combined = combined[:max_chars] + "\n...(更早的内容已省略)..."
+            combined = combined[:max_chars] + "\n...(earlier content omitted)..."
 
         target_chars = target_tokens * CHARS_PER_TOKEN
 
@@ -597,21 +598,21 @@ class ContextManager:
                 model=self._brain.model,
                 max_tokens=target_tokens,
                 system=(
-                    "你是一个对话压缩助手。用户已切换到新话题，"
-                    "请将以下旧话题对话压缩为结构化摘要。\n"
-                    "必须保留：\n"
-                    "1. 用户身份信息和偏好设定\n"
-                    "2. 重要的配置/环境信息（路径、版本、参数等）\n"
-                    "3. 关键结论和最终决策（包括具体数值、名称）\n"
-                    "4. 用户明确提到的需求和约束条件\n"
-                    "5. 已完成的操作及其结果（一句话概括每项）\n"
-                    "6. 用户设定的行为规则（如「每次先做X」「不要Y」「必须先Z」等），必须原文保留\n"
-                    "可以省略：中间调试过程、工具调用原始输出、重复的试错步骤。"
+                    "You are a conversation compression assistant. The user has switched to a new topic; "
+                    "compress the following old-topic conversation into a structured summary.\n"
+                    "Must preserve:\n"
+                    "1. User identity and preference settings\n"
+                    "2. Important configuration/environment info (paths, versions, parameters, etc.)\n"
+                    "3. Key conclusions and final decisions (including specific numbers and names)\n"
+                    "4. User-stated requirements and constraints\n"
+                    "5. Completed actions and their results (one sentence per item)\n"
+                    "6. User-specified behavior rules (e.g. 'always do X first', 'do not Y', 'must first Z'), preserved verbatim\n"
+                    "May omit: intermediate debugging, raw tool-call output, repeated trial-and-error steps."
                 ),
                 messages=[
                     {
                         "role": "user",
-                        "content": f"请将以下旧话题对话压缩到 {target_chars} 字以内:\n\n{combined}",
+                        "content": f"Please compress the following old-topic conversation to within {target_chars} characters:\n\n{combined}",
                     }
                 ],
                 use_thinking=False,
@@ -642,7 +643,7 @@ class ContextManager:
     async def _compress_large_tool_results(
         self, messages: list[dict], threshold: int | None = None
     ) -> list[dict]:
-        """对单条过大的 tool_result 内容并行 LLM 压缩"""
+        """Compress oversized individual tool_result contents in parallel via LLM."""
         if threshold is None:
             from ..config import settings as _settings
 
@@ -722,32 +723,32 @@ class ContextManager:
     async def _llm_compress_text(
         self, text: str, target_tokens: int, context_type: str = "general"
     ) -> str:
-        """使用 LLM 压缩一段文本到目标 token 数"""
+        """Use the LLM to compress a piece of text to a target token count."""
         max_input = CHUNK_MAX_TOKENS * CHARS_PER_TOKEN
         if len(text) > max_input:
             head_size = int(max_input * 0.6)
             tail_size = int(max_input * 0.3)
-            text = text[:head_size] + "\n...(中间内容过长已省略)...\n" + text[-tail_size:]
+            text = text[:head_size] + "\n...(middle content too long, omitted)...\n" + text[-tail_size:]
 
         target_chars = target_tokens * CHARS_PER_TOKEN
 
         if context_type == "tool_result":
             system_prompt = (
-                "你是一个信息压缩助手。请将以下工具执行结果压缩为简洁摘要，"
-                "保留关键数据、状态码、错误信息和重要输出，去掉冗余细节。"
+                "You are an information compression assistant. Compress the following tool execution result into a concise summary, "
+                "preserving key data, status codes, error messages, and important output; remove redundant details."
             )
         elif context_type == "tool_input":
             system_prompt = (
-                "你是一个信息压缩助手。请将以下工具调用参数压缩为简洁摘要，"
-                "保留关键参数名和值，去掉冗余内容。"
+                "You are an information compression assistant. Compress the following tool call arguments into a concise summary, "
+                "preserving key parameter names and values; remove redundant content."
             )
         else:
             system_prompt = (
-                "你是一个对话压缩助手。请将以下对话内容压缩为结构化摘要，"
-                "必须保留：用户原始目标、已完成的步骤及结果、当前任务进度、"
-                "待处理的问题（AI 的提问和用户的回答）、所有具体数值和配置信息"
-                "（端口号、路径、密钥等，不要用模糊描述代替具体值）、下一步计划、"
-                "用户设定的行为规则（如「每次先做X」「不要Y」「必须先Z」等，必须原文保留）。"
+                "You are a conversation compression assistant. Compress the following conversation into a structured summary. "
+                "Must preserve: user's original goal, completed steps and their results, current task progress, "
+                "pending questions (AI questions and user answers), all specific numeric and configuration values "
+                "(ports, paths, secrets, etc. — do not replace concrete values with vague descriptions), next-step plan, "
+                "and user-specified behavior rules (e.g. 'always do X first', 'do not Y', 'must first Z' — preserved verbatim)."
             )
 
         _tt = set_tracking_context(
@@ -764,7 +765,7 @@ class ContextManager:
                 messages=[
                     {
                         "role": "user",
-                        "content": f"请将以下内容压缩到 {target_chars} 字以内:\n\n{text}",
+                        "content": f"Please compress the following content to within {target_chars} characters:\n\n{text}",
                     }
                 ],
                 use_thinking=False,
@@ -789,7 +790,7 @@ class ContextManager:
                 if len(text) > target_chars:
                     head = int(target_chars * 0.7)
                     tail = int(target_chars * 0.2)
-                    return text[:head] + "\n...(压缩失败，已截断)...\n" + text[-tail:]
+                    return text[:head] + "\n...(compression failed, truncated)...\n" + text[-tail:]
                 return text
 
             return summary.strip()
@@ -801,14 +802,14 @@ class ContextManager:
             if len(text) > target_chars:
                 head = int(target_chars * 0.7)
                 tail = int(target_chars * 0.2)
-                return text[:head] + "\n...(压缩失败，已截断)...\n" + text[-tail:]
+                return text[:head] + "\n...(compression failed, truncated)...\n" + text[-tail:]
             return text
         finally:
             reset_tracking_context(_tt)
 
     def _extract_message_text(self, msg: dict) -> str:
-        """从消息中提取文本内容（包括 tool_use/tool_result 结构化信息）"""
-        role = "用户" if msg["role"] == "user" else "助手"
+        """Extract text content from a message (including tool_use/tool_result structured info)."""
+        role = "User" if msg["role"] == "user" else "Assistant"
         content = msg.get("content", "")
 
         if isinstance(content, str):
@@ -829,7 +830,7 @@ class ContextManager:
                         input_summary, _ = _st(
                             input_summary, 3000, save_full=False, label="compress_input"
                         )
-                        texts.append(f"[调用工具: {name}, 参数: {input_summary}]")
+                        texts.append(f"[Tool call: {name}, args: {input_summary}]")
                     elif item.get("type") == "tool_result":
                         from .tool_executor import smart_truncate as _st
 
@@ -838,8 +839,8 @@ class ContextManager:
                             result_text, 10000, save_full=False, label="compress_result"
                         )
                         is_error = item.get("is_error", False)
-                        status = "错误" if is_error else "成功"
-                        texts.append(f"[工具结果({status}): {result_text}]")
+                        status = "error" if is_error else "success"
+                        texts.append(f"[Tool result ({status}): {result_text}]")
             if texts:
                 return f"{role}: {' '.join(texts)}\n"
 
@@ -851,8 +852,9 @@ class ContextManager:
         target_tokens: int,
         previous_summary: str = "",
     ) -> str:
-        """分块 LLM 摘要消息列表。支持迭代式更新：当存在 previous_summary 时
-        走「更新摘要」路径而非从零开始，避免多次压缩后早期信息逐渐稀释。"""
+        """Chunked LLM summarization of the message list. Supports iterative updates: when previous_summary
+        exists, take the 'update summary' path rather than summarizing from scratch, to avoid gradual
+        dilution of early information over multiple compression rounds."""
         if not messages:
             return ""
 
@@ -896,25 +898,25 @@ class ContextManager:
                 if previous_summary and i == 0:
                     _system = get_compact_prompt(
                         custom_instructions=(
-                            "这是一次迭代式摘要更新。下方包含上一次压缩的摘要和新增对话。"
-                            "请保留上次摘要中仍然相关的所有信息，整合新对话中的进展。"
-                            "已完成的工作从「待处理」移到「已完成」。"
-                            "已回答的问题移到「已解决的问题」。"
-                            "仅删除明确过时的信息。"
+                            "This is an iterative summary update. Below is the previous compressed summary and new conversation. "
+                            "Preserve all information from the previous summary that is still relevant, and integrate new progress. "
+                            "Move completed work from 'pending' to 'done'. "
+                            "Move answered questions to 'resolved questions'. "
+                            "Delete only information that is clearly obsolete."
                         ),
                     )
                     _content = (
-                        f"上次摘要:\n{previous_summary}\n\n"
-                        f"新增对话（第 {i + 1}/{len(chunks)} 块，"
-                        f"约 {chunk_tokens} tokens）:\n\n{chunk}\n\n"
-                        f"请更新摘要，压缩到 {chunk_target * CHARS_PER_TOKEN} 字以内。"
+                        f"Previous summary:\n{previous_summary}\n\n"
+                        f"New conversation (chunk {i + 1}/{len(chunks)}, "
+                        f"~{chunk_tokens} tokens):\n\n{chunk}\n\n"
+                        f"Update the summary, compressing to within {chunk_target * CHARS_PER_TOKEN} characters."
                     )
                 else:
                     _system = get_compact_prompt()
                     _content = (
-                        f"请将以下对话片段（第 {i + 1}/{len(chunks)} 块，"
-                        f"约 {chunk_tokens} tokens）压缩到 "
-                        f"{chunk_target * CHARS_PER_TOKEN} 字以内:\n\n{chunk}"
+                        f"Please compress the following conversation chunk "
+                        f"(chunk {i + 1}/{len(chunks)}, ~{chunk_tokens} tokens) to within "
+                        f"{chunk_target * CHARS_PER_TOKEN} characters:\n\n{chunk}"
                     )
 
                 response = await self._cancellable_llm(
@@ -941,7 +943,7 @@ class ContextManager:
                     logger.warning(f"[Compress] Chunk {i + 1} returned empty summary")
                     max_chars = chunk_target * CHARS_PER_TOKEN
                     return (
-                        chunk[: max_chars // 2] + "\n...(摘要失败，已截断)...\n"
+                        chunk[: max_chars // 2] + "\n...(summary failed, truncated)...\n"
                         if len(chunk) > max_chars
                         else chunk
                     )
@@ -958,7 +960,7 @@ class ContextManager:
                 logger.warning(f"Failed to summarize chunk {i + 1}: {e}")
                 max_chars = chunk_target * CHARS_PER_TOKEN
                 return (
-                    chunk[: max_chars // 2] + "\n...(摘要失败，已截断)...\n"
+                    chunk[: max_chars // 2] + "\n...(summary failed, truncated)...\n"
                     if len(chunk) > max_chars
                     else chunk
                 )
@@ -975,7 +977,7 @@ class ContextManager:
                 logger.warning(f"Chunk {i + 1} summarization raised: {result}")
                 max_chars = chunk_target * CHARS_PER_TOKEN
                 fallback = (
-                    chunks[i][: max_chars // 2] + "\n...(摘要异常)...\n"
+                    chunks[i][: max_chars // 2] + "\n...(summary error)...\n"
                     if len(chunks[i]) > max_chars
                     else chunks[i]
                 )
@@ -997,7 +999,7 @@ class ContextManager:
         return combined
 
     async def _compress_further(self, messages: list[dict], max_tokens: int) -> list[dict]:
-        """递归压缩：减少保留的最近组数量"""
+        """Recursive compression: reduce the number of retained recent groups."""
         current_tokens = self.estimate_messages_tokens(messages)
         if current_tokens <= max_tokens:
             return messages
@@ -1029,14 +1031,14 @@ class ContextManager:
 
     @staticmethod
     def _sanitize_tool_pairs(messages: list[dict]) -> list[dict]:
-        """修复压缩/截断后可能出现的 tool_use/tool_result 孤儿配对。
+        """Fix orphaned tool_use/tool_result pairings that may appear after compression/truncation.
 
-        Anthropic API 要求每个 tool_use 必须有对应的 tool_result。
-        压缩或截断可能破坏这种对应关系，导致 API 400 错误。
+        The Anthropic API requires every tool_use to have a corresponding tool_result.
+        Compression or truncation can break this correspondence, causing API 400 errors.
 
-        处理两种情况：
-        1. 孤儿 tool_result（引用的 tool_use 已被删除）→ 移除
-        2. 孤儿 tool_use（对应的 tool_result 已被删除）→ 插入 stub
+        Handles two cases:
+        1. Orphan tool_result (referenced tool_use was removed) -> remove
+        2. Orphan tool_use (corresponding tool_result was removed) -> insert a stub
         """
         if not messages:
             return messages
@@ -1109,7 +1111,7 @@ class ContextManager:
                         stubs.append({
                             "type": "tool_result",
                             "tool_use_id": block["id"],
-                            "content": "[结果来自早期对话，已被压缩 — 参见上方摘要]",
+                            "content": "[Result from earlier conversation, compressed — see summary above]",
                         })
                 if stubs:
                     result.append({"role": "user", "content": stubs})
@@ -1124,20 +1126,20 @@ class ContextManager:
 
     @staticmethod
     def _inject_summary_into_recent(summary: str, recent_messages: list[dict]) -> list[dict]:
-        """将摘要注入到 recent_messages 中，避免插入假 assistant 回复。
+        """Inject a summary into recent_messages without inserting a fake assistant reply.
 
-        策略：找到 recent_messages 中第一条 user 消息，将摘要作为前缀注入。
-        如果第一条不是 user，则在最前面插入一条 user 摘要消息。
+        Strategy: find the first user message in recent_messages and inject the summary as a prefix.
+        If the first message isn't a user message, prepend a user summary message.
         """
         if not summary:
             return list(recent_messages)
 
         summary_prefix = (
-            "[上下文压缩 -- 仅供参考]\n"
-            "以下是之前对话的结构化摘要，是上一段上下文的交接记录。\n"
-            "不要回答或重新处理摘要中提到的问题（它们已经被处理过了），"
-            "只响应摘要之后出现的最新用户消息。\n"
-            "当前会话状态可能已反映摘要中描述的工作，避免重复执行。\n\n"
+            "[Context compression — for reference only]\n"
+            "The following is a structured summary of the earlier conversation, serving as a handoff record.\n"
+            "Do not re-answer or re-process questions already addressed in the summary — they've already been handled. "
+            "Only respond to the latest user message that appears after the summary.\n"
+            "The current session state may already reflect the work described in the summary; avoid redoing it.\n\n"
             f"{summary}\n\n---\n"
         )
         result = list(recent_messages)
@@ -1164,54 +1166,55 @@ class ContextManager:
         task_description: str = "",
     ) -> list[dict]:
         """
-        上下文压缩后的 Prompt 重写 (Agent Harness: Context Rewriting)。
+        Post-compression prompt rewriting (Agent Harness: Context Rewriting).
 
-        在压缩完成后注入结构化方向提示，防止 Agent 在压缩后"失忆"。
-        通过确定性规则（不用 LLM）重新注入关键信息。
+        After compression, inject a structured orientation prompt to prevent the Agent from "losing memory".
+        Re-injects key information via deterministic rules (no LLM).
 
         Args:
-            messages: 压缩后的消息列表
-            plan_section: 当前 Plan 状态文本（来自 PlanHandler.get_plan_prompt_section）
-            scratchpad_summary: 工作记忆摘要（来自 Scratchpad）
-            completed_tools: 已执行的工具列表
-            task_description: 原始任务描述
+            messages: Compressed message list
+            plan_section: Current plan status text (from PlanHandler.get_plan_prompt_section)
+            scratchpad_summary: Working memory summary (from Scratchpad)
+            completed_tools: List of tools already executed
+            task_description: Original task description
         """
         if not messages:
             return messages
 
         rewrite_parts: list[str] = []
 
-        rewrite_parts.append("[对话摘要]")
+        rewrite_parts.append("[Conversation summary]")
 
         if task_description:
             preview = task_description[:300]
             if len(task_description) > 300:
                 preview += "..."
-            rewrite_parts.append(f"原始任务: {preview}")
+            rewrite_parts.append(f"Original task: {preview}")
 
         if plan_section:
-            # 截断保护：Plan 状态过长时只保留前 2000 字符，避免二次压缩时被丢弃
+            # Truncation safeguard: when the plan status is too long, keep only the first 2000 characters
+            # to avoid being dropped by a subsequent compression pass.
             _ps = (
                 plan_section
                 if len(plan_section) <= 2000
-                else plan_section[:2000] + "\n... (计划状态已截断)"
+                else plan_section[:2000] + "\n... (plan status truncated)"
             )
-            rewrite_parts.append(f"\n当前计划状态:\n{_ps}")
+            rewrite_parts.append(f"\nCurrent plan status:\n{_ps}")
 
         if completed_tools:
             unique_tools = list(dict.fromkeys(completed_tools))
             tools_summary = ", ".join(unique_tools[-10:])
-            rewrite_parts.append(f"已使用工具: {tools_summary}")
+            rewrite_parts.append(f"Tools used: {tools_summary}")
 
         if scratchpad_summary:
-            rewrite_parts.append(f"\n工作记忆:\n{scratchpad_summary}")
+            rewrite_parts.append(f"\nWorking memory:\n{scratchpad_summary}")
 
-        rewrite_parts.append("\n请继续正常处理，保持一贯的回复质量和详细程度。")
+        rewrite_parts.append("\nPlease continue processing normally, maintaining consistent reply quality and level of detail.")
 
         rewrite_text = "\n".join(rewrite_parts)
 
-        # 找到压缩后消息中最后一条 user 消息，在其后追加重写提示
-        # 或者在消息列表末尾追加
+        # Find the last user message in the compressed messages and append the rewrite prompt after it,
+        # or append at the end of the message list.
         result = list(messages)
         last_user_idx = -1
         for i in range(len(result) - 1, -1, -1):
@@ -1234,7 +1237,7 @@ class ContextManager:
         logger.info("[ContextRewriter] Injected post-compression orientation prompt")
         return result
 
-    MAX_PAYLOAD_BYTES = 1_800_000  # 1.8MB — 大多数 API 限制在 2MB
+    MAX_PAYLOAD_BYTES = 1_800_000  # 1.8MB — most APIs cap at 2MB
 
     def _hard_truncate_if_needed(
         self,
@@ -1243,7 +1246,7 @@ class ContextManager:
         memory_manager: object | None = None,
         overhead_bytes: int = 0,
     ) -> list[dict]:
-        """硬保底：当 LLM 压缩后仍超过 hard_limit，直接硬截断。
+        """Hard safety net: when LLM compression still exceeds hard_limit, apply hard truncation.
 
         Uses prefix-sum + binary search for O(n log n) instead of O(n^2).
         """
@@ -1251,7 +1254,7 @@ class ContextManager:
         need_token_truncation = current_tokens > hard_limit
 
         if not need_token_truncation:
-            # token 预算内，仍需检查 payload 大小（base64 图片可能导致 payload 超限）
+            # Within token budget, still need to check payload size (base64 images may exceed payload limits)
             return self._strip_oversized_payload(messages, overhead_bytes=overhead_bytes)
 
         logger.error(
@@ -1300,7 +1303,7 @@ class ContextManager:
                         **msg,
                         "content": (
                             content[:keep_head]
-                            + "\n\n...[内容过长已硬截断]...\n\n"
+                            + "\n\n...[content too long, hard-truncated]...\n\n"
                             + content[-keep_tail:]
                         ),
                     }
@@ -1313,7 +1316,7 @@ class ContextManager:
             {
                 "role": "user",
                 "content": (
-                    "[context_note: 早期对话已自动整理] 请正常回复，保持详细程度和输出质量不变。"
+                    "[context_note: earlier conversation automatically compacted] Please reply normally, keeping the same level of detail and output quality."
                 ),
             },
         )
@@ -1331,11 +1334,11 @@ class ContextManager:
         *,
         overhead_bytes: int = 0,
     ) -> list[dict]:
-        """检查序列化 payload 大小，超过 API 限制时移除媒体内容。
+        """Check serialized payload size; remove media content when it exceeds the API limit.
 
         Args:
-            overhead_bytes: system prompt + tools 等非 message 部分的 byte 大小,
-                           从 MAX_PAYLOAD_BYTES 预算中扣除。
+            overhead_bytes: byte size of non-message parts (system prompt + tools, etc.),
+                           deducted from the MAX_PAYLOAD_BYTES budget.
         """
         effective_limit = self.MAX_PAYLOAD_BYTES - overhead_bytes
         if effective_limit < 200_000:
@@ -1381,7 +1384,7 @@ class ContextManager:
         content: list,
         max_chars: int,
     ) -> list:
-        """截断 content block 列表中的大型内容（图片/视频/大文本等）。"""
+        """Truncate large items (images/videos/large text etc.) in a content block list."""
         new_content: list = []
         for item in content:
             if not isinstance(item, dict):
@@ -1392,17 +1395,17 @@ class ContextManager:
 
             if item_type in cls._MEDIA_BLOCK_TYPES:
                 label = {
-                    "image": "图片",
-                    "image_url": "图片",
-                    "video": "视频",
-                    "video_url": "视频",
-                    "audio": "音频",
-                    "input_audio": "音频",
-                }.get(item_type, "媒体")
+                    "image": "image",
+                    "image_url": "image",
+                    "video": "video",
+                    "video_url": "video",
+                    "audio": "audio",
+                    "input_audio": "audio",
+                }.get(item_type, "media")
                 new_content.append(
                     {
                         "type": "text",
-                        "text": f"[{label}内容已移除以节省上下文空间]",
+                        "text": f"[{label} content removed to save context space]",
                     }
                 )
                 logger.warning(f"[HardTruncate] Stripped {item_type} block to free context")
@@ -1414,15 +1417,15 @@ class ContextManager:
                 if isinstance(val, str) and len(val) > max_chars:
                     keep_h = int(max_chars * 0.7)
                     keep_t = int(max_chars * 0.2)
-                    truncated_item[key] = val[:keep_h] + "\n...[硬截断]...\n" + val[-keep_t:]
+                    truncated_item[key] = val[:keep_h] + "\n...[hard-truncated]...\n" + val[-keep_t:]
 
             item_size = len(json.dumps(truncated_item, ensure_ascii=False, default=str))
             if item_size > max_chars:
                 new_content.append(
                     {
                         "type": "text",
-                        "text": f"[{item_type or 'content'} 数据过大已移除 "
-                        f"(原始 {item_size} 字符)]",
+                        "text": f"[{item_type or 'content'} data too large, removed "
+                        f"(original {item_size} chars)]",
                     }
                 )
                 logger.warning(
@@ -1436,7 +1439,7 @@ class ContextManager:
 
     @staticmethod
     def _enqueue_dropped_for_extraction(dropped: list[dict], memory_manager: object) -> None:
-        """将硬截断丢弃的消息入队到提取队列"""
+        """Enqueue hard-truncated dropped messages into the extraction queue."""
         store = getattr(memory_manager, "store", None)
         if store is None:
             return

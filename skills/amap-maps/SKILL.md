@@ -9,53 +9,53 @@ requires:
   env: [AMAP_WEBSERVICE_KEY]
 ---
 
-# 高德地图综合服务
+# Amap Maps Comprehensive Service
 
-高德地图综合服务，包括地点搜索、路径规划、旅游规划和数据可视化等功能。
+Amap Maps comprehensive service, including POI search, route planning, travel planning, and data visualization features.
 
-## 首次配置
+## Initial Configuration
 
-访问高德开放平台 https://lbs.amap.com/api/webservice/create-project-and-key 创建应用并获取 Key。
-设置环境变量：export AMAP_WEBSERVICE_KEY=your_key
+Visit the Amap Open Platform at https://lbs.amap.com/api/webservice/create-project-and-key to create an application and obtain your API key.
+Set the environment variable: export AMAP_WEBSERVICE_KEY=your_key
 
-## 场景一：关键词搜索
+## Scenario 1: Keyword Search
 
-URL: https://www.amap.com/search?query={关键词}
+URL: https://www.amap.com/search?query={keyword}
 
-## 场景二：周边搜索
+## Scenario 2: Nearby Search
 
-先通过地理编码 API 获取坐标：
-curl -s "https://restapi.amap.com/v3/geocode/geo?address={位置}&output=JSON&key={key}"
+First, obtain coordinates via the Geocoding API:
+curl -s "https://restapi.amap.com/v3/geocode/geo?address={address}&output=JSON&key={key}"
 
-然后拼接周边搜索链接：
-https://ditu.amap.com/search?query={类别}&query_type=RQBXY&longitude={经度}&latitude={纬度}&range=1000
+Then construct the nearby search URL:
+https://ditu.amap.com/search?query={category}&query_type=RQBXY&longitude={longitude}&latitude={latitude}&range=1000
 
-## 场景三：POI 详细搜索
+## Scenario 3: POI Detailed Search
 
-node scripts/poi-search.js --keywords=肯德基 --city=北京
+node scripts/poi-search.js --keywords=KFC --city=Beijing
 
-## 场景四：路径规划
+## Scenario 4: Route Planning
 
 node scripts/route-planning.js --type=walking --origin=116.397428,39.90923 --destination=116.427281,39.903719
 
-支持：walking（步行）、driving（驾车）、riding（骑行）、transfer（公交）
+Supported modes: walking, driving, riding, transfer (public transit)
 
-## 场景五：旅游规划
+## Scenario 5: Travel Planning
 
-node scripts/travel-planner.js --city=北京 --interests=景点,美食,酒店
+node scripts/travel-planner.js --city=Beijing --interests=attractions,food,hotels
 
-## 场景六：热力图
+## Scenario 6: Heatmap
 
-http://a.amap.com/jsapi_demo_show/static/openclaw/heatmap.html?mapStyle=grey&dataUrl={编码后数据地址}
+http://a.amap.com/jsapi_demo_show/static/openclaw/heatmap.html?mapStyle=grey&dataUrl={encoded_data_url}
 
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/amap_tool.py
-高德地图 Web 服务 Python 封装，需设置 AMAP_WEBSERVICE_KEY。
+Python wrapper for Amap Web Services. Requires AMAP_WEBSERVICE_KEY environment variable.
 
 ```bash
-python3 scripts/amap_tool.py geocode "北京市海淀区上地十街10号"
-python3 scripts/amap_tool.py poi "咖啡" --city 北京
-python3 scripts/amap_tool.py drive --from "天安门" --to "首都机场"
+python3 scripts/amap_tool.py geocode "10 Shangdi 10th Street, Haidian District, Beijing"
+python3 scripts/amap_tool.py poi "coffee" --city Beijing
+python3 scripts/amap_tool.py drive --from "Tiananmen" --to "Capital Airport"
 python3 scripts/amap_tool.py weather --city 110000
 ```

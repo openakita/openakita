@@ -9,34 +9,34 @@ category: File System
 
 # Delete File
 
-删除文件或空目录。
+deleteor.
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| path | string | 是 | 要删除的文件或空目录路径 |
+| path | string | Yes | needdelete orDirectory path |
 
 ## Examples
 
-**删除文件**:
+**delete**:
 ```json
 {"path": "temp/output.txt"}
 ```
 
-**删除空目录**:
+**delete**:
 ```json
 {"path": "temp/empty_dir"}
 ```
 
 ## Notes
 
-- 仅删除文件或空目录
-- 非空目录会被拒绝，需使用 run_shell 执行删除命令
-- 路径受安全策略保护
+- deleteor
+- will, Use run_shell Executedelete
+-
 
 ## Related Skills
 
-- `write-file`: 创建文件
-- `list-directory`: 查看目录内容
-- `run-shell`: 递归删除非空目录
+- `write-file`: create
+- `list-directory`: View
+- `run-shell`: delete

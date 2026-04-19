@@ -1,9 +1,9 @@
 """
-ProfileIdentityResolver — 按 AgentProfile 解析身份文件（两级继承）
+ProfileIdentityResolver — resolve identity files per AgentProfile (two-level inheritance).
 
-继承规则:
-  SOUL.md / AGENT.md: Profile 目录有则用，否则继承全局
-  USER.md / MEMORY.md: 始终使用 Profile 独立版本（自动创建空白模板）
+Inheritance rules:
+  SOUL.md / AGENT.md: use Profile copy if present, otherwise fall back to global
+  USER.md / MEMORY.md: always use a Profile-independent copy (auto-create blank template)
 """
 
 from __future__ import annotations
@@ -18,38 +18,38 @@ logger = logging.getLogger(__name__)
 _USER_MD_TEMPLATE = """\
 # User Profile
 
-此文件由 Agent 独立维护，记录该 Agent 服务的用户偏好。
+This file is independently maintained by the Agent, recording user preferences.
 
 ## Basic Information
 
-- **称呼**: [待学习]
-- **主要语言**: 中文
+- **Name**: [to be learned]
+- **Primary language**: Chinese
 
 ## Preferences
 
-[待学习]
+[to be learned]
 
 ---
-*此文件由 OpenAkita 自动维护。*
+*This file is automatically maintained by OpenAkita.*
 """
 
 _MEMORY_MD_TEMPLATE = """\
-# 核心记忆
+# Core Memory
 
-## 偏好
+## Preferences
 
-## 事实
+## Facts
 
-## 规则
+## Rules
 
-## 技能
+## Skills
 
-## 教训
+## Lessons
 """
 
 
 class ProfileIdentityResolver:
-    """按 AgentProfile 解析身份文件，支持全局 + Profile 两级继承。"""
+    """Resolve identity files per AgentProfile, supporting global + Profile two-level inheritance."""
 
     def __init__(
         self,
@@ -60,7 +60,7 @@ class ProfileIdentityResolver:
         self._global_dir = global_identity_dir
 
     def ensure_independent_files(self) -> None:
-        """确保 USER.md 和 MEMORY.md 存在（始终独立的文件）。"""
+        """Ensure USER.md and MEMORY.md exist (always independent files)."""
         self._profile_dir.mkdir(parents=True, exist_ok=True)
         for name, template in [
             ("USER.md", _USER_MD_TEMPLATE),
@@ -72,10 +72,10 @@ class ProfileIdentityResolver:
                 logger.info(f"Created independent {name} for profile at {fp}")
 
     def resolve_path(self, filename: str) -> Path:
-        """解析单个身份文件的实际路径。
+        """Resolve the actual path for a single identity file.
 
-        USER.md / MEMORY.md 始终返回 Profile 目录的版本。
-        SOUL.md / AGENT.md 如果 Profile 目录有就用，否则回退全局。
+        USER.md / MEMORY.md always return the Profile directory version.
+        SOUL.md / AGENT.md use the Profile copy if it exists, otherwise fall back to global.
         """
         always_independent = {"USER.md", "MEMORY.md"}
         profile_path = self._profile_dir / filename
@@ -89,7 +89,7 @@ class ProfileIdentityResolver:
         return self._global_dir / filename
 
     def build_identity(self) -> Identity:
-        """构建一个使用解析后路径的 Identity 实例。"""
+        """Build an Identity instance using the resolved paths."""
         self.ensure_independent_files()
         return Identity(
             soul_path=self.resolve_path("SOUL.md"),

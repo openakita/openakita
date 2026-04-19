@@ -1,6 +1,6 @@
 ---
 name: jimliu/baoyu-skills@baoyu-comic
-description: Knowledge comic creator supporting multiple art styles and tones. Creates original educational comics with detailed panel layouts and sequential image generation. Use when user asks to create "知识漫画", "教育漫画", "biography comic", "tutorial comic", or "Logicomix-style comic".
+description: Knowledge comic creator supporting multiple art styles and tones. Creates original educational comics with detailed panel layouts and sequential image generation. Use when user asks to create "", "", "biography comic", "tutorial comic", or "Logicomix-style comic".
 ---
 
 # Knowledge Comic Creator
@@ -38,27 +38,27 @@ Create original knowledge comics with flexible art style × tone combinations.
 
 Details: [references/partial-workflows.md](references/partial-workflows.md)
 
-### Art Styles (画风)
+### Art Styles ()
 
-| Style | 中文 | Description |
+| Style | | Description |
 |-------|------|-------------|
-| `ligne-claire` | 清线 | Uniform lines, flat colors, European comic tradition (Tintin, Logicomix) |
-| `manga` | 日漫 | Large eyes, manga conventions, expressive emotions |
-| `realistic` | 写实 | Digital painting, realistic proportions, sophisticated |
-| `ink-brush` | 水墨 | Chinese brush strokes, ink wash effects |
-| `chalk` | 粉笔 | Chalkboard aesthetic, hand-drawn warmth |
+| `ligne-claire` | | Uniform lines, flat colors, European comic tradition (Tintin, Logicomix) |
+| `manga` | | Large eyes, manga conventions, expressive emotions |
+| `realistic` | | Digital painting, realistic proportions, sophisticated |
+| `ink-brush` | | Chinese brush strokes, ink wash effects |
+| `chalk` | | Chalkboard aesthetic, hand-drawn warmth |
 
-### Tones (基调)
+### Tones ()
 
-| Tone | 中文 | Description |
+| Tone | | Description |
 |------|------|-------------|
-| `neutral` | 中性 | Balanced, rational, educational |
-| `warm` | 温馨 | Nostalgic, personal, comforting |
-| `dramatic` | 戏剧 | High contrast, intense, powerful |
-| `romantic` | 浪漫 | Soft, beautiful, decorative elements |
-| `energetic` | 活力 | Bright, dynamic, exciting |
-| `vintage` | 复古 | Historical, aged, period authenticity |
-| `action` | 动作 | Speed lines, impact effects, combat |
+| `neutral` | | Balanced, rational, educational |
+| `warm` | | Nostalgic, personal, comforting |
+| `dramatic` | | High contrast, intense, powerful |
+| `romantic` | | Soft, beautiful, decorative elements |
+| `energetic` | | Bright, dynamic, exciting |
+| `vintage` | | Historical, aged, period authenticity |
+| `action` | | Speed lines, impact effects, combat |
 
 ### Preset Shortcuts
 

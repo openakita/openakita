@@ -1,17 +1,19 @@
 """
-DM Pairing（配对授权）
+DM Pairing (Authorization via Pairing Code)
 
-通过一次性配对码验证 IM 用户身份，防止未授权用户发送消息给 Agent。
+Verifies IM user identity through a one-time pairing code,
+preventing unauthorized users from sending messages to the Agent.
 
-流程:
-1. 管理员在 CLI 或已授权通道发起 /pair 命令，生成 8 位配对码（有效期 1 小时）
-2. 新用户在 IM 中发送配对码
-3. 验证通过后该 chat_id 被永久授权
+Flow:
+1. An admin initiates the /pair command via CLI or an authorized channel,
+   generating an 8-character pairing code (valid for 1 hour).
+2. The new user sends the pairing code in the IM.
+3. Upon successful verification, the chat_id is permanently authorized.
 
-安全措施:
-- 配对码 1 小时过期
-- 每个 IP/chat_id 5 次失败后锁定 15 分钟
-- 使用 secrets 生成安全随机码
+Security measures:
+- Pairing code expires after 1 hour.
+- After 5 failed attempts per IP/chat_id, the key is locked out for 15 minutes.
+- Secure random codes generated via the secrets module.
 """
 
 import logging

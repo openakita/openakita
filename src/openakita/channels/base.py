@@ -1,11 +1,11 @@
 """
-通道适配器基类
+Channel adapter base class
 
-定义 IM 通道适配器的抽象接口:
-- 启动/停止
-- 消息收发
-- 媒体处理
-- 事件回调
+Defines the abstract interface for IM channel adapters:
+- Start/stop
+- Message send/receive
+- Media handling
+- Event callbacks
 """
 
 import logging
@@ -19,17 +19,17 @@ from .types import MediaFile, OutgoingMessage, UnifiedMessage
 
 logger = logging.getLogger(__name__)
 
-# Windows 文件名非法字符 (: * ? " < > |)
+# Illegal Windows filename characters (: * ? " < > |)
 _UNSAFE_FILENAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
 def sanitize_filename(name: str) -> str:
-    """将文件名中的非法字符替换为下划线，确保跨平台兼容。"""
+    """Replace illegal characters in a filename with underscores for cross-platform compatibility."""
     safe = _UNSAFE_FILENAME_RE.sub("_", name)
     return safe.strip(". ") or "download"
 
 
-# 回调类型定义
+# Callback type definitions
 MessageCallback = Callable[[UnifiedMessage], Awaitable[None]]
 EventCallback = Callable[[str, dict], Awaitable[None]]
 FailureCallback = Callable[[str, str], None]  # (adapter_name, reason)
@@ -37,18 +37,18 @@ FailureCallback = Callable[[str, str], None]  # (adapter_name, reason)
 
 class ChannelAdapter(ABC):
     """
-    IM 通道适配器基类
+    Base class for IM channel adapters
 
-    各平台适配器需要实现此接口:
+    Each platform adapter must implement this interface:
     - Telegram
-    - 飞书
-    - 企业微信
-    - 钉钉
-    - OneBot (通用协议)
-    - QQ 官方机器人
+    - Feishu
+    - WeCom
+    - DingTalk
+    - OneBot (generic protocol)
+    - QQ official bot
     """
 
-    # 通道名称（子类必须覆盖）
+    # Channel name (subclasses must override)
     channel_name: str = "unknown"
 
     STALE_MESSAGE_THRESHOLD_S: ClassVar[int] = 120
@@ -100,16 +100,16 @@ class ChannelAdapter(ABC):
 
     @property
     def is_running(self) -> bool:
-        """是否运行中"""
+        """Whether the adapter is running"""
         return self._running
 
     def collect_warnings(self) -> list[str]:
-        """检查配置和运行状态，返回安全/配置告警列表。
+        """Check configuration and runtime state, returning a list of safety/config warnings.
 
-        子类可覆写此方法以添加平台特有的检查。
-        基类提供通用检查：
-        - 必填凭证是否疑似占位符
-        - 端口范围检查
+        Subclasses may override this method to add platform-specific checks.
+        The base class provides generic checks:
+        - Whether required credentials look like placeholders
+        - Port range check
         """
         warnings: list[str] = []
         config = getattr(self, "config", None)
@@ -124,51 +124,51 @@ class ChannelAdapter(ABC):
                 for hint in placeholder_hints:
                     if lower.startswith(hint) or lower == hint:
                         warnings.append(
-                            f"[{self.channel_name}] {field_name} 疑似占位符值 '{value[:20]}'，"
-                            f"请检查配置是否正确。"
+                            f"[{self.channel_name}] {field_name} looks like a placeholder value '{value[:20]}'; "
+                            f"please verify the configuration."
                         )
                         break
 
         port = getattr(config, "callback_port", None) or getattr(config, "webhook_port", None)
         if isinstance(port, int) and port < 1024:
             warnings.append(
-                f"[{self.channel_name}] 端口 {port} < 1024，可能需要 root 权限或 setcap 配置。"
+                f"[{self.channel_name}] port {port} < 1024; may require root privileges or setcap configuration."
             )
 
         return warnings
 
-    # ==================== 生命周期 ====================
+    # ==================== Lifecycle ====================
 
     @abstractmethod
     async def start(self) -> None:
         """
-        启动适配器
+        Start the adapter
 
-        建立连接、启动 webhook 等
+        Establish connections, start webhooks, etc.
         """
         pass
 
     @abstractmethod
     async def stop(self) -> None:
         """
-        停止适配器
+        Stop the adapter
 
-        断开连接、清理资源
+        Close connections, clean up resources
         """
         pass
 
-    # ==================== 消息收发 ====================
+    # ==================== Message send/receive ====================
 
     @abstractmethod
     async def send_message(self, message: OutgoingMessage) -> str:
         """
-        发送消息
+        Send a message
 
         Args:
-            message: 要发送的消息
+            message: the message to send
 
         Returns:
-            发送后的消息 ID
+            the ID of the sent message
         """
         pass
 
@@ -179,7 +179,7 @@ class ChannelAdapter(ABC):
         reply_to: str | None = None,
         **kwargs,
     ) -> str:
-        """发送纯文本消息（便捷方法）"""
+        """Send a plain text message (convenience method)"""
         message = OutgoingMessage.text(chat_id, text, reply_to=reply_to, **kwargs)
         return await self.send_message(message)
 
@@ -191,75 +191,76 @@ class ChannelAdapter(ABC):
         reply_to: str | None = None,
         **kwargs,
     ) -> str:
-        """发送图片消息（便捷方法）"""
+        """Send an image message (convenience method)"""
         message = OutgoingMessage.with_image(
             chat_id, image_path, caption, reply_to=reply_to, **kwargs
         )
         return await self.send_message(message)
 
     def format_final_footer(self, chat_id: str, thread_id: str | None = None) -> str | None:
-        """返回追加到最终回复末尾的 footer 文本（如耗时统计）。
+        """Return footer text (e.g., elapsed time stats) to append to the end of the final reply.
 
-        默认返回 None（不追加）。子类可覆写此方法，返回的文本会被 gateway
-        拼接到最后一条分片消息末尾，并在调用后自动重置内部计时器。
+        Returns None by default (no append). Subclasses may override; the returned text
+        will be appended to the last chunked message by the gateway, and internal timers
+        will be reset automatically after the call.
         """
         return None
 
-    # ==================== 媒体处理 ====================
+    # ==================== Media handling ====================
 
     @abstractmethod
     async def download_media(self, media: MediaFile) -> Path:
         """
-        下载媒体文件到本地
+        Download a media file locally
 
         Args:
-            media: 媒体文件信息
+            media: media file info
 
         Returns:
-            本地文件路径
+            local file path
         """
         pass
 
     @abstractmethod
     async def upload_media(self, path: Path, mime_type: str) -> MediaFile:
         """
-        上传媒体文件
+        Upload a media file
 
         Args:
-            path: 本地文件路径
-            mime_type: MIME 类型
+            path: local file path
+            mime_type: MIME type
 
         Returns:
-            上传后的媒体文件信息
+            uploaded media file info
         """
         pass
 
-    # ==================== 回调注册 ====================
+    # ==================== Callback registration ====================
 
     def on_message(self, callback: MessageCallback) -> None:
         """
-        注册消息回调
+        Register a message callback
 
-        当收到消息时调用
+        Called when a message is received
         """
         self._message_callback = callback
         logger.debug(f"{self.channel_name}: message callback registered")
 
     def on_event(self, callback: EventCallback) -> None:
         """
-        注册事件回调
+        Register an event callback
 
-        当收到平台事件时调用（如成员变更、群组更新等）
+        Called when a platform event is received (e.g., member changes, group updates)
         """
         self._event_callback = callback
         logger.debug(f"{self.channel_name}: event callback registered")
 
     def on_failure(self, callback: FailureCallback) -> None:
-        """注册致命失败回调，由网关设置以更新状态面板。"""
+        """Register a fatal-failure callback, set by the gateway to update the status panel."""
         self._failure_callback = callback
 
     def _report_failure(self, reason: str) -> None:
-        """通知网关本适配器已致命失败（认证错误等），使状态面板正确反映离线。"""
+        """Notify the gateway that this adapter has fatally failed (e.g., auth error), so the status panel correctly reflects offline."""
         if self._failure_callback:
             try:
                 self._failure_callback(self.channel_name, reason)
@@ -267,7 +268,7 @@ class ChannelAdapter(ABC):
                 logger.error(f"{self.channel_name}: failure callback error: {e}")
 
     async def _emit_message(self, message: UnifiedMessage) -> None:
-        """触发消息回调"""
+        """Trigger the message callback"""
         if not self._running:
             return
         if self._message_callback:
@@ -277,18 +278,18 @@ class ChannelAdapter(ABC):
                 logger.error(f"{self.channel_name}: message callback error: {e}")
 
     async def _emit_event(self, event_type: str, data: dict) -> None:
-        """触发事件回调"""
+        """Trigger the event callback"""
         if self._event_callback:
             try:
                 await self._event_callback(event_type, data)
             except Exception as e:
                 logger.error(f"{self.channel_name}: event callback error: {e}")
 
-    # ==================== 可选功能 ====================
+    # ==================== Optional features ====================
 
     async def get_chat_info(self, chat_id: str) -> dict | None:
         """
-        获取聊天信息
+        Get chat info
 
         Returns:
             {id, type, title, members_count, ...}
@@ -297,7 +298,7 @@ class ChannelAdapter(ABC):
 
     async def get_user_info(self, user_id: str) -> dict | None:
         """
-        获取用户信息
+        Get user info
 
         Returns:
             {id, username, display_name, avatar_url, ...}
@@ -305,19 +306,19 @@ class ChannelAdapter(ABC):
         return None
 
     async def get_chat_members(self, chat_id: str) -> list[dict]:
-        """获取群聊成员列表"""
+        """Get the member list of a group chat"""
         return []
 
     async def get_recent_messages(self, chat_id: str, limit: int = 20) -> list[dict]:
-        """获取最近消息列表"""
+        """Get the list of recent messages"""
         return []
 
     def get_pending_events(self, chat_id: str) -> list[dict]:
-        """获取并清空待处理的重要事件（如群公告变更、@所有人等）"""
+        """Fetch and clear pending important events (e.g., group announcement changes, @everyone)"""
         return []
 
     async def delete_message(self, chat_id: str, message_id: str) -> bool:
-        """删除消息"""
+        """Delete a message"""
         return False
 
     async def edit_message(
@@ -326,7 +327,7 @@ class ChannelAdapter(ABC):
         message_id: str,
         new_content: str,
     ) -> bool:
-        """编辑消息"""
+        """Edit a message"""
         return False
 
     async def send_file(
@@ -336,18 +337,18 @@ class ChannelAdapter(ABC):
         caption: str | None = None,
     ) -> str:
         """
-        发送文件（可选能力，子类覆盖实现）
+        Send a file (optional capability; subclasses override to implement)
 
         Args:
-            chat_id: 目标聊天 ID
-            file_path: 本地文件路径
-            caption: 附加文字说明
+            chat_id: target chat ID
+            file_path: local file path
+            caption: additional text caption
 
         Returns:
-            发送后的消息 ID
+            the ID of the sent message
 
         Raises:
-            NotImplementedError: 当前平台不支持发送文件
+            NotImplementedError: the current platform does not support sending files
         """
         raise NotImplementedError(f"{self.channel_name} does not support send_file")
 
@@ -358,33 +359,33 @@ class ChannelAdapter(ABC):
         caption: str | None = None,
     ) -> str:
         """
-        发送语音（可选能力，子类覆盖实现）
+        Send a voice message (optional capability; subclasses override to implement)
 
         Args:
-            chat_id: 目标聊天 ID
-            voice_path: 本地语音文件路径
-            caption: 附加文字说明
+            chat_id: target chat ID
+            voice_path: local voice file path
+            caption: additional text caption
 
         Returns:
-            发送后的消息 ID
+            the ID of the sent message
 
         Raises:
-            NotImplementedError: 当前平台不支持发送语音
+            NotImplementedError: the current platform does not support sending voice
         """
         raise NotImplementedError(f"{self.channel_name} does not support send_voice")
 
     async def send_typing(self, chat_id: str, thread_id: str | None = None) -> None:
-        """发送正在输入状态"""
-        # 可选能力：默认实现为 no-op（部分平台不支持 typing 或无需实现）
+        """Send a typing indicator"""
+        # Optional capability: default implementation is a no-op (some platforms do not support typing or do not need it)
         logger.debug(f"{self.channel_name}: typing (noop) chat_id={chat_id}")
 
     async def clear_typing(self, chat_id: str, thread_id: str | None = None) -> None:
-        """清除 typing 状态提示（如有）。默认 no-op。"""
+        """Clear the typing indicator (if any). No-op by default."""
 
-    # ==================== 辅助方法 ====================
+    # ==================== Helper methods ====================
 
     def _log_message(self, message: UnifiedMessage) -> None:
-        """记录消息日志"""
+        """Log an incoming message"""
         text_preview = message.text[:80] if message.text else f"({message.message_type.value})"
         logger.info(
             f"{self.channel_name}: received message from {message.channel_user_id} "
@@ -394,9 +395,9 @@ class ChannelAdapter(ABC):
 
 class CLIAdapter(ChannelAdapter):
     """
-    命令行适配器
+    Command-line adapter
 
-    将现有的 CLI 交互封装为通道适配器
+    Wraps the existing CLI interaction as a channel adapter
     """
 
     channel_name = "cli"
@@ -407,18 +408,18 @@ class CLIAdapter(ChannelAdapter):
         self._media_dir.mkdir(parents=True, exist_ok=True)
 
     async def start(self) -> None:
-        """启动（CLI 无需特殊启动）"""
+        """Start (CLI needs no special startup)"""
         self._running = True
         logger.info("CLI adapter started")
 
     async def stop(self) -> None:
-        """停止"""
+        """Stop"""
         self._running = False
         logger.info("CLI adapter stopped")
 
     async def send_message(self, message: OutgoingMessage) -> str:
         """
-        发送消息（打印到控制台）
+        Send a message (print to the console)
         """
         from rich.console import Console
         from rich.markdown import Markdown
@@ -426,22 +427,22 @@ class CLIAdapter(ChannelAdapter):
         console = Console()
 
         if message.content.text:
-            # 尝试以 Markdown 格式渲染
+            # Attempt to render as Markdown
             try:
                 md = Markdown(message.content.text)
                 console.print(md)
             except Exception:
                 console.print(message.content.text)
 
-        # 显示媒体文件信息
+        # Show media file info
         for media in message.content.all_media:
-            console.print(f"[附件: {media.filename}]")
+            console.print(f"[Attachment: {media.filename}]")
 
         return f"cli_msg_{id(message)}"
 
     async def download_media(self, media: MediaFile) -> Path:
         """
-        下载媒体（CLI 模式下通常已是本地文件）
+        Download media (in CLI mode this is typically already a local file)
         """
         if media.local_path:
             return Path(media.local_path)
@@ -449,7 +450,7 @@ class CLIAdapter(ChannelAdapter):
 
     async def upload_media(self, path: Path, mime_type: str) -> MediaFile:
         """
-        上传媒体（CLI 模式下直接使用本地路径）
+        Upload media (in CLI mode the local path is used directly)
         """
         return MediaFile.create(
             filename=path.name,

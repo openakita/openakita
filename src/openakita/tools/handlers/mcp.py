@@ -1,15 +1,15 @@
 """
-MCP 处理器
+MCP handler
 
-处理 MCP 相关的系统技能：
-- call_mcp_tool: 调用 MCP 工具
-- list_mcp_servers: 列出服务器
-- get_mcp_instructions: 获取使用说明
-- add_mcp_server: 添加服务器配置（持久化到工作区）
-- remove_mcp_server: 移除服务器配置
-- connect_mcp_server: 连接服务器
-- disconnect_mcp_server: 断开服务器
-- reload_mcp_servers: 重新加载所有配置
+Handles MCP-related system skills:
+- call_mcp_tool: Call MCP tool
+- list_mcp_servers: List servers
+- get_mcp_instructions: Get usage instructions
+- add_mcp_server: Add server configuration (persisted to workspace)
+- remove_mcp_server: Remove server configuration
+- connect_mcp_server: Connect to server
+- disconnect_mcp_server: Disconnect from server
+- reload_mcp_servers: Reload all configurations
 """
 
 import logging
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 class MCPHandler:
-    """MCP 处理器"""
+    """MCP handler"""
 
     TOOLS = [
         "call_mcp_tool",
@@ -46,10 +46,10 @@ class MCPHandler:
         self.agent = agent
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
-        """处理工具调用"""
+        """Handle tool invocation"""
         from ...config import settings
 
-        # 管理类工具始终可用（无论 MCP 是否启用）
+        # Management tools are always available (regardless of MCP enablement)
         management_tools = {
             "add_mcp_server": self._add_server,
             "remove_mcp_server": self._remove_server,
@@ -59,7 +59,7 @@ class MCPHandler:
             return await management_tools[tool_name](params)
 
         if not settings.mcp_enabled:
-            return "❌ MCP 已禁用。请在 .env 中设置 MCP_ENABLED=true 启用"
+            return "❌ MCP is disabled. Set MCP_ENABLED=true in .env to enable"
 
         dispatch = {
             "call_mcp_tool": self._call_tool,
@@ -73,10 +73,10 @@ class MCPHandler:
             return await handler_fn(params)
         return f"❌ Unknown MCP tool: {tool_name}"
 
-    # ==================== 调用类工具 ====================
+    # ==================== Tool invocation ====================
 
     async def _call_tool(self, params: dict) -> str:
-        """调用 MCP 工具"""
+        """Call MCP tool"""
         server = params["server"]
         mcp_tool_name = params["tool_name"]
         arguments = params.get("arguments", {})
@@ -84,9 +84,9 @@ class MCPHandler:
         catalog = self.agent.mcp_catalog
         server_info = catalog.get_server(server) if catalog else None
         if server_info and not server_info.enabled:
-            return f"❌ MCP 服务器 {server} 已禁用，无法调用"
+            return f"❌ MCP server {server} is disabled and cannot be called"
         if catalog and hasattr(catalog, "has_server") and not catalog.has_server(server):
-            return f"❌ MCP 服务器 '{server}' 不在此 Agent 的可用范围内"
+            return f"❌ MCP server '{server}' is not available for this Agent"
 
         client = self.agent.mcp_client
 
@@ -97,7 +97,7 @@ class MCPHandler:
             await prepare_chrome_devtools_args(client, server)
             result = await client.connect(server)
             if not result.success:
-                return f"❌ 无法连接到 MCP 服务器 {server}: {result.error}"
+                return f"❌ Failed to connect to MCP server {server}: {result.error}"
             auto_connected = True
 
         result = await client.call_tool(server, mcp_tool_name, arguments)
@@ -109,12 +109,12 @@ class MCPHandler:
             from ...utils.credential_redact import redact_credentials
 
             safe_data = redact_credentials(str(result.data)) if result.data else ""
-            return f"✅ MCP 工具调用成功:\n{safe_data}"
+            return f"✅ MCP tool call succeeded:\n{safe_data}"
         else:
-            return f"❌ MCP 工具调用失败: {result.error}"
+            return f"❌ MCP tool call failed: {result.error}"
 
     async def _list_servers(self, params: dict) -> str:
-        """列出 MCP 服务器及其工具"""
+        """List MCP servers and their tools"""
         catalog_servers = self.agent.mcp_catalog.list_servers()
         connected = self.agent.mcp_client.list_connected()
 
@@ -122,20 +122,20 @@ class MCPHandler:
 
         if not all_ids:
             return (
-                "当前没有配置 MCP 服务器\n\n"
-                "提示: 使用 add_mcp_server 工具添加服务器，或在 mcps/ 目录下手动配置"
+                "No MCP servers configured yet\n\n"
+                "Tip: Use the add_mcp_server tool to add servers, or configure manually in the mcps/ directory"
             )
 
         from ...config import settings
 
-        output = f"已配置 {len(all_ids)} 个 MCP 服务器:\n\n"
+        output = f"Configured {len(all_ids)} MCP servers:\n\n"
 
         for server_id in all_ids:
             is_connected = server_id in connected
-            status = "🟢 已连接" if is_connected else "⚪ 未连接"
+            status = "🟢 Connected" if is_connected else "⚪ Not connected"
 
             workspace_dir = settings.mcp_config_path / server_id
-            source = "📁 工作区" if workspace_dir.exists() else "📦 内置"
+            source = "📁 Workspace" if workspace_dir.exists() else "📦 Built-in"
             output += f"### {server_id} {status} [{source}]\n"
 
             tools = self.agent.mcp_client.list_tools(server_id)
@@ -143,58 +143,58 @@ class MCPHandler:
                 for t in tools:
                     output += f"- **{t.name}**: {t.description}\n"
             elif is_connected:
-                output += "- *(无工具)*\n"
+                output += "- *(No tools)*\n"
             else:
                 catalog_tools = self.agent.mcp_catalog.list_tools(server_id)
                 if catalog_tools:
                     for t in catalog_tools:
                         output += f"- **{t.name}**: {t.description}\n"
                 else:
-                    output += "- *(未连接，使用 `connect_mcp_server` 连接后发现工具)*\n"
+                    output += "- *(Not connected; connect with `connect_mcp_server` to discover tools)*\n"
             output += "\n"
 
         output += (
-            "**可用操作**:\n"
-            "- `call_mcp_tool(server, tool_name, arguments)` 调用工具\n"
-            "- `connect_mcp_server(server)` 连接服务器\n"
-            "- `get_mcp_instructions(server)` 获取详细使用说明\n"
-            "- `add_mcp_server(name, ...)` 添加新服务器\n"
-            "- `remove_mcp_server(name)` 移除服务器"
+            "**Available actions**:\n"
+            "- `call_mcp_tool(server, tool_name, arguments)` Call tool\n"
+            "- `connect_mcp_server(server)` Connect to server\n"
+            "- `get_mcp_instructions(server)` Get detailed usage instructions\n"
+            "- `add_mcp_server(name, ...)` Add new server\n"
+            "- `remove_mcp_server(name)` Remove server"
         )
         return output
 
     async def _get_instructions(self, params: dict) -> str:
-        """获取 MCP 使用说明"""
+        """Get MCP usage instructions"""
         server = params["server"]
         instructions = self.agent.mcp_catalog.get_server_instructions(server)
 
         if instructions:
-            return f"# MCP 服务器 {server} 使用说明\n\n{instructions}"
+            return f"# MCP server {server} Usage Instructions\n\n{instructions}"
         else:
-            return f"❌ 未找到服务器 {server} 的使用说明，或服务器不存在"
+            return f"❌ No usage instructions found for server {server}, or server does not exist"
 
     def _sync_catalog(self, server: str) -> None:
-        """同步运行时工具到 catalog（MCPCatalog 内部缓存会自动失效）"""
+        """Sync runtime tools to catalog (MCPCatalog internal cache auto-invalidates)"""
         sync_tools_after_connect(server, self.agent.mcp_client, self.agent.mcp_catalog)
         logger.info("MCP catalog synced for %s", server)
 
-    # ==================== 连接管理工具 ====================
+    # ==================== Connection management ====================
 
     async def _connect_server(self, params: dict) -> str:
-        """连接到 MCP 服务器"""
+        """Connect to MCP server"""
         server = params["server"]
         catalog = self.agent.mcp_catalog
         client = self.agent.mcp_client
 
         if catalog and hasattr(catalog, "has_server") and not catalog.has_server(server):
-            return f"❌ MCP 服务器 '{server}' 不在此 Agent 的可用范围内"
+            return f"❌ MCP server '{server}' is not available for this Agent"
 
         if client.is_connected(server):
             tools = client.list_tools(server)
-            return f"✅ 已连接到 {server}（{len(tools)} 个工具可用）"
+            return f"✅ Connected to {server} ({len(tools)} tools available)"
 
         if not client.has_server(server):
-            return f"❌ 服务器 {server} 未配置。请先用 add_mcp_server 添加或检查名称"
+            return f"❌ Server {server} not configured. Use add_mcp_server to add or check the name"
 
         from ..mcp_workspace import prepare_chrome_devtools_args
 
@@ -205,27 +205,27 @@ class MCPHandler:
             tools = client.list_tools(server)
             tool_names = [t.name for t in tools]
             return (
-                f"✅ 已连接到 MCP 服务器: {server}\n"
-                f"发现 {len(tools)} 个工具: {', '.join(tool_names)}"
+                f"✅ Connected to MCP server: {server}\n"
+                f"Discovered {len(tools)} tools: {', '.join(tool_names)}"
             )
         else:
-            return f"❌ 连接 MCP 服务器失败: {server}\n原因: {result.error}"
+            return f"❌ Failed to connect to MCP server: {server}\nReason: {result.error}"
 
     async def _disconnect_server(self, params: dict) -> str:
-        """断开 MCP 服务器"""
+        """Disconnect from MCP server"""
         server = params["server"]
         client = self.agent.mcp_client
 
         if not client.is_connected(server):
-            return f"⚪ 服务器 {server} 未连接"
+            return f"⚪ Server {server} is not connected"
 
         await client.disconnect(server)
-        return f"✅ 已断开 MCP 服务器: {server}"
+        return f"✅ Disconnected from MCP server: {server}"
 
-    # ==================== 配置管理工具 ====================
+    # ==================== Configuration management ====================
 
     async def _add_server(self, params: dict) -> str:
-        """添加 MCP 服务器配置到工作区"""
+        """Add MCP server configuration to workspace"""
         from pathlib import Path
 
         from ...config import settings
@@ -233,21 +233,21 @@ class MCPHandler:
 
         name = params.get("name", "").strip()
         if not name:
-            return "❌ 服务器名称不能为空"
+            return "❌ Server name cannot be empty"
 
         transport = params.get("transport", "stdio")
         if transport not in VALID_TRANSPORTS:
             return (
-                f"❌ 不支持的传输协议: {transport}（支持: {', '.join(sorted(VALID_TRANSPORTS))}）"
+                f"❌ Unsupported transport protocol: {transport} (supported: {', '.join(sorted(VALID_TRANSPORTS))})"
             )
 
         command = params.get("command", "")
         url = params.get("url", "")
 
         if transport == "stdio" and not command:
-            return "❌ stdio 模式需要指定 command 参数"
+            return "❌ stdio mode requires the command parameter"
         if transport in ("streamable_http", "sse") and not url:
-            return f"❌ {transport} 模式需要指定 url 参数"
+            return f"❌ {transport} mode requires the url parameter"
 
         result = await add_server_to_workspace(
             name=name,
@@ -270,27 +270,27 @@ class MCPHandler:
         if cr.get("connected"):
             tools = self.agent.mcp_client.list_tools(name)
             tool_names = [t.name for t in tools]
-            connect_msg = f"\n\n✅ 已自动连接，发现 {len(tools)} 个工具: {', '.join(tool_names)}"
+            connect_msg = f"\n\n✅ Auto-connected, discovered {len(tools)} tools: {', '.join(tool_names)}"
         else:
             connect_msg = (
-                f"\n\n⚠️ 自动连接失败: {cr.get('error', '未知')}\n"
-                f'配置已保存，可稍后手动调用 `connect_mcp_server("{name}")` 重试'
+                f"\n\n⚠️ Auto-connection failed: {cr.get('error', 'unknown')}\n"
+                f'Configuration saved; you can retry later by calling `connect_mcp_server("{name}")`'
             )
 
         return (
-            f"✅ 已添加 MCP 服务器: {name}\n"
-            f"  传输: {transport}\n"
-            f"  配置路径: {result['path']}"
+            f"✅ Added MCP server: {name}\n"
+            f"  Transport: {transport}\n"
+            f"  Config path: {result['path']}"
             f"{connect_msg}"
         )
 
     async def _remove_server(self, params: dict) -> str:
-        """移除 MCP 服务器配置"""
+        """Remove MCP server configuration"""
         from ...config import settings
 
         name = params.get("name", "").strip()
         if not name:
-            return "❌ 服务器名称不能为空"
+            return "❌ Server name cannot be empty"
 
         result = await remove_server_from_workspace(
             name,
@@ -302,14 +302,15 @@ class MCPHandler:
 
         if result["status"] == "error":
             return f"❌ {result['message']}"
-        return f"✅ 已移除 MCP 服务器: {name}"
+        return f"✅ Removed MCP server: {name}"
 
     async def _reload_servers(self, params: dict) -> str:
-        """重新加载所有 MCP 配置
+        """Reload all MCP configurations
 
-        直接操作全局共享的 mcp_client/mcp_catalog，避免在 pool agent
-        上调用 _load_mcp_servers()（那会触发 _start_builtin_mcp_servers 等
-        只应在 master agent 上执行的初始化逻辑）。
+        Directly manipulates the globally shared mcp_client/mcp_catalog to avoid
+        calling _load_mcp_servers() on pool agents (which would trigger
+        _start_builtin_mcp_servers and other initialization logic that should
+        only run on master agents).
         """
         from ...config import settings
 
@@ -326,15 +327,15 @@ class MCPHandler:
         )
 
         return (
-            f"✅ MCP 配置已重新加载\n"
-            f"  目录中: {counts['catalog_count']} 个服务器\n"
-            f"  可连接: {counts['client_count']} 个服务器\n"
-            f"  之前已连接的 {counts['previously_connected']} 个服务器已断开\n\n"
-            f"使用 `connect_mcp_server(server)` 重新连接"
+            f"✅ MCP configuration reloaded\n"
+            f"  In catalog: {counts['catalog_count']} servers\n"
+            f"  Connectable: {counts['client_count']} servers\n"
+            f"  Previously connected {counts['previously_connected']} servers disconnected\n\n"
+            f"Use `connect_mcp_server(server)` to reconnect"
         )
 
 
 def create_handler(agent: "Agent"):
-    """创建 MCP 处理器"""
+    """Create MCP handler"""
     handler = MCPHandler(agent)
     return handler.handle

@@ -20,7 +20,7 @@
     "registry_class": "OpenAIRegistry"
   },
   {
-    "name": "阿里云 DashScope（中国区）",
+    "name": "Alibaba DashScope (China)",
     "slug": "dashscope",
     "api_type": "openai",
     "default_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -44,7 +44,7 @@
     "registry_class": "DashScopeInternationalRegistry"
   },
   {
-    "name": "Kimi（月之暗面·中国区）",
+    "name": "Kimi (Moonshot AI - China)",
     "slug": "kimi-cn",
     "api_type": "openai",
     "default_base_url": "https://api.moonshot.cn/v1",
@@ -58,7 +58,7 @@
     "default_max_tokens": 8192
   },
   {
-    "name": "Kimi（月之暗面·国际区）",
+    "name": "Kimi (Moonshot AI - International)",
     "slug": "kimi-int",
     "api_type": "openai",
     "default_base_url": "https://api.moonshot.ai/v1",
@@ -72,7 +72,7 @@
     "default_max_tokens": 8192
   },
   {
-    "name": "MiniMax（中国区）",
+    "name": "MiniMax (China)",
     "slug": "minimax-cn",
     "api_type": "openai",
     "default_base_url": "https://api.minimaxi.com/v1",
@@ -86,7 +86,7 @@
     "default_max_tokens": 8192
   },
   {
-    "name": "MiniMax（国际区）",
+    "name": "MiniMax (International)",
     "slug": "minimax-int",
     "api_type": "openai",
     "default_base_url": "https://api.minimax.io/v1",
@@ -120,7 +120,7 @@
     "registry_class": "OpenRouterRegistry"
   },
   {
-    "name": "硅基流动 SiliconFlow（中国区）",
+    "name": "SiliconFlow (China)",
     "slug": "siliconflow",
     "api_type": "openai",
     "default_base_url": "https://api.siliconflow.cn/v1",
@@ -140,7 +140,7 @@
     "registry_class": "SiliconFlowInternationalRegistry"
   },
   {
-    "name": "火山引擎 (Volcengine)",
+    "name": "Volcengine",
     "slug": "volcengine",
     "api_type": "openai",
     "default_base_url": "https://ark.cn-beijing.volces.com/api/v3",
@@ -154,7 +154,7 @@
     "default_max_tokens": 8192
   },
   {
-    "name": "智谱 AI (Zhipu·中国区)",
+    "name": "Zhipu AI (China)",
     "slug": "zhipu-cn",
     "api_type": "openai",
     "default_base_url": "https://open.bigmodel.cn/api/paas/v4",
@@ -178,7 +178,7 @@
     "registry_class": "ZhipuInternationalRegistry"
   },
   {
-    "name": "百度千帆 (Qianfan)",
+    "name": "Baidu Qianfan",
     "slug": "qianfan",
     "api_type": "openai",
     "default_base_url": "https://qianfan.baidubce.com/v2",
@@ -190,7 +190,7 @@
     "registry_class": "OpenAIRegistry"
   },
   {
-    "name": "腾讯混元 (Hunyuan)",
+    "name": "Tencent Hunyuan",
     "slug": "hunyuan",
     "api_type": "openai",
     "default_base_url": "https://api.hunyuan.cloud.tencent.com/v1",
@@ -281,7 +281,7 @@
     "registry_class": "OpenAIRegistry"
   },
   {
-    "name": "云雾 API (YUNWU)",
+    "name": "Yunwu API",
     "slug": "yunwu",
     "api_type": "openai",
     "default_base_url": "https://yunwu.ai/v1",
@@ -291,7 +291,7 @@
     "registry_class": "OpenAIRegistry"
   },
   {
-    "name": "美团 LongCat (龙猫)",
+    "name": "Meituan LongCat",
     "slug": "longcat",
     "api_type": "openai",
     "default_base_url": "https://api.longcat.chat/openai",
@@ -303,7 +303,7 @@
     "registry_class": "OpenAIRegistry"
   },
   {
-    "name": "心流 (iFlow)",
+    "name": "iFlow",
     "slug": "iflow",
     "api_type": "openai",
     "default_base_url": "https://apis.iflow.cn/v1",
@@ -313,7 +313,7 @@
     "registry_class": "OpenAIRegistry"
   },
   {
-    "name": "Ollama (本地)",
+    "name": "Ollama (Local)",
     "slug": "ollama",
     "api_type": "openai",
     "default_base_url": "http://localhost:11434/v1",
@@ -325,7 +325,7 @@
     "is_local": true
   },
   {
-    "name": "LM Studio (本地)",
+    "name": "LM Studio (Local)",
     "slug": "lmstudio",
     "api_type": "openai",
     "default_base_url": "http://localhost:1234/v1",
@@ -337,7 +337,7 @@
     "is_local": true
   },
   {
-    "name": "自定义服务商",
+    "name": "Custom Provider",
     "slug": "custom",
     "api_type": "openai",
     "default_base_url": "",

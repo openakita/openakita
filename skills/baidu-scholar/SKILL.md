@@ -9,25 +9,25 @@ requires:
   env: [BAIDU_API_KEY]
 ---
 
-# 百度学术检索
+# Baidu Scholar
 
-提供专业的学术文献与知识检索能力，助力智能体深入科研、教育等垂直领域。
+Provides academic literature and knowledge discovery capabilities, enabling agents to dive into research, education, and other academic verticals.
 
-## 配置
+## Configuration
 
 export BAIDU_API_KEY="your_key"
 
-## 功能
+## Features
 
-- 学术论文搜索
-- 期刊文献检索
-- 知识图谱查询
-- 引用关系分析
+- Academic paper search
+- Journal literature retrieval
+- Knowledge graph queries
+- Citation relationship analysis
 
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/baidu_scholar.py
-学术论文搜索（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+Academic paper search (Baidu Qianfan AppBuilder). Requires APPBUILDER_TOKEN to be set.
 
 ```bash
 python3 scripts/baidu_scholar.py search "transformer attention mechanism"

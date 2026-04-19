@@ -1,8 +1,8 @@
 """
 Chat route: POST /api/chat (SSE streaming)
 
-流式返回 AI 对话响应，包含思考内容、文本、工具调用、Plan 等事件。
-使用完整的 Agent 流水线（与 IM/CLI 共享 _prepare_session_context / _finalize_session）。
+Stream AI conversation responses, including thinking content, text, tool calls, Plan events, etc.
+Uses the complete Agent pipeline (shared with IM/CLI via _prepare_session_context / _finalize_session).
 """
 
 from __future__ import annotations
@@ -316,19 +316,19 @@ async def _stream_chat(
 ) -> AsyncIterator[str]:
     """Generate SSE events via Agent.chat_with_session_stream().
 
-    这是一个瘦 SSE 传输层，核心逻辑全部委托给 Agent 流水线。
-    只负责：
-    - SSE 格式包装
-    - 客户端断开检测
-    - artifact 事件注入（deliver_artifacts）
-    - ask_user 文本捕获
-    - Session 回复保存
+    This is a thin SSE transport layer; core logic is entirely delegated to the Agent pipeline.
+    Responsibilities:
+    - SSE format wrapping
+    - Client disconnection detection
+    - artifact event injection (deliver_artifacts)
+    - ask_user text capture
+    - Session reply saving
     """
 
     _reply_chars = 0
     _reply_preview = ""
-    _full_reply = ""  # 完整回复文本（用于 session 保存）
-    _chain_reply = ""  # chain_text 累积（仅在无 text_delta 时 fallback 使用）
+    _full_reply = ""  # Complete reply text (for session saving)
+    _chain_reply = ""  # chain_text accumulation (fallback when no text_delta)
     _done_sent = False
     _client_disconnected = False
     _ask_user_question = ""
@@ -344,7 +344,7 @@ async def _stream_chat(
             try:
                 if await http_request.is_disconnected():
                     _client_disconnected = True
-                    logger.info("[Chat API] 客户端已断开连接，停止流式输出")
+                    logger.info("[Chat API] Client disconnected, stopping stream")
                     return True
             except Exception:
                 pass
@@ -359,7 +359,7 @@ async def _stream_chat(
             preview = _reply_preview[:100].replace("\n", " ")
             try:
                 logger.info(
-                    f"[Chat API] 回复完成: {_reply_chars}字 | "
+                    f"[Chat API] Reply complete: {_reply_chars} chars | "
                     f'"{preview}{"..." if _reply_chars > 100 else ""}"'
                 )
             except (UnicodeEncodeError, OSError):
@@ -426,8 +426,8 @@ async def _stream_chat(
                     if chat_request.agent_profile_id:
                         _apply_agent_profile(session, chat_request.agent_profile_id)
 
-                    # 先添加用户消息，再获取完整历史（含当前消息）
-                    # 这与 IM 路径一致：gateway 先 add_message，再传 session_messages
+                    # Add user message first, then get complete history (including current message)
+                    # Consistent with IM path: gateway adds message first, then passes session_messages
                     if chat_request.message:
                         _msg_added = session.add_message("user", chat_request.message)
                     session_messages_history = (
@@ -471,11 +471,11 @@ async def _stream_chat(
 
         _agent_task = asyncio.create_task(_agent_runner())
 
-        # --- 后台断连检测：宽限期机制 ---
-        # 长任务（如 multi-agent 委派）可能运行 10-20 分钟。客户端断连后不立即
-        # 取消任务，而是给予较长的宽限期（DISCONNECT_GRACE_SECONDS）。任务完成后
-        # 通过 _schedule_background_save 保存结果到 session，用户刷新即可看到。
-        DISCONNECT_GRACE_SECONDS = 900  # 15 分钟
+        # --- Background disconnection detection: grace period mechanism ---
+        # Long-running tasks (e.g., multi-agent delegation) may run 10-20 minutes. After client
+        # disconnection, do not cancel immediately; instead provide a grace period (DISCONNECT_GRACE_SECONDS).
+        # After task completion, results are saved to session via _schedule_background_save; user can see them on refresh.
+        DISCONNECT_GRACE_SECONDS = 900  # 15 minutes
 
         async def _disconnect_watcher():
             nonlocal _client_disconnected
@@ -488,7 +488,7 @@ async def _stream_chat(
                         if await http_request.is_disconnected():
                             _client_disconnected = True
                             logger.info(
-                                "[Chat API] 客户端断开，进入宽限期（%ds）",
+                                "[Chat API] Client disconnected, entering grace period (%ds)",
                                 DISCONNECT_GRACE_SECONDS,
                             )
                             try:
@@ -496,28 +496,28 @@ async def _stream_chat(
                                     _agent_done.wait(),
                                     timeout=DISCONNECT_GRACE_SECONDS,
                                 )
-                                logger.info("[Chat API] Agent task 在宽限期内完成")
+                                logger.info("[Chat API] Agent task completed within grace period")
                             except (asyncio.TimeoutError, TimeoutError):
                                 logger.warning(
-                                    "[Chat API] 宽限期超时（%ds），取消任务",
+                                    "[Chat API] Grace period timeout (%ds), cancelling task",
                                     DISCONNECT_GRACE_SECONDS,
                                 )
                                 try:
                                     actual_agent.cancel_current_task(
-                                        "客户端断开连接（宽限期后）",
+                                        "Client disconnected (after grace period)",
                                         session_id=conversation_id,
                                     )
                                 except Exception as e:
-                                    logger.warning(f"[Chat API] 断连 cancel 失败: {e}")
+                                    logger.warning(f"[Chat API] Disconnect cancel failed: {e}")
                             break
                     except Exception:
                         break
 
         _disconnect_watcher_task = asyncio.create_task(_disconnect_watcher())
 
-        # --- 主 SSE 事件循环：从 queue 读取事件并转发 ---
-        # 每 SSE_KEEPALIVE_INTERVAL 秒无真实事件时发送 keepalive，
-        # 防止前端 fetch 连接因长时间无数据而超时断开（LLM 重试等场景）。
+        # --- Main SSE event loop: read events from queue and forward ---
+        # Send keepalive every SSE_KEEPALIVE_INTERVAL seconds when no real events occur,
+        # to prevent frontend fetch connection timeout due to prolonged data silence (e.g., LLM retries).
         SSE_KEEPALIVE_INTERVAL = 15.0
         _agent_errored = False
         while True:
@@ -540,11 +540,11 @@ async def _stream_chat(
                     yield _sse("done")
                 break
 
-            # 拦截 done 事件：不在此处转发，等 usage 收集完毕后统一发送
+            # Intercept done event: do not forward here; wait for usage collection to complete before sending
             if event_type == "done":
                 continue
 
-            # 捕获 ask_user 问题文本和选项（用于 session 保存）
+            # Capture ask_user question text and options (for session saving)
             if event_type == "ask_user":
                 _ask_user_question = event.get("question", "")
                 _ask_user_options = event.get("options", [])
@@ -561,12 +561,12 @@ async def _stream_chat(
             else:
                 continue
 
-            # deliver_artifacts / send_sticker 都可能返回带 receipts 的 JSON
+            # deliver_artifacts / send_sticker may both return JSON with receipts
             _artifact_tools = ("deliver_artifacts", "send_sticker")
             if event_type == "tool_call_end" and event.get("tool") in _artifact_tools:
                 try:
                     result_str = event.get("result", "{}")
-                    _log_marker = "\n\n[执行日志]"
+                    _log_marker = "\n\n[Execution Log]"
                     if _log_marker in result_str:
                         result_str = result_str[: result_str.index(_log_marker)]
                     result_data = json.loads(result_str)
@@ -639,7 +639,7 @@ async def _stream_chat(
                 try:
                     result_str = event.get("result", "")
                     if '"ui_preference"' in result_str:
-                        _log_marker = "\n\n[执行日志]"
+                        _log_marker = "\n\n[Execution Log]"
                         if _log_marker in result_str:
                             result_str = result_str[: result_str.index(_log_marker)]
                         result_data = json.loads(result_str)
@@ -651,8 +651,8 @@ async def _stream_chat(
 
         # --- Save assistant response to session ---
         _save_done = True
-        # ask_user 场景：_ask_user_question 已包含 LLM 文本 + 问题（由 reason_stream 拼接），
-        # 优先使用它作为保存文本，确保下一轮 LLM 能看到完整的确认问题上下文。
+        # ask_user scenario: _ask_user_question already contains LLM text + question (concatenated by reason_stream),
+        # prioritize using it as save text to ensure next LLM round sees complete confirmation question context.
         if _ask_user_question or _ask_user_questions:
             parts = []
             if _ask_user_question:
@@ -667,7 +667,7 @@ async def _stream_chat(
                         for o in q_opts:
                             parts.append(f"  - {o.get('id', '')}: {o.get('label', '')}")
             elif _ask_user_options:
-                parts.append("\n选项：")
+                parts.append("\nOptions:")
                 for o in _ask_user_options:
                     parts.append(f"  - {o.get('id', '')}: {o.get('label', '')}")
             ask_text = "\n".join(parts)
@@ -699,7 +699,7 @@ async def _stream_chat(
                 else None
             )
             if _task and _task.cancelled:
-                assistant_text_to_save = "[任务已取消]"
+                assistant_text_to_save = "[Task cancelled]"
 
         if session and assistant_text_to_save:
             try:
@@ -783,8 +783,8 @@ async def _stream_chat(
                 await asyncio.wait_for(_agent_done.wait(), timeout=65.0)
             except (TimeoutError, asyncio.CancelledError, Exception):
                 if _agent_task and not _agent_task.done():
-                    # 长任务仍在运行 — 不立即取消，注册后台保存回调。
-                    # 任务完成时回调会 drain queue 并保存 session。
+                    # Long-running task still executing — do not cancel immediately; register background save callback.
+                    # Callback will drain queue and save session when task completes.
                     _bg_save_scheduled = True
                     _schedule_background_save(
                         _agent_task,
@@ -828,7 +828,7 @@ async def _stream_chat(
                 except Exception as e:
                     logger.warning(f"[Chat API] Deferred save failed: {e}")
 
-        # ── 清理断连检测任务 ──
+        # ── Clean up disconnect watcher task ──
         if _disconnect_watcher_task and not _disconnect_watcher_task.done():
             _disconnect_watcher_task.cancel()
             try:
@@ -836,7 +836,7 @@ async def _stream_chat(
             except (asyncio.CancelledError, Exception):
                 pass
 
-        # ── 清理 agent task ──
+        # ── Clean up agent task ──
         if _agent_task and not _agent_task.done() and not _bg_save_scheduled:
             _agent_task.cancel()
             try:
@@ -913,7 +913,7 @@ async def chat(request: Request, body: ChatRequest):
     if not (body.message or "").strip() and not body.attachments:
         return JSONResponse(
             status_code=400,
-            content={"error": "empty_message", "message": "消息内容不能为空"},
+            content={"error": "empty_message", "message": "Message content cannot be empty"},
         )
 
     # ── Busy-lock check (via lifecycle manager) ──
@@ -929,7 +929,7 @@ async def chat(request: Request, body: ChatRequest):
                     "conversation_id": conversation_id,
                     "busy_client_id": conflict.client_id,
                     "busy_since": conflict.start_time,
-                    "message": "该会话正在其他终端进行中，请新建会话或稍后再试",
+                    "message": "This conversation is in progress on another device. Please create a new conversation or try again later.",
                 },
             )
 
@@ -950,7 +950,7 @@ async def chat(request: Request, body: ChatRequest):
                 content={
                     "error": "unknown_agent_profile_id",
                     "agent_profile_id": body.agent_profile_id,
-                    "message": f"未知的 agent_profile_id: {body.agent_profile_id}",
+                    "message": f"Unknown agent_profile_id: {body.agent_profile_id}",
                 },
             )
 
@@ -974,7 +974,7 @@ async def chat(request: Request, body: ChatRequest):
                 content={
                     "error": "unknown_endpoint",
                     "endpoint": body.endpoint,
-                    "message": f"未知的 endpoint: {body.endpoint}",
+                    "message": f"Unknown endpoint: {body.endpoint}",
                 },
             )
 
@@ -1003,17 +1003,17 @@ async def chat(request: Request, body: ChatRequest):
         _non_ascii = sum(1 for c in _msg if ord(c) > 127)
         if _q > len(_msg) * 0.4 and _non_ascii == 0:
             logger.warning(
-                "[Chat API] 疑似编码损坏: 消息含 %d/%d 个问号且无非ASCII字符, "
-                "客户端可能在发送前将中文编码为ASCII(errors=replace)。"
-                "请确认客户端使用 UTF-8 编码 JSON body | conv=%s",
+                "[Chat API] Likely encoding corruption: message has %d/%d question marks with no non-ASCII chars; "
+                "client may have encoded Chinese as ASCII with errors=replace before sending. "
+                "Confirm client uses UTF-8 encoding for JSON body | conv=%s",
                 _q,
                 len(_msg),
                 conversation_id,
             )
 
     logger.info(
-        f'[Chat API] 收到消息: "{msg_preview}"'
-        + (f" (+{att_count}个附件)" if att_count else "")
+        f'[Chat API] Message received: "{msg_preview}"'
+        + (f" (+{att_count} attachments)" if att_count else "")
         + (f" | endpoint={body.endpoint}" if body.endpoint else "")
         + (f" | mode={effective_mode}" if effective_mode != "agent" else "")
         + (f" | thinking={body.thinking_mode}" if body.thinking_mode else "")
@@ -1065,7 +1065,7 @@ async def chat_answer(request: Request, body: ChatAnswerRequest):
 async def chat_cancel(request: Request, body: ChatControlRequest):
     """Cancel the current running task for the specified conversation."""
     conv_id = body.conversation_id
-    reason = body.reason or "用户从聊天界面取消任务"
+    reason = body.reason or "User cancelled task from chat interface"
 
     # Org node sessions (e.g. "org:<org_id>:node:<node_id>") live in
     # OrgRuntime._agent_cache, not in the chat agent_pool.  Route the
@@ -1089,7 +1089,7 @@ async def chat_cancel(request: Request, body: ChatControlRequest):
         return {"status": "error", "message": "Agent not initialized"}
 
     _conv_id = conv_id or getattr(actual_agent, "_current_conversation_id", None)
-    logger.info(f"[Chat API] Cancel 接收到请求: reason={reason!r}, conv_id={_conv_id!r}")
+    logger.info(f"[Chat API] Cancel request received: reason={reason!r}, conv_id={_conv_id!r}")
     actual_agent.cancel_current_task(reason, session_id=_conv_id)
 
     # Immediately release busy-lock so the UI reflects the cancellation.
@@ -1098,7 +1098,7 @@ async def chat_cancel(request: Request, body: ChatControlRequest):
     if _conv_id:
         await get_lifecycle_manager().finish(_conv_id)
 
-    logger.info(f"[Chat API] Cancel 执行完成: reason={reason!r}")
+    logger.info(f"[Chat API] Cancel execution complete: reason={reason!r}")
     return {"status": "ok", "action": "cancel", "reason": reason}
 
 
@@ -1111,7 +1111,7 @@ async def chat_skip(request: Request, body: ChatControlRequest):
     if actual_agent is None:
         return {"status": "error", "message": "Agent not initialized"}
 
-    reason = body.reason or "用户从聊天界面跳过当前步骤"
+    reason = body.reason or "User skipped current step from chat interface"
     _conv_id = conv_id or getattr(actual_agent, "_current_conversation_id", None)
     actual_agent.skip_current_step(reason, session_id=_conv_id)
     logger.info(f"[Chat API] Skip requested: reason={reason!r}, conv_id={_conv_id!r}")
@@ -1135,22 +1135,22 @@ async def chat_insert(request: Request, body: ChatControlRequest):
     if not body.message:
         return {"status": "error", "message": "Message is required for insert"}
 
-    logger.info(f"[Chat API] Insert 接收到消息: {body.message[:80]!r}")
+    logger.info(f"[Chat API] Insert message received: {body.message[:80]!r}")
     msg_type = actual_agent.classify_interrupt(body.message)
-    logger.info(f"[Chat API] Insert 分类结果: msg_type={msg_type!r}, message={body.message[:60]!r}")
+    logger.info(f"[Chat API] Insert classification result: msg_type={msg_type!r}, message={body.message[:60]!r}")
 
     if msg_type == "stop":
-        reason = f"用户发送停止指令: {body.message}"
+        reason = f"User sent stop command: {body.message}"
         _conv_id = conv_id or getattr(actual_agent, "_current_conversation_id", None)
         logger.info(f"[Chat API] Insert -> STOP: reason={reason!r}, conv_id={_conv_id!r}")
         actual_agent.cancel_current_task(reason, session_id=_conv_id)
         if _conv_id:
             await get_lifecycle_manager().finish(_conv_id)
-        logger.info("[Chat API] Insert -> STOP 执行完成")
+        logger.info("[Chat API] Insert -> STOP execution complete")
         return {"status": "ok", "action": "cancel", "reason": reason}
 
     if msg_type == "skip":
-        reason = f"用户发送跳过指令: {body.message}"
+        reason = f"User sent skip command: {body.message}"
         _skip_conv_id = conv_id or getattr(actual_agent, "_current_conversation_id", None)
         ok = actual_agent.skip_current_step(reason, session_id=_skip_conv_id)
         logger.info(f"[Chat API] Insert -> SKIP: reason={reason!r}, ok={ok}")
@@ -1165,7 +1165,7 @@ async def chat_insert(request: Request, body: ChatControlRequest):
 
     _insert_conv_id = conv_id or getattr(actual_agent, "_current_conversation_id", None)
     ok = await to_engine(actual_agent.insert_user_message(body.message, session_id=_insert_conv_id))
-    logger.info(f"[Chat API] Insert 作为普通消息: ok={ok}, message={body.message[:60]!r}")
+    logger.info(f"[Chat API] Insert as normal message: ok={ok}, message={body.message[:60]!r}")
     if not ok:
         return {
             "status": "warning",
@@ -1220,7 +1220,7 @@ async def get_sub_agent_records(request: Request, conversation_id: str = ""):
 
 @router.post("/api/plan/dismiss")
 async def dismiss_plan_approval(request: Request):
-    """用户关闭审批面板时清除后端 pending 状态"""
+    """Clear backend pending state when user closes approval panel"""
     try:
         body = await request.json()
     except Exception:

@@ -1,12 +1,12 @@
 """
-Teammate/Swarm 多 Agent 后端
+Teammate/Swarm multi-agent backends
 
-参考 Claude Code 的 AgentTool + Swarm 设计:
-- InProcessBackend: 进程内并发 (asyncio.Task)
-- SubprocessBackend: 独立进程执行
-- Leader-Teammate 模型: team lead 分配任务
+Inspired by Claude Code's AgentTool + Swarm design:
+- InProcessBackend: In-process concurrency (asyncio.Task)
+- SubprocessBackend: Independent process execution
+- Leader-Teammate model: team lead assigns tasks
 
-与现有 AgentOrchestrator 共存，逐步增强。
+Coexists with the existing AgentOrchestrator, incrementally enhanced.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TeammateTask:
-    """分配给 Teammate 的任务"""
+    """Task assigned to a teammate"""
 
     task_id: str
     description: str
@@ -34,7 +34,7 @@ class TeammateTask:
 
 @dataclass
 class TeammateResult:
-    """Teammate 执行结果"""
+    """Teammate execution result"""
 
     task_id: str
     agent_id: str
@@ -47,7 +47,7 @@ class TeammateResult:
 
 
 class AgentBackend(ABC):
-    """Agent 执行后端基类"""
+    """Agent execution backend base class"""
 
     @abstractmethod
     async def run_teammate(
@@ -55,20 +55,20 @@ class AgentBackend(ABC):
         task: TeammateTask,
         create_agent_fn: Callable,
     ) -> TeammateResult:
-        """执行一个 Teammate 任务。"""
+        """Execute a teammate task."""
         pass
 
     @abstractmethod
     async def wait_all(self, timeout: float = 300) -> list[TeammateResult]:
-        """等待所有正在执行的 Teammate 完成。"""
+        """Wait for all running teammates to complete."""
         pass
 
 
 class InProcessBackend(AgentBackend):
-    """进程内并发后端 (asyncio.Task)。
+    """In-process concurrency backend (asyncio.Task).
 
-    Teammate 在同一进程内以 asyncio.Task 方式并行执行。
-    共享内存但通过上下文隔离避免状态污染。
+    Teammates run in parallel as asyncio.Tasks within the same process.
+    They share memory but avoid state pollution through context isolation.
     """
 
     def __init__(self) -> None:
@@ -80,7 +80,7 @@ class InProcessBackend(AgentBackend):
         task: TeammateTask,
         create_agent_fn: Callable,
     ) -> TeammateResult:
-        """启动 Teammate 任务。"""
+        """Start a teammate task."""
 
         async def _execute():
             try:
@@ -110,7 +110,7 @@ class InProcessBackend(AgentBackend):
         return result
 
     async def wait_all(self, timeout: float = 300) -> list[TeammateResult]:
-        """等待所有 Teammate 完成。"""
+        """Wait for all teammates to complete."""
         if not self._running_tasks:
             return list(self._results.values())
 
@@ -127,12 +127,12 @@ class InProcessBackend(AgentBackend):
 
 
 class TeamManager:
-    """团队管理器。
+    """Team manager.
 
-    管理多个 Teammate 的并行执行，支持:
-    - 任务分配
-    - 进度追踪
-    - 结果聚合
+    Manages parallel execution of multiple teammates. Supports:
+    - Task dispatch
+    - Progress tracking
+    - Result aggregation
     """
 
     def __init__(self, backend: AgentBackend | None = None) -> None:
@@ -145,9 +145,9 @@ class TeamManager:
         tasks: list[TeammateTask],
         create_agent_fn: Callable,
     ) -> list[TeammateResult]:
-        """分配并执行多个任务。
+        """Dispatch and execute multiple tasks.
 
-        并行启动所有任务，等待全部完成。
+        Launches all tasks in parallel, waits for all to complete.
         """
         self._tasks = tasks
 

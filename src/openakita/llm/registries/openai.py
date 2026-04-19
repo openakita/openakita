@@ -1,5 +1,5 @@
 """
-OpenAI 服务商注册表
+OpenAI Provider Registry
 """
 
 from ..capabilities import infer_capabilities
@@ -7,7 +7,7 @@ from .base import ModelInfo, ProviderInfo, ProviderRegistry, get_registry_client
 
 
 class OpenAIRegistry(ProviderRegistry):
-    """OpenAI 注册表"""
+    """OpenAI registry"""
 
     info = ProviderInfo(
         name="OpenAI (Official / Compatible)",
@@ -16,11 +16,11 @@ class OpenAIRegistry(ProviderRegistry):
         default_base_url="https://api.openai.com/v1",
         api_key_env_suggestion="OPENAI_API_KEY",
         supports_model_list=True,
-        supports_capability_api=False,  # API 只返回基本信息
+        supports_capability_api=False,  # API only returns basic info
     )
 
     async def list_models(self, api_key: str) -> list[ModelInfo]:
-        """获取 OpenAI 模型列表"""
+        """Fetch the OpenAI model list."""
         client = get_registry_client()
         try:
             resp = await client.get(
@@ -48,12 +48,12 @@ class OpenAIRegistry(ProviderRegistry):
             return self._get_preset_models()
 
     def _is_chat_model(self, model_id: str) -> bool:
-        """判断是否是 chat 模型"""
+        """Check whether the model is a chat model."""
         chat_prefixes = ["gpt-4", "gpt-3.5", "o1", "chatgpt"]
         return any(model_id.startswith(prefix) for prefix in chat_prefixes)
 
     def _get_preset_models(self) -> list[ModelInfo]:
-        """返回预置模型列表"""
+        """Return the preset model list."""
         preset = [
             "gpt-4o",
             "gpt-4o-mini",

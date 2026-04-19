@@ -9,27 +9,27 @@ category: IM Channel
 
 # Get Chat History
 
-获取当前聊天的历史消息记录。
+get .
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| limit | integer | 否 | 获取最近多少条消息，默认 20 |
-| include_system | boolean | 否 | 是否包含系统消息（如任务通知），默认 True |
+| limit | integer | No | getmessages, Default 20 |
+| include_system | boolean | No | Whether to include system messages(), Default True |
 
 ## Returns
 
-- 用户发送的消息
-- 你之前的回复
-- 系统任务发送的通知
+- Messages sent by user
+- Your previous replies
+- Notifications sent by system tasks
 
 ## When to Use
 
-- 用户说"看看之前的消息"
-- 用户说"刚才发的什么"
-- 需要回顾对话上下文
+- " "
+- " "
+- need
 
 ## Related Skills
 
-- `deliver-artifacts`: 发送附件给用户
+- `deliver-artifacts`: Send

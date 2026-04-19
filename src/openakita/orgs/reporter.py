@@ -1,8 +1,9 @@
 """
-OrgReporter — 组织报告生成
+OrgReporter — Organization report generation
 
-晨会纪要、周报、任务总结、审计日志等报告的统一生成入口。
-从 OrgEventStore 获取原始事件，整理后生成 Markdown 报告文件。
+Unified entry point for generating standup meeting minutes, weekly reports,
+task summaries, audit logs, and other reports.  Fetches raw events from
+OrgEventStore, organizes them, and writes Markdown report files.
 """
 
 from __future__ import annotations
@@ -45,23 +46,23 @@ class OrgReporter:
             node_summaries[actor].append(f"- [{etype}] {json.dumps(data, ensure_ascii=False)[:120]}")
 
         lines = [
-            f"# 晨会纪要 — {today}",
-            f"\n**组织**: {org.name}",
-            f"**状态**: {org.status.value}",
-            f"**节点数**: {len(org.nodes)}",
+            f"# Standup Minutes — {today}",
+            f"\n**Organization**: {org.name}",
+            f"**Status**: {org.status.value}",
+            f"**Node count**: {len(org.nodes)}",
             "",
         ]
 
         for node in org.nodes:
             lines.append(f"## {node.role_title} ({node.id})")
-            lines.append(f"- 状态: {node.status.value}")
-            lines.append(f"- 部门: {node.department or '未分配'}")
+            lines.append(f"- Status: {node.status.value}")
+            lines.append(f"- Department: {node.department or 'Unassigned'}")
             node_events = node_summaries.get(node.id, [])
             if node_events:
-                lines.append("- 今日活动:")
+                lines.append("- Today's activity:")
                 lines.extend(f"  {e}" for e in node_events[:10])
             else:
-                lines.append("- 今日暂无活动")
+                lines.append("- No activity today")
             lines.append("")
 
         content = "\n".join(lines)
@@ -116,34 +117,34 @@ class OrgReporter:
 
         date_str = week_start.strftime("%Y-%m-%d")
         lines = [
-            f"# 周报 — {date_str} ~ {week_end.strftime('%Y-%m-%d')}",
-            f"\n**组织**: {org.name}",
+            f"# Weekly Report — {date_str} ~ {week_end.strftime('%Y-%m-%d')}",
+            f"\n**Organization**: {org.name}",
             "",
-            "## 概览",
-            f"- 任务完成: {task_completed}",
-            f"- 任务失败: {task_failed}",
-            f"- 消息交换: {messages_sent}",
-            f"- 节点激活次数: {nodes_activated}",
-            f"- Token 消耗: {org.total_tokens_used}",
+            "## Overview",
+            f"- Tasks completed: {task_completed}",
+            f"- Tasks failed: {task_failed}",
+            f"- Messages exchanged: {messages_sent}",
+            f"- Node activations: {nodes_activated}",
+            f"- Token usage: {org.total_tokens_used}",
             "",
         ]
 
         if errors:
-            lines.append("## 异常与错误")
+            lines.append("## Errors & Exceptions")
             for err in errors[:10]:
                 data = err.get("data", {})
-                lines.append(f"- [{err.get('actor', '?')}] {data.get('error', '未知')[:100]}")
+                lines.append(f"- [{err.get('actor', '?')}] {data.get('error', 'unknown')[:100]}")
             lines.append("")
 
         if decisions:
-            lines.append("## 管理层决策")
+            lines.append("## Management Decisions")
             for dec in decisions[:10]:
                 data = dec.get("data", {})
                 lines.append(f"- {data.get('decision', json.dumps(data, ensure_ascii=False)[:100])}")
             lines.append("")
 
         if scalings:
-            lines.append("## 人事变动")
+            lines.append("## Personnel Changes")
             for sc in scalings[:10]:
                 lines.append(f"- [{sc.get('event_type', '')}] {json.dumps(sc.get('data', {}), ensure_ascii=False)[:100]}")
             lines.append("")
@@ -169,12 +170,12 @@ class OrgReporter:
         ]
 
         lines = [
-            f"# 任务总结 — {task_id}",
+            f"# Task Summary — {task_id}",
             "",
         ]
 
         if not task_events:
-            lines.append("未找到相关事件记录。")
+            lines.append("No related event records found.")
         else:
             for evt in task_events:
                 lines.append(
@@ -199,8 +200,8 @@ class OrgReporter:
 
         date_str = datetime.now(UTC).strftime("%Y-%m-%d")
         lines = [
-            f"# 审计日志 — 最近 {days} 天",
-            f"\n生成时间: {date_str}",
+            f"# Audit Log — Last {days} Day(s)",
+            f"\nGenerated at: {date_str}",
             "",
         ]
 

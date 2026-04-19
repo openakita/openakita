@@ -1,11 +1,12 @@
 """
-PowerShell 工具定义
+PowerShell tool definition
 
-独立于 run_shell 的 PowerShell 专用工具，参考 CC PowerShellTool 设计：
-- Windows 平台自动启用
-- PS 版本感知（Desktop 5.1 vs Core 7+）语法指导
-- 只读 cmdlet 识别
-- EncodedCommand 沙箱执行
+A dedicated PowerShell tool independent of run_shell, modeled after the CC
+PowerShellTool design:
+- Automatically enabled on Windows
+- PS version-aware (Desktop 5.1 vs Core 7+) syntax guidance
+- Read-only cmdlet recognition
+- EncodedCommand sandboxed execution
 """
 
 import platform
@@ -54,15 +55,15 @@ if _IS_WINDOWS:
                 "required": ["command"],
             },
             "detail": (
-                "Windows 通用命令执行工具（基于 PowerShell）。\n\n"
-                "使用场景：\n"
-                "- 运行 Python/Git/npm/pip 等 CLI 工具\n"
-                "- PowerShell cmdlet（如 Get-Process, Get-ChildItem -Recurse）\n"
-                "- .NET 类型操作（如 [System.IO.File]::ReadAllText()）\n"
-                "- WMI/CIM 查询（如 Get-CimInstance Win32_OperatingSystem）\n"
-                "- 注册表操作（如 Get-ItemProperty HKLM:\\SOFTWARE\\...）\n"
-                "- COM 对象（如 New-Object -ComObject Excel.Application）\n"
-                "- 管道操作（如 Get-Process | Where-Object {$_.CPU -gt 100}）"
+                "General-purpose Windows command execution tool (PowerShell-based).\n\n"
+                "Use cases:\n"
+                "- Running Python/Git/npm/pip and other CLI tools\n"
+                "- PowerShell cmdlets (e.g., Get-Process, Get-ChildItem -Recurse)\n"
+                "- .NET type operations (e.g., [System.IO.File]::ReadAllText())\n"
+                "- WMI/CIM queries (e.g., Get-CimInstance Win32_OperatingSystem)\n"
+                "- Registry operations (e.g., Get-ItemProperty HKLM:\\SOFTWARE\\...)\n"
+                "- COM objects (e.g., New-Object -ComObject Excel.Application)\n"
+                "- Pipeline operations (e.g., Get-Process | Where-Object {$_.CPU -gt 100})"
             ),
             "triggers": [
                 "User asks for Windows system information",

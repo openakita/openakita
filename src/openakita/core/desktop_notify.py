@@ -1,9 +1,9 @@
 """
-桌面通知模块 - 跨平台系统通知（Windows/macOS/Linux）
+Desktop notification module - cross-platform system notifications (Windows/macOS/Linux).
 
-任务完成时通过操作系统原生通知提醒用户。
-Windows Toast / macOS Notification Center / Linux notify-send
-系统通知自带音效，无需额外音频文件。
+Notifies the user via native OS notifications when tasks complete.
+Windows Toast / macOS Notification Center / Linux notify-send.
+System notifications include built-in sounds, so no extra audio files are needed.
 """
 
 import asyncio
@@ -18,18 +18,18 @@ _system = platform.system()
 
 
 def _notify_windows(title: str, body: str, sound: bool = True) -> bool:
-    """Windows Toast 通知（PowerShell，无需额外依赖）"""
+    """Windows Toast notification (PowerShell, no extra dependencies needed)."""
     sound_xml = ""
     if sound:
         sound_xml = '<audio src="ms-winsoundevent:Notification.Default"/>'
     else:
         sound_xml = '<audio silent="true"/>'
 
-    # 转义 PowerShell 字符串中的特殊字符
+    # Escape special characters in PowerShell strings
     safe_title = title.replace('"', '`"').replace("'", "''")
     safe_body = body.replace('"', '`"').replace("'", "''")
 
-    # 获取 Logo 路径
+    # Get logo path
     logo_xml = ""
     try:
         from ..config import settings
@@ -94,7 +94,7 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
 
 
 def _notify_macos(title: str, body: str, sound: bool = True) -> bool:
-    """macOS 通知（osascript，无需额外依赖）"""
+    """macOS notification (osascript, no extra dependencies needed)."""
     sound_clause = ' sound name "default"' if sound else ""
     script = (
         f'display notification "{_escape_applescript(body)}" '
@@ -124,12 +124,12 @@ def _notify_macos(title: str, body: str, sound: bool = True) -> bool:
 
 
 def _escape_applescript(text: str) -> str:
-    """转义 AppleScript 字符串中的特殊字符"""
+    """Escape special characters in AppleScript strings."""
     return text.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def _notify_linux(title: str, body: str, sound: bool = True) -> bool:
-    """Linux 通知（notify-send，大多数桌面环境预装）"""
+    """Linux notification (notify-send, pre-installed on most desktop environments)."""
     try:
         cmd = [
             "notify-send",
@@ -161,7 +161,7 @@ def _notify_linux(title: str, body: str, sound: bool = True) -> bool:
 
 
 def _fallback_beep() -> None:
-    """兜底：如果系统通知失败，至少发出终端提示音"""
+    """Fallback: if system notification fails, at least emit a terminal bell."""
     try:
         if _system == "Windows":
             import winsound
@@ -182,16 +182,16 @@ def send_desktop_notification(
     fallback_beep: bool = True,
 ) -> bool:
     """
-    发送桌面通知（同步版本）。
+    Send a desktop notification (synchronous version).
 
     Args:
-        title: 通知标题
-        body: 通知正文
-        sound: 是否播放通知音（默认 True）
-        fallback_beep: 通知失败时是否发出终端提示音
+        title: Notification title.
+        body: Notification body.
+        sound: Whether to play a notification sound (default True).
+        fallback_beep: Whether to emit a terminal bell if notification fails.
 
     Returns:
-        是否成功发送通知
+        Whether the notification was sent successfully.
     """
     logger.info(f"Sending desktop notification: [{title}] {body[:60]}")
     ok = False
@@ -224,7 +224,7 @@ async def send_desktop_notification_async(
     sound: bool = True,
     fallback_beep: bool = True,
 ) -> bool:
-    """发送桌面通知（异步版本，不阻塞事件循环）"""
+    """Send a desktop notification (async version, non-blocking)."""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
         None,
@@ -240,28 +240,28 @@ def notify_task_completed(
     sound: bool = True,
 ) -> bool:
     """
-    任务完成通知的便捷函数。
+    Convenience function for task-completion notifications.
 
     Args:
-        task_name: 任务名称/描述
-        success: 是否成功
-        duration_seconds: 任务耗时（秒）
-        sound: 是否播放提示音
+        task_name: Task name or description.
+        success: Whether the task succeeded.
+        duration_seconds: Task duration in seconds.
+        sound: Whether to play a notification sound.
     """
     if success:
-        title = "✅ OpenAkita 任务完成"
+        title = "✅ OpenAkita Task Completed"
         body = task_name
     else:
-        title = "❌ OpenAkita 任务失败"
+        title = "❌ OpenAkita Task Failed"
         body = task_name
 
     if duration_seconds > 0:
         if duration_seconds >= 60:
             minutes = int(duration_seconds // 60)
             seconds = int(duration_seconds % 60)
-            body += f"（耗时 {minutes}分{seconds}秒）"
+            body += f" (took {minutes}m {seconds}s)"
         else:
-            body += f"（耗时 {int(duration_seconds)}秒）"
+            body += f" (took {int(duration_seconds)}s)"
 
     return send_desktop_notification(title, body, sound=sound)
 
@@ -273,7 +273,7 @@ async def notify_task_completed_async(
     duration_seconds: float = 0,
     sound: bool = True,
 ) -> bool:
-    """任务完成通知的异步便捷函数。"""
+    """Async convenience function for task-completion notifications."""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(
         None,

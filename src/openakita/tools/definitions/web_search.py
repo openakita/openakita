@@ -1,9 +1,11 @@
 """
-Web Search 工具定义
+Web Search tool definitions
 
-包含网络搜索相关的工具：
-- web_search: 搜索网页
-- news_search: 搜索新闻
+Includes web-search-related tools:
+- web_search: Search the web (supports DuckDuckGo / Brave / Tavily / Exa)
+- news_search: Search news
+
+Search provider is configured via SEARCH_PROVIDER, defaulting to auto (automatically selected).
 """
 
 WEB_SEARCH_TOOLS = [
@@ -28,44 +30,44 @@ WEB_SEARCH_TOOLS = [
         "related_tools": [
             {
                 "name": "browser_navigate",
-                "relation": "需要打开网页查看完整内容或截图时改用 browser_navigate",
+                "relation": "Switch to browser_navigate when you need to open a page for full content or screenshots",
             },
-            {"name": "news_search", "relation": "专门搜索新闻时改用 news_search"},
+            {"name": "news_search", "relation": "Switch to news_search when searching specifically for news"},
         ],
-        "detail": """使用 DuckDuckGo 搜索网页。
+        "detail": """Search the web (via the configured search provider: DuckDuckGo / Brave / Tavily / Exa).
 
-**适用场景**：
-- 查找最新信息
-- 验证事实
-- 查阅文档
-- 回答需要最新知识的问题
+**Use cases**:
+- Find up-to-date information
+- Verify facts
+- Look up documentation
+- Answer questions that require recent knowledge
 
-**参数说明**：
-- query: 搜索关键词
-- max_results: 最大结果数（1-20，默认 5）
-- region: 地区代码（默认 wt-wt 全球，cn-zh 中国）
-- safesearch: 安全搜索级别（on/moderate/off）
+**Parameters**:
+- query: Search keywords
+- max_results: Maximum number of results (1-20, default 5)
+- region: Region code (default wt-wt for global, cn-zh for China)
+- safesearch: Safe search level (on/moderate/off)
 
-**示例**：
-- 搜索信息：web_search(query="Python asyncio 教程", max_results=5)
-- 搜索中文内容：web_search(query="天气预报", region="cn-zh")""",
+**Examples**:
+- Search for information: web_search(query="Python asyncio tutorial", max_results=5)
+- Search Chinese content: web_search(query="weather forecast", region="cn-zh")""",
         "input_schema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "搜索关键词"},
+                "query": {"type": "string", "description": "Search keywords"},
                 "max_results": {
                     "type": "integer",
-                    "description": "最大结果数（1-20，默认 5）",
+                    "description": "Maximum number of results (1-20, default 5)",
                     "default": 5,
                 },
                 "region": {
                     "type": "string",
-                    "description": "地区代码（默认 wt-wt 全球，cn-zh 中国）",
+                    "description": "Region code (default wt-wt for global, cn-zh for China)",
                     "default": "wt-wt",
                 },
                 "safesearch": {
                     "type": "string",
-                    "description": "安全搜索级别（on/moderate/off）",
+                    "description": "Safe search level (on/moderate/off)",
                     "default": "moderate",
                 },
             },
@@ -75,46 +77,46 @@ WEB_SEARCH_TOOLS = [
     {
         "name": "news_search",
         "category": "Web Search",
-        "description": "Search news using DuckDuckGo. Use when you need to find recent news articles, current events, or breaking news. Returns titles, sources, dates, URLs, and excerpts.",
-        "detail": """使用 DuckDuckGo 搜索新闻。
+        "description": "Search news using the configured search provider (DuckDuckGo by default; or Brave / Tavily / Exa when API keys are set). Use when you need to find recent news articles, current events, or breaking news. Returns titles, sources, dates, URLs, and excerpts.",
+        "detail": """Search news (via the configured search provider).
 
-**适用场景**：
-- 查找最新新闻
-- 了解时事动态
-- 获取行业资讯
+**Use cases**:
+- Find the latest news
+- Stay updated on current events
+- Get industry updates
 
-**参数说明**：
-- query: 搜索关键词
-- max_results: 最大结果数（1-20，默认 5）
-- region: 地区代码
-- safesearch: 安全搜索级别
-- timelimit: 时间范围（d=一天, w=一周, m=一月）
+**Parameters**:
+- query: Search keywords
+- max_results: Maximum number of results (1-20, default 5)
+- region: Region code
+- safesearch: Safe search level
+- timelimit: Time range (d=one day, w=one week, m=one month)
 
-**示例**：
-- 搜索新闻：news_search(query="AI 最新进展", max_results=5)
-- 搜索今日新闻：news_search(query="科技", timelimit="d")""",
+**Examples**:
+- Search news: news_search(query="AI latest developments", max_results=5)
+- Search today's news: news_search(query="technology", timelimit="d")""",
         "input_schema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "搜索关键词"},
+                "query": {"type": "string", "description": "Search keywords"},
                 "max_results": {
                     "type": "integer",
-                    "description": "最大结果数（1-20，默认 5）",
+                    "description": "Maximum number of results (1-20, default 5)",
                     "default": 5,
                 },
                 "region": {
                     "type": "string",
-                    "description": "地区代码（默认 wt-wt 全球）",
+                    "description": "Region code (default wt-wt for global)",
                     "default": "wt-wt",
                 },
                 "safesearch": {
                     "type": "string",
-                    "description": "安全搜索级别（on/moderate/off）",
+                    "description": "Safe search level (on/moderate/off)",
                     "default": "moderate",
                 },
                 "timelimit": {
                     "type": "string",
-                    "description": "时间范围（d=一天, w=一周, m=一月，默认不限）",
+                    "description": "Time range (d=one day, w=one week, m=one month, default unlimited)",
                 },
             },
             "required": ["query"],

@@ -1,10 +1,10 @@
 """
-轻量全局状态管理
+Lightweight global state management
 
-参考 Claude Code 的 createStore 模式:
+Modeled after Claude Code's createStore pattern:
 - getState / setState / subscribe
-- 不可变状态更新
-- 订阅者通知机制
+- Immutable state updates
+- Subscriber notification mechanism
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ T = TypeVar("T")
 
 
 class StateStore(Generic[T]):
-    """轻量级状态存储。
+    """Lightweight state store.
 
     Usage:
         store = StateStore(initial_state)
@@ -34,11 +34,11 @@ class StateStore(Generic[T]):
         self._listeners: list[Callable[[T], None]] = []
 
     def get_state(self) -> T:
-        """获取当前状态（只读引用）。"""
+        """Get current state (read-only reference)."""
         return self._state
 
     def set_state(self, updater: Callable[[T], T]) -> None:
-        """通过更新函数设置新状态，通知所有订阅者。"""
+        """Set new state via updater function and notify all subscribers."""
         new_state = updater(self._state)
         if new_state is self._state:
             return  # No change
@@ -46,10 +46,10 @@ class StateStore(Generic[T]):
         self._notify()
 
     def subscribe(self, listener: Callable[[T], None]) -> Callable[[], None]:
-        """订阅状态变更。
+        """Subscribe to state changes.
 
         Returns:
-            取消订阅的函数
+            Unsubscribe function
         """
         self._listeners.append(listener)
 
@@ -62,7 +62,7 @@ class StateStore(Generic[T]):
         return unsubscribe
 
     def _notify(self) -> None:
-        """通知所有订阅者。"""
+        """Notify all subscribers."""
         for listener in self._listeners:
             try:
                 listener(self._state)
@@ -72,13 +72,13 @@ class StateStore(Generic[T]):
 
 @dataclass(frozen=True)
 class AppState:
-    """应用级全局状态（不可变）。"""
+    """Application-level global state (immutable)."""
 
-    # Agent 状态
+    # Agent state
     active_sessions: dict[str, Any] = field(default_factory=dict)
     agent_profiles: dict[str, Any] = field(default_factory=dict)
 
-    # LLM 状态
+    # LLM state
     llm_endpoints_healthy: dict[str, bool] = field(default_factory=dict)
     total_tokens_used: int = 0
     total_cost: float = 0.0
@@ -93,7 +93,7 @@ _app_store: StateStore[AppState] | None = None
 
 
 def get_app_store() -> StateStore[AppState]:
-    """获取全局应用状态存储。"""
+    """Get the global application state store."""
     global _app_store
     if _app_store is None:
         _app_store = StateStore(AppState())

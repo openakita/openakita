@@ -1,8 +1,8 @@
 """
-插件目录 (Plugin Catalog)
+Plugin Catalog
 
-生成系统提示词中的 Installed Plugins 段落，
-让 LLM 知道装了哪些插件、各插件提供了什么能力。
+Generates the 'Installed Plugins' section in the system prompt,
+informing the LLM which plugins are loaded and what capabilities each provides.
 """
 
 from __future__ import annotations

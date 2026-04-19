@@ -7,160 +7,160 @@ metadata:
   version: "2.1.0"
 ---
 
-# Seedance 视频生成
+# Seedance Video Generation
 
-通过火山方舟 Ark API 使用字节跳动 Seedance 模型生成 AI 视频。
+Generate AI videos using ByteDance Seedance models via the Volcengine Ark API.
 
-## 前置条件
+## Prerequisites
 
-需设置 ARK_API_KEY 环境变量：
+Set ARK_API_KEY: 
 export ARK_API_KEY="your-api-key-here"
 
 Base URL: https://ark.cn-beijing.volces.com/api/v3
 
-## 支持模型
+## Supports
 
-| 模型 | 模型 ID | 能力 |
+| | ID | |
 |------|---------|------|
-| Seedance 2.0 | doubao-seedance-2-0-260128 | 全能力：文/图/多模态/编辑/延长/联网/有声 |
-| Seedance 2.0 Fast | doubao-seedance-2-0-fast-260128 | 同 2.0，更快更便宜 |
-| Seedance 1.5 Pro | doubao-seedance-1-5-pro-251215 | 文生视频、图生视频、音频、草稿模式、离线推理 |
-| Seedance 1.0 Pro | doubao-seedance-1-0-pro-250528 | 文生视频、图生视频、离线推理 |
-| Seedance 1.0 Pro Fast | doubao-seedance-1-0-pro-fast-251015 | 同 1.0 Pro，更快 |
-| Seedance 1.0 Lite T2V | doubao-seedance-1-0-lite-t2v-250428 | 仅文生视频 |
-| Seedance 1.0 Lite I2V | doubao-seedance-1-0-lite-i2v-250428 | 图生视频、参考图 |
+| Seedance 2.0 | doubao-seedance-2-0-260128 | All capabilities: text/image/multimodal/edit/extend/web search/audio |
+| Seedance 2.0 Fast | doubao-seedance-2-0-fast-260128 | Same as 2.0, faster and cheaper |
+| Seedance 1.5 Pro | doubao-seedance-1-5-pro-251215 | Text-to-video, image-to-video, audio, draft mode, offline inference |
+| Seedance 1.0 Pro | doubao-seedance-1-0-pro-250528 | Text-to-video, image-to-video, offline inference |
+| Seedance 1.0 Pro Fast | doubao-seedance-1-0-pro-fast-251015 | Same as 1.0 Pro, faster |
+| Seedance 1.0 Lite T2V | doubao-seedance-1-0-lite-t2v-250428 | Text-to-video only |
+| Seedance 1.0 Lite I2V | doubao-seedance-1-0-lite-i2v-250428 | Image-to-video, reference images |
 
-默认模型: doubao-seedance-2-0-260128
+Default model: doubao-seedance-2-0-260128
 
-## Seedance 2.0 能力总览
+## Seedance 2.0 Capabilities Overview
 
-- **文生视频**: 纯文本 prompt 生成视频
-- **图生视频**: 首帧(first_frame) / 首尾帧(first_frame+last_frame)
-- **多模态参考**: 组合图片(0-9张)、视频(0-3个)、音频(0-3个)
-- **视频编辑**: 替换主体、增删改对象、局部重绘/修复
-- **视频延长**: 向前/向后延长、多段串联
-- **联网搜索**: 纯文本模式 web_search，提升时效性
-- **有声视频**: generate_audio=true 生成同步音频
-- **返回尾帧**: return_last_frame=true 获取视频尾帧（用于连续生成）
+- **Text-to-video**: Generate video from a plain text prompt
+- **Image-to-video**: First frame (first_frame) / first+last frame (first_frame+last_frame)
+- **Multimodal reference**: Combine images (0–9), videos (0–3), and audio (0–3)
+- **Video editing**: Replace subjects, add/remove/modify objects, local repaint/inpainting
+- **Video extension**: Extend forward/backward, chain multiple segments
+- **Web search**: Web search in text-only mode via web_search, improves timeliness
+- **Audio video**: generate_audio=true produces synchronized audio
+- **Return last frame**: return_last_frame=true retrieves the final frame of a video (for continuous generation)
 
-## Content 结构
+## Content Structure
 
-Ark API 使用 content 数组传递多模态输入：
+The Ark API uses a content array to pass multimodal inputs:
 
-| type | 子字段 | role | 说明 |
+| type | Sub-field | role | Description |
 |------|--------|------|------|
-| text | text | — | 文本提示词 |
-| image_url | image_url.url | first_frame | 首帧图片 |
-| image_url | image_url.url | last_frame | 尾帧图片 |
-| image_url | image_url.url | reference_image | 参考图片（2.0 多模态） |
-| video_url | video_url.url | reference_video | 参考视频（2.0 编辑/延长/多模态） |
-| audio_url | audio_url.url | reference_audio | 参考音频（2.0 多模态） |
+| text | text | — | Text prompt |
+| image_url | image_url.url | first_frame | First-frame image |
+| image_url | image_url.url | last_frame | Last-frame image |
+| image_url | image_url.url | reference_image | Reference image (2.0 multimodal) |
+| video_url | video_url.url | reference_video | Reference video (2.0 editing/extension/multimodal) |
+| audio_url | audio_url.url | reference_audio | Reference audio (2.0 multimodal) |
 
-**素材引用规则**: 提示词中使用"素材类型+序号"引用，如「图片1」「视频2」「音频1」。序号为同类素材在 content 数组中的排序（从1开始）。不支持用 Asset ID 指代素材。
+**Asset reference rules**: Reference assets in your prompt using "asset type + index", e.g. "image 1", "video 2", "audio 1". The index is the sequential order of that asset type within the content array (starting at 1). Asset IDs cannot be used to reference assets.
 
-## 提示词技巧
+## Prompt Tips
 
-### 基本公式
-**提示词 = 主体 + 运动，背景 + 运动，镜头 + 运动**
+### Basic Formula
+**Prompt = Subject + Motion, Background + Motion, Camera + Motion**
 
-### 通用建议
-- 用简洁准确的自然语言描述想要的效果
-- 将抽象描述换成具象描述，重要内容前置
-- 文生视频随机性较大，可用于激发灵感
-- 图生视频请尽量上传高清高质量图片
-- 如有明确预期，建议先生图再图生视频
+### General Advice
+- Use concise, precise natural language to describe the desired effect
+- Replace abstract descriptions with concrete ones; put important content first
+- Text-to-video has higher randomness — useful for inspiration
+- For image-to-video, upload high-resolution, high-quality images when possible
+- If you have a clear vision, consider generating an image first and then using image-to-video
 
-### 2.0 多模态参考公式
-- **图片参考**: 参考/提取/结合「图片n」中的「主体描述」，生成「画面描述」，保持特征一致
-- **视频参考**: 参考「视频n」的「动作/运镜/特效描述」，保持一致
-- **音频参考**: 音色 → 「角色」说:"「台词」"，音色参考「音频n」；内容 → 时机+「音频n」
+### 2.0 Multimodal Reference Formulas
+- **Image reference**: Reference/extract/combine the "subject description" from "image N", generate "scene description", maintain consistent features
+- **Video reference**: Reference the "action/camera movement/effect description" from "video N", maintain consistency
+- **Audio reference**: Voice → "[character]" says: "[dialogue]", voice reference from "audio N"; Content → timing + "audio N"
 
-### 2.0 视频编辑公式
-- **增加元素**: 描述「元素特征」+「出现时机」+「出现位置」
-- **删除元素**: 点明删除目标，强调保持不变的元素
-- **修改元素**: 清晰描述更换内容
+### 2.0 Video Editing Formulas
+- **Add element**: Describe "element features" + "timing of appearance" + "position"
+- **Remove element**: Specify the target to remove, emphasize elements that should stay unchanged
+- **Modify element**: Clearly describe what to replace it with
 
-### 2.0 视频延长公式
-- **单段延长**: 向前/向后延长「视频n」+「延长内容描述」
-- **多段串联**: 「视频1」+「过渡描述」+接「视频2」+「过渡描述」+接「视频3」
+### 2.0 Video Extension Formulas
+- **Single segment extend**: Extend "video N" forward/backward + "description of extended content"
+- **Multi-segment chain**: "video 1" + "transition description" + followed by "video 2" + "transition description" + followed by "video 3"
 
-## 参数参考
+## Parameters
 
-| 参数 | 类型 | 默认值 | 说明 |
+| Parameter | Type | Default | Description |
 |------|------|--------|------|
 | ratio | string | 16:9 | 16:9, 4:3, 1:1, 3:4, 9:16, 21:9, adaptive |
-| duration | int | 5 | 视频时长：2.0=4-15s, 1.5=4-12s, 1.0=2-12s |
+| duration | int | 5 | Video duration: 2.0=4–15s, 1.5=4–12s, 1.0=2–12s |
 | resolution | string | 720p | 480p, 720p (2.0); 480p, 720p, 1080p (1.x) |
-| generate_audio | bool | true | 生成同步音频 |
-| watermark | bool | false | 添加水印 |
-| seed | int | — | 随机种子（复现结果） |
-| camera_fixed | bool | false | 固定摄像头（1.x） |
-| draft | bool | false | 草稿模式，低成本预览（仅 1.5 Pro） |
-| return_last_frame | bool | false | 返回视频尾帧（用于连续生成） |
-| tools | array | — | [{"type":"web_search"}] 联网搜索（仅 2.0 纯文本） |
-| service_tier | string | default | default=在线推理, flex=离线推理半价（仅 1.5 Pro / 1.0 系列） |
-| execution_expires_after | int | 172800 | 离线任务超时秒数（flex 模式生效） |
-| callback_url | string | — | Webhook 回调 URL，任务状态变化时通知 |
+| generate_audio | bool | true | Generate synchronized audio |
+| watermark | bool | false | Add watermark |
+| seed | int | — | Random seed (for reproducibility) |
+| camera_fixed | bool | false | Fix camera position (1.x) |
+| draft | bool | false | Draft mode, low-cost preview (1.5 Pro only) |
+| return_last_frame | bool | false | Return the last frame of the video (for continuous generation) |
+| tools | array | — | [{"type":"web_search"}] web search (2.0 text-only mode) |
+| service_tier | string | default | default=online inference, flex=offline inference at half price (1.5 Pro / 1.0 series only) |
+| execution_expires_after | int | 172800 | Offline task timeout in seconds (applies in flex mode) |
+| callback_url | string | — | Webhook callback URL; notified when task status changes |
 
-## 进阶用法
+## Advanced Usage
 
-### 离线推理（半价）
-设置 service_tier="flex"，价格仅为在线推理的 50%。仅 1.5 Pro 和 1.0 系列模型支持，2.0 不支持。适合时延不敏感的批量生成场景。
+### Offline Inference (Half Price)
+Set service_tier="flex" for 50% off compared to online inference. Supported by 1.5 Pro and 1.0 series models only; not available for 2.0. Best for batch generation where latency is not a concern.
 
-### 样片模式（两步走）
-1. draft=true 生成低成本预览视频，验证构图/镜头/动作
-2. 确认后用 draft 视频 URL 作为 reference_video 生成正式视频
+### Draft Mode (Two-Step Workflow)
+1. Generate a low-cost preview video with draft=true to validate composition, camera movement, and motion.
+2. After confirmation, use the draft video URL as reference_video to generate the final video.
 
-### 连续视频生成
-设置 return_last_frame=true，用前一个视频的尾帧作为下一个视频的首帧，循环生成多段连续视频。可用 FFmpeg 拼接成长视频。
+### Continuous Video Generation
+Set return_last_frame=true and use the last frame of the previous video as the first frame of the next, iterating to produce multiple continuous segments. Use FFmpeg to concatenate them into a longer video.
 
-## 使用限制
+## Usage Limits
 
-- **图片**: jpeg/png/webp/bmp/tiff/gif/heic/heif, 300-6000px, <30MB, 宽高比 0.4-2.5
-- **视频**: mp4/mov, 2-15s/个, 最多3个, 总时长≤15s, <50MB/个
-- **音频**: wav/mp3, 2-15s/个, 最多3个, 总时长≤15s, <15MB/个
-- **不支持组合**: "文本+音频"、"纯音频"输入
-- **视频 URL 24h 过期**, 需立即下载
-- **2.0 不支持上传含真人人脸的参考图/视频**, 可用虚拟人像(asset://ASSET_ID)
+- **Images**: jpeg/png/webp/bmp/tiff/gif/heic/heif, 300–6000px, <30MB, aspect ratio 0.4–2.5
+- **Videos**: mp4/mov, 2–15s each, up to 3 videos, total duration ≤15s, <50MB each
+- **Audio**: wav/mp3, 2–15s each, up to 3 files, total duration ≤15s, <15MB each
+- **Unsupported combinations**: "text + audio" or "audio only" inputs
+- **Video URLs expire in 24 hours** — download immediately
+- **2.0 does not support uploading reference images/videos containing real human faces** — use virtual avatars (asset://ASSET_ID)
 
-## 预置脚本
+## Pre-built Scripts
 
-本 skill 提供 Python CLI（纯 stdlib，零依赖）：`scripts/seedance.py`
+This skill provides a Python CLI (pure stdlib, zero dependencies): `scripts/seedance.py`
 
 ```bash
-# 文生视频
-python3 scripts/seedance.py create --prompt "小猫打哈欠" --wait --download ~/Desktop
+# Text-to-video
+python3 scripts/seedance.py create --prompt "cat yawning" --wait --download ~/Desktop
 
-# 图生视频（首帧）
-python3 scripts/seedance.py create --prompt "人物转头微笑" --image photo.jpg --wait
+# Image-to-video (first frame)
+python3 scripts/seedance.py create --prompt "person turns head and smiles" --image photo.jpg --wait
 
-# 多模态参考（2.0）
-python3 scripts/seedance.py create --prompt "参考图片1的风格" \
+# Multimodal reference (2.0)
+python3 scripts/seedance.py create --prompt "reference the style in image 1" \
   --ref-images style.jpg --ref-videos clip.mp4 --ref-audios bgm.mp3 --wait
 
-# 视频编辑（2.0）
-python3 scripts/seedance.py create --prompt "将视频1中的猫替换为狗" \
+# Video editing (2.0)
+python3 scripts/seedance.py create --prompt "replace the cat in video 1 with a dog" \
   --ref-videos original.mp4 --wait
 
-# 视频延长（2.0）
-python3 scripts/seedance.py create --prompt "视频1结束后接视频2" \
+# Video extension (2.0)
+python3 scripts/seedance.py create --prompt "continue video 1 and transition into video 2" \
   --ref-videos clip1.mp4 clip2.mp4 --duration 10 --wait
 
-# 联网搜索
-python3 scripts/seedance.py create --prompt "玻璃蛙微距特写" --web-search --wait
+# Web search
+python3 scripts/seedance.py create --prompt "glass frog macro close-up" --web-search --wait
 
-# 离线推理（半价，仅 1.5 Pro / 1.0 系列）
-python3 scripts/seedance.py create --prompt "日落海滩" \
+# Offline inference (half price, 1.5 Pro / 1.0 series only)
+python3 scripts/seedance.py create --prompt "sunset beach" \
   --model doubao-seedance-1-5-pro-251215 --service-tier flex --wait
 
-# 连续视频链式生成（自动用尾帧串接）
+# Continuous video chain generation (auto-stitches via last frame)
 python3 scripts/seedance.py chain \
-  "女孩抱着狐狸，温柔地看向镜头" \
-  "女孩和狐狸在草地上奔跑" \
-  "女孩和狐狸坐在树下休息" \
+  "girl holding a fox, gazing gently at the camera" \
+  "girl and fox running through a meadow" \
+  "girl and fox resting under a tree" \
   --image first_frame.jpg --download ~/Desktop
 
-# 查询/列表/删除
+# Query / list / delete
 python3 scripts/seedance.py status <TASK_ID>
 python3 scripts/seedance.py list
 python3 scripts/seedance.py delete <TASK_ID>

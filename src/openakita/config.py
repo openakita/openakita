@@ -1,5 +1,5 @@
 """
-OpenAkita 配置模块
+OpenAkita configuration module
 """
 
 import logging
@@ -15,104 +15,104 @@ logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
-    """应用配置"""
+    """Application configuration"""
 
     # Anthropic API
     anthropic_api_key: str = Field(default="", description="Anthropic API Key")
     anthropic_base_url: str = Field(
         default="https://api.anthropic.com",
-        description="Anthropic API Base URL (支持云雾AI等转发服务)",
+        description="Anthropic API Base URL (supports forwarding services like Yunwu AI)",
     )
     default_model: str = Field(
-        default="claude-opus-4-5-20251101-thinking", description="默认使用的模型"
+        default="claude-opus-4-5-20251101-thinking", description="Default model to use"
     )
     max_tokens: int = Field(
         default=0,
-        description="最大输出 token 数 (0=不限制，使用模型默认上限；仅 Anthropic API 强制要求此参数时才会自动使用兜底值)",
+        description="Maximum output tokens (0=unlimited, use model default; fallback value is only used when the Anthropic API requires this parameter)",
     )
 
-    # Agent 配置
-    agent_name: str = Field(default="OpenAkita", description="Agent 名称")
+    # Agent configuration
+    agent_name: str = Field(default="OpenAkita", description="Agent name")
     max_iterations: int = Field(
         default=30,
         ge=5,
-        description="Ralph 循环最大迭代次数（最小值 5，推荐 20~50）",
+        description="Max iterations for the Ralph loop (minimum 5, recommended 20~50)",
     )
 
-    # Plan 模式建议阈值（ComplexitySignal.score 达到此值时建议用户使用 Plan 模式）
+    # Plan mode suggestion threshold (when ComplexitySignal.score reaches this value, suggest Plan mode to the user)
     plan_suggest_threshold: int = Field(
         default=5,
         ge=2,
         le=10,
-        description="复杂度评分达到该阈值时建议 Plan 模式（2~10，越高越不容易触发建议）",
+        description="Suggest Plan mode when complexity score reaches this threshold (2~10, higher = less likely to trigger suggestion)",
     )
 
-    # 自检配置
+    # Self-check configuration
     selfcheck_autofix: bool = Field(
         default=True,
-        description="自检时是否执行自动修复（设为 false 则只分析不修复）",
+        description="Whether to auto-fix during self-check (set to false for analysis-only without repairs)",
     )
 
-    # === 任务超时策略 ===
-    # 目标：避免“卡死”而不是限制长任务。推荐使用“无进展超时”。
-    # - progress_timeout_seconds: 若连续超过该时间没有任何进展（LLM返回/工具完成/迭代推进），视为卡死。
-    # - hard_timeout_seconds: 可选硬上限（默认关闭=0）。仅作为最终兜底，避免无限任务。
+    # === Task timeout strategy ===
+    # Goal: avoid hangs rather than limiting long tasks. Prefer "no-progress timeout".
+    # - progress_timeout_seconds: if no progress (LLM return / tool completion / iteration advance) for this duration, consider it hung.
+    # - hard_timeout_seconds: optional hard cap (default disabled=0). Only as a final safety net against infinite tasks.
     progress_timeout_seconds: int = Field(
         default=1200,
-        description="无进展超时阈值（秒）。超过该时间无进展则触发超时处理（默认 1200）",
+        description="No-progress timeout threshold (seconds). Trigger timeout handling when no progress for this long (default 1200)",
     )
     hard_timeout_seconds: int = Field(
         default=0,
-        description="硬超时上限（秒，0=禁用）。仅作为最终兜底，避免无限任务",
+        description="Hard timeout cap (seconds, 0=disabled). Only as a final safety net against infinite tasks",
     )
 
-    # === ForceToolCall（工具护栏）===
-    # 当模型在“可能需要工具”的任务中只给文本不调用工具时，Agent 可追问 1 次以推动工具调用。
-    # 设为 0 可完全关闭该行为（推荐 IM 闲聊/客服式对话场景）。
+    # === ForceToolCall (tool guardrail) ===
+    # When the model returns only text without calling tools on a "likely needs tool" task, Agent can nudge once to push a tool call.
+    # Set to 0 to disable entirely (recommended for IM chitchat / customer service style conversations).
     force_tool_call_max_retries: int = Field(
         default=2,
-        description="当模型未调用工具时，最多追问要求调用工具的次数（0=禁用，信任模型自主判断）",
+        description="Max number of nudges asking the model to call a tool when it doesn't (0=disabled, trust the model's judgment)",
     )
     force_tool_call_im_floor: int = Field(
         default=2,
-        description="IM 通道的 ForceToolCall 最低重试次数（0=与全局一致，不强制下限）",
+        description="Minimum ForceToolCall retry count for IM channels (0=same as global, no floor enforced)",
     )
     confirmation_text_max_retries: int = Field(
         default=2,
-        description="工具执行后无可见文本时的最大追问次数（0=禁用）",
+        description="Max follow-up retries when no visible text after tool execution (0=disabled)",
     )
 
-    # === 工具并行执行 ===
-    # 单轮模型返回多个 tool_use/tool_calls 时，Agent 可选择并行执行工具以提升吞吐。
-    # 默认 1：保持现有串行语义（最安全，尤其是带“思维链连续性”的工具链）。
+    # === Parallel tool execution ===
+    # When the model returns multiple tool_use/tool_calls in one turn, Agent may execute tools in parallel to boost throughput.
+    # Default 1: preserve existing serial semantics (safest, especially for "chain-of-thought continuity" tool chains).
     tool_max_parallel: int = Field(
         default=1,
-        description="单轮并行工具调用最大并发数（默认 1=串行；>1 启用并行）",
+        description="Max concurrent tool calls per turn (default 1=serial; >1 enables parallel)",
     )
 
     allow_parallel_tools_with_interrupt_checks: bool = Field(
         default=False,
-        description="是否允许在启用“工具间中断检查”时也并行执行工具（会降低中断插入粒度，默认关闭）",
+        description="Whether to allow parallel tool execution even when inter-tool interrupt checks are enabled (reduces interrupt insertion granularity, default disabled)",
     )
 
-    # === 工具常驻加载 ===
+    # === Persistent tool loading ===
     always_load_tools: list = Field(
         default_factory=list,
-        description="用户指定的常驻工具名列表，不会被 defer（如 browser_navigate, edit_notebook）",
+        description="User-specified always-loaded tool names, never deferred (e.g. browser_navigate, edit_notebook)",
     )
     always_load_categories: list = Field(
         default_factory=list,
-        description="用户指定的常驻工具分类（如 Browser, MCP），该分类下所有工具不 defer",
+        description="User-specified always-loaded tool categories (e.g. Browser, MCP); all tools in this category will not be deferred",
     )
 
-    # Thinking 模式配置
+    # Thinking mode configuration
     thinking_mode: str = Field(
         default="auto",
-        description="Thinking 模式: auto(自动判断), always(始终启用), never(从不启用)",
+        description="Thinking mode: auto (auto-detect), always (always on), never (never on)",
     )
     im_chain_push: bool = Field(
         default=False,
-        description="IM 通道是否推送思维链进度（💭思考过程、工具调用等）给用户，关闭不影响内部保存。默认关闭以减少刷屏",
+        description="Whether IM channels push chain-of-thought progress (thinking process, tool calls, etc.) to the user; disabling does not affect internal saving. Default disabled to reduce noise",
     )
     thinking_keywords: list = Field(
         default_factory=lambda: [
@@ -137,97 +137,123 @@ class Settings(BaseSettings):
             "plan",
             "design",
         ],
-        description="触发 thinking 模式的关键词",
+        description="Keywords that trigger thinking mode",
     )
 
-    # 路径配置
+    # Path configuration
     project_root: Path = Field(
-        default_factory=lambda: Path.cwd(), description="项目根目录 (默认为当前工作目录)"
+        default_factory=lambda: Path.cwd(), description="Project root directory (defaults to current working directory)"
     )
-    database_path: str = Field(default="data/agent.db", description="数据库路径")
+    database_path: str = Field(default="data/agent.db", description="Database path")
 
-    # === 日志配置 ===
-    log_level: str = Field(default="INFO", description="日志级别")
-    log_dir: str = Field(default="logs", description="日志目录")
-    log_file_prefix: str = Field(default="openakita", description="日志文件前缀")
-    log_max_size_mb: int = Field(default=10, description="单个日志文件最大大小（MB）")
-    log_backup_count: int = Field(default=30, description="保留的日志文件数量")
-    log_retention_days: int = Field(default=30, description="日志保留天数")
+    # === Logging configuration ===
+    log_level: str = Field(default="INFO", description="Log level")
+    log_dir: str = Field(default="logs", description="Log directory")
+    log_file_prefix: str = Field(default="openakita", description="Log file prefix")
+    log_max_size_mb: int = Field(default=10, description="Max size per log file (MB)")
+    log_backup_count: int = Field(default=30, description="Number of log files to retain")
+    log_retention_days: int = Field(default=30, description="Log retention days")
     log_format: str = Field(
-        default="%(asctime)s - %(name)s - %(levelname)s - %(message)s", description="日志格式"
+        default="%(asctime)s - %(name)s - %(levelname)s - %(message)s", description="Log format"
     )
-    log_to_console: bool = Field(default=True, description="是否输出到控制台")
-    log_to_file: bool = Field(default=True, description="是否输出到文件")
+    log_to_console: bool = Field(default=True, description="Whether to output to console")
+    log_to_file: bool = Field(default=True, description="Whether to output to file")
 
-    # === Whisper 语音识别 ===
+    # === Whisper speech recognition ===
     whisper_enabled: bool = Field(
         default=False,
-        description="是否启用本地 Whisper 语音识别（模型较大，占用内存高；关闭后使用在线 STT）",
+        description="Whether to enable local Whisper speech recognition (large model, high memory usage; falls back to online STT when disabled)",
     )
     whisper_model: str = Field(
-        default="base", description="Whisper 模型 (tiny/base/small/medium/large)"
+        default="base", description="Whisper model (tiny/base/small/medium/large)"
     )
     whisper_language: str = Field(
         default="zh",
         description=(
-            "Whisper 语音识别语言: "
-            "zh(中文) | en(英文，自动使用更小更快的 .en 模型) | "
-            "auto(自动检测语言) | 其他语言代码"
+            "Whisper speech recognition language: "
+            "zh (Chinese) | en (English, automatically uses smaller/faster .en model) | "
+            "auto (auto-detect) | other language codes"
         ),
     )
 
-    # === 全局代理配置 ===
-    # 用于 LLM API 请求的代理（如果透明代理不生效）
-    http_proxy: str = Field(default="", description="HTTP 代理地址 (如 http://127.0.0.1:7890)")
-    https_proxy: str = Field(default="", description="HTTPS 代理地址 (如 http://127.0.0.1:7890)")
-    all_proxy: str = Field(default="", description="全局代理地址（优先级高于 http/https proxy）")
+    # === Global proxy configuration ===
+    # Proxy for LLM API requests (when transparent proxy does not work)
+    http_proxy: str = Field(default="", description="HTTP proxy URL (e.g. http://127.0.0.1:7890)")
+    https_proxy: str = Field(default="", description="HTTPS proxy URL (e.g. http://127.0.0.1:7890)")
+    all_proxy: str = Field(default="", description="Global proxy URL (takes priority over http/https proxy)")
 
-    # === IPv4 强制模式 ===
-    # 某些 VPN（如 LetsTAP）不支持 IPv6，启用此选项强制使用 IPv4
+    # === Force IPv4 mode ===
+    # Some VPNs (e.g. LetsTAP) do not support IPv6; enable this option to force IPv4
     force_ipv4: bool = Field(
-        default=False, description="强制使用 IPv4（解决某些 VPN 的 IPv6 兼容性问题）"
+        default=False, description="Force IPv4 (works around IPv6 compatibility issues with certain VPNs)"
     )
 
-    # === 模型下载源配置 ===
-    # 本地 embedding 模型从 HuggingFace 下载，国内可能很慢
-    # 支持: auto(自动选择) | huggingface(官方) | hf-mirror(国内镜像) | modelscope(魔搭社区)
+    # === Model download source configuration ===
+    # Local embedding models are downloaded from HuggingFace, which may be slow in some regions
+    # Supports: auto (auto-select) | huggingface (official) | hf-mirror (China mirror) | modelscope
     model_download_source: str = Field(
         default="auto",
-        description="模型下载源: auto(自动选择最快源) | huggingface | hf-mirror | modelscope",
+        description="Model download source: auto (pick fastest) | huggingface | hf-mirror | modelscope",
     )
 
-    # === Embedding 模型配置 ===
+    # === Embedding model configuration ===
     embedding_model: str = Field(
         default="shibing624/text2vec-base-chinese",
-        description="Embedding 模型名称 (如 shibing624/text2vec-base-chinese)",
+        description="Embedding model name (e.g. shibing624/text2vec-base-chinese)",
     )
     embedding_device: str = Field(
         default="cpu",
-        description="Embedding 模型运行设备 (cpu 或 cuda)",
+        description="Embedding model runtime device (cpu or cuda)",
     )
 
-    # === 搜索后端配置 (v2) ===
+    # === Search backend configuration (v2) ===
     search_backend: str = Field(
         default="fts5",
-        description="记忆搜索后端: fts5(默认,零依赖) | chromadb(可选,本地向量) | api_embedding(可选,在线API)",
+        description="Memory search backend: fts5 (default, zero-deps) | chromadb (optional, local vector) | api_embedding (optional, online API)",
     )
     embedding_api_provider: str = Field(
         default="",
-        description="在线 Embedding API 提供商: dashscope | openai (仅 search_backend=api_embedding 时需要)",
+        description="Online embedding API provider: dashscope | openai (only required when search_backend=api_embedding)",
     )
     embedding_api_key: str = Field(
         default="",
-        description="在线 Embedding API Key (仅 search_backend=api_embedding 时需要)",
+        description="Online embedding API key (only required when search_backend=api_embedding)",
     )
     embedding_api_model: str = Field(
         default="text-embedding-v3",
-        description="在线 Embedding 模型名称 (如 text-embedding-v3, text-embedding-3-small)",
+        description="Online embedding model name (e.g. text-embedding-v3, text-embedding-3-small)",
     )
 
-    # === 记忆系统配置 ===
-    memory_history_days: int = Field(default=30, description="记忆保留天数")
-    memory_max_history_files: int = Field(default=1000, description="最大历史文件数")
-    memory_max_history_size_mb: int = Field(default=500, description="历史文件最大总大小(MB)")
+    # === Memory system configuration ===
+    memory_history_days: int = Field(default=30, description="Memory retention days")
+    memory_max_history_files: int = Field(default=1000, description="Max number of history files")
+    memory_max_history_size_mb: int = Field(default=500, description="Max total size of history files (MB)")
+
+    # === Web Search configuration ===
+    search_provider: str = Field(
+        default="auto",
+        description=(
+            "Web search provider: "
+            "auto (auto-select, recommended) | ddgs (DuckDuckGo, no key required) | "
+            "brave (Brave Search) | tavily (Tavily) | exa (Exa)"
+        ),
+    )
+    search_fallback_enabled: bool = Field(
+        default=True,
+        description="Whether to auto-fall back to the next available provider on search failure (final fallback is DuckDuckGo)",
+    )
+    brave_api_key: str = Field(
+        default="",
+        description="Brave Search API Key (https://api.search.brave.com/)",
+    )
+    tavily_api_key: str = Field(
+        default="",
+        description="Tavily Search API Key (https://tavily.com/)",
+    )
+    exa_api_key: str = Field(
+        default="",
+        description="Exa Search API Key (https://exa.ai/)",
+    )
 
     # GitHub
     github_token: str = Field(default="", description="GitHub Token")
@@ -235,263 +261,263 @@ class Settings(BaseSettings):
     # DashScope API Key (used by image generation tool)
     dashscope_api_key: str = Field(default="", description="DashScope API Key")
 
-    # DashScope 图像生成 (Qwen-Image) - 同一 Key，不同接口
+    # DashScope image generation (Qwen-Image) - same key, different endpoint
     dashscope_image_api_url: str = Field(
         default="https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
-        description="DashScope Qwen-Image 同步接口 URL（默认北京地域）",
+        description="DashScope Qwen-Image synchronous endpoint URL (defaults to Beijing region)",
     )
 
-    # === MCP 配置 ===
-    mcp_enabled: bool = Field(default=True, description="是否启用 MCP (Model Context Protocol)")
-    mcp_timeout: int = Field(default=60, description="MCP 工具调用超时时间（秒），默认 60 秒")
+    # === MCP configuration ===
+    mcp_enabled: bool = Field(default=True, description="Whether to enable MCP (Model Context Protocol)")
+    mcp_timeout: int = Field(default=60, description="MCP tool call timeout (seconds), default 60")
     mcp_connect_timeout: int = Field(
-        default=30, description="MCP 服务器连接超时时间（秒），默认 30 秒"
+        default=30, description="MCP server connection timeout (seconds), default 30"
     )
-    mcp_auto_connect: bool = Field(default=False, description="启动时是否自动连接所有 MCP 服务器")
+    mcp_auto_connect: bool = Field(default=False, description="Whether to auto-connect to all MCP servers on startup")
 
-    # === 调度器配置 ===
-    scheduler_timezone: str = Field(default="Asia/Shanghai", description="调度器时区")
+    # === Scheduler configuration ===
+    scheduler_timezone: str = Field(default="Asia/Shanghai", description="Scheduler timezone")
     scheduler_task_timeout: int = Field(
-        default=1200, description="定时任务执行超时时间（秒），默认 1200 秒（20分钟）"
+        default=1200, description="Scheduled task execution timeout (seconds), default 1200 (20 minutes)"
     )
 
-    # === 记忆整理配置 ===
+    # === Memory consolidation configuration ===
     memory_consolidation_onboarding_days: int = Field(
         default=7,
-        description="新用户适应期天数，期间记忆整理频率提高（默认 7 天）",
+        description="New-user onboarding period in days, during which memory consolidation runs more frequently (default 7 days)",
     )
     memory_consolidation_onboarding_interval_hours: int = Field(
         default=3,
-        description="适应期内记忆整理间隔（小时，默认 3 小时）",
+        description="Memory consolidation interval during onboarding (hours, default 3)",
     )
 
-    # === 记忆模式 ===
-    # mode1: 碎片化记忆 — 基于实体-属性的语义记忆片段，适合简单偏好/事实存储，
-    #         检索快但缺乏跨会话关联能力。
-    # mode2: 关系型图谱 — 多维度(时间/因果/实体/动作/上下文)交织的图结构记忆，
-    #         支持因果推理、时间线回溯、跨会话实体追踪，适合复杂长期交互。
-    # auto:  自动选择 — 根据查询特征(是否涉及因果、时间线、跨会话、实体追踪)
-    #         智能路由到 mode1 或 mode2，兼顾两者优势。
+    # === Memory mode ===
+    # mode1: Fragment memory — entity-attribute-based semantic memory fragments,
+    #         good for simple preferences / facts, fast retrieval but lacks cross-session association.
+    # mode2: Relational graph — multi-dimensional (time/causality/entity/action/context) interwoven graph memory,
+    #         supports causal reasoning, timeline traceback, cross-session entity tracking, suited for complex long-term interactions.
+    # auto:  Auto-select — intelligently routes to mode1 or mode2 based on query features (causality, timeline,
+    #         cross-session, entity tracking), combining the strengths of both.
     memory_mode: str = Field(
         default="auto",
-        description="记忆模式: mode1(碎片化) / mode2(关系型图谱) / auto(自动选择，推荐)",
+        description="Memory mode: mode1 (fragment) / mode2 (relational graph) / auto (auto-select, recommended)",
     )
     mdrm_max_hops: int = Field(
         default=3,
-        description="图遍历最大跳数",
+        description="Max hops for graph traversal",
     )
     mdrm_consolidation_enabled: bool = Field(
         default=True,
-        description="是否启用关系型记忆整合",
+        description="Whether to enable relational memory consolidation",
     )
     mdrm_backfill_on_first_enable: bool = Field(
         default=True,
-        description="首次启用 mode2/auto 时回填模式 1 历史数据",
+        description="Backfill mode1 historical data on first enabling mode2/auto",
     )
 
-    # === 群聊响应策略 ===
+    # === Group chat response strategy ===
     group_response_mode: str = Field(
         default="mention_only",
-        description="群聊响应模式: always(全响应) / mention_only(仅@时响应，默认) / smart(AI判断)",
+        description="Group chat response mode: always (respond to all) / mention_only (respond only when @mentioned, default) / smart (AI decides)",
     )
 
-    # === 通道配置 ===
+    # === Channel configuration ===
     # Telegram
-    telegram_enabled: bool = Field(default=False, description="是否启用 Telegram")
+    telegram_enabled: bool = Field(default=False, description="Whether to enable Telegram")
     telegram_bot_token: str = Field(default="", description="Telegram Bot Token")
     telegram_webhook_url: str = Field(default="", description="Telegram Webhook URL")
-    telegram_pairing_code: str = Field(default="", description="Telegram 配对码（留空则自动生成）")
-    telegram_require_pairing: bool = Field(default=True, description="是否需要配对验证")
+    telegram_pairing_code: str = Field(default="", description="Telegram pairing code (auto-generated if empty)")
+    telegram_require_pairing: bool = Field(default=True, description="Whether pairing verification is required")
     telegram_proxy: str = Field(
         default="",
-        description="Telegram 代理地址 (如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080)",
+        description="Telegram proxy URL (e.g. http://127.0.0.1:7890 or socks5://127.0.0.1:1080)",
     )
 
-    # 飞书
-    feishu_enabled: bool = Field(default=False, description="是否启用飞书")
-    feishu_app_id: str = Field(default="", description="飞书 App ID")
-    feishu_app_secret: str = Field(default="", description="飞书 App Secret")
+    # Feishu
+    feishu_enabled: bool = Field(default=False, description="Whether to enable Feishu")
+    feishu_app_id: str = Field(default="", description="Feishu App ID")
+    feishu_app_secret: str = Field(default="", description="Feishu App Secret")
 
-    # 企业微信（智能机器人 — HTTP 回调模式）
-    wework_enabled: bool = Field(default=False, description="是否启用企业微信（HTTP 回调模式）")
-    wework_corp_id: str = Field(default="", description="企业微信 Corp ID")
-    wework_token: str = Field(default="", description="企业微信回调 Token")
-    wework_encoding_aes_key: str = Field(default="", description="企业微信回调加密 AES Key")
-    wework_callback_port: int = Field(default=9880, description="企业微信回调服务端口")
-    wework_callback_host: str = Field(default="0.0.0.0", description="企业微信回调服务绑定地址")
+    # WeCom (smart bot — HTTP callback mode)
+    wework_enabled: bool = Field(default=False, description="Whether to enable WeCom (HTTP callback mode)")
+    wework_corp_id: str = Field(default="", description="WeCom Corp ID")
+    wework_token: str = Field(default="", description="WeCom callback Token")
+    wework_encoding_aes_key: str = Field(default="", description="WeCom callback encryption AES Key")
+    wework_callback_port: int = Field(default=9880, description="WeCom callback service port")
+    wework_callback_host: str = Field(default="0.0.0.0", description="WeCom callback service bind address")
 
-    # 企业微信（智能机器人 — WebSocket 长连接模式）
-    wework_ws_enabled: bool = Field(default=False, description="是否启用企业微信 WebSocket 长连接")
-    wework_ws_bot_id: str = Field(default="", description="企业微信机器人 ID（后台获取）")
-    wework_ws_secret: str = Field(default="", description="企业微信机器人 Secret（后台获取）")
+    # WeCom (smart bot — WebSocket persistent connection mode)
+    wework_ws_enabled: bool = Field(default=False, description="Whether to enable WeCom WebSocket persistent connection")
+    wework_ws_bot_id: str = Field(default="", description="WeCom bot ID (obtained from console)")
+    wework_ws_secret: str = Field(default="", description="WeCom bot Secret (obtained from console)")
     wework_ws_thinking_indicator: bool = Field(
-        default=True, description="收到消息后立即发送'思考中'流式首帧提示"
+        default=True, description="Send 'thinking' streaming first frame immediately upon receiving a message"
     )
     wework_ws_msg_item_images: bool = Field(
         default=False,
-        description="流式回复中使用 msg_item 发送图片（当前企业微信版本可能不渲染，默认关闭）",
+        description="Use msg_item to send images in streaming replies (current WeCom versions may not render; default disabled)",
     )
     wework_ws_webhook_url: str = Field(
         default="",
-        description="企业微信群机器人 Webhook URL（用于 WS 模式下发送图片/语音/文件）",
+        description="WeCom group bot webhook URL (used in WS mode to send images/voice/files)",
     )
 
-    # 钉钉
-    dingtalk_enabled: bool = Field(default=False, description="是否启用钉钉")
-    dingtalk_client_id: str = Field(default="", description="钉钉 Client ID（原 App Key）")
+    # DingTalk
+    dingtalk_enabled: bool = Field(default=False, description="Whether to enable DingTalk")
+    dingtalk_client_id: str = Field(default="", description="DingTalk Client ID (formerly App Key)")
     dingtalk_client_secret: str = Field(
-        default="", description="钉钉 Client Secret（原 App Secret）"
+        default="", description="DingTalk Client Secret (formerly App Secret)"
     )
 
-    # OneBot 协议（通用）
-    onebot_enabled: bool = Field(default=False, description="是否启用 OneBot")
+    # OneBot protocol (generic)
+    onebot_enabled: bool = Field(default=False, description="Whether to enable OneBot")
     onebot_mode: str = Field(
         default="reverse",
-        description="OneBot 连接模式: reverse（反向WS，推荐）或 forward（正向WS）",
+        description="OneBot connection mode: reverse (reverse WS, recommended) or forward (forward WS)",
     )
     onebot_ws_url: str = Field(
-        default="ws://127.0.0.1:8080", description="OneBot 正向 WS 地址（仅 forward 模式）"
+        default="ws://127.0.0.1:8080", description="OneBot forward WS URL (forward mode only)"
     )
-    onebot_reverse_host: str = Field(default="0.0.0.0", description="OneBot 反向 WS 监听地址")
-    onebot_reverse_port: int = Field(default=6700, description="OneBot 反向 WS 监听端口")
-    onebot_access_token: str = Field(default="", description="OneBot 访问令牌（可选）")
+    onebot_reverse_host: str = Field(default="0.0.0.0", description="OneBot reverse WS listen host")
+    onebot_reverse_port: int = Field(default=6700, description="OneBot reverse WS listen port")
+    onebot_access_token: str = Field(default="", description="OneBot access token (optional)")
 
-    # QQ 官方机器人
-    qqbot_enabled: bool = Field(default=False, description="是否启用 QQ 官方机器人")
-    qqbot_app_id: str = Field(default="", description="QQ 机器人 AppID")
-    qqbot_app_secret: str = Field(default="", description="QQ 机器人 AppSecret")
-    qqbot_sandbox: bool = Field(default=False, description="是否使用沙箱环境")
+    # QQ official bot
+    qqbot_enabled: bool = Field(default=False, description="Whether to enable QQ official bot")
+    qqbot_app_id: str = Field(default="", description="QQ bot AppID")
+    qqbot_app_secret: str = Field(default="", description="QQ bot AppSecret")
+    qqbot_sandbox: bool = Field(default=False, description="Whether to use the sandbox environment")
     qqbot_mode: str = Field(
         default="websocket",
-        description="QQ 机器人接入模式: websocket (默认，无需公网) 或 webhook (需要公网IP/域名)",
+        description="QQ bot connection mode: websocket (default, no public network needed) or webhook (requires public IP/domain)",
     )
-    qqbot_webhook_port: int = Field(default=9890, description="QQ Webhook 回调服务端口")
-    qqbot_webhook_path: str = Field(default="/qqbot/callback", description="QQ Webhook 回调路径")
+    qqbot_webhook_port: int = Field(default=9890, description="QQ Webhook callback service port")
+    qqbot_webhook_path: str = Field(default="/qqbot/callback", description="QQ Webhook callback path")
 
-    # 微信个人号 (iLink Bot API)
-    wechat_enabled: bool = Field(default=False, description="是否启用微信个人号")
-    wechat_token: str = Field(default="", description="微信 iLink Bot Token（扫码登录获取）")
+    # WeChat personal account (iLink Bot API)
+    wechat_enabled: bool = Field(default=False, description="Whether to enable WeChat personal account")
+    wechat_token: str = Field(default="", description="WeChat iLink Bot Token (obtained via QR code login)")
 
-    # === 会话配置 ===
-    session_timeout_minutes: int = Field(default=30, description="会话超时时间（分钟）")
-    session_max_history: int = Field(default=50, description="会话最大历史消息数")
-    session_storage_path: str = Field(default="data/sessions", description="会话存储路径")
+    # === Session configuration ===
+    session_timeout_minutes: int = Field(default=30, description="Session timeout (minutes)")
+    session_max_history: int = Field(default=50, description="Max session history messages")
+    session_storage_path: str = Field(default="data/sessions", description="Session storage path")
 
-    # === 多 Agent 模式 (Beta) ===
+    # === Multi-agent mode (Beta) ===
     multi_agent_enabled: bool = Field(
         default=True,
-        description="多Agent模式 (Beta)，开启后支持多Agent协作、专用Agent、IM多Bot等",
+        description="Multi-agent mode (Beta); when enabled, supports multi-agent collaboration, specialized agents, IM multi-bot, etc.",
     )
     coordinator_mode_enabled: bool = Field(
         default=False,
-        description="协调者模式 (CC-3)：启用后，role=coordinator 的 Agent 仅能委派/规划，不能直接执行文件/命令操作",
+        description="Coordinator mode (CC-3): when enabled, role=coordinator agents can only delegate/plan and cannot directly execute file/command operations",
     )
 
-    # IM 多 Bot 配置（多Agent模式下支持同一通道类型多个Bot实例）
+    # IM multi-bot configuration (supports multiple bot instances per channel type in multi-agent mode)
     im_bots: list[dict] = Field(default_factory=list)
 
-    # === 人格系统配置 ===
+    # === Persona system configuration ===
     persona_name: str = Field(
         default="default",
-        description="当前激活的人格预设名称 (default/business/tech_expert/butler/girlfriend/boyfriend/family/jarvis)",
+        description="Currently active persona preset name (default/business/tech_expert/butler/girlfriend/boyfriend/family/jarvis)",
     )
 
-    # === 记忆回顾（Memory Nudge）配置 ===
+    # === Memory Nudge configuration ===
     memory_nudge_enabled: bool = Field(
         default=True,
-        description="是否启用周期性记忆回顾（每 N 轮对话后用 LLM 审视对话并提取值得记忆的内容）",
+        description="Whether to enable periodic memory review (after every N turns, use LLM to review the conversation and extract memory-worthy content)",
     )
     memory_nudge_interval: int = Field(
         default=10,
-        description="每隔多少轮对话触发一次记忆回顾（0 表示禁用）",
+        description="Trigger memory review every N turns (0 = disabled)",
     )
 
-    # === Smart Approval 配置 ===
+    # === Smart Approval configuration ===
     smart_approval_enabled: bool = Field(
         default=False,
-        description="是否启用 LLM 辅助风险评估（对 CONFIRM 级操作用 LLM 做预判）",
+        description="Whether to enable LLM-assisted risk assessment (use LLM to pre-judge CONFIRM-level operations)",
     )
 
-    # === Docker 执行后端配置 ===
+    # === Docker execution backend configuration ===
     docker_backend_enabled: bool = Field(
         default=False,
-        description="是否启用 Docker 容器执行后端（需要本机安装 Docker）",
+        description="Whether to enable Docker container execution backend (requires Docker installed locally)",
     )
     docker_image: str = Field(
         default="python:3.12-slim",
-        description="Docker 执行后端使用的镜像",
+        description="Docker image used by the execution backend",
     )
     docker_network: str = Field(
         default="none",
-        description="Docker 网络模式: none(断网) | bridge(默认桥接) | host",
+        description="Docker network mode: none (offline) | bridge (default bridge) | host",
     )
 
-    # === 活人感引擎配置 ===
-    proactive_enabled: bool = Field(default=True, description="是否启用活人感模式")
-    proactive_max_daily_messages: int = Field(default=3, description="每日最多主动消息数")
+    # === Proactive engine configuration ===
+    proactive_enabled: bool = Field(default=True, description="Whether to enable proactive (liveness) mode")
+    proactive_max_daily_messages: int = Field(default=3, description="Max proactive messages per day")
     proactive_min_interval_minutes: int = Field(
-        default=120, description="两条主动消息最短间隔（分钟）"
+        default=120, description="Minimum interval between two proactive messages (minutes)"
     )
-    proactive_quiet_hours_start: int = Field(default=23, description="安静时段开始（小时，0-23）")
-    proactive_quiet_hours_end: int = Field(default=7, description="安静时段结束（小时，0-23）")
+    proactive_quiet_hours_start: int = Field(default=23, description="Quiet hours start (hour, 0-23)")
+    proactive_quiet_hours_end: int = Field(default=7, description="Quiet hours end (hour, 0-23)")
     proactive_idle_threshold_hours: int = Field(
-        default=3, description="用户空闲多久后触发闲聊问候（小时），AI 会根据反馈动态调整"
+        default=3, description="Idle time (hours) before triggering a small-talk greeting; AI adjusts dynamically based on feedback"
     )
 
-    # === UI 偏好配置 ===
+    # === UI preferences ===
     ui_theme: str = Field(
         default="system",
-        description="桌面客户端主题: system(跟随系统) | light(浅色) | dark(深色)",
+        description="Desktop client theme: system (follow OS) | light | dark",
     )
     ui_language: str = Field(
         default="zh",
-        description="桌面客户端语言: zh(中文) | en(英文)",
+        description="Desktop client language: zh (Chinese) | en (English)",
     )
 
-    # === 桌面通知配置 ===
+    # === Desktop notification configuration ===
     desktop_notify_enabled: bool = Field(
         default=True,
-        description="任务完成时是否弹出系统桌面通知（Windows Toast / macOS / Linux notify-send）",
+        description="Whether to show a system desktop notification on task completion (Windows Toast / macOS / Linux notify-send)",
     )
     desktop_notify_sound: bool = Field(
         default=True,
-        description="桌面通知是否播放系统提示音",
+        description="Whether the desktop notification plays a system notification sound",
     )
 
-    # === 表情包配置 ===
-    sticker_enabled: bool = Field(default=True, description="是否启用表情包功能")
-    sticker_data_dir: str = Field(default="data/sticker", description="表情包数据目录")
+    # === Sticker configuration ===
+    sticker_enabled: bool = Field(default=True, description="Whether to enable the sticker feature")
+    sticker_data_dir: str = Field(default="data/sticker", description="Sticker data directory")
     sticker_mirrors: list[str] = Field(
         default_factory=list,
         description=(
-            "自定义表情包镜像 URL 列表，优先于内置镜像尝试。"
-            "支持两种格式：1) CDN 镜像基址（追加相对路径），"
-            "2) GitHub 代理前缀（追加完整原始 URL）。"
-            "示例: ['https://ghp.ci/https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/']"
+            "Custom sticker mirror URL list, tried before built-in mirrors. "
+            "Two formats supported: 1) CDN mirror base (relative path appended), "
+            "2) GitHub proxy prefix (full original URL appended). "
+            "Example: ['https://ghp.ci/https://raw.githubusercontent.com/zhaoolee/ChineseBQB/master/']"
         ),
     )
 
-    # === Bug Report / Feedback 配置 ===
-    # 以下三个值是公开标识（类似 reCAPTCHA site key），不是密钥。
-    # 官方发行版需要预填默认值以实现开箱即用；
-    # fork 用户可通过 .env 覆盖为自己的值，留空则禁用对应功能。
+    # === Bug Report / Feedback configuration ===
+    # The following three values are public identifiers (similar to reCAPTCHA site keys), not secrets.
+    # The official release needs to ship defaults for out-of-the-box usage;
+    # fork users can override via .env with their own values, or leave blank to disable the corresponding feature.
     bug_report_endpoint: str = Field(
         default="https://feedback-openakita.fzstack.com",
-        description="反馈上传端点 URL（阿里云 FC）。留空 = 禁用反馈功能。",
+        description="Feedback upload endpoint URL (Alibaba Cloud FC). Blank = disable feedback feature.",
     )
     captcha_scene_id: str = Field(
         default="jkyrkj0w",
-        description="阿里云人机验证 2.0 场景ID（公开标识，下发到前端）。留空 = 跳过验证码。",
+        description="Alibaba Cloud Captcha 2.0 scene ID (public identifier, delivered to frontend). Blank = skip captcha.",
     )
     captcha_prefix: str = Field(
         default="yiqg72",
-        description="阿里云人机验证 2.0 prefix 身份标（公开标识，下发到前端）。",
+        description="Alibaba Cloud Captcha 2.0 prefix identity tag (public identifier, delivered to frontend).",
     )
 
     # === OpenAkita Platform (Agent Hub / Skill Store) ===
     hub_enabled: bool = Field(
         default=False,
-        description="启用 OpenAkita Platform 连接（Agent Hub / Skill Store）。关闭时不注册远程市场工具。",
+        description="Enable OpenAkita Platform connection (Agent Hub / Skill Store). When disabled, remote marketplace tools are not registered.",
     )
     hub_api_url: str = Field(
         default="https://openakita.ai/api",
@@ -506,147 +532,154 @@ class Settings(BaseSettings):
         description="Local device identifier (auto-generated UUID)",
     )
 
-    # === 上下文管理配置 ===
+    # === Context management configuration ===
     context_max_window: int = Field(
         default=0,
-        description="全局上下文最大输入长度 (tokens)。实际生效时取 min(此值, 端点 context_window)。0=不限制，直接使用端点上限",
+        description="Global max context input length (tokens). Effective value is min(this value, endpoint context_window). 0 = no limit, use endpoint max directly",
     )
     context_compression_ratio: float = Field(
         default=0.25,
-        description="上下文压缩目标比例，早期对话压缩到原文的该百分比 (0.05~0.5)",
+        description="Context compression target ratio; older conversations are compressed to this percentage (0.05~0.5)",
     )
     context_compression_threshold: float = Field(
         default=0.85,
-        description="触发压缩的软限比例——上下文 token 数超过硬上限的该比例时开始压缩 (0.5~0.95，越大越晚触发)",
+        description="Soft limit ratio that triggers compression — compression begins when context tokens exceed this fraction of the hard cap (0.5~0.95; higher = triggers later)",
     )
     context_boundary_compression_ratio: float = Field(
         default=0.25,
-        description="跨话题边界压缩比例，旧话题压缩到该百分比 (0.05~0.5)",
+        description="Cross-topic boundary compression ratio; old topics are compressed to this percentage (0.05~0.5)",
     )
     context_min_recent_turns: int = Field(
         default=12,
-        description="压缩时至少保留的最近对话组数 (4~20)",
+        description="Minimum number of recent conversation turns to retain during compression (4~20)",
     )
     context_enable_tool_compression: bool = Field(
         default=True,
-        description="是否启用超长工具结果独立压缩",
+        description="Whether to enable standalone compression of oversized tool results",
     )
     context_large_tool_threshold: int = Field(
         default=5000,
-        description="触发单条工具结果独立压缩的 token 阈值",
+        description="Token threshold that triggers standalone compression of a single tool result",
     )
 
-    # === Harness 配置 ===
+    # === Harness configuration ===
     supervisor_enabled: bool = Field(
-        default=True, description="是否启用运行时监督器 (RuntimeSupervisor)"
+        default=True, description="Whether to enable the runtime supervisor (RuntimeSupervisor)"
     )
-    task_budget_tokens: int = Field(default=0, description="单次任务最大 token 消耗 (0=不限制)")
-    task_budget_cost: float = Field(default=0.0, description="单次任务最大成本 USD (0=不限制)")
+    task_budget_tokens: int = Field(default=0, description="Max token consumption per task (0=unlimited)")
+    task_budget_cost: float = Field(default=0.0, description="Max cost per task in USD (0=unlimited)")
     task_budget_duration: int = Field(
-        default=600, description="单次任务最大时长秒 (0=不限制，默认 600=10分钟)"
+        default=600, description="Max task duration in seconds (0=unlimited, default 600=10 minutes)"
     )
     task_budget_iterations: int = Field(
-        default=50, description="单次任务最大迭代次数 (0=不限制，默认 50)"
+        default=50, description="Max iterations per task (0=unlimited, default 50)"
     )
     task_budget_tool_calls: int = Field(
-        default=30, description="单次任务最大工具调用次数 (0=不限制，默认 30)"
+        default=30, description="Max tool calls per task (0=unlimited, default 30)"
     )
 
-    # === 追踪配置 ===
+    # === Tracing configuration ===
     tracing_enabled: bool = Field(
-        default=True, description="是否启用 Agent 追踪（轻量模式默认开启）"
+        default=True, description="Whether to enable agent tracing (enabled by default in lightweight mode)"
     )
-    tracing_export_dir: str = Field(default="data/traces", description="追踪导出目录")
-    tracing_console_export: bool = Field(default=False, description="是否同时导出到控制台")
+    tracing_export_dir: str = Field(default="data/traces", description="Tracing export directory")
+    tracing_console_export: bool = Field(default=False, description="Whether to also export to console")
 
-    # === 评估配置 ===
-    evaluation_enabled: bool = Field(default=False, description="是否启用每日自动评估")
-    evaluation_output_dir: str = Field(default="data/evaluation", description="评估报告输出目录")
+    # === Evaluation configuration ===
+    evaluation_enabled: bool = Field(default=False, description="Whether to enable daily automated evaluation")
+    evaluation_output_dir: str = Field(default="data/evaluation", description="Evaluation report output directory")
 
-    # === 组织编排 · 任务链终止防护 ===
-    # 这组开关用于防止：
-    # 1) 同一 chain 被重复交付/验收导致附件与交付物重复；
-    # 2) 任务验收完成后节点仍被后续消息唤醒、自主启动新的 ReAct 循环；
-    # 3) 任务完成后自动向上级发送"已完成"通知从而引发新的父级推理。
-    # 默认全部开启；如需回退旧行为只需将对应项设为 false。
+    # === Organization orchestration · Task chain termination safeguards ===
+    # This group of switches prevents:
+    # 1) The same chain being delivered/accepted repeatedly, causing duplicate attachments and deliverables;
+    # 2) After a task is accepted, nodes still being woken up by subsequent messages and autonomously starting new ReAct loops;
+    # 3) Auto-sending a "completed" notification to the parent after task completion, triggering new parent-level reasoning.
+    # All enabled by default; to revert to the old behavior, set the corresponding item to false.
     org_reject_resubmit_after_accept: bool = Field(
         default=True,
-        description="禁止在 chain 已 accepted/delivered 之后再次 submit_deliverable",
+        description="Forbid calling submit_deliverable again after a chain is accepted/delivered",
     )
     org_suppress_closed_chain_reactivation: bool = Field(
         default=True,
-        description="chain 已关闭(accepted/rejected/cancelled)时抑制其消息触发 ReAct 重新激活",
+        description="Suppress ReAct reactivation triggered by messages on a closed chain (accepted/rejected/cancelled)",
     )
     org_post_task_notify_parent: bool = Field(
         default=False,
-        description="任务完成时是否自动向父节点发送[通知]：False 表示不主动唤醒父级",
+        description="Whether to auto-send a [Notification] to the parent node on task completion: False means do not proactively wake the parent",
     )
 
-    # === 组织编排 · 多层级指挥治理（org-orchestration-fix） ===
-    # 这组开关用于治理"CEO -> CMO -> 多个执行者 -> CMO 汇总 -> CEO 回包"
-    # 这类多层级指挥场景，解决以下根因：
-    #   1) 子链 chain_id 默认 _now_iso()，导致父子链断裂、tracker 子树失明
-    #   2) 协调者用 org_send_message(question) 派任务，绕过 chain 注册
-    #   3) Supervisor 把合法 poll 当死循环 TERMINATE
-    #   4) 缺少阻塞等待原语，协调者只能轮询
-    #   5) 完成判定一次性 set，CEO 拿不到最终汇总
-    # 默认全部开启；任一项设为 false 可一键回退到旧行为，旧代码路径保留。
+    # === Organization orchestration · Multi-level command governance (org-orchestration-fix) ===
+    # This group of switches governs multi-level command scenarios such as
+    # "CEO -> CMO -> multiple executors -> CMO summary -> CEO response", addressing root causes:
+    #   1) Child chain_id defaults to _now_iso(), breaking parent-child chain linkage and making
+    #      the tracker blind to subtrees
+    #   2) Coordinators use org_send_message(question) to dispatch tasks, bypassing chain registration
+    #   3) Supervisor misidentifies legitimate polling as an infinite loop and issues TERMINATE
+    #   4) No blocking-wait primitive forces coordinators to spin-poll
+    #   5) Completion detection is a one-shot set, preventing CEO from receiving the final summary
+    # All enabled by default; set any item to false to revert that code path to the old behavior.
     org_chain_parent_enforced: bool = Field(
         default=True,
         description=(
-            "强制 chain 父子关系：delegate 时为子任务新建 chain 并挂到 caller "
-            "current chain 之下；submit 强制复用 caller current chain；"
-            "tracker 完成判定走整棵子树。关闭后回退到旧的'复用 caller chain'语义。"
+            "Enforce chain parent-child relationships: on delegate, create a new child chain "
+            "attached under the caller's current chain; on submit, force-reuse the caller's "
+            "current chain; tracker completion walks the entire subtree. "
+            "Disable to revert to the old 'reuse caller chain' semantics."
         ),
     )
     org_question_task_guard: bool = Field(
         default=True,
         description=(
-            "拦截协调者用 org_send_message(question) 派发任务的反模式："
-            "若 sender 有下属且消息文本含'撰写/优化/产出/完成/给出/生成'等任务措辞，"
-            "拒绝发送并提示改用 org_delegate_task。"
+            "Block the anti-pattern of coordinators dispatching tasks via org_send_message(question): "
+            "if the sender has subordinates and the message text contains task-oriented wording "
+            "(e.g. 'write', 'optimize', 'produce', 'complete', 'provide', 'generate'), "
+            "reject the send and prompt the coordinator to use org_delegate_task instead."
         ),
     )
     org_supervisor_poll_whitelist: bool = Field(
         default=True,
         description=(
-            "Supervisor 对 org_list_delegated_tasks / org_wait_for_deliverable "
-            "等合法轮询/等待工具，抬高重复阈值且最高仅 NUDGE，绝不 TERMINATE。"
+            "Raise the repetition threshold for legitimate polling/waiting tools such as "
+            "org_list_delegated_tasks and org_wait_for_deliverable, and cap the action at NUDGE — "
+            "never TERMINATE."
         ),
     )
     org_wait_primitive_enabled: bool = Field(
         default=True,
         description=(
-            "启用 org_wait_for_deliverable 工具：协调者派完任务后可阻塞等待"
-            "下级交付，避免 org_list_delegated_tasks 轮询触发 Supervisor 死循环。"
+            "Enable the org_wait_for_deliverable tool: after dispatching tasks a coordinator can "
+            "block and wait for subordinate deliveries, avoiding the spin-poll pattern that "
+            "triggers the Supervisor dead-loop detector."
         ),
     )
     org_root_post_summary: bool = Field(
         default=True,
         description=(
-            "用户命令完成判定的两阶段状态机：所有子链关闭 + root IDLE 时，"
-            "先 push 一条 task_complete 到 root inbox 唤醒 root 产出最终汇总，"
-            "等 root 二次 IDLE 后再 set completed。关闭后退回到一阶段判定。"
+            "Two-phase state machine for user-command completion: when all child chains are closed "
+            "and root is IDLE, first push a task_complete event to the root inbox to wake root and "
+            "produce the final summary; mark completed only after root becomes IDLE a second time. "
+            "Disable to revert to one-phase completion detection."
         ),
     )
 
-    # === 组织编排 · 用户命令生命周期看门狗 ===
-    # 用户通过 send_command 下发一条顶层指令后，完成判定由事件驱动
-    # （所有委派链 chain 关闭 + root IDLE + root inbox 空）。下列时间参数
-    # 仅用于看门狗：防止组织真正卡死（LLM 挂起、死锁）时命令无限挂起。
-    # 任一进度信号（token / 工具完成 / 节点状态切换 / chain 事件）到达
-    # 都会让 warn/autostop 计时器归零，因此长时但持续产出的任务不会被误停。
+    # === Organization orchestration · User command lifecycle watchdog ===
+    # After the user dispatches a top-level command via send_command, completion is event-driven
+    # (all delegation chains closed + root IDLE + root inbox empty). The time parameters below
+    # are used only by the watchdog: to prevent indefinite command hangs when the organization
+    # truly deadlocks (LLM hang, deadlock). Any progress signal (token / tool completion / node
+    # state transition / chain event) resets the warn/autostop timers, so long-running but
+    # steadily-producing tasks won't be stopped by mistake.
     org_command_stuck_warn_secs: int = Field(
         default=300,
-        description="无进度多久（秒）向前端发出 stuck_warning 提示（不终止命令，默认 300=5 分钟）",
+        description="Emit a stuck_warning to the frontend after N seconds of no progress (does not terminate the command, default 300=5 minutes)",
     )
     org_command_stuck_autostop_secs: int = Field(
         default=1800,
-        description="无进度多久（秒）兜底 soft_stop 组织（默认 1800=30 分钟）",
+        description="Fall back to soft_stop of the organization after N seconds of no progress (default 1800=30 minutes)",
     )
     org_command_timeout_secs: int = Field(
         default=10800,
-        description="单条命令最长运行时间（秒）硬上限，0 或负数表示不限时（默认 10800=3 小时）",
+        description="Hard cap on the max runtime of a single command (seconds); 0 or negative means no limit (default 10800=3 hours)",
     )
 
     @model_validator(mode="after")
@@ -668,7 +701,7 @@ class Settings(BaseSettings):
     def _strip_inline_comments(cls, values: dict) -> dict:  # type: ignore[override]
         """Strip inline comments from env values before type coercion.
 
-        .env files may contain lines like ``MAX_TOKENS=4096  # 常规推荐值``.
+        .env files may contain lines like ``MAX_TOKENS=4096  # recommended value``.
         If an external caller (e.g. Tauri bridge) passes the raw value including
         the comment as an OS env-var, Pydantic would fail to parse ``"4096 # ..."``
         as ``int``.  This validator runs *before* field-level coercion and removes
@@ -691,19 +724,19 @@ class Settings(BaseSettings):
         "env_file": ".env",
         "env_file_encoding": "utf-8",
         "extra": "ignore",
-        # 关键：忽略空字符串环境变量（例如 .env 里写了 PROGRESS_TIMEOUT_SECONDS=）
-        # 否则 pydantic 会尝试把 "" 解析成 int/bool，导致启动失败。
+        # Key: ignore empty-string environment variables (e.g. PROGRESS_TIMEOUT_SECONDS= in .env)
+        # Otherwise pydantic tries to parse "" as int/bool and startup fails.
         "env_ignore_empty": True,
     }
 
     def reload(self) -> list[str]:
-        """从 .env 文件重新加载配置，返回发生变更的字段名列表。
+        """Reload configuration from the .env file, returning the list of changed field names.
 
-        创建一个新的 Settings 实例（会重新读取 .env），
-        然后把所有字段值拷贝回当前单例。
+        Creates a new Settings instance (which re-reads .env),
+        then copies all field values back into the current singleton.
 
-        运行时持久化字段（``_PERSISTABLE_KEYS``）由 RuntimeState 管理，
-        不从 .env 覆盖，避免 im_bots 等被重置。
+        Runtime-persisted fields (``_PERSISTABLE_KEYS``) are managed by RuntimeState
+        and are not overridden from .env, to avoid resetting im_bots and similar.
         """
         _skip = set(_PERSISTABLE_KEYS)
         fresh = Settings()
@@ -724,42 +757,42 @@ class Settings(BaseSettings):
 
     @property
     def identity_path(self) -> Path:
-        """身份配置目录路径"""
+        """Identity configuration directory path"""
         return self.project_root / "identity"
 
     @property
     def soul_path(self) -> Path:
-        """SOUL.md 路径"""
+        """SOUL.md path"""
         return self.identity_path / "SOUL.md"
 
     @property
     def agent_path(self) -> Path:
-        """AGENT.md 路径"""
+        """AGENT.md path"""
         return self.identity_path / "AGENT.md"
 
     @property
     def user_path(self) -> Path:
-        """USER.md 路径"""
+        """USER.md path"""
         return self.identity_path / "USER.md"
 
     @property
     def memory_path(self) -> Path:
-        """MEMORY.md 路径"""
+        """MEMORY.md path"""
         return self.identity_path / "MEMORY.md"
 
     @property
     def personas_path(self) -> Path:
-        """人格预设目录路径"""
+        """Persona preset directory path"""
         return self.identity_path / "personas"
 
     @property
     def sticker_data_path(self) -> Path:
-        """表情包数据目录路径"""
+        """Sticker data directory path"""
         return self.project_root / self.sticker_data_dir
 
     @property
     def openakita_home(self) -> Path:
-        """用户数据根目录，优先使用 OPENAKITA_ROOT 环境变量，默认 ~/.openakita"""
+        """User data root directory; prefers the OPENAKITA_ROOT env var, defaults to ~/.openakita"""
         import os
 
         env_root = os.environ.get("OPENAKITA_ROOT", "").strip()
@@ -769,10 +802,10 @@ class Settings(BaseSettings):
 
     @property
     def user_workspace_path(self) -> Path:
-        """当前用户工作区路径。
+        """Current user workspace path.
 
-        如果 project_root 位于 openakita_home/workspaces/ 下（生产模式），
-        直接使用 project_root 作为工作区路径；否则（开发模式）回退到 default。
+        If project_root is located under openakita_home/workspaces/ (production mode),
+        use project_root directly as the workspace path; otherwise (development mode) fall back to default.
         """
         ws_dir = self.openakita_home / "workspaces"
         try:
@@ -783,65 +816,66 @@ class Settings(BaseSettings):
 
     @property
     def skills_path(self) -> Path:
-        """用户技能安装目录 (~/.openakita/workspaces/default/skills)
+        """User skill install directory (~/.openakita/workspaces/default/skills)
 
-        所有通过 install_skill / skill-creator 安装或创建的技能都存放在此目录。
-        该目录位于用户 home 下，打包版本也有写权限。
-        开发模式下项目级 skills/ 仍会被扫描（通过 SKILL_DIRECTORIES），但安装目标统一为此路径。
+        All skills installed or created via install_skill / skill-creator live here.
+        This directory lives under the user home and is writable even in packaged builds.
+        In development mode the project-level skills/ is still scanned (via SKILL_DIRECTORIES),
+        but the install target is unified to this path.
         """
         return self.user_workspace_path / "skills"
 
     @property
     def specs_path(self) -> Path:
-        """规格文档目录路径"""
+        """Spec document directory path"""
         return self.project_root / "specs"
 
     @property
     def data_dir(self) -> Path:
-        """数据存储目录 (project_root/data)"""
+        """Data storage directory (project_root/data)"""
         return self.project_root / "data"
 
     @property
     def db_full_path(self) -> Path:
-        """数据库完整路径"""
+        """Full database path"""
         return self.project_root / self.database_path
 
     @property
     def log_dir_path(self) -> Path:
-        """日志目录完整路径"""
+        """Full log directory path"""
         return self.project_root / self.log_dir
 
     @property
     def log_file_path(self) -> Path:
-        """主日志文件路径"""
+        """Main log file path"""
         return self.log_dir_path / f"{self.log_file_prefix}.log"
 
     @property
     def error_log_path(self) -> Path:
-        """错误日志文件路径（只记录 ERROR/CRITICAL）"""
+        """Error log file path (records ERROR/CRITICAL only)"""
         return self.log_dir_path / "error.log"
 
     @property
     def selfcheck_dir(self) -> Path:
-        """自检报告目录"""
+        """Self-check report directory"""
         return self.project_root / "data" / "selfcheck"
 
     @property
     def mcp_config_path(self) -> Path:
-        """用户 MCP 配置目录（可写，打包模式安全）
+        """User MCP configuration directory (writable, safe in packaged mode)
 
-        路径: {project_root}/data/mcp/servers/
-        AI 通过工具添加的 MCP 服务器配置保存在此目录。
-        启动时同时扫描内置 mcps/ 和此目录。
+        Path: {project_root}/data/mcp/servers/
+        MCP server configurations added by the AI via tools are saved in this directory.
+        At startup, both the built-in mcps/ and this directory are scanned.
         """
         return self.project_root / "data" / "mcp" / "servers"
 
     @property
     def mcp_builtin_path(self) -> Path:
-        """内置 MCP 配置目录（随项目分发，打包后可能只读）
+        """Built-in MCP configuration directory (shipped with the project, may be read-only when packaged)
 
-        优先使用 project_root/mcps（开发模式），
-        若不存在则回退到 wheel 打包位置 site-packages/openakita/builtin_mcps/。
+        Prefer project_root/mcps (development mode);
+        if missing, fall back to the wheel-packaged location site-packages/openakita/builtin_mcps/.
         """
         dev_path = self.project_root / "mcps"
         if dev_path.exists():
@@ -853,14 +887,14 @@ class Settings(BaseSettings):
 
 
 # ---------------------------------------------------------------------------
-# 运行时状态持久化
+# Runtime state persistence
 # ---------------------------------------------------------------------------
-# 用于保存用户通过对话动态修改的设置（角色、活人感开关等），
-# 使其在 Agent 重启后依然生效。
-# 存储位置: data/runtime_state.json
+# Stores settings dynamically modified by the user through conversation
+# (persona, proactive toggle, etc.) so they remain in effect after Agent restart.
+# Storage location: data/runtime_state.json
 # ---------------------------------------------------------------------------
 
-# 需要持久化的 settings 字段名
+# Settings field names that need to be persisted
 _PERSISTABLE_KEYS: list[str] = [
     "persona_name",
     "memory_nudge_enabled",
@@ -883,14 +917,14 @@ _PERSISTABLE_KEYS: list[str] = [
 
 class RuntimeState:
     """
-    轻量级运行时状态持久化。
+    Lightweight runtime state persistence.
 
-    在 settings 单例上修改可持久化字段后，调用 save() 写入磁盘；
-    在 Agent 启动时调用 load() 从磁盘恢复。
+    After modifying persistable fields on the settings singleton, call save() to write to disk;
+    call load() at Agent startup to restore from disk.
     """
 
     def __init__(self, state_file: Path | None = None):
-        # 延迟解析（settings 还没创建时不能访问 project_root）
+        # Lazy resolution (cannot access project_root before settings is created)
         self._state_file = state_file
 
     @property
@@ -900,7 +934,7 @@ class RuntimeState:
         return self._state_file
 
     def save(self) -> None:
-        """把当前 settings 中的可持久化字段写入 JSON 文件（原子写入 + 备份）。"""
+        """Write the persistable fields from settings to a JSON file (atomic write + backup)."""
         from .utils.atomic_io import safe_json_write
 
         data: dict = {}
@@ -913,7 +947,7 @@ class RuntimeState:
             logger.error(f"[RuntimeState] Failed to save: {e}")
 
     def load(self) -> None:
-        """从 JSON 文件恢复设置到 settings 单例，仅覆盖可持久化字段（支持 .bak 回退）。"""
+        """Restore settings from a JSON file into the settings singleton, overriding only persistable fields (with .bak fallback support)."""
         from .utils.atomic_io import read_json_safe
 
         data = read_json_safe(self.state_file)
@@ -937,14 +971,14 @@ class RuntimeState:
             logger.error(f"[RuntimeState] Failed to load: {e}")
 
 
-# 全局配置实例
+# Global configuration instance
 settings = Settings()
 
-# 全局运行时状态管理器
+# Global runtime state manager
 runtime_state = RuntimeState()
 
 # ---------------------------------------------------------------------------
-# 重启信号标志
+# Restart signal flag
 # ---------------------------------------------------------------------------
-# 由 /api/config/restart 端点设置，main.py serve() 循环检测此标志决定是否重启。
+# Set by the /api/config/restart endpoint; main.py serve() loop checks this flag to decide whether to restart.
 _restart_requested: bool = False

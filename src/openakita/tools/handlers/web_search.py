@@ -1,10 +1,17 @@
 """
-Web Search 处理器
+Web Search Handler
 
-直接使用 ddgs 库执行网络搜索，无需通过 MCP。
+Delegates to SearchProviderRouter which supports multiple backends:
+  DuckDuckGo (default, no key) | Brave | Tavily | Exa
+
+Configure via .env:
+  SEARCH_PROVIDER=auto          # auto|ddgs|brave|tavily|exa
+  BRAVE_API_KEY=...
+  TAVILY_API_KEY=...
+  EXA_API_KEY=...
+  SEARCH_FALLBACK_ENABLED=true
 """
 
-import asyncio
 import logging
 import traceback
 from typing import Any
@@ -12,46 +19,8 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def _sync_web_search(
-    query: str,
-    max_results: int,
-    region: str,
-    safesearch: str,
-) -> list[dict[str, Any]]:
-    """在独立线程中执行同步的 ddgs 搜索（避免事件循环冲突）"""
-    from ddgs import DDGS
-
-    with DDGS() as ddgs:
-        return ddgs.text(
-            query,
-            max_results=max_results,
-            region=region,
-            safesearch=safesearch,
-        )
-
-
-def _sync_news_search(
-    query: str,
-    max_results: int,
-    region: str,
-    safesearch: str,
-    timelimit: str | None,
-) -> list[dict[str, Any]]:
-    """在独立线程中执行同步的 ddgs 新闻搜索"""
-    from ddgs import DDGS
-
-    with DDGS() as ddgs:
-        return ddgs.news(
-            query,
-            max_results=max_results,
-            region=region,
-            safesearch=safesearch,
-            timelimit=timelimit,
-        )
-
-
 class WebSearchHandler:
-    """Web Search 处理器"""
+    """Web Search handler"""
 
     TOOLS = ["web_search", "news_search"]
 
@@ -66,46 +35,48 @@ class WebSearchHandler:
         else:
             return f"Unknown web search tool: {tool_name}"
 
+    def _get_router(self):
+        """Lazy-load the router (respects config reloads)."""
+        from openakita.tools.handlers.search_providers import get_router
+
+        return get_router()
+
     async def _web_search(self, params: dict[str, Any]) -> str:
-        """搜索网页"""
+        """Search the web"""
         query = params.get("query", "")
         if not query:
-            return "错误：query 参数不能为空"
+            return "Error: query parameter must not be empty"
 
         max_results = min(max(1, params.get("max_results", 5)), 20)
         region = params.get("region", "wt-wt")
         safesearch = params.get("safesearch", "moderate")
 
         try:
-            from ddgs import DDGS  # noqa: F401
-        except ImportError:
-            from openakita.tools._import_helper import import_or_hint
-
-            return f"错误：{import_or_hint('ddgs')}"
-
-        try:
-            results = await asyncio.to_thread(
-                _sync_web_search,
-                query=query,
+            router = self._get_router()
+            results = await router.get_web_results(
+                query,
                 max_results=max_results,
                 region=region,
                 safesearch=safesearch,
             )
+            provider = router.active_provider_name
+            logger.debug("[WebSearch] web_search via '%s', got %d results", provider, len(results))
             return self._format_web_results(results)
         except Exception as e:
             tb = traceback.format_exc()
-            logger.error(f"Web search failed: {type(e).__name__}: {e}\n{tb}")
+            logger.error("Web search failed: %s\n%s", e, tb)
             return (
-                "搜索暂时不可用（网络无法访问 DuckDuckGo）。"
-                "请直接告知用户\"当前无法联网搜索\"，建议稍后重试或改用其他工具，"
-                "不要反复重试，也不要伪造搜索结果。"
+                "Search is temporarily unavailable (all search providers are unreachable). "
+                'Please inform the user that "web search is currently unavailable" '
+                "and suggest retrying later or using a different tool. "
+                "Do not retry repeatedly or fabricate search results."
             )
 
     async def _news_search(self, params: dict[str, Any]) -> str:
-        """搜索新闻"""
+        """Search news"""
         query = params.get("query", "")
         if not query:
-            return "错误：query 参数不能为空"
+            return "Error: query parameter must not be empty"
 
         max_results = min(max(1, params.get("max_results", 5)), 20)
         region = params.get("region", "wt-wt")
@@ -113,70 +84,44 @@ class WebSearchHandler:
         timelimit = params.get("timelimit")
 
         try:
-            from ddgs import DDGS  # noqa: F401
-        except ImportError:
-            from openakita.tools._import_helper import import_or_hint
-
-            return f"错误：{import_or_hint('ddgs')}"
-
-        try:
-            results = await asyncio.to_thread(
-                _sync_news_search,
-                query=query,
+            router = self._get_router()
+            results = await router.get_news_results(
+                query,
                 max_results=max_results,
                 region=region,
                 safesearch=safesearch,
                 timelimit=timelimit,
             )
-            return self._format_news_results(results)
+            provider = router.active_provider_name
+            logger.debug("[WebSearch] news_search via '%s', got %d results", provider, len(results))
+            return self._format_web_results(results)
         except Exception as e:
             tb = traceback.format_exc()
-            logger.error(f"News search failed: {type(e).__name__}: {e}\n{tb}")
+            logger.error("News search failed: %s\n%s", e, tb)
             return (
-                "新闻搜索暂时不可用（网络无法访问 DuckDuckGo）。"
-                "请直接告知用户\"当前无法联网搜索\"，建议稍后重试或改用其他工具，"
-                "不要反复重试，也不要伪造搜索结果。"
+                "News search is temporarily unavailable (all search providers are unreachable). "
+                'Please inform the user that "web search is currently unavailable" '
+                "and suggest retrying later or using a different tool. "
+                "Do not retry repeatedly or fabricate search results."
             )
 
     @staticmethod
     def _format_web_results(results: list) -> str:
-        """格式化网页搜索结果"""
+        """Format search results (shared by web + news)"""
         if not results:
-            return "未找到相关结果"
+            return "No relevant results found"
 
         output = []
         for i, r in enumerate(results, 1):
-            title = r.get("title", "无标题")
-            url = r.get("href", r.get("link", ""))
-            body = r.get("body", r.get("snippet", ""))
+            title = r.get("title", "No title")
+            url = r.get("url", r.get("href", r.get("link", "")))
+            body = r.get("body", r.get("snippet", r.get("content", "")))
             output.append(f"**{i}. {title}**\n{url}\n{body}\n")
-
-        return "\n".join(output)
-
-    @staticmethod
-    def _format_news_results(results: list) -> str:
-        """格式化新闻搜索结果"""
-        if not results:
-            return "未找到相关新闻"
-
-        output = []
-        for i, r in enumerate(results, 1):
-            title = r.get("title", "无标题")
-            url = r.get("url", r.get("link", ""))
-            body = r.get("body", r.get("excerpt", ""))
-            date = r.get("date", "")
-            source = r.get("source", "")
-
-            header = f"**{i}. {title}**"
-            if source or date:
-                header += f" ({source} {date})"
-
-            output.append(f"{header}\n{url}\n{body}\n")
 
         return "\n".join(output)
 
 
 def create_handler(agent: Any = None):
-    """创建 WebSearchHandler 实例并返回 handle 方法"""
+    """Create a WebSearchHandler instance and return its handle method"""
     handler = WebSearchHandler(agent)
     return handler.handle

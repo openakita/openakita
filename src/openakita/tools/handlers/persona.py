@@ -1,11 +1,11 @@
 """
-人格系统 + 活人感处理器
+Persona system + proactive engagement handler
 
-处理人格和活人感相关的工具调用:
-- switch_persona: 切换预设或用户自创 Agent 角色
-- update_persona_trait: 更新偏好特质
-- toggle_proactive: 开关活人感
-- get_persona_profile: 获取人格配置
+Handles tool calls related to persona and proactive engagement:
+- switch_persona: Switch to a preset or user-created Agent role
+- update_persona_trait: Update preference traits
+- toggle_proactive: Toggle proactive engagement on/off
+- get_persona_profile: Get persona configuration
 """
 
 import logging
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def _find_agent_profile_by_name(name: str):
-    """按名称模糊查找用户创建的 AgentProfile。
+    """Fuzzily find a user-created AgentProfile by name.
 
     Returns (profile, store) or (None, None).
     """
@@ -44,7 +44,7 @@ def _find_agent_profile_by_name(name: str):
 
 
 class PersonaHandler:
-    """人格系统处理器"""
+    """Persona system handler"""
 
     TOOLS = [
         "switch_persona",
@@ -57,7 +57,7 @@ class PersonaHandler:
         self.agent = agent
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
-        """处理工具调用"""
+        """Handle tool calls"""
         if tool_name == "switch_persona":
             return self._switch_persona(params)
         elif tool_name == "update_persona_trait":
@@ -70,13 +70,13 @@ class PersonaHandler:
             return f"❌ Unknown persona tool: {tool_name}"
 
     def _switch_persona(self, params: dict) -> str:
-        """切换人格预设或用户自创 Agent 角色"""
+        """Switch persona preset or user-created Agent role"""
         preset_name = params.get("preset_name", "default")
 
         if not hasattr(self.agent, "persona_manager") or not self.agent.persona_manager:
-            return "❌ 人格系统未初始化"
+            return "❌ Persona system not initialized"
 
-        # 1) 先尝试内置预设
+        # 1) Try built-in presets first
         success = self.agent.persona_manager.switch_preset(preset_name)
         if success:
             from ...config import runtime_state, settings
@@ -84,24 +84,24 @@ class PersonaHandler:
             settings.persona_name = preset_name
             runtime_state.save()
             return (
-                f"✅ 已切换人格为: {preset_name}\n\n"
-                f"当前可用预设: {', '.join(self.agent.persona_manager.available_presets)}"
+                f"✅ Persona switched to: {preset_name}\n\n"
+                f"Available presets: {', '.join(self.agent.persona_manager.available_presets)}"
             )
 
-        # 2) 内置预设没有匹配，尝试查找用户自创的 Agent Profile
+        # 2) Built-in preset not matched, try user-created Agent Profile
         profile, _ = _find_agent_profile_by_name(preset_name)
         if profile:
             switched = self._switch_to_agent_profile(profile)
             if switched:
                 return (
-                    f"✅ 已切换到自定义角色「{profile.name}」（{profile.description or '无描述'}）\n"
-                    f"角色将从下一条消息开始生效。"
+                    f"✅ Switched to custom role '{profile.name}' ({profile.description or 'no description'})\n"
+                    f"The role will take effect starting from the next message."
                 )
 
-        # 3) 都没有匹配
+        # 3) Nothing matched
         available_presets = self.agent.persona_manager.available_presets
-        lines = [f"❌ 未找到名为「{preset_name}」的预设或自定义角色\n"]
-        lines.append(f"**内置预设**: {', '.join(available_presets)}")
+        lines = [f"❌ No preset or custom role found with the name '{preset_name}'\n"]
+        lines.append(f"**Built-in presets**: {', '.join(available_presets)}")
         try:
             from ...agents.profile import ProfileStore
             from ...config import settings
@@ -114,13 +114,13 @@ class PersonaHandler:
                 ]
                 if custom_profiles:
                     names = [f"{p.icon} {p.name}" for p in custom_profiles]
-                    lines.append(f"**自定义角色**: {', '.join(names)}")
+                    lines.append(f"**Custom roles**: {', '.join(names)}")
         except Exception:
             pass
         return "\n".join(lines)
 
     def _switch_to_agent_profile(self, profile) -> bool:
-        """将当前会话的 agent_profile_id 切换到目标 AgentProfile。"""
+        """Switch the current session's agent_profile_id to the target AgentProfile."""
         try:
             session = getattr(self.agent, "_current_session", None)
             if session is None:
@@ -142,11 +142,11 @@ class PersonaHandler:
             return False
 
     def _update_persona_trait(self, params: dict) -> str:
-        """更新人格偏好特质"""
+        """Update persona preference traits"""
         from ...core.persona import PersonaTrait
 
         if not hasattr(self.agent, "persona_manager") or not self.agent.persona_manager:
-            return "❌ 人格系统未初始化"
+            return "❌ Persona system not initialized"
 
         dimension = params.get("dimension", "")
         preference = params.get("preference", "")
@@ -154,7 +154,7 @@ class PersonaHandler:
         evidence = params.get("evidence", "")
 
         if not dimension or not preference:
-            return "❌ 需要提供 dimension 和 preference"
+            return "❌ Must provide dimension and preference"
 
         trait = PersonaTrait(
             id=str(uuid.uuid4())[:8],
@@ -167,14 +167,14 @@ class PersonaHandler:
 
         self.agent.persona_manager.add_trait(trait)
 
-        # 同时写入记忆系统（按 dimension 去重：同 dimension 只保留最新值）
+        # Also write to memory system (deduplicate by dimension: keep only the latest value for each dimension)
         if hasattr(self.agent, "memory_manager") and self.agent.memory_manager:
             from ...memory.types import Memory, MemoryPriority, MemoryType
 
             mm = self.agent.memory_manager
             store = getattr(mm, "store", None)
 
-            # 查找同 dimension 已有记忆，更新而非新建
+            # Find existing memory for the same dimension, update instead of creating new
             if store:
                 existing = store.query_semantic(memory_type="persona_trait", limit=50)
                 for old in existing:
@@ -186,7 +186,7 @@ class PersonaHandler:
                                 "importance_score": max(old.importance_score, trait.confidence),
                             },
                         )
-                        return f"✅ 已更新人格偏好: {dimension} = {preference} (来源: {source})"
+                        return f"✅ Updated persona preference: {dimension} = {preference} (source: {source})"
 
             memory = Memory(
                 type=MemoryType.PERSONA_TRAIT,
@@ -198,76 +198,76 @@ class PersonaHandler:
             )
             mm.add_memory(memory)
 
-        return f"✅ 已更新人格偏好: {dimension} = {preference} (来源: {source})"
+        return f"✅ Updated persona preference: {dimension} = {preference} (source: {source})"
 
     def _toggle_proactive(self, params: dict) -> str:
-        """开关活人感模式"""
+        """Toggle proactive engagement mode"""
         enabled = params.get("enabled", False)
 
         if not hasattr(self.agent, "proactive_engine") or not self.agent.proactive_engine:
-            return "❌ 活人感引擎未初始化"
+            return "❌ Proactive engagement engine not initialized"
 
         self.agent.proactive_engine.toggle(enabled)
-        # 更新配置并持久化
+        # Update config and persist
         from ...config import runtime_state, settings
 
         settings.proactive_enabled = enabled
         runtime_state.save()
 
         if enabled:
-            return "✅ 已开启活人感模式！我会不定期给你发问候和提醒~\n\n你可以随时说「关闭活人感」来关闭。"
+            return "✅ Proactive engagement mode enabled! I will send you greetings and reminders from time to time.\n\nYou can say 'disable proactive engagement' at any time to turn it off."
         else:
-            return "✅ 已关闭活人感模式，我不会再主动发消息了。"
+            return "✅ Proactive engagement mode disabled. I will no longer send messages proactively."
 
     def _get_persona_profile(self, params: dict) -> str:
-        """获取当前人格配置"""
+        """Get current persona configuration"""
         if not hasattr(self.agent, "persona_manager") or not self.agent.persona_manager:
-            return "❌ 人格系统未初始化"
+            return "❌ Persona system not initialized"
 
         merged = self.agent.persona_manager.get_merged_persona()
 
         lines = [
-            "## 当前人格配置",
+            "## Current Persona Configuration",
             "",
-            f"**预设角色**: {merged.preset_name}",
-            f"**正式程度**: {merged.formality}",
-            f"**幽默感**: {merged.humor}",
-            f"**表情使用**: {merged.emoji_usage}",
-            f"**回复长度**: {merged.reply_length}",
-            f"**主动程度**: {merged.proactiveness}",
-            f"**情感距离**: {merged.emotional_distance}",
-            f"**鼓励程度**: {merged.encouragement}",
-            f"**表情包偏好**: {merged.sticker_preference}",
+            f"**Preset role**: {merged.preset_name}",
+            f"**Formality**: {merged.formality}",
+            f"**Humor**: {merged.humor}",
+            f"**Emoji usage**: {merged.emoji_usage}",
+            f"**Reply length**: {merged.reply_length}",
+            f"**Proactiveness**: {merged.proactiveness}",
+            f"**Emotional distance**: {merged.emotional_distance}",
+            f"**Encouragement**: {merged.encouragement}",
+            f"**Sticker preference**: {merged.sticker_preference}",
         ]
 
         if merged.address_style:
-            lines.append(f"**称呼方式**: {merged.address_style}")
+            lines.append(f"**Address style**: {merged.address_style}")
 
         if merged.care_topics:
-            lines.append(f"**关心话题**: {', '.join(merged.care_topics)}")
+            lines.append(f"**Care topics**: {', '.join(merged.care_topics)}")
 
-        # 活人感状态
+        # Proactive engagement status
         proactive_status = (
-            "已开启"
+            "Enabled"
             if (
                 hasattr(self.agent, "proactive_engine")
                 and self.agent.proactive_engine
                 and self.agent.proactive_engine.config.enabled
             )
-            else "已关闭"
+            else "Disabled"
         )
-        lines.append(f"\n**活人感模式**: {proactive_status}")
+        lines.append(f"\n**Proactive engagement mode**: {proactive_status}")
 
         if merged.user_customizations:
-            lines.append(f"\n### 用户偏好叠加\n{merged.user_customizations}")
+            lines.append(f"\n### User Preference Overrides\n{merged.user_customizations}")
 
         if merged.context_adaptations:
-            lines.append(f"\n### 上下文适配\n{merged.context_adaptations}")
+            lines.append(f"\n### Context Adaptations\n{merged.context_adaptations}")
 
         return "\n".join(lines)
 
 
 def create_handler(agent: "Agent"):
-    """创建人格处理器"""
+    """Create persona handler"""
     handler = PersonaHandler(agent)
     return handler.handle

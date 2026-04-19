@@ -1,29 +1,29 @@
 """
-文档搜索测试用例 (30个)
+Document search test cases
 """
 
 from openakita.testing.runner import TestCase
 
 DOC_SEARCH_TESTS = [
-    # 项目文档搜索
+    # Project document search
     TestCase(
         id="search_doc_001",
         category="search",
         subcategory="doc",
-        description="搜索 README",
+        description="Search README",
         input={
             "action": "search_doc",
             "query": "OpenAkita",
             "file": "README.md",
         },
-        expected="contains:自进化",
+        expected="contains:self-evolving",
         tags=["doc", "readme"],
     ),
     TestCase(
         id="search_doc_002",
         category="search",
         subcategory="doc",
-        description="搜索 AGENT.md",
+        description="Search AGENT.md",
         input={
             "action": "search_doc",
             "query": "Ralph",
@@ -36,21 +36,21 @@ DOC_SEARCH_TESTS = [
         id="search_doc_003",
         category="search",
         subcategory="doc",
-        description="搜索 SOUL.md",
+        description="Search SOUL.md",
         input={
             "action": "search_doc",
-            "query": "诚实",
+            "query": "honesty",
             "file": "identity/SOUL.md",
         },
         expected="length>=10",
         tags=["doc", "soul"],
     ),
-    # 规格文档搜索
+    # Specification document search
     TestCase(
         id="search_spec_001",
         category="search",
         subcategory="spec",
-        description="搜索技能规格",
+        description="Search skill specifications",
         input={
             "action": "search_doc",
             "query": "BaseSkill",
@@ -63,7 +63,7 @@ DOC_SEARCH_TESTS = [
         id="search_spec_002",
         category="search",
         subcategory="spec",
-        description="搜索工具规格",
+        description="Search tool specifications",
         input={
             "action": "search_doc",
             "query": "ShellTool",
@@ -72,15 +72,15 @@ DOC_SEARCH_TESTS = [
         expected="length>=1",
         tags=["spec", "tool"],
     ),
-    # 代码注释搜索
+    # Docstring search
     TestCase(
         id="search_docstring_001",
         category="search",
         subcategory="docstring",
-        description="搜索函数文档",
+        description="Search function docstrings",
         input={
             "action": "search_docstring",
-            "query": "执行",
+            "query": "execute",
             "path": "src/openakita",
         },
         expected="length>=1",
@@ -90,7 +90,7 @@ DOC_SEARCH_TESTS = [
         id="search_docstring_002",
         category="search",
         subcategory="docstring",
-        description="搜索类文档",
+        description="Search class docstrings",
         input={
             "action": "search_docstring",
             "query": "Agent",

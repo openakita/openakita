@@ -1,8 +1,9 @@
 """
-外部工具类目定义、岗位角色工具预设、节点头像预设。
+External tool category definitions, role-based tool presets, and node avatar presets.
 
-将工具按功能域分组为类目（category），节点的 external_tools 字段
-可以混合使用类目名和具体工具名。expand_tool_categories() 负责展开。
+Tools are grouped by functional domain into categories. A node's external_tools
+field can contain a mix of category names and specific tool names.
+expand_tool_categories() handles the expansion.
 """
 
 from __future__ import annotations
@@ -111,26 +112,26 @@ def list_categories() -> list[dict[str, str | list[str]]]:
 # ---------------------------------------------------------------------------
 
 AVATAR_PRESETS: list[dict[str, str]] = [
-    {"id": "ceo",         "bg": "#1a365d", "label": "CEO / 总裁"},
-    {"id": "cto",         "bg": "#2b6cb0", "label": "CTO / 技术总监"},
-    {"id": "cfo",         "bg": "#2f855a", "label": "CFO / 财务总监"},
-    {"id": "cmo",         "bg": "#dd6b20", "label": "CMO / 市场总监"},
-    {"id": "cpo",         "bg": "#6b46c1", "label": "CPO / 产品总监"},
-    {"id": "architect",   "bg": "#2c5282", "label": "架构师"},
-    {"id": "dev-m",       "bg": "#3182ce", "label": "开发工程师 (男)"},
-    {"id": "dev-f",       "bg": "#00838f", "label": "开发工程师 (女)"},
-    {"id": "devops",      "bg": "#4a5568", "label": "DevOps 工程师"},
-    {"id": "designer-m",  "bg": "#d53f8c", "label": "设计师 (男)"},
-    {"id": "designer-f",  "bg": "#b83280", "label": "设计师 (女)"},
-    {"id": "pm",          "bg": "#805ad5", "label": "产品 / 项目经理"},
-    {"id": "analyst",     "bg": "#3182ce", "label": "数据分析师"},
-    {"id": "marketer",    "bg": "#e53e3e", "label": "市场营销"},
-    {"id": "writer",      "bg": "#744210", "label": "文案 / 写手"},
-    {"id": "hr",          "bg": "#c05621", "label": "人力资源"},
-    {"id": "legal",       "bg": "#718096", "label": "法务顾问"},
-    {"id": "support",     "bg": "#319795", "label": "客服支持"},
-    {"id": "researcher",  "bg": "#276749", "label": "研究员"},
-    {"id": "media",       "bg": "#e53e3e", "label": "社媒运营"},
+    {"id": "ceo",         "bg": "#1a365d", "label": "CEO / President"},
+    {"id": "cto",         "bg": "#2b6cb0", "label": "CTO / Tech Director"},
+    {"id": "cfo",         "bg": "#2f855a", "label": "CFO / Finance Director"},
+    {"id": "cmo",         "bg": "#dd6b20", "label": "CMO / Marketing Director"},
+    {"id": "cpo",         "bg": "#6b46c1", "label": "CPO / Product Director"},
+    {"id": "architect",   "bg": "#2c5282", "label": "Architect"},
+    {"id": "dev-m",       "bg": "#3182ce", "label": "Developer (M)"},
+    {"id": "dev-f",       "bg": "#00838f", "label": "Developer (F)"},
+    {"id": "devops",      "bg": "#4a5568", "label": "DevOps Engineer"},
+    {"id": "designer-m",  "bg": "#d53f8c", "label": "Designer (M)"},
+    {"id": "designer-f",  "bg": "#b83280", "label": "Designer (F)"},
+    {"id": "pm",          "bg": "#805ad5", "label": "Product / Project Manager"},
+    {"id": "analyst",     "bg": "#3182ce", "label": "Data Analyst"},
+    {"id": "marketer",    "bg": "#e53e3e", "label": "Marketing"},
+    {"id": "writer",      "bg": "#744210", "label": "Copywriter"},
+    {"id": "hr",          "bg": "#c05621", "label": "Human Resources"},
+    {"id": "legal",       "bg": "#718096", "label": "Legal Counsel"},
+    {"id": "support",     "bg": "#319795", "label": "Customer Support"},
+    {"id": "researcher",  "bg": "#276749", "label": "Researcher"},
+    {"id": "media",       "bg": "#e53e3e", "label": "Social Media"},
 ]
 
 AVATAR_MAP: dict[str, dict[str, str]] = {a["id"]: a for a in AVATAR_PRESETS}

@@ -14,7 +14,7 @@ Download and install an Agent from the OpenAkita Platform Agent Store to the loc
 ## When to Use
 
 - User wants to install a specific Agent from the hub
-- User says "安装这个 Agent" after browsing search results
+- User says "installthis Agent" after browsing search results
 - User provides an Agent ID to install
 
 ## Workflow

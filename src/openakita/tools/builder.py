@@ -1,11 +1,11 @@
 """
-工具工厂
+Tool Factory
 
-参考 Claude Code 的 buildTool + ToolDef 模式:
-- 声明式工具定义
-- 自动填充默认值
-- 统一注册入口
-- 并发安全/只读/破坏性标记
+Modeled after Claude Code's buildTool + ToolDef pattern:
+- Declarative tool definitions
+- Automatic default-value filling
+- Unified registration entry point
+- Concurrency-safe / read-only / destructive flags
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ TOOL_DEFAULTS = {
 
 @dataclass
 class ToolDef:
-    """声明式工具定义。"""
+    """Declarative tool definition."""
 
     name: str
     description: str
@@ -50,34 +50,34 @@ class ToolDef:
     context_modifier: Callable | None = None
 
     def check_concurrency_safe(self, tool_input: dict) -> bool:
-        """检查给定输入下是否并发安全。"""
+        """Check whether the tool is concurrency-safe for the given input."""
         if callable(self.is_concurrency_safe):
             return self.is_concurrency_safe(tool_input)
         return bool(self.is_concurrency_safe)
 
     def check_read_only(self, tool_input: dict) -> bool:
-        """检查给定输入下是否只读。"""
+        """Check whether the tool is read-only for the given input."""
         if callable(self.is_read_only):
             return self.is_read_only(tool_input)
         return bool(self.is_read_only)
 
     def check_destructive(self, tool_input: dict) -> bool:
-        """检查给定输入下是否具有破坏性。"""
+        """Check whether the tool is destructive for the given input."""
         if callable(self.is_destructive):
             return self.is_destructive(tool_input)
         return bool(self.is_destructive)
 
     def check_enabled(self) -> bool:
-        """检查工具是否启用。"""
+        """Check whether the tool is enabled."""
         if callable(self.is_enabled):
             return self.is_enabled()
         return bool(self.is_enabled)
 
 
 def build_tool(tool_def: ToolDef) -> dict:
-    """从 ToolDef 生成完整的工具注册信息。
+    """Generate complete tool registration info from a ToolDef.
 
-    返回兼容现有 SystemHandlerRegistry 的 dict 格式。
+    Returns a dict compatible with the existing SystemHandlerRegistry.
     """
     return {
         "name": tool_def.name,
@@ -95,7 +95,7 @@ def build_tool(tool_def: ToolDef) -> dict:
 
 
 def build_tool_schema(tool_def: ToolDef) -> dict:
-    """生成 LLM function calling 用的 schema。"""
+    """Generate an LLM function-calling schema."""
     return {
         "name": tool_def.name,
         "description": tool_def.description,
@@ -104,32 +104,32 @@ def build_tool_schema(tool_def: ToolDef) -> dict:
 
 
 class ToolRegistry:
-    """基于 ToolDef 的工具注册表。
+    """Tool registry based on ToolDef.
 
-    与现有 SystemHandlerRegistry 并存，逐步迁移。
+    Coexists with the existing SystemHandlerRegistry during gradual migration.
     """
 
     def __init__(self) -> None:
         self._tools: dict[str, ToolDef] = {}
 
     def register(self, tool_def: ToolDef) -> None:
-        """注册一个工具。"""
+        """Register a tool."""
         self._tools[tool_def.name] = tool_def
         logger.debug("Registered tool: %s (category=%s)", tool_def.name, tool_def.category)
 
     def get(self, name: str) -> ToolDef | None:
-        """获取工具定义。"""
+        """Get a tool definition by name."""
         return self._tools.get(name)
 
     def get_enabled_tools(self) -> list[ToolDef]:
-        """获取所有启用的工具。"""
+        """Return all enabled tools."""
         return [t for t in self._tools.values() if t.check_enabled()]
 
     def get_schemas(self, *, sorted_for_cache: bool = True) -> list[dict]:
-        """获取所有启用工具的 LLM schema。
+        """Return LLM schemas for all enabled tools.
 
         Args:
-            sorted_for_cache: 按名称排序保证 prompt cache 稳定性
+            sorted_for_cache: sort by name to ensure prompt cache stability
         """
         tools = self.get_enabled_tools()
         if sorted_for_cache:
@@ -137,16 +137,16 @@ class ToolRegistry:
         return [build_tool_schema(t) for t in tools]
 
     def is_concurrency_safe(self, name: str, tool_input: dict) -> bool:
-        """查询工具在给定输入下是否并发安全。"""
+        """Query whether the tool is concurrency-safe for the given input."""
         tool = self._tools.get(name)
         if not tool:
             return False
         return tool.check_concurrency_safe(tool_input)
 
     def partition_tool_calls(self, tool_calls: list[dict]) -> list[dict]:
-        """将工具调用分区为并发安全批次和串行批次。
+        """Partition tool calls into concurrency-safe batches and serial batches.
 
-        返回格式:
+        Return format:
             [{"calls": [...], "concurrent": True/False}, ...]
         """
         batches: list[dict] = []

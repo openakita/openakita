@@ -28,5 +28,5 @@ Use this skill when the user wants to:
 
 ## Examples
 
-- "把我的 GitHub 仓库提交到 Skill Store"
-- "提交 https://github.com/my-org/my-skill 到平台"
+- " GitHub Skill Store"
+- " https://github.com/my-org/my-skill "

@@ -1,14 +1,14 @@
 """
-失败分析管线 (Agent Harness: Failure Analysis Pipeline)
+Failure Analysis Pipeline (Agent Harness: Failure Analysis Pipeline)
 
-利用 DecisionTrace 数据和任务执行记录，对失败任务进行结构化分析，
-识别 Harness 层面的缺陷并生成改进建议。
+Leverages DecisionTrace data and task execution records to perform structured analysis
+of failed tasks, identifying Harness-level defects and generating improvement suggestions.
 
-分析维度:
-- 根因分类: context_loss / tool_limitation / plan_deficiency / loop / budget_exhaustion / external_failure
-- Harness 缺口识别: missing_tool / insufficient_docs / missing_guardrail / weak_verification / poor_context_engineering
-- 量化指标: tokens_wasted / time_wasted / iterations_before_failure
-- 改进建议: 自动生成 Harness 改进建议
+Analysis Dimensions:
+- Root Cause Classification: context_loss / tool_limitation / plan_deficiency / loop / budget_exhaustion / external_failure
+- Harness Gap Identification: missing_tool / insufficient_docs / missing_guardrail / weak_verification / poor_context_engineering
+- Quantitative Metrics: tokens_wasted / time_wasted / iterations_before_failure
+- Improvement Suggestions: Automatically generated Harness improvement suggestions
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 class RootCause(StrEnum):
-    """失败根因分类"""
+    """Failure root cause classification"""
 
     CONTEXT_LOSS = "context_loss"
     TOOL_LIMITATION = "tool_limitation"
@@ -39,7 +39,7 @@ class RootCause(StrEnum):
 
 
 class HarnessGap(StrEnum):
-    """Harness 缺口类型"""
+    """Harness gap type"""
 
     MISSING_TOOL = "missing_tool"
     INSUFFICIENT_DOCS = "insufficient_docs"
@@ -53,20 +53,20 @@ class HarnessGap(StrEnum):
 
 @dataclass
 class FailureMetrics:
-    """失败任务量化指标"""
+    """Quantitative metrics for failed tasks"""
 
     total_tokens: int = 0
     total_iterations: int = 0
     total_tool_calls: int = 0
     elapsed_seconds: float = 0.0
-    tokens_after_last_progress: int = 0  # 最后一次有效进展后浪费的 token
+    tokens_after_last_progress: int = 0  # tokens wasted after the last effective progress
     error_count: int = 0
     loop_count: int = 0
 
 
 @dataclass
 class FailureAnalysisResult:
-    """单次失败分析结果"""
+    """Result of a single failure analysis"""
 
     task_id: str
     timestamp: str
@@ -80,10 +80,10 @@ class FailureAnalysisResult:
 
 class FailureAnalyzer:
     """
-    失败分析器。
+    Failure analyzer.
 
-    从 react_trace、supervisor events、budget status 等数据源
-    提取失败信号并进行分类分析。
+    Extracts failure signals from data sources such as react_trace,
+    supervisor events, and budget status, then classifies and analyzes them.
     """
 
     def __init__(self, output_dir: str | Path = "data/failure_analysis") -> None:
@@ -102,15 +102,15 @@ class FailureAnalyzer:
         task_description: str = "",
     ) -> FailureAnalysisResult:
         """
-        分析一个失败任务。
+        Analyze a failed task.
 
         Args:
-            task_id: 任务 ID
-            react_trace: ReAct 循环追踪数据
-            supervisor_events: RuntimeSupervisor 事件记录
-            budget_summary: 预算使用摘要
-            exit_reason: 退出原因
-            task_description: 任务描述
+            task_id: Task ID
+            react_trace: ReAct loop trace data
+            supervisor_events: RuntimeSupervisor event records
+            budget_summary: Budget usage summary
+            exit_reason: Exit reason
+            task_description: Task description
         """
         react_trace = react_trace or []
         supervisor_events = supervisor_events or []
@@ -175,7 +175,7 @@ class FailureAnalyzer:
 
         return result
 
-    # ==================== 根因分类 ====================
+    # ==================== Root Cause Classification ====================
 
     def _classify_root_cause(
         self,
@@ -184,7 +184,7 @@ class FailureAnalyzer:
         budget_summary: dict,
         exit_reason: str,
     ) -> RootCause:
-        """基于多信号分类失败根因"""
+        """Classify failure root cause based on multiple signals"""
 
         if exit_reason == "budget_exceeded":
             return RootCause.BUDGET_EXHAUSTION
@@ -193,7 +193,7 @@ class FailureAnalyzer:
             return RootCause.LOOP_DETECTED
 
         if exit_reason == "max_iterations":
-            # 检查是否是循环导致
+            # Check if loop was the cause
             loop_events = [
                 e
                 for e in supervisor_events
@@ -203,12 +203,12 @@ class FailureAnalyzer:
                 return RootCause.LOOP_DETECTED
             return RootCause.PLAN_DEFICIENCY
 
-        # 检查工具错误模式
+        # Check tool error patterns
         tool_errors = self._count_tool_errors(react_trace)
         if tool_errors > len(react_trace) * 0.5:
             return RootCause.TOOL_LIMITATION
 
-        # 检查外部失败
+        # Check for external failures
         external_patterns = ["API", "timeout", "connection", "HTTP", "502", "503"]
         for trace in react_trace[-5:]:
             for tr in trace.get("tool_results", []):
@@ -216,7 +216,7 @@ class FailureAnalyzer:
                 if any(p in content for p in external_patterns):
                     return RootCause.EXTERNAL_FAILURE
 
-        # 检查上下文丢失（压缩后迷失方向）
+        # Check for context loss (disorientation after compression)
         compression_count = sum(1 for t in react_trace if t.get("context_compressed"))
         if compression_count >= 2:
             late_errors = self._count_tool_errors(react_trace[len(react_trace) // 2 :])
@@ -225,7 +225,7 @@ class FailureAnalyzer:
 
         return RootCause.UNKNOWN
 
-    # ==================== Harness 缺口识别 ====================
+    # ==================== Harness Gap Identification ====================
 
     def _identify_harness_gap(
         self,
@@ -233,13 +233,13 @@ class FailureAnalyzer:
         react_trace: list[dict],
         supervisor_events: list[dict],
     ) -> HarnessGap:
-        """基于根因和迹象识别 Harness 缺口"""
+        """Identify Harness gaps based on root cause and signals"""
 
         if root_cause == RootCause.TOOL_LIMITATION:
             return HarnessGap.MISSING_TOOL
 
         if root_cause == RootCause.LOOP_DETECTED:
-            # 检查 supervisor 是否及时介入
+            # Check if supervisor intervened in time
             loop_events = [
                 e
                 for e in supervisor_events
@@ -260,7 +260,7 @@ class FailureAnalyzer:
 
         return HarnessGap.NONE
 
-    # ==================== 证据收集 ====================
+    # ==================== Evidence Collection ====================
 
     def _collect_evidence(
         self,
@@ -268,7 +268,7 @@ class FailureAnalyzer:
         supervisor_events: list[dict],
         exit_reason: str,
     ) -> list[str]:
-        """收集关键证据"""
+        """Collect key evidence"""
         evidence = []
 
         if exit_reason:
@@ -276,13 +276,13 @@ class FailureAnalyzer:
 
         evidence.append(f"Total iterations: {len(react_trace)}")
 
-        # 最后几轮的工具调用
+        # Tool calls from the last few iterations
         for trace in react_trace[-3:]:
             tools = [tc.get("name", "?") for tc in trace.get("tool_calls", [])]
             if tools:
                 evidence.append(f"Iter {trace.get('iteration', '?')}: tools={tools}")
 
-        # Supervisor 事件
+        # Supervisor events
         for event in supervisor_events[-3:]:
             evidence.append(
                 f"Supervisor: {event.get('pattern', '?')} level={event.get('level', '?')}"
@@ -290,44 +290,44 @@ class FailureAnalyzer:
 
         return evidence
 
-    # ==================== 改进建议 ====================
+    # ==================== Improvement Suggestions ====================
 
     _SUGGESTION_MAP = {
         RootCause.CONTEXT_LOSS: (
-            "上下文丢失导致失败。建议：\n"
-            "1. 检查 ContextRewriter 是否正确注入 Plan 状态\n"
-            "2. 增加 Scratchpad 中的关键决策记录\n"
-            "3. 考虑降低压缩阈值保留更多上下文"
+            "Context loss caused failure. Suggestions:\n"
+            "1. Check if ContextRewriter properly injects Plan status\n"
+            "2. Increase key decision logging in the Scratchpad\n"
+            "3. Consider lowering compression thresholds to retain more context"
         ),
         RootCause.TOOL_LIMITATION: (
-            "工具能力不足。建议：\n"
-            "1. 检查是否需要新增工具或技能\n"
-            "2. 现有工具的错误处理是否充分\n"
-            "3. 工具参数验证是否完善"
+            "Insufficient tool capability. Suggestions:\n"
+            "1. Check if new tools or skills are needed\n"
+            "2. Verify if current tool error handling is sufficient\n"
+            "3. Improve tool parameter validation"
         ),
         RootCause.PLAN_DEFICIENCY: (
-            "计划不充分导致超时。建议：\n"
-            "1. 检查 Plan 步骤是否足够细粒度\n"
-            "2. 是否有未预见的依赖关系\n"
-            "3. 验证器是否在 Plan 未完成时正确拦截"
+            "Insufficient planning led to timeout. Suggestions:\n"
+            "1. Check if Plan steps are granular enough\n"
+            "2. Look for unforeseen dependencies\n"
+            "3. Verify if validators are correctly intercepting incomplete Plans"
         ),
         RootCause.LOOP_DETECTED: (
-            "推理陷入循环。建议：\n"
-            "1. 检查 Supervisor 的循环检测阈值是否合适\n"
-            "2. 回滚策略是否注入了足够的差异化提示\n"
-            "3. 是否需要更早期的干预"
+            "Reasoning stuck in a loop. Suggestions:\n"
+            "1. Check if Supervisor loop detection thresholds are appropriate\n"
+            "2. Ensure rollback strategies inject enough differentiation hints\n"
+            "3. Consider earlier intervention"
         ),
         RootCause.BUDGET_EXHAUSTION: (
-            "预算耗尽。建议：\n"
-            "1. 评估预算配置是否合理\n"
-            "2. 检查是否有 token 浪费（重复读取大文件等）\n"
-            "3. 考虑是否需要更便宜的模型降级策略"
+            "Budget exhausted. Suggestions:\n"
+            "1. Evaluate if budget configurations are reasonable\n"
+            "2. Check for token waste (e.g., redundant reading of large files)\n"
+            "3. Consider cheaper model fallback strategies"
         ),
         RootCause.EXTERNAL_FAILURE: (
-            "外部依赖失败。建议：\n"
-            "1. 添加外部 API 的重试和降级策略\n"
-            "2. 检查超时配置是否合理\n"
-            "3. 考虑添加缓存机制"
+            "External dependency failure. Suggestions:\n"
+            "1. Add retry and fallback strategies for external APIs\n"
+            "2. Check if timeout configurations are reasonable\n"
+            "3. Consider adding a caching mechanism"
         ),
     }
 
@@ -337,25 +337,25 @@ class FailureAnalyzer:
         harness_gap: HarnessGap,
         metrics: FailureMetrics,
     ) -> str:
-        """生成改进建议"""
+        """Generate improvement suggestions"""
         suggestion = self._SUGGESTION_MAP.get(root_cause, "")
 
         if metrics.tokens_after_last_progress > 50000:
             suggestion += (
-                f"\n\n⚠️ 最后一次有效进展后浪费了 {metrics.tokens_after_last_progress} tokens。"
-                "考虑更早期的终止或策略切换。"
+                f"\n\n⚠️ Wasted {metrics.tokens_after_last_progress} tokens after the last effective progress. "
+                "Consider earlier termination or strategy switching."
             )
 
         return suggestion
 
-    # ==================== 辅助方法 ====================
+    # ==================== Helper Methods ====================
 
     def _compute_metrics(
         self,
         react_trace: list[dict],
         budget_summary: dict,
     ) -> FailureMetrics:
-        """计算量化指标"""
+        """Compute quantitative metrics"""
         metrics = FailureMetrics()
         metrics.total_iterations = len(react_trace)
 
@@ -364,10 +364,10 @@ class FailureAnalyzer:
             metrics.total_tokens += tokens.get("input", 0) + tokens.get("output", 0)
             metrics.total_tool_calls += len(trace.get("tool_calls", []))
 
-            # 检查错误
+            # Check for errors
             for tr in trace.get("tool_results", []):
                 content = str(tr.get("result_content", ""))
-                if any(m in content for m in ["❌", "⚠️ 工具执行错误", "错误类型:"]):
+                if any(m in content for m in ["❌", "⚠️ Tool execution error", "Error type:"]):
                     metrics.error_count += 1
 
         metrics.elapsed_seconds = budget_summary.get("elapsed_seconds", 0)
@@ -375,17 +375,17 @@ class FailureAnalyzer:
         return metrics
 
     def _count_tool_errors(self, traces: list[dict]) -> int:
-        """计算工具错误数"""
+        """Count tool errors"""
         count = 0
         for trace in traces:
             for tr in trace.get("tool_results", []):
                 content = str(tr.get("result_content", ""))
-                if any(m in content for m in ["❌", "⚠️ 工具执行错误", "错误类型:"]):
+                if any(m in content for m in ["❌", "⚠️ Tool execution error", "Error type:"]):
                     count += 1
         return count
 
     def _persist_result(self, result: FailureAnalysisResult) -> None:
-        """持久化分析结果"""
+        """Persist analysis results"""
         try:
             date_str = datetime.now().strftime("%Y-%m-%d")
             day_dir = self._output_dir / date_str
@@ -420,11 +420,11 @@ class FailureAnalyzer:
             logger.warning(f"[FailureAnalysis] Failed to persist result: {e}")
 
     def get_recent_results(self, limit: int = 20) -> list[FailureAnalysisResult]:
-        """获取最近的分析结果"""
+        """Get recent analysis results"""
         return list(reversed(self._results[-limit:]))
 
     def get_stats(self) -> dict[str, Any]:
-        """获取统计摘要"""
+        """Get statistics summary"""
         if not self._results:
             return {"total": 0}
 

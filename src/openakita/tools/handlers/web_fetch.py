@@ -1,7 +1,8 @@
 """
-Web Fetch 处理器
+Web Fetch Handler
 
-轻量 URL 内容获取 — 不启动浏览器，直接 HTTP 抓取并提取正文转 Markdown。
+Lightweight URL content fetching — no browser launched; directly fetches via HTTP,
+extracts the main body text, and converts it to Markdown.
 """
 
 import logging
@@ -31,22 +32,22 @@ class WebFetchHandler:
         max_length = params.get("max_length", 15000)
 
         if not url:
-            return "❌ web_fetch 缺少必要参数 'url'。"
+            return "❌ web_fetch missing required parameter 'url'."
 
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
-            return f"❌ 无效 URL：{url}（需要完整 URL，包含 https:// 等协议前缀）"
+            return f"❌ Invalid URL: {url} (a full URL with scheme prefix such as https:// is required)"
 
         from ...utils.url_safety import is_safe_url
 
         safe, reason = await is_safe_url(url)
         if not safe:
-            return f"❌ URL 安全检查失败：{reason}。请使用浏览器工具访问本地/内网服务。"
+            return f"❌ URL safety check failed: {reason}. Use the browser tool to access local/intranet services."
 
         try:
             import httpx
         except ImportError:
-            return "❌ web_fetch 需要 httpx 库。请运行: pip install httpx"
+            return "❌ web_fetch requires the httpx library. Please run: pip install httpx"
 
         from ...llm.providers.proxy_utils import get_httpx_client_kwargs
 
@@ -65,16 +66,16 @@ class WebFetchHandler:
                 response = await client.get(url)
                 response.raise_for_status()
         except httpx.HTTPStatusError as e:
-            return f"❌ HTTP {e.response.status_code} 错误：{url}"
+            return f"❌ HTTP {e.response.status_code} error: {url}"
         except httpx.TimeoutException:
-            return f"❌ 请求超时（30s）：{url}"
+            return f"❌ Request timed out (30s): {url}"
         except Exception as e:
-            return f"❌ 请求失败：{e}"
+            return f"❌ Request failed: {e}"
 
         content_type = response.headers.get("content-type", "")
 
         if any(t in content_type for t in ("image/", "audio/", "video/", "application/pdf")):
-            return f"❌ web_fetch 不支持二进制内容（{content_type}）。请使用浏览器工具或下载。"
+            return f"❌ web_fetch does not support binary content ({content_type}). Use the browser tool or download directly."
 
         html = response.text
 
@@ -82,14 +83,14 @@ class WebFetchHandler:
 
         if len(markdown) > max_length:
             markdown = markdown[:max_length] + (
-                f"\n\n[CONTENT_TRUNCATED] 内容已截断至 {max_length} 字符。"
-                "如需完整内容，增大 max_length 参数或使用浏览器工具。"
+                f"\n\n[CONTENT_TRUNCATED] Content truncated to {max_length} characters. "
+                "Increase max_length or use the browser tool for the full content."
             )
 
         if not markdown.strip():
             return (
-                f"⚠️ 页面内容为空或无法提取正文：{url}\n"
-                "可能是 JavaScript 渲染的页面，请使用浏览器工具查看。"
+                f"⚠️ Page content is empty or main text could not be extracted: {url}\n"
+                "This may be a JavaScript-rendered page. Try the browser tool instead."
             )
 
         return f"URL: {url}\n\n{markdown}"

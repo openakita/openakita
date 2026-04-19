@@ -2,6 +2,12 @@
  * Reusable chat panel — organization or node level.
  * Renders a scrollable message list, input box, and real-time WS progress.
  * Messages are persisted to backend session API (same as main ChatView).
+ *
+ * NOTE: rehype-raw allows raw HTML inside ReactMarkdown, but streaming content
+ * often contains unclosed/partially-streamed tags like `<details>` that the
+ * browser auto-repairs in a way that leaves React holding orphaned fibers.
+ * Solution: while streaming, strip all HTML tags to plain text so the DOM
+ * stays stable; render full HTML only on finalised (non-streaming) messages.
  */
 import { useState, useRef, useEffect, useCallback } from "react";
 import { safeFetch } from "../providers";
@@ -72,6 +78,20 @@ function sessionId(orgId: string, nodeId?: string | null): string {
 
 let _seq = 0;
 function genId() { return `orgchat-${Date.now()}-${++_seq}`; }
+
+/**
+ * Strip HTML tags to plain text — used for streaming previews so rehype-raw
+ * never sees partially-closed tags and breaks React reconciliation.
+ * Collapses whitespace that was inside structural tags to keep it readable.
+ */
+function stripHtmlTags(html: string): string {
+  // Replace closing structural tags with newlines for readability
+  const withNewlines = html
+    .replace(/<\/(?:details|summary|p|div|li|tr|th|td|blockquote|pre|h[1-6])>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n");
+  // Strip all remaining tags
+  return withNewlines.replace(/<[^>]*>/g, "");
+}
 
 const LS_PREFIX = "orgchat_msgs_";
 
@@ -687,8 +707,17 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           <div key={m.id} className={`ocp-msg ocp-msg-${m.role} ${m.streaming ? "ocp-msg-streaming" : ""}`}>
             <div className={`ocp-msg-bubble ${m.role !== "user" ? "chatMdContent" : ""}`}>
               {m.role === "user" ? (
+                // User messages: never contain raw HTML, safe to render as-is
                 m.content
+              ) : m.streaming ? (
+                // While streaming, render plain text only — rehype-raw + unclosed HTML
+                // tags during streaming causes React's removeChild reconciliation crash.
+                // Strip all HTML tags so the DOM stays stable during rapid updates.
+                <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit", fontSize: "inherit" }}>
+                  {stripHtmlTags(m.content)}
+                </pre>
               ) : md ? (
+                // Final (non-streaming) message: render full markdown with HTML support
                 <md.ReactMarkdown remarkPlugins={md.remarkPlugins} rehypePlugins={md.rehypePlugins}>
                   {m.content}
                 </md.ReactMarkdown>
@@ -698,8 +727,8 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
               {m.streaming && <span className="ocp-typing">●</span>}
               {!m.streaming && m.attachments && m.attachments.length > 0 && (
                 <div style={{ borderTop: "1px solid rgba(100,116,139,0.2)", marginTop: 10, paddingTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
-                  {m.attachments.map((f, i) => (
-                    <FileAttachmentCard key={f.file_path || i} file={f} apiBaseUrl={apiBaseUrl} />
+                  {m.attachments.map((f) => (
+                    <FileAttachmentCard key={f.file_path ?? String(Math.random())} file={f} apiBaseUrl={apiBaseUrl} />
                   ))}
                 </div>
               )}

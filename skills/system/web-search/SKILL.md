@@ -9,29 +9,29 @@ category: Web Search
 
 # Web Search
 
-使用 DuckDuckGo 搜索网页，获取最新信息。
+Use DuckDuckGo search, get. 
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| query | string | 是 | 搜索关键词 |
-| max_results | integer | 否 | 最大结果数（1-20，默认 5） |
-| region | string | 否 | 地区代码（wt-wt 全球，cn-zh 中国） |
-| safesearch | string | 否 | 安全搜索（on/moderate/off） |
+| query | string | Yes | search |
+| max_results | integer | No | Maximum (1-20, Default 5) |
+| region | string | No | (wt-wt, cn-zh ) |
+| safesearch | string | No | search (on/moderate/off) |
 
 ## Examples
 
-**搜索信息**:
+**search**:
 ```json
-{"query": "Python asyncio 教程", "max_results": 5}
+{"query": "Python asyncio ", "max_results": 5}
 ```
 
-**搜索中文内容**:
+**search**:
 ```json
-{"query": "天气预报", "region": "cn-zh"}
+{"query": "", "region": "cn-zh"}
 ```
 
 ## Related Skills
 
-- `news-search`: 搜索新闻
+- `news-search`: search

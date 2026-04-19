@@ -1,10 +1,10 @@
 """
-媒体处理器
+Media Handler
 
-处理各种媒体内容:
-- 语音转文字 (Speech-to-Text)
-- 图片理解 (Vision)
-- 文件内容提取 (PDF, Office, etc.)
+Processes various types of media content:
+- Speech-to-Text
+- Image understanding (Vision)
+- File content extraction (PDF, Office, etc.)
 """
 
 import asyncio
@@ -20,15 +20,15 @@ logger = logging.getLogger(__name__)
 
 class MediaHandler:
     """
-    媒体处理器
+    Media Handler
 
-    提供统一的媒体处理接口，支持:
-    - 语音转文字
-    - 图片描述/理解
-    - 文档内容提取
+    Provides a unified media processing interface, supporting:
+    - Speech-to-text transcription
+    - Image description / understanding
+    - Document content extraction
     """
 
-    # 支持 .en 专用模型的 Whisper 尺寸（large 无 .en 变体）
+    # Whisper sizes that support a dedicated .en model (large has no .en variant)
     _EN_MODEL_SIZES = {"tiny", "base", "small", "medium"}
 
     def __init__(
@@ -40,34 +40,34 @@ class MediaHandler:
     ):
         """
         Args:
-            brain: Brain 实例（用于图片理解）
-            whisper_model: Whisper 模型大小 (tiny, base, small, medium, large)
-            whisper_language: 语音识别语言 (zh/en/auto/其他语言代码)
-            enable_ocr: 是否启用 OCR
+            brain: Brain instance (used for image understanding).
+            whisper_model: Whisper model size (tiny, base, small, medium, large).
+            whisper_language: Speech recognition language (zh/en/auto/other language codes).
+            enable_ocr: Whether to enable OCR.
         """
         self.brain = brain
         self.whisper_language = whisper_language.lower().strip()
-        # 英语且模型尺寸有 .en 变体时，自动切换到更小更快的 .en 模型
+        # For English, automatically switch to the smaller, faster .en model when available
         if self.whisper_language == "en" and whisper_model in self._EN_MODEL_SIZES:
             self.whisper_model = f"{whisper_model}.en"
         else:
             self.whisper_model = whisper_model
         self.enable_ocr = enable_ocr
 
-        # 延迟加载的模型
+        # Lazily loaded models
         self._whisper = None
         self._whisper_loaded = False
-        self._whisper_unavailable = False  # ImportError → 本进程内不再重试
+        self._whisper_unavailable = False  # ImportError -> no retry within this process
         self._ocr = None
 
     async def preload_whisper(self) -> bool:
         """
-        预加载 Whisper 模型
+        Preload the Whisper model.
 
-        在系统启动时调用，避免第一次使用时的延迟
+        Called at system startup to avoid delay on first use.
 
         Returns:
-            是否成功加载
+            Whether the model was loaded successfully.
         """
         if self._whisper_loaded or self._whisper_unavailable:
             return self._whisper_loaded
@@ -81,7 +81,7 @@ class MediaHandler:
             return False
 
     def _load_whisper_sync(self) -> None:
-        """同步加载 Whisper 模型"""
+        """Synchronously load the Whisper model."""
         if self._whisper_loaded or self._whisper_unavailable:
             return
 
@@ -96,22 +96,22 @@ class MediaHandler:
             from openakita.tools._import_helper import import_or_hint
 
             hint = import_or_hint("whisper")
-            logger.warning(f"Whisper 不可用（本进程内不再重试）: {hint}")
+            logger.warning(f"Whisper unavailable (no retry within this process): {hint}")
             self._whisper_unavailable = True
         except Exception as e:
             logger.error(f"Failed to load Whisper model: {e}")
 
     async def process(self, media: MediaFile) -> MediaFile:
         """
-        处理媒体文件
+        Process a media file.
 
-        根据类型自动选择处理方式
+        Automatically selects the processing method based on the file type.
 
         Args:
-            media: 媒体文件
+            media: The media file.
 
         Returns:
-            处理后的媒体文件（带有 transcription/description/extracted_text）
+            The processed media file (with transcription/description/extracted_text).
         """
         if not media.local_path:
             logger.warning(f"Media {media.id} has no local path, skipping processing")
@@ -134,15 +134,15 @@ class MediaHandler:
 
     async def transcribe_audio(self, media: MediaFile) -> str:
         """
-        语音转文字
+        Speech-to-text transcription.
 
-        使用 OpenAI Whisper 或云服务
+        Uses OpenAI Whisper or a cloud service.
 
         Args:
-            media: 音频文件
+            media: The audio file.
 
         Returns:
-            转写文本
+            The transcribed text.
         """
         if not media.local_path:
             raise ValueError("Media has no local path")
@@ -150,18 +150,18 @@ class MediaHandler:
         logger.info(f"Transcribing audio: {media.filename}")
 
         try:
-            # 尝试使用本地 Whisper
+            # Try local Whisper first
             transcription = await self._transcribe_with_whisper(media.local_path)
         except Exception as e:
             logger.warning(f"Local Whisper failed: {e}, trying fallback")
-            # 回退：使用简单的描述
-            transcription = f"[语音消息，时长 {media.duration or '未知'} 秒]"
+            # Fallback: use a simple description
+            transcription = f"[Voice message, duration {media.duration or 'unknown'} seconds]"
 
         media.transcription = transcription
         return transcription
 
     async def _transcribe_with_whisper(self, audio_path: str) -> str:
-        """使用本地 Whisper 转写"""
+        """Transcribe using local Whisper."""
         if not self._whisper_loaded and not self._whisper_unavailable:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, self._load_whisper_sync)
@@ -184,7 +184,7 @@ class MediaHandler:
             kwargs["language"] = self.whisper_language
 
         def _run_whisper():
-            # 对已转换的 WAV 尝试直接 numpy 加载，绕过 ffmpeg 依赖
+            # For converted WAV files, try loading directly via numpy to bypass ffmpeg dependency
             if compatible_path.endswith(".wav"):
                 audio_array = load_wav_as_numpy(compatible_path)
                 if audio_array is not None:
@@ -198,15 +198,15 @@ class MediaHandler:
 
     async def describe_image(self, media: MediaFile) -> str:
         """
-        图片理解/描述
+        Image understanding / description.
 
-        使用 Claude Vision 或其他多模态模型
+        Uses Claude Vision or another multimodal model.
 
         Args:
-            media: 图片文件
+            media: The image file.
 
         Returns:
-            图片描述
+            The image description.
         """
         if not media.local_path:
             raise ValueError("Media has no local path")
@@ -215,30 +215,30 @@ class MediaHandler:
 
         try:
             if self.brain:
-                # 使用 Claude Vision
+                # Use Claude Vision
                 description = await self._describe_with_vision(media.local_path)
             else:
-                # 回退：使用 OCR
+                # Fallback: use OCR
                 description = await self._ocr_image(media.local_path)
         except Exception as e:
             logger.warning(f"Image description failed: {e}")
-            description = f"[图片: {media.filename}]"
+            description = f"[Image: {media.filename}]"
 
         media.description = description
         return description
 
     async def _describe_with_vision(self, image_path: str) -> str:
-        """使用 Claude Vision 描述图片"""
+        """Describe an image using Claude Vision."""
         import base64
 
-        # 读取图片并转 base64
+        # Read the image and convert to base64
         with open(image_path, "rb") as f:
             image_data = base64.standard_b64encode(f.read()).decode()
 
-        # 确定 MIME 类型
+        # Determine MIME type
         mime_type = mimetypes.guess_type(image_path)[0] or "image/jpeg"
 
-        # 调用 Claude
+        # Call Claude
         response = await self.brain.client.messages.create(
             model=self.brain.model,
             max_tokens=500,
@@ -256,7 +256,7 @@ class MediaHandler:
                         },
                         {
                             "type": "text",
-                            "text": "请简要描述这张图片的内容，用中文回答。",
+                            "text": "Briefly describe the content of this image.",
                         },
                     ],
                 }
@@ -266,25 +266,25 @@ class MediaHandler:
         return response.content[0].text
 
     async def _ocr_image(self, image_path: str) -> str:
-        """使用 OCR 提取图片文字"""
+        """Extract text from an image using OCR."""
         if not self.enable_ocr:
             return ""
 
         try:
-            # 尝试使用 pytesseract
+            # Try using pytesseract
             import pytesseract
             from PIL import Image
 
             image = Image.open(image_path)
             text = pytesseract.image_to_string(image, lang="chi_sim+eng")
 
-            return text.strip() if text.strip() else "[图片无可识别文字]"
+            return text.strip() if text.strip() else "[Image has no recognizable text]"
 
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
 
             hint = import_or_hint("pytesseract")
-            logger.warning(f"OCR 不可用: {hint}")
+            logger.warning(f"OCR unavailable: {hint}")
             return ""
         except Exception as e:
             logger.warning(f"OCR failed: {e}")
@@ -292,18 +292,18 @@ class MediaHandler:
 
     async def extract_text(self, media: MediaFile) -> str:
         """
-        提取文件内容
+        Extract file content.
 
-        支持:
+        Supports:
         - PDF
-        - Office 文档 (docx, xlsx, pptx)
-        - 文本文件
+        - Office documents (docx, xlsx, pptx)
+        - Text files
 
         Args:
-            media: 文件
+            media: The file.
 
         Returns:
-            提取的文本
+            The extracted text.
         """
         if not media.local_path:
             raise ValueError("Media has no local path")
@@ -325,16 +325,16 @@ class MediaHandler:
             elif extension in (".txt", ".md", ".json", ".py", ".js", ".html", ".css"):
                 text = path.read_bytes().decode("utf-8", errors="ignore")
             else:
-                text = f"[文件: {media.filename}，不支持内容提取]"
+                text = f"[File: {media.filename}, content extraction not supported]"
         except Exception as e:
             logger.warning(f"Text extraction failed: {e}")
-            text = f"[文件: {media.filename}，提取失败]"
+            text = f"[File: {media.filename}, extraction failed]"
 
         media.extracted_text = text
         return text
 
     async def _extract_pdf(self, path: Path) -> str:
-        """提取 PDF 内容"""
+        """Extract PDF content."""
         try:
             import fitz  # PyMuPDF
 
@@ -348,7 +348,7 @@ class MediaHandler:
             return "\n".join(text_parts)
 
         except ImportError:
-            # 回退方案
+            # Fallback approach
             try:
                 import pypdf
 
@@ -364,10 +364,10 @@ class MediaHandler:
                 from openakita.tools._import_helper import import_or_hint
 
                 hint = import_or_hint("fitz")
-                raise ImportError(f"PDF 提取不可用: {hint}")
+                raise ImportError(f"PDF extraction unavailable: {hint}")
 
     async def _extract_docx(self, path: Path) -> str:
-        """提取 Word 文档内容"""
+        """Extract Word document content."""
         try:
             from docx import Document
 
@@ -383,10 +383,10 @@ class MediaHandler:
             from openakita.tools._import_helper import import_or_hint
 
             hint = import_or_hint("docx")
-            raise ImportError(f"DOCX 提取不可用: {hint}")
+            raise ImportError(f"DOCX extraction unavailable: {hint}")
 
     async def _extract_xlsx(self, path: Path) -> str:
-        """提取 Excel 内容"""
+        """Extract Excel content."""
         try:
             import openpyxl
 
@@ -396,7 +396,7 @@ class MediaHandler:
             for sheet in wb.worksheets:
                 text_parts.append(f"## Sheet: {sheet.title}")
 
-                for row in sheet.iter_rows(max_row=100):  # 限制行数
+                for row in sheet.iter_rows(max_row=100):  # Limit row count
                     cells = [str(cell.value) if cell.value else "" for cell in row]
                     text_parts.append(" | ".join(cells))
 
@@ -407,10 +407,10 @@ class MediaHandler:
             from openakita.tools._import_helper import import_or_hint
 
             hint = import_or_hint("openpyxl")
-            raise ImportError(f"XLSX 提取不可用: {hint}")
+            raise ImportError(f"XLSX extraction unavailable: {hint}")
 
     async def _extract_pptx(self, path: Path) -> str:
-        """提取 PowerPoint 内容"""
+        """Extract PowerPoint content."""
         try:
             from pptx import Presentation
 
@@ -430,4 +430,4 @@ class MediaHandler:
             from openakita.tools._import_helper import import_or_hint
 
             hint = import_or_hint("pptx")
-            raise ImportError(f"PPTX 提取不可用: {hint}")
+            raise ImportError(f"PPTX extraction unavailable: {hint}")

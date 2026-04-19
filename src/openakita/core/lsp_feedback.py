@@ -1,10 +1,10 @@
 """
-LSP 集成: 语言服务器诊断作为被动反馈
+LSP integration: language-server diagnostics as passive feedback.
 
-参考 Claude Code 的诊断反馈设计:
-- 工具执行后自动收集相关文件的 lint/type-check 信息
-- 将诊断注入工具结果，让 LLM 看到并修正
-- 支持多种语言服务器后端
+Inspired by Claude Code's diagnostic feedback design:
+- Automatically collects lint/type-check info for relevant files after tool execution
+- Injects diagnostics into tool results so the LLM can see and fix issues
+- Supports multiple language-server backends
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Diagnostic:
-    """一条诊断信息"""
+    """A single diagnostic item."""
 
     file: str
     line: int
@@ -32,7 +32,7 @@ class Diagnostic:
 
 @dataclass
 class DiagnosticReport:
-    """一组文件的诊断报告"""
+    """Diagnostic report for a set of files."""
 
     diagnostics: list[Diagnostic] = field(default_factory=list)
     files_checked: list[str] = field(default_factory=list)
@@ -46,7 +46,7 @@ class DiagnosticReport:
         return sum(1 for d in self.diagnostics if d.severity == "warning")
 
     def to_feedback_string(self, max_items: int = 20) -> str:
-        """转为可注入到工具结果的反馈文本。"""
+        """Convert to feedback text suitable for injection into tool results."""
         if not self.diagnostics:
             return ""
 
@@ -68,10 +68,10 @@ class DiagnosticReport:
 
 
 class LSPFeedbackCollector:
-    """LSP 诊断收集器。
+    """LSP diagnostic collector.
 
-    在工具执行后收集被修改文件的诊断信息，
-    注入到工具结果中作为被动反馈。
+    Collects diagnostics for modified files after tool execution
+    and injects them into tool results as passive feedback.
     """
 
     def __init__(self) -> None:
@@ -86,7 +86,7 @@ class LSPFeedbackCollector:
         *,
         timeout: float = 10.0,
     ) -> DiagnosticReport:
-        """收集指定文件的诊断信息。"""
+        """Collect diagnostics for the specified files."""
         report = DiagnosticReport(files_checked=files)
 
         for name, backend in self._backends.items():
@@ -106,14 +106,14 @@ class LSPFeedbackCollector:
 
 
 class DiagnosticBackend:
-    """诊断后端基类"""
+    """Base class for diagnostic backends."""
 
     async def check(self, files: list[str]) -> list[Diagnostic]:
         raise NotImplementedError
 
 
 class RuffBackend(DiagnosticBackend):
-    """Ruff (Python) lint 后端"""
+    """Ruff (Python) lint backend."""
 
     async def check(self, files: list[str]) -> list[Diagnostic]:
         py_files = [f for f in files if f.endswith(".py")]
@@ -154,7 +154,7 @@ class RuffBackend(DiagnosticBackend):
 
 
 class TypeScriptBackend(DiagnosticBackend):
-    """TypeScript tsc 诊断后端"""
+    """TypeScript tsc diagnostic backend."""
 
     async def check(self, files: list[str]) -> list[Diagnostic]:
         ts_files = [f for f in files if f.endswith((".ts", ".tsx"))]

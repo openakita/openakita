@@ -1,7 +1,7 @@
 """
-Windows 桌面自动化 - 配置管理
+Windows Desktop Automation - Configuration Management
 
-支持从环境变量和配置文件加载配置
+Supports loading configuration from environment variables and config files
 """
 
 import os
@@ -10,13 +10,13 @@ from dataclasses import dataclass, field
 
 @dataclass
 class CaptureConfig:
-    """截图配置"""
+    """Screenshot capture configuration."""
 
     default_monitor: int = 0
     compression_quality: int = 85
     max_width: int = 1920
     max_height: int = 1080
-    cache_ttl: float = 1.0  # 截图缓存时间（秒）
+    cache_ttl: float = 1.0  # Screenshot cache TTL (seconds)
 
     @classmethod
     def from_env(cls) -> "CaptureConfig":
@@ -31,7 +31,7 @@ class CaptureConfig:
 
 @dataclass
 class UIAConfig:
-    """UIAutomation 配置"""
+    """UIAutomation configuration."""
 
     timeout: float = 5.0
     retry_interval: float = 0.5
@@ -48,7 +48,7 @@ class UIAConfig:
 
 @dataclass
 class VisionConfig:
-    """视觉识别配置"""
+    """Vision recognition configuration."""
 
     enabled: bool = True
     max_retries: int = 2
@@ -65,7 +65,7 @@ class VisionConfig:
 
 @dataclass
 class ActionConfig:
-    """操作配置"""
+    """Action configuration."""
 
     click_delay: float = 0.1
     type_interval: float = 0.03
@@ -86,7 +86,7 @@ class ActionConfig:
 
 @dataclass
 class DesktopConfig:
-    """桌面自动化总配置"""
+    """Desktop automation top-level configuration."""
 
     enabled: bool = True
     capture: CaptureConfig = field(default_factory=CaptureConfig)
@@ -96,7 +96,7 @@ class DesktopConfig:
 
     @classmethod
     def from_env(cls) -> "DesktopConfig":
-        """从环境变量加载配置"""
+        """Load configuration from environment variables."""
         return cls(
             enabled=os.getenv("DESKTOP_ENABLED", "true").lower() == "true",
             capture=CaptureConfig.from_env(),
@@ -107,16 +107,16 @@ class DesktopConfig:
 
     @classmethod
     def default(cls) -> "DesktopConfig":
-        """返回默认配置"""
+        """Return the default configuration."""
         return cls()
 
 
-# 全局配置实例
+# Global configuration instance
 _config: DesktopConfig | None = None
 
 
 def get_config() -> DesktopConfig:
-    """获取全局配置"""
+    """Get the global configuration."""
     global _config
     if _config is None:
         _config = DesktopConfig.from_env()
@@ -124,12 +124,12 @@ def get_config() -> DesktopConfig:
 
 
 def set_config(config: DesktopConfig) -> None:
-    """设置全局配置"""
+    """Set the global configuration."""
     global _config
     _config = config
 
 
 def reset_config() -> None:
-    """重置配置为默认值"""
+    """Reset configuration to defaults."""
     global _config
     _config = None

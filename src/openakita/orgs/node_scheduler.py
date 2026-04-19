@@ -1,8 +1,10 @@
 """
-OrgNodeScheduler — 节点定时任务调度
+OrgNodeScheduler — Node Scheduled Task Runner
 
-管理每个节点的独立定时任务，支持 cron、固定间隔、一次性三种模式。
-包含智能调频：连续无异常时自动降频，发现异常立即恢复。
+Manages independent scheduled tasks per node, supporting cron, fixed-interval,
+and one-shot modes.  Includes adaptive frequency scaling: automatically reduces
+check frequency when consecutive runs are clean, and immediately restores it
+when an issue is detected.
 """
 
 from __future__ import annotations
@@ -154,8 +156,8 @@ class OrgNodeScheduler:
                         if new_interval != current_interval:
                             logger.info(
                                 f"[Scheduler] {node_id}/{sched.name}: "
-                                f"降频 {current_interval}s -> {int(new_interval)}s "
-                                f"(连续{sched.consecutive_clean}次无异常)"
+                                f"down-scaling {current_interval}s -> {int(new_interval)}s "
+                                f"({sched.consecutive_clean} consecutive clean runs)"
                             )
                             current_interval = new_interval
                     self._save_schedule(org_id, node_id, sched)
@@ -177,19 +179,19 @@ class OrgNodeScheduler:
         })
 
         prompt = (
-            f"[定时任务] {sched.name}\n"
-            f"时间: {_now_iso()}\n"
-            f"指令: {sched.prompt}\n\n"
-            f"请执行上述任务。"
+            f"[Scheduled Task] {sched.name}\n"
+            f"Time: {_now_iso()}\n"
+            f"Instruction: {sched.prompt}\n\n"
+            f"Please execute the task above."
         )
 
         if sched.report_condition == "on_issue":
             prompt += (
-                f"\n\n汇报规则：仅在发现异常/问题时向 {sched.report_to or '上级'} 汇报。"
-                f"如果一切正常，简要记录到你的私有记忆即可。"
+                f"\n\nReporting rule: only report to {sched.report_to or 'supervisor'} when an issue is found. "
+                f"If everything is normal, briefly record it in your private memory."
             )
         elif sched.report_condition == "always" and sched.report_to:
-            prompt += f"\n\n执行完毕后请向 {sched.report_to} 汇报结果。"
+            prompt += f"\n\nAfter execution, please report the result to {sched.report_to}."
 
         result = await self._runtime.send_command(org_id, node_id, prompt)
 

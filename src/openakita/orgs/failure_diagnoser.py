@@ -1,22 +1,25 @@
 """
-Failure diagnoser —— 把 ReAct trace + exit_reason 翻译成"给用户看的根因 + 建议"。
+Failure diagnoser —— translates ReAct trace + exit_reason into a user-facing
+"root cause + suggestion" summary.
 
-职责边界：
-- 纯函数分析：不写文件、不发事件、不依赖 I/O
-- 只产出 dict，是否发给前端由 runtime.py 决定
-- 与 openakita.evolution.failure_analysis 分离：后者是给 harness/训练用的结构化落盘，
-  本模块只关心"人话摘要 + 证据片段 + 下一步建议"，两者职责互不耦合
+Responsibility boundaries:
+- Pure analytical function: no file writes, no events emitted, no I/O dependencies
+- Only produces a dict; whether to send it to the frontend is decided by runtime.py
+- Kept separate from openakita.evolution.failure_analysis: that module persists
+  structured data for the harness/training pipeline, while this module only
+  concerns itself with "plain-language summary + evidence snippets + next-step
+  suggestion". The two have non-overlapping responsibilities.
 
-输出形状:
+Output shape:
     {
-        "root_cause": str,        # 分类码（稳定字符串，供前端切样式/打点）
-        "headline": str,          # 一句话人话标题
+        "root_cause": str,        # Category code (stable string, for frontend styling/metrics)
+        "headline": str,          # One-sentence plain-language headline
         "evidence": list[dict],   # [{iter, tool, args_summary, error}, ...]
-        "suggestion": str,        # 给用户的下一步建议（多行文本，markdown 兼容）
-        "exit_reason": str,       # 透传 reasoning_engine._last_exit_reason
+        "suggestion": str,        # Next-step suggestion for the user (multi-line, markdown-compatible)
+        "exit_reason": str,       # Passes through reasoning_engine._last_exit_reason
     }
 
-永不抛异常：分析失败时回退到 root_cause="unknown"。
+Never raises: falls back to root_cause="unknown" if analysis fails.
 """
 
 from __future__ import annotations
@@ -52,7 +55,7 @@ _GENERIC_FAIL_MARKERS = (
 
 
 def _is_error_entry(is_error_flag: bool, result_content: str) -> bool:
-    """字段 `is_error` 有时会漏打；再扫一遍文本兜底识别失败。"""
+    """The `is_error` field is sometimes missed; re-scan the text as a fallback to detect failures."""
     if is_error_flag:
         return True
     if not result_content:
@@ -61,7 +64,7 @@ def _is_error_entry(is_error_flag: bool, result_content: str) -> bool:
 
 
 def _summarize_args(args: Any) -> str:
-    """把 tool args 压成一行摘要，优先显示与组织编排相关的关键字段。"""
+    """Compress tool args into a one-line summary, prioritizing org-orchestration-related key fields."""
     if not isinstance(args, dict):
         return ""
     priority_keys = ("to_node", "from_node", "node_id", "tool_name", "command", "path")
@@ -83,7 +86,7 @@ def _summarize_args(args: Any) -> str:
 
 
 def _extract_evidence(react_trace: list[dict]) -> list[dict]:
-    """从 trace 中抽取所有失败的工具调用作为证据条目。"""
+    """Extract all failed tool calls from the trace as evidence entries."""
     evidence: list[dict] = []
     for iter_trace in react_trace:
         if not isinstance(iter_trace, dict):
@@ -126,7 +129,7 @@ def _extract_evidence(react_trace: list[dict]) -> list[dict]:
 
 
 def _classify_delegate_subtype(evidence: list[dict]) -> str | None:
-    """死循环场景里，再细分 org_delegate_task 的失败子类型。"""
+    """In infinite-loop scenarios, further classify the failure subtype of org_delegate_task."""
     delegate_fails = [e for e in evidence if e.get("tool") == "org_delegate_task"]
     if len(delegate_fails) < 3:
         return None
@@ -151,80 +154,80 @@ def _classify_delegate_subtype(evidence: list[dict]) -> str | None:
     return "org_delegate_loop"
 
 
-# root_cause -> (headline 模板, suggestion 文案)
-# headline 使用 str.format()；预设占位符: tool / iterations / exit_reason
+# root_cause -> (headline template, suggestion text)
+# headline uses str.format(); preset placeholders: tool / iterations / exit_reason
 _DIAGNOSIS_TEMPLATES: dict[str, dict[str, str]] = {
     "org_delegate_self": {
-        "headline": "节点连续 {iterations} 次把任务委派给了自己，被系统判定为死循环并强制终止",
+        "headline": "The node delegated the task to itself {iterations} times in a row, was detected as an infinite loop and force-terminated",
         "suggestion": (
-            "最常见原因是 LLM 把'自己的角色'（例如 CPO=产品总监）和"
-            "'下级角色名'（例如 产品经理=pm）搞混。\n\n"
-            "**建议**：\n"
-            "1. 在指令里直接使用下级的节点 id（例如 `pm`）而不是中文职位名；\n"
-            "2. 或者让当前节点使用 `org_submit_deliverable` 亲自完成并交付；\n"
-            "3. 长期可调整该节点的 prompt，明确区分'我是谁'和'我的下级是谁'。"
+            "The most common cause is that the LLM confused 'its own role' (e.g., CPO = Chief Product Officer) "
+            "with a 'subordinate role name' (e.g., Product Manager = pm).\n\n"
+            "**Suggestions**:\n"
+            "1. In the instruction, use the subordinate's node id directly (e.g., `pm`) instead of a Chinese title;\n"
+            "2. Or have the current node use `org_submit_deliverable` to complete and deliver the work itself;\n"
+            "3. Longer term, adjust the node's prompt to clearly distinguish 'who I am' from 'who my subordinates are'."
         ),
     },
     "non_direct_subordinate": {
-        "headline": "节点连续 {iterations} 次尝试委派给非直属下级，被系统强制终止",
+        "headline": "The node tried {iterations} times in a row to delegate to a non-direct subordinate and was force-terminated",
         "suggestion": (
-            "`org_delegate_task` 只能把任务委派给**直属下级**。\n\n"
-            "**建议**：\n"
-            "1. 改由目标节点的直属上司来下派任务；\n"
-            "2. 或者用 `org_send_message` 做横向协作提醒。"
+            "`org_delegate_task` can only delegate tasks to **direct subordinates**.\n\n"
+            "**Suggestions**:\n"
+            "1. Have the target node's direct superior delegate the task instead;\n"
+            "2. Or use `org_send_message` for lateral-collaboration notifications."
         ),
     },
     "delegate_target_not_exist": {
-        "headline": "节点连续 {iterations} 次委派到不存在的节点，被系统强制终止",
+        "headline": "The node delegated to a non-existent node {iterations} times in a row and was force-terminated",
         "suggestion": (
-            "目标 `to_node` 在当前组织中找不到。\n\n"
-            "**建议**：\n"
-            "1. 调用 `org_get_org_chart` 查看当前所有可用节点 id；\n"
-            "2. 检查参数是否拼写错误或混用了中文角色名。"
+            "The target `to_node` cannot be found in the current organization.\n\n"
+            "**Suggestions**:\n"
+            "1. Call `org_get_org_chart` to view all currently available node ids;\n"
+            "2. Check for typos in the parameter or accidental use of a Chinese role name."
         ),
     },
     "org_delegate_loop": {
-        "headline": "org_delegate_task 陷入死循环（{iterations} 次失败尝试），被系统强制终止",
+        "headline": "org_delegate_task entered an infinite loop ({iterations} failed attempts) and was force-terminated",
         "suggestion": (
-            "**建议**：\n"
-            "1. 确认任务是否应该由当前节点自行完成；\n"
-            "2. 若是，改用 `org_submit_deliverable` 交付结果；\n"
-            "3. 若需要外部协作，用 `org_send_message` 代替。"
+            "**Suggestions**:\n"
+            "1. Check whether the task should have been completed by the current node itself;\n"
+            "2. If so, use `org_submit_deliverable` to deliver the result;\n"
+            "3. If external collaboration is needed, use `org_send_message` instead."
         ),
     },
     "loop_detected_generic": {
-        "headline": "工具 `{tool}` 被连续调用陷入死循环，被系统强制终止",
+        "headline": "Tool `{tool}` was called repeatedly in an infinite loop and was force-terminated",
         "suggestion": (
-            "**建议**：\n"
-            "1. 检查该工具的参数是否反复相同；\n"
-            "2. 换一个工具或调整策略；\n"
-            "3. 若任务已无法继续，直接用自然语言回复用户当前进展。"
+            "**Suggestions**:\n"
+            "1. Check whether the tool arguments are repeating identically;\n"
+            "2. Switch to a different tool or adjust the strategy;\n"
+            "3. If the task can no longer proceed, reply to the user in natural language with the current progress."
         ),
     },
     "max_iterations": {
-        "headline": "节点达到最大迭代次数仍未完成任务",
+        "headline": "The node hit the maximum number of iterations without completing the task",
         "suggestion": (
-            "**建议**：\n"
-            "1. 把目标拆分成更小的子任务分批下发；\n"
-            "2. 检查是否有工具反复失败导致迭代被浪费；\n"
-            "3. 如确需长任务，可在配置里放宽 `max_iterations` 上限。"
+            "**Suggestions**:\n"
+            "1. Break the goal into smaller subtasks and dispatch them in batches;\n"
+            "2. Check whether any tool is failing repeatedly and wasting iterations;\n"
+            "3. For genuinely long tasks, raise the `max_iterations` limit in the config."
         ),
     },
     "verify_incomplete": {
-        "headline": "节点多轮尝试后，任务验证仍判定为未完成",
+        "headline": "After multiple attempts, the node's task was still judged as incomplete by verification",
         "suggestion": (
-            "常见原因是只发送了文字回复，没有真正产出要求的文件 / 交付物。\n\n"
-            "**建议**：\n"
-            "1. 在指令里明确指定输出方式（如 `write_file` / `deliver_artifacts`）；\n"
-            "2. 复查 verify 规则是否过于严格。"
+            "A common cause is only sending a text reply without actually producing the required file / deliverable.\n\n"
+            "**Suggestions**:\n"
+            "1. Explicitly specify the output method in the instruction (e.g., `write_file` / `deliver_artifacts`);\n"
+            "2. Review whether the verify rules are too strict."
         ),
     },
     "unknown": {
-        "headline": "任务非正常结束（exit_reason={exit_reason}）",
+        "headline": "Task ended abnormally (exit_reason={exit_reason})",
         "suggestion": (
-            "未匹配到典型根因模式。\n\n"
-            "**建议**：查看对应的 react_trace JSON 文件（`data/react_traces/<date>/…`）"
-            "了解完整推理过程，或把任务描述改得更明确后重试。"
+            "No typical root-cause pattern matched.\n\n"
+            "**Suggestion**: inspect the corresponding react_trace JSON file (`data/react_traces/<date>/…`) "
+            "to see the full reasoning process, or rewrite the task description more clearly and retry."
         ),
     },
 }
@@ -235,7 +238,7 @@ def _pick_root_cause(
     evidence: list[dict],
     total_iterations: int,
 ) -> tuple[str, dict[str, Any]]:
-    """根据 exit_reason + evidence 决定 root_cause 及模板占位参数。"""
+    """Determine root_cause and template placeholder args based on exit_reason + evidence."""
     if exit_reason == "loop_terminated":
         subtype = _classify_delegate_subtype(evidence)
         if subtype:
@@ -276,7 +279,7 @@ def summarize(
     react_trace: list[dict] | None,
     exit_reason: str,
 ) -> dict[str, Any]:
-    """把 ReAct trace + exit_reason 转成给用户看的诊断 payload。"""
+    """Convert ReAct trace + exit_reason into a diagnosis payload shown to the user."""
     safe_reason = exit_reason or "unknown"
     trace = react_trace or []
     try:
@@ -294,7 +297,7 @@ def summarize(
                 "iter": 0,
                 "tool": "…",
                 "args_summary": "",
-                "error": f"（还有 {omitted} 条失败记录未展示，请查看完整 react_trace）",
+                "error": f"({omitted} more failure records not shown; see the full react_trace)",
             })
             evidence = trimmed
 
@@ -309,29 +312,30 @@ def summarize(
         logger.debug("[FailureDiagnoser] summarize failed: %s", exc)
         return {
             "root_cause": "unknown",
-            "headline": f"任务非正常结束（exit_reason={safe_reason}）",
+            "headline": f"Task ended abnormally (exit_reason={safe_reason})",
             "evidence": [],
-            "suggestion": "诊断模块遇到异常，建议查看 `data/react_traces/` 下的完整 trace。",
+            "suggestion": "The diagnosis module encountered an exception; inspect the full trace under `data/react_traces/`.",
             "exit_reason": safe_reason,
         }
 
 
 def format_human_summary(diagnosis: dict[str, Any]) -> str:
-    """把 diagnosis dict 格式化成一段可塞进 assistant message 的 markdown 文本。
+    """Format the diagnosis dict into a markdown block suitable for inclusion in an assistant message.
 
-    runtime 在发 WebSocket 事件时可同步把这段写到最终 assistant 气泡，
-    保证用户即使收起时间线也能看到结论。
+    When runtime emits the WebSocket event, it can also write this block into the
+    final assistant bubble so the user still sees the conclusion even if the
+    timeline is collapsed.
     """
     if not isinstance(diagnosis, dict):
         return ""
-    headline = diagnosis.get("headline") or "任务未正常完成"
+    headline = diagnosis.get("headline") or "Task did not complete normally"
     suggestion = diagnosis.get("suggestion") or ""
     evidence = diagnosis.get("evidence") or []
 
-    lines = [f"> **为什么失败**：{headline}"]
+    lines = [f"> **Why it failed**: {headline}"]
     if evidence:
         lines.append(">")
-        lines.append("> **关键动作**：")
+        lines.append("> **Key actions**:")
         for item in evidence[:MAX_EVIDENCE_ITEMS]:
             iter_n = item.get("iter") or "?"
             tool = item.get("tool") or "?"
@@ -340,7 +344,7 @@ def format_human_summary(diagnosis: dict[str, Any]) -> str:
             if len(err) > 120:
                 err = err[:120] + "…"
             args_part = f"({args})" if args else ""
-            lines.append(f"> - 第 {iter_n} 轮 `{tool}`{args_part} → {err}")
+            lines.append(f"> - Iteration {iter_n} `{tool}`{args_part} → {err}")
     if suggestion:
         lines.append(">")
         for sline in suggestion.splitlines():

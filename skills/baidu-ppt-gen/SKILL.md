@@ -9,26 +9,26 @@ requires:
   env: [BAIDU_API_KEY]
 ---
 
-# 智能 PPT 生成
+# Smart PPT Generation
 
-根据主题与大纲，快速生成结构清晰、排版专业的演示文稿草稿，大幅提升内容生产力。
+Based on a topic and outline, quickly generate a well-structured, professionally formatted presentation draft to boost content productivity.
 
-## 配置
+## Configuration
 
 export BAIDU_API_KEY="your_key"
 
-## 功能
+## Features
 
-- 基于主题自动生成大纲
-- 专业排版与布局
-- 多模板风格支持
-- 内容结构优化
+- Automatically generate outlines based on topic
+- Professional layout and design
+- Multiple template style support
+- Content structure optimization
 
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/ppt_gen.py
-PPT 大纲生成（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+PPT outline generation (Baidu Qianfan AppBuilder). Requires APPBUILDER_TOKEN.
 
 ```bash
-python3 scripts/ppt_gen.py generate "Q2季度销售报告"
+python3 scripts/ppt_gen.py generate "Q2 Sales Report"
 ```

@@ -1,31 +1,31 @@
 """
-系统工具目录 (Tool Catalog)
+System tool catalog (Tool Catalog).
 
-遵循渐进式披露原则（与 Agent Skills 规范对齐）:
-- Level 1: 工具清单 (name + description) - 在系统提示中提供
-- Level 2: 详细说明 (detail + examples + triggers + prerequisites) - 通过 get_tool_info 获取 / 传给 LLM API
-- Level 3: 直接执行工具
+Follows progressive disclosure principle (aligned with Agent Skills spec):
+- Level 1: Tool inventory (name + description) - provided in system prompt
+- Level 2: Detailed documentation (detail + examples + triggers + prerequisites) - obtained via get_tool_info / passed to LLM API
+- Level 3: Direct tool execution
 
-工具定义格式（遵循 tool-definition-spec.md）：
+Tool definition format (following tool-definition-spec.md):
 {
-    # 必填字段
+    # Required fields
     "name": "tool_name",
-    "description": "清单披露的简短描述（Level 1）",
+    "description": "Brief description for inventory disclosure (Level 1)",
     "input_schema": {...},
 
-    # 推荐字段
-    "detail": "详细使用说明（Level 2）",
-    "triggers": ["触发条件1", "触发条件2"],
-    "prerequisites": ["前置条件1", "前置条件2"],
+    # Recommended fields
+    "detail": "Detailed usage documentation (Level 2)",
+    "triggers": ["trigger condition 1", "trigger condition 2"],
+    "prerequisites": ["prerequisite 1", "prerequisite 2"],
     "examples": [{"scenario": "...", "params": {...}, "expected": "..."}],
 
-    # 可选字段
-    "category": "工具分类",
-    "warnings": ["重要警告"],
+    # Optional fields
+    "category": "tool category",
+    "warnings": ["important warning"],
     "related_tools": [{"name": "...", "relation": "..."}],
 }
 
-如果没有 detail 字段，则 fallback 到 description。
+If no detail field is present, falls back to description.
 """
 
 import logging
@@ -65,19 +65,19 @@ HIGH_FREQ_TOOLS = CATALOG_EXCLUDED_TOOLS
 
 class ToolCatalog:
     """
-    系统工具目录
+    System tool catalog.
 
-    管理工具清单的生成和格式化，用于系统提示注入。
-    支持渐进式披露：
-    - Level 1: 工具清单 (name + short_description)
-    - Level 2: 完整定义 (description + input_schema)
+    Manages tool inventory generation and formatting for system prompt injection.
+    Supports progressive disclosure:
+    - Level 1: Tool inventory (name + short_description)
+    - Level 2: Complete definition (description + input_schema)
 
-    高频工具 (run_shell, read_file, write_file, list_directory) 直接以完整
-    schema 注入 LLM tools 参数，无需经过 get_tool_info 中间步骤。
+    High-frequency tools (run_shell, read_file, write_file, list_directory) are injected
+    directly with complete schema into LLM tools parameter, bypassing get_tool_info step.
     """
 
-    # 工具清单模板
-    # 注意：该段落会进入 system prompt，尽量短（降低噪声与 token 占用）
+    # Tool inventory template
+    # Note: this text goes into system prompt, keep it brief (reduce noise and token usage)
     CATALOG_TEMPLATE = """
 ## Available System Tools
 
@@ -100,8 +100,8 @@ but with full schema you'll fill arguments more reliably.
 {tool_list}
 """
 
-    # 分类展示顺序（决定系统提示中的排列顺序）
-    # 不在此列表中的分类会自动追加到末尾
+    # Category display order (determines ordering in system prompt)
+    # Categories not in this list are automatically appended at the end
     CATEGORY_ORDER = [
         "File System",
         "Agent",
@@ -122,8 +122,8 @@ but with full schema you'll fill arguments more reliably.
         "Config",
     ]
 
-    # 分类显示名映射（内部名 -> 系统提示中的显示名）
-    # 未在此映射中的分类直接使用内部名
+    # Category display name mapping (internal name -> display name in system prompt)
+    # Categories not in this mapping use their internal name directly
     CATEGORY_DISPLAY_NAMES = {
         "Desktop": "Desktop (Windows)",
         "Skills": "Skills Management",
@@ -151,10 +151,10 @@ but with full schema you'll fill arguments more reliably.
 
     def __init__(self, tools: list[dict]):
         """
-        初始化工具目录
+        Initialize tool catalog.
 
         Args:
-            tools: 工具定义列表，每个工具包含 name, short_description, description, input_schema
+            tools: Tool definition list; each tool includes name, short_description, description, input_schema
         """
         nameless = [t for t in tools if not t.get("name")]
         if nameless:
@@ -188,37 +188,39 @@ but with full schema you'll fill arguments more reliably.
         deferred_tools: set[str] | None = None,
     ) -> str:
         """
-        生成工具清单（Level 1）
+        Generate tool inventory (Level 1).
 
-        从工具定义的 category 字段自动聚合分类，按 CATEGORY_ORDER 排序输出。
-        新增工具只要有 category 字段就会自动出现，无需修改此处代码。
+        Automatically aggregates categories from tool definition category field,
+        sorts by CATEGORY_ORDER. New tools with category field appear automatically
+        without code modification.
 
         Args:
-            exclude_high_freq: 是否排除高频工具（默认排除，因为它们已通过
-                LLM tools 参数直接注入完整 schema，不需要在文本清单中重复）
-            deferred_tools: 当前被 defer 的工具名集合。在 catalog 文本中标注
-                [deferred] 以告知 LLM 需先 tool_search 才能调用。
+            exclude_high_freq: Whether to exclude high-frequency tools (default: True,
+                because they are already fully injected via LLM tools parameter and
+                do not need duplication in text inventory)
+            deferred_tools: Set of currently deferred tool names. Marked with [deferred]
+                in catalog text to indicate LLM must call tool_search first.
 
         Returns:
-            格式化的工具清单字符串
+            Formatted tool inventory string
         """
         if deferred_tools is not None:
             self._deferred_tools = deferred_tools
         if not self._tools:
             return "\n## Available System Tools\n\nNo system tools available.\n"
 
-        # 1. 按 category 字段自动聚合工具
+        # 1. Automatically aggregate tools by category field
         categories: OrderedDict[str, list[tuple[str, dict]]] = OrderedDict()
         uncategorized: list[tuple[str, dict]] = []
 
         for name in sorted(self._tools):
             tool = self._tools[name]
-            # 高频工具已在 tools 参数中全量提供，跳过以节省 token
+            # High-frequency tools already fully provided in tools parameter, skip to save tokens
             if exclude_high_freq and name in _CATALOG_EXCLUDED_SET:
                 continue
             cat = tool.get("category")
             if not cat:
-                cat = infer_category(name)  # fallback 到 base.py 的推断
+                cat = infer_category(name)  # fallback to base.py inference
             if not cat and name in self._tool_sources:
                 cat = "Plugin"
             if cat:
@@ -226,7 +228,7 @@ but with full schema you'll fill arguments more reliably.
             else:
                 uncategorized.append((name, tool))
 
-        # 2. 按 CATEGORY_ORDER 排序输出
+        # 2. Sort and output by CATEGORY_ORDER
         category_sections = []
         emitted_cats: set[str] = set()
 
@@ -240,7 +242,7 @@ but with full schema you'll fill arguments more reliably.
                 category_sections.append(section)
             emitted_cats.add(cat)
 
-        # 3. 未在 CATEGORY_ORDER 中的分类（新分类自动出现在末尾）
+        # 3. Categories not in CATEGORY_ORDER (new categories appear at end automatically)
         for cat, tools_in_cat in categories.items():
             if cat in emitted_cats:
                 continue
@@ -249,7 +251,7 @@ but with full schema you'll fill arguments more reliably.
             if section:
                 category_sections.append(section)
 
-        # 4. 未分类工具（兜底）
+        # 4. Uncategorized tools (fallback)
         if uncategorized:
             section = self._format_category_section("Other", uncategorized)
             if section:
@@ -264,13 +266,13 @@ but with full schema you'll fill arguments more reliably.
 
     def get_direct_tool_schemas(self) -> list[dict]:
         """
-        获取高频工具的完整 schema，用于直接注入 LLM tools 参数。
+        Get complete schema of high-frequency tools for direct injection into LLM tools parameter.
 
-        这些工具（run_shell, read_file, write_file, list_directory）
-        跳过渐进式披露，直接以 {name, description, input_schema} 提供给 LLM。
+        These tools (run_shell, read_file, write_file, list_directory) bypass progressive
+        disclosure and are provided to the LLM directly as {name, description, input_schema}.
 
         Returns:
-            高频工具的完整 schema 列表
+            Complete schema list of high-frequency tools
         """
         schemas = []
         for tool_name in CATALOG_EXCLUDED_TOOLS:
@@ -286,21 +288,21 @@ but with full schema you'll fill arguments more reliably.
         return schemas
 
     def is_high_freq_tool(self, tool_name: str) -> bool:
-        """判断是否为高频工具"""
+        """Check whether a tool is high-frequency."""
         return tool_name in _CATALOG_EXCLUDED_SET
 
     def _format_category_section(
         self, display_name: str, tools: list[tuple[str, dict]]
     ) -> str | None:
         """
-        格式化一个分类的工具条目
+        Format tool entries for a category.
 
         Args:
-            display_name: 分类显示名
-            tools: (name, tool_def) 列表
+            display_name: Category display name
+            tools: List of (name, tool_def) tuples
 
         Returns:
-            格式化字符串，无工具时返回 None
+            Formatted string, or None if no tools
         """
         if not tools:
             return None
@@ -327,21 +329,21 @@ but with full schema you'll fill arguments more reliably.
 
     def _get_short_description(self, description: str) -> str:
         """
-        从完整描述中提取简短描述
+        Extract short description from complete description.
 
         Args:
-            description: 完整描述
+            description: Complete description
 
         Returns:
-            简短描述（第一行，不截断以保留完整警告信息）
+            Short description (first line, not truncated to preserve complete warnings)
         """
         if not description:
             return ""
 
-        # 取第一行，不再截断
-        # 原因：完整工具定义已通过 tools 参数传给 LLM API，
-        # 清单中截断会丢失重要警告（如 ⚠️ 必须先检查状态），
-        # 导致 LLM 行为异常（如不调用工具就说"完成"）
+        # Get first line, do not truncate further
+        # Reason: complete tool definition is already passed to LLM API via tools parameter.
+        # Truncating in inventory loses important warnings (like "must check status first"),
+        # causing LLM behavioral issues (e.g. saying "done" without calling tool).
         first_line = description.split("\n")[0].strip()
 
         return first_line
@@ -366,15 +368,15 @@ but with full schema you'll fill arguments more reliably.
         deferred_tools: set[str] | None = None,
     ) -> str:
         """
-        获取工具清单
+        Get tool inventory.
 
         Args:
-            refresh: 是否强制刷新
-            exclude_high_freq: 是否排除高频工具（默认排除）
-            deferred_tools: 当前被 defer 的工具名集合
+            refresh: Whether to force refresh
+            exclude_high_freq: Whether to exclude high-frequency tools (default: True)
+            deferred_tools: Set of currently deferred tool names
 
         Returns:
-            工具清单字符串
+            Tool inventory string
         """
         if refresh or self._cached_catalog is None or deferred_tools is not None:
             return self.generate_catalog(
@@ -385,13 +387,13 @@ but with full schema you'll fill arguments more reliably.
 
     def get_tool_info(self, tool_name: str) -> dict | None:
         """
-        获取工具的完整定义（Level 2）
+        Get complete definition of a tool (Level 2).
 
         Args:
-            tool_name: 工具名称
+            tool_name: Tool name
 
         Returns:
-            工具完整定义，包含 description 和 input_schema
+            Complete tool definition including description and input_schema
         """
         tool = self._tools.get(tool_name)
         if not tool:
@@ -405,15 +407,15 @@ but with full schema you'll fill arguments more reliably.
 
     def get_tool_info_formatted(self, tool_name: str) -> str:
         """
-        获取工具的格式化完整信息（Level 2 详细说明）
+        Get formatted complete information of a tool (Level 2 detailed documentation).
 
-        支持新规范字段：triggers, prerequisites, examples, warnings, related_tools
+        Supports new spec fields: triggers, prerequisites, examples, warnings, related_tools
 
         Args:
-            tool_name: 工具名称
+            tool_name: Tool name
 
         Returns:
-            格式化的工具信息字符串
+            Formatted tool information string
         """
         tool = self._tools.get(tool_name)
         if not tool:
@@ -430,16 +432,16 @@ but with full schema you'll fill arguments more reliably.
                 "Call `tool_search` to activate it, then use it in the next turn.\n\n"
             )
 
-        # 分类
+        # Category
         category = tool.get("category")
         if category:
             output += f"**Category**: {category}\n\n"
 
-        # 详细说明（优先使用 detail，否则 fallback 到 description）
+        # Detailed documentation (prefer detail, fall back to description)
         detail = tool.get("detail") or tool.get("description", "No description")
         output += f"{detail}\n\n"
 
-        # 警告信息
+        # Warnings
         warnings = tool.get("warnings", [])
         if warnings:
             output += "## ⚠️ Warnings\n\n"
@@ -447,7 +449,7 @@ but with full schema you'll fill arguments more reliably.
                 output += f"- {warning}\n"
             output += "\n"
 
-        # 触发条件
+        # Trigger conditions
         triggers = tool.get("triggers", [])
         if triggers:
             output += "## When to Use\n\n"
@@ -455,7 +457,7 @@ but with full schema you'll fill arguments more reliably.
                 output += f"- {trigger}\n"
             output += "\n"
 
-        # 前置条件
+        # Prerequisites
         prerequisites = tool.get("prerequisites", [])
         if prerequisites:
             output += "## Prerequisites\n\n"
@@ -466,7 +468,7 @@ but with full schema you'll fill arguments more reliably.
                     output += f"- {prereq}\n"
             output += "\n"
 
-        # 参数说明
+        # Parameter documentation
         schema = tool.get("input_schema", {})
         props = schema.get("properties", {})
         required = schema.get("required", [])
@@ -490,7 +492,7 @@ but with full schema you'll fill arguments more reliably.
         else:
             output += "## Parameters\n\nNo parameters required.\n\n"
 
-        # 使用示例
+        # Usage examples
         examples = tool.get("examples", [])
         if examples:
             output += "## Examples\n\n"
@@ -505,7 +507,7 @@ but with full schema you'll fill arguments more reliably.
                     output += f"→ {expected}\n"
                 output += "\n"
 
-        # 相关工具
+        # Related tools
         related_tools = tool.get("related_tools", [])
         if related_tools:
             output += "## Related Tools\n\n"
@@ -518,7 +520,7 @@ but with full schema you'll fill arguments more reliably.
         return output
 
     def _format_params(self, params: dict) -> str:
-        """格式化参数为 JSON 字符串"""
+        """Format parameters as JSON string."""
         import json
 
         if not params:
@@ -526,19 +528,19 @@ but with full schema you'll fill arguments more reliably.
         return json.dumps(params, ensure_ascii=False, indent=2)
 
     def list_tools(self) -> list[str]:
-        """列出所有工具名称"""
+        """List all tool names."""
         return list(self._tools.keys())
 
     def has_tool(self, tool_name: str) -> bool:
-        """检查工具是否存在"""
+        """Check whether a tool exists."""
         return tool_name in self._tools
 
     def update_tools(self, tools: list[dict]) -> None:
         """
-        更新工具列表
+        Update tool list.
 
         Args:
-            tools: 新的工具定义列表
+            tools: New tool definition list
         """
         nameless = [t for t in tools if not t.get("name")]
         if nameless:
@@ -553,11 +555,11 @@ but with full schema you'll fill arguments more reliably.
 
     def add_tool(self, tool: dict, source: str | None = None) -> None:
         """
-        添加单个工具
+        Add a single tool.
 
         Args:
-            tool: 工具定义（支持 Anthropic 和 OpenAI 格式）
-            source: 工具来源标识（如 ``"plugin:lark-cli-tool"``）
+            tool: Tool definition (supports Anthropic and OpenAI format)
+            source: Tool source identifier (e.g., ``"plugin:lark-cli-tool"``)
         """
         name = tool.get("name") or tool.get("function", {}).get("name", "")
         if not name:
@@ -569,13 +571,13 @@ but with full schema you'll fill arguments more reliably.
 
     def remove_tool(self, tool_name: str) -> bool:
         """
-        移除工具
+        Remove a tool.
 
         Args:
-            tool_name: 工具名称
+            tool_name: Tool name
 
         Returns:
-            是否成功移除
+            Whether removal was successful
         """
         if tool_name in self._tools:
             del self._tools[tool_name]
@@ -585,15 +587,15 @@ but with full schema you'll fill arguments more reliably.
         return False
 
     def invalidate_cache(self) -> None:
-        """使缓存失效"""
+        """Invalidate cache."""
         self._cached_catalog = None
 
     @property
     def tool_count(self) -> int:
-        """工具数量"""
+        """Tool count."""
         return len(self._tools)
 
 
 def create_tool_catalog(tools: list[dict]) -> ToolCatalog:
-    """便捷函数：创建工具目录"""
+    """Convenience function: create tool catalog."""
     return ToolCatalog(tools)

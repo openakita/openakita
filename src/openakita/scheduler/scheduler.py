@@ -1,10 +1,10 @@
 """
-任务调度器
+Task scheduler
 
-核心调度器:
-- 管理任务生命周期
-- 触发任务执行
-- 任务持久化
+Core scheduler:
+- Manage task lifecycle
+- Trigger task execution
+- Persist tasks
 """
 
 import asyncio
@@ -22,19 +22,19 @@ from .triggers import Trigger
 
 logger = logging.getLogger(__name__)
 
-# 执行器类型定义
+# Executor type definition
 TaskExecutorFunc = Callable[[ScheduledTask], Awaitable[tuple[bool, str]]]
 
 
 class TaskScheduler:
     """
-    任务调度器
+    Task scheduler
 
-    职责:
-    - 加载和保存任务
-    - 计算下一次运行时间
-    - 触发任务执行
-    - 处理执行结果
+    Responsibilities:
+    - Load and save tasks
+    - Compute next run time
+    - Trigger task execution
+    - Handle execution results
     """
 
     def __init__(
@@ -43,16 +43,16 @@ class TaskScheduler:
         executor: TaskExecutorFunc | None = None,
         timezone: str = "Asia/Shanghai",
         max_concurrent: int = 5,
-        check_interval_seconds: int = 2,  # 优化：从 10 秒改为 2 秒，提高提醒精度
-        advance_seconds: int = 20,  # 提前执行秒数，补偿 Agent 初始化和 LLM 调用延迟
+        check_interval_seconds: int = 2,  # Optimization: reduced from 10s to 2s for better reminder precision
+        advance_seconds: int = 20,  # Seconds to run ahead of schedule, to compensate for Agent init and LLM call latency
     ):
         """
         Args:
-            storage_path: 任务存储目录
-            executor: 任务执行器函数
-            timezone: 时区
-            max_concurrent: 最大并发执行数
-            check_interval_seconds: 检查间隔（秒）
+            storage_path: task storage directory
+            executor: task executor function
+            timezone: timezone
+            max_concurrent: maximum concurrent executions
+            check_interval_seconds: check interval in seconds
         """
         self.storage_path = Path(storage_path) if storage_path else Path("data/scheduler")
         self.storage_path.mkdir(parents=True, exist_ok=True)
@@ -61,49 +61,49 @@ class TaskScheduler:
         self.timezone = timezone
         self.max_concurrent = max_concurrent
         self.check_interval = check_interval_seconds
-        self.advance_seconds = advance_seconds  # 提前执行秒数
+        self.advance_seconds = advance_seconds  # Seconds to run ahead of schedule
 
         self._plugin_hooks = None
 
-        # 任务存储 {task_id: ScheduledTask}
+        # Task storage {task_id: ScheduledTask}
         self._tasks: dict[str, ScheduledTask] = {}
 
-        # 触发器缓存 {task_id: Trigger}
+        # Trigger cache {task_id: Trigger}
         self._triggers: dict[str, Trigger] = {}
 
-        # 执行记录
+        # Execution records
         self._executions: list[TaskExecution] = []
         self._seen_execution_ids: set[str] = set()
 
-        # 运行状态
+        # Running state
         self._running = False
         self._scheduler_task: asyncio.Task | None = None
         self._running_tasks: set[str] = set()
         self._semaphore: asyncio.Semaphore | None = None
 
-        # 并发保护锁：覆盖 _tasks/_triggers 所有写路径
+        # Concurrency guard lock: covers all write paths for _tasks/_triggers
         self._lock = asyncio.Lock()
 
-        # 回调：任务因连续失败被自动禁用时触发
+        # Callback: fired when a task is auto-disabled after repeated failures
         self.on_task_auto_disabled: Callable[[ScheduledTask], Awaitable[None]] | None = None
 
-        # 回调：启动时有 missed 任务汇总通知
+        # Callback: summary notification when there are missed tasks at startup
         self.on_missed_tasks_summary: Callable[[list[ScheduledTask]], Awaitable[None]] | None = None
 
-        # 加载任务
+        # Load tasks
         self._load_tasks()
         self._load_executions()
 
     async def start(self) -> None:
-        """启动调度器"""
+        """Start the scheduler"""
         self._running = True
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
 
         self._trim_executions_file()
 
-        # 更新任务的下一次运行时间
-        # 注意：只有 next_run 为空或已严重过期的任务才重新计算
-        # 避免程序重启导致任务立即执行
+        # Update next run time for tasks
+        # Note: only tasks whose next_run is empty or has seriously overdue are recalculated,
+        # to avoid immediate execution after a program restart
         now = datetime.now()
         missed_tasks: list[ScheduledTask] = []
 
@@ -118,24 +118,24 @@ class TaskScheduler:
 
             self._save_tasks()
 
-        # 启动调度循环
+        # Start the scheduler loop
         self._scheduler_task = asyncio.create_task(self._scheduler_loop())
 
         logger.info(f"TaskScheduler started with {len(self._tasks)} tasks")
 
-        # 异步通知 missed 任务
+        # Async-notify missed tasks
         if missed_tasks and self.on_missed_tasks_summary:
             asyncio.ensure_future(self._notify_missed_tasks(missed_tasks))
 
     async def _notify_missed_tasks(self, missed: list[ScheduledTask]) -> None:
-        """安全调用 missed 任务汇总通知"""
+        """Safely invoke the missed-tasks summary notification"""
         try:
             await self.on_missed_tasks_summary(missed)
         except Exception as e:
             logger.debug(f"on_missed_tasks_summary callback error: {e}")
 
     async def stop(self, graceful_timeout: float = 30.0) -> None:
-        """停止调度器，优雅等待运行中的任务完成"""
+        """Stop the scheduler, gracefully waiting for running tasks to complete"""
         self._running = False
 
         if self._scheduler_task:
@@ -184,19 +184,19 @@ class TaskScheduler:
 
         logger.info("TaskScheduler stopped")
 
-    # ==================== 任务管理 ====================
+    # ==================== Task management ====================
 
-    MAX_TASKS = 200  # 用户任务数上限，防止无限创建
+    MAX_TASKS = 200  # Upper limit for user tasks, to prevent unbounded creation
 
     async def add_task(self, task: ScheduledTask) -> str:
         """
-        添加任务
+        Add a task
 
         Returns:
-            任务 ID
+            Task ID
 
         Raises:
-            ValueError: 任务 ID 重复或达到上限
+            ValueError: duplicate task ID or upper limit reached
         """
         async with self._lock:
             if task.id in self._tasks:
@@ -205,7 +205,7 @@ class TaskScheduler:
             user_tasks = [t for t in self._tasks.values() if t.deletable]
             if len(user_tasks) >= self.MAX_TASKS:
                 raise ValueError(
-                    f"已达到任务数量上限（{self.MAX_TASKS}），请先取消不需要的任务再创建新任务"
+                    f"Task count limit reached ({self.MAX_TASKS}); cancel unneeded tasks before creating new ones"
                 )
 
             trigger = Trigger.from_config(task.trigger_type.value, task.trigger_config)
@@ -223,14 +223,14 @@ class TaskScheduler:
 
     async def remove_task(self, task_id: str, force: bool = False) -> str:
         """
-        删除任务
+        Remove a task
 
         Args:
-            task_id: 任务 ID
-            force: 强制删除（即使是系统任务）
+            task_id: task ID
+            force: force delete (even for system tasks)
 
         Returns:
-            "ok" 成功, "not_found" 不存在, "system_task" 系统任务不可删
+            "ok" on success, "not_found" if missing, "system_task" if it is a non-deletable system task
         """
         async with self._lock:
             if task_id not in self._tasks:
@@ -272,7 +272,7 @@ class TaskScheduler:
     }
 
     async def update_task(self, task_id: str, updates: dict) -> bool:
-        """更新任务（仅允许白名单字段）"""
+        """Update a task (only whitelisted fields are allowed)"""
         async with self._lock:
             if task_id not in self._tasks:
                 return False
@@ -300,19 +300,19 @@ class TaskScheduler:
         return True
 
     async def enable_task(self, task_id: str) -> bool:
-        """启用任务"""
+        """Enable a task"""
         async with self._lock:
             if task_id not in self._tasks:
                 return False
             task = self._tasks[task_id]
-            task.fail_count = 0  # Bug-7: 重置失败计数，给任务重新来过的机会
+            task.fail_count = 0  # Bug-7: reset fail count to give the task a fresh start
             task.enable()
             self._update_next_run(task)
             self._save_tasks()
         return True
 
     async def disable_task(self, task_id: str) -> bool:
-        """禁用任务"""
+        """Disable a task"""
         async with self._lock:
             if task_id not in self._tasks:
                 return False
@@ -322,7 +322,7 @@ class TaskScheduler:
         return True
 
     def get_task(self, task_id: str) -> ScheduledTask | None:
-        """获取任务"""
+        """Get a task"""
         return self._tasks.get(task_id)
 
     def list_tasks(
@@ -330,7 +330,7 @@ class TaskScheduler:
         user_id: str | None = None,
         enabled_only: bool = False,
     ) -> list[ScheduledTask]:
-        """列出任务"""
+        """List tasks"""
         tasks = list(self._tasks.values())
 
         if user_id:
@@ -341,16 +341,16 @@ class TaskScheduler:
         return sorted(tasks, key=lambda t: t.next_run or datetime.max)
 
     async def save(self) -> None:
-        """公共保存接口（获取锁后保存，供外部需要批量修改后调用）"""
+        """Public save interface (acquires the lock and saves, for callers that need to batch-update externally)"""
         async with self._lock:
             self._save_tasks()
 
     async def trigger_now(self, task_id: str) -> TaskExecution | None:
         """
-        立即触发任务（走 semaphore 并发控制，检查任务状态）
+        Trigger the task immediately (uses semaphore concurrency control, checks task state)
 
         Returns:
-            执行记录, 或 None（任务不存在/不可用/已在运行）
+            Execution record, or None (task missing / unavailable / already running)
         """
         task = self._tasks.get(task_id)
         if not task:
@@ -374,15 +374,15 @@ class TaskScheduler:
         finally:
             self._running_tasks.discard(task_id)
 
-    # ==================== 调度循环 ====================
+    # ==================== Scheduler loop ====================
 
     @staticmethod
     def _deterministic_jitter(task_id: str, max_jitter_seconds: int = 10) -> float:
-        """基于 task_id 的确定性抖动，防止多任务同时触发雷群"""
+        """Deterministic jitter based on task_id, to prevent a thundering herd from multiple tasks firing simultaneously"""
         return (hash(task_id) % (max_jitter_seconds * 1000)) / 1000.0
 
     async def _scheduler_loop(self) -> None:
-        """调度循环"""
+        """Scheduler loop"""
         while self._running:
             try:
                 now = datetime.now()
@@ -413,9 +413,10 @@ class TaskScheduler:
 
     async def _run_task_safe(self, task: ScheduledTask) -> None:
         """
-        安全地执行任务
+        Safely execute a task
 
-        注意：_running_tasks 已经在调度循环中添加了，这里只需要执行和清理
+        Note: _running_tasks has already been added in the scheduler loop;
+        here we just need to run and clean up.
         """
         try:
             async with self._semaphore:
@@ -424,7 +425,7 @@ class TaskScheduler:
             self._running_tasks.discard(task.id)
 
     async def _execute_task(self, task: ScheduledTask) -> TaskExecution:
-        """执行任务"""
+        """Execute a task"""
         execution = TaskExecution.create(task.id)
 
         logger.info(f"Executing task: {task.id} ({task.name})")
@@ -475,25 +476,25 @@ class TaskScheduler:
         return execution
 
     def _handle_task_failure(self, task: ScheduledTask, error_msg: str) -> None:
-        """处理任务失败：标记失败状态并推进 next_run"""
+        """Handle task failure: mark failure state and advance next_run"""
         was_enabled = task.enabled
         task.mark_failed(error_msg)
         self._advance_next_run(task)
         logger.warning(f"Task {task.id} reported failure: {error_msg}")
 
-        # 检测是否刚被自动禁用（mark_failed 内部会在 fail_count>=5 时禁用）
+        # Detect whether it was just auto-disabled (mark_failed disables internally when fail_count>=5)
         if was_enabled and not task.enabled and self.on_task_auto_disabled:
             asyncio.ensure_future(self._notify_auto_disabled(task))
 
     async def _notify_auto_disabled(self, task: ScheduledTask) -> None:
-        """安全调用 on_task_auto_disabled 回调"""
+        """Safely invoke the on_task_auto_disabled callback"""
         try:
             await self.on_task_auto_disabled(task)
         except Exception as e:
             logger.debug(f"on_task_auto_disabled callback error for {task.id}: {e}")
 
     def _advance_next_run(self, task: ScheduledTask) -> None:
-        """确保 next_run 跳过当前 advance 窗口，防止同一触发窗口内快速重试"""
+        """Ensure next_run skips current advance window to prevent rapid retries within same trigger window"""
         trigger = self._triggers.get(task.id)
         if not trigger:
             return
@@ -503,7 +504,7 @@ class TaskScheduler:
             task.next_run = next_run
 
     def _update_next_run(self, task: ScheduledTask) -> None:
-        """更新任务的下一次运行时间"""
+        """Update task's next run time"""
         trigger = self._triggers.get(task.id)
         if not trigger:
             trigger = Trigger.from_config(task.trigger_type.value, task.trigger_config)
@@ -513,12 +514,12 @@ class TaskScheduler:
 
     def _recalculate_missed_run(self, task: ScheduledTask, now: datetime) -> None:
         """
-        重新计算错过执行时间的任务的下一次运行时间
+        Recalculate next run time for tasks that missed their scheduled execution time
 
-        与 _update_next_run 的区别：
-        - 不会设置为立即执行（即使 last_run 为 None）
-        - 用于程序重启后恢复任务
-        - 记录 missed 元数据供后续汇总通知
+        Difference from _update_next_run:
+        - Will not schedule for immediate execution (even if last_run is None)
+        - Used to recover tasks after program restart
+        - Records missed metadata for subsequent summary notification
         """
         trigger = self._triggers.get(task.id)
         if not trigger:
@@ -534,7 +535,7 @@ class TaskScheduler:
             task.metadata["missed_at"] = missed_at.isoformat() if missed_at else now.isoformat()
             return
 
-        # 对于间隔任务和 cron 任务，记录 missed 并推进到下一次
+        # For interval and cron tasks, record missed and advance to next occurrence
         task.metadata["last_missed_at"] = missed_at.isoformat() if missed_at else now.isoformat()
         missed_count = task.metadata.get("missed_count", 0)
         task.metadata["missed_count"] = missed_count + 1
@@ -551,17 +552,17 @@ class TaskScheduler:
             f"(missed at {missed_at}, total missed: {missed_count + 1})"
         )
 
-    # ==================== 持久化 ====================
+    # ==================== Persistence ====================
 
     def _try_recover_json(self, target: Path) -> bool:
         """
-        当 target 缺失/损坏时，尝试从 .bak 或 .tmp 恢复。
-        返回是否执行了恢复动作（成功与否都算尝试过）。
+        Attempt to recover from .bak or .tmp file when target is missing/corrupted.
+        Returns whether recovery was attempted (success or failure both count as attempted).
         """
         bak = target.with_suffix(target.suffix + ".bak")
         tmp = target.with_suffix(target.suffix + ".tmp")
 
-        # 目标文件存在则不恢复
+        # Do not recover if target file exists
         if target.exists():
             return False
 
@@ -580,10 +581,10 @@ class TaskScheduler:
         return False
 
     def _load_tasks(self) -> None:
-        """加载任务"""
+        """Load tasks"""
         tasks_file = self.storage_path / "tasks.json"
 
-        # 若文件不存在，尝试恢复（Windows 上 rename 非原子，可能在崩溃窗口丢失）
+        # If file does not exist, attempt recovery (rename is non-atomic on Windows, may be lost during crash window)
         if not tasks_file.exists():
             self._try_recover_json(tasks_file)
         if not tasks_file.exists():
@@ -628,7 +629,7 @@ class TaskScheduler:
             logger.error(f"Failed to load tasks: {e}")
 
     def _load_executions(self) -> None:
-        """加载执行记录，同时支持旧 JSON 数组和新 JSONL 格式。"""
+        """Load execution records, supporting both legacy JSON array and new JSONL formats."""
         executions_file = self.storage_path / "executions.json"
 
         if not executions_file.exists():
@@ -668,7 +669,7 @@ class TaskScheduler:
             logger.warning(f"Failed to load executions: {e}")
 
     def _migrate_to_jsonl(self, executions_file: Path) -> None:
-        """一次性将旧 JSON 数组格式迁移为 JSONL。"""
+        """One-time migration from legacy JSON array format to JSONL."""
         try:
             lines = []
             for e in self._executions:
@@ -680,7 +681,7 @@ class TaskScheduler:
             logger.warning(f"Failed to migrate executions to JSONL: {e}")
 
     def _save_tasks(self) -> None:
-        """保存tasks (SESSION durability tasks are excluded from persistence)."""
+        """Save tasks (SESSION durability tasks are excluded from persistence)."""
         tasks_file = self.storage_path / "tasks.json"
 
         try:
@@ -695,7 +696,7 @@ class TaskScheduler:
             logger.error(f"Failed to save tasks: {e}")
 
     def _append_execution(self, execution: TaskExecution) -> None:
-        """追加单条执行记录到 JSONL 文件（幂等：跳过已记录的 id）。"""
+        """Append single execution record to JSONL file (idempotent: skip already recorded ids)."""
         if execution.id in self._seen_execution_ids:
             logger.debug(f"Skipping duplicate execution append: {execution.id}")
             return
@@ -709,7 +710,7 @@ class TaskScheduler:
             logger.error(f"Failed to append execution: {e}")
 
     def _trim_executions_file(self) -> None:
-        """启动时裁剪 JSONL 文件，防止无限增长。保留最近 1000 行。"""
+        """Trim JSONL file at startup to prevent unbounded growth. Keep last 1000 lines."""
         executions_file = self.storage_path / "executions.json"
         if not executions_file.exists():
             return
@@ -726,10 +727,10 @@ class TaskScheduler:
         except Exception as e:
             logger.warning(f"Failed to trim executions file: {e}")
 
-    # ==================== 统计 ====================
+    # ==================== Statistics ====================
 
     def get_stats(self) -> dict:
-        """获取调度器统计"""
+        """Get scheduler statistics"""
         active_tasks = [t for t in self._tasks.values() if t.is_active]
 
         return {
@@ -764,7 +765,7 @@ class TaskScheduler:
         task_id: str | None = None,
         limit: int = 50,
     ) -> list[TaskExecution]:
-        """获取执行记录"""
+        """Get execution records"""
         executions = self._executions
 
         if task_id:

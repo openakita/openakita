@@ -1,11 +1,11 @@
 """
-每日记忆归纳器
+Daily memory consolidator
 
-功能:
-1. 每日凌晨归纳当天的对话历史
-2. 使用 LLM 提取精华记忆
-3. 刷新 MEMORY.md 精华摘要
-4. 清理过期历史文件
+Features:
+1. Consolidate conversation history every morning
+2. Extract essential memories using LLM
+3. Refresh MEMORY.md summary
+4. Clean up expired history files
 """
 
 import json
@@ -22,16 +22,16 @@ logger = logging.getLogger(__name__)
 
 class DailyConsolidator:
     """
-    每日记忆归纳器
+    Daily memory consolidator
 
-    负责:
-    - 读取昨天的所有对话历史
-    - 使用 LLM 归纳精华
-    - 存入长期记忆
-    - 刷新 MEMORY.md
+    Responsibilities:
+    - Read all conversation history from yesterday
+    - Consolidate essential insights using LLM
+    - Store in long-term memory
+    - Refresh MEMORY.md
     """
 
-    # MEMORY.md 最大字符数（引用全局统一常量）
+    # Maximum characters for MEMORY.md (reference global constant)
     MEMORY_MD_MAX_CHARS = MEMORY_MD_MAX_CHARS
 
     def __init__(
@@ -44,11 +44,11 @@ class DailyConsolidator:
     ):
         """
         Args:
-            data_dir: 数据目录
-            memory_md_path: MEMORY.md 路径
-            memory_manager: MemoryManager 实例
-            brain: LLM 大脑实例
-            identity_dir: identity 目录路径（用于偏好晋升）
+            data_dir: Data directory
+            memory_md_path: Path to MEMORY.md
+            memory_manager: MemoryManager instance
+            brain: LLM brain instance
+            identity_dir: Identity directory path (for preference promotion)
         """
         self.data_dir = Path(data_dir)
         self.memory_md_path = Path(memory_md_path)
@@ -56,22 +56,22 @@ class DailyConsolidator:
         self.brain = brain
         self.identity_dir = Path(identity_dir) if identity_dir else None
 
-        # 子组件
+        # Sub-components
         self.extractor = MemoryExtractor(brain)
         self.consolidator = MemoryConsolidator(data_dir, brain, self.extractor)
 
-        # 每日摘要目录
+        # Daily summary directory
         self.summaries_dir = self.data_dir / "daily_summaries"
         self.summaries_dir.mkdir(parents=True, exist_ok=True)
 
     async def consolidate_daily(self) -> dict:
         """
-        执行每日归纳
+        Execute daily consolidation
 
-        适合在凌晨 3:00 由定时任务调用
+        Suitable to be called by scheduled task at 3:00 AM
 
         Returns:
-            归纳结果统计
+            Consolidation result statistics
         """
         logger.info("Starting daily memory consolidation...")
 
@@ -86,32 +86,32 @@ class DailyConsolidator:
         }
 
         try:
-            # 1. 整理所有未处理的会话
+            # 1. Consolidate all unprocessed sessions
             summaries, memories = await self.consolidator.consolidate_all_unprocessed()
             result["sessions_processed"] = len(summaries)
             result["memories_extracted"] = len(memories)
 
-            # 2. 添加新记忆到 MemoryManager
+            # 2. Add new memories to MemoryManager
             if self.memory_manager and memories:
                 for memory in memories:
                     if self.memory_manager.add_memory(memory):
                         result["memories_added"] += 1
 
-            # 3. 清理重复记忆（使用 LLM 判断语义重复）
+            # 3. Clean duplicate memories (use LLM to judge semantic duplicates)
             result["duplicates_removed"] = await self._cleanup_duplicate_memories()
 
-            # 4. 刷新 MEMORY.md
+            # 4. Refresh MEMORY.md
             await self.refresh_memory_md()
             result["memory_md_refreshed"] = True
 
-            # 4.5 晋升人格偏好到 identity
+            # 4.5 Promote personality traits to identity
             persona_promoted = await self._promote_persona_traits_to_identity()
             result["persona_traits_promoted"] = persona_promoted
 
-            # 5. 清理过期历史
+            # 5. Clean up expired history
             result["cleanup"] = self.consolidator.cleanup_history()
 
-            # 6. 保存每日摘要
+            # 6. Save daily summary
             self._save_daily_summary(result, summaries)
 
             logger.info(f"Daily consolidation completed: {result}")
@@ -124,20 +124,20 @@ class DailyConsolidator:
 
     async def refresh_memory_md(self) -> bool:
         """
-        刷新 MEMORY.md 精华摘要
+        Refresh MEMORY.md summary
 
-        从 memories.json 选取最重要的记忆，生成精简的 Markdown
+        Select most important memories from memories.json and generate concise Markdown
 
         Returns:
-            是否成功
+            Whether successful
         """
         try:
-            # 获取所有记忆
+            # Get all memories
             memories = []
             if self.memory_manager:
                 memories = list(self.memory_manager._memories.values())
 
-            # 按类型和优先级分组
+            # Group by type and priority
             by_type = {
                 "preference": [],
                 "rule": [],
@@ -146,7 +146,7 @@ class DailyConsolidator:
             }
 
             for m in memories:
-                # 只选取永久或长期记忆
+                # Only select permanent or long-term memories
                 if m.priority not in (MemoryPriority.PERMANENT, MemoryPriority.LONG_TERM):
                     continue
 
@@ -154,20 +154,20 @@ class DailyConsolidator:
                 if type_key in by_type:
                     by_type[type_key].append(m)
 
-            # 按重要性排序，每类最多 3-5 条
+            # Sort by importance, max 3-5 per type
             for key in by_type:
                 by_type[key].sort(key=lambda x: x.importance_score, reverse=True)
                 by_type[key] = by_type[key][: 5 if key == "fact" else 3]
 
-            # 生成 Markdown
+            # Generate Markdown
             content = self._generate_memory_md(by_type)
 
-            # 检查长度限制
+            # Check length limit
             if len(content) > self.MEMORY_MD_MAX_CHARS:
-                # 压缩内容
+                # Compress content
                 content = await self._compress_memory_md(content)
 
-            # 安全写入文件（先备份再写入）
+            # Write file safely (backup then write)
             if len(content.strip()) < 10:
                 logger.warning("Generated MEMORY.md content too short, skipping refresh")
                 return False
@@ -183,74 +183,74 @@ class DailyConsolidator:
             return False
 
     def _generate_memory_md(self, by_type: dict) -> str:
-        """生成 MEMORY.md 内容"""
+        """Generate MEMORY.md content"""
         lines = [
             "# Core Memory",
             "",
-            "> Agent 核心记忆，每次对话都会加载。每日凌晨自动刷新。",
-            f"> 最后更新: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            "> Agent core memory loaded in every conversation. Auto-refreshed daily at 3 AM.",
+            f"> Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
             "",
         ]
 
-        # 用户偏好
+        # User preferences
         if by_type["preference"]:
-            lines.append("## 用户偏好")
+            lines.append("## User Preferences")
             for m in by_type["preference"]:
                 lines.append(f"- {m.content}")
             lines.append("")
 
-        # 重要规则
+        # Important rules
         if by_type["rule"]:
-            lines.append("## 重要规则")
+            lines.append("## Important Rules")
             for m in by_type["rule"]:
                 lines.append(f"- {m.content}")
             lines.append("")
 
-        # 关键事实
+        # Key facts
         if by_type["fact"]:
-            lines.append("## 关键事实")
+            lines.append("## Key Facts")
             for m in by_type["fact"]:
                 lines.append(f"- {m.content}")
             lines.append("")
 
-        # 成功模式（可选）
+        # Success patterns (optional)
         if by_type["skill"]:
-            lines.append("## 成功模式")
-            for m in by_type["skill"][:2]:  # 最多 2 条
+            lines.append("## Success Patterns")
+            for m in by_type["skill"][:2]:  # Max 2 items
                 lines.append(f"- {m.content}")
             lines.append("")
 
-        # 如果所有分类都为空
+        # If all categories are empty
         if not any(by_type.values()):
-            lines.append("## 记忆")
-            lines.append("[暂无核心记忆]")
+            lines.append("## Memory")
+            lines.append("[No core memory]")
             lines.append("")
 
         return "\n".join(lines)
 
     async def _compress_memory_md(self, content: str) -> str:
         """
-        使用 LLM 压缩 MEMORY.md 内容
+        Compress MEMORY.md content using LLM
 
-        当内容超过限制时调用
+        Called when content exceeds limit
         """
         if not self.brain:
             return truncate_memory_md(content, self.MEMORY_MD_MAX_CHARS)
 
         try:
-            prompt = f"""将以下记忆精简为更短的版本，保留最重要的信息。
+            prompt = f"""Condense the following memory into a shorter version, retaining the most important information.
 
-当前内容:
+Current content:
 {content}
 
-要求:
-- 总长度不超过 {self.MEMORY_MD_MAX_CHARS} 字符
-- 保持 Markdown 格式
-- 保留最重要的 5-10 条记忆
-- 每条记忆精简为一句话"""
+Requirements:
+- Total length not exceeding {self.MEMORY_MD_MAX_CHARS} characters
+- Maintain Markdown format
+- Keep the 5-10 most important memories
+- Compress each memory to a single sentence"""
 
             response = await self.brain.think(
-                prompt, system="你是内容精简专家。输出精简后的 Markdown 内容。"
+                prompt, system="You are a content condensation expert. Output the condensed Markdown content."
             )
 
             return response.content.strip()
@@ -260,7 +260,7 @@ class DailyConsolidator:
             return truncate_memory_md(content, self.MEMORY_MD_MAX_CHARS)
 
     def _save_daily_summary(self, result: dict, summaries: list) -> None:
-        """保存每日摘要"""
+        """Save daily summary"""
         today = datetime.now().strftime("%Y-%m-%d")
         summary_file = self.summaries_dir / f"{today}.json"
 
@@ -278,7 +278,7 @@ class DailyConsolidator:
             logger.error(f"Failed to save daily summary: {e}")
 
     def get_yesterday_summary(self) -> dict | None:
-        """获取昨天的归纳摘要"""
+        """Get yesterday's consolidation summary"""
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
         summary_file = self.summaries_dir / f"{yesterday}.json"
 
@@ -292,7 +292,7 @@ class DailyConsolidator:
         return None
 
     def get_recent_summaries(self, days: int = 7) -> list[dict]:
-        """获取最近几天的归纳摘要"""
+        """Get consolidation summaries from recent days"""
         summaries = []
 
         for i in range(days):
@@ -308,19 +308,19 @@ class DailyConsolidator:
 
         return summaries
 
-    # ==================== 人格偏好晋升 ====================
+    # ==================== Personality Trait Promotion ====================
 
     async def _promote_persona_traits_to_identity(self) -> int:
         """
-        将高置信度的 PERSONA_TRAIT 记忆晋升到 identity/personas/user_custom.md
+        Promote high-confidence PERSONA_TRAIT memories to identity/personas/user_custom.md
 
-        筛选标准:
-        - 记忆类型为 PERSONA_TRAIT
-        - 置信度 >= 0.7 或记忆被访问/强化 >= 3 次
-        - 按维度分组，每维度取置信度最高的
+        Selection criteria:
+        - Memory type is PERSONA_TRAIT
+        - Confidence >= 0.7 or memory access/reinforcement >= 3 times
+        - Group by dimension, take highest confidence per dimension
 
         Returns:
-            晋升的特质数量
+            Number of promoted traits
         """
         if not self.memory_manager or not self.identity_dir:
             return 0
@@ -329,7 +329,7 @@ class DailyConsolidator:
         persona_dir.mkdir(parents=True, exist_ok=True)
         user_custom_path = persona_dir / "user_custom.md"
 
-        # 1. 筛选 PERSONA_TRAIT 类型记忆
+        # 1. Filter PERSONA_TRAIT type memories
         persona_memories = []
         for mem in self.memory_manager._memories.values():
             if mem.type == MemoryType.PERSONA_TRAIT:
@@ -338,7 +338,7 @@ class DailyConsolidator:
         if not persona_memories:
             return 0
 
-        # 2. 筛选高置信度或高访问量的
+        # 2. Filter high-confidence or high-access memories
         qualified = [
             m for m in persona_memories if m.importance_score >= 0.7 or m.access_count >= 3
         ]
@@ -346,7 +346,7 @@ class DailyConsolidator:
         if not qualified:
             return 0
 
-        # 3. 按维度分组（从 tags 中提取 dimension:xxx）
+        # 3. Group by dimension (extract dimension:xxx from tags)
         by_dimension: dict[str, list[Memory]] = {}
         for mem in qualified:
             dimension = None
@@ -360,7 +360,7 @@ class DailyConsolidator:
                 by_dimension[dimension].append(mem)
 
         if not by_dimension:
-            # 尝试从 content 解析
+            # Try parsing from content
             for mem in qualified:
                 parts = mem.content.split("=", 1)
                 if len(parts) == 2:
@@ -372,11 +372,11 @@ class DailyConsolidator:
         if not by_dimension:
             return 0
 
-        # 4. 每个维度取置信度最高的
+        # 4. Take highest confidence per dimension
         promoted_traits: dict[str, tuple[str, Memory]] = {}  # dim -> (preference, memory)
         for dim, mems in by_dimension.items():
             best = max(mems, key=lambda m: m.importance_score)
-            # 提取偏好值
+            # Extract preference value
             pref = None
             for tag in best.tags:
                 if tag.startswith("preference:"):
@@ -387,17 +387,17 @@ class DailyConsolidator:
                 pref = parts[1].strip() if len(parts) == 2 else best.content
             promoted_traits[dim] = (pref, best)
 
-        # 5. 生成 user_custom.md 内容
+        # 5. Generate user_custom.md content
         now = datetime.now()
         lines = [
             "# User Custom Persona",
             "",
-            "> 从用户交互中归集的个性化偏好，每日自动更新。",
-            f"> 最后更新: {now.strftime('%Y-%m-%d %H:%M')}",
+            "> Personalized preferences aggregated from user interactions, auto-updated daily.",
+            f"> Last updated: {now.strftime('%Y-%m-%d %H:%M')}",
             "",
         ]
 
-        # 按类别分组
+        # Group by category
         style_traits = {}
         interaction_traits = {}
         care_traits = {}
@@ -412,7 +412,7 @@ class DailyConsolidator:
         care_dims = {"care_topics"}
 
         for dim, (pref, mem) in promoted_traits.items():
-            entry = f"- {dim}: {pref}（置信度 {mem.importance_score:.2f}）"
+            entry = f"- {dim}: {pref} (confidence {mem.importance_score:.2f})"
             if dim in style_dims:
                 style_traits[dim] = entry
             elif dim in interaction_dims:
@@ -423,17 +423,17 @@ class DailyConsolidator:
                 style_traits[dim] = entry
 
         if style_traits:
-            lines.append("## 沟通风格偏好")
+            lines.append("## Communication Style Preferences")
             lines.extend(style_traits.values())
             lines.append("")
 
         if interaction_traits:
-            lines.append("## 互动偏好")
+            lines.append("## Interaction Preferences")
             lines.extend(interaction_traits.values())
             lines.append("")
 
         if care_traits:
-            lines.append("## 关心话题")
+            lines.append("## Care Topics")
             lines.extend(care_traits.values())
             lines.append("")
 
@@ -441,7 +441,7 @@ class DailyConsolidator:
         user_custom_path.write_text(content, encoding="utf-8")
         logger.info(f"Promoted {len(promoted_traits)} persona traits to {user_custom_path}")
 
-        # 6. 触发重编译
+        # 6. Trigger recompilation
         try:
             from ..prompt.compiler import compile_all
 
@@ -452,24 +452,24 @@ class DailyConsolidator:
 
         return len(promoted_traits)
 
-    # ==================== 去重清理 ====================
+    # ==================== Duplicate Cleanup ====================
 
-    # 向量相似度阈值（用于初筛可能的重复）
-    # 0.3 太宽松，改为 0.15，配合 LLM 二次判断
+    # Vector similarity threshold (for initial filtering of possible duplicates)
+    # 0.3 was too loose, changed to 0.15, paired with LLM secondary judgment
     DUPLICATE_DISTANCE_THRESHOLD = 0.15
 
     async def _cleanup_duplicate_memories(self) -> int:
         """
-        清理重复记忆
+        Clean up duplicate memories
 
-        策略:
-        1. 按类型分组遍历所有记忆
-        2. 用向量搜索找相似的记忆对
-        3. 用 LLM 判断是否真的重复
-        4. 如果重复，保留更重要/更新的那条，删除另一条
+        Strategy:
+        1. Iterate all memories grouped by type
+        2. Use vector search to find similar memory pairs
+        3. Use LLM to determine if truly duplicates
+        4. If duplicate, keep more important/recent one, delete the other
 
         Returns:
-            删除的重复记忆数量
+            Number of deleted duplicate memories
         """
         if not self.memory_manager:
             return 0
@@ -481,7 +481,7 @@ class DailyConsolidator:
         logger.info(f"Checking {len(memories)} memories for duplicates...")
 
         deleted_ids = set()
-        checked_pairs = set()  # 避免重复检查同一对
+        checked_pairs = set()  # Avoid duplicate checking of same pair
 
         for memory in memories:
             if memory.id in deleted_ids:
@@ -494,7 +494,7 @@ class DailyConsolidator:
                 similar = self.memory_manager.vector_store.search(
                     memory.content,
                     limit=5,
-                    filter_type=memory.type.value,  # 只在同类型中查找
+                    filter_type=memory.type.value,  # Search only within same type
                 )
 
                 for other_id, distance in similar:
@@ -525,7 +525,7 @@ class DailyConsolidator:
                         self.memory_manager.delete_memory(remove.id)
                         deleted_ids.add(remove.id)
             else:
-                # 回退：字符串前缀匹配去重（向量库不可用时）
+                # Fallback: string prefix matching deduplication (when vector store unavailable)
                 strip = self.memory_manager._strip_common_prefix
                 core_a = strip(memory.content)
                 for other in memories:
@@ -556,15 +556,15 @@ class DailyConsolidator:
 
     def _decide_which_to_keep(self, mem1: Memory, mem2: Memory) -> tuple[Memory, Memory]:
         """
-        决定保留哪条记忆
+        Decide which memory to keep
 
-        规则:
-        1. 优先级: PERMANENT > LONG_TERM > SHORT_TERM > TRANSIENT
-        2. 重要性: importance_score 高的优先
-        3. 时间: 更新的优先
+        Rules:
+        1. Priority: PERMANENT > LONG_TERM > SHORT_TERM > TRANSIENT
+        2. Importance: higher importance_score wins
+        3. Time: more recent wins
 
         Returns:
-            (保留的记忆, 删除的记忆)
+            (memory to keep, memory to delete)
         """
         priority_order = {
             MemoryPriority.PERMANENT: 4,
@@ -573,16 +573,16 @@ class DailyConsolidator:
             MemoryPriority.TRANSIENT: 1,
         }
 
-        # 比较优先级
+        # Compare priority
         p1 = priority_order.get(mem1.priority, 0)
         p2 = priority_order.get(mem2.priority, 0)
 
         if p1 != p2:
             return (mem1, mem2) if p1 > p2 else (mem2, mem1)
 
-        # 比较重要性
+        # Compare importance
         if abs(mem1.importance_score - mem2.importance_score) > 0.1:
             return (mem1, mem2) if mem1.importance_score > mem2.importance_score else (mem2, mem1)
 
-        # 比较更新时间
+        # Compare update time
         return (mem1, mem2) if mem1.updated_at > mem2.updated_at else (mem2, mem1)

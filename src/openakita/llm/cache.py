@@ -1,13 +1,13 @@
 """
-Prompt Cache 支持
+Prompt Cache support
 
-实现 Anthropic API 的 prompt caching 策略:
-- 系统提示分段缓存 (静态部分 + 动态部分)
-- 工具 Schema 缓存标记
-- 消息缓存断点 (最后 1-2 条消息)
-- 工具 Schema LRU 缓存 (按 name + schema hash)
+Implements Anthropic API prompt caching strategy:
+- System prompt segmented caching (static part + dynamic part)
+- Tool schema cache markers
+- Message cache breakpoints (last 1-2 messages)
+- Tool schema LRU cache (by name + schema hash)
 
-参考 Claude Code 的 getCacheControl / addCacheBreakpoints。
+Reference: Claude Code's getCacheControl / addCacheBreakpoints.
 """
 
 from __future__ import annotations
@@ -23,13 +23,14 @@ SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "<!-- DYNAMIC_BOUNDARY -->"
 
 
 def build_cached_system_blocks(system_prompt: str) -> list[dict]:
-    """将系统提示拆分为静态/动态部分并添加 cache_control。
+    """Split the system prompt into static/dynamic parts and add cache_control.
 
-    如果系统提示包含 DYNAMIC_BOUNDARY 标记，则标记之前的部分为静态缓存。
-    否则整个提示都标记为缓存。
+    If the system prompt contains a DYNAMIC_BOUNDARY marker, the part before
+    the marker is cached statically. Otherwise, the entire prompt is marked
+    for caching.
 
     Returns:
-        Anthropic 格式的 system blocks 列表
+        List of system blocks in Anthropic format
     """
     if not system_prompt:
         return []
@@ -67,10 +68,10 @@ def build_cached_system_blocks(system_prompt: str) -> list[dict]:
 
 
 def add_tools_cache_control(tools: list[dict]) -> list[dict]:
-    """为工具列表添加缓存标记。
+    """Add cache markers to the tool list.
 
-    最后一个工具添加 cache_control，使整个工具列表可被缓存。
-    工具列表应预先排序以保证缓存稳定性。
+    Appends cache_control to the last tool so the entire tool list can be
+    cached. The tool list should be pre-sorted for cache stability.
     """
     if not tools:
         return tools
@@ -85,14 +86,15 @@ def add_message_cache_breakpoints(
     messages: list[dict],
     max_breakpoints: int = 2,
 ) -> list[dict]:
-    """在消息列表的末尾添加缓存断点。
+    """Add cache breakpoints at the end of the message list.
 
-    在最后 N 条消息的最后一个 content block 上添加 cache_control。
-    这使得对话历史中靠后的消息可以被缓存复用。
+    Adds cache_control to the last content block of the last N messages.
+    This allows messages toward the end of the conversation history to be
+    cached and reused.
 
     Args:
-        messages: 消息列表
-        max_breakpoints: 最多添加的断点数量 (默认 2)
+        messages: List of messages
+        max_breakpoints: Maximum number of breakpoints to add (default 2)
     """
     if not messages:
         return messages
@@ -129,25 +131,25 @@ def add_message_cache_breakpoints(
 
 
 def _schema_hash(schema: dict) -> str:
-    """计算 JSON Schema 的稳定哈希。"""
+    """Compute a stable hash for a JSON Schema."""
     canonical = json.dumps(schema, sort_keys=True, separators=(",", ":"))
     return hashlib.md5(canonical.encode()).hexdigest()
 
 
 @lru_cache(maxsize=512)
 def _cached_tool_schema_json(name: str, schema_hash: str, raw_json: str) -> dict:
-    """缓存工具 Schema 的序列化结果。"""
+    """Cache the serialized result of a tool schema."""
     return json.loads(raw_json)
 
 
 def get_cached_tool_schema(tool: dict) -> dict:
-    """获取缓存的工具 Schema，避免每次请求重新序列化。
+    """Retrieve a cached tool schema, avoiding re-serialization on every request.
 
     Args:
-        tool: 工具定义 dict (含 name, description, input_schema)
+        tool: Tool definition dict (containing name, description, input_schema)
 
     Returns:
-        缓存后的工具 Schema dict
+        Cached tool schema dict
     """
     name = tool.get("name", "")
     schema = tool.get("input_schema", {})
@@ -157,5 +159,5 @@ def get_cached_tool_schema(tool: dict) -> dict:
 
 
 def sort_tools_for_cache_stability(tools: list[dict]) -> list[dict]:
-    """按名称排序工具列表，保证 prompt cache 稳定性。"""
+    """Sort the tool list by name to ensure prompt cache stability."""
     return sorted(tools, key=lambda t: t.get("name", ""))

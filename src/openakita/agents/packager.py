@@ -1,8 +1,8 @@
 """
-Agent 打包与安装
+Agent packaging and installation.
 
-AgentPackager: 将本地 AgentProfile + 技能打包成 .akita-agent 文件
-AgentInstaller: 从 .akita-agent 文件安装 Agent 到本地
+AgentPackager: Bundles a local AgentProfile + skills into a .akita-agent file.
+AgentInstaller: Installs an Agent from a .akita-agent file to the local system.
 """
 
 from __future__ import annotations
@@ -32,11 +32,11 @@ logger = logging.getLogger(__name__)
 
 
 class PackageError(Exception):
-    """Agent 包操作错误"""
+    """Agent package operation error."""
 
 
 class AgentPackager:
-    """将本地 Agent 打包成 .akita-agent ZIP 文件"""
+    """Packages a local Agent into a .akita-agent ZIP file."""
 
     def __init__(
         self,
@@ -62,22 +62,22 @@ class AgentPackager:
         include_skills: list[str] | None = None,
     ) -> Path:
         """
-        打包指定 Agent 为 .akita-agent 文件。
+        Package the specified Agent as a .akita-agent file.
 
         Spec v1.1: third-party skills are NOT bundled; they are declared
         as required_external_skills and fetched from their original source
         during installation.
 
         Args:
-            profile_id: 要打包的 Agent Profile ID
-            author_name: 作者名（如未提供则使用 created_by）
-            author_url: 作者主页
-            version: 包版本号
-            readme: README 内容
-            include_skills: 要打包的技能列表（None 则使用 profile 中的技能）
+            profile_id: The Agent Profile ID to package
+            author_name: Author name (falls back to created_by if not provided)
+            author_url: Author homepage URL
+            version: Package version number
+            readme: README content
+            include_skills: List of skills to include (None uses the profile's skills)
 
         Returns:
-            输出文件路径
+            Output file path
         """
         profile = self.profile_store.get(profile_id)
         if profile is None:
@@ -262,7 +262,7 @@ class AgentPackager:
 
 
 class AgentInstaller:
-    """从 .akita-agent ZIP 文件安装 Agent 到本地"""
+    """Installs an Agent from a .akita-agent ZIP file to the local system."""
 
     def __init__(
         self,
@@ -273,7 +273,7 @@ class AgentInstaller:
         self.skills_dir = skills_dir
 
     def inspect(self, package_path: Path) -> dict[str, Any]:
-        """预览 .akita-agent 包内容（不执行安装）"""
+        """Preview .akita-agent package contents (without installing)."""
         self._validate_file(package_path)
 
         with zipfile.ZipFile(package_path, "r") as zf:
@@ -314,19 +314,19 @@ class AgentInstaller:
         hub_source: dict[str, Any] | None = None,
     ) -> AgentProfile:
         """
-        安装 .akita-agent 包。
+        Install a .akita-agent package.
 
         Spec v1.1: after extracting bundled skills, the installer attempts
         to fetch required_external_skills from their original sources.
         Failures are non-blocking — the agent is still installed.
 
         Args:
-            package_path: 包文件路径
-            force: 如果 ID 冲突，是否强制覆盖
-            hub_source: Hub 来源元数据（如果从 Hub 下载安装）
+            package_path: Package file path
+            force: Whether to force overwrite if ID conflicts
+            hub_source: Hub source metadata (if installed from Hub)
 
         Returns:
-            创建的 AgentProfile
+            The created AgentProfile
         """
         self._validate_file(package_path)
 
@@ -674,7 +674,7 @@ class AgentInstaller:
         return target_dir
 
     def _resolve_conflict(self, profile_id: str) -> str:
-        """ID 冲突时追加后缀"""
+        """Append a suffix when there is an ID conflict."""
         for i in range(1, 100):
             new_id = f"{profile_id}-{i}"
             if not self.profile_store.exists(new_id):

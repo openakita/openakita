@@ -7,24 +7,24 @@ metadata:
   version: "1.0.0"
 ---
 
-# 小度 (Xiaodu)
+# Xiaodu (Baidu Smart Speaker)
 
-通过小度 MCP 协议赋予智能体物理交互能力，实现对小度设备及生态硬件的精准控制、场景联动与家庭 IoT 任务执行。
+Empowers the agent with physical interaction capabilities through the Xiaodu MCP protocol, enabling precise control of Xiaodu devices and ecosystem hardware, scene linkage, and home IoT task execution.
 
-## 功能
+## Features
 
-- 智能设备控制
-- 场景联动
-- 家庭 IoT 任务
-- 生态硬件管理
+- Smart device control
+- Scene automation
+- Home IoT tasks
+- Ecosystem hardware management
 
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/xiaodu_mcp.py
-小度设备控制 MCP 客户端（MCP URL 需配置），需设置 XIAODU_MCP_KEY。
+Xiaodu device control MCP client (MCP URL must be configured). Requires `XIAODU_MCP_KEY`.
 
 ```bash
 python3 scripts/xiaodu_mcp.py devices
 python3 scripts/xiaodu_mcp.py control --device light-001 --action on
-python3 scripts/xiaodu_mcp.py scene --name "回家模式"
+python3 scripts/xiaodu_mcp.py scene --name "Home Mode"
 ```

@@ -1,6 +1,6 @@
 """
-即时通讯 API 适配器
-支持钉钉、企业微信、飞书
+Instant Messaging API adapters.
+Supports DingTalk, WeCom (Enterprise WeChat), and Feishu (Lark).
 """
 
 import base64
@@ -14,7 +14,7 @@ from . import BaseAPIAdapter
 
 
 class DingTalkAdapter(BaseAPIAdapter):
-    """钉钉机器人适配器"""
+    """DingTalk bot adapter."""
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
@@ -54,7 +54,7 @@ class DingTalkAdapter(BaseAPIAdapter):
 
 
 class WeComAdapter(BaseAPIAdapter):
-    """企业微信机器人适配器"""
+    """WeCom (Enterprise WeChat) bot adapter."""
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
@@ -80,7 +80,7 @@ class WeComAdapter(BaseAPIAdapter):
 
 
 class FeishuAdapter(BaseAPIAdapter):
-    """飞书机器人适配器"""
+    """Feishu (Lark) bot adapter."""
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
@@ -104,5 +104,5 @@ class FeishuAdapter(BaseAPIAdapter):
 def create_im_adapter(provider: str, config: dict[str, Any]) -> BaseAPIAdapter:
     providers = {"dingtalk": DingTalkAdapter, "wecom": WeComAdapter, "feishu": FeishuAdapter}
     if provider not in providers:
-        raise ValueError(f"不支持的 IM 提供商：{provider}")
+        raise ValueError(f"Unsupported IM provider: {provider}")
     return providers[provider](config)

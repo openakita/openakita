@@ -9,42 +9,42 @@ category: Desktop
 
 # Desktop Type
 
-在当前焦点位置输入文本。
+Type text at current focus position. 
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |------|------|------|------|
-| text | string | 是 | 要输入的文本 |
-| clear_first | boolean | 否 | 是否先清空现有内容（Ctrl+A 后输入），默认 false |
+| text | string | Yes | need |
+| clear_first | boolean | No | YesNohave (Ctrl+A ), Default false |
 
 ## Features
 
-- 支持中文输入
-- 支持先清空再输入
+- Supports
+- Supports
 
 ## Workflow
 
-1. 先用 `desktop-click` 点击目标输入框获得焦点
-2. 调用此工具输入文本
+1. `desktop-click` Click
+2. CallType text
 
 ## Examples
 
-**直接输入**:
+****:
 ```json
 {"text": "Hello World"}
 ```
 
-**清空后输入**:
+****:
 ```json
 {"text": "New content", "clear_first": true}
 ```
 
 ## Warning
 
-如果输入的是浏览器内的网页表单，请使用 `browser_type` 工具。
+Yes, Use `browser_type`. 
 
 ## Related Skills
 
-- `desktop-click`: 先点击获取焦点
-- `desktop-hotkey`: 快捷键操作
+- `desktop-click`: Clickget
+- `desktop-hotkey`:

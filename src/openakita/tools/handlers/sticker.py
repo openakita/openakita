@@ -1,8 +1,8 @@
 """
-表情包处理器
+Sticker handler
 
-处理表情包相关的工具调用:
-- send_sticker: 搜索并发送表情包
+Handles sticker-related tool calls:
+- send_sticker: search and send stickers
 """
 
 import json
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class StickerHandler:
-    """表情包处理器"""
+    """Sticker handler"""
 
     TOOLS = ["send_sticker"]
 
@@ -26,23 +26,23 @@ class StickerHandler:
         self.agent = agent
 
     async def handle(self, tool_name: str, params: dict[str, Any]) -> str:
-        """处理工具调用"""
+        """Handle tool call"""
         if tool_name == "send_sticker":
             return await self._send_sticker(params)
         else:
             return f"❌ Unknown sticker tool: {tool_name}"
 
     async def _send_sticker(self, params: dict) -> str:
-        """搜索并发送表情包"""
+        """Search and send a sticker"""
         if not hasattr(self.agent, "sticker_engine") or not self.agent.sticker_engine:
-            return "❌ 表情包引擎未初始化"
+            return "❌ Sticker engine not initialized"
 
         sticker_engine = self.agent.sticker_engine
         query = params.get("query") or ""
         mood = params.get("mood")
         category = params.get("category")
 
-        # 搜索表情包
+        # Search for sticker
         result = None
         if mood and not query:
             result = await sticker_engine.get_random_by_mood(mood)
@@ -51,35 +51,35 @@ class StickerHandler:
             result = random.choice(results) if results else None
 
         if not result:
-            return "❌ 没找到合适的表情包，换个关键词试试？"
+            return "❌ No matching sticker found. Try a different keyword?"
 
-        # 下载到本地缓存
+        # Download to local cache
         url = result.get("url", "")
         if not url:
-            return "❌ 表情包 URL 无效"
+            return "❌ Invalid sticker URL"
 
         local_path = await sticker_engine.download_and_cache(url)
         if not local_path:
-            return f"❌ 表情包下载失败: {url}"
+            return f"❌ Sticker download failed: {url}"
 
-        # 通过 im_context 获取当前 IM 会话的适配器和 chat_id
+        # Get current IM session adapter and chat_id via im_context
         adapter, chat_id = self._get_adapter_and_chat_id()
         if adapter and chat_id:
             try:
                 await adapter.send_image(chat_id, str(local_path), caption="")
-                return f"✅ 已发送表情包: {result.get('name', 'unknown')}"
+                return f"✅ Sticker sent: {result.get('name', 'unknown')}"
             except Exception as e:
                 logger.warning(f"Failed to send sticker via adapter: {e}")
-                return f"❌ 表情包发送失败: {e}"
+                return f"❌ Failed to send sticker: {e}"
 
-        # Desktop 模式：直接返回 deliver_artifacts 格式的 JSON 回执，
-        # 让 chat API 能直接注入 artifact 事件，无需 LLM 再次调用 deliver_artifacts。
+        # Desktop mode: return a deliver_artifacts-formatted JSON receipt directly,
+        # so the chat API can inject an artifact event without another LLM call to deliver_artifacts.
         return self._build_desktop_receipt(local_path, result.get("name", "sticker"))
 
     @staticmethod
     def _build_desktop_receipt(local_path, name: str) -> str:
-        """构造与 deliver_artifacts desktop 回执相同格式的 JSON，
-        让 chat API 的 send_sticker 拦截逻辑能注入 artifact 事件。"""
+        """Build a JSON receipt in the same format as the deliver_artifacts desktop receipt,
+        so the chat API send_sticker interception logic can inject an artifact event."""
         from pathlib import Path as _Path
 
         resolved = _Path(local_path).resolve()
@@ -109,7 +109,7 @@ class StickerHandler:
 
     @staticmethod
     def _get_adapter_and_chat_id():
-        """通过 im_context 获取当前 IM 适配器和 chat_id"""
+        """Get current IM adapter and chat_id via im_context"""
         from ...core.im_context import get_im_session
 
         session = get_im_session()
@@ -135,6 +135,6 @@ class StickerHandler:
 
 
 def create_handler(agent: "Agent"):
-    """创建表情包处理器"""
+    """Create a Sticker handler"""
     handler = StickerHandler(agent)
     return handler.handle

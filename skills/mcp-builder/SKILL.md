@@ -225,7 +225,7 @@ add_mcp_server(
     transport="stdio",
     command="python",
     args=["-m", "<module_name>"],
-    description="服务器描述",
+description="",
     env={"API_KEY": "xxx"}
 )
 ```
@@ -237,7 +237,7 @@ add_mcp_server(
     transport="stdio",
     command="python",
     args=["<absolute_path_to>/server.py"],
-    description="服务器描述"
+description=""
 )
 ```
 
@@ -248,7 +248,7 @@ add_mcp_server(
     transport="stdio",
     command="npx",
     args=["-y", "<package-name>"],
-    description="服务器描述"
+description=""
 )
 ```
 
@@ -259,7 +259,7 @@ add_mcp_server(
     transport="stdio",
     command="node",
     args=["<absolute_path_to>/dist/index.js"],
-    description="服务器描述"
+description=""
 )
 ```
 
@@ -269,7 +269,7 @@ add_mcp_server(
     name="<server-name>",
     transport="streamable_http",
     url="http://localhost:8080/mcp",
-    description="服务器描述"
+description=""
 )
 ```
 
@@ -277,7 +277,7 @@ add_mcp_server(
 
 After `add_mcp_server` returns:
 
-1. Check the response — it should show "已自动连接" and discovered tools
+1. Check the response — it should show "Automatic" and discovered tools
 2. If auto-connect failed, troubleshoot:
    - Verify the command path is correct (use absolute paths for local scripts)
    - Check dependencies are installed

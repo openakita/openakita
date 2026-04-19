@@ -1,56 +1,42 @@
 ---
 name: openakita/skills@taobaoke-tool
-description: "Taobaoke all-in-one toolkit for Taobao, JD, and Pinduoduo affiliate marketing. Convert product links to affiliate links, cross-platform price comparison, one-click price protection, and commission tracking. Use for e-commerce affiliate operations."
+description: "Taobao affiliate tool for product search, commission calculation, and marketing link generation. Use for e-commerce affiliate marketing and product recommendations."
 license: MIT
 metadata:
-  author: wuhaichao87
-  version: "2.1.0"
-requires:
-  env: [ZHETAOKE_APP_KEY, ZHETAOKE_SID]
+  author: openakita
+  version: "1.0.0"
 ---
 
-# 淘宝客全能工具箱
+# Taobao Affiliate Tool
 
-淘宝客一站式解决方案，支持链接转链、全网比价、自动价保、佣金追踪。
+Product search, commission tracking, and affiliate link generation tool for Taobao marketplace marketing.
 
-## 配置
+## Configuration
 
-在环境变量中设置：
-export ZHETAOKE_APP_KEY="your_key"
-export ZHETAOKE_SID="your_sid"
-
-可选配置：
-export JD_UNION_ID="your_jd_id"
-export TAOBAO_PID="your_pid"
-export PDD_PID="your_pdd_pid"
-
-## 支持平台
-
-| 平台 | 支持格式 | 商品信息 | 佣金信息 |
-|------|---------|---------|---------|
-| 淘宝 | 淘口令、链接 | 完整 | 完整 |
-| 京东 | 短链接、标准链接 | 完整 | 完整 |
-| 拼多多 | mobile.yangkeduo.com | 基础 | 基础 |
-
-## 核心功能
-
-- 智能转链：淘宝/京东/拼多多链接自动转佣金链接
-- 全网比价：对比三大平台价格
-- 一键价保：自动申请价保追回差价
-- 佣金追踪：记录转链和成交数据
-- 高佣转链：通过折淘客 API 获取最高佣金
-
-## 使用
-
-python3 scripts/taobaoke_master.py <链接>
-
-## 预置脚本
-
-### scripts/taobaoke_master.py
-淘宝客转链/搜索/比价工具，需设置 ZHETAOKE_APP_KEY 和 ZHETAOKE_SID。
+Set your Taobao affiliate credentials:
 
 ```bash
-python3 scripts/taobaoke_master.py convert "https://item.taobao.com/item.htm?id=123456"
-python3 scripts/taobaoke_master.py search "无线蓝牙耳机"
-python3 scripts/taobaoke_master.py compare "https://item.taobao.com/item.htm?id=123456"
+export TAOBAO_APP_KEY="your_app_key"
+export TAOBAO_APP_SECRET="your_app_secret"
+export TAOBAO_ADZONE_ID="your_adzone_id"
+```
+
+## Features
+
+- Product search and filtering
+- Commission rate calculation
+- Affiliate link generation
+- Product category browsing
+- Price comparison
+- Trending product tracking
+
+## Pre-built Scripts
+
+### scripts/taobaoke.py
+Taobao affiliate product search and link generation.
+
+```bash
+python3 scripts/taobaoke.py search "keyword" --price-min 50 --price-max 500
+python3 scripts/taobaoke.py link --item-id 12345678
+python3 scripts/taobaoke.py commission --category "electronics"
 ```

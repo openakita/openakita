@@ -1,11 +1,11 @@
 """
-向量存储 - 基于 ChromaDB
+Vector store - based on ChromaDB
 
-提供语义搜索能力:
-- 记忆向量化存储
-- 语义相似度搜索
-- 支持按类型过滤
-- 支持多源下载 (HuggingFace / hf-mirror / ModelScope)
+Provides semantic search capabilities:
+- Vectorized memory storage
+- Semantic similarity search
+- Filtering by type
+- Multi-source download support (HuggingFace / hf-mirror / ModelScope)
 """
 
 import asyncio
@@ -17,18 +17,19 @@ from .types import normalize_tags
 
 logger = logging.getLogger(__name__)
 
-# 延迟导入，避免未安装依赖时报错
+# Lazy imports to avoid errors when dependencies are not installed
 _sentence_transformers_available = None
 _chromadb = None
 
 
 def _lazy_import():
-    """延迟导入依赖"""
+    """Lazily import dependencies"""
     global _sentence_transformers_available, _chromadb
 
     if _sentence_transformers_available is None:
-        # 模块可能在服务运行期间安装，路径尚未注入 sys.path。
-        # 在导入前尝试刷新一次（idempotent，不会重复添加已有路径）。
+        # The module may be installed while the service is running, with the path
+        # not yet injected into sys.path. Try refreshing once before importing
+        # (idempotent; does not re-add existing paths).
         import sys
 
         if "sentence_transformers" not in sys.modules:
@@ -47,8 +48,8 @@ def _lazy_import():
             from openakita.tools._import_helper import import_or_hint
 
             hint = import_or_hint("sentence_transformers")
-            logger.info(f"[VectorStore] 向量搜索未启用: {hint}")
-            logger.debug(f"sentence_transformers ImportError 详情: {e}", exc_info=True)
+            logger.info(f"[VectorStore] Vector search not enabled: {hint}")
+            logger.debug(f"sentence_transformers ImportError details: {e}", exc_info=True)
             _sentence_transformers_available = False
             return False
 
@@ -57,8 +58,8 @@ def _lazy_import():
 
     if _chromadb is None:
         try:
-            # 在导入前禁用 chromadb 遥测，避免因 posthog 缺失导致 ImportError
-            # chromadb 在 import 时会检查这些环境变量
+            # Disable chromadb telemetry before import to avoid ImportError from missing posthog.
+            # chromadb checks these environment variables at import time.
             import os
 
             os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
@@ -71,8 +72,8 @@ def _lazy_import():
             from openakita.tools._import_helper import import_or_hint
 
             hint = import_or_hint("chromadb")
-            logger.info(f"[VectorStore] ChromaDB 未启用: {hint}")
-            logger.debug(f"chromadb ImportError 详情: {e}", exc_info=True)
+            logger.info(f"[VectorStore] ChromaDB not enabled: {hint}")
+            logger.debug(f"chromadb ImportError details: {e}", exc_info=True)
             return False
 
     return True
@@ -80,18 +81,18 @@ def _lazy_import():
 
 class VectorStore:
     """
-    向量存储 - 基于 ChromaDB
+    Vector store - based on ChromaDB
 
-    使用本地 embedding 模型，无需 API 调用。
-    支持多下载源 (HuggingFace / hf-mirror / ModelScope)。
+    Uses a local embedding model, no API calls required.
+    Supports multiple download sources (HuggingFace / hf-mirror / ModelScope).
 
-    初始化策略：
-    - 模型下载在后台线程中进行，绝不阻塞后端启动
-    - 下载完成前，所有操作优雅降级（返回空结果）
-    - 下载失败后有冷却重试机制
+    Initialization strategy:
+    - Model download runs in a background thread and never blocks backend startup
+    - Until download completes, all operations gracefully degrade (return empty results)
+    - Cooldown-based retry mechanism after download failures
     """
 
-    # 默认使用中文优化的 embedding 模型
+    # Default to a Chinese-optimized embedding model
     DEFAULT_MODEL = "shibing624/text2vec-base-chinese"
 
     def __init__(
@@ -102,13 +103,13 @@ class VectorStore:
         download_source: str = "auto",
     ):
         """
-        初始化向量存储
+        Initialize vector store
 
         Args:
-            data_dir: 数据目录
-            model_name: embedding 模型名称 (默认 shibing624/text2vec-base-chinese)
-            device: 设备 (cpu 或 cuda)
-            download_source: 下载源 ("auto" | "huggingface" | "hf-mirror" | "modelscope")
+            data_dir: Data directory
+            model_name: Embedding model name (default shibing624/text2vec-base-chinese)
+            device: Device (cpu or cuda)
+            download_source: Download source ("auto" | "huggingface" | "hf-mirror" | "modelscope")
         """
         self.data_dir = Path(data_dir)
         self.model_name = model_name or self.DEFAULT_MODEL
@@ -120,49 +121,49 @@ class VectorStore:
         self._collection = None
         self._enabled = False
 
-        # 初始化状态机
+        # Initialization state machine
         self._init_state = "idle"  # idle → loading → ready / failed
         self._init_failed = False
         self._init_fail_time: float = 0.0
-        self._init_retry_cooldown: float = 300.0  # 失败后 5 分钟冷却再重试
+        self._init_retry_cooldown: float = 300.0  # 5-minute cooldown after failure before retrying
         self._retry_count: int = 0
-        self._import_missing: bool = False  # 依赖缺失（ImportError）
+        self._import_missing: bool = False  # Dependency missing (ImportError)
         self._lock = threading.RLock()
 
-        # 立即启动后台初始化（不阻塞调用方）
+        # Start background initialization immediately (does not block caller)
         self._start_background_init()
 
     def _start_background_init(self) -> None:
-        """在后台线程中启动初始化，不阻塞调用方。"""
+        """Start initialization in a background thread; does not block the caller."""
         t = threading.Thread(
             target=self._do_initialize,
             name="VectorStore-init",
             daemon=True,
         )
         t.start()
-        logger.info("[VectorStore] 后台初始化已启动（不阻塞后端启动）")
+        logger.info("[VectorStore] Background initialization started (does not block backend startup)")
 
     def _do_initialize(self) -> None:
-        """实际执行初始化（在后台线程中运行）。"""
+        """Actually perform initialization (runs in background thread)."""
         with self._lock:
             if self._init_state == "loading":
-                return  # 已有线程在初始化
+                return  # Another thread is already initializing
             self._init_state = "loading"
 
         try:
             self._do_initialize_inner()
         except Exception:
-            pass  # 错误已在 inner 中处理
+            pass  # Errors are already handled in inner
 
     def _do_initialize_inner(self) -> None:
-        """初始化核心逻辑，包含模型下载和 ChromaDB 初始化。"""
+        """Core initialization logic, including model download and ChromaDB init."""
         import time as _time
 
-        # ── 关键：在导入 sentence_transformers 之前就配置好 HF_ENDPOINT ──
-        # sentence_transformers 导入时会触发 huggingface_hub 导入，
-        # 而 huggingface_hub 在模块级缓存 HF_ENDPOINT。
-        # 如果不提前设置，缓存值会是 https://huggingface.co，
-        # 即使后续改了 os.environ 也不会生效。
+        # ── Key: configure HF_ENDPOINT BEFORE importing sentence_transformers ──
+        # Importing sentence_transformers triggers huggingface_hub import,
+        # and huggingface_hub caches HF_ENDPOINT at module level.
+        # If not set in advance, the cached value will be https://huggingface.co,
+        # and later changes to os.environ will have no effect.
         try:
             from .model_hub import _apply_source_env, _resolve_source
 
@@ -172,9 +173,9 @@ class VectorStore:
 
                 resolved = detect_best_source()
             _apply_source_env(resolved)
-            logger.info(f"[VectorStore] 预配置 HF_ENDPOINT (源={resolved.value})")
+            logger.info(f"[VectorStore] Pre-configured HF_ENDPOINT (source={resolved.value})")
         except Exception as e:
-            logger.debug(f"[VectorStore] 预配置 HF_ENDPOINT 失败 (非致命): {e}")
+            logger.debug(f"[VectorStore] Pre-configuring HF_ENDPOINT failed (non-fatal): {e}")
 
         if not _lazy_import():
             with self._lock:
@@ -187,11 +188,11 @@ class VectorStore:
             return
 
         try:
-            # 初始化 embedding 模型（支持多源下载）
+            # Initialize embedding model (supports multi-source download)
             from .model_hub import load_embedding_model
 
             logger.info(
-                f"[VectorStore] 正在加载 embedding 模型: {self.model_name} "
+                f"[VectorStore] Loading embedding model: {self.model_name} "
                 f"(source={self.download_source})"
             )
             model = load_embedding_model(
@@ -200,7 +201,7 @@ class VectorStore:
                 device=self.device,
             )
 
-            # 初始化 ChromaDB
+            # Initialize ChromaDB
             chromadb_dir = self.data_dir / "chromadb"
             chromadb_dir.mkdir(parents=True, exist_ok=True)
 
@@ -211,13 +212,13 @@ class VectorStore:
                 settings=Settings(anonymized_telemetry=False),
             )
 
-            # 获取或创建 collection
+            # Get or create collection
             collection = client.get_or_create_collection(
                 name="memories",
                 metadata={"hnsw:space": "cosine"},
             )
 
-            # 全部成功，原子性地设置状态
+            # All succeeded; set state atomically
             with self._lock:
                 self._model = model
                 self._client = client
@@ -228,21 +229,21 @@ class VectorStore:
                 self._import_missing = False
                 self._retry_count = 0
 
-            logger.info(f"[VectorStore] ✓ 初始化完成，已加载 {collection.count()} 条记忆")
+            logger.info(f"[VectorStore] ✓ Initialization complete, loaded {collection.count()} memories")
 
         except Exception as e:
             err_msg = str(e)
             if "posthog" in err_msg:
                 logger.warning(
-                    f"VectorStore 初始化失败（chromadb 遥测依赖缺失，不影响核心功能）: {e}"
+                    f"VectorStore initialization failed (chromadb telemetry dependency missing, does not affect core features): {e}"
                 )
             elif "chromadb" in err_msg.lower():
                 logger.warning(
-                    f"VectorStore 初始化失败（chromadb 内部模块缺失，"
-                    f"请尝试重新安装 vector-memory 模块）: {e}"
+                    f"VectorStore initialization failed (chromadb internal module missing, "
+                    f"please try reinstalling the vector-memory module): {e}"
                 )
             else:
-                logger.error(f"[VectorStore] 初始化失败: {e}")
+                logger.error(f"[VectorStore] Initialization failed: {e}")
 
             with self._lock:
                 self._enabled = False
@@ -252,13 +253,13 @@ class VectorStore:
                 self._retry_count += 1
 
     def _ensure_initialized(self) -> bool:
-        """检查是否已初始化就绪。
+        """Check whether initialization is ready.
 
-        设计原则：**绝不阻塞调用方**。
-        - 已就绪 → 返回 True
-        - 正在加载 → 返回 False（调用方优雅降级）
-        - 加载失败且冷却期已过 → 触发后台重试，返回 False
-        - 依赖缺失（ImportError）→ 指数退避，最长 1 小时
+        Design principle: **never block the caller**.
+        - Ready → return True
+        - Loading → return False (caller degrades gracefully)
+        - Failed and cooldown elapsed → trigger background retry, return False
+        - Dependency missing (ImportError) → exponential backoff, capped at 1 hour
         """
         global _sentence_transformers_available, _chromadb
 
@@ -272,7 +273,7 @@ class VectorStore:
             if self._init_failed:
                 import time as _time
 
-                # 依赖缺失时指数退避：300s → 600s → 1200s → … → 3600s 封顶
+                # Exponential backoff on missing dependency: 300s → 600s → 1200s → … capped at 3600s
                 if self._import_missing:
                     cooldown = min(
                         self._init_retry_cooldown * (2 ** (self._retry_count - 1)),
@@ -285,12 +286,12 @@ class VectorStore:
                 if elapsed < cooldown:
                     return False
                 logger.info(
-                    f"[VectorStore] 上次初始化失败已过 {elapsed:.0f}s"
-                    f"（重试 #{self._retry_count + 1}），后台重新尝试..."
+                    f"[VectorStore] {elapsed:.0f}s since last init failure "
+                    f"(retry #{self._retry_count + 1}), retrying in background..."
                 )
                 self._init_failed = False
-                # 重置全局导入缓存，允许重新尝试 import
-                # （模块可能在冷却期内通过设置中心安装）
+                # Reset global import cache to allow retrying the import
+                # (the module may have been installed via setup center during cooldown)
                 _sentence_transformers_available = None
                 _chromadb = None
 
@@ -299,7 +300,7 @@ class VectorStore:
 
     @property
     def enabled(self) -> bool:
-        """是否可用"""
+        """Whether available"""
         return self._ensure_initialized()
 
     def add_memory(
@@ -312,18 +313,18 @@ class VectorStore:
         tags: list[str] = None,
     ) -> bool:
         """
-        添加记忆到向量库
+        Add a memory to the vector store
 
         Args:
-            memory_id: 记忆 ID
-            content: 记忆内容
-            memory_type: 记忆类型 (fact/preference/skill/error/rule/context)
-            priority: 优先级 (transient/short_term/long_term/permanent)
-            importance: 重要性评分 (0-1)
-            tags: 标签列表
+            memory_id: Memory ID
+            content: Memory content
+            memory_type: Memory type (fact/preference/skill/error/rule/context)
+            priority: Priority (transient/short_term/long_term/permanent)
+            importance: Importance score (0-1)
+            tags: Tag list
 
         Returns:
-            是否成功
+            Whether successful
         """
         if not self._ensure_initialized():
             return False
@@ -361,16 +362,16 @@ class VectorStore:
         min_importance: float = 0.0,
     ) -> list[tuple[str, float]]:
         """
-        语义搜索
+        Semantic search
 
         Args:
-            query: 搜索查询
-            limit: 返回数量
-            filter_type: 过滤类型 (可选)
-            min_importance: 最小重要性 (可选)
+            query: Search query
+            limit: Number of results to return
+            filter_type: Filter type (optional)
+            min_importance: Minimum importance (optional)
 
         Returns:
-            [(memory_id, distance), ...] 距离越小越相似
+            [(memory_id, distance), ...] smaller distance means more similar
         """
         if not self._ensure_initialized():
             return []
@@ -392,11 +393,11 @@ class VectorStore:
             if not results["ids"] or not results["ids"][0]:
                 return []
 
-            # 返回 (id, distance) 列表
+            # Return list of (id, distance)
             ids = results["ids"][0]
             distances = results["distances"][0] if results.get("distances") else [0] * len(ids)
 
-            # 过滤低重要性
+            # Filter out low importance
             if min_importance > 0 and results.get("metadatas"):
                 filtered = []
                 for i, (mid, dist) in enumerate(zip(ids, distances, strict=False)):
@@ -419,21 +420,21 @@ class VectorStore:
         min_importance: float = 0.0,
     ) -> list[tuple[str, float]]:
         """
-        异步语义搜索（将 CPU 密集的 encode 操作放到线程池，避免阻塞事件循环）
+        Async semantic search (offloads the CPU-intensive encode operation to a thread pool to avoid blocking the event loop)
 
-        参数和返回值与 search() 完全相同。
+        Parameters and return value are identical to search().
         """
         return await asyncio.to_thread(self.search, query, limit, filter_type, min_importance)
 
     def delete_memory(self, memory_id: str) -> bool:
         """
-        删除记忆
+        Delete a memory
 
         Args:
-            memory_id: 记忆 ID
+            memory_id: Memory ID
 
         Returns:
-            是否成功
+            Whether successful
         """
         if not self._ensure_initialized():
             return False
@@ -457,18 +458,18 @@ class VectorStore:
         tags: list[str] = None,
     ) -> bool:
         """
-        更新记忆
+        Update a memory
 
         Args:
-            memory_id: 记忆 ID
-            content: 新内容
-            memory_type: 记忆类型
-            priority: 优先级
-            importance: 重要性
-            tags: 标签
+            memory_id: Memory ID
+            content: New content
+            memory_type: Memory type
+            priority: Priority
+            importance: Importance
+            tags: Tags
 
         Returns:
-            是否成功
+            Whether successful
         """
         if not self._ensure_initialized():
             return False
@@ -499,7 +500,7 @@ class VectorStore:
             return False
 
     def get_stats(self) -> dict:
-        """获取统计信息"""
+        """Get statistics"""
         if not self._ensure_initialized():
             return {"enabled": False, "count": 0}
 
@@ -512,13 +513,13 @@ class VectorStore:
             }
 
     def clear(self) -> bool:
-        """清空所有记忆"""
+        """Clear all memories"""
         if not self._ensure_initialized():
             return False
 
         try:
             with self._lock:
-                # 删除并重新创建 collection
+                # Delete and recreate collection
                 self._client.delete_collection("memories")
                 self._collection = self._client.get_or_create_collection(
                     name="memories",
@@ -535,13 +536,13 @@ class VectorStore:
         memories: list[dict],
     ) -> int:
         """
-        批量添加记忆
+        Batch add memories
 
         Args:
             memories: [{"id": ..., "content": ..., "type": ..., "priority": ..., "importance": ..., "tags": ...}, ...]
 
         Returns:
-            成功添加的数量
+            Number of memories successfully added
         """
         if not self._ensure_initialized():
             return 0

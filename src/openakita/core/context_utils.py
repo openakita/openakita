@@ -1,10 +1,10 @@
 """
-上下文窗口工具函数
+Context window utility functions
 
-从 agent.py / context_manager.py 提取的公共逻辑:
-- estimate_tokens: 中英文感知的 token 估算
-- get_max_context_tokens: 根据端点配置计算可用上下文 token 数
-- get_raw_context_window: 获取端点原始 context_window 值
+Shared logic extracted from agent.py / context_manager.py:
+- estimate_tokens: Chinese/English-aware token estimation
+- get_max_context_tokens: Calculate available context tokens from endpoint config
+- get_raw_context_window: Retrieve the raw context_window value for the endpoint
 """
 
 import logging
@@ -16,9 +16,9 @@ DEFAULT_MAX_CONTEXT_TOKENS = 160000
 
 
 def estimate_tokens(text: str) -> int:
-    """估算文本的 token 数量（中英文感知）。
+    """Estimate the token count of text (Chinese/English-aware).
 
-    中文约 1.5 字符/token，英文约 4 字符/token。
+    Chinese: roughly 1.5 characters per token; English: roughly 4 characters per token.
     """
     if not text:
         return 0
@@ -31,13 +31,13 @@ def estimate_tokens(text: str) -> int:
 
 
 def get_raw_context_window(brain: Any) -> int:
-    """获取当前端点配置的原始 context_window 值。
+    """Retrieve the raw context_window value from the current endpoint config.
 
     Args:
-        brain: Brain 实例
+        brain: Brain instance
 
     Returns:
-        context_window 值，获取失败返回 0
+        context_window value; returns 0 on failure
     """
     try:
         info = brain.get_current_model_info()
@@ -54,12 +54,12 @@ def get_max_context_tokens(
     brain: Any,
     conversation_id: str | None = None,
 ) -> int:
-    """根据端点配置计算可用上下文 token 数。
+    """Calculate available context tokens based on endpoint configuration.
 
-    优先级:
-    1. 端点配置的 context_window（缺失/为 0 时使用 200000 兜底）
-    2. 减去 max_tokens 输出预留和 5% buffer
-    3. 完全无法获取时 fallback 到 DEFAULT_MAX_CONTEXT_TOKENS (160K)
+    Priority:
+    1. Endpoint's context_window (falls back to 200000 if missing or 0)
+    2. Subtract max_tokens output reserve and a 5% buffer
+    3. If retrieval fails entirely, fall back to DEFAULT_MAX_CONTEXT_TOKENS (160K)
     """
     FALLBACK_CONTEXT_WINDOW = 200000
 

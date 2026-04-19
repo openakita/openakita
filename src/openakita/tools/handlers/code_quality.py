@@ -1,8 +1,8 @@
 """
-Code Quality 处理器
+Code Quality handler
 
-读取 linter 诊断信息：
-- read_lints: 调用项目配置的 linter 获取诊断
+Reads linter diagnostics:
+- read_lints: calls the project-configured linter to get diagnostics
 """
 
 import asyncio

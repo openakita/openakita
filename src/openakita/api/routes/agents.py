@@ -396,7 +396,7 @@ async def delete_category(category_id: str):
         raise HTTPException(status_code=409, detail=str(e))
 
     if not removed:
-        raise HTTPException(status_code=404, detail=f"分类 '{category_id}' 不存在")
+        raise HTTPException(status_code=404, detail=f"Category '{category_id}' not found")
 
     logger.info(f"[Agents API] Deleted category: {category_id}")
     return {"status": "ok"}

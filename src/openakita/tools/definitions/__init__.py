@@ -1,33 +1,33 @@
 """
-系统工具定义模块
+System tool definitions module
 
-将工具定义从 agent.py 抽离出来，按类别组织。
-每个文件定义一类工具，最后统一导出。
+Extracts tool definitions from agent.py, organized by category.
+Each file defines a category of tools, unified export at the end.
 
-遵循 tool-definition-spec.md 规范。
+Follows the tool-definition-spec.md specification.
 
-结构：
-- base.py         # 基础类型、验证器、构建器
-- browser.py      # Browser 工具（11 个）
-- filesystem.py   # File System 工具（8 个）
-- skills.py       # Skills 工具（7 个）
-- memory.py       # Memory 工具（3 个）
-- scheduled.py    # Scheduled Tasks 工具（5 个）
-- im_channel.py   # IM Channel 工具（4 个）
-- profile.py      # User Profile 工具（3 个）
-- system.py       # System 工具（7 个）
-- mcp.py          # MCP 工具（8 个）
-- plan.py         # Todo & Plan 工具（6 个）
-- web_search.py   # Web Search 工具（2 个）
-- web_fetch.py    # Web Fetch 工具（1 个）
-- code_quality.py # Code Quality 工具（1 个）
-- search.py       # Search 工具（1 个）
-- mode.py         # Mode 工具（1 个）
-- notebook.py     # Notebook 工具（1 个）
-- config.py       # Config 工具（1 个，统一配置管理）
+Structure:
+- base.py         # Base types, validators, builders
+- browser.py      # Browser tools (11)
+- filesystem.py   # File System tools (8)
+- skills.py       # Skills tools (7)
+- memory.py       # Memory tools (3)
+- scheduled.py    # Scheduled Tasks tools (5)
+- im_channel.py   # IM Channel tools (4)
+- profile.py      # User Profile tools (3)
+- system.py       # System tools (7)
+- mcp.py          # MCP tools (8)
+- plan.py         # Todo & Plan tools (6)
+- web_search.py   # Web Search tools (2)
+- web_fetch.py    # Web Fetch tools (1)
+- code_quality.py # Code Quality tools (1)
+- search.py       # Search tools (1)
+- mode.py         # Mode tools (1)
+- notebook.py     # Notebook tools (1)
+- config.py       # Config tools (1, unified configuration management)
 """
 
-# 基础模块
+# Base modules
 from .agent import AGENT_TOOLS
 from .agent_hub import AGENT_HUB_TOOLS
 from .agent_package import AGENT_PACKAGE_TOOLS
@@ -50,7 +50,7 @@ from .browser import BROWSER_TOOLS
 from .cli_anything import CLI_ANYTHING_TOOLS
 from .code_quality import CODE_QUALITY_TOOLS
 
-# 工具定义
+# Tool definitions
 from .config import CONFIG_TOOLS
 from .filesystem import FILESYSTEM_TOOLS
 from .im_channel import IM_CHANNEL_TOOLS
@@ -76,10 +76,11 @@ from .structured_output import STRUCTURED_OUTPUT_TOOLS
 from .system import SYSTEM_TOOLS
 from .tool_search import TOOL_SEARCH_TOOLS
 from .web_fetch import WEB_FETCH_TOOLS
+from .deep_search import DEEP_SEARCH_TOOLS
 from .web_search import WEB_SEARCH_TOOLS
 from .worktree import WORKTREE_TOOLS
 
-# 合并所有工具定义（不含平台连接类工具，后者由 agent 根据 hub_enabled 动态加载）
+# Merge all tool definitions (excluding platform connection tools, which are dynamically loaded by the agent based on hub_enabled)
 BASE_TOOLS = (
     FILESYSTEM_TOOLS
     + SKILLS_TOOLS
@@ -108,9 +109,10 @@ BASE_TOOLS = (
     + SLEEP_TOOLS
     + STRUCTURED_OUTPUT_TOOLS
     + WORKTREE_TOOLS
+    + DEEP_SEARCH_TOOLS
 )
 
-# 平台连接工具（Agent Hub + Skill Store），仅在 hub_enabled=True 时注册
+# Platform connection tools (Agent Hub + Skill Store), registered only when hub_enabled=True
 HUB_TOOLS = AGENT_HUB_TOOLS + SKILL_STORE_TOOLS
 
 _ALL_TOOLS = list(BASE_TOOLS) + list(HUB_TOOLS) + list(AGENT_TOOLS)
@@ -130,7 +132,7 @@ def get_tool_input_schema(tool_name: str) -> dict:
 
 
 __all__ = [
-    # 基础类型和工具
+    # Base types and tools
     "ToolDefinition",
     "ToolExample",
     "RelatedTool",
@@ -144,7 +146,7 @@ __all__ = [
     "infer_category",
     "merge_tool_lists",
     "filter_tools_by_category",
-    # 工具列表
+    # Tool lists
     "BASE_TOOLS",
     "HUB_TOOLS",
     "AGENT_TOOLS",
@@ -167,6 +169,7 @@ __all__ = [
     "MCP_TOOLS",
     "PLAN_TOOLS",
     "WEB_FETCH_TOOLS",
+    "DEEP_SEARCH_TOOLS",
     "WEB_SEARCH_TOOLS",
     "PERSONA_TOOLS",
     "STICKER_TOOLS",

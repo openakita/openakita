@@ -1,10 +1,10 @@
 """
-Token 预算控制
+Token budget control
 
-参考 Claude Code 的 token budget 设计:
-- 用户可在消息中写 +500k 设置预算
-- 达到百分比时注入提示
-- 超出预算优雅终止
+Modeled after Claude Code's token budget design:
+- Users can set a budget by writing +500k in a message
+- A warning prompt is injected when a percentage threshold is reached
+- Graceful termination when the budget is exceeded
 """
 
 from __future__ import annotations
@@ -18,11 +18,11 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TokenBudget:
-    """Token 消耗预算"""
+    """Token consumption budget"""
 
-    total_limit: int = 0  # 0 = 无限制
+    total_limit: int = 0  # 0 = unlimited
     used: int = 0
-    warning_threshold: float = 0.8  # 80% 时警告
+    warning_threshold: float = 0.8  # Warn at 80%
 
     @property
     def remaining(self) -> int:
@@ -49,11 +49,11 @@ class TokenBudget:
         )
 
     def record(self, tokens: int) -> None:
-        """记录 token 消耗。"""
+        """Record token consumption."""
         self.used += tokens
 
     def get_warning_message(self) -> str | None:
-        """获取预算警告消息（注入到系统提示）。"""
+        """Get the budget warning message (injected into the system prompt)."""
         if self.is_exceeded:
             return (
                 f"[TOKEN BUDGET EXCEEDED] You have used {self.used:,} tokens, "
@@ -71,15 +71,15 @@ class TokenBudget:
 
 
 def parse_token_budget(text: str) -> int | None:
-    """从用户消息中解析 token 预算。
+    """Parse token budget from a user message.
 
-    支持格式:
-    - "+500k" → 500,000
-    - "+1m" → 1,000,000
-    - "+100000" → 100,000
+    Supported formats:
+    - "+500k" -> 500,000
+    - "+1m" -> 1,000,000
+    - "+100000" -> 100,000
 
     Returns:
-        token 数量，如果没有预算指令则返回 None
+        Token count, or None if no budget directive is found.
     """
     patterns = [
         (r"\+(\d+)k\b", lambda m: int(m.group(1)) * 1000),

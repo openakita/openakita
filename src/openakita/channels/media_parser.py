@@ -1,16 +1,16 @@
 """
-媒体解析器：从回复文本中提取图片/文件引用
+Media parser: extract image/file references from reply text
 
-参考 openclaw-china-main packages/shared/src/media/media-parser.ts
+Reference: openclaw-china-main packages/shared/src/media/media-parser.ts
 
-支持的格式：
-- Markdown 图片: ![alt](path_or_url)
-- HTML img 标签: <img src="...">
-- Markdown 链接文件: [filename](path_or_url)（非图片扩展名时视为文件）
-- MEDIA: 指令行: MEDIA: /path/to/file
-- 裸本地路径（以已知扩展名结尾的绝对路径独占一行）
+Supported formats:
+- Markdown images: ![alt](path_or_url)
+- HTML img tags: <img src="...">
+- Markdown link files: [filename](path_or_url) (treated as file when not an image extension)
+- MEDIA: directive lines: MEDIA: /path/to/file
+- Bare local paths (absolute paths on their own line ending with a known extension)
 
-解析后返回清理过的文本和提取出的媒体路径列表。
+Returns cleaned text and a list of extracted media paths.
 """
 
 from __future__ import annotations
@@ -55,13 +55,13 @@ _RE_MARKDOWN_IMAGE = re.compile(
     r"!\[([^\]]*)\]\(([^)\s]+)\)",
 )
 
-# HTML <img> 标签 — 提取 src 属性
+# HTML <img> tags — extract src attribute
 _RE_HTML_IMG = re.compile(
     r"""<img\s+[^>]*?src\s*=\s*["']([^"']+)["'][^>]*?/?>""",
     re.IGNORECASE,
 )
 
-# Markdown 链接: [text](url) — 不匹配 ![img](...) 格式
+# Markdown links: [text](url) — excludes ![img](...) format
 _RE_MARKDOWN_LINK = re.compile(
     r"(?<!!)\[([^\]]+)\]\(([^)\s]+)\)",
 )
@@ -71,7 +71,7 @@ _RE_BARE_LOCAL_PATH = re.compile(
     re.MULTILINE,
 )
 
-# 合并所有已知媒体扩展名（用于裸路径检测）
+# Merge all known media extensions (for bare path detection)
 _ALL_MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | AUDIO_EXTENSIONS | VIDEO_EXTENSIONS | FILE_EXTENSIONS
 
 
@@ -130,7 +130,7 @@ def is_http_url(s: str) -> bool:
 
 
 def _is_safe_url(s: str) -> bool:
-    """拒绝 javascript:, file:, data: 等危险 scheme"""
+    """Reject dangerous schemes such as javascript:, file:, data:"""
     s_lower = s.strip().lower()
     if ":" in s_lower:
         scheme_part = s_lower.split(":", 1)[0]
@@ -160,18 +160,18 @@ def parse_media_from_text(
     parse_media_lines: bool = True,
     parse_bare_paths: bool = True,
 ) -> MediaParseResult:
-    """从文本中解析并提取媒体引用。
+    """Parse and extract media references from text.
 
     Args:
-        text: 待解析文本
-        remove_from_text: 是否从返回文本中移除已提取的媒体引用
-        allowed_prefixes: 本地路径白名单前缀（None 表示不限制）
-        parse_markdown_images: 是否解析 ![alt](path) 格式
-        parse_media_lines: 是否解析 MEDIA: 行
-        parse_bare_paths: 是否解析独占一行的裸绝对路径
+        text: Text to parse
+        remove_from_text: Whether to remove extracted media references from returned text
+        allowed_prefixes: Allowed local path prefixes (None means no restriction)
+        parse_markdown_images: Whether to parse ![alt](path) format
+        parse_media_lines: Whether to parse MEDIA: lines
+        parse_bare_paths: Whether to parse bare absolute paths on their own line
 
     Returns:
-        MediaParseResult 包含 cleaned_text、images、files
+        MediaParseResult containing cleaned_text, images, files
     """
     if not text:
         return MediaParseResult()
@@ -181,7 +181,7 @@ def parse_media_from_text(
     cleaned = text
 
     def _try_add(source: str) -> bool:
-        """尝试添加媒体项（去重 + 安全校验 + scheme 白名单）"""
+        """Try to add a media item (dedup + security check + scheme allowlist)."""
         if not _is_safe_url(source):
             logger.warning(f"Media source rejected (unsafe scheme): {source[:100]}")
             return False
@@ -212,7 +212,7 @@ def parse_media_from_text(
             result.files.append(media)
         return True
 
-    # 1. 解析 MEDIA: 指令行
+    # 1. Parse MEDIA: directive lines
     if parse_media_lines:
         lines = cleaned.split("\n")
         kept_lines: list[str] = []
@@ -226,7 +226,7 @@ def parse_media_from_text(
         if remove_from_text:
             cleaned = "\n".join(kept_lines)
 
-    # 2. 解析 Markdown 图片 ![alt](path)
+    # 2. Parse Markdown images ![alt](path)
     if parse_markdown_images:
 
         def _md_replacer(m: re.Match) -> str:
@@ -237,7 +237,7 @@ def parse_media_from_text(
 
         cleaned = _RE_MARKDOWN_IMAGE.sub(_md_replacer, cleaned)
 
-    # 3. 解析 HTML <img src="..."> 标签
+    # 3. Parse HTML <img src="..."> tags
     if parse_markdown_images:
 
         def _html_img_replacer(m: re.Match) -> str:
@@ -248,7 +248,7 @@ def parse_media_from_text(
 
         cleaned = _RE_HTML_IMG.sub(_html_img_replacer, cleaned)
 
-    # 4. 解析 Markdown 链接 [text](path)（仅提取媒体扩展名的链接）
+    # 4. Parse Markdown links [text](path) (only extract links with media extensions)
     if parse_markdown_images:
 
         def _md_link_replacer(m: re.Match) -> str:
@@ -262,7 +262,7 @@ def parse_media_from_text(
 
         cleaned = _RE_MARKDOWN_LINK.sub(_md_link_replacer, cleaned)
 
-    # 5. 解析裸本地路径（独占一行的绝对路径，以已知扩展名结尾）
+    # 5. Parse bare local paths (absolute paths on their own line ending with a known extension)
     if parse_bare_paths:
 
         def _bare_replacer(m: re.Match) -> str:
@@ -276,7 +276,7 @@ def parse_media_from_text(
 
         cleaned = _RE_BARE_LOCAL_PATH.sub(_bare_replacer, cleaned)
 
-    # 清理连续空行
+    # Collapse consecutive blank lines
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     result.cleaned_text = cleaned
 

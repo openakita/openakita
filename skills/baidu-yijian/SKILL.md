@@ -7,23 +7,23 @@ metadata:
   version: "1.0.0"
 ---
 
-# 百度一见
+# Baidu Yijian
 
-让 OpenClaw 具备视觉管理能力，覆盖零售餐饮、能源电力、矿山、港口、化工、钢铁等 20+ 行业。
+Equips OpenClaw with visual management capabilities, covering 20+ industries including retail & food service, energy & power, mining, ports, chemicals, and steel.
 
-## 功能
+## Features
 
-- 工业视觉检测
-- 多行业场景覆盖
-- 实时监控与告警
-- 视觉分析报告
+- Industrial visual inspection
+- Multi-industry scenario coverage
+- Real-time monitoring and alerts
+- Visual analysis reports
 
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/yijian.py
-工业视觉检测（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
+Industrial visual inspection (Baidu Qianfan AppBuilder). Requires `APPBUILDER_TOKEN`.
 
 ```bash
 python3 scripts/yijian.py detect --image /path/to/product.jpg
-python3 scripts/yijian.py report "产线质检分析"
+python3 scripts/yijian.py report "Production line quality analysis"
 ```

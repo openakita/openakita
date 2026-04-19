@@ -1,7 +1,7 @@
 """
-定时任务定义
+Scheduled Task Definition
 
-定义任务的数据结构和状态
+Defines task data structures and states
 """
 
 import logging
@@ -15,22 +15,22 @@ logger = logging.getLogger(__name__)
 
 
 class TriggerType(Enum):
-    """触发器类型"""
+    """Trigger type"""
 
-    ONCE = "once"  # 一次性（指定时间执行）
-    INTERVAL = "interval"  # 间隔（每 N 分钟/小时）
-    CRON = "cron"  # Cron 表达式
+    ONCE = "once"  # One-time (execute at specified time)
+    INTERVAL = "interval"  # Interval (every N minutes/hours)
+    CRON = "cron"  # Cron expression
 
 
 class TaskType(Enum):
-    """任务类型"""
+    """Task type"""
 
-    REMINDER = "reminder"  # 简单提醒（到时间直接发送消息，不需要 LLM 处理）
-    TASK = "task"  # 复杂任务（需要 LLM 执行，会发送开始/结束通知）
+    REMINDER = "reminder"  # Simple reminder (send message at time, no LLM processing)
+    TASK = "task"  # Complex task (requires LLM execution, sends start/end notifications)
 
 
 class TaskSource(Enum):
-    """任务来源，用于区分聊天生成、插件生成和系统内置任务。"""
+    """Task source, to distinguish between chat-generated, plugin-generated, and system-built tasks."""
 
     MANUAL = "manual"
     CHAT = "chat"
@@ -40,28 +40,28 @@ class TaskSource(Enum):
 
 
 class TaskDurability(Enum):
-    """任务持久化级别。当前调度器默认都是持久化任务。"""
+    """Task persistence level. Current scheduler defaults to persistent tasks."""
 
     PERSISTENT = "persistent"
     SESSION = "session"
 
 
 class TaskStatus(Enum):
-    """任务状态"""
+    """Task status"""
 
-    PENDING = "pending"  # 等待首次执行
-    SCHEDULED = "scheduled"  # 已调度（等待触发）
-    RUNNING = "running"  # 执行中
-    COMPLETED = "completed"  # 已完成（一次性任务）
-    FAILED = "failed"  # 失败
-    DISABLED = "disabled"  # 已禁用
-    CANCELLED = "cancelled"  # 已取消
-    MISSED = "missed"  # 错过执行（程序停机期间过期的一次性任务）
+    PENDING = "pending"  # Waiting for first execution
+    SCHEDULED = "scheduled"  # Scheduled (waiting for trigger)
+    RUNNING = "running"  # Running
+    COMPLETED = "completed"  # Completed (one-time task)
+    FAILED = "failed"  # Failed
+    DISABLED = "disabled"  # Disabled
+    CANCELLED = "cancelled"  # Cancelled
+    MISSED = "missed"  # Missed (one-time task expired during program downtime)
 
 
 @dataclass
 class TaskExecution:
-    """任务执行记录"""
+    """Task execution record"""
 
     id: str
     task_id: str
@@ -141,65 +141,65 @@ class TaskExecution:
 @dataclass
 class ScheduledTask:
     """
-    定时任务
+    Scheduled Task
 
-    表示一个可调度的任务
+    Represents a schedulable task
 
-    任务类型 (task_type):
-    - REMINDER: 简单提醒，到时间直接发送 reminder_message
-    - TASK: 复杂任务，需要 LLM 执行 prompt，会发送开始/结束通知
+    Task type (task_type):
+    - REMINDER: simple reminder, send reminder_message directly at time
+    - TASK: complex task, requires LLM to execute prompt, sends start/end notifications
     """
 
     id: str
     name: str
-    description: str  # LLM 理解的任务描述
+    description: str  # Task description understood by LLM
 
-    # 触发配置
+    # Trigger configuration
     trigger_type: TriggerType
-    trigger_config: dict  # 触发器配置
+    trigger_config: dict  # Trigger configuration
 
-    # 任务类型配置
-    task_type: TaskType = TaskType.TASK  # 任务类型: reminder/task
-    reminder_message: str | None = None  # 简单提醒的消息内容（仅 REMINDER 类型使用）
+    # Task type configuration
+    task_type: TaskType = TaskType.TASK  # Task type: reminder/task
+    reminder_message: str | None = None  # Message content for simple reminder (REMINDER type only)
 
-    # 执行内容
-    prompt: str = ""  # 发送给 Agent 的 prompt（仅 TASK 类型使用）
-    script_path: str | None = None  # 预置脚本路径
-    action: str | None = None  # 系统动作标识（如 system:daily_memory）
+    # Execution content
+    prompt: str = ""  # Prompt sent to Agent (TASK type only)
+    script_path: str | None = None  # Preset script path
+    action: str | None = None  # System action identifier (e.g., system:daily_memory)
 
-    # 通知配置
-    channel_id: str | None = None  # 结果发送的通道
-    chat_id: str | None = None  # 结果发送的聊天 ID
-    user_id: str | None = None  # 创建者
+    # Notification configuration
+    channel_id: str | None = None  # Channel for sending results
+    chat_id: str | None = None  # Chat ID for sending results
+    user_id: str | None = None  # Creator
 
-    # 多 Agent 配置（单 Agent 模式下始终为 "default"，无功能影响）
+    # Multi-agent configuration (always "default" in single-agent mode, no functional impact)
     agent_profile_id: str = "default"
 
-    # 领域边界
+    # Domain boundaries
     task_source: TaskSource = TaskSource.MANUAL
     durability: TaskDurability = TaskDurability.PERSISTENT
 
-    # 状态
+    # Status
     enabled: bool = True
     status: TaskStatus = TaskStatus.PENDING
-    deletable: bool = True  # 是否允许删除（系统任务设为 False）
+    deletable: bool = True  # Whether deletion is allowed (system tasks set to False)
 
-    # 执行记录
+    # Execution record
     last_run: datetime | None = None
     next_run: datetime | None = None
     run_count: int = 0
     fail_count: int = 0
 
-    # 时间戳
+    # Timestamp
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
 
-    # Cron 增强配置
-    silent: bool = False  # [SILENT] 抑制：执行但不发送结果通知
-    no_schedule_tools: bool = False  # 防递归：禁止任务内部再创建定时任务
-    skill_ids: list[str] = field(default_factory=list)  # Skill 绑定：仅加载指定技能
+    # Cron enhancement configuration
+    silent: bool = False  # [SILENT] Suppress: execute but do not send result notifications
+    no_schedule_tools: bool = False  # Prevent recursion: disallow creating scheduled tasks within the task
+    skill_ids: list[str] = field(default_factory=list)  # Skill binding: load only specified skills
 
-    # 元数据
+    # Metadata
     metadata: dict = field(default_factory=dict)
 
     @classmethod
@@ -215,7 +215,7 @@ class ScheduledTask:
         user_id: str | None = None,
         **kwargs,
     ) -> "ScheduledTask":
-        """创建新任务"""
+        """Create a new task"""
         return cls(
             id=f"task_{uuid.uuid4().hex[:12]}",
             name=name,
@@ -239,20 +239,20 @@ class ScheduledTask:
         **kwargs,
     ) -> "ScheduledTask":
         """
-        创建简单提醒任务
+        Create a simple reminder task
 
         Args:
-            name: 提醒名称
-            description: 提醒描述
-            run_at: 提醒时间
-            message: 要发送的提醒消息
+            name: Reminder name
+            description: Reminder description
+            run_at: Reminder time
+            message: Reminder message to send
         """
         return cls.create(
             name=name,
             description=description,
             trigger_type=TriggerType.ONCE,
             trigger_config={"run_at": run_at.isoformat()},
-            prompt="",  # 简单提醒不需要 prompt
+            prompt="",  # Simple reminder does not need prompt
             task_type=TaskType.REMINDER,
             reminder_message=message,
             **kwargs,
@@ -267,7 +267,7 @@ class ScheduledTask:
         prompt: str,
         **kwargs,
     ) -> "ScheduledTask":
-        """创建一次性任务"""
+        """Create a one-time task"""
         return cls.create(
             name=name,
             description=description,
@@ -286,7 +286,7 @@ class ScheduledTask:
         prompt: str,
         **kwargs,
     ) -> "ScheduledTask":
-        """创建间隔任务"""
+        """Create an interval task"""
         return cls.create(
             name=name,
             description=description,
@@ -305,7 +305,7 @@ class ScheduledTask:
         prompt: str,
         **kwargs,
     ) -> "ScheduledTask":
-        """创建 Cron 任务"""
+        """Create a Cron task"""
         return cls.create(
             name=name,
             description=description,
@@ -315,7 +315,7 @@ class ScheduledTask:
             **kwargs,
         )
 
-    # 合法状态转换表：当前状态 → 允许的目标状态集合
+    # Valid state transition table: current status → set of allowed target statuses
     _VALID_TRANSITIONS: ClassVar[dict[TaskStatus, set[TaskStatus]]] = {
         TaskStatus.PENDING: {
             TaskStatus.SCHEDULED,
@@ -344,7 +344,7 @@ class ScheduledTask:
     }
 
     def _check_transition(self, target: TaskStatus) -> bool:
-        """检查状态转换是否合法。不合法时记录警告并返回 False。"""
+        """Check if state transition is valid. Log warning and return False if invalid."""
         allowed = self._VALID_TRANSITIONS.get(self.status, set())
         if target not in allowed:
             logger.warning(
@@ -355,7 +355,7 @@ class ScheduledTask:
         return True
 
     def enable(self) -> None:
-        """启用任务"""
+        """Enable task"""
         if self.status == TaskStatus.COMPLETED and self.trigger_type == TriggerType.ONCE:
             logger.warning(
                 f"Task {self.id}: cannot re-enable completed one-time task "
@@ -375,7 +375,7 @@ class ScheduledTask:
         self.updated_at = datetime.now()
 
     def disable(self) -> None:
-        """禁用任务"""
+        """Disable task"""
         if not self._check_transition(TaskStatus.DISABLED):
             return
         self.enabled = False
@@ -383,7 +383,7 @@ class ScheduledTask:
         self.updated_at = datetime.now()
 
     def cancel(self) -> None:
-        """取消任务"""
+        """Cancel task"""
         if not self._check_transition(TaskStatus.CANCELLED):
             return
         self.enabled = False
@@ -411,14 +411,14 @@ class ScheduledTask:
             )
 
     def mark_running(self) -> None:
-        """标记为执行中"""
+        """Mark as running"""
         if not self._check_transition(TaskStatus.RUNNING):
             return
         self.status = TaskStatus.RUNNING
         self.updated_at = datetime.now()
 
     def mark_completed(self, next_run: datetime | None = None) -> None:
-        """标记执行完成"""
+        """Mark execution as completed"""
         if self.status != TaskStatus.RUNNING:
             logger.warning(
                 f"Task {self.id}: mark_completed called from {self.status.value}, expected RUNNING"
@@ -438,7 +438,7 @@ class ScheduledTask:
             self.next_run = next_run
 
     def mark_failed(self, error: str = None) -> None:
-        """标记执行失败"""
+        """Mark execution as failed"""
         if self.status != TaskStatus.RUNNING:
             logger.warning(
                 f"Task {self.id}: mark_failed called from {self.status.value}, expected RUNNING"
@@ -462,21 +462,21 @@ class ScheduledTask:
 
     @property
     def is_active(self) -> bool:
-        """是否活跃（可被调度）"""
+        """Whether task is active (can be scheduled)"""
         return self.enabled and self.status in (TaskStatus.PENDING, TaskStatus.SCHEDULED)
 
     @property
     def is_one_time(self) -> bool:
-        """是否一次性任务"""
+        """Whether task is one-time"""
         return self.trigger_type == TriggerType.ONCE
 
     @property
     def is_reminder(self) -> bool:
-        """是否是简单提醒任务"""
+        """Whether task is a simple reminder"""
         return self.task_type == TaskType.REMINDER
 
     def to_dict(self) -> dict:
-        """序列化"""
+        """Serialize"""
         return {
             "id": self.id,
             "name": self.name,
@@ -511,7 +511,7 @@ class ScheduledTask:
 
     @classmethod
     def from_dict(cls, data: dict) -> "ScheduledTask":
-        """反序列化（对损坏/残缺数据尽量容错）"""
+        """Deserialize (with fault tolerance for corrupted/incomplete data)"""
         task_id = data.get("id")
         name = data.get("name")
         trigger_type_str = data.get("trigger_type")

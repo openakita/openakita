@@ -1,15 +1,15 @@
 """
-Ralph Wiggum 循环引擎
+Ralph Wiggum Loop Engine
 
-参考来源:
+References:
 - https://github.com/anthropics/claude-code/tree/main/plugins/ralph-wiggum
 - https://claytonfarr.github.io/ralph-playbook/
 
-核心理念:
-- 任务未完成，绝不终止
-- 通过文件持久化状态
-- 每次迭代 fresh context
-- 通过 backpressure（测试验证）强制自我修正
+Core principles:
+- Never stop until the task is complete
+- Persist state via files
+- Fresh context on each iteration
+- Force self-correction through backpressure (test verification)
 """
 
 import logging
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 class TaskStatus(Enum):
-    """任务状态"""
+    """Task status."""
 
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
@@ -37,11 +37,11 @@ class TaskStatus(Enum):
 
 @dataclass
 class Task:
-    """任务定义"""
+    """Task definition."""
 
     id: str
     description: str
-    session_id: str | None = None  # 关联的会话 ID，用于隔离不同会话的任务
+    session_id: str | None = None  # Associated session ID for isolating tasks across sessions
     status: TaskStatus = TaskStatus.PENDING
     priority: int = 0
     attempts: int = 0
@@ -53,32 +53,32 @@ class Task:
     subtasks: list["Task"] = field(default_factory=list)
 
     def mark_in_progress(self) -> None:
-        """标记为进行中"""
+        """Mark as in progress."""
         self.status = TaskStatus.IN_PROGRESS
         self.attempts += 1
 
     def mark_completed(self, result: Any = None) -> None:
-        """标记为完成"""
+        """Mark as completed."""
         self.status = TaskStatus.COMPLETED
         self.completed_at = datetime.now()
         self.result = result
 
     def mark_failed(self, error: str) -> None:
-        """标记为失败"""
+        """Mark as failed."""
         self.error = error
         if self.attempts >= self.max_attempts:
             self.status = TaskStatus.FAILED
         else:
-            self.status = TaskStatus.PENDING  # 可重试
+            self.status = TaskStatus.PENDING  # Retriable
 
     @property
     def is_complete(self) -> bool:
-        """是否已完成"""
+        """Whether the task is complete."""
         return self.status == TaskStatus.COMPLETED
 
     @property
     def can_retry(self) -> bool:
-        """是否可以重试"""
+        """Whether the task can be retried."""
         return (
             self.status in (TaskStatus.PENDING, TaskStatus.FAILED)
             and self.attempts < self.max_attempts
@@ -87,7 +87,7 @@ class Task:
 
 @dataclass
 class TaskResult:
-    """任务执行结果"""
+    """Task execution result."""
 
     success: bool
     data: Any = None
@@ -98,9 +98,9 @@ class TaskResult:
 
 class StopHook:
     """
-    Stop Hook - 拦截退出尝试
+    Stop Hook - Intercept exit attempts
 
-    当 Agent 试图退出但任务未完成时，拦截并继续
+    When the Agent tries to exit but the task is not yet complete, intercept and continue.
     """
 
     def __init__(self, task: Task):
@@ -108,7 +108,7 @@ class StopHook:
         self.intercepted_count = 0
 
     def should_stop(self) -> bool:
-        """检查是否应该停止"""
+        """Check whether execution should stop."""
         if self.task.is_complete:
             return True
 
@@ -120,10 +120,10 @@ class StopHook:
 
     def intercept(self) -> bool:
         """
-        拦截退出尝试
+        Intercept an exit attempt.
 
         Returns:
-            True 如果拦截成功（应继续执行），False 如果应该停止
+            True if intercepted (should continue), False if should stop.
         """
         if self.should_stop():
             return False
@@ -137,16 +137,16 @@ class StopHook:
 
 class RalphLoop:
     """
-    Ralph Wiggum 循环引擎
+    Ralph Wiggum Loop Engine
 
-    核心循环逻辑:
+    Core loop logic:
     while not task.is_complete and iteration < max_iterations:
-        1. 从 MEMORY.md 加载状态
-        2. 执行一次迭代
-        3. 检查结果
-        4. 如果失败，分析原因并调整策略
-        5. 保存进度到 MEMORY.md
-        6. 继续下一次迭代
+        1. Load state from MEMORY.md
+        2. Execute one iteration
+        3. Check the result
+        4. If failed, analyze the cause and adjust strategy
+        5. Save progress to MEMORY.md
+        6. Continue to the next iteration
     """
 
     def __init__(
@@ -171,11 +171,11 @@ class RalphLoop:
         execute_fn: Callable[[Task], Any],
     ) -> TaskResult:
         """
-        运行 Ralph 循环
+        Run the Ralph loop.
 
         Args:
-            task: 要执行的任务
-            execute_fn: 执行函数，接收 Task 返回结果或抛出异常
+            task: The task to execute.
+            execute_fn: Execution function that receives a Task and returns a result or raises.
 
         Returns:
             TaskResult
@@ -192,31 +192,31 @@ class RalphLoop:
         while self._iteration < self.max_iterations:
             self._iteration += 1
 
-            # 检查是否应该停止
+            # Check whether to stop
             if self._stop_hook.should_stop():
                 break
 
-            # 加载进度
+            # Load progress
             await self._load_progress()
 
-            # 通知迭代开始
+            # Notify iteration start
             if self.on_iteration:
                 self.on_iteration(self._iteration, task)
 
             logger.info(f"Iteration {self._iteration}/{self.max_iterations}")
 
-            # 标记任务进行中
+            # Mark task as in progress
             task.mark_in_progress()
 
             try:
-                # 执行任务
+                # Execute the task
                 result = await execute_fn(task)
 
-                # 执行成功
+                # Execution succeeded
                 task.mark_completed(result)
                 logger.info(f"Task {task.id} completed successfully")
 
-                # 保存进度
+                # Save progress
                 await self._save_progress()
 
                 duration = (datetime.now() - start_time).total_seconds()
@@ -231,24 +231,24 @@ class RalphLoop:
                 error_msg = str(e)
                 logger.error(f"Iteration {self._iteration} failed: {error_msg}")
 
-                # 标记失败
+                # Mark as failed
                 task.mark_failed(error_msg)
 
-                # 通知错误
+                # Notify error
                 if self.on_error:
                     self.on_error(error_msg, task)
 
-                # 保存进度
+                # Save progress
                 await self._save_progress()
 
-                # 尝试拦截退出
+                # Attempt to intercept exit
                 if not self._stop_hook.intercept():
                     break
 
-                # 分析错误并调整策略
+                # Analyze error and adapt strategy
                 await self._analyze_and_adapt(error_msg)
 
-        # 循环结束但任务未完成
+        # Loop ended but task not complete
         duration = (datetime.now() - start_time).total_seconds()
 
         if task.is_complete:
@@ -267,13 +267,13 @@ class RalphLoop:
             )
 
     async def _load_progress(self) -> None:
-        """从 MEMORY.md 加载进度（在线程池中执行，避免阻塞事件循环）"""
+        """Load progress from MEMORY.md (runs in a thread pool to avoid blocking the event loop)."""
         import asyncio
 
         await asyncio.to_thread(self._load_progress_sync)
 
     def _load_progress_sync(self) -> None:
-        """同步加载进度"""
+        """Synchronously load progress."""
         try:
             if self.memory_path.exists():
                 self.memory_path.read_text(encoding="utf-8")
@@ -282,7 +282,7 @@ class RalphLoop:
             logger.warning(f"Failed to load progress: {e}")
 
     async def _save_progress(self) -> None:
-        """保存进度到 MEMORY.md（在线程池中执行，避免阻塞事件循环）"""
+        """Save progress to MEMORY.md (runs in a thread pool to avoid blocking the event loop)."""
         import asyncio
 
         if not self._current_task:
@@ -290,7 +290,7 @@ class RalphLoop:
         await asyncio.to_thread(self._save_progress_sync)
 
     def _save_progress_sync(self) -> None:
-        """同步保存进度"""
+        """Synchronously save progress."""
         if not self._current_task:
             return
 
@@ -304,10 +304,10 @@ class RalphLoop:
             task_info = f"""### Active Task
 
 - **ID**: {task.id}
-{session_line}- **描述**: {task.description}
-- **状态**: {task.status.value}
-- **尝试次数**: {task.attempts}
-- **最后更新**: {datetime.now().isoformat()}
+{session_line}- **Description**: {task.description}
+- **Status**: {task.status.value}
+- **Attempts**: {task.attempts}
+- **Last Updated**: {datetime.now().isoformat()}
 """
 
             if "### Active Task" in content:
@@ -341,32 +341,32 @@ class RalphLoop:
 
     async def _analyze_and_adapt(self, error: str) -> None:
         """
-        分析错误并调整策略
+        Analyze the error and adapt strategy.
 
-        这是 Ralph 模式的核心:
-        - 分析失败原因
-        - 搜索解决方案
-        - 调整策略
+        This is the core of the Ralph pattern:
+        - Analyze the failure cause
+        - Search for solutions
+        - Adjust strategy
         """
         logger.info("Analyzing error and adapting strategy...")
 
-        # TODO: 实现更智能的错误分析
-        # 1. 使用 Brain 分析错误
-        # 2. 搜索 GitHub 找解决方案
-        # 3. 如果需要新能力，安装它
-        # 4. 更新执行策略
+        # TODO: Implement smarter error analysis
+        # 1. Use Brain to analyze the error
+        # 2. Search GitHub for solutions
+        # 3. Install new capabilities if needed
+        # 4. Update execution strategy
 
-        # 暂时简单等待后重试
+        # For now, simply wait and retry
         import asyncio
 
         await asyncio.sleep(1)
 
     @property
     def iteration(self) -> int:
-        """当前迭代次数"""
+        """Current iteration count."""
         return self._iteration
 
     @property
     def current_task(self) -> Task | None:
-        """当前任务"""
+        """Current task."""
         return self._current_task

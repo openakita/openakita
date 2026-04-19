@@ -1,112 +1,112 @@
 ---
 name: openakita/skills@wecom-cli
-description: "WeCom (Enterprise WeChat) CLI - official open-source CLI tool from WeCom. Covers 7 business categories: Contacts, Todos, Meetings, Messages, Schedules, Documents, Smartsheets. Built in Rust for macOS/Linux/Windows. Use when user wants to operate WeCom resources."
+description: "WeCom (Enterprise WeChat) CLI — official open-source CLI tool from WeCom. Covers 7 business categories: Contacts, Todos, Meetings, Messages, Schedules, Documents, Smartsheets. Built in Rust for macOS/Linux/Windows. Use when the user wants to operate WeCom resources."
 license: MIT
 metadata:
   author: WecomTeam
   version: "0.1.5"
 ---
 
-# 企业微信 CLI (wecom-cli)
+# WeCom CLI (Enterprise WeChat Command Line Interface)
 
-企业微信开放平台官方命令行工具 — 让人类和 AI Agent 都能在终端中操作企业微信。
+Official command-line tool from WeCom Open Platform — enables both humans and AI Agents to operate WeCom resources from the terminal.
 
-> 官方 GitHub: https://github.com/WecomTeam/wecom-cli
-> 官方帮助: https://open.work.weixin.qq.com/help2/pc/21676
+> Official GitHub: https://github.com/WecomTeam/wecom-cli
+> Official Help: https://open.work.weixin.qq.com/help2/pc/21676
 
-## 安装
+## Installation
 
 ```bash
-# 安装 CLI
+# Install CLI
 npm install -g @wecom/cli
 
-# 安装 CLI Skill（必需）
+# Install CLI Skill (required)
 npx skills add WeComTeam/wecom-cli -y -g
 
-# 配置凭证（交互式，仅需一次）
+# Configure credentials (interactive, one-time only)
 wecom-cli init
 ```
 
-### 前置条件
+### Prerequisites
 
-- 支持平台：macOS (x64/arm64)、Linux (x64/arm64) 及 Windows (x64)
+- Supported platforms: macOS (x64/arm64), Linux (x64/arm64), and Windows (x64)
 - Node.js >= 18
-- 企业微信账号（**目前仅对 ≤ 10 人企业开放使用**）
-- （可选）智能机器人 Bot ID 和 Secret
+- WeCom account (**currently only available for enterprises with ≤ 10 members**)
+- (Optional) Bot ID and Secret for intelligent chatbot
 
-## 功能范围
+## Feature Coverage
 
-覆盖企业微信核心业务品类：
+Covers core WeCom business categories:
 
-| 品类 | 能力 |
+| Category | Capabilities |
 |------|------|
-| 👤 通讯录 | 获取可见范围成员列表、按姓名/别名搜索等 |
-| ✅ 待办 | 创建/读取/更新/删除待办，变更用户处理状态等 |
-| 🎥 会议 | 创建预约会议、取消会议、更新受邀成员、查询列表与详情等 |
-| 💬 消息 | 会话列表查询、消息记录拉取（文本/图片/文件/语音/视频）、多媒体下载、发送文本等 |
-| 📅 日程 | 日程增删改查、参与人管理、多成员闲忙查询等 |
-| 📄 文档 | 文档创建/读取/编辑等 |
-| 📊 智能表格 | 智能表格创建、子表与字段管理、记录增删改查等 |
+| 👤 Contacts | Get visible member list, search by name/alias, etc. |
+| ✅ Todos | Create/Read/Update/Delete todos, track user processing status, etc. |
+| 🎥 Meetings | Create scheduled meetings, cancel meetings, update invitees, query lists and details, etc. |
+| 💬 Messages | Query conversation list, fetch message records (text/image/file/voice/video), download multimedia, send text, etc. |
+| 📅 Schedules | Schedule CRUD, participant management, query member availability, etc. |
+| 📄 Documents | Document create/read/edit, etc. |
+| 📊 Smartsheets | Smartsheet create, sub-sheet and field management, record CRUD, etc. |
 
 ## Agent Skills
 
-安装 CLI Skill 后，AI Agent 工具（Cursor、Claude Code 等）即可通过自然语言操作企业微信。
+After installing the CLI Skill, AI Agent tools (Cursor, Claude Code, etc.) can operate WeCom via natural language.
 
-### Skill 列表
+### Skill List
 
-| Skill ID | 功能 |
+| Skill ID | Function |
 |----------|------|
-| wecomcli-lookup-contact | 通讯录成员搜索（姓名/别名） |
-| wecomcli-get-todo-list | 获取待办列表 |
-| wecomcli-get-todo-detail | 获取待办详情 |
-| wecomcli-edit-todo | 创建/更新/删除待办 |
-| wecomcli-create-meeting | 创建预约会议 |
-| wecomcli-edit-meeting | 更新/取消会议 |
-| wecomcli-get-meeting | 查询会议列表与详情 |
-| wecomcli-get-msg | 会话列表、消息拉取、媒体下载、发送文本 |
-| wecomcli-manage-schedule | 日程 CRUD、参与人管理、闲忙查询 |
-| wecomcli-manage-doc | 文档创建/读取/编辑 |
-| wecomcli-manage-smartsheet-schema | 智能表格创建、字段管理 |
-| wecomcli-manage-smartsheet-data | 智能表格记录增删改查 |
+| wecomcli-lookup-contact | Contact search (by name/alias) |
+| wecomcli-get-todo-list | Get todo list |
+| wecomcli-get-todo-detail | Get todo details |
+| wecomcli-edit-todo | Create/Update/Delete todos |
+| wecomcli-create-meeting | Schedule a meeting |
+| wecomcli-edit-meeting | Update/cancel meetings |
+| wecomcli-get-meeting | Query meeting list and details |
+| wecomcli-get-msg | Conversation list, message fetching, media download, send text |
+| wecomcli-manage-schedule | Schedule CRUD, participant management, availability lookup |
+| wecomcli-manage-doc | Document create/read/edit |
+| wecomcli-manage-smartsheet-schema | Smartsheet create, field management |
+| wecomcli-manage-smartsheet-data | Smartsheet record CRUD |
 
-## 使用示例
+## Usage Examples
 
 ```bash
-# 获取通讯录可见范围内的成员列表
+# List visible contacts
 wecom-cli contact get_userlist '{}'
 
-# 创建待办
-wecom-cli todo create '{"title": "周报", "due_date": "2026-04-10"}'
+# Create a todo
+wecom-cli todo create '{"title": "Weekly report", "due_date": "2026-04-10"}'
 
-# 查看会议列表
+# View meeting list
 wecom-cli meeting list '{}'
 ```
 
-## 限制
+## Limitations
 
-当前仅对 **≤ 10 人企业** 开放使用。
+Currently only available for **enterprises with ≤ 10 members**.
 
-## 安全规则
+## Security Rules
 
-- 写入/删除操作前确认用户意图
-- 不输出密钥到终端明文
-- 配置凭证通过交互式初始化完成，安全存储
+- Confirm user intent before write/delete operations
+- Never output API keys to terminal in plain text
+- Credentials are configured via interactive initialization with secure storage
 
-## 预置脚本
+## Pre-built Scripts
 
 ### scripts/setup.py
-企微 wecom-cli 安装配置脚本。
+WeCom CLI installation and configuration script.
 
 ```bash
 python3 scripts/setup.py
 ```
 
 ### scripts/wecom_quick.py
-企微常用操作快捷脚本。
+Quick shortcuts for common WeCom operations.
 
 ```bash
 python3 scripts/wecom_quick.py send-msg --to xxx --content "Hello"
 python3 scripts/wecom_quick.py contacts
-python3 scripts/wecom_quick.py create-doc --title "新文档"
+python3 scripts/wecom_quick.py create-doc --title "New Document"
 python3 scripts/wecom_quick.py schedule
 ```

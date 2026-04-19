@@ -1,10 +1,10 @@
 """
-OpenAkita 测试系统
+OpenAkita testing system
 
-包含300个测试用例，覆盖:
-- 问答测试 (100个)
-- 工具测试 (100个)
-- 搜索测试 (100个)
+Contains 300 test cases covering:
+- Q&A tests (100)
+- Tool tests (100)
+- Search tests (100)
 """
 
 from .fixer import CodeFixer

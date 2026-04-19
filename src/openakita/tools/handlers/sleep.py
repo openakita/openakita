@@ -1,8 +1,8 @@
 """
-Sleep 工具处理器
+Sleep tool handler
 
-可中断的 asyncio.sleep，不占 shell 进程。
-参考 CC SleepTool。
+Interruptible asyncio.sleep that does not consume a shell process.
+Based on CC SleepTool.
 """
 
 import asyncio

@@ -1,10 +1,10 @@
 """
-UTF-8 编码强制模块 — 在所有入口点最早期导入
+UTF-8 encoding enforcement module — import at the very start of every entry point.
 
-解决 Windows 上 sys.stdout/stderr 默认使用 GBK 编码，
-导致中文、emoji 等 Unicode 字符输出乱码或崩溃的问题。
+Solves the issue on Windows where sys.stdout/stderr default to GBK encoding,
+causing Chinese characters, emoji, and other Unicode output to be garbled or crash.
 
-用法: 在每个入口模块的最顶部添加:
+Usage: add at the very top of each entry module:
     import openakita._ensure_utf8  # noqa: F401
 """
 
@@ -13,10 +13,11 @@ import sys
 
 
 def ensure_utf8_stdio() -> None:
-    """将 stdout/stderr 重新配置为 UTF-8 编码。
+    """Reconfigure stdout/stderr to use UTF-8 encoding.
 
-    仅在流对象支持 reconfigure 时生效（CPython 3.7+）。
-    errors="replace" 确保遇到无法编码的字符时用替代符号而非崩溃。
+    Only takes effect when the stream object supports reconfigure (CPython 3.7+).
+    errors="replace" ensures that unencodable characters are replaced with a
+    substitution marker rather than raising an exception.
     """
     if hasattr(sys.stdout, "reconfigure"):
         try:
@@ -33,8 +34,8 @@ def ensure_utf8_stdio() -> None:
 if sys.platform == "win32":
     ensure_utf8_stdio()
 
-    # 设置 Windows 控制台代码页为 UTF-8 (等同于 chcp 65001)
-    # 防止 emoji 等字符在打印时触发 GBK 编码异常
+    # Set Windows console code page to UTF-8 (equivalent to chcp 65001)
+    # Prevents emoji and similar characters from triggering GBK encoding errors when printed
     try:
         import ctypes
 
@@ -43,18 +44,20 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# 确保子进程也继承 UTF-8 编码设置
+# Ensure child processes also inherit UTF-8 encoding settings
 os.environ.setdefault("PYTHONUTF8", "1")
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
-# PyInstaller 打包环境下，某些第三方包的 METADATA 文件含非 UTF-8 字节，
-# pydantic 导入时通过 importlib.metadata.entry_points() 扫描插件会触发
-# UnicodeDecodeError。本项目不使用 pydantic 插件，直接禁用即可。
+# Under PyInstaller, some third-party METADATA files contain non-UTF-8 bytes.
+# When pydantic imports, it scans plugins via importlib.metadata.entry_points(),
+# which can trigger UnicodeDecodeError. This project does not use pydantic plugins,
+# so disabling them is safe.
 if getattr(sys, "frozen", False):
     os.environ.setdefault("PYDANTIC_DISABLE_PLUGINS", "1")
 
-# Windows 环境下预填充 platform 缓存，避免后续 platform.system() 等调用
-# 通过 subprocess 执行 `cmd /c ver` 触发阻塞（在某些环境中 cmd 子进程会卡死）。
+# On Windows, pre-populate the platform cache to prevent later calls to
+# platform.system() etc. from spawning `cmd /c ver` via subprocess, which can
+# hang in certain environments.
 if sys.platform == "win32":
     import platform as _platform
 

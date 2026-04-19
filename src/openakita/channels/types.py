@@ -1,11 +1,11 @@
 """
-统一消息类型定义
+Unified message type definition
 
-定义跨平台通用的消息格式:
-- UnifiedMessage: 接收的消息
-- OutgoingMessage: 发送的消息
-- MessageContent: 消息内容（文本/媒体）
-- MediaFile: 媒体文件
+Defines cross-platform common message formats:
+- UnifiedMessage: Received message
+- OutgoingMessage: Sent message
+- MessageContent: Message content (text/media)
+- MediaFile: Media file
 """
 
 import uuid
@@ -16,77 +16,77 @@ from pathlib import Path
 
 
 class MessageType(Enum):
-    """消息类型"""
+    """Message types"""
 
-    TEXT = "text"  # 纯文本
-    IMAGE = "image"  # 图片
-    VOICE = "voice"  # 语音
-    FILE = "file"  # 文件
-    VIDEO = "video"  # 视频
-    LOCATION = "location"  # 位置
-    STICKER = "sticker"  # 表情包
-    MIXED = "mixed"  # 图文混合
-    COMMAND = "command"  # 命令（/xxx）
-    UNKNOWN = "unknown"  # 未知类型
+    TEXT = "text"  # Plain text
+    IMAGE = "image"  # Image
+    VOICE = "voice"  # Voice
+    FILE = "file"  # File
+    VIDEO = "video"  # Video
+    LOCATION = "location"  # Location
+    STICKER = "sticker"  # Sticker
+    MIXED = "mixed"  # Mixed text and image
+    COMMAND = "command"  # Command (/xxx)
+    UNKNOWN = "unknown"  # Unknown type
 
 
 VOICE_STT_FAILURES = frozenset({
-    "[语音识别失败]",
-    "[语音处理超时]",
-    "[语音处理失败]",
+    "[voice recognition failed]",
+    "[voice processing timeout]",
+    "[voice processing failed]",
 })
 
 
 def is_voice_stt_failed(transcription: str | None) -> bool:
-    """判断语音转写结果是否为失败标记"""
+    """Check if voice transcription result is a failure marker"""
     return not transcription or transcription in VOICE_STT_FAILURES
 
 
 class MediaStatus(Enum):
-    """媒体状态"""
+    """Media status"""
 
-    PENDING = "pending"  # 待下载
-    DOWNLOADING = "downloading"  # 下载中
-    READY = "ready"  # 已就绪
-    FAILED = "failed"  # 失败
-    PROCESSED = "processed"  # 已处理（如语音转文字）
+    PENDING = "pending"  # Pending download
+    DOWNLOADING = "downloading"  # Downloading
+    READY = "ready"  # Ready
+    FAILED = "failed"  # Failed
+    PROCESSED = "processed"  # Processed (e.g., voice to text)
 
 
 @dataclass
 class MediaFile:
     """
-    媒体文件
+    Media file
 
-    表示图片、语音、文件等媒体内容
+    Represents media content such as images, voice, files, etc.
     """
 
-    id: str  # 媒体 ID
-    filename: str  # 文件名
-    mime_type: str  # MIME 类型
-    size: int = 0  # 文件大小（字节）
+    id: str  # Media ID
+    filename: str  # Filename
+    mime_type: str  # MIME type
+    size: int = 0  # File size (bytes)
 
-    # 来源
-    url: str | None = None  # 原始 URL（平台提供）
-    file_id: str | None = None  # 平台文件 ID
+    # Source
+    url: str | None = None  # Original URL (provided by platform)
+    file_id: str | None = None  # Platform file ID
 
-    # 本地
-    local_path: str | None = None  # 本地缓存路径
+    # Local
+    local_path: str | None = None  # Local cache path
     status: MediaStatus = MediaStatus.PENDING
 
-    # 处理结果
-    transcription: str | None = None  # 语音转文字结果
-    description: str | None = None  # 图片描述
-    extracted_text: str | None = None  # 文件提取文本
+    # Processing results
+    transcription: str | None = None  # Voice to text result
+    description: str | None = None  # Image description
+    extracted_text: str | None = None  # File extracted text
 
-    # 元数据
-    duration: float | None = None  # 时长（音视频）
-    width: int | None = None  # 宽度（图片/视频）
-    height: int | None = None  # 高度（图片/视频）
-    thumbnail_url: str | None = None  # 缩略图 URL
-    extra: dict = None  # 平台特定的额外数据
+    # Metadata
+    duration: float | None = None  # Duration (audio/video)
+    width: int | None = None  # Width (image/video)
+    height: int | None = None  # Height (image/video)
+    thumbnail_url: str | None = None  # Thumbnail URL
+    extra: dict = None  # Platform-specific extra data
 
     def __post_init__(self):
-        """初始化后处理"""
+        """Post-initialization processing"""
         if self.extra is None:
             self.extra = {}
 
@@ -99,7 +99,7 @@ class MediaFile:
         file_id: str | None = None,
         size: int = 0,
     ) -> "MediaFile":
-        """创建媒体文件"""
+        """Create media file"""
         return cls(
             id=f"media_{uuid.uuid4().hex[:12]}",
             filename=filename,
@@ -131,10 +131,10 @@ class MediaFile:
 
     @property
     def extension(self) -> str:
-        """获取文件扩展名"""
+        """Get file extension"""
         if "." in self.filename:
             return self.filename.rsplit(".", 1)[-1].lower()
-        # 从 MIME 类型推断
+        # Infer from MIME type
         mime_to_ext = {
             "image/jpeg": "jpg",
             "image/png": "png",
@@ -197,20 +197,20 @@ class MediaFile:
 @dataclass
 class MessageContent:
     """
-    消息内容
+    Message content
 
-    封装文本和媒体内容
+    Encapsulates text and media content
     """
 
-    text: str | None = None  # 文本内容
-    images: list[MediaFile] = field(default_factory=list)  # 图片列表
-    voices: list[MediaFile] = field(default_factory=list)  # 语音列表
-    files: list[MediaFile] = field(default_factory=list)  # 文件列表
-    videos: list[MediaFile] = field(default_factory=list)  # 视频列表
+    text: str | None = None  # Text content
+    images: list[MediaFile] = field(default_factory=list)  # Image list
+    voices: list[MediaFile] = field(default_factory=list)  # Voice list
+    files: list[MediaFile] = field(default_factory=list)  # File list
+    videos: list[MediaFile] = field(default_factory=list)  # Video list
 
-    # 特殊内容
-    location: dict | None = None  # 位置 {lat, lng, name, address}
-    sticker: dict | None = None  # 表情包 {id, emoji, set_name}
+    # Special content
+    location: dict | None = None  # Location {lat, lng, name, address}
+    sticker: dict | None = None  # Sticker {id, emoji, set_name}
 
     @property
     def has_text(self) -> bool:
@@ -222,12 +222,12 @@ class MessageContent:
 
     @property
     def all_media(self) -> list[MediaFile]:
-        """获取所有媒体文件"""
+        """Get all media files"""
         return self.images + self.voices + self.files + self.videos
 
     @property
     def message_type(self) -> MessageType:
-        """推断消息类型"""
+        """Infer message type"""
         if self.has_text and self.has_media:
             return MessageType.MIXED
         if self.images:
@@ -250,9 +250,9 @@ class MessageContent:
 
     def to_plain_text(self) -> str:
         """
-        转换为纯文本
+        Convert to plain text
 
-        将媒体内容转换为描述性文本，用于发送给 LLM
+        Converts media content to descriptive text for sending to LLM
         """
         parts = []
 
@@ -261,31 +261,31 @@ class MessageContent:
 
         for img in self.images:
             if img.description:
-                parts.append(f"[图片: {img.description}]")
+                parts.append(f"[Image: {img.description}]")
             else:
-                parts.append(f"[图片: {img.filename}]")
+                parts.append(f"[Image: {img.filename}]")
 
         for voice in self.voices:
             if not is_voice_stt_failed(voice.transcription):
-                parts.append(f"[语音转文字: {voice.transcription}]")
+                parts.append(f"[Voice to text: {voice.transcription}]")
             else:
-                dur = f"{voice.duration}秒" if voice.duration else "未知时长"
-                parts.append(f"[语音消息: {dur}, 未成功转写]")
+                dur = f"{voice.duration}s" if voice.duration else "unknown duration"
+                parts.append(f"[Voice message: {dur}, transcription failed]")
 
         for video in self.videos:
-            parts.append(f"[视频: {video.filename}, {video.duration or '未知'}秒]")
+            parts.append(f"[Video: {video.filename}, {video.duration or 'unknown'}s]")
 
         for file in self.files:
             if file.extracted_text:
-                parts.append(f"[文件内容: {file.extracted_text}]")
+                parts.append(f"[File content: {file.extracted_text}]")
             else:
-                parts.append(f"[文件: {file.filename}]")
+                parts.append(f"[File: {file.filename}]")
 
         if self.location:
-            parts.append(f"[位置: {self.location.get('name', '未知')}]")
+            parts.append(f"[Location: {self.location.get('name', 'unknown')}]")
 
         if self.sticker:
-            parts.append(f"[表情: {self.sticker.get('emoji', '😀')}]")
+            parts.append(f"[Sticker: {self.sticker.get('emoji', '😀')}]")
 
         return "\n".join(parts) if parts else ""
 
@@ -314,70 +314,70 @@ class MessageContent:
 
     @classmethod
     def text_only(cls, text: str) -> "MessageContent":
-        """创建纯文本内容"""
+        """Create plain text content"""
         return cls(text=text)
 
     @classmethod
     def with_image(cls, image: MediaFile, caption: str | None = None) -> "MessageContent":
-        """创建图片消息"""
+        """Create image message"""
         return cls(text=caption, images=[image])
 
     @classmethod
     def with_file(cls, file: MediaFile, caption: str | None = None) -> "MessageContent":
-        """创建文件消息"""
+        """Create file message"""
         return cls(text=caption, files=[file])
 
     @classmethod
     def with_voice(cls, voice: MediaFile, caption: str | None = None) -> "MessageContent":
-        """创建语音消息"""
+        """Create voice message"""
         return cls(text=caption, voices=[voice])
 
     @classmethod
     def with_video(cls, video: MediaFile, caption: str | None = None) -> "MessageContent":
-        """创建视频消息"""
+        """Create video message"""
         return cls(text=caption, videos=[video])
 
 
 @dataclass
 class UnifiedMessage:
     """
-    统一消息格式（接收）
+    Unified message format (received)
 
-    将各平台消息转换为统一格式
+    Converts messages from various platforms to unified format
     """
 
-    id: str  # 消息 ID
-    channel: str  # 来源通道
-    channel_message_id: str  # 原始消息 ID
+    id: str  # Message ID
+    channel: str  # Source channel
+    channel_message_id: str  # Original message ID
 
-    # 发送者
-    user_id: str  # 统一用户 ID
-    channel_user_id: str  # 通道用户 ID
+    # Sender
+    user_id: str  # Unified user ID
+    channel_user_id: str  # Channel user ID
 
-    # 聊天
-    chat_id: str  # 聊天 ID（私聊/群组）
-    chat_type: str = "private"  # 聊天类型: private/group/channel
-    thread_id: str | None = None  # 话题/线程 ID
+    # Chat
+    chat_id: str  # Chat ID (private/group)
+    chat_type: str = "private"  # Chat type: private/group/channel
+    thread_id: str | None = None  # Topic/thread ID
 
-    # 内容
+    # Content
     message_type: MessageType = MessageType.TEXT
     content: MessageContent = field(default_factory=MessageContent)
 
-    # 引用
-    reply_to: str | None = None  # 回复的消息 ID
-    forward_from: str | None = None  # 转发来源
+    # References
+    reply_to: str | None = None  # ID of replied message
+    forward_from: str | None = None  # Forward source
 
-    # 时间
+    # Time
     timestamp: datetime = field(default_factory=datetime.now)
 
-    # @提及检测
+    # @mention detection
     is_mentioned: bool = False
     is_direct_message: bool = False
 
-    # 原始数据
+    # Raw data
     raw: dict = field(default_factory=dict)
 
-    # 元数据
+    # Metadata
     metadata: dict = field(default_factory=dict)
 
     @classmethod
@@ -391,7 +391,7 @@ class UnifiedMessage:
         content: MessageContent,
         **kwargs,
     ) -> "UnifiedMessage":
-        """创建统一消息"""
+        """Create unified message"""
         return cls(
             id=f"msg_{uuid.uuid4().hex[:12]}",
             channel=channel,
@@ -406,22 +406,22 @@ class UnifiedMessage:
 
     @property
     def text(self) -> str:
-        """获取文本内容"""
+        """Get text content"""
         return self.content.text or ""
 
     @property
     def plain_text(self) -> str:
-        """获取纯文本（包含媒体描述）"""
+        """Get plain text (including media descriptions)"""
         return self.content.to_plain_text()
 
     @property
     def is_command(self) -> bool:
-        """是否为命令"""
+        """Is it a command"""
         return self.message_type == MessageType.COMMAND
 
     @property
     def command(self) -> str | None:
-        """获取命令（不含 /）"""
+        """Get command (without /)"""
         if self.is_command and self.text:
             parts = self.text[1:].split(maxsplit=1)
             return parts[0] if parts else None
@@ -429,7 +429,7 @@ class UnifiedMessage:
 
     @property
     def command_args(self) -> str:
-        """获取命令参数"""
+        """Get command arguments"""
         if self.is_command and self.text:
             parts = self.text[1:].split(maxsplit=1)
             return parts[1] if len(parts) > 1 else ""
@@ -468,29 +468,29 @@ class UnifiedMessage:
 @dataclass
 class OutgoingMessage:
     """
-    发送消息格式
+    Outgoing message format
 
-    Agent 回复转换为此格式发送
+    Agent replies converted to this format for sending
     """
 
-    chat_id: str  # 目标聊天 ID
-    content: MessageContent  # 消息内容
+    chat_id: str  # Target chat ID
+    content: MessageContent  # Message content
 
-    # 可选
-    reply_to: str | None = None  # 回复消息 ID
-    thread_id: str | None = None  # 话题/线程 ID
+    # Optional
+    reply_to: str | None = None  # Reply message ID
+    thread_id: str | None = None  # Topic/thread ID
 
-    # 格式
-    parse_mode: str | None = None  # 解析模式: markdown/html
-    disable_preview: bool = False  # 禁用链接预览
-    silent: bool = False  # 静默发送（不通知）
+    # Format
+    parse_mode: str | None = None  # Parse mode: markdown/html
+    disable_preview: bool = False  # Disable link preview
+    silent: bool = False  # Silent send (no notification)
 
-    # 元数据
+    # Metadata
     metadata: dict = field(default_factory=dict)
 
     @classmethod
     def text(cls, chat_id: str, text: str, **kwargs) -> "OutgoingMessage":
-        """创建纯文本消息"""
+        """Create plain text message"""
         return cls(
             chat_id=chat_id,
             content=MessageContent.text_only(text),
@@ -505,7 +505,7 @@ class OutgoingMessage:
         caption: str | None = None,
         **kwargs,
     ) -> "OutgoingMessage":
-        """创建图片消息"""
+        """Create image message"""
         import mimetypes
 
         path = Path(image_path)
@@ -531,7 +531,7 @@ class OutgoingMessage:
         caption: str | None = None,
         **kwargs,
     ) -> "OutgoingMessage":
-        """创建文件消息"""
+        """Create file message"""
         import mimetypes
 
         path = Path(file_path)
@@ -557,7 +557,7 @@ class OutgoingMessage:
         caption: str | None = None,
         **kwargs,
     ) -> "OutgoingMessage":
-        """创建语音消息"""
+        """Create voice message"""
         import mimetypes
 
         path = Path(voice_path)
@@ -583,7 +583,7 @@ class OutgoingMessage:
         caption: str | None = None,
         **kwargs,
     ) -> "OutgoingMessage":
-        """创建视频消息"""
+        """Create video message"""
         import mimetypes
 
         path = Path(video_path)

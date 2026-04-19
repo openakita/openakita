@@ -9,20 +9,20 @@ category: System
 
 # Get Tool Info
 
-获取系统工具的详细参数定义（Level 2 披露）。
+get (Level 2 ). 
 
 ## Parameters
 
-| 参数 | 类型 | 必填 | 说明 |
+| Parameter | Type | Required | Description |
 |-----|------|-----|------|
-| tool_name | string | 是 | 工具名称 |
+| tool_name | string | Yes | Tool name |
 
 ## When to Use
 
-- 了解不熟悉的工具用法
-- 查看工具参数
-- 学习工具示例
+- not
+- ViewTool arguments
+-
 
 ## Tip
 
-在调用不熟悉的工具前，先用此工具了解其完整用法、参数说明和示例。
+inCallnot, Full, and.

@@ -1,6 +1,6 @@
 ---
 name: list-exportable-agents
-description: List all Agent profiles that can be exported as .akita-agent packages. Shows both system and custom agents.
+description: List all Agent profiles that can be exported as.akita-agent packages. Shows both system and custom agents.
 system: true
 handler: agent_package
 tool-name: list_exportable_agents
@@ -9,21 +9,21 @@ category: Agent Package
 
 # List Exportable Agents
 
-列出所有可导出的 Agent，包括系统预设和自定义 Agent。
+listhave Agent, and Agent. 
 
 ## Parameters
 
-无参数。
+No parameters.
 
 ## Returns
 
-返回 Agent 列表，每项包含：
+Returns Agent, Includes: 
 - `id`: Agent ID
-- `name`: 显示名称
-- `type`: 类型（system/custom）
-- `category`: 分类
-- `skills_count`: 技能数量
+- `name`: Display
+- `type`: (system/custom) 
+- `category`:
+- `skills_count`:
 
 ## Related Skills
 
-- `export-agent`: 导出指定 Agent
+- `export-agent`: Agent

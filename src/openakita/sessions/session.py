@@ -1,11 +1,11 @@
 """
-会话对象定义
+Session object definitions.
 
-Session 代表一个独立的对话上下文，包含:
-- 来源通道信息
-- 对话历史
-- 会话变量
-- 配置覆盖
+A Session represents an independent conversation context, including:
+- source channel info
+- conversation history
+- session variables
+- configuration overrides
 """
 
 import logging
@@ -20,31 +20,31 @@ logger = logging.getLogger(__name__)
 
 
 class SessionState(Enum):
-    """会话状态"""
+    """Session state."""
 
-    ACTIVE = "active"  # 活跃中
-    IDLE = "idle"  # 空闲（无活动但未过期）
-    EXPIRED = "expired"  # 已过期
-    CLOSED = "closed"  # 已关闭
+    ACTIVE = "active"  # active
+    IDLE = "idle"  # idle (no activity but not expired)
+    EXPIRED = "expired"  # expired
+    CLOSED = "closed"  # closed
 
 
 @dataclass
 class SessionConfig:
     """
-    会话配置
+    Session configuration.
 
-    可覆盖全局配置，实现会话级别的定制
+    Overrides the global config to provide per-session customization.
     """
 
-    max_history: int = 100  # 最大历史消息数
-    timeout_minutes: int = 30  # 超时时间（分钟）
-    language: str = "zh"  # 语言
-    model: str | None = None  # 覆盖默认模型
-    custom_prompt: str | None = None  # 自定义系统提示
-    auto_summarize: bool = True  # 是否自动摘要长对话
+    max_history: int = 100  # max number of history messages
+    timeout_minutes: int = 30  # timeout (minutes)
+    language: str = "zh"  # language
+    model: str | None = None  # override the default model
+    custom_prompt: str | None = None  # custom system prompt
+    auto_summarize: bool = True  # whether to auto-summarize long conversations
 
     def merge_with_defaults(self, defaults: "SessionConfig") -> "SessionConfig":
-        """合并配置，self 优先"""
+        """Merge configs; self takes precedence."""
         return SessionConfig(
             max_history=self.max_history or defaults.max_history,
             timeout_minutes=self.timeout_minutes or defaults.timeout_minutes,
@@ -60,18 +60,18 @@ class SessionConfig:
 @dataclass
 class SessionContext:
     """
-    会话上下文
+    Session context.
 
-    存储会话级别的状态和数据
+    Stores session-level state and data.
     """
 
-    messages: list[dict] = field(default_factory=list)  # 对话历史
-    variables: dict[str, Any] = field(default_factory=dict)  # 会话变量
-    current_task: str | None = None  # 当前任务 ID
-    memory_scope: str | None = None  # 记忆范围 ID
-    summary: str | None = None  # 对话摘要（用于长对话压缩）
-    topic_boundaries: list[int] = field(default_factory=list)  # 话题边界的消息索引
-    current_topic_start: int = 0  # 当前话题起始消息索引
+    messages: list[dict] = field(default_factory=list)  # conversation history
+    variables: dict[str, Any] = field(default_factory=dict)  # session variables
+    current_task: str | None = None  # current task ID
+    memory_scope: str | None = None  # memory scope ID
+    summary: str | None = None  # conversation summary (for long-conversation compaction)
+    topic_boundaries: list[int] = field(default_factory=list)  # message indices of topic boundaries
+    current_topic_start: int = 0  # start message index of the current topic
     agent_profile_id: str = "default"
     agent_switch_history: list[dict] = field(default_factory=list)
     handoff_events: list[dict] = field(default_factory=list)  # agent_handoff events for SSE
@@ -86,7 +86,7 @@ class SessionContext:
     _DEDUP_TIME_WINDOW_SECONDS = 30
 
     def add_message(self, role: str, content: str, **metadata) -> bool:
-        """添加消息（含去重：连续相同 + 时间窗口内相同）。
+        """Add a message (with deduplication: consecutive duplicates + duplicates within a time window).
 
         Returns:
             True if the message was actually added, False if deduped.
@@ -124,26 +124,26 @@ class SessionContext:
             return True
 
     def mark_topic_boundary(self) -> None:
-        """在当前消息位置标记话题边界。
+        """Mark a topic boundary at the current message position.
 
-        后续可用 get_current_topic_messages() 只获取当前话题的消息。
+        Afterwards, get_current_topic_messages() can be used to retrieve only the current topic's messages.
         """
         boundary_idx = len(self.messages)
         self.topic_boundaries.append(boundary_idx)
         self.current_topic_start = boundary_idx
 
     def get_current_topic_messages(self) -> list[dict]:
-        """获取当前话题的消息（从最后一个边界开始）。"""
+        """Get the messages in the current topic (starting from the last boundary)."""
         if self.current_topic_start >= len(self.messages):
             return []
         return self.messages[self.current_topic_start :]
 
     def get_pre_topic_messages(self) -> list[dict]:
-        """获取当前话题边界之前的消息。"""
+        """Get messages before the current topic boundary."""
         return self.messages[: self.current_topic_start]
 
     def get_messages(self, limit: int | None = None) -> list[dict]:
-        """获取消息历史"""
+        """Get message history."""
         if limit is not None:
             try:
                 return self.messages[-int(limit) :]
@@ -152,15 +152,15 @@ class SessionContext:
         return self.messages
 
     def set_variable(self, key: str, value: Any) -> None:
-        """设置会话变量"""
+        """Set a session variable."""
         self.variables[key] = value
 
     def get_variable(self, key: str, default: Any = None) -> Any:
-        """获取会话变量"""
+        """Get a session variable."""
         return self.variables.get(key, default)
 
     def clear_messages(self) -> None:
-        """清空消息历史"""
+        """Clear message history."""
         with self._msg_lock:
             self.messages = []
             self.topic_boundaries = []
@@ -168,7 +168,7 @@ class SessionContext:
             self.variables["_context_reset_at"] = datetime.now().isoformat()
 
     def to_dict(self) -> dict:
-        """序列化"""
+        """Serialize."""
         return {
             "messages": self.messages,
             "variables": self.variables,
@@ -187,7 +187,7 @@ class SessionContext:
 
     @classmethod
     def from_dict(cls, data: dict) -> "SessionContext":
-        """反序列化"""
+        """Deserialize."""
         return cls(
             messages=data.get("messages", []),
             variables=data.get("variables", {}),
@@ -208,35 +208,35 @@ class SessionContext:
 @dataclass
 class Session:
     """
-    会话对象
+    Session object.
 
-    代表一个独立的对话上下文，关联:
-    - 来源通道（telegram/feishu/...）
-    - 聊天 ID（私聊/群聊/话题）
-    - 用户 ID
+    Represents an independent conversation context, associated with:
+    - source channel (telegram/feishu/...)
+    - chat ID (private/group/topic)
+    - user ID
     """
 
     id: str
-    channel: str  # 来源通道
-    chat_id: str  # 聊天 ID（群/私聊）
-    user_id: str  # 用户 ID
-    thread_id: str | None = None  # 话题/线程 ID（飞书话题等）
+    channel: str  # source channel
+    chat_id: str  # chat ID (group/private)
+    user_id: str  # user ID
+    thread_id: str | None = None  # topic/thread ID (e.g. Feishu threads)
     chat_type: str = "private"  # "group" | "private"
-    display_name: str = ""  # 用户昵称（用于 UI 展示）
-    chat_name: str = ""  # 聊天/群组名称（群名、频道名等）
+    display_name: str = ""  # user nickname (for UI display)
+    chat_name: str = ""  # chat/group name (group name, channel name, etc.)
 
-    # 状态
+    # State
     state: SessionState = SessionState.ACTIVE
     created_at: datetime = field(default_factory=datetime.now)
     last_active: datetime = field(default_factory=datetime.now)
 
-    # 上下文
+    # Context
     context: SessionContext = field(default_factory=SessionContext)
 
-    # 配置（可覆盖全局）
+    # Config (can override globals)
     config: SessionConfig = field(default_factory=SessionConfig)
 
-    # 元数据
+    # Metadata
     metadata: dict = field(default_factory=dict)
 
     @classmethod
@@ -251,7 +251,7 @@ class Session:
         display_name: str = "",
         chat_name: str = "",
     ) -> "Session":
-        """创建新会话"""
+        """Create a new session."""
         session_id = (
             f"{channel}_{chat_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:8]}"
         )
@@ -268,48 +268,48 @@ class Session:
         )
 
     def touch(self) -> None:
-        """更新活跃时间"""
+        """Update the last-active time."""
         self.last_active = datetime.now()
         if self.state == SessionState.IDLE:
             self.state = SessionState.ACTIVE
 
     def is_expired(self, timeout_minutes: int | None = None) -> bool:
-        """仅在超长不活跃时标记过期（30 天冷归档）"""
-        timeout = timeout_minutes or (60 * 24 * 30)  # 30 天
+        """Mark as expired only after an extended period of inactivity (30-day cold archive)."""
+        timeout = timeout_minutes or (60 * 24 * 30)  # 30 days
         elapsed = (datetime.now() - self.last_active).total_seconds() / 60
         return elapsed > timeout
 
     def mark_expired(self) -> None:
-        """标记为过期"""
+        """Mark as expired."""
         self.state = SessionState.EXPIRED
 
     def mark_idle(self) -> None:
-        """标记为空闲"""
+        """Mark as idle."""
         self.state = SessionState.IDLE
 
     def close(self) -> None:
-        """关闭会话"""
+        """Close the session."""
         self.state = SessionState.CLOSED
 
-    # ==================== 元数据管理 ====================
+    # ==================== Metadata management ====================
 
     def set_metadata(self, key: str, value: Any) -> None:
-        """设置元数据"""
+        """Set metadata."""
         self.metadata[key] = value
 
     def get_metadata(self, key: str, default: Any = None) -> Any:
-        """获取元数据"""
+        """Get metadata."""
         return self.metadata.get(key, default)
 
-    # ==================== 任务管理 ====================
+    # ==================== Task management ====================
 
     def set_task(self, task_id: str, description: str) -> None:
         """
-        设置当前任务
+        Set the current task.
 
         Args:
-            task_id: 任务 ID
-            description: 任务描述
+            task_id: task ID
+            description: task description
         """
         self.context.current_task = task_id
         self.context.set_variable("task_description", description)
@@ -320,11 +320,11 @@ class Session:
 
     def complete_task(self, success: bool = True, result: str = "") -> None:
         """
-        完成当前任务
+        Complete the current task.
 
         Args:
-            success: 是否成功
-            result: 结果描述
+            success: whether it succeeded
+            result: result description
         """
         self.context.set_variable("task_status", "completed" if success else "failed")
         self.context.set_variable("task_result", result)
@@ -340,10 +340,10 @@ class Session:
 
     def get_task_status(self) -> dict:
         """
-        获取当前任务状态
+        Get the current task status.
 
         Returns:
-            任务状态字典
+            Task status dict
         """
         return {
             "task_id": self.context.current_task,
@@ -355,19 +355,19 @@ class Session:
         }
 
     def has_active_task(self) -> bool:
-        """是否有正在进行的任务"""
+        """Whether there is an active task."""
         return self.context.current_task is not None
 
     @property
     def session_key(self) -> str:
-        """会话唯一标识"""
+        """Unique session identifier."""
         key = f"{self.channel}:{self.chat_id}:{self.user_id}"
         if self.thread_id:
             key += f":{self.thread_id}"
         return key
 
     def add_message(self, role: str, content: str, **metadata) -> bool:
-        """添加消息并更新活跃时间。返回 True 表示消息被添加，False 表示被去重跳过。"""
+        """Add a message and update last-active time. Returns True if added, False if skipped by dedup."""
         added = self.context.add_message(role, content, **metadata)
         self.touch()
         if added and len(self.context.messages) > self.config.max_history:
@@ -375,14 +375,14 @@ class Session:
         return added
 
     _RULE_SIGNAL_WORDS = (
-        "不要",
-        "必须",
-        "禁止",
-        "每次",
-        "规则",
-        "永远不要",
-        "务必",
-        "永远",
+        "don't",
+        "must",
+        "forbid",
+        "each time",
+        "rule",
+        "never",
+        "essential",
+        "always",
         "always",
         "never",
         "must",
@@ -390,9 +390,9 @@ class Session:
     )
 
     def _truncate_history(self) -> None:
-        """截断历史消息，保留 75%，对丢弃部分生成简要摘要插入头部。
+        """Truncate history messages, keeping 75%, and insert a brief summary of the dropped portion at the head.
 
-        优先保留用户设定的行为规则类消息。
+        Prioritizes preserving user-defined behavioral rule messages.
         """
         with self.context._msg_lock:
             keep_count = int(self.config.max_history * 3 / 4)
@@ -438,9 +438,9 @@ class Session:
 
             header_parts: list[str] = []
             if rule_snippets:
-                header_parts.append("[用户规则（必须遵守）]\n" + "\n".join(rule_snippets))
+                header_parts.append("[User rules (must follow)]\n" + "\n".join(rule_snippets))
             if keywords:
-                header = "[历史背景，非当前任务]\n"
+                header = "[Historical context, not the current task]\n"
                 body = ""
                 for kw in keywords:
                     candidate = (body + "\n" + kw).strip() if body else kw
@@ -461,10 +461,10 @@ class Session:
             )
 
     def _mark_dropped_for_extraction(self, dropped: list[dict]) -> None:
-        """v2: 将被截断的消息标记为需要提取。
+        """v2: flag truncated messages as needing extraction.
 
-        通过 metadata["_memory_manager"] 或回调机制通知记忆系统。
-        如果记忆系统不可用, 静默跳过 (不影响截断流程)。
+        Notifies the memory system via metadata["_memory_manager"] or a callback mechanism.
+        If the memory system is unavailable, silently skip (does not affect the truncation flow).
         """
         memory_manager = self.metadata.get("_memory_manager")
         if memory_manager is None:
@@ -488,8 +488,8 @@ class Session:
             logger.warning(f"Failed to enqueue dropped messages for extraction: {e}")
 
     def to_dict(self) -> dict:
-        """序列化"""
-        # 过滤掉以 _ 开头的私有 metadata（如 _gateway, _session_key 等运行时数据）
+        """Serialize."""
+        # Filter out private metadata starting with _ (e.g. _gateway, _session_key runtime data)
         serializable_metadata = {
             k: v
             for k, v in self.metadata.items()
@@ -521,7 +521,7 @@ class Session:
         }
 
     def _is_json_serializable(self, value: Any) -> bool:
-        """检查值是否可以 JSON 序列化"""
+        """Check whether the value is JSON-serializable."""
         import json
 
         try:
@@ -532,7 +532,7 @@ class Session:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Session":
-        """反序列化"""
+        """Deserialize."""
         config_data = data.get("config", {})
         return cls(
             id=data["id"],

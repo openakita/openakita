@@ -1,8 +1,8 @@
 """
-BrowserManager - 浏览器生命周期管理
+BrowserManager - browser lifecycle management
 
-通过状态机管理 Playwright 浏览器的启动、停止和健康检查。
-对外提供 ``page``（供 PlaywrightTools）和 ``cdp_url``（供外部 CDP 集成）。
+Manages Playwright browser startup, shutdown, and health checks via a state machine.
+Exposes ``page`` (for PlaywrightTools) and ``cdp_url`` (for external CDP integration).
 """
 
 from __future__ import annotations
@@ -51,24 +51,24 @@ _SERVER_EXTRA_ARGS = [
 
 
 def _is_server_environment() -> bool:
-    """检测是否运行在无 GUI 的服务器环境（如 Windows Server / headless Linux）。
+    """Detect whether we're running in a GUI-less server environment (e.g. Windows Server / headless Linux).
 
-    注意：PyInstaller 打包的桌面应用（IS_FROZEN=True）不等于服务器，
-    不应因为是打包环境就强制 headless / --disable-gpu。
+    Note: a PyInstaller-packaged desktop app (IS_FROZEN=True) is not the same as a server;
+    don't force headless / --disable-gpu just because it's a packaged environment.
     """
     system = platform.system()
 
-    # macOS 使用 Quartz/Aqua 桌面系统，不依赖 DISPLAY/WAYLAND_DISPLAY
+    # macOS uses Quartz/Aqua and does not rely on DISPLAY/WAYLAND_DISPLAY
     if system == "Darwin":
         return False
 
     if system != "Windows":
-        # Linux: 检查 X11/Wayland 显示服务器
+        # Linux: check X11/Wayland display server
         if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
             return True
         return False
 
-    # Windows: 远程桌面会话
+    # Windows: remote desktop session
     try:
         import ctypes
 
@@ -78,7 +78,7 @@ def _is_server_environment() -> bool:
     except Exception:
         pass
 
-    # Windows: 通过注册表检测 Windows Server 版本
+    # Windows: detect Windows Server via registry
     try:
         import winreg
 
@@ -97,7 +97,7 @@ def _is_server_environment() -> bool:
 
 
 def _is_native_executable(path: Path) -> bool:
-    """通过文件头判断是否为 Mach-O 二进制或 #! 脚本。"""
+    """Check the file header to determine if it's a Mach-O binary or a #! script."""
     try:
         with open(path, "rb") as f:
             head = f.read(4)
@@ -107,11 +107,12 @@ def _is_native_executable(path: Path) -> bool:
 
 
 def _ensure_macos_executability(target: Path) -> None:
-    """确保目录下所有原生二进制可执行且无 quarantine 属性。
+    """Ensure all native binaries under the directory are executable and have no quarantine attribute.
 
-    PyInstaller 将 Chromium.app 和 Playwright driver 作为 data 打包，
-    macOS 上会丢失 Unix 执行权限。下载的文件还会带有 com.apple.quarantine
-    扩展属性，导致 Gatekeeper 阻止执行。此函数统一处理两个问题。
+    PyInstaller ships Chromium.app and the Playwright driver as data files,
+    which loses the Unix execute bit on macOS. Downloaded files also carry the
+    com.apple.quarantine extended attribute, causing Gatekeeper to block execution.
+    This function handles both problems together.
     """
     if not _IS_MAC or not target.exists():
         return
@@ -140,10 +141,10 @@ def _ensure_macos_executability(target: Path) -> None:
 
 
 def _find_bundled_browser_executable() -> str | None:
-    """在 PyInstaller 打包目录中搜索内置的 Chromium/Chrome 可执行文件。
+    """Search the PyInstaller bundle directory for a bundled Chromium/Chrome executable.
 
-    搜索路径（按优先级）：
-    1. {base}/browser/...                                       — 直接打包位置
+    Search paths (in priority order):
+    1. {base}/browser/...                                       — direct bundle location
     2. {base}/playwright-browsers/chromium-*/chrome-win/         — Playwright (Windows)
     3. {base}/playwright-browsers/chromium-*/chrome-mac[-arm64]/ — Playwright (macOS)
     4. {base}/playwright-browsers/chromium-*/chrome-linux/       — Playwright (Linux)
@@ -321,19 +322,19 @@ class _IsolatedBrowserContext:
 
 
 class BrowserManager:
-    """浏览器生命周期管理（状态机 + 多策略启动 + 回退链）"""
+    """Browser lifecycle management (state machine + multi-strategy launch + fallback chain)"""
 
     def __init__(self, cdp_port: int = 9222, use_user_chrome: bool = True):
         self._cdp_port = cdp_port
         self._use_user_chrome = use_user_chrome
 
-        # Playwright 资源
+        # Playwright resources
         self._playwright: Any | None = None
         self._browser: Any | None = None
         self._context: Any | None = None
         self._page: Any | None = None
 
-        # 公共状态
+        # Public state
         self.state = BrowserState.IDLE
         self.visible: bool = True
         self.using_user_chrome: bool = False
@@ -344,32 +345,33 @@ class BrowserManager:
         self._startup_lock = asyncio.Lock()
         self._is_server = _is_server_environment()
 
-        # Chrome 检测
+        # Chrome detection
         from .chrome_finder import detect_chrome_installation
 
         self._chrome_path, self._chrome_user_data = detect_chrome_installation()
 
-        # 内置 Chromium 检测（PyInstaller 打包环境）
+        # Bundled Chromium detection (PyInstaller packaging environment)
         self._bundled_executable = _find_bundled_browser_executable()
 
         if self._is_server:
             logger.info("[Browser] Server environment detected, will use extra launch args")
 
-    # ── 驱动健康辅助 ────────────────────────────────────
+    # ── Driver health helpers ────────────────────────────────────
 
     @staticmethod
     def _is_driver_pipe_broken(error: Exception) -> bool:
-        """检测错误是否表明 Playwright driver 管道已断裂，需要重启。
+        """Check whether the error indicates that the Playwright driver pipe is broken and needs a restart.
 
-        当 Chrome 尝试启动但进程崩溃（如 profile 被锁定），Playwright 的 pipe
-        通信会被切断。此时 ``_is_driver_dead()`` 可能因为只检查缓存属性而返回
-        False，但实际通信已不可用。
+        When Chrome attempts to start but its process crashes (e.g. profile is locked),
+        Playwright's pipe communication is severed. In that case ``_is_driver_dead()``
+        may return False because it only checks cached attributes, while real communication
+        is already unusable.
         """
         return "connection closed while reading from the driver" in str(error).lower()
 
     @staticmethod
     def _is_chrome_process_running() -> bool:
-        """检测是否有 Chrome 主进程正在运行。"""
+        """Check whether a Chrome main process is running."""
         try:
             if platform.system() == "Windows":
                 result = subprocess.run(
@@ -390,7 +392,7 @@ class BrowserManager:
         except Exception:
             return False
 
-    # ── 公共属性 ────────────────────────────────────────
+    # ── Public properties ────────────────────────────────────────
 
     @property
     def page(self) -> Any | None:
@@ -412,7 +414,7 @@ class BrowserManager:
     def current_url(self) -> str | None:
         return self._page.url if self._page else None
 
-    # ── 启动 / 停止 ────────────────────────────────────
+    # ── Start / stop ────────────────────────────────────
 
     async def start(self, visible: bool = True) -> bool:
         async with self._startup_lock:
@@ -502,14 +504,14 @@ class BrowserManager:
             return False
 
     async def _start_playwright_driver(self) -> bool:
-        """启动 Playwright driver 进程（最多重试 2 次），失败时返回 False。"""
+        """Start the Playwright driver process (up to 2 retries). Returns False on failure."""
         try:
             from playwright.async_api import async_playwright
         except ImportError:
             from openakita.tools._import_helper import import_or_hint
 
             hint = import_or_hint("playwright")
-            logger.error(f"Playwright 导入失败: {hint}")
+            logger.error(f"Playwright import failed: {hint}")
             self.state = BrowserState.ERROR
             return False
 
@@ -533,13 +535,13 @@ class BrowserManager:
                 )
                 return True
             except (asyncio.TimeoutError, TimeoutError):
-                last_err = f"Playwright driver 启动超时 (20s, attempt {attempt}/{max_attempts})"
+                last_err = f"Playwright driver start timed out (20s, attempt {attempt}/{max_attempts})"
                 logger.warning(f"[Browser] {last_err}")
                 await self._cleanup_playwright()
                 if attempt < max_attempts:
                     await asyncio.sleep(1)
             except Exception as e:
-                last_err = f"Playwright driver 启动失败: {type(e).__name__}: {e}"
+                last_err = f"Playwright driver start failed: {type(e).__name__}: {e}"
                 logger.warning(f"[Browser] {last_err}", exc_info=True)
                 await self._cleanup_playwright()
                 if attempt < max_attempts:
@@ -555,7 +557,7 @@ class BrowserManager:
             await self._stop_internal()
 
     async def ensure_ready(self) -> bool:
-        """如果浏览器未就绪则自动启动，就绪则做健康检查。"""
+        """Auto-start the browser if not ready; otherwise run a health check."""
         if self.state == BrowserState.READY:
             if await self._health_check():
                 return True
@@ -565,7 +567,7 @@ class BrowserManager:
         return await self.start(visible=self.visible)
 
     async def get_status(self) -> dict:
-        """返回完整状态信息，供 browser_open / browser_status 使用。"""
+        """Return full status info for browser_open / browser_status to use."""
         if self.state != BrowserState.READY or not self._context:
             return {
                 "is_open": False,
@@ -614,7 +616,7 @@ class BrowserManager:
         return self
 
     async def reset_state(self) -> None:
-        """只清除引用不关闭资源（用于检测到浏览器被外部关闭时）。"""
+        """Clear references only, without closing resources (used when the browser is detected as externally closed)."""
         self.state = BrowserState.IDLE
         self._browser = None
         self._context = None
@@ -623,18 +625,18 @@ class BrowserManager:
         self._cdp_url = None
         logger.info("[Browser] State reset")
 
-    # ── 内部 ────────────────────────────────────────────
+    # ── Internal ────────────────────────────────────────────
 
     def _setup_browsers_path(self) -> None:
-        """设置 PLAYWRIGHT_BROWSERS_PATH 环境变量。
+        """Set the PLAYWRIGHT_BROWSERS_PATH environment variable.
 
-        如果已通过 _find_bundled_browser_executable() 找到内置二进制，则不需要
-        设置此变量，因为会通过 executable_path 参数直接指定。
+        If a bundled binary has already been located via _find_bundled_browser_executable(),
+        this variable isn't needed because it'll be specified directly through the executable_path argument.
         """
         if "PLAYWRIGHT_BROWSERS_PATH" in os.environ:
             return
 
-        # 如果有内置可执行文件，跳过 — 会在 _try_bundled_chromium 里用 executable_path
+        # If we have a bundled executable, skip — it will be passed via executable_path in _try_bundled_chromium
         if self._bundled_executable:
             logger.info(
                 f"[Browser] Will use bundled executable directly: {self._bundled_executable}"
@@ -663,7 +665,7 @@ class BrowserManager:
             logger.info(f"[Browser] Using external Chromium: {browsers_dir}")
 
     def _build_strategy_order(self) -> list[StartupStrategy]:
-        """根据历史成功策略决定尝试顺序。"""
+        """Decide attempt order based on the historically successful strategy."""
         full_order = [
             StartupStrategy.CDP_CONNECT,
             StartupStrategy.USER_CHROME_USER_PROFILE,
@@ -695,7 +697,7 @@ class BrowserManager:
         return False
 
     async def _try_cdp_connect(self) -> bool:
-        """尝试连接已运行的 Chrome 调试端口。"""
+        """Try to connect to a running Chrome debug port."""
         import httpx
 
         async with httpx.AsyncClient() as client:
@@ -729,7 +731,7 @@ class BrowserManager:
         return True
 
     def _build_launch_args(self) -> list[str]:
-        """构建 Chromium 启动参数列表。"""
+        """Build the Chromium launch argument list."""
         args = list(_COMMON_CHROMIUM_ARGS)
         args.append(f"--remote-debugging-port={self._cdp_port}")
         if self._is_server:
@@ -737,7 +739,7 @@ class BrowserManager:
         return args
 
     async def _try_user_chrome(self, headless: bool, *, use_oa_profile: bool) -> bool:
-        """使用用户 Chrome 启动 persistent context。"""
+        """Launch a persistent context using the user's Chrome."""
         if not self._chrome_path:
             raise RuntimeError("Chrome executable not found")
 
@@ -785,7 +787,7 @@ class BrowserManager:
         return True
 
     def _preflight_chromium(self) -> str | None:
-        """预检 Chromium 二进制是否可用，返回错误信息或 None。"""
+        """Preflight-check whether the Chromium binary is usable. Returns an error message or None."""
         try:
             exe = self._playwright.chromium.executable_path
         except Exception:
@@ -796,7 +798,7 @@ class BrowserManager:
 
         exe_path = Path(exe)
         if not exe_path.exists():
-            hint = f"Chromium 可执行文件不存在: {exe}\n请运行: playwright install chromium"
+            hint = f"Chromium executable not found: {exe}\nPlease run: playwright install chromium"
             browsers_path = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "(default)")
             logger.error(
                 f"[Browser] Chromium preflight FAIL: {hint} "
@@ -816,11 +818,11 @@ class BrowserManager:
                     exe_path.chmod(exe_path.stat().st_mode | 0o755)
                     logger.info(f"[Browser] Fixed execute permission for Chromium: {exe}")
                 except OSError:
-                    return f"Chromium 可执行文件无执行权限: {exe}"
+                    return f"Chromium executable has no execute permission: {exe}"
 
         file_size = exe_path.stat().st_size
         if file_size < 1_000_000:
-            hint = f"Chromium 二进制文件异常（仅 {file_size} bytes），可能下载不完整: {exe}"
+            hint = f"Chromium binary appears invalid (only {file_size} bytes); download may be incomplete: {exe}"
             logger.error(f"[Browser] {hint}")
             return hint
 
@@ -828,11 +830,11 @@ class BrowserManager:
         return None
 
     async def _try_bundled_chromium(self, headless: bool) -> bool:
-        """使用 Chromium 启动。
+        """Launch using Chromium.
 
-        策略（按顺序）：
-        1. persistent_context — 原子式创建浏览器 + 上下文 + 页面，避免进程间隙崩溃
-        2. launch + new_context + new_page — 传统方式兜底
+        Strategies (in order):
+        1. persistent_context — atomically create browser + context + page, avoid inter-process crashes
+        2. launch + new_context + new_page — traditional fallback
         """
         exe_path = self._bundled_executable
 
@@ -855,7 +857,7 @@ class BrowserManager:
 
         last_err: Exception | None = None
 
-        # --- 策略 1: persistent_context（原子启动，避免 new_page 崩溃）---
+        # --- Strategy 1: persistent_context (atomic launch, avoid new_page crashes) ---
         try:
             ok = await self._launch_persistent(exe_path, effective_headless)
             if ok:
@@ -865,7 +867,7 @@ class BrowserManager:
             logger.info(f"[Browser] persistent_context failed ({e}), trying standard launch...")
             await self._close_browser_silently()
 
-        # --- 策略 2: 传统 launch + new_context + new_page ---
+        # --- Strategy 2: traditional launch + new_context + new_page ---
         try:
             ok = await self._launch_standard(exe_path, effective_headless)
             if ok:
@@ -882,7 +884,7 @@ class BrowserManager:
         exe_path: str | None,
         headless: bool,
     ) -> bool:
-        """用 launch_persistent_context 原子启动浏览器 + 页面。"""
+        """Atomically launch browser + page using launch_persistent_context."""
         import tempfile
 
         user_data = tempfile.mkdtemp(prefix="oa_chromium_")
@@ -917,7 +919,7 @@ class BrowserManager:
         exe_path: str | None,
         headless: bool,
     ) -> bool:
-        """传统 launch + new_context + new_page。"""
+        """Traditional launch + new_context + new_page."""
         launch_kwargs: dict[str, Any] = {
             "headless": headless,
             "args": self._build_launch_args(),
@@ -946,7 +948,7 @@ class BrowserManager:
         return True
 
     async def _close_browser_silently(self) -> None:
-        """关闭浏览器资源但不清理 Playwright driver。"""
+        """Close browser resources without cleaning up Playwright driver."""
         for resource in (self._page, self._context, self._browser):
             if resource:
                 try:
@@ -958,7 +960,7 @@ class BrowserManager:
         self._browser = None
 
     async def _health_check(self) -> bool:
-        """快速检查浏览器连接是否存活。"""
+        """Quick health check for browser connection status."""
         try:
             if not self._page or not self._context:
                 return False
@@ -969,7 +971,7 @@ class BrowserManager:
             return False
 
     async def _stop_internal(self) -> None:
-        """实际停止流程（不加锁，由调用方保证锁）。"""
+        """Internal stop sequence (caller must hold lock)."""
         prev = self.state
         self.state = BrowserState.STOPPING
         try:
@@ -997,7 +999,7 @@ class BrowserManager:
             logger.info("Browser stopped")
 
     async def _is_driver_dead(self) -> bool:
-        """检测 Playwright driver 进程是否已崩溃。"""
+        """Check if Playwright driver process has crashed."""
         if not self._playwright:
             return True
         try:

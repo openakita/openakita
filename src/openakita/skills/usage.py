@@ -1,12 +1,12 @@
 """
-技能使用追踪
+Skill usage tracking
 
-记录技能调用频率，用于:
-- Catalog 排序（常用技能排前）
-- 使用建议
-- 技能健康度统计
+Records skill invocation frequency, used for:
+- Catalog ordering (frequently used skills ranked higher)
+- Usage recommendations
+- Skill health statistics
 
-采用 7 天半衰期衰减模型 + 60 秒防抖。
+Uses a 7-day half-life exponential decay model with 60-second debounce.
 """
 
 from __future__ import annotations

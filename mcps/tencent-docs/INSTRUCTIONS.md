@@ -1,62 +1,62 @@
-# 腾讯文档 MCP Server
+# Tencent Docs MCP Server
 
-腾讯文档 MCP 提供了一套完整的在线文档操作工具，支持创建、查询、编辑多种类型的在线文档。
+The Tencent Docs MCP provides a comprehensive set of online document operation tools, supporting the creation, querying, and editing of various types of online documents.
 
-## 配置
+## Configuration
 
-1. 访问 https://docs.qq.com/open/auth/mcp.html 获取个人 Token
-2. 在 `.env` 文件中设置环境变量：
+1. Visit https://docs.qq.com/open/auth/mcp.html to obtain your personal Token
+2. Set the environment variable in your `.env` file:
    ```
-   TENCENT_DOCS_TOKEN=你的Token值
+   TENCENT_DOCS_TOKEN=your_token_value
    ```
-3. 重启后使用 `connect_mcp_server("tencent-docs")` 连接
+3. After restarting, connect using `connect_mcp_server("tencent-docs")`
 
-## 可用工具
+## Available Tools
 
-连接后工具会自动发现，以下为主要工具参考：
+Tools are auto-discovered upon connection. The following is a reference for the main tools:
 
-### 文档创建
+### Document Creation
 
-| 工具 | 功能 |
-|------|------|
-| create_smartcanvas_by_markdown | 创建智能文档（首选） |
-| create_excel_by_markdown | 创建 Excel 表格 |
-| create_slide_by_markdown | 创建幻灯片 |
-| create_mind_by_markdown | 创建思维导图 |
-| create_flowchart_by_mermaid | 创建流程图 |
-| create_word_by_markdown | 创建 Word 文档 |
+| Tool | Function |
+|------|----------|
+| create_smartcanvas_by_markdown | Create a smart document (preferred) |
+| create_excel_by_markdown | Create an Excel spreadsheet |
+| create_slide_by_markdown | Create a presentation |
+| create_mind_by_markdown | Create a mind map |
+| create_flowchart_by_mermaid | Create a flowchart |
+| create_word_by_markdown | Create a Word document |
 
-### 文档管理
+### Document Management
 
-| 工具 | 功能 |
-|------|------|
-| query_space_node | 查询空间节点 |
-| create_space_node | 创建空间节点（文件夹） |
-| delete_space_node | 删除空间节点 |
-| search_space_file | 搜索空间文件 |
-| get_content | 获取文档内容 |
-| batch_update_sheet_range | 批量更新表格区域 |
+| Tool | Function |
+|------|----------|
+| query_space_node | Query space nodes |
+| create_space_node | Create a space node (folder) |
+| delete_space_node | Delete a space node |
+| search_space_file | Search for files in a space |
+| get_content | Retrieve document content |
+| batch_update_sheet_range | Batch update spreadsheet ranges |
 
-### 智能文档操作 (smartcanvas.*)
+### Smart Document Operations (smartcanvas.*)
 
-对已有智能文档进行增删改查，包括页面、文本、标题、待办事项等元素操作。
+Perform CRUD operations on existing smart documents, including pages, text, headings, to-do items, and other elements.
 
-### 智能表格操作 (smartsheet.*)
+### Smart Spreadsheet Operations (smartsheet.*)
 
-对智能表格进行工作表/视图/字段/记录操作，支持多视图、字段管理、看板等高级功能。
+Perform worksheet/view/field/record operations on smart spreadsheets, with support for multi-view, field management, kanban boards, and other advanced features.
 
-## 文档类型选择
+## Choosing a Document Type
 
-- 通用文档内容 → `create_smartcanvas_by_markdown`（首选）
-- 数据表格 → `create_excel_by_markdown`
-- 演示文稿 → `create_slide_by_markdown`
-- 知识图谱/大纲 → `create_mind_by_markdown`
-- 流程图/架构图 → `create_flowchart_by_mermaid`
-- 结构化数据管理 → `smartsheet.*` 系列工具
+- General document content → `create_smartcanvas_by_markdown` (preferred)
+- Data tables → `create_excel_by_markdown`
+- Presentations → `create_slide_by_markdown`
+- Knowledge graphs / outlines → `create_mind_by_markdown`
+- Flowcharts / architecture diagrams → `create_flowchart_by_mermaid`
+- Structured data management → `smartsheet.*` tool series
 
-## 注意事项
+## Notes
 
-- Header 的 key 必须使用 `Authorization`，不能使用其他名称
-- 实际可用工具以调用 `tools/list` 接口返回结果为准
-- 错误码 400006 表示 Token 鉴权失败，请检查 Token 配置
-- 错误码 400007 表示 VIP 权限不足
+- The header key must be `Authorization`; other names are not accepted
+- Actual available tools are determined by what the `tools/list` endpoint returns
+- Error code 400006 indicates Token authentication failure — check your Token configuration
+- Error code 400007 indicates insufficient VIP permissions

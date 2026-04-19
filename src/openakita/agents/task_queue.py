@@ -95,14 +95,14 @@ class TaskQueue:
                 task.cancel()
         self._active.clear()
 
-        # 清理堆中未执行的 Future，防止泄漏
+        # Clean up unexecuted futures in the heap to prevent leaks
         for qt in self._heap:
             fut = self._results.pop(qt.task_id, None)
             if fut and not fut.done():
                 fut.cancel()
         self._heap.clear()
 
-        # 清理任何残留的 Future
+        # Clean up any remaining futures
         for _tid, fut in list(self._results.items()):
             if not fut.done():
                 fut.cancel()

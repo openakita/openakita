@@ -1,10 +1,10 @@
 """
-配置系统加固: 文件监听 + 热更新
+Configuration system hardening: file watching + hot reload
 
-参考 Claude Code 的配置管理:
-- 文件锁保护写入 (filelock)
-- 只持久化与默认值不同的字段
-- 文件变更检测与自动重载
+Inspired by Claude Code's configuration management:
+- File-lock-protected writes (filelock)
+- Only persist fields that differ from defaults
+- File change detection and automatic reload
 """
 
 from __future__ import annotations
@@ -22,10 +22,10 @@ _DEFAULT_POLL_INTERVAL = 5.0  # seconds
 
 
 class ConfigWatcher:
-    """配置文件变更监听器。
+    """Configuration file change watcher.
 
-    轮询方式检测文件 mtime 变化，变化时触发回调。
-    比 watchdog 更轻量，无额外依赖。
+    Polls the file's mtime for changes and triggers a callback when detected.
+    Lighter than watchdog with no extra dependencies.
     """
 
     def __init__(
@@ -42,7 +42,7 @@ class ConfigWatcher:
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
-        """启动文件监听（后台线程）。"""
+        """Start file watching (background thread)."""
         if self._running:
             return
         self._running = True
@@ -52,7 +52,7 @@ class ConfigWatcher:
         logger.debug("ConfigWatcher started for %s", self._path)
 
     def stop(self) -> None:
-        """停止监听。"""
+        """Stop watching."""
         self._running = False
         if self._thread:
             self._thread.join(timeout=self._poll_interval + 1)
@@ -90,12 +90,12 @@ def write_config_safe(
     *,
     defaults: dict | None = None,
 ) -> None:
-    """安全写入配置文件（文件锁 + 只写差异）。
+    """Safely write a configuration file (file lock + diff-only write).
 
     Args:
-        path: 配置文件路径
-        data: 要写入的配置数据
-        defaults: 默认值 dict；只持久化与默认值不同的字段
+        path: Configuration file path
+        data: Configuration data to write
+        defaults: Default values dict; only fields differing from defaults are persisted
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -121,7 +121,7 @@ def write_config_safe(
 
 
 def _atomic_write(path: Path, data: dict) -> None:
-    """原子写入: 先写临时文件，再 rename。"""
+    """Atomic write: write to a temporary file first, then rename."""
     tmp_path = path.with_suffix(".tmp")
     content = json.dumps(data, indent=2, ensure_ascii=False, default=str)
     tmp_path.write_text(content, encoding="utf-8")
