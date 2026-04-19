@@ -38,6 +38,8 @@ ALWAYS_LOAD_TOOLS: frozenset[str] = frozenset(
         "update_todo_step",
         "get_todo_status",
         "complete_todo",
+        # Task timeout (LLM needs reliable schema during long-running tasks)
+        "set_task_timeout",
     }
 )
 
@@ -69,7 +71,6 @@ DEFER_INDIVIDUAL_TOOLS: frozenset[str] = frozenset(
         "switch_mode",
         "enable_thinking",
         "get_session_logs",
-        "set_task_timeout",
         "get_workspace_map",
         "read_lints",
         "news_search",

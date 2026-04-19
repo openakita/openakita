@@ -99,10 +99,20 @@ class SystemHandler:
         tool_name_to_query = params["tool_name"]
         return self.agent.tool_catalog.get_tool_info_formatted(tool_name_to_query)
 
+    @staticmethod
+    def _safe_int(val, default=0):
+        """Safely convert a value to int, handling None, empty strings, and string-typed numbers."""
+        if val is None:
+            return default
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return default
+
     def _set_task_timeout(self, params: dict) -> str:
         """Dynamically adjust the timeout policy for the current task"""
-        pt = int(params.get("progress_timeout_seconds") or 0)
-        ht = int(params.get("hard_timeout_seconds") or 0)
+        pt = self._safe_int(params.get("progress_timeout_seconds"), 0)
+        ht = self._safe_int(params.get("hard_timeout_seconds"), 0)
         reason = params.get("reason", "")
 
         if pt <= 0:

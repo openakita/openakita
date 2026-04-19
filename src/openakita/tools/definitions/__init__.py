@@ -76,6 +76,7 @@ from .structured_output import STRUCTURED_OUTPUT_TOOLS
 from .system import SYSTEM_TOOLS
 from .tool_search import TOOL_SEARCH_TOOLS
 from .web_fetch import WEB_FETCH_TOOLS
+from .deep_search import DEEP_SEARCH_TOOLS
 from .web_search import WEB_SEARCH_TOOLS
 from .worktree import WORKTREE_TOOLS
 
@@ -108,6 +109,7 @@ BASE_TOOLS = (
     + SLEEP_TOOLS
     + STRUCTURED_OUTPUT_TOOLS
     + WORKTREE_TOOLS
+    + DEEP_SEARCH_TOOLS
 )
 
 # Platform connection tools (Agent Hub + Skill Store), registered only when hub_enabled=True
@@ -167,6 +169,7 @@ __all__ = [
     "MCP_TOOLS",
     "PLAN_TOOLS",
     "WEB_FETCH_TOOLS",
+    "DEEP_SEARCH_TOOLS",
     "WEB_SEARCH_TOOLS",
     "PERSONA_TOOLS",
     "STICKER_TOOLS",
