@@ -683,51 +683,80 @@ class PluginManager:
     async def _invoke_on_unload(instance: PluginBase, plugin_id: str) -> None:
         """Run ``on_unload`` supporting both sync and async signatures.
 
-        Async coroutines are awaited on the **main** event loop (the one
-        running the request) — this is critical because plugins commonly
-        close ``aiosqlite`` connections / ``httpx.AsyncClient`` instances
-        whose teardown coroutines are bound to that loop.
+        CRITICAL design note (do NOT regress to running sync handlers in a
+        worker thread with a temporary loop):
 
-        Sync ``on_unload`` runs in a worker thread but with a temporary
-        event loop installed on it, so legacy plugins that internally call
-        ``asyncio.get_event_loop().create_task(...)`` still execute their
-        cleanup coroutines (and we wait for those to finish).
+        Most legacy plugins do:
+
+            def on_unload(self):
+                loop = asyncio.get_event_loop()
+                loop.create_task(self._client.close())   # httpx
+                loop.create_task(self._tm.close())       # aiosqlite
+
+        ``self._client`` / ``self._tm`` were created on the **main** event
+        loop during ``on_load``. Awaiting their ``close()`` from a different
+        loop raises ``Future attached to a different loop`` (or silently
+        deadlocks), leaving the underlying file handles / sockets open —
+        which is what causes Windows ``WinError 32`` on the subsequent
+        rmtree. So the sync handler MUST run inline on the main loop's task,
+        and any ``loop.create_task(...)`` it issues MUST be drained on the
+        same main loop.
         """
         handler = instance.on_unload
+        loop = asyncio.get_running_loop()
+
         if inspect.iscoroutinefunction(handler):
-            await asyncio.wait_for(handler(), timeout=UNLOAD_TIMEOUT)
+            before = set(asyncio.all_tasks(loop))
+            try:
+                await asyncio.wait_for(handler(), timeout=UNLOAD_TIMEOUT)
+            finally:
+                # Even if the coroutine raises/timeouts, drain anything it
+                # scheduled (mirrors the sync path).
+                after = set(asyncio.all_tasks(loop))
+                new_tasks = {t for t in (after - before) if not t.done()}
+                if new_tasks:
+                    try:
+                        await asyncio.wait(new_tasks, timeout=UNLOAD_TIMEOUT)
+                    except Exception as e:
+                        logger.debug(
+                            "Plugin '%s' drain async-on_unload tasks error: %s",
+                            plugin_id,
+                            e,
+                        )
             return
 
-        def _run_sync_on_unload() -> None:
-            loop = asyncio.new_event_loop()
-            try:
-                asyncio.set_event_loop(loop)
-                result = handler()
-                if inspect.iscoroutine(result):
-                    loop.run_until_complete(
-                        asyncio.wait_for(result, timeout=UNLOAD_TIMEOUT)
-                    )
-                # Drain anything the plugin scheduled via create_task() on this loop.
-                pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
-                if pending:
-                    loop.run_until_complete(
-                        asyncio.wait(pending, timeout=UNLOAD_TIMEOUT)
-                    )
-            finally:
-                try:
-                    loop.run_until_complete(loop.shutdown_asyncgens())
-                except Exception:
-                    pass
-                try:
-                    asyncio.set_event_loop(None)
-                except Exception:
-                    pass
-                loop.close()
+        # Sync handler — run inline so create_task() targets the main loop.
+        before = set(asyncio.all_tasks(loop))
+        result: Any = None
+        try:
+            result = handler()
+        except Exception as e:
+            logger.warning("Plugin '%s' sync on_unload raised: %s", plugin_id, e)
 
-        await asyncio.wait_for(
-            asyncio.to_thread(_run_sync_on_unload),
-            timeout=UNLOAD_TIMEOUT + 2.0,
-        )
+        # Defensive: a sync def that returns a coroutine (mistakenly
+        # forgotten ``async``) — await it instead of leaking the coroutine.
+        if inspect.iscoroutine(result):
+            try:
+                await asyncio.wait_for(result, timeout=UNLOAD_TIMEOUT)
+            except Exception as e:
+                logger.warning(
+                    "Plugin '%s' on_unload-returned coroutine error: %s",
+                    plugin_id,
+                    e,
+                )
+
+        # Drain any tasks the handler scheduled on the main loop.
+        after = set(asyncio.all_tasks(loop))
+        new_tasks = {t for t in (after - before) if not t.done()}
+        if new_tasks:
+            try:
+                await asyncio.wait(new_tasks, timeout=UNLOAD_TIMEOUT)
+            except Exception as e:
+                logger.debug(
+                    "Plugin '%s' drain sync-on_unload tasks error: %s",
+                    plugin_id,
+                    e,
+                )
 
     async def unload_plugin(self, plugin_id: str) -> bool:
         loaded = self._loaded.pop(plugin_id, None)
@@ -748,6 +777,20 @@ class PluginManager:
         except Exception as e:
             logger.warning("Plugin '%s' aclose error: %s", plugin_id, e)
 
+        # 2b. Sweep up "stray" tasks the plugin scheduled itself — e.g.
+        #     ``asyncio.get_event_loop().create_task(self._poll_loop())`` from
+        #     on_load, which never went through ``api.spawn_task`` and is
+        #     therefore invisible to ``_cancel_spawned_tasks``. We identify
+        #     them by checking whether their coroutine's source module belongs
+        #     to this plugin (main module + tracked submodules). Without this,
+        #     a polling task continues to use the plugin's httpx/SQLite
+        #     connections after unload, which keeps the Windows file handles
+        #     open and breaks the subsequent rmtree.
+        try:
+            await self._cancel_stray_plugin_tasks(plugin_id, loaded)
+        except Exception as e:
+            logger.debug("Plugin '%s' stray-task sweep error: %s", plugin_id, e)
+
         # 3. Drop plugin module and its plugin-local submodules so a reinstall
         #    or hot-reload sees fresh code (and releases SQLite/HTTP file handles).
         if loaded.module_name:
@@ -760,10 +803,13 @@ class PluginManager:
             except ValueError:
                 pass
 
-        # 4. Force a GC pass — some C-extensions (sqlite3, ssl) only release
-        #    OS handles when the Python wrapper is collected. Without this,
-        #    Windows reinstall hits WinError 32 ("file in use").
+        # 4. Force GC — some C-extensions (sqlite3, ssl) only release OS
+        #    handles when their Python wrapper is collected. We do TWO passes
+        #    with a brief yield in between because aiosqlite + httpx tend to
+        #    have one layer of cyclic refs through their connection pools.
         try:
+            gc.collect()
+            await asyncio.sleep(0)
             gc.collect()
         except Exception:
             pass
@@ -773,6 +819,70 @@ class PluginManager:
 
         logger.info("Plugin '%s' unloaded", plugin_id)
         return True
+
+    @staticmethod
+    async def _cancel_stray_plugin_tasks(
+        plugin_id: str, loaded: _LoadedPlugin
+    ) -> None:
+        """Cancel & await any task whose coroutine lives in a plugin module.
+
+        This is a safety net for plugins that bypass ``api.spawn_task`` and
+        use ``asyncio.create_task`` directly (very common in third-party
+        code). Without canceling these, they keep referencing the plugin's
+        ``httpx.AsyncClient`` / ``aiosqlite.Connection`` and prevent file
+        handle release.
+        """
+        plugin_modules: set[str] = set(loaded.imported_modules)
+        if loaded.module_name:
+            plugin_modules.add(loaded.module_name)
+        if not plugin_modules:
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        stray: list[asyncio.Task[Any]] = []
+        for t in asyncio.all_tasks(loop):
+            if t.done():
+                continue
+            coro = t.get_coro()
+            # The reliable way to get a coroutine's module is via the frame
+            # globals — coro.__module__ is almost always ``None`` for
+            # ``async def`` functions, and ``cr_code.co_filename`` would
+            # require a path-to-module mapping we don't keep.
+            mod: str | None = None
+            frame = getattr(coro, "cr_frame", None)
+            if frame is not None:
+                f_globals = getattr(frame, "f_globals", None) or {}
+                mod = f_globals.get("__name__")
+            if not isinstance(mod, str):
+                continue
+            # Match exact module name or ``<plugin>.<sub>`` prefix; avoid
+            # over-collecting siblings like ``foo_bar`` when plugin is ``foo``.
+            if mod in plugin_modules or any(
+                mod.startswith(pm + ".") for pm in plugin_modules
+            ):
+                stray.append(t)
+
+        if not stray:
+            return
+
+        logger.info(
+            "Plugin '%s': cancelling %d stray task(s) created outside spawn_task",
+            plugin_id,
+            len(stray),
+        )
+        for t in stray:
+            t.cancel()
+        # Suppress CancelledError surfacing to the gather/wait result.
+        try:
+            await asyncio.wait(stray, timeout=UNLOAD_TIMEOUT)
+        except Exception as e:
+            logger.debug(
+                "Plugin '%s' awaiting stray task cancellation: %s", plugin_id, e
+            )
 
     async def disable_plugin(self, plugin_id: str, reason: str = "user") -> None:
         self._state.disable(plugin_id, reason)

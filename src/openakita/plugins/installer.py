@@ -94,6 +94,50 @@ def _robust_rename(src: Path, dst: Path, *, attempts: int = _RMTREE_ATTEMPTS) ->
     return False
 
 
+def _list_locked_files(plugin_dir: Path, *, max_items: int = 10) -> list[str]:
+    """Probe each surviving file under ``plugin_dir`` to find likely locks.
+
+    Used after ``_robust_rmtree`` fails so the user/diagnostics can see
+    which files are actually held (DB vs log vs .pyc), narrowing the root
+    cause without naming the holding process. Pure read-only probe — does
+    NOT modify the filesystem.
+
+    Heuristic: ``os.replace(f, f)`` (rename-to-self) is the correct probe
+    for "can rmtree delete this?" on Windows. Renaming requires the
+    ``DELETE`` access right and ``FILE_SHARE_DELETE`` from any other open
+    handle — exactly the same combination ``os.unlink`` (and therefore
+    ``shutil.rmtree``) needs. SQLite/aiosqlite, Python's ``RotatingFileHandler``,
+    and most "open exclusively for write" handles deny ``FILE_SHARE_DELETE``,
+    so they show up here even though they happily allow ``open(f, "ab")``.
+
+    NOTE: an earlier version probed with ``open(f, "ab")``. That only checks
+    ``FILE_SHARE_WRITE`` and silently missed the most common offender
+    (a still-open SQLite connection from a leaked test/process), making the
+    user-facing 207/409 error a generic "目录无法清理" with no filenames.
+    """
+    locked: list[str] = []
+    try:
+        for f in plugin_dir.rglob("*"):
+            if not f.is_file():
+                continue
+            try:
+                # Rename-to-self: identity op on success, raises OSError if
+                # any other handle on the file denies DELETE share — i.e.
+                # exactly the rmtree blocker we want to surface.
+                os.replace(f, f)
+            except OSError:
+                try:
+                    rel = f.relative_to(plugin_dir).as_posix()
+                except ValueError:
+                    rel = str(f)
+                locked.append(rel)
+                if len(locked) >= max_items:
+                    break
+    except OSError as e:
+        logger.debug("Could not walk %s for lock probe: %s", plugin_dir, e)
+    return locked
+
+
 def _force_remove_db_files(plugin_dir: Path) -> bool:
     """Last-resort: delete any SQLite files so a reinstall is not blocked.
 
@@ -701,6 +745,17 @@ def uninstall(
         if _robust_rmtree(target):
             out["removed"] = True
         else:
+            # Probe which files survived — actionable info for the user
+            # ("the DB is held" vs "a .pyc is held" points to very different
+            # root causes; in practice it's almost always the SQLite WAL or a
+            # log file that the plugin failed to close in on_unload).
+            locked = _list_locked_files(target)
+            if locked:
+                preview = ", ".join(locked[:5])
+                more = f" (+{len(locked) - 5} 更多)" if len(locked) > 5 else ""
+                out["warnings"].append(
+                    f"以下文件仍被占用: {preview}{more}"
+                )
             # Graceful degradation: clear DB files so the next install isn't
             # blocked by a still-locked SQLite file inside the leftover dir.
             if _force_remove_db_files(target):

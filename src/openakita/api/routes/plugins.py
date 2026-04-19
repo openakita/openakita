@@ -102,6 +102,23 @@ def _find_icon(plugin_dir: Path) -> str | None:
 def _manifest_meta(manifest, plugin_dir: Path) -> dict[str, Any]:
     """Common metadata extracted from manifest + files."""
     icon_file = _find_icon(plugin_dir)
+    # i18n surfacing: pass through the manifest's per-language fields so
+    # the frontend can pick the right text without doing a second API call.
+    # We always include the dict (even if empty) so the client can do a
+    # straightforward `meta.display_name?.[lang] ?? meta.name` lookup.
+    display_name_i18n: dict[str, str] = {}
+    if getattr(manifest, "display_name_zh", ""):
+        display_name_i18n["zh"] = manifest.display_name_zh
+    if getattr(manifest, "display_name_en", ""):
+        display_name_i18n["en"] = manifest.display_name_en
+    description_i18n: dict[str, str] = dict(getattr(manifest, "description_i18n", {}) or {})
+    ui_title = ""
+    ui_title_i18n: dict[str, str] = {}
+    ui_cfg = getattr(manifest, "ui", None)
+    if ui_cfg is not None:
+        ui_title = getattr(ui_cfg, "title", "") or ""
+        ui_title_i18n = dict(getattr(ui_cfg, "title_i18n", {}) or {})
+
     meta: dict[str, Any] = {
         "id": manifest.id,
         "name": manifest.name,
@@ -118,6 +135,11 @@ def _manifest_meta(manifest, plugin_dir: Path) -> dict[str, Any]:
         "has_config_schema": (plugin_dir / "config_schema.json").is_file(),
         "has_icon": icon_file is not None,
         "onboard": manifest.raw.get("onboard"),
+        # i18n: clients should prefer these when present, fall back to `name`/`description`.
+        "display_name_i18n": display_name_i18n,
+        "description_i18n": description_i18n,
+        "ui_title": ui_title,
+        "ui_title_i18n": ui_title_i18n,
     }
     return meta
 
@@ -432,15 +454,21 @@ async def uninstall_plugin(
         data_root = plugins_dir.parent / "plugin_data"
         state_path = _plugin_state_path()
         pm = _get_plugin_manager(request)
+
+        # 1. Stop the running instance first so the file handles drop.
         if pm:
             await pm.unload_plugin(plugin_id)
-            pm.state.remove_plugin(plugin_id)
-            pm.state.save(state_path)
-        else:
-            state = PluginState.load(state_path)
-            state.remove_plugin(plugin_id)
-            state.save(state_path)
 
+        # 2. Try to delete the on-disk plugin directory.
+        #
+        #    CRITICAL: do NOT touch persistent state until we know the
+        #    deletion outcome. The previous order ("remove_plugin then
+        #    uninstall") had a nasty failure mode: when uninstall returned
+        #    partial/failure, the state file lost the entry but the plugin
+        #    directory survived. On the next /list call, _sync_new_plugins
+        #    rediscovered the leftover dir, and PluginState.is_enabled()
+        #    returns True for unknown ids — so the plugin would silently
+        #    "come back to life" after a refresh.
         result = await asyncio.to_thread(
             installer.uninstall,
             plugin_id,
@@ -451,7 +479,16 @@ async def uninstall_plugin(
 
         warnings: list[str] = list(result.get("warnings") or [])
 
+        # 3. Reconcile state with the actual filesystem outcome.
         if result.get("removed"):
+            # Code dir is gone — drop state entry entirely.
+            if pm:
+                pm.state.remove_plugin(plugin_id)
+                pm.state.save(state_path)
+            else:
+                state = PluginState.load(state_path)
+                state.remove_plugin(plugin_id)
+                state.save(state_path)
             return {
                 "ok": True,
                 "data": {
@@ -460,6 +497,21 @@ async def uninstall_plugin(
                     "warnings": warnings,
                 },
             }
+
+        # Partial / total failure: keep an entry in plugin_state so the leftover
+        # directory is NOT silently re-discovered & auto-loaded as a "new"
+        # plugin on the next refresh. Mark it disabled with a clear reason so
+        # the user can see what happened in the UI.
+        disabled_reason = (
+            "pending_removal_partial" if result.get("partial") else "pending_removal_failed"
+        )
+        if pm:
+            pm.state.disable(plugin_id, reason=disabled_reason)
+            pm.state.save(state_path)
+        else:
+            state = PluginState.load(state_path)
+            state.disable(plugin_id, reason=disabled_reason)
+            state.save(state_path)
 
         if result.get("partial"):
             # 207 Multi-Status — surface the partial outcome to the UI.
