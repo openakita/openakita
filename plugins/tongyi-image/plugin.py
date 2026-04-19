@@ -814,8 +814,8 @@ class Plugin(PluginBase):
                 return {"ok": False, "error": f"优化失败: {e}"}
 
         @router.get("/prompt-guide")
-        async def get_prompt_guide() -> dict:
-            return {"ok": True, **get_prompt_guide_data()}
+        async def get_prompt_guide(locale: str | None = None) -> dict:
+            return {"ok": True, **get_prompt_guide_data(locale)}
 
         @router.get("/prompt-templates")
         async def get_prompt_templates() -> dict:

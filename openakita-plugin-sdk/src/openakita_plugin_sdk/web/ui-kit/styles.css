@@ -205,6 +205,68 @@ body { margin: 0; font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
 .oa-preview-empty__hint  { font-size: 12px; color: var(--oa-text-muted); }
 
 /* ──────────────────────────────────────────────────────────────────────────
+ * 3b) List panel — left-side companion to .oa-preview-area. Visually
+ *     identical (card surface + border + shadow + radius) so a list view
+ *     and its detail/preview pane read as a balanced two-column layout
+ *     instead of "floating buttons next to a framed canvas".
+ *
+ *     Internal slots:
+ *       .oa-list-panel__filters  → grouped filter rows at the top
+ *       .oa-list-panel__divider  → 1px separator between filters and items
+ *       .oa-list-panel__items    → the actual scrollable list
+ *       .oa-list-panel__footer   → a small footer row (e.g. "共 N 个任务")
+ *
+ *     Layout intent: when paired with .oa-preview-area in a flex split-layout,
+ *     both children sit in the same row and grow to the same height naturally.
+ * ────────────────────────────────────────────────────────────────────────── */
+.oa-list-panel {
+  display: flex; flex-direction: column;
+  min-height: 100%;
+  background: var(--oa-surface);
+  border: 1px solid var(--oa-border);
+  border-radius: var(--oa-radius);
+  padding: 14px 14px 12px;
+  box-sizing: border-box;
+  box-shadow: var(--oa-shadow-sm);
+}
+.oa-list-panel__filters {
+  display: flex; flex-direction: column;
+  gap: 10px;
+}
+.oa-list-panel__divider {
+  height: 1px;
+  background: var(--oa-border);
+  margin: 12px -14px;     /* bleed to the panel edges so it reads as a real divider */
+  border: 0;
+}
+.oa-list-panel__items {
+  flex: 1;
+  display: flex; flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+  min-height: 0;          /* let the flex item actually scroll */
+}
+.oa-list-panel__footer {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--oa-border);
+  font-size: 11px;
+  color: var(--oa-text-muted);
+}
+
+/* Compact filter button group (used inside .oa-list-panel__filters)
+ * Pairs a small section label with a row of buttons. */
+.oa-filter-group__label {
+  font-size: 11px; font-weight: 600;
+  color: var(--oa-text-muted);
+  text-transform: uppercase; letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+.oa-filter-group__buttons {
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
  * 4) Collapse — based on native <details>; default closed; rotating chevron.
  * ────────────────────────────────────────────────────────────────────────── */
 details.oa-collapse {
@@ -288,6 +350,151 @@ details.oa-collapse[open] > summary.oa-collapse__summary .oa-collapse__chevron {
 .oa-md-content strong { font-weight: 600; }
 .oa-md-content em { font-style: italic; }
 .oa-md-content hr { border: 0; border-top: 1px solid var(--oa-border); margin: 12px 0; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 7) Plugin hero header — large iconified title for the plugin's top bar.
+ *    Pair the icon with .oa-hero-title__icon (rounded gradient chip) and the
+ *    text with .oa-hero-title__text. Falls back gracefully if no icon.
+ *
+ *    <h1 class="oa-hero-title">
+ *      <span class="oa-hero-title__icon">{svg}</span>
+ *      <span class="oa-hero-title__text">通义生图</span>
+ *    </h1>
+ * ────────────────────────────────────────────────────────────────────────── */
+.oa-hero-title {
+  display: inline-flex; align-items: center; gap: 12px;
+  font-size: 20px; font-weight: 700; color: var(--oa-text);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.oa-hero-title__icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--oa-primary), #8b5cf6);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+  flex-shrink: 0;
+}
+.oa-hero-title__icon > svg { width: 22px; height: 22px; }
+.oa-hero-title__text { line-height: 1.2; }
+.oa-hero-title__sub {
+  display: block;
+  font-size: 11px; font-weight: 500;
+  color: var(--oa-text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 8) Section label — small accented title for grouping form fields or
+ *    sub-areas inside a card. The 3px accent bar gives clear visual rhythm
+ *    without adding more borders.
+ *
+ *    <div class="oa-section-label">生成模式</div>
+ *    <div class="oa-section-label oa-section-label--inline">
+ *      <span>提示词</span>
+ *      <button class="oa-ai-btn">…</button>
+ *    </div>
+ * ────────────────────────────────────────────────────────────────────────── */
+.oa-section-label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600;
+  color: var(--oa-text);
+  margin: 0 0 8px;
+  line-height: 1.3;
+}
+.oa-section-label::before {
+  content: ""; display: inline-block;
+  width: 3px; height: 14px;
+  border-radius: 2px;
+  background: var(--oa-primary);
+  flex-shrink: 0;
+}
+/* --inline: render the label text and a trailing action (e.g. AI 优化)
+ * side-by-side, hugging the left edge with a small gap. We deliberately
+ * do NOT use space-between, so the action sits right next to the label
+ * and reads as "this action belongs to this field" instead of floating
+ * away on the right. */
+.oa-section-label--inline {
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.oa-section-label--inline > :first-child {
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.oa-section-label--inline > :first-child::before {
+  content: ""; display: inline-block;
+  width: 3px; height: 14px;
+  border-radius: 2px;
+  background: var(--oa-primary);
+}
+.oa-section-label--inline::before { content: none; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 9) AI button — a small "this is an AI feature" affordance. Used for
+ *    things like "AI optimize prompt", "AI suggest", "AI rewrite".
+ *
+ *    Visual recipe: violet→pink gradient outline + faint inner gradient,
+ *    sparkles icon with subtle pulse on hover. Stays small (~24px tall) so
+ *    it can dock next to a section label or input header.
+ *
+ *    <button class="oa-ai-btn" type="button">
+ *      <span class="oa-icon oa-ai-btn__icon">{svg.sparkles}</span>
+ *      AI 优化
+ *    </button>
+ * ────────────────────────────────────────────────────────────────────────── */
+/* Solid-fill gradient button. We deliberately use a filled style (not an
+ * outline / ghost button) because in real use the AI affordance was hard
+ * to spot when only the border carried color — the button blended into
+ * the surrounding card. A filled violet→pink gradient pill with a moving
+ * background reads instantly as "this is the AI action". */
+.oa-ai-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 14px;
+  font-size: 12px; font-weight: 600;
+  line-height: 1;
+  color: #fff;
+  background: linear-gradient(120deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
+  background-size: 200% 200%;
+  background-position: 0% 50%;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(99, 102, 241, 0.25), 0 2px 8px rgba(236, 72, 153, 0.18);
+  transition: transform 120ms ease, box-shadow 200ms ease, background-position 600ms ease;
+  white-space: nowrap;
+}
+.oa-ai-btn__icon {
+  color: #fff;
+  display: inline-flex;
+  transition: transform 600ms ease;
+}
+.oa-ai-btn__icon > svg { width: 13px; height: 13px; }
+.oa-ai-btn:hover {
+  background-position: 100% 50%;
+  box-shadow: 0 0 0 3px rgba(236, 72, 153, 0.18), 0 4px 12px rgba(99, 102, 241, 0.30);
+  transform: translateY(-1px);
+}
+.oa-ai-btn:hover .oa-ai-btn__icon {
+  transform: rotate(25deg) scale(1.15);
+  animation: oa-ai-pulse 1.4s infinite ease-in-out;
+}
+.oa-ai-btn:active { transform: translateY(0); }
+.oa-ai-btn[disabled] {
+  cursor: not-allowed;
+  background: var(--oa-border);
+  color: var(--oa-text-muted);
+  box-shadow: none;
+  transform: none;
+}
+.oa-ai-btn[disabled] .oa-ai-btn__icon { color: var(--oa-text-muted); animation: none; transform: none; }
+
+@keyframes oa-ai-pulse {
+  0%, 100% { filter: drop-shadow(0 0 0 rgba(255, 255, 255, 0)); }
+  50%      { filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.85)); }
+}
 
 /* ──────────────────────────────────────────────────────────────────────────
  * 6) Settings section — visual grouping for settings page subsections.

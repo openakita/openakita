@@ -1,11 +1,13 @@
 {
   "id": "tongyi-image",
-  "name": "通义生图",
-  "name_i18n": { "en": "Tongyi Image" },
+  "name": "Tongyi Image",
   "version": "0.1.0",
-  "description": "基于 DashScope 的 AI 图片生成 — 文生图、图像编辑、电商套图、风格重绘、背景生成、画面扩展、涂鸦作画",
+  "description": "AI image generation powered by Alibaba DashScope — text-to-image, image editing, e-commerce suite, style repaint, background generation, outpainting, sketch-to-image",
+  "display_name_zh": "通义生图",
+  "display_name_en": "Tongyi Image",
   "description_i18n": {
-    "en": "AI image generation powered by DashScope — text-to-image, image editing, e-commerce suite, style repaint, background generation, outpainting, sketch-to-image"
+    "zh": "基于阿里云百炼 DashScope 的 AI 图片生成 — 文生图、图像编辑、电商套图、风格重绘、背景生成、画面扩展、涂鸦作画",
+    "en": "AI image generation powered by Alibaba DashScope — text-to-image, image editing, e-commerce suite, style repaint, background generation, outpainting, sketch-to-image"
   },
   "type": "python",
   "entry": "plugin.py",
@@ -30,7 +32,10 @@
   "ui": {
     "entry": "ui/dist/index.html",
     "title": "通义生图",
-    "title_i18n": { "en": "Tongyi Image" },
+    "title_i18n": {
+      "zh": "通义生图",
+      "en": "Tongyi Image"
+    },
     "sidebar_group": "apps",
     "permissions": ["upload", "download", "notifications", "theme", "clipboard"]
   }

@@ -94,7 +94,23 @@ export function Sidebar({
   desktopVersion, backendVersion, serviceRunning,
   onBugReport, onRefreshStatus, isWeb, mobileOpen, httpApiBase,
 }: SidebarProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const lang = i18n.language;
+  // Pick a localized plugin app title from `title_i18n`, falling back to the
+  // default `title` string. Mirror of pickI18n() in PluginManagerView so the
+  // sidebar and the manager list always show the same label per language.
+  const pickAppTitle = (app: PluginUIApp): string => {
+    const dict = app.title_i18n;
+    if (dict && typeof dict === "object") {
+      if (dict[lang]) return dict[lang];
+      const base = lang.split("-")[0];
+      if (base && dict[base]) return dict[base];
+      if (dict.en) return dict.en;
+      const first = Object.values(dict).find(v => typeof v === "string" && v);
+      if (first) return first;
+    }
+    return app.title;
+  };
 
   const [expandedGroups, setExpandedGroups] = useState<Record<NavGroupId, boolean>>({
     capabilities: false,
@@ -226,6 +242,7 @@ export function Sidebar({
               <div className="navGroupItems">
                 {pluginApps.map(app => {
                   const appViewId: ViewId = `plugin_app:${app.id}`;
+                  const appTitle = pickAppTitle(app);
                   return (
                     <div
                       key={app.id}
@@ -233,14 +250,14 @@ export function Sidebar({
                       onClick={() => onViewChange(appViewId)}
                       role="button"
                       tabIndex={0}
-                      title={app.title}
+                      title={appTitle}
                     >
                       {app.icon_url ? (
                         <img src={`${httpApiBase}${app.icon_url}`} alt="" style={{ width: 16, height: 16, borderRadius: 2 }} />
                       ) : (
                         <IconLayoutGrid size={16} />
                       )}
-                      {!collapsed && <span>{app.title}</span>}
+                      {!collapsed && <span>{appTitle}</span>}
                     </div>
                   );
                 })}
