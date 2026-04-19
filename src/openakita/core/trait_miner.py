@@ -148,6 +148,14 @@ class TraitMiner:
         if len(message.strip()) <= 3:
             return []
 
+        # 系统级"自言自语"（idle/heartbeat/agent 间转发的 system prompt）不
+        # 反映真实用户偏好，跳过 LLM 调用，避免 idle_probe 风暴时把 compiler_think
+        # 也卷进去烧 token。匹配开头的 [空闲检查] / [空闲心跳] / [系统] 等标签前缀。
+        _stripped = message.lstrip()
+        for _prefix in ("[空闲检查]", "[空闲心跳]", "[系统]", "[system]", "[idle]"):
+            if _stripped.startswith(_prefix):
+                return []
+
         try:
             from .tool_executor import smart_truncate as _st
 

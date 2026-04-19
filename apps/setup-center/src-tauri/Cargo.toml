@@ -11,6 +11,10 @@ base64 = "0.22.1"
 flate2 = "1.0.35"
 
 [dependencies]
+# TODO(tao#1180): Tauri 2.10.x 锁死 tao 0.34.x，仍存在 Windows 事件循环
+# "cannot move state from Destroyed" panic（详见 https://github.com/tauri-apps/tao/issues/1180）。
+# 上游 tao 修复后请升级 Tauri/tao 验证 panic 不再出现，
+# 然后移除 src/main.rs 中的 try_self_heal_relaunch / restart.marker 自愈逻辑。
 tauri = { version = "2.10.1", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"

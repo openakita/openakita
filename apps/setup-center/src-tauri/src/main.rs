@@ -11,8 +11,9 @@ use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::collections::HashMap;
 use tauri::Emitter;
 use tauri::Manager;
 #[cfg(desktop)]
@@ -33,6 +34,101 @@ static MANAGED_CHILD: Lazy<Mutex<Option<ManagedProcess>>> = Lazy::new(|| Mutex::
 /// Rust 自动启动后端时置 true，启动完成（成功/失败）后置 false。
 /// 前端可查询该标记以显示"正在自动启动服务"并禁用启动/重启按钮。
 static AUTO_START_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
+/// AUTO_START_IN_PROGRESS 置 true 时记录的 wall-clock 毫秒。
+/// 用于 ``is_backend_auto_starting`` 的超时兜底：超过 ``AUTO_START_TIMEOUT_MS``
+/// 视为后台 spawn 线程已经死掉/卡死，强制返回 false 防止前端 toast 永久卡住。
+static AUTO_START_STARTED_AT_MS: AtomicU64 = AtomicU64::new(0);
+const AUTO_START_TIMEOUT_MS: u64 = 90_000;
+
+/// `openakita_service_start` 的进程级互斥窗口（毫秒）。
+/// 在 3 秒内对同一 workspace 的第二次调用将被直接拒绝，避免前端重试/竞态
+/// 在短时间内连续 spawn 出多个后端进程（autostart.log 里 27s 内 5 次 spawn
+/// 就是这个 bug 的现场表现）。
+const SERVICE_START_DEDUPE_MS: u64 = 3_000;
+static SERVICE_START_LAST_AT: Lazy<Mutex<HashMap<String, u64>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 进程级自愈相关：crash 重启 marker 文件路径。
+/// 由 panic hook 在命中 tao#1180 特征时写入，setup 阶段读出并向前端 emit
+/// `app-restarted-from-crash` 事件，前端据此恢复上次工作区/视图。
+/// 同一窗口去重写：只保留最近一次现场，避免 marker 累积。
+fn restart_marker_path() -> PathBuf {
+    let base = home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".openakita");
+    let _ = fs::create_dir_all(&base);
+    base.join("restart.marker")
+}
+
+/// 防止自愈进入无限重启循环：如果短时间内（30s）已经因 panic 自愈过一次，
+/// 再次崩溃则不再 spawn，让用户感知到崩溃并人工介入。
+const SELF_HEAL_COOLDOWN_MS: u64 = 30_000;
+
+fn try_self_heal_relaunch(panic_msg: &str) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // 写 marker（携带 ts/panic_brief/上次 workspace 等供前端恢复使用）
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let last_ws = read_state_file().current_workspace_id.unwrap_or_default();
+    // 命令行恢复时间：若上一份 marker 距今 < 冷却窗，不再二次自愈，
+    // 避免无限崩溃-重启循环把 CPU 烧穿。
+    if let Ok(prev) = fs::read_to_string(restart_marker_path()) {
+        if let Ok(prev_json) = serde_json::from_str::<serde_json::Value>(&prev) {
+            if let Some(prev_ts) = prev_json.get("ts").and_then(|v| v.as_u64()) {
+                if ts.saturating_sub(prev_ts) < SELF_HEAL_COOLDOWN_MS / 1000 {
+                    log_to_file(&format!(
+                        "[self-heal] skip relaunch: last self-heal {}s ago < cooldown",
+                        ts.saturating_sub(prev_ts)
+                    ));
+                    return;
+                }
+            }
+        }
+    }
+    let marker = serde_json::json!({
+        "ts": ts,
+        "panic_brief": panic_msg.chars().take(200).collect::<String>(),
+        "last_workspace_id": last_ws,
+        "reason": "tao_destroyed_panic",
+    });
+    let _ = fs::write(
+        restart_marker_path(),
+        serde_json::to_string_pretty(&marker).unwrap_or_else(|_| "{}".into()),
+    );
+
+    // spawn 自身进程；--auto-restarted 让新实例知晓自己是恢复实例。
+    // single-instance 插件会保证只有一个活实例（旧进程即将崩溃）。
+    if let Ok(exe) = std::env::current_exe() {
+        let mut cmd = Command::new(&exe);
+        cmd.arg("--auto-restarted");
+        // 避免继承当前控制台句柄，参考 spawn_detached 模式
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            const DETACHED_PROCESS: u32 = 0x00000008;
+            const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+            cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+        }
+        match cmd.spawn() {
+            Ok(_) => log_to_file(&format!(
+                "[self-heal] relaunched {} after tao panic", exe.display()
+            )),
+            Err(e) => log_to_file(&format!("[self-heal] relaunch FAILED: {e}")),
+        }
+    }
+}
 
 static ROOT_CONFIG_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 static STATE_FILE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
@@ -2549,12 +2645,32 @@ fn write_crash_log(message: &str, show_dialog: bool) -> PathBuf {
 }
 
 fn main() {
+    // 自愈接力进程的启动时序兜底：
+    // panic hook 在 spawn 新实例时旧进程还没真正退出，
+    // tauri-plugin-single-instance 会让新实例的 callback 在旧进程里触发
+    // 然后新实例直接退出。这里在新实例最早期 sleep 让旧进程的崩溃流程
+    // 完整执行（写 crash.log + 释放 single-instance 锁），然后再继续启动。
+    if std::env::args().any(|a| a == "--auto-restarted") {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+    }
+
     // Global panic hook: capture panics to crash.log + show dialog.
+    // 进程级自愈：检测 tao Windows 事件循环的已知 panic
+    // ("cannot move state from Destroyed"，对应上游 tao#1180)，落
+    // restart.marker 并立刻 spawn 一份自身进程接力。新进程靠
+    // tauri-plugin-single-instance 保证只有一个活实例，旧进程随后崩溃。
+    // 上游修复后此自愈可拆除（见 Cargo.toml TODO 标记）。
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let msg = format!("PANIC: {info}");
         eprintln!("{msg}");
         write_crash_log(&msg, true);
+        let panic_str = info.to_string();
+        if panic_str.contains("cannot move state from Destroyed")
+            || panic_str.contains("tao") && panic_str.contains("Destroyed")
+        {
+            try_self_heal_relaunch(&panic_str);
+        }
         default_hook(info);
     }));
 
@@ -2679,6 +2795,24 @@ fn main() {
             let launch_mode = if is_first_run_arg { "first-run" } else { "normal" };
             app.emit("app-launch-mode", launch_mode).ok();
 
+            // ── 自愈恢复：检查上次崩溃留下的 restart.marker ──
+            // 由 panic hook 在命中 tao#1180 特征时写入；这里读出后立刻删除
+            // 避免重复触发，并向前端 emit 事件，前端可据此恢复上次工作区/视图
+            // 或弹温和提示告诉用户"刚刚已自动恢复"。
+            let marker_path = restart_marker_path();
+            if marker_path.exists() {
+                if let Ok(content) = fs::read_to_string(&marker_path) {
+                    log_to_file(&format!(
+                        "[self-heal] restart.marker recovered: {}",
+                        content.lines().next().unwrap_or("")
+                    ));
+                    let payload: serde_json::Value =
+                        serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+                    app.emit("app-restarted-from-crash", payload).ok();
+                }
+                let _ = fs::remove_file(&marker_path);
+            }
+
             // 后台启动时：不弹出主窗口，只保留托盘/菜单栏常驻
             let is_background = std::env::args().any(|a| a == "--background");
             if is_background {
@@ -2708,6 +2842,7 @@ fn main() {
                 ));
                 if need_start {
                     AUTO_START_IN_PROGRESS.store(true, Ordering::SeqCst);
+                    AUTO_START_STARTED_AT_MS.store(now_ms(), Ordering::SeqCst);
                     let venv_dir = openakita_root_dir().join("venv").to_string_lossy().to_string();
                     let ws_clone = ws_id.clone();
                     std::thread::spawn(move || {
@@ -2723,6 +2858,7 @@ fn main() {
                             }
                         }
                         AUTO_START_IN_PROGRESS.store(false, Ordering::SeqCst);
+                        AUTO_START_STARTED_AT_MS.store(0, Ordering::SeqCst);
                     });
                 }
             } else {
@@ -3240,6 +3376,35 @@ fn read_env_kv(path: &Path) -> Vec<(String, String)> {
 #[tauri::command]
 fn openakita_service_start(venv_dir: String, workspace_id: String) -> Result<ServiceStatus, String> {
     log_to_file(&format!("[service_start] called: ws={}, venv={}", workspace_id, venv_dir));
+    // ── 进程级互斥：同一 workspace 在 SERVICE_START_DEDUPE_MS 窗口内拒绝重复 spawn。
+    // 解决 autostart.log 里 27s 内 5 次 spawn pid 的现场表现：前端在 health
+    // check 还没响应时反复 invoke，下游 try_acquire_start_lock 的文件锁有
+    // 短暂失效窗，需要在更外层加一层时间窗去重。命中时直接返回当前已知
+    // ServiceStatus（让前端继续轮询 health 即可），不抛错避免触发 toast。
+    {
+        let mut last_map = SERVICE_START_LAST_AT.lock().unwrap();
+        let now = now_ms();
+        if let Some(&last) = last_map.get(&workspace_id) {
+            let elapsed = now.saturating_sub(last);
+            if elapsed < SERVICE_START_DEDUPE_MS {
+                log_to_file(&format!(
+                    "[service_start] dedupe-skip ws={} elapsed_ms={}",
+                    workspace_id, elapsed
+                ));
+                let pid_file = service_pid_file(&workspace_id);
+                let pf = pid_file.to_string_lossy().to_string();
+                let pid_opt = read_pid_file(&workspace_id).map(|d| d.pid);
+                let running = read_pid_file(&workspace_id)
+                    .map(|d| is_pid_file_valid(&d))
+                    .unwrap_or(false);
+                return Ok(build_service_status(
+                    &workspace_id, running, pid_opt, pf,
+                ));
+            }
+        }
+        last_map.insert(workspace_id.clone(), now);
+    }
+
     fs::create_dir_all(run_dir()).map_err(|e| {
         let msg = format!("create run dir failed: {e}");
         log_to_file(&format!("[service_start] FAIL: {}", msg));
@@ -3557,7 +3722,25 @@ fn autostart_set_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), Str
 /// 返回 true 时前端应禁用启动/重启按钮并显示"正在自动启动服务"提示。
 #[tauri::command]
 fn is_backend_auto_starting() -> bool {
-    AUTO_START_IN_PROGRESS.load(Ordering::SeqCst)
+    if !AUTO_START_IN_PROGRESS.load(Ordering::SeqCst) {
+        return false;
+    }
+    // 90s 兜底：spawn 线程理应在该窗口内完成（成功/失败都会清 flag）。
+    // 超时仍 true 视为线程已死掉/卡住，主动清掉，避免前端 toast 永久卡住。
+    let started_at = AUTO_START_STARTED_AT_MS.load(Ordering::SeqCst);
+    if started_at > 0 {
+        let elapsed = now_ms().saturating_sub(started_at);
+        if elapsed >= AUTO_START_TIMEOUT_MS {
+            log_to_file(&format!(
+                "[auto-start] is_backend_auto_starting timeout after {}ms, clearing flag",
+                elapsed
+            ));
+            AUTO_START_IN_PROGRESS.store(false, Ordering::SeqCst);
+            AUTO_START_STARTED_AT_MS.store(0, Ordering::SeqCst);
+            return false;
+        }
+    }
+    true
 }
 
 #[tauri::command]

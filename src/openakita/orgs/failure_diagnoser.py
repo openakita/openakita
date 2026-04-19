@@ -125,6 +125,45 @@ def _extract_evidence(react_trace: list[dict]) -> list[dict]:
     return evidence
 
 
+def _has_successful_chain_relay(react_trace: list[dict]) -> bool:
+    """检测 trace 中是否有"成功的 propagate_chain 接力发送"。
+
+    判定：tool_calls 里存在 name=org_send_message 且 input.propagate_chain=True，
+    对应 tool_results 不是 error 且不含失败 marker。这是 LLM 在 delegate 自指
+    误判后走 send_message 兜底出口的信号；命中即可对 self_delegate 类
+    诊断做豁免，避免给用户报"被强制终止"的硬错误。
+    """
+    if not react_trace:
+        return False
+    for iter_trace in react_trace:
+        if not isinstance(iter_trace, dict):
+            continue
+        calls = iter_trace.get("tool_calls") or []
+        results_by_id: dict[str, dict] = {}
+        for r in (iter_trace.get("tool_results") or []):
+            if isinstance(r, dict):
+                rid = r.get("tool_use_id") or r.get("id") or ""
+                if rid:
+                    results_by_id[rid] = r
+        for call in calls:
+            if not isinstance(call, dict):
+                continue
+            if str(call.get("name") or "") != "org_send_message":
+                continue
+            inp = call.get("input") or {}
+            if not isinstance(inp, dict):
+                continue
+            if not bool(inp.get("propagate_chain")):
+                continue
+            tool_id = call.get("id") or ""
+            res = results_by_id.get(tool_id, {}) if tool_id else {}
+            res_text = str(res.get("result_content") or "")
+            if _is_error_entry(bool(res.get("is_error")), res_text):
+                continue
+            return True
+    return False
+
+
 def _classify_delegate_subtype(evidence: list[dict]) -> str | None:
     """死循环场景里，再细分 org_delegate_task 的失败子类型。"""
     delegate_fails = [e for e in evidence if e.get("tool") == "org_delegate_task"]
@@ -163,6 +202,16 @@ _DIAGNOSIS_TEMPLATES: dict[str, dict[str, str]] = {
             "1. 在指令里直接使用下级的节点 id（例如 `pm`）而不是中文职位名；\n"
             "2. 或者让当前节点使用 `org_submit_deliverable` 亲自完成并交付；\n"
             "3. 长期可调整该节点的 prompt，明确区分'我是谁'和'我的下级是谁'。"
+        ),
+    },
+    "org_delegate_self_recovered": {
+        "headline": "节点遇到 {iterations} 次 delegate 自指误判，已通过 send_message 接力把任务派下去",
+        "suggestion": (
+            "本次 LLM 自动改用 `org_send_message(propagate_chain=true)` 把当前 "
+            "task_chain_id 接力给下属，任务链未中断。\n\n"
+            "**建议（如频繁出现可关注）**：\n"
+            "1. 检查节点 prompt 中目标节点 id 是否清晰；\n"
+            "2. 排查日志中的 `[delegate-self-misjudge]` ERROR 行获取自指现场。"
         ),
     },
     "non_direct_subordinate": {
@@ -234,12 +283,22 @@ def _pick_root_cause(
     exit_reason: str,
     evidence: list[dict],
     total_iterations: int,
+    react_trace: list[dict] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """根据 exit_reason + evidence 决定 root_cause 及模板占位参数。"""
     if exit_reason == "loop_terminated":
         subtype = _classify_delegate_subtype(evidence)
         if subtype:
             delegate_fails_n = sum(1 for e in evidence if e.get("tool") == "org_delegate_task")
+            # 豁免：若 LLM 已通过 send_message+propagate_chain=true 兜底接力
+            # 把任务派下去，self_delegate 的硬错误降级成"已自愈"提示，
+            # 避免给用户报"死循环被强制终止"误导。
+            if (
+                subtype == "org_delegate_self"
+                and react_trace
+                and _has_successful_chain_relay(react_trace)
+            ):
+                subtype = "org_delegate_self_recovered"
             return subtype, {
                 "iterations": delegate_fails_n,
                 "exit_reason": exit_reason,
@@ -282,7 +341,9 @@ def summarize(
     try:
         evidence = _extract_evidence(trace)
         total_iterations = len(trace)
-        root_cause, fmt = _pick_root_cause(safe_reason, evidence, total_iterations)
+        root_cause, fmt = _pick_root_cause(
+            safe_reason, evidence, total_iterations, react_trace=trace,
+        )
         template = _DIAGNOSIS_TEMPLATES.get(root_cause) or _DIAGNOSIS_TEMPLATES["unknown"]
         headline = template["headline"].format(**fmt)
         suggestion = template["suggestion"]

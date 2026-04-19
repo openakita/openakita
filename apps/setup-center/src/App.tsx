@@ -622,6 +622,13 @@ function MainApp() {
     }
   }
 
+  // 自动启动 loading toast 的 id 提升为 ref；strict 模式下 effect 会
+  // mount→unmount→remount，原本的局部 _busyAutoStart 会随第一次卸载丢失
+  // 引用，导致 dismissLoading 拿不到 id，老 toast 永久残留（"幽灵 toast"）。
+  // 用 ref 保存最新 id，并在 cleanup 中显式 dismiss + 置 null，保证任何
+  // 路径（成功/失败/被中途 cancel）都能清掉同一只气泡。
+  const autoStartToastRef = useRef<string | number | null>(null);
+
   // Web mode init: runs after auth is confirmed
   const webInitDone = useRef(false);
   useEffect(() => {
@@ -728,7 +735,12 @@ function MainApp() {
                 const autoStarting = await invoke<boolean>("is_backend_auto_starting");
                 if (autoStarting) {
                   handled = true;
-                  const _busyAutoStart = notifyLoading(t("topbar.autoStarting"));
+                  // 复用同一只 ref：strict mode 第二次 mount 时若 ref 还有
+                  // 旧 id，先 dismiss 再创建新的，避免双 toast 叠加。
+                  if (autoStartToastRef.current !== null) {
+                    try { dismissLoading(autoStartToastRef.current); } catch { /* ignore */ }
+                  }
+                  autoStartToastRef.current = notifyLoading(t("topbar.autoStarting"));
                   let serviceReady = false;
                   let spawnDone = false;
                   let postSpawnWait = 0;
@@ -756,7 +768,10 @@ function MainApp() {
                       heartbeatFailCount.current = 0;
                       setTimeout(() => { visibilityGraceRef.current = false; }, 10000);
                     }
-                    dismissLoading(_busyAutoStart);
+                    if (autoStartToastRef.current !== null) {
+                      dismissLoading(autoStartToastRef.current);
+                      autoStartToastRef.current = null;
+                    }
                     if (serviceReady) {
                       notifySuccess(t("topbar.autoStartSuccess"));
                     } else {
@@ -778,6 +793,12 @@ function MainApp() {
     })();
     return () => {
       cancelled = true;
+      // strict mode unmount 或路由切换时把 loading toast 显式 dismiss，
+      // 防止"正在启动服务"幽灵气泡卡到下一轮 mount 之后仍可见。
+      if (autoStartToastRef.current !== null) {
+        try { dismissLoading(autoStartToastRef.current); } catch { /* ignore */ }
+        autoStartToastRef.current = null;
+      }
     };
   }, []);
 
