@@ -4,5 +4,6 @@
     "serverDescription": "Official Google Chrome DevTools MCP - connects to the user's real Chrome browser for automation, debugging, and performance analysis. Supports preserving login state and password managers. Requires Node.js v20.19+ and Chrome.",
     "command": "npx",
     "args": ["-y", "chrome-devtools-mcp@latest", "--autoConnect"],
-    "env": {}
+    "env": {},
+    "autoConnect": false
 }
