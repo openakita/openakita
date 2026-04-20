@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field
 from openakita.plugins.api import PluginAPI, PluginBase
 from openakita_plugin_sdk.contrib import (
     CostEstimator, ErrorCoach, QualityGates, TaskStatus,
-    UIEventEmitter, VendorError, collect_storage_stats,
+    UIEventEmitter, VendorError, add_upload_preview_route,
+    build_preview_url, collect_storage_stats,
 )
 
 from providers import (
@@ -88,10 +89,21 @@ class Plugin(PluginBase):
         )
         api.log("avatar-speaker loaded")
 
-    def on_unload(self) -> None:
-        for t in list(self._workers.values()):
-            try: t.cancel()
-            except Exception: pass
+    async def on_unload(self) -> None:
+        workers = [t for t in list(self._workers.values()) if not t.done()]
+        for t in workers:
+            t.cancel()
+        if workers:
+            results = await asyncio.gather(*workers, return_exceptions=True)
+            for res in results:
+                if isinstance(res, asyncio.CancelledError):
+                    continue
+                if isinstance(res, Exception):
+                    self._api.log(
+                        f"avatar-speaker on_unload worker drain error: {res!r}",
+                        level="warning",
+                    )
+        self._workers.clear()
 
     async def _handle_tool_call(self, tool_name: str, args: dict) -> str:
         try:
@@ -113,6 +125,13 @@ class Plugin(PluginBase):
         return f"unknown tool: {tool_name}"
 
     def _register_routes(self, router: APIRouter) -> None:
+        # Issue #479: serve previously uploaded portrait images so the UI can
+        # render <img src="/api/plugins/avatar-speaker/uploads/<file>">.
+        add_upload_preview_route(
+            router,
+            base_dir=self._api.get_data_dir() / "uploads",
+        )
+
         @router.get("/healthz")
         async def healthz():
             return {"ok": True, "plugin": "avatar-speaker"}
@@ -163,7 +182,11 @@ class Plugin(PluginBase):
             with target.open("wb") as fp:
                 while chunk := await file.read(1024 * 1024):
                     fp.write(chunk)
-            return {"path": str(target)}
+            rel = target.relative_to(self._api.get_data_dir() / "uploads")
+            return {
+                "path": str(target),
+                "url": build_preview_url("avatar-speaker", rel),
+            }
 
         @router.post("/tasks")
         async def create_task(body: CreateBody):

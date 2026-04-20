@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from openakita.plugins.api import PluginAPI, PluginBase
 from openakita_plugin_sdk.contrib import (
     ErrorCoach, QualityGates, TaskStatus, UIEventEmitter,
+    add_upload_preview_route, build_preview_url,
 )
 
 from poster_engine import render_poster, select_image_provider
@@ -73,10 +74,21 @@ class Plugin(PluginBase):
         )
         api.log("poster-maker loaded")
 
-    def on_unload(self) -> None:
-        for t in list(self._workers.values()):
-            try: t.cancel()
-            except Exception: pass
+    async def on_unload(self) -> None:
+        workers = [t for t in list(self._workers.values()) if not t.done()]
+        for t in workers:
+            t.cancel()
+        if workers:
+            results = await asyncio.gather(*workers, return_exceptions=True)
+            for res in results:
+                if isinstance(res, asyncio.CancelledError):
+                    continue
+                if isinstance(res, Exception):
+                    self._api.log(
+                        f"poster-maker on_unload worker drain error: {res!r}",
+                        level="warning",
+                    )
+        self._workers.clear()
 
     async def _handle_tool_call(self, tool_name: str, args: dict) -> str:
         try:
@@ -99,6 +111,13 @@ class Plugin(PluginBase):
         return f"unknown tool: {tool_name}"
 
     def _register_routes(self, router: APIRouter) -> None:
+        # Issue #479: serve previously uploaded background images so the UI
+        # can render <img src="/api/plugins/poster-maker/uploads/<file>">.
+        add_upload_preview_route(
+            router,
+            base_dir=self._api.get_data_dir() / "uploads",
+        )
+
         @router.get("/healthz")
         async def healthz():
             return {"ok": True, "plugin": "poster-maker"}
@@ -124,7 +143,10 @@ class Plugin(PluginBase):
             target = data_dir / f"{uuid.uuid4().hex[:12]}{ext}"
             with target.open("wb") as f:
                 shutil.copyfileobj(file.file, f)
-            return {"path": str(target)}
+            return {
+                "path": str(target),
+                "url": build_preview_url("poster-maker", target.name),
+            }
 
         @router.post("/tasks")
         async def create_task(body: CreateBody):

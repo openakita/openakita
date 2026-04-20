@@ -161,19 +161,43 @@ class TaskManager:
         row = await cur.fetchone()
         return self._row_to_dict(row) if row else None
 
+    # Whitelist of caller-facing keys → physical column names. Anything
+    # outside this map is rejected to prevent SQL injection via column-name
+    # interpolation in the UPDATE statement below.
+    _UPDATABLE_COLUMNS: dict[str, str] = {
+        "status": "status",
+        "error_message": "error_message",
+        "api_task_id": "api_task_id",
+        "prompt": "prompt",
+        "negative_prompt": "negative_prompt",
+        "model": "model",
+        "mode": "mode",
+        "params": "params_json",
+        "image_urls": "image_urls",
+        "local_image_paths": "local_image_paths",
+        "usage": "usage_json",
+    }
+    _JSON_ENCODED_KEYS: frozenset[str] = frozenset(
+        {"params", "image_urls", "local_image_paths", "usage"}
+    )
+
     async def update_task(self, task_id: str, **updates: Any) -> None:
         assert self._db
-        sets = []
-        vals = []
+        if not updates:
+            return
+        sets: list[str] = []
+        vals: list[Any] = []
         for k, v in updates.items():
-            if k in ("params", "image_urls", "local_image_paths", "usage"):
-                col = "params_json" if k == "params" else (
-                    "usage_json" if k == "usage" else k
+            col = self._UPDATABLE_COLUMNS.get(k)
+            if col is None:
+                raise ValueError(
+                    f"update_task: column '{k}' is not whitelisted "
+                    f"(allowed: {sorted(self._UPDATABLE_COLUMNS)})"
                 )
-                sets.append(f"{col} = ?")
+            sets.append(f"{col} = ?")
+            if k in self._JSON_ENCODED_KEYS:
                 vals.append(json.dumps(v, ensure_ascii=False))
             else:
-                sets.append(f"{k} = ?")
                 vals.append(v)
         sets.append("updated_at = ?")
         vals.append(_now_iso())

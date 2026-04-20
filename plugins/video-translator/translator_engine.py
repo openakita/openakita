@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable, Iterable
 
+from openakita_plugin_sdk.contrib import parse_llm_json_array
+
 
 def _load_sibling(plugin_dir_name: str, module_name: str, alias: str):
     src = Path(__file__).resolve().parent.parent / plugin_dir_name / f"{module_name}.py"
@@ -113,24 +115,14 @@ def translate_chunks_offline(
 
 
 def _safe_json_array(text: str) -> list:
-    """Extract a JSON array from possibly fenced LLM output."""
-    text = (text or "").strip()
-    if not text: return []
-    try:
-        data = json.loads(text)
-        return data if isinstance(data, list) else []
-    except (ValueError, TypeError):
-        pass
-    # Try to find first [...] block
-    start = text.find("[")
-    end = text.rfind("]")
-    if start >= 0 and end > start:
-        try:
-            data = json.loads(text[start: end + 1])
-            return data if isinstance(data, list) else []
-        except (ValueError, TypeError):
-            return []
-    return []
+    """Extract a JSON array from possibly fenced LLM output.
+
+    Thin wrapper over ``openakita_plugin_sdk.contrib.parse_llm_json_array``
+    (5-level fallback: direct → fence-strip → outer-span → balanced-span scan
+    → ``[]``). Kept under this name for backward compatibility with the
+    existing tests and any in-tree callers.
+    """
+    return parse_llm_json_array(text or "")
 
 
 # ── ffmpeg command builders (pure) ────────────────────────────────────

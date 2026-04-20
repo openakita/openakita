@@ -18,6 +18,11 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
 
 from openakita.plugins.api import PluginAPI, PluginBase
+from openakita_plugin_sdk.contrib import (
+    add_upload_preview_route,
+    build_preview_url,
+    collect_storage_stats,
+)
 
 from tongyi_dashscope_client import DashScopeClient, DashScopeError
 from tongyi_models import (
@@ -152,7 +157,7 @@ class Plugin(PluginBase):
             },
         ], handler=self._handle_tool)
 
-        asyncio.get_event_loop().create_task(self._async_init())
+        api.spawn_task(self._async_init(), name="tongyi-image:init")
         api.log("Tongyi Image plugin loaded")
 
     async def _async_init(self) -> None:
@@ -162,13 +167,24 @@ class Plugin(PluginBase):
             self._client = DashScopeClient(api_key)
         self._start_polling()
 
-    def on_unload(self) -> None:
-        if self._poll_task:
+    async def on_unload(self) -> None:
+        if self._poll_task and not self._poll_task.done():
             self._poll_task.cancel()
-        loop = asyncio.get_event_loop()
-        if self._client:
-            loop.create_task(self._client.close())
-        loop.create_task(self._tm.close())
+            try:
+                await self._poll_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                logger.warning("tongyi-image poll task drain error: %s", exc)
+        if self._client is not None:
+            try:
+                await self._client.close()
+            except Exception as exc:
+                logger.warning("tongyi-image DashScope client close error: %s", exc)
+        try:
+            await self._tm.close()
+        except Exception as exc:
+            logger.warning("tongyi-image task manager close error: %s", exc)
 
     # ── Tool handler ──
 
@@ -242,8 +258,9 @@ class Plugin(PluginBase):
         if status == "succeeded" and image_urls:
             config = await self._tm.get_all_config()
             if config.get("auto_download") == "true":
-                asyncio.get_event_loop().create_task(
-                    self._download_images(task["id"], image_urls)
+                self._api.spawn_task(
+                    self._download_images(task["id"], image_urls),
+                    name=f"tongyi-image:download:{task['id']}",
                 )
             self._broadcast_update(task["id"], "succeeded")
 
@@ -415,7 +432,9 @@ class Plugin(PluginBase):
     # ── Polling ──
 
     def _start_polling(self) -> None:
-        self._poll_task = asyncio.get_event_loop().create_task(self._poll_loop())
+        self._poll_task = self._api.spawn_task(
+            self._poll_loop(), name="tongyi-image:poll"
+        )
 
     async def _poll_loop(self) -> None:
         while True:
@@ -462,8 +481,9 @@ class Plugin(PluginBase):
                     )
                     config = await self._tm.get_all_config()
                     if config.get("auto_download") == "true" and image_urls:
-                        asyncio.get_event_loop().create_task(
-                            self._download_images(task["id"], image_urls)
+                        self._api.spawn_task(
+                            self._download_images(task["id"], image_urls),
+                            name=f"tongyi-image:download:{task['id']}",
                         )
                     self._broadcast_update(task["id"], "succeeded")
 
@@ -522,6 +542,13 @@ class Plugin(PluginBase):
     # ── Route registration ──
 
     def _register_routes(self, router: APIRouter) -> None:
+
+        # Issue #479: serve previously uploaded images so the UI can render
+        # <img src="/api/plugins/tongyi-image/uploads/<file>"> after upload.
+        add_upload_preview_route(
+            router,
+            base_dir=self._api.get_data_dir() / "uploads",
+        )
 
         @router.post("/tasks")
         async def create_task(body: CreateTaskBody) -> dict:
@@ -669,8 +696,9 @@ class Plugin(PluginBase):
                 if image_urls:
                     config = await self._tm.get_all_config()
                     if config.get("auto_download") == "true":
-                        asyncio.get_event_loop().create_task(
-                            self._download_images(task_id, image_urls)
+                        self._api.spawn_task(
+                            self._download_images(task_id, image_urls),
+                            name=f"tongyi-image:download:{task_id}",
                         )
                 updated = await self._tm.get_task(task_id)
                 return {"ok": True, "task": updated, "images_found": len(image_urls)}
@@ -744,6 +772,7 @@ class Plugin(PluginBase):
             return {
                 "ok": True,
                 "path": str(filepath),
+                "url": build_preview_url("tongyi-image", filename),
                 "base64": f"data:{mime};base64,{b64}" if len(content) < 10_000_000 else None,
             }
 
@@ -823,23 +852,25 @@ class Plugin(PluginBase):
 
         @router.get("/storage/stats")
         async def storage_stats() -> dict:
+            # Wrap each subdir in collect_storage_stats so the walk runs off
+            # the loop and is hard-capped at max_files (avoids UI stalls when
+            # users accumulate tens of thousands of generated images).
             data_dir = self._api.get_data_dir()
-            stats = {}
+            stats: dict[str, dict] = {}
+            truncated_any = False
             for label, d in [
                 ("images", data_dir / "images"),
                 ("uploads", data_dir / "uploads"),
             ]:
-                total_size = 0
-                file_count = 0
-                if d.is_dir():
-                    for f in d.rglob("*"):
-                        if f.is_file():
-                            total_size += f.stat().st_size
-                            file_count += 1
+                report = await collect_storage_stats(
+                    d, max_files=20000, sample_paths=0, skip_hidden=True,
+                )
+                truncated_any = truncated_any or report.truncated
                 stats[label] = {
                     "path": str(d),
-                    "size_bytes": total_size,
-                    "size_mb": round(total_size / 1048576, 1),
-                    "file_count": file_count,
+                    "size_bytes": report.total_bytes,
+                    "size_mb": round(report.total_bytes / 1048576, 1),
+                    "file_count": report.total_files,
+                    "truncated": report.truncated,
                 }
-            return {"ok": True, "stats": stats}
+            return {"ok": True, "stats": stats, "truncated": truncated_any}

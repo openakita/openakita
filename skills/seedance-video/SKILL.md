@@ -165,3 +165,33 @@ python3 scripts/seedance.py status <TASK_ID>
 python3 scripts/seedance.py list
 python3 scripts/seedance.py delete <TASK_ID>
 ```
+
+## Quality Gates (G1–G3)
+
+| Gate | 检查内容                                            | 通过条件                                                  |
+| ---- | --------------------------------------------------- | --------------------------------------------------------- |
+| G1   | `ARK_API_KEY` 环境变量已设                          | `os.environ.get("ARK_API_KEY")` 非空                     |
+| G2   | 输入素材符合"使用限制"清单（图/视频/音频规格）     | 调用前 `validate_assets()` 校验通过                       |
+| G3   | 任务 polling 终态可识别（成功 / 失败 / 内容审核）  | `status in {"succeeded","failed","content_filter"}`       |
+
+## Trust Hooks（你怎么知道我没乱花钱 / 偷数据）
+
+| 信任点              | 怎么自查                                                         |
+| ------------------- | ---------------------------------------------------------------- |
+| 钱花在哪 / Cost     | 仅调用 `https://ark.cn-beijing.volces.com/api/v3` — 火山方舟    |
+| 数据流向 / Data     | 上传素材以 URL 形式提交（你提供，CLI 不主动上传到第三方）        |
+| 出错怎么办 / Errors | CLI 退出码非 0；JSON 模式输出 `{ok: false, error: ...}`          |
+| 远程依赖 / Network  | 仅火山方舟；可用 `--dry-run` 离线打印 payload 不发请求           |
+
+## storyboard 一键投喂 / Storyboard Bridge (Sprint 1)
+
+`storyboard` 插件新增 `GET /api/plugins/storyboard/tasks/{task_id}/export-seedance.json`，
+返回该路由会输出一份 `{shots: [{prompt, duration_sec, model, ratio, resolution}, ...],
+cli_examples: [...]}` JSON。可直接 `jq` 抽取后批量喂给本 CLI：
+
+```bash
+curl -s localhost:8000/api/plugins/storyboard/tasks/<sb_task>/export-seedance.json \
+  | jq -r '.cli_examples[]' \
+  | sh
+```
+

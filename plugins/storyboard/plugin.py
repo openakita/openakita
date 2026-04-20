@@ -17,7 +17,8 @@ from openakita_plugin_sdk.contrib import (
 )
 
 from storyboard_engine import (
-    _SYSTEM, parse_storyboard_llm_output, self_check,
+    _SYSTEM, Shot, Storyboard, parse_storyboard_llm_output, self_check,
+    to_seedance_payload,
 )
 from task_manager import StoryboardTaskManager
 
@@ -70,10 +71,21 @@ class Plugin(PluginBase):
         )
         api.log("storyboard loaded")
 
-    def on_unload(self) -> None:
-        for t in list(self._workers.values()):
-            try: t.cancel()
-            except Exception: pass
+    async def on_unload(self) -> None:
+        workers = [t for t in list(self._workers.values()) if not t.done()]
+        for t in workers:
+            t.cancel()
+        if workers:
+            results = await asyncio.gather(*workers, return_exceptions=True)
+            for res in results:
+                if isinstance(res, asyncio.CancelledError):
+                    continue
+                if isinstance(res, Exception):
+                    self._api.log(
+                        f"storyboard on_unload worker drain error: {res!r}",
+                        level="warning",
+                    )
+        self._workers.clear()
 
     async def _handle_tool_call(self, tool_name: str, args: dict) -> str:
         try:
@@ -157,6 +169,58 @@ class Plugin(PluginBase):
             from fastapi.responses import PlainTextResponse
             return PlainTextResponse(buf.getvalue(), media_type="text/csv",
                                      headers={"Content-Disposition": f'attachment; filename="{task_id}.csv"'})
+
+        @router.get("/tasks/{task_id}/export-seedance.json")
+        async def export_seedance(
+            task_id: str,
+            model: str = "doubao-seedance-2-0-260128",
+            ratio: str = "16:9",
+            resolution: str = "720p",
+        ):
+            """Export storyboard as a Seedance-compatible task list.
+
+            One JSON entry per shot, plus copy-pasteable
+            ``scripts/seedance.py create`` examples.  Used to bridge the
+            "plan → generate" gap until a real seedance plugin lands.
+            """
+            rec = await self._tm.get_task(task_id)
+            if rec is None or not rec.result.get("storyboard"):
+                raise HTTPException(
+                    status_code=404,
+                    detail={"problem": "no storyboard"},
+                )
+            sb_dict = rec.result["storyboard"]
+            sb = Storyboard(
+                title=sb_dict.get("title", "未命名分镜"),
+                target_duration_sec=float(
+                    sb_dict.get("target_duration_sec", 30.0)
+                ),
+                style_notes=sb_dict.get("style_notes", ""),
+                shots=[
+                    Shot(
+                        index=int(s.get("index", i + 1)),
+                        duration_sec=float(s.get("duration_sec", 0.0)),
+                        visual=str(s.get("visual", "")),
+                        camera=str(s.get("camera", "")),
+                        dialogue=str(s.get("dialogue", "")),
+                        sound=str(s.get("sound", "")),
+                        notes=str(s.get("notes", "")),
+                    )
+                    for i, s in enumerate(sb_dict.get("shots", []))
+                ],
+            )
+            payload = to_seedance_payload(
+                sb, model=model, ratio=ratio, resolution=resolution,
+            )
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                payload,
+                headers={
+                    "Content-Disposition": (
+                        f'attachment; filename="{task_id}-seedance.json"'
+                    ),
+                },
+            )
 
     async def _create(self, body: CreateBody) -> str:
         tid = await self._tm.create_task(

@@ -125,10 +125,20 @@ class Plugin(PluginBase):
 
         api.log("highlight-cutter loaded")
 
-    def on_unload(self) -> None:
-        for t in list(self._workers.values()):
-            try: t.cancel()
-            except Exception: pass
+    async def on_unload(self) -> None:
+        workers = [t for t in list(self._workers.values()) if not t.done()]
+        for t in workers:
+            t.cancel()
+        if workers:
+            results = await asyncio.gather(*workers, return_exceptions=True)
+            for res in results:
+                if isinstance(res, asyncio.CancelledError):
+                    continue
+                if isinstance(res, Exception):
+                    self._api.log(
+                        f"highlight-cutter on_unload worker drain error: {res!r}",
+                        level="warning",
+                    )
         self._workers.clear()
 
     # ── tool dispatcher ──

@@ -62,6 +62,123 @@ class Storyboard:
         }
 
 
+# ── seedance CLI export (issue: storyboard ↔ seedance hand-off) ────────
+
+
+# Seedance Ark API duration window: 2.0=4-15s, 1.x=2-12s. We clamp to the
+# intersection [2, 15] so any model accepts the payload, and we degrade
+# gently when the storyboard shot is shorter/longer than the model allows.
+_SEEDANCE_MIN_DURATION = 2
+_SEEDANCE_MAX_DURATION = 15
+_SEEDANCE_DEFAULT_MODEL = "doubao-seedance-2-0-260128"
+_SEEDANCE_DEFAULT_RATIO = "16:9"
+_SEEDANCE_DEFAULT_RESOLUTION = "720p"
+
+
+def _shot_to_seedance_prompt(shot: Shot, *, style_notes: str = "") -> str:
+    """Combine ``visual + camera + sound`` into a Seedance-friendly prompt.
+
+    The Seedance API takes a single text prompt per task; the storyboard
+    however splits the description across several fields.  We concatenate
+    them with comma separators so the user can review/edit before invoking
+    ``scripts/seedance.py create``.
+    """
+    parts: list[str] = []
+    visual = (shot.visual or "").strip()
+    if visual:
+        parts.append(visual)
+    camera = (shot.camera or "").strip()
+    if camera:
+        parts.append(f"镜头: {camera}")
+    sound = (shot.sound or "").strip()
+    if sound:
+        parts.append(f"音效: {sound}")
+    if style_notes:
+        parts.append(f"风格: {style_notes.strip()}")
+    return ", ".join(parts) or "一段画面"
+
+
+def _clamp_seedance_duration(seconds: float) -> int:
+    if seconds <= 0:
+        return _SEEDANCE_MIN_DURATION
+    rounded = int(round(seconds))
+    if rounded < _SEEDANCE_MIN_DURATION:
+        return _SEEDANCE_MIN_DURATION
+    if rounded > _SEEDANCE_MAX_DURATION:
+        return _SEEDANCE_MAX_DURATION
+    return rounded
+
+
+def to_seedance_payload(
+    sb: Storyboard,
+    *,
+    model: str = _SEEDANCE_DEFAULT_MODEL,
+    ratio: str = _SEEDANCE_DEFAULT_RATIO,
+    resolution: str = _SEEDANCE_DEFAULT_RESOLUTION,
+) -> dict[str, Any]:
+    """Render a storyboard as a JSON payload tailored for ``seedance.py``.
+
+    Output shape::
+
+        {
+          "title": "...",
+          "model": "doubao-seedance-2-0-260128",
+          "ratio": "16:9",
+          "resolution": "720p",
+          "target_duration_sec": 30,
+          "shots": [
+            {"index": 1, "prompt": "...", "duration": 5,
+             "ratio": "16:9", "resolution": "720p", "model": "..."},
+            ...
+          ],
+          "cli_examples": ["python scripts/seedance.py create --prompt ..."],
+        }
+
+    Each shot maps to a single seedance task; the helper does *not* call the
+    network — it produces a payload the user (or downstream automation) can
+    feed to ``scripts/seedance.py create`` one shot at a time.
+    """
+    shots_out: list[dict[str, Any]] = []
+    cli_examples: list[str] = []
+    for s in sb.shots:
+        prompt_text = _shot_to_seedance_prompt(s, style_notes=sb.style_notes)
+        duration = _clamp_seedance_duration(s.duration_sec)
+        shots_out.append({
+            "index": s.index,
+            "prompt": prompt_text,
+            "duration": duration,
+            "ratio": ratio,
+            "resolution": resolution,
+            "model": model,
+            "source_shot": s.to_dict(),
+        })
+        # Build a copy-pasteable CLI line; quote the prompt with double-quotes
+        # and escape any embedded quotes so the example survives a shell paste.
+        escaped = prompt_text.replace('"', r'\"')
+        cli_examples.append(
+            f'python scripts/seedance.py create --prompt "{escaped}" '
+            f'--model {model} --duration {duration} --ratio {ratio} '
+            f'--resolution {resolution} --wait'
+        )
+    return {
+        "title": sb.title,
+        "model": model,
+        "ratio": ratio,
+        "resolution": resolution,
+        "target_duration_sec": sb.target_duration_sec,
+        "shot_count": len(shots_out),
+        "shots": shots_out,
+        "cli_examples": cli_examples,
+        "notes": (
+            "Each shot is one independent seedance task; durations are "
+            f"clamped into the [{_SEEDANCE_MIN_DURATION},"
+            f"{_SEEDANCE_MAX_DURATION}] second window supported by all "
+            "current Seedance models. Run cli_examples one by one, or feed "
+            "shots[*] into your own batch script."
+        ),
+    }
+
+
 # ── prompt ─────────────────────────────────────────────────────────────
 
 
