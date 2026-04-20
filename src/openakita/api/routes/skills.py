@@ -243,12 +243,16 @@ async def update_skill_config(request: Request):
 async def install_skill(request: Request):
     """安装技能（远程模式替代 Tauri openakita_install_skill 命令）。
 
-    POST body: { "url": "github:user/repo/skill" }
+    POST body: { "url": "github:user/repo/skill", "category": "Browser" (可选) }
 
     完成后会：
       1. 把新安装 skill_id upsert 到 data/skills.json 的 external_allowlist
          （仅当已存在该字段；文件不存在时保留“未声明=全部启用”语义）
       2. 通过 ``propagate_skill_change`` 完整刷新运行时缓存与 Agent Pool。
+
+    Args:
+        category: 可选大类名。命中且通过校验时安装到 ``skills/<category>/<id>/``；
+            否则安装到 ``skills/<id>/`` 顶层（向后兼容）。
     """
     from openakita.skills.allowlist_io import upsert_skill_ids
 
@@ -256,6 +260,10 @@ async def install_skill(request: Request):
     url = body.get("url", "").strip()
     if not url:
         return {"error": "url is required"}
+    category_raw = body.get("category")
+    category = (
+        str(category_raw).strip() if isinstance(category_raw, str) and category_raw.strip() else None
+    )
 
     try:
         from openakita.config import settings
@@ -267,7 +275,7 @@ async def install_skill(request: Request):
     try:
         from openakita.setup_center.bridge import install_skill as _install_skill
 
-        await asyncio.to_thread(_install_skill, workspace_dir, url)
+        await asyncio.to_thread(_install_skill, workspace_dir, url, category=category)
     except FileNotFoundError as e:
         missing = getattr(e, "filename", None) or "外部命令"
         logger.error("Skill install missing dependency: %s", e, exc_info=True)
@@ -281,15 +289,35 @@ async def install_skill(request: Request):
         logger.error("Skill install failed: %s", e, exc_info=True)
         return {"error": str(e)}
 
-    # 识别本次新增的 skill 目录（最近修改的 SKILL.md 所在目录）
+    # 识别本次新增的 skill 目录（最近修改的 SKILL.md 所在目录）。
+    # 升级为 rglob 扫描以兼容分类目录化后的嵌套布局
+    # （skills/<category>/<skill_id>/SKILL.md，最多 4 层即可覆盖
+    #  <category>/<sub>/<skill> + SKILL.md 的最深路径）。
     install_warning = None
     new_skill_id: str | None = None
     try:
         from openakita.setup_center.bridge import _resolve_skills_dir
 
         skills_dir = _resolve_skills_dir(workspace_dir)
+        candidate_dirs: list[Path] = []
+        try:
+            for skill_md in skills_dir.rglob("SKILL.md"):
+                parent = skill_md.parent
+                # 跳过位于隐藏 / 内部目录里的 SKILL.md（如克隆遗留 .git）
+                rel_parts = parent.relative_to(skills_dir).parts
+                if any(p.startswith(".") or p.startswith("_") for p in rel_parts):
+                    continue
+                # 限制深度：分类最多嵌套 3 层 + skill 目录 = 4 段
+                if len(rel_parts) > 4:
+                    continue
+                candidate_dirs.append(parent)
+        except Exception:
+            # rglob 异常时回退到原顶层扫描，避免完全失败
+            candidate_dirs = [
+                d for d in skills_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists()
+            ]
         candidates = sorted(
-            (d for d in skills_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists()),
+            candidate_dirs,
             key=lambda d: d.stat().st_mtime,
             reverse=True,
         )

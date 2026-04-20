@@ -1467,14 +1467,43 @@ _CMD_PREFIXES = re.compile(
 )
 
 
-def install_skill(workspace_dir: str, url: str) -> None:
-    """安装技能（从 Git URL、GitHub 简写或本地目录）"""
+def install_skill(
+    workspace_dir: str, url: str, *, category: str | None = None
+) -> None:
+    """安装技能（从 Git URL、GitHub 简写或本地目录）。
+
+    Args:
+        workspace_dir: 工作区根目录
+        url: 技能来源（github:owner/repo / 完整 URL / owner/repo / 本地路径）
+        category: 可选大类。命中且通过校验时，安装到 ``skills/<category>/<skill_id>/``；
+            否则维持旧行为安装到 ``skills/<skill_id>/``（顶层平铺）。
+    """
     url = _CMD_PREFIXES.sub("", url.strip()).strip()
     if not url:
         raise ValueError("请输入有效的技能地址，如 owner/repo 或 Git URL")
 
-    skills_dir = _resolve_skills_dir(workspace_dir)
-    skills_dir.mkdir(parents=True, exist_ok=True)
+    root_skills_dir = _resolve_skills_dir(workspace_dir)
+    root_skills_dir.mkdir(parents=True, exist_ok=True)
+
+    # 校验 category 并解析最终落盘根。校验失败时退化为顶层安装并向 stderr
+    # 写一行提示，**不污染 stdout 的 JSON 协议**（CLI 与 API 都按行解析 stdout）。
+    skills_dir = root_skills_dir
+    if category:
+        try:
+            from openakita.skills.categories import is_valid_category_name
+
+            if is_valid_category_name(category):
+                skills_dir = root_skills_dir / category
+                skills_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                sys.stderr.write(
+                    f"[install_skill] 分类名 {category!r} 非法，已忽略并安装到顶层\n"
+                )
+        except Exception as ce:
+            sys.stderr.write(
+                f"[install_skill] 分类校验异常 {category!r}: {ce}，已安装到顶层\n"
+            )
+            skills_dir = root_skills_dir
 
     if url.startswith("github:"):
         # github:user/repo/path -> clone from GitHub

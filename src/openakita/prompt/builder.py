@@ -567,7 +567,6 @@ def build_system_prompt(
         system_parts.append(session_meta)
 
     # 6.6 架构概况（powered by {model}，区分主/子 Agent）
-    from ..config import settings as _arch_settings
 
     arch_section = _build_arch_section(
         model_display_name=model_display_name,
@@ -1526,12 +1525,9 @@ def _build_catalogs_section(
     """
     _profile = prompt_profile or PromptProfile.LOCAL_AGENT
     _tier = prompt_tier or PromptTier.LARGE
-    progressive = (
-        _profile == PromptProfile.CONSUMER_CHAT
-        or _tier == PromptTier.SMALL
-        or mode != "agent"
-        or message_count < 4
-    )
+    # NOTE: 历史上这里有 progressive 分支（前 4 轮仅注入索引），
+    # 现在 skills 段统一使用 get_grouped_compact_catalog 零截断范式注入；
+    # 仍保留 _profile/_tier 供 exposure_filter 使用，以避免 ConsumerChat 看到全部
     parts = []
 
     if tool_catalog:
@@ -1555,8 +1551,6 @@ def _build_catalogs_section(
 
     if skill_catalog:
         try:
-            skills_budget = budget_tokens * 50 // 100
-
             # Profile-aware exposure filter
             _exp_filter: str | None = None
             if _profile == PromptProfile.CONSUMER_CHAT:
@@ -1564,7 +1558,13 @@ def _build_catalogs_section(
             elif _profile == PromptProfile.IM_ASSISTANT:
                 _exp_filter = "core+recommended"
 
-            skills_index = skill_catalog.get_index_catalog(exposure_filter=_exp_filter)
+            # 参考 hermes-agent 的"零截断"范式：所有 profile 统一注入
+            # 按分类分组的紧凑清单（每行 ``- name: when_to_use``），
+            # 不再按 progressive 切换 index/full，也不再 apply_budget 截断技能段，
+            # 避免新装技能在 token 预算下被剔除导致 LLM 看不见
+            skills_grouped = skill_catalog.get_grouped_compact_catalog(
+                exposure_filter=_exp_filter
+            )
 
             skills_rule = (
                 "### 技能使用规则\n"
@@ -1577,21 +1577,9 @@ def _build_catalogs_section(
                 "- **重要**：当前日期时间已写在「运行环境」里，禁止为了查日期而调用技能脚本\n"
             )
 
-            if progressive:
-                parts.append(
-                    "\n\n".join([skills_index, skills_rule]).strip()
-                    + "\n\n> 详细技能说明将在需要时提供。可使用 `list_skills` 查看完整列表。"
-                )
-            else:
-                index_tokens = estimate_tokens(skills_index)
-                remaining = max(0, skills_budget - index_tokens)
-                skills_detail = skill_catalog.generate_catalog(exposure_filter=_exp_filter)
-                skills_detail_result = apply_budget(
-                    skills_detail, remaining, "skills", truncate_strategy="end"
-                )
-                parts.append(
-                    "\n\n".join([skills_index, skills_rule, skills_detail_result.content]).strip()
-                )
+            parts.append(
+                "\n\n".join([skills_grouped, skills_rule]).strip()
+            )
         except Exception as e:
             logger.error(
                 "[PromptBuilder] skill catalog build failed, skipping: %s",
@@ -2187,11 +2175,14 @@ def get_prompt_debug_info(
         info["catalogs"]["tools"] = estimate_tokens(tools_text)
 
     if skill_catalog:
-        skills_index = skill_catalog.get_index_catalog()
-        skills_detail = skill_catalog.get_catalog()
+        # 与 _build_catalogs_section 对齐：使用 grouped 紧凑产物作为口径
+        try:
+            skills_grouped = skill_catalog.get_grouped_compact_catalog()
+        except Exception:
+            skills_grouped = skill_catalog.get_catalog()
         _skills_rule_overhead = 200
         info["catalogs"]["skills"] = (
-            estimate_tokens(skills_index) + estimate_tokens(skills_detail) + _skills_rule_overhead
+            estimate_tokens(skills_grouped) + _skills_rule_overhead
         )
 
     if mcp_catalog:

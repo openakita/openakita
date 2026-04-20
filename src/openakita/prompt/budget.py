@@ -232,6 +232,20 @@ def apply_budget(
             truncated=False,
         )
 
+    if truncate_strategy == "none":
+        # 显式不截断（用于 skills：与 hermes-agent 的零截断范式对齐，
+        # 避免新装技能因排序靠后被剔除导致 LLM 看不见）
+        logger.info(
+            f"[Budget] {section_name}: {original_tokens} tokens over budget "
+            f"{budget_tokens} but strategy=none, allowing full content"
+        )
+        return BudgetResult(
+            content=content,
+            original_tokens=original_tokens,
+            final_tokens=original_tokens,
+            truncated=False,
+        )
+
     target_chars = int(budget_tokens * _TOKEN_TO_CHAR_RATIO)
 
     if truncate_strategy == "start":
@@ -340,9 +354,12 @@ def apply_budget_to_sections(
     }
 
     # 截断策略
+    # NOTE: skills 段刻意改为 "none" — 与 hermes-agent 的零截断范式对齐，
+    # 由 SkillCatalog.get_grouped_compact_catalog 通过紧凑分组本身控制规模，
+    # 避免新装技能因排序靠后或预算紧张被截断从而对 LLM 不可见。
     strategy_map = {
         "memory": "start",  # 记忆保留最新
-        "skills": "end",  # 技能截断末尾
+        "skills": "none",  # 技能不截断（紧凑分组本身已小）
         "mcp": "end",  # MCP 截断末尾
         "tools": "end",  # 工具截断末尾
     }

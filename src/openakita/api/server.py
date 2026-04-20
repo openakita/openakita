@@ -48,6 +48,7 @@ from .routes import (
     qqbot_onboard,
     scheduler,
     sessions,
+    skill_categories,
     skills,
     token_stats,
     upload,
@@ -61,6 +62,11 @@ try:
 except ImportError:
     plugins_routes = None
     logging.getLogger(__name__).debug("Plugin routes not available")
+try:
+    from .routes import plugin_deps as plugin_deps_routes
+except ImportError:
+    plugin_deps_routes = None
+    logging.getLogger(__name__).debug("Plugin-deps routes not available")
 from .routes import (
     auth as auth_routes,
 )
@@ -361,6 +367,7 @@ def create_app(
     app.include_router(scheduler.router, tags=["定时任务"])
     app.include_router(sessions.router, tags=["会话"])
     app.include_router(skills.router, tags=["技能"])
+    app.include_router(skill_categories.router, tags=["技能分类"])
     app.include_router(token_stats.router, tags=["统计"])
     app.include_router(upload.router, tags=["文件"])
     app.include_router(workspace_io.router, tags=["工作区"])
@@ -371,6 +378,8 @@ def create_app(
     app.include_router(orgs.inbox_router, tags=["组织消息中心"])
     if plugins_routes is not None:
         app.include_router(plugins_routes.router)
+    if plugin_deps_routes is not None:
+        app.include_router(plugin_deps_routes.router, tags=["插件依赖"])
 
     @app.get("/", tags=["系统"])
     async def root():
