@@ -901,6 +901,16 @@ button.btnApplyRestart:hover {
   font-weight: 700;
 }
 
+/* Inline images (e.g. platform favicons from skills like daily-hot-report)
+   render at their native size (typically 16~32px) and align with surrounding
+   text. Larger images (screenshots, diagrams) are capped at container width
+   but not forced smaller. */
+.chatMdContent img {
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+}
+
 /* User bubble overrides — white text on brand background */
 .chatMdContentUser {
   color: #fff;
