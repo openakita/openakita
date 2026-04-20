@@ -198,6 +198,29 @@ def _has_accepted_child_signal(react_trace: list[dict]) -> bool:
     return False
 
 
+def is_soft_verify_incomplete(
+    exit_reason: str,
+    react_trace: list[dict] | None,
+) -> bool:
+    """判断该次 task 退出是否属于「软 verify_incomplete」：
+    exit_reason 为 verify_incomplete 但 trace 中已存在成功的
+    `org_accept_deliverable`，说明协调者节点其实已通过下属交付完成本任务，
+    verify 提示更像「严格规则未匹配」，应当走完成路径而非硬失败路径。
+
+    与 `_pick_root_cause` 内部对 verify_incomplete 的降级判定保持一致，
+    供 OrgRuntime._run_node_task 识别后切到 task_completed 分支并触发
+    _post_task_hook，避免上级因子节点未发出"完成"信号而陷入长时间 idle。
+    """
+    if exit_reason != "verify_incomplete":
+        return False
+    if not react_trace:
+        return False
+    try:
+        return _has_accepted_child_signal(react_trace)
+    except Exception:
+        return False
+
+
 def _classify_delegate_subtype(evidence: list[dict]) -> str | None:
     """死循环场景里，再细分 org_delegate_task 的失败子类型。"""
     delegate_fails = [e for e in evidence if e.get("tool") == "org_delegate_task"]

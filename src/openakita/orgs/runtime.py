@@ -17,7 +17,11 @@ from typing import TYPE_CHECKING, Any
 
 from .blackboard import OrgBlackboard
 from .event_store import OrgEventStore
-from .failure_diagnoser import format_human_summary, summarize as _diagnose_failure
+from .failure_diagnoser import (
+    format_human_summary,
+    is_soft_verify_incomplete as _is_soft_verify_incomplete,
+    summarize as _diagnose_failure,
+)
 from .identity import OrgIdentity
 from .messenger import OrgMessenger
 from .models import (
@@ -121,6 +125,10 @@ class UserCommandTracker:
         "started_at",
         "warned_stuck",
         "auto_stopped",
+        # 区分 auto_stopped 的来源：True 表示由用户主动调用
+        # `cancel_user_command` 强制终止；False 表示由 _command_watchdog
+        # 卡死兜底触发。仅影响 send_command 终态文案，不改变流程。
+        "user_cancelled",
         "state",
         "summary_pushed_at",
         # BUG-3：保存当前命令的用户原始指令内容，供子节点 system prompt
@@ -153,6 +161,7 @@ class UserCommandTracker:
         self.started_at: float = now
         self.warned_stuck: bool = False
         self.auto_stopped: bool = False
+        self.user_cancelled: bool = False
         # See class docstring for state machine details.
         self.state: str = "running"
         # monotonic time when summary inbox push happened (debounce).
@@ -981,10 +990,17 @@ class OrgRuntime:
 
         if tracker.auto_stopped:
             final_result["stopped_by_watchdog"] = True
-            final_result.setdefault(
-                "warning",
-                "组织长时间无进度，已自动暂停，此为已有阶段性结果。",
-            )
+            if tracker.user_cancelled:
+                final_result["cancelled_by_user"] = True
+                # 覆盖 warning（即使被前置流程 setdefault 过也要换成"用户主动"文案）
+                final_result["warning"] = (
+                    "已按用户请求强制终止当前任务，可立即发送新指令。"
+                )
+            else:
+                final_result.setdefault(
+                    "warning",
+                    "组织长时间无进度，已自动暂停，此为已有阶段性结果。",
+                )
 
         if chain_id:
             final_result["chain_id"] = chain_id
@@ -1395,19 +1411,36 @@ class OrgRuntime:
             # loop_terminated -> 被 Supervisor 强制终止；
             # max_iterations -> 超过最大迭代；
             # verify_incomplete -> TaskVerify 判定未完成但重试耗尽
+            #
+            # 软 verify_incomplete（is_soft_verify=True）：exit_reason=verify_incomplete
+            # 但 trace 中已存在成功的 org_accept_deliverable，说明协调者节点
+            # 实际已通过下属交付完成本任务；这种情况直接走 is_normal 路径，
+            # 触发 _post_task_hook 唤醒父级 drain，避免上级因子节点未发出
+            # "完成"信号而陷入 5+ 分钟 idle 等待（CmdWatchdog warn）。
             exit_reason = "normal"
             re_engine = None
+            react_trace: list[dict] | None = None
             try:
                 re_engine = getattr(agent, "reasoning_engine", None)
                 if re_engine is not None:
                     exit_reason = getattr(re_engine, "_last_exit_reason", "normal") or "normal"
+                    react_trace = getattr(re_engine, "_last_react_trace", None)
             except Exception:
                 exit_reason = "normal"
                 re_engine = None
+                react_trace = None
 
-            is_normal = exit_reason in ("normal", "ask_user")
+            try:
+                is_soft_verify = _is_soft_verify_incomplete(exit_reason, react_trace)
+            except Exception:
+                is_soft_verify = False
+
+            is_normal = exit_reason in ("normal", "ask_user") or is_soft_verify
             is_terminated = exit_reason == "loop_terminated"
-            is_failed = exit_reason in ("max_iterations", "verify_incomplete")
+            is_failed = (
+                exit_reason in ("max_iterations", "verify_incomplete")
+                and not is_soft_verify
+            )
 
             status_reason = "task_completed" if is_normal else (
                 "task_terminated" if is_terminated else "task_failed"
@@ -1423,12 +1456,15 @@ class OrgRuntime:
             if org.id not in self._active_orgs:
                 return {"node_id": node.id, "result": result_text}
 
-            # 非正常退出时调用 failure_diagnoser 生成"为什么失败 + 建议"人话 payload；
-            # 正常退出路径跳过以避免在热路径上做无用功。
+            # 非正常退出 / 软 verify_incomplete 都生成 failure_diagnoser 诊断卡片：
+            # - 非正常退出：用于 task_failed/task_terminated 卡片展示根因+建议
+            # - 软 verify_incomplete：复用诊断模板生成"提示性"卡片，附在 task_complete
+            #   气泡末尾，让用户即使收起时间线也能看到「verify 提示但已通过下属交付完成」
+            # 正常退出（normal/ask_user）则跳过以避免热路径无用功。
             diagnosis: dict | None = None
-            if not is_normal:
+            need_diagnosis = (not is_normal) or is_soft_verify
+            if need_diagnosis:
                 try:
-                    react_trace = getattr(re_engine, "_last_react_trace", None) if re_engine else None
                     diagnosis = _diagnose_failure(react_trace, exit_reason)
                 except Exception as diag_err:
                     logger.debug(f"[OrgRuntime] failure diagnosis failed on {node.id}: {diag_err}")
@@ -1460,6 +1496,11 @@ class OrgRuntime:
             }
             if diagnosis:
                 event_payload["diagnosis"] = diagnosis
+            if is_soft_verify:
+                # 软完成路径复用 task_complete 事件，但带上 warning=True 让需要
+                # 区分"完美完成"vs"提示性完成"的消费者（评测/统计）能识别。
+                # 老前端忽略此字段，行为不变。
+                event_payload["warning"] = True
             self.get_event_store(org.id).emit(event_name, node.id, event_payload)
 
             await self._broadcast_ws("org:node_status", {
@@ -1474,6 +1515,8 @@ class OrgRuntime:
             }
             if diagnosis:
                 ws_payload["diagnosis"] = diagnosis
+            if is_soft_verify:
+                ws_payload["warning"] = True
             # 失败/终止类卡片做窗口去重，避免 verify_incomplete 重试或多路径
             # 触发同一节点同一根因被反复 emit 多张相同诊断卡片到聊天气泡。
             # 正常完成（org:task_complete）保持原行为，不做任何抑制。
@@ -1493,6 +1536,15 @@ class OrgRuntime:
                 logger.warning(
                     f"[OrgRuntime] Node {node.id} ended with exit_reason={exit_reason}, "
                     f"root_cause={root_cause_tag}, emitting {event_name} (NOT task_completed)"
+                )
+            elif is_soft_verify:
+                root_cause_tag = (diagnosis or {}).get(
+                    "root_cause", "verify_incomplete_with_children",
+                )
+                logger.info(
+                    f"[OrgRuntime] Node {node.id} soft-completed: "
+                    f"exit_reason={exit_reason}, root_cause={root_cause_tag}; "
+                    f"treated as task_completed so post_task_hook can drain parent"
                 )
 
             is_root = (node.level == 0 or not org.get_parent(node.id))
@@ -1520,7 +1572,8 @@ class OrgRuntime:
                         "origin": origin,
                     }
 
-            # 非正常结束时不触发 post-task hook（避免把"部分/失败结果"再次下发下游）
+            # 非正常结束时不触发 post-task hook（避免把"部分/失败结果"再次下发下游）；
+            # 软 verify_incomplete 也走 hook，让父级能 drain 子节点交付队列。
             if is_normal:
                 asyncio.ensure_future(self._post_task_hook(org, node))
 
@@ -1531,6 +1584,8 @@ class OrgRuntime:
             }
             if diagnosis:
                 return_payload["diagnosis"] = diagnosis
+            if is_soft_verify:
+                return_payload["soft_complete"] = True
             return return_payload
 
         except Exception as e:
@@ -2945,6 +3000,71 @@ class OrgRuntime:
                 "[OrgRuntime] soft_stop wake waiters failed", exc_info=True,
             )
         self.get_event_store(org_id).emit("soft_stop", "user", {})
+
+    async def cancel_user_command(
+        self,
+        org_id: str,
+        command_id: str | None = None,
+    ) -> dict:
+        """用户主动强制终止当前在跑的用户命令。
+
+        语义：
+          - 把该 org 下所有未完成的 ``UserCommandTracker`` 标记为
+            ``user_cancelled=True`` + ``auto_stopped=True``，并 ``completed.set()``，
+            让 ``send_command`` 立刻 unblock 走"stopped_by_watchdog +
+            cancelled_by_user"分支返回阶段性结果。
+          - 复用 :meth:`_soft_stop_org` 取消所有 BUSY 节点 / 清 mailbox /
+            唤醒 inbox 等待者，但**不会**改变组织 OrgStatus —— 用户可立即
+            再发新指令。
+
+        Args:
+            org_id: 目标组织。
+            command_id: 仅用于审计日志；当前实现按 org 粒度终止该 org 下所有
+                未完成 trackers（实际同一 org 同一 root 至多一个 in-flight
+                tracker，故等价于按 command 粒度终止）。
+
+        Returns:
+            ``{"ok": True, "cancelled_roots": [...], "command_id": ...}``
+        """
+        cancelled_roots: list[str] = []
+        for (oid, root_id), tracker in list(self._active_user_cmd.items()):
+            if oid != org_id:
+                continue
+            if tracker.completed.is_set():
+                continue
+            tracker.user_cancelled = True
+            tracker.auto_stopped = True
+            tracker.completed.set()
+            cancelled_roots.append(root_id)
+
+        try:
+            await self._soft_stop_org(org_id)
+        except Exception as e:
+            logger.warning(
+                "[OrgRuntime] cancel_user_command soft_stop failed: %s", e,
+            )
+
+        try:
+            self.get_event_store(org_id).emit(
+                "user_command_cancelled",
+                "user",
+                {
+                    "command_id": command_id,
+                    "cancelled_roots": cancelled_roots,
+                },
+            )
+        except Exception:
+            pass
+
+        logger.info(
+            "[OrgRuntime] cancel_user_command: org=%s cmd=%s roots=%s",
+            org_id, command_id, cancelled_roots,
+        )
+        return {
+            "ok": True,
+            "command_id": command_id,
+            "cancelled_roots": cancelled_roots,
+        }
 
     def _has_active_delegations(self, org_id: str, root_node_id: str) -> bool:
         """Return True if any downstream work exists for this command.
