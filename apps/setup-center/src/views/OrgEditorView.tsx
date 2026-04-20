@@ -694,7 +694,7 @@ export function OrgEditorView({
 
   // MCP/Skill lists for selection
   const [availableMcpServers, setAvailableMcpServers] = useState<{ name: string; status: string }[]>([]);
-  const [availableSkills, setAvailableSkills] = useState<{ name: string; description?: string; name_i18n?: string; description_i18n?: string }[]>([]);
+  const [availableSkills, setAvailableSkills] = useState<{ name: string; description?: string; name_i18n?: string; description_i18n?: string; category?: string | null }[]>([]);
 
   // Blackboard panel ref (data managed by OrgBlackboardPanel)
   const bbPanelRef = useRef<OrgBlackboardPanelHandle>(null);
@@ -827,6 +827,14 @@ export function OrgEditorView({
       setAvailableSkills(data.skills || []);
     } catch { /* skills endpoint may not be available */ }
   }, [apiBaseUrl]);
+
+  // 实时刷新：监听 App.tsx 桥接的 'openakita:skills-changed' 事件，
+  // 与 SkillManager.tsx 共享同一事件源，避免后端技能变更后该面板看到旧列表
+  useEffect(() => {
+    const onChange = () => { fetchAvailableSkills().catch(() => {}); };
+    window.addEventListener("openakita:skills-changed", onChange);
+    return () => window.removeEventListener("openakita:skills-changed", onChange);
+  }, [fetchAvailableSkills]);
 
 
   const fetchAgentProfiles = useCallback(async () => {
@@ -3868,9 +3876,9 @@ export function OrgEditorView({
                     </CardContent>
                   )}
                   {availableSkills.length > 0 ? (
-                    <CardContent className="max-h-[150px] space-y-2 overflow-y-auto px-3 py-3">
-                      {availableSkills
-                        .filter((skill) => {
+                    <CardContent className="max-h-[260px] space-y-3 overflow-y-auto px-3 py-3">
+                      {(() => {
+                        const filtered = availableSkills.filter((skill) => {
                           if (!skillSearch) return true;
                           const q = skillSearch.toLowerCase();
                           const ni = skill.name_i18n;
@@ -3880,50 +3888,102 @@ export function OrgEditorView({
                           return nameStr.toLowerCase().includes(q)
                             || skill.name.toLowerCase().includes(q)
                             || descStr.toLowerCase().includes(q)
-                            || (skill.description || "").toLowerCase().includes(q);
-                        })
-                        .map((skill) => {
-                        const checked = selectedNode.skills.includes(skill.name);
-                        const rawName = skill.name_i18n;
-                        const displayName = (typeof rawName === "object" && rawName !== null)
-                          ? (rawName as any).zh || (rawName as any).en || skill.name
-                          : rawName || skill.name;
-                        const rawDesc = skill.description_i18n;
-                        const displayDesc = (typeof rawDesc === "object" && rawDesc !== null)
-                          ? (rawDesc as any).zh || (rawDesc as any).en || skill.description || ""
-                          : rawDesc || skill.description || "";
-                        return (
-                          <label
-                            key={skill.name}
-                            className="flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-xs transition-colors"
-                            style={{
-                              borderColor: checked ? "color-mix(in srgb, var(--primary) 45%, var(--line))" : "var(--line)",
-                              background: checked ? "color-mix(in srgb, var(--primary) 10%, transparent)" : "var(--card-bg)",
-                            }}
-                          >
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={() => {
-                                const next = checked
-                                  ? selectedNode.skills.filter((s: string) => s !== skill.name)
-                                  : [...selectedNode.skills, skill.name];
-                                updateNodeData("skills", next);
+                            || (skill.description || "").toLowerCase().includes(q)
+                            || ((skill.category || "").toLowerCase().includes(q));
+                        });
+                        // 按 category 分组（参考 hermes 范式：分类字典序，组内按 name 字典序）
+                        const grouped: Record<string, typeof filtered> = {};
+                        for (const s of filtered) {
+                          const k = s.category || "Uncategorized";
+                          (grouped[k] ||= [] as typeof filtered).push(s);
+                        }
+                        const sortedNames = Object.keys(grouped).sort((a, b) => a.localeCompare(b));
+                        for (const k of sortedNames) grouped[k].sort((a, b) => a.name.localeCompare(b.name));
+
+                        const renderSkillRow = (skill: typeof filtered[number]) => {
+                          const checked = selectedNode.skills.includes(skill.name);
+                          const rawName = skill.name_i18n;
+                          const displayName = (typeof rawName === "object" && rawName !== null)
+                            ? (rawName as any).zh || (rawName as any).en || skill.name
+                            : rawName || skill.name;
+                          const rawDesc = skill.description_i18n;
+                          const displayDesc = (typeof rawDesc === "object" && rawDesc !== null)
+                            ? (rawDesc as any).zh || (rawDesc as any).en || skill.description || ""
+                            : rawDesc || skill.description || "";
+                          return (
+                            <label
+                              key={skill.name}
+                              className="flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-xs transition-colors"
+                              style={{
+                                borderColor: checked ? "color-mix(in srgb, var(--primary) 45%, var(--line))" : "var(--line)",
+                                background: checked ? "color-mix(in srgb, var(--primary) 10%, transparent)" : "var(--card-bg)",
                               }}
-                              className="mt-0.5"
-                            />
-                            <div className="min-w-0 flex-1 overflow-hidden">
-                              <div className="overflow-hidden text-ellipsis whitespace-nowrap">
-                                {displayName}
-                              </div>
-                              {displayDesc && (
-                                <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-muted-foreground">
-                                  {displayDesc}
+                            >
+                              <Checkbox
+                                checked={checked}
+                                onCheckedChange={() => {
+                                  const next = checked
+                                    ? selectedNode.skills.filter((s: string) => s !== skill.name)
+                                    : [...selectedNode.skills, skill.name];
+                                  updateNodeData("skills", next);
+                                }}
+                                className="mt-0.5"
+                              />
+                              <div className="min-w-0 flex-1 overflow-hidden">
+                                <div className="overflow-hidden text-ellipsis whitespace-nowrap">
+                                  {displayName}
                                 </div>
-                              )}
+                                {displayDesc && (
+                                  <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-muted-foreground">
+                                    {displayDesc}
+                                  </div>
+                                )}
+                              </div>
+                            </label>
+                          );
+                        };
+
+                        return sortedNames.map((catName) => {
+                          const items = grouped[catName];
+                          const groupNames = items.map(s => s.name);
+                          const allChecked = groupNames.every(n => selectedNode.skills.includes(n));
+                          return (
+                            <div key={catName} className="flex flex-col gap-1.5">
+                              <div className="flex items-center gap-2">
+                                <div className="text-[11px] font-semibold text-foreground/80">
+                                  {catName}
+                                </div>
+                                <span className="text-[10px] text-muted-foreground">{items.length}</span>
+                                <div className="flex-1" />
+                                <button
+                                  type="button"
+                                  className="text-[10px] text-muted-foreground hover:text-foreground"
+                                  onClick={() => {
+                                    if (allChecked) {
+                                      // 反选：仅作用于 agent profile 的 enabled_skills，
+                                      // **不**下发到全局 allowlist（这是 OrgEditor 的语义）
+                                      const next = selectedNode.skills.filter(
+                                        (s: string) => !groupNames.includes(s)
+                                      );
+                                      updateNodeData("skills", next);
+                                    } else {
+                                      const next = Array.from(
+                                        new Set([...selectedNode.skills, ...groupNames])
+                                      );
+                                      updateNodeData("skills", next);
+                                    }
+                                  }}
+                                >
+                                  {allChecked ? "全不选" : "全选"}
+                                </button>
+                              </div>
+                              <div className="flex flex-col gap-1.5">
+                                {items.map(renderSkillRow)}
+                              </div>
                             </div>
-                          </label>
-                        );
-                      })}
+                          );
+                        });
+                      })()}
                     </CardContent>
                   ) : (
                     <CardContent className="px-4 py-3 text-[11px] text-muted-foreground">

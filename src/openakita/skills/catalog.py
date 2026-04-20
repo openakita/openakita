@@ -15,13 +15,18 @@
 - Level C (index): names only
 """
 
+import json
 import logging
+import os
+import tempfile
 import threading
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .registry import SkillRegistry
 
 if TYPE_CHECKING:
+    from .categories import CategoryRegistry
     from .usage import SkillUsageTracker
 
 logger = logging.getLogger(__name__)
@@ -65,16 +70,27 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
         self,
         registry: SkillRegistry,
         usage_tracker: "SkillUsageTracker | None" = None,
+        category_registry: "CategoryRegistry | None" = None,
     ):
         self.registry = registry
+        # 注：usage_tracker 仍保留供 list_skills 工具与 UI 排序使用，
+        # 但 **不再** 影响系统提示中技能清单的展示顺序，
+        # 否则新技能（score=0）总被排到末尾，配合截断会被剔除（参考 hermes 范式）
         self._usage_tracker = usage_tracker
+        self._category_registry = category_registry
         self._lock = threading.Lock()
         self._cached_catalog: str | None = None
         self._cached_index: str | None = None
         self._cached_compact: str | None = None
+        self._cached_grouped: dict[str | None, str] = {}
+        self._snapshot_loaded: bool = False  # 单次进程启动只尝试加载一次
 
     def _list_model_visible(self, exposure_filter: str | None = None) -> list:
-        """Return enabled skills that are also visible to the model, sorted by usage.
+        """Return enabled skills that are also visible to the model.
+
+        排序：先按 ``category`` 字典序、再按 ``name`` 字典序（确定性），
+        刻意 **不** 按 usage_tracker 倒排，避免新技能因 score=0 永远排末尾
+        从而在 prompt 截断时被剔除（参考 hermes-agent 范式）。
 
         Args:
             exposure_filter: If provided, only return skills with exposure_level
@@ -96,9 +112,12 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
                 continue
             skills.append(s)
 
-        if self._usage_tracker:
-            scores = self._usage_tracker.get_all_scores()
-            skills.sort(key=lambda s: scores.get(s.skill_id, 0), reverse=True)
+        skills.sort(
+            key=lambda s: (
+                (s.category or "Uncategorized").lower(),
+                (s.name or "").lower(),
+            )
+        )
         return skills
 
     def generate_catalog(self, *, exposure_filter: str | None = None) -> str:
@@ -195,6 +214,115 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
                 names = [s.name for s in skills]
                 result = f"Available skills: {', '.join(names)}"
             self._cached_compact = result
+            return result
+
+    def get_grouped_compact_catalog(
+        self, *, exposure_filter: str | None = None
+    ) -> str:
+        """生成 **按分类分组的紧凑技能清单**，用于系统提示注入。
+
+        参考 hermes-agent 的"零截断"范式：
+        - 按分类字典序、再按 name 字典序输出（确定性，避免抖动）
+        - 每个 skill 一行：``- **name**: when_to_use 或 description 首句``
+        - 分类标题展示 ``DESCRIPTION.md`` 的描述（如果有）
+        - 不做 token 预算截断；调用方 ``PromptBuilder._build_catalogs_section``
+          直接整块注入，保证新装技能也能被 LLM 看到
+
+        缓存：按 ``exposure_filter`` 维度缓存；``invalidate_cache`` 同时清空。
+        """
+        with self._lock:
+            cache_key = exposure_filter
+            cached = self._cached_grouped.get(cache_key)
+            if cached is not None:
+                return cached
+
+            # L2：进程首次未命中时尝试从磁盘 snapshot prime L1
+            if not self._snapshot_loaded:
+                self._snapshot_loaded = True
+                try:
+                    primed = self._load_disk_snapshot_if_valid()
+                    if primed:
+                        self._cached_grouped.update(primed)
+                        if cache_key in primed:
+                            return primed[cache_key]
+                except Exception as e:
+                    logger.debug("Skill catalog snapshot prime failed: %s", e)
+
+            skills = self._list_model_visible(exposure_filter=exposure_filter)
+            hidden_count = self.registry.count_catalog_hidden()
+
+            if not skills:
+                if hidden_count > 0:
+                    result = (
+                        "## Available Skills\n\n"
+                        "No skills pre-loaded for this profile. "
+                        f"{hidden_count} more skill(s) available — "
+                        "use `list_skills` to discover, then `get_skill_info` to load."
+                    )
+                else:
+                    result = (
+                        "## Available Skills\n\n"
+                        "No skills installed. Use the skill creation workflow to add new skills."
+                    )
+                self._cached_grouped[cache_key] = result
+                return result
+
+            grouped: dict[str, list] = {}
+            for s in skills:
+                cat = s.category or "Uncategorized"
+                grouped.setdefault(cat, []).append(s)
+
+            cat_descriptions: dict[str, str | None] = {}
+            if self._category_registry is not None:
+                try:
+                    for entry in self._category_registry.list_all():
+                        cat_descriptions[entry.name] = entry.description
+                except Exception:
+                    pass
+
+            lines: list[str] = [
+                "## Available Skills",
+                "",
+                "Use `get_skill_info(skill_name)` to load full instructions when needed.",
+                "Skills are grouped by category. All installed skills are listed below.",
+                "",
+            ]
+
+            for cat in sorted(grouped.keys(), key=lambda x: x.lower()):
+                desc = cat_descriptions.get(cat)
+                if desc:
+                    lines.append(f"### {cat} — {desc}")
+                else:
+                    lines.append(f"### {cat}")
+                for s in grouped[cat]:
+                    when = (getattr(s, "when_to_use", "") or "").strip()
+                    if not when:
+                        when = (s.description or "").split("\n")[0].strip()
+                    when = when[:160]
+                    lines.append(self._safe_format(
+                        "- **{name}**: {when}",
+                        name=s.name,
+                        when=when,
+                    ))
+                lines.append("")
+
+            if hidden_count > 0:
+                lines.append(
+                    f"_({hidden_count} more skill(s) hidden by profile — "
+                    "use `list_skills` to enumerate)_"
+                )
+
+            result = "\n".join(lines).rstrip() + "\n"
+            self._cached_grouped[cache_key] = result
+            logger.debug(
+                "Generated grouped catalog: %d skills across %d categories",
+                len(skills),
+                len(grouped),
+            )
+            try:
+                self._write_disk_snapshot()
+            except Exception as e:
+                logger.debug("Skill catalog snapshot write failed: %s", e)
             return result
 
     def get_index_catalog(self, *, exposure_filter: str | None = None) -> str:
@@ -380,11 +508,126 @@ Do not infer filesystem paths from the workspace map; `get_skill_info` is author
             self._cached_catalog = None
             self._cached_index = None
             self._cached_compact = None
+            self._cached_grouped.clear()
+        self._invalidate_disk_snapshot()
 
     @property
     def skill_count(self) -> int:
         """技能数量"""
         return self.registry.count
+
+    # ── 二层缓存：磁盘 snapshot（参考 hermes-agent） ──────────────────
+
+    @staticmethod
+    def _snapshot_path() -> Path | None:
+        """返回 ``data/.skills_prompt_snapshot.json`` 的绝对路径。"""
+        try:
+            from ..config import settings
+
+            return Path(settings.project_root) / "data" / ".skills_prompt_snapshot.json"
+        except Exception:
+            try:
+                return Path.cwd() / "data" / ".skills_prompt_snapshot.json"
+            except Exception:
+                return None
+
+    def _build_manifest(self) -> dict[str, list[int]]:
+        """收集所有 SKILL.md / DESCRIPTION.md 的 (mtime_ns, size) 作为 manifest。"""
+        manifest: dict[str, list[int]] = {}
+        seen_dirs: set[str] = set()
+        for entry in self.registry.list_all():
+            sp = getattr(entry, "skill_path", None)
+            if not sp:
+                continue
+            try:
+                p = Path(sp)
+                if p.exists():
+                    st = p.stat()
+                    manifest[str(p)] = [st.st_mtime_ns, st.st_size]
+                # 同级或上溯查找 DESCRIPTION.md（最多向上 4 层）
+                cur = p.parent
+                for _ in range(4):
+                    key = str(cur)
+                    if key in seen_dirs:
+                        break
+                    seen_dirs.add(key)
+                    desc = cur / "DESCRIPTION.md"
+                    if desc.exists():
+                        st = desc.stat()
+                        manifest[str(desc)] = [st.st_mtime_ns, st.st_size]
+                    if cur.parent == cur:
+                        break
+                    cur = cur.parent
+            except OSError:
+                continue
+        return manifest
+
+    def _load_disk_snapshot_if_valid(self) -> dict[str | None, str] | None:
+        """如果 manifest 与 snapshot 一致，返回 ``{exposure_filter: catalog}``。"""
+        path = self._snapshot_path()
+        if path is None or not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        snap_manifest = data.get("manifest")
+        snap_catalogs = data.get("catalogs")
+        if not isinstance(snap_manifest, dict) or not isinstance(snap_catalogs, dict):
+            return None
+        current = self._build_manifest()
+        if current != snap_manifest:
+            return None
+        # snap_catalogs 的 key 是字符串；空串恢复为 None（即默认 exposure）
+        result: dict[str | None, str] = {}
+        for k, v in snap_catalogs.items():
+            if not isinstance(v, str):
+                continue
+            real_key: str | None = k if k else None
+            result[real_key] = v
+        return result
+
+    def _write_disk_snapshot(self) -> None:
+        """原子地把 L1 缓存写入磁盘 snapshot。"""
+        path = self._snapshot_path()
+        if path is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
+        manifest = self._build_manifest()
+        # 把 None key 序列化为 ""，反序列化时还原
+        catalogs = {(k if k is not None else ""): v for k, v in self._cached_grouped.items()}
+        payload = {"version": 1, "manifest": manifest, "catalogs": catalogs}
+
+        try:
+            tmp_fd, tmp_str = tempfile.mkstemp(
+                prefix=".skills_snap.", suffix=".json.tmp", dir=str(path.parent)
+            )
+            tmp_path = Path(tmp_str)
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, ensure_ascii=False)
+            os.replace(tmp_path, path)
+        except OSError as e:
+            logger.debug("Snapshot write failed: %s", e)
+            try:
+                if "tmp_path" in locals() and tmp_path.exists():
+                    tmp_path.unlink()
+            except OSError:
+                pass
+
+    def _invalidate_disk_snapshot(self) -> None:
+        """清空磁盘 snapshot 与 ``_snapshot_loaded`` 标记。"""
+        self._snapshot_loaded = False
+        path = self._snapshot_path()
+        if path is None:
+            return
+        try:
+            if path.exists():
+                path.unlink()
+        except OSError as e:
+            logger.debug("Snapshot delete failed: %s", e)
 
 
 def generate_skill_catalog(registry: SkillRegistry) -> str:

@@ -11,6 +11,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .categories import (
+    RESERVED_NAMESPACE_DIRS,
+    CategoryRegistry,
+    read_description_md,
+)
 from .parser import ParsedSkill, SkillMetadata, SkillParser
 from .registry import SkillRegistry
 
@@ -184,9 +189,13 @@ class SkillLoader:
         self,
         registry: SkillRegistry | None = None,
         parser: SkillParser | None = None,
+        category_registry: "CategoryRegistry | None" = None,
     ):
         self.registry = registry if registry is not None else SkillRegistry()
         self.parser = parser or SkillParser()
+        self.category_registry = (
+            category_registry if category_registry is not None else CategoryRegistry()
+        )
         self._loaded_skills: dict[str, ParsedSkill] = {}
 
     def discover_skill_directories(self, base_path: Path | None = None) -> list[Path]:
@@ -233,11 +242,31 @@ class SkillLoader:
         Returns:
             加载的技能数量
         """
+        # 每次 load_all 都重置分类注册表，避免被删除的分类残留
+        try:
+            self.category_registry.clear()
+        except Exception:
+            pass
+
         directories = self.discover_skill_directories(base_path)
         loaded = 0
 
         for skill_dir in directories:
-            loaded += self.load_from_directory(skill_dir)
+            # __builtin__ / skills/system/ 等只读源以及被识别为 system 的根
+            # 视为只读分类容器；用户工作区与项目 skills/ 视为可写
+            try:
+                builtin_root = _builtin_skills_root()
+            except Exception:
+                builtin_root = None
+            is_readonly_root = (
+                builtin_root is not None
+                and skill_dir.resolve() == builtin_root.resolve()
+            )
+            loaded += self.load_from_directory(
+                skill_dir,
+                _category_path="",
+                _readonly=is_readonly_root,
+            )
 
         loaded += self._load_cli_anything_skills()
 
@@ -290,17 +319,31 @@ class SkillLoader:
             logger.info(f"Loaded {loaded} cli-anything skills from pip packages")
         return loaded
 
-    def load_from_directory(self, directory: Path, *, force: bool = True) -> int:
+    def load_from_directory(
+        self,
+        directory: Path,
+        *,
+        force: bool = True,
+        _category_path: str = "",
+        _readonly: bool = False,
+    ) -> int:
         """
-        从目录加载所有技能
+        从目录加载所有技能（参考 hermes-agent 范式）
 
-        每个子目录如果包含 SKILL.md 则被视为一个技能。
-        特殊处理: 'system' 子目录会被递归扫描，用于存放系统工具 skill。
+        递归规则：
+        - 子目录含 SKILL.md → 视为一个技能，调用 ``load_skill``
+        - 子目录名属于 ``RESERVED_NAMESPACE_DIRS``（system/external/custom/
+          community/builtin）→ 命名空间容器，递归但不作为分类透传
+        - 子目录不含 SKILL.md 且不是命名空间 → **分类容器**：
+            * 若同级有 DESCRIPTION.md，读取分类描述
+            * 把目录名（嵌套时用 / 拼接）作为 ``inferred_category`` 透传
+              给该分类下的所有 SKILL.md
 
         Args:
             directory: 技能目录
-            force: 是否允许覆盖已注册的同名 skill（默认 True，保证 ``load_all`` 的
-                重复调用能拾取用户对 SKILL.md 的最新修改；仅在需要保留首次注册者时传 False）
+            force: 是否允许覆盖已注册的同名 skill
+            _category_path: 内部参数。当前正在递归的分类路径，外部调用请保持空
+            _readonly: 内部参数。当前根（如 ``__builtin__``）是否为只读
 
         Returns:
             加载的技能数量
@@ -311,6 +354,28 @@ class SkillLoader:
 
         loaded = 0
 
+        # 进入分类容器时登记分类（顶层 _category_path="" 时跳过，避免把
+        # 根目录本身误登记为分类）
+        if _category_path:
+            description = None
+            desc_file = directory / "DESCRIPTION.md"
+            if desc_file.exists():
+                try:
+                    description = read_description_md(desc_file)
+                except Exception as e:
+                    logger.debug(
+                        "Failed to read DESCRIPTION.md at %s: %s", desc_file, e
+                    )
+            try:
+                self.category_registry.upsert(
+                    _category_path,
+                    description=description,
+                    source_dir=directory,
+                    system_readonly=_readonly,
+                )
+            except Exception as e:
+                logger.debug("CategoryRegistry.upsert(%s) failed: %s", _category_path, e)
+
         for item in directory.iterdir():
             if not item.is_dir():
                 continue
@@ -318,13 +383,46 @@ class SkillLoader:
             skill_md = item / "SKILL.md"
             if skill_md.exists():
                 try:
-                    skill = self.load_skill(item, force=force)
+                    skill = self.load_skill(
+                        item,
+                        force=force,
+                        inferred_category=_category_path or None,
+                    )
                     if skill:
                         loaded += 1
+                        if _category_path:
+                            try:
+                                self.category_registry.add_skill(
+                                    _category_path, item.name
+                                )
+                            except Exception:
+                                pass
                 except Exception as e:
                     logger.error(f"Failed to load skill from {item}: {e}")
-            elif item.name in ("system", "external", "custom", "community", "builtin"):
-                loaded += self.load_from_directory(item, force=force)
+            elif item.name in RESERVED_NAMESPACE_DIRS:
+                # 命名空间目录：保持旧行为（不作为用户面向的"大类"，
+                # 因此 _category_path 不向下累积；system 目录默认只读）
+                child_readonly = _readonly or item.name == "system"
+                loaded += self.load_from_directory(
+                    item,
+                    force=force,
+                    _category_path="",
+                    _readonly=child_readonly,
+                )
+            elif item.name.startswith(".") or item.name.startswith("_"):
+                # 隐藏目录 / 内部目录（如 .git、__pycache__）不当作分类
+                continue
+            else:
+                # 分类容器：递归并把目录名累加进 _category_path
+                sub_category = (
+                    f"{_category_path}/{item.name}" if _category_path else item.name
+                )
+                loaded += self.load_from_directory(
+                    item,
+                    force=force,
+                    _category_path=sub_category,
+                    _readonly=_readonly,
+                )
 
         logger.info(f"Loaded {loaded} skills from {directory}")
         return loaded
@@ -345,6 +443,7 @@ class SkillLoader:
         *,
         plugin_source: str | None = None,
         force: bool = False,
+        inferred_category: str | None = None,
     ) -> ParsedSkill | None:
         """
         加载单个技能
@@ -353,6 +452,11 @@ class SkillLoader:
             skill_dir: 技能目录
             plugin_source: 插件来源标识
             force: 允许覆盖已注册的同名 skill（用于 reload / 重装场景）
+            inferred_category: 由 ``load_from_directory`` 根据父目录推断的分类。
+                当 SKILL.md frontmatter 未声明 ``category`` 时使用；
+                当 frontmatter 已声明且非系统技能时，目录推断的分类**优先**
+                （hermes 范式：目录就是分类）；系统技能（``meta.system=True``）
+                始终以 frontmatter 为准，避免破坏既有 system 分组 UX
 
         Returns:
             ParsedSkill 或 None
@@ -362,6 +466,15 @@ class SkillLoader:
 
             # 加载 sidecar 翻译文件
             self._load_i18n(skill_dir, skill.metadata)
+
+            # 应用目录推断的分类（顺序：non-system 时目录优先；
+            # system 时 frontmatter 优先；都没有时 inferred 兜底）
+            if inferred_category:
+                if getattr(skill.metadata, "system", False):
+                    if not (skill.metadata.category or "").strip():
+                        skill.metadata.category = inferred_category
+                else:
+                    skill.metadata.category = inferred_category
 
             # OS compatibility check
             if not self._is_os_compatible(skill.metadata.supported_os):

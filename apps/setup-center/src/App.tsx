@@ -1049,6 +1049,18 @@ function MainApp() {
           refreshStatus().catch(() => {});
         }, 2_000);
       }
+      // 桥接技能变更：把 WS 'skills:changed' 转成全局 window CustomEvent，
+      // 各组件（SkillManager / OrgEditorView 等）可以监听同一事件实现实时刷新，
+      // 无需让 App 知道具体组件存在。``action`` 透传给监听方按需做差异化处理。
+      if (event === "skills:changed") {
+        try {
+          window.dispatchEvent(new CustomEvent("openakita:skills-changed", {
+            detail: { action: String(p.action || "") },
+          }));
+        } catch {
+          // ignore - browser may not support CustomEvent in some sandboxes
+        }
+      }
     });
     return unsub;
   }, [webAuthed]);

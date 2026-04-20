@@ -433,8 +433,14 @@ class Agent:
         self.web_tool = WebTool()
 
         # 初始化技能系统 (SKILL.md 规范)
+        from ..skills.categories import CategoryRegistry
+
         self.skill_registry = SkillRegistry()
-        self.skill_loader = SkillLoader(self.skill_registry)
+        self.skill_category_registry = CategoryRegistry()
+        self.skill_loader = SkillLoader(
+            self.skill_registry,
+            category_registry=self.skill_category_registry,
+        )
 
         # F6/F9: usage tracker + watcher (created early, wired after load)
         from ..skills.usage import SkillUsageTracker
@@ -445,6 +451,7 @@ class Agent:
         self.skill_catalog = SkillCatalog(
             self.skill_registry,
             usage_tracker=self._skill_usage_tracker,
+            category_registry=self.skill_category_registry,
         )
 
         # F8: conditional activation manager

@@ -190,6 +190,7 @@ function SkillCard({
   onEnvChange,
   onSaveConfig,
   saving,
+  onMoveCategory,
 }: {
   skill: SkillInfo;
   expanded: boolean;
@@ -202,6 +203,7 @@ function SkillCard({
   onEnvChange: (fn: (prev: EnvMap) => EnvMap) => void;
   onSaveConfig: () => void;
   saving: boolean;
+  onMoveCategory?: () => void;
 }) {
   const hasConfig = skill.config && skill.config.length > 0;
   const configComplete = skill.configComplete ?? true;
@@ -262,6 +264,17 @@ function SkillCard({
             >
               <IconEye size={14} />
             </Button>
+            {!skill.system && onMoveCategory && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onMoveCategory}
+                title={t("skills.category.moveTitle")}
+                className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted"
+              >
+                {t("skills.category.move")}
+              </Button>
+            )}
             {!skill.system && onUninstall && (
               <Button
                 variant="ghost"
@@ -626,6 +639,19 @@ export function SkillManager({
   const [installedSearch, setInstalledSearch] = useState("");
   const [aiOrganizing, setAiOrganizing] = useState(false);
   const [localImporting, setLocalImporting] = useState(false);
+  // ── 技能分类（hermes 风格：DESCRIPTION.md + 目录） ──
+  type CategoryInfo = {
+    name: string;
+    description: string | null;
+    total: number;
+    enabled: number;
+    system_readonly: boolean;
+  };
+  const [categories, setCategories] = useState<CategoryInfo[]>([]);
+  const [groupView, setGroupView] = useState(true);
+  const [categoryBusy, setCategoryBusy] = useState<string | null>(null);
+  // 安装时选择落入的分类（""=不指定，安装到顶层）
+  const [installCategory, setInstallCategory] = useState<string>("");
   const [detailSkill, setDetailSkill] = useState<SkillInfo | null>(null);
   const [detailContent, setDetailContent] = useState("");
   const [detailContentLoading, setDetailContentLoading] = useState(false);
@@ -711,6 +737,160 @@ export function SkillManager({
   useEffect(() => {
     loadSkills();
   }, [loadSkills]);
+
+  // ── 加载技能分类列表 ──
+  const loadCategories = useCallback(async () => {
+    if (!serviceRunning || !apiBaseUrl) return;
+    try {
+      const res = await safeFetch(`${apiBaseUrl}/api/skill-categories`, {
+        signal: AbortSignal.timeout(8_000),
+      });
+      const data = await res.json();
+      const list: CategoryInfo[] = Array.isArray(data?.categories) ? data.categories : [];
+      setCategories(list);
+    } catch {
+      // 静默失败：分类是增强型功能，不影响主流程
+    }
+  }, [serviceRunning, apiBaseUrl]);
+
+  useEffect(() => {
+    loadCategories();
+  }, [loadCategories]);
+
+  // ── 实时刷新：监听 App.tsx 桥接的 'openakita:skills-changed' 事件 ──
+  // enabledDirty=true 时仅 toast 提示用户（避免覆盖未保存草稿），
+  // 否则静默 reload 技能与分类列表
+  const enabledDirtyRef = useRef(enabledDirty);
+  useEffect(() => { enabledDirtyRef.current = enabledDirty; }, [enabledDirty]);
+  useEffect(() => {
+    const onChange = () => {
+      if (enabledDirtyRef.current) {
+        toast.info(t("skills.realtimeDirtyHint"));
+        return;
+      }
+      loadSkills().catch(() => {});
+      loadCategories().catch(() => {});
+    };
+    window.addEventListener("openakita:skills-changed", onChange);
+    return () => window.removeEventListener("openakita:skills-changed", onChange);
+  }, [loadSkills, loadCategories, t]);
+
+  // ── 大类启用/禁用 / 创建 / 删除（mass action over allowlist） ──
+  const handleCategoryEnableAll = useCallback(async (name: string) => {
+    if (!apiBaseUrl) return;
+    setCategoryBusy(name);
+    try {
+      await safeFetch(`${apiBaseUrl}/api/skill-categories/${encodeURIComponent(name)}/enable`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        signal: AbortSignal.timeout(15_000),
+      });
+      toast.success(t("skills.category.enabledAll", { name }));
+    } catch (e) {
+      toast.error(friendlyError(e, t, "save"));
+    } finally {
+      setCategoryBusy(null);
+    }
+  }, [apiBaseUrl, t]);
+
+  const handleCategoryDisableAll = useCallback(async (name: string) => {
+    if (!apiBaseUrl) return;
+    setCategoryBusy(name);
+    try {
+      await safeFetch(`${apiBaseUrl}/api/skill-categories/${encodeURIComponent(name)}/disable`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+        signal: AbortSignal.timeout(15_000),
+      });
+      toast.success(t("skills.category.disabledAll", { name }));
+    } catch (e) {
+      toast.error(friendlyError(e, t, "save"));
+    } finally {
+      setCategoryBusy(null);
+    }
+  }, [apiBaseUrl, t]);
+
+  const handleCategoryCreate = useCallback(async () => {
+    if (!apiBaseUrl) return;
+    const name = window.prompt(t("skills.category.createNamePrompt"));
+    if (!name) return;
+    const description = window.prompt(t("skills.category.createDescPrompt")) ?? "";
+    try {
+      const res = await safeFetch(`${apiBaseUrl}/api/skill-categories`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), description: description.trim() }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const data = await res.json();
+      if (data?.error || data?.detail) {
+        throw new Error(String(data.error || data.detail));
+      }
+      toast.success(t("skills.category.created", { name: name.trim() }));
+    } catch (e) {
+      toast.error(friendlyError(e, t, "save"));
+    }
+  }, [apiBaseUrl, t]);
+
+  const handleCategoryRename = useCallback(async (name: string) => {
+    if (!apiBaseUrl) return;
+    const next = window.prompt(t("skills.category.renamePrompt"), name);
+    if (!next || next === name) return;
+    try {
+      const res = await safeFetch(`${apiBaseUrl}/api/skill-categories/${encodeURIComponent(name)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ new_name: next.trim() }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const data = await res.json();
+      if (data?.error || data?.detail) throw new Error(String(data.error || data.detail));
+      toast.success(t("skills.category.renamed", { from: name, to: next.trim() }));
+    } catch (e) {
+      toast.error(friendlyError(e, t, "save"));
+    }
+  }, [apiBaseUrl, t]);
+
+  const handleCategoryEditDesc = useCallback(async (name: string, current: string | null) => {
+    if (!apiBaseUrl) return;
+    const next = window.prompt(t("skills.category.editDescPrompt"), current ?? "");
+    if (next == null) return;
+    try {
+      const res = await safeFetch(`${apiBaseUrl}/api/skill-categories/${encodeURIComponent(name)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: next }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const data = await res.json();
+      if (data?.error || data?.detail) throw new Error(String(data.error || data.detail));
+      toast.success(t("skills.category.descUpdated"));
+    } catch (e) {
+      toast.error(friendlyError(e, t, "save"));
+    }
+  }, [apiBaseUrl, t]);
+
+  const handleMoveSkill = useCallback(async (skillId: string) => {
+    if (!apiBaseUrl) return;
+    const choices = ["", ...categories.filter(c => !c.system_readonly).map(c => c.name)].join("\n  - ");
+    const target = window.prompt(t("skills.category.movePrompt") + "\n  - " + choices);
+    if (target == null) return;
+    try {
+      const res = await safeFetch(`${apiBaseUrl}/api/skill-categories/move`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skill_id: skillId, target_category: target.trim() || null }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const data = await res.json();
+      if (data?.error || data?.detail) throw new Error(String(data.error || data.detail));
+      toast.success(t("skills.category.moved"));
+    } catch (e) {
+      toast.error(friendlyError(e, t, "save"));
+    }
+  }, [apiBaseUrl, categories, t]);
 
   // ── 检查配置是否完整（纯函数，不依赖于状态） ──
   function checkConfigComplete(config: SkillConfigField[] | null | undefined, env: EnvMap): boolean {
@@ -903,7 +1083,10 @@ export function SkillManager({
           const res = await safeFetch(`${apiBaseUrl}/api/skills/install`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: folderPath }),
+            body: JSON.stringify({
+              url: folderPath,
+              ...(installCategory ? { category: installCategory } : {}),
+            }),
             signal: AbortSignal.timeout(60_000),
           });
           const data = await res.json();
@@ -940,7 +1123,7 @@ export function SkillManager({
     } finally {
       setLocalImporting(false);
     }
-  }, [dataMode, serviceRunning, apiBaseUrl, currentWorkspaceId, venvDir, loadSkills, t]);
+  }, [dataMode, serviceRunning, apiBaseUrl, currentWorkspaceId, venvDir, loadSkills, t, installCategory]);
 
   // ── 打开技能详情弹窗 ──
   const handleViewDetail = useCallback(async (skill: SkillInfo) => {
@@ -1193,7 +1376,10 @@ export function SkillManager({
         const res = await safeFetch(`${apiBaseUrl}/api/skills/install`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: skill.url }),
+          body: JSON.stringify({
+            url: skill.url,
+            ...(installCategory ? { category: installCategory } : {}),
+          }),
           signal: AbortSignal.timeout(60_000),
         });
         const data = await res.json();
@@ -1240,7 +1426,7 @@ export function SkillManager({
       setInstallingSet(prev => { const next = new Set(prev); next.delete(uniqueKey); return next; });
       setInstallStatus("");
     }
-  }, [loadSkills, venvDir, currentWorkspaceId, dataMode, serviceRunning, apiBaseUrl, t]);
+  }, [loadSkills, venvDir, currentWorkspaceId, dataMode, serviceRunning, apiBaseUrl, t, installCategory]);
 
   // ── 手动输入链接安装技能 ──
   const handleManualInstall = useCallback(async () => {
@@ -1261,7 +1447,10 @@ export function SkillManager({
         const res = await safeFetch(`${apiBaseUrl}/api/skills/install`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url }),
+          body: JSON.stringify({
+            url,
+            ...(installCategory ? { category: installCategory } : {}),
+          }),
           signal: AbortSignal.timeout(120_000),
         });
         const data = await res.json();
@@ -1295,7 +1484,7 @@ export function SkillManager({
     } finally {
       setManualInstalling(false);
     }
-  }, [manualUrl, loadSkills, venvDir, currentWorkspaceId, dataMode, serviceRunning, apiBaseUrl, t]);
+  }, [manualUrl, loadSkills, venvDir, currentWorkspaceId, dataMode, serviceRunning, apiBaseUrl, t, installCategory]);
 
   if (!serviceRunning) {
     return (
@@ -1396,6 +1585,20 @@ export function SkillManager({
                     />
                   </div>
                   <div className="flex items-center gap-3">
+                    {/* 安装时归类下拉（""=安装到顶层，与旧行为一致） */}
+                    <select
+                      value={installCategory}
+                      onChange={(e) => setInstallCategory(e.target.value)}
+                      className="h-9 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                      title={t("skills.category.installToTitle")}
+                    >
+                      <option value="">{t("skills.category.installToTop")}</option>
+                      {categories
+                        .filter(c => !c.system_readonly)
+                        .map(c => (
+                          <option key={c.name} value={c.name}>{c.name}</option>
+                        ))}
+                    </select>
                     {dataMode !== "remote" && (
                       <Button
                         variant="outline"
@@ -1467,24 +1670,151 @@ export function SkillManager({
             </Card>
           )}
           
-          <div className="flex flex-col gap-3">
-            {filteredSkills.map((skill) => (
-              <SkillCard
-                key={skill.skillId}
-                skill={skill}
-                expanded={expandedSkill === skill.skillId}
-                onToggleExpand={() => setExpandedSkill(expandedSkill === skill.skillId ? null : skill.skillId)}
-                onToggleEnabled={() => handleToggleEnabled(skill)}
-                onViewDetail={() => handleViewDetail(skill)}
-                onUninstall={!skill.system ? () => requestUninstall(skill) : undefined}
-                uninstalling={uninstallingSet.has(skill.skillId)}
-                envDraft={envDraft}
-                onEnvChange={onEnvChange}
-                onSaveConfig={() => handleSaveConfig(skill)}
-                saving={saving}
-              />
-            ))}
-          </div>
+          {/* 分组视图开关 + 新建分类按钮 */}
+          {skillsWithConfig.length > 0 && (
+            <div className="flex items-center gap-3 flex-wrap">
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground select-none">
+                <input
+                  type="checkbox"
+                  checked={groupView}
+                  onChange={(e) => setGroupView(e.target.checked)}
+                />
+                {t("skills.category.groupView")}
+              </label>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={handleCategoryCreate}
+                title={t("skills.category.createTitle")}
+              >
+                {t("skills.category.create")}
+              </Button>
+            </div>
+          )}
+
+          {!groupView && (
+            <div className="flex flex-col gap-3">
+              {filteredSkills.map((skill) => (
+                <SkillCard
+                  key={skill.skillId}
+                  skill={skill}
+                  expanded={expandedSkill === skill.skillId}
+                  onToggleExpand={() => setExpandedSkill(expandedSkill === skill.skillId ? null : skill.skillId)}
+                  onToggleEnabled={() => handleToggleEnabled(skill)}
+                  onViewDetail={() => handleViewDetail(skill)}
+                  onUninstall={!skill.system ? () => requestUninstall(skill) : undefined}
+                  uninstalling={uninstallingSet.has(skill.skillId)}
+                  envDraft={envDraft}
+                  onEnvChange={onEnvChange}
+                  onSaveConfig={() => handleSaveConfig(skill)}
+                  saving={saving}
+                  onMoveCategory={!skill.system ? () => handleMoveSkill(skill.skillId) : undefined}
+                />
+              ))}
+            </div>
+          )}
+
+          {groupView && (() => {
+            const grouped: Record<string, typeof filteredSkills> = {};
+            for (const s of filteredSkills) {
+              const k = s.category || t("skills.category.uncategorized");
+              (grouped[k] ||= [] as typeof filteredSkills).push(s);
+            }
+            const sortedNames = Object.keys(grouped).sort((a, b) => a.localeCompare(b));
+            const metaByName = new Map(categories.map(c => [c.name, c]));
+            return (
+              <div className="flex flex-col gap-4">
+                {sortedNames.map((catName) => {
+                  const meta = metaByName.get(catName);
+                  const items = grouped[catName];
+                  const readonly = meta?.system_readonly ?? false;
+                  const total = items.length;
+                  const enabled = items.filter(s => s.enabled).length;
+                  const busy = categoryBusy === catName;
+                  return (
+                    <div key={catName} className="flex flex-col gap-2 rounded-md border border-border/60 bg-card/40 p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="font-semibold text-sm text-foreground">
+                          {catName}
+                        </div>
+                        <Badge variant="secondary" className="text-[11px] px-1.5 py-0">
+                          {enabled}/{total}
+                        </Badge>
+                        {meta?.description && (
+                          <span className="text-xs text-muted-foreground line-clamp-1 flex-1 min-w-[8rem]">
+                            {meta.description}
+                          </span>
+                        )}
+                        <div className="flex-1" />
+                        {!readonly && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => handleCategoryEnableAll(catName)}
+                              disabled={busy}
+                              title={t("skills.category.enableAllTitle")}
+                            >
+                              {t("skills.category.enableAll")}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => handleCategoryDisableAll(catName)}
+                              disabled={busy}
+                              title={t("skills.category.disableAllTitle")}
+                            >
+                              {t("skills.category.disableAll")}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => handleCategoryEditDesc(catName, meta?.description ?? null)}
+                              title={t("skills.category.editDesc")}
+                            >
+                              {t("skills.category.editDesc")}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              onClick={() => handleCategoryRename(catName)}
+                              title={t("skills.category.rename")}
+                            >
+                              {t("skills.category.rename")}
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        {items.map((skill) => (
+                          <SkillCard
+                            key={skill.skillId}
+                            skill={skill}
+                            expanded={expandedSkill === skill.skillId}
+                            onToggleExpand={() => setExpandedSkill(expandedSkill === skill.skillId ? null : skill.skillId)}
+                            onToggleEnabled={() => handleToggleEnabled(skill)}
+                            onViewDetail={() => handleViewDetail(skill)}
+                            onUninstall={!skill.system ? () => requestUninstall(skill) : undefined}
+                            uninstalling={uninstallingSet.has(skill.skillId)}
+                            envDraft={envDraft}
+                            onEnvChange={onEnvChange}
+                            onSaveConfig={() => handleSaveConfig(skill)}
+                            saving={saving}
+                            onMoveCategory={!skill.system && !readonly ? () => handleMoveSkill(skill.skillId) : undefined}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
       )}
 
