@@ -8,7 +8,13 @@ Design rules (audit3 hardening):
 - **All calls have a hard timeout** (default 60s, configurable per call).
 - **Retry only safe failures**: 429 / 5xx / network exceptions.  4xx
   (except 429) and content-moderation responses are *not* retried — they
-  surface to ``ErrorCoach`` immediately.
+  surface to ``ErrorCoach`` immediately.  This avoids the CutClaw
+  ``audio/litellm_client.py:76-128`` anti-pattern where
+  ``retry_if_exception_type(Exception)`` burns quota on permanent failures.
+- **Body-level moderation detection**: even a 5xx response whose body
+  matches a moderation regex (e.g. "content policy violated", "敏感",
+  "风控") is **not** retried — vendors sometimes return 200 / 5xx with a
+  moderation message instead of a clean 400.
 - **cancel_task()** is mandatory in the contract: subclasses must implement
   it (or raise ``NotImplementedError`` if the vendor truly cannot cancel
   — but document it).
@@ -20,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,6 +36,46 @@ logger = logging.getLogger(__name__)
 _DEFAULT_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
 _NEVER_RETRY_STATUSES = frozenset({400, 401, 403, 404, 422})
 
+# Default content-moderation / sensitive-content body matcher.  Plugins can
+# override per-instance via ``moderation_pattern=``.  Patterns are matched
+# case-insensitively against the response body (decoded text or json string).
+_DEFAULT_MODERATION_PATTERN = re.compile(
+    r"(content[\s_-]?polic|moderation|sensitive[\s_-]?content|"
+    r"data[\s_-]?inspection[\s_-]?failed|inappropriat|"
+    r"\u654f\u611f|\u98ce\u63a7|\u5185\u5bb9\u5b89\u5168|\u8fdd\u89c4|\u5ba1\u6838\u4e0d\u901a\u8fc7)",
+    re.IGNORECASE,
+)
+
+
+# Coarse-grained classification used by ErrorCoach + UI badges.
+ERROR_KIND_NETWORK = "network"
+ERROR_KIND_TIMEOUT = "timeout"
+ERROR_KIND_RATE_LIMIT = "rate_limit"
+ERROR_KIND_AUTH = "auth"
+ERROR_KIND_NOT_FOUND = "not_found"
+ERROR_KIND_MODERATION = "moderation"
+ERROR_KIND_CLIENT = "client"
+ERROR_KIND_SERVER = "server"
+ERROR_KIND_UNKNOWN = "unknown"
+
+
+def _classify(status: int | None, body: Any, *, is_timeout: bool = False) -> str:
+    if is_timeout:
+        return ERROR_KIND_TIMEOUT
+    if status is None:
+        return ERROR_KIND_NETWORK
+    if status == 429:
+        return ERROR_KIND_RATE_LIMIT
+    if status in (401, 403):
+        return ERROR_KIND_AUTH
+    if status == 404:
+        return ERROR_KIND_NOT_FOUND
+    if 400 <= status < 500:
+        return ERROR_KIND_CLIENT
+    if 500 <= status < 600:
+        return ERROR_KIND_SERVER
+    return ERROR_KIND_UNKNOWN
+
 
 class VendorError(Exception):
     """Raised when a vendor call fails after retries.
@@ -37,6 +84,10 @@ class VendorError(Exception):
         status: HTTP status code (or ``None`` for transport errors).
         body: Decoded body (str / dict / None).
         retryable: Whether *this specific* failure could be safely retried.
+        kind: Coarse-grained classification, one of ``"network"``,
+            ``"timeout"``, ``"rate_limit"``, ``"auth"``, ``"not_found"``,
+            ``"moderation"``, ``"client"``, ``"server"``, ``"unknown"``.
+            Useful for ErrorCoach matching and UI badges.
     """
 
     def __init__(
@@ -46,11 +97,13 @@ class VendorError(Exception):
         status: int | None = None,
         body: Any = None,
         retryable: bool = False,
+        kind: str = ERROR_KIND_UNKNOWN,
     ) -> None:
         super().__init__(message)
         self.status = status
         self.body = body
         self.retryable = retryable
+        self.kind = kind
 
 
 @dataclass
@@ -88,6 +141,7 @@ class BaseVendorClient:
         retry_backoff: float = 0.8,
         retry_max_backoff: float = 8.0,
         retry_statuses: frozenset[int] = _DEFAULT_RETRY_STATUSES,
+        moderation_pattern: re.Pattern[str] | None = _DEFAULT_MODERATION_PATTERN,
     ) -> None:
         if base_url is not None:
             self.base_url = base_url
@@ -96,6 +150,8 @@ class BaseVendorClient:
         self.retry_backoff = max(0.0, float(retry_backoff))
         self.retry_max_backoff = max(0.0, float(retry_max_backoff))
         self.retry_statuses = retry_statuses
+        # Pass ``None`` to disable moderation detection entirely.
+        self.moderation_pattern = moderation_pattern
 
     # ── overridable ──────────────────────────────────────────────────────
 
@@ -163,12 +219,25 @@ class BaseVendorClient:
                         params=spec.params,
                         headers=spec.headers,
                     )
-                except (httpx.TimeoutException, httpx.NetworkError) as e:
+                except httpx.TimeoutException as e:
+                    last_error = VendorError(
+                        f"Timeout after {spec.timeout:.1f}s: {e}",
+                        status=None,
+                        body=None,
+                        retryable=True,
+                        kind=ERROR_KIND_TIMEOUT,
+                    )
+                    if attempt < retries:
+                        await asyncio.sleep(self._backoff(attempt))
+                        continue
+                    raise last_error from e
+                except httpx.NetworkError as e:
                     last_error = VendorError(
                         f"Network error: {e}",
                         status=None,
                         body=None,
                         retryable=True,
+                        kind=ERROR_KIND_NETWORK,
                     )
                     if attempt < retries:
                         await asyncio.sleep(self._backoff(attempt))
@@ -176,9 +245,30 @@ class BaseVendorClient:
                     raise last_error from e
 
                 if resp.status_code < 400:
+                    # 200-class might still carry a moderation message — check.
+                    body_ok = self._safe_body(resp)
+                    if self._is_moderation(body_ok):
+                        raise VendorError(
+                            f"Content moderation rejected the request "
+                            f"(HTTP {resp.status_code}): {self._short(body_ok)}",
+                            status=resp.status_code,
+                            body=body_ok,
+                            retryable=False,
+                            kind=ERROR_KIND_MODERATION,
+                        )
                     return self._parse(resp)
 
                 body = self._safe_body(resp)
+                # Moderation responses NEVER retry, even if status is 5xx.
+                if self._is_moderation(body):
+                    raise VendorError(
+                        f"Content moderation rejected the request "
+                        f"(HTTP {resp.status_code}): {self._short(body)}",
+                        status=resp.status_code,
+                        body=body,
+                        retryable=False,
+                        kind=ERROR_KIND_MODERATION,
+                    )
                 if (
                     resp.status_code in self.retry_statuses
                     and resp.status_code not in _NEVER_RETRY_STATUSES
@@ -189,6 +279,7 @@ class BaseVendorClient:
                         status=resp.status_code,
                         body=body,
                         retryable=True,
+                        kind=_classify(resp.status_code, body),
                     )
                     await asyncio.sleep(self._backoff(attempt))
                     continue
@@ -198,12 +289,13 @@ class BaseVendorClient:
                     status=resp.status_code,
                     body=body,
                     retryable=False,
+                    kind=_classify(resp.status_code, body),
                 )
 
         # Defensive: should never reach here
         if last_error:
             raise last_error
-        raise VendorError("Unknown vendor failure", retryable=False)
+        raise VendorError("Unknown vendor failure", retryable=False, kind=ERROR_KIND_UNKNOWN)
 
     async def get_json(self, path: str, **kw: Any) -> Any:
         return await self.request("GET", path, **kw)
@@ -243,4 +335,23 @@ class BaseVendorClient:
         if body is None:
             return ""
         s = body if isinstance(body, str) else str(body)
-        return s[:240] + ("…" if len(s) > 240 else "")
+        return s[:240] + ("\u2026" if len(s) > 240 else "")
+
+    def _is_moderation(self, body: Any) -> bool:
+        """Return True iff body matches the moderation pattern.
+
+        Returns False when the pattern is disabled (set to ``None``) or the
+        body is empty.
+        """
+        if self.moderation_pattern is None or body is None:
+            return False
+        if isinstance(body, str):
+            text = body
+        else:
+            try:
+                text = str(body)
+            except Exception:  # noqa: BLE001
+                return False
+        if not text:
+            return False
+        return bool(self.moderation_pattern.search(text))
