@@ -199,9 +199,22 @@ class ResponseHandler:
         self._brain = brain
         self._memory_manager = memory_manager
 
+    # 系统/组织自动注入的元指令前缀。命中其中任何一个意味着「user_request」
+    # 实际上不是真正用户输入，而是后端合成的汇总/通知/系统消息，关键词命中
+    # （如「文件」「链接」「附件」）会导致 verify 误判。显式白名单 3 个前缀，
+    # 不写正则一刀切，避免误伤恰好以 "[" 开头的真实用户输入。
+    _SYSTEM_REQUEST_PREFIXES: tuple[str, ...] = (
+        "[用户指令最终汇总]",
+        "[系统]",
+        "[组织]",
+    )
+
     @staticmethod
     def _request_expects_artifact(user_request: str | None) -> bool:
-        text = (user_request or "").lower()
+        raw = (user_request or "").strip()
+        if raw.startswith(ResponseHandler._SYSTEM_REQUEST_PREFIXES):
+            return False
+        text = raw.lower()
         return any(
             key in text
             for key in (
@@ -238,6 +251,8 @@ class ResponseHandler:
         tool_results: list[dict] | None = None,
         conversation_id: str | None = None,
         bypass: bool = False,
+        accepted_child_count: int = 0,
+        has_recent_accepted_signal: bool = False,
     ) -> bool:
         """
         任务完成度复核。
@@ -274,6 +289,8 @@ class ResponseHandler:
                 delivery_receipts=delivery_receipts,
                 tool_results=tool_results or [],
                 conversation_id=conversation_id or "",
+                accepted_child_count=int(accepted_child_count or 0),
+                has_recent_accepted_signal=bool(has_recent_accepted_signal),
             )
             registry = create_default_registry()
             report = registry.run_all(val_context)
@@ -283,6 +300,7 @@ class ResponseHandler:
                     if output.result == ValidationResult.PASS and output.name in (
                         "ArtifactValidator",
                         "CompletePlanValidator",
+                        "OrgDelegationValidator",
                     ):
                         logger.info(
                             f"[TaskVerify] Deterministic PASS: {output.name} — {output.reason}"

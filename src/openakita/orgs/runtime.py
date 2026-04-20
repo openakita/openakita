@@ -1345,6 +1345,10 @@ class OrgRuntime:
         self.set_current_chain_id(org.id, node.id, chain_id)
         if hasattr(agent, "_org_context"):
             agent._org_context["current_chain_id"] = chain_id or ""
+            # 同时把 org_id/node_id 注入到 agent context，供 reasoning_engine
+            # 在 verify 时查询本节点 chain-scoped/mailbox 信号（B4）。
+            agent._org_context["current_org_id"] = org.id
+            agent._org_context["current_node_id"] = node.id
 
         self._set_node_status(org, node, NodeStatus.BUSY, "task_started")
         self._node_last_activity[cache_key] = time.monotonic()
@@ -1988,7 +1992,7 @@ class OrgRuntime:
         else:
             parts.append(
                 "## 行为准则\n\n"
-                "1. **只使用上述 org_* 工具**。不要调用 write_file、read_file、run_shell 等非组织工具，它们不可用。\n"
+                "1. **只使用上述 org_* 工具**。不要调用 write_file、read_file、run_shell 等非组织工具，它们不可用；也不要用 `get_tool_info` 去探查这些被禁用的工具，对你来说一定查不到。\n"
                 "2. **简洁回复**。完成工具调用后，用 1-2 句话总结结果即可。\n"
                 "3. **先查再做**。不确定找谁时用 org_find_colleague；不确定流程时用 org_search_policy。\n"
                 "4. **重要信息写黑板**。决策、方案、进度等用 org_write_blackboard 记录，方便同事查阅。\n"
@@ -2340,6 +2344,75 @@ class OrgRuntime:
             org_dir = self._manager._org_dir(org_id)
             self._event_stores[org_id] = OrgEventStore(org_dir, org_id)
         return self._event_stores[org_id]
+
+    # ------------------------------------------------------------------
+    # Verify-context accessors (B4 - 给 reasoning_engine 提供组织视角信号)
+    # ------------------------------------------------------------------
+
+    def get_accepted_child_count(self, org_id: str, chain_id: str) -> int:
+        """严格信号：当前激活 chain 子树下已 ACCEPTED 的子任务数。
+
+        通过 ProjectStore.find_task_by_chain 找到当前 task，再 get_subtasks
+        数 status==ACCEPTED 的儿子。chain_id 缺失或 task 不存在时返回 0，
+        不抛异常。仅用于「该协调者节点是否已通过下属交付完成本任务」判定。
+        """
+        if not chain_id:
+            return 0
+        try:
+            from openakita.orgs.models import TaskStatus
+            from openakita.orgs.project_store import ProjectStore
+
+            store = ProjectStore(self._manager._org_dir(org_id))
+            task = store.find_task_by_chain(chain_id)
+            if not task:
+                return 0
+            children = store.get_subtasks(task.id)
+            return sum(
+                1 for c in children if c.status == TaskStatus.ACCEPTED
+            )
+        except Exception as exc:  # pragma: no cover — 防御性
+            logger.debug(
+                "[Verify] get_accepted_child_count(%s, %s) failed: %s",
+                org_id, chain_id, exc,
+            )
+            return 0
+
+    def has_recent_accepted_signal(
+        self,
+        org_id: str,
+        node_id: str,
+        window_secs: float = 60.0,
+    ) -> bool:
+        """弱信号兜底：该节点最近 N 秒是否作为「验收方」处理过 task_accepted。
+
+        用于严格信号拿不到时（chain_id 缺失 / 没有 ProjectStore task）的兜底，
+        只在很短时间窗口内成立，避免把过去任务的成果错误带入新任务。
+        """
+        if not node_id:
+            return False
+        try:
+            from datetime import datetime, timedelta, timezone
+
+            store = self.get_event_store(org_id)
+            if store is None:
+                return False
+            cutoff = datetime.now(timezone.utc) - timedelta(
+                seconds=max(1.0, float(window_secs)),
+            )
+            cutoff_iso = cutoff.isoformat()
+            recent = store.query(
+                event_type="task_accepted",
+                actor=node_id,
+                since=cutoff_iso,
+                limit=5,
+            )
+            return bool(recent)
+        except Exception as exc:  # pragma: no cover — 防御性
+            logger.debug(
+                "[Verify] has_recent_accepted_signal(%s, %s) failed: %s",
+                org_id, node_id, exc,
+            )
+            return False
 
     def get_inbox(self, org_id: str) -> OrgInbox:
         return self._inbox

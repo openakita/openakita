@@ -28,6 +28,7 @@
 如果没有 detail 字段，则 fallback 到 description。
 """
 
+import difflib
 import logging
 from collections import OrderedDict
 
@@ -417,7 +418,7 @@ but with full schema you'll fill arguments more reliably.
         """
         tool = self._tools.get(tool_name)
         if not tool:
-            return f"❌ Tool not found: {tool_name}"
+            return self._format_tool_not_found(tool_name)
 
         deferred = getattr(self, "_deferred_tools", set())
         is_deferred = tool_name in deferred
@@ -516,6 +517,45 @@ but with full schema you'll fill arguments more reliably.
             output += "\n"
 
         return output
+
+    def _format_tool_not_found(self, tool_name: str) -> str:
+        """生成 tool-not-found 的引导式提示。
+
+        - 若本节点存在相近名工具（difflib 相似度 >= 0.5），列出建议；
+        - 否则提示该工具不可用、不必再探查，并指引使用 org_* 工具。
+
+        建议来源严格限定 self._tools.keys()，因此只会建议本节点真实可用的工具，
+        不会把全局工具表里不可用的名字回灌进来。
+        """
+        available = list(self._tools.keys())
+        suggestions = difflib.get_close_matches(
+            tool_name, available, n=3, cutoff=0.5,
+        )
+
+        org_tool_count = sum(1 for n in available if n.startswith("org_"))
+        only_org = (org_tool_count > 0 and org_tool_count == len(available))
+
+        lines = [f"❌ Tool not found: {tool_name}"]
+        if suggestions:
+            lines.append(
+                "可能的相近工具（来自本节点当前可用工具集）："
+                + ", ".join(suggestions)
+            )
+            lines.append(
+                f"如需详情请用 get_tool_info('{suggestions[0]}') 查看。"
+            )
+        elif only_org:
+            lines.append(
+                "本节点当前仅可使用 org_* 组织协作工具。"
+                f"工具 '{tool_name}' 不会出现在此节点，请停止探查；"
+                "请改用 org_delegate_task / org_send_message / org_submit_deliverable 等组织工具完成协作。"
+            )
+        else:
+            lines.append(
+                f"工具 '{tool_name}' 不在本节点的可用工具集合中，请勿继续探查。"
+                "可用工具清单已在系统提示中列出，按其中的工具名调用即可。"
+            )
+        return "\n".join(lines)
 
     def _format_params(self, params: dict) -> str:
         """格式化参数为 JSON 字符串"""

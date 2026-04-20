@@ -164,6 +164,40 @@ def _has_successful_chain_relay(react_trace: list[dict]) -> bool:
     return False
 
 
+def _has_accepted_child_signal(react_trace: list[dict]) -> bool:
+    """检测 trace 中是否有「成功验收下属交付」的痕迹。
+
+    判定：tool_calls 里存在 name=org_accept_deliverable 且对应 tool_results
+    没有 is_error 也没有失败 marker。命中后 _pick_root_cause 把
+    verify_incomplete 切成 verify_incomplete_with_children 软提示模板，
+    避免对已通过下属交付完成的协调者节点误报硬错。
+    """
+    if not react_trace:
+        return False
+    for iter_trace in react_trace:
+        if not isinstance(iter_trace, dict):
+            continue
+        calls = iter_trace.get("tool_calls") or []
+        results_by_id: dict[str, dict] = {}
+        for r in (iter_trace.get("tool_results") or []):
+            if isinstance(r, dict):
+                rid = r.get("tool_use_id") or r.get("id") or ""
+                if rid:
+                    results_by_id[rid] = r
+        for call in calls:
+            if not isinstance(call, dict):
+                continue
+            if str(call.get("name") or "") != "org_accept_deliverable":
+                continue
+            tool_id = call.get("id") or ""
+            res = results_by_id.get(tool_id, {}) if tool_id else {}
+            res_text = str(res.get("result_content") or "")
+            if _is_error_entry(bool(res.get("is_error")), res_text):
+                continue
+            return True
+    return False
+
+
 def _classify_delegate_subtype(evidence: list[dict]) -> str | None:
     """死循环场景里，再细分 org_delegate_task 的失败子类型。"""
     delegate_fails = [e for e in evidence if e.get("tool") == "org_delegate_task"]
@@ -268,6 +302,16 @@ _DIAGNOSIS_TEMPLATES: dict[str, dict[str, str]] = {
             "2. 复查 verify 规则是否过于严格。"
         ),
     },
+    "verify_incomplete_with_children": {
+        "headline": "节点已通过下属交付完成任务，但 verify 仍标记未完成（提示性）",
+        "suggestion": (
+            "本节点已 `org_accept_deliverable` 验收下属至少 1 项交付，"
+            "实际任务通常已完成；verify 提示更像「严格规则未匹配」，可作为参考而非阻断信号。\n\n"
+            "**建议**：\n"
+            "1. 直接查看下属上交的文件/链接确认结果是否符合预期；\n"
+            "2. 如确需进一步动作，向该节点追加一条明确的指令即可。"
+        ),
+    },
     "unknown": {
         "headline": "任务非正常结束（exit_reason={exit_reason}）",
         "suggestion": (
@@ -319,6 +363,14 @@ def _pick_root_cause(
             "tool": "",
         }
     if exit_reason == "verify_incomplete":
+        # 若 trace 中存在「成功验收下属交付」的痕迹，降级为提示性卡片，
+        # 避免对协调者节点（已通过下属交付完成本任务）报硬错。
+        if react_trace and _has_accepted_child_signal(react_trace):
+            return "verify_incomplete_with_children", {
+                "iterations": total_iterations,
+                "exit_reason": exit_reason,
+                "tool": "",
+            }
         return "verify_incomplete", {
             "iterations": total_iterations,
             "exit_reason": exit_reason,

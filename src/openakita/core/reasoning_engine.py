@@ -1904,6 +1904,7 @@ class ReasoningEngine:
                         params=tc.get("input", {}),
                         success=not is_error,
                         iteration=iteration,
+                        result_text=result_content if is_error else None,
                     )
 
                 # Supervisor: 记录响应文本和 token 用量
@@ -3726,6 +3727,7 @@ class ReasoningEngine:
                             params=_stc.get("input", {}),
                             success=not _sr_err,
                             iteration=_iteration,
+                            result_text=_sr_content if _sr_err else None,
                         )
                     self._supervisor.record_response(decision.text_content or "")
                     if _in_tokens or _out_tokens:
@@ -4932,14 +4934,24 @@ class ReasoningEngine:
             cleaned_text = strip_thinking_tags(decision.text_content)
             _, cleaned_text = parse_intent_tag(cleaned_text)
             if cleaned_text and len(cleaned_text.strip()) > 0:
+                last_user_request = ResponseHandler.get_last_user_request(original_messages)
+                # 汇总轮（root post-summary 注入的 [用户指令最终汇总] 提示）下，
+                # 本次 ReAct 的目的就是输出汇总文本而非再产出文件，verify 全程绕过。
+                # 与 B1 的关键词白名单互补：B1 修关键词命中根因，B2 兜底全路径。
+                is_summary_round = (last_user_request or "").lstrip().startswith(
+                    "[用户指令最终汇总]"
+                )
+                # 同时拼装组织级 verify 上下文（B4 由 ValidationContext 消费）
+                org_validation_kwargs = self._build_org_validation_kwargs()
                 is_completed = await self._response_handler.verify_task_completion(
-                    user_request=ResponseHandler.get_last_user_request(original_messages),
+                    user_request=last_user_request,
                     assistant_response=cleaned_text,
                     executed_tools=executed_tool_names,
                     delivery_receipts=delivery_receipts,
                     tool_results=all_tool_results,
                     conversation_id=conversation_id,
-                    bypass=supervisor_intervened,
+                    bypass=supervisor_intervened or is_summary_round,
+                    **org_validation_kwargs,
                 )
 
                 if is_completed:
@@ -5815,6 +5827,56 @@ class ReasoningEngine:
             }
             return "tool_result" not in part_types
         return False
+
+    def _build_org_validation_kwargs(self) -> dict[str, object]:
+        """从 agent._org_context 拼装组织视角的 verify 上下文 (B4)。
+
+        - 严格分支：runtime.get_accepted_child_count(org_id, chain_id)
+        - 弱信号兜底：runtime.has_recent_accepted_signal(org_id, node_id)
+
+        非组织 agent / 拿不到上下文时返回空 dict，verify 行为与旧版完全一致。
+        """
+        try:
+            agent = getattr(self._tool_executor, "_agent_ref", None)
+            if agent is None:
+                return {}
+            ctx = getattr(agent, "_org_context", None)
+            if not isinstance(ctx, dict):
+                return {}
+            org_id = ctx.get("current_org_id") or ""
+            node_id = ctx.get("current_node_id") or ""
+            chain_id = ctx.get("current_chain_id") or ""
+            if not org_id or not node_id:
+                return {}
+
+            from openakita.orgs.runtime import get_runtime  # 延迟导入避免环路
+            runtime = get_runtime()
+            if runtime is None:
+                return {}
+
+            accepted = 0
+            try:
+                accepted = int(runtime.get_accepted_child_count(org_id, chain_id) or 0)
+            except Exception:
+                accepted = 0
+
+            has_recent = False
+            if accepted == 0:
+                # 严格信号失败时再问弱信号，避免重复 IO
+                try:
+                    has_recent = bool(
+                        runtime.has_recent_accepted_signal(org_id, node_id)
+                    )
+                except Exception:
+                    has_recent = False
+
+            return {
+                "accepted_child_count": accepted,
+                "has_recent_accepted_signal": has_recent,
+            }
+        except Exception as exc:
+            logger.debug("[Verify] _build_org_validation_kwargs failed: %s", exc)
+            return {}
 
     @staticmethod
     def _is_in_progress_promise(text: str) -> bool:

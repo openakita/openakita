@@ -87,6 +87,19 @@ class Intervention:
 # -- 配置常量 --
 TOOL_THRASH_WINDOW = 8
 TOOL_THRASH_FAIL_THRESHOLD = 3
+# Known-error patterns: 永久性、不会随重试改变的系统级错误。
+# 命中后在 _check_tool_thrashing 内提前升级（≥2 STRATEGY_SWITCH，≥3 TERMINATE）。
+# 必须只列「永远不会改变」的错（工具不存在 / 缺必填参数），不要列瞬态错
+# （timeout / 5xx / network），后者保留给原有 8 窗 3 阈 STRATEGY_SWITCH 路径。
+KNOWN_ERROR_PATTERNS: tuple[str, ...] = (
+    "Tool not found",
+    "❌ Tool not found",
+    "未找到该工具",
+    "❌ run_shell 缺少必要参数",
+    "缺少必要参数 'command'",
+)
+KNOWN_ERROR_STRATEGY_SWITCH_THRESHOLD = 2
+KNOWN_ERROR_TERMINATE_THRESHOLD = 3
 EDIT_THRASH_WINDOW = 10
 EDIT_THRASH_THRESHOLD = 3
 REASONING_SIMILARITY_THRESHOLD = 0.80
@@ -196,10 +209,23 @@ class RuntimeSupervisor:
         params: dict[str, Any] | None = None,
         success: bool = True,
         iteration: int = 0,
+        result_text: str | None = None,
     ) -> None:
-        """记录一次工具调用"""
+        """记录一次工具调用。
+
+        ``result_text`` 是工具返回内容的截断版（可选），仅用于 supervisor
+        识别已知的「永久错」模式（如 ``Tool not found``、缺参数）。
+        不传时退化为旧行为，仅依赖 ``success`` 布尔。
+        """
         if not self._enabled:
             return
+        truncated = None
+        if result_text is not None:
+            try:
+                txt = str(result_text)
+            except Exception:
+                txt = ""
+            truncated = txt[:512] if txt else ""
         self._tool_call_history.append(
             {
                 "tool_name": tool_name,
@@ -207,6 +233,7 @@ class RuntimeSupervisor:
                 "success": success,
                 "iteration": iteration,
                 "timestamp": time.time(),
+                "result_text": truncated,
             }
         )
         # 文件操作追踪
@@ -530,16 +557,81 @@ class RuntimeSupervisor:
         return None
 
     def _check_tool_thrashing(self, iteration: int) -> Intervention | None:
-        """工具抖动检测：同一工具连续多次失败（不同参数）"""
+        """工具抖动检测：同一工具连续多次失败（不同参数）。
+
+        分两层判定（同函数内分支，不引入新检测路径）：
+        1) 已知永久错（KNOWN_ERROR_PATTERNS）：≥2 次 STRATEGY_SWITCH，≥3 次 TERMINATE。
+           典型场景：LLM 反复 `get_tool_info('write_file')` 拿到 ❌ Tool not found，
+           或 `run_shell` 反复缺 'command' 参数。这类错重试无意义，必须早终止。
+        2) 普通失败：维持原 ``TOOL_THRASH_WINDOW=8`` 窗口、``threshold=3`` 阈值，
+           升级到 STRATEGY_SWITCH。
+        """
         recent = self._tool_call_history[-TOOL_THRASH_WINDOW:]
-        if len(recent) < self._tool_thrash_fail_threshold:
+        if not recent:
             return None
 
         tool_failures: dict[str, int] = {}
+        tool_known_error_failures: dict[str, int] = {}
+        tool_known_error_sample: dict[str, str] = {}
         for entry in recent:
-            if not entry["success"]:
-                name = entry["tool_name"]
-                tool_failures[name] = tool_failures.get(name, 0) + 1
+            if entry.get("success"):
+                continue
+            name = entry.get("tool_name") or ""
+            if not name:
+                continue
+            tool_failures[name] = tool_failures.get(name, 0) + 1
+            result_text = entry.get("result_text") or ""
+            if result_text:
+                for pat in KNOWN_ERROR_PATTERNS:
+                    if pat in result_text:
+                        tool_known_error_failures[name] = (
+                            tool_known_error_failures.get(name, 0) + 1
+                        )
+                        # 记一条样本用于提示文案，避免过长
+                        if name not in tool_known_error_sample:
+                            tool_known_error_sample[name] = result_text[:160]
+                        break
+
+        # ---- 已知永久错路径（前置） ----
+        for tool_name, ke_count in tool_known_error_failures.items():
+            if ke_count >= KNOWN_ERROR_TERMINATE_THRESHOLD:
+                sample = tool_known_error_sample.get(tool_name, "")
+                return Intervention(
+                    level=InterventionLevel.TERMINATE,
+                    pattern=PatternType.TOOL_THRASHING,
+                    message=(
+                        f"Tool '{tool_name}' hit known permanent error {ke_count} times "
+                        f"in last {TOOL_THRASH_WINDOW} calls — terminating to save tokens"
+                    ),
+                    should_inject_prompt=True,
+                    should_rollback=False,
+                    prompt_injection=(
+                        f"[系统提示] 工具 '{tool_name}' 已经连续 {ke_count} 次返回同一个永久性错误，"
+                        f"重试不会改变结果。错误样本：{sample}\n"
+                        "请立即停止调用该工具，改用本节点确实可用的工具，或直接用自然语言回复用户。"
+                    ),
+                )
+            if ke_count >= KNOWN_ERROR_STRATEGY_SWITCH_THRESHOLD:
+                sample = tool_known_error_sample.get(tool_name, "")
+                return Intervention(
+                    level=InterventionLevel.STRATEGY_SWITCH,
+                    pattern=PatternType.TOOL_THRASHING,
+                    message=(
+                        f"Tool '{tool_name}' hit known permanent error {ke_count} times — "
+                        "switching strategy"
+                    ),
+                    should_inject_prompt=True,
+                    should_rollback=True,
+                    prompt_injection=(
+                        f"[系统提示] 工具 '{tool_name}' 在本节点不可用或参数错误（已重复 {ke_count} 次）。"
+                        f"错误样本：{sample}\n"
+                        "请改用本节点系统提示中明确列出的工具；不要用 get_tool_info 探查这些工具，它们不会出现。"
+                    ),
+                )
+
+        # ---- 普通失败路径（保持原阈值与文案） ----
+        if len(recent) < self._tool_thrash_fail_threshold:
+            return None
 
         for tool_name, fail_count in tool_failures.items():
             if fail_count >= self._tool_thrash_fail_threshold:

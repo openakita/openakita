@@ -204,6 +204,40 @@ class FilesystemHandler:
     }
 
     @classmethod
+    def _format_run_shell_missing_command(cls, params: dict) -> str:
+        """缺 'command' 参数时返回引导式错误，识别常见误传字段。
+
+        - 列出实际收到的键，方便 LLM 发现自己传错；
+        - 若误传 script/cmd/shell/bash/code，特别提示重命名为 'command'。
+        """
+        try:
+            keys = list(params.keys()) if isinstance(params, dict) else []
+        except Exception:
+            keys = []
+
+        wrong_alias = None
+        if isinstance(params, dict):
+            for alias in cls._RUN_SHELL_ALIAS_KEYS:
+                if alias in params and params.get(alias):
+                    wrong_alias = alias
+                    break
+
+        lines = [
+            "❌ run_shell 缺少必要参数 'command'。",
+            'Usage: run_shell(command="ls -la", working_directory=None, timeout=60)',
+            f"You passed keys: {keys}",
+        ]
+        if wrong_alias is not None:
+            lines.append(
+                f"检测到你传了 '{wrong_alias}'，请改名为 'command' 后重试，参数值原样保留即可。"
+            )
+        else:
+            lines.append(
+                "常见误传字段：script / cmd / shell / bash / code → 都应使用 'command'。"
+            )
+        return "\n".join(lines)
+
+    @classmethod
     def _interpret_exit_code(cls, command: str, exit_code: int) -> str | None:
         """Return a human-readable meaning if the exit code is a known
         non-error for the given command, or ``None`` otherwise."""
@@ -224,11 +258,14 @@ class FilesystemHandler:
         meanings = cls._EXIT_CODE_SEMANTICS.get(cmd_name, {})
         return meanings.get(exit_code)
 
+    # 常见的 LLM 误传字段名 -> 都应改写为 'command'
+    _RUN_SHELL_ALIAS_KEYS = ("script", "cmd", "shell", "bash", "code")
+
     async def _run_shell(self, params: dict) -> str:
         """Execute shell command with persistent session + background support."""
         command = params.get("command", "")
         if not command:
-            return "❌ run_shell 缺少必要参数 'command'。"
+            return self._format_run_shell_missing_command(params)
 
         policy = self._get_fix_policy()
         if policy:
