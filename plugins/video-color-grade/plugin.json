@@ -1,0 +1,48 @@
+{
+  "id": "video-color-grade",
+  "name": "Video Color Grade",
+  "display_name_zh": "视频一键调色",
+  "display_name_en": "Video Color Grade",
+  "version": "0.1.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "One-click subtle color grading for any video. Samples brightness/contrast/saturation via ffmpeg signalstats and emits a per-clip eq filter capped at \u00b18% per axis (no creative LUTs). Falls back to the named 'subtle' / 'neutral_punch' / 'warm_cinematic' presets when auto analysis is unavailable.",
+  "description_i18n": {
+    "zh": "\u4e00\u952e\u8c03\u8272\u63d2\u4ef6\uff1a\u901a\u8fc7 ffmpeg signalstats \u91c7\u6837\u4eae\u5ea6/\u5bf9\u6bd4\u5ea6/\u9971\u548c\u5ea6\uff0c\u751f\u6210\u6bcf\u6bb5\u89c6\u9891\u7684\u5fae\u8c03\u53c2\u6570\uff0c\u6240\u6709\u8c03\u6574\u6362\u8f74\u9ed8\u8ba4 \u00b18% \u4e0a\u9650\uff0c\u4ec0\u4e48\u573a\u666f\u90fd\u4e0d\u4f1a\u8fc7\u8c03\u3002\u4e5f\u53ef\u76f4\u63a5\u9009 \"subtle / neutral_punch / warm_cinematic\" \u9884\u8bbe\u3002",
+    "en": "One-click subtle color grading for any video. Samples brightness/contrast/saturation via ffmpeg signalstats and emits a per-clip eq filter capped at \u00b18% per axis (no creative LUTs). Falls back to the named 'subtle' / 'neutral_punch' / 'warm_cinematic' presets when auto analysis is unavailable."
+  },
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["video", "color", "grade", "ffmpeg", "post"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.4.0"
+  },
+  "provides": {
+    "tools": [
+      "video_color_grade_create",
+      "video_color_grade_status",
+      "video_color_grade_list",
+      "video_color_grade_cancel",
+      "video_color_grade_preview"
+    ],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "视频一键调色",
+    "title_i18n": { "zh": "视频一键调色", "en": "Video Color Grade" },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme"]
+  }
+}
