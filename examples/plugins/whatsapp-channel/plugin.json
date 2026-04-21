@@ -1,8 +1,8 @@
 {
   "id": "whatsapp-channel",
   "name": "WhatsApp",
-  "version": "1.0.0",
-  "description": "WhatsApp IM channel adapter supporting Cloud API (business) and WhatsApp Web (personal via QR code)",
+  "version": "2.0.0",
+  "description": "WhatsApp IM channel adapter supporting Cloud API (business) and WhatsApp Web via Baileys 7.x (LID/ESM, requires Node.js >= 20)",
   "author": "OpenAkita Team",
   "license": "MIT",
   "type": "python",
