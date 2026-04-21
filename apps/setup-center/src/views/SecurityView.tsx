@@ -438,6 +438,18 @@ export default function SecurityView({ apiBaseUrl, serviceRunning }: SecurityVie
                 />
               ))}
             </div>
+            <div className="space-y-2 max-w-xs">
+              <Label className="text-sm font-medium">{t("security.defaultZone", "默认区域")}</Label>
+              <Select value={zones.default_zone || "controlled"} onValueChange={(v) => setZones((prev) => ({ ...prev, default_zone: v }))}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="workspace">{t("security.zoneWorkspace", "工作区 (workspace)")}</SelectItem>
+                  <SelectItem value="controlled">{t("security.zoneControlled", "受控区 (controlled)")}</SelectItem>
+                  <SelectItem value="protected">{t("security.zoneProtected", "受保护区 (protected)")}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t("security.defaultZoneDesc", "路径不匹配任何区域时使用的默认区域。受控区允许创建/编辑，受保护区拒绝所有写入。")}</p>
+            </div>
             <div className="flex justify-end pt-2">
               <Button onClick={() => doSave("/api/config/security/zones", zones, "zonesSaved")} disabled={saving}>
                 {saving ? <Loader2 className="size-4 animate-spin mr-2" /> : <Save size={14} className="mr-2" />}

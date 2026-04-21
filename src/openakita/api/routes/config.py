@@ -191,6 +191,7 @@ class SecurityZonesUpdate(BaseModel):
     controlled: list[str] = []
     protected: list[str] = []
     forbidden: list[str] = []
+    default_zone: str = "controlled"
 
 
 class SecurityCommandsUpdate(BaseModel):
@@ -992,6 +993,8 @@ async def write_security_zones(body: SecurityZonesUpdate):
     z["controlled"] = body.controlled
     z["protected"] = body.protected
     z["forbidden"] = body.forbidden
+    if body.default_zone in ("workspace", "controlled", "protected", "forbidden"):
+        z["default_zone"] = body.default_zone
     _write_policies_yaml(data)
     try:
         from openakita.core.policy import reset_policy_engine

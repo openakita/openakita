@@ -531,6 +531,8 @@ class PolicyEngine:
     所有判定都会记录到审计系统。
     """
 
+    _SMART_ESCALATION_THRESHOLD: int = 3
+
     def __init__(self, config: SecurityConfig | None = None) -> None:
         self._config = config or self._make_default_config()
         self._audit_log: list[dict[str, Any]] = []
@@ -550,6 +552,8 @@ class PolicyEngine:
         self._skill_allowlists: dict[str, set[str]] = {}
         # P3-3: 前端安全模式 (synced to confirmation.mode)
         self._frontend_mode: str = "smart"
+        # Smart-mode session trust escalation counter
+        self._session_allow_count: int = 0
 
     @property
     def config(self) -> SecurityConfig:
@@ -1084,9 +1088,12 @@ class PolicyEngine:
                     metadata={"risk_level": risk.value},
                 )
             if mode == "smart":
-                # smart mode: MEDIUM returns CONFIRM; frontend checkAutoAllow
-                # handles auto-allow based on session trust escalation.
-                pass
+                if self._session_allow_count >= self._SMART_ESCALATION_THRESHOLD:
+                    self._on_allow(tool_name, params)
+                    return PolicyResult(
+                        decision=PolicyDecision.ALLOW,
+                        metadata={"risk_level": risk.value, "auto_approved": "smart_escalation"},
+                    )
             result = PolicyResult(
                 decision=PolicyDecision.CONFIRM,
                 reason=f"此命令可能修改系统配置或安装软件，需要确认: {command[:120]}",
@@ -1216,6 +1223,7 @@ class PolicyEngine:
     def _on_allow(self, tool_name: str, params: dict[str, Any] | None = None) -> None:
         if tool_name not in ("read_file", "list_directory", "grep", "glob"):
             self._consecutive_denials = 0
+            self._session_allow_count += 1
         if params is not None:
             result = PolicyResult(decision=PolicyDecision.ALLOW, reason="", policy_name="")
             self._audit(tool_name, params, result)
@@ -1303,10 +1311,26 @@ class PolicyEngine:
         For session/persistent allowlists we match the base command (first
         token + ``*``) so that ``npm install foo`` also matches later
         ``npm install bar``.
+
+        Handles full-path executors like ``"C:/.../python.exe" -m pip install``
+        by extracting the semantic sub-command (``pip install*``).
         """
         parts = command.strip().split()
         if not parts:
             return command
+
+        base = parts[0].strip('"').strip("'")
+        sep = "/" if "/" in base else "\\"
+        exe_name = base.rsplit(sep, 1)[-1].lower() if sep in base else base.lower()
+        if exe_name.endswith(".exe"):
+            exe_name = exe_name[:-4]
+
+        _EXECUTOR_NAMES = {"python", "python3", "python3.11", "python3.12", "python3.13", "node", "ruby", "perl"}
+        if exe_name in _EXECUTOR_NAMES and len(parts) >= 3 and parts[1] == "-m":
+            if len(parts) >= 4:
+                return f"{parts[2]} {parts[3]}*"
+            return f"{parts[2]}*"
+
         if len(parts) >= 2:
             return f"{parts[0]} {parts[1]}*"
         return f"{parts[0]}*"
@@ -1419,12 +1443,21 @@ class PolicyEngine:
         """Check if tool call matches a persistent user allowlist entry.
 
         Returns the entry metadata (including ``needs_sandbox``) or None.
+        Matches both the raw command and the semantic command extracted
+        by ``_command_to_pattern`` (handles full-path executors like
+        ``python.exe -m pip install``).
         """
         command = params.get("command", "")
         if tool_name in ("run_shell", "run_powershell") and command:
+            semantic_pattern = self._command_to_pattern(command)
+            semantic_cmd = semantic_pattern.rstrip("*").rstrip()
             for entry in self._config.user_allowlist.commands:
                 pattern = entry.get("pattern", "")
-                if pattern and fnmatch.fnmatch(command, pattern):
+                if not pattern:
+                    continue
+                if fnmatch.fnmatch(command, pattern):
+                    return entry
+                if semantic_cmd and fnmatch.fnmatch(semantic_cmd, pattern):
                     return entry
         else:
             for entry in self._config.user_allowlist.tools:
@@ -1515,6 +1548,7 @@ class PolicyEngine:
         for k in to_remove:
             self._pending_ui_confirms.pop(k, None)
         self._session_allowlist.clear()
+        self._session_allow_count = 0
 
     def resolve_ui_confirm(self, confirm_id: str, decision: str) -> bool:
         """Called by the /api/chat/security-confirm endpoint.

@@ -28,7 +28,7 @@ security:
     - C:/Windows/System32/config/**
     - /etc/shadow
     - /etc/gshadow
-    default_zone: protected
+    default_zone: controlled
   confirmation:
     enabled: true
     mode: smart
