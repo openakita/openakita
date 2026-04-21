@@ -1430,6 +1430,28 @@ export function OrgEditorView({
     return { ...((e.data as any) || {}), source: e.source, target: e.target, _id: e.id };
   }, [selectedEdgeId, edges]);
 
+  // 渲染用 edges：把 edge 动画 / 流量计数合并到 edge 对象。
+  // 必须 useMemo —— 否则拖拽时 useNodesState 每帧刷新 nodes 会让父组件重渲，
+  // 内联 edges.map(...) 会重建所有 edge 引用，ReactFlow 按引用 diff 时
+  // 会判定"全部边都变了"并重画所有 SVG / marker，导致拖拽和动画一顿一顿。
+  // 拖拽只改 nodes，不在本 memo 依赖里，所以拖拽期间 ReactFlow 收到的是同一引用。
+  const flowEdges = useMemo(() => {
+    return edges.map((e) => {
+      const anim = edgeAnimations[e.id];
+      const flowCount = liveMode ? edgeFlowCounts[e.id] : undefined;
+      const base = flowCount && flowCount > 0
+        ? { ...e, label: `${(e.data as any)?.label || ""} ${flowCount > 0 ? `(${flowCount})` : ""}`.trim() || undefined }
+        : e;
+      if (!anim) return base;
+      return {
+        ...base,
+        animated: true,
+        style: { ...base.style, stroke: anim.color, strokeWidth: 3, filter: `drop-shadow(0 0 4px ${anim.color})` },
+        markerEnd: { ...(base.markerEnd as any), color: anim.color },
+      };
+    });
+  }, [edges, edgeAnimations, edgeFlowCounts, liveMode]);
+
   const updateEdgeData = useCallback((field: string, value: any) => {
     if (!selectedEdgeId) return;
     setEdges((prev) =>
@@ -2036,20 +2058,7 @@ export function OrgEditorView({
                 reactFlowRef.current = instance;
               }}
               nodes={nodes}
-              edges={edges.map((e) => {
-                const anim = edgeAnimations[e.id];
-                const flowCount = liveMode ? edgeFlowCounts[e.id] : undefined;
-                const base = flowCount && flowCount > 0
-                  ? { ...e, label: `${(e.data as any)?.label || ""} ${flowCount > 0 ? `(${flowCount})` : ""}`.trim() || undefined }
-                  : e;
-                if (!anim) return base;
-                return {
-                  ...base,
-                  animated: true,
-                  style: { ...base.style, stroke: anim.color, strokeWidth: 3, filter: `drop-shadow(0 0 4px ${anim.color})` },
-                  markerEnd: { ...(base.markerEnd as any), color: anim.color },
-                };
-              })}
+              edges={flowEdges}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
