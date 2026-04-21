@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>本地出图 (local-sd-flux)</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      body { margin: 0; padding: 32px; line-height: 1.55; max-width: 760px; }
+      h1 { margin-top: 0; font-size: 22px; }
+      code { background: rgba(127,127,127,0.15); padding: 2px 6px; border-radius: 4px; }
+      .muted { opacity: 0.65; font-size: 14px; }
+      ul { padding-left: 20px; }
+      .badge { display: inline-block; background: #1f6feb; color: white; padding: 2px 8px; border-radius: 12px; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>本地出图 <span class="badge">backend ready</span></h1>
+    <p class="muted">
+      插件后端（FastAPI 路由 + brain 工具 + ComfyUI 客户端）已就绪；
+      可视化前端尚未脚手架完成。可以先通过 HTTP / brain 工具直接驱动。
+    </p>
+
+    <h2>核心 HTTP 路由</h2>
+    <ul>
+      <li><code>GET  /healthz</code> — 预设列表与默认 base_url</li>
+      <li><code>GET  /check-server</code> — 真正打 ComfyUI 探活</li>
+      <li><code>GET  /presets</code> — sd15 / sdxl / flux 三套预设</li>
+      <li><code>POST /preview</code> — 干跑一次出 plan，不发起渲染</li>
+      <li><code>POST /tasks</code> — 创建并排队</li>
+      <li><code>GET  /tasks/{id}/image/{idx}</code> — 流式拉一张图</li>
+      <li><code>POST /rank-providers</code> — 多机择优</li>
+    </ul>
+
+    <h2>核心 brain 工具</h2>
+    <ul>
+      <li><code>local_sd_flux_create</code></li>
+      <li><code>local_sd_flux_status</code> / <code>list</code> / <code>cancel</code></li>
+      <li><code>local_sd_flux_check_deps</code></li>
+      <li><code>local_sd_flux_rank_providers</code></li>
+    </ul>
+
+    <p class="muted">
+      详细用法：<code>plugins/local-sd-flux/README.md</code> 与
+      <code>plugins/local-sd-flux/SKILL.md</code>。
+    </p>
+  </body>
+</html>

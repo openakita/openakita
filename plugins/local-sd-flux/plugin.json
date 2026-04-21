@@ -1,0 +1,50 @@
+{
+  "id": "local-sd-flux",
+  "name": "Local SD / FLUX (ComfyUI)",
+  "display_name_zh": "本地出图 (Stable Diffusion / FLUX)",
+  "display_name_en": "Local SD / FLUX (ComfyUI)",
+  "version": "1.0.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Generate images locally through a running ComfyUI server. Ships with curated workflow presets for Stable Diffusion 1.5, SDXL and FLUX, plus a lightweight provider-ranker that picks between local-GPU / local-CPU / remote ComfyUI based on VRAM, queue depth and reliability.",
+  "description_i18n": {
+    "zh": "通过本地 ComfyUI 服务出图。内置 Stable Diffusion 1.5 / SDXL / FLUX 三套校准过的工作流预设，并集成一个简化的 provider 排序器，按 VRAM / 队列深度 / 可靠性自动在 本地 GPU / 本地 CPU / 远端 ComfyUI 间挑选。",
+    "en": "Generate images locally through a running ComfyUI server. Ships with curated workflow presets for Stable Diffusion 1.5, SDXL and FLUX, plus a lightweight provider-ranker that picks between local-GPU / local-CPU / remote ComfyUI based on VRAM, queue depth and reliability."
+  },
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["image", "ai", "stable-diffusion", "flux", "comfyui", "local", "gpu"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.4.0"
+  },
+  "provides": {
+    "tools": [
+      "local_sd_flux_create",
+      "local_sd_flux_status",
+      "local_sd_flux_list",
+      "local_sd_flux_cancel",
+      "local_sd_flux_check_deps",
+      "local_sd_flux_rank_providers"
+    ],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "本地出图",
+    "title_i18n": { "zh": "本地出图", "en": "Local SD / FLUX" },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme"]
+  }
+}
