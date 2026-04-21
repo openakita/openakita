@@ -5,6 +5,43 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 2026-04-21
+
+### Fixed — 插件加载系统三件套
+
+- **多插件 `task_manager.py` / `providers.py` 同名子模块在 `sys.modules`
+  互相覆盖**：21 个插件中有 19 个使用裸名 `from task_manager import X`
+  导入自己目录下的 `task_manager.py`；先加载的插件抢占
+  `sys.modules["task_manager"]`,后续插件命中缓存导致
+  `ImportError: cannot import name 'XxxTaskManager'`。`_load_python_plugin`
+  在 `exec_module` 前增加 shadowed 机制：扫描本插件目录的顶层 `.py` /
+  包名,把 `sys.modules` 里属于其他插件的同名条目先弹出,让本插件的
+  bare import 能沿 `sys.path` 找到自己的文件。已加载兄弟插件持有的
+  Python 对象引用照常工作。
+- **`PluginManager._failed` 在卸载/移除后从不清理**：UI 长期残留"插件
+  加载失败"幽灵条目。`unload_plugin` 入口立即 `pop _failed[plugin_id]`;
+  纯 failed-state 的卸载现在返回 `True`(原先返回 `False`,语义更准确,
+  现有测试不受影响)。`uninstall_plugin` 路由的 removed 分支额外调用
+  新增的 `pm.forget_failure(plugin_id)` 兜底。
+- **`seedance-video` 缺失 `prompt_optimizer.py` 导致
+  `ModuleNotFoundError`**：Sprint 18 收尾依据
+  [docs/sprint18-cleanup-assessment.md](docs/sprint18-cleanup-assessment.md)
+  §B8 的错误 grep 结论删除了该文件,但 `plugin.py` 第 39–46 行 import
+  并在 4 个 REST 端点(`/prompt-guide`、`/prompt-templates`、
+  `/prompt-formulas`、`/prompt-optimize`)实际使用 6 个符号。已从 commit
+  `f04787f9^` 还原 291 行原版本。SDK 的
+  `openakita_plugin_sdk.contrib.prompt_optimizer.PromptOptimizer` 是另一
+  套泛化 API（无 Seedance 静态字典、签名不同）,不能替换;后续若想接 SDK
+  须按 §B8 推荐方案做拆分。
+
+### Documentation
+
+- `docs/sprint18-cleanup-assessment.md` §B8.A — 标注 grep 结论错误 +
+  撤销动作 + 复核命令(`rg --pcre2 -nP "from\s+prompt_optimizer"`)
+- `docs/plugin-2.0-handover.md` — 移除 `prompt_optimizer.py` 删除线,
+  改写为"已还原"
+- 自检 21 个插件的同名子模块碰撞清单(归档于本次 PR plan)
+
 ## [1.27.9] - 2026-04-20
 
 > Plugin Sprint 7-18 整合发布。完成 SDK `contrib/` 6 件套补齐 + 8 个新 AI-媒体插件

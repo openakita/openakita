@@ -302,6 +302,11 @@ class PluginAPI:
     def register_api_routes(self, router) -> None:
         if not self._check_permission("routes.register"):
             return
+        # ``_admin/*`` is a reserved namespace owned by the host's plugin
+        # management API (see ``src/openakita/api/routes/plugins.py``). Drop
+        # any plugin route that would shadow / collide with it before mounting,
+        # and warn loudly so the developer knows to rename.
+        self._strip_reserved_admin_routes(router)
         api_server = self._host.get("api_app")
         if api_server is not None:
             try:
@@ -315,6 +320,36 @@ class PluginAPI:
         pending = self._host.setdefault("_pending_plugin_routers", [])
         pending.append((self._plugin_id, router))
         self.log(f"API app not yet available, routes queued for /api/plugins/{self._plugin_id}")
+
+    def _strip_reserved_admin_routes(self, router) -> None:
+        """Remove any plugin route under the reserved ``_admin/*`` prefix.
+
+        Plugins must NOT register routes under ``_admin/`` because the host
+        already exposes its plugin-management API there
+        (``/api/plugins/{plugin_id}/_admin/...``). Allowing both would
+        re-introduce the FastAPI route-shadowing bug that caused plugin
+        ``GET /tasks`` endpoints to be silently masked by the host's
+        ``GET /{plugin_id}/_admin/spawned-tasks`` (formerly ``/tasks``).
+        """
+        routes = getattr(router, "routes", None)
+        if not routes:
+            return
+        kept = []
+        dropped: list[str] = []
+        for route in routes:
+            path = getattr(route, "path", "") or ""
+            normalized = path if path.startswith("/") else "/" + path
+            if normalized == "/_admin" or normalized.startswith("/_admin/"):
+                dropped.append(path)
+                continue
+            kept.append(route)
+        if dropped:
+            router.routes = kept
+            self.log(
+                "Refused to register reserved-namespace routes "
+                f"(prefix /_admin is owned by the host): {dropped}",
+                "warning",
+            )
 
     # --- Channel registration (advanced) ---
 

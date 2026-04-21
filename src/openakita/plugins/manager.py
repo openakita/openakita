@@ -432,6 +432,59 @@ class PluginManager:
         except OSError:
             plugin_dir_resolved = plugin_dir
 
+        # Isolate plugin-local submodules from cross-plugin sys.modules
+        # collisions. Many plugins ship a top-level ``task_manager.py`` (or
+        # ``providers.py``) and import it as ``from task_manager import X``.
+        # The first plugin to load wins ``sys.modules['task_manager']``;
+        # later plugins doing the same bare import would receive the cached
+        # module from a sibling plugin and raise ``ImportError`` for any
+        # class that doesn't exist there. Before exec'ing this plugin,
+        # evict any ``sys.modules`` entry whose name matches a top-level
+        # file/pkg in this plugin's directory but whose source file lives
+        # elsewhere — so the new plugin's bare imports resolve to its own
+        # files via ``sys.path``. Already-loaded sibling plugins keep
+        # working because they hold direct object references; they would
+        # only be affected by *late* re-imports of their own submodules,
+        # which is not a pattern OpenAkita plugins use.
+        plugin_local_names: set[str] = set()
+        try:
+            for child in plugin_dir.iterdir():
+                if (
+                    child.is_file()
+                    and child.suffix == ".py"
+                    and child.stem != "__init__"
+                ):
+                    plugin_local_names.add(child.stem)
+                elif child.is_dir() and (child / "__init__.py").is_file():
+                    plugin_local_names.add(child.name)
+        except OSError:
+            pass
+
+        for name in plugin_local_names:
+            existing = sys.modules.get(name)
+            if existing is None:
+                continue
+            mod_file = getattr(existing, "__file__", None) or ""
+            if not mod_file:
+                # Namespace packages / built-ins have no __file__; assume
+                # they don't belong to this plugin and leave them alone.
+                continue
+            try:
+                belongs = Path(mod_file).resolve().is_relative_to(
+                    plugin_dir_resolved
+                )
+            except (OSError, ValueError):
+                belongs = False
+            if not belongs:
+                sys.modules.pop(name, None)
+                logger.debug(
+                    "Plugin '%s' shadowing top-level module '%s' "
+                    "previously from %s",
+                    manifest.id,
+                    name,
+                    mod_file,
+                )
+
         pre_modules = set(sys.modules.keys())
 
         try:
@@ -785,9 +838,17 @@ class PluginManager:
                 )
 
     async def unload_plugin(self, plugin_id: str) -> bool:
+        # Clear any prior failure record. Both "previously loaded then
+        # unloaded" and "never successfully loaded" must drop the
+        # ``_failed`` entry — otherwise stale errors keep showing in the
+        # plugin manager UI long after the user removed the plugin.
+        had_failure = self._failed.pop(plugin_id, None) is not None
+
         loaded = self._loaded.pop(plugin_id, None)
         if loaded is None:
-            return False
+            # Nothing to tear down, but if we just cleared a failure row
+            # let the caller know the operation actually changed state.
+            return had_failure
 
         # 1. Plugin's own on_unload — best effort, never blocks the rest.
         try:
@@ -1089,6 +1150,16 @@ class PluginManager:
 
     def list_failed(self) -> dict[str, str]:
         return dict(self._failed)
+
+    def forget_failure(self, plugin_id: str) -> bool:
+        """Drop ``plugin_id`` from the in-memory failure registry.
+
+        Returns ``True`` if there was an entry to remove. Used by the
+        uninstall route as a defensive cleanup so the UI's "load failure"
+        section never displays ghost entries for plugins whose code dir
+        no longer exists.
+        """
+        return self._failed.pop(plugin_id, None) is not None
 
     def get_plugin_logs(self, plugin_id: str, lines: int = 100) -> str:
         loaded = self._loaded.get(plugin_id)

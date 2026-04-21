@@ -481,7 +481,7 @@ npm run build   # 输出到 dist/
 **热开发提示 / Hot Dev Tips:**
 - 宿主会在每次 iframe 加载时附加 `?_v=timestamp` 防止缓存
 - 修改 `index.html` 后，在桌面端侧边栏重新点击插件入口即可刷新
-- 后端路由修改后需重启宿主（或使用 `POST /api/plugins/{id}/reload`）
+- 后端路由修改后需重启宿主（或使用 `POST /api/plugins/{id}/_admin/reload`）
 
 ---
 
@@ -512,9 +512,9 @@ class Plugin(PluginBase):
             return {"ok": True, "task_id": "xxx"}
 ```
 
-所有路由自动挂载在 `/api/plugins/<plugin_id>/` 前缀下。
+所有路由自动挂载在 `/api/plugins/<plugin_id>/` 前缀下。**注意：`_admin/*` 是宿主保留命名空间**——宿主插件管理 / 诊断接口（启用、禁用、读写配置、重载、日志、`spawned-tasks` 等）都在 `/api/plugins/<plugin_id>/_admin/...` 上，插件不能也不应该在 `_admin/` 下注册路由（`register_api_routes` 会自动剥离并打 warning）。所以放心地使用常见的业务路径如 `/tasks`、`/config`、`/status`，它们不会再被宿主接口屏蔽。
 
-All routes are auto-mounted under `/api/plugins/<plugin_id>/` prefix.
+All routes are auto-mounted under `/api/plugins/<plugin_id>/` prefix. **Note: `_admin/*` is a reserved namespace owned by the host** — host management / diagnostic endpoints (enable, disable, config, reload, logs, `spawned-tasks`, …) live at `/api/plugins/<plugin_id>/_admin/...`. Plugins must not register routes under `_admin/` (the host strips and warns about them at `register_api_routes` time). Common business paths like `/tasks`, `/config`, `/status` are safe to use and will no longer be shadowed by host endpoints.
 
 ### 文件响应 / File Response
 

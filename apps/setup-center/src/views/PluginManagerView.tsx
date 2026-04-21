@@ -191,7 +191,7 @@ function PluginIcon({ plugin, apiBase }: { plugin: PluginInfo; apiBase: string }
   if (plugin.has_icon && !imgErr) {
     return (
       <img
-        src={`${apiBase}/api/plugins/${plugin.id}/icon`}
+        src={`${apiBase}/api/plugins/${plugin.id}/_admin/icon`}
         alt=""
         onError={() => setImgErr(true)}
         style={{ width: 28, height: 28, borderRadius: 6, objectFit: "cover", flexShrink: 0 }}
@@ -362,7 +362,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
   const loadTasks = async (pluginId: string) => {
     setTasksLoading(true);
     try {
-      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/tasks`);
+      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/spawned-tasks`);
       const raw = await resp.json();
       const data = raw.data ?? raw;
       setTasksData({
@@ -418,7 +418,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
       const url =
         action === "delete"
           ? `${apiBaseRef.current()}/api/plugins/${id}`
-          : `${apiBaseRef.current()}/api/plugins/${id}/${action}`;
+          : `${apiBaseRef.current()}/api/plugins/${id}/_admin/${action}`;
       const resp = await safeFetch(url, { method, signal: longOpSignal() });
 
       if (action === "reload") {
@@ -530,7 +530,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     scrollToCard(pluginId);
     if (!readmeCache[pluginId]) {
       try {
-        const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/readme`);
+        const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/readme`);
         const raw = await resp.json();
         const data = raw.data ?? raw;
         setReadmeCache((prev) => ({ ...prev, [pluginId]: data.readme || t("plugins.noReadme") }));
@@ -553,8 +553,8 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     scrollToCard(pluginId);
     try {
       const [schemaResp, configResp] = await Promise.all([
-        safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/schema`),
-        safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/config`),
+        safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/schema`),
+        safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/config`),
       ]);
       const schemaRaw = await schemaResp.json();
       const configRaw = await configResp.json();
@@ -573,7 +573,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     setConfigSaving(true);
     setConfigMsg("");
     try {
-      await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/config`, {
+      await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/config`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(configValues),
@@ -589,7 +589,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
   const handleGrantPermissions = async (pluginId: string, perms: string[]) => {
     setGranting(true);
     try {
-      await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/permissions/grant`, {
+      await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/permissions/grant`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ permissions: perms, reload: true }),
@@ -606,7 +606,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
   const handleRevokePermission = async (pluginId: string, perm: string) => {
     setGranting(true);
     try {
-      await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/permissions/revoke`, {
+      await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/permissions/revoke`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ permissions: [perm], reload: true }),
@@ -622,7 +622,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
 
   const handleOpenFolder = async (pluginId: string) => {
     try {
-      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/open-folder`, {
+      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/open-folder`, {
         method: "POST",
       });
       const raw = await resp.json();
@@ -637,7 +637,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
 
   const handleExport = async (pluginId: string) => {
     try {
-      const url = `${apiBaseRef.current()}/api/plugins/${pluginId}/export`;
+      const url = `${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/export`;
       await downloadFile(url, `${pluginId}.zip`);
     } catch (e: any) {
       setError(e.message);
@@ -654,7 +654,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     scrollToCard(pluginId);
     setLogsContent("");
     try {
-      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/logs?lines=200`);
+      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/logs?lines=200`);
       const raw = await resp.json();
       const data = raw.data ?? raw;
       setLogsContent(data.logs || t("plugins.noLogs"));
@@ -666,7 +666,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
   const refreshLogs = async (pluginId: string) => {
     setLogsContent("");
     try {
-      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/logs?lines=200`);
+      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/logs?lines=200`);
       const raw = await resp.json();
       const data = raw.data ?? raw;
       setLogsContent(data.logs || t("plugins.noLogs"));

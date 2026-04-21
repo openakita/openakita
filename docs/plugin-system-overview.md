@@ -338,19 +338,26 @@ my-plugin/
 |------|------|------|
 | `/api/plugins/list` | GET | 获取已安装插件列表及加载状态 |
 | `/api/plugins/install` | POST | 安装插件（source 为 Git URL 或 zip） |
-| `/api/plugins/{id}/enable` | POST | 启用插件 |
-| `/api/plugins/{id}/disable` | POST | 禁用插件 |
-| `/api/plugins/{id}/reload` | POST | 热重载插件 |
-| `/api/plugins/{id}/schema` | GET | 获取 config_schema.json |
-| `/api/plugins/{id}/config` | GET | 获取当前配置值 |
-| `/api/plugins/{id}/config` | PUT | 更新配置值 |
-| `/api/plugins/{id}/readme` | GET | 获取 README 文档内容 |
-| `/api/plugins/{id}/icon` | GET | 获取插件图标文件 |
-| `/api/plugins/{id}/open-folder` | POST | 返回插件目录路径（前端调用系统文件管理器打开） |
-| `/api/plugins/{id}/export` | GET | 导出插件为 .zip 压缩包 |
-| `/api/plugins/{id}/uninstall` | DELETE | 卸载插件 |
+| `/api/plugins/{id}/_admin/enable` | POST | 启用插件 |
+| `/api/plugins/{id}/_admin/disable` | POST | 禁用插件 |
+| `/api/plugins/{id}/_admin/reload` | POST | 热重载插件 |
+| `/api/plugins/{id}/_admin/schema` | GET | 获取 config_schema.json |
+| `/api/plugins/{id}/_admin/config` | GET | 获取当前配置值 |
+| `/api/plugins/{id}/_admin/config` | PUT | 更新配置值 |
+| `/api/plugins/{id}/_admin/readme` | GET | 获取 README 文档内容 |
+| `/api/plugins/{id}/_admin/icon` | GET | 获取插件图标文件 |
+| `/api/plugins/{id}/_admin/logs` | GET | 获取插件最近日志（?lines=N） |
+| `/api/plugins/{id}/_admin/permissions` | GET | 查看权限明细 |
+| `/api/plugins/{id}/_admin/permissions/grant` | POST | 批准权限 |
+| `/api/plugins/{id}/_admin/permissions/revoke` | POST | 撤销权限 |
+| `/api/plugins/{id}/_admin/spawned-tasks` | GET | 列出该插件通过 `api.spawn_task` 启动的后台任务（诊断用） |
+| `/api/plugins/{id}/_admin/open-folder` | POST | 返回插件目录路径（前端调用系统文件管理器打开） |
+| `/api/plugins/{id}/_admin/export` | GET | 导出插件为 .zip 压缩包 |
+| `/api/plugins/{id}` | DELETE | 卸载插件 |
 
-> **注意**: 根路径 `GET /api/plugins` 无路由定义（返回 404）。获取插件列表请使用 `GET /api/plugins/list`。
+> **注意**:
+> - 根路径 `GET /api/plugins` 无路由定义（返回 404）。获取插件列表请使用 `GET /api/plugins/list`。
+> - 所有针对单个插件的"管理 / 诊断"接口均在 `/_admin/` 子前缀下，**`_admin/*` 是宿主保留命名空间**——插件不能在自己的路由表里使用 `_admin/`，否则 `register_api_routes` 会自动剥离并打 warning。这样设计是为了避免插件常用的 `/tasks`、`/config` 路径被宿主同名接口屏蔽。
 
 ---
 

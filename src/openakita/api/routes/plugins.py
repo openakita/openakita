@@ -481,10 +481,16 @@ async def uninstall_plugin(
 
         # 3. Reconcile state with the actual filesystem outcome.
         if result.get("removed"):
-            # Code dir is gone — drop state entry entirely.
+            # Code dir is gone — drop state entry entirely. Also forget
+            # any in-memory load-failure record, otherwise the UI keeps
+            # rendering the ghost error block for a plugin that no
+            # longer exists. ``unload_plugin`` already does this for
+            # cleanly-loaded plugins, but a plugin that *failed* to
+            # load was never in ``_loaded`` and was a no-op there.
             if pm:
                 pm.state.remove_plugin(plugin_id)
                 pm.state.save(state_path)
+                pm.forget_failure(plugin_id)
             else:
                 state = PluginState.load(state_path)
                 state.remove_plugin(plugin_id)
@@ -546,7 +552,7 @@ async def uninstall_plugin(
         )
 
 
-@router.post("/{plugin_id}/enable")
+@router.post("/{plugin_id}/_admin/enable")
 async def enable_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
     _check_plugin_id(plugin_id)
     async with _plugin_op_lock:
@@ -555,7 +561,7 @@ async def enable_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
         return {"ok": True, "data": {"plugin_id": plugin_id, "enabled": True}}
 
 
-@router.post("/{plugin_id}/disable")
+@router.post("/{plugin_id}/_admin/disable")
 async def disable_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
     _check_plugin_id(plugin_id)
     async with _plugin_op_lock:
@@ -568,7 +574,7 @@ def _plugin_config_path(plugin_id: str) -> Path:
     return _plugins_dir() / plugin_id / "config.json"
 
 
-@router.get("/{plugin_id}/config")
+@router.get("/{plugin_id}/_admin/config")
 async def get_plugin_config(plugin_id: str) -> dict[str, Any]:
     _check_plugin_id(plugin_id)
     plugin_dir = _plugins_dir() / plugin_id
@@ -591,7 +597,7 @@ async def get_plugin_config(plugin_id: str) -> dict[str, Any]:
         ) from e
 
 
-@router.put("/{plugin_id}/config")
+@router.put("/{plugin_id}/_admin/config")
 async def update_plugin_config(
     plugin_id: str,
     body: Annotated[dict[str, Any], Body()],
@@ -656,7 +662,7 @@ async def update_plugin_config(
     return {"ok": True, "data": current}
 
 
-@router.get("/{plugin_id}/readme")
+@router.get("/{plugin_id}/_admin/readme")
 async def get_plugin_readme(plugin_id: str) -> dict[str, str]:
     _check_plugin_id(plugin_id)
     plugin_dir = _plugins_dir() / plugin_id
@@ -669,7 +675,7 @@ async def get_plugin_readme(plugin_id: str) -> dict[str, str]:
     return {"ok": True, "data": {"readme": readme}}
 
 
-@router.get("/{plugin_id}/schema")
+@router.get("/{plugin_id}/_admin/schema")
 async def get_plugin_config_schema(plugin_id: str) -> dict[str, Any]:
     _check_plugin_id(plugin_id)
     plugin_dir = _plugins_dir() / plugin_id
@@ -687,7 +693,7 @@ class PermissionGrantBody(BaseModel):
     reload: bool = Field(True, description="Reload plugin after granting permissions")
 
 
-@router.post("/{plugin_id}/permissions/grant")
+@router.post("/{plugin_id}/_admin/permissions/grant")
 async def grant_permissions(
     plugin_id: str, body: PermissionGrantBody, request: Request
 ) -> dict[str, Any]:
@@ -705,7 +711,7 @@ class PermissionRevokeBody(BaseModel):
     reload: bool = Field(True, description="Reload plugin after revoking permissions")
 
 
-@router.post("/{plugin_id}/permissions/revoke")
+@router.post("/{plugin_id}/_admin/permissions/revoke")
 async def revoke_permissions(
     plugin_id: str, body: PermissionRevokeBody, request: Request
 ) -> dict[str, Any]:
@@ -718,7 +724,7 @@ async def revoke_permissions(
     return {"ok": True, "data": {"revoked": body.permissions}}
 
 
-@router.get("/{plugin_id}/permissions")
+@router.get("/{plugin_id}/_admin/permissions")
 async def get_plugin_permissions(plugin_id: str, request: Request) -> dict[str, Any]:
     """Get detailed permission info for a plugin."""
     _check_plugin_id(plugin_id)
@@ -774,7 +780,7 @@ async def get_plugin_permissions(plugin_id: str, request: Request) -> dict[str, 
     }
 
 
-@router.post("/{plugin_id}/reload")
+@router.post("/{plugin_id}/_admin/reload")
 async def reload_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
     """Reload a plugin (useful after granting permissions or changing config)."""
     _check_plugin_id(plugin_id)
@@ -784,7 +790,7 @@ async def reload_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
         return {"ok": True, "data": {"plugin_id": plugin_id}}
 
 
-@router.get("/{plugin_id}/logs")
+@router.get("/{plugin_id}/_admin/logs")
 async def get_plugin_logs(
     plugin_id: str,
     request: Request,
@@ -804,7 +810,7 @@ async def get_plugin_logs(
     return {"ok": True, "data": {"logs": text}}
 
 
-@router.get("/{plugin_id}/icon")
+@router.get("/{plugin_id}/_admin/icon")
 async def get_plugin_icon(plugin_id: str) -> Response:
     """Serve the plugin's icon file (png/svg/jpg)."""
     _check_plugin_id(plugin_id)
@@ -832,7 +838,7 @@ async def get_plugin_icon(plugin_id: str) -> Response:
     return Response(content=data, media_type=media_map.get(ext, "application/octet-stream"))
 
 
-@router.post("/{plugin_id}/open-folder")
+@router.post("/{plugin_id}/_admin/open-folder")
 async def open_plugin_folder(plugin_id: str) -> dict[str, str]:
     """Return the absolute path so frontend can open it via Tauri/OS."""
     _check_plugin_id(plugin_id)
@@ -845,7 +851,7 @@ async def open_plugin_folder(plugin_id: str) -> dict[str, str]:
     return {"ok": True, "data": {"path": str(plugin_dir.resolve())}}
 
 
-@router.get("/{plugin_id}/export")
+@router.get("/{plugin_id}/_admin/export")
 async def export_plugin(plugin_id: str) -> Response:
     """Export a plugin as a .zip file for sharing."""
     _check_plugin_id(plugin_id)
@@ -975,7 +981,7 @@ async def check_updates(request: Request) -> dict[str, Any]:
     }
 
 
-@router.post("/{plugin_id}/update")
+@router.post("/{plugin_id}/_admin/update")
 async def update_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
     """Update a specific plugin to the latest version. Requires marketplace."""
     _check_plugin_id(plugin_id)
@@ -1058,7 +1064,7 @@ async def set_dev_mode(body: DevModeBody, request: Request) -> dict[str, Any]:
 # --- Background-task diagnostics --------------------------------------------
 
 
-@router.get("/{plugin_id}/tasks")
+@router.get("/{plugin_id}/_admin/spawned-tasks")
 async def list_plugin_tasks(plugin_id: str, request: Request) -> dict[str, Any]:
     """List background tasks the plugin scheduled via ``api.spawn_task``.
 

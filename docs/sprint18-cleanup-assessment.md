@@ -223,6 +223,15 @@
 
 > 检查结果：`grep "optimize_prompt|prompt_optimizer" plugins/seedance-video` → **零引用**。可安全删除。
 
+> **⚠ 2026-04-21 修订**：上述 grep 结论是错误的。复核 `plugins/seedance-video/plugin.py`
+> 第 39–46 行明确 `from prompt_optimizer import (ATMOSPHERE_KEYWORDS, CAMERA_KEYWORDS,`
+> `MODE_FORMULAS, PROMPT_TEMPLATES, PromptOptimizeError, optimize_prompt)`，并在
+> `/prompt-guide`、`/prompt-templates`、`/prompt-formulas`、`/prompt-optimize` 4 个
+> REST 端点中实际使用。SDK 的 `PromptOptimizer` 类是另一套泛化 API（无 Seedance 静态
+> 字典、签名不同），不能直接替换。已从 commit `f04787f9^` 还原 `prompt_optimizer.py`
+> 原 291 行版本。结论：**本节 A 的"立即删除"动作不应执行**，未来 grep 类似结论前
+> 务必再 `rg --pcre2 -nP "from\s+prompt_optimizer|import\s+prompt_optimizer"` 双重确认。
+
 #### B. tongyi prompt_optimizer 拆分
 
 把 810 行拆成两块：
@@ -345,7 +354,7 @@ def load_skill(path: str | Path) -> ParsedSkill: ...
 * [x] 本文件 `docs/sprint18-cleanup-assessment.md`
 * [x] `CHANGELOG.md` 追加 1.3.0 段落（Sprint 7-17 全部条目 + Sprint 18 评估）
 * [x] 主 README 插件矩阵刷新（新增 6 个插件 + 既有 14 个汇总到 §Plugin System）
-* [x] 删除 `plugins/seedance-video/prompt_optimizer.py`（孤儿，无引用）
+* [x] ~~删除 `plugins/seedance-video/prompt_optimizer.py`（孤儿，无引用）~~ — **2026-04-21 已撤销**：grep 结论错误，实为 `plugin.py` 重度依赖；已从 `f04787f9^` 还原。
 
 ---
 
@@ -355,7 +364,7 @@ def load_skill(path: str | Path) -> ParsedSkill: ...
 |----|------|------|-----------|
 | A1+ tongyi | task_manager + dashscope_client → SDK 子类 | 🟢 推荐 | ❌ 下一次 PR |
 | A1+ seedance | task_manager + ark_client → SDK 子类 | 🟢 推荐（更简单） | ❌ 下一次 PR |
-| B8 seedance prompt_optimizer | 删除孤儿文件 | 🟢 立即 | ✅ 本次 |
+| B8 seedance prompt_optimizer | ~~删除孤儿文件~~ → 误删,已还原 | 🔴 撤销 | ❌ 2026-04-21 还原 |
 | B8 tongyi prompt_optimizer | 拆 600 行静态资料 / 200 行 LLM → 接 SDK | 🟡 推荐 | ❌ 下一次 PR |
 | SkillManifest loader 接入 host | adapter 方案可行但当前无强需求 | 🟡 推迟 | ❌ 待消费者出现 |
 | 文档收尾 | CHANGELOG + README + 本评估 | 🟢 立即 | ✅ 本次 |
