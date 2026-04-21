@@ -21,21 +21,50 @@ plugin starts with the same foundation instead of re-inventing it.
 
 ## Module map
 
-| module                  | what                                                                 |
-|-------------------------|----------------------------------------------------------------------|
-| `task_manager`          | `BaseTaskManager` — SQLite tasks/assets/config + cancel              |
-| `vendor_client`         | `BaseVendorClient` — async HTTP w/ retry classification + cancel hook|
-| `errors`                | `ErrorCoach` + `ErrorPattern` — render exceptions as 3-段式          |
-| `cost_estimator`        | `CostEstimator` + `CostPreview` — {low, high, sample, confidence}    |
-| `intent_verifier`       | `IntentVerifier` — "verify, not guess" pre-flight (AnyGen)           |
-| `prompt_optimizer`      | `PromptOptimizer` — vendor-agnostic LLM refinement                   |
-| `quality_gates`         | `QualityGates` — G1/G2/G3 pure functions (CI + SKILL.md)             |
-| `render_pipeline`       | `build_render_pipeline` — safe FFmpeg command builder                |
-| `env_any_loader`        | `load_env_any` — parse SKILL.md frontmatter env_any                  |
-| `slideshow_risk`        | `evaluate_slideshow_risk` — 6-dim heuristic (OpenMontage corrected)  |
-| `delivery_promise`      | `validate_cuts` — actual vs promised motion ratio                    |
-| `provider_score`        | `score_providers` — 7-dim weighted ranking (audit3 weights)          |
-| `ui_events`             | `UIEventEmitter` + `strip_plugin_event_prefix`                       |
+Status legend: ✅ used by ≥1 first-party plugin · 🅿️ available, awaiting
+first consumer (still tested + maintained, free to import).
+
+| module                  | status | what                                                                 |
+|-------------------------|--------|----------------------------------------------------------------------|
+| `task_manager`          | ✅      | `BaseTaskManager` — SQLite tasks/assets/config + cancel              |
+| `vendor_client`         | ✅      | `BaseVendorClient` — async HTTP w/ retry classification + cancel hook|
+| `errors`                | ✅      | `ErrorCoach` + `ErrorPattern` — render exceptions as 3-段式          |
+| `cost_estimator`        | ✅      | `CostEstimator` + `CostPreview` — {low, high, sample, confidence}    |
+| `intent_verifier`       | ✅      | `IntentVerifier` — "verify, not guess" pre-flight (AnyGen)           |
+| `prompt_optimizer`      | ✅      | `PromptOptimizer` — vendor-agnostic LLM refinement                   |
+| `quality_gates`         | ✅      | `QualityGates` — G1/G2/G3 pure functions (CI + SKILL.md)             |
+| `render_pipeline`       | ✅      | `build_render_pipeline` — safe FFmpeg command builder                |
+| `env_any_loader`        | ✅      | `load_env_any` — parse SKILL.md frontmatter env_any                  |
+| `slideshow_risk`        | ✅      | `evaluate_slideshow_risk` — 6-dim heuristic (OpenMontage corrected)  |
+| `delivery_promise`      | ✅      | `validate_cuts` — actual vs promised motion ratio                    |
+| `provider_score`        | ✅      | `score_providers` — 7-dim weighted ranking (audit3 weights)          |
+| `ui_events`             | ✅      | `UIEventEmitter` + `strip_plugin_event_prefix`                       |
+| `ffmpeg`                | ✅      | `run_ffmpeg`, `auto_color_grade_filter`, `sample_signalstats`, …    |
+| `verification`          | ✅      | `Verification` + `LowConfidenceField` (D2.10 envelope)               |
+| `cost_tracker`          | 🅿️      | `CostTracker` — reserve/reconcile/refund + `requires_approval`       |
+| `checkpoint`            | 🅿️      | `Checkpoint` — snapshot/restore around high-cost stages              |
+
+### 🅿️ Modules — health-check addendum (Sprint 13.4)
+
+`cost_tracker` and `checkpoint` are fully designed, fully tested
+(44 unit tests as of 2026-04-20) and exported from
+`openakita_plugin_sdk.contrib`, but have **no first-party plugin
+consumer yet**.  They are kept in the SDK because:
+
+1. **Future plugins need them.**  The roadmap items D7 (`dub-it`,
+   long TTS jobs) and D5 (`ppt-to-video`, multi-stage LibreOffice +
+   FFmpeg + TTS) are explicit consumers — both want
+   ``reserve()`` / ``snapshot()`` semantics so a per-stage retry does
+   not double-charge or leak the cost ledger.
+2. **External plugin authors may already import them.**  The SDK
+   commits to semver compat from 0.4.0; silently removing public
+   symbols would break those users.
+3. **Cheap to keep.**  Both modules are pure-Python, zero runtime cost
+   when not imported, and the test suite runs in <1 s.
+
+If a future audit shows neither D7 nor D5 ended up using them, raise
+the question again — at that point a deprecation notice (one minor
+release of warnings) is the right move, not a silent delete.
 
 ## Quick start (a typical plugin)
 

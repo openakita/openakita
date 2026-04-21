@@ -1,0 +1,48 @@
+{
+  "id": "smart-poster-grid",
+  "name": "Smart Poster Grid",
+  "display_name_zh": "海报多尺寸生成",
+  "display_name_en": "Smart Poster Grid",
+  "version": "1.0.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Generate one consistent poster across 4 social aspect ratios (1:1, 3:4, 9:16, 16:9) in a single call. Reuses poster-maker's templates and Pillow renderer.",
+  "description_i18n": {
+    "zh": "一次生成 4 个社交尺寸（1:1 / 3:4 / 9:16 / 16:9）的同款海报，复用 poster-maker 的模板与 Pillow 渲染器。",
+    "en": "Generate one consistent poster across 4 social aspect ratios (1:1, 3:4, 9:16, 16:9) in a single call. Reuses poster-maker's templates and Pillow renderer."
+  },
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["poster", "design", "marketing", "social", "batch"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.4.0"
+  },
+  "provides": {
+    "tools": [
+      "smart_poster_grid_create",
+      "smart_poster_grid_status",
+      "smart_poster_grid_list",
+      "smart_poster_grid_cancel",
+      "smart_poster_grid_ratios"
+    ],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "海报多尺寸生成",
+    "title_i18n": { "zh": "海报多尺寸生成", "en": "Smart Poster Grid" },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme"]
+  }
+}
