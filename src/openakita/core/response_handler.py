@@ -183,6 +183,78 @@ def parse_intent_tag(text: str) -> tuple[str | None, str]:
     return None, text
 
 
+# ==================== 文件交付意图识别（模块级 helper） ====================
+#
+# 该函数被 ResponseHandler / OrgRuntime / ReasoningEngine 共用：
+# 1. ResponseHandler.verify_task_completion 用它决定是否对纯文本最终答复
+#    施加"必须有附件证据"的硬校验；
+# 2. OrgRuntime._run_node_task 用它决定是否触发 auto-persist 兜底落盘，
+#    以及是否要静默 verify_incomplete 诊断卡片；
+# 3. ReasoningEngine._handle_final_answer 用它选择 retry prompt 文案
+#    （expects=True → 强约束指令；expects=False → 温和提示）。
+#
+# 设计要点：
+# - 仅看「用户原始请求」的文本特征，**不依赖** reasoning_engine 的 stale
+#   实例属性（verify 没执行的轮次该属性可能不可信）。
+# - 系统/组织合成的元指令前缀（如「[用户指令最终汇总]」）必须先剔除，
+#   避免命中其中包含的「文件/附件」字面值导致误判。
+# - 关键词偏向「交付意图」而非泛指「话题里出现了文件」。
+
+_SYSTEM_REQUEST_PREFIXES_TUPLE: tuple[str, ...] = (
+    "[用户指令最终汇总]",
+    "[系统]",
+    "[组织]",
+)
+
+_ARTIFACT_INTENT_KEYWORDS: tuple[str, ...] = (
+    "图片",
+    "照片",
+    "图像",
+    "海报",
+    "壁纸",
+    "配图",
+    "截图",
+    "附件",
+    "文件",
+    "下载",
+    "发我",
+    "发给我",
+    "给我一张",
+    "给我发",
+    "导出",
+    "另存",
+    "保存为",
+    "生成一份",
+    "出一份",
+    "做一份",
+    "写一份",
+    "image",
+    "photo",
+    "picture",
+    "file",
+    "attachment",
+    "download",
+    "send me",
+    "export",
+)
+
+
+def request_expects_artifact(user_request: str | None) -> bool:
+    """判断用户原始请求是否明显要求附件/文件类交付物。
+
+    返回 True 表示用户文本里出现了"交付物"信号，调用方据此决定是否
+    强约束 LLM 走 ``write_file`` / ``org_submit_deliverable(file_attachments=...)``
+    路径。返回 False 时调用方应避免向用户喷发"必须交付文件"的诊断噪音。
+    """
+    raw = (user_request or "").strip()
+    if not raw:
+        return False
+    if raw.startswith(_SYSTEM_REQUEST_PREFIXES_TUPLE):
+        return False
+    text = raw.lower()
+    return any(key in text for key in _ARTIFACT_INTENT_KEYWORDS)
+
+
 class ResponseHandler:
     """
     响应处理器。
@@ -203,44 +275,14 @@ class ResponseHandler:
     # 实际上不是真正用户输入，而是后端合成的汇总/通知/系统消息，关键词命中
     # （如「文件」「链接」「附件」）会导致 verify 误判。显式白名单 3 个前缀，
     # 不写正则一刀切，避免误伤恰好以 "[" 开头的真实用户输入。
-    _SYSTEM_REQUEST_PREFIXES: tuple[str, ...] = (
-        "[用户指令最终汇总]",
-        "[系统]",
-        "[组织]",
-    )
+    _SYSTEM_REQUEST_PREFIXES: tuple[str, ...] = _SYSTEM_REQUEST_PREFIXES_TUPLE  # type: ignore[name-defined]
 
     @staticmethod
     def _request_expects_artifact(user_request: str | None) -> bool:
-        raw = (user_request or "").strip()
-        if raw.startswith(ResponseHandler._SYSTEM_REQUEST_PREFIXES):
-            return False
-        text = raw.lower()
-        return any(
-            key in text
-            for key in (
-                "图片",
-                "照片",
-                "图像",
-                "海报",
-                "壁纸",
-                "配图",
-                "截图",
-                "附件",
-                "文件",
-                "下载",
-                "发我",
-                "发给我",
-                "给我一张",
-                "给我发",
-                "image",
-                "photo",
-                "picture",
-                "file",
-                "attachment",
-                "download",
-                "send me",
-            )
-        )
+        # 兼容旧调用点：转发到模块级 ``request_expects_artifact``。
+        # 该函数同时被 runtime / reasoning_engine 直接 import，避免依赖
+        # ResponseHandler 实例属性导致的 stale 信号问题。
+        return request_expects_artifact(user_request)
 
     async def verify_task_completion(
         self,

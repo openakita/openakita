@@ -15,6 +15,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..core.response_handler import request_expects_artifact
 from .blackboard import OrgBlackboard
 from .event_store import OrgEventStore
 from .failure_diagnoser import (
@@ -314,8 +315,18 @@ class OrgRuntime:
         # 同一 (org_id, node_id, root_cause) 只 broadcast 一次，避免 verify_incomplete
         # 反复重试或 watchdog 多次 emit 导致前端聊天气泡里出现多张相同的失败卡片。
         # key = (org_id, node_id, root_cause), value = 上次 emit 的时间戳（秒）。
+        # 窗口 300s（5min）：原 30s 太短，verify_incomplete 在长任务里很容易跨过
+        # 30s 再次触发同根因诊断，造成聊天里反复出现"为什么失败"。
         self._recent_diagnosis_emit: dict[tuple[str, str, str], float] = {}
-        self._diagnosis_emit_window_secs: float = 30.0
+        self._diagnosis_emit_window_secs: float = 300.0
+
+        # 节点本任务内已成功登记的文件数量（_register_file_output 成功 +1）。
+        # 在 _activate_and_run_inner 进入 _run_agent_task 之前清零，agent.chat
+        # 返回后读取。auto-persist 兜底仅在 counter == 0 时触发，确保不会和
+        # LLM 自己调 write_file/generate_image/org_submit_deliverable 已经
+        # 产生的真实附件重复落盘。
+        # key = "{org_id}:{node_id}"（与 _node_last_activity 对齐），值 = int。
+        self._node_files_registered_in_task: dict[str, int] = {}
 
         # 工具级在途锁：防止 LLM 在同一 ReAct iter 内 emit 多个相同 tool_use
         # （如 3 次 org_delegate_task 给同一 to_node 同一 chain）造成下游
@@ -1400,6 +1411,11 @@ class OrgRuntime:
             if hasattr(agent, "brain") and hasattr(agent.brain, "drain_usage_accumulator"):
                 agent.brain.drain_usage_accumulator()
 
+            # per-task 文件计数器清零：本任务内每次成功的 _register_file_output
+            # 都会让该 counter +1。auto-persist 兜底仅在 counter==0 时触发，
+            # 杜绝"LLM 已自己写过文件 + 系统又兜底落盘"的双写。
+            self._node_files_registered_in_task[cache_key] = 0
+
             result_text = await self._run_agent_task(
                 agent, prompt, session_id, org, node,
             )
@@ -1429,6 +1445,84 @@ class OrgRuntime:
                 exit_reason = "normal"
                 re_engine = None
                 react_trace = None
+
+            # ======================================================
+            # 文件交付兜底（auto-persist final answer）
+            # ------------------------------------------------------
+            # 触发条件（必须全部满足，任一不满足直接跳过）：
+            #   1. org.auto_persist_final_answer 为 True（per-org 开关，
+            #      默认 True，UI 在组织设置页可关）；
+            #   2. 用户原始 prompt 命中 request_expects_artifact —— 用户确实
+            #      在要"附件/文件类"成果，否则强行落盘是噪音；
+            #   3. 本任务内 _register_file_output 计数 == 0 —— LLM 没自己
+            #      产出过任何文件（写过的不重复）；
+            #   4. result_text 是有意义的长文（≥200 字符）—— 短回复落盘
+            #      只会污染 workspace。
+            # 任何异常仅 warning，不影响主流程。
+            persisted_attachment: dict | None = None
+            try:
+                expects_artifact = request_expects_artifact(prompt)
+            except Exception:
+                expects_artifact = False
+            auto_persist_enabled = bool(
+                getattr(org, "auto_persist_final_answer", True)
+            )
+            files_registered = self._node_files_registered_in_task.get(cache_key, 0)
+            if (
+                auto_persist_enabled
+                and expects_artifact
+                and files_registered == 0
+                and isinstance(result_text, str)
+                and len(result_text.strip()) >= 200
+            ):
+                try:
+                    workspace_for_persist = self._resolve_org_workspace(org)
+                    persisted_attachment = self._tool_handler.auto_persist_node_final_answer(
+                        org_id=org.id,
+                        node_id=node.id,
+                        chain_id=chain_id,
+                        title=(prompt or "")[:60].strip() or "final_answer",
+                        body=result_text,
+                        workspace=workspace_for_persist,
+                    )
+                except Exception:
+                    logger.warning(
+                        "[OrgRuntime] auto_persist_node_final_answer hook failed",
+                        exc_info=True,
+                    )
+                    persisted_attachment = None
+
+            # 子节点合成 TASK_DELIVERED：
+            # 当 auto-persist 真的产出了附件、且本节点不是 root、且 LLM 整轮
+            # 都没主动调过 org_submit_deliverable 时，主动给父节点合成一条
+            # TASK_DELIVERED 消息（含附件元数据），关闭父节点 wait_for_deliverable
+            # 与项目任务状态。否则父级会一直挂在 mailbox 等待，直到 watchdog
+            # 超时——这是"光提示不落实"的最后一公里。
+            if persisted_attachment is not None:
+                try:
+                    is_root_for_delivery = (
+                        node.level == 0 or not org.get_parent(node.id)
+                    )
+                    submit_called = self._react_trace_has_tool(
+                        react_trace, "org_submit_deliverable",
+                    )
+                    if (
+                        not is_root_for_delivery
+                        and not submit_called
+                        and chain_id
+                    ):
+                        await self._synthesize_task_delivered_to_parent(
+                            org=org,
+                            from_node=node,
+                            chain_id=chain_id,
+                            deliverable_text=result_text,
+                            attachment=persisted_attachment,
+                        )
+                except Exception:
+                    logger.warning(
+                        "[OrgRuntime] synthesize task_delivered failed",
+                        exc_info=True,
+                    )
 
             try:
                 is_soft_verify = _is_soft_verify_incomplete(exit_reason, react_trace)
@@ -1469,6 +1563,27 @@ class OrgRuntime:
                 except Exception as diag_err:
                     logger.debug(f"[OrgRuntime] failure diagnosis failed on {node.id}: {diag_err}")
                     diagnosis = None
+
+                # 静默策略：verify_incomplete + 用户原始 prompt 没有"附件交付意图"
+                # 时，整张诊断卡片完全不展示——既不拼到 result_text、也不进 event/ws
+                # payload。这正是用户反馈的"明明不用附件交付的也要提示"场景：
+                # 不展示并不丢信息，因为日志里仍然记录了 exit_reason=verify_incomplete。
+                # 注意：is_soft_verify 路径不走这里——软完成是积极信号，需要保留
+                # 提示卡片表示"已通过下属交付完成"。
+                rc_for_silence = (diagnosis or {}).get("root_cause") if diagnosis else None
+                if (
+                    diagnosis
+                    and not is_soft_verify
+                    and rc_for_silence == "verify_incomplete"
+                    and not expects_artifact
+                ):
+                    logger.info(
+                        "[OrgRuntime] silencing verify_incomplete diagnosis card for "
+                        "org=%s node=%s (user prompt did not request file artifact)",
+                        org.id, node.id,
+                    )
+                    diagnosis = None
+
                 # 把人话摘要追加到 result_text 末尾，这样即使前端只读 chat bubble 也能看到结论
                 if diagnosis:
                     try:
@@ -4260,11 +4375,154 @@ class OrgRuntime:
             except Exception:
                 pass
 
+        # per-task 文件计数器 +1：auto-persist 兜底仅在本任务零文件时触发，
+        # 计数器是判定"LLM 是否已自己产出文件"的唯一信号源。计数失败不能
+        # 影响主流程，所以包在 try 里。
+        try:
+            counter_key = f"{org_id}:{node_id}"
+            self._node_files_registered_in_task[counter_key] = (
+                self._node_files_registered_in_task.get(counter_key, 0) + 1
+            )
+        except Exception:
+            pass
+
         return {
             "filename": resolved_name,
             "file_path": str(p),
             "file_size": size_bytes,
         }
+
+    @staticmethod
+    def _react_trace_has_tool(
+        react_trace: list[dict] | None, tool_name: str
+    ) -> bool:
+        """扫一遍最近一次 ReAct trace，判断指定工具是否真的被调用过。
+
+        用于 auto-persist 后的"是否需要合成 TASK_DELIVERED"决策——LLM 自己
+        已经走过 ``org_submit_deliverable`` 时，再合成一遍会和 messenger 5s
+        内容 hash 去重碰撞或重复唤醒父级。trace 缺失/异常时保守返回 False
+        （让上游有机会触发兜底）。
+        """
+        if not react_trace or not tool_name:
+            return False
+        try:
+            for iter_entry in react_trace:
+                if not isinstance(iter_entry, dict):
+                    continue
+                for tc in iter_entry.get("tool_calls") or ():
+                    if isinstance(tc, dict) and tc.get("name") == tool_name:
+                        return True
+        except Exception:
+            return False
+        return False
+
+    async def _synthesize_task_delivered_to_parent(
+        self,
+        *,
+        org: Organization,
+        from_node: OrgNode,
+        chain_id: str,
+        deliverable_text: str,
+        attachment: dict,
+    ) -> bool:
+        """子节点 auto-persist 后给父节点合成一条 ``TASK_DELIVERED``。
+
+        仅在 ``_activate_and_run_inner`` 走 auto-persist 且 LLM 整轮没自己调
+        ``org_submit_deliverable`` 时被触发。复用 ``_handle_org_submit_deliverable``
+        同款 ``OrgMessage(TASK_DELIVERED)`` 结构 + ``messenger.send`` 路径，
+        让父级 mailbox / wait_for_deliverable / 项目状态 / `org:task_delivered`
+        WS 广播全部正常闭环。
+
+        返回 True 表示消息已被 messenger 接收。任何失败都吞掉并 warning。
+        """
+        try:
+            parent = org.get_parent(from_node.id)
+        except Exception:
+            parent = None
+        if parent is None:
+            return False
+        messenger = self.get_messenger(org.id)
+        if messenger is None:
+            return False
+
+        body = (deliverable_text or "").strip()
+        summary = body[:200]
+        metadata: dict = {
+            "deliverable": body[:2000],
+            "summary": summary[:500],
+            "task_chain_id": chain_id,
+            "auto_synthesized": True,
+            "file_attachments": [attachment],
+        }
+        msg = OrgMessage(
+            org_id=org.id,
+            from_node=from_node.id,
+            to_node=parent.id,
+            msg_type=MsgType.TASK_DELIVERED,
+            content=f"任务交付（兜底落盘）: {body[:_LIM_EVENT]}",
+            metadata=metadata,
+        )
+
+        try:
+            ok = await messenger.send(msg)
+        except Exception:
+            logger.warning(
+                "[OrgRuntime] synthetic TASK_DELIVERED messenger.send failed",
+                exc_info=True,
+            )
+            return False
+        if not ok:
+            logger.info(
+                "[OrgRuntime] synthetic TASK_DELIVERED dropped by messenger "
+                "(dedupe/bandwidth/target-not-found): org=%s from=%s to=%s chain=%s",
+                org.id, from_node.id, parent.id, chain_id,
+            )
+            return False
+
+        try:
+            self.get_event_store(org.id).emit(
+                "task_delivered", from_node.id,
+                {
+                    "to": parent.id,
+                    "chain_id": chain_id,
+                    "deliverable_preview": body[:_LIM_EVENT],
+                    "file_count": 1,
+                    "auto_synthesized": True,
+                },
+            )
+        except Exception:
+            pass
+        try:
+            await self._broadcast_ws("org:task_delivered", {
+                "org_id": org.id,
+                "from_node": from_node.id,
+                "to_node": parent.id,
+                "chain_id": chain_id,
+                "summary": summary[:_LIM_WS],
+                "auto_synthesized": True,
+            })
+        except Exception:
+            pass
+        try:
+            self._tool_handler._link_project_task(
+                org.id, chain_id,
+                status="delivered",
+                deliverable_content=body[:2000],
+                delivery_summary=summary[:500],
+            )
+        except Exception:
+            pass
+        try:
+            self._on_inbound_for_node(org.id, parent.id)
+        except Exception:
+            pass
+        logger.info(
+            "[OrgRuntime] synthesized TASK_DELIVERED: org=%s from=%s to=%s "
+            "chain=%s file=%s",
+            org.id, from_node.id, parent.id, chain_id,
+            attachment.get("filename"),
+        )
+        return True
 
     def _record_file_output(
         self,

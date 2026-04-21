@@ -390,6 +390,79 @@ class OrgToolHandler:
             return None
         return candidate
 
+    # 节点级最终答复兜底落盘的最小字符数。比 submit_deliverable 通道更宽松：
+    # 此通道由 OrgRuntime 在 expects_artifact=True、且本任务零文件登记时主动
+    # 触发，已完成"是否需要附件"的语义把关，无需再用结构化文档启发式过滤。
+    # 200 字符是经验阈值——比"我已完成"长，又能覆盖 200~300 字的简短报告。
+    _FINAL_ANSWER_AUTO_PERSIST_MIN_CHARS = 200
+
+    def auto_persist_node_final_answer(
+        self,
+        *,
+        org_id: str,
+        node_id: str,
+        chain_id: str | None,
+        title: str,
+        body: str,
+        workspace,
+    ) -> dict | None:
+        """OrgRuntime 兜底落盘入口：把节点的纯文字最终答复保存为 .md 附件。
+
+        与 ``org_submit_deliverable`` 内的 auto-persist 分支对应，但调用面
+        更窄：只在「用户确实期望附件交付 + 本任务还没产出过任何文件」时被
+        ``runtime._run_node_task`` 调用，因此不复用 ``_looks_like_structured_document``
+        启发式（语义把关已在上游完成），但保留同样的：
+          * 字符数下限（200，比 deliverable 通道宽松）；
+          * path-traversal 校验（沿用 ``_auto_persist_deliverable``）；
+          * **唯一登记入口** ``runtime._register_file_output`` —— 不引入并行
+            落盘/广播路径，确保黑板写入、WS 广播、ProjectTask 联动只发生一次。
+
+        失败/不满足条件时返回 None；不抛异常（best-effort，不能影响主流程）。
+        """
+        body_stripped = (body or "").strip()
+        if not body_stripped:
+            return None
+        if len(body_stripped) < self._FINAL_ANSWER_AUTO_PERSIST_MIN_CHARS:
+            return None
+        if workspace is None:
+            return None
+        try:
+            persisted_path = self._auto_persist_deliverable(
+                workspace=workspace,
+                chain_id=chain_id or "",
+                title=(title or "").strip() or "final_answer",
+                body=body_stripped,
+            )
+        except Exception:
+            logger.warning(
+                "[ToolHandler] auto_persist_node_final_answer write failed",
+                exc_info=True,
+            )
+            return None
+        if persisted_path is None:
+            return None
+        try:
+            registered = self._runtime._register_file_output(
+                org_id, node_id,
+                chain_id=chain_id or None,
+                filename=persisted_path.name,
+                file_path=str(persisted_path),
+                workspace=workspace,
+            )
+        except Exception:
+            logger.warning(
+                "[ToolHandler] auto_persist_node_final_answer register failed",
+                exc_info=True,
+            )
+            return None
+        if registered:
+            logger.info(
+                "[ToolHandler] auto-persisted node final answer to %s "
+                "(org=%s node=%s chain=%s len=%d)",
+                persisted_path, org_id, node_id, chain_id, len(body_stripped),
+            )
+        return registered
+
     def _link_project_task(
         self, org_id: str, chain_id: str, *,
         title: str = "",

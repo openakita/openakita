@@ -399,6 +399,14 @@ class Organization:
     watchdog_stuck_threshold_s: int = 1800
     watchdog_silence_threshold_s: int = 1800
 
+    # 交付兜底：当用户原始 prompt 明显需要附件交付，但本任务内 LLM 一个文件
+    # 都没产出且最终答复是 ≥200 字的长文时，OrgRuntime 会把该长文自动落盘为
+    # ``<workspace>/deliverables/*.md``（走唯一登记入口 _register_file_output），
+    # 并给非 root 节点合成一条 TASK_DELIVERED 给上级。默认 True；从组织设置
+    # 页可关。该开关只影响"兜底"，关掉不影响 LLM 自己显式调 write_file /
+    # org_submit_deliverable 的行为。
+    auto_persist_final_answer: bool = True
+
     def __post_init__(self):
         self.tags = normalize_tags(self.tags)
 
@@ -453,6 +461,7 @@ class Organization:
             "watchdog_interval_s": self.watchdog_interval_s,
             "watchdog_stuck_threshold_s": self.watchdog_stuck_threshold_s,
             "watchdog_silence_threshold_s": self.watchdog_silence_threshold_s,
+            "auto_persist_final_answer": self.auto_persist_final_answer,
         }
 
     @classmethod

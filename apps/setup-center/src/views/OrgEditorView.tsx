@@ -1092,6 +1092,8 @@ export function OrgEditorView({
       operation_mode: (currentOrg as any).operation_mode || "command",
       core_business: currentOrg.core_business || "",
       workspace_dir: (currentOrg as any).workspace_dir || "",
+      auto_persist_final_answer:
+        (currentOrg as any).auto_persist_final_answer !== false,
       heartbeat_enabled: currentOrg.heartbeat_enabled,
       heartbeat_interval_s: currentOrg.heartbeat_interval_s,
       standup_enabled: currentOrg.standup_enabled,
@@ -4397,6 +4399,40 @@ export function OrgEditorView({
             <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4, lineHeight: 1.5 }}>
               {t("orgEditor.outputPathHint", "组织编排产出的文件将保存在此目录。留空则使用默认路径。")}
             </div>
+          </div>
+
+          {/* ── 交付兜底 ── */}
+          <div className="card" style={{ padding: 10, marginBottom: 10 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
+              {t("orgEditor.autoPersistTitle", "交付兜底")}
+            </div>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                style={{ marginTop: 3 }}
+                checked={(currentOrg as any).auto_persist_final_answer !== false}
+                onChange={(e) =>
+                  setCurrentOrg({
+                    ...currentOrg,
+                    auto_persist_final_answer: e.target.checked,
+                  } as any)
+                }
+              />
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontSize: 12 }}>
+                  {t("orgEditor.autoPersistLabel", "自动把长文回复落盘为附件")}
+                </span>
+                <span style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.5 }}>
+                  {t(
+                    "orgEditor.autoPersistHint",
+                    "用户原始指令明确要求文件/附件、但节点本轮没产出任何文件且只回了 ≥200 字长文时，"
+                    + "系统会把该长文自动保存为 .md 附件到工作目录的 deliverables/ 下，"
+                    + "并给上级合成一条「任务交付」消息。关闭后只走 LLM 自己的工具调用，"
+                    + "不做兜底。"
+                  )}
+                </span>
+              </div>
+            </label>
           </div>
 
           {/* ── 核心业务 (仅自主模式) ── */}

@@ -317,12 +317,12 @@ _DIAGNOSIS_TEMPLATES: dict[str, dict[str, str]] = {
         ),
     },
     "verify_incomplete": {
-        "headline": "节点多轮尝试后，任务验证仍判定为未完成",
+        "headline": "节点未交付要求的文件 / 附件，仅以纯文字回复结束本轮",
         "suggestion": (
-            "常见原因是只发送了文字回复，没有真正产出要求的文件 / 交付物。\n\n"
-            "**建议**：\n"
-            "1. 在指令里明确指定输出方式（如 `write_file` / `deliver_artifacts`）；\n"
-            "2. 复查 verify 规则是否过于严格。"
+            "如果用户确实需要附件交付，建议下一轮：\n"
+            "1. 让节点用 `write_file` 把成果写到工作区；或\n"
+            "2. 调 `org_submit_deliverable(file_attachments=[…])` 带附件交给上级；\n"
+            "3. 若实际只需文字回答，可在「组织设置」放宽 verify / 关闭兜底落盘。"
         ),
     },
     "verify_incomplete_with_children": {
@@ -463,8 +463,17 @@ def format_human_summary(diagnosis: dict[str, Any]) -> str:
     headline = diagnosis.get("headline") or "任务未正常完成"
     suggestion = diagnosis.get("suggestion") or ""
     evidence = diagnosis.get("evidence") or []
+    root_cause = diagnosis.get("root_cause") or ""
 
-    lines = [f"> **为什么失败**：{headline}"]
+    # 软提示类（verify_incomplete*）只是 verify 规则没匹配，并不是硬失败，
+    # 用「ℹ️ 复盘提示」中性表述；硬失败（loop_terminated / max_iterations 等）
+    # 才用「为什么失败」强调失败语气，避免对所有非完美结束都喷"失败"二字。
+    if root_cause.startswith("verify_incomplete"):
+        prefix_label = "ℹ️ 复盘提示"
+    else:
+        prefix_label = "为什么失败"
+
+    lines = [f"> **{prefix_label}**：{headline}"]
     if evidence:
         lines.append(">")
         lines.append("> **关键动作**：")

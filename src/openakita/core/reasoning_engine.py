@@ -41,6 +41,7 @@ from .response_handler import (
     ResponseHandler,
     clean_llm_response,
     parse_intent_tag,
+    request_expects_artifact,
     strip_thinking_tags,
 )
 from .supervisor import UNPRODUCTIVE_ADMIN_TOOLS as _ADMIN_TOOL_NAMES
@@ -5032,16 +5033,39 @@ class ReasoningEngine:
                         }
                     )
                 else:
-                    working_messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "[系统提示] 根据复核判断，用户请求可能还有未完成的部分。"
-                                "如果确实还有剩余步骤，请继续调用工具执行；"
-                                "如果已全部完成，请给用户一个包含结果的总结回复。"
-                            ),
-                        }
-                    )
+                    # 按"用户是否明确要求附件交付"分两套提示：
+                    # - expects_artifact=True：硬约束，给出具体工具签名 + 路径样例，
+                    #   逼 LLM 真的走 write_file / org_submit_deliverable(file_attachments=...)
+                    #   而不是再来一段纯文字"我已经做好了"。
+                    # - expects_artifact=False：温和复核提示，避免对纯对话场景喷
+                    #   "你必须交付文件"的噪音误导。
+                    expects_artifact = request_expects_artifact(last_user_request)
+                    if expects_artifact:
+                        retry_msg = (
+                            "[系统] ⚠️ 用户请求里明确提到附件/文件类交付物，"
+                            "但你刚才只回了纯文字、没有产生任何文件证据。"
+                            "请立即在本轮调用以下工具之一完成真正的落盘交付，"
+                            "不要再仅靠文字声明完成：\n"
+                            "1) `write_file({\"path\": \"<workspace>/deliverables/<title>.md\", "
+                            "\"content\": \"<完整内容>\"})` —— 把成果写到工作区；\n"
+                            "2) 如果你处在协作组织内、需要交给上级，调用 "
+                            "`org_submit_deliverable({\"to_node\": \"<上级>\", "
+                            "\"deliverable\": \"<摘要>\", \"file_attachments\": "
+                            "[{\"filename\": \"<title>.md\", \"file_path\": "
+                            "\"<workspace>/deliverables/<title>.md\"}]})` —— "
+                            "带附件提交并触发上级验收；\n"
+                            "3) 若是图片/视频类成果，先用对应生成工具产出文件，"
+                            "再用上面任一方式落盘。\n"
+                            "记住：文字描述 ≠ 已交付。"
+                        )
+                    else:
+                        retry_msg = (
+                            "[系统提示] 根据复核判断，用户请求可能还有未完成的部分。"
+                            "如果确实还有剩余步骤，请继续调用工具执行；"
+                            "如果已全部完成，请直接给用户一个包含结果的总结回复"
+                            "（无需强行产出附件）。"
+                        )
+                    working_messages.append({"role": "user", "content": retry_msg})
                 return (
                     working_messages,
                     no_tool_call_count,
