@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "OpenAkita Desktop",
+  "productName": "OpenAkitaDesktop",
   "version": "1.27.9",
   "identifier": "com.openakita.setupcenter",
   "build": {

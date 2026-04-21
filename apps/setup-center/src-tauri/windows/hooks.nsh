@@ -7,6 +7,49 @@
 ; (StrFunc.nsh is included by installer.nsi before this file)
 ${StrRep}
 
+; ── Legacy install migration ──
+; Detect old "OpenAkita Desktop" installs so the new "OpenAkitaDesktop"
+; installer can silently uninstall the old version and migrate CLI/PATH.
+!define LEGACY_PRODUCTNAME "OpenAkita Desktop"
+!define LEGACY_UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${LEGACY_PRODUCTNAME}"
+!define LEGACY_MANUPRODUCTKEY "Software\OpenAkita\${LEGACY_PRODUCTNAME}"
+
+Var LegacyInstallDir
+Var LegacyUninstallString
+Var LegacyCliOpenakita
+Var LegacyCliOa
+Var LegacyCliAddPath
+Var LegacyMigrated
+
+!macro _OpenAkita_DetectLegacyInstall
+  StrCpy $LegacyInstallDir ""
+  StrCpy $LegacyUninstallString ""
+  StrCpy $LegacyMigrated 0
+
+  ; Primary source: MANUPRODUCTKEY stores $INSTDIR without quotes
+  ReadRegStr $LegacyInstallDir HKCU "${LEGACY_MANUPRODUCTKEY}" ""
+  ${If} $LegacyInstallDir == ""
+    ; Fallback: InstallLocation has surrounding quotes — strip them
+    ReadRegStr $LegacyInstallDir HKCU "${LEGACY_UNINSTKEY}" "InstallLocation"
+    StrCpy $R0 $LegacyInstallDir 1
+    ${If} $R0 == '"'
+      StrLen $R1 $LegacyInstallDir
+      IntOp $R1 $R1 - 2
+      StrCpy $LegacyInstallDir $LegacyInstallDir $R1 1
+    ${EndIf}
+  ${EndIf}
+
+  ; UninstallString keeps its embedded quotes (ExecWait needs them)
+  ReadRegStr $LegacyUninstallString HKCU "${LEGACY_UNINSTKEY}" "UninstallString"
+
+  ; Save CLI preferences BEFORE running old uninstaller (it deletes the key)
+  ${If} $LegacyInstallDir != ""
+    ReadRegDWORD $LegacyCliOpenakita HKCU "Software\OpenAkita\CLI" "openakita"
+    ReadRegDWORD $LegacyCliOa HKCU "Software\OpenAkita\CLI" "oa"
+    ReadRegDWORD $LegacyCliAddPath HKCU "Software\OpenAkita\CLI" "addToPath"
+  ${EndIf}
+!macroend
+
 ; ── PATH 辅助脚本 ──
 ; 通过 PowerShell 安全地读写 PATH 注册表值，解决：
 ; 1. NSIS ReadRegStr 字符串长度上限导致长 PATH 被截断/清空
@@ -249,6 +292,60 @@ ${StrRep}
   ${If} ${FileExists} "$PLUGINSDIR\_oa_locked.txt"
     MessageBox MB_OK|MB_ICONSTOP "$(installAbortLocked)" /SD IDOK
     Abort
+  ${EndIf}
+
+  ; ── Legacy "OpenAkita Desktop" → "OpenAkitaDesktop" migration ──
+  ${If} $LegacyInstallDir != ""
+  ${AndIf} $LegacyUninstallString != ""
+    DetailPrint "Migrating from legacy install at $LegacyInstallDir..."
+
+    ; Run old uninstaller in passive mode (NOT /UPDATE) so it fully cleans
+    ; shortcuts, Run entry, PATH, CLI registry, and uninstall key.
+    ; User data is safe: $DeleteAppDataCheckboxState defaults to "" (unchecked)
+    ; and /P skips the confirm page so it can never become 1.
+    ; _?= makes ExecWait truly synchronous (uninstaller runs in-place).
+    ExecWait '$LegacyUninstallString /P _?=$LegacyInstallDir' $0
+
+    ; Residual cleanup — old uninstaller cannot self-delete (running via _?=)
+    ; and may have been blocked by AV.
+    Delete "$LegacyInstallDir\uninstall.exe"
+    RMDir /r "$LegacyInstallDir"
+
+    ; Clean leftover registry
+    DeleteRegKey HKCU "${LEGACY_UNINSTKEY}"
+    DeleteRegKey HKCU "${LEGACY_MANUPRODUCTKEY}"
+    DeleteRegKey /ifempty HKCU "Software\OpenAkita"
+
+    ; Clean leftover shortcuts (in case old uninstaller failed)
+    Delete "$SMPROGRAMS\${LEGACY_PRODUCTNAME}\${LEGACY_PRODUCTNAME}.lnk"
+    RMDir "$SMPROGRAMS\${LEGACY_PRODUCTNAME}"
+    Delete "$SMPROGRAMS\${LEGACY_PRODUCTNAME}.lnk"
+    Delete "$DESKTOP\${LEGACY_PRODUCTNAME}.lnk"
+
+    ; Clean leftover autostart Run entry
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${LEGACY_PRODUCTNAME}"
+
+    ; Write back CLI preferences (old uninstaller deleted the key)
+    ${If} $LegacyCliOpenakita != ""
+      WriteRegDWORD HKCU "Software\OpenAkita\CLI" "openakita" $LegacyCliOpenakita
+      WriteRegDWORD HKCU "Software\OpenAkita\CLI" "oa" $LegacyCliOa
+      WriteRegDWORD HKCU "Software\OpenAkita\CLI" "addToPath" $LegacyCliAddPath
+    ${EndIf}
+
+    ; Log migration result for passive/silent installs where UI is hidden
+    ExpandEnvStrings $R0 "%USERPROFILE%\.openakita\logs"
+    CreateDirectory "$R0"
+    ${If} $0 = 0
+      FileOpen $R1 "$R0\migration.log" w
+      FileWrite $R1 "Migration from $LegacyInstallDir completed successfully (exit code 0)$\r$\n"
+      FileClose $R1
+    ${Else}
+      FileOpen $R1 "$R0\migration.log" w
+      FileWrite $R1 "Migration from $LegacyInstallDir: old uninstaller exited with code $0 (residuals force-cleaned)$\r$\n"
+      FileClose $R1
+    ${EndIf}
+
+    StrCpy $LegacyMigrated 1
   ${EndIf}
 
   ; Skip cleanup entirely when no data dir exists (fresh install).

@@ -457,6 +457,10 @@ Function PageEnvCheck
  ${If} $PassiveMode = 1
   Abort
  ${EndIf}
+ ; Legacy migration: skip page, old preferences are preserved
+ ${If} $LegacyInstallDir != ""
+  Abort
+ ${EndIf}
 
  ; 检测 ~/.openakita 是否存在
  ExpandEnvStrings $R0 "%USERPROFILE%\.openakita"
@@ -528,6 +532,10 @@ Function PageCliSetup
   Abort
  ${EndIf}
  ${If} $UpdateMode = 1
+  Abort
+ ${EndIf}
+ ; Legacy migration: skip page, old CLI preferences are restored
+ ${If} $LegacyInstallDir != ""
   Abort
  ${EndIf}
 
@@ -704,6 +712,10 @@ Function .onInit
  !endif
 
  !insertmacro SetContext
+
+ !ifmacrodef _OpenAkita_DetectLegacyInstall
+   !insertmacro _OpenAkita_DetectLegacyInstall
+ !endif
 
  ${If} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"
  ; Set default install location
@@ -1221,8 +1233,9 @@ Function CreateOrUpdateStartMenuShortcut
  ${EndIf}
 
  ; Skip creating shortcut if in update mode or no shortcut mode
- ; but always create if migrating from wix
+ ; but always create if migrating from wix or from legacy productName
  ${If} $WixMode = 0
+ ${AndIf} $LegacyMigrated <> 1
  ${If} $UpdateMode = 1
  ${OrIf} $NoShortcutMode = 1
  Return
@@ -1250,8 +1263,9 @@ Function CreateOrUpdateDesktopShortcut
  ${EndIf}
 
  ; Skip creating shortcut if in update mode or no shortcut mode
- ; but always create if migrating from wix
+ ; but always create if migrating from wix or from legacy productName
  ${If} $WixMode = 0
+ ${AndIf} $LegacyMigrated <> 1
  ${If} $UpdateMode = 1
  ${OrIf} $NoShortcutMode = 1
  Return
