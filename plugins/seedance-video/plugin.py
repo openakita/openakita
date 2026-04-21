@@ -30,6 +30,7 @@ from models import (
 )
 from openakita_plugin_sdk.contrib import (
     CostTracker,
+    VendorError,
     add_upload_preview_route,
     build_preview_url,
     collect_storage_stats,
@@ -248,8 +249,11 @@ class Plugin(PluginBase):
                 callback_url=callback_url,
                 execution_expires_after=expires,
             )
+        except VendorError as e:
+            logger.error("Ark API error: %s (kind=%s)", e, e.kind)
+            raise HTTPException(status_code=502, detail=f"Ark API error: {e}")
         except Exception as e:
-            logger.error("Ark API error: %s", e)
+            logger.error("Ark API unexpected error: %s", e)
             raise HTTPException(status_code=502, detail=f"Ark API error: {e}")
 
         ark_task_id = result.get("id", "")

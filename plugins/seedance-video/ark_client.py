@@ -1,32 +1,42 @@
-"""Volcengine Ark API client for Seedance video generation."""
+"""Volcengine Ark API client for Seedance video generation.
+
+Uses ``BaseVendorClient`` from the SDK for automatic retry, timeout,
+error classification (``ERROR_KIND_*``), and content-moderation body
+detection.  All HTTP calls go through ``self.request()`` /
+``self.post_json()`` / ``self.get_json()`` which create a fresh
+``httpx.AsyncClient`` per call — no long-lived connection to manage.
+"""
 
 from __future__ import annotations
 
 import logging
 from typing import Any
 
-import httpx
+from openakita_plugin_sdk.contrib import BaseVendorClient, VendorError
 
 logger = logging.getLogger(__name__)
 
 ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 
 
-class ArkClient:
+class ArkClient(BaseVendorClient):
     def __init__(self, api_key: str) -> None:
+        super().__init__(base_url=ARK_BASE_URL, timeout=60.0)
         self._api_key = api_key
-        self._client = httpx.AsyncClient(
-            base_url=ARK_BASE_URL,
-            timeout=60.0,
-            headers={"Authorization": f"Bearer {api_key}"},
-        )
 
-    async def close(self) -> None:
-        await self._client.aclose()
+    def auth_headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self._api_key}"}
 
     def update_api_key(self, api_key: str) -> None:
         self._api_key = api_key
-        self._client.headers["Authorization"] = f"Bearer {api_key}"
+
+    async def cancel_task(self, task_id: str) -> bool:
+        """Cancel a running Ark task via DELETE."""
+        await self.request("DELETE", f"/contents/generations/tasks/{task_id}")
+        return True
+
+    async def close(self) -> None:
+        """No-op — BaseVendorClient creates per-call httpx clients."""
 
     async def create_task(
         self,
@@ -81,14 +91,12 @@ class ArkClient:
         if execution_expires_after:
             body["execution_expires_after"] = {"seconds": execution_expires_after}
 
-        resp = await self._client.post("/contents/generations/tasks", json=body)
-        resp.raise_for_status()
-        return resp.json()
+        return await self.post_json(
+            "/contents/generations/tasks", json_body=body, timeout=120.0,
+        )
 
     async def get_task(self, task_id: str) -> dict:
-        resp = await self._client.get(f"/contents/generations/tasks/{task_id}")
-        resp.raise_for_status()
-        return resp.json()
+        return await self.get_json(f"/contents/generations/tasks/{task_id}")
 
     async def list_tasks(
         self,
@@ -102,27 +110,20 @@ class ArkClient:
         }
         if filter_status:
             params["filter"] = f'{{"status":"{filter_status}"}}'
-        resp = await self._client.get("/contents/generations/tasks", params=params)
-        resp.raise_for_status()
-        return resp.json()
+        return await self.get_json(
+            "/contents/generations/tasks", params=params,
+        )
 
     async def delete_task(self, task_id: str) -> dict:
-        resp = await self._client.delete(f"/contents/generations/tasks/{task_id}")
-        resp.raise_for_status()
-        return resp.json()
+        return await self.request(
+            "DELETE", f"/contents/generations/tasks/{task_id}",
+        )
 
     async def validate_key(self) -> bool:
-        """Quick validation by listing one task.
-
-        Any exception (network, 4xx auth, 5xx upstream) is treated as a
-        validation failure so the UI can show a single boolean.  We log at
-        ``warning`` level instead of swallowing silently so operators can grep
-        for "Ark key validation failed" in the host log if a user reports
-        "key keeps showing invalid".
-        """
+        """Quick validation by listing one task."""
         try:
             await self.list_tasks(page_size=1)
             return True
-        except Exception as exc:
-            logger.warning("Ark key validation failed: %s", exc)
+        except VendorError as exc:
+            logger.warning("Ark key validation failed: %s (kind=%s)", exc, exc.kind)
             return False

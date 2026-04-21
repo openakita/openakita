@@ -6,19 +6,19 @@
   <title>Seedance Video Generator</title>
   <script src="/api/plugins/_sdk/bootstrap.js"></script>
   <!-- OpenAkita Plugin UI Kit (shared, theme-aware; safe oa-* prefix only) -->
-  <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css?v=20260419-1">
-  <script src="/api/plugins/_sdk/ui-kit/icons.js?v=20260419-1"></script>
-  <script src="/api/plugins/_sdk/ui-kit/i18n.js?v=20260419-1"></script>
-  <script src="/api/plugins/_sdk/ui-kit/markdown-mini.js?v=20260419-1"></script>
-  <script src="/api/plugins/_sdk/ui-kit/dep-gate.js?v=20260419-1"></script>
+  <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css?v=20260419-8">
+  <script src="/api/plugins/_sdk/ui-kit/icons.js?v=20260419-8"></script>
+  <script src="/api/plugins/_sdk/ui-kit/i18n.js?v=20260419-8"></script>
+  <script src="/api/plugins/_sdk/ui-kit/markdown-mini.js?v=20260419-8"></script>
+  <script src="/api/plugins/_sdk/ui-kit/dep-gate.js?v=20260419-8"></script>
   <!--
     Preload CDN deps in parallel (script tags below remain synchronous so
     React/ReactDOM/Babel still execute in declared order; preload only
     starts the downloads earlier so they finish faster).
   -->
-  <link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" />
-  <link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" />
-  <link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js" />
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react@18/umd/react.production.min.js" />
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" />
+  <link rel="preload" as="script" href="https://unpkg.com/@babel/standalone/babel.min.js" />
   <style>
     :root {
       --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
@@ -49,7 +49,8 @@
     .tab { padding: 10px 18px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--text-muted); transition: all .15s; white-space: nowrap; }
     .tab:hover { color: var(--text); background: var(--bg-hover); }
     .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
-    .content { flex: 1; overflow-y: auto; padding: 20px; }
+    .content { flex: 1; overflow: hidden; padding: 20px; position: relative; }
+    .content > div { overflow-y: auto; }
     .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
     .card-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
     .btn { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-size: 13px; cursor: pointer; transition: all .15s; display: inline-flex; align-items: center; gap: 6px; }
@@ -64,7 +65,8 @@
     .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(59,130,246,.15); }
     .textarea { resize: vertical; min-height: 80px; font-family: inherit; }
     .select { appearance: none; padding-right: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
-    .label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px; color: var(--text-muted); }
+    .label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text); margin: 0 0 8px; line-height: 1.3; }
+    .label::before { content: ""; display: inline-block; width: 3px; height: 14px; border-radius: 2px; background: var(--primary); flex-shrink: 0; }
     .form-row { margin-bottom: 14px; }
     .flex { display: flex; } .gap-2 { gap: 8px; } .gap-3 { gap: 12px; } .gap-4 { gap: 16px; }
     .items-center { align-items: center; } .justify-between { justify-content: space-between; }
@@ -136,7 +138,8 @@
     .content { padding: 14px 16px; }
     .card { padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
     .form-row { margin-bottom: 10px; }
-    .label { margin-bottom: 5px; font-size: 12px; }
+    /* (.label compact-override removed — keep the upgraded label styles
+     *  defined above so all form-field labels get the section-title look) */
     .header { padding: 10px 18px; }
     .tab { padding: 9px 16px; }
     .btn { padding: 7px 14px; }
@@ -363,9 +366,9 @@ window.__bridge = {
 
 // ── React via CDN (production build) ──
 </script>
-<script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script type="text/babel" data-type="module">
 const { useState, useEffect, useCallback, useRef } = React;
 const { pluginApi, onEvent, uploadFile, downloadFile, showToast, showInFolder, pickFolder, copyToClipboard } = window.__bridge;
@@ -616,6 +619,7 @@ const I18N_DICT = {
     "toast.unknownErr": "未知错误",
     "err.title": "插件 UI 渲染出错",
     "err.retry": "重试渲染",
+    "err.stackLabel": "错误堆栈详情",
   },
   en: {
     "app.title": "Seedance Video",
@@ -860,6 +864,7 @@ const I18N_DICT = {
     "toast.unknownErr": "Unknown error",
     "err.title": "Plugin UI render error",
     "err.retry": "Retry render",
+    "err.stackLabel": "Error stack trace",
   },
 };
 
@@ -2391,24 +2396,51 @@ function App() {
   );
 }
 
-// React 18 production build unmounts the root if a child throws —
-// resulting in the entire iframe going blank. Wrap App in a boundary so
-// users see a recoverable message instead of a 5-second blank screen.
+// React 18 production build will UNMOUNT the entire root if any component
+// throws and there is no error boundary above it. This boundary catches
+// those errors at the App root, keeps the host shell visible, and shows
+// the actual error message + stack so we can debug.
 class PluginErrorBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { err: null }; }
-  static getDerivedStateFromError(err) { return { err }; }
-  componentDidCatch(err, info) { console.error("[seedance-video]", err, info); }
-  reset = () => this.setState({ err: null });
+  constructor(props) {
+    super(props);
+    this.state = { error: null, info: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    this.setState({ info });
+    console.error("[seedance-video] render error:", error, info);
+  }
+  reset = () => this.setState({ error: null, info: null });
   render() {
-    if (!this.state.err) return this.props.children;
+    if (!this.state.error) return this.props.children;
+    const err = this.state.error;
+    const stack = (err && err.stack) || String(err);
+    const compStack = (this.state.info && this.state.info.componentStack) || "";
     const tr = (k) => _i18n.t(k);
     return (
-      <div style={{padding: 24, maxWidth: 720}}>
-        <strong style={{color: "var(--danger,#ef4444)"}}>{tr("err.title")}</strong>
-        <pre style={{whiteSpace: "pre-wrap", marginTop: 8, padding: 12, background: "var(--bg)"}}>
-          {String(this.state.err && this.state.err.stack || this.state.err)}
-        </pre>
-        <button className="btn btn-sm btn-primary" onClick={this.reset}>{tr("err.retry")}</button>
+      <div style={{padding: 24, maxWidth: 820, margin: "0 auto"}}>
+        <div className="oa-config-banner" role="alert" style={{borderColor: "var(--danger, #ef4444)"}}>
+          <span className="oa-icon oa-config-banner__icon" style={{color: "var(--danger, #ef4444)"}}
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.warning() : ""}} />
+          <div className="oa-config-banner__text">
+            <strong>{tr("err.title")}</strong>
+            <div style={{fontSize: 12, color: "var(--text-muted)", marginTop: 4}}>
+              {err && err.message ? err.message : String(err)}
+            </div>
+          </div>
+          <button className="oa-config-banner__action" type="button" onClick={this.reset}>
+            {tr("err.retry")}
+          </button>
+        </div>
+        <details style={{marginTop: 16, fontSize: 12, color: "var(--text-muted)"}} open>
+          <summary style={{cursor: "pointer", marginBottom: 8}}>{tr("err.stackLabel")}</summary>
+          <pre style={{padding: 12, background: "var(--bg-card, var(--bg))", border: "1px solid var(--border)", borderRadius: 6, overflow: "auto", maxHeight: 240, whiteSpace: "pre-wrap", wordBreak: "break-word"}}>
+{stack}
+{compStack ? "\n--- React component stack ---" + compStack : ""}
+          </pre>
+        </details>
       </div>
     );
   }
