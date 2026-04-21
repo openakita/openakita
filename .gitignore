@@ -176,6 +176,10 @@ plugins/*
 !plugins/ppt-to-video/ui/
 !plugins/ppt-to-video/ui/dist/
 !plugins/ppt-to-video/ui/dist/**
+!plugins/local-sd-flux/
+!plugins/local-sd-flux/ui/
+!plugins/local-sd-flux/ui/dist/
+!plugins/local-sd-flux/ui/dist/**
 !plugins/tts-studio/
 !plugins/tts-studio/ui/
 !plugins/tts-studio/ui/dist/
