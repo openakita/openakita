@@ -1,0 +1,48 @@
+{
+  "id": "video-bg-remove",
+  "name": "Video Background Remove",
+  "display_name_zh": "视频抠像换背景",
+  "display_name_en": "Video Background Remove",
+  "version": "1.0.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Remove a person from a video background and composite onto a solid color, an image, or transparency. Powered by RVM (Robust Video Matting) MobileNetV3 via onnxruntime, falling back gracefully when the model or runtime is missing.",
+  "description_i18n": {
+    "zh": "用 RVM (Robust Video Matting) MobileNetV3 抠出人物，再合成到纯色 / 图片 / 透明背景。onnxruntime 或模型缺失时给出引导而不是崩溃。",
+    "en": "Remove a person from a video background and composite onto a solid color, an image, or transparency. Powered by RVM (Robust Video Matting) MobileNetV3 via onnxruntime, falling back gracefully when the model or runtime is missing."
+  },
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["video", "matting", "background", "rvm", "onnx"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.4.0"
+  },
+  "provides": {
+    "tools": [
+      "video_bg_remove_create",
+      "video_bg_remove_status",
+      "video_bg_remove_list",
+      "video_bg_remove_cancel",
+      "video_bg_remove_check_deps"
+    ],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "视频抠像换背景",
+    "title_i18n": { "zh": "视频抠像换背景", "en": "Video Background Remove" },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme"]
+  }
+}
