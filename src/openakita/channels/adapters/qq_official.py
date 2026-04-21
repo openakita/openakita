@@ -1594,17 +1594,22 @@ class QQBotAdapter(ChannelAdapter):
             local_path=file_path,
         )
 
+    # QQ 官方 API 文档允许直传的语音格式（无需任何转码）
+    # 来源：https://bot.q.qq.com/wiki/develop/api-v2/server-inter/message/send-receive/rich-media.html
+    _QQ_VOICE_DIRECT_FORMATS = {".silk", ".slk", ".wav", ".mp3", ".flac"}
+
     async def send_voice(
         self,
         chat_id: str,
         voice_path: str,
         caption: str | None = None,
     ) -> str:
-        """发送语音消息 (file_type=3, SILK 格式 + base64 上传)。
+        """发送语音消息 (file_type=3, base64 上传)。
 
-        QQ 官方 API 语音要求 SILK 格式。自动检测输入格式:
-        - .silk/.slk 文件直接上传
-        - 其他格式尝试用 pilk 转码为 SILK
+        QQ 官方 API 已支持 silk/wav/mp3/flac 直接上传，**不再强制 SILK 转码**。
+        - 上述 4 种格式：原文件直接 base64 上传
+        - 其他格式（opus/ogg/amr/m4a/...）：用 ffmpeg 转为 mp3 后上传
+        - 无 ffmpeg 且格式不支持：抛 RuntimeError 并给出明确提示
         """
         import base64 as b64
         from pathlib import Path as _Path
@@ -1619,50 +1624,12 @@ class QQBotAdapter(ChannelAdapter):
         msg_id = self._resolve_msg_id(chat_id)
 
         ext = src.suffix.lower()
-        silk_data: bytes | None = None
-
-        if ext in (".silk", ".slk"):
-            silk_data = src.read_bytes()
+        if ext in self._QQ_VOICE_DIRECT_FORMATS:
+            voice_bytes = src.read_bytes()
         else:
-            try:
-                import io
-                import tempfile
-                import wave
+            voice_bytes = await self._transcode_voice_to_mp3(src)
 
-                import pilk
-
-                raw_bytes = src.read_bytes()
-                pcm_data: bytes
-                sample_rate = 24000
-                try:
-                    with wave.open(io.BytesIO(raw_bytes)) as wf:
-                        sample_rate = wf.getframerate()
-                        pcm_data = wf.readframes(wf.getnframes())
-                except wave.Error:
-                    pcm_data = raw_bytes
-
-                tmp_pcm = None
-                tmp_silk = None
-                try:
-                    with tempfile.NamedTemporaryFile(suffix=".pcm", delete=False) as fp:
-                        tmp_pcm = fp.name
-                        fp.write(pcm_data)
-                    with tempfile.NamedTemporaryFile(suffix=".silk", delete=False) as fp:
-                        tmp_silk = fp.name
-                    pilk.encode(tmp_pcm, tmp_silk, pcm_rate=sample_rate, tencent=True)
-                    silk_data = _Path(tmp_silk).read_bytes()
-                finally:
-                    if tmp_pcm:
-                        _Path(tmp_pcm).unlink(missing_ok=True)
-                    if tmp_silk:
-                        _Path(tmp_silk).unlink(missing_ok=True)
-            except ImportError:
-                raise ImportError("pilk 未安装，无法将音频转为 SILK 格式。请运行: pip install pilk")
-
-        if not silk_data:
-            raise RuntimeError("Failed to prepare SILK voice data")
-
-        file_data = b64.standard_b64encode(silk_data).decode("ascii")
+        file_data = b64.standard_b64encode(voice_bytes).decode("ascii")
         upload_result = await self._upload_rich_media_base64(
             chat_type,
             chat_id,
@@ -1684,6 +1651,66 @@ class QQBotAdapter(ChannelAdapter):
             file_info,
             msg_id,
         )
+
+    @staticmethod
+    async def _transcode_voice_to_mp3(src_path: Path) -> bytes:
+        """把任意音频转成 mp3 字节流（用于 QQ send_voice 兜底）。
+
+        通过 ffmpeg 转码为 64kbps mono mp3——QQ 接收即可。
+        ffmpeg 不可用时抛 RuntimeError，提示用户改传 silk/wav/mp3/flac。
+        """
+        import asyncio
+        import shutil
+        import subprocess
+        import tempfile
+
+        if not shutil.which("ffmpeg"):
+            raise RuntimeError(
+                f"音频格式 {src_path.suffix} 不在 QQ 直传列表 "
+                f"(silk/wav/mp3/flac) 中，且系统未安装 ffmpeg 用于自动转码。"
+                f"请安装 ffmpeg，或将语音转换为受支持格式后再发送。"
+            )
+
+        loop = asyncio.get_event_loop()
+
+        def _run_ffmpeg() -> bytes:
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as fp:
+                tmp_out = fp.name
+            try:
+                cmd = [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    str(src_path),
+                    "-vn",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "24000",
+                    "-b:a",
+                    "64k",
+                    "-f",
+                    "mp3",
+                    tmp_out,
+                ]
+                extra: dict[str, Any] = {}
+                if os.name == "nt":
+                    extra["creationflags"] = subprocess.CREATE_NO_WINDOW
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    timeout=60,
+                    check=False,
+                    **extra,
+                )
+                if proc.returncode != 0:
+                    err = (proc.stderr or b"").decode("utf-8", errors="replace")[:300]
+                    raise RuntimeError(f"ffmpeg 转 mp3 失败: {err}")
+                return Path(tmp_out).read_bytes()
+            finally:
+                Path(tmp_out).unlink(missing_ok=True)
+
+        return await loop.run_in_executor(None, _run_ffmpeg)
 
     # ==================== Typing 提示 ====================
 

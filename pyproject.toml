@@ -74,7 +74,7 @@ dependencies = [
 [project.optional-dependencies]
 # 飞书 IM 通道
 feishu = [
-    "lark-oapi>=1.4.0",
+    "lark-oapi>=1.5.5",         # 2026-04 上游版本，5 个月 bug fix + 安全补丁
     "qrcode>=8.0",
 ]
 
@@ -85,31 +85,40 @@ dingtalk = [
 
 # 企业微信 IM 通道
 wework = [
-    "aiohttp>=3.11.0",
-    "pycryptodome>=3.19.0",
+    "aiohttp>=3.13.0",          # 多个 CVE 修复 + 性能改进
+    "pycryptodome>=3.23.0",     # ARM64 wheel + AES-GCM 性能 + 安全更新
 ]
 
 # 企业微信 WebSocket 长连接通道
 wework_ws = [
-    "websockets>=15.0.1",
-    "cryptography>=46.0.5",
+    "websockets>=16.0",         # 2026-01 主版本，max_size 分片限制 + Python 3.14 支持
+    "cryptography>=46.0.7",     # 补丁级安全更新
 ]
 
 # OneBot 协议通道 (NapCat/Lagrange 等)
 onebot = [
-    "websockets>=15.0.1",
+    "websockets>=16.0",
 ]
 
 # QQ 官方机器人
+# 注意：QQ 官方 API 已支持 silk/wav/mp3/flac 直接上传（2024+），
+# 发送语音不再需要 pilk 编码。如需接收/转写用户发送的 SILK 语音
+# （由 src/openakita/channels/media/audio_utils.py 处理），请额外
+# `pip install pilk` 或安装 voice extra。
 qqbot = [
-    "websockets>=15.0.1",       # QQ Gateway WebSocket 连接
-    "aiohttp>=3.11.0",          # Webhook 模式 HTTP 回调服务器
-    "pilk>=0.2.1",              # SILK 语音编解码（QQ 语音格式）
+    "websockets>=16.0",         # QQ Gateway WebSocket 连接
+    "aiohttp>=3.13.0",          # Webhook 模式 HTTP 回调服务器
 ]
 
 # 微信个人号 (iLink Bot API)
 wechat = [
-    "pycryptodome>=3.19.0",
+    "pycryptodome>=3.23.0",
+]
+
+# 语音接收/转写支持（QQ + 微信用户发来的 SILK v3 语音 → WAV）
+# 仅在需要语音转写功能时安装；不影响发送侧（QQ send_voice 已不依赖 pilk）。
+voice = [
+    "pilk>=0.2.1",
 ]
 
 # AI 媒体类插件脚手架（contrib 模块所需的 SDK 版本）
@@ -133,13 +142,13 @@ windows = [
 # 全部可选依赖（core + 所有 IM 通道 + 桌面自动化 + 插件 SDK）
 all = [
     # -- IM 通道 --
-    "lark-oapi>=1.4.0",
+    "lark-oapi>=1.5.5",
     "dingtalk-stream>=0.24.3",
-    "aiohttp>=3.11.0",
-    "pycryptodome>=3.19.0",
-    "websockets>=15.0.1",
-    "cryptography>=46.0.5",
-    "pilk>=0.2.1",
+    "aiohttp>=3.13.0",
+    "pycryptodome>=3.23.0",
+    "websockets>=16.0",
+    "cryptography>=46.0.7",
+    "pilk>=0.2.1",  # 语音接收/转写（QQ/微信 SILK 解码），发送不再需要
     # -- 桌面自动化 --
     "mss>=9.0.0",
     "pyautogui>=0.9.54",

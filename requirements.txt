@@ -65,23 +65,27 @@ python-telegram-bot>=22.7  # Telegram Bot API
 # =====================================================
 
 # 飞书
-lark-oapi>=1.4.0           # 飞书官方 SDK (WebSocket 长连接 + 卡片回调)
+lark-oapi>=1.5.5           # 飞书官方 SDK (WebSocket 长连接 + 卡片回调) - 5 个月 bug fix
 
 # 企业微信
-aiohttp>=3.11.0            # 企业微信 HTTP 回调服务器
-pycryptodome>=3.19.0       # 企业微信消息加解密 (AES-256-CBC)
-cryptography>=46.0.5       # 企业微信 WS 长连接加密 (CVE-2026-34073 修复)
+aiohttp>=3.13.0            # 企业微信 HTTP 回调服务器（含 CVE 修复）
+pycryptodome>=3.23.0       # 企业微信消息加解密 (AES-256-CBC) + ARM64 wheel
+cryptography>=46.0.7       # 企业微信 WS 长连接加密（补丁级安全更新）
 
 # 钉钉 (Stream 模式)
 dingtalk-stream>=0.24.3    # 钉钉 Stream SDK
 
 # OneBot 协议 (NapCat/Lagrange 等)
-websockets>=15.0.1         # OneBot WebSocket 支持
+websockets>=16.0           # OneBot WebSocket 支持（2026-01 主版本）
 
 # QQ 官方机器人
-# websockets>=15.0.1       # QQ Gateway WebSocket（已在 OneBot 行列出）
-# aiohttp>=3.11.0          # QQ Webhook 模式（已在企业微信行列出）
-pilk>=0.2.1                # SILK 语音编解码（QQ 语音格式）
+# websockets>=16.0         # QQ Gateway WebSocket（已在 OneBot 行列出）
+# aiohttp>=3.13.0          # QQ Webhook 模式（已在企业微信行列出）
+# 注：QQ 官方 API 已支持 silk/wav/mp3/flac 直传，发送语音不再需要 pilk。
+# pilk 仅用于接收侧 SILK→WAV 解码（语音转写），见下方"语音接收/转写"。
+
+# 语音接收/转写（QQ + 微信用户发来的 SILK v3 → WAV）
+pilk>=0.2.1                # SILK 解码：仅接收侧需要
 
 # =====================================================
 # 可选依赖 - Windows 桌面自动化
