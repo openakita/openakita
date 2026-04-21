@@ -1269,6 +1269,7 @@ export function OrgEditorView({
         is_clone: false,
         clone_source: null,
         external_tools: [],
+        enable_file_tools: true,
         ephemeral: false,
         frozen_by: null,
         frozen_reason: null,
@@ -1549,7 +1550,7 @@ export function OrgEditorView({
       department: "", custom_prompt: "", identity_dir: null, mcp_servers: [], skills: [],
       skills_mode: "all", preferred_endpoint: null, max_concurrent_tasks: 1, timeout_s: 0,
       can_delegate: true, can_escalate: true, can_request_scaling: true, is_clone: false,
-      clone_source: null, external_tools: [], ephemeral: false, frozen_by: null,
+      clone_source: null, external_tools: [], enable_file_tools: true, ephemeral: false, frozen_by: null,
       frozen_reason: null, frozen_at: null, avatar: null, status: "idle",
     };
     setNodes((prev) => [...prev, orgNodeToFlowNode(newNode, { _liveMode: liveMode })]);
@@ -3798,6 +3799,39 @@ export function OrgEditorView({
                       );
                     })}
                   </CardContent>
+                  {/* 基础文件工具开关：与上面 6 个类目正交 —— 即便没勾选
+                      "文件/命令"，只要打开这个开关就给节点放行 write_file /
+                      read_file / edit_file / list_directory，让需要交付文件
+                      的角色可以把交付物落盘后走 file_attachments 提交。
+                      run_shell / 删除等高风险工具仍由"文件/命令"类目控制。 */}
+                  <div className="border-t px-3 py-3" style={{ borderColor: "var(--line)" }}>
+                    {(() => {
+                      const checked = selectedNode.enable_file_tools !== false;
+                      return (
+                        <label
+                          className="flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-xs transition-colors"
+                          style={{
+                            borderColor: checked ? "color-mix(in srgb, var(--primary) 45%, var(--line))" : "var(--line)",
+                            background: checked ? "color-mix(in srgb, var(--primary) 10%, transparent)" : "var(--card-bg)",
+                          }}
+                        >
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(value) => updateNodeData("enable_file_tools", value === true)}
+                            className="mt-[2px]"
+                          />
+                          <div className="flex flex-col gap-1">
+                            <span className="font-medium">基础文件工具</span>
+                            <span className="text-[11px] leading-4 text-muted-foreground">
+                              即便未勾选"文件/命令"也允许使用 write_file / read_file /
+                              edit_file / list_directory，专门用于把交付物落盘成附件。
+                              文件路径限定在组织 workspace 目录内。默认开启。
+                            </span>
+                          </div>
+                        </label>
+                      );
+                    })()}
+                  </div>
                 </Card>
 
                 {/* ── Section 2: MCP 服务器 ── */}

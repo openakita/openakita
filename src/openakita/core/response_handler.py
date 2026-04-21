@@ -356,16 +356,12 @@ class ResponseHandler:
                             f"[TaskVerify] PlanValidator FAIL (non-blocking): {output.reason}"
                         )
 
-                for output in report.outputs:
-                    if (
-                        output.result == ValidationResult.FAIL
-                        and output.name == "ArtifactValidator"
-                    ):
-                        logger.warning(
-                            f"[TaskVerify] ArtifactValidator FAIL but treating as PASS "
-                            f"(delivery failure is infra issue, not agent fault): {output.reason}"
-                        )
-                        return True
+                # NOTE: 历史上这里有一段把 ArtifactValidator FAIL 当 PASS 的"临时
+                # 兜底"（理由：交付失败是基础设施问题不算 agent 错），结果就是
+                # 哪怕 LLM 完全没产出文件、明明该交附件也只回了一段文字，验收
+                # 也会被静默放行 → 用户感觉"明明要附件结果一个文件没有"。这条
+                # 短路在 2025-04 被删除：FAIL 就让它 FAIL，下游 LLM 复核或硬
+                # verify_incomplete 路径会负责给出正确的失败原因和重试提示。
         except Exception as e:
             logger.debug(f"[TaskVerify] Deterministic validation skipped: {e}")
 

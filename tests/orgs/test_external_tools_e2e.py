@@ -90,9 +90,14 @@ class TestToolFilteringE2E:
 
     async def test_node_without_external_tools_has_only_org_tools(self, runtime_env):
         runtime, manager = runtime_env
+        # 显式关 enable_file_tools 才能测"纯 org_*"分支：自 2025-04 起，
+        # OrgNode.enable_file_tools 默认为 True，节点会被注入安全的基础文件
+        # 工具（write_file/read_file/edit_file/list_directory）以便交付物落盘。
+        # 本用例的语义是"未授权任何执行类工具"，保留 enable_file_tools=False
+        # 来锁定该协议；新增 test_node_default_has_basic_file_tools 覆盖默认行为。
         org = manager.create(make_org(
             name="纯协作",
-            nodes=[make_node("boss", "Boss", 0)],
+            nodes=[make_node("boss", "Boss", 0, enable_file_tools=False)],
             edges=[],
         ).to_dict())
         await runtime.start_org(org.id)
@@ -105,11 +110,52 @@ class TestToolFilteringE2E:
             assert name.startswith("org_") or name == "get_tool_info" or name in _PLAN_TOOLS, \
                 f"Unexpected tool '{name}' on node without external_tools"
 
+    async def test_node_default_has_basic_file_tools(self, runtime_env):
+        """E0-4: 节点默认开启 enable_file_tools=True，应该获得安全的基础文件工具。"""
+        runtime, manager = runtime_env
+        org = manager.create(make_org(
+            name="默认文件工具",
+            nodes=[make_node("boss", "Boss", 0)],
+            edges=[],
+        ).to_dict())
+        await runtime.start_org(org.id)
+
+        agent = await runtime._create_node_agent(org, org.get_node("boss"))
+        tool_names = {t["name"] for t in agent._tools}
+        # 安全子集应在
+        for expected in ("write_file", "read_file", "edit_file", "list_directory"):
+            assert expected in tool_names, \
+                f"enable_file_tools=True 时应注入 {expected}，实际: {sorted(tool_names)}"
+        # 高风险工具不应在（仍由 external_tools=['filesystem'] 控制）
+        for forbidden in ("run_shell", "delete_file"):
+            assert forbidden not in tool_names, \
+                f"enable_file_tools=True 不应放行高风险工具 {forbidden}"
+
+    async def test_node_with_enable_file_tools_false_has_no_file_tools(self, runtime_env):
+        """E0-4: 显式关 enable_file_tools 时不能再注入文件工具。"""
+        runtime, manager = runtime_env
+        org = manager.create(make_org(
+            name="禁用文件工具",
+            nodes=[make_node("boss", "Boss", 0, enable_file_tools=False)],
+            edges=[],
+        ).to_dict())
+        await runtime.start_org(org.id)
+
+        agent = await runtime._create_node_agent(org, org.get_node("boss"))
+        tool_names = {t["name"] for t in agent._tools}
+        for forbidden in ("write_file", "read_file", "edit_file", "list_directory"):
+            assert forbidden not in tool_names, \
+                f"enable_file_tools=False 时不应注入 {forbidden}"
+
     async def test_node_with_research_tools_retains_web_search(self, runtime_env):
         runtime, manager = runtime_env
         org = manager.create(make_org(
             name="研究团队",
-            nodes=[make_node("researcher", "研究员", 0, external_tools=["research"])],
+            # 用例下面的 for 断言要求"工具集 ⊂ research+plan+org+get_tool_info"，
+            # 所以这里关掉 enable_file_tools，避免基础文件工具混入打挂断言。
+            nodes=[make_node("researcher", "研究员", 0,
+                             external_tools=["research"],
+                             enable_file_tools=False)],
             edges=[],
         ).to_dict())
         await runtime.start_org(org.id)
@@ -345,7 +391,10 @@ class TestToolRequestGrantE2E:
             name="申请授权",
             nodes=[
                 make_node("ceo", "CEO", 0, "管理层", external_tools=["research", "planning"]),
-                make_node("dev", "开发", 1, "技术部"),
+                # 测试场景需要 dev 一开始没有 write_file，等 CEO 授权 filesystem
+                # 才能用。enable_file_tools 默认会把 write_file 注入进来，会让
+                # 这条"申请授权"叙事失效，所以这里显式关掉。
+                make_node("dev", "开发", 1, "技术部", enable_file_tools=False),
             ],
             edges=[make_edge("ceo", "dev")],
         ).to_dict())
@@ -396,8 +445,13 @@ class TestToolRequestGrantE2E:
         org = manager.create(make_org(
             name="收回测试",
             nodes=[
+                # 测试目标是"收回 filesystem 后 write_file 应该消失"，因此 worker
+                # 不能再走 enable_file_tools 默认注入路径，否则收回后 write_file
+                # 仍由"基础文件工具"白名单保留，把测试断言打挂。
                 make_node("boss", "Boss", 0, external_tools=["research"]),
-                make_node("worker", "Worker", 1, external_tools=["research", "filesystem"]),
+                make_node("worker", "Worker", 1,
+                          external_tools=["research", "filesystem"],
+                          enable_file_tools=False),
             ],
             edges=[make_edge("boss", "worker")],
         ).to_dict())
