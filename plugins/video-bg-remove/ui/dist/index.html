@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>视频抠像换背景 · video-bg-remove</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Microsoft YaHei", sans-serif;
+    margin: 0;
+    padding: 2rem;
+    line-height: 1.55;
+    color: #1f2933;
+    background: #f7f8fa;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { color: #e4e7eb; background: #1a202c; }
+    code, pre { background: #2d3748; }
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 0.5rem; }
+  h2 { font-size: 1.05rem; margin-top: 1.5rem; }
+  code, pre {
+    background: #edf0f4;
+    padding: 0.15rem 0.35rem;
+    border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.92rem;
+  }
+  pre { padding: 0.75rem 1rem; overflow-x: auto; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    background: #fef3c7;
+    color: #92400e;
+    margin-left: 0.5rem;
+  }
+  ul { padding-left: 1.2rem; }
+  li { margin: 0.2rem 0; }
+  a { color: #2563eb; }
+</style>
+</head>
+<body>
+  <h1>视频抠像换背景<span class="badge">UI scaffolding pending</span></h1>
+  <p>
+    后端 (FastAPI 路由 + brain tools) 已就绪。可视化前端尚未开始构建；
+    在前端落地之前，可以通过下方 HTTP 路由直接驱动。
+  </p>
+
+  <h2>1. 检查依赖</h2>
+  <pre>GET /api/plugins/video-bg-remove/check-deps</pre>
+  <p>三栏返回 onnxruntime / ffmpeg / 模型文件状态。任何一项缺失都会附带下载提示。</p>
+
+  <h2>2. 创建抠像任务</h2>
+  <pre>POST /api/plugins/video-bg-remove/tasks
+{
+  "input_path": "/abs/path/to/clip.mp4",
+  "background": { "kind": "color", "color": [0, 177, 64] }
+}</pre>
+  <p>
+    <code>background.kind</code> 支持 <code>color</code> / <code>image</code> /
+    <code>transparent</code>。透明背景会强制输出 <code>.mov</code>
+    （libx264 不支持 alpha）。
+  </p>
+
+  <h2>3. 取回成品</h2>
+  <pre>GET /api/plugins/video-bg-remove/tasks/{id}/video</pre>
+
+  <h2>brain 可调用的工具</h2>
+  <ul>
+    <li><code>video_bg_remove_create</code></li>
+    <li><code>video_bg_remove_status</code></li>
+    <li><code>video_bg_remove_list</code></li>
+    <li><code>video_bg_remove_cancel</code></li>
+    <li><code>video_bg_remove_check_deps</code></li>
+  </ul>
+
+  <p style="margin-top:2rem; opacity:0.7; font-size:0.85rem;">
+    详见仓库内 <code>plugins/video-bg-remove/README.md</code> 与
+    <code>SKILL.md</code>。
+  </p>
+</body>
+</html>
