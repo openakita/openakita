@@ -1978,6 +1978,17 @@ class OrgRuntime:
 
         allowed_external = expand_tool_categories(node.external_tools) - _ORG_CONFLICT_TOOLS
 
+        # E0-4: 节点级"基础文件工具"开关。即便用户没在 external_tools 里勾选
+        # filesystem 类目，只要 enable_file_tools=True（默认），就给节点放行
+        # 一组安全的读写工具，避免出现"角色明明该交文件，但提示词里被告知
+        # 'write_file 不可用' 只能回纯文本"的死循环。这里刻意不包含 run_shell
+        # / delete_file —— 命令执行和删除属高风险，仍要走 external_tools 显式
+        # 授权。文件路径在 agent.file_tool.base_path 处被隔离到 org workspace。
+        if getattr(node, "enable_file_tools", True):
+            allowed_external = allowed_external | {
+                "write_file", "read_file", "edit_file", "list_directory",
+            }
+
         per_node_tools = build_org_node_tools(org, node)
         per_node_by_name: dict[str, dict] = {t["name"]: t for t in per_node_tools}
 
@@ -2480,6 +2491,35 @@ class OrgRuntime:
                 extra = f"\n交付内容: {deliverable}"
             if summary:
                 extra += f"\n工作简述: {summary}"
+            # E0-2: 附件清单一定要显式喂给上级 LLM。否则父节点只看见一段文字，
+            # 看不到下属其实交了几个文件、什么名字、什么大小，结果就是验收时
+            # 错判（继续追问"你交付的文件呢"）或者打回一份本来已经合格的交付。
+            # metadata["file_attachments"] 由 _handle_org_submit_deliverable 写
+            # 入，结构是 [{"filename": str, "file_path": str, "file_size": int?}].
+            attachments = msg.metadata.get("file_attachments") or []
+            if isinstance(attachments, list) and attachments:
+                lines = []
+                for att in attachments[:20]:
+                    if not isinstance(att, dict):
+                        continue
+                    fname = att.get("filename") or att.get("name") or "(未命名)"
+                    fpath = att.get("file_path") or att.get("path") or ""
+                    size = att.get("file_size") or att.get("size_bytes") or 0
+                    if size and isinstance(size, int):
+                        if size >= 1024 * 1024:
+                            size_str = f" ({size / 1024 / 1024:.1f} MB)"
+                        elif size >= 1024:
+                            size_str = f" ({size / 1024:.1f} KB)"
+                        else:
+                            size_str = f" ({size} B)"
+                    else:
+                        size_str = ""
+                    if fpath:
+                        lines.append(f"  - **{fname}**{size_str} → `{fpath}`")
+                    else:
+                        lines.append(f"  - **{fname}**{size_str}")
+                if lines:
+                    extra += f"\n附件清单（共 {len(attachments)} 个）:\n" + "\n".join(lines)
             extra += "\n请用 org_accept_deliverable 或 org_reject_deliverable 进行验收。"
         elif msg.msg_type == MsgType.TASK_REJECTED:
             reason = msg.metadata.get("rejection_reason", "")
@@ -4313,7 +4353,21 @@ class OrgRuntime:
         if not p.exists() or not p.is_file():
             return None
 
-        size_bytes = p.stat().st_size
+        # E0-3: 拒绝把空文件登记成"产出"。空文件几乎只可能是 LLM 调用
+        # write_file 写入空字符串、或者插件创建占位文件还没写入数据时，被
+        # 误识别为"已交付"。一旦空文件混入黑板/ProjectTask，下游验收会以为
+        # 任务已经完成，导致整条任务被错判为成功。这里只看物理大小，未来
+        # 如果要做"语义为空检测"放在更上层。
+        try:
+            size_bytes = p.stat().st_size
+        except OSError:
+            return None
+        if size_bytes <= 0:
+            logger.info(
+                "[OrgRuntime] _register_file_output skip empty file: %s (org=%s node=%s)",
+                str(p), org_id, node_id,
+            )
+            return None
         resolved_name = filename or p.name
         ext = p.suffix.lower()
         ext_label = self._FILE_EXT_LABELS.get(ext, "文件")

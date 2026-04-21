@@ -158,6 +158,14 @@ class OrgNode:
     ephemeral: bool = False
     avatar: str | None = None
     external_tools: list[str] = field(default_factory=list)
+    # 节点是否拥有"基础文件工具"（write_file / read_file / edit_file /
+    # list_directory）。默认 True，让没有显式勾选 filesystem 类目的角色（CPO、
+    # 文案、运营等）也能在需要时把交付物落盘成附件，而不是只回一段长文。
+    # 注意：刻意排除 run_shell / delete_file / grep / glob —— 那些归 filesystem
+    # 类目自管，需要的话用户再去勾 external_tools=["filesystem"]。文件路径会被
+    # agent.file_tool.base_path = <org_workspace> 隔离在组织 workspace 内，沿用
+    # 现有沙盒，不引入新的逃逸面。
+    enable_file_tools: bool = True
     frozen_by: str | None = None
     frozen_reason: str | None = None
     frozen_at: str | None = None
@@ -193,6 +201,7 @@ class OrgNode:
             "ephemeral": self.ephemeral,
             "avatar": self.avatar,
             "external_tools": list(self.external_tools) if self.external_tools else [],
+            "enable_file_tools": self.enable_file_tools,
             "frozen_by": self.frozen_by,
             "frozen_reason": self.frozen_reason,
             "frozen_at": self.frozen_at,

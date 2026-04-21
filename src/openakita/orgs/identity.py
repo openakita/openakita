@@ -279,6 +279,13 @@ class OrgIdentity:
             )
 
         has_external = bool(node.external_tools)
+        # E0-4: 节点级"基础文件工具"开关。即便没有勾选 external_tools，只要
+        # enable_file_tools=True（默认），节点也会被注入安全的 write_file /
+        # read_file / edit_file / list_directory；此时 prompt 必须告诉 LLM 这些
+        # 工具是可用的，并指导它在交付物是文档/代码时主动落盘 + 走
+        # org_submit_deliverable(file_attachments=[...])，否则会出现"工具明明
+        # 在但提示词说不可用"的自相矛盾。
+        has_basic_file_tools = getattr(node, "enable_file_tools", True)
         if has_external:
             from .tool_categories import TOOL_CATEGORIES, expand_tool_categories
             ext_names = expand_tool_categories(node.external_tools)
@@ -292,6 +299,22 @@ class OrgIdentity:
                 "- 外部工具得到的重要结果，用 org_write_blackboard 写入黑板共享给同事\n"
                 "- 优先通过直接连线关系沟通（上下级、协作伙伴）\n"
                 "- 非必要不跨级沟通\n"
+                "- 回复要简洁，1-3 句话概括行动和结果即可\n\n"
+                + delivery_flow
+            )
+        elif has_basic_file_tools:
+            parts.append(
+                "## 组织工具与行为约束\n"
+                "你拥有 org_* 组织协作工具，以及一组基础文件工具（write_file / "
+                "read_file / edit_file / list_directory），用于把文档/代码/方案"
+                "等结构化交付物落盘到组织 workspace。注意：run_shell、网络爬取、"
+                "MCP 等高级工具未授权给你，需要时通过 org_request_tools 申请。\n"
+                "协作规则：\n"
+                "- 与同事沟通、委派、汇报用 org_* 工具\n"
+                "- 当你的交付物是文档/代码/HTML 等结构化内容时，**先用 write_file "
+                "把文件落盘**，再用 org_submit_deliverable(file_attachments=[…]) "
+                "把附件交给委派人，不要只把全文塞进 deliverable 字段\n"
+                "- 重要决策和方案写入 org_write_blackboard，写之前先 org_read_blackboard 检查避免重复\n"
                 "- 回复要简洁，1-3 句话概括行动和结果即可\n\n"
                 + delivery_flow
             )

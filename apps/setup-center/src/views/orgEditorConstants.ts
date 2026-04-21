@@ -339,6 +339,7 @@ export interface OrgNodeData {
   is_clone: boolean;
   clone_source: string | null;
   external_tools: string[];
+  enable_file_tools?: boolean;
   ephemeral: boolean;
   avatar: string | null;
   frozen_by: string | null;

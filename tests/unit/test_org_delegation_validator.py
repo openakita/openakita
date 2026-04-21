@@ -110,7 +110,10 @@ class TestDiagnosisCardDowngrade:
     def test_verify_incomplete_without_accept_signal_keeps_strict(self):
         diag = summarize(self._make_trace_without_accept(), exit_reason="verify_incomplete")
         assert diag["root_cause"] == "verify_incomplete"
-        assert "未完成" in diag["headline"]
+        # 新模板（在 verify-incomplete-noise-fix 中改造为更具体的失败描述）：
+        # "节点未交付要求的文件 / 附件，仅以纯文字回复结束本轮"
+        # 断言对该语义的关键词进行匹配，不再绑定旧的 "未完成" 短语。
+        assert "未交付" in diag["headline"] or "纯文字" in diag["headline"]
 
     def test_unrelated_exit_reason_unchanged(self):
         # max_iterations / loop_terminated paths must be unaffected by the new branch.
