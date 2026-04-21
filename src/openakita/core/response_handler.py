@@ -370,6 +370,12 @@ class ResponseHandler:
         # 足够长或带文件附件，说明已经实际产出，直接放行；否则才走 LLM 复核。
         # 这是修复"sub-agent 实际已经写好文档/代码并提交，但 LLM verify 误判
         # 'verify_incomplete' 反复重试"的关键。
+        # E1-1：trust-but-verify 在「expects_artifact=True」时收紧——纯文字
+        # 即便 ≥200 字符也不能 PASS，必须有附件。原因：用户明确要求"导出/写文件/
+        # 生成报告/做 PPT"等场景下，只回长文 = 没完成；放行就成了用户反馈的
+        # "明明要附件结果一个文件没有"。这条收紧只在 expects_artifact 才生效，
+        # 其它场景（普通问答 / 计划讨论 / 复盘）维持原 PASS 阈值，行为不变。
+        expects_artifact = self._request_expects_artifact(user_request)
         try:
             executed_set = set(executed_tools or [])
             tool_results_list = tool_results or []
@@ -407,25 +413,36 @@ class ResponseHandler:
                     if delivery_receipts:
                         attachments_count = max(attachments_count, len(delivery_receipts))
 
-                if submit_ok_run and (deliverable_len >= 200 or attachments_count >= 1):
+                # 阈值分两档：
+                #   - expects_artifact=True：必须 attachments_count >= 1，纯文本不算
+                #   - expects_artifact=False（普通讨论/答复）：保持历史行为
+                #     (deliverable_len>=200 或 attachments_count>=1) 任一即可
+                if expects_artifact:
+                    pass_ok = submit_ok_run and attachments_count >= 1
+                else:
+                    pass_ok = submit_ok_run and (
+                        deliverable_len >= 200 or attachments_count >= 1
+                    )
+
+                if pass_ok:
                     logger.info(
                         "[TaskVerify] trust-but-verify PASS: "
-                        "submit_deliverable executed, deliverable_len=%d files=%d",
-                        deliverable_len, attachments_count,
+                        "submit_deliverable executed, deliverable_len=%d files=%d "
+                        "expects_artifact=%s",
+                        deliverable_len, attachments_count, expects_artifact,
                     )
                     return True
                 if submit_ok_run:
                     logger.info(
                         "[TaskVerify] trust-but-verify INSUFFICIENT: "
-                        "deliverable_len=%d files=%d → fall back to LLM verify",
-                        deliverable_len, attachments_count,
+                        "deliverable_len=%d files=%d expects_artifact=%s "
+                        "→ fall back to LLM verify",
+                        deliverable_len, attachments_count, expects_artifact,
                     )
         except Exception as exc:
             logger.debug(
                 "[TaskVerify] trust-but-verify gate skipped: %s", exc,
             )
-
-        expects_artifact = self._request_expects_artifact(user_request)
 
         # 宣称已交付但无证据
         if (

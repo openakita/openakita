@@ -1492,12 +1492,27 @@ class OrgRuntime:
                     )
                     persisted_attachment = None
 
-            # 子节点合成 TASK_DELIVERED：
-            # 当 auto-persist 真的产出了附件、且本节点不是 root、且 LLM 整轮
-            # 都没主动调过 org_submit_deliverable 时，主动给父节点合成一条
-            # TASK_DELIVERED 消息（含附件元数据），关闭父节点 wait_for_deliverable
-            # 与项目任务状态。否则父级会一直挂在 mailbox 等待，直到 watchdog
-            # 超时——这是"光提示不落实"的最后一公里。
+            # 子节点合成 TASK_DELIVERED（auto-persist 兜底最后一公里）：
+            #
+            # P0-5 修订：旧注释说"关闭父节点 wait_for_deliverable"——这是误导。
+            # 父节点的 `org_wait_for_deliverable` 监听的是 `inbox_event` /
+            # `chain_event`，TASK_DELIVERED 消息进 mailbox 时**不会**额外发这两
+            # 个事件，所以这里合成的消息**无法**直接结束 wait。它真正的作用是：
+            #   1) 进父节点 mailbox → 后续父节点被激活时能看到"下属已交付 + 附件"
+            #   2) emit `task_delivered` event + ws → 前端时间线/项目卡片
+            #      自动更新为 delivered，避免一直停在 in_progress
+            #   3) `_link_project_task(status="delivered")` → ProjectTask 状态闭合
+            #   4) `_on_inbound_for_node(parent)` → 父节点 mailbox watcher
+            #      被推一下，让其在下次空闲时 drain
+            # 触发条件（P0-4 收紧）：
+            #   - 本节点不是 root（root 直接对用户回复，没有"父节点"概念）
+            #   - 本轮 LLM 没自己调过 org_submit_deliverable（防双发）
+            #   - chain_id 存在
+            #   - **activation_origin == "task_assign"**：仅当本次激活是被父节点
+            #     `org_delegate_task` 派下来时才合成。其它来源（user_command /
+            #     question / answer / feedback / report / handshake / broadcast …）
+            #     语义上不是"交付场景"，合成 TASK_DELIVERED 反而把 ProjectTask
+            #     状态错误推进到 delivered，污染验收流程。
             if persisted_attachment is not None:
                 try:
                     is_root_for_delivery = (
@@ -1506,10 +1521,12 @@ class OrgRuntime:
                     submit_called = self._react_trace_has_tool(
                         react_trace, "org_submit_deliverable",
                     )
+                    is_task_assign_origin = (activation_origin == "task_assign")
                     if (
                         not is_root_for_delivery
                         and not submit_called
                         and chain_id
+                        and is_task_assign_origin
                     ):
                         await self._synthesize_task_delivered_to_parent(
                             org=org,
@@ -1517,6 +1534,13 @@ class OrgRuntime:
                             chain_id=chain_id,
                             deliverable_text=result_text,
                             attachment=persisted_attachment,
+                        )
+                    elif persisted_attachment is not None and not is_task_assign_origin:
+                        logger.info(
+                            "[OrgRuntime] synth-TASK_DELIVERED skipped: "
+                            "activation_origin=%s is not task_assign (org=%s node=%s "
+                            "chain=%s)",
+                            activation_origin, org.id, node.id, chain_id,
                         )
                 except Exception:
                     logger.warning(
@@ -1527,6 +1551,23 @@ class OrgRuntime:
             try:
                 is_soft_verify = _is_soft_verify_incomplete(exit_reason, react_trace)
             except Exception:
+                is_soft_verify = False
+
+            # P0-2：根节点禁止走 soft verify 降级。根节点是用户最终看到的发言人，
+            # verify_incomplete 多半意味着"该综合下属交付给出最终回复，但 LLM 没
+            # 给"。如果根节点也降级 soft，会被静默判定为"完成"，于是出现用户
+            # 反馈的"最后由子节点说话、根节点没总结"问题。对根节点保持硬 verify_incomplete，
+            # 让 reasoning_engine 的重试 / 失败路径有机会强制 LLM 再总结一次。
+            try:
+                _is_root_node = org.get_parent(node.id) is None
+            except Exception:
+                _is_root_node = False
+            if _is_root_node and is_soft_verify:
+                logger.info(
+                    "[OrgRuntime] root node %s downgrade-to-soft denied; "
+                    "keep verify_incomplete strict so root will not silently exit "
+                    "without final summary.", node.id,
+                )
                 is_soft_verify = False
 
             is_normal = exit_reason in ("normal", "ask_user") or is_soft_verify
@@ -1564,12 +1605,14 @@ class OrgRuntime:
                     logger.debug(f"[OrgRuntime] failure diagnosis failed on {node.id}: {diag_err}")
                     diagnosis = None
 
-                # 静默策略：verify_incomplete + 用户原始 prompt 没有"附件交付意图"
-                # 时，整张诊断卡片完全不展示——既不拼到 result_text、也不进 event/ws
-                # payload。这正是用户反馈的"明明不用附件交付的也要提示"场景：
-                # 不展示并不丢信息，因为日志里仍然记录了 exit_reason=verify_incomplete。
-                # 注意：is_soft_verify 路径不走这里——软完成是积极信号，需要保留
-                # 提示卡片表示"已通过下属交付完成"。
+                # 静默策略 1（硬 verify）：verify_incomplete + 用户原始 prompt 没有
+                # "附件交付意图"时，整张诊断卡片完全不展示——既不拼到 result_text、
+                # 也不进 event/ws payload。日志里仍然记录了 exit_reason=verify_incomplete。
+                # 静默策略 2（软 verify，P0-3）：is_soft_verify=True 表示协调者节点
+                # 通过下属交付实质完成本任务，是"积极信号"。历史版本会保留一张
+                # "ℹ️ 复盘提示"卡片提示用户"已通过下属交付完成"，但该卡片几乎
+                # 100% 是噪音（用户已经看到下属交付物 + task_complete 气泡），
+                # 反而引发"明明完成了为什么还有失败提示"的误解。这里同样彻底静默。
                 rc_for_silence = (diagnosis or {}).get("root_cause") if diagnosis else None
                 if (
                     diagnosis
@@ -1580,6 +1623,14 @@ class OrgRuntime:
                     logger.info(
                         "[OrgRuntime] silencing verify_incomplete diagnosis card for "
                         "org=%s node=%s (user prompt did not request file artifact)",
+                        org.id, node.id,
+                    )
+                    diagnosis = None
+                elif diagnosis and is_soft_verify:
+                    logger.info(
+                        "[OrgRuntime] silencing soft verify_incomplete diagnosis card "
+                        "for org=%s node=%s (already accepted child deliverable; "
+                        "review hint is pure noise to end users)",
                         org.id, node.id,
                     )
                     diagnosis = None
@@ -2312,10 +2363,26 @@ class OrgRuntime:
                 bool(msg.metadata and msg.metadata.get("chain_closed"))
                 or self.is_chain_closed(org_id, chain_id_peek)
             )
+            # P0-1：根节点收到 TASK_DELIVERED 必须放行——这是根节点完成"汇总性
+            # 终态回复"的唯一触发点。如果继续静默，就出现用户反馈的"最后由
+            # 子节点（策划编辑）说话、根节点没有总结"问题：子任务交付后链路
+            # 被 close，TASK_DELIVERED 还没到根节点 mailbox 就被这条软屏障
+            # 吃掉了。只对根 + TASK_DELIVERED 这一组合放行，避免破坏其它
+            # 合法的 close 行为。
+            try:
+                _is_root_for_gate = bool(
+                    self.get_org(org_id) and
+                    self.get_org(org_id).get_parent(node_id) is None
+                )
+            except Exception:
+                _is_root_for_gate = False
+            _root_delivery_bypass = (
+                _is_root_for_gate and msg.msg_type == MsgType.TASK_DELIVERED
+            )
             if closed and msg.msg_type not in (
                 MsgType.TASK_ASSIGN,
                 MsgType.TASK_REJECTED,
-            ):
+            ) and not _root_delivery_bypass:
                 logger.info(
                     "[OrgRuntime] gate: skip ReAct activation for closed chain=%s "
                     "msg_type=%s from=%s to=%s",
@@ -2994,16 +3061,24 @@ class OrgRuntime:
 
             # 同 `_on_node_message` 的软屏障：已关闭 chain 的非派工消息不再激活 ReAct，
             # 只标记为已处理让其从队列中"自然消失"。否则 drain 路径会绕过 handler 门禁。
+            # P0-1：同样对 root + TASK_DELIVERED 放行，理由见 _on_node_message 的注释。
             if suppress_on:
                 chain_peek = msg.metadata.get("task_chain_id") if msg.metadata else None
                 closed = (
                     bool(msg.metadata and msg.metadata.get("chain_closed"))
                     or self.is_chain_closed(org.id, chain_peek)
                 )
+                try:
+                    _is_root_for_drain = org.get_parent(node.id) is None
+                except Exception:
+                    _is_root_for_drain = False
+                _root_delivery_bypass = (
+                    _is_root_for_drain and msg.msg_type == MsgType.TASK_DELIVERED
+                )
                 if closed and msg.msg_type not in (
                     MsgType.TASK_ASSIGN,
                     MsgType.TASK_REJECTED,
-                ):
+                ) and not _root_delivery_bypass:
                     logger.info(
                         "[OrgRuntime] drain-gate skip closed chain=%s msg=%s",
                         chain_peek, msg.id,
