@@ -112,14 +112,15 @@ PLAN_DRIFT_WINDOW = 5
 EXTREME_ITERATION_THRESHOLD = 50
 SELF_CHECK_INTERVAL = 10
 UNPRODUCTIVE_WINDOW = 5
+# 真正"零产出"的只读/查询类工具——多次连续调用提示模型可能在空转。
+# 历史上曾把 ``create_todo / update_todo_step / complete_todo / add_memory``
+# 也列入此集合，导致 plan 推进（每步都要 in_progress + completed 两次
+# update_todo_step）和长期记忆写入被误判为"空转"并触发 STRATEGY_SWITCH 回滚。
+# 实际上这些工具是状态变更/进度推进，不是零产出查询。
 UNPRODUCTIVE_ADMIN_TOOLS = frozenset(
     {
-        "create_todo",
-        "update_todo_step",
         "get_todo_status",
-        "complete_todo",
         "search_memory",
-        "add_memory",
         "list_directory",
     }
 )
@@ -414,14 +415,24 @@ class RuntimeSupervisor:
             return True
 
     def _check_signature_repeat(self, iteration: int) -> Intervention | None:
-        """签名重复检测：工具名维度优先于精确签名。
+        """签名重复检测。
 
-        三级干预：WARN(2次) -> STRATEGY_SWITCH(3次) -> TERMINATE(4次)
-        TERMINATE 级别的检测优先执行，避免低级别干预抢先 return。
+        死循环的本质特征是 **同一工具用同一组参数反复调用却毫无进展**——这只能
+        通过精确签名重复（``most_common_count``）来识别。仅"工具名相同但参数各异"
+        （``top_count``）反映的是 agent 在干活：写多个文件、跑多条命令、推进多个
+        todo step、派多个不同子任务，它们不该被当成死循环。
+
+        因此分级：
+
+        * ``most_common_count >= TERMINATE``：同一精确签名重复 N 次 → TERMINATE
+        * ``most_common_count >= STRATEGY_SWITCH``：同一精确签名重复 N 次 → 回滚
+        * 1-2 种签名 ping-pong 高频交替 → STRATEGY_SWITCH（真死循环的另一种形态）
+        * ``top_count >= WARN`` 或 ``most_common_count >= WARN``：仅 NUDGE 软提示
+          （提醒可能效率不高，单轮屏蔽该工具迫使模型确认进度，但不强制结束任务）
 
         组织协调者轮询白名单（``POLL_FRIENDLY_TOOLS``）：对
         ``org_list_delegated_tasks`` 等合法等待工具放宽阈值且最高仅 NUDGE，
-        防止协调者因等下属交付而被误判 TERMINATE。
+        防止协调者因等下属交付而被误判。
         """
         recent = self._signature_history[-TOOL_THRASH_WINDOW:]
         if len(recent) < self._signature_repeat_warn:
@@ -447,23 +458,15 @@ class RuntimeSupervisor:
         top_is_poll = self._is_poll_friendly(top_name)
         sig_is_poll = self._is_poll_friendly(_most_common_tool)
         # poll-friendly tools 用放宽后的 warn 阈值触发 NUDGE；TERMINATE / STRATEGY_SWITCH
-        # 路径直接通过 ``not top_is_poll`` / ``not sig_is_poll`` 兜底跳过，无需单独阈值。
+        # 路径直接通过 ``not sig_is_poll`` 兜底跳过，无需单独阈值。
         poll_warn_threshold = (
             self._signature_repeat_warn * POLL_REPEAT_MULTIPLIER
         )
 
-        # --- TERMINATE checks first (highest severity) ---
-        if top_count >= self._signature_repeat_terminate and not top_is_poll:
-            return Intervention(
-                level=InterventionLevel.TERMINATE,
-                pattern=PatternType.SIGNATURE_REPEAT,
-                message=(
-                    f"Dead loop: tool '{top_name}' called {top_count} times "
-                    f"(exact sig max={most_common_count})"
-                ),
-                should_terminate=True,
-            )
-
+        # --- TERMINATE / STRATEGY_SWITCH 仅基于精确签名重复 ---
+        # 历史上曾用 top_count（按工具名聚合）触发 TERMINATE，会把 "agent 写 5 个
+        # 不同文件 / 跑 5 条不同命令 / 推进 5 个 todo step" 这类合法工作误判为
+        # 死循环。已在 v2 改为只看 ``most_common_count``（精确签名）。
         if most_common_count >= self._signature_repeat_terminate and not sig_is_poll:
             return Intervention(
                 level=InterventionLevel.TERMINATE,

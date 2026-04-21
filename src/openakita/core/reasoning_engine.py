@@ -44,8 +44,25 @@ from .response_handler import (
     request_expects_artifact,
     strip_thinking_tags,
 )
-from .supervisor import UNPRODUCTIVE_ADMIN_TOOLS as _ADMIN_TOOL_NAMES
 from .supervisor import RuntimeSupervisor
+
+# 不产出"最终交付物"的管理类工具集合 —— 用于：
+#   1) ``tools_executed_in_task`` 标记（仅这些工具被调用 → 视为本轮无实质执行）
+#   2) "全是 admin 工具+文本回复 → 任务完成 fast-path"（跳过 ForceToolCall）
+#
+# 与 ``supervisor.UNPRODUCTIVE_ADMIN_TOOLS``（"零产出空转"判定）刻意解耦：
+#   * supervisor 只关心**纯查询/读取**类（连续 5 次都在 list/search/get → 空转）
+#   * reasoning_engine 关心"未产出 artifact"，自然包含 todo 推进和 memory 写入
+#     （这些工具产生的是"内部状态变化"而非"用户可见交付物"，所以仍算 admin）
+_ADMIN_TOOL_NAMES = frozenset({
+    "create_todo",
+    "update_todo_step",
+    "get_todo_status",
+    "complete_todo",
+    "search_memory",
+    "add_memory",
+    "list_directory",
+})
 from .token_tracking import TokenTrackingContext, reset_tracking_context, set_tracking_context
 from .tool_executor import ToolExecutor
 
@@ -305,6 +322,19 @@ class ReasoningEngine:
     # 检查点配置
     MAX_CHECKPOINTS = 5  # 保留最近 N 个检查点
     CONSECUTIVE_FAIL_THRESHOLD = 3  # 同一工具连续失败 N 次触发回滚
+
+    # Plan / todo 家族工具：它们的 ❌ 输出通常是给 LLM 的 **入参校验反馈**
+    # （例如 "❌ steps 不能为空"、"❌ todo_id 不存在"），属于 schema 提示
+    # 而不是真正的执行失败，不应计入 rollback / 持久失败计数器。
+    # 否则模型在 plan 推进过程中调错一次参数就会反复触发回滚，把任务卡死。
+    _PLAN_TOOL_NAMES = frozenset({
+        "create_todo",
+        "update_todo_step",
+        "get_todo_status",
+        "complete_todo",
+        "create_plan_file",
+        "exit_plan_mode",
+    })
 
     def __init__(
         self,
@@ -578,7 +608,15 @@ class ReasoningEngine:
         logger.debug(f"[Checkpoint] Saved: {cp.id} at iteration {iteration}")
 
     def _record_tool_result(self, tool_name: str, success: bool) -> None:
-        """记录工具执行结果，用于连续失败检测。"""
+        """记录工具执行结果，用于连续失败检测。
+
+        Plan/todo 家族工具的 ❌ 输出多为入参校验反馈而非真正的执行失败，
+        不参与 ``_tool_failure_counter`` / ``_persistent_tool_failures``
+        统计——既不计失败，也不重置。否则任何一次 update_todo_step 校验
+        提示都会被算成"失败"，连续 3 次就会触发回滚把 plan 推进截断。
+        """
+        if tool_name in self._PLAN_TOOL_NAMES:
+            return
         if success:
             self._tool_failure_counter[tool_name] = 0
             # 成功时也重置持久计数器
@@ -589,13 +627,22 @@ class ReasoningEngine:
                 self._persistent_tool_failures.get(tool_name, 0) + 1
             )
 
-    def _should_rollback(self, tool_results: list[dict]) -> tuple[bool, str]:
+    def _should_rollback(
+        self,
+        tool_results: list[dict],
+        tool_calls: list[dict] | None = None,
+    ) -> tuple[bool, str]:
         """
         检查是否应该触发回滚。
 
         触发条件:
         1. 同一工具连续失败 >= CONSECUTIVE_FAIL_THRESHOLD 次
         2. 整批工具全部失败
+
+        ``tool_calls`` 为可选的 decision.tool_calls 列表（按索引与
+        ``tool_results`` 对齐），用于把 plan/todo 家族工具的 ❌ 入参校验
+        反馈从"批失败"中剔除——否则只调用了一个 update_todo_step 又恰好
+        触发了字段校验提示，就会被算作"本轮所有工具调用均失败"而触发回滚。
 
         Returns:
             (should_rollback, reason)
@@ -605,7 +652,7 @@ class ReasoningEngine:
 
         # 检查本批次工具执行结果
         batch_failures = []
-        for result in tool_results:
+        for i, result in enumerate(tool_results):
             content = ""
             # 主信号: tool_result 的结构化 is_error 标志
             is_error_flag = False
@@ -619,6 +666,12 @@ class ReasoningEngine:
             # 避免回滚注入"请尝试完全不同的方法"覆盖工具的"禁止替代"指引
             if "[行为指引]" in content:
                 return False, ""
+
+            # Plan/todo 家族工具的 ❌ 是 schema 校验提示，不计入批失败
+            if tool_calls and i < len(tool_calls):
+                _name = tool_calls[i].get("name", "") if isinstance(tool_calls[i], dict) else ""
+                if _name in self._PLAN_TOOL_NAMES:
+                    continue
 
             # 兜底: 字符串标记匹配（handler 返回的错误字符串）
             has_error = is_error_flag or any(
@@ -645,7 +698,8 @@ class ReasoningEngine:
             is_failed = has_error and not has_success
             batch_failures.append(is_failed)
 
-        # 整批全部失败
+        # 整批全部失败（注意：plan 工具已被 continue 跳过，不参与判定，
+        # 因此一个 batch 中只有 plan 工具时 batch_failures 为空 → 不触发）
         if batch_failures and all(batch_failures):
             return True, "本轮所有工具调用均失败"
 
@@ -1840,7 +1894,7 @@ class ReasoningEngine:
                     self._consecutive_truncation_count = 0
 
                 # 检查是否应该回滚 — 截断错误不回滚
-                should_rb, rb_reason = self._should_rollback(tool_results)
+                should_rb, rb_reason = self._should_rollback(tool_results, decision.tool_calls)
                 if should_rb and not _has_truncation:
                     rollback_result = self._rollback(rb_reason)
                     if rollback_result:
@@ -3641,7 +3695,9 @@ class ReasoningEngine:
                         self._consecutive_truncation_count = 0
 
                     # --- Rollback 检查（与 run() 一致）— 截断错误不回滚 ---
-                    should_rb, rb_reason = self._should_rollback(tool_results_for_msg)
+                    should_rb, rb_reason = self._should_rollback(
+                        tool_results_for_msg, decision.tool_calls
+                    )
                     if should_rb and not _has_truncation:
                         rollback_result = self._rollback(rb_reason)
                         if rollback_result:
