@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>视频配音翻译 — Dub-It</title>
+  <style>
+    body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+           margin: 2rem; max-width: 720px; line-height: 1.6; color: #222; }
+    h1 { margin-bottom: 0.25rem; }
+    .meta { color: #888; font-size: 0.9rem; margin-bottom: 1.5rem; }
+    code { background: #f4f4f4; padding: 0.1rem 0.3rem; border-radius: 4px; }
+    .hint { background: #fff8e1; border-left: 4px solid #ffb300;
+            padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>视频配音翻译</h1>
+  <p class="meta">Dub-It · backend ready · UI scaffolding pending</p>
+
+  <p>本插件后端已就绪：FastAPI 路由 + 6 个 Brain Tool 已注册，<code>source_review</code>（D2.3）已接入。可视化前端尚未搭建。</p>
+
+  <div class="hint">
+    <strong>临时使用方式</strong><br>
+    先调 <code>POST /plugins/dub-it/review</code> 看源视频是否达标，再用 <code>POST /plugins/dub-it/tasks</code> 提交配音任务。完成后 <code>GET /plugins/dub-it/tasks/{id}/output</code> 下载结果。
+  </div>
+
+  <h2>核心能力</h2>
+  <ul>
+    <li><code>POST /review</code> — 仅做 ffprobe 体检</li>
+    <li><code>POST /tasks</code> — extract → transcribe → translate → TTS → mux</li>
+    <li><code>GET /tasks/{id}</code> — D2.10 校验包络（段数 / 字节数 / 体检警告）</li>
+    <li><code>GET /tasks/{id}/output</code> — 下载译制视频</li>
+  </ul>
+</body>
+</html>
