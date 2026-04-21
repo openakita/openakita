@@ -1,0 +1,50 @@
+{
+  "id": "dub-it",
+  "name": "Dub-It",
+  "display_name_zh": "视频配音翻译",
+  "display_name_en": "Dub-It",
+  "version": "1.0.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Translate a video's audio into another language and dub it back over the original picture. Pre-flights with the SDK source_review (D2.3), then runs extract → transcribe → translate → TTS → mux as four pluggable steps so the host can swap stub backends for production providers.",
+  "description_i18n": {
+    "zh": "把视频的语音翻译到目标语言并重新配音叠回原视频。流程：先用 SDK source_review (D2.3) 做 ffprobe 体检，再依次执行 抽音 → 转写 → 翻译 → TTS → 混音，每一步都是可插拔的，便于主程序替换为生产实现。",
+    "en": "Translate a video's audio into another language and dub it back over the original picture. Pre-flights with the SDK source_review (D2.3), then runs extract → transcribe → translate → TTS → mux as four pluggable steps so the host can swap stub backends for production providers."
+  },
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["video", "dub", "translate", "tts", "ffmpeg", "source-review"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.4.0"
+  },
+  "provides": {
+    "tools": [
+      "dub_it_create",
+      "dub_it_status",
+      "dub_it_list",
+      "dub_it_cancel",
+      "dub_it_review_source",
+      "dub_it_check_deps"
+    ],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "视频配音翻译",
+    "title_i18n": { "zh": "视频配音翻译", "en": "Dub-It" },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme"]
+  }
+}

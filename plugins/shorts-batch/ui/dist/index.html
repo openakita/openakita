@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>短视频批量生成 — Shorts Batch</title>
+  <style>
+    body { font-family: -apple-system, "Segoe UI", system-ui, sans-serif;
+           margin: 2rem; max-width: 720px; line-height: 1.6; color: #222; }
+    h1 { margin-bottom: 0.25rem; }
+    .meta { color: #888; font-size: 0.9rem; margin-bottom: 1.5rem; }
+    code { background: #f4f4f4; padding: 0.1rem 0.3rem; border-radius: 4px; }
+    .hint { background: #fff8e1; border-left: 4px solid #ffb300;
+            padding: 0.75rem 1rem; margin: 1rem 0; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>短视频批量生成</h1>
+  <p class="meta">Shorts Batch · backend ready · UI scaffolding pending</p>
+
+  <p>本插件后端已经就绪：<code>FastAPI</code> 路由 + 5 个 Brain Tool 已注册。可视化前端尚未搭建。</p>
+
+  <div class="hint">
+    <strong>临时使用方式</strong><br>
+    通过 <code>POST /plugins/shorts-batch/preview-risk</code> 先看每条 brief 的 <code>slideshow_risk</code> 评分，再用 <code>POST /plugins/shorts-batch/tasks</code> 提交批次。
+  </div>
+
+  <h2>核心能力</h2>
+  <ul>
+    <li><code>POST /preview-risk</code> — 仅打分、不渲染、不花配额</li>
+    <li><code>POST /tasks</code> — 提交批次（带 <code>risk_block_threshold</code> 可阻塞高风险条目）</li>
+    <li><code>GET /tasks/{id}</code> — 查询风险分布、成功/失败计数、D2.10 校验包络</li>
+  </ul>
+</body>
+</html>

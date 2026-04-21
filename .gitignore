@@ -180,6 +180,14 @@ plugins/*
 !plugins/local-sd-flux/ui/
 !plugins/local-sd-flux/ui/dist/
 !plugins/local-sd-flux/ui/dist/**
+!plugins/shorts-batch/
+!plugins/shorts-batch/ui/
+!plugins/shorts-batch/ui/dist/
+!plugins/shorts-batch/ui/dist/**
+!plugins/dub-it/
+!plugins/dub-it/ui/
+!plugins/dub-it/ui/dist/
+!plugins/dub-it/ui/dist/**
 !plugins/tts-studio/
 !plugins/tts-studio/ui/
 !plugins/tts-studio/ui/dist/
