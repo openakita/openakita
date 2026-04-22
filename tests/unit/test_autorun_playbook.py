@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -121,3 +122,75 @@ def test_playbook_spec_from_metadata_minimal():
     assert spec.loop_enabled is False
     assert spec.max_loops is None
     assert spec.worktree == PlaybookWorktreeSpec()
+
+
+def test_playbookrun_init_parses_spec(make_task, profile_store_mock, agent_factory_mock):
+    from openakita.scheduler.autorun_playbook import PlaybookRun, PlaybookState
+
+    factory, _ = agent_factory_mock
+    task = make_task(agent_profile_id="claude-code-pair")
+    run = PlaybookRun(task, executor=MagicMock(),
+                     profile_store=profile_store_mock, agent_factory=factory)
+
+    assert run.task is task
+    assert run.profile_id == "claude-code-pair"
+    assert run.state == PlaybookState.INITIALIZING
+    assert run.wt_info is None
+    assert run._loop_iter == 0
+    assert run.run_id.startswith("run-")
+    assert len(run.run_id) == 12  # "run-" + 8 hex
+
+
+def test_effective_path_no_reset_returns_source(tmp_path, make_task,
+                                                profile_store_mock, agent_factory_mock):
+    from openakita.scheduler.autorun_playbook import PlaybookDocumentSpec, PlaybookRun
+
+    factory, _ = agent_factory_mock
+    src = tmp_path / "plan.md"
+    src.write_text("- [ ] a\n")
+    task = make_task(documents=[{"filename": str(src), "reset_on_completion": False}])
+    run = PlaybookRun(task, executor=MagicMock(),
+                     profile_store=profile_store_mock, agent_factory=factory)
+
+    doc = PlaybookDocumentSpec(filename=str(src), reset_on_completion=False)
+    assert run._effective_path(doc, loop_iter=0) == str(src)
+
+
+def test_effective_path_reset_creates_working_copy(tmp_path, make_task,
+                                                   profile_store_mock, agent_factory_mock):
+    from openakita.scheduler.autorun_playbook import PlaybookDocumentSpec, PlaybookRun
+
+    factory, _ = agent_factory_mock
+    src = tmp_path / "nightly.md"
+    src.write_text("- [ ] generated\n")
+    task = make_task(task_id="tsk-1",
+                     documents=[{"filename": str(src), "reset_on_completion": True}])
+    run = PlaybookRun(task, executor=MagicMock(),
+                     profile_store=profile_store_mock, agent_factory=factory)
+
+    doc = PlaybookDocumentSpec(filename=str(src), reset_on_completion=True)
+    wc = Path(run._effective_path(doc, loop_iter=2))
+    assert wc.exists()
+    assert wc.parent.name == "tsk-1-loop2"
+    assert wc.parent.parent.name == "Runs"
+    assert wc.read_text() == "- [ ] generated\n"
+    # Second call is idempotent: returns the same path, does NOT re-copy.
+    wc.write_text("- [x] mutated\n")
+    wc2 = Path(run._effective_path(doc, loop_iter=2))
+    assert wc2 == wc
+    assert wc2.read_text() == "- [x] mutated\n"
+
+
+def test_reset_docs_filters_by_flag(make_task, profile_store_mock, agent_factory_mock):
+    from openakita.scheduler.autorun_playbook import PlaybookRun
+
+    factory, _ = agent_factory_mock
+    task = make_task(documents=[
+        {"filename": "/a.md", "reset_on_completion": False},
+        {"filename": "/b.md", "reset_on_completion": True},
+        {"filename": "/c.md", "reset_on_completion": True},
+    ])
+    run = PlaybookRun(task, executor=MagicMock(),
+                     profile_store=profile_store_mock, agent_factory=factory)
+    reset = run._reset_docs()
+    assert [d.filename for d in reset] == ["/b.md", "/c.md"]
