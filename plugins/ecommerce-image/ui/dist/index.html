@@ -555,8 +555,9 @@ function ImageUpload({ value, onChange, label }) {
       ) : preview ? (
         <img src={preview} className="upload-preview" alt="" />
       ) : (
-        <div>
-          <div style={{fontSize:"24px",marginBottom:"4px"}}><Ic name="upload" size="xl" /></div>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+          <span className="oa-icon" style={{fontSize:24,opacity:.6}}
+            dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.upload() : ""}} />
           <div>{label || "点击或拖拽上传图片"}</div>
         </div>
       )}
@@ -622,8 +623,9 @@ function MultiImageUpload({ value, onChange, label, max }) {
             <div className="spinner-sm"></div> <span className="text-sm">上传中...</span>
           </div>
         ) : (
-          <div>
-            <div style={{fontSize:"24px",marginBottom:"4px"}}><Ic name="upload" size="xl" /></div>
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:6}}>
+            <span className="oa-icon" style={{fontSize:24,opacity:.6}}
+              dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.upload() : ""}} />
             <div>{label || "点击或拖拽上传多张图片"}</div>
           </div>
         )}
@@ -748,11 +750,16 @@ function DynamicForm({ feature, params, setParams, pluginApi }) {
       return (
         <div className="form-row" key={p.id}>
           {canOpt ? (
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-              <div className="label" style={{margin:0}}>{p.label}{p.required ? " *" : ""}</div>
-              <button className="btn-ai-opt" disabled={optimizing[p.id] || !val}
-                onClick={() => handleOptimize(p.id)}>
-                {optimizing[p.id] ? (<><span className="spinner-xs"></span> 优化中...</>) : (<><Ic name="sparkles" /> AI 优化</>)}
+            <div className="oa-section-label oa-section-label--inline">
+              <span>{p.label}{p.required ? " *" : ""}</span>
+              <button className="oa-ai-btn" type="button" disabled={optimizing[p.id] || !val}
+                onClick={() => handleOptimize(p.id)}
+                title="使用 AI 自动优化提示词">
+                {optimizing[p.id]
+                  ? <span className="spinner-sm" style={{width:11,height:11,borderWidth:1.5}} />
+                  : <span className="oa-ai-btn__icon"
+                      dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.sparkles() : ""}} />}
+                AI 优化
               </button>
             </div>
           ) : (
@@ -1760,18 +1767,17 @@ function CreateTab({ features, activeModule, setActiveModule, selectedFeature, s
         </div>
       </div>
 
-      <div className="split-right" style={{display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div className={"split-right oa-preview-area" + (!selectedTask ? " oa-preview-area--centered" : "")}>
         {selectedTask ? (
-          <div style={{width:"100%",alignSelf:"flex-start"}}>
+          <div style={{width:"100%"}}>
             <TaskDetail task={selectedTask} />
           </div>
         ) : (
-          <div style={{textAlign:"center",color:"var(--text-dim)"}}>
-            <div style={{fontSize:48,marginBottom:12,opacity:.4}}>
-              <Ic name="sparkles" size="xl" />
-            </div>
-            <div style={{fontSize:14,fontWeight:500}}>选择一个功能开始创作</div>
-            <div className="text-sm text-dim" style={{marginTop:4}}>或查看历史记录</div>
+          <div className="oa-preview-empty">
+            <span className="oa-preview-empty__icon"
+              dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.sparkles() : ""}} />
+            <div className="oa-preview-empty__title">选择一个功能开始创作</div>
+            <div className="oa-preview-empty__hint">或查看历史记录</div>
           </div>
         )}
       </div>
@@ -1869,15 +1875,17 @@ function TasksTab({ pluginApi }) {
         <div className="text-xs text-dim" style={{padding:"8px 0",textAlign:"center"}}>共 {total} 条</div>
       </div>
 
-      <div className="split-right" style={{display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div className={"split-right oa-preview-area" + (!selected ? " oa-preview-area--centered" : "")}>
         {selected ? (
-          <div style={{width:"100%",alignSelf:"flex-start"}}>
+          <div style={{width:"100%"}}>
             <TaskDetail task={selected} />
           </div>
         ) : (
-          <div style={{textAlign:"center",color:"var(--text-dim)"}}>
-            <div style={{fontSize:48,marginBottom:12,opacity:.4}}><Ic name="layers" size="xl" /></div>
-            <div style={{fontSize:14,fontWeight:500}}>选择一个任务查看详情</div>
+          <div className="oa-preview-empty">
+            <span className="oa-preview-empty__icon"
+              dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.listTask ? window.OpenAkitaIcons.listTask() : (window.OpenAkitaIcons.layers ? window.OpenAkitaIcons.layers() : "") : ""}} />
+            <div className="oa-preview-empty__title">未选择任务</div>
+            <div className="oa-preview-empty__hint">从左侧列表选择一个任务查看详情</div>
           </div>
         )}
       </div>
