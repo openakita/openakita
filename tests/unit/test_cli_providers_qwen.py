@@ -8,20 +8,20 @@ from unittest.mock import patch
 
 import pytest
 
-from openakita.agents.cli_providers import PROVIDERS
 from openakita.agents.cli_detector import CliProviderId
-from openakita.agents.cli_runner import CliRunRequest, ExitReason, ProviderRunResult
+from openakita.agents.cli_providers import PROVIDERS
+from openakita.agents.cli_runner import CliRunRequest, ExitReason
 from openakita.agents.profile import AgentProfile, AgentType, CliPermissionMode
 
 
 def _profile(**overrides) -> AgentProfile:
-    base = dict(
-        id="qwen-agent",
-        name="Qwen",
-        type=AgentType.EXTERNAL_CLI,
-        cli_provider_id=CliProviderId.QWEN,
-        cli_permission_mode=CliPermissionMode.PLAN,
-    )
+    base = {
+        "id": "qwen-agent",
+        "name": "Qwen",
+        "type": AgentType.EXTERNAL_CLI,
+        "cli_provider_id": CliProviderId.QWEN,
+        "cli_permission_mode": CliPermissionMode.PLAN,
+    }
     base.update(overrides)
     return AgentProfile(**base)
 
@@ -79,7 +79,7 @@ def test_qwen_resume():
 def test_qwen_session_root():
     from openakita.agents.cli_providers import qwen
 
-    assert qwen.SESSION_ROOT == Path.home() / ".qwen" / "sessions"
+    assert Path.home() / ".qwen" / "sessions" == qwen.SESSION_ROOT
 
 
 @pytest.mark.asyncio
