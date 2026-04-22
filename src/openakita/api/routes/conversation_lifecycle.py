@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Coroutine
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,20 @@ class ConversationLifecycleManager:
         self._busy: dict[str, BusyInfo] = {}
         self._lock = asyncio.Lock()
         self._generation_counter = 0
+        self._bg_tasks: set[asyncio.Task] = set()
+
+    # ── Background Task Management ─────────────────────────────────────
+
+    def schedule_background_save(self, coro: Coroutine) -> None:
+        """Fire-and-forget a background coroutine with GC protection.
+
+        Stores a strong reference to the ``asyncio.Task`` so it is not
+        garbage-collected mid-execution.  The task is removed from the
+        tracking set automatically when it completes.
+        """
+        task = asyncio.create_task(coro)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
 
     # ── Public API ──────────────────────────────────────────────────────
 
