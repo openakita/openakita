@@ -213,6 +213,111 @@ class SecurityConfirmRequest(BaseModel):
     decision: str  # allow_once | allow_session | allow_always | deny | sandbox (legacy: allow)
 
 
+# ─── CLI Provider Extensions Table ────────────────────────────────────
+
+_CLI_PROVIDER_EXTENSIONS: list[dict[str, str]] = [
+    {
+        "provider_id": "claude_code",
+        "name": "Claude Code",
+        "description": "Anthropic's official CLI for autonomous coding.",
+        "description_zh": "Anthropic 官方自主编码 CLI。",
+        "install_cmd": "npm install -g @anthropic-ai/claude-code",
+        "upgrade_cmd": "npm update -g @anthropic-ai/claude-code",
+        "homepage": "https://github.com/anthropics/claude-code",
+        "license": "MIT",
+        "author": "Anthropic",
+    },
+    {
+        "provider_id": "codex",
+        "name": "OpenAI Codex",
+        "description": "OpenAI's coding CLI.",
+        "description_zh": "OpenAI 编码 CLI。",
+        "install_cmd": "npm install -g @openai/codex",
+        "upgrade_cmd": "npm update -g @openai/codex",
+        "homepage": "https://github.com/openai/codex",
+        "license": "Apache-2.0",
+        "author": "OpenAI",
+    },
+    {
+        "provider_id": "opencode",
+        "name": "OpenCode",
+        "description": "Open-source agent-driven CLI from SST.",
+        "description_zh": "SST 出品的开源代理驱动 CLI。",
+        "install_cmd": "npm install -g opencode-ai",
+        "upgrade_cmd": "npm update -g opencode-ai",
+        "homepage": "https://github.com/sst/opencode",
+        "license": "MIT",
+        "author": "SST",
+    },
+    {
+        "provider_id": "gemini",
+        "name": "Gemini CLI",
+        "description": "Google's Gemini coding CLI.",
+        "description_zh": "Google Gemini 编码 CLI。",
+        "install_cmd": "npm install -g @google/gemini-cli",
+        "upgrade_cmd": "npm update -g @google/gemini-cli",
+        "homepage": "https://github.com/google-gemini/gemini-cli",
+        "license": "Apache-2.0",
+        "author": "Google",
+    },
+    {
+        "provider_id": "copilot",
+        "name": "GitHub Copilot CLI",
+        "description": "GitHub Copilot command-line companion.",
+        "description_zh": "GitHub Copilot 命令行伙伴。",
+        "install_cmd": "gh extension install github/gh-copilot",
+        "upgrade_cmd": "gh extension upgrade github/gh-copilot",
+        "homepage": "https://github.com/github/gh-copilot",
+        "license": "MIT",
+        "author": "GitHub",
+    },
+    {
+        "provider_id": "droid",
+        "name": "Droid",
+        "description": "Factory's Droid CLI for autonomous dev workflows.",
+        "description_zh": "Factory Droid 自主开发 CLI。",
+        "install_cmd": "curl -fsSL https://factory.ai/cli | sh",
+        "upgrade_cmd": "curl -fsSL https://factory.ai/cli | sh",
+        "homepage": "https://docs.factory.ai",
+        "license": "Proprietary",
+        "author": "Factory",
+    },
+    {
+        "provider_id": "cursor",
+        "name": "Cursor Agent",
+        "description": "Cursor's headless coding agent CLI.",
+        "description_zh": "Cursor 的无头编码代理 CLI。",
+        "install_cmd": "curl https://cursor.com/install -fsS | bash",
+        "upgrade_cmd": "curl https://cursor.com/install -fsS | bash",
+        "homepage": "https://docs.cursor.com/cli",
+        "license": "Proprietary",
+        "author": "Cursor",
+    },
+    {
+        "provider_id": "qwen",
+        "name": "Qwen Code",
+        "description": "Alibaba's Qwen coding CLI.",
+        "description_zh": "阿里巴巴通义千问编码 CLI。",
+        "install_cmd": "npm install -g @qwen-code/qwen-code",
+        "upgrade_cmd": "npm update -g @qwen-code/qwen-code",
+        "homepage": "https://github.com/QwenLM/qwen-code",
+        "license": "Apache-2.0",
+        "author": "Alibaba Cloud",
+    },
+    {
+        "provider_id": "goose",
+        "name": "Goose",
+        "description": "Block's open-source AI coding agent.",
+        "description_zh": "Block 开源 AI 编码代理。",
+        "install_cmd": "curl -fsSL https://block.github.io/goose/install.sh | bash",
+        "upgrade_cmd": "curl -fsSL https://block.github.io/goose/install.sh | bash",
+        "homepage": "https://block.github.io/goose",
+        "license": "Apache-2.0",
+        "author": "Block",
+    },
+]
+
+
 # ─── Routes ────────────────────────────────────────────────────────────
 
 
@@ -975,7 +1080,7 @@ async def write_security_config(body: SecurityConfigUpdate):
 @router.get("/api/config/security/zones")
 async def read_security_zones():
     """Read zone path configuration."""
-    from openakita.core.policy import _default_protected_paths, _default_forbidden_paths
+    from openakita.core.policy import _default_forbidden_paths, _default_protected_paths
 
     data = _read_policies_yaml() or {}
     zones = data.get("security", {}).get("zones", {})
@@ -1416,6 +1521,8 @@ async def list_extensions():
     import os
     import shutil
 
+    from openakita.agents.cli_detector import discover_all
+
     def _find_cli_anything() -> str | None:
         for d in os.environ.get("PATH", "").split(os.pathsep):
             try:
@@ -1431,37 +1538,62 @@ async def list_extensions():
     oc_path = shutil.which("opencli")
     ca_path = _find_cli_anything()
 
-    return {
-        "extensions": [
-            {
-                "id": "opencli",
-                "name": "OpenCLI",
-                "description": "Operate websites via CLI, reusing Chrome login sessions",
-                "description_zh": "将网站转化为 CLI 命令，复用 Chrome 登录态",
-                "category": "Web",
-                "installed": oc_path is not None,
-                "path": oc_path,
-                "install_cmd": "npm install -g opencli",
-                "upgrade_cmd": "npm update -g opencli",
-                "setup_cmd": "opencli setup",
-                "homepage": "https://github.com/anthropics/opencli",
-                "license": "MIT",
-                "author": "Anthropic / Jack Wener",
-            },
-            {
-                "id": "cli-anything",
-                "name": "CLI-Anything",
-                "description": "Control desktop software via auto-generated CLI interfaces",
-                "description_zh": "为桌面软件自动生成 CLI 接口（GIMP、Blender 等）",
-                "category": "Desktop",
-                "installed": ca_path is not None,
-                "path": ca_path,
-                "install_cmd": "pip install cli-anything-gimp",
-                "upgrade_cmd": "pip install --upgrade cli-anything-<app>",
-                "setup_cmd": None,
-                "homepage": "https://github.com/HKUDS/CLI-Anything",
-                "license": "MIT",
-                "author": "HKU Data Science Lab (HKUDS)",
-            },
-        ],
-    }
+    base_entries: list[dict] = [
+        {
+            "id": "opencli",
+            "name": "OpenCLI",
+            "description": "Operate websites via CLI, reusing Chrome login sessions",
+            "description_zh": "将网站转化为 CLI 命令，复用 Chrome 登录态",
+            "category": "Web",
+            "installed": oc_path is not None,
+            "path": oc_path,
+            "install_cmd": "npm install -g opencli",
+            "upgrade_cmd": "npm update -g opencli",
+            "setup_cmd": "opencli setup",
+            "homepage": "https://github.com/anthropics/opencli",
+            "license": "MIT",
+            "author": "Anthropic / Jack Wener",
+        },
+        {
+            "id": "cli-anything",
+            "name": "CLI-Anything",
+            "description": "Control desktop software via auto-generated CLI interfaces",
+            "description_zh": "为桌面软件自动生成 CLI 接口（GIMP、Blender 等）",
+            "category": "Desktop",
+            "installed": ca_path is not None,
+            "path": ca_path,
+            "install_cmd": "pip install cli-anything-gimp",
+            "upgrade_cmd": "pip install --upgrade cli-anything-<app>",
+            "setup_cmd": None,
+            "homepage": "https://github.com/HKUDS/CLI-Anything",
+            "license": "MIT",
+            "author": "HKU Data Science Lab (HKUDS)",
+        },
+    ]
+
+    detected = await discover_all()
+    ai_entries: list[dict] = []
+    for meta in _CLI_PROVIDER_EXTENSIONS:
+        pid_str = meta["provider_id"]
+        dc = next(
+            (d for d in detected.values() if d.provider_id.value == pid_str),
+            None,
+        )
+        ai_entries.append({
+            "id": pid_str,
+            "cli_provider_id": pid_str,
+            "name": meta["name"],
+            "description": meta["description"],
+            "description_zh": meta["description_zh"],
+            "category": "AI Agent",
+            "installed": bool(dc and dc.binary_path),
+            "path": dc.binary_path if dc else None,
+            "install_cmd": meta["install_cmd"],
+            "upgrade_cmd": meta["upgrade_cmd"],
+            "setup_cmd": None,
+            "homepage": meta["homepage"],
+            "license": meta["license"],
+            "author": meta["author"],
+        })
+
+    return {"extensions": base_entries + ai_entries}
