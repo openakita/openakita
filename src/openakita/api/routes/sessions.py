@@ -425,3 +425,42 @@ async def get_external_cli_detected():
         }
         for pid, d in probed.items()
     ]
+
+
+def _claude_cwd_hash(cwd: str) -> str:
+    """Claude Code hashes the cwd into the directory name under
+    ~/.claude/projects/. The exact algorithm is a simple slug-replace: slashes
+    become hyphens, leading slash dropped. Verified by inspecting a live
+    ~/.claude/projects/ tree."""
+    slug = cwd.lstrip("/").replace("/", "-")
+    return slug
+
+
+@router.get("/external-cli/{provider}")
+async def list_external_cli_sessions(provider: str, cwd: str = "", limit: int = 50):
+    pid = _safe_provider(provider)
+    if pid is None:
+        return {"error": f"unknown provider: {provider}", "sessions": []}
+    root = _PROVIDER_ROOTS.get(pid)
+    if root is None or not root.exists():
+        return {"sessions": []}
+
+    # Codex stores sessions flat; cwd filter is advisory only
+    scope = root / _claude_cwd_hash(cwd) if pid == CliProviderId.CLAUDE_CODE and cwd else root
+
+    if not scope.exists():
+        return {"sessions": []}
+
+    entries = []
+    for f in sorted(scope.rglob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
+        stat = f.stat()
+        entries.append({
+            "session_id": f.stem,
+            "path": str(f),
+            "bytes": stat.st_size,
+            "mtime": stat.st_mtime,
+            "cwd_hash": f.parent.name if pid == CliProviderId.CLAUDE_CODE else None,
+        })
+        if len(entries) >= limit:
+            break
+    return {"sessions": entries}
