@@ -4,9 +4,19 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>电商内容生成</title>
+<!--
+  Self-contained plugin UI: bootstrap + UI Kit are inlined under _assets/.
+  bootstrap.js no-ops outside of an iframe, so direct-source dev mode falls
+  back to the inline directFetch / showToast glue defined further below.
+-->
+<script src="_assets/bootstrap.js"></script>
+<link rel="stylesheet" href="_assets/styles.css">
+<script src="_assets/icons.js"></script>
+<script src="_assets/i18n.js"></script>
 <style>
 :root {
   --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
+  --bg-main: var(--bg);
   --text: #1e293b; --text-muted: #64748b; --text-dim: #94a3b8;
   --primary: #6366f1; --primary-hover: #4f46e5; --primary-light: rgba(99,102,241,.1);
   --success: #22c55e; --warning: #f59e0b; --danger: #ef4444;
@@ -14,6 +24,7 @@
 }
 [data-theme="dark"] {
   --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+  --bg-main: var(--bg);
   --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
   --border: #334155;
 }
@@ -262,6 +273,21 @@ function directFetch(method, path, body) {
 }
 
 function apiCall(method, path, body) {
+  // Preferred: use the shared bootstrap.js bridge (window.OpenAkita.api) if it
+  // has finished its handshake. Falls back to the legacy inline postMessage
+  // plumbing when bootstrap is present but not yet ready, and finally to
+  // directFetch in dev / non-iframe mode. 5s timeout protects against a host
+  // that accepts the message but never answers.
+  if (window.OpenAkita && typeof window.OpenAkita.api === "function" && window.OpenAkita.__ready) {
+    var TIMEOUT_MARK = { __timeout: true };
+    return Promise.race([
+      window.OpenAkita.api(method, path, body),
+      new Promise(function(resolve) { setTimeout(function() { resolve(TIMEOUT_MARK); }, 5000); })
+    ]).then(function(r) {
+      if (r === TIMEOUT_MARK) return directFetch(method, path, body);
+      return r;
+    });
+  }
   if (!_inIframe || !_bridgeConnected) return directFetch(method, path, body);
   return new Promise(function(resolve, reject) {
     var id = uid();
@@ -334,6 +360,9 @@ async function downloadAsset(taskId, idx, isVideo) {
 
 function showToast(body, type) {
   type = type || "success";
+  if (window.OpenAkita && typeof window.OpenAkita.notify === "function" && window.OpenAkita.__ready) {
+    try { window.OpenAkita.notify({ title: "", body: body, type: type }); return; } catch (_) { /* fall through */ }
+  }
   if (_inIframe && _bridgeConnected) { post({ type: "bridge:notification", payload: { title: "", body: body, type: type } }); return; }
   var toast = document.createElement("div");
   toast.style.cssText = "position:fixed;top:16px;right:16px;padding:10px 16px;border-radius:8px;font-size:13px;z-index:9999;color:#fff;background:" + (type === "error" ? "#ef4444" : "#22c55e") + ";box-shadow:0 4px 12px rgba(0,0,0,.15);transition:opacity .3s;";
@@ -1866,6 +1895,8 @@ function App() {
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+// Tell the host its loading overlay can dismiss now (no-op outside iframe).
+try { window.OpenAkita && window.OpenAkita.ready && window.OpenAkita.ready(); } catch (_) {}
 </script>
 </body>
 </html>
