@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] - 2026-04-22
 
+### Added — `plugins/clip-sense` v1.0.0：智剪工坊 AI 视频剪辑插件
+
+- **新插件 ClipSense 智剪工坊**：AI 驱动的视频剪辑助手，支持 4 种剪辑模式
+  - 高光提取 (highlight_extract)：AI 识别精彩片段自动剪辑
+  - 静音精剪 (silence_clean)：纯本地检测移除静音段，免费
+  - 段落拆条 (topic_split)：AI 按主题自动拆分长视频
+  - 口播精编 (talking_polish)：AI 去除口误/废话/重复
+- **云端智能 + 本地执行**：DashScope Paraformer ASR + Qwen 分析 + 本地 FFmpeg
+- **UI 对标 tongyi-image**：split-layout / mode-btn / task-card / 4 Tab / dark mode / i18n
+- **7 步 Pipeline**：setup → check_deps → transcribe → analyze → execute → subtitle → finalize
+- **转写缓存**：SHA256 指纹避免重复转写
+- **9 类错误体系**：与 avatar-studio 统一的 error_kind + hints
+- **5 个 Brain Tools / 18 条 Routes**
+- **~200 i18n keys** (zh + en)
+
 ### Changed — `plugins/ecommerce-image` v0.3.0：UI 结构性重构（对齐 tongyi-image 4-tab 布局）
 
 - **Tab 结构重构**：6 tab (4 模块 + 教学 + 设置) → 4 tab (创建 / 任务列表 /
