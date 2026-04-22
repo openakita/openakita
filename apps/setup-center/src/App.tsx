@@ -521,7 +521,7 @@ function MainApp() {
   }, []);
 
   // workspace create
-  const [newWsName, setNewWsName] = useState("默认工作区");
+  const [newWsName, setNewWsName] = useState("Default workspace");
   const newWsId = useMemo(() => slugify(newWsName) || "default", [newWsName]);
 
   // python / venv / install
@@ -682,7 +682,7 @@ function MainApp() {
             if (!cancelled && v) {
               setOpenakitaInstalled(true);
               setOpenakitaVersion(v);
-              setVenvStatus(`安装完成 (v${v})`);
+              setVenvStatus(`Installation complete (v${v})`);
               setVenvReady(true);
             }
           } catch { /* venv not found or openakita not installed */ }
@@ -1087,15 +1087,15 @@ function MainApp() {
   // Keep boolean flags in sync with the visible status string (best-effort).
   useEffect(() => {
     if (!venvStatus) return;
-    if (venvStatus.includes("venv 就绪")) setVenvReady(true);
-    if (venvStatus.includes("安装完成")) setOpenakitaInstalled(true);
+    if (venvStatus.includes("venv ready")) setVenvReady(true);
+    if (venvStatus.includes("Installation complete")) setOpenakitaInstalled(true);
   }, [venvStatus]);
 
   async function doCreateWorkspace() {
-    const _busyId = notifyLoading("创建工作区...");
+    const _busyId = notifyLoading("Creating workspace...");
     try {
       if (IS_WEB) {
-        notifyError("工作区管理暂不支持 Web 模式，请在桌面端操作");
+        notifyError("Workspace management is not supported in Web mode — use the desktop app");
         return;
       } else {
         const ws = await invoke<WorkspaceSummary>("create_workspace", {
@@ -1107,18 +1107,18 @@ function MainApp() {
         setCurrentWorkspaceId(ws.id);
       }
       resetEnvLoaded();
-      notifySuccess(`已创建工作区：${newWsName.trim()}（${newWsId}）`);
+      notifySuccess(`Workspace created: ${newWsName.trim()} (${newWsId})`);
     } finally {
       dismissLoading(_busyId);
     }
   }
 
   async function doSetCurrentWorkspace(id: string) {
-    const _busyId = notifyLoading("切换工作区...");
+    const _busyId = notifyLoading("Switching workspace...");
     try {
       const wasRunning = serviceStatus?.running;
       if (IS_WEB) {
-        notifyError("工作区切换暂不支持 Web 模式，请在桌面端操作");
+        notifyError("Workspace switching is not supported in Web mode — use the desktop app");
         return;
       } else {
         await invoke("set_current_workspace", { id });
@@ -1136,13 +1136,13 @@ function MainApp() {
   }
 
   async function doDetectPython() {
-    const _busyId = notifyLoading("检测项目 Python 环境...");
+    const _busyId = notifyLoading("Detecting Python environment...");
     try {
       const cands = await invoke<PythonCandidate[]>("detect_python");
       setPythonCandidates(cands);
       const firstUsable = cands.findIndex((c) => c.isUsable);
       setSelectedPythonIdx(firstUsable);
-      notifySuccess(firstUsable >= 0 ? "已找到可用 Python（3.11+）" : "未找到可用内置 Python（请检查安装包完整性）");
+      notifySuccess(firstUsable >= 0 ? "Found a usable Python (3.11+)" : "No usable bundled Python found — check installation package integrity");
     } catch (e) {
       notifyError(String(e));
     } finally {
@@ -1151,9 +1151,9 @@ function MainApp() {
   }
 
   async function doInstallEmbeddedPython() {
-    const _busyId = notifyLoading("检查内置 Python...");
+    const _busyId = notifyLoading("Checking bundled Python...");
     try {
-      setVenvStatus("检查内置 Python 中...");
+      setVenvStatus("Checking bundled Python...");
       const r = await invoke<BundledPythonInstallResult>("install_bundled_python", { pythonSeries: "3.11" });
       const cand: PythonCandidate = {
         command: r.pythonCommand,
@@ -1162,11 +1162,11 @@ function MainApp() {
       };
       setPythonCandidates((prev) => [cand, ...prev.filter((p) => p.command.join(" ") !== cand.command.join(" "))]);
       setSelectedPythonIdx(0);
-      setVenvStatus(`内置 Python 就绪：${r.pythonPath}`);
-      notifySuccess("内置 Python 可用，可以继续创建 venv");
+      setVenvStatus(`Bundled Python ready: ${r.pythonPath}`);
+      notifySuccess("Bundled Python is available — you can proceed to create a venv");
     } catch (e) {
       notifyError(String(e));
-      setVenvStatus(`内置 Python 不可用：${String(e)}`);
+      setVenvStatus(`Bundled Python unavailable: ${String(e)}`);
     } finally {
       dismissLoading(_busyId);
     }
@@ -1174,19 +1174,19 @@ function MainApp() {
 
   async function doCreateVenv() {
     if (!canUsePython) return;
-    const _busyId = notifyLoading("创建 venv...");
+    const _busyId = notifyLoading("Creating venv...");
     try {
-      setVenvStatus("创建 venv 中...");
+      setVenvStatus("Creating venv...");
       const py = pythonCandidates[selectedPythonIdx].command;
       await invoke<string>("create_venv", { pythonCommand: py, venvDir });
-      setVenvStatus(`venv 就绪：${venvDir}`);
+      setVenvStatus(`venv ready: ${venvDir}`);
       setVenvReady(true);
       setOpenakitaInstalled(false);
-      notifySuccess("venv 已准备好，可以安装 openakita");
+      notifySuccess("venv is ready — you can now install openakita");
       await persistPythonEnvConfig(venvDir);
     } catch (e) {
       notifyError(String(e));
-      setVenvStatus(`创建 venv 失败：${String(e)}`);
+      setVenvStatus(`Failed to create venv: ${String(e)}`);
     } finally {
       dismissLoading(_busyId);
     }
@@ -1246,7 +1246,7 @@ function MainApp() {
         setSelectedPypiVersion(list[0]); // latest
       }
     } catch (e: any) {
-      notifyError(`获取 PyPI 版本列表失败：${e}`);
+      notifyError(`Failed to fetch PyPI version list: ${e}`);
     } finally {
       setPypiVersionsLoading(false);
     }
@@ -1254,27 +1254,27 @@ function MainApp() {
 
   async function doSetupVenvAndInstallOpenAkita() {
     if (!canUsePython) {
-      notifyError("请先在 Python 步骤安装/检测并选择一个可用 Python（3.11+）。");
+      notifyError("Please install/detect Python first and select a usable Python (3.11+).");
       return;
     }
     setInstallLiveLog("");
-    setInstallProgress({ stage: "准备开始", percent: 1 });
-    const _busyId = notifyLoading("创建 venv 并安装 openakita...");
+    setInstallProgress({ stage: "Preparing", percent: 1 });
+    const _busyId = notifyLoading("Creating venv and installing openakita...");
     try {
       // 1) create venv (idempotent)
-      setInstallProgress({ stage: "创建 venv", percent: 10 });
-      setVenvStatus("创建 venv 中...");
+      setInstallProgress({ stage: "Creating venv", percent: 10 });
+      setVenvStatus("Creating venv...");
       const py = pythonCandidates[selectedPythonIdx].command;
       await invoke<string>("create_venv", { pythonCommand: py, venvDir });
       setVenvReady(true);
       setOpenakitaInstalled(false);
-      setVenvStatus(`venv 就绪：${venvDir}`);
-      setInstallProgress({ stage: "venv 就绪", percent: 30 });
+      setVenvStatus(`venv ready: ${venvDir}`);
+      setInstallProgress({ stage: "venv ready", percent: 30 });
       await persistPythonEnvConfig(venvDir);
 
       // 2) pip install
-      setInstallProgress({ stage: "pip 安装", percent: 35 });
-      setVenvStatus("安装 openakita 中（pip）...");
+      setInstallProgress({ stage: "pip install", percent: 35 });
+      setVenvStatus("Installing openakita (pip)...");
       setInstallLog("");
       const ex = extras.trim();
       const extrasPart = ex ? `[${ex}]` : "";
@@ -1292,11 +1292,11 @@ function MainApp() {
         if (installSource === "local") {
           const p = localSourcePath.trim();
           if (!p) {
-            throw new Error("请选择/填写本地源码路径（例如本仓库根目录）");
+            throw new Error("Please select or enter the local source path (e.g. the repo root)");
           }
           const url = toFileUrl(p);
           if (!url) {
-            throw new Error("本地路径无效");
+            throw new Error("Invalid local path");
           }
           return `openakita${extrasPart} @ ${url}`;
         }
@@ -1314,9 +1314,9 @@ function MainApp() {
       });
       setInstallLog(String(log || ""));
       setOpenakitaInstalled(true);
-      setVenvStatus(`安装完成：${spec}`);
-      setInstallProgress({ stage: "安装完成", percent: 100 });
-      notifySuccess("openakita 已安装，可以读取服务商列表并配置端点");
+      setVenvStatus(`Installation complete: ${spec}`);
+      setInstallProgress({ stage: "Installation complete", percent: 100 });
+      notifySuccess("openakita installed — you can now load the provider list and configure endpoints");
 
       // 3) verify by attempting to list providers (makes failures visible early)
       try {
@@ -1327,10 +1327,10 @@ function MainApp() {
     } catch (e) {
       const msg = String(e);
       notifyError(msg);
-      setVenvStatus(`安装失败：${msg}`);
-      setInstallLog("");
-      if (msg.includes("缺少 Setup Center 所需模块") || msg.includes("No module named 'openakita.setup_center'")) {
-        notifySuccess("你安装到的 openakita 不包含 Setup Center 模块。建议切换“安装来源”为 GitHub 或 本地源码，然后重新安装。");
+      setVenvStatus(`Installation failed: ${msg}`);
+      setInstallLog(“”);
+      if (msg.includes(“缺少 Setup Center 所需模块”) || msg.includes(“No module named 'openakita.setup_center'”)) {
+        notifySuccess(“The installed openakita does not include the Setup Center module. Try switching the install source to GitHub or Local source and reinstalling.”);
       }
     } finally {
       dismissLoading(_busyId);
@@ -1338,7 +1338,7 @@ function MainApp() {
   }
 
   async function doLoadProviders() {
-    const _busyId = notifyLoading("读取服务商列表...");
+    const _busyId = notifyLoading("Loading provider list...");
     try {
       let parsed: ProviderInfo[] = [];
 
@@ -2588,10 +2588,10 @@ function MainApp() {
 
   async function doRefreshSkills() {
     if (!currentWorkspaceId && dataMode !== "remote") {
-      notifyError("请先设置当前工作区");
+      notifyError("Please set a current workspace first");
       return;
     }
-    const _busyId = notifyLoading("读取 skills...");
+    const _busyId = notifyLoading("Loading skills...");
     try {
       let skillsList: any[] = [];
       // ── 后端运行中 → HTTP API ──
@@ -2626,7 +2626,7 @@ function MainApp() {
           path: s?.path ?? null,
         })),
       );
-      notifySuccess("已刷新 skills 列表");
+      notifySuccess("Skills list refreshed");
     } catch (e) {
       notifyError(String(e));
     } finally {
@@ -2636,14 +2636,14 @@ function MainApp() {
 
   async function doSaveSkillsSelection() {
     if (!currentWorkspaceId) {
-      notifyError("请先设置当前工作区");
+      notifyError("Please set a current workspace first");
       return;
     }
     if (!skillsDetail) {
-      notifyError("未读取到 skills 列表（请先刷新 skills）");
+      notifyError("Skills list not loaded — please refresh skills first");
       return;
     }
-    const _busyId = notifyLoading("保存 skills 启用状态...");
+    const _busyId = notifyLoading("Saving skills enabled state...");
     try {
       const externalAllowlist = skillsDetail
         .filter((s) => !s.system && !!s.skill_id)
@@ -2663,7 +2663,7 @@ function MainApp() {
 
       await writeWorkspaceFile("data/skills.json", content);
       setSkillsTouched(false);
-      notifySuccess("已保存：data/skills.json（系统技能默认启用；外部技能按你的选择启用）");
+      notifySuccess("Saved: data/skills.json (system skills enabled by default; external skills enabled per your selection)");
     } catch (e) {
       notifyError(String(e));
     } finally {
@@ -2764,11 +2764,11 @@ function MainApp() {
       const result = await saveEnvKeys(keys);
       if (result.restartRequired) {
         toast.warning(
-          t("config.savedNeedRestart", "已保存，需要重启服务才能生效"),
+          t("config.savedNeedRestart", "Saved — restart the service for changes to take effect"),
           {
             duration: 8000,
             action: {
-              label: t("config.restartNow", "立即重启"),
+              label: t("config.restartNow", "Restart now"),
               onClick: () => restartService(),
             },
           },
@@ -2847,8 +2847,8 @@ function MainApp() {
                           body: JSON.stringify({ entries }),
                         });
                         notifySuccess(willDisable
-                          ? t("config.mcpDisabledNeedRestart", { defaultValue: "MCP 已禁用，重启后生效" })
-                          : t("config.mcpEnabledNeedRestart", { defaultValue: "MCP 已启用，重启后生效" }));
+                          ? t("config.mcpDisabledNeedRestart", { defaultValue: "MCP disabled — takes effect after restart" })
+                          : t("config.mcpEnabledNeedRestart", { defaultValue: "MCP enabled — takes effect after restart" }));
                       }
                     } catch { /* ignore */ }
                   }}

@@ -563,7 +563,7 @@ function MarketplaceSkillCard({
                 )}
               </div>
               <div className="text-xs text-muted-foreground truncate">
-                {skill.description || t("skills.marketplaceNoDesc", "暂无描述，安装后可在技能详情中查看")}
+                {skill.description || t("skills.marketplaceNoDesc", "No description available — check skill details after installing")}
               </div>
               <div className="text-[11px] text-muted-foreground/60 font-mono mt-1 truncate">
                 {skill.url}
@@ -1019,19 +1019,19 @@ export function SkillManager({
     try {
       const skillSummary = skillsWithConfig
         .filter((s) => !s.system)
-        .map((s) => `${s.name} [${s.enabled ? "启用" : "禁用"}]: ${s.description}`)
+        .map((s) => `${s.name} [${s.enabled ? "enabled" : "disabled"}]: ${s.description}`)
         .join("\n");
 
       const message = [
-        "请帮我整理技能。以下是我当前安装的外部技能列表：",
+        "Please help me organize my skills. Here is my current list of installed external skills:",
         "",
         skillSummary,
         "",
-        "请根据以下原则给出建议并使用 manage_skill_enabled 工具执行：",
-        "1. 功能重复或相似的技能，只保留最好的一个",
-        "2. 通用性强、常用的技能保持启用",
-        "3. 非常小众或几乎不会用到的技能可以禁用",
-        "4. 先列出你的分析和建议，征得我同意后再执行变更",
+        "Please provide recommendations based on the following principles and use the manage_skill_enabled tool to apply them:",
+        "1. Keep only the best skill when multiple skills have overlapping or similar functionality",
+        "2. Keep widely useful, frequently used skills enabled",
+        "3. Very niche or rarely used skills can be disabled",
+        "4. First list your analysis and recommendations, then wait for my approval before making changes",
       ].join("\n");
 
       const res = await safeFetch(`${apiBaseUrl}/api/chat`, {
@@ -1230,7 +1230,7 @@ export function SkillManager({
           skillName: key,
         });
       } else {
-        throw new Error(t("skills.envNotReady") || "环境未就绪");
+        throw new Error(t("skills.envNotReady") || "Environment not ready");
       }
 
       if (detailSkill?.skillId === key) setDetailSkill(null);
@@ -1363,7 +1363,7 @@ export function SkillManager({
     }
     const uniqueKey = skill.url || skill.id || skill.name;
     setInstallingSet(prev => new Set(prev).add(uniqueKey));
-    setInstallStatus(t("skills.installDownloading", "正在下载技能..."));
+    setInstallStatus(t("skills.installDownloading", "Downloading skill..."));
     setError(null);
     try {
       let installed = false;
@@ -1372,7 +1372,7 @@ export function SkillManager({
       // 后端 /api/skills/install 成功后自动 propagate_skill_change(INSTALL)，
       // 此处不再额外发 /api/skills/reload。
       if (serviceRunning && apiBaseUrl != null) {
-        setInstallStatus(t("skills.installDownloading", "正在下载技能..."));
+        setInstallStatus(t("skills.installDownloading", "Downloading skill..."));
         const res = await safeFetch(`${apiBaseUrl}/api/skills/install`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1385,7 +1385,7 @@ export function SkillManager({
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         installed = true;
-        setInstallStatus(t("skills.installParsing", "正在解析技能..."));
+        setInstallStatus(t("skills.installParsing", "Parsing skill..."));
       }
 
       // 方式2：服务未运行 → Tauri invoke（本地模式）
@@ -1397,7 +1397,7 @@ export function SkillManager({
         });
       }
 
-      setInstallStatus(t("skills.installDone", "安装完成"));
+      setInstallStatus(t("skills.installDone", "Installation complete"));
       setMarketplace((prev) => prev.map((s) =>
         s.url === skill.url ? { ...s, installed: true } : s
       ));
@@ -1490,8 +1490,8 @@ export function SkillManager({
     return (
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
         <IconZap size={48} />
-        <div className="mt-3 font-semibold">技能</div>
-        <div className="mt-1 text-xs opacity-50">后端服务未启动，请启动后再进行使用</div>
+        <div className="mt-3 font-semibold">Skills</div>
+        <div className="mt-1 text-xs opacity-50">Backend service is not running — start it before using this page</div>
       </div>
     );
   }

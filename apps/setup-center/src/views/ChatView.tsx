@@ -815,7 +815,7 @@ export function ChatView({
 
         const restoredConvs: ChatConversation[] = backendSessions.map((s) => ({
           id: s.id,
-          title: s.title || "对话",
+          title: s.title || "Chat",
           lastMessage: s.lastMessage || "",
           timestamp: s.timestamp,
           messageCount: s.messageCount || 0,
@@ -829,7 +829,7 @@ export function ChatView({
             if (!local) return b;
             return {
               ...local,
-              title: local.titleGenerated ? local.title : (b.title || local.title || "对话"),
+              title: local.titleGenerated ? local.title : (b.title || local.title || "Chat"),
               lastMessage: b.lastMessage || local.lastMessage,
               timestamp: Math.max(local.timestamp || 0, b.timestamp || 0),
               messageCount: Math.max(local.messageCount || 0, b.messageCount || 0),
@@ -920,7 +920,7 @@ export function ChatView({
             updated[idx] = { ...updated[idx], lastMessage: preview || updated[idx].lastMessage, timestamp: Math.max(updated[idx].timestamp || 0, ts), messageCount: (updated[idx].messageCount || 0) + 1 };
             return updated;
           }
-          return [{ id: convId, title: preview.slice(0, 20) || "对话", lastMessage: preview, timestamp: ts, messageCount: 1 }, ...prev];
+          return [{ id: convId, title: preview.slice(0, 20) || "Chat", lastMessage: preview, timestamp: ts, messageCount: 1 }, ...prev];
         });
       } else if (event === "chat:conversation_deleted") {
         setConversations((prev) => {
@@ -1009,7 +1009,7 @@ export function ChatView({
           return [...filtered, alert];
         });
         if (isOffline) {
-          notifyError(t("chat.imChannelOffline", { channel, defaultValue: `IM 通道 ${channel} 已断开连接` }));
+          notifyError(t("chat.imChannelOffline", { channel, defaultValue: `IM channel "${channel}" disconnected` }));
         }
         if (isOnline) {
           setTimeout(() => {
@@ -1191,26 +1191,26 @@ export function ChatView({
   // ── 斜杠命令定义 ──
   const slashCommands: SlashCommand[] = useMemo(() => {
     const cmds: SlashCommand[] = [
-    { id: "model", label: "切换模型", description: "选择使用的 LLM 端点", action: (args) => {
+    { id: "model", label: "Switch model", description: "Select the LLM endpoint to use", action: (args) => {
       if (args && endpoints.find((e) => e.name === args)) {
         setSelectedEndpoint(args);
-        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `已切换到端点: ${args}`, timestamp: Date.now() }]);
+        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `Switched to endpoint: ${args}`, timestamp: Date.now() }]);
       } else {
         const names = ["auto", ...endpoints.map((e) => e.name)];
-        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `可用端点: ${names.join(", ")}\n用法: /model <端点名>`, timestamp: Date.now() }]);
+        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `Available endpoints: ${names.join(", ")}\nUsage: /model <endpoint-name>`, timestamp: Date.now() }]);
       }
     }},
-    { id: "plan", label: "计划模式", description: "开启/关闭 Plan 模式，先计划再执行", action: () => {
+    { id: "plan", label: "Plan mode", description: "Toggle Plan mode (plan first, then execute)", action: () => {
       const next = chatMode === "plan" ? "agent" : "plan";
       setChatMode(next);
-      setMessages((prev) => [...prev, { id: genId(), role: "system", content: next === "plan" ? "已开启 Plan 模式" : "已关闭 Plan 模式", timestamp: Date.now() }]);
+      setMessages((prev) => [...prev, { id: genId(), role: "system", content: next === "plan" ? "Plan mode enabled" : "Plan mode disabled", timestamp: Date.now() }]);
     }},
-    { id: "ask", label: "问答模式", description: "开启/关闭 Ask 模式，仅问答不执行工具", action: () => {
+    { id: "ask", label: "Ask mode", description: "Toggle Ask mode (Q&A only, no tool execution)", action: () => {
       const next = chatMode === "ask" ? "agent" : "ask";
       setChatMode(next);
-      setMessages((prev) => [...prev, { id: genId(), role: "system", content: next === "ask" ? "已开启问答模式（仅问答，不执行工具）" : "已退出问答模式", timestamp: Date.now() }]);
+      setMessages((prev) => [...prev, { id: genId(), role: "system", content: next === "ask" ? "Ask mode enabled (Q&A only, no tool execution)" : "Ask mode disabled", timestamp: Date.now() }]);
     }},
-    { id: "clear", label: "清空对话", description: "清除当前对话的所有消息", action: () => {
+    { id: "clear", label: "Clear conversation", description: "Delete all messages in the current conversation", action: () => {
       setMessages([]);
       if (activeConvId) {
         safeFetch(`${apiBase}/api/chat/clear`, {
@@ -1220,125 +1220,125 @@ export function ChatView({
         }).catch(() => {});
       }
     }},
-    { id: "skill", label: "使用技能", description: "调用已安装的技能（发送 /skill:<技能名> 触发）", action: (args) => {
+    { id: "skill", label: "Use skill", description: "Invoke an installed skill (send /skill:<skill-name> to trigger)", action: (args) => {
       if (args) {
-        setInputValue(`请使用技能「${args}」来帮我：`);
+        setInputValue(`Please use the skill "${args}" to help me: `);
       } else {
-        setMessages((prev) => [...prev, { id: genId(), role: "system", content: "用法: /skill <技能名>，如 /skill web-search。在消息中提及技能名即可触发。", timestamp: Date.now() }]);
+        setMessages((prev) => [...prev, { id: genId(), role: "system", content: "Usage: /skill <skill-name>, e.g. /skill web-search. Mentioning the skill name in your message also triggers it.", timestamp: Date.now() }]);
       }
     }},
-    { id: "persona", label: "切换角色", description: "切换 Agent 的人格预设", action: (args) => {
+    { id: "persona", label: "Switch persona", description: "Switch the Agent's persona preset", action: (args) => {
       if (args) {
-        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `角色切换请在「设置 → 灵魂与意志」中修改 PERSONA_NAME 为 "${args}"`, timestamp: Date.now() }]);
+        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `To switch persona, change PERSONA_NAME to "${args}" in Settings → Soul & Will`, timestamp: Date.now() }]);
       } else {
-        setMessages((prev) => [...prev, { id: genId(), role: "system", content: "可用角色: default, business, tech_expert, butler, girlfriend, boyfriend, family, jarvis\n用法: /persona <角色ID>", timestamp: Date.now() }]);
+        setMessages((prev) => [...prev, { id: genId(), role: "system", content: "Available personas: default, business, tech_expert, butler, girlfriend, boyfriend, family, jarvis\nUsage: /persona <persona-id>", timestamp: Date.now() }]);
       }
     }},
-    { id: "agent", label: "切换 Agent", description: "在多 Agent 间切换（handoff 模式）", action: (args) => {
+    { id: "agent", label: "Switch Agent", description: "Switch between agents (handoff mode)", action: (args) => {
       if (args) {
-        setInputValue(`请切换到 Agent「${args}」来处理接下来的任务。`);
+        setInputValue(`Please switch to the Agent "${args}" to handle the next task.`);
       } else {
-        setMessages((prev) => [...prev, { id: genId(), role: "system", content: "用法: /agent <Agent名称>。在 handoff 模式下，AI 会自动在 Agent 间切换。", timestamp: Date.now() }]);
+        setMessages((prev) => [...prev, { id: genId(), role: "system", content: "Usage: /agent <agent-name>. In handoff mode, the AI will switch between agents automatically.", timestamp: Date.now() }]);
       }
     }},
-    { id: "agents", label: "查看 Agent 列表", description: "显示可用的 Agent 列表", action: () => {
-      setMessages((prev) => [...prev, { id: genId(), role: "system", content: "Agent 列表取决于 handoff 配置。当前可通过 /agent <名称> 手动请求切换。", timestamp: Date.now() }]);
+    { id: "agents", label: "List agents", description: "Show available agent list", action: () => {
+      setMessages((prev) => [...prev, { id: genId(), role: "system", content: "The agent list depends on the handoff configuration. You can request a switch manually with /agent <name>.", timestamp: Date.now() }]);
     }},
-    { id: "org", label: "组织模式", description: "切换到组织编排模式，向组织下命令", action: (args) => {
-      if (args === "off" || args === "关闭") {
+    { id: "org", label: "Org mode", description: "Switch to org mode and issue commands to the org", action: (args) => {
+      if (args === "off") {
         setOrgMode(false);
         setSelectedOrgId(null);
-        setMessages((prev) => [...prev, { id: genId(), role: "system", content: "已退出组织模式", timestamp: Date.now() }]);
+        setMessages((prev) => [...prev, { id: genId(), role: "system", content: "Org mode disabled", timestamp: Date.now() }]);
       } else if (args) {
         const match = orgList.find(o => o.name.includes(args) || o.id === args);
         if (match) {
           setOrgMode(true);
           setSelectedOrgId(match.id);
-          setMessages((prev) => [...prev, { id: genId(), role: "system", content: `已切换到组织: ${match.icon} ${match.name}`, timestamp: Date.now() }]);
+          setMessages((prev) => [...prev, { id: genId(), role: "system", content: `Switched to org: ${match.icon} ${match.name}`, timestamp: Date.now() }]);
         } else {
-          setMessages((prev) => [...prev, { id: genId(), role: "system", content: `未找到组织「${args}」。可用组织: ${orgList.map(o => o.name).join(", ") || "无"}`, timestamp: Date.now() }]);
+          setMessages((prev) => [...prev, { id: genId(), role: "system", content: `Org "${args}" not found. Available orgs: ${orgList.map(o => o.name).join(", ") || "none"}`, timestamp: Date.now() }]);
         }
       } else {
-        const names = orgList.map(o => `${o.icon} ${o.name}`).join("\n") || "（暂无组织）";
-        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `组织模式 ${orgMode ? "已开启" : "已关闭"}\n可用组织:\n${names}\n\n用法: /org <组织名> 或 /org off`, timestamp: Date.now() }]);
+        const names = orgList.map(o => `${o.icon} ${o.name}`).join("\n") || "(no orgs)";
+        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `Org mode ${orgMode ? "enabled" : "disabled"}\nAvailable orgs:\n${names}\n\nUsage: /org <org-name> or /org off`, timestamp: Date.now() }]);
       }
     }},
-    { id: "thinking", label: "深度思考", description: "设置思考模式 (on/off/auto)", action: (args) => {
+    { id: "thinking", label: "Deep thinking", description: "Set thinking mode (on/off/auto)", action: (args) => {
       const mode = args?.toLowerCase().trim();
       if (mode === "on" || mode === "off" || mode === "auto") {
         setThinkingMode(mode);
-        const label = { on: "开启", off: "关闭", auto: "自动" }[mode];
-        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `思考模式已设置为: ${label}`, timestamp: Date.now() }]);
+        const label = { on: "on", off: "off", auto: "auto" }[mode];
+        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `Thinking mode set to: ${label}`, timestamp: Date.now() }]);
       } else {
-        const currentLabel = { on: "开启", off: "关闭", auto: "自动" }[thinkingMode];
-        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `当前思考模式: ${currentLabel}\n用法: /thinking on|off|auto`, timestamp: Date.now() }]);
+        const currentLabel = { on: "on", off: "off", auto: "auto" }[thinkingMode];
+        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `Current thinking mode: ${currentLabel}\nUsage: /thinking on|off|auto`, timestamp: Date.now() }]);
       }
     }},
-    { id: "thinking_depth", label: "思考程度", description: "设置思考程度 (low/medium/high)", action: (args) => {
+    { id: "thinking_depth", label: "Thinking depth", description: "Set thinking depth (low/medium/high)", action: (args) => {
       const depth = args?.toLowerCase().trim();
       if (depth === "low" || depth === "medium" || depth === "high") {
         setThinkingDepth(depth);
-        const label = { low: "低", medium: "中", high: "高" }[depth];
-        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `思考程度已设置为: ${label}`, timestamp: Date.now() }]);
+        const label = { low: "low", medium: "medium", high: "high" }[depth];
+        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `Thinking depth set to: ${label}`, timestamp: Date.now() }]);
       } else {
-        const currentLabel = { low: "低", medium: "中", high: "高" }[thinkingDepth];
-        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `当前思考程度: ${currentLabel}\n用法: /thinking_depth low|medium|high`, timestamp: Date.now() }]);
+        const currentLabel = { low: "low", medium: "medium", high: "high" }[thinkingDepth];
+        setMessages((prev) => [...prev, { id: genId(), role: "system", content: `Current thinking depth: ${currentLabel}\nUsage: /thinking_depth low|medium|high`, timestamp: Date.now() }]);
       }
     }},
-    { id: "export", label: t("chat.exportLabel", "导出会话"), description: t("chat.exportDesc", "导出当前对话 (md/json)"), action: (args) => {
+    { id: "export", label: t("chat.exportLabel", "Export conversation"), description: t("chat.exportDesc", "Export current conversation (md/json)"), action: (args) => {
       const fmt = args?.trim().toLowerCase() === "json" ? "json" : "md";
       const conv = conversations.find((c) => c.id === activeConvId);
-      exportConversation(messages, conv?.title || t("chat.conversation", "对话"), fmt as "md" | "json");
-      setMessages((prev) => [...prev, { id: genId(), role: "system", content: t("chat.exportDone", { format: fmt.toUpperCase(), defaultValue: `已导出为 ${fmt.toUpperCase()} 格式` }), timestamp: Date.now() }]);
+      exportConversation(messages, conv?.title || t("chat.conversation", "Chat"), fmt as "md" | "json");
+      setMessages((prev) => [...prev, { id: genId(), role: "system", content: t("chat.exportDone", { format: fmt.toUpperCase(), defaultValue: `Exported as ${fmt.toUpperCase()}` }), timestamp: Date.now() }]);
     }},
-    { id: "memory", label: t("chat.memoryCmd", "记忆管理"), description: t("chat.memoryCmdDesc", "查看/管理 AI 记忆条目"), action: (args) => {
+    { id: "memory", label: t("chat.memoryCmd", "Memory management"), description: t("chat.memoryCmdDesc", "View/manage AI memory entries"), action: (args) => {
       if (args === "list" || !args) {
         safeFetch(`${apiBase}/api/memory/entries?limit=20`).then(r => r.json()).then(data => {
           const entries = data?.entries || data?.memories || [];
           if (!entries.length) {
-            setMessages(prev => [...prev, { id: genId(), role: "system", content: t("chat.memoryEmpty", "暂无记忆条目。AI 会在对话中自动学习和记忆。"), timestamp: Date.now() }]);
+            setMessages(prev => [...prev, { id: genId(), role: "system", content: t("chat.memoryEmpty", "No memory entries yet. The AI will learn and remember things automatically during conversation."), timestamp: Date.now() }]);
           } else {
             const lines = entries.slice(0, 15).map((e: any, i: number) => `${i + 1}. ${(e.content || e.text || "").slice(0, 100)}`);
-            setMessages(prev => [...prev, { id: genId(), role: "system", content: `**记忆条目** (${entries.length} 条)：\n${lines.join("\n")}`, timestamp: Date.now() }]);
+            setMessages(prev => [...prev, { id: genId(), role: "system", content: `**Memory entries** (${entries.length}):\n${lines.join("\n")}`, timestamp: Date.now() }]);
           }
         }).catch(() => {
-          setMessages(prev => [...prev, { id: genId(), role: "system", content: t("chat.memoryLoadFail", "无法加载记忆条目，请确认服务已启动。"), timestamp: Date.now() }]);
+          setMessages(prev => [...prev, { id: genId(), role: "system", content: t("chat.memoryLoadFail", "Could not load memory entries — make sure the service is running."), timestamp: Date.now() }]);
         });
       } else {
-        setMessages(prev => [...prev, { id: genId(), role: "system", content: "用法: /memory [list]", timestamp: Date.now() }]);
+        setMessages(prev => [...prev, { id: genId(), role: "system", content: "Usage: /memory [list]", timestamp: Date.now() }]);
       }
     }},
-    { id: "skills", label: t("chat.skillsCmd", "技能管理"), description: t("chat.skillsCmdDesc", "查看已安装的技能列表"), action: () => {
+    { id: "skills", label: t("chat.skillsCmd", "Skill management"), description: t("chat.skillsCmdDesc", "View installed skill list"), action: () => {
       safeFetch(`${apiBase}/api/skills`).then(r => r.json()).then(data => {
         const skills = Array.isArray(data?.skills) ? data.skills : [];
         if (!skills.length) {
-          setMessages(prev => [...prev, { id: genId(), role: "system", content: t("chat.skillsEmpty", "暂无已安装技能。可在设置 > 高级 > 平台连接中启用技能商店，或使用 /skill install <url> 安装。"), timestamp: Date.now() }]);
+          setMessages(prev => [...prev, { id: genId(), role: "system", content: t("chat.skillsEmpty", "No skills installed. Enable the skill marketplace in Settings > Advanced > Platform connections, or install with /skill install <url>."), timestamp: Date.now() }]);
         } else {
-          const lines = skills.map((s: any) => `- **${s.name || s.skill_id}**: ${s.description || t("chat.skillsNoDesc", "无描述")} ${s.enabled === false ? "(已禁用)" : ""}`);
-          setMessages(prev => [...prev, { id: genId(), role: "system", content: `**已安装技能** (${skills.length})：\n${lines.join("\n")}`, timestamp: Date.now() }]);
+          const lines = skills.map((s: any) => `- **${s.name || s.skill_id}**: ${s.description || t("chat.skillsNoDesc", "No description")} ${s.enabled === false ? "(disabled)" : ""}`);
+          setMessages(prev => [...prev, { id: genId(), role: "system", content: `**Installed skills** (${skills.length}):\n${lines.join("\n")}`, timestamp: Date.now() }]);
         }
       }).catch(() => {
-        setMessages(prev => [...prev, { id: genId(), role: "system", content: t("chat.skillsLoadFail", "无法加载技能列表。"), timestamp: Date.now() }]);
+        setMessages(prev => [...prev, { id: genId(), role: "system", content: t("chat.skillsLoadFail", "Could not load skill list."), timestamp: Date.now() }]);
       });
     }},
-    { id: "unlock", label: "解除只读", description: "重置死亡开关，解除 Agent 只读模式", action: () => {
+    { id: "unlock", label: "Disable read-only", description: "Reset the death switch and take the Agent out of read-only mode", action: () => {
       safeFetch(`${apiBase}/api/config/security/death-switch/reset`, { method: "POST" })
         .then(() => {
           setDeathSwitchActive(false);
-          setMessages((prev) => [...prev, { id: genId(), role: "system", content: "死亡开关已重置，Agent 已退出只读模式。", timestamp: Date.now() }]);
+          setMessages((prev) => [...prev, { id: genId(), role: "system", content: "Death switch reset — Agent is no longer in read-only mode.", timestamp: Date.now() }]);
         })
         .catch(() => {
-          setMessages((prev) => [...prev, { id: genId(), role: "system", content: "重置失败，请检查后端服务状态。", timestamp: Date.now() }]);
+          setMessages((prev) => [...prev, { id: genId(), role: "system", content: "Reset failed — check backend service status.", timestamp: Date.now() }]);
         });
     }},
-    { id: "help", label: "帮助", description: "显示可用命令列表", action: () => {} },
+    { id: "help", label: "Help", description: "Show available commands", action: () => {} },
   ];
     const helpCmd = cmds.find((c) => c.id === "help");
     if (helpCmd) {
       helpCmd.action = () => {
         const lines = cmds.map((c) => `- \`/${c.id}\` — ${c.description}`).join("\n");
         setMessages((prev) => [...prev, {
-          id: genId(), role: "system", content: `**可用命令：**\n${lines}`, timestamp: Date.now(),
+          id: genId(), role: "system", content: `**Available commands:**\n${lines}`, timestamp: Date.now(),
         }]);
       };
     }
@@ -1363,7 +1363,7 @@ export function ChatView({
     setSelectedEndpoint("auto");
     setConversations((prev) => [{
       id,
-      title: "新对话",
+      title: "New conversation",
       lastMessage: "",
       timestamp: Date.now(),
       messageCount: 0,
@@ -1391,11 +1391,11 @@ export function ChatView({
           method: "DELETE",
         });
         if (!res.ok) {
-          notifyError(t("chat.deleteConvFailed", "删除会话失败，请重试"));
+          notifyError(t("chat.deleteConvFailed", "Failed to delete conversation — please try again"));
           return;
         }
       } catch {
-        notifyError(t("chat.deleteConvNetworkFailed", "删除会话失败，请检查网络连接"));
+        notifyError(t("chat.deleteConvNetworkFailed", "Failed to delete conversation — check your connection"));
         return;
       }
     }
@@ -1493,7 +1493,7 @@ export function ChatView({
         if (match) {
           targetOrgId = match.id;
         } else {
-          notifyError(`未找到组织「${orgRef}」，请检查名称是否正确`);
+          notifyError(`Org "${orgRef}" not found — please check the name`);
           return;
         }
       }
@@ -1560,37 +1560,37 @@ export function ChatView({
               return m;
             });
             if (st === "busy") {
-              pushProgress(`● **${nodeId}** 开始处理${task ? `：${task.slice(0, 60)}` : ""}`);
+              pushProgress(`● **${nodeId}** started${task ? `: ${task.slice(0, 60)}` : ""}`);
             } else if (st === "idle") {
-              pushProgress(`✓ **${nodeId}** 完成`);
+              pushProgress(`✓ **${nodeId}** done`);
             } else if (st === "error") {
-              pushProgress(`✗ **${nodeId}** 出错`);
+              pushProgress(`✗ **${nodeId}** error`);
             }
           } else if (event === "org:task_delegated") {
             const task = (d.task || "") as string;
             setOrgDelegations(prev => [...prev.slice(-20), { from: nodeId, to: toNode, task, ts: Date.now() }]);
-            pushProgress(`→ **${nodeId}** → **${toNode}** 分配任务：${(task as string).slice(0, 50)}`);
+            pushProgress(`→ **${nodeId}** → **${toNode}** delegated: ${(task as string).slice(0, 50)}`);
           } else if (event === "org:message") {
-            const msgType = d.msg_type as string || "消息";
+            const msgType = d.msg_type as string || "message";
             pushProgress(`→ **${nodeId}** → **${toNode}** ${msgType}`);
           } else if (event === "org:escalation") {
-            pushProgress(`↑ **${nodeId}** 向上汇报`);
+            pushProgress(`↑ **${nodeId}** escalated`);
           } else if (event === "org:blackboard_update") {
-            pushProgress(`~ **${nodeId}** 更新黑板`);
+            pushProgress(`~ **${nodeId}** updated blackboard`);
           } else if (event === "org:task_complete") {
             setOrgNodeStates(prev => {
               const m = new Map(prev);
               m.set(nodeId, { status: "done", ts: Date.now() });
               return m;
             });
-            pushProgress(`✓ **${nodeId}** 任务完成`);
+            pushProgress(`✓ **${nodeId}** task complete`);
           } else if (event === "org:task_timeout") {
             setOrgNodeStates(prev => {
               const m = new Map(prev);
               m.set(nodeId, { status: "timeout", ts: Date.now() });
               return m;
             });
-            pushProgress(`! **${nodeId}** 任务超时`);
+            pushProgress(`! **${nodeId}** task timed out`);
           }
         });
 
@@ -1668,7 +1668,7 @@ export function ChatView({
               } catch { /* poll failed, retry next cycle */ }
 
               if (!resolved && Date.now() - lastProgressAt > stallThreshold) {
-                pushProgress("... 执行时间较长，组织仍在处理中...");
+                pushProgress("... Taking longer than expected — org is still processing...");
                 lastProgressAt = Date.now();
               }
             }
@@ -1680,7 +1680,7 @@ export function ChatView({
                 : "";
               updateOrgMessages((prev) => prev.map(m =>
                 m.id === placeholderId
-                  ? { ...m, content: `${progressSummary}**[${orgOrgName}]** 命令执行超时（已等待 10 分钟），请稍后手动检查结果。`, streaming: false }
+                  ? { ...m, content: `${progressSummary}**[${orgOrgName}]** Command timed out (waited 10 minutes) — please check the result manually later.`, streaming: false }
                   : m
               ));
             }
@@ -1690,7 +1690,7 @@ export function ChatView({
         } catch (e: any) {
           updateOrgMessages((prev) => prev.map(m =>
             m.id === placeholderId
-              ? { ...m, content: `组织命令失败: ${e.message || e}`, streaming: false, role: "system" as const }
+              ? { ...m, content: `Org command failed: ${e.message || e}`, streaming: false, role: "system" as const }
               : m
           ));
         } finally {
@@ -1734,7 +1734,7 @@ export function ChatView({
       setActiveConvId(convId);
       setConversations((prev) => [{
         id: convId!,
-        title: text.slice(0, 30) || "新对话",
+        title: text.slice(0, 30) || "New conversation",
         lastMessage: text,
         timestamp: Date.now(),
         messageCount: 1,
@@ -1961,9 +1961,9 @@ export function ChatView({
             }
           } catch { /* fall through to generic error */ }
         }
-        const errText = await response.text().catch(() => "请求失败");
+        const errText = await response.text().catch(() => "Request failed");
         updateMessages((prev) => prev.map((m) =>
-          m.id === assistantMsg.id ? { ...m, content: `错误：${response.status} ${errText}`, streaming: false } : m
+          m.id === assistantMsg.id ? { ...m, content: `Error: ${response.status} ${errText}`, streaming: false } : m
         ));
         if (thisConvId) updateConvStatus(thisConvId, "error");
         return;
@@ -2485,7 +2485,7 @@ export function ChatView({
                   const switchMsg: ChatMessage = {
                     id: genId(),
                     role: "system",
-                    content: `Agent 切换到：${event.agentName}${event.reason ? ` — ${event.reason}` : ""}`,
+                    content: `Agent switched to: ${event.agentName}${event.reason ? ` — ${event.reason}` : ""}`,
                     timestamp: Date.now(),
                   };
                   return [...prev.filter((m) => m.id !== assistantMsg.id), switchMsg, {
@@ -2565,7 +2565,7 @@ export function ChatView({
           } catch {
             sseParseFailures++;
             if (sseParseFailures >= 5) {
-              notifyError(t("chat.sseParseError", "SSE 数据解析异常频繁，可能存在通信问题"));
+              notifyError(t("chat.sseParseError", "Frequent SSE parse errors — possible communication issue"));
               sseParseFailures = 0;
             }
           }
@@ -2579,7 +2579,7 @@ export function ChatView({
         if (sctx.userStopped) {
           updateMessages((prev) => prev.map((m) =>
             m.id === assistantMsg.id
-              ? { ...m, content: m.content || "（已中止）", streaming: false }
+              ? { ...m, content: m.content || "(Stopped)", streaming: false }
               : m
           ));
         } else {
@@ -2593,7 +2593,7 @@ export function ChatView({
           m.id === assistantMsg.id
             ? {
                 ...m,
-                content: m.content || (m.askUser ? "" : "未收到有效回复，请重试。"),
+                content: m.content || (m.askUser ? "" : "No valid response received — please try again."),
                 streaming: false,
               }
             : m
@@ -2634,7 +2634,7 @@ export function ChatView({
     } catch (e: unknown) {
       if (sctx.userStopped) {
         updateMessages((prev) => prev.map((m) =>
-          m.id === assistantMsg.id ? { ...m, content: m.content || "（已中止）", streaming: false } : m
+          m.id === assistantMsg.id ? { ...m, content: m.content || "(Stopped)", streaming: false } : m
         ));
       } else {
         const isAbortLike =
@@ -2656,7 +2656,7 @@ export function ChatView({
             }
           } catch { /* health probe failed -> keep backend guidance */ }
           updateMessages((prev) => prev.map((m) =>
-            m.id === assistantMsg.id ? { ...m, content: m.content || `连接失败：${errMsg}\n\n${guidance}`, streaming: false } : m
+            m.id === assistantMsg.id ? { ...m, content: m.content || `Connection failed: ${errMsg}\n\n${guidance}`, streaming: false } : m
           ));
         }
 
@@ -2775,14 +2775,14 @@ export function ChatView({
   const handlePlanApprove = useCallback(() => {
     setPendingApproval(null);
     setChatMode("agent");
-    sendMessage("请按计划执行", undefined, undefined, "agent");
+    sendMessage("Please execute as planned", undefined, undefined, "agent");
   }, [sendMessage]);
 
   const handlePlanReject = useCallback((feedback: string) => {
     setPendingApproval(null);
     const msg = feedback
-      ? `计划需要修改。修改意见：\n${feedback}`
-      : "计划需要修改，请重新调整。";
+      ? `The plan needs revision. Feedback:\n${feedback}`
+      : "The plan needs revision — please adjust it.";
     sendMessage(msg, undefined, undefined, "plan");
   }, [sendMessage]);
 
@@ -2852,7 +2852,7 @@ export function ChatView({
     safeFetch(`${apiBase}/api/chat/skip`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversation_id: activeConvId, reason: "用户从界面跳过步骤" }),
+      body: JSON.stringify({ conversation_id: activeConvId, reason: "User skipped step from UI" }),
     }).catch(() => {});
   }, [apiBase, activeConvId]);
 
@@ -2866,7 +2866,7 @@ export function ChatView({
     safeFetch(`${apiBase}/api/chat/cancel`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversation_id: activeConvId, reason: "用户从界面取消任务" }),
+      body: JSON.stringify({ conversation_id: activeConvId, reason: "User cancelled task from UI" }),
     }).then(() => {
       const cid = activeConvId;
       setTimeout(() => {
@@ -2989,7 +2989,7 @@ export function ChatView({
         _uploadId: uploadId,
       };
       if (att.type === "video" && file.size > 7 * 1024 * 1024) {
-        notifyError(`视频文件过大 (${(file.size / 1024 / 1024).toFixed(1)}MB)，桌面端最大支持 7MB（base64 编码后需 < 10MB）`);
+        notifyError(`Video file too large (${(file.size / 1024 / 1024).toFixed(1)} MB) — desktop max is 7 MB (base64-encoded must be < 10 MB)`);
         continue;
       }
       if (att.type === "image" || att.type === "video") {
@@ -3000,7 +3000,7 @@ export function ChatView({
           setPendingAttachments((prev) => [...prev, att]);
         };
         reader.onerror = () => {
-          notifyError(`文件读取失败: ${file.name}`);
+          notifyError(`Failed to read file: ${file.name}`);
         };
         reader.readAsDataURL(file);
       } else {
@@ -3013,7 +3013,7 @@ export function ChatView({
             );
           })
           .catch(() => {
-            notifyError(`文件上传失败: ${file.name}`);
+            notifyError(`Failed to upload file: ${file.name}`);
             setPendingAttachments((prev) =>
               prev.filter((a) => a._uploadId !== uploadId || a.url));
           });
@@ -3048,7 +3048,7 @@ export function ChatView({
         reader.onload = () => {
           setPendingAttachments((prev) => [...prev, {
             type: "image",
-            name: `粘贴图片-${Date.now()}.png`,
+            name: `pasted-image-${Date.now()}.png`,
             previewUrl: reader.result as string,
             url: reader.result as string,
             size: file.size,
@@ -3092,7 +3092,7 @@ export function ChatView({
               const estimatedSize = base64Len * 3 / 4;
               const VIDEO_MAX_SIZE = 7 * 1024 * 1024;
               if (estimatedSize > VIDEO_MAX_SIZE) {
-                notifyError(`视频文件过大 (${(estimatedSize / 1024 / 1024).toFixed(1)}MB)，最大支持 7MB（base64 编码后需 < 10MB）`);
+                notifyError(`Video file too large (${(estimatedSize / 1024 / 1024).toFixed(1)} MB) — max is 7 MB (base64-encoded must be < 10 MB)`);
                 return;
               }
             }
@@ -3167,7 +3167,7 @@ export function ChatView({
             );
           })
           .catch(() => {
-            notifyError(t("chat.voiceUploadFailed", "语音上传失败"));
+            notifyError(t("chat.voiceUploadFailed", "Voice upload failed"));
             setPendingAttachments((prev) => prev.filter((a) => a._uploadId !== uploadId || a.url));
           });
         stream.getTracks().forEach((t) => t.stop());
@@ -3180,11 +3180,11 @@ export function ChatView({
     } catch (err: any) {
       const name = err?.name || "";
       if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-        notifyError(t("chat.micPermissionDenied", "麦克风权限被拒绝，请在浏览器/系统设置中允许访问"));
+        notifyError(t("chat.micPermissionDenied", "Microphone permission denied — allow access in browser/system settings"));
       } else if (name === "NotFoundError") {
-        notifyError(t("chat.micNotFound", "未检测到麦克风设备"));
+        notifyError(t("chat.micNotFound", "No microphone device detected"));
       } else {
-        notifyError(t("chat.micError", "无法访问麦克风，请检查浏览器权限设置"));
+        notifyError(t("chat.micError", "Cannot access microphone — check browser permission settings"));
       }
     }
   }, [isRecording]);
@@ -3370,7 +3370,7 @@ export function ChatView({
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
         <IconMessageCircle size={48} />
         <div className="mt-3 font-semibold">{t("chat.title")}</div>
-        <div className="mt-1 text-xs opacity-50">{t("chat.serviceNotRunning", "后端服务未启动，请启动后再进行使用")}</div>
+        <div className="mt-1 text-xs opacity-50">{t("chat.serviceNotRunning", "Backend service is not running — please start it before using the app")}</div>
       </div>
     );
   }
@@ -3467,7 +3467,7 @@ export function ChatView({
                 },
               },
               {
-                label: t("chat.exportConversation", "导出会话"),
+                label: t("chat.exportConversation", "Export conversation"),
                 icon: <IconDownload size={13} />,
                 danger: false,
                 action: () => {
@@ -3475,7 +3475,7 @@ export function ChatView({
                   const convMsgs = ctxMenu.convId === activeConvId
                     ? messages
                     : loadMessagesFromStorage(STORAGE_KEY_MSGS_PREFIX + ctxMenu.convId);
-                  exportConversation(convMsgs, conv?.title || t("chat.conversation", "对话"), "md");
+                  exportConversation(convMsgs, conv?.title || t("chat.conversation", "Chat"), "md");
                   setCtxMenu(null);
                 },
               },
@@ -3514,7 +3514,7 @@ export function ChatView({
       <div className="flex min-w-0 flex-1 flex-col" onMouseDown={() => { if (sidebarOpen && !sidebarPinned) setSidebarOpen(false); }}>
         {/* Chat top bar */}
         <div className="chatTopBar">
-          <button onClick={newConversation} className="chatTopBarBtn" aria-label={t("chat.newConversation", "新建会话")}>
+          <button onClick={newConversation} className="chatTopBarBtn" aria-label={t("chat.newConversation", "New conversation")}>
             <IconPlus size={14} />
           </button>
 
@@ -3554,7 +3554,7 @@ export function ChatView({
           {/* Active sub-agents in current conversation */}
           {displayActiveSubAgents.length > 0 && (
             <div className="subAgentStrip">
-              <span className="subAgentLabel">{t("chat.collaborating", "协作中")}</span>
+              <span className="subAgentLabel">{t("chat.collaborating", "Collaborating")}</span>
               {displayActiveSubAgents.map((sub) => {
                 const sp = agentProfiles.find((p) => p.id === sub.agentId);
                 return (
@@ -3600,7 +3600,7 @@ export function ChatView({
             onClick={() => setSidebarOpen((v) => !v)}
             className="chatTopBarBtn"
             style={{ background: sidebarOpen ? "rgba(37,99,235,0.08)" : "transparent" }}
-            title={t("chat.toggleHistory") || "会话列表"}
+            title={t("chat.toggleHistory") || "Conversation list"}
           >
             <IconMenu size={16} />
           </button>
@@ -3633,14 +3633,14 @@ export function ChatView({
                   }
                   if (e.key === "Escape") { setMsgSearchOpen(false); setMsgSearchQuery(""); }
                 }}
-                placeholder={t("chat.searchMessages", "搜索消息...")}
+                placeholder={t("chat.searchMessages", "Search messages...")}
                 style={{
                   flex: 1, background: "var(--bg)", border: "1px solid var(--line)",
                   borderRadius: 8, padding: "6px 10px", fontSize: 13, outline: "none",
                   color: "var(--fg)",
                 }}
               />
-              {q && <span style={{ opacity: 0.5, fontSize: 11, whiteSpace: "nowrap" }}>{total > 0 ? `${msgSearchIdx + 1}/${total}` : t("common.noResults", "无结果")}</span>}
+              {q && <span style={{ opacity: 0.5, fontSize: 11, whiteSpace: "nowrap" }}>{total > 0 ? `${msgSearchIdx + 1}/${total}` : t("common.noResults", "No results")}</span>}
               <button onClick={() => { setMsgSearchOpen(false); setMsgSearchQuery(""); }} style={{ background: "none", border: "none", cursor: "pointer", opacity: 0.5, padding: 2 }}>
                 <IconX size={14} />
               </button>
@@ -3652,12 +3652,12 @@ export function ChatView({
         {!serviceRunning && (
           <div className="flex items-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs text-amber-600 dark:text-amber-400">
             <IconAlertCircle size={14} />
-            {t("chat.offline", "后端服务未连接，部分功能暂不可用")}
+            {t("chat.offline", "Backend service not connected — some features are unavailable")}
           </div>
         )}
 
         {/* 消息列表 */}
-        <div ref={scrollContainerRef} role="log" aria-live="polite" aria-label={t("chat.messageList", "消息列表")} className="flex min-h-0 flex-1 flex-col overflow-hidden px-5 py-4">
+        <div ref={scrollContainerRef} role="log" aria-live="polite" aria-label={t("chat.messageList", "Message list")} className="flex min-h-0 flex-1 flex-col overflow-hidden px-5 py-4">
           {hydrating && messages.length === 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 18, padding: "16px 0", animation: "pulse 1.5s ease-in-out infinite" }}>
               {[0.6, 0.85, 0.45].map((w, i) => (
@@ -3681,12 +3681,12 @@ export function ChatView({
               </div>
               <div className="grid w-full max-w-[520px] grid-cols-1 gap-3 sm:grid-cols-2">
                 {[
-                  { id: "research", icon: <IconBarChart size={20} />, text: t("chat.quickStart.research", "帮我调研一下 OpenAkita 的竞品分析") },
-                  { id: "ppt", icon: <IconPlan size={20} />, text: t("chat.quickStart.ppt", "帮我做一个项目汇报 PPT 大纲") },
-                  { id: "search", icon: <IconGlobe size={20} />, text: t("chat.quickStart.search", "搜索 OpenAkita 最新动态") },
-                  { id: "email", icon: <IconMail size={20} />, text: t("chat.quickStart.email", "帮我写一封商务邮件") },
-                  { id: "summary", icon: <IconClipboard size={20} />, text: t("chat.quickStart.summary", "帮我总结一下今天的工作内容") },
-                  { id: "translate", icon: <IconGlobe size={20} />, text: t("chat.quickStart.translate", "把这段话翻译成英文") },
+                  { id: "research", icon: <IconBarChart size={20} />, text: t("chat.quickStart.research", "Help me research a competitive analysis for OpenAkita") },
+                  { id: "ppt", icon: <IconPlan size={20} />, text: t("chat.quickStart.ppt", "Help me create a project presentation outline") },
+                  { id: "search", icon: <IconGlobe size={20} />, text: t("chat.quickStart.search", "Search for the latest news about OpenAkita") },
+                  { id: "email", icon: <IconMail size={20} />, text: t("chat.quickStart.email", "Help me write a business email") },
+                  { id: "summary", icon: <IconClipboard size={20} />, text: t("chat.quickStart.summary", "Help me summarise today's work") },
+                  { id: "translate", icon: <IconGlobe size={20} />, text: t("chat.quickStart.translate", "Translate this text into English") },
                 ].map((item) => (
                   <button
                     key={item.id}
@@ -3763,19 +3763,19 @@ export function ChatView({
           <div className="flex items-center gap-3 border-t border-red-500/30 bg-red-500/10 px-4 py-2.5 text-sm">
             <span style={{ fontSize: 16 }}>&#x1F6D1;</span>
             <span style={{ flex: 1, color: "var(--destructive, #ef4444)" }}>
-              Agent 处于只读模式 — 死亡开关已触发，所有写入操作被阻止
+              Agent is in read-only mode — death switch triggered, all write operations are blocked
             </span>
             <button
               onClick={() => {
                 safeFetch(`${apiBase}/api/config/security/death-switch/reset`, { method: "POST" })
                   .then(() => {
                     setDeathSwitchActive(false);
-                    setMessages((prev) => [...prev, { id: genId(), role: "system", content: "死亡开关已重置，Agent 已退出只读模式。", timestamp: Date.now() }]);
+                    setMessages((prev) => [...prev, { id: genId(), role: "system", content: "Death switch reset — Agent is no longer in read-only mode.", timestamp: Date.now() }]);
                   })
                   .catch(() => {});
               }}
               style={{ padding: "4px 12px", borderRadius: 6, border: "1px solid var(--destructive, #ef4444)", background: "var(--destructive, #ef4444)", color: "#fff", cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" }}
-            >解除只读</button>
+            >Disable read-only</button>
           </div>
         )}
 
@@ -3783,15 +3783,15 @@ export function ChatView({
         {idleReturnPrompt && (
           <div className="flex items-center gap-3 border-t border-amber-500/20 bg-amber-500/10 px-4 py-2.5 text-sm">
             <IconClock size={16} />
-            <span style={{ flex: 1 }}>{t("chat.idleReturnHint", "你已离开较长时间，当前会话上下文较长。建议使用 /clear 节省 token 或新建会话。")}</span>
+            <span style={{ flex: 1 }}>{t("chat.idleReturnHint", "You've been away for a while and this conversation has a long context. Consider using /clear to save tokens or starting a new conversation.")}</span>
             <button
               onClick={() => { setIdleReturnPrompt(false); newConversation(); }}
               style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--primary)", color: "#fff", cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" }}
-            >{t("chat.newConversation", "新建会话")}</button>
+            >{t("chat.newConversation", "New conversation")}</button>
             <button
               onClick={() => setIdleReturnPrompt(false)}
               style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid var(--line)", background: "transparent", color: "var(--text)", cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" }}
-            >{t("common.dismiss", "忽略")}</button>
+            >{t("common.dismiss", "Dismiss")}</button>
           </div>
         )}
 
@@ -3800,7 +3800,7 @@ export function ChatView({
           <div className="border-t border-border/60 bg-muted/20 px-4 py-2.5 text-sm">
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
               <span style={{ opacity: 0.7 }}>
-                {t("chat.largePaste", "粘贴文本")} — {pastedLargeText.text.length} {t("common.chars", "字符")} / {pastedLargeText.lines} {t("common.lines", "行")}
+                {t("chat.largePaste", "Pasted text")} — {pastedLargeText.text.length} {t("common.chars", "chars")} / {pastedLargeText.lines} {t("common.lines", "lines")}
               </span>
               <span style={{ display: "flex", gap: 6 }}>
                 <button
@@ -3822,13 +3822,13 @@ export function ChatView({
                   }}
                   style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--primary)", color: "#fff", cursor: "pointer", fontSize: 12 }}
                 >
-                  {t("common.insert", "插入")}
+                  {t("common.insert", "Insert")}
                 </button>
                 <button
                   onClick={() => setPastedLargeText(null)}
                   style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid var(--line)", background: "transparent", color: "var(--text)", cursor: "pointer", fontSize: 12 }}
                 >
-                  {t("common.discard", "丢弃")}
+                  {t("common.discard", "Discard")}
                 </button>
               </span>
             </div>
@@ -3870,9 +3870,9 @@ export function ChatView({
               }}
             >
               <span>{orgFlowPanelOpen ? "▼" : "▶"}</span>
-              <span>{t("chat.orgFlowPanel", "组织协调状态")}</span>
+              <span>{t("chat.orgFlowPanel", "Org coordination status")}</span>
               <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.6 }}>
-                {orgNodeStates.size} {t("chat.orgNodes", "节点")}
+                {orgNodeStates.size} {t("chat.orgNodes", "nodes")}
               </span>
             </button>
             {orgFlowPanelOpen && (
@@ -3915,7 +3915,7 @@ export function ChatView({
           }}>
             <IconPlug size={16} />
             <span style={{ flex: 1 }}>
-              {t("chat.imChannelDisconnected", { channel: a.channel, defaultValue: `IM 通道 "${a.channel}" 已断开` })}
+              {t("chat.imChannelDisconnected", { channel: a.channel, defaultValue: `IM channel "${a.channel}" disconnected` })}
             </span>
             <button
               onClick={() => setImChannelAlerts((prev) => prev.filter((x) => x.channel !== a.channel))}
@@ -3936,7 +3936,7 @@ export function ChatView({
             border: "1px solid rgba(34,197,94,0.25)",
           }}>
             <IconCheckCircle size={14} />
-            <span>{t("chat.imChannelReconnected", { channel: a.channel, defaultValue: `IM 通道 "${a.channel}" 已重连` })}</span>
+            <span>{t("chat.imChannelReconnected", { channel: a.channel, defaultValue: `IM channel "${a.channel}" reconnected` })}</span>
           </div>
         ))}
 
@@ -4209,8 +4209,8 @@ export function ChatView({
                     <span style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 4 }}>
                       <IconBuilding size={13} />
                       {orgMode && selectedOrgId
-                        ? (() => { const o = orgList.find(x => x.id === selectedOrgId); return o ? o.name : "组织"; })()
-                        : "组织"}
+                        ? (() => { const o = orgList.find(x => x.id === selectedOrgId); return o ? o.name : "Org"; })()
+                        : "Org"}
                     </span>
                     {orgMode ? <IconX size={10} /> : <IconChevronDown size={12} />}
                   </button>
@@ -4245,7 +4245,7 @@ export function ChatView({
                 display: "flex", alignItems: "center", gap: 6,
               }}>
                 <IconBuilding size={12} />
-                {t("chat.orgTalkingWith", "正在与「{{org}}」{{node}}对话", { org: orgList.find(o => o.id === selectedOrgId)?.name ?? "", node: selectedOrgNodeId ? ` / ${selectedOrgNodeId}` : "" })}
+                {t("chat.orgTalkingWith", "Talking with \"{{org}}\"{{node}}", { org: orgList.find(o => o.id === selectedOrgId)?.name ?? "", node: selectedOrgNodeId ? ` / ${selectedOrgNodeId}` : "" })}
                 {selectedOrgNodeId && (
                   <button
                     onClick={() => setSelectedOrgNodeId(null)}
@@ -4254,23 +4254,23 @@ export function ChatView({
                       color: "var(--muted)", fontSize: 10, padding: "0 2px",
                       display: "flex", alignItems: "center",
                     }}
-                    title={t("chat.cancelNodeTarget", "取消节点指定，改为与整个组织对话")}
+                    title={t("chat.cancelNodeTarget", "Clear node target — talk to the whole org instead")}
                   >
                     <IconX size={10} />
                   </button>
                 )}
-                {orgCommandPending && <span style={{ opacity: 0.6 }}> — {t("chat.orgCoordinating", "组织协调中，进度实时显示 ↓")}</span>}
+                {orgCommandPending && <span style={{ opacity: 0.6 }}> — {t("chat.orgCoordinating", "Org coordinating — progress shown below ↓")}</span>}
               </div>
             )}
 
             {/* Textarea */}
             <textarea
               ref={inputRef}
-              aria-label={t("chat.inputAriaLabel", "输入消息")}
+              aria-label={t("chat.inputAriaLabel", "Message input")}
               onChange={handleInputChange}
               onKeyDown={handleInputKeyDown}
               onPaste={handlePaste}
-              placeholder={orgCommandPending ? t("chat.orgProcessing", "组织正在处理中...") : orgMode ? (selectedOrgNodeId ? t("chat.orgSendToNode", "输入指令发送给 {{node}}...", { node: selectedOrgNodeId }) : t("chat.orgSendToOrg", "输入指令发送给组织...")) : isCurrentConvStreaming ? `Enter ${t("chat.queueHint")}${t("chat.commaEscStop", "，Esc 停止")}` : chatMode === "plan" ? t("chat.planModePlaceholder", { enterSend: t("chat.enterSend") }) : chatMode === "ask" ? t("chat.askModePlaceholder") : `${t("chat.placeholder")}  · ${t("chat.enterSendSlash", "Enter 发送，Shift+Enter 换行，/ 命令")}`}
+              placeholder={orgCommandPending ? t("chat.orgProcessing", "Org is processing...") : orgMode ? (selectedOrgNodeId ? t("chat.orgSendToNode", "Type a command for {{node}}...", { node: selectedOrgNodeId }) : t("chat.orgSendToOrg", "Type a command for the org...")) : isCurrentConvStreaming ? `Enter ${t("chat.queueHint")}${t("chat.commaEscStop", ", Esc to stop")}` : chatMode === "plan" ? t("chat.planModePlaceholder", { enterSend: t("chat.enterSend") }) : chatMode === "ask" ? t("chat.askModePlaceholder") : `${t("chat.placeholder")}  · ${t("chat.enterSendSlash", "Enter to send, Shift+Enter for newline, / for commands")}`}
               rows={1}
               className="chatInputTextarea"
               onInput={(e) => {
@@ -4449,7 +4449,7 @@ export function ChatView({
                       data-slot="stop"
                       onClick={orgCommandPending ? undefined : handleCancelTask}
                       className={`chatInputSendBtn ${orgCommandPending ? "" : "chatInputStopBtn"}`}
-                      title={orgCommandPending ? "组织处理中..." : t("chat.stopGeneration")}
+                      title={orgCommandPending ? "Org processing..." : t("chat.stopGeneration")}
                       disabled={orgCommandPending}
                       style={orgCommandPending ? { opacity: 0.5, cursor: "wait" } : undefined}
                     >
@@ -4463,7 +4463,7 @@ export function ChatView({
                     className="chatInputSendBtn"
                     disabled={!hasInputText && pendingAttachments.length === 0}
                     title={t("chat.send")}
-                    aria-label={t("chat.send", "发送")}
+                    aria-label={t("chat.send", "Send")}
                   >
                     <IconSend size={14} />
                   </button>
@@ -4480,7 +4480,7 @@ export function ChatView({
         {typeof window !== "undefined" && window.innerWidth <= 768 && (
           <div className="sidebarOverlay" style={{ zIndex: 1000 }} onClick={() => setSidebarOpen(false)} />
         )}
-        <nav className={`convSidebar${typeof window !== "undefined" && window.innerWidth <= 768 ? " convSidebarMobileOpen" : ""}`} aria-label={t("chat.conversationList", "会话列表")}>
+        <nav className={`convSidebar${typeof window !== "undefined" && window.innerWidth <= 768 ? " convSidebarMobileOpen" : ""}`} aria-label={t("chat.conversationList", "Conversation list")}>
           <div className="convSidebarHeader">
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <div className="convSearchBox" style={{ flex: 1 }}>
@@ -4488,7 +4488,7 @@ export function ChatView({
                 <input
                   data-slot="search"
                   className="convSearchInput"
-                  placeholder={t("chat.searchConversations") || "搜索会话..."}
+                  placeholder={t("chat.searchConversations") || "Search conversations..."}
                   value={convSearchQuery}
                   onChange={(e) => setConvSearchQuery(e.target.value)}
                 />
@@ -4506,7 +4506,7 @@ export function ChatView({
                   setSidebarPinned(next);
                   try { localStorage.setItem("openakita_convSidebarPinned", String(next)); } catch {}
                 }}
-                title={sidebarPinned ? (t("chat.unpinSidebar") || "取消固定") : (t("chat.pinSidebar") || "固定会话列表")}
+                title={sidebarPinned ? (t("chat.unpinSidebar") || "Unpin sidebar") : (t("chat.pinSidebar") || "Pin conversation list")}
                 style={{ color: sidebarPinned ? "var(--brand, #2563eb)" : "var(--muted2, #999)" }}
               >
                 <IconPin size={14} />
@@ -4527,14 +4527,14 @@ export function ChatView({
 
             {agentConvs.length > 0 && (
               <>
-                <div className="convSectionLabel">{t("chat.conversationsLabel") || "会话"}</div>
+                <div className="convSectionLabel">{t("chat.conversationsLabel") || "Conversations"}</div>
                 {agentConvs.map(renderConvItem)}
               </>
             )}
 
             {filteredConversations.length === 0 && (
               <div className="convEmpty">
-                {convSearchQuery ? t("common.noResults") || "无结果" : t("common.noData")}
+                {convSearchQuery ? t("common.noResults") || "No results" : t("common.noData")}
               </div>
             )}
           </div>
@@ -4565,14 +4565,14 @@ export function ChatView({
       {shortcutsOpen && createPortal(
         <div style={{ position: "fixed", inset: 0, zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.4)" }} onClick={() => setShortcutsOpen(false)}>
           <div style={{ background: "var(--panel)", borderRadius: 16, padding: "24px 28px", minWidth: 340, maxWidth: 420, boxShadow: "0 24px 64px rgba(0,0,0,0.3)", border: "1px solid var(--line)" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>{t("chat.shortcuts", "键盘快捷键")}</div>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>{t("chat.shortcuts", "Keyboard shortcuts")}</div>
             {[
-              ["Enter", t("chat.shortcutSend", "发送消息")],
-              ["Shift + Enter", t("chat.shortcutNewline", "换行")],
-              ["Esc", t("chat.shortcutStop", "停止生成 / 取消")],
-              ["Ctrl + /", t("chat.shortcutPanel", "打开此面板")],
-              ["/", t("chat.shortcutSlash", "打开斜杠命令菜单")],
-              ["↑ / ↓", t("chat.shortcutNav", "命令菜单导航")],
+              ["Enter", t("chat.shortcutSend", "Send message")],
+              ["Shift + Enter", t("chat.shortcutNewline", "New line")],
+              ["Esc", t("chat.shortcutStop", "Stop generation / Cancel")],
+              ["Ctrl + /", t("chat.shortcutPanel", "Open this panel")],
+              ["/", t("chat.shortcutSlash", "Open slash command menu")],
+              ["↑ / ↓", t("chat.shortcutNav", "Navigate command menu")],
             ].map(([key, desc]) => (
               <div key={key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--line)" }}>
                 <span style={{ fontSize: 13, opacity: 0.7 }}>{desc}</span>
@@ -4581,7 +4581,7 @@ export function ChatView({
             ))}
             <div style={{ marginTop: 14, textAlign: "right" }}>
               <button onClick={() => setShortcutsOpen(false)} style={{ fontSize: 13, padding: "5px 14px", borderRadius: 6, border: "1px solid var(--line)", background: "var(--brand)", color: "#fff", cursor: "pointer" }}>
-                {t("common.close", "关闭")}
+                {t("common.close", "Close")}
               </button>
             </div>
           </div>

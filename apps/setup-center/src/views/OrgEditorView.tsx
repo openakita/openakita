@@ -1800,9 +1800,9 @@ export function OrgEditorView({
               />
             </div>
             <div style={{ padding: "16px 20px", borderTop: "1px solid var(--line)", flexShrink: 0 }}>
-              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{t("orgEditor.welcomeTitle", "欢迎使用组织编排")}</h3>
+              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{t("orgEditor.welcomeTitle", "Welcome to Org Editor")}</h3>
               <p style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.8 }}>
-                {t("orgEditor.welcomeDesc", "组织编排可以让多个 AI Agent 协同工作——你可以设计组织架构、定义节点角色、配置协作关系，然后一键启动，让整个 AI 团队自动运转。")}
+                {t("orgEditor.welcomeDesc", "Org Editor lets multiple AI Agents collaborate — design the org structure, define node roles, configure relationships, then launch with one click and let the entire AI team run automatically.")}
               </p>
             </div>
           </div>
@@ -2048,7 +2048,7 @@ export function OrgEditorView({
                 />
               ) : (
                 <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)", height: "100%" }}>
-                  请先选择一个组织
+                  Please select an org first
                 </div>
               )}
             </div>
@@ -2104,31 +2104,31 @@ export function OrgEditorView({
               {/* Canvas-specific toolbar */}
               <Panel position="top-left">
                 <div className="org-canvas-toolbar">
-                  <button className="org-cvs-btn" onClick={() => setShowNewNodeForm(true)} title="添加节点">
-                    <IconPlus size={13} /> 节点
+                  <button className="org-cvs-btn" onClick={() => setShowNewNodeForm(true)} title="Add node">
+                    <IconPlus size={13} /> Node
                   </button>
-                  <button className="org-cvs-btn" title="自动布局" onClick={() => { setNodes(computeTreeLayout(nodes, edges)); }}>
-                    <IconSitemap size={13} /> 布局
+                  <button className="org-cvs-btn" title="Auto-layout" onClick={() => { setNodes(computeTreeLayout(nodes, edges)); }}>
+                    <IconSitemap size={13} /> Layout
                   </button>
                   <button
                     className={`org-cvs-btn${!layoutLocked ? " org-cvs-btn--active" : ""}`}
                     onClick={() => setLayoutLocked((v) => !v)}
-                    title={layoutLocked ? "解锁拖拽" : "锁定布局，防止误拖拽"}
+                    title={layoutLocked ? "Unlock dragging" : "Lock layout to prevent accidental drags"}
                   >
-                    <IconSitemap size={13} /> {layoutLocked ? "拖拽关" : "拖拽开"}
+                    <IconSitemap size={13} /> {layoutLocked ? "Drag off" : "Drag on"}
                   </button>
                   {selectedNodeId && (
-                    <button className="org-cvs-btn org-cvs-btn--danger" onClick={handleDeleteNode} title="删除选中节点">
+                    <button className="org-cvs-btn org-cvs-btn--danger" onClick={handleDeleteNode} title="Delete selected node">
                       <IconTrash size={13} />
                     </button>
                   )}
                 </div>
                 <div className="org-edge-legend">
                   {([
-                    { type: "hierarchy", label: "上下级", dash: false },
-                    { type: "collaborate", label: "协作", dash: true },
-                    { type: "escalate", label: "上报", dash: false },
-                    { type: "consult", label: "咨询", dash: false },
+                    { type: "hierarchy", label: "Hierarchy", dash: false },
+                    { type: "collaborate", label: "Collaborate", dash: true },
+                    { type: "escalate", label: "Escalate", dash: false },
+                    { type: "consult", label: "Consult", dash: false },
                   ] as const).map((e) => (
                     <span key={e.type} className="org-edge-legend-item">
                       <span
@@ -2143,13 +2143,13 @@ export function OrgEditorView({
                   ))}
                 </div>
                 <div className="org-connect-hint">
-                  连线方式：拖拽或点击节点上下圆点
+                  Connect: drag or click the handle dots on each node
                 </div>
               </Panel>
               {saveStatus !== "idle" && (
                 <Panel position="bottom-center">
                   <div className={`org-save-indicator org-save-indicator--${saveStatus}`}>
-                    {saveStatus === "saving" ? "保存中..." : saveStatus === "saved" ? <><IconCheck size={12} /> 已自动保存~</> : <span onClick={() => doSaveRef.current()} style={{ cursor: "pointer" }}>保存失败 · 重试</span>}
+                    {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? <><IconCheck size={12} /> Auto-saved</> : <span onClick={() => doSaveRef.current()} style={{ cursor: "pointer" }}>Save failed · Retry</span>}
                   </div>
                 </Panel>
               )}
@@ -2165,40 +2165,40 @@ export function OrgEditorView({
                 {contextMenu.type === "node" && contextMenu.id && (<>
                   {liveMode && selectedOrgId && (
                     <button onClick={() => { setSelectedNodeId(contextMenu.id!); setSelectedEdgeId(null); setShowRightPanel(true); setShowNodeChat(true); setContextMenu(null); }}>
-                      <span className="org-ctx-icon"><IconMessageCircle size={14} /></span>与该节点对话
+                      <span className="org-ctx-icon"><IconMessageCircle size={14} /></span>Chat with node
                     </button>
                   )}
                   {liveMode && selectedOrgId && (nodes.find(n => n.id === contextMenu.id)?.data as any)?.status === "frozen" && (
                     <button onClick={() => ctxUnfreezeNode(contextMenu.id!)}>
-                      <span className="org-ctx-icon"><IconUnlock size={14} /></span>解除冻结
+                      <span className="org-ctx-icon"><IconUnlock size={14} /></span>Unfreeze
                     </button>
                   )}
                   <button onClick={() => ctxCopyNode(contextMenu.id!)}>
-                    <span className="org-ctx-icon"><IconClipboard size={14} /></span>复制节点
+                    <span className="org-ctx-icon"><IconClipboard size={14} /></span>Copy node
                   </button>
                   <button onClick={() => ctxDeleteNode(contextMenu.id!)}>
-                    <span className="org-ctx-icon" style={{ color: "#e74c3c" }}><IconTrash size={14} /></span>删除节点
+                    <span className="org-ctx-icon" style={{ color: "#e74c3c" }}><IconTrash size={14} /></span>Delete node
                   </button>
                 </>)}
                 {contextMenu.type === "edge" && contextMenu.id && (<>
                   <button onClick={() => ctxReverseEdge(contextMenu.id!)}>
-                    <span className="org-ctx-icon"><IconRefresh size={14} /></span>反转方向
+                    <span className="org-ctx-icon"><IconRefresh size={14} /></span>Reverse direction
                   </button>
                   <button onClick={() => ctxDeleteEdge(contextMenu.id!)}>
-                    <span className="org-ctx-icon" style={{ color: "#e74c3c" }}><IconTrash size={14} /></span>删除连线
+                    <span className="org-ctx-icon" style={{ color: "#e74c3c" }}><IconTrash size={14} /></span>Delete edge
                   </button>
                 </>)}
                 {contextMenu.type === "pane" && (<>
                   <button onClick={() => ctxAddNodeAt()}>
-                    <span className="org-ctx-icon"><IconPlus size={14} /></span>添加节点
+                    <span className="org-ctx-icon"><IconPlus size={14} /></span>Add node
                   </button>
                   {clipboardNode && (
                     <button onClick={() => ctxPasteNode()}>
-                      <span className="org-ctx-icon"><IconPin size={14} /></span>粘贴节点
+                      <span className="org-ctx-icon"><IconPin size={14} /></span>Paste node
                     </button>
                   )}
                   <button onClick={() => { setNodes(computeTreeLayout(nodes, edges)); setContextMenu(null); }}>
-                    <span className="org-ctx-icon"><IconShuffle size={14} /></span>自动布局
+                    <span className="org-ctx-icon"><IconShuffle size={14} /></span>Auto-layout
                   </button>
                   <button
                     onClick={() => {
@@ -2209,7 +2209,7 @@ export function OrgEditorView({
                     <span className="org-ctx-icon" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
                       <Maximize className="size-3.5" strokeWidth={2} />
                     </span>
-                    适应视图
+                    Fit view
                   </button>
                 </>)}
               </div>,
@@ -2226,13 +2226,13 @@ export function OrgEditorView({
                 return (nd?.data as any)?.role_title || id?.slice(0, 6) || "";
               };
               const typeMeta: Record<string, { icon: string; label: string; tip: string; cls: string }> = {
-                task_delegated:  { icon: "↗", label: "分配", tip: "分配任务给下级节点",       cls: "feed-delegated" },
-                task_delivered:  { icon: "↙", label: "交付", tip: "向上级交付任务成果",       cls: "feed-delivered" },
-                task_accepted:   { icon: "✓", label: "通过", tip: "上级验收通过",             cls: "feed-accepted" },
-                task_rejected:   { icon: "✗", label: "打回", tip: "上级打回，需要重新处理",   cls: "feed-rejected" },
-                task_timeout:    { icon: "⏱", label: "超时", tip: "任务执行超时",             cls: "feed-timeout" },
-                task_completed:  { icon: "✓", label: "完成", tip: "节点执行完成",             cls: "feed-completed" },
-                node_activated:  { icon: "▶", label: "执行", tip: "节点开始执行任务",         cls: "feed-activated" },
+                task_delegated:  { icon: "↗", label: "Delegated", tip: "Task delegated to subordinate",   cls: "feed-delegated" },
+                task_delivered:  { icon: "↙", label: "Delivered", tip: "Result delivered to superior",    cls: "feed-delivered" },
+                task_accepted:   { icon: "✓", label: "Accepted",  tip: "Accepted by superior",            cls: "feed-accepted" },
+                task_rejected:   { icon: "✗", label: "Rejected",  tip: "Rejected — needs rework",         cls: "feed-rejected" },
+                task_timeout:    { icon: "⏱", label: "Timeout",   tip: "Task execution timed out",        cls: "feed-timeout" },
+                task_completed:  { icon: "✓", label: "Done",      tip: "Node finished execution",         cls: "feed-completed" },
+                node_activated:  { icon: "▶", label: "Running",   tip: "Node started executing task",     cls: "feed-activated" },
               };
               const defaultMeta = { icon: "•", label: "", tip: "", cls: "" };
 
@@ -2241,7 +2241,7 @@ export function OrgEditorView({
                 if (n.status !== "busy" && !n.current_task_title) continue;
                 const pp = n.plan_progress || {};
                 const pct = pp.total > 0 ? Math.round((pp.completed / pp.total) * 100) : -1;
-                const rawTask = n.current_task_title || (n.current_task ? String(n.current_task) : "执行中…");
+                const rawTask = n.current_task_title || (n.current_task ? String(n.current_task) : "Running…");
                 const taskDesc = humanizeTask(rawTask, nodes);
                 busyLines.push({ key: n.id, node: n.role_title || nodeLabel(n.id), text: taskDesc, pct });
               }
@@ -2322,7 +2322,7 @@ export function OrgEditorView({
                     <div key={`an-${i}`} className="org-feed-item feed-warn">
                       <span className="org-feed-badge feed-warn">
                         <span className="org-feed-badge-icon">!</span>
-                        异常
+                        Anomaly
                       </span>
                       <span className="org-feed-who">{a.role_title || nodeLabel(a.node_id)}</span>
                       <Tooltip>
@@ -2347,7 +2347,7 @@ export function OrgEditorView({
               <button
                 onClick={() => setShowBlackboardPanel(v => !v)}
                 className={`org-bb-fab${showBlackboardPanel ? " org-bb-fab--active" : ""}`}
-                title="组织黑板"
+                title="Org blackboard"
               >
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -2355,17 +2355,17 @@ export function OrgEditorView({
                   <line x1="8" y1="12" x2="14" y2="12" />
                   <line x1="8" y1="16" x2="12" y2="16" />
                 </svg>
-                <span className="org-bb-fab-label">黑板</span>
+                <span className="org-bb-fab-label">Blackboard</span>
               </button>
               <button
                 onClick={() => setActiveDrawer("chat")}
                 className="org-chat-fab"
-                title="打开组织指挥台"
+                title="Open org command center"
               >
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                 </svg>
-                <span className="org-chat-fab-label">指挥台</span>
+                <span className="org-chat-fab-label">Command</span>
               </button>
             </div>
           )}
@@ -2384,7 +2384,7 @@ export function OrgEditorView({
                   nodeId={null}
                   apiBaseUrl={apiBaseUrl}
                   showHeader
-                  title={`${currentOrg?.name || "组织"} · 指挥台`}
+                  title={`${currentOrg?.name || "Org"} · Command Center`}
                   onClose={() => setActiveDrawer(null)}
                   nodeNames={nodeNameMap}
                 />
@@ -3007,7 +3007,7 @@ export function OrgEditorView({
             display: "flex", justifyContent: "space-between", alignItems: "center",
           }}>
             <div style={{ fontWeight: 600, fontSize: 13 }}>
-              对话 · {selectedNode.role_title}
+              Chat · {selectedNode.role_title}
             </div>
           </div>
           <div style={{ flex: 1, minHeight: 0 }}>
@@ -3056,7 +3056,7 @@ export function OrgEditorView({
             <div>
               <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{selectedNode.role_title}</div>
               <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                {selectedNode.department || "未分配部门"}
+                {selectedNode.department || "No department assigned"}
               </div>
             </div>
             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -3072,7 +3072,7 @@ export function OrgEditorView({
                     color: "#fff", border: "none", borderRadius: 8,
                     boxShadow: showNodeChat ? "inset 0 1px 3px rgba(0,0,0,0.3)" : undefined,
                   }}
-                  title={showNodeChat ? "收起对话面板" : "展开对话面板"}
+                  title={showNodeChat ? "Collapse chat panel" : "Expand chat panel"}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
@@ -3097,13 +3097,13 @@ export function OrgEditorView({
               className="grid w-full grid-cols-3"
             >
               <ToggleGroupItem value="overview" className="h-8 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
-                概览
+                Overview
               </ToggleGroupItem>
               <ToggleGroupItem value="identity" className="h-8 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
-                身份
+                Identity
               </ToggleGroupItem>
               <ToggleGroupItem value="capabilities" className="h-8 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
-                能力
+                Capabilities
               </ToggleGroupItem>
             </ToggleGroup>
           </div>
@@ -3120,7 +3120,7 @@ export function OrgEditorView({
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
               </svg>
-              <span>运行中，配置已锁定</span>
+              <span>Running — config is locked</span>
             </div>
           )}
 
@@ -3143,25 +3143,25 @@ export function OrgEditorView({
                   }} />
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 600 }}>
-                      {orgStats.health === "healthy" ? "运行正常" : orgStats.health === "critical" ? "存在异常" : orgStats.health === "warning" ? "需要关注" : "有待观察"}
+                      {orgStats.health === "healthy" ? "Running normally" : orgStats.health === "critical" ? "Issues detected" : orgStats.health === "warning" ? "Needs attention" : "Under observation"}
                     </div>
                     <div style={{ fontSize: 10, color: "#9ca3af" }}>
-                      {orgStats.anomalies?.length > 0 ? `${orgStats.anomalies.length} 个告警` : "所有节点状态良好"}
+                      {orgStats.anomalies?.length > 0 ? `${orgStats.anomalies.length} alert(s)` : "All nodes healthy"}
                     </div>
                   </div>
                 </div>
 
                 {/* KPI grid */}
                 <div className="card" style={{ padding: 12 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>运行指标</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Runtime metrics</div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
                     {[
-                      { label: "运行时长", value: orgStats.uptime_s ? (orgStats.uptime_s >= 3600 ? `${Math.floor(orgStats.uptime_s / 3600)}h${Math.floor((orgStats.uptime_s % 3600) / 60)}m` : `${Math.round(orgStats.uptime_s / 60)}m`) : "-", color: "var(--primary)" },
-                      { label: "完成任务", value: orgStats.total_tasks_completed ?? 0, color: "#22c55e" },
-                      { label: "消息交换", value: orgStats.total_messages_exchanged ?? 0, color: "#3b82f6" },
-                      { label: "待处理", value: orgStats.pending_messages ?? 0, color: orgStats.pending_messages > 5 ? "#f59e0b" : "#6b7280" },
-                      { label: "未读消息", value: orgStats.unread_inbox ?? 0, color: orgStats.unread_inbox > 0 ? "#dc2626" : "#6b7280" },
-                      { label: "待审批", value: orgStats.pending_approvals ?? 0, color: orgStats.pending_approvals > 0 ? "#7c3aed" : "#6b7280" },
+                      { label: "Uptime", value: orgStats.uptime_s ? (orgStats.uptime_s >= 3600 ? `${Math.floor(orgStats.uptime_s / 3600)}h${Math.floor((orgStats.uptime_s % 3600) / 60)}m` : `${Math.round(orgStats.uptime_s / 60)}m`) : "-", color: "var(--primary)" },
+                      { label: "Tasks done", value: orgStats.total_tasks_completed ?? 0, color: "#22c55e" },
+                      { label: "Messages", value: orgStats.total_messages_exchanged ?? 0, color: "#3b82f6" },
+                      { label: "Pending", value: orgStats.pending_messages ?? 0, color: orgStats.pending_messages > 5 ? "#f59e0b" : "#6b7280" },
+                      { label: "Unread", value: orgStats.unread_inbox ?? 0, color: orgStats.unread_inbox > 0 ? "#dc2626" : "#6b7280" },
+                      { label: "Approvals", value: orgStats.pending_approvals ?? 0, color: orgStats.pending_approvals > 0 ? "#7c3aed" : "#6b7280" },
                     ].map((item) => (
                       <div key={item.label} style={{
                         padding: 6, background: "var(--bg-secondary)",
@@ -3178,7 +3178,7 @@ export function OrgEditorView({
                 {orgStats.anomalies?.length > 0 && (
                   <div className="card" style={{ padding: 12 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "#f59e0b" }}>
-                      告警 ({orgStats.anomalies.length})
+                      Alerts ({orgStats.anomalies.length})
                     </div>
                     <div style={{ maxHeight: 150, overflowY: "auto" }}>
                       {orgStats.anomalies.map((a: any, i: number) => (
@@ -3192,7 +3192,7 @@ export function OrgEditorView({
                             color: a.type === "error" ? "#dc2626" : a.type === "stuck" ? "#b45309" : "#2563eb",
                             fontWeight: 500,
                           }}>
-                            {a.type === "error" ? "错误" : a.type === "stuck" ? "卡住" : "积压"}
+                            {a.type === "error" ? "Error" : a.type === "stuck" ? "Stuck" : "Backlog"}
                           </span>
                           <div>
                             <span style={{ fontWeight: 500 }}>{a.role_title}</span>
@@ -3206,7 +3206,7 @@ export function OrgEditorView({
 
                 {/* Node load table */}
                 <div className="card" style={{ padding: 12 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>节点负荷</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Node load</div>
                   <div style={{ maxHeight: 200, overflowY: "auto" }}>
                     {(orgStats.per_node || []).map((nd: any) => {
                       const st = nd.status || "idle";
@@ -3256,7 +3256,7 @@ export function OrgEditorView({
                 {/* Recent blackboard changes */}
                 {orgStats.recent_blackboard?.length > 0 && (
                   <div className="card" style={{ padding: 12 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>黑板最新动态</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Blackboard recent activity</div>
                     <div style={{ maxHeight: 160, overflowY: "auto" }}>
                       {orgStats.recent_blackboard.map((bb: any, i: number) => {
                         const tc = BB_TYPE_COLORS[bb.memory_type] || "#6b7280";
@@ -3338,7 +3338,7 @@ export function OrgEditorView({
 
             {propsTab === "overview" && (
               <fieldset disabled={!!liveMode} style={{ border: "none", margin: 0, padding: 0, minWidth: 0, opacity: liveMode ? 0.5 : 1, display: "flex", flexDirection: "column", gap: 10 }}>
-                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>头像</label>
+                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>Avatar</label>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                   {AVATAR_PRESETS.map((av) => {
                     const isSel = selectedNode.avatar === av.id;
@@ -3361,7 +3361,7 @@ export function OrgEditorView({
                   })}
                   {/* Upload custom avatar */}
                   <label
-                    title={liveMode ? "运行中不可修改" : "上传自定义头像"}
+                    title={liveMode ? "Cannot modify while running" : "Upload custom avatar"}
                     style={{
                       width: 36, height: 36, borderRadius: 8,
                       border: "2px dashed var(--muted, #9ca3af)",
@@ -3384,7 +3384,7 @@ export function OrgEditorView({
                         const file = e.target.files?.[0];
                         if (!file) return;
                         if (file.size > 2 * 1024 * 1024) {
-                          alert("图片不能超过 2MB");
+                          alert("Image must be smaller than 2 MB");
                           return;
                         }
                         const form = new FormData();
@@ -3399,10 +3399,10 @@ export function OrgEditorView({
                             updateNodeData("avatar", data.url);
                           } else {
                             const err = await res.text();
-                            alert(`上传失败: ${err}`);
+                            alert(`Upload failed: ${err}`);
                           }
                         } catch (err) {
-                          alert(`上传失败: ${err}`);
+                          alert(`Upload failed: ${err}`);
                         }
                         e.target.value = "";
                       }}
@@ -3413,26 +3413,26 @@ export function OrgEditorView({
                 {selectedNode.avatar && (selectedNode.avatar.startsWith("/") || selectedNode.avatar.startsWith("http")) && (
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <OrgAvatar avatarId={selectedNode.avatar} size={48} />
-                    <span style={{ fontSize: 11, color: "var(--muted)" }}>自定义头像</span>
+                    <span style={{ fontSize: 11, color: "var(--muted)" }}>Custom avatar</span>
                     <button
                       className="btn btn-sm"
                       style={{ fontSize: 11, padding: "2px 6px" }}
                       onClick={() => updateNodeData("avatar", null)}
                     >
-                      移除
+                      Remove
                     </button>
                   </div>
                 )}
-                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>岗位名称</label>
+                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>Role title</label>
                 <input
                   className="input"
                   value={selectedNode.role_title}
                   onChange={(e) => updateNodeData("role_title", e.target.value)}
-                  placeholder="如：技术总监、前端工程师、QA 负责人"
+                  placeholder="e.g. CTO, Frontend Engineer, QA Lead"
                   style={{ fontSize: 13 }}
                 />
-                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>Agent 来源
-                  <span style={{ fontWeight: 400, marginLeft: 6 }}>— 决定节点的专业能力</span>
+                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>Agent source
+                  <span style={{ fontWeight: 400, marginLeft: 6 }}>— determines the node's expertise</span>
                 </label>
                 <div style={{ display: "flex", gap: 6 }}>
                   <select
@@ -3441,13 +3441,13 @@ export function OrgEditorView({
                     onChange={(e) => updateNodeData("agent_source", e.target.value === "local" ? "local" : `ref:${selectedNode.agent_profile_id || ""}`)}
                     style={{ fontSize: 13, flex: 1 }}
                   >
-                    <option value="local">本地专属</option>
-                    <option value="ref">引用已有 Agent</option>
+                    <option value="local">Local (dedicated)</option>
+                    <option value="ref">Reference existing Agent</option>
                   </select>
                 </div>
                 {selectedNode.agent_source.startsWith("ref:") && (
                   <>
-                    <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", marginTop: -4 }}>选择 Agent</label>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", marginTop: -4 }}>Select Agent</label>
                     <div style={{ position: "relative" }}>
                       <div
                         className="input"
@@ -3460,7 +3460,7 @@ export function OrgEditorView({
                         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                           {(() => {
                             const ap = agentProfiles.find(p => p.id === selectedNode.agent_profile_id);
-                            if (!ap) return "点击选择...";
+                            if (!ap) return "Click to select...";
                             return (
                               <>
                                 {ap.icon ? <span style={{ fontSize: 16, flexShrink: 0 }}>{ap.icon}</span> : <IconBot size={16} style={{ flexShrink: 0 }} />}
@@ -3485,7 +3485,7 @@ export function OrgEditorView({
                               className="input"
                               value={agentProfileSearch}
                               onChange={(e) => setAgentProfileSearch(e.target.value)}
-                              placeholder="搜索 Agent..."
+                              placeholder="Search agents..."
                               autoFocus
                               style={{ fontSize: 12, width: "100%" }}
                               onClick={(e) => e.stopPropagation()}
@@ -3494,7 +3494,7 @@ export function OrgEditorView({
                           <div style={{ overflowY: "auto", flex: 1 }}>
                             {agentProfiles.length === 0 ? (
                               <div style={{ padding: 12, color: "var(--muted)", textAlign: "center", fontSize: 11 }}>
-                                暂无可用 Agent，请先在 Agent 管理页创建
+                                No agents available — create one in the Agent Manager first
                               </div>
                             ) : (
                               agentProfiles
@@ -3536,37 +3536,37 @@ export function OrgEditorView({
                   </>
                 )}
                 <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>
-                  岗位目标
-                  <span style={{ fontWeight: 400, marginLeft: 6 }}>— 这个岗位要达成什么</span>
+                  Role goal
+                  <span style={{ fontWeight: 400, marginLeft: 6 }}>— what this role needs to achieve</span>
                 </label>
                 <textarea
                   className="input"
                   value={selectedNode.role_goal}
                   onChange={(e) => updateNodeData("role_goal", e.target.value)}
                   rows={2}
-                  placeholder="如：负责整体技术架构设计，把控代码质量，推进技术选型和落地"
+                  placeholder="e.g. Own the overall technical architecture, uphold code quality, drive technology choices"
                   style={{ fontSize: 13, resize: "vertical" }}
                 />
                 <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>
-                  角色背景
-                  <span style={{ fontWeight: 400, marginLeft: 6 }}>— 专业经验和能力特长</span>
+                  Role backstory
+                  <span style={{ fontWeight: 400, marginLeft: 6 }}>— professional background and strengths</span>
                 </label>
                 <textarea
                   className="input"
                   value={selectedNode.role_backstory}
                   onChange={(e) => updateNodeData("role_backstory", e.target.value)}
                   rows={3}
-                  placeholder="如：10年全栈开发经验，精通 Python/TypeScript，熟悉微服务架构，曾主导多个大型项目的技术选型"
+                  placeholder="e.g. 10 years of full-stack experience, expert in Python/TypeScript, microservices architecture"
                   style={{ fontSize: 13, resize: "vertical" }}
                 />
-                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>部门</label>
+                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>Department</label>
                 <input
                   className="input"
                   value={selectedNode.department}
                   onChange={(e) => updateNodeData("department", e.target.value)}
                   style={{ fontSize: 13 }}
                 />
-                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>层级</label>
+                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>Level</label>
                 <input
                   className="input"
                   type="number"
@@ -3586,20 +3586,20 @@ export function OrgEditorView({
                   background: "var(--card-bg, #fff)",
                 }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", marginBottom: 6 }}>
-                    提示词构成说明
+                    Prompt composition
                   </div>
                   <div style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.7 }}>
-                    <div>系统会自动将以下信息拼装为完整的组织 Agent 提示词：</div>
+                    <div>The system assembles the following into a full org-agent prompt:</div>
                     <div style={{ marginTop: 4, paddingLeft: 8 }}>
-                      <div>1. <b>精简身份声明</b> — 角色定位 + 协作原则（自动生成）</div>
-                      <div>2. <b>角色描述</b> — 来自 ROLE.md / 自定义提示词 / 岗位信息</div>
-                      <div>3. <b>组织上下文</b> — 核心业务、架构、上下级关系、权限、黑板</div>
-                      <div>4. <b>运行环境</b> — 时间、OS、Shell 等（自动注入）</div>
-                      <div>5. <b>工具清单</b> — org_* 工具 + 节点配置的外部工具</div>
-                      <div>6. <b>行为准则 &amp; 策略红线</b> — 协作规则、交付流程</div>
+                      <div>1. <b>Compact identity declaration</b> — role positioning + collaboration principles (auto-generated)</div>
+                      <div>2. <b>Role description</b> — from ROLE.md / custom prompt / role fields</div>
+                      <div>3. <b>Org context</b> — core business, structure, hierarchy, permissions, blackboard</div>
+                      <div>4. <b>Runtime environment</b> — time, OS, shell, etc. (auto-injected)</div>
+                      <div>5. <b>Tool list</b> — org_* tools + node's external tools</div>
+                      <div>6. <b>Behavior guidelines &amp; policy limits</b> — collaboration rules, delivery workflow</div>
                     </div>
                     <div style={{ marginTop: 6 }}>
-                      角色描述优先级：ROLE.md 文件 &gt; 自定义提示词 &gt; AgentProfile &gt; 自动生成
+                      Role description priority: ROLE.md &gt; custom prompt &gt; AgentProfile &gt; auto-generated
                     </div>
                   </div>
                 </div>
@@ -3611,18 +3611,18 @@ export function OrgEditorView({
                 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                     <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>
-                      自定义提示词
+                      Custom prompt
                     </div>
                     <button
                       className="btnSmall"
                       style={{ fontSize: 10, padding: "2px 8px" }}
                       onClick={() => {
-                        if (selectedNode.custom_prompt && !confirm("将覆盖当前自定义提示词，确认？")) return;
-                        const tpl = `你是一位经验丰富的${selectedNode.role_title || "专业人员"}。\n\n## 核心职责\n- ${selectedNode.role_goal || "待定义"}\n\n## 工作风格\n- 沟通简洁高效，结论先行\n- 重要决策写入组织黑板\n- 主动向上级汇报进展\n\n## 专业背景\n${selectedNode.role_backstory || "请在此描述角色的专业背景、经验和能力特长"}`;
+                        if (selectedNode.custom_prompt && !confirm("This will overwrite the current custom prompt. Confirm?")) return;
+                        const tpl = `You are an experienced ${selectedNode.role_title || "professional"}.\n\n## Core responsibilities\n- ${selectedNode.role_goal || "TBD"}\n\n## Work style\n- Communicate concisely; lead with conclusions\n- Record important decisions on the org blackboard\n- Proactively report progress to superiors\n\n## Professional background\n${selectedNode.role_backstory || "Describe the role's professional background, experience, and strengths here"}`;
                         updateNodeData("custom_prompt", tpl);
                       }}
                     >
-                      填充模板
+                      Fill template
                     </button>
                   </div>
                   <textarea
@@ -3630,13 +3630,13 @@ export function OrgEditorView({
                     value={selectedNode.custom_prompt}
                     onChange={(e) => updateNodeData("custom_prompt", e.target.value)}
                     rows={10}
-                    placeholder={"可选。不填写时系统将根据岗位名称、目标、背景自动生成角色描述。\n\n填写后将替代自动生成的内容，可更精细地控制角色行为。\n\n示例：\n你是一位资深前端工程师，擅长 React/Vue...\n\n## 核心职责\n- 负责前端架构设计和代码审查\n- 协调前端团队的开发进度"}
+                    placeholder={"Optional. If left blank, the system will auto-generate a role description from the role title, goal, and backstory.\n\nWhen filled in, this replaces the auto-generated content and gives you fine-grained control over the role's behaviour.\n\nExample:\nYou are a senior frontend engineer, skilled in React/Vue...\n\n## Core responsibilities\n- Own frontend architecture and code review\n- Coordinate frontend team delivery"}
                     style={{ fontSize: 12, resize: "vertical", fontFamily: "monospace", lineHeight: 1.5, minHeight: 120 }}
                   />
                   <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 4 }}>
                     {selectedNode.custom_prompt
-                      ? `已配置自定义提示词（${selectedNode.custom_prompt.length} 字符）`
-                      : `未配置。系统将自动生成："你是${selectedNode.role_title || "..."}。目标：${selectedNode.role_goal ? selectedNode.role_goal.slice(0, 20) + "..." : "..."}"`}
+                      ? `Custom prompt configured (${selectedNode.custom_prompt.length} characters)`
+                      : `Not configured. System will auto-generate: "You are ${selectedNode.role_title || "..."}. Goal: ${selectedNode.role_goal ? selectedNode.role_goal.slice(0, 20) + "..." : "..."}"`}
                   </div>
                 </div>
 
@@ -3647,7 +3647,7 @@ export function OrgEditorView({
                 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                     <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>
-                      提示词预览
+                      Prompt preview
                     </div>
                     <div style={{ display: "flex", gap: 4 }}>
                       {fullPromptPreview !== null && (
@@ -3656,7 +3656,7 @@ export function OrgEditorView({
                           style={{ fontSize: 10, padding: "2px 8px" }}
                           onClick={() => setFullPromptPreview(null)}
                         >
-                          简略
+                          Compact
                         </button>
                       )}
                       <button
@@ -3672,15 +3672,15 @@ export function OrgEditorView({
                               const data = await resp.json();
                               setFullPromptPreview(data.full_prompt);
                             } else {
-                              setFullPromptPreview("(获取失败，请先保存组织配置)");
+                              setFullPromptPreview("(Failed to fetch — please save the org config first)");
                             }
                           } catch {
-                            setFullPromptPreview("(获取失败)");
+                            setFullPromptPreview("(Fetch failed)");
                           }
                           setPromptPreviewLoading(false);
                         }}
                       >
-                        {promptPreviewLoading ? "..." : "完整预览"}
+                        {promptPreviewLoading ? "..." : "Full preview"}
                       </button>
                     </div>
                   </div>
@@ -3694,16 +3694,16 @@ export function OrgEditorView({
                       ? fullPromptPreview
                       : selectedNode.custom_prompt
                         ? selectedNode.custom_prompt
-                        : `你是${selectedNode.role_title || "(未设置岗位名称)"}。${selectedNode.role_goal ? `目标：${selectedNode.role_goal}。` : ""}${selectedNode.role_backstory ? `背景：${selectedNode.role_backstory}。` : ""}`}
+                        : `You are ${selectedNode.role_title || "(no role title set)"}. ${selectedNode.role_goal ? `Goal: ${selectedNode.role_goal}. ` : ""}${selectedNode.role_backstory ? `Background: ${selectedNode.role_backstory}.` : ""}`}
                   </div>
                   {fullPromptPreview === null && (
                     <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 6 }}>
-                      以上为角色描述部分。点击「完整预览」查看含组织架构、关系、权限等的完整提示词。
+                      This shows the role-description section. Click "Full preview" to see the complete prompt including org structure, relationships, permissions, etc.
                     </div>
                   )}
                   {fullPromptPreview !== null && (
                     <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 6 }}>
-                      以上为组织上下文提示词（{fullPromptPreview.length} 字符）。实际运行时还会追加运行环境、工具清单、行为准则等（约 1500-2500 字符）。
+                      This is the org-context prompt ({fullPromptPreview.length} characters). At runtime, runtime environment, tool list, behavior guidelines, etc. are appended (~1500-2500 characters).
                     </div>
                   )}
                 </div>
@@ -3714,16 +3714,15 @@ export function OrgEditorView({
                   background: "var(--card-bg, #fff)",
                 }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", marginBottom: 4 }}>
-                    高级：身份文件
+                    Advanced: identity files
                   </div>
                   <div style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.6 }}>
-                    如需更精细的角色控制，可在组织目录下创建节点专属身份文件：
+                    For finer-grained role control, create node-specific identity files under the org directory:
                     <div style={{ fontFamily: "monospace", fontSize: 10, marginTop: 4, paddingLeft: 8 }}>
-                      <div>nodes/{selectedNode.id}/identity/ROLE.md — 角色定义（最高优先级）</div>
+                      <div>nodes/{selectedNode.id}/identity/ROLE.md — role definition (highest priority)</div>
                     </div>
                     <div style={{ fontSize: 10, color: "var(--warning, #b8860b)", marginTop: 6 }}>
-                      注意：组织模式下使用精简协作身份，不注入 SOUL.md / AGENT.md
-                      的完整内容（其「单打独斗」哲学与组织协作冲突）。ROLE.md 正常生效。
+                      Note: org mode uses a compact collaborative identity — SOUL.md / AGENT.md full content is not injected (their "solo" philosophy conflicts with org collaboration). ROLE.md is applied normally.
                     </div>
                   </div>
                 </div>
@@ -3736,9 +3735,9 @@ export function OrgEditorView({
                 <Card className="gap-0 overflow-hidden py-0">
                   <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
                     <div className="min-w-0">
-                      <CardTitle className="text-sm">执行工具</CardTitle>
+                      <CardTitle className="text-sm">Execution tools</CardTitle>
                       <CardDescription className="mt-1 text-[11px]">
-                        未选择时只能使用组织协作工具
+                        Without selection, only org collaboration tools are available
                       </CardDescription>
                     </div>
                     <Button
@@ -3760,19 +3759,19 @@ export function OrgEditorView({
                         else if (title.includes("devops")) preset = ["filesystem", "memory"];
                         updateNodeData("external_tools", preset);
                       }}
-                      title="根据岗位角色自动推荐工具"
+                      title="Auto-recommend tools based on role"
                     >
-                      自动推荐
+                      Auto-recommend
                     </Button>
                   </div>
                   <CardContent className="grid grid-cols-2 gap-2 px-3 py-3">
                     {[
-                      { key: "research", label: "搜索" },
-                      { key: "planning", label: "计划" },
-                      { key: "filesystem", label: "文件/命令" },
-                      { key: "memory", label: "记忆" },
-                      { key: "browser", label: "浏览器" },
-                      { key: "communication", label: "通信" },
+                      { key: "research", label: "Search" },
+                      { key: "planning", label: "Planning" },
+                      { key: "filesystem", label: "Files/Shell" },
+                      { key: "memory", label: "Memory" },
+                      { key: "browser", label: "Browser" },
+                      { key: "communication", label: "Communication" },
                     ].map((cat) => {
                       const checked = (selectedNode.external_tools || []).includes(cat.key);
                       return (
@@ -3821,11 +3820,11 @@ export function OrgEditorView({
                             className="mt-[2px]"
                           />
                           <div className="flex flex-col gap-1">
-                            <span className="font-medium">基础文件工具</span>
+                            <span className="font-medium">Basic file tools</span>
                             <span className="text-[11px] leading-4 text-muted-foreground">
-                              即便未勾选"文件/命令"也允许使用 write_file / read_file /
-                              edit_file / list_directory，专门用于把交付物落盘成附件。
-                              文件路径限定在组织 workspace 目录内。默认开启。
+                              Allows write_file / read_file / edit_file / list_directory even when
+                              "Files/Shell" is unchecked — specifically for writing deliverables as
+                              attachments. Paths are restricted to the org workspace directory. On by default.
                             </span>
                           </div>
                         </label>
@@ -3837,15 +3836,15 @@ export function OrgEditorView({
                 {/* ── Section 2: MCP 服务器 ── */}
                 <Card className="gap-0 overflow-hidden py-0">
                   <CardHeader className="px-4 py-3" style={{ borderBottom: "1px solid var(--line)" }}>
-                    <CardTitle className="text-sm">MCP 服务器</CardTitle>
+                    <CardTitle className="text-sm">MCP servers</CardTitle>
                     <CardDescription className="text-[11px]">
-                      节点可调用的外部服务接口
+                      External service interfaces available to this node
                     </CardDescription>
                   </CardHeader>
                   {availableMcpServers.length > 3 && (
                     <CardContent className="px-3 pt-3 pb-0">
                       <ShadInput
-                        placeholder="搜索服务器..."
+                        placeholder="Search servers..."
                         value={mcpSearch}
                         onChange={(e) => setMcpSearch(e.target.value)}
                         className="h-8 text-xs"
@@ -3884,7 +3883,7 @@ export function OrgEditorView({
                               background: srv.status === "connected" ? "#dcfce7" : "#f3f4f6",
                               color: srv.status === "connected" ? "#166534" : "#9ca3af",
                             }}>
-                              {srv.status === "connected" ? "在线" : "离线"}
+                              {srv.status === "connected" ? "Online" : "Offline"}
                             </Badge>
                           </label>
                         );
@@ -3892,12 +3891,12 @@ export function OrgEditorView({
                     </CardContent>
                   ) : (
                     <CardContent className="px-4 py-3 text-[11px] text-muted-foreground">
-                      暂无可用服务器
+                      No servers available
                     </CardContent>
                   )}
                   {selectedNode.mcp_servers.length > 0 && (
                     <div className="border-t px-4 py-2 text-[10px] text-muted-foreground">
-                      已选 {selectedNode.mcp_servers.length} 个
+                      {selectedNode.mcp_servers.length} selected
                     </div>
                   )}
                 </Card>
@@ -3905,15 +3904,15 @@ export function OrgEditorView({
                 {/* ── Section 3: 技能 ── */}
                 <Card className="gap-0 overflow-hidden py-0">
                   <CardHeader className="px-4 py-3" style={{ borderBottom: "1px solid var(--line)" }}>
-                    <CardTitle className="text-sm">技能</CardTitle>
+                    <CardTitle className="text-sm">Skills</CardTitle>
                     <CardDescription className="text-[11px]">
-                      已安装的专业技能包
+                      Installed skill packages
                     </CardDescription>
                   </CardHeader>
                   {availableSkills.length > 3 && (
                     <CardContent className="px-3 pt-3 pb-0">
                       <ShadInput
-                        placeholder="搜索技能..."
+                        placeholder="Search skills..."
                         value={skillSearch}
                         onChange={(e) => setSkillSearch(e.target.value)}
                         className="h-8 text-xs"
@@ -4019,7 +4018,7 @@ export function OrgEditorView({
                                     }
                                   }}
                                 >
-                                  {allChecked ? "全不选" : "全选"}
+                                  {allChecked ? "Deselect all" : "Select all"}
                                 </button>
                               </div>
                               <div className="flex flex-col gap-1.5">
@@ -4032,12 +4031,12 @@ export function OrgEditorView({
                     </CardContent>
                   ) : (
                     <CardContent className="px-4 py-3 text-[11px] text-muted-foreground">
-                      暂无可用技能
+                      No skills available
                     </CardContent>
                   )}
                   {selectedNode.skills.length > 0 && (
                     <div className="border-t px-4 py-2 text-[10px] text-muted-foreground">
-                      已选 {selectedNode.skills.length} 个
+                      {selectedNode.skills.length} selected
                     </div>
                   )}
                 </Card>
@@ -4049,7 +4048,7 @@ export function OrgEditorView({
                     padding: "6px 10px", borderRadius: 6, border: "1px solid #fde68a",
                     lineHeight: 1.5,
                   }}>
-                    已选择 MCP 服务器但未启用"搜索"等工具类目中的 MCP 调用能力。
+                    MCP servers are selected but MCP call capability is not enabled in the tool categories.
                     <Button
                       variant="outline"
                       size="sm"
@@ -4059,7 +4058,7 @@ export function OrgEditorView({
                         if (!cur.includes("mcp")) updateNodeData("external_tools", [...cur, "mcp"]);
                       }}
                     >
-                      一键启用
+                      Enable
                     </Button>
                   </div>
                 )}
@@ -4071,11 +4070,11 @@ export function OrgEditorView({
                 {/* Performance section */}
                 <Card className="gap-0 py-0">
                   <CardHeader className="px-4 py-3">
-                    <CardTitle className="text-sm">性能限制</CardTitle>
+                    <CardTitle className="text-sm">Performance limits</CardTitle>
                   </CardHeader>
                   <CardContent className="grid grid-cols-2 gap-3 px-4 pb-4">
                     <div>
-                      <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">并行任务数</ShadLabel>
+                      <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">Concurrent tasks</ShadLabel>
                       <ShadInput
                         type="number"
                         min={1}
@@ -4085,7 +4084,7 @@ export function OrgEditorView({
                       />
                     </div>
                     <div>
-                      <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">超时 (秒)</ShadLabel>
+                      <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">Timeout (s)</ShadLabel>
                       <ShadInput
                         type="number"
                         min={30}
@@ -4101,13 +4100,13 @@ export function OrgEditorView({
                 <Card className="gap-0 py-0">
                   <div className="flex items-start justify-between gap-3 px-4 py-3">
                     <div className="min-w-0">
-                      <CardTitle className="text-sm">自动分身</CardTitle>
+                      <CardTitle className="text-sm">Auto-clone</CardTitle>
                       <CardDescription className="mt-1 text-[11px] leading-5">
-                        任务堆积超过阈值时自动创建分身处理。
+                        Automatically create clones when task backlog exceeds the threshold.
                       </CardDescription>
                     </div>
                     <div className="flex shrink-0 items-center gap-2 pt-0.5">
-                      <ShadLabel className="cursor-pointer text-[11px] text-muted-foreground" htmlFor="auto-clone-enabled">启用</ShadLabel>
+                      <ShadLabel className="cursor-pointer text-[11px] text-muted-foreground" htmlFor="auto-clone-enabled">Enable</ShadLabel>
                       <Switch
                         id="auto-clone-enabled"
                         checked={selectedNode.auto_clone_enabled || false}
@@ -4119,7 +4118,7 @@ export function OrgEditorView({
                   {selectedNode.auto_clone_enabled && (
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                       <div>
-                        <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">触发阈值（待处理数）</ShadLabel>
+                        <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">Trigger threshold (pending count)</ShadLabel>
                         <ShadInput
                           type="number"
                           min={2}
@@ -4129,7 +4128,7 @@ export function OrgEditorView({
                         />
                       </div>
                       <div>
-                        <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">最大分身数</ShadLabel>
+                        <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">Max clones</ShadLabel>
                         <ShadInput
                           type="number"
                           min={1}
@@ -4142,7 +4141,7 @@ export function OrgEditorView({
                     </div>
                   )}
                   <div className="text-[11px] leading-5 text-muted-foreground">
-                    任务堆积超过阈值时自动创建分身处理。分身共享岗位记忆，同一任务链由同一分身完成。空闲分身在心跳时自动回收。
+                    Clones are created when task backlog exceeds the threshold. Clones share the role's memory; the same clone handles an entire task chain. Idle clones are automatically reclaimed at heartbeat.
                   </div>
                   </CardContent>
                 </Card>
@@ -4150,17 +4149,17 @@ export function OrgEditorView({
                 {/* Permissions section */}
                 <Card className="gap-0 overflow-hidden py-0">
                   <CardHeader className="px-4 py-3" style={{ borderBottom: "1px solid var(--line)" }}>
-                    <CardTitle className="text-sm">权限控制</CardTitle>
+                    <CardTitle className="text-sm">Permissions</CardTitle>
                     <CardDescription className="text-[11px]">
-                      控制节点在组织内的行为权限
+                      Control the node's allowed behaviors within the org
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="grid grid-cols-2 gap-2 px-3 py-3">
                     {([
-                      { key: "can_delegate", label: "委派任务" },
-                      { key: "can_escalate", label: "上报问题" },
-                      { key: "can_request_scaling", label: "申请扩编" },
-                      { key: "ephemeral", label: "临时节点" },
+                      { key: "can_delegate", label: "Delegate tasks" },
+                      { key: "can_escalate", label: "Escalate issues" },
+                      { key: "can_request_scaling", label: "Request scaling" },
+                      { key: "ephemeral", label: "Ephemeral node" },
                     ] as const).map(({ key, label }) => {
                       const checked = !!selectedNode[key];
                       return (
@@ -4186,16 +4185,16 @@ export function OrgEditorView({
                 {/* LLM endpoint */}
                 <Card className="gap-0 py-0">
                   <CardHeader className="px-4 py-3">
-                    <CardTitle className="text-sm">LLM 端点偏好</CardTitle>
+                    <CardTitle className="text-sm">LLM endpoint preference</CardTitle>
                     <CardDescription className="text-[11px]">
-                      留空时使用默认端点
+                      Leave blank to use the default endpoint
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="px-4 pb-4">
                     <ShadInput
                       value={selectedNode.preferred_endpoint || ""}
                       onChange={(e) => updateNodeData("preferred_endpoint", e.target.value || null)}
-                      placeholder="留空使用默认端点"
+                      placeholder="Leave blank for default endpoint"
                       className="h-8 text-xs"
                     />
                   </CardContent>
@@ -4226,7 +4225,7 @@ export function OrgEditorView({
         >
           {/* Header */}
           <div className="flex items-center justify-between">
-            <span className="text-sm font-semibold">连线属性</span>
+            <span className="text-sm font-semibold">Edge properties</span>
             <Button variant="ghost" size="icon-xs" onClick={() => setSelectedEdgeId(null)}>
               <XIcon className="size-3.5" />
             </Button>
@@ -4234,13 +4233,13 @@ export function OrgEditorView({
 
           {/* Source / Target */}
           <div className="rounded-md border border-border bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
-            <div>起点: <strong className="text-foreground">{(() => { const n = nodes.find(n => n.id === selectedEdge.source); return (n?.data as any)?.role_title || selectedEdge.source; })()}</strong></div>
-            <div>终点: <strong className="text-foreground">{(() => { const n = nodes.find(n => n.id === selectedEdge.target); return (n?.data as any)?.role_title || selectedEdge.target; })()}</strong></div>
+            <div>From: <strong className="text-foreground">{(() => { const n = nodes.find(n => n.id === selectedEdge.source); return (n?.data as any)?.role_title || selectedEdge.source; })()}</strong></div>
+            <div>To: <strong className="text-foreground">{(() => { const n = nodes.find(n => n.id === selectedEdge.target); return (n?.data as any)?.role_title || selectedEdge.target; })()}</strong></div>
           </div>
 
           {/* Edge type */}
           <div className="space-y-2">
-            <ShadLabel className="text-xs">连线类型</ShadLabel>
+            <ShadLabel className="text-xs">Edge type</ShadLabel>
             <ToggleGroup
               type="single"
               value={selectedEdge.edge_type || "hierarchy"}
@@ -4248,10 +4247,10 @@ export function OrgEditorView({
               className="flex flex-wrap gap-1.5"
             >
               {([
-                { key: "hierarchy", label: "上下级", color: EDGE_COLORS.hierarchy },
-                { key: "collaborate", label: "协作", color: EDGE_COLORS.collaborate },
-                { key: "escalate", label: "上报", color: EDGE_COLORS.escalate },
-                { key: "consult", label: "咨询", color: EDGE_COLORS.consult || "var(--muted)" },
+                { key: "hierarchy", label: "Hierarchy", color: EDGE_COLORS.hierarchy },
+                { key: "collaborate", label: "Collaborate", color: EDGE_COLORS.collaborate },
+                { key: "escalate", label: "Escalate", color: EDGE_COLORS.escalate },
+                { key: "consult", label: "Consult", color: EDGE_COLORS.consult || "var(--muted)" },
               ] as const).map((t) => (
                 <ToggleGroupItem
                   key={t.key}
@@ -4269,11 +4268,11 @@ export function OrgEditorView({
 
           {/* Label */}
           <div className="space-y-2">
-            <ShadLabel className="text-xs" htmlFor="edge-label">标签</ShadLabel>
+            <ShadLabel className="text-xs" htmlFor="edge-label">Label</ShadLabel>
             <ShadInput
               id="edge-label"
               className="h-8 text-xs"
-              placeholder="可选，如「技术指导」「审批」"
+              placeholder="Optional, e.g. 'Technical guidance', 'Approval'"
               value={selectedEdge.label || ""}
               onChange={(e) => updateEdgeData("label", e.target.value)}
             />
@@ -4282,8 +4281,8 @@ export function OrgEditorView({
           {/* Bidirectional */}
           <div className="flex items-center justify-between rounded-md border border-border px-3 py-2.5">
             <div className="space-y-0.5">
-              <ShadLabel className="text-xs cursor-pointer" htmlFor="edge-bidir">双向通信</ShadLabel>
-              <p className="text-[11px] text-muted-foreground leading-tight">关闭后只能从起点向终点发消息</p>
+              <ShadLabel className="text-xs cursor-pointer" htmlFor="edge-bidir">Bidirectional</ShadLabel>
+              <p className="text-[11px] text-muted-foreground leading-tight">When off, messages can only flow from source to target</p>
             </div>
             <Switch
               id="edge-bidir"
@@ -4295,7 +4294,7 @@ export function OrgEditorView({
           {/* Priority */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <ShadLabel className="text-xs">优先级</ShadLabel>
+              <ShadLabel className="text-xs">Priority</ShadLabel>
               <Badge variant="secondary" className="h-5 text-[10px] tabular-nums">{selectedEdge.priority ?? 0}</Badge>
             </div>
             <Slider
@@ -4307,7 +4306,7 @@ export function OrgEditorView({
 
           {/* Bandwidth limit */}
           <div className="space-y-2">
-            <ShadLabel className="text-xs" htmlFor="edge-bw">通信频率上限 (次/小时)</ShadLabel>
+            <ShadLabel className="text-xs" htmlFor="edge-bw">Bandwidth limit (msgs/hour)</ShadLabel>
             <ShadInput
               id="edge-bw"
               type="number" min={1} max={999}
@@ -4325,7 +4324,7 @@ export function OrgEditorView({
               className="w-full gap-1.5 text-xs"
               onClick={handleDeleteEdge}
             >
-              <IconTrash size={12} /> 删除连线
+              <IconTrash size={12} /> Delete edge
             </Button>
           </div>
         </div>
@@ -4375,11 +4374,11 @@ export function OrgEditorView({
             animation: "org-panel-in 0.3s cubic-bezier(0.4,0,0.2,1) 0.05s both",
           }}
         >
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>组织设置</div>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>Org settings</div>
 
           {/* ── 运行模式 ── */}
           <div className="card" style={{ padding: 10, marginBottom: 10 }}>
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>运行模式</div>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>Operation mode</div>
             <div style={{ display: "flex", gap: 4 }}>
               <button
                 className="btnSmall"
@@ -4392,7 +4391,7 @@ export function OrgEditorView({
                 }}
                 onClick={() => setCurrentOrg({ ...currentOrg, operation_mode: "command" } as any)}
               >
-                命令模式
+                Command mode
               </button>
               <button
                 className="btnSmall"
@@ -4405,24 +4404,24 @@ export function OrgEditorView({
                 }}
                 onClick={() => setCurrentOrg({ ...currentOrg, operation_mode: "autonomous" } as any)}
               >
-                自主模式
+                Autonomous mode
               </button>
             </div>
             <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4, lineHeight: 1.5 }}>
               {((currentOrg as any).operation_mode || "command") === "command"
-                ? "通过聊天或命令面板下达任务，按需执行"
-                : "组织根据核心业务自动运转，顶层负责人持续运营"}
+                ? "Issue tasks via chat or the command panel; executed on demand"
+                : "The org runs autonomously based on core business goals; the top-level manager operates continuously"}
             </div>
           </div>
 
           {/* ── 工作目录 ── */}
           <div className="card" style={{ padding: 10, marginBottom: 10 }}>
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>工作目录</div>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>Working directory</div>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <input
                 className="input"
                 style={{ flex: 1, fontSize: 12 }}
-                placeholder="默认：组织数据目录/workspace"
+                placeholder="Default: org data dir/workspace"
                 value={(currentOrg as any).workspace_dir || ""}
                 onChange={(e) => setCurrentOrg({ ...currentOrg, workspace_dir: e.target.value } as any)}
               />
@@ -4431,23 +4430,23 @@ export function OrgEditorView({
                   className="btnSmall"
                   style={{ fontSize: 12, padding: "5px 10px", whiteSpace: "nowrap" }}
                   onClick={async () => {
-                    const selected = await openFileDialog({ directory: true, title: "选择工作目录" });
+                    const selected = await openFileDialog({ directory: true, title: "Select working directory" });
                     if (selected) setCurrentOrg({ ...currentOrg, workspace_dir: selected } as any);
                   }}
                 >
-                  浏览
+                  Browse
                 </button>
               )}
             </div>
             <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4, lineHeight: 1.5 }}>
-              {t("orgEditor.outputPathHint", "组织编排产出的文件将保存在此目录。留空则使用默认路径。")}
+              {t("orgEditor.outputPathHint", "Files produced by the org will be saved in this directory. Leave blank to use the default path.")}
             </div>
           </div>
 
           {/* ── 交付兜底 ── */}
           <div className="card" style={{ padding: 10, marginBottom: 10 }}>
             <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
-              {t("orgEditor.autoPersistTitle", "交付兜底")}
+              {t("orgEditor.autoPersistTitle", "Delivery fallback")}
             </div>
             <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
               <input
@@ -4463,15 +4462,15 @@ export function OrgEditorView({
               />
               <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 <span style={{ fontSize: 12 }}>
-                  {t("orgEditor.autoPersistLabel", "自动把长文回复落盘为附件")}
+                  {t("orgEditor.autoPersistLabel", "Automatically save long replies as file attachments")}
                 </span>
                 <span style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.5 }}>
                   {t(
                     "orgEditor.autoPersistHint",
-                    "用户原始指令明确要求文件/附件、但节点本轮没产出任何文件且只回了 ≥200 字长文时，"
-                    + "系统会把该长文自动保存为 .md 附件到工作目录的 deliverables/ 下，"
-                    + "并给上级合成一条「任务交付」消息。关闭后只走 LLM 自己的工具调用，"
-                    + "不做兜底。"
+                    "When the original instruction explicitly requests a file/attachment but the node produced no files and responded with a long text (≥200 characters), "
+                    + "the system automatically saves that text as a .md attachment in the workspace deliverables/ folder "
+                    + "and sends a 'Task delivered' message to the superior. "
+                    + "When disabled, only the LLM's own tool calls are used — no fallback."
                   )}
                 </span>
               </div>
@@ -4486,9 +4485,9 @@ export function OrgEditorView({
               onClick={() => setBizCollapsed(!bizCollapsed)}
             >
               <div style={{ fontWeight: 600, fontSize: 13 }}>
-                核心业务
+                Core business
                 {bizCollapsed && (currentOrg.core_business || "").trim() && (
-                  <span style={{ fontWeight: 400, fontSize: 11, color: "var(--ok)", marginLeft: 6 }}>已配置</span>
+                  <span style={{ fontWeight: 400, fontSize: 11, color: "var(--ok)", marginLeft: 6 }}>Configured</span>
                 )}
               </div>
               <span style={{ fontSize: 11, color: "var(--muted)" }}>{bizCollapsed ? "▸" : "▾"}</span>
@@ -4496,22 +4495,22 @@ export function OrgEditorView({
             {!bizCollapsed && (
               <div style={{ marginTop: 6 }}>
                 <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6, lineHeight: 1.5 }}>
-                  填写后组织启动即自主运转——顶层负责人自动接收任务书并开始工作，心跳变为定期复盘。
+                  Once filled in, the org runs autonomously on startup — the top-level manager automatically receives a task brief and begins working; heartbeat becomes a periodic review.
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: 8 }}>
                   {[
-                    { label: "创业公司", tpl: "## 业务定位\n我们是一家___公司，核心产品/服务是___。\n\n## 当前阶段目标\n- 完成产品 MVP 并上线\n- 获取首批 100 个种子用户\n- 验证产品-市场匹配度\n\n## 工作策略\n- 产品优先：先打磨核心功能，再扩展\n- 精益运营：小规模验证后再投入推广资源\n- 数据驱动：关注用户留存率和活跃度\n\n## 主动运营要求\n负责人需持续推进：产品开发进度跟踪、市场调研执行、用户反馈收集与分析、团队任务协调。每个复盘周期应有可交付成果。" },
-                    { label: "内容运营", tpl: "## 业务定位\n面向___领域的内容创作与分发平台/账号。\n\n## 当前阶段目标\n- 建立稳定的内容生产流程（每周___篇）\n- 核心平台粉丝/订阅达到___\n- 形成可复制的爆款内容方法论\n\n## 工作策略\n- 选题驱动：每周策划会确定选题方向\n- 数据复盘：分析每篇内容的阅读/互动数据\n- 持续迭代：根据数据调整内容策略\n\n## 主动运营要求\n负责人需持续推进：选题策划与分配、内容质量把控、发布排期管理、数据复盘与策略调整。确保内容产出不中断。" },
-                    { label: "软件项目", tpl: "## 项目定位\n为___开发的___系统/应用。\n\n## 当前阶段目标\n- 完成___模块的开发与测试\n- 交付可演示的版本给___\n- 技术文档同步更新\n\n## 工作策略\n- 迭代开发：按优先级排列功能，每轮迭代2周\n- 质量保障：代码审查 + 自动化测试覆盖\n- 文档先行：关键架构决策必须文档化\n\n## 主动运营要求\n负责人需持续推进：任务拆解与分配、代码审查、进度跟踪、阻塞问题排除、与需求方沟通确认。" },
-                    { label: "研究课题", tpl: "## 课题方向\n研究___领域的___问题。\n\n## 当前阶段目标\n- 完成文献调研，形成研究综述\n- 确定研究方案和实验设计\n- 产出阶段性研究报告\n\n## 工作策略\n- 文献先行：系统梳理相关领域进展\n- 实验验证：设计对照实验验证假设\n- 定期交流：团队内部周会分享进展\n\n## 主动运营要求\n负责人需持续推进：文献调研分配、研究方案讨论、实验进度追踪、成果整理与汇报。" },
-                    { label: "电商运营", tpl: "## 业务定位\n面向___的___品类电商。\n\n## 当前阶段目标\n- 完成店铺搭建和首批___个 SKU 上架\n- 月销售额达到___\n- 建立稳定的供应链和客服流程\n\n## 工作策略\n- 选品驱动：通过市场分析确定主推品类\n- 流量获取：___平台引流 + 内容营销\n- 复购优先：客户满意度和复购率是核心指标\n\n## 主动运营要求\n负责人需持续推进：选品调研、供应链管理、营销活动策划执行、客户反馈处理、数据分析与策略调整。确保日常运营不中断。" },
+                    { label: "Startup", tpl: "## Business positioning\nWe are a ___ company. Our core product/service is ___.\n\n## Current goals\n- Ship MVP and go live\n- Acquire first 100 seed users\n- Validate product-market fit\n\n## Work strategy\n- Product-first: polish core features before expanding\n- Lean operations: validate at small scale before investing in growth\n- Data-driven: track retention rate and engagement\n\n## Autonomous operation requirements\nThe manager must continuously drive: product development tracking, market research, user feedback collection and analysis, team task coordination. Each review cycle must have deliverables." },
+                    { label: "Content ops", tpl: "## Business positioning\nContent creation and distribution platform/account targeting the ___ space.\n\n## Current goals\n- Establish a stable content production cadence (___/week)\n- Reach ___ followers/subscribers on core platform\n- Build a repeatable formula for high-performing content\n\n## Work strategy\n- Topic-driven: weekly planning meeting to set topics\n- Data review: analyze reads/engagement per piece\n- Continuous iteration: adjust strategy based on data\n\n## Autonomous operation requirements\nThe manager must continuously drive: topic planning, content quality control, publish schedule, data review and strategy adjustment. Ensure content output never stops." },
+                    { label: "Software project", tpl: "## Project positioning\n___ system/app built for ___.\n\n## Current goals\n- Complete development and testing of ___ module\n- Deliver a demo-ready build to ___\n- Keep technical documentation up to date\n\n## Work strategy\n- Iterative development: prioritise features; 2-week sprints\n- Quality assurance: code review + automated test coverage\n- Docs-first: key architecture decisions must be documented\n\n## Autonomous operation requirements\nThe manager must continuously drive: task breakdown and assignment, code review, progress tracking, blocker resolution, and requirements clarification with stakeholders." },
+                    { label: "Research project", tpl: "## Research direction\nInvestigating ___ problem in the ___ domain.\n\n## Current goals\n- Complete literature review and produce research summary\n- Define research plan and experimental design\n- Produce a milestone research report\n\n## Work strategy\n- Literature-first: systematically survey the field\n- Experimental validation: design controlled experiments to test hypotheses\n- Regular check-ins: weekly team meeting to share progress\n\n## Autonomous operation requirements\nThe manager must continuously drive: literature review assignment, research plan discussion, experiment progress tracking, and results compilation and reporting." },
+                    { label: "E-commerce", tpl: "## Business positioning\n___ category e-commerce targeting ___.\n\n## Current goals\n- Set up store and list the first ___ SKUs\n- Reach monthly sales of ___\n- Establish a stable supply chain and customer service process\n\n## Work strategy\n- Product selection-driven: use market analysis to determine top categories\n- Traffic acquisition: ___ platform traffic + content marketing\n- Repeat purchase priority: customer satisfaction and repurchase rate are the key metrics\n\n## Autonomous operation requirements\nThe manager must continuously drive: product selection research, supply chain management, marketing campaign planning and execution, customer feedback handling, data analysis and strategy adjustment. Ensure daily operations never stop." },
                   ].map((tpl) => (
                     <button
                       key={tpl.label}
                       className="btnSmall"
                       style={{ fontSize: 11, padding: "3px 8px" }}
                       onClick={() => {
-                        if ((currentOrg.core_business || "").trim() && !confirm("将覆盖当前内容，确认？")) return;
+                        if ((currentOrg.core_business || "").trim() && !confirm("This will overwrite the current content. Confirm?")) return;
                         setCurrentOrg({ ...currentOrg, core_business: tpl.tpl });
                       }}
                     >
@@ -4522,13 +4521,13 @@ export function OrgEditorView({
                 <textarea
                   className="input"
                   style={{ width: "100%", fontSize: 12, minHeight: 120, resize: "vertical", lineHeight: 1.6, fontFamily: "inherit" }}
-                  placeholder={"填写或选择模板后编辑。\n\n组织启动后，顶层节点将根据此内容自动制定策略、分配任务、持续推进。"}
+                  placeholder={"Fill in or select a template then edit.\n\nAfter the org starts, the top-level node will automatically set strategy, assign tasks, and continuously drive work based on this content."}
                   value={currentOrg.core_business || ""}
                   onChange={(e) => setCurrentOrg({ ...currentOrg, core_business: e.target.value })}
                 />
                 {(currentOrg.core_business || "").trim() && (
                   <div style={{ fontSize: 11, color: "var(--ok)", marginTop: 4 }}>
-                    启动组织后，顶层负责人将自动接收任务书并开始自主运营
+                    After the org starts, the top-level manager will automatically receive a task brief and begin autonomous operation
                   </div>
                 )}
               </div>
@@ -4543,7 +4542,7 @@ export function OrgEditorView({
               onClick={() => setPersonaCollapsed(!personaCollapsed)}
             >
               <div style={{ fontWeight: 600, fontSize: 13 }}>
-                用户身份
+                User identity
                 {currentOrg.user_persona?.title && (
                   <span style={{ fontWeight: 400, fontSize: 11, color: "var(--muted)", marginLeft: 6 }}>
                     {currentOrg.user_persona.display_name || currentOrg.user_persona.title}
@@ -4555,16 +4554,16 @@ export function OrgEditorView({
             {!personaCollapsed && (
               <div style={{ marginTop: 6 }}>
                 <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6, lineHeight: 1.5 }}>
-                  你在本组织中的角色。节点会以此身份认知你。
+                  Your role in this org. Nodes will recognise you by this identity.
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: 8 }}>
                   {[
-                    { title: "董事长", desc: "组织最高决策者" },
-                    { title: "产品负责人", desc: "项目需求方与最终验收人" },
-                    { title: "出品人", desc: "内容方向决策者" },
-                    { title: "投资人", desc: "外部投资方" },
-                    { title: "甲方", desc: "项目委托方" },
-                    { title: "课题负责人", desc: "研究课题主持人" },
+                    { title: "Chairman", desc: "Highest decision-maker in the org" },
+                    { title: "Product Owner", desc: "Requirements owner and final acceptance authority" },
+                    { title: "Executive Producer", desc: "Content direction decision-maker" },
+                    { title: "Investor", desc: "External investment party" },
+                    { title: "Client", desc: "Project commissioner" },
+                    { title: "Principal Investigator", desc: "Research project leader" },
                   ].map((preset) => (
                     <button
                       key={preset.title}
@@ -4586,11 +4585,11 @@ export function OrgEditorView({
                 <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                   <div style={{ display: "flex", gap: 6 }}>
                     <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>头衔</label>
+                      <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>Title</label>
                       <input
                         className="input"
                         style={{ width: "100%", fontSize: 12 }}
-                        placeholder="董事长"
+                        placeholder="Chairman"
                         value={currentOrg.user_persona?.title || ""}
                         onChange={(e) => setCurrentOrg({
                           ...currentOrg,
@@ -4599,29 +4598,29 @@ export function OrgEditorView({
                       />
                     </div>
                     <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>显示名</label>
+                      <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>Display name</label>
                       <input
                         className="input"
                         style={{ width: "100%", fontSize: 12 }}
-                        placeholder="留空用头衔"
+                        placeholder="Leave blank to use title"
                         value={currentOrg.user_persona?.display_name || ""}
                         onChange={(e) => setCurrentOrg({
                           ...currentOrg,
-                          user_persona: { ...currentOrg.user_persona, title: currentOrg.user_persona?.title || "负责人", display_name: e.target.value, description: currentOrg.user_persona?.description || "" },
+                          user_persona: { ...currentOrg.user_persona, title: currentOrg.user_persona?.title || "Manager", display_name: e.target.value, description: currentOrg.user_persona?.description || "" },
                         })}
                       />
                     </div>
                   </div>
                   <div>
-                    <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>简介</label>
+                    <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>Bio</label>
                     <input
                       className="input"
                       style={{ width: "100%", fontSize: 12 }}
-                      placeholder="例如：组织最高决策者"
+                      placeholder="e.g. Highest decision-maker in the org"
                       value={currentOrg.user_persona?.description || ""}
                       onChange={(e) => setCurrentOrg({
                         ...currentOrg,
-                        user_persona: { ...currentOrg.user_persona, title: currentOrg.user_persona?.title || "负责人", display_name: currentOrg.user_persona?.display_name || "", description: e.target.value },
+                        user_persona: { ...currentOrg.user_persona, title: currentOrg.user_persona?.title || "Manager", display_name: currentOrg.user_persona?.display_name || "", description: e.target.value },
                       })}
                     />
                   </div>
@@ -4632,21 +4631,21 @@ export function OrgEditorView({
 
           {/* ── Quick actions ── */}
           <div className="card" style={{ padding: 10, marginBottom: 10 }}>
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>操作</div>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>Actions</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-              <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={() => setConfirmReset(true)}>重置组织</button>
-              <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={handleExportOrg}>导出配置</button>
+              <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={() => setConfirmReset(true)}>Reset org</button>
+              <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={handleExportOrg}>Export config</button>
               <label className="btnSmall" style={{ fontSize: 11, padding: "4px 8px", cursor: "pointer" }}>
-                导入配置
+                Import config
                 <input type="file" accept=".json" style={{ display: "none" }} onChange={handleImportOrg} />
               </label>
               {liveMode && (<>
                 <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={async () => {
                   try { await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/heartbeat/trigger`, { method: "POST" }); } catch {}
-                }}>触发心跳</button>
+                }}>Trigger heartbeat</button>
                 <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={async () => {
                   try { await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/standup/trigger`, { method: "POST" }); } catch {}
-                }}>触发晨会</button>
+                }}>Trigger standup</button>
               </>)}
             </div>
           </div>
@@ -4670,7 +4669,7 @@ export function OrgEditorView({
         </div>
       )}
       <ConfirmDialog
-        dialog={confirmReset ? { message: "确认重置该组织吗？将清空所有运行数据（黑板、消息、事件日志），恢复为初始状态。此操作不可撤销。", onConfirm: handleResetOrg } : null}
+        dialog={confirmReset ? { message: "Reset this org? All runtime data (blackboard, messages, event log) will be cleared and the org will return to its initial state. This cannot be undone.", onConfirm: handleResetOrg } : null}
         onClose={() => setConfirmReset(false)}
       />
     </div>

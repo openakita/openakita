@@ -432,7 +432,7 @@ export function StatusView(props: StatusViewProps) {
                   <TableCell className="py-2.5 text-center">
                     <span
                       className="inline-flex items-center justify-center gap-1 text-xs"
-                      title={fullError ? (t("status.clickToCopy", "点击复制") + ": " + fullError) : undefined}
+                      title={fullError ? (t("status.clickToCopy", "Click to copy") + ": " + fullError) : undefined}
                     >
                       <span className={"healthDot " + dotClass} />
                       <span
