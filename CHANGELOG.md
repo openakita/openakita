@@ -18,7 +18,7 @@ SDK `0.6.0 → 0.7.0`，`contrib/` 子包整体下沉，`plugins/` 从 21 → 2 
   子包 + 287 行的 `__init__.py`）。SDK 顶层 import 表面回到约 25 项（对齐 0.2 时代）。
 - **保留** SDK 核心：`PluginBase` / `PluginAPI` / `PluginManifest` / `tool_definition` /
   `decorators` / `hooks` / `protocols` / `scaffold` / `testing` / `channel` / `llm` /
-  `config` / `types` / `version` / `skill_loader`。
+  `config` / `types` / `version`（`skill_loader` 也下沉到 staging,见下文）。
 - **删除** `web/ui-kit/` 中无消费者的 7 个 JS：`cost-preview.js` / `error-coach.js` /
   `event-helpers.js` / `first-success-celebrate.js` / `onboard-wizard.js` /
   `task-panel.js` / `dep-gate.js`。剩下的 `bootstrap.js` / `styles.css` / `icons.js` /
@@ -59,13 +59,67 @@ SDK `0.6.0 → 0.7.0`，`contrib/` 子包整体下沉，`plugins/` 从 21 → 2 
 - staging 区**仅作为代码参考保留**，不再 import、不再跑 CI、不属于 SDK 公共 API。
 - 对应的 `tests/contrib/test_*.py` 直接删除（7 个）。
 
+#### 前端资源下沉 + host 解耦（SDK 0.6.x → 0.7.0 第二刀）
+
+- **`web/` 整体下沉** —— `git mv openakita-plugin-sdk/src/openakita_plugin_sdk/web/`
+  到 `plugins-archive/_shared/web-uikit/`(`bootstrap.js` 5.8KB +
+  `ui-kit/` 4 文件:`styles.css` / `icons.js` / `i18n.js` / `markdown-mini.js`)。
+  SDK wheel **不再分发任何前端文件**,`pyproject.toml` 中的 hatchling
+  注释也一并清理。
+- **host 不再 mount `/api/plugins/_sdk/*`** —— `src/openakita/api/server.py`
+  原 L400–L442 的 `_sdk_web_dir` 解析 + `StaticFiles` mount 段全部删除,
+  改为一段 NOTE 说明历史与新规则。
+- **`plugin_deps.py` 路由退役** —— 因 `contrib/dep_gate.py` 已下沉到 staging,
+  对应的 host 端 REST 路由 `src/openakita/api/routes/plugin_deps.py` 与
+  `server.py` 中的 import / `include_router` 一并删除。dep-gate 特性彻底退役;
+  `seedance-video` 中的 `OpenAkitaDepGate` 调用因有 defensive check,在 JS
+  缺失时安全 no-op,无前端报错。
+- **插件 UI 自包含化** —— `plugins/tongyi-image/ui/dist/_assets/` inline
+  完整 5 件套(bootstrap + styles + icons + i18n + markdown-mini),
+  `plugins/seedance-video/ui/dist/_assets/` inline 同样 5 件套(覆盖
+  实际 11×OpenAkitaI18n / 6×OpenAkitaIcons / 22×oa-section 用法)。
+  HTML 全部改用相对路径 `_assets/...`,删除 `?v=20260419-8` cache-bust 参数。
+- **`requires.sdk` 收紧** —— tongyi/seedance 的 `plugin.json` 从
+  `">=0.6.0,<1.0.0"` 收紧为 `">=0.7.0,<0.8.0"`,语义对齐"自包含,只吃 SDK 核心"
+  的新现实。
+- **新增归档 README** —— `plugins-archive/_shared/web-uikit/README.md` 详述
+  archive 插件如何复活 UI(`cp _assets/` + 改相对路径)。
+
+#### `skill_loader.py` 也一并下沉
+
+`openakita_plugin_sdk.skill_loader`(SKILL.md frontmatter 解析,314 行)
+没有任何 plugins/ 真消费者(host 自有 `src/openakita/skills/loader.py`
+完全独立),与 contrib 同期"扩展定位"残留。
+
+- `git mv openakita-plugin-sdk/src/openakita_plugin_sdk/skill_loader.py
+  openakita-plugin-sdk/staging/skill_loader.py`
+- `git mv openakita-plugin-sdk/tests/test_skill_loader.py
+  openakita-plugin-sdk/staging/tests/test_skill_loader.py`
+- 新增 `openakita-plugin-sdk/staging/README.md` 说明 staging/ 整体性质,
+  与原 `staging/contrib/README.md` 一致:**0 消费者、不打包、不进 CI**。
+
+#### 杂项
+
+- 删除老 wheel `openakita-plugin-sdk/dist/openakita_plugin_sdk-0.3.0-py3-none-any.whl`
+  (130KB,内含早期 contrib + web/,误用风险)。
+- `pyproject.toml` description 从 `"... and Plugin 2.0 UI support"` 回退为
+  `"SDK for building OpenAkita plugins — protocols, base classes, testing helpers"`。
+- `scaffold.py` "ui" 模板将在后续 PR 中修复 `window._ctx` 老 bug 并改为
+  自包含 `_assets/bootstrap.js` 输出(本次提交未含,跟踪在
+  `sdk_web_frontend_purge_4a6e6ded.plan.md` X9)。
+
 #### 文档同步
 
 - 删除 `openakita-plugin-sdk/docs/contrib.md` / `ai-media-scaffold-guide.md` /
-  `dependency-gate.md`（对应模块都已下沉）。
-- `openakita-plugin-sdk/README.md` / 顶层 `__init__.py` 删除 contrib 段落，
+  `dependency-gate.md` / `plugin-ui.md` / `plugin-i18n-and-uikit-migration.md`
+  (对应模块/特性都已下沉或退役)。
+- `openakita-plugin-sdk/docs/README.md` / `getting-started.md` /
+  `api-reference.md` 改写为「最小壳 + UI 自包含」口径,删除 Plugin 2.0 UI
+  专节链接。
+- `openakita-plugin-sdk/README.md` / 顶层 `__init__.py` 删除 contrib 段落,
   明确 SDK 只做"最小壳子"。
-- `docs/plugin-context-cheatsheet.md` 21 插件矩阵 → "2 一等公民 + 19 archive" 两栏。
+- `docs/plugin-context-cheatsheet.md` 21 插件矩阵 → "2 一等公民 + 19 archive" 两栏,
+  并新增「UI 必须自包含」「archive 复活模式」两条硬规则。
 
 ---
 
