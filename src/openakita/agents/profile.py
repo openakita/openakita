@@ -286,6 +286,42 @@ class AgentProfile:
         return d
 
     @classmethod
+    def derive_ephemeral_from(
+        cls,
+        base: AgentProfile,
+        *,
+        id: str,
+        **overrides: Any,
+    ) -> AgentProfile:
+        """Clone *base* into a fresh ephemeral profile with deep-copied mutable fields.
+
+        Used by `tools/handlers/agent.py::_spawn` so it stops hand-assembling
+        partial `AgentProfile(...)` objects. All profile-owned fields — including
+        the CLI fields added in this plan — are carried over through one helper,
+        with *overrides* replacing specific fields after the copy.
+
+        Enforces `ephemeral=True` and `inherit_from=base.id` regardless of overrides.
+        """
+        from copy import deepcopy
+
+        data = base.to_dict()
+        data.pop("origin", None)
+        data.pop("namespace", None)
+        data.pop("definition_id", None)
+        data.update({
+            "id": id,
+            "ephemeral": True,
+            "inherit_from": base.id,
+        })
+        for k, v in overrides.items():
+            data[k] = v
+        # Deep-copy list/dict fields so the ephemeral can mutate without touching base
+        for k, v in list(data.items()):
+            if isinstance(v, list | dict):
+                data[k] = deepcopy(v)
+        return cls.from_dict(data)
+
+    @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AgentProfile:
         data = dict(data)
         known = {f.name for f in cls.__dataclass_fields__.values()}
