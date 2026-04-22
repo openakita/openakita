@@ -1569,7 +1569,32 @@
     "saveFile": "保存文件",
     "identitySaveSuccess": "身份文件已保存",
     "identitySaveFailed": "身份文件保存失败",
-    "semanticCount": "{{count}} 条语义记忆"
+    "semanticCount": "{{count}} 条语义记忆",
+    "cliWizard": {
+      "openButton": "新建 CLI 代理",
+      "openTooltip": "创建一个由本地 CLI 工具（Claude Code / Codex / Goose 等）驱动的代理",
+      "title": "新建 CLI 代理",
+      "subtitle": "把本地 CLI 工具封装为可被编排调度的子代理。",
+      "step1Label": "选择提供商",
+      "step2Label": "配置",
+      "providerLabel": "已检测到的 CLI 提供商",
+      "detecting": "正在扫描 PATH 下的 CLI 提供商…",
+      "noneDetected": "未在 PATH 下检测到受支持的 CLI。请先安装 Claude Code / Codex / Goose 等工具并重新加载。",
+      "notOnPath": "本机未安装",
+      "next": "下一步",
+      "back": "上一步",
+      "permissionLabel": "权限模式",
+      "permissionPlan": "Plan（只读/需确认）",
+      "permissionWrite": "Write（自主编辑）",
+      "permissionHint": "Write 模式允许 CLI 直接编辑文件与运行工具，无需逐项确认。仅在可信任务下使用。",
+      "nameLabel": "显示名称",
+      "namePlaceholder": "例如：Claude 结对（重构）",
+      "descriptionLabel": "描述（可选）",
+      "create": "创建",
+      "creating": "创建中…",
+      "createSuccess": "CLI 代理已创建",
+      "createFailed": "CLI 代理创建失败"
+    }
   },
   "orgEditor": {
     "title": "组织编排",

@@ -1569,7 +1569,32 @@
     "saveFile": "Save File",
     "identitySaveSuccess": "Identity file saved",
     "identitySaveFailed": "Failed to save identity file",
-    "semanticCount": "{{count}} semantic memories"
+    "semanticCount": "{{count}} semantic memories",
+    "cliWizard": {
+      "openButton": "New CLI Agent",
+      "openTooltip": "Create an agent backed by a local CLI (Claude Code, Codex, Goose, …)",
+      "title": "New CLI-backed Agent",
+      "subtitle": "Wrap a local CLI tool so it can be orchestrated as a sub-agent.",
+      "step1Label": "Pick provider",
+      "step2Label": "Configure",
+      "providerLabel": "Detected CLI providers",
+      "detecting": "Scanning PATH for CLI providers…",
+      "noneDetected": "No supported CLIs detected on PATH. Install Claude Code, Codex, Goose, or another supported tool and reload.",
+      "notOnPath": "Not installed on this machine",
+      "next": "Next",
+      "back": "Back",
+      "permissionLabel": "Permission mode",
+      "permissionPlan": "Plan (read-only / confirmations)",
+      "permissionWrite": "Write (autonomous edits)",
+      "permissionHint": "Write mode lets the CLI edit files and run tools without per-action confirmation. Use for trusted tasks.",
+      "nameLabel": "Display name",
+      "namePlaceholder": "e.g. Claude Pair (refactor)",
+      "descriptionLabel": "Description (optional)",
+      "create": "Create",
+      "creating": "Creating…",
+      "createSuccess": "CLI agent created",
+      "createFailed": "Failed to create CLI agent"
+    }
   },
   "orgEditor": {
     "title": "Orchestration",
