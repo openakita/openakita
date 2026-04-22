@@ -1,56 +1,238 @@
 """video-translator — pipeline glue: ASR + LLM translate + TTS + mux.
 
-Reuses (no duplication):
-- ``subtitle-maker.subtitle_engine`` for ASR (whisper.cpp) and SRT writing.
-- ``tts-studio.studio_engine`` for TTS provider selection.
+Phase 2-06 of the plugin overhaul: this module no longer reaches into
+sibling plugins via the historical ``_load_sibling`` shim. ASR is now
+served by :mod:`openakita_plugin_sdk.contrib.asr`, TTS by
+:mod:`openakita_plugin_sdk.contrib.tts`, and the SRT/VTT renderers plus
+``TranscriptChunk`` dataclass are owned locally so this engine can be
+loaded in isolation (for tests, REPL exploration, or downstream agents
+that don't have ``subtitle-maker`` installed).
 
 Pure functions in this module (no I/O for ``translate_chunks_offline``,
-``build_extract_audio_cmd``, ``build_mux_cmd``) so they're trivially testable.
+``build_extract_audio_cmd``, ``build_mux_cmd``, ``to_srt``, ``to_vtt``)
+remain trivially testable.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import logging
 import shutil
-import sys
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Awaitable, Callable, Iterable
+from typing import Any
 
 from openakita_plugin_sdk.contrib import parse_llm_json_array
-
-
-def _load_sibling(plugin_dir_name: str, module_name: str, alias: str):
-    src = Path(__file__).resolve().parent.parent / plugin_dir_name / f"{module_name}.py"
-    if alias in sys.modules: return sys.modules[alias]
-    spec = importlib.util.spec_from_file_location(alias, src)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load {src}")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[alias] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_sm = _load_sibling("subtitle-maker", "subtitle_engine", "_oa_sm_engine")
-to_srt = _sm.to_srt
-to_vtt = _sm.to_vtt
-
-_hc = _load_sibling("highlight-cutter", "highlight_engine", "_oa_hc_engine")
-TranscriptChunk = _hc.TranscriptChunk
-whisper_cpp_transcribe = _hc.whisper_cpp_transcribe
-
-_ts = _load_sibling("tts-studio", "studio_engine", "_oa_ts_engine")
-select_tts_provider = _ts.select_tts_provider
+from openakita_plugin_sdk.contrib.asr import (
+    ASRError,
+)
+from openakita_plugin_sdk.contrib.asr import (
+    select_provider as _sdk_select_asr,
+)
+from openakita_plugin_sdk.contrib.tts import (
+    select_provider as _sdk_select_tts,
+)
 
 logger = logging.getLogger(__name__)
 
+
+# ── locally-owned dataclass + renderers (no more sibling plugin import) ─
+
+
+@dataclass(frozen=True)
+class TranscriptChunk:
+    """One transcribed line with timing in seconds.
+
+    Owned here (not re-exported from ``subtitle-maker``) so the engine
+    has zero hard dependency on sibling plugins. The shape is identical
+    to the one ``subtitle-maker`` and ``highlight-cutter`` use, which
+    keeps cross-plugin data flows mechanical.
+    """
+
+    start: float
+    end: float
+    text: str
+
+
+def _ts_srt(t: float) -> str:
+    if t < 0:
+        t = 0.0
+    h = int(t // 3600)
+    m = int((t % 3600) // 60)
+    s = int(t % 60)
+    ms = int(round((t - int(t)) * 1000))
+    if ms >= 1000:
+        ms = 0
+        s += 1
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def _ts_vtt(t: float) -> str:
+    return _ts_srt(t).replace(",", ".")
+
+
+def to_srt(chunks: list[TranscriptChunk]) -> str:
+    out: list[str] = []
+    for i, c in enumerate(chunks, start=1):
+        out.append(str(i))
+        out.append(f"{_ts_srt(c.start)} --> {_ts_srt(c.end)}")
+        out.append(c.text)
+        out.append("")
+    return "\n".join(out)
+
+
+def to_vtt(chunks: list[TranscriptChunk]) -> str:
+    out: list[str] = ["WEBVTT", ""]
+    for c in chunks:
+        out.append(f"{_ts_vtt(c.start)} --> {_ts_vtt(c.end)}")
+        out.append(c.text)
+        out.append("")
+    return "\n".join(out)
+
+
+# ── credentials registry (set by Plugin.on_load via /settings) ──────────
+
+
+_CREDENTIALS: dict[str, str | None] = {
+    "dashscope_api_key": None,
+    "openai_api_key": None,
+}
+
+
+def configure_credentials(
+    *,
+    dashscope_api_key: str | None = None,
+    openai_api_key: str | None = None,
+) -> None:
+    """Plug API keys into the engine without touching ``os.environ``.
+
+    Called from :meth:`plugin.Plugin._load_credentials` on load and on
+    every ``POST /settings`` so users can rotate keys at runtime.
+    """
+    if dashscope_api_key is not None:
+        _CREDENTIALS["dashscope_api_key"] = dashscope_api_key or None
+    if openai_api_key is not None:
+        _CREDENTIALS["openai_api_key"] = openai_api_key or None
+
+
+def _build_asr_configs(*, model: str, binary: str) -> dict[str, dict[str, Any]]:
+    return {
+        "dashscope_paraformer": (
+            {"api_key": _CREDENTIALS["dashscope_api_key"]}
+            if _CREDENTIALS["dashscope_api_key"] else {}
+        ),
+        "whisper_local": {"binary": binary, "model": model},
+        "stub": {},
+    }
+
+
+def _build_tts_configs() -> dict[str, dict[str, Any]]:
+    return {
+        "qwen3_tts_flash": (
+            {"api_key": _CREDENTIALS["dashscope_api_key"]}
+            if _CREDENTIALS["dashscope_api_key"] else {}
+        ),
+        "cosyvoice": (
+            {"api_key": _CREDENTIALS["dashscope_api_key"]}
+            if _CREDENTIALS["dashscope_api_key"] else {}
+        ),
+        "openai_tts": (
+            {"api_key": _CREDENTIALS["openai_api_key"]}
+            if _CREDENTIALS["openai_api_key"] else {}
+        ),
+        "edge": {},
+    }
+
+
+# ── ASR + TTS bridges around contrib.* ──────────────────────────────────
+
+
+async def transcribe_with_contrib_asr(
+    source: Path,
+    *,
+    provider_id: str = "auto",
+    region: str = "cn",
+    language: str = "auto",
+    model: str = "base",
+    binary: str = "whisper-cli",
+) -> list[TranscriptChunk]:
+    """Run ASR through the SDK's contrib.asr registry and adapt the
+    result to the engine's chunk shape.
+
+    Returns an empty list on any provider failure so the orchestrator
+    can fall back to a deterministic offline path (matches the previous
+    ``whisper_cpp_transcribe`` semantics).
+    """
+    try:
+        prov = _sdk_select_asr(
+            provider_id,
+            configs=_build_asr_configs(model=model, binary=binary),
+            region=region,
+            allow_stub=False,
+        )
+    except ASRError as exc:
+        logger.warning("contrib.asr select failed (%s): %s", provider_id, exc)
+        return []
+
+    try:
+        result = await prov.transcribe(source, language=language)
+    except Exception as exc:  # noqa: BLE001 — providers vary; degrade gracefully
+        logger.warning("contrib.asr transcribe failed (%s): %s", provider_id, exc)
+        return []
+
+    out: list[TranscriptChunk] = []
+    for ch in getattr(result, "chunks", []) or []:
+        text = (getattr(ch, "text", "") or "").strip()
+        if not text:
+            continue
+        start = max(0.0, float(getattr(ch, "start", 0.0)))
+        end = max(start + 0.001, float(getattr(ch, "end", start)))
+        out.append(TranscriptChunk(start=start, end=end, text=text))
+    return out
+
+
+def select_tts_provider(preferred: str = "auto") -> Any:
+    """Pick a TTS provider through ``contrib.tts.select_provider``.
+
+    Raises :class:`openakita_plugin_sdk.contrib.tts.TTSError` if no
+    provider is available — caller maps that to ``ErrorCoach``.
+    """
+    return _sdk_select_tts(preferred, configs=_build_tts_configs())
+
+
+# back-compat: legacy name used by older plugin code paths
+async def whisper_cpp_transcribe(
+    source: Path,
+    *,
+    model: str = "base",
+    language: str = "auto",
+    binary: str = "whisper-cli",
+    timeout_sec: float = 600.0,  # noqa: ARG001 — kept for signature parity
+) -> list[TranscriptChunk]:
+    return await transcribe_with_contrib_asr(
+        source,
+        provider_id="whisper_local",
+        language=language,
+        model=model,
+        binary=binary,
+    )
+
+
 __all__ = [
-    "TranscriptChunk", "whisper_cpp_transcribe", "to_srt", "to_vtt",
-    "select_tts_provider", "translate_chunks", "translate_chunks_offline",
-    "build_extract_audio_cmd", "build_mux_cmd", "concat_audio_chunks_cmd",
+    "SUPPORTED_LANGS",
+    "TranscriptChunk",
+    "build_extract_audio_cmd",
+    "build_mux_cmd",
+    "concat_audio_chunks_cmd",
+    "configure_credentials",
+    "select_tts_provider",
+    "to_srt",
+    "to_vtt",
+    "transcribe_with_contrib_asr",
+    "translate_chunks",
+    "translate_chunks_offline",
+    "whisper_cpp_transcribe",
 ]
 
 

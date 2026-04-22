@@ -3,18 +3,17 @@
   "name": "Video Translator",
   "display_name_zh": "AI 视频翻译",
   "display_name_en": "Video Translator",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "python",
   "entry": "plugin.py",
-  "description": "Upload a video, automatically transcribe → translate subtitles → synthesize new voice-over → output a bilingual video. Reuses subtitle-maker (ASR) + tts-studio (TTS).",
+  "description": "Upload a video, automatically transcribe → translate subtitles → synthesize new voice-over → output a bilingual video. Self-contained: uses contrib.asr / contrib.tts directly (no sibling-plugin imports).",
   "description_i18n": {
-    "zh": "上传一段视频，自动识别语音 → 翻译字幕 → 合成新配音 → 输出双语视频。复用 subtitle-maker (ASR) + tts-studio (TTS)。",
-    "en": "Upload a video, automatically transcribe → translate subtitles → synthesize new voice-over → output a bilingual video. Reuses subtitle-maker (ASR) + tts-studio (TTS)."
+    "zh": "上传一段视频，自动识别语音 → 翻译字幕 → 合成新配音 → 输出双语视频。直接走 SDK contrib.asr / contrib.tts，不再硬依赖其他插件。",
+    "en": "Upload a video, automatically transcribe → translate subtitles → synthesize new voice-over → output a bilingual video. Self-contained: uses contrib.asr / contrib.tts directly (no sibling-plugin imports)."
   },
   "author": "OpenAkita",
   "category": "creative",
   "tags": ["translate", "video", "subtitle", "dubbing"],
-  "depends": ["subtitle-maker", "tts-studio"],
   "permissions": [
     "tools.register",
     "routes.register",
@@ -28,7 +27,7 @@
     "openakita": ">=1.27.0",
     "plugin_api": "~2",
     "plugin_ui_api": "~1",
-    "sdk": ">=0.4.0"
+    "sdk": ">=0.6.0,<1.0.0"
   },
   "provides": {
     "tools": ["video_translator_create", "video_translator_status", "video_translator_list", "video_translator_cancel"],

@@ -6,14 +6,17 @@ import asyncio
 import sys
 from pathlib import Path
 
-import pytest
-
 _HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_HERE))
 
 from translator_engine import (  # noqa: E402
-    SUPPORTED_LANGS, TranscriptChunk, _safe_json_array, build_extract_audio_cmd,
-    build_mux_cmd, concat_audio_chunks_cmd, translate_chunks,
+    SUPPORTED_LANGS,
+    TranscriptChunk,
+    _safe_json_array,
+    build_extract_audio_cmd,
+    build_mux_cmd,
+    concat_audio_chunks_cmd,
+    translate_chunks,
     translate_chunks_offline,
 )
 
@@ -90,7 +93,8 @@ def test_build_extract_audio_cmd_uses_16khz_mono() -> None:
 
 def test_concat_audio_chunks_cmd_writes_list_file(tmp_path) -> None:
     parts = [tmp_path / "a.mp3", tmp_path / "b.mp3"]
-    for p in parts: p.write_bytes(b"x")
+    for p in parts:
+        p.write_bytes(b"x")
     list_file = tmp_path / "list.txt"
     cmd = concat_audio_chunks_cmd(parts=parts, list_file=list_file,
                                    output_audio=tmp_path / "out.m4a", ffmpeg="ffmpeg")

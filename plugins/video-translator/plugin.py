@@ -11,21 +11,44 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from openakita_plugin_sdk.contrib import (
+    ErrorCoach,
+    QualityGates,
+    TaskStatus,
+    UIEventEmitter,
+    VendorError,
+)
+from pydantic import BaseModel
+from task_manager import TranslatorTaskManager
+from translator_engine import (
+    SUPPORTED_LANGS,
+    build_extract_audio_cmd,
+    build_mux_cmd,
+    concat_audio_chunks_cmd,
+    configure_credentials,
+    select_tts_provider,
+    to_srt,
+    transcribe_with_contrib_asr,
+    translate_chunks,
+    translate_chunks_offline,
+)
 
 from openakita.plugins.api import PluginAPI, PluginBase
-from openakita_plugin_sdk.contrib import (
-    ErrorCoach, QualityGates, TaskStatus, UIEventEmitter, VendorError,
-)
-
-from translator_engine import (
-    SUPPORTED_LANGS, build_extract_audio_cmd, build_mux_cmd,
-    concat_audio_chunks_cmd, select_tts_provider, to_srt,
-    translate_chunks, translate_chunks_offline, whisper_cpp_transcribe,
-)
-from task_manager import TranslatorTaskManager
 
 logger = logging.getLogger(__name__)
+
+
+_SENSITIVE_CONFIG_KEYS = {"dashscope_api_key", "openai_api_key"}
+
+
+def _redacted_config(cfg: dict[str, str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for k, v in cfg.items():
+        if k in _SENSITIVE_CONFIG_KEYS and v:
+            out[k] = f"***{v[-4:]}" if len(v) > 4 else "***"
+        else:
+            out[k] = v
+    return out
 
 
 class CreateBody(BaseModel):
@@ -75,7 +98,26 @@ class Plugin(PluginBase):
             ],
             self._handle_tool_call,
         )
+        api.spawn_task(self._load_credentials())
         api.log("video-translator loaded")
+
+    async def _load_credentials(self) -> None:
+        """Pull API keys out of plugin config and inject them into the
+        engine's credential registry. Called on load and on every
+        ``POST /settings`` so users can rotate keys without a restart.
+        """
+        try:
+            cfg = await self._tm.get_config()
+        except Exception as e:  # noqa: BLE001 — first run, db not ready, etc.
+            self._api.log(
+                f"video-translator _load_credentials get_config failed: {e!r}",
+                level="warning",
+            )
+            return
+        configure_credentials(
+            dashscope_api_key=cfg.get("dashscope_api_key") or None,
+            openai_api_key=cfg.get("openai_api_key") or None,
+        )
 
     async def on_unload(self) -> None:
         workers = [t for t in list(self._workers.values()) if not t.done()]
@@ -123,12 +165,23 @@ class Plugin(PluginBase):
 
         @router.get("/config")
         async def get_config():
-            return await self._tm.get_config()
+            return _redacted_config(await self._tm.get_config())
 
         @router.post("/config")
         async def set_config(updates: dict):
             await self._tm.set_config({k: str(v) for k, v in updates.items()})
-            return await self._tm.get_config()
+            await self._load_credentials()
+            return _redacted_config(await self._tm.get_config())
+
+        @router.get("/settings")
+        async def get_settings():
+            return _redacted_config(await self._tm.get_config())
+
+        @router.post("/settings")
+        async def set_settings(updates: dict):
+            await self._tm.set_config({k: str(v) for k, v in updates.items()})
+            await self._load_credentials()
+            return _redacted_config(await self._tm.get_config())
 
         @router.post("/upload-video")
         async def upload_video(file: UploadFile = File(...)):
@@ -215,8 +268,10 @@ class Plugin(PluginBase):
             resp = await think(prompt=prompt, max_tokens=max_tokens)
             text = getattr(resp, "text", None) or getattr(resp, "content", None) or ""
             if not isinstance(text, str):
-                try: text = "".join(getattr(b, "text", "") for b in text)
-                except TypeError: text = str(text)
+                try:
+                    text = "".join(getattr(b, "text", "") for b in text)
+                except TypeError:
+                    text = str(text)
             return text
         return call
 
@@ -242,7 +297,8 @@ class Plugin(PluginBase):
 
     async def _run(self, task_id: str) -> None:
         rec = await self._tm.get_task(task_id)
-        if rec is None: return
+        if rec is None:
+            return
         params = rec.params
         cfg = await self._tm.get_config()
 
@@ -267,13 +323,21 @@ class Plugin(PluginBase):
                 check=True, timeout=600, capture_output=True,
             )
 
-            # 2) ASR
+            # 2) ASR — routed through SDK contrib.asr (Phase 2-06 cleanup).
             self._events.emit("task_updated",
                               {"id": task_id, "status": "running", "stage": "transcribe"})
-            chunks = await whisper_cpp_transcribe(wav, model=cfg.get("asr_model", "base"))
+            chunks = await transcribe_with_contrib_asr(
+                wav,
+                provider_id=cfg.get("asr_provider", "auto"),
+                region=cfg.get("asr_region", "cn"),
+                language=cfg.get("asr_language", "auto"),
+                model=cfg.get("asr_model", "base"),
+                binary=cfg.get("asr_binary", "whisper-cli"),
+            )
             if not chunks:
                 raise VendorError(
-                    "未能识别出语音。可能没装 whisper-cli，或音频太安静。",
+                    "未能识别出语音。请检查 ASR 配置 (DashScope key 或本地 whisper.cpp)，"
+                    "或确认音频不是静音。",
                     retryable=False,
                 )
 
