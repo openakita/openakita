@@ -62,8 +62,12 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(99,102,241,.15); }
 .textarea { resize: vertical; min-height: 72px; max-height: 400px; font-family: inherit; }
 .select { appearance: none; padding-right: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
-.label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px; color: var(--text-muted); }
-.form-row { margin-bottom: 12px; }
+/* Form-field label — upgraded to a "section label" look (small accent
+ * bar + slightly heavier weight) so each field gets a clear hierarchy.
+ * Mirrors plugins/tongyi-image and plugins/seedance-video. */
+.label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text); margin: 0 0 8px; line-height: 1.3; }
+.label::before { content: ""; display: inline-block; width: 3px; height: 14px; border-radius: 2px; background: var(--primary); flex-shrink: 0; }
+.form-row { margin-bottom: 14px; }
 .flex { display: flex; } .gap-2 { gap: 8px; } .gap-3 { gap: 12px; }
 .items-center { align-items: center; } .justify-between { justify-content: space-between; }
 .flex-1 { flex: 1; } .flex-wrap { flex-wrap: wrap; }
@@ -173,6 +177,26 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 *::-webkit-scrollbar-corner { background: transparent; }
 * { scrollbar-width: thin; scrollbar-color: rgba(148,163,184,.45) transparent; }
 .form-panel, .result-panel, .sidebar { scrollbar-gutter: stable; }
+
+/* ── compact overrides (align with seedance-video / tongyi-image rhythm) ── */
+.content { padding: 14px 16px; }
+.card { padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+.tab { padding: 9px 16px; }
+.btn { padding: 7px 14px; }
+
+/* ── full-width primary button (block) — used for major submit actions ── */
+.btn-block { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 12px 16px; font-size: 14px; font-weight: 600; border-radius: 8px; }
+
+/* ── header: API key status pill (matches tongyi-image header pattern) ── */
+.api-pill { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; background: rgba(34,197,94,.12); color: var(--success); cursor: default; }
+.api-pill--missing { background: rgba(245,158,11,.15); color: var(--warning); cursor: pointer; }
+
+/* ── prompt textarea wrapper with floating counter ── */
+.prompt-wrap { position: relative; }
+.prompt-wrap .prompt-counter { position: absolute; bottom: 8px; right: 12px; font-size: 11px; color: var(--text-dim); pointer-events: none; background: linear-gradient(to right, transparent, var(--bg) 30%); padding: 2px 4px 2px 16px; border-radius: 4px; }
+
+/* ── tip-bar (subtle inline hint, matches seedance-video) ── */
+.tip-bar { background: rgba(99,102,241,.08); border: 1px solid rgba(99,102,241,.2); border-radius: 6px; padding: 8px 12px; font-size: 12px; color: var(--primary); margin-bottom: 12px; }
 
 /* ── Settings drawer (right-side overlay; replaces full-page settings) ── */
 .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.32); z-index: 200; display: flex; justify-content: flex-end; animation: oa-fade-in .12s ease-out; }
@@ -1867,7 +1891,7 @@ function App() {
                   <ExampleGallery examples={featureDetail.examples} onSelect={handleExampleSelect} />
 
                   <div style={{marginTop:16}}>
-                    <button className="btn btn-primary" style={{width:"100%",justifyContent:"center",padding:"10px 16px"}}
+                    <button className="btn btn-primary btn-block"
                       onClick={handleGenerate} disabled={generating || blockedByRequired.length > 0}
                       title={blockedByRequired.length ? "请先填写必填项" : ""}>
                       {generating ? (
