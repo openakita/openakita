@@ -33,8 +33,8 @@ def test_detected_cli_is_frozen():
         version="1.0.0",
         error=None,
     )
-    with pytest.raises(Exception):
-        d.binary_path = "/other"  # frozen
+    with pytest.raises(Exception):  # noqa: B017
+        d.binary_path = "/other"  # frozen — exact exception type is an impl detail
 
 
 @pytest.mark.asyncio

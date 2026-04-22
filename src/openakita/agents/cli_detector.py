@@ -98,7 +98,7 @@ async def _read_version(binary_path: str) -> tuple[str | None, str | None]:
         return None, f"spawn failed: {exc}"
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=3.0)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         return None, "probe timed out"
     if proc.returncode != 0:
