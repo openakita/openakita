@@ -3,7 +3,7 @@
   "name": "Video Background Remove",
   "display_name_zh": "视频抠像换背景",
   "display_name_en": "Video Background Remove",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "python",
   "entry": "plugin.py",
   "description": "Remove a person from a video background and composite onto a solid color, an image, or transparency. Powered by RVM (Robust Video Matting) MobileNetV3 via onnxruntime, falling back gracefully when the model or runtime is missing.",
@@ -26,7 +26,7 @@
     "openakita": ">=1.27.0",
     "plugin_api": "~2",
     "plugin_ui_api": "~1",
-    "sdk": ">=0.4.0"
+    "sdk": ">=0.6.0,<1.0.0"
   },
   "provides": {
     "tools": [

@@ -3,7 +3,7 @@
   "name": "PPT to Video",
   "display_name_zh": "PPT 转视频",
   "display_name_en": "PPT to Video",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "python",
   "entry": "plugin.py",
   "description": "Turn a .pptx into a narrated video: each slide becomes one image clip with a TTS voice-over of the speaker notes. Reuses LibreOffice (soffice) for pptx → png conversion, python-pptx for note extraction, and the avatar-speaker TTS providers for narration.",
@@ -27,7 +27,7 @@
     "openakita": ">=1.27.0",
     "plugin_api": "~2",
     "plugin_ui_api": "~1",
-    "sdk": ">=0.4.0"
+    "sdk": ">=0.6.0,<1.0.0"
   },
   "provides": {
     "tools": [

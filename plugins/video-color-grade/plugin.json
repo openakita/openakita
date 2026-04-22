@@ -3,7 +3,7 @@
   "name": "Video Color Grade",
   "display_name_zh": "视频一键调色",
   "display_name_en": "Video Color Grade",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "python",
   "entry": "plugin.py",
   "description": "One-click subtle color grading for any video. Samples brightness/contrast/saturation via ffmpeg signalstats and emits a per-clip eq filter capped at \u00b18% per axis (no creative LUTs). Falls back to the named 'subtle' / 'neutral_punch' / 'warm_cinematic' presets when auto analysis is unavailable.",
@@ -26,7 +26,7 @@
     "openakita": ">=1.27.0",
     "plugin_api": "~2",
     "plugin_ui_api": "~1",
-    "sdk": ">=0.4.0"
+    "sdk": ">=0.6.0,<1.0.0"
   },
   "provides": {
     "tools": [
