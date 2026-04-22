@@ -115,6 +115,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .mode-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 
 .image-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.image-gallery--single { display: flex; justify-content: center; }
+.image-gallery--single .image-card { max-width: min(100%, 600px); width: 100%; }
+.image-gallery--single .image-card img { aspect-ratio: auto; height: auto; object-fit: contain; }
 .image-card { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; cursor: pointer; transition: .15s; position: relative; }
 .image-card:hover { border-color: var(--primary); box-shadow: 0 2px 8px rgba(0,0,0,.1); }
 .image-card img, .image-card video { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
@@ -252,6 +255,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   <symbol id="ic-megaphone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 13v-2z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></symbol>
   <symbol id="ic-party" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5.8 11.3L2 22l10.7-3.79"/><path d="M4 3h.01"/><path d="M22 8h.01"/><path d="M15 2h.01"/><path d="M22 20h.01"/><path d="M22 2l-2.24.75a2.9 2.9 0 0 0-1.96 3.12v0c.1.86-.57 1.63-1.45 1.63h-.38c-.86 0-1.6.6-1.76 1.44L14 10"/><path d="M22 13l-.82-.33c-.86-.34-1.82.2-1.98 1.11v0c-.11.7-.72 1.22-1.43 1.22H17"/><path d="M11 2l.33.82c.34.86-.2 1.82-1.11 1.98v0C9.52 4.9 9 5.52 9 6.23V7"/></symbol>
   <symbol id="ic-confetti" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5.8 11.3L2 22l10.7-3.79"/><path d="M4 3h.01"/><path d="M22 8h.01"/><path d="M15 2h.01"/><path d="M22 20h.01"/><path d="M22 2l-2.24.75a2.9 2.9 0 0 0-1.96 3.12c.1.86-.57 1.63-1.45 1.63h-.38c-.86 0-1.6.6-1.76 1.44L14 10"/><path d="M22 13l-.82-.33c-.86-.34-1.82.2-1.98 1.11-.11.7-.72 1.22-1.43 1.22H17"/><path d="M11 2l.33.82c.34.86-.2 1.82-1.11 1.98C9.52 4.9 9 5.52 9 6.23V7"/></symbol>
+
+  <!-- Guide-specific icons -->
+  <symbol id="ic-target" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></symbol>
+  <symbol id="ic-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></symbol>
+  <symbol id="ic-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
+  <symbol id="ic-palette" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="0.5" fill="currentColor"/><circle cx="17.5" cy="10.5" r="0.5" fill="currentColor"/><circle cx="8.5" cy="7.5" r="0.5" fill="currentColor"/><circle cx="6.5" cy="12" r="0.5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></symbol>
+  <symbol id="ic-brush" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></symbol>
+  <symbol id="ic-film" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/></symbol>
 
   <!-- UI placeholders -->
   <symbol id="ic-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></symbol>
@@ -411,6 +422,7 @@ const KNOWN_ICONS = new Set([
   "flame","clapperboard","camera","masks","copy","edit","refresh","package",
   "images","globe","sparkles","layers","ruler","rocket","message","megaphone",
   "party","confetti","upload","clipboard","file","book",
+  "target","check","close","palette","brush","film",
 ]);
 // Names whose ecommerce sprite has a same-meaning OpenAkitaIcons sibling.
 // Render those via the shared UI Kit so all plugins use identical glyphs;
@@ -735,15 +747,17 @@ function DynamicForm({ feature, params, setParams, pluginApi }) {
       };
       return (
         <div className="form-row" key={p.id}>
-          <div className="label" style={canOpt ? {display:"flex",alignItems:"center",justifyContent:"space-between"} : undefined}>
-            <span>{p.label}{p.required ? " *" : ""}</span>
-            {canOpt && (
+          {canOpt ? (
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+              <div className="label" style={{margin:0}}>{p.label}{p.required ? " *" : ""}</div>
               <button className="btn-ai-opt" disabled={optimizing[p.id] || !val}
                 onClick={() => handleOptimize(p.id)}>
                 {optimizing[p.id] ? (<><span className="spinner-xs"></span> 优化中...</>) : (<><Ic name="sparkles" /> AI 优化</>)}
               </button>
-            )}
-          </div>
+            </div>
+          ) : (
+            <label className="label">{p.label}{p.required ? " *" : ""}</label>
+          )}
           <textarea className="input textarea" placeholder={p.placeholder || ""}
             value={val}
             ref={autoResize}
@@ -1137,27 +1151,31 @@ function TaskDetail({ task }) {
       )}
 
       {/* Non-parent: show images */}
-      {!isParent && imgs.length > 0 && (
-        <div className="card">
-          <div className="image-gallery">
-            {imgs.map((url, i) => {
-              const isLocal = url && (url.indexOf(":\\") >= 0 || url.startsWith("/"));
-              const apiBase = _ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/ecommerce-image";
-              const displayUrl = isLocal
-                ? apiBase + "/images/" + task.id + "?idx=" + i
-                : url;
-              return (
-              <div key={i} className="image-card" onClick={() => setLightbox(displayUrl)}>
-                <img src={displayUrl} alt="" loading="lazy" />
-                <div className="image-card-actions">
-                  <button onClick={(e) => { e.stopPropagation(); downloadAsset(task.id, i); }}>下载</button>
+      {!isParent && imgs.length > 0 && (() => {
+        const resolvedUrls = imgs.map((url, i) => {
+          const isLocal = url && (url.indexOf(":\\") >= 0 || url.startsWith("/"));
+          const apiBase = _ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/ecommerce-image";
+          return isLocal ? apiBase + "/images/" + task.id + "?idx=" + i : url;
+        });
+        const isSingle = resolvedUrls.length === 1;
+        const galleryClass = isSingle ? "image-gallery image-gallery--single" : "image-gallery";
+        const galleryStyle = isSingle ? undefined : {justifyItems: "center"};
+        const cardStyle = isSingle ? undefined : {maxWidth: 320, width: "100%"};
+        return (
+          <div className="card">
+            <div className={galleryClass} style={galleryStyle}>
+              {resolvedUrls.map((displayUrl, i) => (
+                <div key={i} className="image-card" onClick={() => setLightbox(displayUrl)} style={cardStyle}>
+                  <img src={displayUrl} alt="" loading="lazy" />
+                  <div className="image-card-actions">
+                    <button onClick={(e) => { e.stopPropagation(); downloadAsset(task.id, i); }}>下载</button>
+                  </div>
                 </div>
-              </div>
-              );
-            })}
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {lightbox && (
         <div className="lightbox" onClick={() => setLightbox(null)}>
@@ -1255,9 +1273,11 @@ function SettingsPage({ onPurge }) {
             <option value="1">始终演示（不调用外网 API）</option>
           </select>
         </div>
-        <div className="form-row flex gap-2 flex-wrap">
-          <button type="button" className="btn btn-danger btn-sm" onClick={purgeMock}>清除全部演示任务</button>
-          <span className="text-xs text-dim">仅删除 api_task_id 为 mock- 开头的记录，可随时再生成</span>
+        <div className="form-row">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button type="button" className="btn btn-danger btn-sm" onClick={purgeMock}>清除全部演示任务</button>
+            <span className="text-xs text-dim">仅删除 api_task_id 为 mock- 开头的记录，可随时再生成</span>
+          </div>
         </div>
       </div>
       <div className="setting-section oa-settings-section">
@@ -1337,12 +1357,14 @@ function SettingsPage({ onPurge }) {
               onClick={() => save({ video_output_dir: vidDir.trim() })}>保存</button>
           </div>
         </div>
-        <div className="form-row flex gap-2 flex-wrap items-center">
+        <div className="form-row">
+          <div className="flex items-center gap-2 flex-wrap">
           <button type="button" className="btn btn-sm"
             onClick={() => { setImgDir(""); setVidDir(""); save({ image_output_dir: "", video_output_dir: "" }); }}>
             重置为默认
           </button>
           <span className="text-xs text-dim">留空即使用插件默认目录</span>
+          </div>
         </div>
         <p className="text-xs text-dim" style={{marginTop:8,lineHeight:1.6}}>
           {meta && meta.default_image_dir ? (
@@ -1825,7 +1847,12 @@ function TasksTab({ pluginApi }) {
             <div key={tk.id} className={"task-card" + (selected && selected.id === tk.id ? " selected" : "")}
               onClick={() => setSelected(tk)}>
               <div className="task-thumb">
-                {tk.status === "running" ? <div className="spinner-sm" /> : <Ic name={tk.task_type === "video" ? "video" : "image"} />}
+                {(() => {
+                  const tkImgs = tk.image_urls ? (typeof tk.image_urls === "string" ? JSON.parse(tk.image_urls || "[]") : tk.image_urls) : [];
+                  if (tkImgs.length > 0) return <img src={tkImgs[0]} alt="" />;
+                  if (tk.status === "running") return <div className="spinner-sm" />;
+                  return <Ic name={tk.task_type === "video" ? "video" : "image"} />;
+                })()}
               </div>
               <div className="task-info">
                 <h4>{tk.prompt || tk.feature_id || "任务"}</h4>
@@ -1833,6 +1860,7 @@ function TasksTab({ pluginApi }) {
                   <span className={"tag " + ((STATUS_MAP[tk.status] || {}).cls || "tag-gray")}>{(STATUS_MAP[tk.status] || {}).label || tk.status}</span>
                   <span>{tk.module}</span>
                   <span>{tk.model || ""}</span>
+                  <span>{tk.created_at ? new Date(tk.created_at * 1000).toLocaleString() : ""}</span>
                 </div>
               </div>
             </div>
@@ -2007,14 +2035,14 @@ function App() {
         <div className="header-right" />
       </div>
       {tab !== "settings" && cfgMeta && cfgMeta.mock_mode !== "0"
-        && (!cfgMeta.has_dashscope_key || !cfgMeta.has_ark_key) && (
+        && !cfgMeta.has_dashscope_key && !cfgMeta.has_ark_key && (
         <div className="oa-config-banner" role="alert" style={{margin:"12px 16px 0",flexShrink:0}}>
           <span className="oa-icon oa-config-banner__icon"
                 dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.warning() : ""}} />
           <div className="oa-config-banner__text">
-            <strong>未配置完整 API Key</strong>
+            <strong>未配置 API Key</strong>
             <div style={{fontSize:12,color:"var(--text-muted)",marginTop:2}}>
-              图像类缺 DashScope 时使用<strong> 演示占位图</strong>；视频类缺 Ark 时使用<strong> 演示示例视频</strong>。
+              配置 DashScope Key 可使用图像功能，配置 Ark Key 可使用视频功能。至少配置一个即可开始使用。
             </div>
           </div>
           <button className="oa-config-banner__action" type="button" onClick={() => setTab("settings")}>
