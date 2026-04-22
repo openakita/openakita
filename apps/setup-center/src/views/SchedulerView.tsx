@@ -71,6 +71,12 @@ type IMChannel = {
 // Frontend-only schedule mode; maps to backend trigger_type (once/interval/cron)
 type ScheduleMode = "once" | "interval" | "daily" | "weekly" | "monthly" | "custom";
 
+type PlaybookDocForm = {
+  key: string;
+  filename: string;
+  reset_on_completion: boolean;
+};
+
 type TaskForm = {
   name: string;
   task_type: string;
@@ -93,6 +99,14 @@ type TaskForm = {
   channel_id: string;
   chat_id: string;
   enabled: boolean;
+  playbook: {
+    documents: PlaybookDocForm[];
+    prompt: string;
+    loop_enabled: boolean;
+    max_loops: number | null;
+    worktree_enabled: boolean;
+    agent_profile_id: string;
+  };
 };
 
 // API_BASE is derived from the apiBaseUrl prop (empty string = relative path for web mode)
@@ -114,6 +128,14 @@ const defaultForm: TaskForm = {
   channel_id: "",
   chat_id: "",
   enabled: true,
+  playbook: {
+    documents: [],
+    prompt: "Complete the next unfinished `- [ ]` task in the attached document. Edit the file to flip it to `- [x]` when done. Stop after one task.",
+    loop_enabled: false,
+    max_loops: null,
+    worktree_enabled: false,
+    agent_profile_id: "default",
+  },
 };
 
 function pad2(n: number): string { return n.toString().padStart(2, "0"); }
@@ -346,6 +368,7 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
   const [busy, setBusy] = useState(false);
   
   const [channels, setChannels] = useState<IMChannel[]>([]);
+  const [profiles, setProfiles] = useState<AgentProfile[]>([]);
   const [activeTab, setActiveTab] = useState<TaskTab>("active");
   const [searchQuery, setSearchQuery] = useState("");
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
@@ -903,6 +926,7 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
                   <SelectContent>
                     <SelectItem value="reminder">{t("scheduler.typeReminder")}</SelectItem>
                     <SelectItem value="task">{t("scheduler.typeTask")}</SelectItem>
+                    <SelectItem value="playbook">{t("scheduler.typePlaybook")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -924,7 +948,7 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
 
             {renderTriggerFields()}
 
-            {form.task_type === "reminder" ? (
+            {form.task_type === "reminder" && (
               <div className="space-y-1.5">
                 <Label>{t("scheduler.reminderMessage")}</Label>
                 <Textarea
@@ -935,7 +959,8 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
                   className="resize-y"
                 />
               </div>
-            ) : (
+            )}
+            {form.task_type === "task" && (
               <div className="space-y-1.5">
                 <Label>{t("scheduler.prompt")}</Label>
                 <Textarea
@@ -946,6 +971,10 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
                   className="resize-y"
                 />
               </div>
+            )}
+            {form.task_type === "playbook" && (
+              <PlaybookFormSection form={form} setForm={setForm} t={t}
+                                   profiles={profiles} />
             )}
 
             <div className="space-y-1.5">
@@ -1284,4 +1313,15 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
       <ConfirmDialog dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />
     </div>
   );
+}
+
+type AgentProfile = { profile_id: string; name: string; agent_type?: string };
+
+function PlaybookFormSection(_props: {
+  form: TaskForm;
+  setForm: React.Dispatch<React.SetStateAction<TaskForm>>;
+  t: (k: string, opts?: any) => string;
+  profiles: AgentProfile[];
+}) {
+  return null;
 }
