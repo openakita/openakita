@@ -187,8 +187,23 @@
   });
   OpenAkitaI18n.bindDom(document.body);
 
-  const apiBase = (OpenAkita.meta && OpenAkita.meta.apiBase) || '';
-  const api = (path, opts) => fetch(apiBase + path, opts).then(r => r.json().then(j => ({ ok: r.ok, status: r.status, body: j })));
+  function _detectApiBase() {
+    try {
+      if (window.OpenAkita && OpenAkita.meta && OpenAkita.meta.apiBase) {
+        return OpenAkita.meta.apiBase;
+      }
+    } catch (_) {}
+    var loc = window.location;
+    if (loc.port === '5173' || loc.port === '1420') return 'http://127.0.0.1:18900';
+    return loc.origin;
+  }
+  function api(path, opts) {
+    var url = path.indexOf('http') === 0 ? path : _detectApiBase() + path;
+    return fetch(url, opts || {}).then(function(r) {
+      return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j }; });
+    });
+  }
+  Object.defineProperty(window, 'apiBase', { get: _detectApiBase, configurable: true });
   const $ = (id) => document.getElementById(id);
   let lastTaskId = null;
 
@@ -246,7 +261,7 @@
 
   $('exportBtn').addEventListener('click', () => {
     if (!lastTaskId) return;
-    window.open(apiBase + '/tasks/' + lastTaskId + '/export.csv', '_blank');
+    window.open(_detectApiBase() + '/tasks/' + lastTaskId + '/export.csv', '_blank');
   });
   $('copyBtn').addEventListener('click', async () => {
     if (!lastTaskId) return;
@@ -257,7 +272,7 @@
     }
   });
 
-  const taskPanel = new TaskPanel({ root: '#tasks', apiBase, tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
+  const taskPanel = new TaskPanel({ root: '#tasks', apiBase: _detectApiBase(), tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
   taskPanel.start();
 
   OpenAkita.onEvent('task_updated', async (data) => {

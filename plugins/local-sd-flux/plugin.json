@@ -3,7 +3,7 @@
   "name": "Local SD / FLUX (ComfyUI)",
   "display_name_zh": "本地出图 (Stable Diffusion / FLUX)",
   "display_name_en": "Local SD / FLUX (ComfyUI)",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "python",
   "entry": "plugin.py",
   "description": "Generate images locally through a running ComfyUI server. Ships with curated workflow presets for Stable Diffusion 1.5, SDXL and FLUX, plus a lightweight provider-ranker that picks between local-GPU / local-CPU / remote ComfyUI based on VRAM, queue depth and reliability.",
@@ -27,7 +27,7 @@
     "openakita": ">=1.27.0",
     "plugin_api": "~2",
     "plugin_ui_api": "~1",
-    "sdk": ">=0.4.0"
+    "sdk": ">=0.6.0,<1.0.0"
   },
   "provides": {
     "tools": [

@@ -119,8 +119,23 @@
   });
   OpenAkitaI18n.bindDom(document.body);
 
-  const apiBase = (OpenAkita.meta && OpenAkita.meta.apiBase) || '';
-  const api = (path, opts) => fetch(apiBase + path, opts).then(r => r.json().then(j => ({ ok: r.ok, status: r.status, body: j })));
+  function _detectApiBase() {
+    try {
+      if (window.OpenAkita && OpenAkita.meta && OpenAkita.meta.apiBase) {
+        return OpenAkita.meta.apiBase;
+      }
+    } catch (_) {}
+    var loc = window.location;
+    if (loc.port === '5173' || loc.port === '1420') return 'http://127.0.0.1:18900';
+    return loc.origin;
+  }
+  function api(path, opts) {
+    var url = path.indexOf('http') === 0 ? path : _detectApiBase() + path;
+    return fetch(url, opts || {}).then(function(r) {
+      return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j }; });
+    });
+  }
+  Object.defineProperty(window, 'apiBase', { get: _detectApiBase, configurable: true });
   const $ = (id) => document.getElementById(id);
 
   let templates = []; let chosen = null; let bgPath = null; let lastTaskId = null;
@@ -167,7 +182,7 @@
   $('bgFile').addEventListener('change', async (e) => {
     const f = e.target.files[0]; if (!f) return;
     const fd = new FormData(); fd.append('file', f);
-    const r = await fetch(apiBase + '/upload-background', { method:'POST', body: fd });
+    const r = await fetch(_detectApiBase() + '/upload-background', { method:'POST', body: fd });
     if (!r.ok) { $('bgInfo').textContent = T('bg.uploadFail'); return; }
     const j = await r.json(); bgPath = j.path;
     $('bgInfo').textContent = T('bg.uploaded', { name: f.name });
@@ -188,13 +203,13 @@
     taskPanel.refresh();
   });
 
-  const taskPanel = new TaskPanel({ root: '#tasks', apiBase, tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
+  const taskPanel = new TaskPanel({ root: '#tasks', apiBase: _detectApiBase(), tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
   taskPanel.start();
 
   OpenAkita.onEvent('task_updated', (data) => {
     taskPanel.refresh();
     if (data && data.status === 'succeeded' && data.id === lastTaskId) {
-      const url = apiBase + '/tasks/' + data.id + '/poster';
+      const url = _detectApiBase() + '/tasks/' + data.id + '/poster';
       const div = document.createElement('div');
       div.className = 'oa-card';
       div.innerHTML = `<h3>${T('result.title')}</h3>

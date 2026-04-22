@@ -3,7 +3,7 @@
   "name": "Storyboard",
   "display_name_zh": "AI 分镜师",
   "display_name_en": "Storyboard",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "python",
   "entry": "plugin.py",
   "description": "Break a text script into a shot list (visual, camera language, duration, dialogue per shot), one-click export to CSV/JSON or hand off to seedance/tongyi for image generation. Designed for users who can't write a script.",
@@ -27,7 +27,7 @@
     "openakita": ">=1.27.0",
     "plugin_api": "~2",
     "plugin_ui_api": "~1",
-    "sdk": ">=0.4.0"
+    "sdk": ">=0.6.0,<1.0.0"
   },
   "provides": {
     "tools": [

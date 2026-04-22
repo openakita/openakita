@@ -3,7 +3,7 @@
   "name": "Poster Maker",
   "display_name_zh": "AI 海报生成",
   "display_name_en": "Poster Maker",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "python",
   "entry": "plugin.py",
   "description": "Generate a poster in 1 minute from a template + copy + a single image. Optionally calls AI image editing to polish the background.",
@@ -26,7 +26,7 @@
     "openakita": ">=1.27.0",
     "plugin_api": "~2",
     "plugin_ui_api": "~1",
-    "sdk": ">=0.4.0"
+    "sdk": ">=0.6.0,<1.0.0"
   },
   "provides": {
     "tools": ["poster_maker_create", "poster_maker_status", "poster_maker_list", "poster_maker_cancel", "poster_maker_templates"],
