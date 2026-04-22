@@ -3,7 +3,7 @@
   "name": "BGM Suggester",
   "display_name_zh": "AI 配乐顾问",
   "display_name_en": "BGM Suggester",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "python",
   "entry": "plugin.py",
   "description": "Turn a scene + mood + duration into a structured BGM brief (style/bpm/mood-arc/keywords) and bridge it into Suno AI prompts and YouTube/Spotify/Epidemic search queries. No ffmpeg or model download needed.",
@@ -27,7 +27,7 @@
     "openakita": ">=1.27.0",
     "plugin_api": "~2",
     "plugin_ui_api": "~1",
-    "sdk": ">=0.4.0"
+    "sdk": ">=0.6.0,<1.0.0"
   },
   "provides": {
     "tools": [

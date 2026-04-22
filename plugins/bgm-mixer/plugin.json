@@ -3,7 +3,7 @@
   "name": "BGM Mixer",
   "display_name_zh": "节拍混音 (BGM Mixer)",
   "display_name_en": "BGM Mixer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "python",
   "entry": "plugin.py",
   "description": "Mix a voice track with a background music track, using beat-aware ducking and beat-snapped cuts (CutClaw / madmom inspired). Falls back to a deterministic stub beat tracker when madmom is not installed so the plugin works on any machine.",
@@ -26,7 +26,7 @@
     "openakita": ">=1.27.0",
     "plugin_api": "~2",
     "plugin_ui_api": "~1",
-    "sdk": ">=0.4.0"
+    "sdk": ">=0.6.0,<1.0.0"
   },
   "provides": {
     "tools": [
