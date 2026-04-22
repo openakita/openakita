@@ -243,6 +243,15 @@ def _sanitize_path(full_path: Path, workspace_root: Path) -> str:
 
 _SENSITIVE_KEY_PATTERNS = ("KEY", "SECRET", "TOKEN", "PASSWORD", "CREDENTIAL")
 
+# NOTE: 修改本块（_mask_value / _mask_raw_env / read_env 的 mask 行为）时，
+# 务必同步检查以下三处防御，避免再次回归 v1.26.6 已修复的
+# "编辑端点时遮蔽 API Key 被回写覆盖真实密钥" 缺陷：
+#   1. write_env: 对敏感键过滤含 *** 的值（safe_entries）
+#   2. save_endpoint: body.api_key 含 *** 时降级为 None
+#   3. apps/setup-center/src/views/LLMView.tsx: editDraft.apiKeyDirty 标记
+# 参考 v1.26.x 提交：8ab550fa（前后端 dirty + save_endpoint 防御）
+# 与 d3ea9814（write_env *** 防御）。曾被 main 6439b342 误回退。
+
 
 def _mask_value(key: str, value: str) -> str:
     """Redact values whose key name suggests a secret (API keys, tokens, etc.)."""
@@ -271,15 +280,24 @@ def _mask_raw_env(raw: str) -> str:
 
 @router.get("/api/config/env")
 async def read_env():
-    """Read .env file content as key-value pairs (sensitive values masked)."""
+    """Read .env file content as key-value pairs.
+
+    Sensitive values (keys containing TOKEN/SECRET/PASSWORD/KEY/CREDENTIAL)
+    are masked before being returned. The ``has_value`` map tells the
+    frontend which keys actually have a non-empty value without leaking
+    the real secret — this lets the editor distinguish "已配置 / 未配置"
+    while still requiring the user to explicitly retype to update a key
+    (see apiKeyDirty in LLMView.tsx).
+    """
     env_path = _project_root() / ".env"
     if not env_path.exists():
-        return {"env": {}, "raw": ""}
+        return {"env": {}, "has_value": {}, "raw": ""}
     content = env_path.read_bytes().decode("utf-8", errors="replace")
     env = _parse_env(content)
     masked_env = {k: _mask_value(k, v) for k, v in env.items()}
+    has_value = {k: bool(v and v.strip()) for k, v in env.items()}
     masked_raw = _mask_raw_env(content)
-    return {"env": masked_env, "raw": masked_raw}
+    return {"env": masked_env, "has_value": has_value, "raw": masked_raw}
 
 
 @router.post("/api/config/env")
@@ -294,14 +312,35 @@ async def write_env(body: EnvUpdateRequest):
     existing = ""
     if env_path.exists():
         existing = env_path.read_bytes().decode("utf-8", errors="replace")
-    new_content = _update_env_content(existing, body.entries, delete_keys=set(body.delete_keys))
-    env_path.write_text(new_content, encoding="utf-8")
+
+    # Defense: drop masked sentinel values for sensitive keys to prevent the
+    # frontend's saveEnvKeys path from accidentally overwriting real secrets
+    # with the *** display values returned by GET /api/config/env.
+    # See v1.26.x commit d3ea9814.
+    import re as _re
+
+    _sensitive_key_re = _re.compile(
+        r"(TOKEN|SECRET|PASSWORD|KEY|APIKEY|CREDENTIAL)", _re.IGNORECASE
+    )
+    safe_entries: dict[str, str] = {}
     for key, value in body.entries.items():
+        if value and "***" in value and _sensitive_key_re.search(key):
+            logger.warning(
+                "[Config API] write_env: dropping masked value for %s", key
+            )
+            continue
+        safe_entries[key] = value
+
+    new_content = _update_env_content(
+        existing, safe_entries, delete_keys=set(body.delete_keys)
+    )
+    env_path.write_text(new_content, encoding="utf-8")
+    for key, value in safe_entries.items():
         if value:
             os.environ[key] = value
     for key in body.delete_keys:
         os.environ.pop(key, None)
-    count = len([v for v in body.entries.values() if v]) + len(body.delete_keys)
+    count = len([v for v in safe_entries.values() if v]) + len(body.delete_keys)
     logger.info(f"[Config API] Updated .env with {count} entries")
 
     # Determine if any changed keys require a service restart
@@ -328,7 +367,7 @@ async def write_env(body: EnvUpdateRequest):
         "OPENAKITA_THEME",
         "LANGUAGE",
     )
-    changed_keys = {k for k, v in body.entries.items() if v} | set(body.delete_keys)
+    changed_keys = {k for k, v in safe_entries.items() if v} | set(body.delete_keys)
     restart_required = any(
         any(k.upper().startswith(p) for p in _RESTART_REQUIRED_PREFIXES) for k in changed_keys
     )
@@ -344,7 +383,7 @@ async def write_env(body: EnvUpdateRequest):
 
     return {
         "status": "ok",
-        "updated_keys": list(body.entries.keys()),
+        "updated_keys": list(safe_entries.keys()),
         "restart_required": restart_required,
         "hot_reloadable": hot_reloadable,
     }
@@ -409,11 +448,26 @@ async def save_endpoint(body: SaveEndpointRequest, request: Request):
     """
     from openakita.llm.endpoint_manager import ConflictError
 
+    # Defense: if the frontend echoed back the masked sentinel from
+    # GET /api/config/env (e.g. "sk-d****ab53"), treat it as "unchanged"
+    # rather than overwriting the real key on disk. The frontend should
+    # already gate this via apiKeyDirty (LLMView.tsx) but we keep this
+    # belt-and-suspenders to prevent regressions like main 6439b342.
+    # See v1.26.x commit 8ab550fa.
+    api_key = body.api_key
+    if api_key and "***" in api_key:
+        logger.warning(
+            "[Config API] save-endpoint: ignoring masked API key (len=%d), "
+            "treating as unchanged",
+            len(api_key),
+        )
+        api_key = None
+
     mgr = _get_endpoint_manager()
     try:
         result = mgr.save_endpoint(
             endpoint=body.endpoint,
-            api_key=body.api_key,
+            api_key=api_key,
             endpoint_type=body.endpoint_type,
             expected_version=body.expected_version,
         )
