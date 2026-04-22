@@ -33,6 +33,8 @@ type AgentProfile = {
   memory_inherit_global?: boolean;
   name_i18n?: Record<string, string>;
   description_i18n?: Record<string, string>;
+  cli_provider_id?: string | null;
+  cli_permission_mode?: "plan" | "write";
 };
 
 type SkillItem = {
@@ -74,6 +76,30 @@ type CategoryInfo = {
   color: string;
   builtin: boolean;
   agent_count: number;
+};
+
+type DetectedCli = {
+  provider_id: string;
+  name: string;
+  binary: string;
+  version?: string;
+  available: boolean;
+};
+
+type CliWizardState = {
+  step: 1 | 2;
+  provider_id: string | null;
+  permission_mode: "plan" | "write";
+  name: string;
+  description: string;
+};
+
+const EMPTY_CLI_WIZARD: CliWizardState = {
+  step: 1,
+  provider_id: null,
+  permission_mode: "write",
+  name: "",
+  description: "",
 };
 
 // SVG icon paths (viewBox 0 0 24 24, stroke-based for consistency)
@@ -196,6 +222,12 @@ export function AgentManagerView({
   const [skillSearch, setSkillSearch] = useState("");
   const importInputRef = useRef<HTMLInputElement>(null);
 
+  // CLI wizard state
+  const [cliWizardOpen, setCliWizardOpen] = useState(false);
+  const [cliWizard, setCliWizard] = useState<CliWizardState>(EMPTY_CLI_WIZARD);
+  const [detectedClis, setDetectedClis] = useState<DetectedCli[]>([]);
+  const [detectLoading, setDetectLoading] = useState(false);
+
   // Isolation UI state
   const [identityTab, setIdentityTab] = useState<string>("SOUL.md");
   const [identityContent, setIdentityContent] = useState<string>("");
@@ -276,6 +308,20 @@ export function AgentManagerView({
       setCategories(data.categories || []);
     } catch (e) {
       logger.warn("AgentManager", "Failed to fetch categories", { error: String(e) });
+    }
+  }, [apiBaseUrl]);
+
+  const fetchDetectedClis = useCallback(async () => {
+    setDetectLoading(true);
+    try {
+      const res = await safeFetch(`${apiBaseUrl}/api/sessions/external-cli/detected`);
+      const data = await res.json();
+      setDetectedClis(data.detected || []);
+    } catch (e) {
+      logger.warn("AgentManager", "Failed to fetch detected CLIs", { error: String(e) });
+      setDetectedClis([]);
+    } finally {
+      setDetectLoading(false);
     }
   }, [apiBaseUrl]);
 
