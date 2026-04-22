@@ -464,3 +464,46 @@ async def list_external_cli_sessions(provider: str, cwd: str = "", limit: int = 
         if len(entries) >= limit:
             break
     return {"sessions": entries}
+
+
+@router.get("/external-cli/{provider}/{session_id}/messages")
+async def stream_external_cli_messages(
+    provider: str,
+    session_id: str,
+    cursor: str = "",
+    limit: int = 500,
+):
+    pid = _safe_provider(provider)
+    if pid is None:
+        return {"error": f"unknown provider: {provider}", "entries": [], "next_cursor": None, "eof": True}
+    parser = _PARSERS.get(pid)
+    root = _PROVIDER_ROOTS.get(pid)
+    if parser is None or root is None:
+        return {"entries": [], "next_cursor": None, "eof": True}
+
+    # Find the file under root whose stem matches session_id. One `rglob` per
+    # request is acceptable for Phase 1; Phase 3b adds a cache if needed.
+    match: Path | None = None
+    for f in root.rglob(f"{session_id}.jsonl"):
+        match = f
+        break
+    if match is None:
+        return {"error": "session not found", "entries": [], "next_cursor": None, "eof": True}
+
+    start = int(cursor) if cursor.isdigit() else 0
+    entries: list = []
+    read_n = 0
+    with open(match, "rb") as fh:
+        fh.seek(start)
+        while read_n < limit:
+            line = fh.readline()
+            if not line:
+                break
+            decoded = line.decode("utf-8", errors="replace")
+            parsed = parser(decoded)
+            if parsed is not None:
+                entries.append(parsed)
+                read_n += 1
+        next_cursor = str(fh.tell())
+        eof = not fh.read(1)  # probe one byte past cursor
+    return {"entries": entries, "next_cursor": None if eof else next_cursor, "eof": eof}
