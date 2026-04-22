@@ -129,6 +129,7 @@ export function LLMView(props: LLMViewProps) {
     name: string; priority: number; providerSlug: string;
     apiType: "openai" | "openai_responses" | "anthropic";
     baseUrl: string; apiKeyEnv: string; apiKeyValue: string;
+    apiKeyDirty: boolean;
     modelId: string; caps: string[]; maxTokens: number;
     contextWindow: number; timeout: number; rpmLimit: number;
     pricingTiers: { max_input: number; input_price: number; output_price: number }[];
@@ -847,6 +848,7 @@ export function LLMView(props: LLMViewProps) {
       baseUrl: ep.base_url || "",
       apiKeyEnv: ep.api_key_env || "",
       apiKeyValue: envDraft[ep.api_key_env || ""] || "",
+      apiKeyDirty: false,
       modelId: ep.model || "",
       caps: Array.isArray(ep.capabilities) && ep.capabilities.length ? ep.capabilities : ["text"],
       maxTokens: typeof ep.max_tokens === "number" ? ep.max_tokens : 0,
@@ -966,7 +968,11 @@ export function LLMView(props: LLMViewProps) {
             { method: "DELETE" },
           );
         }
-        const keyToSave = editDraft.apiKeyValue.trim() || null;
+        // Only send the API key when the user actually edited the input
+        // (apiKeyDirty). Otherwise the prefilled masked value (sk-d****ab53)
+        // would be echoed back and overwrite the real key on disk.
+        // See v1.26.x commit 8ab550fa.
+        const keyToSave = editDraft.apiKeyDirty ? (editDraft.apiKeyValue.trim() || null) : null;
         const res = await safeFetch(`${httpApiBase()}/api/config/save-endpoint`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -988,7 +994,8 @@ export function LLMView(props: LLMViewProps) {
         if (nameChanged) {
           await deleteEndpointLocal(editingOriginalName, "endpoints");
         }
-        await saveEndpointLocal(endpoint, editDraft.apiKeyValue.trim() || null, "endpoints");
+        const effectiveKeyLocal = editDraft.apiKeyDirty ? (editDraft.apiKeyValue.trim() || null) : null;
+        await saveEndpointLocal(endpoint, effectiveKeyLocal, "endpoints");
       }
 
       notifySuccess("端点已更新");
@@ -1542,7 +1549,7 @@ export function LLMView(props: LLMViewProps) {
                 {(() => { const url = getProviderApplyUrl(editDraft.providerSlug); const ep = providers.find((p) => p.slug === editDraft.providerSlug); return url && !isLocalProvider(ep) ? <Button type="button" variant="link" size="xs" className="h-auto p-0 text-[11px]" onClick={() => openApplyUrl(url)}>{t("llm.getApiKey")}</Button> : null; })()}
               </Label>
               <div className="relative">
-                <Input value={editDraft.apiKeyValue} onChange={(e) => { setEditDraft((d) => d ? { ...d, apiKeyValue: e.target.value } : d); }} type={(secretShown.__EDIT_EP_KEY && !IS_WEB) ? "text" : "password"} className="pr-11" placeholder={isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) ? t("llm.localKeyPlaceholder") : t("llm.apiKeyPlaceholder")} />
+                <Input value={editDraft.apiKeyValue} onChange={(e) => { setEditDraft((d) => d ? { ...d, apiKeyValue: e.target.value, apiKeyDirty: true } : d); }} type={(secretShown.__EDIT_EP_KEY && !IS_WEB) ? "text" : "password"} className="pr-11" placeholder={isLocalProvider(providers.find((p) => p.slug === editDraft.providerSlug)) ? t("llm.localKeyPlaceholder") : t("llm.apiKeyPlaceholder")} />
                 {!IS_WEB && <Button type="button" variant="ghost" size="icon-xs" className="absolute right-1.5 top-1/2 -translate-y-1/2" onClick={() => setSecretShown((m) => ({ ...m, __EDIT_EP_KEY: !m.__EDIT_EP_KEY }))} title={secretShown.__EDIT_EP_KEY ? t("llm.hideSecret") : t("llm.showSecret")}>
                   {secretShown.__EDIT_EP_KEY ? <IconEyeOff size={14} /> : <IconEye size={14} />}
                 </Button>}
