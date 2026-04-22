@@ -126,6 +126,10 @@ plugins/*
 !plugins/seedance-video/ui/
 !plugins/seedance-video/ui/dist/
 !plugins/seedance-video/ui/dist/**
+!plugins/avatar-studio/
+!plugins/avatar-studio/ui/
+!plugins/avatar-studio/ui/dist/
+!plugins/avatar-studio/ui/dist/**
 !plugins/ecommerce-image/
 !plugins/ecommerce-image/**
 
