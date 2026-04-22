@@ -81,7 +81,7 @@ class CostPreview:
 
 
 _DEFAULT_HUMAN_TRANSLATOR: dict[str, Callable[[float], str]] = {
-    "CNY": lambda c: f"≈ {c:.2f} 元 (一杯奶茶 ≈ 18 元)" if c < 50 else f"≈ {c:.0f} 元",
+    "CNY": lambda c: f"≈ ¥{c:.2f}" if c < 50 else f"≈ ¥{c:.0f}",
     "USD": lambda c: f"≈ ${c:.2f}" if c < 10 else f"≈ ${c:.0f}",
     "credit": lambda c: f"≈ {int(c)} credits",
 }

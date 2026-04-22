@@ -40,7 +40,7 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "title": "AI 分镜师",
+    "title": "Storyboard",
     "title_i18n": { "zh": "AI 分镜师", "en": "Storyboard" },
     "sidebar_group": "apps",
     "permissions": ["download", "notifications", "theme", "clipboard"]

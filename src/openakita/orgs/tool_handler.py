@@ -87,12 +87,12 @@ class OrgToolHandler:
         try:
             if self._runtime.is_org_recently_stopped(org_id):
                 return (
-                    "[组织已停止] 组织已被停止或删除，当前任务已被取消。"
-                    "请停止继续调用任何 org_* 工具，直接给用户一个文字总结说明任务已终止。"
+                    "[Org stopped] The organization has been stopped or deleted and the current task has been cancelled. "
+                    "Stop calling any org_* tools and give the user a plain-text summary stating that the task has been terminated."
                 )
         except Exception:
             pass
-        return "组织未运行"
+        return "Organization not running"
 
     _INT_DEFAULTS: dict[str, int] = {
         "priority": 0,
@@ -797,12 +797,11 @@ class OrgToolHandler:
                     node_id, args.get("to_node", ""),
                 )
                 return (
-                    "[org_send_message 拦截] 检测到你正用 msg_type=question "
-                    "向下属派发实际任务（含'撰写/优化/产出/完成'等任务措辞）。"
-                    "这会绕过任务链跟踪，导致系统认为你的指令已完成而提前结束。"
-                    "请改用 org_delegate_task 正式派发任务（一次只能派一个，"
-                    "可并行多次调用），并在下属交付后用 org_accept_deliverable "
-                    "验收。需要等下属交付时可调用 org_wait_for_deliverable。"
+                    "[org_send_message blocked] Detected attempt to assign a real task "
+                    "to a subordinate via msg_type=question (message contains task keywords such as 'write/optimize/produce/complete'). "
+                    "This bypasses task-chain tracking and causes the system to consider your instruction complete prematurely. "
+                    "Use org_delegate_task to formally delegate tasks (one at a time, but multiple calls may be made in parallel). "
+                    "Verify deliverables with org_accept_deliverable and use org_wait_for_deliverable when you need to wait."
                 )
 
         metadata: dict = {}
@@ -855,8 +854,8 @@ class OrgToolHandler:
                     f"`{c.id}`({c.role_title})" for c in candidates
                 )
                 return (
-                    f"[org_send_message 失败] 你是 {caller_label}，to_node='{to_node}' "
-                    f"对应多个节点：{cand_list}。请改用上面列出的精确节点 id（反引号包住的那一个）。"
+                    f"[org_send_message failed] You are {caller_label}. to_node='{to_node}' "
+                    f"matches multiple nodes: {cand_list}. Use the exact node id shown above (the one in backticks)."
                 )
             if status == "fuzzy":
                 cand = candidates[0] if candidates else None
@@ -865,26 +864,26 @@ class OrgToolHandler:
                 )
                 if cand and cand.id == node_id:
                     return (
-                        f"[org_send_message 失败] 你是 {caller_label}，"
-                        f"to_node='{to_node}' 模糊匹配到的是你自己（{cand_label}），不能给自己发消息。"
-                        "请使用准确的目标节点 id。"
+                        f"[org_send_message failed] You are {caller_label}. "
+                        f"to_node='{to_node}' fuzzy-matched to yourself ({cand_label}). Cannot send a message to yourself. "
+                        "Use the exact target node id."
                     )
                 return (
-                    f"[org_send_message 失败] 你是 {caller_label}，to_node='{to_node}' "
-                    f"不是精确匹配，最接近的是 {cand_label}。为避免误发，请把 to_node 改为 "
-                    "上面建议的精确节点 id 再试。"
+                    f"[org_send_message failed] You are {caller_label}. to_node='{to_node}' "
+                    f"is not an exact match — the closest is {cand_label}. To avoid misdirected messages, change to_node to "
+                    "the exact node id suggested above and retry."
                 )
             if status == "not_found":
                 avail = ", ".join(f"{n.id}({n.role_title})" for n in org.nodes)
                 return (
-                    f"[org_send_message 失败] 你是 {caller_label}，节点 '{to_node}' 不存在。"
-                    f"可用节点: {avail}"
+                    f"[org_send_message failed] You are {caller_label}. Node '{to_node}' does not exist. "
+                    f"Available nodes: {avail}"
                 )
 
             to_node = resolved.id
             if to_node == node_id:
                 return (
-                    f"[org_send_message 失败] 你是 {caller_label}，不能给自己发消息。"
+                    f"[org_send_message failed] You are {caller_label}. Cannot send a message to yourself."
                 )
 
         msg = OrgMessage(
@@ -915,9 +914,10 @@ class OrgToolHandler:
                     _inflight_key,
                 )
                 return (
-                    f"[去重] 检测到 {self._runtime._tool_inflight_window_secs:.0f}s 内"
-                    f"已用 propagate_chain 接力同一任务链（{relay_chain_for_lock[:12]}）"
-                    f"给 {to_node}，已忽略。请改用 org_wait_for_deliverable 等待结果。"
+                    f"[Deduplicated] A propagate_chain relay to {to_node} for the same task chain "
+                    f"({relay_chain_for_lock[:12]}…) was already sent within the last "
+                    f"{self._runtime._tool_inflight_window_secs:.0f}s and has been ignored. "
+                    "Use org_wait_for_deliverable to wait for the result."
                 )
 
         try:
@@ -936,7 +936,7 @@ class OrgToolHandler:
             })
             self._runtime._mark_effective_action(org_id, node_id)
             self._runtime._on_inbound_for_node(org_id, to_node)
-        return f"消息已发送给 {to_node}" if ok else "发送失败"
+        return f"Message sent to {to_node}" if ok else "Failed to send message"
 
     async def _handle_org_reply_message(
         self, args: dict, org_id: str, node_id: str

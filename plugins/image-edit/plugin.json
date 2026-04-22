@@ -40,7 +40,7 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "title": "AI 改图",
+    "title": "Image Edit",
     "title_i18n": { "zh": "AI 改图", "en": "Image Edit" },
     "sidebar_group": "apps",
     "permissions": ["upload", "download", "notifications", "theme", "clipboard"]

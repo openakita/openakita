@@ -40,7 +40,7 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "title": "视频抠像换背景",
+    "title": "Video Background Remove",
     "title_i18n": { "zh": "视频抠像换背景", "en": "Video Background Remove" },
     "sidebar_group": "apps",
     "permissions": ["upload", "download", "notifications", "theme"]

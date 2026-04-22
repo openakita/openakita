@@ -36,7 +36,7 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "title": "AI 视频翻译",
+    "title": "Video Translator",
     "title_i18n": { "zh": "AI 视频翻译", "en": "Video Translator" },
     "sidebar_group": "apps",
     "permissions": ["upload", "download", "notifications", "theme"]

@@ -40,7 +40,7 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "title": "节拍混音",
+    "title": "BGM Mixer",
     "title_i18n": { "zh": "节拍混音", "en": "BGM Mixer" },
     "sidebar_group": "apps",
     "permissions": ["upload", "download", "notifications", "theme"]

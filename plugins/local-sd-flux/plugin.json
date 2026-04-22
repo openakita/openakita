@@ -42,7 +42,7 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "title": "本地出图",
+    "title": "Local SD / FLUX",
     "title_i18n": { "zh": "本地出图", "en": "Local SD / FLUX" },
     "sidebar_group": "apps",
     "permissions": ["upload", "download", "notifications", "theme"]

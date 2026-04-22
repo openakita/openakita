@@ -42,7 +42,7 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "title": "视频配音翻译",
+    "title": "Dub-It",
     "title_i18n": { "zh": "视频配音翻译", "en": "Dub-It" },
     "sidebar_group": "apps",
     "permissions": ["upload", "download", "notifications", "theme"]

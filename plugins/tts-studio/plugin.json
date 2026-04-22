@@ -35,7 +35,7 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "title": "AI 配音工坊",
+    "title": "TTS Studio",
     "title_i18n": { "zh": "AI 配音工坊", "en": "TTS Studio" },
     "sidebar_group": "apps",
     "permissions": ["upload", "download", "notifications", "theme", "clipboard"]

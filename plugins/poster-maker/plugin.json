@@ -34,7 +34,7 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "title": "AI 海报生成",
+    "title": "Poster Maker",
     "title_i18n": { "zh": "AI 海报生成", "en": "Poster Maker" },
     "sidebar_group": "apps",
     "permissions": ["upload", "download", "notifications", "theme"]

@@ -203,7 +203,7 @@ class TestClearTyping:
         body = adapter._http_client.put.call_args.kwargs["json"]
         assert body["cardBizId"] == "biz_stale"
         card_data = json.loads(body["cardData"])
-        assert "处理完成" in card_data["contents"][0]["text"]
+        assert "Done" in card_data["contents"][0]["text"]
 
     @pytest.mark.asyncio
     async def test_update_failure_silent(self, adapter):
@@ -279,7 +279,7 @@ class TestSendMessageConsumesCard:
         assert sk not in adapter._thinking_cards
         put_body = put_mock.call_args.kwargs["json"]
         card_data = json.loads(put_body["cardData"])
-        assert "处理完成" in card_data["contents"][0]["text"]
+        assert "Done" in card_data["contents"][0]["text"]
 
     @pytest.mark.asyncio
     async def test_no_card_normal_flow(self, adapter):

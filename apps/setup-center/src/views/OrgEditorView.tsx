@@ -124,7 +124,7 @@ function OrgCanvasControls() {
                 <ZoomIn className="size-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="left">放大</TooltipContent>
+            <TooltipContent side="left">Zoom in</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -132,7 +132,7 @@ function OrgCanvasControls() {
                 <ZoomOut className="size-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="left">缩小</TooltipContent>
+            <TooltipContent side="left">Zoom out</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -140,7 +140,7 @@ function OrgCanvasControls() {
                 <Maximize className="size-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="left">适应视图</TooltipContent>
+            <TooltipContent side="left">Fit view</TooltipContent>
           </Tooltip>
         </div>
       </TooltipProvider>
@@ -374,8 +374,8 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
         position={Position.Top}
         className="org-handle"
         isConnectable
-        title="目标连接点：点击或拖拽到这里完成连线"
-        aria-label="目标连接点"
+        title="Target: click or drag here to connect"
+        aria-label="Target connection point"
       />
 
       {/* Department color strip */}
@@ -399,9 +399,9 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
           statusColor={statusColor}
           statusGlow={isBusy}
           statusTitle={
-            !isLive && data.status === "idle" ? "未激活"
+            !isLive && data.status === "idle" ? "Inactive"
             : data.status === "idle" && idleSecs != null && idleSecs > 60
-              ? `空闲 ${idleSecs >= 3600 ? `${Math.floor(idleSecs / 3600)}h${Math.floor((idleSecs % 3600) / 60)}m` : `${Math.floor(idleSecs / 60)}m`}`
+              ? `Idle ${idleSecs >= 3600 ? `${Math.floor(idleSecs / 3600)}h${Math.floor((idleSecs % 3600) / 60)}m` : `${Math.floor(idleSecs / 60)}m`}`
             : STATUS_LABELS[data.status] || data.status
           }
           style={isBusy ? { border: `2px solid ${statusColor}` } : isError ? { border: "2px solid var(--danger)" } : undefined}
@@ -428,7 +428,7 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
                 color: isEphemeral ? "#b45309" : "#0369a1",
                 fontWeight: 500,
               }}>
-                {isEphemeral ? "临时" : "副本"}
+                {isEphemeral ? "Ephemeral" : "Clone"}
               </span>
             )}
           </div>
@@ -468,7 +468,7 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
               background: "var(--bg-subtle, #f3f4f6)", color: "var(--muted)",
               fontWeight: 500,
             }}>
-              未激活
+              Inactive
             </span>
           ) : data.status !== "idle" ? (
             <span style={{
@@ -485,10 +485,10 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
               fontWeight: 500,
             }}
               title={idleSecs != null && idleSecs > 60
-                ? `空闲 ${idleSecs >= 3600 ? `${Math.floor(idleSecs / 3600)}h${Math.floor((idleSecs % 3600) / 60)}m` : `${Math.floor(idleSecs / 60)}m`}`
-                : "在线空闲"}
+                ? `Idle ${idleSecs >= 3600 ? `${Math.floor(idleSecs / 3600)}h${Math.floor((idleSecs % 3600) / 60)}m` : `${Math.floor(idleSecs / 60)}m`}`
+                : "Online idle"}
             >
-              空闲
+              Idle
             </span>
           )}
           {pendingMsgs > 0 && (
@@ -524,7 +524,7 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
         {isAnomaly && (
           <div style={{ fontSize: 9, color: "#f59e0b", marginTop: 3, display: "flex", alignItems: "center", gap: 3 }}>
             <IconAlertCircle size={10} color="#f59e0b" />
-            <span>{typeof isAnomaly === "string" ? isAnomaly : "需要关注"}</span>
+            <span>{typeof isAnomaly === "string" ? isAnomaly : "Needs attention"}</span>
           </div>
         )}
 
@@ -532,7 +532,7 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
         {isFrozen && (
           <div style={{ fontSize: 10, color: "#93c5fd", marginTop: 4, display: "flex", alignItems: "center", gap: 3 }}>
             <IconSnowflake size={11} color="#93c5fd" />
-            <span>{data.frozen_reason || "已冻结"}</span>
+            <span>{data.frozen_reason || "Frozen"}</span>
           </div>
         )}
         </div>{/* close title area */}
@@ -562,36 +562,36 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
             }}>
               <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 11 }}>{data.role_title}</div>
               <div style={{ color: "#6b7280", lineHeight: 1.6 }}>
-                <div>部门: {data.department || "—"} · 层级 L{data.level ?? "?"}</div>
-                <div>状态: <span style={{ color: statusColor, fontWeight: 500 }}>{!isLive && data.status === "idle" ? "未激活" : isLive && data.status === "idle" ? "空闲" : STATUS_LABELS[data.status] || data.status}</span></div>
-                {idleSecs != null && <div>空闲: {idleSecs >= 3600 ? `${Math.floor(idleSecs / 3600)}h${Math.floor((idleSecs % 3600) / 60)}m` : idleSecs >= 60 ? `${Math.floor(idleSecs / 60)}m` : `${idleSecs}s`}</div>}
-                {pendingMsgs != null && pendingMsgs > 0 && <div>待处理: {pendingMsgs} 条消息</div>}
+                <div>Dept: {data.department || "—"} · Level L{data.level ?? "?"}</div>
+                <div>Status: <span style={{ color: statusColor, fontWeight: 500 }}>{!isLive && data.status === "idle" ? "Inactive" : isLive && data.status === "idle" ? "Idle" : STATUS_LABELS[data.status] || data.status}</span></div>
+                {idleSecs != null && <div>Idle: {idleSecs >= 3600 ? `${Math.floor(idleSecs / 3600)}h${Math.floor((idleSecs % 3600) / 60)}m` : idleSecs >= 60 ? `${Math.floor(idleSecs / 60)}m` : `${idleSecs}s`}</div>}
+                {pendingMsgs != null && pendingMsgs > 0 && <div>Pending: {pendingMsgs} messages</div>}
                 {((pp && pp.total != null && pp.total > 0) || (ds && (ds.total ?? 0) > 0)) && <Sep />}
                 {pp && pp.total != null && pp.total > 0 && (
                   <div>
-                    计划进度: {pp.completed ?? 0}/{pp.total}
+                    Plan progress: {pp.completed ?? 0}/{pp.total}
                     <div style={{ marginTop: 2, height: 4, borderRadius: 2, background: "var(--line)", overflow: "hidden" }}>
                       <div style={{ height: "100%", width: `${Math.min(100, ((pp.completed ?? 0) / pp.total) * 100)}%`, background: "var(--primary)", borderRadius: 2 }} />
                     </div>
                   </div>
                 )}
                 {ds && (ds.total ?? 0) > 0 && (
-                  <div>委派: 进行中 {ds.in_progress ?? 0} · 已完成 {ds.completed ?? 0} / {ds.total}</div>
+                  <div>Delegated: in-progress {ds.in_progress ?? 0} · done {ds.completed ?? 0} / {ds.total}</div>
                 )}
                 {(runningSince != null || extTools.length > 0 || recentTs != null || watchdog) && <Sep />}
                 {runningSince != null && (
-                  <div>运行中: {typeof runningSince === "number" ? fmtTime(runningSince) : fmtShortDate(runningSince)}</div>
+                  <div>Running since: {typeof runningSince === "number" ? fmtTime(runningSince) : fmtShortDate(runningSince)}</div>
                 )}
-                {extTools.length > 0 && <div>外部工具: {extTools.slice(0, 3).join(", ")}{extTools.length > 3 ? ` +${extTools.length - 3}` : ""}</div>}
-                {recentTs != null && <div>最近活动: {fmtShortDate(recentTs)}</div>}
-                {watchdog && <div>看门狗: {watchdog}</div>}
+                {extTools.length > 0 && <div>External tools: {extTools.slice(0, 3).join(", ")}{extTools.length > 3 ? ` +${extTools.length - 3}` : ""}</div>}
+                {recentTs != null && <div>Recent activity: {fmtShortDate(recentTs)}</div>}
+                {watchdog && <div>Watchdog: {watchdog}</div>}
                 {(data.current_task || isAnomaly) && <Sep />}
                 {data.current_task && (
                   <div style={{ marginTop: 2, color: "#b45309", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 200, overflow: "auto", lineHeight: 1.5 }}>
                     {data.current_task}
                   </div>
                 )}
-                {isAnomaly && <div style={{ marginTop: 2, color: "#f59e0b", fontWeight: 500 }}>{typeof isAnomaly === "string" ? isAnomaly : "异常"}</div>}
+                {isAnomaly && <div style={{ marginTop: 2, color: "#f59e0b", fontWeight: 500 }}>{typeof isAnomaly === "string" ? isAnomaly : "Anomaly"}</div>}
               </div>
             </div>
           );
@@ -604,8 +604,8 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
         position={Position.Bottom}
         className="org-handle"
         isConnectable
-        title="源连接点：从这里点击或拖拽开始连线"
-        aria-label="源连接点"
+        title="Source: click or drag from here to connect"
+        aria-label="Source connection point"
       />
     </div>
   );
@@ -933,9 +933,9 @@ export function OrgEditorView({
       } else if (ev === "org:task_cancelled") {
         bbPanelRef.current?.refresh();
       } else if (ev === "org:quota_exhausted") {
-        showToast(`配额耗尽：${(d as any).message || "LLM 调用次数已用完"}`, "error");
+        showToast(`Quota exhausted: ${(d as any).message || "LLM call limit reached"}`, "error");
       } else if (ev === "org:watchdog_recovery") {
-        showToast(`看门狗恢复：节点 ${(d as any).node_id} 已自动恢复`, "error");
+        showToast(`Watchdog recovery: node ${(d as any).node_id} auto-recovered`, "error");
       } else if (ev === "org:broadcast") {
         triggerEdgeAnimation((d as any).from_node, (d as any).from_node, "#a78bfa");
       } else if (ev === "org:meeting_started" || ev === "org:meeting_completed") {
@@ -955,13 +955,13 @@ export function OrgEditorView({
       const mode = (currentOrg as any).operation_mode || "command";
       showToast(
         mode === "autonomous"
-          ? "组织已启动（自主模式）——顶层负责人将根据核心业务自动运营"
-          : "组织已启动（命令模式）——可通过聊天或命令面板下达任务",
+          ? "Org started (autonomous mode) — the top-level lead will operate automatically"
+          : "Org started (command mode) — send tasks via chat or the command panel",
         "ok",
       );
     } catch (e: any) {
       console.error("Failed to start org:", e);
-      showToast(`启动失败：${e?.message || e}`, "error");
+      showToast(`Failed to start: ${e?.message || e}`, "error");
     }
   }, [currentOrg, apiBaseUrl, showToast]);
 
@@ -989,7 +989,7 @@ export function OrgEditorView({
       setLayoutLocked(false);
     } catch (e: any) {
       console.error("Failed to stop org:", e);
-      showToast(`停止失败：${e?.message || e}`, "error");
+      showToast(`Failed to stop: ${e?.message || e}`, "error");
     } finally {
       // 800ms 内拒绝二次触发；正常 stop 链路远小于此阈值。
       setTimeout(() => { stoppingRef.current = false; }, 800);
@@ -1007,7 +1007,7 @@ export function OrgEditorView({
 
       if (IS_TAURI) {
         const savePath = await saveFileDialog({
-          title: "导出组织配置",
+          title: "Export org configuration",
           defaultPath: defaultName,
           filters: [{ name: "JSON", extensions: ["json"] }],
         });
@@ -1015,7 +1015,7 @@ export function OrgEditorView({
         const res = await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/export`, { method: "POST" });
         const data = await res.json();
         await writeTextFile(savePath, JSON.stringify(data, null, 2));
-        showToast(`组织已导出到: ${savePath}`);
+        showToast(`Org exported to: ${savePath}`);
       } else {
         const res = await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/export`, { method: "POST" });
         const data = await res.json();
@@ -1026,7 +1026,7 @@ export function OrgEditorView({
         a.download = defaultName;
         a.click();
         URL.revokeObjectURL(url);
-        showToast(`组织「${currentOrg.name}」已导出为 ${defaultName}`);
+        showToast(`Org "${currentOrg.name}" exported as ${defaultName}`);
       }
     } catch (e) { showToast(String(e), "error"); }
   }, [currentOrg, apiBaseUrl, showToast]);
@@ -1042,7 +1042,7 @@ export function OrgEditorView({
         body: formData,
       });
       const data = await res.json();
-      showToast(data.message || `组织「${data.organization?.name || ""}」导入成功`);
+      showToast(data.message || `Org "${data.organization?.name || ""}" imported successfully`);
       fetchOrgList();
       if (data.organization?.id) {
         setSelectedOrgId(data.organization.id);
@@ -1061,7 +1061,7 @@ export function OrgEditorView({
       setLayoutLocked(false);
       bbPanelRef.current?.refresh();
       setOrgStats(null);
-      showToast("组织已重置");
+      showToast("Org reset");
     } catch (e) { console.error("Failed to reset org:", e); }
     setConfirmReset(false);
   }, [currentOrg, apiBaseUrl]);
@@ -1088,7 +1088,7 @@ export function OrgEditorView({
     return {
       name: currentOrg.name,
       description: currentOrg.description,
-      user_persona: currentOrg.user_persona || { title: "负责人", display_name: "", description: "" },
+      user_persona: currentOrg.user_persona || { title: "Manager", display_name: "", description: "" },
       operation_mode: (currentOrg as any).operation_mode || "command",
       core_business: currentOrg.core_business || "",
       workspace_dir: (currentOrg as any).workspace_dir || "",
@@ -1115,7 +1115,7 @@ export function OrgEditorView({
         headers: { "Content-Type": "application/json" },
         body: snapshot,
       });
-      if (!resp.ok) throw new Error(`保存失败 (${resp.status})`);
+      if (!resp.ok) throw new Error(`Save failed (${resp.status})`);
       lastSavedRef.current = snapshot;
       setSaveStatus("saved");
       fetchOrgList();
@@ -1123,7 +1123,7 @@ export function OrgEditorView({
     } catch (e: any) {
       console.error("Failed to save org:", e);
       setSaveStatus("error");
-      showToast(e.message || "自动保存失败", "error");
+      showToast(e.message || "Auto-save failed", "error");
       return false;
     }
   }, [currentOrg, buildSavePayload, apiBaseUrl, fetchOrgList, showToast]);
@@ -1160,7 +1160,7 @@ export function OrgEditorView({
     if (orgCreateBusyRef.current) return;
     orgCreateBusyRef.current = true;
     setCreatingOrg(true);
-    const defaultName = "新组织";
+    const defaultName = "New Org";
     try {
       const res = await safeFetch(`${apiBaseUrl}/api/orgs`, {
         method: "POST",
@@ -1177,11 +1177,11 @@ export function OrgEditorView({
         newId = pool[0]?.id ?? "";
       }
       if (newId) setSelectedOrgId(newId);
-      showToast(newId ? `已创建「${defaultName}」` : "已创建组织，但未在列表中定位到条目，请刷新或检查后端日志", newId ? "ok" : "error");
+      showToast(newId ? `Created "${defaultName}"` : "Org created, but could not locate it in the list — refresh or check backend logs", newId ? "ok" : "error");
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to create org:", e);
-      showToast(msg.includes("401") || msg.includes("Authentication") ? "创建失败：需要登录或访问令牌（远程访问请检查 Web 访问密码）" : `创建组织失败：${msg}`, "error");
+      showToast(msg.includes("401") || msg.includes("Authentication") ? "Create failed: login required or invalid token (check Web access password for remote access)" : `Failed to create org: ${msg}`, "error");
     } finally {
       orgCreateBusyRef.current = false;
       setCreatingOrg(false);
@@ -1207,11 +1207,11 @@ export function OrgEditorView({
       }
       if (newId) setSelectedOrgId(newId);
       setShowTemplates(false);
-      showToast(newId ? `已从模板创建组织${data?.name ? `「${data.name}」` : ""}` : "已从模板创建，但未定位到新组织", newId ? "ok" : "error");
+      showToast(newId ? `Org created from template${data?.name ? ` "${data.name}"` : ""}` : "Org created from template, but could not locate the new org", newId ? "ok" : "error");
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to create from template:", e);
-      showToast(`从模板创建失败：${msg}`, "error");
+      showToast(`Failed to create from template: ${msg}`, "error");
     } finally {
       orgCreateBusyRef.current = false;
       setCreatingOrg(false);

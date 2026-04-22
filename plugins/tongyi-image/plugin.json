@@ -35,7 +35,7 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "title": "通义生图",
+    "title": "Tongyi Image",
     "title_i18n": {
       "zh": "通义生图",
       "en": "Tongyi Image"

@@ -41,7 +41,7 @@
   "ui": {
     "entry": "ui/dist/index.html",
     "icon": "",
-    "title": "精彩瞬间剪辑",
+    "title": "Highlight Cutter",
     "title_i18n": { "en": "Highlight Cutter", "zh": "精彩瞬间剪辑" },
     "sidebar_group": "apps",
     "permissions": ["upload", "download", "notifications", "theme"]

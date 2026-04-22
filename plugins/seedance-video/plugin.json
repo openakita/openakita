@@ -36,7 +36,7 @@
   "ui": {
     "entry": "ui/dist/index.html",
     "icon": "",
-    "title": "Seedance 视频生成",
+    "title": "Seedance Video",
     "title_i18n": {
       "en": "Seedance Video",
       "zh": "Seedance 视频生成"

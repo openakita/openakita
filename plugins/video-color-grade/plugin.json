@@ -40,7 +40,7 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "title": "视频一键调色",
+    "title": "Video Color Grade",
     "title_i18n": { "zh": "视频一键调色", "en": "Video Color Grade" },
     "sidebar_group": "apps",
     "permissions": ["upload", "download", "notifications", "theme"]

@@ -41,7 +41,7 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "title": "音视频转写归档",
+    "title": "Transcribe Archive",
     "title_i18n": { "zh": "音视频转写归档", "en": "Transcribe Archive" },
     "sidebar_group": "apps",
     "permissions": ["upload", "download", "notifications", "theme", "clipboard"]

@@ -502,8 +502,8 @@ class OrgRuntime:
         valid = self._VALID_TRANSITIONS.get(org.status, set())
         if target not in valid:
             raise ValueError(
-                f"无效状态转换: {org.status.value} -> {target.value} "
-                f"(允许的目标: {', '.join(s.value for s in valid) or '无'})"
+                f"Invalid state transition: {org.status.value} -> {target.value} "
+                f"(allowed targets: {', '.join(s.value for s in valid) or 'none'})"
             )
 
     # ------------------------------------------------------------------

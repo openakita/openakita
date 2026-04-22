@@ -40,7 +40,7 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "title": "AI 配音员",
+    "title": "Avatar Speaker",
     "title_i18n": { "zh": "AI 配音员", "en": "Avatar Speaker" },
     "sidebar_group": "apps",
     "permissions": ["upload", "download", "notifications", "theme", "clipboard"]

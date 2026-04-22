@@ -52,43 +52,42 @@ class IntentSummary:
         }
 
 
-_DEFAULT_SYSTEM_PROMPT = """你是 OpenAkita 的「意图复核员」。用户即将提交一个 AI 生成任务，
-你的工作是在花钱之前确认理解正确。
+_DEFAULT_SYSTEM_PROMPT = """You are the Intent Reviewer for OpenAkita. A user is about to submit an AI generation job, and your job is to confirm that you understand their intent correctly before any cost is incurred.
 
-请输出严格的 JSON：
+Output strict JSON only:
 
 {
-  "summary": "用一两句话复述用户真正想要的产物，要用普通人能懂的话",
-  "clarifying_questions": ["最多 3 个对结果影响最大的问题，问完就能动手"],
+  "summary": "1-2 sentences restating what the user actually wants, in plain language",
+  "clarifying_questions": ["up to 3 questions that have the biggest impact on the result — enough to get started"],
   "confidence": "high | medium | low",
-  "risks": ["最多 3 条可能踩雷的点（敏感词/资源不全/期望与价格不匹配等）"]
+  "risks": ["up to 3 potential problem areas (sensitive terms, missing assets, expectation vs. price mismatch, etc.)"]
 }
 
-规则：
-- 不解释、不寒暄、不要 markdown 包裹，只输出 JSON。
-- 如果用户输入已经很清晰且无风险，clarifying_questions 与 risks 都给空数组。
-- summary 必须基于用户输入，不要编造细节。
+Rules:
+- No explanations, no greetings, no markdown wrapper — output JSON only.
+- If the user input is already clear and risk-free, return empty arrays for clarifying_questions and risks.
+- summary must be based on the user's input — do not invent details.
 """
 
 
-_DEFAULT_SELF_EVAL_SYSTEM_PROMPT = """你是 OpenAkita 的「交付复核员」。
-另一个模型刚刚根据用户的 brief 产出了结果。你要回答一个问题：
-**这个产物真的交付了 brief 里说要的东西吗？**
+_DEFAULT_SELF_EVAL_SYSTEM_PROMPT = """You are the Delivery Reviewer for OpenAkita.
+Another model has just produced output based on the user's brief. Answer one question:
+**Does this output actually deliver what the brief asked for?**
 
-请输出严格的 JSON：
+Output strict JSON only:
 
 {
   "passed": true | false,
-  "gaps": ["最多 5 条具体缺漏（用户能看懂的措辞）"],
-  "suggestions": ["每条 gap 对应的修复建议（与 gaps 等长或更短）"],
+  "gaps": ["up to 5 specific gaps, phrased so the user can understand them"],
+  "suggestions": ["one fix suggestion per gap, same length or shorter than gaps"],
   "confidence": "high | medium | low"
 }
 
-规则：
-- 只看交付一致性，不评价审美 / 创意。
-- gap 必须是 brief 显式要的而产物没给的；产物多给的内容不算 gap。
-- 不解释、不寒暄、不要 markdown 包裹，只输出 JSON。
-- 当 brief 不清晰到无法判断时，passed=false 且 confidence="low"。
+Rules:
+- Only assess delivery consistency — do not evaluate aesthetics or creativity.
+- A gap is something the brief explicitly requested but the output did not provide. Extra content is not a gap.
+- No explanations, no greetings, no markdown wrapper — output JSON only.
+- If the brief is too vague to judge, set passed=false and confidence="low".
 """
 
 
@@ -139,9 +138,9 @@ class IntentVerifier:
         on any failure — never raises (intent verification is best-effort)."""
         if not self._llm_call:
             return IntentSummary(
-                summary=user_input.strip()[:200] or "(空输入)",
+                summary=user_input.strip()[:200] or "(empty input)",
                 confidence="low",
-                risks=["未配置 LLM，跳过意图复核"],
+                risks=["No LLM configured — intent review skipped"],
             )
 
         ctx_block = ""
@@ -160,9 +159,9 @@ class IntentVerifier:
         except Exception as e:  # noqa: BLE001 — best-effort
             logger.warning("IntentVerifier LLM call failed: %s", e)
             return IntentSummary(
-                summary=user_input.strip()[:200] or "(空输入)",
+                summary=user_input.strip()[:200] or "(empty input)",
                 confidence="low",
-                risks=[f"意图复核失败: {type(e).__name__}"],
+                risks=[f"Intent review failed: {type(e).__name__}"],
             )
 
         text = self._extract_text(raw)
@@ -215,10 +214,10 @@ class IntentVerifier:
             ctx_block = f"\n\n## 插件上下文\n{self._plugin_ctx}"
 
         user_block = (
-            "## 用户原始 brief\n"
-            f"{original_brief or '(空)'}\n\n"
-            "## 模型刚刚产出的内容\n"
-            f"{produced_output or '(空)'}"
+            "## Original user brief\n"
+            f"{original_brief or '(empty)'}\n\n"
+            "## Model output\n"
+            f"{produced_output or '(empty)'}"
         )
 
         messages = [
@@ -232,7 +231,7 @@ class IntentVerifier:
             logger.warning("IntentVerifier.self_eval_loop LLM call failed: %s", e)
             return EvalResult(
                 passed=False,
-                gaps=[f"复核器调用失败: {type(e).__name__}"],
+                gaps=[f"Reviewer call failed: {type(e).__name__}"],
                 confidence="low",
                 raw="",
             )
@@ -284,7 +283,7 @@ class IntentVerifier:
                 continue
             return IntentSummary(
                 summary=str(data.get("summary") or "").strip()
-                    or fallback.strip()[:200] or "(无)",
+                    or fallback.strip()[:200] or "(none)",
                 clarifying_questions=[
                     str(q).strip() for q in (data.get("clarifying_questions") or []) if q
                 ][:3],
@@ -294,9 +293,9 @@ class IntentVerifier:
             )
 
         return IntentSummary(
-            summary=text.strip()[:200] or fallback.strip()[:200] or "(无)",
+            summary=text.strip()[:200] or fallback.strip()[:200] or "(none)",
             confidence="low",
-            risks=["LLM 输出未按 JSON 返回，已退回原始文本"],
+            risks=["LLM did not return valid JSON — falling back to raw text"],
             raw=text,
         )
 
@@ -375,7 +374,7 @@ def _parse_eval(text: str) -> EvalResult:
 
     return EvalResult(
         passed=False,
-        gaps=["复核器未能给出 JSON 判断，已退回原始文本"],
+        gaps=["Reviewer did not return a valid JSON verdict — falling back to raw text"],
         confidence="low",
         raw=text,
     )

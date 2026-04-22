@@ -95,10 +95,10 @@ def _default_patterns() -> list[ErrorPattern]:
     return [
         ErrorPattern(
             pattern_id="api_key_missing",
-            cause_category="API Key 未配置",
-            problem_template="还没填供应商的 API Key，所以请求没法发出去。",
-            next_step_template="点右上角【设置】→ 把 API Key 粘进去 → 重试一次。",
-            tip="API Key 一次性配置，下次直接用。",
+            cause_category="API Key not configured",
+            problem_template="No API Key has been set for the provider, so requests cannot be sent.",
+            next_step_template="Click Settings (top right) → paste your API Key → retry.",
+            tip="Configure your API Key once and it will be reused automatically.",
             severity="warning",
             retryable=False,
             priority=20,
@@ -109,10 +109,10 @@ def _default_patterns() -> list[ErrorPattern]:
         ),
         ErrorPattern(
             pattern_id="api_key_invalid",
-            cause_category="API Key 失效",
-            problem_template="供应商说这个 Key 用不了 ({evidence})，可能填错或者过期。",
-            next_step_template="去供应商控制台核对 Key → 重新粘贴 → 保存重试。",
-            tip="多账号时，注意别把测试 Key 当生产用。",
+            cause_category="API Key invalid",
+            problem_template="The provider rejected this key ({evidence}) — it may be incorrect or expired.",
+            next_step_template="Check the key in your provider dashboard → re-paste it → save and retry.",
+            tip="If you have multiple accounts, make sure you are not using a test key in production.",
             severity="error",
             retryable=False,
             priority=20,
@@ -120,10 +120,10 @@ def _default_patterns() -> list[ErrorPattern]:
         ),
         ErrorPattern(
             pattern_id="rate_limit",
-            cause_category="请求太频繁",
-            problem_template="供应商限流了 ({evidence})，需要等一会儿。",
-            next_step_template="不用动，10 秒后插件会自动重试；如果常态化，去后台升级套餐。",
-            tip="可在【设置】里把 poll_interval 调大，少打几次。",
+            cause_category="Rate limited",
+            problem_template="The provider is rate-limiting requests ({evidence}). Please wait a moment.",
+            next_step_template="No action needed — the plugin will retry automatically in 10 seconds. If this happens repeatedly, upgrade your plan.",
+            tip="You can increase poll_interval in Settings to reduce request frequency.",
             severity="warning",
             retryable=True,
             priority=15,
@@ -131,10 +131,10 @@ def _default_patterns() -> list[ErrorPattern]:
         ),
         ErrorPattern(
             pattern_id="server_error",
-            cause_category="供应商故障",
-            problem_template="供应商服务端报错 ({evidence})，不是你的问题。",
-            next_step_template="点【重试】；如果连续失败 3 次，去供应商状态页查公告。",
-            tip="可在【设置】里切换备用 provider。",
+            cause_category="Provider outage",
+            problem_template="The provider returned a server error ({evidence}). This is not your fault.",
+            next_step_template="Click Retry. If it fails 3 times in a row, check the provider's status page for announcements.",
+            tip="You can switch to a backup provider in Settings.",
             severity="warning",
             retryable=True,
             priority=10,
@@ -142,10 +142,10 @@ def _default_patterns() -> list[ErrorPattern]:
         ),
         ErrorPattern(
             pattern_id="content_moderation",
-            cause_category="内容被风控",
-            problem_template="内容审核没过 ({evidence})，重试也不会变。",
-            next_step_template="改一下 Prompt 里的敏感词，或者上传不一样的素材。",
-            tip="先用【意图验证】预检一遍 Prompt，能省一次失败。",
+            cause_category="Content policy violation",
+            problem_template="Content moderation failed ({evidence}). Retrying will not help.",
+            next_step_template="Edit the sensitive terms in your prompt, or upload different source material.",
+            tip="Use Intent Verification to pre-screen your prompt and avoid this failure.",
             severity="error",
             retryable=False,
             priority=18,
@@ -157,10 +157,10 @@ def _default_patterns() -> list[ErrorPattern]:
         ),
         ErrorPattern(
             pattern_id="quota_exhausted",
-            cause_category="配额耗尽",
-            problem_template="本月额度用完了 ({evidence})。",
-            next_step_template="去供应商控制台续费 → 回来点【重试】。",
-            tip="【设置】打开「成本预警」，到 80% 就提醒。",
+            cause_category="Quota exhausted",
+            problem_template="Your monthly quota is used up ({evidence}).",
+            next_step_template="Top up in your provider dashboard → come back and click Retry.",
+            tip="Enable cost alerts in Settings to get notified at 80% usage.",
             severity="error",
             retryable=False,
             priority=18,
@@ -171,10 +171,10 @@ def _default_patterns() -> list[ErrorPattern]:
         ),
         ErrorPattern(
             pattern_id="network_timeout",
-            cause_category="网络问题",
-            problem_template="请求超时了 ({evidence})，可能你这边网不稳。",
-            next_step_template="检查一下网络，或者切到代理；点【重试】。",
-            tip="国内访问海外 API 建议配代理。",
+            cause_category="Network timeout",
+            problem_template="Request timed out ({evidence}). Your network connection may be unstable.",
+            next_step_template="Check your network or switch to a proxy, then click Retry.",
+            tip="A proxy is recommended when accessing overseas APIs from China.",
             severity="warning",
             retryable=True,
             priority=12,
@@ -183,10 +183,10 @@ def _default_patterns() -> list[ErrorPattern]:
         ),
         ErrorPattern(
             pattern_id="ffmpeg_missing",
-            cause_category="FFmpeg 未安装",
-            problem_template="系统找不到 ffmpeg 命令 ({evidence})，没法做视频处理。",
-            next_step_template="去 https://ffmpeg.org/download.html 下一份 → 加进 PATH → 重启应用。",
-            tip="Windows 下推荐 winget install Gyan.FFmpeg。",
+            cause_category="FFmpeg not installed",
+            problem_template="The system cannot find the ffmpeg command ({evidence}). Video processing is unavailable.",
+            next_step_template="Download FFmpeg from https://ffmpeg.org/download.html → add it to PATH → restart the app.",
+            tip="On Windows, run: winget install Gyan.FFmpeg",
             severity="error",
             retryable=False,
             priority=20,
@@ -197,10 +197,10 @@ def _default_patterns() -> list[ErrorPattern]:
         ),
         ErrorPattern(
             pattern_id="file_not_found",
-            cause_category="文件丢失",
-            problem_template="找不到这个文件 ({evidence})，可能被删了或路径变了。",
-            next_step_template="重新上传一次素材；如果是历史任务，先在【素材库】里恢复。",
-            tip="开启「自动备份」可以减少这种情况。",
+            cause_category="File missing",
+            problem_template="Cannot find the file ({evidence}). It may have been deleted or moved.",
+            next_step_template="Re-upload the source material. For a historical task, restore it from the Media Library first.",
+            tip="Enabling Auto Backup can reduce this type of issue.",
             severity="error",
             retryable=False,
             priority=18,
@@ -208,9 +208,9 @@ def _default_patterns() -> list[ErrorPattern]:
         ),
         ErrorPattern(
             pattern_id="task_not_found",
-            cause_category="任务不存在",
-            problem_template="找不到这个任务 ID ({evidence})，可能已过期或被清理。",
-            next_step_template="刷新任务列表，从最新一条重新开始。",
+            cause_category="Task not found",
+            problem_template="Cannot find task ID ({evidence}). It may have expired or been cleaned up.",
+            next_step_template="Refresh the task list and start from the latest entry.",
             severity="warning",
             retryable=False,
             priority=12,
@@ -276,11 +276,11 @@ class ErrorCoach:
         if best is None:
             return RenderedError(
                 pattern_id="_fallback",
-                cause_category="未知错误",
-                problem=f"出了个我们没见过的错 ({ev or 'unknown'})。",
+                cause_category="Unknown error",
+                problem=f"An unexpected error occurred ({ev or 'unknown'}).",
                 evidence=ev,
-                next_step="点【重试】；如果反复出现，把日志发给我们 (设置 → 反馈)。",
-                tip="报错日志在 data/plugins/<id>/logs/ 下。",
+                next_step="Click Retry. If it keeps happening, send us the logs via Settings → Feedback.",
+                tip="Error logs are located under data/plugins/<id>/logs/",
                 severity="error",
                 retryable=True,
             )
@@ -299,7 +299,7 @@ class ErrorCoach:
     @staticmethod
     def _fmt(template: str, evidence: str) -> str:
         try:
-            return template.format(evidence=evidence or "无详情")
+            return template.format(evidence=evidence or "no details")
         except (KeyError, IndexError):
             return template
 
