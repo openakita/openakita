@@ -27,7 +27,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -37,6 +37,7 @@ from openakita_plugin_sdk.contrib import (
     QualityGates,
     TaskStatus,
     UIEventEmitter,
+    add_upload_preview_route,
     ffprobe_json_sync,
 )
 
@@ -226,6 +227,35 @@ class Plugin(PluginBase):
     # ── routes ──────────────────────────────────────────────────────
 
     def _register_routes(self, router: APIRouter) -> None:
+        # Serve previously uploaded voice / bgm tracks so the UI can
+        # render <audio src="/api/plugins/bgm-mixer/uploads/<file>">
+        # for an instant pre-mix preview.
+        add_upload_preview_route(
+            router, base_dir=self._data_dir / "uploads",
+        )
+
+        @router.post("/upload")
+        async def upload(kind: str = Query(default="voice"), file: UploadFile = File(...)) -> dict[str, Any]:
+            """Accept a voice or bgm track and return its absolute path.
+
+            The mixer needs absolute on-disk paths because ffmpeg runs
+            in a subprocess; we save uploads under
+            ``data/<plugin>/uploads/<kind>/`` so they survive plugin
+            re-installs (data dir is owned by the plugin id).
+            """
+            sub = "voice" if (kind or "").lower() == "voice" else "bgm"
+            target_dir = self._data_dir / "uploads" / sub
+            target_dir.mkdir(parents=True, exist_ok=True)
+            safe_name = (file.filename or "upload.bin").replace("/", "_").replace("\\", "_")
+            target = target_dir / safe_name
+            with target.open("wb") as fp:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    fp.write(chunk)
+            return {"path": str(target), "kind": sub, "filename": safe_name}
+
         @router.get("/healthz")
         async def healthz() -> dict[str, Any]:
             return {
@@ -274,7 +304,13 @@ class Plugin(PluginBase):
             rows = await self._tm.list_tasks(
                 status=status, limit=limit, offset=offset,
             )
-            return {"items": [r.to_dict() for r in rows], "total": len(rows)}
+            payload = [r.to_dict() for r in rows]
+            # ``items`` is kept for back-compat (existing tools / brain
+            # scripts may already key off it); ``tasks`` is the alias the
+            # shared TaskPanel UI-kit looks for. Returning both is the
+            # cheapest way to satisfy both audiences without a breaking
+            # change.
+            return {"items": payload, "tasks": payload, "total": len(rows)}
 
         @router.get("/tasks/{task_id}")
         async def get_task(task_id: str) -> dict[str, Any]:
