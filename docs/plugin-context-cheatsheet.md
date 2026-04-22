@@ -260,7 +260,7 @@ prompt + (可选 ref) → vendor.POST → task_id →
 | --- | --- | --- | --- |
 | `tongyi-image` | 0.3.x | DashScope wanx2 / qwen-image。**新插件抄它的 `plugin.py` / UI**。 | `tongyi_inline/{upload_preview, storage_stats}.py` |
 | `seedance-video` | 1.2.x | 字节 Seedance 文生视频 / 图生视频，含 long-video 链式生成。 | `seedance_inline/{vendor_client, upload_preview, storage_stats, llm_json_parser, parallel_executor}.py` |
-| `ecommerce-image` | 0.2.1 | 19 个电商场景 feature（主图 / 详情页 / 海报 / 视频）；DashScope + Ark 双 provider。**已升 `plugin_api ~2`**：`api.spawn_task` / async on_unload / `_ensure_ready` 守卫 / `_UPDATABLE_COLS` 白名单。 | `ecom_*.py` 同目录平铺（无 `_inline/` 子目录） |
+| `ecommerce-image` | 0.3.0 | 19 个电商场景 feature（主图 / 详情页 / 海报 / 视频）；DashScope + Ark 双 provider。**v0.3.0 UI 结构性重构**：对齐 tongyi-image 4-tab 布局（创建/任务列表/提示词教学/设置），split-layout 左表单右预览，两层 mode-btn 选模块+功能，TasksTab 独立 tab。 | `ecom_*.py` 同目录平铺（无 `_inline/` 子目录） |
 | `avatar-studio` | 1.0.0 | DashScope 数字人工作室：照片说话 / 视频换嘴 / 视频换人 / 数字人合成。`wan2.2-s2v` + `videoretalk` + `wan2.2-animate-mix` + `wan2.5-i2i-preview` + `cosyvoice-v2` 全链路。**接手已 archive 的 `avatar-speaker`**。 | `avatar_studio_inline/{vendor_client, upload_preview, storage_stats, llm_json_parser, parallel_executor}.py` |
 
 > 这两个插件**不**从 `openakita_plugin_sdk.contrib` import 任何东西（contrib 已删）。所有 helper 都在自家 `_inline/` 里 vendor 一份。

@@ -103,23 +103,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .btn-ai-opt:disabled { opacity: .5; cursor: not-allowed; }
 .btn-ai-opt .spinner-xs { width: 12px; height: 12px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin .6s linear infinite; display: inline-block; }
 
-.main-layout { display: flex; height: 100%; min-height: 0; overflow: hidden; }
-/* Sidebar visually echoes oa-list-panel rhythm: surface card + radius +
- * subtle shadow on the items zone, accent bar on active item.  Layout role
- * (fixed-width left column with right border) is intentionally preserved. */
-.sidebar { width: 200px; border-right: 1px solid var(--border); background: var(--bg-card); overflow-y: auto; flex-shrink: 0; padding: 10px 8px; min-height: 0; }
-.sidebar-item { position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 12px 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background 120ms ease, color 120ms ease; margin-bottom: 4px; color: var(--text-muted); }
-.sidebar-item:hover { background: var(--bg-hover); color: var(--text); }
-.sidebar-item.active, .sidebar-item.is-selected { background: var(--primary-light); color: var(--primary); font-weight: 500; }
-.sidebar-item.active::before, .sidebar-item.is-selected::before { content: ""; position: absolute; left: 4px; top: 50%; transform: translateY(-50%); width: 3px; height: 16px; border-radius: 2px; background: var(--primary); }
-.sidebar-icon { width: 18px; height: 18px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
-.sidebar-icon svg, .ic { width: 1em; height: 1em; vertical-align: -0.125em; display: inline-block; }
+.ic { width: 1em; height: 1em; vertical-align: -0.125em; display: inline-block; }
 .ic-lg { width: 1.25em; height: 1.25em; }
 .ic-xl { width: 1.5em; height: 1.5em; }
-
-.work-area { flex: 1; display: flex; min-width: 0; min-height: 0; overflow: hidden; }
-.form-panel { width: 380px; min-width: 340px; border-right: 1px solid var(--border); overflow-y: auto; overflow-x: hidden; padding: 16px; flex-shrink: 0; min-height: 0; max-height: 100%; }
-.result-panel { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 16px; min-width: 0; min-height: 0; max-height: 100%; }
+.split-layout { display: flex; gap: 20px; height: 100%; }
+.split-left { width: 42%; min-width: 380px; overflow-y: auto; flex-shrink: 0; }
+.split-right { flex: 1; overflow-y: auto; }
+@media (max-width: 860px) { .split-layout { flex-direction: column; } .split-left { width: 100%; min-width: unset; } }
+.mode-btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-size: 12px; cursor: pointer; transition: all .15s; }
+.mode-btn:hover { background: var(--bg-hover); color: var(--text); }
+.mode-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 
 .image-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
 .image-card { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; cursor: pointer; transition: .15s; position: relative; }
@@ -137,7 +130,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .task-info { flex: 1; min-width: 0; }
 .task-info h4 { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
 .task-meta { font-size: 11px; color: var(--text-dim); display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.mock-banner { padding: 8px 16px; font-size: 13px; background: rgba(245,158,11,.12); color: var(--text); border-bottom: 1px solid var(--border); }
 .progress-bar { height: 4px; background: var(--bg-hover); border-radius: 2px; overflow: hidden; margin-top: 6px; }
 .progress-fill { height: 100%; background: var(--primary); border-radius: 2px; transition: width .3s; }
 .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; }
@@ -166,13 +158,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .form-section-title { font-size: 13px; font-weight: 600; margin-bottom: 10px; color: var(--text); }
 .form-empty-hint { padding: 12px; border: 1px dashed var(--border); border-radius: var(--radius); font-size: 13px; color: var(--text-muted); background: var(--bg-hover); }
 .video-player { width: 100%; max-height: 400px; border-radius: var(--radius); background: #000; }
-@media (max-width: 900px) {
-  .main-layout { flex-direction: column; }
-  .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); flex-direction: row; overflow-x: auto; padding: 4px 8px; display: flex; }
-  .sidebar-item { white-space: nowrap; }
-  .work-area { flex-direction: column; }
-  .form-panel { width: 100%; min-width: unset; border-right: none; border-bottom: 1px solid var(--border); }
-}
 
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-thumb { background: rgba(148,163,184,.45); border-radius: 5px; border: 2px solid transparent; background-clip: padding-box; }
@@ -180,7 +165,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 *::-webkit-scrollbar-track { background: transparent; }
 *::-webkit-scrollbar-corner { background: transparent; }
 * { scrollbar-width: thin; scrollbar-color: rgba(148,163,184,.45) transparent; }
-.form-panel, .result-panel, .sidebar { scrollbar-gutter: stable; }
+.split-left, .split-right { scrollbar-gutter: stable; }
 
 /* ── compact overrides (align with seedance-video / tongyi-image rhythm) ── */
 .content { padding: 14px 16px; }
@@ -465,13 +450,18 @@ const ICON_MAP = {
   file: "file", "arrow-left": "arrow-left",
 };
 
+const TABS = [
+  { id: "create",   label: "创建" },
+  { id: "tasks",    label: "任务列表" },
+  { id: "guide",    label: "提示词教学" },
+  { id: "settings", label: "设置" },
+];
+
 const MODULES = [
-  { id: "video", label: "视频生成", icon: "video" },
-  { id: "image", label: "图像生成", icon: "image" },
+  { id: "video",  label: "视频生成",   icon: "video" },
+  { id: "image",  label: "图像生成",   icon: "image" },
   { id: "detail", label: "电商详情图", icon: "detail" },
-  { id: "poster", label: "活动海报", icon: "poster" },
-  { id: "guide", label: "提示词教学", icon: "book" },
-  { id: "settings", label: "设置", icon: "settings" },
+  { id: "poster", label: "活动海报",   icon: "poster" },
 ];
 
 const STATUS_MAP = {
@@ -745,20 +735,20 @@ function DynamicForm({ feature, params, setParams, pluginApi }) {
       };
       return (
         <div className="form-row" key={p.id}>
-          <label className="label">{p.label}{p.required ? " *" : ""}</label>
+          <div className="label" style={canOpt ? {display:"flex",alignItems:"center",justifyContent:"space-between"} : undefined}>
+            <span>{p.label}{p.required ? " *" : ""}</span>
+            {canOpt && (
+              <button className="btn-ai-opt" disabled={optimizing[p.id] || !val}
+                onClick={() => handleOptimize(p.id)}>
+                {optimizing[p.id] ? (<><span className="spinner-xs"></span> 优化中...</>) : (<><Ic name="sparkles" /> AI 优化</>)}
+              </button>
+            )}
+          </div>
           <textarea className="input textarea" placeholder={p.placeholder || ""}
             value={val}
             ref={autoResize}
             onChange={(e) => { setParams({...params, [p.id]: e.target.value}); autoResize(e.target); }}
             style={{overflow: "auto"}} />
-          {canOpt && (
-            <div className="ai-opt-row">
-              <button className="btn-ai-opt" disabled={optimizing[p.id] || !val}
-                onClick={() => handleOptimize(p.id)}>
-                {optimizing[p.id] ? (<><span className="spinner-xs"></span> 优化中...</>) : (<><Ic name="sparkles" /> AI 优化</>)}
-              </button>
-            </div>
-          )}
         </div>
       );
     }
@@ -1245,9 +1235,13 @@ function SettingsPage({ onPurge }) {
   const mockMode = (config.mock_mode != null && config.mock_mode !== "") ? config.mock_mode : (meta && meta.mock_mode) || "auto";
 
   return (
-    <div style={{maxWidth:600,margin:"0 auto",padding:20}}>
-      <div className="setting-section">
-        <h3>演示 / 模拟数据</h3>
+    <div style={{maxWidth:640}}>
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title">
+          <span className="oa-icon" style={{color:"var(--primary)"}}
+            dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.settings() : ""}} />
+          演示 / 模拟数据
+        </h3>
         <p className="text-sm text-muted" style={{marginBottom:12}}>
           未配置对应 API Key 时，默认会用占位图（picsum）与示例视频（W3C）走完整流程，便于验收表单与任务列表。
           配置真实 Key 后可将此项设为「关闭演示」；「始终演示」即使有 Key 也不会调用外网生图/视频 API。
@@ -1266,9 +1260,13 @@ function SettingsPage({ onPurge }) {
           <span className="text-xs text-dim">仅删除 api_task_id 为 mock- 开头的记录，可随时再生成</span>
         </div>
       </div>
-      <div className="setting-section">
-        <h3>API 配置</h3>
-        <div className="form-row">
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title">
+          <span className="oa-icon" style={{color:"var(--primary)"}}
+            dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.key ? window.OpenAkitaIcons.key() : (window.OpenAkitaIcons.settings ? window.OpenAkitaIcons.settings() : "") : ""}} />
+          API 配置
+        </h3>
+        <div className={"form-row" + (config.dashscope_api_key ? "" : " oa-config-field-callout")}>
           <label className="label">DashScope API Key (通义万相)</label>
           <div className="flex gap-2">
             <input className="input flex-1" type="password" placeholder={config.dashscope_api_key ? "已配置 (***)" : "输入 API Key"}
@@ -1280,7 +1278,7 @@ function SettingsPage({ onPurge }) {
             获取地址：<a href="https://bailian.console.aliyun.com/?tab=model#/api-key" target="_blank" rel="noopener noreferrer" style={{color:"var(--primary)"}}>阿里云百炼控制台</a>
           </div>
         </div>
-        <div className="form-row">
+        <div className={"form-row" + (config.ark_api_key ? "" : " oa-config-field-callout")}>
           <label className="label">Ark API Key (火山引擎视频)</label>
           <div className="flex gap-2">
             <input className="input flex-1" type="password" placeholder={config.ark_api_key ? "已配置 (***)" : "输入 API Key"}
@@ -1293,8 +1291,12 @@ function SettingsPage({ onPurge }) {
           </div>
         </div>
       </div>
-      <div className="setting-section">
-        <h3>输出目录</h3>
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title">
+          <span className="oa-icon" style={{color:"var(--primary)"}}
+            dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.folder ? window.OpenAkitaIcons.folder() : (window.OpenAkitaIcons.settings ? window.OpenAkitaIcons.settings() : "") : ""}} />
+          输出目录
+        </h3>
         <div className="form-row">
           <label className="label">自动下载</label>
           <div className="flex items-center gap-2">
@@ -1354,8 +1356,12 @@ function SettingsPage({ onPurge }) {
           )}
         </p>
       </div>
-      <div className="setting-section">
-        <h3>默认参数</h3>
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title">
+          <span className="oa-icon" style={{color:"var(--primary)"}}
+            dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.settings() : ""}} />
+          默认参数
+        </h3>
         <p className="text-sm text-muted" style={{marginBottom:12}}>
           当具体功能未指定时使用的全局默认值。优先级：表单输入 &gt; 功能预设 &gt; 全局默认。
         </p>
@@ -1417,8 +1423,12 @@ function SettingsPage({ onPurge }) {
           </div>
         </div>
       </div>
-      <div className="setting-section">
-        <h3>轮询配置</h3>
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title">
+          <span className="oa-icon" style={{color:"var(--primary)"}}
+            dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.refresh ? window.OpenAkitaIcons.refresh() : (window.OpenAkitaIcons.settings ? window.OpenAkitaIcons.settings() : "") : ""}} />
+          轮询配置
+        </h3>
         <div className="grid-2">
           <div className="form-row">
             <label className="label">图像轮询间隔(秒)</label>
@@ -1438,19 +1448,6 @@ function SettingsPage({ onPurge }) {
 
 // ── PromptGuide (提示词教学页) ──
 function PromptGuide() {
-  const [openSections, setOpenSections] = useState({ general: true, image: false, video: false, ai: false });
-  const toggle = (key) => setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
-
-  const Section = ({ id, title, icon, children }) => (
-    <div className="guide-card">
-      <div className="guide-card-header" onClick={() => toggle(id)}>
-        <span className="guide-card-title"><Ic name={icon} /> {title}</span>
-        <span className={"guide-chevron" + (openSections[id] ? " open" : "")}>▶</span>
-      </div>
-      {openSections[id] && <div className="guide-card-body">{children}</div>}
-    </div>
-  );
-
   const Tag = ({ children }) => <span className="guide-tag">{children}</span>;
   const Code = ({ children }) => <pre className="guide-code">{children}</pre>;
 
@@ -1461,7 +1458,7 @@ function PromptGuide() {
       </div>
 
       {/* ── 通用原则 ── */}
-      <Section id="general" title="通用原则" icon="book">
+      <Collapsible title={<><Ic name="book" /> 通用原则</>} defaultOpen={false}>
         <div className="guide-section">
           <h4>提示词 ≠ 文字说明，而是「画面描述」</h4>
           <p>AI 需要的是你想看到的<strong>视觉元素</strong>，不是产品介绍文案。把自己想象成摄影师或导演，描述你脑海中的画面。</p>
@@ -1489,10 +1486,10 @@ function PromptGuide() {
             <li><Ic name="palette" /> <strong>指定风格</strong>：「极简」「赛博朋克」「日系清新」远比「好看」有用</li>
           </ul>
         </div>
-      </Section>
+      </Collapsible>
 
       {/* ── 图像类功能教学 ── */}
-      <Section id="image" title="图像功能提示词教学" icon="image">
+      <Collapsible title={<><Ic name="image" /> 图像功能提示词教学</>} defaultOpen={false}>
         <div className="guide-section">
 
           <h4><Ic name="cart" /> 商品主图</h4>
@@ -1525,10 +1522,10 @@ function PromptGuide() {
           <Code>{"海报设计，产品：{产品名}。\n活动主题：{你的主题}。\n风格：{风格}设计。\n【结构】上1/3大字标题+活动信息，中间产品主视觉聚焦，\n下1/4行动引导（按钮/二维码/倒计时）。"}</Code>
           <p className="text-sm text-muted">子类型差异：私域海报适合朋友圈竖版(9:16)，节日海报注重节日视觉元素，活动宣传突出利益点</p>
         </div>
-      </Section>
+      </Collapsible>
 
       {/* ── 视频类功能教学 ── */}
-      <Section id="video" title="视频功能提示词教学" icon="video">
+      <Collapsible title={<><Ic name="video" /> 视频功能提示词教学</>} defaultOpen={false}>
         <div className="guide-section">
 
           <h4><Ic name="film" /> 视频提示词的核心结构：时间轴</h4>
@@ -1622,10 +1619,10 @@ function PromptGuide() {
             </div>
           </div>
         </div>
-      </Section>
+      </Collapsible>
 
       {/* ── AI 优化说明 ── */}
-      <Section id="ai" title="AI 优化功能说明" icon="sparkles">
+      <Collapsible title={<><Ic name="sparkles" /> AI 优化功能说明</>} defaultOpen={false}>
         <div className="guide-section">
           <h4>工作原理</h4>
           <ol>
@@ -1659,14 +1656,211 @@ function PromptGuide() {
             </tbody>
           </table>
         </div>
-      </Section>
+      </Collapsible>
+    </div>
+  );
+}
+
+// ── CreateTab ──
+function CreateTab({ features, activeModule, setActiveModule, selectedFeature, setSelectedFeature, featureDetail, params, setParams, generating, onGenerate, selectedTask, setSelectedTask, pluginApi }) {
+  const currentFeatures = features[activeModule] || [];
+
+  const blockedByRequired = useMemo(() => {
+    if (!featureDetail || !(featureDetail.params || []).length) return [];
+    return featureDetail.params.filter((p) => isRequiredParamEmpty(p, params));
+  }, [featureDetail, params]);
+
+  const handleExampleSelect = (ex) => {
+    setParams((prev) => ({ ...prev, ...ex.preset_params }));
+    showToast("已加载示例参数");
+  };
+
+  return (
+    <div className="split-layout">
+      <div className="split-left">
+        <div className="card">
+          <div className="form-row">
+            <div className="label">生成模块</div>
+            <div className="flex gap-2 flex-wrap">
+              {MODULES.map(m => (
+                <button key={m.id} className={"mode-btn" + (activeModule === m.id ? " active" : "")}
+                  onClick={() => setActiveModule(m.id)}>
+                  <span style={{display:"inline-flex",alignItems:"center",gap:6}}>
+                    <Ic name={m.icon} /> {m.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {currentFeatures.length > 1 && (
+            <div className="form-row">
+              <div className="label">功能</div>
+              <div className="flex gap-2 flex-wrap">
+                {currentFeatures.map(f => (
+                  <button key={f.id} className={"mode-btn" + (selectedFeature === f.id ? " active" : "")}
+                    onClick={() => { setSelectedFeature(f.id); setSelectedTask(null); }}>
+                    <span style={{display:"inline-flex",alignItems:"center",gap:6}}>
+                      <Ic name={f.icon || "file"} /> {f.name}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {featureDetail && (
+            <>
+              <p className="text-sm text-muted" style={{marginBottom:14}}>{featureDetail.description}</p>
+              <DynamicForm feature={featureDetail} params={params} setParams={setParams} pluginApi={pluginApi} />
+              <ExampleGallery examples={featureDetail.examples} onSelect={handleExampleSelect} />
+              <div style={{marginTop:16}}>
+                <button className="btn btn-primary btn-block"
+                  onClick={onGenerate} disabled={generating || blockedByRequired.length > 0}
+                  title={blockedByRequired.length ? "请先填写必填项" : ""}>
+                  {generating ? <><span className="spinner-sm"></span> 生成中...</>
+                    : <><Ic name={featureDetail.output_type === "video" ? "video" : "sparkles"} /> 开始生成</>}
+                </button>
+                {blockedByRequired.length > 0 && (
+                  <p className="text-xs text-warning" style={{marginTop:8}}>
+                    请先完成必填项：{blockedByRequired.map(p => p.label).join("、")}
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+          {!featureDetail && (
+            <div className="empty-state" style={{padding:"30px 0"}}>
+              <div className="spinner"></div>
+              <div className="text-sm text-dim" style={{marginTop:8}}>加载中...</div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="split-right" style={{display:"flex",alignItems:"center",justifyContent:"center"}}>
+        {selectedTask ? (
+          <div style={{width:"100%",alignSelf:"flex-start"}}>
+            <TaskDetail task={selectedTask} />
+          </div>
+        ) : (
+          <div style={{textAlign:"center",color:"var(--text-dim)"}}>
+            <div style={{fontSize:48,marginBottom:12,opacity:.4}}>
+              <Ic name="sparkles" size="xl" />
+            </div>
+            <div style={{fontSize:14,fontWeight:500}}>选择一个功能开始创作</div>
+            <div className="text-sm text-dim" style={{marginTop:4}}>或查看历史记录</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── TasksTab ──
+function TasksTab({ pluginApi }) {
+  const [tasks, setTasks] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [statusFilter, setStatusFilter] = useState("");
+  const [moduleFilter, setModuleFilter] = useState("");
+  const [selected, setSelected] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      let q = "/tasks?limit=50";
+      if (statusFilter) q += "&status=" + statusFilter;
+      if (moduleFilter) q += "&module=" + moduleFilter;
+      const r = await pluginApi("GET", q);
+      if (r.body && r.body.ok) {
+        setTasks(Array.isArray(r.body.tasks) ? r.body.tasks : []);
+        setTotal(typeof r.body.total === "number" ? r.body.total : 0);
+      }
+    } catch (e) { console.warn("tasks load error", e); }
+    setLoading(false);
+  }, [statusFilter, moduleFilter]);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const iv = setInterval(load, 15000);
+    return () => clearInterval(iv);
+  }, [load]);
+
+  return (
+    <div className="split-layout">
+      <div className="split-left" style={{width:"38%",minWidth:320}}>
+        <div style={{marginBottom:12}}>
+          <div className="label">状态</div>
+          <div className="flex gap-2 flex-wrap">
+            {[{v:"",l:"全部"},{v:"running",l:"生成中"},{v:"succeeded",l:"完成"},{v:"failed",l:"失败"}].map(f => (
+              <button key={f.v} className={"mode-btn" + (statusFilter===f.v?" active":"")}
+                onClick={() => setStatusFilter(f.v)}>{f.l}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{marginBottom:12}}>
+          <div className="label">模块</div>
+          <div className="flex gap-2 flex-wrap">
+            <button className={"mode-btn" + (moduleFilter===""?" active":"")}
+              onClick={() => setModuleFilter("")}>全部</button>
+            {MODULES.map(m => (
+              <button key={m.id} className={"mode-btn" + (moduleFilter===m.id?" active":"")}
+                onClick={() => setModuleFilter(m.id)}>
+                <Ic name={m.icon} /> {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <hr style={{border:"none",borderTop:"1px solid var(--border)",margin:"8px 0 12px"}} />
+
+        <div style={{flex:1,overflowY:"auto"}}>
+          {loading && tasks.length === 0 ? (
+            <div className="empty-state"><div className="spinner" /></div>
+          ) : tasks.length === 0 ? (
+            <div className="empty-state" style={{padding:"30px 0"}}>
+              <div className="text-sm text-dim">暂无任务</div>
+            </div>
+          ) : tasks.map(tk => (
+            <div key={tk.id} className={"task-card" + (selected && selected.id === tk.id ? " selected" : "")}
+              onClick={() => setSelected(tk)}>
+              <div className="task-thumb">
+                {tk.status === "running" ? <div className="spinner-sm" /> : <Ic name={tk.task_type === "video" ? "video" : "image"} />}
+              </div>
+              <div className="task-info">
+                <h4>{tk.prompt || tk.feature_id || "任务"}</h4>
+                <div className="task-meta">
+                  <span className={"tag " + ((STATUS_MAP[tk.status] || {}).cls || "tag-gray")}>{(STATUS_MAP[tk.status] || {}).label || tk.status}</span>
+                  <span>{tk.module}</span>
+                  <span>{tk.model || ""}</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="text-xs text-dim" style={{padding:"8px 0",textAlign:"center"}}>共 {total} 条</div>
+      </div>
+
+      <div className="split-right" style={{display:"flex",alignItems:"center",justifyContent:"center"}}>
+        {selected ? (
+          <div style={{width:"100%",alignSelf:"flex-start"}}>
+            <TaskDetail task={selected} />
+          </div>
+        ) : (
+          <div style={{textAlign:"center",color:"var(--text-dim)"}}>
+            <div style={{fontSize:48,marginBottom:12,opacity:.4}}><Ic name="layers" size="xl" /></div>
+            <div style={{fontSize:14,fontWeight:500}}>选择一个任务查看详情</div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 // ── App ──
 function App() {
-  const [mainTab, setMainTab] = useState("video");
+  const [tab, setTab] = useState("create");
+  const [activeModule, setActiveModule] = useState("video");
   const [features, setFeatures] = useState({});
   const [selectedFeature, setSelectedFeature] = useState(null);
   const [featureDetail, setFeatureDetail] = useState(null);
@@ -1674,18 +1868,16 @@ function App() {
   const [tasks, setTasks] = useState([]);
   const [selectedTask, setSelectedTask] = useState(null);
   const [generating, setGenerating] = useState(false);
-  const [tasksLoading, setTasksLoading] = useState(false);
   const [cfgMeta, setCfgMeta] = useState(null);
   const pollRef = useRef(null);
 
   useEffect(() => {
-    if (mainTab === "settings") return;
+    if (tab === "settings") return;
     pluginApi("GET", "/config").then((r) => {
       if (r.body && r.body.ok) setCfgMeta(r.body.meta || null);
     });
-  }, [mainTab]);
+  }, [tab]);
 
-  // Load features
   useEffect(() => {
     pluginApi("GET", "/features").then((resp) => {
       if (resp.body && resp.body.ok) {
@@ -1698,7 +1890,6 @@ function App() {
     }).catch(() => {});
   }, []);
 
-  // Load feature detail when selected
   useEffect(() => {
     if (!selectedFeature) return;
     pluginApi("GET", "/features/" + selectedFeature).then((resp) => {
@@ -1713,18 +1904,6 @@ function App() {
     }).catch(() => {});
   }, [selectedFeature]);
 
-  // Load tasks for current module
-  const loadTasks = useCallback((module) => {
-    setTasksLoading(true);
-    pluginApi("GET", "/tasks?module=" + (module || mainTab) + "&limit=30").then((resp) => {
-      if (resp.body && resp.body.ok) setTasks(resp.body.tasks || []);
-      setTasksLoading(false);
-    }).catch(() => setTasksLoading(false));
-  }, [mainTab]);
-
-  useEffect(() => { loadTasks(mainTab); }, [mainTab]);
-
-  // Poll running tasks (3s for responsive progress)
   useEffect(() => {
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(() => {
@@ -1746,7 +1925,6 @@ function App() {
     return () => clearInterval(pollRef.current);
   }, [tasks, selectedTask]);
 
-  // Bridge events
   useEffect(() => {
     onEvent("task_update", (data) => {
       if (data.task_id) {
@@ -1776,6 +1954,11 @@ function App() {
     });
   }, []);
 
+  const blockedByRequired = useMemo(() => {
+    if (!featureDetail || !(featureDetail.params || []).length) return [];
+    return featureDetail.params.filter((p) => isRequiredParamEmpty(p, params));
+  }, [featureDetail, params]);
+
   const generateLock = useRef(false);
   const handleGenerate = async () => {
     if (!selectedFeature || generating || generateLock.current) return;
@@ -1802,26 +1985,13 @@ function App() {
     generateLock.current = false;
   };
 
-  const handleExampleSelect = (ex) => {
-    setParams((prev) => ({ ...prev, ...ex.preset_params }));
-    showToast("已加载示例参数");
-  };
-
-  const currentFeatures = features[mainTab] || [];
-
-  const blockedByRequired = useMemo(() => {
-    if (!featureDetail || !(featureDetail.params || []).length) return [];
-    return featureDetail.params.filter((p) => isRequiredParamEmpty(p, params));
-  }, [featureDetail, params]);
-
-  // When switching module tab, auto-select first feature
   useEffect(() => {
-    const list = features[mainTab] || [];
+    const list = features[activeModule] || [];
     if (list.length > 0) {
       setSelectedFeature(list[0].id);
       setSelectedTask(null);
     }
-  }, [mainTab, features]);
+  }, [activeModule, features]);
 
   return (
     <div className="app">
@@ -1836,7 +2006,7 @@ function App() {
         </h1>
         <div className="header-right" />
       </div>
-      {mainTab !== "settings" && cfgMeta && cfgMeta.mock_mode !== "0"
+      {tab !== "settings" && cfgMeta && cfgMeta.mock_mode !== "0"
         && (!cfgMeta.has_dashscope_key || !cfgMeta.has_ark_key) && (
         <div className="oa-config-banner" role="alert" style={{margin:"12px 16px 0",flexShrink:0}}>
           <span className="oa-icon oa-config-banner__icon"
@@ -1847,7 +2017,7 @@ function App() {
               图像类缺 DashScope 时使用<strong> 演示占位图</strong>；视频类缺 Ark 时使用<strong> 演示示例视频</strong>。
             </div>
           </div>
-          <button className="oa-config-banner__action" type="button" onClick={() => setMainTab("settings")}>
+          <button className="oa-config-banner__action" type="button" onClick={() => setTab("settings")}>
             前往设置
             <span className="oa-icon"
                   dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.arrowRight() : ""}} />
@@ -1855,87 +2025,29 @@ function App() {
         </div>
       )}
       <div className="tabs">
-        {MODULES.map((m) => (
-          <div key={m.id} className={"tab" + (mainTab === m.id ? " active" : "")}
-            onClick={() => setMainTab(m.id)}>
-            <Ic name={m.icon} /> {m.label}
-          </div>
+        {TABS.map(t => (
+          <div key={t.id} className={"tab" + (tab === t.id ? " active" : "")}
+            onClick={() => setTab(t.id)}>{t.label}</div>
         ))}
       </div>
       <div className="content">
-        {mainTab === "settings" ? (
-          <div style={{padding:"16px 20px",overflow:"auto",height:"100%"}}>
-            <SettingsPage onPurge={() => { loadTasks(mainTab); setSelectedTask(null); }} />
-          </div>
-        ) : mainTab === "guide" ? (
-          <PromptGuide />
-        ) : (
-        <div className="main-layout" style={{height:"100%"}}>
-          {/* Sidebar */}
-          <div className="sidebar">
-            {currentFeatures.map((f) => (
-              <div key={f.id} className={"sidebar-item" + (selectedFeature === f.id ? " active" : "")}
-                onClick={() => { setSelectedFeature(f.id); setSelectedTask(null); }}>
-                <span className="sidebar-icon"><Ic name={f.icon || "file"} /></span>
-                <span>{f.name}</span>
-              </div>
-            ))}
-          </div>
-
-          {/* Work area */}
-          <div className="work-area">
-            {/* Form panel */}
-            <div className="form-panel">
-              {featureDetail ? (
-                <div>
-                  <div className="card" style={{marginBottom:12}}>
-                    <div className="flex items-center gap-2" style={{marginBottom:6}}>
-                      <span className="sidebar-icon" style={{width:22,height:22}}><Ic name={featureDetail.icon || "file"} size="lg" /></span>
-                      <h2 style={{fontSize:15,fontWeight:600}}>{featureDetail.name}</h2>
-                    </div>
-                    <p className="text-sm text-muted" style={{marginBottom:14}}>{featureDetail.description}</p>
-
-                    <DynamicForm feature={featureDetail} params={params} setParams={setParams} pluginApi={pluginApi} />
-
-                    <ExampleGallery examples={featureDetail.examples} onSelect={handleExampleSelect} />
-
-                    <div style={{marginTop:16}}>
-                      <button className="btn btn-primary btn-block"
-                        onClick={handleGenerate} disabled={generating || blockedByRequired.length > 0}
-                        title={blockedByRequired.length ? "请先填写必填项" : ""}>
-                        {generating ? (
-                          <><span className="spinner-sm"></span> 生成中...</>
-                        ) : (
-                          <><Ic name={featureDetail.output_type === "video" ? "video" : "sparkles"} /> 开始生成</>
-                        )}
-                      </button>
-                      {blockedByRequired.length > 0 && (
-                        <p className="text-xs text-warning" style={{marginTop:8}}>
-                          请先完成必填项：{blockedByRequired.map((p) => p.label).join("、")}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  <TaskList tasks={tasks} selectedId={selectedTask?.id}
-                    onSelect={setSelectedTask} onRefresh={() => loadTasks()}
-                    loading={tasksLoading} />
-                </div>
-              ) : (
-                <div className="empty-state">
-                  <div className="spinner"></div>
-                  <div className="text-sm text-dim" style={{marginTop:8}}>加载中...</div>
-                </div>
-              )}
-            </div>
-
-            {/* Result panel */}
-            <div className="result-panel">
-              <TaskDetail task={selectedTask} />
-            </div>
-          </div>
+        <div style={{display: tab === "create" ? "block" : "none", height: "100%"}}>
+          <CreateTab features={features} activeModule={activeModule} setActiveModule={setActiveModule}
+            selectedFeature={selectedFeature} setSelectedFeature={setSelectedFeature}
+            featureDetail={featureDetail} params={params} setParams={setParams}
+            generating={generating} onGenerate={handleGenerate}
+            selectedTask={selectedTask} setSelectedTask={setSelectedTask}
+            pluginApi={pluginApi} />
         </div>
-        )}
+        <div style={{display: tab === "tasks" ? "block" : "none", height: "100%"}}>
+          <TasksTab pluginApi={pluginApi} />
+        </div>
+        <div style={{display: tab === "guide" ? "block" : "none", height: "100%"}}>
+          <PromptGuide />
+        </div>
+        <div style={{display: tab === "settings" ? "block" : "none", height: "100%"}}>
+          <SettingsPage onPurge={() => {}} />
+        </div>
       </div>
     </div>
   );

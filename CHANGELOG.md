@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] - 2026-04-22
 
+### Changed — `plugins/ecommerce-image` v0.3.0：UI 结构性重构（对齐 tongyi-image 4-tab 布局）
+
+- **Tab 结构重构**：6 tab (4 模块 + 教学 + 设置) → 4 tab (创建 / 任务列表 /
+  提示词教学 / 设置)，与 tongyi-image 完全对齐。
+- **布局改造**：删除 sidebar + form-panel + result-panel 旧布局，全面改用
+  `split-layout` (split-left 表单 / split-right 预览) 拓宽显示区域。
+- **Feature 选择**：侧栏列表 → 两层 `mode-btn`（第一层选模块
+  video/image/detail/poster，第二层选功能）。
+- **任务列表独立**：从创建页底部内联 TaskList 抽取为独立 "任务列表" tab，
+  split-layout 左列表筛选 + 右详情预览，自带 15s 轮询。
+- **PromptGuide 修正**：全部 section 默认折叠，统一 `Collapsible` 组件，
+  修复内容重叠排版。
+- **SettingsPage 对齐**：`oa-settings-section` 分区卡片化 + `grid-2` 布局 +
+  `oa-config-field-callout` 未配 Key 高亮。
+- **AI 优化按钮**：从 textarea 下方移至与 label 同行，节省垂直空间。
+- **CSS 精简**：删除 `.sidebar` / `.work-area` / `.form-panel` / `.result-panel`
+  / `.main-layout` 等旧类，新增 `.split-layout` / `.mode-btn` 等 tongyi 同款类。
+
 ### Fixed — `plugins/ecommerce-image` v0.2.1：转圈白屏 + 后端硬化（plugin_api `~1` → `~2`）
 
 - **UI 不再卡转圈**：`_assets/{bootstrap,styles,icons,i18n}` 4 件齐全，

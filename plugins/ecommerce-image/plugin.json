@@ -5,7 +5,7 @@
     "en": "E-Commerce Content",
     "zh": "电商内容生成"
   },
-  "version": "0.2.2",
+  "version": "0.3.0",
   "type": "python",
   "entry": "plugin.py",
   "description": "AI-powered e-commerce content creation — product images, detail pages, posters, and videos.",
