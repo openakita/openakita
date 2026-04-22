@@ -13,7 +13,11 @@ from .core import PluginAPI, PluginBase
 class MockPluginAPI(PluginAPI):
     """In-memory mock of PluginAPI for unit testing plugins."""
 
-    def __init__(self, plugin_id: str = "test-plugin") -> None:
+    def __init__(
+        self,
+        plugin_id: str = "test-plugin",
+        granted_permissions: list[str] | None = None,
+    ) -> None:
         self.plugin_id = plugin_id
         self.logs: list[tuple[str, str]] = []
         self.config: dict = {}
@@ -30,6 +34,12 @@ class MockPluginAPI(PluginAPI):
         self._data_dir = Path(tempfile.mkdtemp())
         self.registered_ui_event_handlers: dict[str, list[Callable]] = {}
         self.broadcast_events: list[dict] = []
+        # ``None`` means "all permissions granted" so the vast majority of
+        # existing tests keep passing unchanged. Pass an explicit list to
+        # exercise the not-granted path.
+        self._granted_permissions: set[str] | None = (
+            set(granted_permissions) if granted_permissions is not None else None
+        )
 
     def log(self, msg: str, level: str = "info") -> None:
         self.logs.append((level, msg))
@@ -93,6 +103,11 @@ class MockPluginAPI(PluginAPI):
 
     def send_message(self, channel: str, chat_id: str, text: str) -> None:
         self.sent_messages.append({"channel": channel, "chat_id": chat_id, "text": text})
+
+    def has_permission(self, name: str) -> bool:
+        if self._granted_permissions is None:
+            return True
+        return name in self._granted_permissions
 
     # --- Plugin 2.0: UI support ---
 

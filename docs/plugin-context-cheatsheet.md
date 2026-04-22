@@ -194,7 +194,17 @@ plugins/<plugin-id>/
 - 存储统计：`await collect_storage_stats(dir, max_files=20000, sample_paths=0, skip_hidden=True)`，永不卡 UI
 - UI 推送：`api.broadcast_ui_event("task_update", {"task_id": ..., "status": ...})`
 - 文件下载/预览：`api.create_file_response(source, filename=..., media_type=..., as_download=bool)`
-- 提示词优化：`brain = api.get_brain()`；没 brain 就友好降级返回 `{"ok": False, "error": "LLM 不可用..."}`
+- 提示词优化：**先**用 `api.has_permission("brain.access")` 区分两类失败 — 没权限要提示用户去插件管理授权，有权限但 `get_brain()` 仍返回 `None` 才是 LLM 不可用：
+
+  ```python
+  if not api.has_permission("brain.access"):
+      return {"ok": False, "error": "AI 优化未授权：缺少 brain.access 权限，请到插件管理授予后重试"}
+  brain = api.get_brain()
+  if not brain:
+      return {"ok": False, "error": "LLM 不可用：主进程未注入 brain"}
+  ```
+
+  原因：`get_brain()==None` 同时覆盖了"没权限"和"主机没 brain"两种情况，但解决路径完全不同（点一下授权 vs 改 LLM 配置），合并提示会让用户瞎猜。Host 在插件加载时已自动把 manifest 声明、未授权的高级权限填入 `pending_permissions`，前端管理页会立即给出授权按钮，不必等用户撞到错误。
 - 长任务标准状态机（异步任务）：
 
 ```

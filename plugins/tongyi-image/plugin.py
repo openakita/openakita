@@ -823,9 +823,25 @@ class Plugin(PluginBase):
 
         @router.post("/prompt-optimize")
         async def optimize_prompt_endpoint(body: PromptOptimizeBody) -> dict:
+            # Distinguish "permission not granted" from "host has no brain":
+            # the two failure modes look identical via get_brain()==None but
+            # have very different fixes (approve a permission vs. configure
+            # an LLM endpoint), so the toast must say which one to do.
+            if not self._api.has_permission("brain.access"):
+                return {
+                    "ok": False,
+                    "error": (
+                        "AI 优化未授权：插件缺少 brain.access 权限。"
+                        "请到「设置中心 → 插件管理 → 通义生图 → 权限」"
+                        "勾选并保存后重试。"
+                    ),
+                }
             brain = self._api.get_brain()
             if not brain:
-                return {"ok": False, "error": "LLM 不可用，请在主设置中配置 LLM"}
+                return {
+                    "ok": False,
+                    "error": "LLM 不可用：主进程未注入 brain（请确认 OpenAkita 已正常启动）。",
+                }
             try:
                 result = await optimize_prompt(
                     brain=brain,

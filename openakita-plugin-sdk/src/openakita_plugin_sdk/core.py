@@ -134,6 +134,23 @@ class PluginAPI(ABC):
     @abstractmethod
     def send_message(self, channel: str, chat_id: str, text: str) -> None: ...
 
+    # --- Permission introspection ---
+
+    def has_permission(self, name: str) -> bool:
+        """Side-effect-free check for whether a permission is granted.
+
+        Plugins should use this when they want to render a feature-specific
+        error (e.g. "AI optimize disabled because ``brain.access`` is not
+        granted, please approve it in Plugin Manager") instead of relying on
+        ``get_*()`` returning ``None``, which can also mean "host service
+        unavailable".
+
+        The default implementation returns ``True`` so older host runtimes
+        that do not implement this method still let plugins compile against
+        the SDK; concrete runtimes override it.
+        """
+        return True
+
     # --- Plugin 2.0: UI support ---
 
     @property

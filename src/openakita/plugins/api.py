@@ -147,6 +147,20 @@ class PluginAPI:
             self._pending_permissions.add(required)
         return False
 
+    def has_permission(self, name: str) -> bool:
+        """Public, side-effect-free check for whether a permission is granted.
+
+        Use this in plugin code paths that want to *gracefully degrade* and
+        produce a domain-specific error message (e.g. "AI optimize disabled
+        because brain.access not granted"), instead of relying on
+        ``get_brain()`` returning ``None`` — which conflates "permission
+        missing" with "host has no brain".
+
+        Unlike ``_check_permission`` this never logs and never marks the
+        permission as pending; it's purely a read.
+        """
+        return name in BASIC_PERMISSIONS or name in self._granted_permissions
+
     # --- Logging (basic, always available) ---
 
     def log(self, msg: str, level: str = "info") -> None:

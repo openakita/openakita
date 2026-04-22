@@ -298,6 +298,25 @@ class PluginManager:
             hook_registry=self._hook_registry,
         )
 
+        # Pre-seed pending_permissions so the management UI can show an
+        # "approve" prompt the moment the plugin is installed/reloaded,
+        # instead of waiting for the user to first trigger a feature, hit
+        # an opaque "service unavailable" error, and only THEN realising
+        # they need to grant a permission. Without this, _pending_permissions
+        # is populated only as a side-effect of failed _check_permission()
+        # calls inside route handlers, which means manifest-declared but
+        # not-yet-approved permissions stay invisible until you stumble onto
+        # the gated code path. (Discovered via tongyi-image's brain.access:
+        # users got "LLM 不可用" with no hint that a permission was missing.)
+        from .manifest import BASIC_PERMISSIONS
+
+        granted_set = set(granted)
+        for perm in manifest.permissions:
+            if perm in BASIC_PERMISSIONS:
+                continue
+            if perm not in granted_set:
+                api._pending_permissions.add(perm)
+
         plugin_instance: PluginBase | None = None
         module_name = ""
         sys_path_entry = ""
