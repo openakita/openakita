@@ -174,30 +174,116 @@
   OpenAkitaI18n.bindDom(document.body);
 
   // 4) App logic ----------------------------------------------------------
-  // _detectApiBase() mirrors the tongyi-image pattern: read OpenAkita.meta
-  // first (set asynchronously by bootstrap.js after the iframe handshake),
-  // fall back to dev-server ports (5173 / 1420) and finally to window.origin.
-  // Relying on the synchronous OpenAkita.meta.apiBase race-condition broke
-  // 'Recent tasks' with 404 every time the page loaded fast enough.
+  // Bridge layer mirrors tongyi-image: prefer postMessage("bridge:api-request")
+  // so the host process forwards HTTP calls (works in Tauri/Electron where the
+  // iframe origin is e.g. tauri://localhost and direct fetch hits the wrong
+  // origin). Fall back to direct fetch only when no host bridge is available
+  // (i.e. running the UI standalone in a browser pointed at the dev port).
+  const BRIDGE_VER = 1;
+  let _ctx = null;
+  let _bridgeConnected = false;
+  const _pending = {};
+  const _readyWaiters = [];
+  const _inIframe = window.parent !== window;
+  function _uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36); }
+  function _post(msg) {
+    if (_inIframe) window.parent.postMessage(Object.assign({ __akita_bridge: true, version: BRIDGE_VER }, msg), '*');
+  }
   function _detectApiBase() {
-    try {
-      if (window.OpenAkita && OpenAkita.meta && OpenAkita.meta.apiBase) {
-        return OpenAkita.meta.apiBase;
-      }
-    } catch (_) {}
+    if (_ctx && _ctx.apiBase) return _ctx.apiBase;
     var loc = window.location;
     if (loc.port === '5173' || loc.port === '1420') return 'http://127.0.0.1:18900';
     return loc.origin;
   }
-  function pluginPath(p) { return '/api/plugins/avatar-speaker' + p; }
-  function api(path, opts) {
+  function _directFetch(method, path, body) {
     var url = path.indexOf('http') === 0 ? path : _detectApiBase() + path;
-    return fetch(url, opts || {}).then(function(r) {
-      return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j }; });
+    var opts = { method: method, headers: { 'Content-Type': 'application/json' } };
+    if (body && method !== 'GET' && method !== 'HEAD') {
+      if (body instanceof FormData) { opts.body = body; delete opts.headers['Content-Type']; }
+      else { opts.body = JSON.stringify(body); }
+    }
+    return fetch(url, opts).then(function(r) {
+      return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j }; })
+        .catch(function() { return { ok: r.ok, status: r.status, body: {} }; });
     });
   }
-  // Alias kept for back-compat when other parts of this file pass an
-  // already-prefixed URL (they all start with '/' relative to the api base).
+  function apiCall(method, path, body) {
+    if (!_inIframe || !_bridgeConnected) return _directFetch(method, path, body);
+    return new Promise(function(resolve) {
+      var id = _uid();
+      _pending[id] = function(payload) {
+        // Host returns { ok, status, body } via bridge:api-response
+        resolve(payload && typeof payload === 'object' && 'ok' in payload
+          ? payload
+          : { ok: true, status: 200, body: payload });
+      };
+      _post({ type: 'bridge:api-request', requestId: id, payload: { method: method, path: path, body: body } });
+      setTimeout(function() {
+        if (_pending[id]) {
+          delete _pending[id];
+          _directFetch(method, path, body).then(resolve);
+        }
+      }, 5000);
+    });
+  }
+  function pluginApi(method, path, body) {
+    var pid = (_ctx && _ctx.pluginId) || 'avatar-speaker';
+    return apiCall(method, '/api/plugins/' + pid + path, body);
+  }
+  // Legacy shim: existing code in this file calls api('/voices') etc. assuming
+  // GET unless an opts.method is supplied. Route everything through pluginApi
+  // so it benefits from the bridge.
+  function api(path, opts) {
+    opts = opts || {};
+    var method = (opts.method || 'GET').toUpperCase();
+    var body = null;
+    if (opts.body) {
+      try { body = typeof opts.body === 'string' ? JSON.parse(opts.body) : opts.body; }
+      catch (_) { body = opts.body; }
+    }
+    return pluginApi(method, path, body);
+  }
+  // Wait until the bridge:init payload (or 1 s timeout) before kicking off
+  // first-paint API calls — eliminates the 404 race seen on Tauri/Electron.
+  function whenBridgeReady() {
+    return new Promise(function(resolve) {
+      if (_bridgeConnected || !_inIframe) return resolve();
+      _readyWaiters.push(resolve);
+      setTimeout(function() {
+        // Still resolve so the UI degrades gracefully when no host is present.
+        if (!_bridgeConnected) {
+          while (_readyWaiters.length) (_readyWaiters.shift())();
+        }
+      }, 1500);
+    });
+  }
+  window.addEventListener('message', function(e) {
+    var d = e.data;
+    if (!d || !d.__akita_bridge) return;
+    if ((d.type === 'bridge:init' || d.type === 'bridge:handshake-ack') && d.payload) {
+      if (d.type === 'bridge:init') _ctx = d.payload;
+      _bridgeConnected = true;
+      while (_readyWaiters.length) (_readyWaiters.shift())();
+    }
+    var acks = ['bridge:api-response','bridge:download-ack','bridge:show-in-folder-ack','bridge:pick-folder-ack','bridge:clipboard-ack'];
+    if (acks.indexOf(d.type) !== -1 && d.requestId && _pending[d.requestId]) {
+      var fn = _pending[d.requestId];
+      delete _pending[d.requestId];
+      try { fn(d.payload); } catch (_) {}
+    }
+  });
+  // Kick off the handshake so the host knows we're alive. Re-send every 300ms
+  // (max 20s) until the host answers — same retry cadence as tongyi-image.
+  (function _kickHandshake() {
+    function _send() {
+      _post({ type: 'bridge:ready' });
+      _post({ type: 'bridge:handshake', payload: { sdkVersion: '1.0.0' } });
+    }
+    _send();
+    if (!_inIframe) return;
+    var t = setInterval(function() { if (_bridgeConnected) clearInterval(t); else _send(); }, 300);
+    setTimeout(function() { clearInterval(t); }, 20000);
+  })();
   Object.defineProperty(window, 'apiBase', { get: _detectApiBase, configurable: true });
   const $ = (id) => document.getElementById(id);
   let lastTaskId = null;
@@ -213,24 +299,35 @@
     ],
   });
 
-  api('/voices').then(r => {
-    const sel = $('voice'); sel.innerHTML = '';
-    (r.body.presets || []).forEach(v => {
-      const o = document.createElement('option');
-      o.value = v.id; o.textContent = `${v.label} [${v.provider}]`;
-      sel.appendChild(o);
+  // First-paint API calls must wait for the host bridge to deliver apiBase /
+  // pluginId; otherwise direct fetches hit the wrong origin under Tauri.
+  whenBridgeReady().then(function () {
+    api('/voices').then(r => {
+      const sel = $('voice'); sel.innerHTML = '';
+      const presets = (r && r.body && r.body.presets) || [];
+      if (!presets.length) {
+        const o = document.createElement('option');
+        o.value = ''; o.textContent = '(声音列表加载失败 — 检查 host 连接)';
+        sel.appendChild(o);
+        return;
+      }
+      presets.forEach(v => {
+        const o = document.createElement('option');
+        o.value = v.id; o.textContent = `${v.label} [${v.provider}]`;
+        sel.appendChild(o);
+      });
     });
+    refreshCost();
   });
 
   async function refreshCost() {
     const r = await api('/cost', { method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ text: $('text').value, provider: $('provider').value })});
-    if (r.ok) CostPreview.mount('#costBox', r.body);
-    else ErrorCoach.mount('#costBox', r.body.detail || { problem: T('err.cost.fail') });
+    if (r && r.ok) CostPreview.mount('#costBox', r.body);
+    else ErrorCoach.mount('#costBox', (r && r.body && r.body.detail) || { problem: T('err.cost.fail') });
   }
   $('text').addEventListener('input', () => { clearTimeout(window.__cT); window.__cT = setTimeout(refreshCost, 400); });
   $('provider').addEventListener('change', refreshCost);
-  refreshCost();
 
   $('goBtn').addEventListener('click', async () => {
     $('errorBox').innerHTML = '';
@@ -251,11 +348,12 @@
       return;
     }
     lastTaskId = r.body.task_id;
-    taskPanel.refresh();
+    if (taskPanel) taskPanel.refresh();
   });
 
   function showResult(taskId, rec) {
-    const url = _detectApiBase() + '/audio/' + taskId;
+    var pid = (_ctx && _ctx.pluginId) || 'avatar-speaker';
+    const url = _detectApiBase() + '/api/plugins/' + pid + '/audio/' + taskId;
     $('resultCard').style.display = 'block';
     $('player').src = url;
     const a = $('dlBtn'); a.href = url; a.download = '';
@@ -265,11 +363,19 @@
     };
   }
 
-  const taskPanel = new TaskPanel({ root: '#tasks', apiBase: _detectApiBase(), tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
-  taskPanel.start();
+  // TaskPanel locks in apiBase at construction time, so build it AFTER the
+  // bridge handshake — otherwise it polls the wrong origin and shows
+  // "列表加载失败 HTTP 404" on every tick.
+  let taskPanel = null;
+  whenBridgeReady().then(function () {
+    const base = _detectApiBase() + '/api/plugins/' + ((_ctx && _ctx.pluginId) || 'avatar-speaker');
+    taskPanel = new TaskPanel({ root: '#tasks', apiBase: base, tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
+    taskPanel.start();
+  });
 
-  OpenAkita.onEvent('task_updated', (data) => {
-    taskPanel.refresh();
+  // OpenAkita is the global from bootstrap.js; only present inside the iframe.
+  if (window.OpenAkita && OpenAkita.onEvent) OpenAkita.onEvent('task_updated', (data) => {
+    if (taskPanel) taskPanel.refresh();
     if (data && data.id === lastTaskId && data.status === 'succeeded') {
       showResult(lastTaskId, data);
       FirstSuccessCelebrate.maybeFire({

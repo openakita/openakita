@@ -209,10 +209,14 @@
     if (loc.port === '5173' || loc.port === '1420') return 'http://127.0.0.1:18900';
     return loc.origin;
   }
+  // CRITICAL: api(path) must prepend /api/plugins/highlight-cutter — otherwise
+  // it hits e.g. http://127.0.0.1:18900/tasks (404). Phase 2-03 missed this.
+  function pluginPath(p) { return '/api/plugins/highlight-cutter' + p; }
   function api(path, opts) {
-    var url = path.indexOf('http') === 0 ? path : _detectApiBase() + path;
+    var url = path.indexOf('http') === 0 ? path : _detectApiBase() + pluginPath(path);
     return fetch(url, opts || {}).then(function(r) {
-      return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j }; });
+      return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j }; })
+        .catch(function() { return { ok: r.ok, status: r.status, body: {} }; });
     });
   }
   Object.defineProperty(window, 'apiBase', { get: _detectApiBase, configurable: true });
@@ -239,7 +243,7 @@
     info.textContent = T('upload.uploading', { mb: (file.size/1024/1024).toFixed(1) });
     const form = new FormData(); form.append('file', file);
     try {
-      const r = await fetch(_detectApiBase() + '/upload', { method: 'POST', body: form });
+      const r = await fetch(_detectApiBase() + pluginPath('/upload'), { method: 'POST', body: form });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
       chosenSourcePath = j.path;
@@ -299,7 +303,7 @@
     }
   });
 
-  const taskPanel = new TaskPanel({ root: '#tasks', apiBase: _detectApiBase(), tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
+  const taskPanel = new TaskPanel({ root: '#tasks', apiBase: _detectApiBase() + pluginPath(''), tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
   taskPanel.start();
 
   OpenAkita.onEvent('task_updated', (data) => {

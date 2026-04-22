@@ -197,10 +197,12 @@
     if (loc.port === '5173' || loc.port === '1420') return 'http://127.0.0.1:18900';
     return loc.origin;
   }
+  function pluginPath(p) { return '/api/plugins/storyboard' + p; }
   function api(path, opts) {
-    var url = path.indexOf('http') === 0 ? path : _detectApiBase() + path;
+    var url = path.indexOf('http') === 0 ? path : _detectApiBase() + pluginPath(path);
     return fetch(url, opts || {}).then(function(r) {
-      return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j }; });
+      return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j }; })
+        .catch(function() { return { ok: r.ok, status: r.status, body: {} }; });
     });
   }
   Object.defineProperty(window, 'apiBase', { get: _detectApiBase, configurable: true });
@@ -261,7 +263,7 @@
 
   $('exportBtn').addEventListener('click', () => {
     if (!lastTaskId) return;
-    window.open(_detectApiBase() + '/tasks/' + lastTaskId + '/export.csv', '_blank');
+    window.open(_detectApiBase() + pluginPath('/tasks/' + lastTaskId + '/export.csv'), '_blank');
   });
   $('copyBtn').addEventListener('click', async () => {
     if (!lastTaskId) return;
@@ -272,7 +274,7 @@
     }
   });
 
-  const taskPanel = new TaskPanel({ root: '#tasks', apiBase: _detectApiBase(), tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
+  const taskPanel = new TaskPanel({ root: '#tasks', apiBase: _detectApiBase() + pluginPath(''), tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
   taskPanel.start();
 
   OpenAkita.onEvent('task_updated', async (data) => {

@@ -129,10 +129,12 @@
     if (loc.port === '5173' || loc.port === '1420') return 'http://127.0.0.1:18900';
     return loc.origin;
   }
+  function pluginPath(p) { return '/api/plugins/poster-maker' + p; }
   function api(path, opts) {
-    var url = path.indexOf('http') === 0 ? path : _detectApiBase() + path;
+    var url = path.indexOf('http') === 0 ? path : _detectApiBase() + pluginPath(path);
     return fetch(url, opts || {}).then(function(r) {
-      return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j }; });
+      return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j }; })
+        .catch(function() { return { ok: r.ok, status: r.status, body: {} }; });
     });
   }
   Object.defineProperty(window, 'apiBase', { get: _detectApiBase, configurable: true });
@@ -182,7 +184,7 @@
   $('bgFile').addEventListener('change', async (e) => {
     const f = e.target.files[0]; if (!f) return;
     const fd = new FormData(); fd.append('file', f);
-    const r = await fetch(_detectApiBase() + '/upload-background', { method:'POST', body: fd });
+    const r = await fetch(_detectApiBase() + pluginPath('/upload-background'), { method:'POST', body: fd });
     if (!r.ok) { $('bgInfo').textContent = T('bg.uploadFail'); return; }
     const j = await r.json(); bgPath = j.path;
     $('bgInfo').textContent = T('bg.uploaded', { name: f.name });
@@ -203,13 +205,13 @@
     taskPanel.refresh();
   });
 
-  const taskPanel = new TaskPanel({ root: '#tasks', apiBase: _detectApiBase(), tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
+  const taskPanel = new TaskPanel({ root: '#tasks', apiBase: _detectApiBase() + pluginPath(''), tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
   taskPanel.start();
 
   OpenAkita.onEvent('task_updated', (data) => {
     taskPanel.refresh();
     if (data && data.status === 'succeeded' && data.id === lastTaskId) {
-      const url = _detectApiBase() + '/tasks/' + data.id + '/poster';
+      const url = _detectApiBase() + pluginPath('/tasks/' + data.id + '/poster');
       const div = document.createElement('div');
       div.className = 'oa-card';
       div.innerHTML = `<h3>${T('result.title')}</h3>

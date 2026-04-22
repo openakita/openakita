@@ -159,10 +159,14 @@
     if (loc.port === '5173' || loc.port === '1420') return 'http://127.0.0.1:18900';
     return loc.origin;
   }
+  // CRITICAL: api(path) must prepend /api/plugins/tts-studio — otherwise it
+  // hits e.g. http://127.0.0.1:18900/voices (404). Phase 2-02 missed this.
+  function pluginPath(p) { return '/api/plugins/tts-studio' + p; }
   function api(path, opts) {
-    var url = path.indexOf('http') === 0 ? path : _detectApiBase() + path;
+    var url = path.indexOf('http') === 0 ? path : _detectApiBase() + pluginPath(path);
     return fetch(url, opts || {}).then(function(r) {
-      return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j }; });
+      return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j }; })
+        .catch(function() { return { ok: r.ok, status: r.status, body: {} }; });
     });
   }
   Object.defineProperty(window, 'apiBase', { get: _detectApiBase, configurable: true });
@@ -214,13 +218,13 @@
     taskPanel.refresh();
   });
 
-  const taskPanel = new TaskPanel({ root: '#tasks', apiBase: _detectApiBase(), tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
+  const taskPanel = new TaskPanel({ root: '#tasks', apiBase: _detectApiBase() + pluginPath(''), tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
   taskPanel.start();
 
   OpenAkita.onEvent('task_updated', (data) => {
     taskPanel.refresh();
     if (data && data.status === 'succeeded' && data.id === lastTaskId) {
-      const url = _detectApiBase() + '/tasks/' + data.id + '/audio';
+      const url = _detectApiBase() + pluginPath('/tasks/' + data.id + '/audio');
       const div = document.createElement('div');
       div.className = 'oa-card';
       div.innerHTML = `<h3>${T('result.title')}</h3><audio controls src="${url}" style="width:100%"></audio>

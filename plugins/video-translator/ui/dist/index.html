@@ -158,10 +158,12 @@
     if (loc.port === '5173' || loc.port === '1420') return 'http://127.0.0.1:18900';
     return loc.origin;
   }
+  function pluginPath(p) { return '/api/plugins/video-translator' + p; }
   function api(path, opts) {
-    var url = path.indexOf('http') === 0 ? path : _detectApiBase() + path;
+    var url = path.indexOf('http') === 0 ? path : _detectApiBase() + pluginPath(path);
     return fetch(url, opts || {}).then(function(r) {
-      return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j }; });
+      return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j }; })
+        .catch(function() { return { ok: r.ok, status: r.status, body: {} }; });
     });
   }
   Object.defineProperty(window, 'apiBase', { get: _detectApiBase, configurable: true });
@@ -192,7 +194,7 @@
     const f = e.target.files[0]; if (!f) return;
     $('vidInfo').textContent = T('upload.uploading');
     const fd = new FormData(); fd.append('file', f);
-    const r = await fetch(_detectApiBase() + '/upload-video', { method:'POST', body: fd });
+    const r = await fetch(_detectApiBase() + pluginPath('/upload-video'), { method:'POST', body: fd });
     if (!r.ok) { ErrorCoach.mount('#errorBox', { problem: T('err.upload.fail') }); return; }
     const j = await r.json(); videoPath = j.path;
     $('vidInfo').textContent = T('upload.done', { name: f.name, mb: (f.size/1024/1024).toFixed(1) });
@@ -215,13 +217,13 @@
     taskPanel.refresh();
   });
 
-  const taskPanel = new TaskPanel({ root: '#tasks', apiBase: _detectApiBase(), tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
+  const taskPanel = new TaskPanel({ root: '#tasks', apiBase: _detectApiBase() + pluginPath(''), tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
   taskPanel.start();
 
   OpenAkita.onEvent('task_updated', (data) => {
     taskPanel.refresh();
     if (data && data.status === 'succeeded' && data.id === lastTaskId) {
-      const _ab = _detectApiBase();
+      const _ab = _detectApiBase() + pluginPath('');
       const v = _ab + '/tasks/' + data.id + '/video';
       const s = _ab + '/tasks/' + data.id + '/srt';
       const div = document.createElement('div');
