@@ -1,0 +1,601 @@
+/* OpenAkita Plugin UI Kit — shared styles
+ * Minimal, theme-aware (uses OpenAkita CSS variables when present).
+ * Plugins include this with:
+ *   <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css">
+ */
+
+/*
+ * Variable fallback chain notes:
+ *   --oa-surface intentionally falls back to --bg-card before the literal,
+ *   so plugins that follow the OpenAkita color system (--bg page color,
+ *   --bg-card raised card color) automatically get a contrasting surface
+ *   for oa-preview-area / oa-settings-section / oa-collapse without having
+ *   to declare --surface themselves.
+ */
+:root {
+  --oa-bg: var(--bg, #ffffff);
+  --oa-surface: var(--surface, var(--bg-card, #f8fafc));
+  --oa-text: var(--text, #1e293b);
+  --oa-text-muted: var(--text-muted, #64748b);
+  --oa-border: var(--border, #e2e8f0);
+  --oa-primary: var(--primary, #4f46e5);
+  --oa-primary-hover: var(--primary-hover, #4338ca);
+  --oa-success: var(--success, #16a34a);
+  --oa-warning: var(--warning, #f59e0b);
+  --oa-danger: var(--danger, #ef4444);
+  --oa-radius: 8px;
+  --oa-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="dark"] {
+  --oa-bg: var(--bg, #0f172a);
+  --oa-surface: var(--surface, var(--bg-card, #1e293b));
+  --oa-text: var(--text, #f1f5f9);
+  --oa-text-muted: var(--text-muted, #94a3b8);
+  --oa-border: var(--border, #334155);
+  --oa-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+body { margin: 0; font-family: -apple-system, "Segoe UI", system-ui, sans-serif; background: var(--oa-bg); color: var(--oa-text); }
+
+.oa-card { background: var(--oa-surface); border: 1px solid var(--oa-border); border-radius: var(--oa-radius); padding: 16px; margin-bottom: 12px; }
+.oa-card h3 { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+.oa-card p  { margin: 0 0 6px; font-size: 13px; color: var(--oa-text-muted); }
+
+.oa-btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; font-size: 13px; border-radius: 6px; border: 1px solid var(--oa-border); background: var(--oa-surface); color: var(--oa-text); cursor: pointer; transition: background 120ms ease; }
+.oa-btn:hover { background: var(--oa-border); }
+.oa-btn.oa-btn-primary { background: var(--oa-primary); border-color: var(--oa-primary); color: #fff; }
+.oa-btn.oa-btn-primary:hover { background: var(--oa-primary-hover); }
+.oa-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+.oa-input, .oa-textarea, .oa-select { width: 100%; box-sizing: border-box; padding: 8px 10px; font-size: 13px; border: 1px solid var(--oa-border); border-radius: 6px; background: var(--oa-bg); color: var(--oa-text); }
+.oa-textarea { min-height: 80px; resize: vertical; }
+.oa-label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: var(--oa-text-muted); }
+.oa-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+.oa-grid { display: grid; gap: 12px; }
+.oa-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+
+/* ── status pills ── */
+.oa-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.oa-pill.pending  { background: #f1f5f9; color: #64748b; }
+.oa-pill.running  { background: #dbeafe; color: #1d4ed8; }
+.oa-pill.queued   { background: #fef3c7; color: #92400e; }
+.oa-pill.succeeded{ background: #dcfce7; color: #166534; }
+.oa-pill.failed   { background: #fee2e2; color: #b91c1c; }
+.oa-pill.cancelled{ background: #f3f4f6; color: #6b7280; }
+
+/* ── error coach card (CapCut 3-段式) ── */
+.oa-error-coach { border: 1px solid var(--oa-danger); border-left-width: 4px; background: var(--oa-bg); border-radius: var(--oa-radius); padding: 14px; }
+.oa-error-coach.warning { border-color: var(--oa-warning); }
+.oa-error-coach .cause  { font-size: 11px; font-weight: 700; color: var(--oa-text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+.oa-error-coach .why    { font-size: 14px; font-weight: 600; margin-bottom: 8px; color: var(--oa-text); }
+.oa-error-coach .what   { font-size: 13px; margin-bottom: 8px; color: var(--oa-text); }
+.oa-error-coach .what::before { content: "→ "; color: var(--oa-primary); font-weight: 700; }
+.oa-error-coach .tip    { font-size: 12px; color: var(--oa-text-muted); padding-top: 8px; border-top: 1px dashed var(--oa-border); display: flex; align-items: flex-start; gap: 6px; }
+.oa-error-coach .tip > svg { flex-shrink: 0; margin-top: 2px; opacity: 0.75; }
+
+/* ── cost preview ── */
+.oa-cost { padding: 12px; background: var(--oa-surface); border: 1px dashed var(--oa-border); border-radius: var(--oa-radius); }
+.oa-cost .range  { font-size: 18px; font-weight: 700; color: var(--oa-text); }
+.oa-cost .human  { font-size: 12px; color: var(--oa-text-muted); margin-top: 4px; }
+.oa-cost .conf   { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--oa-bg); display: inline-block; margin-top: 6px; color: var(--oa-text-muted); }
+.oa-cost .conf.high   { background: #dcfce7; color: #166534; }
+.oa-cost .conf.medium { background: #fef3c7; color: #92400e; }
+.oa-cost .conf.low    { background: #fee2e2; color: #b91c1c; }
+
+/* ── thinking spinner (independent of upload/render) ── */
+.oa-thinking { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--oa-text-muted); }
+.oa-thinking .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--oa-primary); animation: oa-pulse 1.2s infinite ease-in-out; }
+.oa-thinking .dot:nth-child(2) { animation-delay: 0.15s; }
+.oa-thinking .dot:nth-child(3) { animation-delay: 0.3s; }
+@keyframes oa-pulse { 0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
+
+/* ── confetti container (first success) ── */
+.oa-confetti { position: fixed; inset: 0; pointer-events: none; z-index: 9999; overflow: hidden; }
+.oa-confetti span { position: absolute; width: 8px; height: 14px; opacity: 0; animation: oa-fall 1.6s ease-in forwards; }
+@keyframes oa-fall {
+  0% { transform: translate3d(0, -10vh, 0) rotate(0deg); opacity: 0; }
+  10% { opacity: 1; }
+  100% { transform: translate3d(var(--dx, 0), 110vh, 0) rotate(720deg); opacity: 0; }
+}
+
+/* ── icon helper (use with <span class="oa-icon">{svgString}</span>) ── */
+.oa-icon { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; line-height: 0; flex-shrink: 0; }
+.oa-icon > svg { width: 1em; height: 1em; display: block; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 1) Config banner  — top "API Key not set" notice with jump button.
+ *    Pair with .oa-config-banner__action which calls plugin's setTab(...).
+ * ────────────────────────────────────────────────────────────────────────── */
+.oa-config-banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; margin: 0 0 12px;
+  border: 1px solid var(--oa-warning); border-left-width: 4px;
+  border-radius: var(--oa-radius);
+  background: rgba(245, 158, 11, 0.08);
+  font-size: 13px; color: var(--oa-text);
+}
+.oa-config-banner__icon { color: var(--oa-warning); display: inline-flex; flex-shrink: 0; }
+.oa-config-banner__icon > svg { width: 18px; height: 18px; }
+.oa-config-banner__text { flex: 1; line-height: 1.5; }
+.oa-config-banner__text strong { font-weight: 600; }
+.oa-config-banner__action {
+  flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 6px 12px;
+  border: 1px solid var(--oa-warning);
+  background: var(--oa-warning); color: #fff;
+  border-radius: 6px; font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: filter 120ms ease, transform 120ms ease;
+}
+.oa-config-banner__action:hover { filter: brightness(0.92); }
+.oa-config-banner__action:active { transform: translateY(1px); }
+.oa-config-banner__action > svg { width: 14px; height: 14px; }
+[data-theme="dark"] .oa-config-banner { background: rgba(245, 158, 11, 0.12); }
+
+/* Variants */
+.oa-config-banner.oa-config-banner--info {
+  border-color: var(--oa-primary); background: rgba(79, 70, 229, 0.06);
+}
+.oa-config-banner.oa-config-banner--info .oa-config-banner__icon { color: var(--oa-primary); }
+.oa-config-banner.oa-config-banner--info .oa-config-banner__action {
+  border-color: var(--oa-primary); background: var(--oa-primary);
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 2) Config field callout — highlight the critical KEY input on settings.
+ * ────────────────────────────────────────────────────────────────────────── */
+.oa-config-field-callout {
+  position: relative;
+  padding: 12px 14px 12px 16px;
+  border: 1px solid var(--oa-warning);
+  border-left-width: 4px;
+  border-radius: var(--oa-radius);
+  background: rgba(245, 158, 11, 0.06);
+}
+.oa-config-field-callout[data-callout]::before {
+  content: attr(data-callout);
+  display: block;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+  color: var(--oa-warning); text-transform: uppercase;
+  margin-bottom: 6px;
+}
+[data-theme="dark"] .oa-config-field-callout { background: rgba(245, 158, 11, 0.10); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 3) Preview area — right-side preview canvas with empty state.
+ *    Use as the OUTER frame so users always see a card even before generation.
+ * ────────────────────────────────────────────────────────────────────────── */
+.oa-preview-area {
+  display: flex; flex-direction: column;
+  min-height: 100%;
+  background: var(--oa-surface);
+  border: 1px solid var(--oa-border);
+  border-radius: var(--oa-radius);
+  padding: 16px;
+  box-sizing: border-box;
+  overflow: auto;
+  box-shadow: var(--oa-shadow-sm);
+}
+.oa-preview-area--centered {
+  align-items: center; justify-content: center;
+}
+.oa-preview-area--centered > * { max-width: 100%; }
+.oa-preview-empty {
+  flex: 1;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--oa-text-muted);
+  min-height: 280px;
+}
+.oa-preview-empty__icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 72px; height: 72px;
+  border-radius: 50%;
+  background: var(--oa-bg);
+  border: 1px dashed var(--oa-border);
+  color: var(--oa-text-muted);
+  margin-bottom: 16px;
+  opacity: 0.85;
+}
+.oa-preview-empty__icon > svg { width: 32px; height: 32px; }
+.oa-preview-empty__title { font-size: 14px; font-weight: 500; color: var(--oa-text); margin-bottom: 4px; }
+.oa-preview-empty__hint  { font-size: 12px; color: var(--oa-text-muted); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 3b) List panel — left-side companion to .oa-preview-area. Visually
+ *     identical (card surface + border + shadow + radius) so a list view
+ *     and its detail/preview pane read as a balanced two-column layout
+ *     instead of "floating buttons next to a framed canvas".
+ *
+ *     Internal slots:
+ *       .oa-list-panel__filters  → grouped filter rows at the top
+ *       .oa-list-panel__divider  → 1px separator between filters and items
+ *       .oa-list-panel__items    → the actual scrollable list
+ *       .oa-list-panel__footer   → a small footer row (e.g. "共 N 个任务")
+ *
+ *     Layout intent: when paired with .oa-preview-area in a flex split-layout,
+ *     both children sit in the same row and grow to the same height naturally.
+ * ────────────────────────────────────────────────────────────────────────── */
+.oa-list-panel {
+  display: flex; flex-direction: column;
+  min-height: 100%;
+  background: var(--oa-surface);
+  border: 1px solid var(--oa-border);
+  border-radius: var(--oa-radius);
+  padding: 14px 14px 12px;
+  box-sizing: border-box;
+  box-shadow: var(--oa-shadow-sm);
+}
+.oa-list-panel__filters {
+  display: flex; flex-direction: column;
+  gap: 10px;
+}
+.oa-list-panel__divider {
+  height: 1px;
+  background: var(--oa-border);
+  margin: 12px -14px;     /* bleed to the panel edges so it reads as a real divider */
+  border: 0;
+}
+.oa-list-panel__items {
+  flex: 1;
+  display: flex; flex-direction: column;
+  gap: 8px;
+  overflow: auto;
+  min-height: 0;          /* let the flex item actually scroll */
+}
+.oa-list-panel__footer {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--oa-border);
+  font-size: 11px;
+  color: var(--oa-text-muted);
+}
+
+/* Compact filter button group (used inside .oa-list-panel__filters)
+ * Pairs a small section label with a row of buttons. */
+.oa-filter-group__label {
+  font-size: 11px; font-weight: 600;
+  color: var(--oa-text-muted);
+  text-transform: uppercase; letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+.oa-filter-group__buttons {
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 4) Collapse — based on native <details>; default closed; rotating chevron.
+ * ────────────────────────────────────────────────────────────────────────── */
+details.oa-collapse {
+  border: 1px solid var(--oa-border);
+  border-radius: var(--oa-radius);
+  background: var(--oa-surface);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+details.oa-collapse > summary.oa-collapse__summary {
+  list-style: none;
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 13px; font-weight: 600;
+  color: var(--oa-text);
+  user-select: none;
+}
+details.oa-collapse > summary.oa-collapse__summary::-webkit-details-marker { display: none; }
+details.oa-collapse > summary.oa-collapse__summary::marker { content: ""; }
+details.oa-collapse > summary.oa-collapse__summary:hover { background: var(--oa-bg); }
+.oa-collapse__chevron {
+  display: inline-flex; align-items: center; justify-content: center;
+  margin-left: auto;
+  color: var(--oa-text-muted);
+  transition: transform 180ms ease;
+}
+.oa-collapse__chevron > svg { width: 14px; height: 14px; }
+details.oa-collapse[open] > summary.oa-collapse__summary .oa-collapse__chevron {
+  transform: rotate(180deg);
+}
+.oa-collapse__body { padding: 4px 14px 14px; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 5) Markdown content — typography for rendered markdown OR for hand-built
+ *    docs that want a uniform "doc" feel (h2..h4, lists, code, blockquote).
+ * ────────────────────────────────────────────────────────────────────────── */
+.oa-md-content { font-size: 13px; line-height: 1.65; color: var(--oa-text); }
+.oa-md-content h1, .oa-md-content h2, .oa-md-content h3, .oa-md-content h4 {
+  font-weight: 600; color: var(--oa-text);
+  margin: 14px 0 6px; line-height: 1.35;
+}
+.oa-md-content h1 { font-size: 17px; }
+.oa-md-content h2 { font-size: 15px; }
+.oa-md-content h3 { font-size: 14px; }
+.oa-md-content h4 { font-size: 13px; color: var(--oa-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.oa-md-content > *:first-child { margin-top: 0; }
+.oa-md-content p { margin: 6px 0; }
+.oa-md-content ul, .oa-md-content ol { margin: 6px 0; padding-left: 22px; }
+.oa-md-content li { margin: 2px 0; }
+.oa-md-content li > p { margin: 2px 0; }
+.oa-md-content code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 1px 6px;
+  background: var(--oa-bg);
+  border: 1px solid var(--oa-border);
+  border-radius: 4px;
+}
+.oa-md-content pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  padding: 10px 12px;
+  background: var(--oa-bg);
+  border: 1px solid var(--oa-border);
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.oa-md-content pre code { padding: 0; background: transparent; border: 0; }
+.oa-md-content blockquote {
+  margin: 8px 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--oa-border);
+  color: var(--oa-text-muted);
+  background: var(--oa-bg);
+  border-radius: 0 6px 6px 0;
+}
+.oa-md-content a { color: var(--oa-primary); text-decoration: none; }
+.oa-md-content a:hover { text-decoration: underline; }
+.oa-md-content strong { font-weight: 600; }
+.oa-md-content em { font-style: italic; }
+.oa-md-content hr { border: 0; border-top: 1px solid var(--oa-border); margin: 12px 0; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 7) Plugin hero header — large iconified title for the plugin's top bar.
+ *    Pair the icon with .oa-hero-title__icon (rounded gradient chip) and the
+ *    text with .oa-hero-title__text. Falls back gracefully if no icon.
+ *
+ *    <h1 class="oa-hero-title">
+ *      <span class="oa-hero-title__icon">{svg}</span>
+ *      <span class="oa-hero-title__text">通义生图</span>
+ *    </h1>
+ * ────────────────────────────────────────────────────────────────────────── */
+.oa-hero-title {
+  display: inline-flex; align-items: center; gap: 12px;
+  font-size: 20px; font-weight: 700; color: var(--oa-text);
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.oa-hero-title__icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--oa-primary), #8b5cf6);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+  flex-shrink: 0;
+}
+.oa-hero-title__icon > svg { width: 22px; height: 22px; }
+.oa-hero-title__text { line-height: 1.2; }
+.oa-hero-title__sub {
+  display: block;
+  font-size: 11px; font-weight: 500;
+  color: var(--oa-text-muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 8) Section label — small accented title for grouping form fields or
+ *    sub-areas inside a card. The 3px accent bar gives clear visual rhythm
+ *    without adding more borders.
+ *
+ *    <div class="oa-section-label">生成模式</div>
+ *    <div class="oa-section-label oa-section-label--inline">
+ *      <span>提示词</span>
+ *      <button class="oa-ai-btn">…</button>
+ *    </div>
+ * ────────────────────────────────────────────────────────────────────────── */
+.oa-section-label {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600;
+  color: var(--oa-text);
+  margin: 0 0 8px;
+  line-height: 1.3;
+}
+.oa-section-label::before {
+  content: ""; display: inline-block;
+  width: 3px; height: 14px;
+  border-radius: 2px;
+  background: var(--oa-primary);
+  flex-shrink: 0;
+}
+/* --inline: render the label text and a trailing action (e.g. AI 优化)
+ * side-by-side, hugging the left edge with a small gap. We deliberately
+ * do NOT use space-between, so the action sits right next to the label
+ * and reads as "this action belongs to this field" instead of floating
+ * away on the right. */
+.oa-section-label--inline {
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.oa-section-label--inline > :first-child {
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.oa-section-label--inline > :first-child::before {
+  content: ""; display: inline-block;
+  width: 3px; height: 14px;
+  border-radius: 2px;
+  background: var(--oa-primary);
+}
+.oa-section-label--inline::before { content: none; }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 9) AI button — a small "this is an AI feature" affordance. Used for
+ *    things like "AI optimize prompt", "AI suggest", "AI rewrite".
+ *
+ *    Visual recipe: violet→pink gradient outline + faint inner gradient,
+ *    sparkles icon with subtle pulse on hover. Stays small (~24px tall) so
+ *    it can dock next to a section label or input header.
+ *
+ *    <button class="oa-ai-btn" type="button">
+ *      <span class="oa-icon oa-ai-btn__icon">{svg.sparkles}</span>
+ *      AI 优化
+ *    </button>
+ * ────────────────────────────────────────────────────────────────────────── */
+/* Solid-fill gradient button. We deliberately use a filled style (not an
+ * outline / ghost button) because in real use the AI affordance was hard
+ * to spot when only the border carried color — the button blended into
+ * the surrounding card. A filled violet→pink gradient pill with a moving
+ * background reads instantly as "this is the AI action". */
+.oa-ai-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 14px;
+  font-size: 12px; font-weight: 600;
+  line-height: 1;
+  color: #fff;
+  background: linear-gradient(120deg, #6366f1 0%, #8b5cf6 50%, #ec4899 100%);
+  background-size: 200% 200%;
+  background-position: 0% 50%;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(99, 102, 241, 0.25), 0 2px 8px rgba(236, 72, 153, 0.18);
+  transition: transform 120ms ease, box-shadow 200ms ease, background-position 600ms ease;
+  white-space: nowrap;
+}
+.oa-ai-btn__icon {
+  color: #fff;
+  display: inline-flex;
+  transition: transform 600ms ease;
+}
+.oa-ai-btn__icon > svg { width: 13px; height: 13px; }
+.oa-ai-btn:hover {
+  background-position: 100% 50%;
+  box-shadow: 0 0 0 3px rgba(236, 72, 153, 0.18), 0 4px 12px rgba(99, 102, 241, 0.30);
+  transform: translateY(-1px);
+}
+.oa-ai-btn:hover .oa-ai-btn__icon {
+  transform: rotate(25deg) scale(1.15);
+  animation: oa-ai-pulse 1.4s infinite ease-in-out;
+}
+.oa-ai-btn:active { transform: translateY(0); }
+.oa-ai-btn[disabled] {
+  cursor: not-allowed;
+  background: var(--oa-border);
+  color: var(--oa-text-muted);
+  box-shadow: none;
+  transform: none;
+}
+.oa-ai-btn[disabled] .oa-ai-btn__icon { color: var(--oa-text-muted); animation: none; transform: none; }
+
+@keyframes oa-ai-pulse {
+  0%, 100% { filter: drop-shadow(0 0 0 rgba(255, 255, 255, 0)); }
+  50%      { filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.85)); }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 6) Settings section — visual grouping for settings page subsections.
+ * ────────────────────────────────────────────────────────────────────────── */
+.oa-settings-section {
+  border: 1px solid var(--oa-border);
+  border-radius: var(--oa-radius);
+  background: var(--oa-surface);
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  box-shadow: var(--oa-shadow-sm);
+}
+.oa-settings-section__title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 14px; font-weight: 600;
+  color: var(--oa-text);
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--oa-border);
+}
+.oa-settings-section__title > .oa-icon { color: var(--oa-text-muted); }
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * 7) Dependency Gate banner — system component install / status surface.
+ *    Auto-rendered by dep-gate.js; plugins only declare:
+ *      <div data-oa-dep="ffmpeg,whisper.cpp"></div>
+ * ────────────────────────────────────────────────────────────────────────── */
+.oa-dep-banner-host { display: block; margin-bottom: 12px; }
+.oa-dep-banner-host > .oa-dep-banner + .oa-dep-banner { margin-top: 8px; }
+
+.oa-dep-banner {
+  border: 1px solid var(--oa-warning);
+  border-left-width: 4px;
+  background: rgba(245, 158, 11, 0.06);
+  border-radius: var(--oa-radius);
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--oa-text);
+}
+[data-theme="dark"] .oa-dep-banner { background: rgba(245, 158, 11, 0.10); }
+
+.oa-dep-banner--ready {
+  border-color: var(--oa-success);
+  background: rgba(22, 163, 74, 0.06);
+}
+[data-theme="dark"] .oa-dep-banner--ready { background: rgba(22, 163, 74, 0.10); }
+
+.oa-dep-banner--loading,
+.oa-dep-banner--error {
+  border-color: var(--oa-border);
+  background: var(--oa-surface);
+  color: var(--oa-text-muted);
+}
+.oa-dep-banner--error { border-color: var(--oa-danger); color: var(--oa-danger); }
+
+.oa-dep-banner__row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  flex-wrap: wrap;
+}
+.oa-dep-banner__head {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.oa-dep-banner__title { font-weight: 600; }
+.oa-dep-banner__ver { font-size: 11px; color: var(--oa-text-muted); }
+.oa-dep-banner__desc {
+  font-size: 12px; color: var(--oa-text-muted); margin-top: 6px;
+  line-height: 1.5;
+}
+
+.oa-dep-banner__actions { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.oa-dep-banner__strategy {
+  font-size: 10px; font-weight: 700;
+  padding: 1px 6px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.oa-dep-banner__sudo {
+  font-size: 10px; font-weight: 700;
+  padding: 1px 6px; border-radius: 999px;
+  background: rgba(0, 0, 0, 0.18);
+  color: #fff;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.oa-dep-banner__manual { background: var(--oa-surface); }
+.oa-dep-banner__no-method {
+  font-size: 12px; color: var(--oa-text-muted); font-style: italic;
+}
+
+.oa-dep-banner__log {
+  margin-top: 10px;
+  max-height: 220px; overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px; line-height: 1.45;
+  background: rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--oa-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+[data-theme="dark"] .oa-dep-banner__log { background: rgba(255, 255, 255, 0.03); }
+.oa-dep-banner__log-line { white-space: pre-wrap; word-break: break-word; }
+.oa-dep-banner__log-line--err { color: var(--oa-danger); }
+.oa-dep-banner__log-line--ok  { color: var(--oa-success); font-weight: 600; }

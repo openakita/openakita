@@ -132,6 +132,10 @@ plugins/*
 !plugins/avatar-studio/ui/dist/**
 !plugins/ecommerce-image/
 !plugins/ecommerce-image/**
+!plugins/clip-sense/
+!plugins/clip-sense/ui/
+!plugins/clip-sense/ui/dist/
+!plugins/clip-sense/ui/dist/**
 
 # Archived plugins (not auto-loaded; not for GitHub)
 # 整个目录及其所有内容都不进入 git
