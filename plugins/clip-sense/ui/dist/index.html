@@ -35,17 +35,18 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
     .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
-    .header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--bg-card); }
+    .header { display: flex; align-items: center; justify-content: space-between; padding: 10px 18px; border-bottom: 1px solid var(--border); background: var(--bg-card); }
     .header h1 { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
     .header-right { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-muted); }
     .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--bg-card); padding: 0 16px; }
-    .tab { padding: 10px 18px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--text-muted); transition: all .15s; white-space: nowrap; }
+    .tab { padding: 9px 16px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--text-muted); transition: all .15s; white-space: nowrap; }
     .tab:hover { color: var(--text); background: var(--bg-hover); }
     .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
-    .content { flex: 1; overflow: hidden; padding: 20px; position: relative; }
+    .content { flex: 1; overflow: hidden; padding: 14px 16px; position: relative; }
     .content > div { overflow-y: auto; }
-    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
-    .btn { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-size: 13px; cursor: pointer; transition: all .15s; display: inline-flex; align-items: center; gap: 6px; }
+    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+    .card-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+    .btn { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-size: 13px; cursor: pointer; transition: all .15s; display: inline-flex; align-items: center; gap: 6px; }
     .btn:hover { background: var(--bg-hover); }
     .btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
     .btn-primary:hover { background: var(--primary-hover); }
@@ -62,6 +63,7 @@
     .flex { display: flex; } .gap-2 { gap: 8px; } .gap-3 { gap: 12px; }
     .items-center { align-items: center; } .justify-between { justify-content: space-between; }
     .flex-1 { flex: 1; } .flex-wrap { flex-wrap: wrap; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .text-sm { font-size: 13px; } .text-xs { font-size: 11px; }
     .text-muted { color: var(--text-muted); } .text-dim { color: var(--text-dim); }
     .text-success { color: var(--success); } .text-warning { color: var(--warning); } .text-danger { color: var(--danger); }
@@ -71,48 +73,42 @@
     .tag-green { background: rgba(34,197,94,.15); color: #4ade80; }
     .tag-red { background: rgba(239,68,68,.15); color: #f87171; }
     .tag-gray { background: rgba(148,163,184,.15); color: #94a3b8; }
-    .tag-yellow { background: rgba(245,158,11,.15); color: #f59e0b; }
     .mode-btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-size: 12px; cursor: pointer; transition: all .15s; }
     .mode-btn:hover { background: var(--bg-hover); color: var(--text); }
     .mode-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
     .upload-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 24px; text-align: center; cursor: pointer; transition: .15s; color: var(--text-muted); }
     .upload-zone:hover { border-color: var(--primary); background: rgba(99,102,241,.04); }
     .upload-zone.has-file { padding: 8px; border-style: solid; }
-    .split-layout { display: flex; height: 100%; gap: 16px; }
+    .split-layout { display: flex; gap: 20px; height: 100%; }
     .split-left { width: 42%; min-width: 380px; overflow-y: auto; flex-shrink: 0; }
-    .split-right { flex: 1; display: flex; flex-direction: column; }
-    .oa-preview-area { flex: 1; display: flex; flex-direction: column; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-    .oa-preview-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-dim); gap: 12px; }
-    .oa-preview-empty svg { width: 48px; height: 48px; opacity: .4; }
-    .oa-list-panel { display: flex; flex-direction: column; height: 100%; }
-    .oa-list-panel__filters { padding: 0 0 12px; display: flex; flex-wrap: wrap; gap: 8px; }
-    .oa-list-panel__divider { border-top: 1px solid var(--border); margin-bottom: 12px; }
-    .oa-list-panel__items { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-    .oa-list-panel__footer { padding-top: 12px; font-size: 12px; color: var(--text-dim); }
-    .task-card { display: flex; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; transition: .15s; background: var(--bg-card); }
+    .split-right { flex: 1; overflow-y: auto; }
+    .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: var(--text-dim); text-align: center; }
+    .task-card { display: flex; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); transition: .15s; cursor: pointer; margin-bottom: 8px; }
     .task-card:hover { background: var(--bg-hover); }
     .task-card.selected { border-color: var(--primary); background: var(--primary-light); }
-    .task-thumb { width: 64px; height: 48px; border-radius: 4px; background: var(--bg-hover); overflow: hidden; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
-    .task-thumb svg { width: 24px; height: 24px; color: var(--text-dim); }
+    .task-thumb { width: 64px; height: 48px; border-radius: 6px; background: var(--bg-hover); flex-shrink: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; }
     .task-info { flex: 1; min-width: 0; }
-    .task-info h4 { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .task-meta { display: flex; gap: 8px; align-items: center; font-size: 11px; color: var(--text-dim); margin-top: 4px; flex-wrap: wrap; }
-    .setting-section { margin-bottom: 20px; }
-    .setting-section h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
-    .setting-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; gap: 12px; }
-    .setting-label { font-size: 13px; color: var(--text); }
-    .setting-hint { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
-    .oa-config-banner { background: rgba(245,158,11,.1); border: 1px solid rgba(245,158,11,.3); padding: 10px 20px; font-size: 13px; color: var(--warning); display: flex; align-items: center; gap: 8px; }
+    .task-info h4 { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+    .task-meta { font-size: 11px; color: var(--text-dim); display: flex; gap: 8px; flex-wrap: wrap; }
+    .setting-section { margin-bottom: 24px; }
+    .setting-section h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; }
+    .spinner-sm { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; z-index: 2000; animation: ak-fade-in .15s ease-out; padding: 20px; }
+    .modal-card { background: var(--bg-card); border-radius: 12px; padding: 22px 24px; max-width: 420px; width: 100%; box-shadow: 0 20px 50px rgba(0,0,0,.25); animation: ak-scale-in .15s ease-out; }
+    .modal-icon { width: 42px; height: 42px; border-radius: 50%; background: rgba(34,197,94,.12); color: var(--success); display: flex; align-items: center; justify-content: center; margin-bottom: 14px; font-size: 22px; }
+    .modal-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+    .modal-desc { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 18px; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    @keyframes ak-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes ak-scale-in { from { transform: scale(.94); opacity: 0; } to { transform: scale(1); opacity: 1; } }
     .progress-bar { height: 6px; background: var(--bg-hover); border-radius: 3px; overflow: hidden; }
     .progress-bar__fill { height: 100%; background: var(--primary); border-radius: 3px; transition: width .3s; }
     .pipeline-steps { display: flex; gap: 4px; margin: 12px 0; }
     .pipeline-step { flex: 1; text-align: center; padding: 6px 4px; font-size: 11px; border-radius: 4px; background: var(--bg-hover); color: var(--text-dim); transition: .2s; }
     .pipeline-step.active { background: var(--primary); color: #fff; }
     .pipeline-step.done { background: var(--success); color: #fff; }
-    .switch { width: 36px; height: 20px; background: var(--bg-hover); border: 1px solid var(--border); border-radius: 10px; cursor: pointer; position: relative; transition: .2s; }
-    .switch.on { background: var(--primary); border-color: var(--primary); }
-    .switch::after { content: ""; position: absolute; width: 14px; height: 14px; background: #fff; border-radius: 50%; top: 2px; left: 2px; transition: .2s; }
-    .switch.on::after { left: 18px; }
     .slider-row { display: flex; align-items: center; gap: 12px; }
     .slider-row input[type="range"] { flex: 1; }
     .slider-val { font-size: 12px; color: var(--text-muted); min-width: 48px; text-align: right; }
@@ -120,85 +116,179 @@
     .error-panel { padding: 16px; background: rgba(239,68,68,.06); border: 1px solid rgba(239,68,68,.2); border-radius: var(--radius); }
     .error-panel__kind { font-weight: 600; margin-bottom: 8px; }
     .error-panel__hints { list-style: disc; padding-left: 20px; font-size: 13px; color: var(--text-muted); }
-    .collapsible-header { display: flex; align-items: center; justify-content: space-between; cursor: pointer; padding: 8px 0; font-size: 13px; font-weight: 500; }
-    .collapsible-body { overflow: hidden; transition: max-height .2s; }
-    .library-card { display: flex; gap: 12px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-card); }
-    .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
-    .modal-content { background: var(--bg-card); border-radius: 12px; padding: 24px; max-width: 420px; width: 90%; text-align: center; }
-    .modal-content h3 { font-size: 16px; margin-bottom: 12px; }
-    .modal-content p { font-size: 13px; color: var(--text-muted); margin-bottom: 16px; }
-    @media (max-width: 860px) {
-      .split-layout { flex-direction: column; }
-      .split-left { width: 100%; min-width: auto; }
-    }
-    .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .toast-container { position: fixed; top: 20px; right: 20px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; }
-    .toast { padding: 10px 16px; border-radius: 6px; font-size: 13px; background: var(--bg-card); border: 1px solid var(--border); box-shadow: 0 4px 12px rgba(0,0,0,.1); animation: slideIn .2s; max-width: 340px; }
-    .toast.error { border-color: var(--danger); color: var(--danger); }
-    .toast.warning { border-color: var(--warning); color: var(--warning); }
-    @keyframes slideIn { from { transform: translateX(20px); opacity: 0; } }
+    .library-card { display: flex; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-card); margin-bottom: 8px; }
+    @media (max-width: 860px) { .split-layout { flex-direction: column; } .split-left { width: 100%; min-width: unset; } }
   </style>
 </head>
 <body>
-  <div id="root"></div>
-  <div id="toast-root"></div>
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script type="text/babel" data-presets="react">
-// ── Bridge SDK ──
-var _ctx = window.__openakita_plugin_context || null;
+<div id="root"></div>
+<script>
+// ── Bridge SDK (same pattern as tongyi-image) ──
+var BRIDGE_VER = 1;
+var _ctx = null, _caps = [], _pending = {}, _handlers = {};
+var _bridgeConnected = false;
+var _inIframe = window.parent !== window;
+function uid() { return Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
+function post(msg) { if (_inIframe) window.parent.postMessage({ __akita_bridge: true, version: BRIDGE_VER, ...msg }, "*"); }
+
 function _detectApiBase() {
   if (_ctx && _ctx.apiBase) return _ctx.apiBase;
-  var m = window.location.pathname.match(/\/api\/plugins\/[^/]+/);
-  return m ? m[0] : "/api/plugins/clip-sense";
+  var loc = window.location;
+  if (loc.port === "5173" || loc.port === "1420") return "http://127.0.0.1:18900";
+  return loc.origin;
 }
-function pluginApi(method, path, body) {
+
+function directFetch(method, path, body) {
   var url = path.startsWith("http") ? path : _detectApiBase() + path;
-  var opts = { method: method, headers: {} };
-  if (body) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
-  return fetch(url, opts).then(r => r.json().then(b => ({ ok: r.ok, status: r.status, body: b })));
+  var opts = { method: method, headers: { "Content-Type": "application/json" } };
+  if (body && method !== "GET" && method !== "HEAD") {
+    if (body instanceof FormData) { opts.body = body; delete opts.headers["Content-Type"]; }
+    else { opts.body = JSON.stringify(body); }
+  }
+  return fetch(url, opts).then(function(resp) {
+    return resp.json().then(function(json) { return { ok: resp.ok, status: resp.status, body: json }; });
+  });
 }
+
+function apiCall(method, path, body) {
+  if (!_inIframe || !_bridgeConnected) return directFetch(method, path, body);
+  return new Promise(function(resolve, reject) {
+    var id = uid();
+    _pending[id] = { resolve: resolve, reject: reject };
+    post({ type: "bridge:api-request", requestId: id, payload: { method: method, path: path, body: body } });
+    setTimeout(function() {
+      if (_pending[id]) { delete _pending[id]; directFetch(method, path, body).then(resolve).catch(reject); }
+    }, 5000);
+  });
+}
+
+function pluginApi(method, path, body) {
+  var base = _ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/clip-sense";
+  return apiCall(method, base + path, body);
+}
+
 function bridgeDownload(url, fname) {
-  if (_ctx && _ctx.download) return _ctx.download(url, fname);
-  return Promise.reject(new Error("No bridge download"));
+  return new Promise(function(resolve) {
+    if (!_inIframe || !_bridgeConnected) { resolve({ ok: false, error: "no-bridge" }); return; }
+    var id = uid();
+    _pending[id] = { resolve: resolve, reject: function(e) { resolve({ ok: false, error: String(e) }); } };
+    post({ type: "bridge:download", requestId: id, payload: { url: url, filename: fname } });
+    setTimeout(function() {
+      if (_pending[id]) { delete _pending[id]; resolve({ ok: false, error: "timeout" }); }
+    }, 60000);
+  });
 }
+
+function bridgeShowInFolder(path) {
+  if (!_inIframe || !_bridgeConnected || !path) return;
+  if (_caps.length && _caps.indexOf("show-in-folder") === -1) return;
+  var id = uid();
+  _pending[id] = { resolve: function() {}, reject: function() {} };
+  post({ type: "bridge:show-in-folder", requestId: id, payload: { path: path } });
+  setTimeout(function() { if (_pending[id]) delete _pending[id]; }, 10000);
+}
+
+window.addEventListener("message", function(e) {
+  var d = e.data;
+  if (!d || !d.__akita_bridge) return;
+  if (d.type === "bridge:init" && d.payload) {
+    _ctx = d.payload; _bridgeConnected = true;
+    if (_ctx.theme) document.documentElement.setAttribute("data-theme", _ctx.theme.includes("dark") ? "dark" : "light");
+  }
+  if (d.type === "bridge:handshake-ack" && d.payload) { _caps = d.payload.capabilities || []; _bridgeConnected = true; }
+  var acks = ["bridge:api-response","bridge:clipboard-ack","bridge:download-ack","bridge:show-in-folder-ack","bridge:pick-folder-ack"];
+  if (acks.indexOf(d.type) !== -1 && d.requestId && _pending[d.requestId]) {
+    _pending[d.requestId].resolve(d.payload); delete _pending[d.requestId];
+  }
+  if (d.type === "bridge:theme-change" && d.payload) {
+    document.documentElement.setAttribute("data-theme", (d.payload.theme || "").includes("dark") ? "dark" : "light");
+  }
+  if (d.type === "bridge:event" && d.payload) {
+    var h = _handlers[d.payload.eventType];
+    if (h) h.forEach(function(fn) { fn(d.payload.data); });
+  }
+});
+var _readyInterval = null;
+function _sendReady() { post({ type: "bridge:ready" }); post({ type: "bridge:handshake", payload: { sdkVersion: "1.0.0" } }); }
+_sendReady();
+if (_inIframe) {
+  _readyInterval = setInterval(function() { if (_bridgeConnected) { clearInterval(_readyInterval); return; } _sendReady(); }, 300);
+  setTimeout(function() { if (_readyInterval) clearInterval(_readyInterval); }, 20000);
+}
+function onEvent(type, fn) { (_handlers[type] = _handlers[type] || []).push(fn); }
+
 function uploadFile(file) {
   var base = _detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/clip-sense");
   var fd = new FormData(); fd.append("file", file);
-  return fetch(base + "/upload", { method: "POST", body: fd }).then(r => r.json());
+  return fetch(base + "/upload", { method: "POST", body: fd }).then(function(r) { return r.json(); });
 }
-// ── Toast ──
-var _toasts = [];
+
+function _tr(key, vars, fallback) {
+  if (window.OpenAkitaI18n && window.OpenAkitaI18n.t) {
+    var v = window.OpenAkitaI18n.t(key, vars);
+    if (v && v !== key) return v;
+  }
+  if (fallback) return fallback;
+  return key;
+}
+
+async function downloadOutput(taskId, fname) {
+  try {
+    showToast(_tr("toast.downloading", null, "下载中..."));
+    var base = _detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/clip-sense");
+    var url = base + "/tasks/" + taskId + "/download";
+    if (_inIframe && _bridgeConnected) {
+      var native = await bridgeDownload(url, fname || "clip_sense_output.mp4");
+      if (native && native.ok && native.path && /[\\/]/.test(String(native.path))) {
+        showToast("已保存到: " + native.path);
+        bridgeShowInFolder(native.path);
+        return;
+      }
+    }
+    var resp = await fetch(url);
+    if (!resp.ok) throw new Error("Server returned " + resp.status);
+    var blob = await resp.blob();
+    var objUrl = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = objUrl; a.download = fname || "output.mp4";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(objUrl); }, 3000);
+    showToast("已下载: " + (fname || "output.mp4"));
+  } catch (e) {
+    showToast("下载失败: " + e.message, "error");
+  }
+}
+
 function showToast(body, type) {
-  if (!type) type = "info";
-  var id = Date.now() + Math.random();
-  _toasts.push({ id, body, type });
-  _renderToasts();
-  setTimeout(() => { _toasts = _toasts.filter(t => t.id !== id); _renderToasts(); }, 4000);
+  type = type || "success";
+  if (_inIframe && _bridgeConnected) { post({ type: "bridge:notification", payload: { title: "", body: body, type: type } }); return; }
+  console.log("[Toast]", type, body);
 }
-function _renderToasts() {
-  var root = document.getElementById("toast-root");
-  if (!root) return;
-  root.innerHTML = "";
-  root.className = "toast-container";
-  _toasts.forEach(t => {
-    var d = document.createElement("div");
-    d.className = "toast " + (t.type === "error" ? "error" : t.type === "warning" ? "warning" : "");
-    d.textContent = t.body;
-    root.appendChild(d);
-  });
-}
-// ── I18N ──
-var I18N_DICT = {
+</script>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ─── i18n dictionary ────────────────────────────────────────────────────
+const I18N_DICT = {
   zh: {
     "app.title": "智剪工坊",
     "app.subtitle": "AI 智能视频剪辑",
-    "tab.create": "创建",
-    "tab.tasks": "任务",
-    "tab.library": "素材库",
-    "tab.settings": "设置",
+    "tabs.create": "创建",
+    "tabs.tasks": "任务列表",
+    "tabs.library": "素材库",
+    "tabs.settings": "设置",
+    "banner.noKey.title": "尚未配置 DashScope API Key",
+    "banner.noKey.desc": "高光提取、段落拆条、口播精编需要 API Key。静音精剪可免费使用。",
+    "banner.noKey.cta": "前往配置",
+    "modal.title": "任务已开始",
+    "modal.desc": "视频正在处理中，您可以继续其他操作或前往任务列表查看进度。",
+    "modal.continue": "继续创建",
+    "modal.goTasks": "前往任务列表",
     "mode.highlight_extract": "高光提取",
     "mode.silence_clean": "静音精剪",
     "mode.topic_split": "段落拆条",
@@ -207,6 +297,12 @@ var I18N_DICT = {
     "mode.silence_clean.desc": "自动检测并移除静音/空白段落",
     "mode.topic_split.desc": "AI 按主题自动拆分长视频为多个短视频",
     "mode.talking_polish.desc": "AI 去除口误、废话、重复，精炼口播",
+    "status.pending": "等待中",
+    "status.running": "处理中",
+    "status.succeeded": "已完成",
+    "status.failed": "失败",
+    "status.cancelled": "已取消",
+    "create.modeLabel": "剪辑模式",
     "create.upload": "上传视频",
     "create.uploadHint": "拖拽或点击上传 MP4 / MOV / MKV",
     "create.uploadChange": "更换视频",
@@ -225,85 +321,101 @@ var I18N_DICT = {
     "create.segDur.short": "1-3分钟",
     "create.segDur.medium": "3-5分钟",
     "create.segDur.auto": "自动",
-    "create.removeFiller": "AI 去废话",
-    "create.removeStutter": "去口误",
-    "create.removeRepeat": "去重复",
     "create.burnSubtitle": "嵌入字幕",
     "create.submit": "开始剪辑",
     "create.submitting": "正在提交...",
     "create.costEstimate": "预估费用",
     "create.costFree": "免费（纯本地）",
     "preview.empty.title": "等待剪辑",
-    "preview.empty.desc": "选择模式并上传视频开始",
+    "preview.empty.hint": "选择模式并上传视频开始",
     "preview.step.setup": "准备",
-    "preview.step.check_deps": "检查依赖",
-    "preview.step.transcribe": "语音转写",
-    "preview.step.analyze": "AI 分析",
-    "preview.step.execute": "视频处理",
-    "preview.step.subtitle": "字幕生成",
+    "preview.step.check_deps": "检查",
+    "preview.step.transcribe": "转写",
+    "preview.step.analyze": "分析",
+    "preview.step.execute": "处理",
+    "preview.step.subtitle": "字幕",
     "preview.step.finalize": "完成",
     "preview.processing": "正在处理视频...",
     "preview.downloadVideo": "下载视频",
     "preview.downloadSrt": "下载字幕",
-    "preview.downloadJson": "下载转写",
-    "tasks.title": "任务列表",
+    "preview.viewInTasks": "在任务列表中查看",
+    "tasks.filter.status": "状态",
+    "tasks.filter.mode": "模式",
     "tasks.filter.all": "全部",
-    "tasks.filter.running": "处理中",
-    "tasks.filter.succeeded": "已完成",
-    "tasks.filter.failed": "失败",
     "tasks.filter.allModes": "全部模式",
-    "tasks.empty": "暂无任务",
-    "tasks.selectHint": "从左侧列表选择一个任务",
-    "tasks.count": "共 {n} 个任务",
-    "tasks.retry": "重试",
-    "tasks.delete": "删除",
-    "tasks.cancel": "取消",
-    "tasks.download": "下载",
+    "tasks.empty.title": "暂无任务",
+    "tasks.empty.hint": "在"创建"页发起一次剪辑后，任务会出现在这里",
+    "tasks.untitled": "无标题",
+    "tasks.totalCount": "共 {n} 个任务",
+    "tasks.detail.title": "任务详情",
+    "tasks.detail.retry": "重试",
+    "tasks.detail.delete": "删除",
+    "tasks.detail.cancel": "取消",
+    "tasks.detail.download": "下载",
+    "tasks.detail.confirmDelete": "确定删除?",
+    "tasks.detail.runningHint": "正在处理...",
+    "tasks.detail.id": "ID",
+    "tasks.detail.mode": "模式",
+    "tasks.detail.duration": "时长",
+    "tasks.detail.outputDuration": "输出时长",
+    "tasks.detail.createdAt": "创建时间",
+    "tasks.detail.step": "当前步骤",
+    "tasks.empty.noSelection.title": "未选择任务",
+    "tasks.empty.noSelection.hint": "从左侧列表选择一个任务查看详情",
     "library.title": "素材库",
     "library.empty": "上传第一个视频素材",
     "library.uploadBtn": "上传新视频",
     "library.transcribed": "已转写",
     "library.pending": "待转写",
-    "library.useThis": "用此素材创建",
-    "settings.apiKey": "DashScope API Key",
-    "settings.apiKeyHint": "在阿里云百炼控制台获取",
-    "settings.ffmpegPath": "FFmpeg 路径",
-    "settings.ffmpegDetect": "自动检测",
-    "settings.ffmpegStatus": "FFmpeg 状态",
-    "settings.ffmpegOk": "可用",
-    "settings.ffmpegNotFound": "未检测到",
-    "settings.defaultThreshold": "默认静音阈值",
-    "settings.defaultSubtitle": "默认嵌入字幕",
-    "settings.defaultFormat": "默认输出格式",
-    "settings.storage": "存储统计",
-    "settings.totalFiles": "文件数",
-    "settings.totalSize": "总大小",
-    "settings.save": "保存",
-    "settings.saved": "已保存",
-    "settings.configNeeded": "请先在设置中配置 DashScope API Key",
+    "settings.api.title": "API 配置",
+    "settings.api.callout": "必填项",
+    "settings.api.key.show": "显示",
+    "settings.api.key.hide": "隐藏",
+    "settings.api.key.save": "保存",
+    "settings.api.key.helpPrefix": "获取地址: ",
+    "settings.api.key.helpLink": "阿里云百炼控制台",
+    "settings.ffmpeg.title": "FFmpeg",
+    "settings.ffmpeg.status": "FFmpeg 状态",
+    "settings.ffmpeg.ok": "可用",
+    "settings.ffmpeg.notFound": "未检测到",
+    "settings.ffmpeg.path": "FFmpeg 路径",
+    "settings.ffmpeg.detect": "检测",
+    "settings.defaults.title": "默认参数",
+    "settings.defaults.subtitle": "默认嵌入字幕",
+    "settings.defaults.format": "默认输出格式",
+    "settings.storage.title": "存储",
+    "settings.storage.files": "文件数",
+    "settings.storage.size": "总大小",
     "toast.taskCreated": "任务已创建",
-    "toast.taskCreatedDesc": "视频正在处理中，可在任务列表查看进度",
     "toast.createFail": "创建失败",
-    "toast.needKey": "请先配置 API Key",
+    "toast.needKey": "请先在设置中配置 API Key",
     "toast.needVideo": "请先上传视频",
     "toast.deleted": "已删除",
     "toast.cancelled": "已取消",
     "toast.retryCreated": "重试任务已创建",
     "toast.downloading": "下载中...",
     "toast.uploadFail": "上传失败",
-    "modal.title": "任务已创建",
-    "modal.desc": "视频正在处理中，您可以继续其他操作或前往任务列表查看进度。",
-    "modal.goTasks": "查看任务",
-    "modal.close": "继续创建",
+    "toast.savedSettings": "设置已保存",
+    "toast.saveFailed": "保存失败",
     "error.title": "处理失败",
+    "err.title": "插件 UI 渲染出错",
+    "err.retry": "重试渲染",
+    "err.stackLabel": "错误堆栈 (复制给开发者)",
   },
   en: {
     "app.title": "ClipSense",
     "app.subtitle": "AI Video Editor",
-    "tab.create": "Create",
-    "tab.tasks": "Tasks",
-    "tab.library": "Library",
-    "tab.settings": "Settings",
+    "tabs.create": "Create",
+    "tabs.tasks": "Tasks",
+    "tabs.library": "Library",
+    "tabs.settings": "Settings",
+    "banner.noKey.title": "DashScope API Key not configured",
+    "banner.noKey.desc": "Highlight extraction, topic splitting, and talking polish need an API Key. Silence clean is free.",
+    "banner.noKey.cta": "Go to settings",
+    "modal.title": "Task started",
+    "modal.desc": "Your video is being processed. You can continue creating or check the Tasks tab for progress.",
+    "modal.continue": "Keep creating",
+    "modal.goTasks": "Go to tasks",
     "mode.highlight_extract": "Highlights",
     "mode.silence_clean": "Silence Clean",
     "mode.topic_split": "Topic Split",
@@ -312,6 +424,12 @@ var I18N_DICT = {
     "mode.silence_clean.desc": "Detect and remove silent segments for tighter cuts",
     "mode.topic_split.desc": "AI splits long video into topic-based short clips",
     "mode.talking_polish.desc": "AI removes filler, stutters, and repetitions",
+    "status.pending": "Pending",
+    "status.running": "Processing",
+    "status.succeeded": "Done",
+    "status.failed": "Failed",
+    "status.cancelled": "Cancelled",
+    "create.modeLabel": "Editing mode",
     "create.upload": "Upload Video",
     "create.uploadHint": "Drag or click to upload MP4 / MOV / MKV",
     "create.uploadChange": "Change Video",
@@ -330,16 +448,13 @@ var I18N_DICT = {
     "create.segDur.short": "1-3 min",
     "create.segDur.medium": "3-5 min",
     "create.segDur.auto": "Auto",
-    "create.removeFiller": "Remove Filler",
-    "create.removeStutter": "Remove Stutters",
-    "create.removeRepeat": "Remove Repeats",
     "create.burnSubtitle": "Burn Subtitles",
     "create.submit": "Start Editing",
     "create.submitting": "Submitting...",
     "create.costEstimate": "Estimated Cost",
     "create.costFree": "Free (local only)",
     "preview.empty.title": "Ready to Edit",
-    "preview.empty.desc": "Select a mode and upload a video to start",
+    "preview.empty.hint": "Select a mode and upload a video to start",
     "preview.step.setup": "Setup",
     "preview.step.check_deps": "Check",
     "preview.step.transcribe": "Transcribe",
@@ -350,713 +465,1054 @@ var I18N_DICT = {
     "preview.processing": "Processing video...",
     "preview.downloadVideo": "Download Video",
     "preview.downloadSrt": "Download SRT",
-    "preview.downloadJson": "Download Transcript",
-    "tasks.title": "Task List",
+    "preview.viewInTasks": "View in Tasks",
+    "tasks.filter.status": "Status",
+    "tasks.filter.mode": "Mode",
     "tasks.filter.all": "All",
-    "tasks.filter.running": "Running",
-    "tasks.filter.succeeded": "Completed",
-    "tasks.filter.failed": "Failed",
-    "tasks.filter.allModes": "All Modes",
-    "tasks.empty": "No tasks yet",
-    "tasks.selectHint": "Select a task from the list",
-    "tasks.count": "{n} tasks total",
-    "tasks.retry": "Retry",
-    "tasks.delete": "Delete",
-    "tasks.cancel": "Cancel",
-    "tasks.download": "Download",
+    "tasks.filter.allModes": "All modes",
+    "tasks.empty.title": "No tasks yet",
+    "tasks.empty.hint": "Once you start an edit in the Create tab, tasks will appear here.",
+    "tasks.untitled": "Untitled",
+    "tasks.totalCount": "{n} tasks",
+    "tasks.detail.title": "Task details",
+    "tasks.detail.retry": "Retry",
+    "tasks.detail.delete": "Delete",
+    "tasks.detail.cancel": "Cancel",
+    "tasks.detail.download": "Download",
+    "tasks.detail.confirmDelete": "Delete this task?",
+    "tasks.detail.runningHint": "Processing...",
+    "tasks.detail.id": "ID",
+    "tasks.detail.mode": "Mode",
+    "tasks.detail.duration": "Duration",
+    "tasks.detail.outputDuration": "Output",
+    "tasks.detail.createdAt": "Created at",
+    "tasks.detail.step": "Current step",
+    "tasks.empty.noSelection.title": "No task selected",
+    "tasks.empty.noSelection.hint": "Pick a task on the left to view its details.",
     "library.title": "Library",
     "library.empty": "Upload your first video",
     "library.uploadBtn": "Upload Video",
     "library.transcribed": "Transcribed",
     "library.pending": "Pending",
-    "library.useThis": "Create with this",
-    "settings.apiKey": "DashScope API Key",
-    "settings.apiKeyHint": "Get it from Alibaba Cloud console",
-    "settings.ffmpegPath": "FFmpeg Path",
-    "settings.ffmpegDetect": "Auto Detect",
-    "settings.ffmpegStatus": "FFmpeg Status",
-    "settings.ffmpegOk": "Available",
-    "settings.ffmpegNotFound": "Not Found",
-    "settings.defaultThreshold": "Default Threshold",
-    "settings.defaultSubtitle": "Default Burn Subtitles",
-    "settings.defaultFormat": "Default Output Format",
-    "settings.storage": "Storage Stats",
-    "settings.totalFiles": "Files",
-    "settings.totalSize": "Total Size",
-    "settings.save": "Save",
-    "settings.saved": "Saved",
-    "settings.configNeeded": "Please configure DashScope API Key in Settings",
+    "settings.api.title": "API configuration",
+    "settings.api.callout": "Required",
+    "settings.api.key.show": "Show",
+    "settings.api.key.hide": "Hide",
+    "settings.api.key.save": "Save",
+    "settings.api.key.helpPrefix": "Get a key at: ",
+    "settings.api.key.helpLink": "Alibaba Cloud Bailian Console",
+    "settings.ffmpeg.title": "FFmpeg",
+    "settings.ffmpeg.status": "FFmpeg status",
+    "settings.ffmpeg.ok": "Available",
+    "settings.ffmpeg.notFound": "Not found",
+    "settings.ffmpeg.path": "FFmpeg path",
+    "settings.ffmpeg.detect": "Detect",
+    "settings.defaults.title": "Default parameters",
+    "settings.defaults.subtitle": "Default burn subtitles",
+    "settings.defaults.format": "Default output format",
+    "settings.storage.title": "Storage",
+    "settings.storage.files": "Files",
+    "settings.storage.size": "Total size",
     "toast.taskCreated": "Task created",
-    "toast.taskCreatedDesc": "Video is processing. Check Tasks tab for progress.",
     "toast.createFail": "Create failed",
-    "toast.needKey": "Please configure API Key first",
+    "toast.needKey": "Please configure API Key in Settings first",
     "toast.needVideo": "Please upload a video first",
     "toast.deleted": "Deleted",
     "toast.cancelled": "Cancelled",
     "toast.retryCreated": "Retry task created",
     "toast.downloading": "Downloading...",
     "toast.uploadFail": "Upload failed",
-    "modal.title": "Task Created",
-    "modal.desc": "Your video is being processed. You can continue creating or check the Tasks tab.",
-    "modal.goTasks": "View Tasks",
-    "modal.close": "Continue",
-    "error.title": "Processing Failed",
+    "toast.savedSettings": "Settings saved",
+    "toast.saveFailed": "Save failed",
+    "error.title": "Processing failed",
+    "err.title": "Plugin UI render error",
+    "err.retry": "Retry render",
+    "err.stackLabel": "Error stack (share with developers)",
   }
 };
-var _locale = (navigator.language || "zh").startsWith("en") ? "en" : "zh";
-if (_ctx && _ctx.locale) _locale = _ctx.locale.startsWith("en") ? "en" : "zh";
-function useLocale() { return _locale; }
-function useT() {
-  return function t(key, vars) {
-    var s = (I18N_DICT[_locale] || I18N_DICT.zh)[key] || key;
-    if (vars) Object.keys(vars).forEach(k => { s = s.replace("{" + k + "}", vars[k]); });
-    return s;
+
+const _i18n = (function () {
+  if (window.OpenAkitaI18n && window.OpenAkitaI18n.register) {
+    window.OpenAkitaI18n.register(I18N_DICT);
+    return window.OpenAkitaI18n;
+  }
+  let loc = (navigator && navigator.language) || "zh";
+  const subs = new Set();
+  return {
+    t: function (k, vars) {
+      const base = (loc || "zh").split(/[-_]/)[0];
+      const tpl = (I18N_DICT[loc] && I18N_DICT[loc][k])
+        || (I18N_DICT[base] && I18N_DICT[base][k])
+        || (I18N_DICT.en && I18N_DICT.en[k])
+        || k;
+      return vars
+        ? String(tpl).replace(/\{(\w+)\}/g, (_, n) => vars[n] != null ? String(vars[n]) : "{" + n + "}")
+        : tpl;
+    },
+    locale: () => loc,
+    setLocale: (l) => { loc = l; subs.forEach(fn => { try { fn(l); } catch (_) {} }); },
+    onChange: (fn) => { subs.add(fn); return () => subs.delete(fn); },
   };
+})();
+
+function useT() {
+  const [, setTick] = useState(0);
+  useEffect(() => _i18n.onChange(() => setTick(x => x + 1)), []);
+  return _i18n.t;
 }
-// ── Icon component (same as tongyi) ──
-function OAIcon({ name, size }) {
-  var s = size || 16;
-  if (window.OpenAkitaIcons && window.OpenAkitaIcons[name]) {
-    return React.createElement("span", {
-      dangerouslySetInnerHTML: { __html: window.OpenAkitaIcons[name] },
-      style: { display: "inline-flex", width: s, height: s }
-    });
-  }
-  return React.createElement("span", { style: { width: s, height: s, display: "inline-block" } });
+
+// ── Mode definitions ──
+const MODE_DEFS = [
+  { id: "highlight_extract", iconKey: "sparkles" },
+  { id: "silence_clean",     iconKey: "headphones" },
+  { id: "topic_split",       iconKey: "scissors" },
+  { id: "talking_polish",    iconKey: "mic" },
+];
+function modeList(t) {
+  return MODE_DEFS.map(m => ({ ...m, name: t("mode." + m.id) }));
 }
-// ── Error Boundary ──
-class PluginErrorBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { error: null }; }
-  static getDerivedStateFromError(e) { return { error: e }; }
-  render() {
-    if (this.state.error) {
-      return React.createElement("div", { style: { padding: 40, textAlign: "center" } },
-        React.createElement("h2", null, "Plugin UI Error"),
-        React.createElement("p", { className: "text-muted" }, this.state.error.message)
-      );
-    }
-    return this.props.children;
-  }
+
+// ── SVG Icon (calls the function!) ──
+function OAIcon({ name, style }) {
+  const svg = (window.OpenAkitaIcons && window.OpenAkitaIcons[name]) ? window.OpenAkitaIcons[name]() : "";
+  return <span className="oa-icon" style={style} dangerouslySetInnerHTML={{ __html: svg }} />;
 }
-// ── TaskStartedModal ──
-function TaskStartedModal({ open, onClose, onGoToTasks }) {
-  var t = useT();
-  if (!open) return null;
-  return React.createElement("div", { className: "modal-overlay", onClick: onClose },
-    React.createElement("div", { className: "modal-content", onClick: e => e.stopPropagation() },
-      React.createElement(OAIcon, { name: "check-circle", size: 48 }),
-      React.createElement("h3", null, t("modal.title")),
-      React.createElement("p", null, t("modal.desc")),
-      React.createElement("div", { className: "flex gap-2", style: { justifyContent: "center" } },
-        React.createElement("button", { className: "btn", onClick: onClose }, t("modal.close")),
-        React.createElement("button", { className: "btn btn-primary", onClick: onGoToTasks }, t("modal.goTasks"))
-      )
-    )
-  );
-}
+
+// ── Status helpers ──
+const STATUS_CLS = { pending: "tag-orange", running: "tag-blue", succeeded: "tag-green", failed: "tag-red", cancelled: "tag-gray" };
+function statusLabel(s, t) { return t("status." + s); }
+function statusCls(s) { return STATUS_CLS[s] || "tag-gray"; }
+
 // ── Pipeline steps ──
-var PIPELINE_STEPS = ["setup", "check_deps", "transcribe", "analyze", "execute", "subtitle", "finalize"];
+const PIPELINE_STEPS = ["setup", "check_deps", "transcribe", "analyze", "execute", "subtitle", "finalize"];
+
 function PipelineProgress({ currentStep, status }) {
-  var t = useT();
-  var idx = PIPELINE_STEPS.indexOf(currentStep);
-  return React.createElement("div", { className: "pipeline-steps" },
-    PIPELINE_STEPS.map((s, i) =>
-      React.createElement("div", {
-        key: s,
-        className: "pipeline-step" + (i === idx && status === "running" ? " active" : "") + (i < idx ? " done" : "")
-      }, t("preview.step." + s))
-    )
+  const t = useT();
+  const idx = PIPELINE_STEPS.indexOf(currentStep);
+  return (
+    <div className="pipeline-steps">
+      {PIPELINE_STEPS.map((s, i) => (
+        <div key={s}
+             className={"pipeline-step" + (i === idx && status === "running" ? " active" : "") + (i < idx || status === "succeeded" ? " done" : "")}>
+          {t("preview.step." + s)}
+        </div>
+      ))}
+    </div>
   );
 }
+
 // ── ErrorPanel ──
 function ErrorPanel({ errorKind, errorMessage, errorHints }) {
-  var t = useT();
-  return React.createElement("div", { className: "error-panel" },
-    React.createElement("div", { className: "error-panel__kind text-danger" },
-      React.createElement("span", { className: "tag tag-red", style: { marginRight: 8 } }, errorKind || "unknown"),
-      t("error.title")
-    ),
-    errorMessage && React.createElement("p", { className: "text-sm", style: { margin: "8px 0" } }, errorMessage),
-    errorHints && errorHints.length > 0 && React.createElement("ul", { className: "error-panel__hints" },
-      errorHints.map((h, i) => React.createElement("li", { key: i }, h))
-    )
+  const t = useT();
+  return (
+    <div className="error-panel">
+      <div className="error-panel__kind text-danger">
+        <span className="tag tag-red" style={{marginRight: 8}}>{errorKind || "unknown"}</span>
+        {t("error.title")}
+      </div>
+      {errorMessage && <p className="text-sm" style={{margin: "8px 0"}}>{errorMessage}</p>}
+      {errorHints && errorHints.length > 0 && (
+        <ul className="error-panel__hints">
+          {errorHints.map((h, i) => <li key={i}>{h}</li>)}
+        </ul>
+      )}
+    </div>
   );
 }
-// ── Main App ──
-function App() {
-  var t = useT();
-  var [tab, setTab] = React.useState("create");
-  var [apiReady, setApiReady] = React.useState(false);
-  var [ffmpegReady, setFfmpegReady] = React.useState(false);
-  var [modes, setModes] = React.useState([]);
 
-  React.useEffect(() => {
-    pluginApi("GET", "/settings").then(r => {
-      if (r.ok && r.body) setApiReady(!!r.body.dashscope_api_key);
-    });
-    pluginApi("GET", "/ffmpeg/status").then(r => {
-      if (r.ok && r.body) setFfmpegReady(r.body.available);
-    });
-    pluginApi("GET", "/modes").then(r => {
-      if (r.ok && r.body) setModes(r.body);
-    });
+// ── TaskStartedModal ──
+function TaskStartedModal({ open, onClose, onGoToTasks }) {
+  const t = useT();
+  if (!open) return null;
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-icon">
+          <OAIcon name="check" style={{fontSize:24, color:"var(--success)"}} />
+        </div>
+        <div className="modal-title">{t("modal.title")}</div>
+        <div className="modal-desc">{t("modal.desc")}</div>
+        <div className="modal-actions">
+          <button className="btn" onClick={onClose}>{t("modal.continue")}</button>
+          <button className="btn btn-primary" onClick={() => { onClose(); onGoToTasks && onGoToTasks(); }}>
+            {t("modal.goTasks")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── App ───
+function App() {
+  const t = useT();
+  const [tab, setTab] = useState("create");
+  const [apiReady, setApiReady] = useState(false);
+  const [ffmpegReady, setFfmpegReady] = useState(false);
+  const [tabsMounted, setTabsMounted] = useState({ create: true });
+  const [tasksRefreshSignal, setTasksRefreshSignal] = useState(0);
+
+  const goToTab = useCallback((id) => {
+    setTab(id);
+    if (id === "tasks") setTasksRefreshSignal(s => s + 1);
   }, []);
 
-  return React.createElement("div", { className: "app" },
-    React.createElement("div", { className: "header" },
-      React.createElement("h1", null, React.createElement(OAIcon, { name: "film", size: 20 }), " ", t("app.title")),
-      React.createElement("div", { className: "header-right" },
-        React.createElement("span", { className: "text-xs text-dim" }, t("app.subtitle")),
-        ffmpegReady ?
-          React.createElement("span", { className: "tag tag-green" }, "FFmpeg ✓") :
-          React.createElement("span", { className: "tag tag-red" }, "FFmpeg ✗")
-      )
-    ),
-    !apiReady && React.createElement("div", { className: "oa-config-banner" },
-      React.createElement(OAIcon, { name: "alert-triangle", size: 16 }),
-      t("settings.configNeeded"),
-      React.createElement("button", { className: "btn btn-sm", style: { marginLeft: "auto" }, onClick: () => setTab("settings") }, t("tab.settings"))
-    ),
-    React.createElement("div", { className: "tabs" },
-      ["create", "tasks", "library", "settings"].map(id =>
-        React.createElement("div", {
-          key: id, className: "tab" + (tab === id ? " active" : ""), onClick: () => setTab(id)
-        }, t("tab." + id))
-      )
-    ),
-    React.createElement("div", { className: "content" },
-      React.createElement("div", { style: { display: tab === "create" ? "block" : "none", height: "100%" } },
-        React.createElement(CreateTab, { apiReady, ffmpegReady, modes, onGoTasks: () => setTab("tasks") })
-      ),
-      React.createElement("div", { style: { display: tab === "tasks" ? "block" : "none", height: "100%" } },
-        React.createElement(TasksTab, { active: tab === "tasks" })
-      ),
-      React.createElement("div", { style: { display: tab === "library" ? "block" : "none", height: "100%" } },
-        React.createElement(LibraryTab, { active: tab === "library" })
-      ),
-      React.createElement("div", { style: { display: tab === "settings" ? "block" : "none", height: "100%" } },
-        React.createElement(SettingsTab, { onSaved: () => {
-          pluginApi("GET", "/settings").then(r => { if (r.ok && r.body) setApiReady(!!r.body.dashscope_api_key); });
-          pluginApi("GET", "/ffmpeg/status").then(r => { if (r.ok && r.body) setFfmpegReady(r.body.available); });
-        }})
-      )
-    )
+  useEffect(() => {
+    pluginApi("GET", "/settings").then(r => {
+      if (r.ok && r.body && r.body.dashscope_api_key) setApiReady(true);
+    }).catch(() => {});
+    pluginApi("GET", "/ffmpeg/status").then(r => {
+      if (r.ok && r.body) setFfmpegReady(r.body.available);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setTabsMounted(prev => ({ ...prev, [tab]: true }));
+  }, [tab]);
+
+  const TABS = [
+    { id: "create",   name: t("tabs.create") },
+    { id: "tasks",    name: t("tabs.tasks") },
+    { id: "library",  name: t("tabs.library") },
+    { id: "settings", name: t("tabs.settings") },
+  ];
+
+  return (
+    <div className="app">
+      <div className="header">
+        <h1 className="oa-hero-title">
+          <span className="oa-hero-title__icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.film() : ""}} />
+          <span className="oa-hero-title__text">
+            {t("app.title")}
+            <span className="oa-hero-title__sub">{t("app.subtitle")}</span>
+          </span>
+        </h1>
+        <div className="header-right">
+          {ffmpegReady
+            ? <span className="tag tag-green">FFmpeg ✓</span>
+            : <span className="tag tag-red">FFmpeg ✗</span>}
+        </div>
+      </div>
+
+      <div className="tabs">
+        {TABS.map(item => (
+          <div key={item.id} className={`tab ${tab === item.id ? "active" : ""}`}
+               onClick={() => goToTab(item.id)}>{item.name}</div>
+        ))}
+      </div>
+
+      {!apiReady && tab !== "settings" && (
+        <div className="oa-config-banner" role="alert"
+             style={{margin:"12px 20px 0", flexShrink:0}}>
+          <span className="oa-icon oa-config-banner__icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.warning() : ""}} />
+          <div className="oa-config-banner__text">
+            <strong>{t("banner.noKey.title")}</strong>
+            <div style={{fontSize:12, color:"var(--text-muted)", marginTop:2}}>
+              {t("banner.noKey.desc")}
+            </div>
+          </div>
+          <button className="oa-config-banner__action" type="button"
+                  onClick={() => setTab("settings")}>
+            {t("banner.noKey.cta")}
+            <span className="oa-icon"
+                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.arrowRight() : ""}} />
+          </button>
+        </div>
+      )}
+
+      <div className="content">
+        <div style={{ display: tab === "create" ? "block" : "none", height: "100%" }}>
+          <CreateTab apiReady={apiReady} ffmpegReady={ffmpegReady} goToTasks={() => goToTab("tasks")} />
+        </div>
+        <div style={{ display: tab === "tasks" ? "block" : "none", height: "100%" }}>
+          {tabsMounted.tasks && <TasksTab refreshSignal={tasksRefreshSignal} />}
+        </div>
+        <div style={{ display: tab === "library" ? "block" : "none", height: "100%" }}>
+          {tabsMounted.library && <LibraryTab />}
+        </div>
+        <div style={{ display: tab === "settings" ? "block" : "none", height: "100%" }}>
+          {tabsMounted.settings && <SettingsTab onApiKeyChange={k => setApiReady(!!k)}
+                                                onFfmpegChange={v => setFfmpegReady(v)} />}
+        </div>
+      </div>
+    </div>
   );
 }
-// ── CreateTab ──
-function CreateTab({ apiReady, ffmpegReady, modes, onGoTasks }) {
-  var t = useT();
-  var [mode, setMode] = React.useState("highlight_extract");
-  var [file, setFile] = React.useState(null);
-  var [uploadResult, setUploadResult] = React.useState(null);
-  var [submitting, setSubmitting] = React.useState(false);
-  var [showModal, setShowModal] = React.useState(false);
-  var [previewTask, setPreviewTask] = React.useState(null);
-  var [params, setParams] = React.useState({
+
+// ─── Create Tab ───
+function CreateTab({ apiReady, ffmpegReady, goToTasks }) {
+  const t = useT();
+  const MODES = modeList(t);
+  const [mode, setMode] = useState("highlight_extract");
+  const [file, setFile] = useState(null);
+  const [uploadResult, setUploadResult] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [taskStartedOpen, setTaskStartedOpen] = useState(false);
+  const [previewTask, setPreviewTask] = useState(null);
+  const fileRef = useRef(null);
+
+  const [params, setParams] = useState({
     flavor: "", target_count: 5, target_duration: 30,
     silence_preset: "standard", threshold_db: -40, min_silence_sec: 0.5, padding_sec: 0.1,
     target_segment_duration: 180, burn_subtitle: false,
   });
-  var fileRef = React.useRef(null);
+  const setP = (k, v) => setParams(p => ({ ...p, [k]: v }));
 
-  var handleUpload = async (f) => {
+  const handleUpload = async (f) => {
     setFile(f);
     try {
-      var r = await uploadFile(f);
+      const r = await uploadFile(f);
       setUploadResult(r);
-    } catch (e) { showToast(t("toast.uploadFail"), "error"); }
+    } catch { showToast(t("toast.uploadFail"), "error"); }
   };
 
-  var handleSubmit = async () => {
+  const handleCreate = async () => {
     if (!uploadResult) { showToast(t("toast.needVideo"), "warning"); return; }
     if (mode !== "silence_clean" && !apiReady) { showToast(t("toast.needKey"), "warning"); return; }
-    setSubmitting(true);
+    setCreating(true);
     try {
-      var body = { mode, source_video_path: uploadResult.path, source_url: uploadResult.url, ...params };
-      var r = await pluginApi("POST", "/tasks", body);
-      if (r.ok) {
-        showToast(t("toast.taskCreated"));
-        setShowModal(true);
+      const body = { mode, source_video_path: uploadResult.path, source_url: uploadResult.url, ...params };
+      const r = await pluginApi("POST", "/tasks", body);
+      if (r.ok && r.body) {
         setPreviewTask(r.body);
+        setTaskStartedOpen(true);
         pollTask(r.body.id);
       } else {
         showToast(r.body?.detail || t("toast.createFail"), "error");
       }
     } catch (e) { showToast(t("toast.createFail"), "error"); }
-    setSubmitting(false);
+    setCreating(false);
   };
 
-  var pollTask = (taskId) => {
-    var iv = setInterval(async () => {
-      var r = await pluginApi("GET", "/tasks/" + taskId);
-      if (r.ok && r.body) {
-        setPreviewTask(r.body);
-        if (["succeeded", "failed", "cancelled"].includes(r.body.status)) clearInterval(iv);
-      }
-    }, 3000);
+  const pollTask = (taskId) => {
+    let attempts = 0;
+    const poll = async () => {
+      if (attempts > 120) return;
+      attempts++;
+      try {
+        const r = await pluginApi("GET", "/tasks/" + taskId);
+        if (r.ok && r.body) {
+          setPreviewTask(r.body);
+          if (["succeeded", "failed", "cancelled"].includes(r.body.status)) return;
+        }
+      } catch {}
+      setTimeout(poll, attempts < 10 ? 3000 : 8000);
+    };
+    setTimeout(poll, 3000);
   };
 
-  var setP = (k, v) => setParams(p => ({ ...p, [k]: v }));
+  const isFree = mode === "silence_clean";
 
-  var isFree = mode === "silence_clean";
+  return (
+    <>
+    <div className="split-layout">
+      <div className="split-left">
+        <div className="card">
+          <div className="form-row">
+            <div className="label">{t("create.modeLabel")}</div>
+            <div className="flex gap-2 flex-wrap">
+              {MODES.map(m => (
+                <button key={m.id} className={`mode-btn ${mode === m.id ? "active" : ""}`}
+                        onClick={() => setMode(m.id)}>
+                  <span style={{display:"inline-flex", alignItems:"center", gap:6}}>
+                    <OAIcon name={m.iconKey} /> {m.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
 
-  return React.createElement("div", { className: "split-layout", style: { height: "100%" } },
-    React.createElement("div", { className: "split-left" },
-      React.createElement("div", { className: "card" },
-        React.createElement("div", { className: "label" }, t("tab.create")),
-        React.createElement("div", { className: "flex gap-2 flex-wrap", style: { marginBottom: 16 } },
-          [
-            { id: "highlight_extract", icon: "sparkles" },
-            { id: "silence_clean", icon: "volume-x" },
-            { id: "topic_split", icon: "scissors" },
-            { id: "talking_polish", icon: "mic" },
-          ].map(m =>
-            React.createElement("button", {
-              key: m.id,
-              className: "mode-btn" + (mode === m.id ? " active" : ""),
-              onClick: () => setMode(m.id),
-            }, React.createElement(OAIcon, { name: m.icon, size: 14 }), " ", t("mode." + m.id))
-          )
-        ),
-        React.createElement("div", { className: "text-xs text-muted", style: { marginBottom: 16 } }, t("mode." + mode + ".desc")),
-        React.createElement("div", { className: "form-row" },
-          React.createElement("div", {
-            className: "upload-zone" + (file ? " has-file" : ""),
-            onClick: () => fileRef.current && fileRef.current.click(),
-            onDragOver: e => e.preventDefault(),
-            onDrop: e => { e.preventDefault(); if (e.dataTransfer.files[0]) handleUpload(e.dataTransfer.files[0]); }
-          },
-            React.createElement("input", { ref: fileRef, type: "file", accept: "video/*,audio/*", style: { display: "none" }, onChange: e => e.target.files[0] && handleUpload(e.target.files[0]) }),
-            file ?
-              React.createElement("div", null,
-                React.createElement(OAIcon, { name: "film", size: 24 }),
-                React.createElement("div", { className: "text-sm", style: { marginTop: 4 } }, file.name),
-                React.createElement("div", { className: "text-xs text-dim" }, (file.size / 1048576).toFixed(1) + " MB"),
-                React.createElement("button", { className: "btn btn-sm", style: { marginTop: 8 }, onClick: e => { e.stopPropagation(); fileRef.current && fileRef.current.click(); } }, t("create.uploadChange"))
-              ) :
-              React.createElement("div", null,
-                React.createElement(OAIcon, { name: "upload", size: 32 }),
-                React.createElement("div", { className: "text-sm", style: { marginTop: 8 } }, t("create.upload")),
-                React.createElement("div", { className: "text-xs text-dim" }, t("create.uploadHint"))
-              )
-          )
-        ),
-        mode === "highlight_extract" && React.createElement(React.Fragment, null,
-          React.createElement("div", { className: "form-row" },
-            React.createElement("div", { className: "label" }, t("create.flavor")),
-            React.createElement("input", { className: "input", placeholder: t("create.flavorPlaceholder"), value: params.flavor, onChange: e => setP("flavor", e.target.value) })
-          ),
-          React.createElement("div", { className: "form-row flex gap-2" },
-            React.createElement("div", { style: { flex: 1 } },
-              React.createElement("div", { className: "label" }, t("create.targetCount")),
-              React.createElement("select", { className: "input select", value: params.target_count, onChange: e => setP("target_count", +e.target.value) },
-                [3, 5, 8, 10].map(n => React.createElement("option", { key: n, value: n }, n))
-              )
-            ),
-            React.createElement("div", { style: { flex: 1 } },
-              React.createElement("div", { className: "label" }, t("create.targetDuration")),
-              React.createElement("select", { className: "input select", value: params.target_duration, onChange: e => setP("target_duration", +e.target.value) },
-                [15, 30, 60, 90].map(n => React.createElement("option", { key: n, value: n }, n + "s"))
-              )
-            )
-          )
-        ),
-        mode === "silence_clean" && React.createElement(React.Fragment, null,
-          React.createElement("div", { className: "form-row" },
-            React.createElement("div", { className: "label" }, t("create.silencePreset")),
-            React.createElement("div", { className: "flex gap-2" },
-              ["conservative", "standard", "aggressive"].map(p =>
-                React.createElement("button", {
-                  key: p,
-                  className: "mode-btn" + (params.silence_preset === p ? " active" : ""),
-                  onClick: () => {
-                    setP("silence_preset", p);
-                    var presets = { conservative: [-50, 1.0, 0.2], standard: [-40, 0.5, 0.1], aggressive: [-35, 0.3, 0.05] };
-                    var [td, ms, pd] = presets[p];
-                    setParams(pr => ({ ...pr, silence_preset: p, threshold_db: td, min_silence_sec: ms, padding_sec: pd }));
-                  }
-                }, t("create.preset." + p))
-              )
-            )
-          ),
-          React.createElement("div", { className: "form-row" },
-            React.createElement("div", { className: "label" }, t("create.threshold")),
-            React.createElement("div", { className: "slider-row" },
-              React.createElement("input", { type: "range", min: -60, max: -20, step: 1, value: params.threshold_db, onChange: e => setP("threshold_db", +e.target.value) }),
-              React.createElement("span", { className: "slider-val" }, params.threshold_db + " dB")
-            )
-          ),
-          React.createElement("div", { className: "form-row flex gap-2" },
-            React.createElement("div", { style: { flex: 1 } },
-              React.createElement("div", { className: "label" }, t("create.minSilence")),
-              React.createElement("div", { className: "slider-row" },
-                React.createElement("input", { type: "range", min: 0.2, max: 2, step: 0.1, value: params.min_silence_sec, onChange: e => setP("min_silence_sec", +e.target.value) }),
-                React.createElement("span", { className: "slider-val" }, params.min_silence_sec + "s")
-              )
-            ),
-            React.createElement("div", { style: { flex: 1 } },
-              React.createElement("div", { className: "label" }, t("create.padding")),
-              React.createElement("div", { className: "slider-row" },
-                React.createElement("input", { type: "range", min: 0, max: 0.5, step: 0.05, value: params.padding_sec, onChange: e => setP("padding_sec", +e.target.value) }),
-                React.createElement("span", { className: "slider-val" }, params.padding_sec + "s")
-              )
-            )
-          )
-        ),
-        mode === "topic_split" && React.createElement("div", { className: "form-row" },
-          React.createElement("div", { className: "label" }, t("create.segDuration")),
-          React.createElement("div", { className: "flex gap-2" },
-            [{ val: 120, label: "create.segDur.short" }, { val: 240, label: "create.segDur.medium" }, { val: 0, label: "create.segDur.auto" }].map(o =>
-              React.createElement("button", {
-                key: o.val,
-                className: "mode-btn" + (params.target_segment_duration === o.val ? " active" : ""),
-                onClick: () => setP("target_segment_duration", o.val)
-              }, t(o.label))
-            )
-          )
-        ),
-        mode === "talking_polish" && React.createElement(React.Fragment, null,
-          React.createElement("div", { className: "form-row flex gap-3" },
-            [
-              { key: "removeFiller", label: "create.removeFiller" },
-              { key: "removeStutter", label: "create.removeStutter" },
-              { key: "removeRepeat", label: "create.removeRepeat" },
-            ].map(sw =>
-              React.createElement("div", { key: sw.key, className: "flex items-center gap-2" },
-                React.createElement("div", {
-                  className: "switch" + (params[sw.key] !== false ? " on" : ""),
-                  onClick: () => setP(sw.key, params[sw.key] === false)
-                }),
-                React.createElement("span", { className: "text-sm" }, t(sw.label))
-              )
-            )
-          )
-        ),
-        React.createElement("div", { className: "form-row flex items-center gap-2", style: { marginTop: 4 } },
-          React.createElement("div", {
-            className: "switch" + (params.burn_subtitle ? " on" : ""),
-            onClick: () => setP("burn_subtitle", !params.burn_subtitle)
-          }),
-          React.createElement("span", { className: "text-sm" }, t("create.burnSubtitle"))
-        ),
-        React.createElement("div", { className: "text-xs text-dim", style: { margin: "12px 0 16px" } },
-          t("create.costEstimate"), ": ", isFree ? t("create.costFree") : "~¥1.5 / 30min"
-        ),
-        React.createElement("button", {
-          className: "btn btn-primary",
-          style: { width: "100%" },
-          disabled: submitting || !file,
-          onClick: handleSubmit
-        }, submitting ? React.createElement(React.Fragment, null, React.createElement("span", { className: "spinner" }), " ", t("create.submitting")) : t("create.submit"))
-      )
-    ),
-    React.createElement("div", { className: "split-right" },
-      React.createElement("div", { className: "oa-preview-area" },
-        !previewTask ? React.createElement("div", { className: "oa-preview-empty" },
-          React.createElement(OAIcon, { name: "film", size: 48 }),
-          React.createElement("div", { style: { fontWeight: 500 } }, t("preview.empty.title")),
-          React.createElement("div", { className: "text-sm" }, t("preview.empty.desc"))
-        ) :
-        previewTask.status === "running" || previewTask.status === "pending" ? React.createElement("div", { style: { padding: 20 } },
-          React.createElement(PipelineProgress, { currentStep: previewTask.pipeline_step, status: previewTask.status }),
-          React.createElement("div", { className: "flex items-center gap-2", style: { marginTop: 16 } },
-            React.createElement("span", { className: "spinner" }),
-            React.createElement("span", { className: "text-sm" }, t("preview.processing"))
-          )
-        ) :
-        previewTask.status === "succeeded" ? React.createElement("div", { style: { padding: 20 } },
-          previewTask.output_path && React.createElement("video", { className: "video-player", controls: true, src: _detectApiBase() + "/tasks/" + previewTask.id + "/download" }),
-          React.createElement("div", { className: "flex gap-2", style: { marginTop: 12 } },
-            React.createElement("button", { className: "btn btn-primary btn-sm", onClick: () => window.open(_detectApiBase() + "/tasks/" + previewTask.id + "/download") },
-              React.createElement(OAIcon, { name: "download", size: 14 }), " ", t("preview.downloadVideo")
-            ),
-            previewTask.subtitle_path && React.createElement("button", { className: "btn btn-sm", onClick: () => window.open(_detectApiBase() + "/tasks/" + previewTask.id + "/subtitle") },
-              t("preview.downloadSrt")
-            )
-          )
-        ) :
-        previewTask.status === "failed" ? React.createElement("div", { style: { padding: 20 } },
-          React.createElement(ErrorPanel, { errorKind: previewTask.error_kind, errorMessage: previewTask.error_message, errorHints: previewTask.error_hints })
-        ) : null
-      )
-    ),
-    React.createElement(TaskStartedModal, { open: showModal, onClose: () => setShowModal(false), onGoToTasks: () => { setShowModal(false); onGoTasks(); } })
+          <div className="text-xs text-muted" style={{marginBottom: 16}}>
+            {t("mode." + mode + ".desc")}
+          </div>
+
+          <div className="form-row">
+            <div className="label">{t("create.upload")}</div>
+            <div className={`upload-zone ${file ? "has-file" : ""}`}
+                 onClick={() => fileRef.current && fileRef.current.click()}
+                 onDragOver={e => e.preventDefault()}
+                 onDrop={e => { e.preventDefault(); if (e.dataTransfer.files[0]) handleUpload(e.dataTransfer.files[0]); }}>
+              <input ref={fileRef} type="file" accept="video/*,audio/*" style={{display:"none"}}
+                     onChange={e => e.target.files[0] && handleUpload(e.target.files[0])} />
+              {file ? (
+                <div>
+                  <div style={{display:"inline-flex", alignItems:"center", gap:6}}>
+                    <OAIcon name="film" style={{fontSize:20}} />
+                    <span className="text-sm" style={{fontWeight:500}}>{file.name}</span>
+                  </div>
+                  <div className="text-xs text-dim">{(file.size / 1048576).toFixed(1)} MB</div>
+                  <button className="btn btn-sm" style={{marginTop:6}}
+                          onClick={e => { e.stopPropagation(); fileRef.current && fileRef.current.click(); }}>
+                    {t("create.uploadChange")}
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <span className="oa-icon" style={{fontSize:28, opacity:.5}}
+                        dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.upload() : ""}} />
+                  <div className="text-sm" style={{marginTop:8}}>{t("create.upload")}</div>
+                  <div className="text-xs text-dim">{t("create.uploadHint")}</div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {mode === "highlight_extract" && (
+            <>
+              <div className="form-row">
+                <div className="label">{t("create.flavor")}</div>
+                <input className="input" placeholder={t("create.flavorPlaceholder")}
+                       value={params.flavor} onChange={e => setP("flavor", e.target.value)} />
+              </div>
+              <div className="grid-2">
+                <div className="form-row">
+                  <div className="label">{t("create.targetCount")}</div>
+                  <select className="input select" value={params.target_count}
+                          onChange={e => setP("target_count", +e.target.value)}>
+                    {[3,5,8,10].map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
+                <div className="form-row">
+                  <div className="label">{t("create.targetDuration")}</div>
+                  <select className="input select" value={params.target_duration}
+                          onChange={e => setP("target_duration", +e.target.value)}>
+                    {[15,30,60,90].map(n => <option key={n} value={n}>{n}s</option>)}
+                  </select>
+                </div>
+              </div>
+            </>
+          )}
+
+          {mode === "silence_clean" && (
+            <>
+              <div className="form-row">
+                <div className="label">{t("create.silencePreset")}</div>
+                <div className="flex gap-2">
+                  {["conservative", "standard", "aggressive"].map(p => (
+                    <button key={p} className={`mode-btn ${params.silence_preset === p ? "active" : ""}`}
+                            onClick={() => {
+                              const presets = { conservative: [-50, 1.0, 0.2], standard: [-40, 0.5, 0.1], aggressive: [-35, 0.3, 0.05] };
+                              const [td, ms, pd] = presets[p];
+                              setParams(pr => ({ ...pr, silence_preset: p, threshold_db: td, min_silence_sec: ms, padding_sec: pd }));
+                            }}>
+                      {t("create.preset." + p)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="label">{t("create.threshold")}</div>
+                <div className="slider-row">
+                  <input type="range" min={-60} max={-20} step={1}
+                         value={params.threshold_db} onChange={e => setP("threshold_db", +e.target.value)} />
+                  <span className="slider-val">{params.threshold_db} dB</span>
+                </div>
+              </div>
+              <div className="grid-2">
+                <div className="form-row">
+                  <div className="label">{t("create.minSilence")}</div>
+                  <div className="slider-row">
+                    <input type="range" min={0.2} max={2} step={0.1}
+                           value={params.min_silence_sec} onChange={e => setP("min_silence_sec", +e.target.value)} />
+                    <span className="slider-val">{params.min_silence_sec}s</span>
+                  </div>
+                </div>
+                <div className="form-row">
+                  <div className="label">{t("create.padding")}</div>
+                  <div className="slider-row">
+                    <input type="range" min={0} max={0.5} step={0.05}
+                           value={params.padding_sec} onChange={e => setP("padding_sec", +e.target.value)} />
+                    <span className="slider-val">{params.padding_sec}s</span>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {mode === "topic_split" && (
+            <div className="form-row">
+              <div className="label">{t("create.segDuration")}</div>
+              <div className="flex gap-2">
+                {[{ val: 120, label: "create.segDur.short" }, { val: 240, label: "create.segDur.medium" }, { val: 0, label: "create.segDur.auto" }].map(o => (
+                  <button key={o.val} className={`mode-btn ${params.target_segment_duration === o.val ? "active" : ""}`}
+                          onClick={() => setP("target_segment_duration", o.val)}>
+                    {t(o.label)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {mode === "talking_polish" && (
+            <div className="form-row">
+              <div className="grid-2" style={{gap:8}}>
+                {[
+                  { key: "removeFiller", label: "去废话" },
+                  { key: "removeStutter", label: "去口误" },
+                ].map(sw => (
+                  <div key={sw.key} className="flex items-center gap-2">
+                    <div className={`switch ${params[sw.key] !== false ? "on" : ""}`}
+                         onClick={() => setP(sw.key, params[sw.key] === false)}
+                         style={{width:36,height:20,borderRadius:10,background:params[sw.key]!==false?"var(--primary)":"var(--border)",cursor:"pointer",position:"relative",transition:".2s"}}>
+                      <div style={{position:"absolute",top:2,left:params[sw.key]!==false?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:".2s"}} />
+                    </div>
+                    <span className="text-sm">{sw.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="form-row flex items-center gap-2" style={{marginTop: 4}}>
+            <div className={`switch ${params.burn_subtitle ? "on" : ""}`}
+                 onClick={() => setP("burn_subtitle", !params.burn_subtitle)}
+                 style={{width:36,height:20,borderRadius:10,background:params.burn_subtitle?"var(--primary)":"var(--border)",cursor:"pointer",position:"relative",transition:".2s"}}>
+              <div style={{position:"absolute",top:2,left:params.burn_subtitle?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:".2s"}} />
+            </div>
+            <span className="text-sm">{t("create.burnSubtitle")}</span>
+          </div>
+
+          <div className="text-xs text-dim" style={{margin: "12px 0 16px"}}>
+            {t("create.costEstimate")}: {isFree ? t("create.costFree") : "~¥1.5 / 30min"}
+          </div>
+
+          <button className="btn btn-primary" style={{width: "100%", justifyContent: "center", padding: "10px"}}
+                  onClick={handleCreate} disabled={creating || !file}>
+            {creating ? (
+              <><span className="spinner-sm" /> {t("create.submitting")}</>
+            ) : (
+              <span style={{display:"inline-flex", alignItems:"center", gap:6}}>
+                <span className="oa-icon"
+                      dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.sparkles() : ""}} />
+                {t("create.submit")}
+              </span>
+            )}
+          </button>
+        </div>
+      </div>
+
+      <div className={"split-right oa-preview-area" + (!previewTask ? " oa-preview-area--centered" : "")}>
+        {!previewTask ? (
+          <div className="oa-preview-empty">
+            <span className="oa-preview-empty__icon"
+                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.film() : ""}} />
+            <div className="oa-preview-empty__title">{t("preview.empty.title")}</div>
+            <div className="oa-preview-empty__hint">{t("preview.empty.hint")}</div>
+          </div>
+        ) : previewTask.status === "running" || previewTask.status === "pending" ? (
+          <div style={{width:"100%"}}>
+            <div className="card">
+              <PipelineProgress currentStep={previewTask.pipeline_step} status={previewTask.status} />
+              <div className="empty-state" style={{padding: "30px 20px"}}>
+                <div className="spinner" style={{marginBottom: 12}} />
+                <span className="text-sm text-muted">{t("preview.processing")}</span>
+                <button className="btn btn-sm" style={{marginTop: 12, display:"inline-flex", alignItems:"center", gap:6}}
+                        onClick={goToTasks}>
+                  <OAIcon name="listTask" /> {t("preview.viewInTasks")}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : previewTask.status === "succeeded" ? (
+          <div style={{width:"100%"}}>
+            <div className="card">
+              <div className="flex items-center justify-between" style={{marginBottom: 12}}>
+                <span className="card-title" style={{marginBottom: 0}}>
+                  <span className={`tag ${statusCls("succeeded")}`} style={{marginRight:8}}>{statusLabel("succeeded", t)}</span>
+                </span>
+              </div>
+              {previewTask.output_path && (
+                <video className="video-player" controls
+                       src={_detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/clip-sense") + "/tasks/" + previewTask.id + "/download"} />
+              )}
+              <div className="flex gap-2" style={{marginTop: 12}}>
+                <button className="btn btn-primary btn-sm"
+                        onClick={() => downloadOutput(previewTask.id, (previewTask.source_video_path || "output").split(/[/\\]/).pop())}>
+                  <OAIcon name="download" /> {t("preview.downloadVideo")}
+                </button>
+                {previewTask.subtitle_path && (
+                  <button className="btn btn-sm"
+                          onClick={() => window.open(_detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/clip-sense") + "/tasks/" + previewTask.id + "/subtitle")}>
+                    {t("preview.downloadSrt")}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : previewTask.status === "failed" ? (
+          <div style={{width:"100%"}}>
+            <div className="card">
+              <ErrorPanel errorKind={previewTask.error_kind}
+                          errorMessage={previewTask.error_message}
+                          errorHints={previewTask.error_hints} />
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+    <TaskStartedModal open={taskStartedOpen}
+                      onClose={() => setTaskStartedOpen(false)}
+                      onGoToTasks={goToTasks} />
+    </>
   );
 }
-// ── TasksTab ──
-function TasksTab({ active }) {
-  var t = useT();
-  var [tasks, setTasks] = React.useState([]);
-  var [total, setTotal] = React.useState(0);
-  var [filter, setFilter] = React.useState({ status: null, mode: null });
-  var [selected, setSelected] = React.useState(null);
 
-  var load = async () => {
-    var q = "/tasks?limit=50";
-    if (filter.status) q += "&status=" + filter.status;
-    if (filter.mode) q += "&mode=" + filter.mode;
-    var r = await pluginApi("GET", q);
-    if (r.ok && r.body) { setTasks(r.body.tasks || []); setTotal(r.body.total || 0); }
-  };
-  React.useEffect(() => { if (active) load(); }, [active, filter.status, filter.mode]);
-  React.useEffect(() => { if (!active) return; var iv = setInterval(load, 5000); return () => clearInterval(iv); }, [active, filter.status, filter.mode]);
+// ─── Tasks Tab ───
+function TasksTab({ refreshSignal = 0 }) {
+  const t = useT();
+  const MODES = modeList(t);
+  const [tasks, setTasks] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [filter, setFilter] = useState("");
+  const [modeFilter, setModeFilter] = useState("");
+  const [selected, setSelected] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  var handleDelete = async (id) => {
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      let q = "/tasks?limit=50";
+      if (filter) q += "&status=" + filter;
+      if (modeFilter) q += "&mode=" + modeFilter;
+      const r = await pluginApi("GET", q);
+      if (r.ok && r.body) {
+        setTasks(Array.isArray(r.body.tasks) ? r.body.tasks : []);
+        setTotal(typeof r.body.total === "number" ? r.body.total : 0);
+      }
+    } catch {}
+    setLoading(false);
+  }, [filter, modeFilter]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const loadRef = useRef(load);
+  useEffect(() => { loadRef.current = load; }, [load]);
+  useEffect(() => { if (refreshSignal > 0) loadRef.current(); }, [refreshSignal]);
+
+  useEffect(() => {
+    onEvent("plugin:clip-sense:task_update", () => load());
+    const iv = setInterval(load, 10000);
+    return () => clearInterval(iv);
+  }, [load]);
+
+  const handleDelete = async (id) => {
+    if (!confirm(t("tasks.detail.confirmDelete"))) return;
     await pluginApi("DELETE", "/tasks/" + id);
-    showToast(t("toast.deleted")); setSelected(null); load();
+    if (selected && selected.id === id) setSelected(null);
+    showToast(t("toast.deleted")); load();
   };
-  var handleRetry = async (id) => {
-    var r = await pluginApi("POST", "/tasks/" + id + "/retry");
+  const handleRetry = async (id) => {
+    const r = await pluginApi("POST", "/tasks/" + id + "/retry");
     if (r.ok) { showToast(t("toast.retryCreated")); load(); }
   };
-  var handleCancel = async (id) => {
+  const handleCancel = async (id) => {
     await pluginApi("POST", "/tasks/" + id + "/cancel");
     showToast(t("toast.cancelled")); load();
   };
-  var detail = selected ? tasks.find(t => t.id === selected) : null;
 
-  var statusTag = (s) => {
-    var cls = s === "succeeded" ? "tag-green" : s === "failed" ? "tag-red" : s === "running" || s === "pending" ? "tag-blue" : "tag-gray";
-    var label = t("tasks.filter." + (s === "running" || s === "pending" ? "running" : s === "succeeded" ? "succeeded" : s === "failed" ? "failed" : "all"));
-    return React.createElement("span", { className: "tag " + cls }, label);
-  };
+  return (
+    <div className="split-layout">
+      <div className="split-left oa-list-panel">
+        <div className="oa-list-panel__filters">
+          <div>
+            <div className="oa-section-label">{t("tasks.filter.status")}</div>
+            <div className="oa-filter-group__buttons">
+              {[
+                { v: "",          l: t("tasks.filter.all") },
+                { v: "running",   l: statusLabel("running", t) },
+                { v: "succeeded", l: statusLabel("succeeded", t) },
+                { v: "failed",    l: statusLabel("failed", t) },
+              ].map(f => (
+                <button key={f.v} className={`mode-btn ${filter === f.v ? "active" : ""}`}
+                        onClick={() => setFilter(f.v)}>{f.l}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="oa-section-label">{t("tasks.filter.mode")}</div>
+            <div className="oa-filter-group__buttons">
+              <button className={`btn btn-sm ${modeFilter === "" ? "btn-primary" : ""}`}
+                      onClick={() => setModeFilter("")}>{t("tasks.filter.allModes")}</button>
+              {MODES.map(m => (
+                <button key={m.id} className={`btn btn-sm ${modeFilter === m.id ? "btn-primary" : ""}`}
+                        onClick={() => setModeFilter(m.id)}>
+                  <span style={{display:"inline-flex", alignItems:"center", gap:4}}>
+                    <OAIcon name={m.iconKey} /> {m.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
 
-  return React.createElement("div", { className: "split-layout", style: { height: "100%" } },
-    React.createElement("div", { className: "split-left" },
-      React.createElement("div", { className: "oa-list-panel" },
-        React.createElement("div", { className: "oa-list-panel__filters" },
-          [null, "running", "succeeded", "failed"].map(s =>
-            React.createElement("button", {
-              key: s || "all", className: "mode-btn" + (filter.status === s ? " active" : ""),
-              onClick: () => setFilter(f => ({ ...f, status: s }))
-            }, t("tasks.filter." + (s || "all")))
-          )
-        ),
-        React.createElement("div", { className: "oa-list-panel__filters" },
-          [null, "highlight_extract", "silence_clean", "topic_split", "talking_polish"].map(m =>
-            React.createElement("button", {
-              key: m || "all", className: "mode-btn" + (filter.mode === m ? " active" : ""),
-              onClick: () => setFilter(f => ({ ...f, mode: m }))
-            }, m ? t("mode." + m) : t("tasks.filter.allModes"))
-          )
-        ),
-        React.createElement("div", { className: "oa-list-panel__divider" }),
-        React.createElement("div", { className: "oa-list-panel__items" },
-          tasks.length === 0 ? React.createElement("div", { className: "oa-preview-empty", style: { padding: 40 } }, t("tasks.empty")) :
-          tasks.map(tk =>
-            React.createElement("div", {
-              key: tk.id,
-              className: "task-card" + (selected === tk.id ? " selected" : ""),
-              onClick: () => setSelected(tk.id)
-            },
-              React.createElement("div", { className: "task-thumb" }, React.createElement(OAIcon, { name: "film", size: 24 })),
-              React.createElement("div", { className: "task-info" },
-                React.createElement("h4", null, tk.source_video_path ? tk.source_video_path.split(/[/\\]/).pop() : tk.mode),
-                React.createElement("div", { className: "task-meta" },
-                  statusTag(tk.status),
-                  React.createElement("span", null, t("mode." + tk.mode)),
-                  React.createElement("span", null, tk.created_at)
-                )
-              )
-            )
-          )
-        ),
-        React.createElement("div", { className: "oa-list-panel__footer" }, t("tasks.count", { n: total }))
-      )
-    ),
-    React.createElement("div", { className: "split-right" },
-      React.createElement("div", { className: "oa-preview-area" },
-        !detail ? React.createElement("div", { className: "oa-preview-empty" },
-          React.createElement(OAIcon, { name: "list", size: 48 }),
-          React.createElement("div", null, t("tasks.selectHint"))
-        ) :
-        React.createElement("div", { style: { padding: 20, overflowY: "auto", flex: 1 } },
-          React.createElement("div", { className: "flex items-center justify-between", style: { marginBottom: 16 } },
-            React.createElement("h3", { className: "text-sm" }, detail.source_video_path ? detail.source_video_path.split(/[/\\]/).pop() : detail.id),
-            React.createElement("div", { className: "flex gap-2" },
-              detail.status === "failed" && React.createElement("button", { className: "btn btn-sm", onClick: () => handleRetry(detail.id) }, t("tasks.retry")),
-              (detail.status === "running" || detail.status === "pending") && React.createElement("button", { className: "btn btn-sm", onClick: () => handleCancel(detail.id) }, t("tasks.cancel")),
-              detail.status === "succeeded" && React.createElement("button", { className: "btn btn-sm btn-primary", onClick: () => window.open(_detectApiBase() + "/tasks/" + detail.id + "/download") }, t("tasks.download")),
-              React.createElement("button", { className: "btn btn-sm btn-danger", onClick: () => handleDelete(detail.id) }, t("tasks.delete"))
-            )
-          ),
-          detail.status === "succeeded" && detail.output_path && React.createElement("video", { className: "video-player", controls: true, src: _detectApiBase() + "/tasks/" + detail.id + "/download", style: { marginBottom: 12 } }),
-          (detail.status === "running" || detail.status === "pending") && React.createElement(PipelineProgress, { currentStep: detail.pipeline_step, status: detail.status }),
-          detail.status === "failed" && React.createElement(ErrorPanel, { errorKind: detail.error_kind, errorMessage: detail.error_message, errorHints: detail.error_hints }),
-          React.createElement("div", { className: "card", style: { marginTop: 12 } },
-            React.createElement("div", { className: "text-sm" },
-              React.createElement("div", null, "Mode: ", t("mode." + detail.mode)),
-              React.createElement("div", null, "Status: ", statusTag(detail.status)),
-              detail.pipeline_step && React.createElement("div", null, "Step: ", detail.pipeline_step),
-              detail.source_duration_sec && React.createElement("div", null, "Duration: ", (detail.source_duration_sec / 60).toFixed(1), " min"),
-              detail.output_duration_sec && React.createElement("div", null, "Output: ", (detail.output_duration_sec / 60).toFixed(1), " min"),
-              detail.cost && React.createElement("div", null, "Cost: ¥", detail.cost.total_cny)
-            )
-          )
-        )
-      )
-    )
+        <hr className="oa-list-panel__divider" />
+
+        <div className="oa-list-panel__items">
+          {loading && tasks.length === 0 ? (
+            <div className="empty-state"><div className="spinner" /></div>
+          ) : tasks.length === 0 ? (
+            <div className="oa-preview-empty" style={{minHeight: 160, padding: "24px 16px"}}>
+              <span className="oa-preview-empty__icon"
+                    dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.listTask() : ""}} />
+              <div className="oa-preview-empty__title">{t("tasks.empty.title")}</div>
+              <div className="oa-preview-empty__hint">{t("tasks.empty.hint")}</div>
+            </div>
+          ) : (
+            tasks.map(tk => (
+              <div key={tk.id} className={`task-card ${selected?.id === tk.id ? "selected" : ""}`}
+                   onClick={() => setSelected(tk)}>
+                <div className="task-thumb">
+                  {tk.status === "running" || tk.status === "pending"
+                    ? <div className="spinner-sm" />
+                    : <OAIcon name="film" style={{fontSize:20, opacity:.5}} />}
+                </div>
+                <div className="task-info">
+                  <h4>{tk.source_video_path ? tk.source_video_path.split(/[/\\]/).pop() : (tk.mode || t("tasks.untitled"))}</h4>
+                  <div className="task-meta">
+                    <span className={`tag ${statusCls(tk.status)}`}>{statusLabel(tk.status, t)}</span>
+                    <span>{MODES.find(m => m.id === tk.mode)?.name || tk.mode}</span>
+                    <span>{tk.created_at}</span>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="oa-list-panel__footer">{t("tasks.totalCount", { n: total })}</div>
+      </div>
+
+      <div className={"split-right oa-preview-area" + (!selected ? " oa-preview-area--centered" : "")}>
+        {selected ? (
+          <div style={{width: "100%"}}>
+            <div className="card">
+              <div className="flex items-center justify-between" style={{marginBottom: 12}}>
+                <span className="card-title" style={{marginBottom: 0}}>{t("tasks.detail.title")}</span>
+                <div className="flex gap-2">
+                  {selected.status === "failed" && (
+                    <button className="btn btn-sm" onClick={() => handleRetry(selected.id)}>{t("tasks.detail.retry")}</button>
+                  )}
+                  {(selected.status === "running" || selected.status === "pending") && (
+                    <button className="btn btn-sm" onClick={() => handleCancel(selected.id)}>{t("tasks.detail.cancel")}</button>
+                  )}
+                  {selected.status === "succeeded" && (
+                    <button className="btn btn-sm btn-primary"
+                            onClick={() => downloadOutput(selected.id, (selected.source_video_path || "output").split(/[/\\]/).pop())}>
+                      {t("tasks.detail.download")}
+                    </button>
+                  )}
+                  <button className="btn btn-sm btn-danger" onClick={() => handleDelete(selected.id)}>{t("tasks.detail.delete")}</button>
+                </div>
+              </div>
+
+              {selected.status === "succeeded" && selected.output_path && (
+                <video className="video-player" controls style={{marginBottom: 12}}
+                       src={_detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/clip-sense") + "/tasks/" + selected.id + "/download"} />
+              )}
+
+              {(selected.status === "running" || selected.status === "pending") && (
+                <>
+                  <PipelineProgress currentStep={selected.pipeline_step} status={selected.status} />
+                  <div className="empty-state" style={{padding: "20px"}}>
+                    <div className="spinner" style={{marginBottom: 8}} />
+                    <span className="text-sm text-muted">{t("tasks.detail.runningHint")}</span>
+                  </div>
+                </>
+              )}
+
+              {selected.status === "failed" && (
+                <ErrorPanel errorKind={selected.error_kind}
+                            errorMessage={selected.error_message}
+                            errorHints={selected.error_hints} />
+              )}
+            </div>
+
+            <div className="card">
+              <div className="grid-2">
+                <div><span className="text-xs text-dim">{t("tasks.detail.id")}</span><div className="text-sm">{selected.id}</div></div>
+                <div><span className="text-xs text-dim">{t("tasks.detail.mode")}</span><div className="text-sm">{MODES.find(m => m.id === selected.mode)?.name || selected.mode}</div></div>
+                <div><span className="text-xs text-dim">{t("tasks.detail.createdAt")}</span><div className="text-sm">{selected.created_at}</div></div>
+                {selected.pipeline_step && <div><span className="text-xs text-dim">{t("tasks.detail.step")}</span><div className="text-sm">{t("preview.step." + selected.pipeline_step)}</div></div>}
+                {selected.source_duration_sec && <div><span className="text-xs text-dim">{t("tasks.detail.duration")}</span><div className="text-sm">{(selected.source_duration_sec / 60).toFixed(1)} min</div></div>}
+                {selected.output_duration_sec && <div><span className="text-xs text-dim">{t("tasks.detail.outputDuration")}</span><div className="text-sm">{(selected.output_duration_sec / 60).toFixed(1)} min</div></div>}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="oa-preview-empty">
+            <span className="oa-preview-empty__icon"
+                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.listTask() : ""}} />
+            <div className="oa-preview-empty__title">{t("tasks.empty.noSelection.title")}</div>
+            <div className="oa-preview-empty__hint">{t("tasks.empty.noSelection.hint")}</div>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
-// ── LibraryTab ──
-function LibraryTab({ active }) {
-  var t = useT();
-  var [items, setItems] = React.useState([]);
-  var [total, setTotal] = React.useState(0);
-  var fileRef = React.useRef(null);
 
-  var load = async () => {
-    var r = await pluginApi("GET", "/library?limit=50");
-    if (r.ok && r.body) { setItems(r.body.transcripts || []); setTotal(r.body.total || 0); }
+// ─── Library Tab ───
+function LibraryTab() {
+  const t = useT();
+  const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0);
+  const fileRef = useRef(null);
+
+  const load = async () => {
+    try {
+      const r = await pluginApi("GET", "/library?limit=50");
+      if (r.ok && r.body) { setItems(r.body.transcripts || []); setTotal(r.body.total || 0); }
+    } catch {}
   };
-  React.useEffect(() => { if (active) load(); }, [active]);
+  useEffect(() => { load(); }, []);
 
-  var handleUpload = async (f) => {
+  const handleUpload = async (f) => {
     try { await uploadFile(f); load(); } catch { showToast(t("toast.uploadFail"), "error"); }
   };
-  var handleDelete = async (id) => {
+  const handleDelete = async (id) => {
     await pluginApi("DELETE", "/library/" + id);
     showToast(t("toast.deleted")); load();
   };
 
-  return React.createElement("div", { style: { maxWidth: 800, margin: "0 auto" } },
-    React.createElement("div", { className: "flex items-center justify-between", style: { marginBottom: 16 } },
-      React.createElement("h2", { className: "text-sm", style: { fontWeight: 600 } }, t("library.title")),
-      React.createElement("button", { className: "btn btn-primary btn-sm", onClick: () => fileRef.current && fileRef.current.click() },
-        React.createElement(OAIcon, { name: "upload", size: 14 }), " ", t("library.uploadBtn")
-      ),
-      React.createElement("input", { ref: fileRef, type: "file", accept: "video/*,audio/*", style: { display: "none" }, onChange: e => e.target.files[0] && handleUpload(e.target.files[0]) })
-    ),
-    items.length === 0 ? React.createElement("div", { className: "oa-preview-empty", style: { padding: 60 } },
-      React.createElement(OAIcon, { name: "film", size: 48 }),
-      React.createElement("div", null, t("library.empty"))
-    ) :
-    items.map(item =>
-      React.createElement("div", { key: item.id, className: "library-card", style: { marginBottom: 8 } },
-        React.createElement("div", { className: "task-thumb" }, React.createElement(OAIcon, { name: "film", size: 24 })),
-        React.createElement("div", { style: { flex: 1 } },
-          React.createElement("div", { className: "text-sm", style: { fontWeight: 500 } }, item.source_name || item.id),
-          React.createElement("div", { className: "task-meta" },
-            React.createElement("span", { className: "tag " + (item.status === "succeeded" ? "tag-green" : "tag-gray") },
-              item.status === "succeeded" ? t("library.transcribed") : t("library.pending")
-            ),
-            item.duration_sec && React.createElement("span", null, (item.duration_sec / 60).toFixed(1) + " min")
-          )
-        ),
-        React.createElement("div", { className: "flex gap-2 items-center" },
-          React.createElement("button", { className: "btn btn-sm btn-danger", onClick: () => handleDelete(item.id) }, t("tasks.delete"))
-        )
-      )
-    )
+  return (
+    <div style={{maxWidth: 800, margin: "0 auto"}}>
+      <div className="flex items-center justify-between" style={{marginBottom: 16}}>
+        <h2 style={{fontSize:14, fontWeight:600}}>{t("library.title")}</h2>
+        <div className="flex gap-2">
+          <button className="btn btn-primary btn-sm" onClick={() => fileRef.current && fileRef.current.click()}>
+            <OAIcon name="upload" /> {t("library.uploadBtn")}
+          </button>
+          <input ref={fileRef} type="file" accept="video/*,audio/*" style={{display:"none"}}
+                 onChange={e => e.target.files[0] && handleUpload(e.target.files[0])} />
+        </div>
+      </div>
+      {items.length === 0 ? (
+        <div className="oa-preview-empty" style={{minHeight:200}}>
+          <span className="oa-preview-empty__icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.film() : ""}} />
+          <div className="oa-preview-empty__title">{t("library.empty")}</div>
+        </div>
+      ) : (
+        items.map(item => (
+          <div key={item.id} className="library-card">
+            <div className="task-thumb">
+              <OAIcon name="film" style={{fontSize:20, opacity:.5}} />
+            </div>
+            <div style={{flex:1}}>
+              <div className="text-sm" style={{fontWeight:500}}>{item.source_name || item.id}</div>
+              <div className="task-meta">
+                <span className={`tag ${item.status === "succeeded" ? "tag-green" : "tag-gray"}`}>
+                  {item.status === "succeeded" ? t("library.transcribed") : t("library.pending")}
+                </span>
+                {item.duration_sec && <span>{(item.duration_sec / 60).toFixed(1)} min</span>}
+              </div>
+            </div>
+            <div className="flex gap-2 items-center">
+              <button className="btn btn-sm btn-danger" onClick={() => handleDelete(item.id)}>
+                {t("tasks.detail.delete")}
+              </button>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
   );
 }
-// ── SettingsTab ──
-function SettingsTab({ onSaved }) {
-  var t = useT();
-  var [cfg, setCfg] = React.useState({});
-  var [ffmpeg, setFfmpeg] = React.useState({});
-  var [storage, setStorage] = React.useState({});
-  var [showKey, setShowKey] = React.useState(false);
 
-  React.useEffect(() => {
-    pluginApi("GET", "/settings").then(r => { if (r.ok) setCfg(r.body || {}); });
-    pluginApi("GET", "/ffmpeg/status").then(r => { if (r.ok) setFfmpeg(r.body || {}); });
-    pluginApi("GET", "/storage/stats").then(r => { if (r.ok) setStorage(r.body || {}); });
+// ─── Settings Tab ───
+function SettingsTab({ onApiKeyChange, onFfmpegChange }) {
+  const t = useT();
+  const [config, setConfig] = useState({});
+  const [ffmpeg, setFfmpeg] = useState({});
+  const [storage, setStorage] = useState(null);
+  const [keyVisible, setKeyVisible] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    pluginApi("GET", "/settings").then(r => { if (r.ok && r.body) setConfig(r.body); }).catch(() => {});
+    pluginApi("GET", "/ffmpeg/status").then(r => { if (r.ok && r.body) setFfmpeg(r.body); }).catch(() => {});
+    pluginApi("GET", "/storage/stats").then(r => { if (r.ok && r.body) setStorage(r.body); }).catch(() => {});
   }, []);
 
-  var save = async (updates) => {
-    await pluginApi("PUT", "/settings", { updates });
-    showToast(t("settings.saved"));
-    if (onSaved) onSaved();
+  const save = async (updates) => {
+    setSaving(true);
+    try {
+      const r = await pluginApi("PUT", "/settings", { updates });
+      if (r.ok) {
+        setConfig(prev => ({ ...prev, ...updates }));
+        if (updates.dashscope_api_key !== undefined) onApiKeyChange(updates.dashscope_api_key);
+        showToast(t("toast.savedSettings"));
+      }
+    } catch { showToast(t("toast.saveFailed"), "error"); }
+    setSaving(false);
   };
 
-  var setField = (k, v) => {
-    setCfg(c => ({ ...c, [k]: v }));
-  };
+  const updateField = (key, value) => setConfig(prev => ({ ...prev, [key]: value }));
 
-  return React.createElement("div", { style: { maxWidth: 640, margin: "0 auto", overflowY: "auto" } },
-    React.createElement("div", { className: "setting-section" },
-      React.createElement("h3", null, React.createElement(OAIcon, { name: "key", size: 16 }), " ", t("settings.apiKey")),
-      React.createElement("div", { className: "setting-row" },
-        React.createElement("div", { style: { flex: 1 } },
-          React.createElement("div", { className: "flex gap-2" },
-            React.createElement("input", {
-              className: "input", type: showKey ? "text" : "password",
-              value: cfg.dashscope_api_key || "",
-              onChange: e => setField("dashscope_api_key", e.target.value),
-              placeholder: "sk-..."
-            }),
-            React.createElement("button", { className: "btn btn-sm", onClick: () => setShowKey(!showKey) }, showKey ? "Hide" : "Show"),
-            React.createElement("button", { className: "btn btn-sm btn-primary", onClick: () => save({ dashscope_api_key: cfg.dashscope_api_key || "" }) }, t("settings.save"))
-          ),
-          React.createElement("div", { className: "setting-hint" }, t("settings.apiKeyHint"))
-        )
-      )
-    ),
-    React.createElement("div", { className: "setting-section" },
-      React.createElement("h3", null, React.createElement(OAIcon, { name: "terminal", size: 16 }), " FFmpeg"),
-      React.createElement("div", { className: "setting-row" },
-        React.createElement("span", { className: "setting-label" }, t("settings.ffmpegStatus")),
-        ffmpeg.available ?
-          React.createElement("span", { className: "tag tag-green" }, t("settings.ffmpegOk") + " v" + (ffmpeg.version || "")) :
-          React.createElement("span", { className: "tag tag-red" }, t("settings.ffmpegNotFound"))
-      ),
-      React.createElement("div", { className: "setting-row" },
-        React.createElement("div", { style: { flex: 1 } },
-          React.createElement("div", { className: "flex gap-2" },
-            React.createElement("input", {
-              className: "input",
-              value: cfg.ffmpeg_path || "",
-              onChange: e => setField("ffmpeg_path", e.target.value),
-              placeholder: t("settings.ffmpegPath")
-            }),
-            React.createElement("button", { className: "btn btn-sm", onClick: async () => {
-              await save({ ffmpeg_path: cfg.ffmpeg_path || "" });
-              var r = await pluginApi("GET", "/ffmpeg/status");
-              if (r.ok) setFfmpeg(r.body);
-            }}, t("settings.ffmpegDetect"))
-          )
-        )
-      )
-    ),
-    React.createElement("div", { className: "setting-section" },
-      React.createElement("h3", null, React.createElement(OAIcon, { name: "settings", size: 16 }), " ", t("settings.defaultThreshold")),
-      React.createElement("div", { className: "setting-row" },
-        React.createElement("span", { className: "setting-label" }, t("settings.defaultSubtitle")),
-        React.createElement("div", {
-          className: "switch" + (cfg.default_subtitle === "true" ? " on" : ""),
-          onClick: () => { var v = cfg.default_subtitle === "true" ? "false" : "true"; setField("default_subtitle", v); save({ default_subtitle: v }); }
-        })
-      ),
-      React.createElement("div", { className: "setting-row" },
-        React.createElement("span", { className: "setting-label" }, t("settings.defaultFormat")),
-        React.createElement("select", {
-          className: "input select", style: { width: 120 },
-          value: cfg.default_output_format || "mp4",
-          onChange: e => { setField("default_output_format", e.target.value); save({ default_output_format: e.target.value }); }
-        },
-          React.createElement("option", { value: "mp4" }, "MP4"),
-          React.createElement("option", { value: "mkv" }, "MKV")
-        )
-      )
-    ),
-    React.createElement("div", { className: "setting-section" },
-      React.createElement("h3", null, React.createElement(OAIcon, { name: "hard-drive", size: 16 }), " ", t("settings.storage")),
-      React.createElement("div", { className: "setting-row" },
-        React.createElement("span", { className: "setting-label" }, t("settings.totalFiles")),
-        React.createElement("span", null, storage.total_files || 0)
-      ),
-      React.createElement("div", { className: "setting-row" },
-        React.createElement("span", { className: "setting-label" }, t("settings.totalSize")),
-        React.createElement("span", null, ((storage.total_bytes || 0) / 1048576).toFixed(1) + " MB")
-      )
-    )
+  return (
+    <div style={{maxWidth: 640}}>
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title">
+          <span className="oa-icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.key() : ""}} />
+          {t("settings.api.title")}
+        </h3>
+        <div className={"form-row" + (config.dashscope_api_key ? "" : " oa-config-field-callout")}
+             data-callout={config.dashscope_api_key ? undefined : t("settings.api.callout")}>
+          <div className="label">DashScope API Key</div>
+          <div className="flex gap-2">
+            <input className="input flex-1" type={keyVisible ? "text" : "password"}
+                   value={config.dashscope_api_key || ""}
+                   onChange={e => updateField("dashscope_api_key", e.target.value)}
+                   placeholder="sk-..." />
+            <button className="btn btn-sm" onClick={() => setKeyVisible(!keyVisible)}>
+              {keyVisible ? t("settings.api.key.hide") : t("settings.api.key.show")}
+            </button>
+            <button className="btn btn-sm btn-primary"
+                    onClick={() => save({ dashscope_api_key: config.dashscope_api_key || "" })}
+                    disabled={saving}>{t("settings.api.key.save")}</button>
+          </div>
+          <div className="text-xs text-dim" style={{marginTop: 4}}>
+            {t("settings.api.key.helpPrefix")}
+            <a href="https://bailian.console.aliyun.com/#/api-key" target="_blank" rel="noopener"
+               style={{color: "var(--primary)"}}>{t("settings.api.key.helpLink")}</a>
+          </div>
+        </div>
+      </div>
+
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title">
+          <span className="oa-icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.settings() : ""}} />
+          {t("settings.ffmpeg.title")}
+        </h3>
+        <div className="flex items-center justify-between" style={{padding:"8px 0", borderBottom:"1px solid var(--border)"}}>
+          <span className="text-sm">{t("settings.ffmpeg.status")}</span>
+          {ffmpeg.available
+            ? <span className="tag tag-green">{t("settings.ffmpeg.ok")} v{ffmpeg.version || ""}</span>
+            : <span className="tag tag-red">{t("settings.ffmpeg.notFound")}</span>}
+        </div>
+        <div className="form-row" style={{marginTop: 12}}>
+          <div className="label">{t("settings.ffmpeg.path")}</div>
+          <div className="flex gap-2">
+            <input className="input flex-1"
+                   value={config.ffmpeg_path || ""}
+                   onChange={e => updateField("ffmpeg_path", e.target.value)}
+                   placeholder="ffmpeg" />
+            <button className="btn btn-sm" onClick={async () => {
+              await save({ ffmpeg_path: config.ffmpeg_path || "" });
+              const r = await pluginApi("GET", "/ffmpeg/status");
+              if (r.ok && r.body) { setFfmpeg(r.body); onFfmpegChange(r.body.available); }
+            }}>{t("settings.ffmpeg.detect")}</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title">
+          <span className="oa-icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.settings() : ""}} />
+          {t("settings.defaults.title")}
+        </h3>
+        <div className="grid-2">
+          <div className="form-row">
+            <div className="label">{t("settings.defaults.subtitle")}</div>
+            <div className="flex items-center gap-2">
+              <div className={`switch ${config.default_subtitle === "true" ? "on" : ""}`}
+                   onClick={() => { const v = config.default_subtitle === "true" ? "false" : "true"; updateField("default_subtitle", v); save({ default_subtitle: v }); }}
+                   style={{width:36,height:20,borderRadius:10,background:config.default_subtitle==="true"?"var(--primary)":"var(--border)",cursor:"pointer",position:"relative",transition:".2s"}}>
+                <div style={{position:"absolute",top:2,left:config.default_subtitle==="true"?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:".2s"}} />
+              </div>
+            </div>
+          </div>
+          <div className="form-row">
+            <div className="label">{t("settings.defaults.format")}</div>
+            <select className="input select" value={config.default_output_format || "mp4"}
+                    onChange={e => { updateField("default_output_format", e.target.value); save({ default_output_format: e.target.value }); }}>
+              <option value="mp4">MP4</option>
+              <option value="mkv">MKV</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {storage && (
+        <div className="setting-section oa-settings-section">
+          <h3 className="oa-settings-section__title">
+            <span className="oa-icon"
+                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.folder() : ""}} />
+            {t("settings.storage.title")}
+          </h3>
+          <div className="flex items-center justify-between" style={{padding:"8px 0", borderBottom:"1px solid var(--border)"}}>
+            <span className="text-sm">{t("settings.storage.files")}</span>
+            <span className="text-sm text-muted">{storage.total_files || 0}</span>
+          </div>
+          <div className="flex items-center justify-between" style={{padding:"8px 0"}}>
+            <span className="text-sm">{t("settings.storage.size")}</span>
+            <span className="text-sm text-muted">{((storage.total_bytes || 0) / 1048576).toFixed(1)} MB</span>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
-// ── Mount ──
+
+// ─── Error Boundary ───
+class PluginErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null, info: null };
+  }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) {
+    this.setState({ info });
+    console.error("[clip-sense] render error:", error, info);
+  }
+  reset = () => this.setState({ error: null, info: null });
+  render() {
+    if (!this.state.error) return this.props.children;
+    const err = this.state.error;
+    const stack = (err && err.stack) || String(err);
+    const compStack = (this.state.info && this.state.info.componentStack) || "";
+    const tr = (k) => _i18n.t(k);
+    return (
+      <div style={{padding: 24, maxWidth: 820, margin: "0 auto"}}>
+        <div className="oa-config-banner" role="alert" style={{borderColor: "var(--danger)"}}>
+          <span className="oa-icon oa-config-banner__icon" style={{color: "var(--danger)"}}
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.warning() : ""}} />
+          <div className="oa-config-banner__text">
+            <strong>{tr("err.title")}</strong>
+            <div style={{fontSize: 12, color: "var(--text-muted)", marginTop: 4}}>
+              {err && err.message ? err.message : String(err)}
+            </div>
+          </div>
+          <button className="oa-config-banner__action" type="button" onClick={this.reset}>
+            {tr("err.retry")}
+          </button>
+        </div>
+        <details style={{marginTop: 16, fontSize: 12, color: "var(--text-muted)"}} open>
+          <summary style={{cursor: "pointer", marginBottom: 8}}>{tr("err.stackLabel")}</summary>
+          <pre style={{padding: 12, background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6, overflow: "auto", maxHeight: 240, whiteSpace: "pre-wrap", wordBreak: "break-word"}}>
+{stack}
+{compStack ? "\n--- React component stack ---" + compStack : ""}
+          </pre>
+        </details>
+      </div>
+    );
+  }
+}
+
+// ─── Mount ───
 ReactDOM.createRoot(document.getElementById("root")).render(
-  React.createElement(PluginErrorBoundary, null, React.createElement(App, null))
+  <PluginErrorBoundary>
+    <App />
+  </PluginErrorBoundary>
 );
-  </script>
+if (window.OpenAkita && typeof window.OpenAkita.ready === "function") {
+  window.OpenAkita.ready();
+}
+</script>
 </body>
 </html>
