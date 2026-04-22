@@ -28,8 +28,87 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from openakita_plugin_sdk.contrib import build_render_pipeline
+from openakita_plugin_sdk.contrib.asr import (
+    ASRChunk,
+    ASRError,
+    select_provider as _sdk_select_asr,
+)
 
 logger = logging.getLogger(__name__)
+
+
+# ── credentials registry ───────────────────────────────────────────────
+
+# Phase 2-03 of the overhaul playbook: ASR is now provided by
+# ``openakita_plugin_sdk.contrib.asr``. Plugins push their own
+# credentials through ``configure_credentials`` and call
+# :func:`transcribe_with_contrib_asr` instead of shelling out to
+# whisper.cpp directly.
+
+_CREDENTIALS: dict[str, str | None] = {
+    "dashscope_api_key": None,
+}
+
+
+def configure_credentials(
+    *,
+    dashscope_api_key: str | None = None,
+) -> None:
+    """Hot-update credentials used by subsequent ASR provider builds."""
+    if dashscope_api_key is not None:
+        _CREDENTIALS["dashscope_api_key"] = dashscope_api_key or None
+
+
+def _build_asr_configs(*, model: str, binary: str) -> dict[str, dict[str, Any]]:
+    dk = _CREDENTIALS.get("dashscope_api_key")
+    return {
+        "dashscope_paraformer": {"api_key": dk} if dk else {},
+        "whisper_local": {"binary": binary, "model": model},
+        "stub": {},
+    }
+
+
+async def transcribe_with_contrib_asr(
+    source: Path,
+    *,
+    provider_id: str = "auto",
+    region: str = "cn",
+    language: str = "auto",
+    model: str = "base",
+    binary: str = "whisper-cli",
+    allow_stub: bool = False,
+) -> list[TranscriptChunk]:
+    """Transcribe ``source`` using a ``contrib.asr`` provider.
+
+    Returns an empty list if no provider is available and ``allow_stub``
+    is False — callers (highlight-cutter, subtitle-maker, …) have a
+    silence/even-split fallback that handles that case gracefully.
+    """
+    configs = _build_asr_configs(model=model, binary=binary)
+    try:
+        provider = _sdk_select_asr(
+            provider_id, configs=configs, region=region, allow_stub=allow_stub,
+        )
+    except ASRError as exc:
+        logger.warning("contrib.asr select failed: %s", exc)
+        return []
+    try:
+        result = await provider.transcribe(source, language=language)
+    except ASRError as exc:
+        logger.warning("contrib.asr transcribe failed: %s", exc)
+        return []
+    return [
+        TranscriptChunk(start=c.start, end=c.end, text=c.text, confidence=c.confidence)
+        for c in result.chunks
+    ]
+
+
+def _asr_chunks_to_transcript(chunks: list[ASRChunk]) -> list[TranscriptChunk]:
+    """Cast contrib.asr chunks into the engine's local dataclass shape."""
+    return [
+        TranscriptChunk(start=c.start, end=c.end, text=c.text, confidence=c.confidence)
+        for c in chunks
+    ]
 
 
 # ── data types ──────────────────────────────────────────────────────────

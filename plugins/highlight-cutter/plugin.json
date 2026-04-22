@@ -3,7 +3,7 @@
   "name": "Highlight Cutter",
   "display_name_zh": "精彩瞬间剪辑",
   "display_name_en": "Highlight Cutter",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "python",
   "entry": "plugin.py",
   "description": "Upload a long video and AI picks 3-10 highlight moments and cuts them automatically. Designed for users who don't know how to use video editing software.",
@@ -27,7 +27,7 @@
     "openakita": ">=1.27.0",
     "plugin_api": "~2",
     "plugin_ui_api": "~1",
-    "sdk": ">=0.4.0"
+    "sdk": ">=0.6.0,<1.0.0"
   },
   "provides": {
     "tools": [

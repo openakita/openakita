@@ -19,8 +19,12 @@ class HighlightTaskManager(BaseTaskManager):
 
     def default_config(self):
         return {
-            "asr_provider": "whisper.cpp",
+            "asr_provider": "auto",
+            "asr_region": "cn",
             "asr_model": "base",
+            "asr_language": "auto",
+            "asr_binary": "whisper-cli",
+            "dashscope_api_key": "",
             "min_segment_sec": "3",
             "max_segment_sec": "20",
             "target_segment_count": "5",

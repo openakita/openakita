@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -31,12 +32,25 @@ from openakita_plugin_sdk.contrib import (
 
 from highlight_engine import (
     HighlightSegment,
+    configure_credentials,
     keyword_score,
     pick_segments,
     render_highlights,
-    whisper_cpp_transcribe,
+    transcribe_with_contrib_asr,
 )
 from task_manager import HighlightTaskManager
+
+_SENSITIVE_CONFIG_KEYS = {"dashscope_api_key"}
+
+
+def _redacted_config(cfg: dict[str, str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for k, v in cfg.items():
+        if k in _SENSITIVE_CONFIG_KEYS and v:
+            out[k] = f"***{v[-4:]}" if len(v) > 4 else "***"
+        else:
+            out[k] = v
+    return out
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +137,15 @@ class Plugin(PluginBase):
             self._handle_tool_call,
         )
 
+        api.spawn_task(self._load_credentials())
         api.log("highlight-cutter loaded")
+
+    async def _load_credentials(self) -> None:
+        cfg = await self._tm.get_config()
+        configure_credentials(
+            dashscope_api_key=cfg.get("dashscope_api_key")
+            or os.environ.get("DASHSCOPE_API_KEY", ""),
+        )
 
     async def on_unload(self) -> None:
         workers = [t for t in list(self._workers.values()) if not t.done()]
@@ -174,12 +196,23 @@ class Plugin(PluginBase):
 
         @router.get("/config")
         async def get_config():
-            return await self._tm.get_config()
+            return _redacted_config(await self._tm.get_config())
 
         @router.post("/config")
         async def set_config(updates: dict):
             await self._tm.set_config({k: str(v) for k, v in updates.items()})
-            return await self._tm.get_config()
+            await self._load_credentials()
+            return _redacted_config(await self._tm.get_config())
+
+        @router.get("/settings")
+        async def get_settings():
+            return _redacted_config(await self._tm.get_config())
+
+        @router.post("/settings")
+        async def set_settings(updates: dict):
+            await self._tm.set_config({k: str(v) for k, v in updates.items()})
+            await self._load_credentials()
+            return _redacted_config(await self._tm.get_config())
 
         @router.post("/intent")
         async def intent(body: IntentBody):
@@ -341,10 +374,14 @@ class Plugin(PluginBase):
             self._events.emit("task_updated", {"id": task_id, "status": "running",
                                                "stage": "transcribe"})
             cfg = await self._tm.get_config()
-            chunks = await whisper_cpp_transcribe(
+            chunks = await transcribe_with_contrib_asr(
                 source,
+                provider_id=cfg.get("asr_provider", "auto"),
+                region=cfg.get("asr_region", "cn"),
+                language=cfg.get("asr_language", "auto"),
                 model=cfg.get("asr_model", "base"),
-                binary="whisper-cli",
+                binary=cfg.get("asr_binary", "whisper-cli"),
+                allow_stub=False,
             )
 
             # Stage 2: score & pick (audit3 三分自检 enforced inside pick_segments)

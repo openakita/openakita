@@ -195,8 +195,27 @@
   OpenAkitaI18n.bindDom(document.body);
 
   // 4) App logic --------------------------------------------------------
-  const apiBase = (OpenAkita.meta && OpenAkita.meta.apiBase) || '';
-  const api = (path, opts) => fetch(apiBase + path, opts).then(r => r.json().then(j => ({ ok: r.ok, status: r.status, body: j })));
+  // _detectApiBase mirrors tongyi-image / avatar-speaker — OpenAkita.meta
+  // is injected asynchronously by bootstrap.js so reading it synchronously
+  // at script-eval time used to leave the URL empty and break "Recent tasks"
+  // with a permanent 404.
+  function _detectApiBase() {
+    try {
+      if (window.OpenAkita && OpenAkita.meta && OpenAkita.meta.apiBase) {
+        return OpenAkita.meta.apiBase;
+      }
+    } catch (_) {}
+    var loc = window.location;
+    if (loc.port === '5173' || loc.port === '1420') return 'http://127.0.0.1:18900';
+    return loc.origin;
+  }
+  function api(path, opts) {
+    var url = path.indexOf('http') === 0 ? path : _detectApiBase() + path;
+    return fetch(url, opts || {}).then(function(r) {
+      return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j }; });
+    });
+  }
+  Object.defineProperty(window, 'apiBase', { get: _detectApiBase, configurable: true });
 
   let chosenSourcePath = null;
   let chosenDuration = 60;
@@ -220,7 +239,7 @@
     info.textContent = T('upload.uploading', { mb: (file.size/1024/1024).toFixed(1) });
     const form = new FormData(); form.append('file', file);
     try {
-      const r = await fetch(apiBase + '/upload', { method: 'POST', body: form });
+      const r = await fetch(_detectApiBase() + '/upload', { method: 'POST', body: form });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
       chosenSourcePath = j.path;
@@ -280,7 +299,7 @@
     }
   });
 
-  const taskPanel = new TaskPanel({ root: '#tasks', apiBase, tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
+  const taskPanel = new TaskPanel({ root: '#tasks', apiBase: _detectApiBase(), tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
   taskPanel.start();
 
   OpenAkita.onEvent('task_updated', (data) => {
