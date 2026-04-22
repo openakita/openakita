@@ -911,7 +911,15 @@ export function AgentDashboardView({
         if (isDorm) {
           ctx.setLineDash([3, 3]);
         }
+        if (n.agent_type === "external_cli") {
+          ctx.save();
+          ctx.setLineDash([4, 3]);
+          ctx.lineWidth = 1.5;
+        }
         ctx.stroke();
+        if (n.agent_type === "external_cli") {
+          ctx.restore();
+        }
         ctx.setLineDash([]);
 
         // inner highlight (top-left light spot)
