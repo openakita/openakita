@@ -96,10 +96,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .btn-ai-opt .spinner-xs { width: 12px; height: 12px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin .6s linear infinite; display: inline-block; }
 
 .main-layout { display: flex; height: 100%; min-height: 0; overflow: hidden; }
-.sidebar { width: 200px; border-right: 1px solid var(--border); background: var(--bg-card); overflow-y: auto; flex-shrink: 0; padding: 8px; min-height: 0; }
-.sidebar-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: .15s; margin-bottom: 2px; color: var(--text-muted); }
+/* Sidebar visually echoes oa-list-panel rhythm: surface card + radius +
+ * subtle shadow on the items zone, accent bar on active item.  Layout role
+ * (fixed-width left column with right border) is intentionally preserved. */
+.sidebar { width: 200px; border-right: 1px solid var(--border); background: var(--bg-card); overflow-y: auto; flex-shrink: 0; padding: 10px 8px; min-height: 0; }
+.sidebar-item { position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 12px 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; transition: background 120ms ease, color 120ms ease; margin-bottom: 4px; color: var(--text-muted); }
 .sidebar-item:hover { background: var(--bg-hover); color: var(--text); }
-.sidebar-item.active { background: var(--primary-light); color: var(--primary); font-weight: 500; }
+.sidebar-item.active, .sidebar-item.is-selected { background: var(--primary-light); color: var(--primary); font-weight: 500; }
+.sidebar-item.active::before, .sidebar-item.is-selected::before { content: ""; position: absolute; left: 4px; top: 50%; transform: translateY(-50%); width: 3px; height: 16px; border-radius: 2px; background: var(--primary); }
 .sidebar-icon { width: 18px; height: 18px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
 .sidebar-icon svg, .ic { width: 1em; height: 1em; vertical-align: -0.125em; display: inline-block; }
 .ic-lg { width: 1.25em; height: 1.25em; }
@@ -169,6 +173,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 *::-webkit-scrollbar-corner { background: transparent; }
 * { scrollbar-width: thin; scrollbar-color: rgba(148,163,184,.45) transparent; }
 .form-panel, .result-panel, .sidebar { scrollbar-gutter: stable; }
+
+/* ── Settings drawer (right-side overlay; replaces full-page settings) ── */
+.modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.32); z-index: 200; display: flex; justify-content: flex-end; animation: oa-fade-in .12s ease-out; }
+@keyframes oa-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.settings-drawer { width: 480px; max-width: 100vw; height: 100%; background: var(--bg-card); border-left: 1px solid var(--border); box-shadow: -8px 0 24px rgba(0,0,0,.12); display: flex; flex-direction: column; animation: oa-slide-in .18s cubic-bezier(.2,.7,.2,1); }
+@keyframes oa-slide-in { from { transform: translateX(20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+.settings-drawer__head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.settings-drawer__title { font-size: 14px; font-weight: 600; color: var(--text); display: inline-flex; align-items: center; gap: 8px; }
+.settings-drawer__close { cursor: pointer; padding: 4px 6px; border-radius: 6px; color: var(--text-muted); display: inline-flex; align-items: center; }
+.settings-drawer__close:hover { background: var(--bg-hover); color: var(--text); }
+.settings-drawer__body { flex: 1; overflow: auto; padding: 16px; }
+@media (max-width: 600px) { .settings-drawer { width: 100vw; } }
 
 /* ── Guide (提示词教学) Styles ── */
 .guide-container { padding: 24px; max-width: 900px; margin: 0 auto; overflow-y: auto; height: 100%; }
@@ -395,8 +411,23 @@ const KNOWN_ICONS = new Set([
   "images","globe","sparkles","layers","ruler","rocket","message","megaphone",
   "party","confetti","upload","clipboard","file","book",
 ]);
+// Names whose ecommerce sprite has a same-meaning OpenAkitaIcons sibling.
+// Render those via the shared UI Kit so all plugins use identical glyphs;
+// keep the inline sprite as authoritative source for the 19 ecommerce-only
+// icons that OpenAkitaIcons does not ship (clapperboard / camera / masks /
+// copy / package / images / layers / ruler / rocket / message / megaphone /
+// party / confetti / clipboard / file / arrow-left / detail / poster / flame).
+const OA_ICON_KEYS = {
+  cart: "cart", settings: "settings", video: "video", image: "image",
+  edit: "edit", refresh: "refresh", globe: "globe", sparkles: "sparkles",
+  upload: "upload", book: "book",
+};
 function Ic({ name, className = "", size }) {
   const cls = "ic" + (size === "lg" ? " ic-lg" : size === "xl" ? " ic-xl" : "") + (className ? " " + className : "");
+  const oaName = OA_ICON_KEYS[name];
+  if (oaName && typeof window !== "undefined" && window.OpenAkitaIcons && typeof window.OpenAkitaIcons[oaName] === "function") {
+    return <span className={cls + " oa-icon"} dangerouslySetInnerHTML={{ __html: window.OpenAkitaIcons[oaName]() }} />;
+  }
   let id = name;
   if (id && !KNOWN_ICONS.has(id)) {
     id = EMOJI_TO_ICON[id] || EMOJI_TO_ICON[String(id).trim()] || null;
@@ -947,7 +978,7 @@ function ChildTaskCard({ child, index, total, onLightbox, onRetried }) {
 
       {editing && (
         <div style={{marginBottom:8}}>
-          <textarea className="form-input" style={{width:"100%",minHeight:80,fontSize:12,resize:"vertical"}}
+          <textarea className="input textarea" style={{width:"100%",minHeight:80,fontSize:12,resize:"vertical"}}
             value={editPrompt} onChange={(e) => setEditPrompt(e.target.value)} />
           <div className="flex gap-2" style={{marginTop:4}}>
             <button className="btn btn-sm btn-primary" onClick={handleSavePrompt} disabled={saving}>
@@ -1421,7 +1452,7 @@ function PromptGuide() {
           <Code>{"主体（产品/人物） + 场景/背景 + 风格/光影 + 细节约束（构图/比例/颜色）"}</Code>
           <h4>示例对比</h4>
           <table className="guide-table">
-            <thead><tr><th>❌ 差的提示词</th><th>✅ 好的提示词</th></tr></thead>
+            <thead><tr><th><Ic name="close" /> 差的提示词</th><th><Ic name="check" /> 好的提示词</th></tr></thead>
             <tbody>
               <tr>
                 <td>帮我做一张耳机主图</td>
@@ -1435,10 +1466,10 @@ function PromptGuide() {
           </table>
           <h4>关键提醒</h4>
           <ul>
-            <li>🎯 <strong>越具体越好</strong>：「45度侧面」比「好看的角度」好</li>
-            <li>🚫 <strong>避免否定词</strong>：说「纯白背景」而不是「不要杂乱背景」</li>
-            <li>📐 <strong>注意比例</strong>：主图方形(1:1)、详情图竖版(3:4)、海报竖版(9:16)</li>
-            <li>🎨 <strong>指定风格</strong>：「极简」「赛博朋克」「日系清新」远比「好看」有用</li>
+            <li><Ic name="target" /> <strong>越具体越好</strong>：「45度侧面」比「好看的角度」好</li>
+            <li><Ic name="close" /> <strong>避免否定词</strong>：说「纯白背景」而不是「不要杂乱背景」</li>
+            <li><Ic name="ruler" /> <strong>注意比例</strong>：主图方形(1:1)、详情图竖版(3:4)、海报竖版(9:16)</li>
+            <li><Ic name="palette" /> <strong>指定风格</strong>：「极简」「赛博朋克」「日系清新」远比「好看」有用</li>
           </ul>
         </div>
       </Section>
@@ -1447,32 +1478,32 @@ function PromptGuide() {
       <Section id="image" title="图像功能提示词教学" icon="image">
         <div className="guide-section">
 
-          <h4>🏪 商品主图</h4>
+          <h4><Ic name="cart" /> 商品主图</h4>
           <p>电商主图 = 买家第一眼看到的图。核心要求：产品清晰、背景干净、无文字水印。</p>
           <Code>{"电商商品主图，产品：{你的产品名}。\n场景与构图：{你的描述}。\n风格：{风格}专业商业摄影。\n【强制约束】产品居中占画面 85% 以上，纯色/简洁渐变背景，\n影棚级布光（主光+补光+轮廓光），锐利对焦，无文字无水印。"}</Code>
           <p className="text-sm text-muted">关键词：产品居中 85%+、影棚布光、无文字水印、纯色背景</p>
 
-          <h4>🖼️ 主图套图 / 详情图套图</h4>
+          <h4><Ic name="images" /> 主图套图 / 详情图套图</h4>
           <p>一组风格统一的图片。关键是<strong>风格锚定</strong>——所有图共享相同色调、光影、排版风格。</p>
           <Code>{"[统一风格] 产品：{产品名}，风格：{风格}商业摄影，色调统一，光影一致。\n电商主图套图第{N}张。\n卖点：{卖点列表}。{详细描述}。\n【强制约束】产品占画面 70%+，保持系列一致性。"}</Code>
           <p className="text-sm text-muted">提示：写清卖点列表，AI 会为每张图分配不同的卖点角度</p>
 
-          <h4>📏 详情长图</h4>
+          <h4><Ic name="ruler" /> 详情长图</h4>
           <p>竖版分段内容图（3:4 比例），最终拼接为商品详情页长图。</p>
           <Code>{"电商详情页竖版分段内容图，产品：{产品名}，\n卖点：{卖点}。{你的描述}。\n【强制约束】竖版构图 3:4 比例，分段清晰：\n首屏产品全貌+品牌，中间每段一个卖点，尾屏售后/规格信息。"}</Code>
 
-          <h4>🆕 新品发布</h4>
+          <h4><Ic name="sparkles" /> 新品发布</h4>
           <p>生成一套新品发布素材（多张子任务），适合上新时一次性出图。</p>
           <Code>{"[统一风格] 产品：{产品名}，视觉风格：{风格}品牌感科技感，色调统一。\n新品发布素材第{N}张。\n卖点：{卖点}。{描述}。"}</Code>
 
-          <h4>✏️ 批量改图 / 批量替换</h4>
+          <h4><Ic name="edit" /> 批量改图 / 批量替换</h4>
           <p>上传多张图进行统一编辑。核心约束：<strong>仅改指定部分，其余严格保持不变</strong>。</p>
           <Code>{"图片编辑：{要修改的内容}，编辑风格：{风格}。\n【强制约束】仅按描述修改指定的视觉属性，\n严格保持原图中产品主体的形状、位置、大小完全不变。"}</Code>
 
-          <h4>🌐 图片翻译</h4>
+          <h4><Ic name="globe" /> 图片翻译</h4>
           <p>将图中文字翻译为目标语言，保持原设计风格。只需选择源图和目标语言即可。</p>
 
-          <h4>🎪 活动海报</h4>
+          <h4><Ic name="megaphone" /> 活动海报</h4>
           <p>海报结构：上 1/3 标题区 → 中间产品主视觉 → 下方行动引导（CTA）。</p>
           <Code>{"海报设计，产品：{产品名}。\n活动主题：{你的主题}。\n风格：{风格}设计。\n【结构】上1/3大字标题+活动信息，中间产品主视觉聚焦，\n下1/4行动引导（按钮/二维码/倒计时）。"}</Code>
           <p className="text-sm text-muted">子类型差异：私域海报适合朋友圈竖版(9:16)，节日海报注重节日视觉元素，活动宣传突出利益点</p>
@@ -1483,11 +1514,11 @@ function PromptGuide() {
       <Section id="video" title="视频功能提示词教学" icon="video">
         <div className="guide-section">
 
-          <h4>📐 视频提示词的核心结构：时间轴</h4>
+          <h4><Ic name="film" /> 视频提示词的核心结构：时间轴</h4>
           <p>视频提示词和图片最大的区别：需要按<strong>时间段</strong>描述画面。</p>
           <Code>{"风格，{时长}秒，{画幅}，氛围\n0-{t1}秒：[开场] 镜头运动 + 画面内容\n{t1}-{t2}秒：[中段] 镜头运动 + 画面内容\n{t2}-{duration}秒：[收尾] 镜头运动 + 画面内容\n【声音】配乐 + 音效（可选）"}</Code>
 
-          <h4>🎬 镜头语言速查</h4>
+          <h4><Ic name="clapperboard" /> 镜头语言速查</h4>
           <div className="guide-tags">
             <Tag>推镜头 Push in — 向前靠近主体</Tag>
             <Tag>拉镜头 Pull out — 向后远离主体</Tag>
@@ -1501,35 +1532,35 @@ function PromptGuide() {
             <Tag>手持晃动 Handheld — Vlog 质感</Tag>
           </div>
 
-          <h4>🌈 氛围关键词库</h4>
+          <h4><Ic name="palette" /> 氛围关键词库</h4>
           <div className="guide-atmo-grid">
             <div>
-              <h5>💡 光影</h5>
+              <h5><Ic name="sparkles" /> 光影</h5>
               <div className="guide-tags">
                 {["逆光","侧光","丁达尔效应","伦勃朗光","体积光","柔光","硬光","影棚灯"].map((w) => <Tag key={w}>{w}</Tag>)}
               </div>
             </div>
             <div>
-              <h5>🎨 色调</h5>
+              <h5><Ic name="brush" /> 色调</h5>
               <div className="guide-tags">
                 {["暖色调","冷色调","高饱和","莫兰迪色","黑金质感","莫奈油画","霓虹"].map((w) => <Tag key={w}>{w}</Tag>)}
               </div>
             </div>
             <div>
-              <h5>🎞️ 质感</h5>
+              <h5><Ic name="film" /> 质感</h5>
               <div className="guide-tags">
                 {["商业广告级","电影级","纪录片","iPhone 实拍感","CG 渲染","胶片颗粒"].map((w) => <Tag key={w}>{w}</Tag>)}
               </div>
             </div>
             <div>
-              <h5>💫 情绪</h5>
+              <h5><Ic name="sparkles" /> 情绪</h5>
               <div className="guide-tags">
                 {["治愈","热血","紧凑","高级感","促销热闹","极简清爽","轻奢","未来感"].map((w) => <Tag key={w}>{w}</Tag>)}
               </div>
             </div>
           </div>
 
-          <h4>📝 视频模式公式</h4>
+          <h4><Ic name="edit" /> 视频模式公式</h4>
           <table className="guide-table">
             <thead><tr><th>模式</th><th>公式</th></tr></thead>
             <tbody>
@@ -1542,34 +1573,34 @@ function PromptGuide() {
             </tbody>
           </table>
 
-          <h4>📋 7 个视频模板速查</h4>
+          <h4><Ic name="clipboard" /> 7 个视频模板速查</h4>
           <div className="guide-template-list">
             <div className="guide-template-item">
-              <strong>🔄 产品 360° 旋转</strong> <span className="text-sm text-muted">干净背景 + 环绕镜头 + 卖点叠加</span>
+              <strong><Ic name="refresh" /> 产品 360° 旋转</strong> <span className="text-sm text-muted">干净背景 + 环绕镜头 + 卖点叠加</span>
               <Code>{"商业广告风格，{duration}秒，{ratio}，简洁干净背景\n0-{t1}秒：环绕镜头，产品全景缓慢旋转\n{t1}-{t2}秒：推镜头特写，强调材质和细节\n{t2}-{duration}秒：拉镜头，产品落定，文字卖点出现"}</Code>
             </div>
             <div className="guide-template-item">
-              <strong>📦 开箱测评</strong> <span className="text-sm text-muted">美妆/数码/食品适用</span>
+              <strong><Ic name="package" /> 开箱测评</strong> <span className="text-sm text-muted">美妆/数码/食品适用</span>
               <Code>{"Vlog 实拍风格，{duration}秒，{ratio}，温馨真实\n0-{t1}秒：手持晃动，拆开包装，产品露出\n{t1}-{t2}秒：俯拍特写，展示质感和包装细节\n{t2}-{duration}秒：使用过程，呈现真实体验"}</Code>
             </div>
             <div className="guide-template-item">
-              <strong>⭐ 卖点演示</strong> <span className="text-sm text-muted">突出 1-2 个核心功能</span>
+              <strong><Ic name="sparkles" /> 卖点演示</strong> <span className="text-sm text-muted">突出 1-2 个核心功能</span>
               <Code>{"商业 CG 风格，{duration}秒，{ratio}，干净影棚灯光\n0-{t1}秒：产品出现，旁白点出主卖点\n{t1}-{t2}秒：动效演示功能\n{t2}-{duration}秒：场景使用画面，强调结果"}</Code>
             </div>
             <div className="guide-template-item">
-              <strong>🏠 场景代入</strong> <span className="text-sm text-muted">把产品放进真实生活场景</span>
+              <strong><Ic name="image" /> 场景代入</strong> <span className="text-sm text-muted">把产品放进真实生活场景</span>
               <Code>{"生活实拍风格，{duration}秒，{ratio}，温暖治愈\n0-{t1}秒：场景全景（客厅/厨房/户外）\n{t1}-{t2}秒：人物使用产品，自然光下细节\n{t2}-{duration}秒：人物满意表情 + 产品定格"}</Code>
             </div>
             <div className="guide-template-item">
-              <strong>⚖️ 对比测试</strong> <span className="text-sm text-muted">Before / After 强转化</span>
+              <strong><Ic name="layers" /> 对比测试</strong> <span className="text-sm text-muted">Before / After 强转化</span>
               <Code>{"测评风格，{duration}秒，{ratio}，干净背景\n0-{t1}秒：左侧 Before 状态，痛点呈现\n{t1}-{t2}秒：使用产品过程，分屏对比\n{t2}-{duration}秒：右侧 After 效果，差异强调"}</Code>
             </div>
             <div className="guide-template-item">
-              <strong>🔥 促销爆点</strong> <span className="text-sm text-muted">618 / 双11 / 活动倒计时</span>
+              <strong><Ic name="flame" /> 促销爆点</strong> <span className="text-sm text-muted">618 / 双11 / 活动倒计时</span>
               <Code>{"促销广告风格，{duration}秒，{ratio}，霓虹高饱和\n0-{t1}秒：标题动效砸入画面\n{t1}-{t2}秒：产品阵列展示 + 折扣价格闪烁\n{t2}-{duration}秒：行动指令 + 倒计时"}</Code>
             </div>
             <div className="guide-template-item">
-              <strong>👁️ 用户视角 POV</strong> <span className="text-sm text-muted">第一视角拍摄使用过程</span>
+              <strong><Ic name="camera" /> 用户视角 POV</strong> <span className="text-sm text-muted">第一视角拍摄使用过程</span>
               <Code>{"POV 第一视角，{duration}秒，{ratio}，真实自然\n0-{t1}秒：手部入画，拿起产品\n{t1}-{t2}秒：操作产品，细节特写\n{t2}-{duration}秒：成果展示，POV 看向使用结果"}</Code>
             </div>
           </div>
@@ -1776,22 +1807,6 @@ function App() {
     }
   }, [mainTab, features]);
 
-  if (showSettings) {
-    return (
-      <div className="app">
-        <div className="header">
-          <h1>
-            <span style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:4}} onClick={() => setShowSettings(false)}><Ic name="arrow-left" /> </span>
-            设置
-          </h1>
-        </div>
-        <div className="content" style={{overflow:"auto"}}>
-          <SettingsPage onPurge={() => { loadTasks(mainTab); setSelectedTask(null); }} />
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="app">
       <div className="header">
@@ -1890,11 +1905,57 @@ function App() {
         </div>
         )}
       </div>
+      {showSettings && (
+        <div className="modal-mask" onClick={() => setShowSettings(false)}>
+          <div className="settings-drawer" onClick={(e) => e.stopPropagation()}>
+            <div className="settings-drawer__head">
+              <span className="settings-drawer__title"><Ic name="settings" /> 设置</span>
+              <span className="settings-drawer__close" onClick={() => setShowSettings(false)} title="关闭"><Ic name="close" /></span>
+            </div>
+            <div className="settings-drawer__body">
+              <SettingsPage onPurge={() => { loadTasks(mainTab); setSelectedTask(null); }} />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+// Wraps <App /> so a render-time exception surfaces as an oa-config-banner
+// instead of a blank screen / silent host loading overlay.
+class PluginErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error: error }; }
+  componentDidCatch(error, info) {
+    try { console.error("[ecommerce-image] uncaught render error", error, info); } catch (_) {}
+  }
+  render() {
+    if (this.state.error) {
+      const msg = (this.state.error && (this.state.error.message || String(this.state.error))) || "未知渲染错误";
+      return (
+        <div style={{padding:24,maxWidth:720,margin:"40px auto"}}>
+          <div className="oa-config-banner" role="alert">
+            <span className="oa-config-banner__icon"><Ic name="warning" /></span>
+            <div className="oa-config-banner__text">
+              <strong>插件 UI 渲染失败。</strong>
+              <div style={{marginTop:6,fontSize:12,color:"var(--text-muted)",wordBreak:"break-word"}}>{msg}</div>
+              <div style={{marginTop:6,fontSize:12,color:"var(--text-muted)"}}>请尝试刷新页面，或在主程序「插件管理」中重新加载本插件。</div>
+            </div>
+            <button className="oa-config-banner__action" onClick={() => { try { window.location.reload(); } catch (_) {} }}>
+              <Ic name="refresh" /> 刷新
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <PluginErrorBoundary><App /></PluginErrorBoundary>
+);
 // Tell the host its loading overlay can dismiss now (no-op outside iframe).
 try { window.OpenAkita && window.OpenAkita.ready && window.OpenAkita.ready(); } catch (_) {}
 </script>
