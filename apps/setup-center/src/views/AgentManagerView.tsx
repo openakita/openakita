@@ -474,6 +474,15 @@ export function AgentManagerView({
     }
   }, [visible, fetchProfiles, fetchSkills, fetchCategories, fetchModels]);
 
+  const generateId = (name: string) =>
+    name
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 32) || "custom-agent";
+
   const openCreateEditor = () => {
     setEditingProfile({ ...EMPTY_PROFILE });
     setIsCreating(true);
@@ -482,6 +491,54 @@ export function AgentManagerView({
     setIdentityContent("");
     setIdentitySource("global");
     setMemoryStats(null);
+  };
+
+  const openCliWizard = () => {
+    setCliWizard(EMPTY_CLI_WIZARD);
+    setCliWizardOpen(true);
+    fetchDetectedClis();
+  };
+
+  const closeCliWizard = () => {
+    setCliWizardOpen(false);
+    setCliWizard(EMPTY_CLI_WIZARD);
+  };
+
+  const submitCliWizard = async () => {
+    const { provider_id, permission_mode, name, description } = cliWizard;
+    if (!provider_id || !name.trim()) return;
+
+    const profileId = generateId(name);
+    const payload = {
+      id: profileId,
+      name: name.trim(),
+      description: description.trim(),
+      type: "external_cli",
+      cli_provider_id: provider_id,
+      cli_permission_mode: permission_mode,
+      icon: "🧑‍💻",
+      color: "#D97757",
+      category: "cli-agents",
+      skills: [],
+      skills_mode: "all",
+      custom_prompt: "",
+    };
+
+    setSaving(true);
+    try {
+      await safeFetch(`${apiBaseUrl}/api/agents/profiles`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      closeCliWizard();
+      fetchProfiles();
+      showToast(t("agentManager.cliWizard.createSuccess"), "ok");
+    } catch (e) {
+      showToast(extractErrorMsg(e, t("agentManager.cliWizard.createFailed")), "err");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const openEditEditor = (profile: AgentProfile) => {
@@ -502,15 +559,6 @@ export function AgentManagerView({
     setEmojiPickerOpen(false);
     setSkillSearch("");
   };
-
-  const generateId = (name: string) =>
-    name
-      .normalize("NFKD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "")
-      .slice(0, 32) || "custom-agent";
 
   const ID_PATTERN = /^[a-z0-9_-]+$/;
   const isIdValid =
@@ -697,6 +745,19 @@ export function AgentManagerView({
           >
             <IconUpload size={14} />
             {t("agentManager.import")}
+          </button>
+          <button
+            onClick={openCliWizard}
+            style={{
+              display: "flex", alignItems: "center", gap: 4,
+              padding: "5px 12px", borderRadius: 8, border: "1px solid var(--primary, #3b82f6)",
+              background: "transparent", color: "var(--primary, #3b82f6)",
+              cursor: "pointer", fontSize: 12, fontWeight: 600,
+            }}
+            title={t("agentManager.cliWizard.openTooltip")}
+          >
+            <IconPlus size={14} />
+            {t("agentManager.cliWizard.openButton")}
           </button>
           <button
             onClick={openCreateEditor}
@@ -1466,6 +1527,134 @@ export function AgentManagerView({
               </Button>
             </div>
           </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* CLI Wizard Sheet */}
+      <Sheet open={cliWizardOpen} onOpenChange={setCliWizardOpen}>
+        <SheetContent side="right" style={{ width: 480, maxWidth: "90vw" }}>
+          <SheetHeader>
+            <SheetTitle>{t("agentManager.cliWizard.title")}</SheetTitle>
+            <SheetDescription>{t("agentManager.cliWizard.subtitle")}</SheetDescription>
+          </SheetHeader>
+
+          {/* Step indicator */}
+          <div style={{ display: "flex", gap: 8, margin: "16px 0", fontSize: 12, color: "var(--muted, #888)" }}>
+            <span style={{ fontWeight: cliWizard.step === 1 ? 700 : 400 }}>
+              {t("agentManager.cliWizard.step1Label")}
+            </span>
+            <span>›</span>
+            <span style={{ fontWeight: cliWizard.step === 2 ? 700 : 400 }}>
+              {t("agentManager.cliWizard.step2Label")}
+            </span>
+          </div>
+
+          {cliWizard.step === 1 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <Label>{t("agentManager.cliWizard.providerLabel")}</Label>
+              {detectLoading && (
+                <div style={{ color: "var(--muted, #888)", fontSize: 12 }}>
+                  {t("agentManager.cliWizard.detecting")}
+                </div>
+              )}
+              {!detectLoading && detectedClis.length === 0 && (
+                <div style={{ color: "var(--muted, #888)", fontSize: 12 }}>
+                  {t("agentManager.cliWizard.noneDetected")}
+                </div>
+              )}
+              {!detectLoading && detectedClis.map((cli) => (
+                <button
+                  key={cli.provider_id}
+                  onClick={() => setCliWizard((w) => ({ ...w, provider_id: cli.provider_id }))}
+                  disabled={!cli.available}
+                  style={{
+                    display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2,
+                    padding: "10px 14px", borderRadius: 8,
+                    border: cliWizard.provider_id === cli.provider_id
+                      ? "2px solid var(--primary, #3b82f6)"
+                      : "1px solid var(--line)",
+                    background: cli.available ? "var(--panel)" : "var(--panel-muted, #f4f4f4)",
+                    cursor: cli.available ? "pointer" : "not-allowed",
+                    opacity: cli.available ? 1 : 0.55,
+                    textAlign: "left",
+                  }}
+                >
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>{cli.name}</span>
+                  <span style={{ fontSize: 11, color: "var(--muted, #888)" }}>
+                    {cli.available
+                      ? `${cli.binary}${cli.version ? ` · v${cli.version}` : ""}`
+                      : t("agentManager.cliWizard.notOnPath")}
+                  </span>
+                </button>
+              ))}
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+                <Button
+                  disabled={!cliWizard.provider_id}
+                  onClick={() => setCliWizard((w) => ({ ...w, step: 2 }))}
+                >
+                  {t("agentManager.cliWizard.next")}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {cliWizard.step === 2 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                <Label>{t("agentManager.cliWizard.permissionLabel")}</Label>
+                <Select
+                  value={cliWizard.permission_mode}
+                  onValueChange={(v) =>
+                    setCliWizard((w) => ({ ...w, permission_mode: v as "plan" | "write" }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="plan">{t("agentManager.cliWizard.permissionPlan")}</SelectItem>
+                    <SelectItem value="write">{t("agentManager.cliWizard.permissionWrite")}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <div style={{ fontSize: 11, color: "var(--muted, #888)", marginTop: 4 }}>
+                  {t("agentManager.cliWizard.permissionHint")}
+                </div>
+              </div>
+
+              <div>
+                <Label>{t("agentManager.cliWizard.nameLabel")}</Label>
+                <Input
+                  value={cliWizard.name}
+                  onChange={(e) => setCliWizard((w) => ({ ...w, name: e.target.value }))}
+                  placeholder={t("agentManager.cliWizard.namePlaceholder")}
+                />
+              </div>
+
+              <div>
+                <Label>{t("agentManager.cliWizard.descriptionLabel")}</Label>
+                <Textarea
+                  value={cliWizard.description}
+                  onChange={(e) => setCliWizard((w) => ({ ...w, description: e.target.value }))}
+                  rows={3}
+                />
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 12 }}>
+                <Button
+                  variant="ghost"
+                  onClick={() => setCliWizard((w) => ({ ...w, step: 1 }))}
+                >
+                  {t("agentManager.cliWizard.back")}
+                </Button>
+                <Button
+                  disabled={saving || !cliWizard.name.trim()}
+                  onClick={submitCliWizard}
+                >
+                  {saving ? t("agentManager.cliWizard.creating") : t("agentManager.cliWizard.create")}
+                </Button>
+              </div>
+            </div>
+          )}
         </SheetContent>
       </Sheet>
     </div>
