@@ -17,7 +17,10 @@ from uuid import uuid4
 from openakita.agents.factory import AgentFactory
 from openakita.api.routes.websocket import broadcast_event
 from openakita.utils.checkbox_md import count_checkboxes
-from openakita.utils.worktree import WorktreeInfo
+from openakita.utils.worktree import (
+    WorktreeInfo,
+    create_agent_worktree,
+)
 
 MAX_CONSECUTIVE_NO_CHANGES = 2
 _RUNS_DIRNAME = "Runs"
@@ -167,6 +170,20 @@ class PlaybookRun:
                     self._doc_snapshots[doc.filename]["stalled"] = True
                 await self._broadcast(active_doc=doc.filename, stalled=stalled)
         return any_progress
+
+    async def _maybe_create_worktree(self) -> WorktreeInfo | None:
+        """Worktree acquisition is opt-in per playbook. We pass the run-unique
+        run_id so create_agent_worktree's internal branch derivation
+        (f'worktree-agent-{agent_id[:8]}') produces a unique branch per run.
+        Templated branch names (Maestro branchNameTemplate) require a surgical
+        extension to create_agent_worktree — deferred to Phase 3b."""
+        wt = self.cfg.worktree
+        if not wt.enabled:
+            return None
+        return await create_agent_worktree(
+            agent_id=self.run_id,
+            project_root=wt.project_root,
+        )
 
     async def _broadcast(self, **extra) -> None:
         """One full-state push per reducer step (Maestro parity). Extra kwargs

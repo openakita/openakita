@@ -420,3 +420,35 @@ async def test_run_doc_pass_honors_stopping(tmp_path, make_task, monkeypatch,
     assert progressed is False
     agent.execute_task_from_message.assert_not_awaited()
     assert md.read_text().count("[ ]") == 2  # unchanged
+
+
+@pytest.mark.asyncio
+async def test_maybe_create_worktree_disabled(make_task, profile_store_mock,
+                                              agent_factory_mock):
+    from openakita.scheduler.autorun_playbook import PlaybookRun
+
+    factory, _ = agent_factory_mock
+    task = make_task(worktree={"enabled": False})
+    run = PlaybookRun(task, executor=MagicMock(),
+                     profile_store=profile_store_mock, agent_factory=factory)
+    assert await run._maybe_create_worktree() is None
+
+
+@pytest.mark.asyncio
+async def test_maybe_create_worktree_enabled(make_task, monkeypatch,
+                                             profile_store_mock, agent_factory_mock):
+    from openakita.scheduler import autorun_playbook as ap
+    from openakita.scheduler.autorun_playbook import PlaybookRun
+
+    factory, _ = agent_factory_mock
+    task = make_task(worktree={"enabled": True, "project_root": "/abs/repo"})
+    run = PlaybookRun(task, executor=MagicMock(),
+                     profile_store=profile_store_mock, agent_factory=factory)
+
+    sentinel = MagicMock(name="WorktreeInfo")
+    captured = AsyncMock(return_value=sentinel)
+    monkeypatch.setattr(ap, "create_agent_worktree", captured)
+
+    wt = await run._maybe_create_worktree()
+    assert wt is sentinel
+    captured.assert_awaited_once_with(agent_id=run.run_id, project_root="/abs/repo")
