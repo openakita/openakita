@@ -1341,9 +1341,9 @@ function MainApp() {
       const msg = String(e);
       notifyError(msg);
       setVenvStatus(`Installation failed: ${msg}`);
-      setInstallLog(“”);
-      if (msg.includes(“缺少 Setup Center 所需模块”) || msg.includes(“No module named 'openakita.setup_center'”)) {
-        notifySuccess(“The installed openakita does not include the Setup Center module. Try switching the install source to GitHub or Local source and reinstalling.”);
+      setInstallLog("");
+      if (msg.includes("缺少 Setup Center 所需模块") || msg.includes("No module named 'openakita.setup_center'")) {
+        notifySuccess("The installed openakita does not include the Setup Center module. Try switching the install source to GitHub or Local source and reinstalling.");
       }
     } finally {
       dismissLoading(_busyId);
@@ -2587,7 +2587,7 @@ function MainApp() {
     setSkillsSelection(m);
   }, [skillsDetail, skillsTouched]);
 
-  // 自动获取 skills：进入“工具与技能”页就拉一次（且仅在尚未拿到 skillsDetail 时）
+  // 自动获取 skills：进入"工具与技能"页就拉一次（且仅在尚未拿到 skillsDetail 时）
   useEffect(() => {
     if (view !== "wizard") return;
     if (stepId !== "tools") return;
@@ -3231,9 +3231,9 @@ function MainApp() {
               LLM（不在这里重复填）
             </div>
             <div className="cardHint">
-              LLM 的 API Key / Base URL / 模型选择，统一在上一步“LLM 端点”里完成：端点会写入 `data/llm_endpoints.json`，并把对应 `api_key_env` 写入工作区 `.env`。
+              LLM 的 API Key / Base URL / 模型选择，统一在上一步"LLM 端点"里完成：端点会写入 `data/llm_endpoints.json`，并把对应 `api_key_env` 写入工作区 `.env`。
               <br />
-              这里主要管理 IM / MCP / 桌面自动化 / Agent/调度 等“运行期开关与参数”。
+              这里主要管理 IM / MCP / 桌面自动化 / Agent/调度 等"运行期开关与参数"。
             </div>
           </div>
 
@@ -3258,7 +3258,7 @@ function MainApp() {
               IM 通道
             </div>
             <div className="cardHint">
-              默认折叠显示。选择“启用”后展开填写信息（上下排列）。建议先把 LLM 端点配置好，再回来启用 IM。
+              默认折叠显示。选择"启用"后展开填写信息（上下排列）。建议先把 LLM 端点配置好，再回来启用 IM。
             </div>
             <div className="divider" />
 
