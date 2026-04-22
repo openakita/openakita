@@ -3,9 +3,20 @@
 Validates plugin manifest ``requires`` against the running system:
 
 - ``requires.openakita``  — minimum system version  (``>=1.27.0``)
-- ``requires.plugin_api`` — compatible API major     (``~1``)
+- ``requires.plugin_api`` — compatible API major     (``~1`` or ``~2``)
 - ``requires.sdk``        — minimum SDK version      (``>=0.1.0``, warn-only)
 - ``requires.python``     — minimum Python version   (``>=3.11``)
+
+Plugin API compatibility window
+-------------------------------
+The host advertises ``PLUGIN_API_VERSION = "2.0.0"`` but accepts plugins
+declaring ``plugin_api: "~1"`` as a transitional convenience: the v1 → v2
+upgrade was a soft API expansion (no breaking changes for existing
+plugins), so refusing to load v1 manifests would orphan the entire
+plugin ecosystem during the migration window. v1 plugins are loaded
+with a one-line warning so authors can upgrade at their own pace.
+``~3`` and beyond are still rejected — the window only covers the
+immediately previous major.
 """
 
 from __future__ import annotations
@@ -21,8 +32,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-PLUGIN_API_VERSION = "1.0.0"
+PLUGIN_API_VERSION = "2.0.0"
 PLUGIN_UI_API_VERSION = "1.0.0"
+
+PLUGIN_API_COMPAT_WINDOW: frozenset[int] = frozenset({1, 2})
+"""Plugin API majors the current host accepts (with warnings for non-current)."""
 
 
 @dataclass
@@ -128,19 +142,28 @@ def _check_plugin_api(plugin_id: str, spec: str, result: CompatResult) -> None:
             result.warnings.append(f"Cannot parse plugin_api spec '{spec}'")
             return
 
-        if req_major[0] != current[0]:
+        if req_major[0] == current[0]:
+            if len(req_major) > 1 and len(current) > 1 and req_major[1] > current[1]:
+                result.warnings.append(
+                    f"Plugin '{plugin_id}' was built for API ~{req_major_str}, "
+                    f"current is {PLUGIN_API_VERSION} — some features may be missing"
+                )
+        elif req_major[0] in PLUGIN_API_COMPAT_WINDOW:
+            result.warnings.append(
+                f"Plugin '{plugin_id}' targets plugin_api ~{req_major_str} but host "
+                f"is {PLUGIN_API_VERSION}; loaded under v{current[0]} compatibility "
+                f"window — please upgrade the plugin manifest to '~{current[0]}' "
+                f"and verify behaviour."
+            )
+        else:
             msg = (
                 f"Plugin '{plugin_id}' requires plugin_api {spec} "
                 f"(major {req_major[0]}), current API is {PLUGIN_API_VERSION} "
-                f"(major {current[0]})"
+                f"(major {current[0]}); outside compatibility window "
+                f"{sorted(PLUGIN_API_COMPAT_WINDOW)}"
             )
             result.errors.append(msg)
             result.ok = False
-        elif len(req_major) > 1 and len(current) > 1 and req_major[1] > current[1]:
-            result.warnings.append(
-                f"Plugin '{plugin_id}' was built for API ~{req_major_str}, "
-                f"current is {PLUGIN_API_VERSION} — some features may be missing"
-            )
     elif spec.startswith(">="):
         req = _parse_version(spec[2:])
         if req is None:
