@@ -33,3 +33,27 @@ for _m in (
     "avatar_pipeline",
 ):
     sys.modules.pop(_m, None)
+
+
+def pytest_configure(config):  # type: ignore[no-untyped-def]
+    """Register custom markers so ``pytest -m integration`` doesn't warn."""
+    config.addinivalue_line(
+        "markers",
+        "integration: opt-in tests that hit real DashScope endpoints (requires DASHSCOPE_API_KEY)",
+    )
+
+
+def pytest_collection_modifyitems(config, items):  # type: ignore[no-untyped-def]
+    """Skip integration tests by default unless ``-m integration`` is set.
+
+    This keeps ``pytest -q`` hermetic — collection is fine, but the
+    integration tests refuse to execute without an explicit opt-in.
+    """
+    if config.getoption("-m") == "integration":
+        return
+    skip_integration = __import__("pytest").mark.skip(
+        reason="integration test — pass ``-m integration`` to run"
+    )
+    for item in items:
+        if "integration" in item.keywords:
+            item.add_marker(skip_integration)
