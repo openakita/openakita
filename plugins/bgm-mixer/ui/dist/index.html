@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>节拍混音 BGM Mixer</title>
+  <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css">
+  <script src="/api/plugins/_sdk/bootstrap.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/icons.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/i18n.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/error-coach.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/task-panel.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/onboard-wizard.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/first-success-celebrate.js"></script>
+  <style>
+    body { padding: 16px; }
+    h1 { margin: 0 0 6px; font-size: 22px; display: inline-flex; align-items: center; gap: 10px; }
+    h1 .oa-icon { width: 22px; height: 22px; color: var(--oa-primary); }
+    h3 { display: inline-flex; align-items: center; gap: 8px; margin: 4px 0 8px; }
+    h3 .oa-icon { width: 16px; height: 16px; color: var(--oa-text-muted); }
+    .header-tip { color: var(--oa-text-muted); font-size: 12px; margin-bottom: 16px; }
+    audio { width: 100%; margin-top: 6px; }
+    .file-row { display:flex; align-items:center; gap:8px; flex-wrap: wrap; }
+    .file-info { font-size: 12px; color: var(--oa-text-muted); }
+    .health-pill { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius: 12px; font-size: 11px; margin-right: 6px; }
+    .health-ok { background: var(--oa-success-bg, #e6f7ec); color: var(--oa-success, #1a7f37); }
+    .health-bad { background: var(--oa-error-bg, #ffebe9); color: var(--oa-error, #cf222e); }
+    pre.cmd { background: var(--oa-bg, #f6f8fa); padding: 8px; border-radius: 6px; font-size: 11px; white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow:auto; }
+    .num-grid { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px; }
+  </style>
+</head>
+<body>
+  <h1>
+    <span class="oa-icon" data-icon="music"></span>
+    <span data-i18n="header.title"></span>
+  </h1>
+  <div class="header-tip" data-i18n="header.tip"></div>
+  <div id="healthBox" style="margin-bottom: 12px"></div>
+
+  <div class="oa-card">
+    <h3>
+      <span class="oa-icon" data-icon="upload"></span>
+      <span data-i18n="step.upload.title"></span>
+    </h3>
+
+    <label class="oa-label" data-i18n="form.voice"></label>
+    <div class="file-row">
+      <input type="file" id="voiceFile" accept="audio/*" style="display:none">
+      <button class="oa-btn" id="voicePick" data-i18n="actions.pickVoice"></button>
+      <span id="voiceInfo" class="file-info" data-i18n="hint.voiceMissing"></span>
+    </div>
+    <audio id="voicePreview" controls style="display:none"></audio>
+
+    <div style="height: 10px"></div>
+
+    <label class="oa-label" data-i18n="form.bgm"></label>
+    <div class="file-row">
+      <input type="file" id="bgmFile" accept="audio/*" style="display:none">
+      <button class="oa-btn" id="bgmPick" data-i18n="actions.pickBgm"></button>
+      <span id="bgmInfo" class="file-info" data-i18n="hint.bgmMissing"></span>
+    </div>
+    <audio id="bgmPreview" controls style="display:none"></audio>
+  </div>
+
+  <div class="oa-card">
+    <h3>
+      <span class="oa-icon" data-icon="settings"></span>
+      <span data-i18n="step.params.title"></span>
+    </h3>
+    <div class="num-grid">
+      <div>
+        <label class="oa-label" data-i18n="form.duck"></label>
+        <input id="duckDb" class="oa-input" type="number" step="1" value="-12">
+      </div>
+      <div>
+        <label class="oa-label" data-i18n="form.fadeIn"></label>
+        <input id="fadeIn" class="oa-input" type="number" step="0.1" value="1.0">
+      </div>
+      <div>
+        <label class="oa-label" data-i18n="form.fadeOut"></label>
+        <input id="fadeOut" class="oa-input" type="number" step="0.1" value="2.0">
+      </div>
+      <div>
+        <label class="oa-label" data-i18n="form.bpmHint"></label>
+        <input id="bpmHint" class="oa-input" type="number" step="1" placeholder="auto">
+      </div>
+      <div>
+        <label class="oa-label" data-i18n="form.voiceGain"></label>
+        <input id="voiceGain" class="oa-input" type="number" step="0.5" value="0">
+      </div>
+      <div>
+        <label class="oa-label" data-i18n="form.bgmGain"></label>
+        <input id="bgmGain" class="oa-input" type="number" step="0.5" value="0">
+      </div>
+      <div>
+        <label class="oa-label" data-i18n="form.tracker"></label>
+        <select id="tracker" class="oa-input">
+          <option value="auto" data-i18n="form.tracker.auto"></option>
+          <option value="stub" data-i18n="form.tracker.stub"></option>
+          <option value="madmom" data-i18n="form.tracker.madmom"></option>
+        </select>
+      </div>
+    </div>
+
+    <div class="oa-row" style="margin-top: 10px; gap: 8px">
+      <button class="oa-btn" id="previewBtn" data-i18n="actions.preview"></button>
+      <button class="oa-btn oa-btn-primary" id="goBtn" data-i18n="actions.go" disabled></button>
+    </div>
+    <div id="errorBox" style="margin-top: 10px"></div>
+  </div>
+
+  <div id="planCard" class="oa-card" style="display:none">
+    <h3>
+      <span class="oa-icon" data-icon="check"></span>
+      <span data-i18n="plan.title"></span>
+    </h3>
+    <div id="planSummary" class="file-info"></div>
+    <details style="margin-top: 6px">
+      <summary data-i18n="plan.cmd"></summary>
+      <pre id="planCmd" class="cmd"></pre>
+    </details>
+  </div>
+
+  <div id="resultCard" class="oa-card" style="display:none">
+    <h3>
+      <span class="oa-icon" data-icon="headphones"></span>
+      <span data-i18n="result.title"></span>
+    </h3>
+    <audio id="resultPlayer" controls></audio>
+    <div class="oa-row" style="margin-top:6px">
+      <a id="resultDl" class="oa-btn" data-i18n="actions.download"></a>
+    </div>
+  </div>
+
+  <h3 style="margin: 18px 0 8px">
+    <span data-i18n="tasks.title"></span>
+  </h3>
+  <div id="tasks"></div>
+
+<script>
+  OpenAkitaI18n.register({
+    zh: {
+      "header.title": "节拍混音 BGM Mixer",
+      "header.tip": "把人声 (旁白/对话) 和背景音乐合成一条最终音频：自动 ducking 让人声始终清晰、自动找节拍切口。",
+      "health.ffmpeg.ok": "ffmpeg 可用",
+      "health.ffmpeg.bad": "ffmpeg 不在 PATH (无法真正混音，仅可预览计划)",
+      "health.madmom.ok": "madmom 可用 (高精度节拍)",
+      "health.madmom.bad": "madmom 未安装 (使用 stub beat tracker，节拍按 BPM hint 推算)",
+      "step.upload.title": "Step 1 · 选择音轨",
+      "form.voice": "人声 (Voice / Narration)",
+      "form.bgm": "背景音乐 (BGM)",
+      "actions.pickVoice": "选择人声文件",
+      "actions.pickBgm": "选择 BGM 文件",
+      "hint.voiceMissing": "未选择 — 接受 mp3 / wav / m4a / flac",
+      "hint.bgmMissing": "未选择 — 接受 mp3 / wav / m4a / flac",
+      "step.params.title": "Step 2 · 混音参数",
+      "form.duck": "Ducking 强度 (dB，负值越大人声越突出)",
+      "form.fadeIn": "BGM 淡入 (秒)",
+      "form.fadeOut": "BGM 淡出 (秒)",
+      "form.bpmHint": "BPM hint (留空自动)",
+      "form.voiceGain": "人声增益 (dB)",
+      "form.bgmGain": "BGM 增益 (dB)",
+      "form.tracker": "节拍引擎",
+      "form.tracker.auto": "自动 (有 madmom 用 madmom，否则 stub)",
+      "form.tracker.stub": "stub (按 BPM hint 推算)",
+      "form.tracker.madmom": "madmom (需安装 madmom)",
+      "actions.preview": "试算计划",
+      "actions.go": "开始混音",
+      "actions.download": "下载",
+      "plan.title": "混音计划 (未生成文件)",
+      "plan.cmd": "查看 ffmpeg 命令",
+      "result.title": "混音结果",
+      "tasks.title": "最近的任务",
+      "err.upload.fail": "上传失败",
+      "err.create.fail": "创建任务失败",
+      "err.preview.fail": "试算失败",
+      "err.both.required": "请同时选择人声和 BGM 音轨",
+      "upload.uploading": "上传中 ({mb} MB)...",
+      "upload.done": "{name} ({mb} MB)",
+      "success.title": "混音完成！",
+      "rec.subtitle": "给视频加字幕",
+      "rec.cutter": "剪辑高光片段"
+    },
+    en: {
+      "header.title": "BGM Mixer",
+      "header.tip": "Mix a voice track with a background music track. Auto-ducking keeps the voice clear; beat-snapped cuts keep the BGM musical.",
+      "health.ffmpeg.ok": "ffmpeg available",
+      "health.ffmpeg.bad": "ffmpeg not in PATH (preview only, cannot render mix)",
+      "health.madmom.ok": "madmom available (high-precision beats)",
+      "health.madmom.bad": "madmom not installed (using stub beat tracker, beats inferred from BPM hint)",
+      "step.upload.title": "Step 1 · Choose tracks",
+      "form.voice": "Voice / Narration",
+      "form.bgm": "Background music (BGM)",
+      "actions.pickVoice": "Pick voice file",
+      "actions.pickBgm": "Pick BGM file",
+      "hint.voiceMissing": "Not selected — mp3 / wav / m4a / flac",
+      "hint.bgmMissing": "Not selected — mp3 / wav / m4a / flac",
+      "step.params.title": "Step 2 · Mix parameters",
+      "form.duck": "Duck depth (dB; more negative → voice stands out more)",
+      "form.fadeIn": "BGM fade-in (sec)",
+      "form.fadeOut": "BGM fade-out (sec)",
+      "form.bpmHint": "BPM hint (blank = auto)",
+      "form.voiceGain": "Voice gain (dB)",
+      "form.bgmGain": "BGM gain (dB)",
+      "form.tracker": "Beat tracker",
+      "form.tracker.auto": "Auto (madmom if available, otherwise stub)",
+      "form.tracker.stub": "Stub (BPM-hint based)",
+      "form.tracker.madmom": "madmom (requires madmom installed)",
+      "actions.preview": "Preview plan",
+      "actions.go": "Start mix",
+      "actions.download": "Download",
+      "plan.title": "Mix plan (no file rendered)",
+      "plan.cmd": "Show ffmpeg command",
+      "result.title": "Result",
+      "tasks.title": "Recent tasks",
+      "err.upload.fail": "Upload failed",
+      "err.create.fail": "Failed to create task",
+      "err.preview.fail": "Preview failed",
+      "err.both.required": "Please pick both a voice and a BGM track",
+      "upload.uploading": "Uploading ({mb} MB)...",
+      "upload.done": "{name} ({mb} MB)",
+      "success.title": "Mix done!",
+      "rec.subtitle": "Add subtitles to video",
+      "rec.cutter": "Cut highlight clips"
+    }
+  });
+  const T = (k, vars) => OpenAkitaI18n.t(k, vars);
+
+  function renderIcons(root) {
+    (root || document).querySelectorAll("[data-icon]").forEach(function (el) {
+      var name = el.dataset.icon;
+      var fn = window.OpenAkitaIcons && window.OpenAkitaIcons[name];
+      if (fn) el.innerHTML = fn();
+    });
+  }
+  renderIcons();
+  OpenAkitaI18n.bindDom(document.body);
+
+  // ── Bridge / api helpers (matches the Phase-2 hotfix pattern) ──
+  function _detectApiBase() {
+    try {
+      if (window.OpenAkita && OpenAkita.meta && OpenAkita.meta.apiBase) {
+        return OpenAkita.meta.apiBase;
+      }
+    } catch (_) {}
+    var loc = window.location;
+    if (loc.port === '5173' || loc.port === '1420') return 'http://127.0.0.1:18900';
+    return loc.origin;
+  }
+  function pluginPath(p) { return '/api/plugins/bgm-mixer' + p; }
+  function api(path, opts) {
+    var url = path.indexOf('http') === 0 ? path : _detectApiBase() + pluginPath(path);
+    return fetch(url, opts || {}).then(function(r) {
+      return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j }; })
+        .catch(function() { return { ok: r.ok, status: r.status, body: {} }; });
+    });
+  }
+
+  const $ = (id) => document.getElementById(id);
+  let voicePath = null;
+  let bgmPath = null;
+  let lastTaskId = null;
+  let voiceDur = null;
+  let bgmDur = null;
+
+  // ── Healthz banner so users instantly know if ffmpeg/madmom missing ─
+  api('/healthz').then(r => {
+    const box = $('healthBox');
+    if (!r.ok) { box.innerHTML = ''; return; }
+    const ff = r.body.ffmpeg ? `<span class="health-pill health-ok">${T('health.ffmpeg.ok')}</span>` : `<span class="health-pill health-bad">${T('health.ffmpeg.bad')}</span>`;
+    const md = r.body.madmom ? `<span class="health-pill health-ok">${T('health.madmom.ok')}</span>` : `<span class="health-pill health-bad">${T('health.madmom.bad')}</span>`;
+    box.innerHTML = ff + md;
+  });
+
+  // ── Upload helpers — bgm-mixer needs absolute paths because ffmpeg
+  // runs in a subprocess. The /upload route stores under the plugin's
+  // private data dir and returns the resolved abs path back to us.
+  async function uploadAudio(file, kind, infoEl, audioEl) {
+    infoEl.textContent = T('upload.uploading', { mb: (file.size/1024/1024).toFixed(1) });
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const r = await fetch(_detectApiBase() + pluginPath('/upload?kind=' + encodeURIComponent(kind)), { method: 'POST', body: form });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      infoEl.textContent = T('upload.done', { name: file.name, mb: (file.size/1024/1024).toFixed(1) });
+      // Browse the uploaded file via the upload-preview route added in
+      // plugin.py (add_upload_preview_route under /uploads/<rel>).
+      const previewUrl = URL.createObjectURL(file);
+      audioEl.src = previewUrl;
+      audioEl.style.display = 'block';
+      audioEl.onloadedmetadata = function() {
+        if (kind === 'voice') voiceDur = audioEl.duration;
+        else bgmDur = audioEl.duration;
+      };
+      return j.path;
+    } catch (err) {
+      ErrorCoach.mount('#errorBox', { problem: T('err.upload.fail'), next_step: err.message });
+      infoEl.textContent = T(kind === 'voice' ? 'hint.voiceMissing' : 'hint.bgmMissing');
+      return null;
+    }
+  }
+
+  $('voicePick').addEventListener('click', () => $('voiceFile').click());
+  $('voiceFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    voicePath = await uploadAudio(f, 'voice', $('voiceInfo'), $('voicePreview'));
+    refreshGoBtn();
+  });
+  $('bgmPick').addEventListener('click', () => $('bgmFile').click());
+  $('bgmFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    bgmPath = await uploadAudio(f, 'bgm', $('bgmInfo'), $('bgmPreview'));
+    refreshGoBtn();
+  });
+  function refreshGoBtn() {
+    $('goBtn').disabled = !(voicePath && bgmPath);
+  }
+
+  function _params() {
+    const out = {
+      voice_path: voicePath,
+      bgm_path: bgmPath,
+      duck_db: parseFloat($('duckDb').value || '-12'),
+      fade_in_sec: parseFloat($('fadeIn').value || '1.0'),
+      fade_out_sec: parseFloat($('fadeOut').value || '2.0'),
+      voice_gain_db: parseFloat($('voiceGain').value || '0'),
+      bgm_gain_db: parseFloat($('bgmGain').value || '0'),
+      beat_tracker: $('tracker').value,
+    };
+    const bpm = parseFloat($('bpmHint').value);
+    if (!Number.isNaN(bpm) && bpm > 0) out.bpm_hint = bpm;
+    return out;
+  }
+
+  $('previewBtn').addEventListener('click', async () => {
+    $('errorBox').innerHTML = '';
+    if (!voicePath || !bgmPath) {
+      ErrorCoach.mount('#errorBox', { problem: T('err.both.required') });
+      return;
+    }
+    const previewBody = Object.assign({}, _params(), {
+      voice_duration_sec: voiceDur || undefined,
+      bgm_duration_sec: bgmDur || undefined,
+    });
+    const r = await api('/preview', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(previewBody),
+    });
+    if (!r.ok) {
+      ErrorCoach.mount('#errorBox', (r.body && r.body.detail) || { problem: T('err.preview.fail') });
+      return;
+    }
+    const plan = r.body.plan || {};
+    $('planSummary').innerHTML = `
+      <div>BGM × ${plan.bgm_loop_count || 1}, ducking ${plan.duck_db}dB</div>
+      <div>${(plan.beats || []).length} beats · ${(plan.sentences || []).length} sentences · ${(plan.bpm || 0).toFixed(1)} BPM</div>
+      <div>voice ${(plan.voice_duration_sec || 0).toFixed(1)}s · BGM ${(plan.bgm_duration_sec || 0).toFixed(1)}s</div>`;
+    $('planCmd').textContent = (r.body.ffmpeg_cmd || []).join(' ');
+    $('planCard').style.display = 'block';
+  });
+
+  $('goBtn').addEventListener('click', async () => {
+    $('errorBox').innerHTML = '';
+    if (!voicePath || !bgmPath) {
+      ErrorCoach.mount('#errorBox', { problem: T('err.both.required') });
+      return;
+    }
+    const r = await api('/tasks', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(_params()),
+    });
+    if (!r.ok) {
+      ErrorCoach.mount('#errorBox', (r.body && r.body.detail) || { problem: T('err.create.fail') });
+      return;
+    }
+    lastTaskId = r.body.task_id;
+    if (taskPanel) taskPanel.refresh();
+  });
+
+  // TaskPanel needs the full /api/plugins/bgm-mixer prefix in apiBase
+  // (Phase-2 hotfix lesson). The shared task-panel.js looks for either
+  // an Array or {tasks: []}; we just patched the backend to return both
+  // {items, tasks} so it works without forking the UI-kit.
+  const taskPanel = new TaskPanel({
+    root: '#tasks',
+    apiBase: _detectApiBase() + pluginPath(''),
+    tasksPath: '/tasks',
+    cancelPath: '/tasks/{id}/cancel',
+  });
+  taskPanel.start();
+
+  function showResult(taskId) {
+    const url = _detectApiBase() + pluginPath('/tasks/' + taskId + '/audio');
+    $('resultCard').style.display = 'block';
+    $('resultPlayer').src = url;
+    $('resultDl').href = url;
+    $('resultDl').setAttribute('download', '');
+  }
+
+  if (window.OpenAkita && OpenAkita.onEvent) OpenAkita.onEvent('task_updated', (data) => {
+    if (taskPanel) taskPanel.refresh();
+    if (data && data.id === lastTaskId && data.status === 'succeeded') {
+      showResult(lastTaskId);
+      FirstSuccessCelebrate.maybeFire({
+        storageKey: 'bgm-mixer:firstSuccess',
+        title: T('success.title'),
+        recommendations: [
+          { id: 'subtitle-maker', label: T('rec.subtitle') },
+          { id: 'highlight-cutter', label: T('rec.cutter') },
+        ],
+        onRecommend: (id) => OpenAkita.navigate('plugin-app:' + id),
+      });
+    }
+  });
+</script>
+</body>
+</html>
