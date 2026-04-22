@@ -9,9 +9,16 @@ from __future__ import annotations
 
 import logging
 import re
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+
+from openakita.agents.cli_detector import CliProviderId, discover_all
+from openakita.sessions.transcript import (
+    parse_claude_stream_json,
+    parse_codex_jsonl,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -376,3 +383,45 @@ async def generate_title(request: Request, body: GenerateTitleRequest):
     except Exception as e:
         logger.warning(f"[Sessions] Title generation failed: {e}")
         return {"title": body.message[:20] or "New Conversation"}
+
+
+# ---------------------------------------------------------------------------
+# External-CLI historical session browsing (Phase 1 — read-only)
+# ---------------------------------------------------------------------------
+# Per-provider session-root directories. Phase 2 (plan 10, plan 11) moves these
+# constants into each cli_providers/<provider>.py module; this dict then becomes
+# a re-export. For Phase 1 we keep the truth here because no cli_providers
+# package exists yet.
+_PROVIDER_ROOTS: dict[CliProviderId, Path] = {
+    CliProviderId.CLAUDE_CODE: Path.home() / ".claude" / "projects",
+    CliProviderId.CODEX: Path.home() / ".codex" / "sessions",
+    # Other providers don't yet have a known session-history layout; fill in as
+    # each adapter lands. The listing endpoint returns [] for unmapped providers.
+}
+
+_PARSERS = {
+    CliProviderId.CLAUDE_CODE: parse_claude_stream_json,
+    CliProviderId.CODEX: parse_codex_jsonl,
+}
+
+
+def _safe_provider(raw: str) -> CliProviderId | None:
+    try:
+        return CliProviderId(raw)
+    except ValueError:
+        return None
+
+
+@router.get("/external-cli/detected")
+async def get_external_cli_detected():
+    probed = await discover_all()
+    return [
+        {
+            "provider_id": pid.value,
+            "installed": d.binary_path is not None,
+            "binary_path": d.binary_path,
+            "version": d.version,
+            "error": d.error,
+        }
+        for pid, d in probed.items()
+    ]
