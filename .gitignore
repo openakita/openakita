@@ -331,4 +331,4 @@ claude_code/
 botpy.log*
 tmp/
 openakita.service
-notes.md
+notes.md.claude/
