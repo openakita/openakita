@@ -141,3 +141,94 @@ def test_session_root_is_claude_projects():
     from openakita.agents.cli_providers import claude_code
 
     assert claude_code.SESSION_ROOT == Path.home() / ".claude" / "projects"
+
+
+def test_parse_stream_line_init_extracts_session_id():
+    from openakita.agents.cli_providers.claude_code import _parse_stream_line
+
+    line = json.dumps({
+        "type": "system",
+        "subtype": "init",
+        "session_id": "sess-xyz-123",
+    }).encode() + b"\n"
+    ev = _parse_stream_line(line)
+
+    assert ev is not None
+    assert ev.kind == "init"
+    assert ev.session_id == "sess-xyz-123"
+
+
+def test_parse_stream_line_assistant_text_accumulates():
+    from openakita.agents.cli_providers.claude_code import _parse_stream_line
+
+    line = json.dumps({
+        "type": "assistant",
+        "message": {
+            "content": [
+                {"type": "text", "text": "Hello "},
+                {"type": "text", "text": "world"},
+            ],
+        },
+    }).encode() + b"\n"
+    ev = _parse_stream_line(line)
+
+    assert ev is not None
+    assert ev.kind == "assistant_text"
+    assert ev.text == "Hello world"
+
+
+def test_parse_stream_line_tool_use_extracts_name():
+    from openakita.agents.cli_providers.claude_code import _parse_stream_line
+
+    line = json.dumps({
+        "type": "assistant",
+        "message": {
+            "content": [
+                {"type": "tool_use", "name": "Edit", "input": {"file_path": "/x"}},
+            ],
+        },
+    }).encode() + b"\n"
+    ev = _parse_stream_line(line)
+
+    assert ev is not None
+    assert ev.kind == "tool_use"
+    assert ev.tool_name == "Edit"
+
+
+def test_parse_stream_line_result_extracts_usage():
+    from openakita.agents.cli_providers.claude_code import _parse_stream_line
+
+    line = json.dumps({
+        "type": "result",
+        "usage": {"input_tokens": 100, "output_tokens": 42},
+        "is_error": False,
+    }).encode() + b"\n"
+    ev = _parse_stream_line(line)
+
+    assert ev is not None
+    assert ev.kind == "result"
+    assert ev.input_tokens == 100
+    assert ev.output_tokens == 42
+
+
+def test_parse_stream_line_error_result_flags_error():
+    from openakita.agents.cli_providers.claude_code import _parse_stream_line
+
+    line = json.dumps({
+        "type": "result",
+        "is_error": True,
+        "result": "rate limit exceeded",
+    }).encode() + b"\n"
+    ev = _parse_stream_line(line)
+
+    assert ev is not None
+    assert ev.kind == "error"
+    assert "rate limit" in ev.error_message
+
+
+def test_parse_stream_line_invalid_json_returns_none():
+    from openakita.agents.cli_providers.claude_code import _parse_stream_line
+
+    assert _parse_stream_line(b"not-json\n") is None
+    assert _parse_stream_line(b"\n") is None
+    assert _parse_stream_line(b"") is None
