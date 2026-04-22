@@ -817,6 +817,17 @@ Result:
             logger.error(f"Memory nudge review failed: {e}")
             return False, str(e)
 
+    async def _system_autorun_playbook(self, task: "ScheduledTask") -> tuple[bool, str]:
+        """Execute a Maestro-style Auto-Mode playbook. See
+        src/openakita/scheduler/autorun_playbook.py for the runner. Runtime is
+        bounded by the playbook's own `max_loops` + stall guard, so this handler
+        deliberately opts out of SYSTEM_TASK_TIMEOUTS."""
+        from openakita.agents.profile import get_profile_store
+        from openakita.scheduler.autorun_playbook import PlaybookRun
+        return await PlaybookRun(
+            task, executor=self, profile_store=get_profile_store()
+        ).execute()
+
     async def _system_proactive_heartbeat(self, task: "ScheduledTask") -> tuple[bool, str]:
         """
         Execute the proactive heartbeat.
