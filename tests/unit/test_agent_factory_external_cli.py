@@ -1,18 +1,20 @@
 """Tests for AgentFactory EXTERNAL_CLI branch + Pool special-case."""
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
+from openakita.agents.cli_runner import ExternalCliLimiter
+from openakita.agents.external_cli import ExternalCliAgent
+from openakita.agents.factory import AgentFactory
+from openakita.agents.profile import AgentProfile, AgentType, CliProviderId
 from openakita.config import Settings
 
 
 def test_settings_external_cli_max_concurrent_default():
     s = Settings()
     assert s.external_cli_max_concurrent == 3
-
-
-from openakita.agents.factory import AgentFactory
-from openakita.agents.cli_runner import ExternalCliLimiter
 
 
 def test_factory_builds_external_cli_limiter_from_settings(monkeypatch):
@@ -29,21 +31,16 @@ def test_factory_builds_external_cli_limiter_from_settings(monkeypatch):
 # Task 3 — EXTERNAL_CLI branch in create()
 # ---------------------------------------------------------------------------
 
-from unittest.mock import MagicMock
-
-from openakita.agents.profile import AgentProfile, AgentType, CliProviderId
-from openakita.agents.external_cli import ExternalCliAgent
-
 
 def _make_cli_profile(**overrides) -> AgentProfile:
-    defaults = dict(
-        id="claude-code-pair",
-        name="Claude Code Pair",
-        type=AgentType.EXTERNAL_CLI,
-        cli_provider_id=CliProviderId.CLAUDE_CODE,
-        mcp_servers=["alpha", "beta"],
-        mcp_mode="all",
-    )
+    defaults = {
+        "id": "claude-code-pair",
+        "name": "Claude Code Pair",
+        "type": AgentType.EXTERNAL_CLI,
+        "cli_provider_id": CliProviderId.CLAUDE_CODE,
+        "mcp_servers": ["alpha", "beta"],
+        "mcp_mode": "all",
+    }
     defaults.update(overrides)
     return AgentProfile(**defaults)
 
