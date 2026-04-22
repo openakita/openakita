@@ -110,11 +110,11 @@ class OrgIdentity:
             if len(_intent_brief) > 400:
                 _intent_brief = _intent_brief[:400] + "..."
             parts.append(
-                "## 用户当前指令（最高优先级，禁止超出）\n"
+                "## Current user instruction (highest priority — do not exceed)\n"
                 f"\"{_intent_brief}\"\n"
-                "下达任何子任务、写任何代码、产出任何交付物之前，"
-                "先检查你的输出严格在该指令的范围、字数、格式约束之内。"
-                "若与上级转述冲突，以上述用户原话为准。"
+                "Before issuing any subtask, writing any code, or producing any deliverable, "
+                "verify that your output strictly falls within the scope, word count, and format constraints of this instruction. "
+                "If it conflicts with your superior's paraphrase, the user's original wording takes precedence."
             )
 
         # Compact identity declaration (replaces full SOUL.md + AGENT.md)

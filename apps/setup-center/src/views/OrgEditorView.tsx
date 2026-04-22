@@ -1501,9 +1501,9 @@ export function OrgEditorView({
         if (n.id !== nodeId) return n;
         return { ...n, data: { ...n.data, status: "idle", frozen_by: null, frozen_reason: null, frozen_at: null } };
       }));
-      showToast("节点已解除冻结");
+      showToast("Node unfrozen");
     } catch (e) {
-      showToast(`解除冻结失败: ${e}`, "error");
+      showToast(`Failed to unfreeze: ${e}`, "error");
     }
   }, [selectedOrgId, apiBaseUrl, setNodes, showToast]);
 
@@ -1529,7 +1529,7 @@ export function OrgEditorView({
       ...structuredClone(clipboardNode),
       id: newId,
       position: { x: (clipboardNode.position?.x ?? 200) + offset, y: (clipboardNode.position?.y ?? 200) + offset },
-      data: { ...clipboardNode.data, id: newId, role_title: `${clipboardNode.data?.role_title || "节点"} (副本)`, _liveMode: liveMode },
+      data: { ...clipboardNode.data, id: newId, role_title: `${clipboardNode.data?.role_title || "Node"} (copy)`, _liveMode: liveMode },
       selected: false,
     };
     setNodes((prev) => [...prev, pasted]);
@@ -1545,7 +1545,7 @@ export function OrgEditorView({
       ? { x: contextMenu.flowX!, y: contextMenu.flowY! }
       : getNextNodePosition(nodes);
     const newNode: OrgNodeData = {
-      id: newId, role_title: "新节点", role_goal: "", role_backstory: "",
+      id: newId, role_title: "New Node", role_goal: "", role_backstory: "",
       agent_source: "local", agent_profile_id: null, position: pos, level: 0,
       department: "", custom_prompt: "", identity_dir: null, mcp_servers: [], skills: [],
       skills_mode: "all", preferred_endpoint: null, max_concurrent_tasks: 1, timeout_s: 0,
@@ -1570,7 +1570,7 @@ export function OrgEditorView({
             <button
               className="org-tb-btn"
               onClick={() => setShowLeftPanel(!showLeftPanel)}
-              title="组织列表"
+              title="Org list"
             >
               <IconMenu size={14} />
             </button>
@@ -1589,9 +1589,9 @@ export function OrgEditorView({
                 <span
                   className="org-topbar-name"
                   onClick={() => setEditingName(true)}
-                  title="点击重命名"
+                  title="Click to rename"
                 >
-                  {currentOrg.name || "未命名组织"}
+                  {currentOrg.name || "Unnamed org"}
                 </span>
               )
             )}
@@ -1613,10 +1613,10 @@ export function OrgEditorView({
                     <span className="org-status-sep" />
                     <Tooltip><TooltipTrigger asChild>
                       <span className="org-status-stat"><IconClipboard size={11} /> {orgStats.total_tasks_completed ?? 0}</span>
-                    </TooltipTrigger><TooltipContent>已完成任务数</TooltipContent></Tooltip>
+                    </TooltipTrigger><TooltipContent>Tasks completed</TooltipContent></Tooltip>
                     <Tooltip><TooltipTrigger asChild>
                       <span className="org-status-stat"><IconMessageCircle size={11} /> {orgStats.total_messages_exchanged ?? 0}</span>
-                    </TooltipTrigger><TooltipContent>消息交换总数</TooltipContent></Tooltip>
+                    </TooltipTrigger><TooltipContent>Messages exchanged</TooltipContent></Tooltip>
                     {orgStats.pending_messages > 0 && (
                       <Tooltip><TooltipTrigger asChild>
                         <span
@@ -1624,7 +1624,7 @@ export function OrgEditorView({
                           style={{ color: "#f59e0b", cursor: "pointer" }}
                           onClick={() => { setSelectedNodeId(null); setSelectedEdgeId(null); setShowRightPanel(true); setPropsTab("overview"); }}
                         >▪ {orgStats.pending_messages}</span>
-                      </TooltipTrigger><TooltipContent>节点间待处理内部消息 — 点击查看节点负荷</TooltipContent></Tooltip>
+                      </TooltipTrigger><TooltipContent>Pending internal messages — click to view node load</TooltipContent></Tooltip>
                     )}
                     {orgStats.anomalies?.length > 0 && (
                       <Tooltip><TooltipTrigger asChild>
@@ -1633,7 +1633,7 @@ export function OrgEditorView({
                           style={{ color: "#ef4444", fontWeight: 600, cursor: "pointer" }}
                           onClick={() => { setSelectedNodeId(null); setSelectedEdgeId(null); setShowRightPanel(true); setPropsTab("overview"); }}
                         >! {orgStats.anomalies.length}</span>
-                      </TooltipTrigger><TooltipContent>点击查看异常详情</TooltipContent></Tooltip>
+                      </TooltipTrigger><TooltipContent>Click to view anomalies</TooltipContent></Tooltip>
                     )}
                   </>
                 )}
@@ -1650,29 +1650,29 @@ export function OrgEditorView({
               variant="outline"
               className="org-topbar-tabs flex-shrink-0"
             >
-              <ToggleGroupItem value="canvas" className="text-xs h-7 px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">编排</ToggleGroupItem>
-              <ToggleGroupItem value="projects" className="text-xs h-7 px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">项目</ToggleGroupItem>
-              <ToggleGroupItem value="dashboard" className="text-xs h-7 px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">看板</ToggleGroupItem>
+              <ToggleGroupItem value="canvas" className="text-xs h-7 px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">Canvas</ToggleGroupItem>
+              <ToggleGroupItem value="projects" className="text-xs h-7 px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">Projects</ToggleGroupItem>
+              <ToggleGroupItem value="dashboard" className="text-xs h-7 px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">Dashboard</ToggleGroupItem>
             </ToggleGroup>
           </div>
 
           {/* ── Right: Actions ── */}
           <div className="org-topbar-right">
             {currentOrg.status === "archived" ? (
-              <span style={{ fontSize: 11, color: "var(--muted)" }}>已归档</span>
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>Archived</span>
             ) : currentOrg.status === "dormant" ? (
-              <button className="org-tb-btn org-tb-btn--ok" onClick={handleStartOrg} title="启动组织">
-                <IconPlay size={13} /> {!isMobile && "启动"}
+              <button className="org-tb-btn org-tb-btn--ok" onClick={handleStartOrg} title="Start org">
+                <IconPlay size={13} /> {!isMobile && "Start"}
               </button>
             ) : (<>
-              <button className="org-tb-btn org-tb-btn--danger" onClick={handleStopOrg} title="停止组织">
-                <IconStop size={13} /> {!isMobile && "停止"}
+              <button className="org-tb-btn org-tb-btn--danger" onClick={handleStopOrg} title="Stop org">
+                <IconStop size={13} /> {!isMobile && "Stop"}
               </button>
             </>)}
             <button
               className={`org-tb-btn${(showRightPanel && !selectedNode && !selectedEdge) ? " org-tb-btn--active" : ""}`}
               onClick={() => { setShowRightPanel(!showRightPanel); setSelectedNodeId(null); setSelectedEdgeId(null); }}
-              title="组织设置"
+              title="Org settings"
             >
               <IconGear size={13} />
             </button>
@@ -1704,26 +1704,26 @@ export function OrgEditorView({
             boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
           }}>
             <div style={{ padding: "12px 12px 8px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontWeight: 600, fontSize: 14 }}>{t("orgEditor.title", "组织编排")}</span>
+              <span style={{ fontWeight: 600, fontSize: 14 }}>{t("orgEditor.title", "Org Editor")}</span>
               <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
                 <TooltipProvider delayDuration={300}>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="link" size="sm" onClick={() => setShowTemplates(!showTemplates)} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">模板</Button>
+                      <Button variant="link" size="sm" onClick={() => setShowTemplates(!showTemplates)} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">Templates</Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">从模板创建组织</TooltipContent>
+                    <TooltipContent side="bottom">Create org from template</TooltipContent>
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="link" size="sm" onClick={() => void handleCreateOrg()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">新建</Button>
+                      <Button variant="link" size="sm" onClick={() => void handleCreateOrg()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">New</Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">新建空白组织</TooltipContent>
+                    <TooltipContent side="bottom">Create blank org</TooltipContent>
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="link" size="sm" onClick={() => orgImportRef.current?.click()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">导入</Button>
+                      <Button variant="link" size="sm" onClick={() => orgImportRef.current?.click()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">Import</Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">从文件导入组织</TooltipContent>
+                    <TooltipContent side="bottom">Import org from file</TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
               </div>
@@ -1731,7 +1731,7 @@ export function OrgEditorView({
             {showTemplates && (
               <div style={{ padding: "0 8px 8px" }}>
                 <div className="card" style={{ padding: 8, fontSize: 12 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 6 }}>从模板创建</div>
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>Create from template</div>
                   {templates.map((tpl) => (
                     <div key={tpl.id} onClick={() => handleCreateFromTemplate(tpl.id)}
                       style={{ padding: "6px 8px", borderRadius: "var(--radius-sm)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}
@@ -1740,7 +1740,7 @@ export function OrgEditorView({
                       <span><IconBuilding size={14} /></span>
                       <div>
                         <div style={{ fontWeight: 500 }}>{tpl.name}</div>
-                        <div style={{ fontSize: 10, color: "var(--muted)" }}>{tpl.node_count} 节点</div>
+                        <div style={{ fontSize: 10, color: "var(--muted)" }}>{tpl.node_count} nodes</div>
                       </div>
                     </div>
                   ))}
@@ -1750,7 +1750,7 @@ export function OrgEditorView({
             <div style={{ flex: 1, overflowY: "auto", padding: "0 8px 8px" }}>
               {orgList.length === 0 && (
                 <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 12, padding: 20 }}>
-                  暂无组织，点击上方创建
+                  No orgs yet — create one above
                 </div>
               )}
               {orgList.map((org) => (
@@ -1763,17 +1763,17 @@ export function OrgEditorView({
                     <IconBuilding size={16} />
                     <div style={{ overflow: "hidden" }}>
                       <div style={{ fontWeight: 500, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{org.name}</div>
-                      <div style={{ fontSize: 10, color: "var(--muted)" }}>{org.node_count} 节点 · {ORG_STATUS_LABELS[org.status] || org.status}</div>
+                      <div style={{ fontSize: 10, color: "var(--muted)" }}>{org.node_count} nodes · {ORG_STATUS_LABELS[org.status] || org.status}</div>
                     </div>
                   </div>
-                  <button className="btnSmall" onClick={(e) => { e.stopPropagation(); setConfirmDeleteOrgId(org.id); }} style={{ opacity: 0.5, fontSize: 10 }} title="删除组织">
+                  <button className="btnSmall" onClick={(e) => { e.stopPropagation(); setConfirmDeleteOrgId(org.id); }} style={{ opacity: 0.5, fontSize: 10 }} title="Delete org">
                     <IconTrash size={10} />
                   </button>
                   {confirmDeleteOrgId === org.id && (
                     <div style={{ position: "absolute", right: 0, top: "100%", zIndex: 10, background: "var(--card-bg, #fff)", border: "1px solid var(--line)", borderRadius: 8, padding: "8px 10px", boxShadow: "0 4px 12px rgba(0,0,0,0.12)", display: "flex", gap: 6, alignItems: "center", fontSize: 11 }} onClick={(e) => e.stopPropagation()}>
-                      <span>确认删除?</span>
-                      <button className="btnSmall" onClick={() => handleDeleteOrg(org.id)} style={{ color: "var(--danger)", fontSize: 11 }}>删除</button>
-                      <button className="btnSmall" onClick={() => setConfirmDeleteOrgId(null)} style={{ fontSize: 11 }}>取消</button>
+                      <span>Delete?</span>
+                      <button className="btnSmall" onClick={() => handleDeleteOrg(org.id)} style={{ color: "var(--danger)", fontSize: 11 }}>Delete</button>
+                      <button className="btnSmall" onClick={() => setConfirmDeleteOrgId(null)} style={{ fontSize: 11 }}>Cancel</button>
                     </div>
                   )}
                 </div>
@@ -1795,7 +1795,7 @@ export function OrgEditorView({
             }}>
               <img
                 src={agentOrgImg}
-                alt={t("orgEditor.title", "组织编排")}
+                alt={t("orgEditor.title", "Org Editor")}
                 style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }}
               />
             </div>
@@ -1838,32 +1838,32 @@ export function OrgEditorView({
         }}
       >
         <div style={{ padding: "12px 12px 8px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>{t("orgEditor.title", "组织编排")}</span>
+          <span style={{ fontWeight: 600, fontSize: 14 }}>{t("orgEditor.title", "Org Editor")}</span>
           <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
             <TooltipProvider delayDuration={300}>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button variant="link" size="sm" onClick={() => setShowTemplates(!showTemplates)} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">
-                    模板
+                    Templates
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">从模板创建组织</TooltipContent>
+                <TooltipContent side="bottom">Create org from template</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button variant="link" size="sm" onClick={() => void handleCreateOrg()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">
-                    新建
+                    New
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">新建空白组织</TooltipContent>
+                <TooltipContent side="bottom">Create a blank org</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button variant="link" size="sm" onClick={() => orgImportRef.current?.click()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">
-                    导入
+                    Import
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">从文件导入组织</TooltipContent>
+                <TooltipContent side="bottom">Import org from file</TooltipContent>
               </Tooltip>
             </TooltipProvider>
             <input
@@ -1873,7 +1873,7 @@ export function OrgEditorView({
               style={{ display: "none" }}
               onChange={handleImportOrg}
             />
-            <button className="btnSmall" onClick={() => setShowLeftPanel(false)} title="关闭" style={{ minWidth: 28, minHeight: 28, opacity: 0.5 }}>
+            <button className="btnSmall" onClick={() => setShowLeftPanel(false)} title="Close" style={{ minWidth: 28, minHeight: 28, opacity: 0.5 }}>
               <IconX size={14} />
             </button>
           </div>
@@ -1883,7 +1883,7 @@ export function OrgEditorView({
         {showTemplates && (
           <div style={{ padding: "0 8px 8px" }}>
             <div className="card" style={{ padding: 8, fontSize: 12 }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>从模板创建</div>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Create from template</div>
               {templates.map((tpl) => (
                 <div
                   key={tpl.id}
@@ -1902,7 +1902,7 @@ export function OrgEditorView({
                   <span><IconBuilding size={14} /></span>
                   <div>
                     <div style={{ fontWeight: 500 }}>{tpl.name}</div>
-                    <div style={{ fontSize: 10, color: "var(--muted)" }}>{tpl.node_count} 节点</div>
+                    <div style={{ fontSize: 10, color: "var(--muted)" }}>{tpl.node_count} nodes</div>
                   </div>
                 </div>
               ))}
@@ -1914,7 +1914,7 @@ export function OrgEditorView({
         <div style={{ flex: 1, overflowY: "auto", padding: "0 8px" }}>
           {orgList.length === 0 && (
             <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 12, padding: 20 }}>
-              暂无组织，点击上方创建
+              No orgs yet — create one above
             </div>
           )}
           {orgList.map((org) => (
@@ -1940,7 +1940,7 @@ export function OrgEditorView({
                     {org.name}
                   </div>
                   <div style={{ fontSize: 10, color: "var(--muted)" }}>
-                    {org.node_count} 节点 · {ORG_STATUS_LABELS[org.status] || org.status}
+                    {org.node_count} nodes · {ORG_STATUS_LABELS[org.status] || org.status}
                   </div>
                 </div>
               </div>
@@ -1951,7 +1951,7 @@ export function OrgEditorView({
                   setConfirmDeleteOrgId(org.id);
                 }}
                 style={{ opacity: 0.5, fontSize: 10 }}
-                title="删除组织"
+                title="Delete org"
               >
                 <IconTrash size={10} />
               </button>
@@ -1965,9 +1965,9 @@ export function OrgEditorView({
                   }}
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <span>确认删除?</span>
-                  <button className="btnSmall" onClick={() => handleDeleteOrg(org.id)} style={{ color: "var(--danger)", fontSize: 11 }}>删除</button>
-                  <button className="btnSmall" onClick={() => setConfirmDeleteOrgId(null)} style={{ fontSize: 11 }}>取消</button>
+                  <span>Delete?</span>
+                  <button className="btnSmall" onClick={() => handleDeleteOrg(org.id)} style={{ color: "var(--danger)", fontSize: 11 }}>Delete</button>
+                  <button className="btnSmall" onClick={() => setConfirmDeleteOrgId(null)} style={{ fontSize: 11 }}>Cancel</button>
                 </div>
               )}
             </div>
@@ -1984,24 +1984,24 @@ export function OrgEditorView({
           <div className="org-modal-overlay" onClick={() => setShowNewNodeForm(false)}>
             <div className="org-modal" onClick={e => e.stopPropagation()} style={{ width: 360 }}>
               <div className="org-modal-header">
-                <span>添加节点</span>
+                <span>Add Node</span>
                 <button className="org-modal-close" onClick={() => setShowNewNodeForm(false)}><IconX size={14} /></button>
               </div>
               <div className="org-modal-body">
-                <label className="org-modal-label">岗位名称 *</label>
+                <label className="org-modal-label">Role title *</label>
                 <input
                   className="input"
-                  placeholder="例如：产品经理"
+                  placeholder="e.g. Product Manager"
                   value={newNodeTitle}
                   onChange={(e) => setNewNodeTitle(e.target.value)}
                   style={{ width: "100%", fontSize: 13, marginBottom: 12 }}
                   autoFocus
                   onKeyDown={(e) => e.key === "Enter" && handleAddNode()}
                 />
-                <label className="org-modal-label">部门（可选）</label>
+                <label className="org-modal-label">Department (optional)</label>
                 <input
                   className="input"
-                  placeholder="例如：技术部"
+                  placeholder="e.g. Engineering"
                   value={newNodeDept}
                   onChange={(e) => setNewNodeDept(e.target.value)}
                   style={{ width: "100%", fontSize: 13 }}
@@ -2009,8 +2009,8 @@ export function OrgEditorView({
                 />
               </div>
               <div className="org-modal-footer">
-                <button className="org-modal-btn" onClick={() => setShowNewNodeForm(false)}>取消</button>
-                <button className="org-modal-btn org-modal-btn--primary" onClick={handleAddNode}>添加</button>
+                <button className="org-modal-btn" onClick={() => setShowNewNodeForm(false)}>Cancel</button>
+                <button className="org-modal-btn org-modal-btn--primary" onClick={handleAddNode}>Add</button>
               </div>
             </div>
           </div>,

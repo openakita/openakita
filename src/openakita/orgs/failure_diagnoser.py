@@ -251,96 +251,96 @@ def _classify_delegate_subtype(evidence: list[dict]) -> str | None:
 # headline 使用 str.format()；预设占位符: tool / iterations / exit_reason
 _DIAGNOSIS_TEMPLATES: dict[str, dict[str, str]] = {
     "org_delegate_self": {
-        "headline": "节点连续 {iterations} 次把任务委派给了自己，被系统判定为死循环并强制终止",
+        "headline": "The node delegated a task to itself {iterations} time(s) in a row. The system detected an infinite loop and force-terminated.",
         "suggestion": (
-            "最常见原因是 LLM 把'自己的角色'（例如 CPO=产品总监）和"
-            "'下级角色名'（例如 产品经理=pm）搞混。\n\n"
-            "**建议**：\n"
-            "1. 在指令里直接使用下级的节点 id（例如 `pm`）而不是中文职位名；\n"
-            "2. 或者让当前节点使用 `org_submit_deliverable` 亲自完成并交付；\n"
-            "3. 长期可调整该节点的 prompt，明确区分'我是谁'和'我的下级是谁'。"
+            "The most common cause is the LLM confusing 'its own role' (e.g. CPO = Chief Product Officer) "
+            "with 'a subordinate role name' (e.g. Product Manager = pm).\n\n"
+            "**Suggestions**:\n"
+            "1. Use the subordinate's exact node id (e.g. `pm`) in your instructions instead of a role title;\n"
+            "2. Or have the current node complete and deliver the work itself using `org_submit_deliverable`;\n"
+            "3. Long-term: adjust the node's prompt to clearly distinguish 'who I am' from 'who my subordinates are'."
         ),
     },
     "org_delegate_self_recovered": {
-        "headline": "节点遇到 {iterations} 次 delegate 自指误判，已通过 send_message 接力把任务派下去",
+        "headline": "The node encountered {iterations} delegate self-misjudgement(s) but recovered by relaying the task via send_message.",
         "suggestion": (
-            "本次 LLM 自动改用 `org_send_message(propagate_chain=true)` 把当前 "
-            "task_chain_id 接力给下属，任务链未中断。\n\n"
-            "**建议（如频繁出现可关注）**：\n"
-            "1. 检查节点 prompt 中目标节点 id 是否清晰；\n"
-            "2. 排查日志中的 `[delegate-self-misjudge]` ERROR 行获取自指现场。"
+            "The LLM automatically fell back to `org_send_message(propagate_chain=true)` to relay the current "
+            "task_chain_id to a subordinate. The task chain was not broken.\n\n"
+            "**Suggestions (if this recurs frequently)**:\n"
+            "1. Check that the target node id is clearly stated in the node's prompt;\n"
+            "2. Look for `[delegate-self-misjudge]` ERROR lines in the logs for the exact context."
         ),
     },
     "non_direct_subordinate": {
-        "headline": "节点连续 {iterations} 次尝试委派给非直属下级，被系统强制终止",
+        "headline": "The node attempted {iterations} time(s) to delegate to a non-direct subordinate. The system force-terminated.",
         "suggestion": (
-            "`org_delegate_task` 只能把任务委派给**直属下级**。\n\n"
-            "**建议**：\n"
-            "1. 改由目标节点的直属上司来下派任务；\n"
-            "2. 或者用 `org_send_message` 做横向协作提醒。"
+            "`org_delegate_task` can only delegate to **direct subordinates**.\n\n"
+            "**Suggestions**:\n"
+            "1. Have the target node's direct superior issue the task instead;\n"
+            "2. Or use `org_send_message` for horizontal collaboration."
         ),
     },
     "delegate_target_not_exist": {
-        "headline": "节点连续 {iterations} 次委派到不存在的节点，被系统强制终止",
+        "headline": "The node attempted {iterations} time(s) to delegate to a non-existent node. The system force-terminated.",
         "suggestion": (
-            "目标 `to_node` 在当前组织中找不到。\n\n"
-            "**建议**：\n"
-            "1. 调用 `org_get_org_chart` 查看当前所有可用节点 id；\n"
-            "2. 检查参数是否拼写错误或混用了中文角色名。"
+            "The target `to_node` cannot be found in the current organization.\n\n"
+            "**Suggestions**:\n"
+            "1. Call `org_get_org_chart` to see all available node ids;\n"
+            "2. Check for typos or role-title/id confusion."
         ),
     },
     "org_delegate_loop": {
-        "headline": "org_delegate_task 陷入死循环（{iterations} 次失败尝试），被系统强制终止",
+        "headline": "org_delegate_task entered an infinite loop ({iterations} failed attempts). The system force-terminated.",
         "suggestion": (
-            "**建议**：\n"
-            "1. 确认任务是否应该由当前节点自行完成；\n"
-            "2. 若是，改用 `org_submit_deliverable` 交付结果；\n"
-            "3. 若需要外部协作，用 `org_send_message` 代替。"
+            "**Suggestions**:\n"
+            "1. Confirm whether the current node should complete the task itself;\n"
+            "2. If so, use `org_submit_deliverable` to deliver the result;\n"
+            "3. If external collaboration is needed, use `org_send_message` instead."
         ),
     },
     "loop_detected_generic": {
-        "headline": "工具 `{tool}` 被连续调用陷入死循环，被系统强制终止",
+        "headline": "Tool `{tool}` was called repeatedly and entered an infinite loop. The system force-terminated.",
         "suggestion": (
-            "**建议**：\n"
-            "1. 检查该工具的参数是否反复相同；\n"
-            "2. 换一个工具或调整策略；\n"
-            "3. 若任务已无法继续，直接用自然语言回复用户当前进展。"
+            "**Suggestions**:\n"
+            "1. Check whether the tool's arguments are identical across calls;\n"
+            "2. Switch to a different tool or adjust your strategy;\n"
+            "3. If the task cannot continue, reply to the user in plain text with the current progress."
         ),
     },
     "max_iterations": {
-        "headline": "节点达到最大迭代次数仍未完成任务",
+        "headline": "The node reached the maximum number of iterations without completing the task.",
         "suggestion": (
-            "**建议**：\n"
-            "1. 把目标拆分成更小的子任务分批下发；\n"
-            "2. 检查是否有工具反复失败导致迭代被浪费；\n"
-            "3. 如确需长任务，可在配置里放宽 `max_iterations` 上限。"
+            "**Suggestions**:\n"
+            "1. Break the goal into smaller subtasks and delegate them in batches;\n"
+            "2. Check whether a tool is repeatedly failing and wasting iterations;\n"
+            "3. If a long-running task is genuinely needed, raise the `max_iterations` limit in settings."
         ),
     },
     "verify_incomplete": {
-        "headline": "节点未交付要求的文件 / 附件，仅以纯文字回复结束本轮",
+        "headline": "The node did not deliver the required file / attachment and ended this round with a text-only reply.",
         "suggestion": (
-            "如果用户确实需要附件交付，建议下一轮：\n"
-            "1. 让节点用 `write_file` 把成果写到工作区；或\n"
-            "2. 调 `org_submit_deliverable(file_attachments=[…])` 带附件交给上级；\n"
-            "3. 若实际只需文字回答，可在「组织设置」放宽 verify / 关闭兜底落盘。"
+            "If the user genuinely needs an attachment, try the following in the next round:\n"
+            "1. Have the node write the output to the workspace using `write_file`; or\n"
+            "2. Call `org_submit_deliverable(file_attachments=[…])` to deliver the attachment to the superior;\n"
+            "3. If only a text answer is needed, relax the verify setting or disable fallback persistence in Organization Settings."
         ),
     },
     "verify_incomplete_with_children": {
-        "headline": "节点已通过下属交付完成任务，但 verify 仍标记未完成（提示性）",
+        "headline": "The node completed the task via subordinate deliveries, but verify still flagged it as incomplete (advisory only).",
         "suggestion": (
-            "本节点已 `org_accept_deliverable` 验收下属至少 1 项交付，"
-            "实际任务通常已完成；verify 提示更像「严格规则未匹配」，可作为参考而非阻断信号。\n\n"
-            "**建议**：\n"
-            "1. 直接查看下属上交的文件/链接确认结果是否符合预期；\n"
-            "2. 如确需进一步动作，向该节点追加一条明确的指令即可。"
+            "This node has accepted at least 1 subordinate delivery via `org_accept_deliverable`. "
+            "The task is usually complete; the verify flag is more like 'strict rule not matched' and should be treated as advisory, not a hard blocker.\n\n"
+            "**Suggestions**:\n"
+            "1. Directly review the files/links submitted by subordinates to confirm the result meets expectations;\n"
+            "2. If further action is needed, send the node a clear follow-up instruction."
         ),
     },
     "unknown": {
-        "headline": "任务非正常结束（exit_reason={exit_reason}）",
+        "headline": "Task ended abnormally (exit_reason={exit_reason}).",
         "suggestion": (
-            "未匹配到典型根因模式。\n\n"
-            "**建议**：查看对应的 react_trace JSON 文件（`data/react_traces/<date>/…`）"
-            "了解完整推理过程，或把任务描述改得更明确后重试。"
+            "No matching root-cause pattern found.\n\n"
+            "**Suggestion**: Review the react_trace JSON file under `data/react_traces/<date>/…` "
+            "for the full reasoning trace, or clarify the task description and retry."
         ),
     },
 }
@@ -430,7 +430,7 @@ def summarize(
                 "iter": 0,
                 "tool": "…",
                 "args_summary": "",
-                "error": f"（还有 {omitted} 条失败记录未展示，请查看完整 react_trace）",
+                "error": f"({omitted} additional failure records not shown — check the full react_trace for details)",
             })
             evidence = trimmed
 
@@ -445,9 +445,9 @@ def summarize(
         logger.debug("[FailureDiagnoser] summarize failed: %s", exc)
         return {
             "root_cause": "unknown",
-            "headline": f"任务非正常结束（exit_reason={safe_reason}）",
+            "headline": f"Task ended abnormally (exit_reason={safe_reason}).",
             "evidence": [],
-            "suggestion": "诊断模块遇到异常，建议查看 `data/react_traces/` 下的完整 trace。",
+            "suggestion": "The diagnostic module encountered an error. Review the full trace under `data/react_traces/`.",
             "exit_reason": safe_reason,
         }
 

@@ -549,7 +549,7 @@ class OrgToolHandler:
                 from openakita.orgs.models import OrgProject, ProjectStatus
                 default_proj = OrgProject(
                     org_id=org_id,
-                    name="任务追踪",
+                    name="Task Tracking",
                     status=ProjectStatus.ACTIVE,
                 )
                 store.create_project(default_proj)
@@ -664,7 +664,7 @@ class OrgToolHandler:
                 store.update_task(existing.project_id, existing.id, {"plan_steps": plan_steps})
                 self._append_execution_log(
                     org_id, chain_id,
-                    f"计划创建: {tool_input.get('task_summary', '')[:_LIM_EXEC_LOG]}",
+                    f"Plan created: {tool_input.get('task_summary', '')[:_LIM_EXEC_LOG]}",
                     node_id,
                 )
             elif tool_name == "update_plan_step":
@@ -683,7 +683,7 @@ class OrgToolHandler:
                 store.update_task(existing.project_id, existing.id, {"progress_pct": progress_pct})
                 self._append_execution_log(
                     org_id, chain_id,
-                    f"步骤 {step_id}: {status} - {result_text[:_LIM_EXEC_LOG]}",
+                    f"Step {step_id}: {status} - {result_text[:_LIM_EXEC_LOG]}",
                     node_id,
                 )
             elif tool_name == "complete_plan":
@@ -695,7 +695,7 @@ class OrgToolHandler:
                 })
                 self._append_execution_log(
                     org_id, chain_id,
-                    f"计划完成: {summary[:_LIM_EXEC_LOG]}",
+                    f"Plan completed: {summary[:_LIM_EXEC_LOG]}",
                     node_id,
                 )
         except Exception as exc:
