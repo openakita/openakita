@@ -38,3 +38,10 @@ def count_unchecked(content: str) -> int:
 
 def count_checked(content: str) -> int:
     return count_checkboxes(content).checked
+
+
+def uncheck_all(content: str) -> str:
+    """Reset every checked task marker to `[ ]`. Non-task `[x]` tokens embedded
+    in prose are left alone because the regex is anchored to the bullet prefix.
+    Idempotent: calling twice is the same as calling once."""
+    return _CHECKED_REPLACE.sub(r"\1[ ]", content)
