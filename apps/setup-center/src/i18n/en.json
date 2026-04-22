@@ -1626,7 +1626,9 @@
     "status_completed": "Done",
     "status_error": "Error",
     "status_dormant": "Dormant",
-    "allDormant": "All agents are dormant — start a conversation to awaken"
+    "allDormant": "All agents are dormant — start a conversation to awaken",
+    "cliBadge": "CLI",
+    "cliProviderTooltip": "External CLI agent · provider: {{provider}}"
   },
   "feedback": {
     "trigger": "Feedback",

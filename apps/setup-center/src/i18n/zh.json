@@ -1626,7 +1626,9 @@
     "status_completed": "已完成",
     "status_error": "错误",
     "status_dormant": "休眠",
-    "allDormant": "所有 Agent 处于休眠状态，发起对话即可唤醒"
+    "allDormant": "所有 Agent 处于休眠状态，发起对话即可唤醒",
+    "cliBadge": "CLI",
+    "cliProviderTooltip": "外部 CLI 代理 · 提供商:{{provider}}"
   },
   "feedback": {
     "trigger": "反馈",

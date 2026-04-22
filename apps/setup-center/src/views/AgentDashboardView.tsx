@@ -1206,6 +1206,18 @@ export function AgentDashboardView({
               <span className="neural-status-dot error" />
             )}
             {n.is_sub_agent && <span className="neural-sub-badge">SUB</span>}
+            {n.agent_type === "external_cli" && (
+              <span
+                className="neural-cli-badge"
+                title={t("dashboard.cliProviderTooltip", {
+                  provider: n.cli_provider_id || "cli",
+                })}
+              >
+                {cliIcon(n.cli_provider_id)}
+                {" "}
+                {t("dashboard.cliBadge")}
+              </span>
+            )}
           </div>
         ))}
       </div>
@@ -1392,6 +1404,16 @@ function NeuralStyles() {
         background: rgba(124,58,237,0.15);
         color: #a78bfa;
         letter-spacing: 0.5px;
+      }
+      .neural-cli-badge {
+        font-size: 9px;
+        padding: 1px 4px;
+        border-radius: 3px;
+        background: rgba(217, 119, 87, 0.18);
+        color: #d97757;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+        margin-left: 4px;
       }
 
       /* HUD */
