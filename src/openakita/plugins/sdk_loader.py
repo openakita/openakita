@@ -2,11 +2,11 @@
 
 Why this exists
 ---------------
-Since plugin scaffold contrib (``openakita_plugin_sdk.contrib``) was added,
-plugin entry modules import ``openakita_plugin_sdk`` directly. Outside a
-production install (where the SDK is shipped via the ``[plugins]`` extra or
-bundled wheel) the package is **not** discoverable, and every such plugin
-fails with::
+Plugin entry modules import ``openakita_plugin_sdk`` directly (for
+``PluginBase`` / ``PluginAPI`` / ``tool_definition`` / etc.).  Outside a
+production install (where the SDK is shipped via the ``[plugins]`` extra
+or bundled wheel) the package is **not** discoverable, and every such
+plugin fails with::
 
     ModuleNotFoundError: No module named 'openakita_plugin_sdk'
 

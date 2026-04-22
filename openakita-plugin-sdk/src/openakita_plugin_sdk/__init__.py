@@ -8,15 +8,15 @@ Quick start::
     from openakita_plugin_sdk.testing import MockPluginAPI, assert_plugin_loads
     from openakita_plugin_sdk.scaffold import scaffold_plugin
 
-For AI media plugins (video / image / audio), use the contrib subpackage::
+The SDK is intentionally minimal — it gives plugins a typed entrypoint,
+a host-facing API surface, and a testing harness, nothing more.  Any
+opinionated AI-media scaffolding (task DB, vendor client, error coach,
+cost preview, render pipeline, intent verifier, …) belongs to the
+plugin that needs it; see ``plugins-archive/_shared/`` for examples
+that used to ship under ``openakita_plugin_sdk.contrib`` (removed in
+0.7.0).
 
-    from openakita_plugin_sdk.contrib import (
-        BaseTaskManager, BaseVendorClient, ErrorCoach, CostEstimator,
-        IntentVerifier, PromptOptimizer, QualityGates, build_render_pipeline,
-    )
-
-See ``docs/getting-started.md`` for the full walkthrough; see
-``docs/contrib.md`` for the AI media scaffolding reference.
+See ``docs/getting-started.md`` for the full walkthrough.
 """
 
 from .core import PluginAPI, PluginBase, PluginManifest

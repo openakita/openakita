@@ -4,13 +4,17 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Tongyi Image Generator</title>
-  <script src="/api/plugins/_sdk/bootstrap.js"></script>
-  <!-- OpenAkita Plugin UI Kit (shared, theme-aware; safe oa-* prefix only) -->
-  <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css?v=20260419-8">
-  <script src="/api/plugins/_sdk/ui-kit/icons.js?v=20260419-8"></script>
-  <script src="/api/plugins/_sdk/ui-kit/markdown-mini.js?v=20260419-8"></script>
-  <!-- i18n helper: subscribes to host locale + provides OpenAkitaI18n.t() -->
-  <script src="/api/plugins/_sdk/ui-kit/i18n.js?v=20260419-8"></script>
+  <!--
+    Self-contained plugin UI: bootstrap + UI Kit are inlined under _assets/.
+    Plugins MUST NOT depend on host-mounted /api/plugins/_sdk/* (removed in
+    SDK 0.7.0). See plugins-archive/_shared/web-uikit/README.md for the
+    canonical reference copy.
+  -->
+  <script src="_assets/bootstrap.js"></script>
+  <link rel="stylesheet" href="_assets/styles.css">
+  <script src="_assets/icons.js"></script>
+  <script src="_assets/markdown-mini.js"></script>
+  <script src="_assets/i18n.js"></script>
   <!--
     Preload CDN deps in parallel (script tags below remain synchronous so
     React/ReactDOM/Babel still execute in declared order; preload only
@@ -632,10 +636,10 @@ const I18N_DICT = {
 };
 
 // Register dictionary with the shared ui-kit i18n helper. The helper is
-// loaded via /api/plugins/_sdk/ui-kit/i18n.js and wires itself to the host's
-// `bridge:locale-change` events automatically. If the helper failed to
-// load (e.g. dev preview without backend) we still fall back to a built-in
-// micro-implementation so the UI never crashes.
+// loaded via _assets/i18n.js (self-contained, no host SDK route) and wires
+// itself to the host's `bridge:locale-change` events automatically. If the
+// helper failed to load (e.g. dev preview without backend) we still fall
+// back to a built-in micro-implementation so the UI never crashes.
 const _i18n = (function () {
   if (window.OpenAkitaI18n && window.OpenAkitaI18n.register) {
     window.OpenAkitaI18n.register(I18N_DICT);
@@ -696,7 +700,7 @@ function modeList(t) {
   return MODE_DEFS.map(m => ({ id: m.id, iconKey: m.iconKey, name: t("modes." + m.id) }));
 }
 
-// Inline SVG icon helper (uses window.OpenAkitaIcons loaded from /api/plugins/_sdk/ui-kit/icons.js).
+// Inline SVG icon helper (uses window.OpenAkitaIcons loaded from _assets/icons.js).
 function OAIcon({ name, style }) {
   const svg = (window.OpenAkitaIcons && window.OpenAkitaIcons[name]) ? window.OpenAkitaIcons[name]() : "";
   return <span className="oa-icon" style={style} dangerouslySetInnerHTML={{ __html: svg }} />;

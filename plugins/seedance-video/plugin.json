@@ -27,7 +27,7 @@
     "openakita": ">=1.27.0",
     "plugin_api": "~1",
     "plugin_ui_api": "~1",
-    "sdk": ">=0.6.0,<1.0.0"
+    "sdk": ">=0.7.0,<1.0.0"
   },
   "provides": {
     "tools": ["seedance_create", "seedance_status", "seedance_list"],

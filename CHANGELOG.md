@@ -5,7 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - 2026-04-21
+## [Unreleased] - 2026-04-22
+
+### Changed — SDK 主动收缩，回归"最小插件壳子"定位
+
+完整执行 [SDK Refocus Cleanup 计划](.cursor/plans/sdk_refocus_cleanup_b3b5f02d.plan.md)。
+SDK `0.6.0 → 0.7.0`，`contrib/` 子包整体下沉，`plugins/` 从 21 → 2 一等公民。
+
+#### SDK 包瘦身（0.6.0 → 0.7.0）
+
+- **删除** `openakita_plugin_sdk.contrib` 整个子包（28 个模块 + `tts/` / `asr/`
+  子包 + 287 行的 `__init__.py`）。SDK 顶层 import 表面回到约 25 项（对齐 0.2 时代）。
+- **保留** SDK 核心：`PluginBase` / `PluginAPI` / `PluginManifest` / `tool_definition` /
+  `decorators` / `hooks` / `protocols` / `scaffold` / `testing` / `channel` / `llm` /
+  `config` / `types` / `version` / `skill_loader`。
+- **删除** `web/ui-kit/` 中无消费者的 6 个 JS：`cost-preview.js` / `error-coach.js` /
+  `dep-gate.js`（保留——seedance 还用）/ `onboard-wizard.js` / `first-success-celebrate.js` /
+  `task-panel.js` / `event-helpers.js`。`bootstrap.js` / `styles.css` / `icons.js` /
+  `markdown-mini.js` / `i18n.js` / `dep-gate.js` 因 tongyi/seedance UI 仍引用而保留。
+
+#### 一等公民收敛到 `plugins/`（21 → 2）
+
+- 仅保留 `plugins/tongyi-image` 与 `plugins/seedance-video`。
+- 两者各自 `_inline/` 子目录托管自家需要的 helper 副本：
+  - `tongyi-image/tongyi_inline/`：`upload_preview.py` / `storage_stats.py`
+  - `seedance-video/seedance_inline/`：`vendor_client.py` / `upload_preview.py` /
+    `storage_stats.py` / `llm_json_parser.py` / `parallel_executor.py`
+- `seedance-video/long_video.py` **删掉** `CostTracker` / `take_checkpoint` /
+  `restore_from_snapshot` 的 demo 桩调用（这些 SDK 接口验证用的代码原本只服务于"演示"，
+  和真实 vendor pipeline 无关），相应 `tests/test_long_video.py` 同步重写。
+
+#### 19 个非一等公民插件 → `plugins-archive/`
+
+`avatar-speaker` / `bgm-mixer` / `bgm-suggester` / `dub-it` / `ecommerce-image` /
+`highlight-cutter` / `image-edit` / `local-sd-flux` / `poster-maker` / `ppt-to-video` /
+`shorts-batch` / `smart-poster-grid` / `storyboard` / `subtitle-maker` /
+`transcribe-archive` / `tts-studio` / `video-bg-remove` / `video-color-grade` /
+`video-translator`。
+
+- 仍可手动启用（README 写明 `cp` / 软链回 `data/plugins/` 才能加载）。
+- **不接受 issue / 不主动跟 SDK 升级**；CI 不再覆盖它们的 `tests/`。
+- 它们继续依赖的 16 个 helper 模块（含 `tts/` `asr/` 子包）下沉到
+  `plugins-archive/_shared/`，每个 archive 插件入口都自动 bootstrap
+  `plugins-archive/` 进 `sys.path`，再 `from _shared import X`。
+
+#### 12 个 0-消费者模块 → `openakita-plugin-sdk/staging/contrib/`
+
+`agent_loop_config` / `checkpoint` / `cost_tracker` / `cost_translation` /
+`delivery_promise` / `dep_catalog` / `dep_gate` / `env_any_loader` /
+`parallel_executor` / `prompt_optimizer` / `prompts` / `tool_result`
+（含 `data/prompts/` 下 5 个 markdown / txt）。
+
+- staging 区**仅作为代码参考保留**，不再 import、不再跑 CI、不属于 SDK 公共 API。
+- 对应的 `tests/contrib/test_*.py` 直接删除（7 个）。
+
+#### 文档同步
+
+- 删除 `openakita-plugin-sdk/docs/contrib.md` / `ai-media-scaffold-guide.md` /
+  `dependency-gate.md`（对应模块都已下沉）。
+- `openakita-plugin-sdk/README.md` / 顶层 `__init__.py` 删除 contrib 段落，
+  明确 SDK 只做"最小壳子"。
+- `docs/plugin-context-cheatsheet.md` 21 插件矩阵 → "2 一等公民 + 19 archive" 两栏。
+
+---
+
+## [前置整改] - 2026-04-21
 
 ### Added — 插件全量整改 (Plugin Overhaul Phases 0–4)
 

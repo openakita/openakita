@@ -26,9 +26,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-          # Install monorepo plugin SDK so that any contrib import in src/ or
-          # plugins/ resolves during lint/type-check; PyPI 0.3.0 may not exist
-          # yet at lint time, so we always use the local source tree.
+          # SDK 0.7.0 主动收缩到「最小插件壳子」定位 (2026-04-22)：旧
+          # ``openakita_plugin_sdk.contrib`` 子包已下沉到 plugins-archive/_shared
+          # 与 openakita-plugin-sdk/staging/contrib，src/ 与一等公民插件
+          # (tongyi-image / seedance-video) 都不再 import 它。我们仍 install
+          # 本地 SDK 源码树，以便 lint/type-check 解析最小核心 API。
           pip install -e ./openakita-plugin-sdk
 
       - name: Check version consistency
@@ -337,7 +339,9 @@ jobs:
           pip install -e ".[all]"
           # Non-editable so PyInstaller picks the SDK up as a normal site-packages
           # entry; the bundled openakita-server image must contain the SDK so
-          # plugin code (openakita_plugin_sdk.contrib.*) loads inside Tauri.
+          # first-class plugin code (tongyi-image / seedance-video) loads
+          # inside Tauri.  Note: as of SDK 0.7.0 the old contrib subpackage
+          # is gone — plugins vendor their own helpers under <plugin>_inline/.
           pip install ./openakita-plugin-sdk
           pip install "pyinstaller>=6.18.0"
 
@@ -405,6 +409,13 @@ jobs:
       - name: Lint SDK
         working-directory: openakita-plugin-sdk
         run: ruff check src/
+
+      - name: Run SDK tests (core only — excludes staging/ archive _shared/)
+        working-directory: openakita-plugin-sdk
+        run: |
+          pip install -e .
+          pip install pytest pytest-asyncio
+          pytest tests/ -v
 
       - name: Build SDK wheel
         run: python -m build --wheel openakita-plugin-sdk/ --outdir dist-sdk/

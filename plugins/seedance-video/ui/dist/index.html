@@ -4,13 +4,20 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Seedance Video Generator</title>
-  <script src="/api/plugins/_sdk/bootstrap.js"></script>
-  <!-- OpenAkita Plugin UI Kit (shared, theme-aware; safe oa-* prefix only) -->
-  <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css?v=20260419-8">
-  <script src="/api/plugins/_sdk/ui-kit/icons.js?v=20260419-8"></script>
-  <script src="/api/plugins/_sdk/ui-kit/i18n.js?v=20260419-8"></script>
-  <script src="/api/plugins/_sdk/ui-kit/markdown-mini.js?v=20260419-8"></script>
-  <script src="/api/plugins/_sdk/ui-kit/dep-gate.js?v=20260419-8"></script>
+  <!--
+    Self-contained plugin UI: bootstrap + UI Kit are inlined under _assets/.
+    Plugins MUST NOT depend on host-mounted /api/plugins/_sdk/* (removed in
+    SDK 0.7.0). See plugins-archive/_shared/web-uikit/README.md for the
+    canonical reference copy. dep-gate.js is intentionally NOT inlined: the
+    backend route plugin_deps.py was retired in 0.7.0 — the existing
+    defensive `if (window.OpenAkitaDepGate && ...)` checks below no-op
+    safely without it.
+  -->
+  <script src="_assets/bootstrap.js"></script>
+  <link rel="stylesheet" href="_assets/styles.css">
+  <script src="_assets/icons.js"></script>
+  <script src="_assets/i18n.js"></script>
+  <script src="_assets/markdown-mini.js"></script>
   <!--
     Preload CDN deps in parallel (script tags below remain synchronous so
     React/ReactDOM/Babel still execute in declared order; preload only
@@ -85,9 +92,9 @@
     .mode-btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-size: 12px; cursor: pointer; transition: all .15s; }
     .mode-btn:hover { background: var(--bg-hover); color: var(--text); }
     .mode-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
-    .ratio-btn { width: 48px; height: 36px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 10px; transition: all .15s; color: var(--text-dim); }
-    .ratio-btn:hover { border-color: var(--text-muted); }
-    .ratio-btn.active { border-color: var(--primary); color: var(--primary); background: rgba(59,130,246,.08); }
+    .ratio-btn { min-width: 56px; height: 40px; padding: 0 12px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all .15s; color: var(--text-muted); background: var(--bg-card); user-select: none; }
+    .ratio-btn:hover { border-color: var(--primary); color: var(--text); }
+    .ratio-btn.active { border-color: var(--primary); color: var(--primary); background: rgba(59,130,246,.10); font-weight: 600; box-shadow: 0 0 0 1px var(--primary) inset; }
     .slider-wrap { display: flex; align-items: center; gap: 12px; }
     .slider-wrap input[type=range] { flex: 1; accent-color: var(--primary); }
     .slider-val { min-width: 40px; text-align: center; font-size: 14px; font-weight: 600; color: var(--primary); }
@@ -152,11 +159,81 @@
     .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
     @keyframes ak-fade-in { from { opacity: 0; } to { opacity: 1; } }
     @keyframes ak-scale-in { from { transform: scale(.94); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    /* ── advanced toggles row (Tongyi-style: label + switch tightly grouped) ── */
+    .toggle-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+    .toggle-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px; border-radius: 6px;
+      cursor: pointer; transition: background .15s;
+      user-select: none;
+    }
+    .toggle-row:hover { background: var(--bg-hover); }
+    .toggle-row__label { font-size: 13px; color: var(--text); flex: 1; }
+    .toggle-row .switch { flex-shrink: 0; }
+    .advanced-divider { height: 1px; background: var(--border); margin: 14px 0 12px; }
+    /* ── full-width primary button (block) ── */
+    .btn-block {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      width: 100%; padding: 12px 16px; font-size: 14px; font-weight: 600;
+      border-radius: 8px;
+    }
+    /* ── prompt textarea wrapper with floating counter ── */
+    .prompt-wrap { position: relative; }
+    .prompt-wrap .prompt-counter {
+      position: absolute; bottom: 8px; right: 12px;
+      font-size: 11px; color: var(--text-dim);
+      pointer-events: none;
+      background: linear-gradient(to right, transparent, var(--bg) 30%);
+      padding: 2px 4px 2px 16px; border-radius: 4px;
+    }
+    /* ── header: API key status pill ── */
+    .api-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 10px; border-radius: 999px;
+      font-size: 12px; font-weight: 500;
+      background: rgba(34,197,94,.12); color: var(--success);
+      cursor: default;
+    }
+    .api-pill--missing {
+      background: rgba(245,158,11,.15); color: var(--warning);
+      cursor: pointer;
+    }
+    .api-pill--missing:hover { filter: brightness(0.95); }
+    /* ── filter group (tongyi-style horizontal pill rows) ── */
+    .filter-group { display: flex; flex-direction: column; gap: 6px; }
+    .filter-group + .filter-group { margin-top: 8px; }
+    .filter-group__label {
+      font-size: 11px; font-weight: 600;
+      color: var(--text-muted); text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .filter-group__buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+    .filter-group__buttons .mode-btn { padding: 5px 12px; font-size: 12px; }
+    /* ── system component callout body (settings) ── */
+    .deps-host { margin-top: 6px; }
+    .deps-host:empty { display: none; }
+    .deps-help {
+      font-size: 12px; color: var(--text-muted); line-height: 1.7;
+      background: var(--bg); border: 1px solid var(--border);
+      border-left: 3px solid var(--primary);
+      border-radius: 6px; padding: 10px 12px; margin-bottom: 10px;
+    }
+    .deps-help strong { color: var(--text); font-weight: 600; }
+    .deps-help ul { margin: 6px 0 0 18px; padding: 0; }
+    .deps-help li { margin: 2px 0; }
+    /* ── inline ffmpeg-missing notice (storyboard) ── */
+    .inline-warn {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 12px; margin-bottom: 12px;
+      background: rgba(245,158,11,.10); border: 1px solid rgba(245,158,11,.35);
+      border-radius: 8px; font-size: 13px; color: var(--text);
+    }
+    .inline-warn__text { flex: 1; }
+    .inline-warn__text small { display: block; color: var(--text-muted); font-size: 11px; margin-top: 2px; }
   </style>
 </head>
 <body>
 <div id="root"></div>
-<div data-oa-dep="ffmpeg"></div>
 <script>
 // ── Minimal Bridge SDK with direct HTTP fallback ──
 const BRIDGE_VER = 1;
@@ -420,7 +497,8 @@ const I18N_DICT = {
     "create.toggle.webSearch": "联网搜索",
     "create.prompt.placeholder": "描述你想生成的视频内容...",
     "create.prompt.counter": "{n}/5000",
-    "create.btn.optimize": "AI 优化提示词",
+    "create.btn.optimize": "AI 优化",
+    "create.btn.optimize.title": "调用 LLM 自动润色 / 重写提示词，让画面描述更细致一致",
     "create.btn.startVideo": "生成视频",
     "create.btn.startDraft": "生成样片预览",
     "create.btn.startFlex": "提交离线任务",
@@ -463,7 +541,10 @@ const I18N_DICT = {
     "modal.taskStarted.online": "视频正在云端异步生成，通常需要 1~3 分钟。可前往任务列表查看生成进度。",
     "modal.taskStarted.continue": "继续创建",
     "modal.taskStarted.goTasks": "前往任务列表",
+    "tasks.filter.status": "状态",
+    "tasks.filter.type": "类型",
     "tasks.filter.all": "全部",
+    "tasks.filter.allTypes": "全部类型",
     "tasks.filter.running": "进行中",
     "tasks.filter.succeeded": "已完成",
     "tasks.filter.failed": "失败",
@@ -546,6 +627,9 @@ const I18N_DICT = {
     "story.results.failPart": " · 失败 {n}",
     "story.concat.title": "拼接完成",
     "story.concat.tip": "可拼接 {n} 个视频片段",
+    "story.ffmpeg.warn.title": "FFmpeg 未安装，无法拼接长视频",
+    "story.ffmpeg.warn.hint": "请前往「设置 > 系统组件」一键安装 FFmpeg",
+    "story.ffmpeg.warn.cta": "前往安装",
     "story.concat.idle": "拼接为长视频 ({mode})",
     "story.concat.busy": "拼接中...",
     "story.concat.modeCut": "硬切",
@@ -558,6 +642,12 @@ const I18N_DICT = {
     "settings.section.defaults": "默认参数",
     "settings.section.folder": "文件夹设置",
     "settings.section.webhook": "Webhook 设置",
+    "settings.section.system": "系统组件",
+    "settings.system.intro.strong": "FFmpeg 仅用于「分镜工作台」的长视频拼接，以及「素材库」的视频缩略预览。",
+    "settings.system.intro.body": "文生视频 / 图生视频 / 任务列表 / 提示词指南等核心功能不依赖 FFmpeg。如果你不需要长视频拼接，可以暂时跳过安装。",
+    "settings.system.platform.win": "Windows: 「一键安装」会调用 winget 自动安装 Gyan.FFmpeg，无需管理员权限。",
+    "settings.system.platform.mac": "macOS: 「一键安装」会调用 Homebrew 自动安装 ffmpeg。",
+    "settings.system.platform.linux": "Linux: apt / dnf 需要 root 权限。如果 OpenAkita 以普通用户身份运行，请点击「手动安装」按系统提示执行 sudo apt-get install ffmpeg。",
     "settings.label.apiKey": "ARK API Key",
     "settings.api.placeholder": "输入 Volcengine Ark API Key",
     "settings.api.show": "显示",
@@ -666,6 +756,7 @@ const I18N_DICT = {
     "create.prompt.placeholder": "Describe the video you want to generate…",
     "create.prompt.counter": "{n}/5000",
     "create.btn.optimize": "AI Optimize",
+    "create.btn.optimize.title": "Use an LLM to refine the prompt for richer, more consistent imagery.",
     "create.btn.startVideo": "Generate Video",
     "create.btn.startDraft": "Generate Draft Preview",
     "create.btn.startFlex": "Submit Flex Job",
@@ -708,7 +799,10 @@ const I18N_DICT = {
     "modal.taskStarted.online": "Video is generating in the cloud (~1–3 min). Check Tasks for progress.",
     "modal.taskStarted.continue": "Keep creating",
     "modal.taskStarted.goTasks": "Open Tasks",
+    "tasks.filter.status": "Status",
+    "tasks.filter.type": "Type",
     "tasks.filter.all": "All",
+    "tasks.filter.allTypes": "All types",
     "tasks.filter.running": "Running",
     "tasks.filter.succeeded": "Done",
     "tasks.filter.failed": "Failed",
@@ -791,6 +885,9 @@ const I18N_DICT = {
     "story.results.failPart": " · Failed {n}",
     "story.concat.title": "Concatenated",
     "story.concat.tip": "Ready to concatenate {n} segments",
+    "story.ffmpeg.warn.title": "FFmpeg is missing, long-video stitching is unavailable",
+    "story.ffmpeg.warn.hint": "Open Settings > System Components to install FFmpeg with one click",
+    "story.ffmpeg.warn.cta": "Open Settings",
     "story.concat.idle": "Concatenate ({mode})",
     "story.concat.busy": "Concatenating…",
     "story.concat.modeCut": "Hard cut",
@@ -803,6 +900,12 @@ const I18N_DICT = {
     "settings.section.defaults": "Defaults",
     "settings.section.folder": "Folders",
     "settings.section.webhook": "Webhook",
+    "settings.section.system": "System Components",
+    "settings.system.intro.strong": "FFmpeg is only used for long-video stitching in the Storyboard tab and video thumbnail previews in Assets.",
+    "settings.system.intro.body": "Text-to-video, image-to-video, the task list and prompt guide do not depend on FFmpeg. If you do not need long-video stitching you may skip this install.",
+    "settings.system.platform.win": "Windows: \"One-click install\" calls winget to install Gyan.FFmpeg without admin rights.",
+    "settings.system.platform.mac": "macOS: \"One-click install\" uses Homebrew to install ffmpeg.",
+    "settings.system.platform.linux": "Linux: apt / dnf require root. If OpenAkita is running as a normal user, click \"Manual install\" and run sudo apt-get install ffmpeg as your packaging policy permits.",
     "settings.label.apiKey": "ARK API Key",
     "settings.api.placeholder": "Paste your Volcengine Ark API Key",
     "settings.api.show": "Show",
@@ -958,6 +1061,7 @@ const I = {
   fileText: <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>,
   online: <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>,
   offline: <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/></svg>,
+  package: <svg viewBox="0 0 24 24"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27,6.96 12,12.01 20.73,6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
 };
 function Ico({ name, style: s }) { return <span className="ico" style={s}>{I[name]}</span>; }
 
@@ -1097,12 +1201,12 @@ function VideoPlayer({ task }) {
   };
 
   if (!task) return (
-    <div className="video-player-wrap">
-      <div className="empty-state">
+    <div className="oa-preview-empty" style={{minHeight: 280, padding: "32px 20px", textAlign: "center"}}>
+      <span className="oa-preview-empty__icon" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M15 10l-4 3V7l4 3z"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
-        <p>{t("preview.empty.title")}</p>
-        <p className="text-xs text-dim" style={{marginTop:4}}>{t("preview.empty.hint")}</p>
-      </div>
+      </span>
+      <div className="oa-preview-empty__title" style={{whiteSpace: "nowrap"}}>{t("preview.empty.title")}</div>
+      <div className="oa-preview-empty__hint" style={{marginTop: 4}}>{t("preview.empty.hint")}</div>
     </div>
   );
 
@@ -1324,7 +1428,7 @@ function CreateTab({ models, onGoToTasks }) {
               className="oa-ai-btn"
               onClick={handleOptimize}
               disabled={optimizing || !prompt.trim()}
-              title={t("create.btn.optimize")}>
+              title={t("create.btn.optimize.title")}>
               {optimizing
                 ? <span className="spinner" style={{width:12,height:12}} />
                 : <span className="oa-ai-btn__icon" aria-hidden="true">
@@ -1333,10 +1437,10 @@ function CreateTab({ models, onGoToTasks }) {
               <span>{t("create.btn.optimize")}</span>
             </button>
           </div>
-          <textarea className="input textarea" value={prompt} onChange={e => setPrompt(e.target.value)}
-            placeholder={t("create.prompt.placeholder")} rows={4} />
-          <div className="flex items-center justify-between" style={{marginTop:8}}>
-            <span className="text-xs text-dim">{t("create.prompt.counter", { n: prompt.length })}</span>
+          <div className="prompt-wrap">
+            <textarea className="input textarea" value={prompt} onChange={e => setPrompt(e.target.value)}
+              placeholder={t("create.prompt.placeholder")} rows={4} />
+            <span className="prompt-counter">{t("create.prompt.counter", { n: prompt.length })}</span>
           </div>
         </div>
 
@@ -1381,34 +1485,33 @@ function CreateTab({ models, onGoToTasks }) {
               <button className={`mode-btn ${serviceTier==="flex"?"active":""}`} onClick={() => setServiceTier("flex")}><Ico name="offline"/> {t("create.tier.flex")}</button>
             </div>
           </div>
-          <div style={{borderTop:"1px solid var(--border)", marginTop:12, paddingTop:10}}>
-            <div className="oa-section-label" style={{fontSize:12,marginBottom:8}}>{t("create.section.advanced")}</div>
-            <div className="grid-2">
-              <div className="flex items-center justify-between">
-                <span className="text-sm">{t("create.toggle.audio")}</span>
-                <div className={`switch ${audio?"on":""}`} onClick={() => setAudio(!audio)} />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm">{t("create.toggle.watermark")}</span>
-                <div className={`switch ${watermark?"on":""}`} onClick={() => setWatermark(!watermark)} />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm">{t("create.toggle.lastFrame")}</span>
-                <div className={`switch ${returnLastFrame?"on":""}`} onClick={() => setReturnLastFrame(!returnLastFrame)} />
-              </div>
-              {canDraft && (
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">{t("create.toggle.draft")}</span>
-                  <div className={`switch ${draft?"on":""}`} onClick={() => setDraft(!draft)} />
-                </div>
-              )}
-              {canWebSearch && (
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">{t("create.toggle.webSearch")}</span>
-                  <div className={`switch ${webSearch?"on":""}`} onClick={() => setWebSearch(!webSearch)} />
-                </div>
-              )}
-            </div>
+          <div className="advanced-divider" />
+          <div className="oa-section-label" style={{fontSize:12,marginBottom:8}}>{t("create.section.advanced")}</div>
+          <div className="toggle-grid">
+            <label className="toggle-row" onClick={() => setAudio(!audio)}>
+              <span className="toggle-row__label">{t("create.toggle.audio")}</span>
+              <div className={`switch ${audio?"on":""}`} />
+            </label>
+            <label className="toggle-row" onClick={() => setWatermark(!watermark)}>
+              <span className="toggle-row__label">{t("create.toggle.watermark")}</span>
+              <div className={`switch ${watermark?"on":""}`} />
+            </label>
+            <label className="toggle-row" onClick={() => setReturnLastFrame(!returnLastFrame)}>
+              <span className="toggle-row__label">{t("create.toggle.lastFrame")}</span>
+              <div className={`switch ${returnLastFrame?"on":""}`} />
+            </label>
+            {canDraft && (
+              <label className="toggle-row" onClick={() => setDraft(!draft)}>
+                <span className="toggle-row__label">{t("create.toggle.draft")}</span>
+                <div className={`switch ${draft?"on":""}`} />
+              </label>
+            )}
+            {canWebSearch && (
+              <label className="toggle-row" onClick={() => setWebSearch(!webSearch)}>
+                <span className="toggle-row__label">{t("create.toggle.webSearch")}</span>
+                <div className={`switch ${webSearch?"on":""}`} />
+              </label>
+            )}
           </div>
         </div>
 
@@ -1417,10 +1520,11 @@ function CreateTab({ models, onGoToTasks }) {
             {createError}
           </div>
         )}
-        <button className="btn btn-primary" style={{width:"100%",padding:"12px",fontSize:14}}
+        <button className="btn btn-primary btn-block"
           onClick={handleCreate} disabled={loading || !prompt.trim()}>
-          {loading ? <span className="spinner" style={{width:16,height:16}}/> : null}
-          {draft ? t("create.btn.startDraft") : serviceTier==="flex" ? t("create.btn.startFlex") : t("create.btn.startVideo")}
+          {loading
+            ? <span className="spinner" style={{width:16,height:16,borderTopColor:"#fff",borderColor:"rgba(255,255,255,.35)"}}/>
+            : <span>{draft ? t("create.btn.startDraft") : serviceTier==="flex" ? t("create.btn.startFlex") : t("create.btn.startVideo")}</span>}
         </button>
       </div>
 
@@ -1449,17 +1553,19 @@ function CreateTab({ models, onGoToTasks }) {
 function TaskListTab() {
   const t = useT();
   const { tasks, total, reload } = useTasks();
-  const [filter, setFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
   const [selected, setSelected] = useState(null);
 
-  const FILTER_IDS = ["all","running","succeeded","failed","draft","flex"];
+  const STATUS_FILTERS = ["all","running","succeeded","failed"];
+  const TYPE_FILTERS = ["all","draft","flex"];
   const safeTasks = Array.isArray(tasks) ? tasks : [];
   const filtered = safeTasks.filter(it => {
-    if (filter === "running") return it.status === "running" || it.status === "pending";
-    if (filter === "succeeded") return it.status === "succeeded";
-    if (filter === "failed") return it.status === "failed";
-    if (filter === "draft") return it.is_draft;
-    if (filter === "flex") return it.service_tier === "flex";
+    if (statusFilter === "running" && !(it.status === "running" || it.status === "pending")) return false;
+    if (statusFilter === "succeeded" && it.status !== "succeeded") return false;
+    if (statusFilter === "failed" && it.status !== "failed") return false;
+    if (typeFilter === "draft" && !it.is_draft) return false;
+    if (typeFilter === "flex" && it.service_tier !== "flex") return false;
     return true;
   });
 
@@ -1467,12 +1573,31 @@ function TaskListTab() {
     <div className="split-layout">
       <div className="split-left oa-list-panel" style={{width:"50%"}}>
         <div className="oa-list-panel__filters">
-          {FILTER_IDS.map(f => (
-            <button key={f} className={`mode-btn ${filter===f?"active":""}`} onClick={() => setFilter(f)}>
-              {t("tasks.filter." + f)}
-            </button>
-          ))}
-          <button className="btn btn-sm" onClick={() => reload()} style={{marginLeft:"auto"}}>{t("tasks.refresh")}</button>
+          <div className="filter-group">
+            <div className="filter-group__label">{t("tasks.filter.status")}</div>
+            <div className="filter-group__buttons">
+              {STATUS_FILTERS.map(f => (
+                <button key={f} className={`mode-btn ${statusFilter===f?"active":""}`} onClick={() => setStatusFilter(f)}>
+                  {t("tasks.filter." + f)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="filter-group">
+            <div className="filter-group__label">{t("tasks.filter.type")}</div>
+            <div className="filter-group__buttons">
+              <button className={`mode-btn ${typeFilter==="all"?"active":""}`} onClick={() => setTypeFilter("all")}>
+                {t("tasks.filter.allTypes")}
+              </button>
+              <button className={`mode-btn ${typeFilter==="draft"?"active":""}`} onClick={() => setTypeFilter("draft")}>
+                {t("tasks.filter.draft")}
+              </button>
+              <button className={`mode-btn ${typeFilter==="flex"?"active":""}`} onClick={() => setTypeFilter("flex")}>
+                {t("tasks.filter.flex")}
+              </button>
+              <button className="btn btn-sm" onClick={() => reload()} style={{marginLeft:"auto"}}>{t("tasks.refresh")}</button>
+            </div>
+          </div>
         </div>
         <div className="oa-list-panel__divider" />
         <div className="oa-list-panel__items">
@@ -1721,7 +1846,7 @@ function PromptGuideTab() {
   );
 }
 
-function StoryboardTab() {
+function StoryboardTab({ onGoToSettings }) {
   const t = useT();
   const [story, setStory] = useState("");
   const [totalDuration, setTotalDuration] = useState(60);
@@ -2133,6 +2258,20 @@ function StoryboardTab() {
 
         {step === "results" && succCount >= 2 && (
           <div style={{marginTop:16}}>
+            {ffmpegOk === false && (
+              <div className="inline-warn">
+                <span style={{flexShrink:0,color:"var(--warning)"}}><Ico name="warn"/></span>
+                <div className="inline-warn__text">
+                  <strong>{t("story.ffmpeg.warn.title")}</strong>
+                  <small>{t("story.ffmpeg.warn.hint")}</small>
+                </div>
+                {onGoToSettings && (
+                  <button className="btn btn-sm btn-primary" onClick={() => onGoToSettings()}>
+                    {t("story.ffmpeg.warn.cta")}
+                  </button>
+                )}
+              </div>
+            )}
             <div className="flex justify-between items-center">
               <p className="text-sm text-dim">
                 {ffmpegOk ? <><Ico name="check"/> {t("story.concat.tip", { n: succCount })}</> : ""}
@@ -2196,6 +2335,15 @@ function SettingsTab({ onKeyChange }) {
   }, []);
 
   const statKeyMap = {output_dir:"settings.stats.outputDir", assets_dir:"settings.stats.assetsDir", cache_dir:"settings.stats.cacheDir"};
+
+  // dep-gate.js auto-scans on DOMContentLoaded but our [data-oa-dep] mounts
+  // lazily inside React, so kick it manually whenever the Settings tab opens.
+  useEffect(() => {
+    if (window.OpenAkitaDepGate && typeof window.OpenAkitaDepGate.init === "function") {
+      window.OpenAkitaDepGate.init();
+    }
+  }, []);
+
   return (
     <div style={{maxWidth:640}}>
       <div className="setting-section oa-settings-section">
@@ -2212,6 +2360,20 @@ function SettingsTab({ onKeyChange }) {
           </div>
           <p className="text-xs text-dim" style={{marginTop:4}}>{t("settings.api.help")}</p>
         </div>
+      </div>
+
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"><Ico name="package"/> {t("settings.section.system")}</h3>
+        <div className="deps-help">
+          <strong>{t("settings.system.intro.strong")}</strong>
+          <div style={{marginTop:4}}>{t("settings.system.intro.body")}</div>
+          <ul>
+            <li>{t("settings.system.platform.win")}</li>
+            <li>{t("settings.system.platform.mac")}</li>
+            <li>{t("settings.system.platform.linux")}</li>
+          </ul>
+        </div>
+        <div className="deps-host" data-oa-dep="ffmpeg"></div>
       </div>
 
       <div className="setting-section oa-settings-section">
@@ -2352,9 +2514,11 @@ function App() {
         </h1>
         <div className="header-right">
           {keyStatus
-            ? <span title={keyStatus} style={{cursor:"default"}}>{t("app.api.label")}: {keyStatus.length > 12 ? keyStatus.slice(0,4)+"..."+keyStatus.slice(-4) : keyStatus}</span>
-            : <span className="text-warning text-xs" onClick={() => setActiveTab(settingsIdx)}
-                style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer"}}
+            ? <span className="api-pill" title={keyStatus}>
+                <Ico name="check"/> {t("app.api.label")}: {keyStatus.length > 12 ? keyStatus.slice(0,4)+"..."+keyStatus.slice(-4) : keyStatus}
+              </span>
+            : <span className="api-pill api-pill--missing"
+                onClick={() => setActiveTab(settingsIdx)}
                 title={t("app.api.tooltip")}>
                 <Ico name="warn"/> {t("app.api.missing")}
               </span>}
@@ -2389,7 +2553,7 @@ function App() {
         {activeTab === 1 && <TaskListTab />}
         {activeTab === 2 && <AssetsTab />}
         {activeTab === 3 && <PromptGuideTab />}
-        {activeTab === 4 && <StoryboardTab />}
+        {activeTab === 4 && <StoryboardTab onGoToSettings={() => setActiveTab(settingsIdx)} />}
         {activeTab === settingsIdx && <SettingsTab onKeyChange={k => setKeyStatus(k)} />}
       </div>
     </div>

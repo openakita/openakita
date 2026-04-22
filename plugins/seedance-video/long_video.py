@@ -11,19 +11,10 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from openakita_plugin_sdk.contrib import (
-    CostTracker,
-    parse_llm_json_object,
-    run_parallel,
-)
+from seedance_inline.llm_json_parser import parse_llm_json_object
+from seedance_inline.parallel_executor import run_parallel
 
 logger = logging.getLogger(__name__)
-
-# Sprint 7 / Sprint 6 三件套活体验证：每段 Seedance 视频按 USD 0.05 估算预留，
-# 真实费率由 Volcengine Ark 计费决定 — 这里只是为了走通
-# CostTracker.reserve / reconcile / refund / commit 全链路，证明 SDK 接口对
-# 真实长视频流水线可用。失败的段会 refund，全成功 commit。
-DEFAULT_SEGMENT_COST_USD = 0.05
 
 
 def ffmpeg_available() -> bool:
@@ -261,7 +252,6 @@ class ChainGenerator:
         ratio: str = "16:9",
         resolution: str = "720p",
         mode: str = "serial",
-        cost_tracker: CostTracker | None = None,
         max_parallel: int = 3,
     ) -> list[dict]:
         """Generate all segments with chaining.
@@ -269,18 +259,11 @@ class ChainGenerator:
         mode: "serial" — each segment uses previous as reference_video (AI extend)
               "parallel" — each uses return_last_frame for next's first_frame
 
-        ``cost_tracker`` (optional) — if supplied the chain reserves
-        ``DEFAULT_SEGMENT_COST_USD`` per segment up front.  Successful segments
-        ``reconcile`` the reservation against the actual estimate; failed
-        segments ``refund`` so unused budget returns to the pool.  This is the
-        Sprint 6 B5 / Sprint 7 activation point — see SKILL.md "Cost tracking".
-
         ``max_parallel`` (parallel mode only) — bounded concurrency for the
-        SDK ``run_parallel`` worker that submits the per-segment Ark calls.
+        ``run_parallel`` worker that submits the per-segment Ark calls.
         Always returns a result for every input (no silent skip — N1.1).
         """
         results: list[dict] = []
-        ct = cost_tracker or CostTracker()
 
         if mode == "serial":
             prev_task = None
@@ -288,9 +271,6 @@ class ChainGenerator:
                 idx = seg.get("index", 0)
                 content = self._build_content(seg, prev_task)
                 has_frame = bool(prev_task and prev_task.get("last_frame_url"))
-                reservation_id = f"seg-{idx}-{id(seg):x}"
-                await ct.reserve(reservation_id, DEFAULT_SEGMENT_COST_USD,
-                                 label=f"chain segment {idx} ({mode})")
                 try:
                     result = await self._ark.create_task(
                         model=model_id,
@@ -319,12 +299,10 @@ class ChainGenerator:
                                 return_last_frame=True,
                             )
                         except Exception as e2:
-                            await ct.refund(reservation_id)
                             logger.error("Chain segment %d retry also failed: %s", idx, e2)
                             results.append(self._make_error(seg, e2))
                             break
                     else:
-                        await ct.refund(reservation_id)
                         results.append(self._make_error(seg, e))
                         break
 
@@ -336,39 +314,28 @@ class ChainGenerator:
                     model=model_id,
                 )
                 results.append(task)
-                await ct.reconcile(reservation_id, DEFAULT_SEGMENT_COST_USD)
 
                 task = await self._wait_for_task(task["id"])
                 prev_task = task
 
         elif mode == "parallel":
             async def submit(seg: dict) -> dict:
-                idx = seg.get("index", 0)
-                reservation_id = f"seg-{idx}-{id(seg):x}"
-                await ct.reserve(reservation_id, DEFAULT_SEGMENT_COST_USD,
-                                 label=f"chain segment {idx} (parallel)")
                 content = [{"type": "text", "text": seg.get("prompt", "")}]
-                try:
-                    result = await self._ark.create_task(
-                        model=model_id,
-                        content=content,
-                        ratio=ratio,
-                        duration=seg.get("duration", 10),
-                        resolution=resolution,
-                        return_last_frame=True,
-                    )
-                    task = await self._tm.create_task(
-                        ark_task_id=result.get("id", ""),
-                        status="running",
-                        prompt=seg.get("prompt", ""),
-                        mode="t2v",
-                        model=model_id,
-                    )
-                    await ct.reconcile(reservation_id, DEFAULT_SEGMENT_COST_USD)
-                    return task
-                except Exception:
-                    await ct.refund(reservation_id)
-                    raise
+                result = await self._ark.create_task(
+                    model=model_id,
+                    content=content,
+                    ratio=ratio,
+                    duration=seg.get("duration", 10),
+                    resolution=resolution,
+                    return_last_frame=True,
+                )
+                return await self._tm.create_task(
+                    ark_task_id=result.get("id", ""),
+                    status="running",
+                    prompt=seg.get("prompt", ""),
+                    mode="t2v",
+                    model=model_id,
+                )
 
             # N1.1 防御：run_parallel 保证每个 input 都有 ParallelResult，
             # 无论 success / failed / cancelled，绝不静默丢弃。

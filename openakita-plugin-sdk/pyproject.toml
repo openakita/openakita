@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "openakita-plugin-sdk"
-version = "0.6.0"
+version = "0.7.0"
 description = "SDK for building OpenAkita plugins — protocols, base classes, testing helpers, and Plugin 2.0 UI support"
 readme = "README.md"
 license = "MIT"
@@ -25,7 +25,3 @@ Documentation = "https://docs.openakita.ai/plugins/"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/openakita_plugin_sdk"]
-# Note: hatchling by default includes ALL files under each declared package
-# directory (not just .py). The web/ subfolder with bootstrap.js is bundled
-# automatically, so no force-include is needed (and adding one would
-# duplicate the entry in the wheel).

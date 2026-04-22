@@ -21,8 +21,8 @@ COPY src/ src/
 COPY skills/ skills/
 COPY mcps/ mcps/
 COPY identity/ identity/
-# Bundle the plugin SDK so AI media plugins (openakita_plugin_sdk.contrib)
-# resolve at runtime without relying on PyPI 0.3.0 being published.
+# Bundle the plugin SDK so first-class plugins (tongyi-image / seedance-video)
+# resolve `openakita_plugin_sdk` at runtime without relying on PyPI publish.
 COPY openakita-plugin-sdk/ openakita-plugin-sdk/
 
 COPY --from=frontend /app/apps/setup-center/dist-web/ apps/setup-center/dist-web/

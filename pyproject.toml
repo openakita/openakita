@@ -121,13 +121,15 @@ voice = [
     "pilk>=0.2.1",
 ]
 
-# AI 媒体类插件脚手架（contrib 模块所需的 SDK 版本）
-# 装上后 plugins/ 下的 seedance-video / tongyi-image / avatar-speaker 等
-# 直接 `from openakita_plugin_sdk.contrib import ...` 不会再 ModuleNotFoundError。
-# Monorepo 开发时 src/openakita/plugins/sdk_loader.py 会兜底注入本地源码,
+# 一等公民插件依赖的最小 SDK 版本
+# (plugins/tongyi-image / plugins/seedance-video — 它们 import
+# `from openakita_plugin_sdk import PluginBase, PluginAPI, ...` 等核心类)。
+# Monorepo 开发时 src/openakita/plugins/sdk_loader.py 会兜底注入本地源码;
 # 这里是给 pip-install 场景显式声明的最低版本。
+# Note: 0.7.0 主动收缩了 SDK API surface (移除了 contrib 子包),
+# 旧版本 0.3.x–0.6.x 上的 contrib 调用都已迁出 (见 CHANGELOG)。
 plugins = [
-    "openakita-plugin-sdk>=0.3.0",
+    "openakita-plugin-sdk>=0.7.0",
 ]
 
 # Windows 桌面自动化

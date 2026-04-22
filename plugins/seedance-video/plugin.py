@@ -28,15 +28,12 @@ from models import (
     get_model,
     model_to_dict,
 )
-from openakita_plugin_sdk.contrib import (
-    CostTracker,
-    VendorError,
+from seedance_inline.storage_stats import collect_storage_stats
+from seedance_inline.upload_preview import (
     add_upload_preview_route,
     build_preview_url,
-    collect_storage_stats,
-    restore_from_snapshot,
-    take_checkpoint,
 )
+from seedance_inline.vendor_client import VendorError
 from prompt_optimizer import (
     ATMOSPHERE_KEYWORDS,
     CAMERA_KEYWORDS,
@@ -846,20 +843,6 @@ class Plugin(PluginBase):
                 name += ".mp4"
             output_path = str(output_dir / name)
 
-            # Sprint 7 / Sprint 6 B9 活体验证：take_checkpoint 在 concat 之前
-            # 拍下 cost ledger 快照与上下文，ffmpeg concat 失败时 restore 回滚。
-            # 真实业务里 cost_tracker 应当跨 generate→concat 共享（plugin 级单例），
-            # 这里 demo 用本地实例先证明 API 可用、可恢复。
-            ct = CostTracker()
-            checkpoint = take_checkpoint(
-                "pre-concat",
-                cost_tracker=ct,
-                extra={
-                    "task_ids": list(body.task_ids),
-                    "transition": body.transition,
-                    "output_path": output_path,
-                },
-            )
             try:
                 ok = await concat_videos(
                     video_paths, output_path,
@@ -867,16 +850,14 @@ class Plugin(PluginBase):
                     fade_duration=body.fade_duration,
                 )
             except Exception as exc:
-                await restore_from_snapshot(checkpoint, cost_tracker=ct)
-                logger.exception("concat raised, rolled back to checkpoint")
+                logger.exception("ffmpeg concat raised")
                 raise HTTPException(
                     status_code=500, detail=f"ffmpeg concat error: {exc}"
                 ) from exc
             if not ok:
-                await restore_from_snapshot(checkpoint, cost_tracker=ct)
                 raise HTTPException(status_code=500, detail="ffmpeg concat failed")
 
-            return {"ok": True, "output_path": output_path, "checkpoint": checkpoint.name}
+            return {"ok": True, "output_path": output_path}
 
         @router.get("/long-video/tasks/{group_id}")
         async def get_chain_tasks(group_id: str) -> dict:

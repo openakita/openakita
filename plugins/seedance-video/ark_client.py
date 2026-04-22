@@ -1,10 +1,12 @@
 """Volcengine Ark API client for Seedance video generation.
 
-Uses ``BaseVendorClient`` from the SDK for automatic retry, timeout,
-error classification (``ERROR_KIND_*``), and content-moderation body
-detection.  All HTTP calls go through ``self.request()`` /
-``self.post_json()`` / ``self.get_json()`` which create a fresh
-``httpx.AsyncClient`` per call — no long-lived connection to manage.
+Uses ``BaseVendorClient`` from the vendored ``seedance_inline.vendor_client``
+helper (forked from SDK 0.6.0 ``contrib`` before the SDK retracted the
+subpackage in 0.7.0).  Provides automatic retry, timeout, error
+classification (``ERROR_KIND_*``), and content-moderation body detection.
+All HTTP calls go through ``self.request()`` / ``self.post_json()`` /
+``self.get_json()`` which create a fresh ``httpx.AsyncClient`` per call —
+no long-lived connection to manage.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from openakita_plugin_sdk.contrib import BaseVendorClient, VendorError
+from seedance_inline.vendor_client import BaseVendorClient, VendorError
 
 logger = logging.getLogger(__name__)
 

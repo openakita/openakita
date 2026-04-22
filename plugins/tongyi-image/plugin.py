@@ -18,10 +18,10 @@ from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
 
 from openakita.plugins.api import PluginAPI, PluginBase
-from openakita_plugin_sdk.contrib import (
+from tongyi_inline.storage_stats import collect_storage_stats
+from tongyi_inline.upload_preview import (
     add_upload_preview_route,
     build_preview_url,
-    collect_storage_stats,
 )
 
 from tongyi_dashscope_client import DashScopeClient, DashScopeError

@@ -62,11 +62,6 @@ try:
 except ImportError:
     plugins_routes = None
     logging.getLogger(__name__).debug("Plugin routes not available")
-try:
-    from .routes import plugin_deps as plugin_deps_routes
-except ImportError:
-    plugin_deps_routes = None
-    logging.getLogger(__name__).debug("Plugin-deps routes not available")
 from .routes import (
     auth as auth_routes,
 )
@@ -378,8 +373,6 @@ def create_app(
     app.include_router(orgs.inbox_router, tags=["组织消息中心"])
     if plugins_routes is not None:
         app.include_router(plugins_routes.router)
-    if plugin_deps_routes is not None:
-        app.include_router(plugin_deps_routes.router, tags=["插件依赖"])
 
     @app.get("/", tags=["系统"])
     async def root():
@@ -404,49 +397,13 @@ def create_app(
     _avatar_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/api/avatars", _StaticFiles(directory=str(_avatar_dir)), name="avatars")
 
-    # ── Serve plugin SDK shared web assets (bootstrap.js, etc.) ──
-    # Bundled inside the openakita_plugin_sdk wheel under web/.
-    # Plugin UIs reference: <script src="/api/plugins/_sdk/bootstrap.js"></script>
-    # Resolution order:
-    #   1) installed openakita_plugin_sdk package (production)
-    #   2) repo-relative openakita-plugin-sdk/src/openakita_plugin_sdk/web (dev, monorepo)
-    _sdk_web_dir: Path | None = None
-    try:
-        from importlib.resources import files as _res_files
-
-        _candidate = _res_files("openakita_plugin_sdk").joinpath("web")
-        if _candidate.is_dir():
-            _sdk_web_dir = Path(str(_candidate))
-    except (ImportError, ModuleNotFoundError):
-        pass
-    except Exception as _sdk_err:
-        logger.warning("Failed to locate plugin SDK assets via importlib: %s", _sdk_err)
-
-    if _sdk_web_dir is None:
-        _here = Path(__file__).resolve()
-        for _parent in _here.parents:
-            _candidate_dir = (
-                _parent / "openakita-plugin-sdk" / "src" / "openakita_plugin_sdk" / "web"
-            )
-            if _candidate_dir.is_dir():
-                _sdk_web_dir = _candidate_dir
-                break
-
-    if _sdk_web_dir is not None:
-        try:
-            app.mount(
-                "/api/plugins/_sdk",
-                _StaticFiles(directory=str(_sdk_web_dir)),
-                name="plugin-sdk-assets",
-            )
-            logger.info("Mounted plugin SDK assets from %s", _sdk_web_dir)
-        except Exception as _sdk_err:
-            logger.warning("Failed to mount plugin SDK assets: %s", _sdk_err)
-    else:
-        logger.warning(
-            "Plugin SDK web/ directory not found; bootstrap.js disabled. "
-            "Install openakita-plugin-sdk or run from a monorepo checkout."
-        )
+    # NOTE: prior to SDK 0.7.0 we mounted /api/plugins/_sdk/* here to serve
+    # bootstrap.js and the shared ui-kit out of the openakita_plugin_sdk
+    # wheel. The SDK no longer ships any frontend assets — every plugin UI
+    # is now expected to be self-contained under its own ui/dist/_assets/
+    # directory (see plugins/tongyi-image and plugins/seedance-video for
+    # working examples, or plugins-archive/_shared/web-uikit/README.md for
+    # how to revive an archived plugin's UI). Do not re-add this mount.
 
     # ── Serve versioned user docs ──
     from openakita import get_version_string as _get_ver

@@ -2,7 +2,14 @@
 
 > 用法：在和 AI 对话之前 `@docs/plugin-context-cheatsheet.md` 引入，让 AI 一次性吃下"参考库 + SDK + 模板插件"的全部约定，再提你具体要做的插件改动。
 >
-> 维护：当 SDK contrib 新增/重命名公共能力，或模板插件 `tongyi-image` 改了关键约定时，请同步更新本文。
+> 维护：当 SDK 顶层 API 变化、或模板插件 `tongyi-image` 改了关键约定时，请同步更新本文。
+>
+> **2026-04-22 起 SDK 已主动收缩到「最小插件壳子」定位**：`openakita_plugin_sdk.contrib`
+> 整个子包已下沉，不再属于 SDK 公共 API。需要那些"轮子"的插件请在自家
+> `_inline/` 子目录里 vendor 一份；只有 archive 区的旧插件才走
+> `plugins-archive/_shared/` 的共享副本。详见
+> [SDK Refocus Cleanup 计划](.cursor/plans/sdk_refocus_cleanup_b3b5f02d.plan.md)
+> 与 [CHANGELOG `[Unreleased]`](../CHANGELOG.md) 段。
 
 ---
 
@@ -67,31 +74,31 @@ d:\OpenAkita_AI_Video
 - 协议：`MemoryBackendProtocol` / `RetrievalSource` / `SearchBackend`
 - 工具：`scaffold.py`（脚手架）、`testing.py`（`MockPluginAPI` / `assert_plugin_loads`）、`decorators.py`（`tool` / `hook` / `auto_register`）
 
-### AI 媒体类基础设施（**必须用** `from openakita_plugin_sdk.contrib import ...`）
+### ⚠️ 旧 contrib 已下架（2026-04-22）
 
-> 铁律：**所有插件统一从 contrib 导入这些"轮子"，不要拷贝到插件目录里**。一旦有重复造轮子的 PR，直接打回。
-> **2026-04 起，跨插件复用任何 TTS/ASR/Provider 必须走 contrib，不允许 `_load_sibling` 反模式（已被 ruff 检测）**。
+`openakita_plugin_sdk.contrib` 整个子包已在 SDK `0.7.0` 删除。需要那些
+helper 的代码现在分布在两个位置：
 
-| 主题         | 关键导出                                                                                                  |
-| ------------ | --------------------------------------------------------------------------------------------------------- |
-| 任务/数据    | `BaseTaskManager`, `TaskRecord`, `TaskStatus`, `Checkpoint`, `take_checkpoint`, `restore_from_snapshot`   |
-| 厂商客户端   | `BaseVendorClient`, `VendorError`, `ERROR_KIND_AUTH/CLIENT/MODERATION/NETWORK/NOT_FOUND/RATE_LIMIT/SERVER/TIMEOUT/UNKNOWN` |
-| 错误体验     | `ErrorCoach`, `ErrorPattern`, `RenderedError`                                                             |
-| 提示词       | `PromptOptimizer`, `load_prompt`, `render_prompt`, `list_prompts`, `PromptNotFound`                       |
-| 意图校验     | `IntentVerifier`, `IntentSummary`, `EvalResult`                                                           |
-| 质量门禁     | `QualityGates`, `GateResult`, `GateStatus`                                                                |
-| 计费         | `CostEstimator`, `CostBreakdown`, `CostPreview`, `to_human_units`                                         |
-| 计费跟踪     | `CostTracker`, `CostEntry`, `CostSnapshot`, `CostSummary`, `Adjustment`, `ApprovalRequired`, `InsufficientBudget`, `DuplicateReservation`, `ReservationNotFound` |
-| 计费翻译     | `translate_cost`, `register_cost_template`, `get_cost_template`, `CostTemplate`, `COST_TRANSLATION_MAP`   |
-| 流水线/并发  | `build_render_pipeline`, `RenderPipeline`, `run_parallel`, `summarize_parallel`, `ParallelResult`, `ParallelSummary`, `AgentLoopConfig`, `DEFAULT_AGENT_LOOP_CONFIG` |
-| FFmpeg       | `run_ffmpeg(_sync)`, `ffprobe_json(_sync)`, `auto_color_grade_filter`, `AUTO_GRADE_PRESETS`, `get_grade_preset`, `list_grade_presets`, `sample_signalstats(_sync)`, `resolve_binary`, `FFmpegError`, `FFmpegResult`, `GradeStats` |
-| 依赖系统     | `DependencyGate`, `DepStatus`, `InstallEvent`, `InstallMethod`, `SystemDependency`, `current_platform`, `DEP_CATALOG`, `DEP_CATALOG_BY_ID`, `FFMPEG`, `WHISPER_CPP`, `YT_DLP` |
-| Web/UI       | `add_upload_preview_route`, `build_preview_url`, `DEFAULT_*_EXTENSIONS`, `UIEventEmitter`, `strip_plugin_event_prefix`, `collect_storage_stats`, `StorageStats` |
-| 解析         | `parse_llm_json` / `parse_llm_json_array` / `parse_llm_json_object`, `load_env_any`, `EnvAnyEntry`        |
-| 审稿/校验    | `review_source` / `review_video` / `review_image` / `review_audio`, `ReviewIssue`, `ReviewReport`, `ReviewThresholds`, `Verification`, `merge_verifications`, `render_verification_badge`, `LowConfidenceField`, `KIND_*`, `BADGE_*` |
-| 评估打分     | `ProviderScore`, `score_providers`, `SlideshowRisk`, `evaluate_slideshow_risk`, `DeliveryPromise`, `validate_cuts`, `ToolResult` |
-| **TTS（新）** | `from openakita_plugin_sdk.contrib.tts import select_provider, TTSError, TTSResult, PRESET_VOICES_ZH` — 后端：`qwen3-tts-flash` / `cosyvoice` / `openai-tts` / `edge`。`select_provider("auto", configs={...})` 自动按可用凭证降级到 `edge`/`stub-silent`。 |
-| **ASR（新）** | `from openakita_plugin_sdk.contrib.asr import select_provider, ASRError, ASRResult, ASRChunk` — 后端：`paraformer-v2`（DashScope）/ `whisper-cpp`（本地）/ `stub`。`select_provider("auto", configs={...})` 自动按可用凭证 + 二进制降级。 |
+| 你是哪种插件 | 拿 helper 的方式 |
+| --- | --- |
+| **一等公民**（`plugins/tongyi-image` / `plugins/seedance-video`） | 在自家 `*_inline/` 子目录里 **vendor 一份**，import 走 `from <plugin>_inline.X import ...`。例如 `from seedance_inline.upload_preview import add_upload_preview_route`。 |
+| **archive 区**（`plugins-archive/<id>/`） | 通过 archive 入口自动注入的 `sys.path` bootstrap，import 走 `from _shared import ...` 或 `from _shared.tts import ...`。所有共享副本住在 `plugins-archive/_shared/`。 |
+| **新写的插件** | 不要去翻找 contrib。先看自家是不是只用一两个函数，能 inline 就 inline；真要复用，复制到自家 `_inline/` 比建跨插件抽象层更便宜。 |
+
+最小插件只需要这些 SDK 顶层导入（`from openakita_plugin_sdk import ...`）：
+
+```python
+from openakita_plugin_sdk import PluginBase, PluginAPI, PluginManifest
+from openakita_plugin_sdk import tool_definition, ToolHandler
+from openakita_plugin_sdk import HOOK_NAMES, HOOK_SIGNATURES
+from openakita_plugin_sdk import (
+    SDK_VERSION, PLUGIN_API_VERSION, PLUGIN_UI_API_VERSION, MIN_OPENAKITA_VERSION,
+)
+from openakita_plugin_sdk import MemoryBackendProtocol, RetrievalSource, SearchBackend
+from openakita_plugin_sdk.decorators import tool, hook, auto_register
+from openakita_plugin_sdk.testing import MockPluginAPI, assert_plugin_loads
+from openakita_plugin_sdk.scaffold import scaffold_plugin
+```
 
 ---
 
@@ -225,78 +232,59 @@ prompt + (可选 ref) → vendor.POST → task_id →
 
 ---
 
-## 四、`plugins/` 现状矩阵 v2（21 个插件，2026-04 整改后真实状态）
+## 四、插件矩阵 v3（2026-04-22 SDK Refocus 后）
 
-> **图例**：✅ = 已接 contrib + UI `_detectApiBase()` + `/settings` 热更新；🟡 = 仅 SDK 升级（脚手架 / 文档 stub / 后续单独整改）；🧪 = 故意保留为 "scaffolding 示例"。
+### A. 一等公民（`plugins/`，CI 必跑、SDK 升级强制跟齐）
 
-### 图像生成 (6)
+| 插件 | 版本 | 关键能力 | 自带 `_inline/` |
+| --- | --- | --- | --- |
+| `tongyi-image` | 0.3.x | DashScope wanx2 / qwen-image。**新插件抄它的 `plugin.py` / UI**。 | `tongyi_inline/{upload_preview, storage_stats}.py` |
+| `seedance-video` | 1.2.x | 字节 Seedance 文生视频 / 图生视频，含 long-video 链式生成。 | `seedance_inline/{vendor_client, upload_preview, storage_stats, llm_json_parser, parallel_executor}.py` |
 
-| 插件                | 版本   | 状态 | 关键能力                                                                |
-| ------------------- | ------ | ---- | ----------------------------------------------------------------------- |
-| `tongyi-image`      | 0.3.0  | ✅   | **模板**。DashScope wanx2 / qwen-image。所有插件抄它的 plugin.py / UI。 |
-| `image-edit`        | 1.1.0  | ✅   | DashScope image2image / inpaint。                                       |
-| `local-sd-flux`     | 1.1.0  | 🟡   | ComfyUI workflow 调度（SD/Flux 本地）。UI 是文档 stub，等用户拉 ComfyUI。|
-| `ecommerce-image`   | 0.2.0  | 🟡   | 电商背景批量生成。补齐了缺失的 `sdk` 字段；后续单独迭代 UI/tests。       |
-| `smart-poster-grid` | 1.1.0  | 🟡   | 海报九宫格组合。无独立 UI（嵌在主面板）。                               |
-| `poster-maker`      | 1.1.0  | ✅   | 海报模板 + LLM 文案。                                                   |
+> 这两个插件**不**从 `openakita_plugin_sdk.contrib` import 任何东西（contrib 已删）。所有 helper 都在自家 `_inline/` 里 vendor 一份。
 
-### 视频生成 (4)
+### B. Archive 区（`plugins-archive/`，**不是**一等公民）
 
-| 插件             | 版本  | 状态 | 关键能力                                                                                        |
-| ---------------- | ----- | ---- | ----------------------------------------------------------------------------------------------- |
-| `seedance-video` | 1.2.0 | ✅   | 字节 Seedance 文生视频 / 图生视频。                                                              |
-| `ppt-to-video`   | 1.1.0 | ✅   | PPT → 单镜头视频。                                                                              |
-| `shorts-batch`   | 1.2.0 | ✅+🆕 | 批量短视频 + **Phase 3 video-pipeline 编排器**（plan→image→video→audio→subtitle→mux 6 步）。     |
-| `storyboard`     | 1.1.0 | ✅   | 分镜脚本生成（LLM）。                                                                           |
+> 不被 host 自动加载（host 只扫 `data/plugins/`）；不接受 issue；不主动跟 SDK 升级；CI 不跑。手动启用方式见 `plugins-archive/README.md`。
 
-### 视频处理 (5)
+| 类别 | 插件 |
+| --- | --- |
+| 图像生成 | `image-edit` · `local-sd-flux` · `ecommerce-image` · `smart-poster-grid` · `poster-maker` |
+| 视频生成 | `ppt-to-video` · `shorts-batch` · `storyboard` |
+| 视频处理 | `highlight-cutter` · `video-bg-remove` · `video-color-grade` · `video-translator` · `subtitle-maker` |
+| 音频口播 | `avatar-speaker` · `tts-studio` · `dub-it` · `bgm-mixer` · `bgm-suggester` |
+| 转录归档 | `transcribe-archive` |
 
-| 插件                | 版本   | 状态 | 关键能力                                                                |
-| ------------------- | ------ | ---- | ----------------------------------------------------------------------- |
-| `highlight-cutter`  | 1.1.0  | ✅   | **去 `_load_sibling`** → 接 `contrib.asr` 自动选 paraformer / whisper。 |
-| `video-bg-remove`   | 1.1.0  | ✅   | 视频抠像（matanyone-cli）。                                             |
-| `video-color-grade` | 0.2.0  | ✅   | FFmpeg 自动调色（用 `auto_color_grade_filter`）。                       |
-| `video-translator`  | 1.1.0  | ✅   | **去 `_load_sibling`** → 自包含；ASR/TTS 全走 `contrib.*`。             |
-| `subtitle-maker`    | 1.1.0  | ✅   | **去 `_load_sibling`** → 接 `contrib.asr`。                             |
+它们继续依赖的 helper 集中在 `plugins-archive/_shared/`：
+`task_manager.py` · `vendor_client.py` · `errors.py` · `upload_preview.py` ·
+`storage_stats.py` · `ui_events.py` · `render_pipeline.py` · `llm_json_parser.py` ·
+`ffmpeg.py` · `verification.py` · `source_review.py` · `provider_score.py` ·
+`slideshow_risk.py` · `intent_verifier.py` · `cost_estimator.py` · `quality_gates.py` ·
+`tts/` · `asr/`。
 
-### 音频/口播 (5)
+### C. SDK 参考区（`openakita-plugin-sdk/staging/contrib/`）
 
-| 插件             | 版本  | 状态 | 关键能力                                                              |
-| ---------------- | ----- | ---- | --------------------------------------------------------------------- |
-| `avatar-speaker` | 1.1.0 | ✅   | 单段口播。**全量重写**接 `contrib.tts`，UI 抄 tongyi 模板。           |
-| `tts-studio`     | 1.1.0 | ✅   | 多角色长音频拼接。**去 `_load_sibling`** → 接 `contrib.tts`。         |
-| `dub-it`         | 1.1.0 | 🧪   | **故意保留为脚手架 example**：可注入 `Transcriber/Translator/Synth`。生产请用 `video-translator`。 |
-| `bgm-mixer`      | 0.2.0 | 🟡   | FFmpeg BGM 混音。无 UI。                                              |
-| `bgm-suggester`  | 0.2.0 | 🟡   | 基于场景 LLM 推荐 BGM。无 UI。                                        |
-
-### 转录归档 (1)
-
-| 插件                 | 版本   | 状态 | 关键能力                                                                                                       |
-| -------------------- | ------ | ---- | -------------------------------------------------------------------------------------------------------------- |
-| `transcribe-archive` | 0.2.0  | ✅   | 长音频分块 + 缓存 + 词级时间戳。通过 `ContribAdapterProvider` 桥接到 `contrib.asr`，保留原 chunking/cache 逻辑。 |
-
-### Phase 0–4 整改累计交付
-
-- **Phase 0**：`src/openakita/plugins/compat.py` `PLUGIN_API_VERSION = "2.0.0"` + `~1` 兼容窗口（17/21 插件因此从 "导入成功但不可见" 变可用）。
-- **Phase 1**：SDK `0.6.0` → 新增 `contrib.tts` / `contrib.asr` 两个公共模块（39 例单测）。
-- **Phase 2**：单插件整改模板 `docs/plugin-overhaul-template.md` + 上面 21 个插件逐个走完模板。
-- **Phase 3**：`shorts-batch` 内置 6 步 `pipeline_orchestrator.py`（不新建 `video-pipeline` 插件，避免重复 brief 模型 / risk-score / worker 三件套）。
-- **Phase 4**：本文 + `CHANGELOG.md` Sprint 整改条目。
+12 个**没有任何插件**消费的旧 contrib 模块作为代码档案保留：
+`agent_loop_config` · `checkpoint` · `cost_tracker` · `cost_translation` ·
+`delivery_promise` · `dep_catalog` · `dep_gate` · `env_any_loader` ·
+`parallel_executor` · `prompt_optimizer` · `prompts` · `tool_result`
+（含 `data/prompts/` 5 个文件）。**不是**可 import 的包，CI 不跑，详见
+`openakita-plugin-sdk/staging/contrib/README.md`。
 
 ---
 
 ## 五、给 AI 的硬性提醒（每次改插件前默念）
 
 1. **先读** `plugins/tongyi-image/{plugin.json,plugin.py,SKILL.md}` 对齐写法。
-2. **能从 `openakita_plugin_sdk.contrib` 导入的，绝不在插件里重写**。
+2. **不要去翻 `openakita_plugin_sdk.contrib`**——它已下架（SDK 0.7.0）。需要的 helper 自己 vendor 进 `<plugin>_inline/`。
 3. 后台任务必须 `api.spawn_task(...)`；`on_unload` 必须 async + 资源清理三件套。
 4. SQL 列名走**白名单**（参考 `tongyi_task_manager._UPDATABLE_COLUMNS`），杜绝注入。
 5. 上传/下载文件路径必须 `path.relative_to(base_dir)` 校验，防遍历。
 6. 异常一律落库 `error_message` + `broadcast_ui_event("task_update", {"status": "failed"})` 兜底。
 7. 写完逻辑必须配套：`SKILL.md` 更新 + `README.md` 更新 + `tests/` 至少补一个用例。
-8. 改厂商客户端前先看 `BaseVendorClient` 已经覆盖了哪些 `ERROR_KIND_*`，复用它的 retry / timeout / classify 逻辑。
-9. 任何 LLM 返回的 JSON，统一用 `parse_llm_json` 系列解析，不要自己 `json.loads`。
-10. UI 事件名前缀已由 host 加 `<plugin-id>:`，前端订阅时用 `strip_plugin_event_prefix` 工具解。
+8. 写厂商 HTTP 客户端时，复用 `seedance_inline/vendor_client.py` 的 retry / timeout / `ERROR_KIND_*` 套路（直接复制再裁剪，胜过新建跨插件抽象层）。
+9. 任何 LLM 返回的 JSON，统一用 `seedance_inline/llm_json_parser.py` 风格的 `parse_llm_json*` 三层 fallback 解析（**不要** `json.loads` 直冲）。
+10. UI 事件名前缀已由 host 加 `<plugin-id>:`，前端订阅时按 `strip_plugin_event_prefix` 的实现自行剥离。
 
 ---
 

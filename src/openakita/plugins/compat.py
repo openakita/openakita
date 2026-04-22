@@ -199,8 +199,8 @@ def _check_sdk(plugin_id: str, spec: str, result: CompatResult) -> None:
             f"Plugin '{plugin_id}' needs openakita-plugin-sdk {spec} but it is not "
             f"installed. Fix it with `pip install \"openakita[plugins]\"` "
             f"(or `pip install -e ./openakita-plugin-sdk` in monorepo dev). "
-            f"Plugins importing from openakita_plugin_sdk.contrib will fail to load "
-            f"until this is resolved."
+            f"Plugins that import openakita_plugin_sdk classes will fail to "
+            f"load until this is resolved."
         )
     elif sdk < req:
         result.warnings.append(

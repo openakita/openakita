@@ -1,11 +1,16 @@
-"""Sprint 7 smoke tests for ``long_video.py`` — proves the SDK
-``contrib`` integrations (``parse_llm_json_object``, ``CostTracker``,
-``run_parallel``) are wired up correctly without hitting the network or
+"""Smoke tests for ``long_video.py`` — proves the inlined helpers
+(``parse_llm_json_object``, ``run_parallel``, vendored under
+``seedance_inline``) are wired up correctly without hitting the network or
 ffmpeg.
 
+The cost-tracking demo bookkeeping (``CostTracker.reserve / reconcile /
+refund``) was removed in 0.7.0 along with the rest of the SDK ``contrib``
+retraction; this file keeps the parse-correctness, chain-shape, and
+"never silently drop a shot" (N1.1) invariants but no longer asserts on
+budget ledgers.
+
 We mock the ``brain`` (LLM), ``ark_client`` and ``task_manager`` so the
-test suite stays hermetic and fast.  The goal is *behaviour*, not
-coverage of every ffmpeg branch — those live behind real binaries.
+test suite stays hermetic and fast.
 """
 from __future__ import annotations
 
@@ -14,10 +19,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from openakita_plugin_sdk.contrib import CostTracker
-
 from long_video import (
-    DEFAULT_SEGMENT_COST_USD,
     ChainGenerator,
     decompose_storyboard,
     ffmpeg_available,
@@ -65,7 +67,7 @@ async def test_decompose_storyboard_parses_clean_json() -> None:
 @pytest.mark.asyncio
 async def test_decompose_storyboard_handles_fenced_json_block() -> None:
     """C5 — the brittle ``find('{')`` heuristic used to fail on this.
-    SDK's ``parse_llm_json_object`` strips ``\u0060\u0060\u0060json`` fences."""
+    The vendored ``parse_llm_json_object`` strips ``\u0060\u0060\u0060json`` fences."""
     payload = (
         "好的，下面是分镜：\n"
         "```json\n"
@@ -105,7 +107,7 @@ async def test_decompose_storyboard_no_llm_returns_error() -> None:
     assert out == {"error": "No LLM available"}
 
 
-# ── ChainGenerator + CostTracker (B5) + run_parallel (B4/N1.1) ────────
+# ── ChainGenerator + run_parallel (B4/N1.1) ───────────────────────────
 
 
 def _seg(idx: int, prompt: str = "p") -> dict:
@@ -117,12 +119,7 @@ def _make_chain_gen(
     create_task_returns: Any = None,
     create_task_raises: Exception | None = None,
 ) -> tuple[ChainGenerator, AsyncMock, AsyncMock]:
-    """Build a ChainGenerator wired to AsyncMock ark_client and task_manager.
-
-    The task_manager.create_task auto-assigns deterministic ids so the
-    chain logic can index results.  ``_wait_for_task`` is short-circuited
-    to return the same dict (skip polling).
-    """
+    """Build a ChainGenerator wired to AsyncMock ark_client and task_manager."""
     ark = AsyncMock()
     if create_task_raises is not None:
         ark.create_task.side_effect = create_task_raises
@@ -147,48 +144,33 @@ def _make_chain_gen(
 
 
 @pytest.mark.asyncio
-async def test_chain_serial_reserves_and_reconciles_per_segment() -> None:
-    """B5 activation: each segment must reserve up front and reconcile on
-    success.  After three segments the ledger should report 3 committed
-    entries (reserved → committed) and zero outstanding reservations.
-    """
+async def test_chain_serial_emits_one_task_per_segment() -> None:
+    """Three segments → three Ark calls → three task rows; no segment is
+    silently dropped on the happy path."""
     cg, ark, tm = _make_chain_gen()
-    ct = CostTracker()
     out = await cg.generate_chain(
         segments=[_seg(1), _seg(2), _seg(3)],
         model_id="doubao-seedance-2-0-260128",
         mode="serial",
-        cost_tracker=ct,
     )
     assert len(out) == 3
     assert ark.create_task.await_count == 3
-    summary = ct.summary()
-    expected_committed = 3 * DEFAULT_SEGMENT_COST_USD
-    assert summary.committed == pytest.approx(expected_committed)
-    assert summary.reserved == pytest.approx(0.0)
-    assert summary.refunded == pytest.approx(0.0)
-    assert summary.entry_count == 3
 
 
 @pytest.mark.asyncio
-async def test_chain_serial_refunds_on_failure() -> None:
-    """B5 invariant: a non-image-rejection failure must refund the
-    reservation (not double-charge or leak budget)."""
+async def test_chain_serial_records_error_and_stops_on_failure() -> None:
+    """A non-image-rejection failure must surface as an ``error`` row and
+    halt the chain (no half-built downstream)."""
     cg, ark, tm = _make_chain_gen(
         create_task_raises=RuntimeError("network boom"),
     )
-    ct = CostTracker()
     out = await cg.generate_chain(
         segments=[_seg(1)],
         model_id="m",
         mode="serial",
-        cost_tracker=ct,
     )
+    assert len(out) == 1
     assert out[0]["error"]
-    summary = ct.summary()
-    assert summary.refunded == pytest.approx(DEFAULT_SEGMENT_COST_USD)
-    assert summary.reserved == pytest.approx(0.0)
-    assert summary.committed == pytest.approx(0.0)
 
 
 @pytest.mark.asyncio
@@ -200,43 +182,32 @@ async def test_chain_parallel_no_silent_skip_on_failure() -> None:
 
     Also validates the ``ParallelResult.ok`` API path (the wrong attribute
     name ``.success`` would have raised ``AttributeError`` and crashed
-    the whole chain — Sprint 7 caught this regression here)."""
+    the whole chain)."""
     cg, ark, tm = _make_chain_gen(
         create_task_raises=RuntimeError("ark down"),
     )
-    ct = CostTracker()
     out = await cg.generate_chain(
         segments=[_seg(1), _seg(2)],
         model_id="m",
         mode="parallel",
-        cost_tracker=ct,
         max_parallel=2,
     )
     assert len(out) == 2
     assert all("error" in r for r in out)
-    summary = ct.summary()
-    assert summary.refunded == pytest.approx(2 * DEFAULT_SEGMENT_COST_USD)
 
 
 @pytest.mark.asyncio
-async def test_chain_parallel_reserves_default_cost_per_segment() -> None:
-    """The reservation amount comes from ``DEFAULT_SEGMENT_COST_USD``;
-    a 4-segment batch must therefore touch the ledger 4× and end up
-    with 4× DEFAULT_SEGMENT_COST_USD committed (no leftover reservation,
-    no refund)."""
+async def test_chain_parallel_returns_one_row_per_segment() -> None:
+    """Happy path parity for the parallel branch: 4 segments → 4 task rows."""
     cg, ark, tm = _make_chain_gen()
-    ct = CostTracker()
-    await cg.generate_chain(
+    out = await cg.generate_chain(
         segments=[_seg(i) for i in range(1, 5)],
         model_id="m",
         mode="parallel",
-        cost_tracker=ct,
         max_parallel=4,
     )
-    summary = ct.summary()
-    assert summary.entry_count == 4
-    assert summary.committed == pytest.approx(4 * DEFAULT_SEGMENT_COST_USD)
-    assert summary.reserved == pytest.approx(0.0)
+    assert len(out) == 4
+    assert all("error" not in r for r in out)
 
 
 @pytest.mark.asyncio
@@ -245,13 +216,11 @@ async def test_chain_parallel_max_parallel_respected_lower_bound() -> None:
     passing 0 still makes progress instead of deadlocking on a
     zero-permit semaphore."""
     cg, ark, tm = _make_chain_gen()
-    ct = CostTracker()
     out = await cg.generate_chain(
         segments=[_seg(1)],
         model_id="m",
         mode="parallel",
-        cost_tracker=ct,
-        max_parallel=0,  # would deadlock without the max(1, ...) guard
+        max_parallel=0,
     )
     assert len(out) == 1
     assert "error" not in out[0]
@@ -267,12 +236,10 @@ async def test_chain_serial_chains_last_frame_into_next_first_frame() -> None:
     cg._wait_for_task = AsyncMock(side_effect=lambda tid: {
         "id": tid, "status": "done", "last_frame_url": "https://cdn/last.png",
     })
-    ct = CostTracker()
     await cg.generate_chain(
         segments=[_seg(1), _seg(2)],
         model_id="m",
         mode="serial",
-        cost_tracker=ct,
     )
     second_call = ark.create_task.await_args_list[1]
     content = second_call.kwargs["content"]
