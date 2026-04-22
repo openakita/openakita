@@ -128,6 +128,7 @@ def test_my_plugin():
 | [Getting Started](getting-started.md) | Full walkthrough from zero to running plugin |
 | [API Reference](api-reference.md) | All `PluginAPI` methods and signatures |
 | [**UI Plugin Guide**](plugin-ui.md) | 🆕 Full-stack UI plugin development (Plugin 2.0) |
+| [**UI / i18n / UI Kit Migration**](plugin-i18n-and-uikit-migration.md) | 🆕 Step-by-step guide to bring an existing plugin onto the shared `oa-*` UI Kit + bilingual (zh/en) i18n |
 | [Permissions](permissions.md) | Three-tier permission model |
 | [Hooks](hooks.md) | All 14 lifecycle hooks with callback signatures |
 | [Protocols](protocols.md) | Memory, Retrieval, Search interfaces |

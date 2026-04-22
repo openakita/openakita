@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 视频翻译</title>
+  <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css">
+  <script src="/api/plugins/_sdk/bootstrap.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/icons.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/i18n.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/event-helpers.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/error-coach.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/task-panel.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/onboard-wizard.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/first-success-celebrate.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/dep-gate.js"></script>
+  <style>
+    body { padding: 16px; }
+    h1 { margin:0 0 6px; font-size: 22px; display: inline-flex; align-items: center; gap: 10px; }
+    h1 .oa-icon { width: 22px; height: 22px; color: var(--oa-primary); }
+    .header-tip { color: var(--oa-text-muted); font-size: 12px; margin-bottom: 16px; }
+    .pipeline { font-size: 12px; color: var(--oa-text-muted); }
+  </style>
+</head>
+<body>
+  <h1>
+    <span class="oa-icon" data-icon="globe"></span>
+    <span data-i18n="header.title"></span>
+  </h1>
+  <div class="header-tip" data-i18n="header.tip"></div>
+  <div class="pipeline" data-i18n="header.pipeline"></div>
+
+  <!-- Dependency gate: ffmpeg + whisper.cpp drive the translate-and-redub pipeline -->
+  <div data-oa-dep="ffmpeg,whisper.cpp"></div>
+
+  <div class="oa-card">
+    <h3>① <span data-i18n="step1.title"></span></h3>
+    <input id="vidFile" type="file" accept="video/*">
+    <div id="vidInfo" style="font-size:12px;color:var(--oa-text-muted);margin-top:4px"></div>
+  </div>
+
+  <div class="oa-card">
+    <h3>② <span data-i18n="step2.title"></span></h3>
+    <div class="oa-grid cols-2">
+      <div>
+        <label class="oa-label" data-i18n="form.lang"></label>
+        <select id="lang" class="oa-input"></select>
+      </div>
+      <div>
+        <label class="oa-label" data-i18n="form.voice"></label>
+        <input id="voice" class="oa-input" value="en-US-AriaNeural">
+      </div>
+    </div>
+    <div class="oa-grid cols-2" style="margin-top:6px">
+      <div>
+        <label class="oa-label" data-i18n="form.burn"></label>
+        <select id="burn" class="oa-input">
+          <option value="false" data-i18n="form.burn.no"></option>
+          <option value="true"  data-i18n="form.burn.yes"></option>
+        </select>
+      </div>
+      <div>
+        <label class="oa-label" data-i18n="form.keepvol"></label>
+        <input id="keepvol" class="oa-input" type="number" step="0.05" min="0" max="1" value="0.15">
+      </div>
+    </div>
+  </div>
+
+  <div class="oa-row" style="margin: 0 0 14px">
+    <button class="oa-btn oa-btn-primary" id="goBtn" disabled data-i18n="actions.go"></button>
+  </div>
+  <div id="errorBox"></div>
+
+  <h3 style="margin: 18px 0 8px" data-i18n="tasks.title"></h3>
+  <div id="tasks"></div>
+
+<script>
+  OpenAkitaI18n.register({
+    zh: {
+      "header.title": "AI 视频翻译",
+      "header.tip": "上传视频 → 自动识别语音 → 翻译字幕 → 合成新配音 → 输出双语视频。",
+      "header.pipeline": "流水线：抽音轨 → ASR → LLM 翻译 → TTS → 合并 → 封装。整个过程在本地，仅翻译用云端 LLM。",
+      "step1.title": "上传视频",
+      "step2.title": "翻译选项",
+      "form.lang": "目标语言",
+      "form.voice": "配音声音",
+      "form.burn": "是否硬烧字幕",
+      "form.burn.no": "否（软字幕，可关闭）",
+      "form.burn.yes": "是（硬字幕，永久显示）",
+      "form.keepvol": "原音保留音量 (0–1)",
+      "actions.go": "开始翻译",
+      "tasks.title": "最近的任务",
+      "upload.uploading": "上传中…",
+      "upload.done": "已上传：{name}（{mb} MB）",
+      "err.upload.fail": "上传失败",
+      "err.video.required": "请先上传视频",
+      "err.create.fail": "创建失败",
+      "result.title": "翻译完成",
+      "result.dlVideo": "下载视频",
+      "result.dlSrt": "下载字幕 SRT",
+      "onboard.q": "你打算把视频翻译成哪种语言？",
+      "onboard.opt.en": "英语 (国际通用)",
+      "onboard.opt.zh": "中文 (回中国发布)",
+      "onboard.opt.ja": "日语",
+      "onboard.opt.other": "其它",
+      "success.title": "第一条翻译视频出炉啦！",
+      "rec.subtitle": "只要字幕不要配音",
+      "rec.tts": "换个声音重做"
+    },
+    en: {
+      "header.title": "Video Translator",
+      "header.tip": "Upload a video → auto-transcribe → translate subtitles → synthesize new voice-over → bilingual video.",
+      "header.pipeline": "Pipeline: extract audio → ASR → LLM translate → TTS → mux → package. Runs locally, only translation calls the cloud LLM.",
+      "step1.title": "Upload video",
+      "step2.title": "Translation options",
+      "form.lang": "Target language",
+      "form.voice": "Voice",
+      "form.burn": "Hard-burn subtitles?",
+      "form.burn.no": "No (soft subtitles, toggleable)",
+      "form.burn.yes": "Yes (hard subtitles, always visible)",
+      "form.keepvol": "Original audio volume (0–1)",
+      "actions.go": "Start translating",
+      "tasks.title": "Recent tasks",
+      "upload.uploading": "Uploading…",
+      "upload.done": "Uploaded: {name} ({mb} MB)",
+      "err.upload.fail": "Upload failed",
+      "err.video.required": "Please upload a video first",
+      "err.create.fail": "Failed to create task",
+      "result.title": "Translation done",
+      "result.dlVideo": "Download video",
+      "result.dlSrt": "Download SRT",
+      "onboard.q": "Which language are you translating into?",
+      "onboard.opt.en": "English (international)",
+      "onboard.opt.zh": "Chinese (China release)",
+      "onboard.opt.ja": "Japanese",
+      "onboard.opt.other": "Other",
+      "success.title": "First translated video is out!",
+      "rec.subtitle": "Just subtitles, no dubbing",
+      "rec.tts": "Redo with another voice"
+    }
+  });
+  const T = (k, vars) => OpenAkitaI18n.t(k, vars);
+
+  document.querySelectorAll("[data-icon]").forEach(function (el) {
+    var name = el.dataset.icon;
+    var fn = window.OpenAkitaIcons && window.OpenAkitaIcons[name];
+    if (fn) el.innerHTML = fn();
+  });
+  OpenAkitaI18n.bindDom(document.body);
+
+  const apiBase = (OpenAkita.meta && OpenAkita.meta.apiBase) || '';
+  const api = (path, opts) => fetch(apiBase + path, opts).then(r => r.json().then(j => ({ ok: r.ok, status: r.status, body: j })));
+  const $ = (id) => document.getElementById(id);
+  let videoPath = null; let lastTaskId = null;
+
+  OnboardWizard.askOnce({
+    storageKey: 'video-translator:audience',
+    question: T('onboard.q'),
+    options: [
+      { id: 'en',    label: T('onboard.opt.en') },
+      { id: 'zh',    label: T('onboard.opt.zh') },
+      { id: 'ja',    label: T('onboard.opt.ja') },
+      { id: 'other', label: T('onboard.opt.other') },
+    ],
+  });
+
+  api('/languages').then(r => {
+    const sel = $('lang'); sel.innerHTML = '';
+    ((r.body && r.body.languages) || []).forEach(l => {
+      const o = document.createElement('option'); o.value = l.code; o.textContent = `${l.name} (${l.code})`;
+      sel.appendChild(o);
+    });
+    sel.value = 'en';
+  });
+
+  $('vidFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    $('vidInfo').textContent = T('upload.uploading');
+    const fd = new FormData(); fd.append('file', f);
+    const r = await fetch(apiBase + '/upload-video', { method:'POST', body: fd });
+    if (!r.ok) { ErrorCoach.mount('#errorBox', { problem: T('err.upload.fail') }); return; }
+    const j = await r.json(); videoPath = j.path;
+    $('vidInfo').textContent = T('upload.done', { name: f.name, mb: (f.size/1024/1024).toFixed(1) });
+    $('goBtn').disabled = false;
+  });
+
+  $('goBtn').addEventListener('click', async () => {
+    $('errorBox').innerHTML = '';
+    if (!videoPath) { ErrorCoach.mount('#errorBox', { problem: T('err.video.required') }); return; }
+    const r = await api('/tasks', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        source_video_path: videoPath,
+        target_language: $('lang').value,
+        voice: $('voice').value,
+        burn_subtitles: $('burn').value === 'true',
+        keep_original_audio_volume: parseFloat($('keepvol').value || '0.15'),
+      })});
+    if (!r.ok) { ErrorCoach.mount('#errorBox', r.body.detail || { problem: T('err.create.fail') }); return; }
+    lastTaskId = r.body.task_id;
+    taskPanel.refresh();
+  });
+
+  const taskPanel = new TaskPanel({ root: '#tasks', apiBase, tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
+  taskPanel.start();
+
+  OpenAkita.onEvent('task_updated', (data) => {
+    taskPanel.refresh();
+    if (data && data.status === 'succeeded' && data.id === lastTaskId) {
+      const v = apiBase + '/tasks/' + data.id + '/video';
+      const s = apiBase + '/tasks/' + data.id + '/srt';
+      const div = document.createElement('div');
+      div.className = 'oa-card';
+      div.innerHTML = `<h3>${T('result.title')}</h3>
+        <video controls src="${v}" style="width:100%;max-height:360px"></video>
+        <div class="oa-row" style="margin-top:6px">
+          <a class="oa-btn" href="${v}" download>${T('result.dlVideo')}</a>
+          <a class="oa-btn" href="${s}" download>${T('result.dlSrt')}</a>
+        </div>`;
+      $('errorBox').innerHTML = ''; $('errorBox').appendChild(div);
+      FirstSuccessCelebrate.maybeFire({
+        storageKey: 'video-translator:firstSuccess',
+        title: T('success.title'),
+        recommendations: [
+          { id: 'subtitle-maker', label: T('rec.subtitle') },
+          { id: 'tts-studio',    label: T('rec.tts') },
+        ],
+        onRecommend: (id) => OpenAkita.navigate('plugin-app:' + id),
+      });
+    }
+  });
+</script>
+</body>
+</html>

@@ -112,9 +112,17 @@ class ArkClient:
         return resp.json()
 
     async def validate_key(self) -> bool:
-        """Quick validation by listing one task."""
+        """Quick validation by listing one task.
+
+        Any exception (network, 4xx auth, 5xx upstream) is treated as a
+        validation failure so the UI can show a single boolean.  We log at
+        ``warning`` level instead of swallowing silently so operators can grep
+        for "Ark key validation failed" in the host log if a user reports
+        "key keeps showing invalid".
+        """
         try:
             await self.list_tasks(page_size=1)
             return True
-        except Exception:
+        except Exception as exc:
+            logger.warning("Ark key validation failed: %s", exc)
             return False

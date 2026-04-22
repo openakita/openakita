@@ -1,0 +1,49 @@
+{
+  "id": "transcribe-archive",
+  "name": "Transcribe Archive",
+  "display_name_zh": "音视频转写归档",
+  "display_name_en": "Transcribe Archive",
+  "version": "0.1.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Chunked, cache-friendly audio/video transcription with word-level timestamps, SRT/VTT export and a D2.10 trust badge. Long files are split into time windows so a single failure never wastes the whole job.",
+  "description_i18n": {
+    "zh": "把长音视频按时间窗口分片转写，自带断点续传缓存，导出字幕 (SRT/VTT)、纯文本和 JSON 归档，并给出 D2.10 可信度徽章。",
+    "en": "Chunked, cache-friendly audio/video transcription with word-level timestamps, SRT/VTT export and a D2.10 trust badge. Long files are split into time windows so a single failure never wastes the whole job."
+  },
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["asr", "transcribe", "subtitle", "srt", "vtt", "archive"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.4.0"
+  },
+  "provides": {
+    "tools": [
+      "transcribe_archive_create",
+      "transcribe_archive_status",
+      "transcribe_archive_list",
+      "transcribe_archive_cancel",
+      "transcribe_archive_preview"
+    ],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "音视频转写归档",
+    "title_i18n": { "zh": "音视频转写归档", "en": "Transcribe Archive" },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme", "clipboard"]
+  }
+}

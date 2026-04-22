@@ -5,6 +5,112 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 2026-04-21
+
+### Fixed — 插件加载系统三件套
+
+- **多插件 `task_manager.py` / `providers.py` 同名子模块在 `sys.modules`
+  互相覆盖**：21 个插件中有 19 个使用裸名 `from task_manager import X`
+  导入自己目录下的 `task_manager.py`；先加载的插件抢占
+  `sys.modules["task_manager"]`,后续插件命中缓存导致
+  `ImportError: cannot import name 'XxxTaskManager'`。`_load_python_plugin`
+  在 `exec_module` 前增加 shadowed 机制：扫描本插件目录的顶层 `.py` /
+  包名,把 `sys.modules` 里属于其他插件的同名条目先弹出,让本插件的
+  bare import 能沿 `sys.path` 找到自己的文件。已加载兄弟插件持有的
+  Python 对象引用照常工作。
+- **`PluginManager._failed` 在卸载/移除后从不清理**：UI 长期残留"插件
+  加载失败"幽灵条目。`unload_plugin` 入口立即 `pop _failed[plugin_id]`;
+  纯 failed-state 的卸载现在返回 `True`(原先返回 `False`,语义更准确,
+  现有测试不受影响)。`uninstall_plugin` 路由的 removed 分支额外调用
+  新增的 `pm.forget_failure(plugin_id)` 兜底。
+- **`seedance-video` 缺失 `prompt_optimizer.py` 导致
+  `ModuleNotFoundError`**：Sprint 18 收尾依据
+  [docs/sprint18-cleanup-assessment.md](docs/sprint18-cleanup-assessment.md)
+  §B8 的错误 grep 结论删除了该文件,但 `plugin.py` 第 39–46 行 import
+  并在 4 个 REST 端点(`/prompt-guide`、`/prompt-templates`、
+  `/prompt-formulas`、`/prompt-optimize`)实际使用 6 个符号。已从 commit
+  `f04787f9^` 还原 291 行原版本。SDK 的
+  `openakita_plugin_sdk.contrib.prompt_optimizer.PromptOptimizer` 是另一
+  套泛化 API（无 Seedance 静态字典、签名不同）,不能替换;后续若想接 SDK
+  须按 §B8 推荐方案做拆分。
+
+### Documentation
+
+- `docs/sprint18-cleanup-assessment.md` §B8.A — 标注 grep 结论错误 +
+  撤销动作 + 复核命令(`rg --pcre2 -nP "from\s+prompt_optimizer"`)
+- `docs/plugin-2.0-handover.md` — 移除 `prompt_optimizer.py` 删除线,
+  改写为"已还原"
+- 自检 21 个插件的同名子模块碰撞清单(归档于本次 PR plan)
+
+## [1.27.9] - 2026-04-20
+
+> Plugin Sprint 7-18 整合发布。完成 SDK `contrib/` 6 件套补齐 + 8 个新 AI-媒体插件
+> 上线 + 老插件全套加固。所有改动覆盖单元测试，主仓 + SDK + 20 个插件总计 **1180+
+> 测试 / 1 skipped / 零回归**。详见 [docs/sprint18-cleanup-assessment.md](docs/sprint18-cleanup-assessment.md)。
+
+### Added — SDK `openakita-plugin-sdk/contrib/` 6 件套（Sprint 8）
+
+- **`quality_gates`** — G1-G5 多轨闸门（含 `slideshow_risk` D2.1）
+- **`intent_verifier`** — `verify_delivery` 出参与用户意图比对（D2.2 + P3.5）
+- **`provider_score`** — 多 provider 排序与裁判（D2.5）
+- **`verification`** — `Verification` + `LowConfidenceField` 协议（D2.10）
+- **`error_coach`** — 错误归因 + 可执行建议（D2.11 + D2.14 双段）
+- **`prompt_optimizer`** — 通用 LLM 提示词优化器（P3.1-P3.5 共 5 条 prompt）
+
+补充模块：`upload_preview`、`agent_loop_config`、`base_task_manager`、`base_vendor_client`、
+`ffmpeg`（`run_ffmpeg` + `auto_color_grade_filter` + `signalstats sampling ±8% clamp`，B7）、
+`source_review`（D2.3）、`slideshow_risk`（D2.1）、`cost_tracker` / `checkpoint`
+（健康检查通过，标记为 🅿️ waiting-for-consumer）。
+
+### Added — 8 个新 AI-媒体插件
+
+| Sprint | 插件 | 卖点 |
+|--------|------|------|
+| Sprint 11 | `transcribe-archive` | parallel_executor + checkpoint + cost_tracker (95 测试) |
+| Sprint 12 | `bgm-mixer` | madmom beat-aware ducking + ffmpeg 切点对齐 (68 测试) |
+| Sprint 13 | `video-color-grade` | SDK auto_color_grade 薄封装 (49 测试) |
+| Sprint 13 | `smart-poster-grid` | 4 尺寸编排 + verification (50 测试) |
+| Sprint 14 | `video-bg-remove` | RVM ckpt + onnxruntime + dep_gate (72 测试) |
+| Sprint 15 | `ppt-to-video` | LibreOffice headless + tts-studio 跨插件调用 (79 测试) |
+| Sprint 16 | `local-sd-flux` | ComfyUI HTTP 客户端 + 5 条 workflow + provider_score (99 测试) |
+| Sprint 17 | `shorts-batch` | 批量 shorts 编排 + slideshow_risk D2.1 (51 测试) |
+| Sprint 17 | `dub-it` | 视频配音翻译 5 阶段流水线 + source_review D2.3 (52 测试) |
+
+每个新插件均自带 `SKILL.md` + `README.md` + `ui/dist/index.html` 占位 + 完整测试。
+
+### Added — 老插件加固（Sprint 7 + Sprint 9 真实复用）
+
+- `seedance-video` — 全套 SQL 白名单 / spawn_task / async unload / SKILL.md / 30+ 测试
+- `storyboard` — 接 `gate_g5_slideshow_risk` + `intent_verifier.verify_delivery`
+- `tongyi-image` — 接 `error_coach` 双段错误归因
+- `bgm-suggester` — 接 `verification` 字段（self-check style match）
+- `cost_translation_map.yaml` — 给 tongyi-image / seedance-video / bgm-suggester 各加一条人话翻译
+
+### Changed
+
+- 主 README 「Plugin System」章节新增「Bundled AI-Media Plugins (20)」表，统计 913 个测试
+- `docs/plugin-2.0-handover.md` — 标记 seedance `prompt_optimizer.py` 已删除
+- `openakita-plugin-sdk/docs/contrib.md` — `cost_tracker` / `checkpoint` 标 🅿️ waiting-for-consumer
+
+### Removed
+
+- `plugins/seedance-video/prompt_optimizer.py` — 孤儿文件（无 import / 无测试，逻辑已被 SDK
+  `contrib.prompt_optimizer.PromptOptimizer` 泛化覆盖）。详见
+  [Sprint 18 评估 §B8](docs/sprint18-cleanup-assessment.md#b8-prompt_optimizer-迁移评估)。
+
+### Documentation
+
+- `docs/sprint18-cleanup-assessment.md` — A1+ tongyi / A1+ seedance / B8 prompt_optimizer
+  / SkillManifest loader 4 项迁移评估
+- `docs/refs-extraction-report.md` — D1-D9 9 个插件 `findings/d_class_copy_points/` 抽点报告（Sprint 10）
+- 各插件 `SKILL.md` + `README.md` 全套补齐
+
+### Tests
+
+- SDK：367 passed / 1 skipped
+- 20 个插件：813+ passed
+- **总计：1180+ 测试，零回归**
+
 ## [1.2.1] - 2026-02-05
 
 ### Added

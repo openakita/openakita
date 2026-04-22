@@ -422,7 +422,8 @@ export function AgentDashboardView({
       const hasRunning = Array.from(simNodesRef.current.values()).some(
         (n) => n.status === "running",
       );
-      const targetInterval = hasRunning ? 1 / 30 : 1 / 10;
+      const isDragging = !!dragRef.current;
+      const targetInterval = isDragging ? 0 : hasRunning ? 1 / 30 : 1 / 24;
       if (t - lastFrameTimeRef.current < targetInterval) {
         animRef.current = requestAnimationFrame(step);
         return;

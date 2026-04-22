@@ -45,6 +45,10 @@ interface TimelineSegment {
   lines: string[];
   files: FileAttachment[];
   done: boolean;
+  /** 上一次 push line 的时间戳（毫秒）；用于抑制 1s 内同行重复 */
+  lastPushAt?: number;
+  /** 已加入 files 的 file_path 集合，按 path 去重 */
+  filePaths?: Set<string>;
   resultPreview?: string;
   /**
    * 节点退出原因：
@@ -133,6 +137,11 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  // 当前在跑命令的 command_id；用于"强制终止"按键判断启用状态。
+  // - 在 send_command 拿到 commandId 后置位
+  // - finalizeResult / send 异常 / 不可恢复重连完成时清空
+  // 与 _pendingCmds 解耦的目的：组件内的 React state 才能驱动按键 enable/disable。
+  const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const mountedRef = useRef(true);
@@ -226,6 +235,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       return [...prev, { id: phId, role: "assistant" as const, content: progress, timestamp: Date.now(), streaming: true }];
     });
     setSending(true);
+    setPendingCmdId(pending.commandId);
 
     const resumePoll = async () => {
       while (!cancelled && _pendingCmds.has(convId)) {
@@ -250,6 +260,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
             if (mountedRef.current) {
               setMessages(prev => prev.map(m => m.id === phId ? { ...m, content, streaming: false, attachments: pending.allFiles.length > 0 ? pending.allFiles : undefined } : m));
               setSending(false);
+              setPendingCmdId(null);
             }
             return;
           }
@@ -259,6 +270,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         const saved = loadFromLocalStorage(convId);
         if (saved.length > 0) setMessages(saved);
         setSending(false);
+        setPendingCmdId(null);
       }
     };
     resumePoll();
@@ -307,6 +319,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
   const handleClear = useCallback(async () => {
     setMessages([]);
     _pendingCmds.delete(convId);
+    setPendingCmdId(null);
     try { localStorage.removeItem(LS_PREFIX + convId); } catch {}
     try {
       await safeFetch(`${apiBaseUrl}/api/sessions/${encodeURIComponent(convId)}`, {
@@ -314,6 +327,26 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       });
     } catch {}
   }, [apiBaseUrl, convId]);
+
+  // 强制终止当前在跑命令：仅 POST 到后端 cancel 端点。
+  // 后端会让 send_command 走"stopped_by_watchdog + cancelled_by_user"分支
+  // 正常返回，从而触发 handleSend 中的 finalizeResult 收尾；此处不动本地
+  // _pendingCmds / 消息流，避免与 send_command 路径竞争产生重复消息。
+  const handleStop = useCallback(async () => {
+    if (!pendingCmdId) return;
+    const ok = window.confirm(
+      "确定要强制终止当前任务？已产出的中间结果会保留，但本次指令将立刻结束。",
+    );
+    if (!ok) return;
+    try {
+      await safeFetch(
+        `${apiBaseUrl}/api/orgs/${encodeURIComponent(orgId)}/commands/${encodeURIComponent(pendingCmdId)}/cancel`,
+        { method: "POST" },
+      );
+    } catch (e) {
+      console.warn("[OrgChat] cancel command failed", e);
+    }
+  }, [apiBaseUrl, orgId, pendingCmdId]);
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
@@ -338,10 +371,43 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     function findOrCreateSeg(nodeId: string): TimelineSegment {
       let idx = activeSegIdx.get(nodeId);
       if (idx != null && !segments[idx].done) return segments[idx];
-      const seg: TimelineSegment = { nodeId, nodeName: nn(nodeId), lines: [], files: [], done: false };
+      const seg: TimelineSegment = {
+        nodeId,
+        nodeName: nn(nodeId),
+        lines: [],
+        files: [],
+        done: false,
+        lastPushAt: 0,
+        filePaths: new Set<string>(),
+      };
       segments.push(seg);
       activeSegIdx.set(nodeId, segments.length - 1);
       return seg;
+    }
+
+    // 进度行去重：相邻同内容、且与上一次 push 间隔 < 1s 视为重复事件，跳过。
+    // 用于兜底前端 WebSocket fan-out（已在 platform/websocket.ts 做事件级去重，
+    // 此处再加一层 segment 级保险，避免某些 handler 残留导致同行被多次入栈）。
+    const SEG_LINE_DEDUPE_MS = 1000;
+    function pushSegLine(seg: TimelineSegment, line: string): boolean {
+      const now = Date.now();
+      const last = seg.lines.length > 0 ? seg.lines[seg.lines.length - 1] : null;
+      if (last === line && seg.lastPushAt && now - seg.lastPushAt < SEG_LINE_DEDUPE_MS) {
+        return false;
+      }
+      seg.lines.push(line);
+      seg.lastPushAt = now;
+      return true;
+    }
+
+    // 文件按 file_path 去重：同一交付物在多次事件中只入 files 一次。
+    function pushSegFile(seg: TimelineSegment, file: FileAttachment): boolean {
+      if (!seg.filePaths) seg.filePaths = new Set<string>();
+      const key = file.file_path || file.filename || "";
+      if (key && seg.filePaths.has(key)) return false;
+      if (key) seg.filePaths.add(key);
+      seg.files.push(file);
+      return true;
     }
 
     function segSummaryIcon(seg: TimelineSegment): string {
@@ -397,7 +463,18 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
       if (pending) {
         pending.lastRendered = rendered;
         pending.segmentCount = segments.length;
-        pending.allFiles = segments.flatMap(s => s.files);
+        // 持久化时也按 file_path 去重，防止 _pendingCmds 缓存里残留重复
+        const seen = new Set<string>();
+        const flat: FileAttachment[] = [];
+        for (const s of segments) {
+          for (const f of s.files) {
+            const key = f.file_path || f.filename || "";
+            if (key && seen.has(key)) continue;
+            if (key) seen.add(key);
+            flat.push(f);
+          }
+        }
+        pending.allFiles = flat;
       }
       if (!mountedRef.current) return;
       setMessages(prev => prev.map(m => m.id === placeholderId ? { ...m, content: rendered || "思考中..." } : m));
@@ -415,38 +492,42 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           const task = (d.current_task || "") as string;
           if (task.startsWith("[通知]")) return;
           const seg = findOrCreateSeg(nid);
-          seg.lines.push(`● **${nn(nid)}** 开始处理${task ? `：${task}` : ""}`);
-          updatePreview();
+          if (pushSegLine(seg, `● **${nn(nid)}** 开始处理${task ? `：${task}` : ""}`)) {
+            updatePreview();
+          }
         } else if (st === "idle") {
           const exitReason = (d.exit_reason as string) || "normal";
           const idx = activeSegIdx.get(nid);
           if (idx != null && segments[idx]) {
-            segments[idx].done = true;
-            segments[idx].exitReason = exitReason;
+            const seg = segments[idx];
+            seg.done = true;
+            seg.exitReason = exitReason;
             // 正常完成才打 ✓；非正常退出交给后续 task_terminated/task_failed 事件打"⏹/⚠"
             if (exitReason === "normal" || exitReason === "ask_user") {
-              segments[idx].lines.push(`✓ **${nn(nid)}** 完成`);
+              pushSegLine(seg, `✓ **${nn(nid)}** 完成`);
             } else {
-              segments[idx].failed = true;
+              seg.failed = true;
             }
           }
           updatePreview();
         } else if (st === "error") {
           const seg = findOrCreateSeg(nid);
           seg.done = true;
-          seg.lines.push(`✗ **${nn(nid)}** 出错`);
+          pushSegLine(seg, `✗ **${nn(nid)}** 出错`);
           updatePreview();
         }
       } else if (event === "org:task_delegated") {
         const task = ((d.task || "") as string);
         const seg = findOrCreateSeg(nid);
-        seg.lines.push(`→ **${nn(nid)}** → **${nn(toN)}** 分配任务：${task}`);
-        updatePreview();
+        if (pushSegLine(seg, `→ **${nn(nid)}** → **${nn(toN)}** 分配任务：${task}`)) {
+          updatePreview();
+        }
       } else if (event === "org:task_delivered") {
         const summary = ((d.summary || "") as string);
         const seg = findOrCreateSeg(nid);
-        seg.lines.push(`📦 **${nn(nid)}** 提交交付${summary ? `：${summary}` : ""}`);
-        updatePreview();
+        if (pushSegLine(seg, `📦 **${nn(nid)}** 提交交付${summary ? `：${summary}` : ""}`)) {
+          updatePreview();
+        }
       } else if (event === "org:task_complete") {
         const preview = ((d.result_preview || "") as string);
         const idx = activeSegIdx.get(nid);
@@ -460,14 +541,15 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         const diagnosis = (d.diagnosis as FailureDiagnosis | undefined) || undefined;
         const idx = activeSegIdx.get(nid);
         if (idx != null && segments[idx]) {
-          segments[idx].done = true;
-          segments[idx].resultPreview = preview;
-          segments[idx].exitReason = reason;
-          segments[idx].failed = true;
-          segments[idx].diagnosis = diagnosis;
-          segments[idx].lines.push(`⏹ **${nn(nid)}** 被强制终止（检测到死循环）`);
+          const seg = segments[idx];
+          seg.done = true;
+          seg.resultPreview = preview;
+          seg.exitReason = reason;
+          seg.failed = true;
+          seg.diagnosis = diagnosis;
+          pushSegLine(seg, `⏹ **${nn(nid)}** 被强制终止（检测到死循环）`);
           if (diagnosis) {
-            segments[idx].lines.push(formatDiagnosisMarkdown(diagnosis));
+            pushSegLine(seg, formatDiagnosisMarkdown(diagnosis));
           }
         }
         updatePreview();
@@ -477,18 +559,19 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         const diagnosis = (d.diagnosis as FailureDiagnosis | undefined) || undefined;
         const idx = activeSegIdx.get(nid);
         if (idx != null && segments[idx]) {
-          segments[idx].done = true;
-          segments[idx].resultPreview = preview;
-          segments[idx].exitReason = reason;
-          segments[idx].failed = true;
-          segments[idx].diagnosis = diagnosis;
+          const seg = segments[idx];
+          seg.done = true;
+          seg.resultPreview = preview;
+          seg.exitReason = reason;
+          seg.failed = true;
+          seg.diagnosis = diagnosis;
           const reasonLabel =
             reason === "max_iterations" ? "达到最大迭代次数" :
             reason === "verify_incomplete" ? "任务验证未通过" :
             "执行失败";
-          segments[idx].lines.push(`⚠ **${nn(nid)}** 未完成：${reasonLabel}`);
+          pushSegLine(seg, `⚠ **${nn(nid)}** 未完成：${reasonLabel}`);
           if (diagnosis) {
-            segments[idx].lines.push(formatDiagnosisMarkdown(diagnosis));
+            pushSegLine(seg, formatDiagnosisMarkdown(diagnosis));
           }
         }
         updatePreview();
@@ -499,13 +582,16 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         const fsize = d.file_size as number | undefined;
         if (mt === "resource" && fname && fpath) {
           const seg = findOrCreateSeg(nid);
-          seg.lines.push(`📎 **${nn(nid)}** 产出文件：${fname}`);
-          seg.files.push({ filename: fname, file_path: fpath, file_size: fsize });
-          updatePreview();
+          const added = pushSegFile(seg, { filename: fname, file_path: fpath, file_size: fsize });
+          if (added) {
+            pushSegLine(seg, `📎 **${nn(nid)}** 产出文件：${fname}`);
+            updatePreview();
+          }
         } else {
           const seg = findOrCreateSeg(nid);
-          seg.lines.push(`~ **${nn(nid)}** 更新黑板`);
-          updatePreview();
+          if (pushSegLine(seg, `~ **${nn(nid)}** 更新黑板`)) {
+            updatePreview();
+          }
         }
       } else if (event === "org:command_stuck_warning") {
         const idle = Number(d.idle_secs || 0);
@@ -513,16 +599,29 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         const sec = idle % 60;
         const idleStr = minutes > 0 ? `${minutes}分${sec}秒` : `${sec}秒`;
         const seg = findOrCreateSeg("system");
-        seg.lines.push(
+        if (pushSegLine(
+          seg,
           `⏳ 组织已 ${idleStr} 无进度。任务仍在运行中，可继续等待，` +
           `或在需要时手动停止。长时间无响应时系统会自动兜底暂停。`
-        );
-        updatePreview();
+        )) {
+          updatePreview();
+        }
       }
     });
 
+    // 跨 segment 收集时按 file_path 去重，避免最终附件区出现重复
     function collectAllFiles(): FileAttachment[] {
-      return segments.flatMap(s => s.files);
+      const seen = new Set<string>();
+      const out: FileAttachment[] = [];
+      for (const s of segments) {
+        for (const f of s.files) {
+          const key = f.file_path || f.filename || "";
+          if (key && seen.has(key)) continue;
+          if (key) seen.add(key);
+          out.push(f);
+        }
+      }
+      return out;
     }
 
     const finalizeResult = (content: string, files?: FileAttachment[], role: "assistant" | "system" = "assistant") => {
@@ -581,6 +680,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         finalizeResult(finalContent);
       } else {
         _pendingCmds.set(convId, { commandId, orgId, placeholderId, lastRendered: "", segmentCount: 0, allFiles: [], finalContent: null });
+        setPendingCmdId(commandId);
 
         let resolved = false;
         const unsubDone = onWsEvent((evt, raw) => {
@@ -634,6 +734,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
     } finally {
       unsubProgress();
       setSending(false);
+      setPendingCmdId(null);
       if (mountedRef.current) {
         const all = messagesRef.current.filter(m => !m.streaming);
         if (all.length > 0) {
@@ -763,6 +864,19 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
           rows={1}
           className="ocp-textarea"
         />
+        <button
+          data-slot="ocp"
+          type="button"
+          onClick={handleStop}
+          disabled={!pendingCmdId}
+          className="ocp-stop"
+          title={pendingCmdId ? "强制终止当前任务" : "当前没有正在执行的任务"}
+          aria-label="强制终止当前任务"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <rect x="6" y="6" width="12" height="12" rx="2" />
+          </svg>
+        </button>
         <button
           data-slot="ocp"
           onClick={handleSend}
@@ -934,6 +1048,24 @@ const CHAT_CSS = `
 }
 .ocp-send:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
 .ocp-send-busy { background: linear-gradient(135deg, #f59e0b, #f97316) !important; }
+
+/* 强制终止当前任务按键：常驻输入区，未运行时灰显 */
+.ocp-stop {
+  width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
+  border: 1px solid var(--line, rgba(100,116,139,0.3));
+  background: transparent;
+  color: var(--muted, #64748b);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+}
+.ocp-stop svg { fill: currentColor; }
+.ocp-stop:not(:disabled):hover {
+  background: rgba(239,68,68,0.12);
+  border-color: rgba(239,68,68,0.55);
+  color: #ef4444;
+}
+.ocp-stop:disabled { opacity: 0.35; cursor: not-allowed; }
 
 .ocp-send-spinner {
   width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3);

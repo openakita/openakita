@@ -393,7 +393,7 @@ See [plugin-ui.md](plugin-ui.md) for the full frontend SDK and Bridge protocol d
 
 ## config_schema.json 示例 / config_schema.json Example
 
-插件根目录下放置 `config_schema.json`，宿主在 `PUT /api/plugins/{id}/config` 时用 `jsonschema` 校验配置。
+插件根目录下放置 `config_schema.json`，宿主在 `PUT /api/plugins/{id}/_admin/config` 时用 `jsonschema` 校验配置。
 
 Place `config_schema.json` in the plugin root. The host validates config updates via `jsonschema`.
 
@@ -436,8 +436,8 @@ Place `config_schema.json` in the plugin root. The host validates config updates
 The host tracks runtime errors. **10 errors** within a **5-minute sliding window** triggers **auto-disable**.
 
 **恢复方式 / Recovery:**
-- 通过 `POST /api/plugins/{id}/enable` 重新启用，error tracker 自动重置
-- Re-enable via `POST /api/plugins/{id}/enable`; the error tracker resets automatically
+- 通过 `POST /api/plugins/{id}/_admin/enable` 重新启用，error tracker 自动重置
+- Re-enable via `POST /api/plugins/{id}/_admin/enable`; the error tracker resets automatically
 
 ---
 

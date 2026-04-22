@@ -56,6 +56,42 @@ def _is_stream_only_error(error: str) -> bool:
     )
 
 
+def _humanize_upstream_error(status: int, body: str) -> str:
+    """把云端 LLM 的英文错误转成对小白用户更友好的中文摘要。
+
+    原始 body 仍会通过 logger.error 留档以便排查；这里只控制传播给用户那条
+    LLMError 的 message。完全找不到匹配时回退到一个通用 HTTP 提示。
+
+    例外：如果是 stream-only relay（"stream must be set to true" 等），
+    必须保留原文，以便 chat() 的 except 分支识别后自动切到流式重试。
+    """
+    if _is_stream_only_error(body or ""):
+        return body or f"API error ({status})"
+    body_l = (body or "").lower()
+    if (
+        "invalidparameter" in body_l
+        and (
+            "url" in body_l
+            or "image" in body_l
+            or "vision" in body_l
+        )
+    ):
+        return "云端模型未能访问到您发送的图片（图片需可公网访问或采用内嵌方式），请稍后重试或更换更小的图片"
+    if status == 401 or "authenticationerror" in body_l or "invalid api key" in body_l:
+        return "API Key 无效或已过期，请到设置中心检查模型端点凭据"
+    if status == 429 or "rate limit" in body_l:
+        return "调用频率已超过上游限制，请稍后再试"
+    if "insufficientquota" in body_l or "insufficient_quota" in body_l or "balance" in body_l:
+        return "云端账户余额不足或额度已用尽，请充值后再继续使用"
+    if status == 408 or "timeout" in body_l:
+        return "云端响应超时，请稍后重试或换个模型"
+    if status == 404 or "modelnotfound" in body_l or "model not found" in body_l:
+        return "目标模型不存在或当前账号无权限调用该模型"
+    if status >= 500:
+        return f"云端服务暂时不可用 (HTTP {status})，请稍后重试"
+    return f"云端模型调用失败 (HTTP {status})"
+
+
 class _BearerAuth(httpx.Auth):
     """Bearer token auth that persists across cross-origin redirects.
 
@@ -262,12 +298,21 @@ class OpenAIProvider(LLMProvider):
 
             if response.status_code >= 400:
                 body = (response.text or "")[:500]
+                logger.error(
+                    "[OpenAIProvider] upstream non-stream error status=%s body=%s",
+                    response.status_code, body[:1000],
+                )
                 if response.status_code == 401:
-                    raise AuthenticationError(f"Authentication failed: {body}", status_code=401)
+                    raise AuthenticationError(
+                        _humanize_upstream_error(401, body), status_code=401
+                    )
                 if response.status_code == 429:
-                    raise RateLimitError(f"Rate limit exceeded: {body}", status_code=429)
+                    raise RateLimitError(
+                        _humanize_upstream_error(429, body), status_code=429
+                    )
                 raise LLMError(
-                    f"API error ({response.status_code}): {body}", status_code=response.status_code
+                    _humanize_upstream_error(response.status_code, body),
+                    status_code=response.status_code,
                 )
 
             try:
@@ -346,18 +391,22 @@ class OpenAIProvider(LLMProvider):
                 if response.status_code >= 400:
                     error_body = await response.aread()
                     error_text = error_body.decode(errors="replace")[:500]
+                    logger.error(
+                        "[OpenAIProvider] upstream stream error status=%s body=%s",
+                        response.status_code, error_text,
+                    )
                     if response.status_code == 401:
                         raise AuthenticationError(
-                            f"Authentication failed: {error_text}",
+                            _humanize_upstream_error(401, error_text),
                             status_code=401,
                         )
                     if response.status_code == 429:
                         raise RateLimitError(
-                            f"Rate limit exceeded: {error_text}",
+                            _humanize_upstream_error(429, error_text),
                             status_code=429,
                         )
                     raise LLMError(
-                        f"API error ({response.status_code}): {error_text}",
+                        _humanize_upstream_error(response.status_code, error_text),
                         status_code=response.status_code,
                     )
 

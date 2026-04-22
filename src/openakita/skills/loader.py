@@ -1,8 +1,8 @@
 """
-Skill loader.
+技能加载器
 
-Follows the Agent Skills specification (agentskills.io/specification).
-Loads skills defined by SKILL.md from a standard directory structure.
+遵循 Agent Skills 规范 (agentskills.io/specification)
+从标准目录结构加载 SKILL.md 定义的技能
 """
 
 import logging
@@ -11,6 +11,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .categories import (
+    RESERVED_NAMESPACE_DIRS,
+    CategoryRegistry,
+    read_description_md,
+)
 from .parser import ParsedSkill, SkillMetadata, SkillParser
 from .registry import SkillRegistry
 
@@ -20,10 +25,10 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_user_workspace_skills() -> Path:
-    """Dynamically resolve the skills directory for the current user workspace.
+    """动态解析当前用户工作区的技能目录。
 
-    In production uses config.settings.skills_path (auto-adapts to the current workspace and custom root),
-    falling back to a path derived from OPENAKITA_ROOT / the default location if import fails.
+    生产模式下使用 config.settings.skills_path（自动适配当前工作区和自定义根目录），
+    导入失败时回退到基于 OPENAKITA_ROOT / 默认路径。
     """
     try:
         from ..config import settings
@@ -40,9 +45,9 @@ def _resolve_user_workspace_skills() -> Path:
 
 def _builtin_skills_root() -> Path | None:
     """
-    Return the built-in skills directory (shipped with the wheel).
+    返回内置技能目录（随 wheel 分发）。
 
-    Expected layout:
+    期望结构：
     openakita/
       builtin_skills/
         system/<tool-name>/SKILL.md
@@ -54,23 +59,23 @@ def _builtin_skills_root() -> Path | None:
         return None
 
 
-# Standard skill directories (ordered by priority)
+# 标准技能目录 (按优先级排序)
 SKILL_DIRECTORIES = [
-    # Built-in system skills (shipped with the pip package, highest priority)
+    # 内置系统技能（随 pip 包分发，优先级最高）
     "__builtin__",
-    # User workspace (resolved at runtime based on the current workspace)
+    # 用户工作区（运行时根据当前工作区动态解析）
     "__user_workspace__",
-    # Project level (still scanned in development mode)
+    # 项目级别（开发模式下仍可扫描）
     "skills",
 ]
 
-# System skill directories (loaded first)
+# 系统技能目录（优先加载）
 SYSTEM_SKILL_DIRECTORIES = [
-    "skills",  # System skills also live under skills/; distinguished via the system: true flag
+    "skills",  # 系统技能也放在 skills/ 目录下，通过 system: true 标记区分
 ]
 
-# External skills not enabled by default at packaging time (applies to fresh installs / when data/skills.json is absent).
-# Once the user toggles selections via the UI, skills.json is created and the user's choice takes precedence.
+# 打包时默认不启用的外部技能（新安装 / 无 data/skills.json 时生效）。
+# 用户通过前端面板手动勾选后会创建 skills.json，之后以用户选择为准。
 DEFAULT_DISABLED_SKILLS: frozenset[str] = frozenset(
     {
         "openakita/skills@algorithmic-art",
@@ -127,23 +132,23 @@ DEFAULT_DISABLED_SKILLS: frozenset[str] = frozenset(
         "openakita/skills@xiaohongshu-creator",
         "openakita/skills@youtube-summarizer",
         "openakita/skills@yuque-skills",
-        # IM / office CLIs
+        # IM 办公 CLI
         "openakita/skills@feishu-cli",
         "openakita/skills@wecom-cli",
         "openakita/skills@dingtalk-cli",
-        # AI video generation
+        # AI 视频生成
         "openakita/skills@seedance-video",
-        # Travel and maps
+        # 出行与地图
         "openakita/skills@amap-maps",
         "openakita/skills@fliggy-travel",
         "openakita/skills@didi-ride",
-        # Tencent ecosystem
+        # 腾讯生态
         "openakita/skills@qq-channel",
         "openakita/skills@tencent-meeting",
         "openakita/skills@tencent-survey",
         "openakita/skills@tencent-news",
         "openakita/skills@tencent-ima",
-        # Baidu skills
+        # 百度系 Skills
         "openakita/skills@baidu-search",
         "openakita/skills@baidu-netdisk",
         "openakita/skills@baidu-baike",
@@ -161,9 +166,9 @@ DEFAULT_DISABLED_SKILLS: frozenset[str] = frozenset(
         "openakita/skills@baidu-yijian",
         "openakita/skills@baidu-famou",
         "openakita/skills@xiaodu-control",
-        # E-commerce tools
+        # 电商工具
         "openakita/skills@taobaoke-tool",
-        # NetEase Cloud Music
+        # 网易云音乐
         "openakita/skills@netease-music",
     }
 )
@@ -171,33 +176,37 @@ DEFAULT_DISABLED_SKILLS: frozenset[str] = frozenset(
 
 class SkillLoader:
     """
-    Skill loader.
+    技能加载器
 
-    Supports:
-    - auto-discovering skills from standard directories
-    - parsing SKILL.md files
-    - loading skill scripts
-    - progressive disclosure
+    支持:
+    - 从标准目录自动发现技能
+    - 解析 SKILL.md 文件
+    - 加载技能脚本
+    - 渐进式披露
     """
 
     def __init__(
         self,
         registry: SkillRegistry | None = None,
         parser: SkillParser | None = None,
+        category_registry: "CategoryRegistry | None" = None,
     ):
         self.registry = registry if registry is not None else SkillRegistry()
         self.parser = parser or SkillParser()
+        self.category_registry = (
+            category_registry if category_registry is not None else CategoryRegistry()
+        )
         self._loaded_skills: dict[str, ParsedSkill] = {}
 
     def discover_skill_directories(self, base_path: Path | None = None) -> list[Path]:
         """
-        Discover all skill directories.
+        发现所有技能目录
 
         Args:
-            base_path: base path (project root).
+            base_path: 基础路径 (项目根目录)
 
         Returns:
-            List of skill directories that exist.
+            存在的技能目录列表
         """
         base_path = base_path or Path.cwd()
         directories = []
@@ -225,19 +234,39 @@ class SkillLoader:
 
     def load_all(self, base_path: Path | None = None) -> int:
         """
-        Load skills from all standard directories.
+        从所有标准目录加载技能
 
         Args:
-            base_path: base path.
+            base_path: 基础路径
 
         Returns:
-            Number of skills loaded.
+            加载的技能数量
         """
+        # 每次 load_all 都重置分类注册表，避免被删除的分类残留
+        try:
+            self.category_registry.clear()
+        except Exception:
+            pass
+
         directories = self.discover_skill_directories(base_path)
         loaded = 0
 
         for skill_dir in directories:
-            loaded += self.load_from_directory(skill_dir)
+            # __builtin__ / skills/system/ 等只读源以及被识别为 system 的根
+            # 视为只读分类容器；用户工作区与项目 skills/ 视为可写
+            try:
+                builtin_root = _builtin_skills_root()
+            except Exception:
+                builtin_root = None
+            is_readonly_root = (
+                builtin_root is not None
+                and skill_dir.resolve() == builtin_root.resolve()
+            )
+            loaded += self.load_from_directory(
+                skill_dir,
+                _category_path="",
+                _readonly=is_readonly_root,
+            )
 
         loaded += self._load_cli_anything_skills()
 
@@ -290,27 +319,62 @@ class SkillLoader:
             logger.info(f"Loaded {loaded} cli-anything skills from pip packages")
         return loaded
 
-    def load_from_directory(self, directory: Path, *, force: bool = True) -> int:
+    def load_from_directory(
+        self,
+        directory: Path,
+        *,
+        force: bool = True,
+        _category_path: str = "",
+        _readonly: bool = False,
+    ) -> int:
         """
-        Load all skills from a directory.
+        从目录加载所有技能（参考 hermes-agent 范式）
 
-        Each subdirectory containing a SKILL.md is treated as a skill.
-        Special handling: the 'system' subdirectory is scanned recursively and is used to hold system-tool skills.
+        递归规则：
+        - 子目录含 SKILL.md → 视为一个技能，调用 ``load_skill``
+        - 子目录名属于 ``RESERVED_NAMESPACE_DIRS``（system/external/custom/
+          community/builtin）→ 命名空间容器，递归但不作为分类透传
+        - 子目录不含 SKILL.md 且不是命名空间 → **分类容器**：
+            * 若同级有 DESCRIPTION.md，读取分类描述
+            * 把目录名（嵌套时用 / 拼接）作为 ``inferred_category`` 透传
+              给该分类下的所有 SKILL.md
 
         Args:
-            directory: skill directory.
-            force: whether to allow overwriting an already-registered skill with the same name (default True,
-                so repeated calls to ``load_all`` pick up the user's latest edits to SKILL.md; pass False only when
-                the first registration should be preserved).
+            directory: 技能目录
+            force: 是否允许覆盖已注册的同名 skill
+            _category_path: 内部参数。当前正在递归的分类路径，外部调用请保持空
+            _readonly: 内部参数。当前根（如 ``__builtin__``）是否为只读
 
         Returns:
-            Number of skills loaded.
+            加载的技能数量
         """
         if not directory.exists():
             logger.warning(f"Skill directory not found: {directory}")
             return 0
 
         loaded = 0
+
+        # 进入分类容器时登记分类（顶层 _category_path="" 时跳过，避免把
+        # 根目录本身误登记为分类）
+        if _category_path:
+            description = None
+            desc_file = directory / "DESCRIPTION.md"
+            if desc_file.exists():
+                try:
+                    description = read_description_md(desc_file)
+                except Exception as e:
+                    logger.debug(
+                        "Failed to read DESCRIPTION.md at %s: %s", desc_file, e
+                    )
+            try:
+                self.category_registry.upsert(
+                    _category_path,
+                    description=description,
+                    source_dir=directory,
+                    system_readonly=_readonly,
+                )
+            except Exception as e:
+                logger.debug("CategoryRegistry.upsert(%s) failed: %s", _category_path, e)
 
         for item in directory.iterdir():
             if not item.is_dir():
@@ -319,13 +383,46 @@ class SkillLoader:
             skill_md = item / "SKILL.md"
             if skill_md.exists():
                 try:
-                    skill = self.load_skill(item, force=force)
+                    skill = self.load_skill(
+                        item,
+                        force=force,
+                        inferred_category=_category_path or None,
+                    )
                     if skill:
                         loaded += 1
+                        if _category_path:
+                            try:
+                                self.category_registry.add_skill(
+                                    _category_path, item.name
+                                )
+                            except Exception:
+                                pass
                 except Exception as e:
                     logger.error(f"Failed to load skill from {item}: {e}")
-            elif item.name in ("system", "external", "custom", "community", "builtin"):
-                loaded += self.load_from_directory(item, force=force)
+            elif item.name in RESERVED_NAMESPACE_DIRS:
+                # 命名空间目录：保持旧行为（不作为用户面向的"大类"，
+                # 因此 _category_path 不向下累积；system 目录默认只读）
+                child_readonly = _readonly or item.name == "system"
+                loaded += self.load_from_directory(
+                    item,
+                    force=force,
+                    _category_path="",
+                    _readonly=child_readonly,
+                )
+            elif item.name.startswith(".") or item.name.startswith("_"):
+                # 隐藏目录 / 内部目录（如 .git、__pycache__）不当作分类
+                continue
+            else:
+                # 分类容器：递归并把目录名累加进 _category_path
+                sub_category = (
+                    f"{_category_path}/{item.name}" if _category_path else item.name
+                )
+                loaded += self.load_from_directory(
+                    item,
+                    force=force,
+                    _category_path=sub_category,
+                    _readonly=_readonly,
+                )
 
         logger.info(f"Loaded {loaded} skills from {directory}")
         return loaded
@@ -346,23 +443,38 @@ class SkillLoader:
         *,
         plugin_source: str | None = None,
         force: bool = False,
+        inferred_category: str | None = None,
     ) -> ParsedSkill | None:
         """
-        Load a single skill.
+        加载单个技能
 
         Args:
-            skill_dir: skill directory.
-            plugin_source: plugin source identifier.
-            force: allow overwriting an already-registered skill with the same name (for reload / reinstall scenarios).
+            skill_dir: 技能目录
+            plugin_source: 插件来源标识
+            force: 允许覆盖已注册的同名 skill（用于 reload / 重装场景）
+            inferred_category: 由 ``load_from_directory`` 根据父目录推断的分类。
+                当 SKILL.md frontmatter 未声明 ``category`` 时使用；
+                当 frontmatter 已声明且非系统技能时，目录推断的分类**优先**
+                （hermes 范式：目录就是分类）；系统技能（``meta.system=True``）
+                始终以 frontmatter 为准，避免破坏既有 system 分组 UX
 
         Returns:
-            ParsedSkill or None.
+            ParsedSkill 或 None
         """
         try:
             skill = self.parser.parse_directory(skill_dir)
 
-            # Load sidecar translation file
+            # 加载 sidecar 翻译文件
             self._load_i18n(skill_dir, skill.metadata)
+
+            # 应用目录推断的分类（顺序：non-system 时目录优先；
+            # system 时 frontmatter 优先；都没有时 inferred 兜底）
+            if inferred_category:
+                if getattr(skill.metadata, "system", False):
+                    if not (skill.metadata.category or "").strip():
+                        skill.metadata.category = inferred_category
+                else:
+                    skill.metadata.category = inferred_category
 
             # OS compatibility check
             if not self._is_os_compatible(skill.metadata.supported_os):
@@ -373,7 +485,7 @@ class SkillLoader:
                 )
                 return None
 
-            # Validation: hard errors block registration, warnings are logged
+            # 验证: hard errors block registration, warnings are logged
             errors = self.parser.validate(skill)
             hard_errors = [e for e in (errors or []) if e.startswith("ERROR:")]
             warnings = [e for e in (errors or []) if not e.startswith("ERROR:")]
@@ -406,9 +518,9 @@ class SkillLoader:
             return None
 
     def _load_i18n(self, skill_dir: Path, metadata: SkillMetadata) -> None:
-        """Load internationalization data into metadata.
+        """加载国际化数据到 metadata。
 
-        Prefers the i18n field from agents/openai.yaml, falling back to .openakita-i18n.json.
+        优先 agents/openai.yaml 的 i18n 字段，回退 .openakita-i18n.json。
         """
         from .i18n import read_i18n
 
@@ -422,7 +534,7 @@ class SkillLoader:
                 metadata.description_i18n[lang] = str(fields["description"])
 
     def _resolve_skill(self, key: str) -> ParsedSkill | None:
-        """Look up by skill_id, falling back to name matching."""
+        """按 skill_id 查找，未命中时回退到 name 匹配。"""
         skill = self._loaded_skills.get(key)
         if skill is not None:
             return skill
@@ -432,17 +544,17 @@ class SkillLoader:
         return None
 
     def get_skill(self, key: str) -> ParsedSkill | None:
-        """Return a loaded skill (accepts skill_id or name)."""
+        """获取已加载的技能（接受 skill_id 或 name）"""
         return self._resolve_skill(key)
 
     def get_skill_body(self, key: str) -> str | None:
         """
-        Return the skill's full instructions (body).
+        获取技能的完整指令 (body)
 
-        This is the second level of progressive disclosure:
-        - Level 1: metadata (name, description) — loaded at startup.
-        - Level 2: full instructions (body) — loaded on activation.
-        - Level 3: resource files — loaded on demand.
+        这是渐进式披露的第二级:
+        - 第一级: 元数据 (name, description) - 启动时加载
+        - 第二级: 完整指令 (body) - 激活时加载
+        - 第三级: 资源文件 - 按需加载
         """
         skill = self._resolve_skill(key)
         if skill:
@@ -450,10 +562,10 @@ class SkillLoader:
         return None
 
     def compute_effective_allowlist(self, external_allowlist: set[str] | None) -> set[str] | None:
-        """Compute the effective allowlist from skills.json's allowlist and the default-disabled list.
+        """根据 skills.json 的 allowlist 和默认禁用列表，计算最终的有效 allowlist。
 
-        - skills.json exists with an external_allowlist -> use it directly (explicit user choice).
-        - skills.json is absent (external_allowlist is None) -> use all external skills minus DEFAULT_DISABLED_SKILLS.
+        - skills.json 存在且有 external_allowlist -> 直接使用（用户显式选择）
+        - skills.json 不存在（external_allowlist is None）-> 用全部外部技能 - DEFAULT_DISABLED_SKILLS
         """
         if external_allowlist is not None:
             return external_allowlist
@@ -474,17 +586,17 @@ class SkillLoader:
         agent_referenced_skills: set[str] | None = None,
     ) -> int:
         """
-        Prune / flag loaded skills against the external-skills allowlist.
+        根据外部技能 allowlist 裁剪 / 标记已加载技能。
 
-        Conventions:
-        - System skills are always retained and enabled.
-        - external_allowlist is None -> no restriction (all enabled).
-        - external_allowlist is set() -> all external skills disabled.
+        约定：
+        - system 技能永远保留且启用
+        - external_allowlist 为 None → 不做限制（全部启用）
+        - external_allowlist 为 set() → 禁用所有外部技能
 
-        External skills not in the allowlist:
-        - referenced by agent_referenced_skills -> kept but flagged disabled=True
-          (sub-agent INCLUSIVE mode can enable them explicitly).
-        - otherwise -> removed from both the registry and the loader.
+        不在 allowlist 中的外部技能：
+        - 被 agent_referenced_skills 引用 → 保留但标记 disabled=True
+          （子 Agent INCLUSIVE 模式可显式启用）
+        - 否则 → 从注册表和 loader 中移除
         """
         if external_allowlist is None:
             for name in self._loaded_skills:
@@ -524,14 +636,14 @@ class SkillLoader:
 
     def get_script_content(self, name: str, script_name: str) -> str | None:
         """
-        Return the contents of a skill script.
+        获取技能脚本内容
 
         Args:
-            name: skill name.
-            script_name: script file name.
+            name: 技能名称
+            script_name: 脚本文件名
 
         Returns:
-            Script contents or None.
+            脚本内容或 None
         """
         skill = self._loaded_skills.get(name)
         if not skill:
@@ -547,7 +659,7 @@ class SkillLoader:
     _SCRIPT_IGNORE = frozenset({"__init__.py", "__pycache__"})
 
     def _list_available_scripts(self, skill: ParsedSkill) -> list[str]:
-        """List all executable scripts in a skill (recursively under scripts/ plus top-level root files)."""
+        """列出技能中所有可执行脚本（scripts/ 递归 + 根目录顶层）。"""
         scripts: list[str] = []
 
         if skill.scripts_dir and skill.scripts_dir.is_dir():
@@ -571,12 +683,12 @@ class SkillLoader:
         return scripts
 
     def _resolve_script_path(self, skill: ParsedSkill, script_name: str) -> Path | None:
-        """Look up a script file in both the skill's scripts/ directory and its root.
+        """在技能的 scripts/ 目录和根目录中查找脚本文件。
 
-        Many external skills (e.g. Anthropic's xlsx, pdf, etc.) place scripts directly
-        in the skill root rather than in a scripts/ subdirectory, so we check both.
+        很多外部技能（如 Anthropic 的 xlsx、pdf 等）把脚本直接放在技能根目录
+        而非 scripts/ 子目录，因此需要双重查找。
 
-        Safety: the resolved path must remain inside the skill directory to prevent ``../`` traversal.
+        安全: 解析后的路径必须仍在技能目录内，防止 ``../`` 穿越。
         """
         for base in (skill.scripts_dir, skill.skill_dir):
             if base is None:
@@ -603,16 +715,16 @@ class SkillLoader:
         cwd: Path | None = None,
     ) -> tuple[bool, str]:
         """
-        Run a skill script.
+        运行技能脚本
 
         Args:
-            name: skill name.
-            script_name: script file name.
-            args: command-line arguments.
-            cwd: working directory.
+            name: 技能名称
+            script_name: 脚本文件名
+            args: 命令行参数
+            cwd: 工作目录
 
         Returns:
-            (success, output) tuple.
+            (成功, 输出) 元组
         """
         skill = self._resolve_skill(name)
         if not skill:
@@ -637,21 +749,21 @@ class SkillLoader:
                     f"then write Python code and execute it via run_shell."
                 )
 
-        # Determine how to run the script
+        # 确定如何运行脚本
         args = args or []
 
         if script_path.suffix == ".py":
-            # PyInstaller compatibility: use runtime_env to fetch the correct Python interpreter
+            # PyInstaller 兼容: 使用 runtime_env 获取正确的 Python 解释器
             from openakita.runtime_env import get_python_executable
 
             py = get_python_executable()
             if not py:
-                return False, "Python interpreter is unavailable; cannot execute the script"
+                return False, "Python 解释器不可用，无法执行脚本"
             cmd = [py, str(script_path)] + args
         elif script_path.suffix in (".sh", ".bash"):
             bash_path = shutil.which("bash")
             if not bash_path:
-                # On Windows, try the common Git Bash paths
+                # Windows 上尝试 Git Bash 的常见路径
                 if sys.platform == "win32":
                     import os as _os
 
@@ -672,7 +784,7 @@ class SkillLoader:
         elif script_path.suffix == ".js":
             cmd = ["node", str(script_path)] + args
         else:
-            # Try running directly
+            # 尝试直接运行
             cmd = [str(script_path)] + args
 
         try:
@@ -721,14 +833,14 @@ class SkillLoader:
 
     def get_reference(self, name: str, ref_name: str) -> str | None:
         """
-        Return a skill reference document.
+        获取技能参考文档
 
         Args:
-            name: skill name (accepts skill_id or display name).
-            ref_name: reference document name (e.g. REFERENCE.md).
+            name: 技能名称（接受 skill_id 或 display name）
+            ref_name: 参考文档名称 (如 REFERENCE.md)
 
         Returns:
-            Document contents or None.
+            文档内容或 None
         """
         skill = self._resolve_skill(name)
         if not skill or not skill.references_dir:
@@ -750,7 +862,7 @@ class SkillLoader:
         return None
 
     def unload_skill(self, name: str) -> bool:
-        """Unload a skill."""
+        """卸载技能"""
         if name in self._loaded_skills:
             del self._loaded_skills[name]
             self.registry.unregister(name)
@@ -759,7 +871,7 @@ class SkillLoader:
         return False
 
     def reload_skill(self, name: str) -> ParsedSkill | None:
-        """Reload a skill."""
+        """重新加载技能"""
         skill = self._loaded_skills.get(name)
         if not skill:
             return None
@@ -774,33 +886,33 @@ class SkillLoader:
 
     @property
     def loaded_count(self) -> int:
-        """Number of loaded skills."""
+        """已加载技能数量"""
         return len(self._loaded_skills)
 
     @property
     def loaded_skills(self) -> list[ParsedSkill]:
-        """All loaded skills."""
+        """所有已加载的技能"""
         return list(self._loaded_skills.values())
 
     @property
     def system_skills(self) -> list[ParsedSkill]:
-        """All system skills."""
+        """所有系统技能"""
         return [s for s in self._loaded_skills.values() if s.metadata.system]
 
     @property
     def external_skills(self) -> list[ParsedSkill]:
-        """All external skills."""
+        """所有外部技能"""
         return [s for s in self._loaded_skills.values() if not s.metadata.system]
 
     def get_skill_by_tool_name(self, tool_name: str) -> ParsedSkill | None:
         """
-        Get a skill by tool name.
+        根据工具名获取技能
 
         Args:
-            tool_name: original tool name (e.g. 'browser_navigate').
+            tool_name: 原工具名称（如 'browser_navigate'）
 
         Returns:
-            ParsedSkill or None.
+            ParsedSkill 或 None
         """
         for skill in self._loaded_skills.values():
             if skill.metadata.tool_name == tool_name:
@@ -809,32 +921,32 @@ class SkillLoader:
 
     def get_skills_by_handler(self, handler: str) -> list[ParsedSkill]:
         """
-        Get all skills associated with the given handler.
+        根据处理器名获取所有相关技能
 
         Args:
-            handler: handler name (e.g. 'browser').
+            handler: 处理器名称（如 'browser'）
 
         Returns:
-            List of skills.
+            技能列表
         """
         return [s for s in self._loaded_skills.values() if s.metadata.handler == handler]
 
     def get_tool_definitions(self) -> list[dict]:
         """
-        Return tool definitions for all system skills.
+        获取所有系统技能的工具定义
 
-        Used as the tools parameter passed to the LLM API.
+        用于传递给 LLM API 的 tools 参数
 
         Returns:
-            List of tool definitions.
+            工具定义列表
         """
         from ..tools.definitions import BASE_TOOLS
 
         definitions = []
 
-        # Build tool definitions from system skills
+        # 从系统技能生成工具定义
         for skill in self.system_skills:
-            # Look up the corresponding original tool definition
+            # 查找对应的原始工具定义
             original_def = None
             for tool in BASE_TOOLS:
                 if tool.get("name") == skill.metadata.tool_name:
@@ -842,12 +954,12 @@ class SkillLoader:
                     break
 
             if original_def:
-                # Use the original definition but update the description (if SKILL.md has a more detailed one)
+                # 使用原始定义但更新描述（如果 SKILL.md 中有更详细的）
                 tool_def = original_def.copy()
-                # The SKILL.md description can override here
+                # 可以在这里用 SKILL.md 中的描述覆盖
                 definitions.append(tool_def)
             else:
-                # No original definition; derive one from SKILL.md
+                # 没有原始定义，从 SKILL.md 生成
                 definitions.append(
                     {
                         "name": skill.metadata.tool_name,
@@ -862,11 +974,11 @@ class SkillLoader:
         return definitions
 
     def is_system_skill(self, name: str) -> bool:
-        """Check whether the skill is a system skill."""
+        """检查是否为系统技能"""
         skill = self._loaded_skills.get(name)
         return skill.metadata.system if skill else False
 
     def get_handler_name(self, name: str) -> str | None:
-        """Return the skill's handler name."""
+        """获取技能的处理器名称"""
         skill = self._loaded_skills.get(name)
         return skill.metadata.handler if skill else None

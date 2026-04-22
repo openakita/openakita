@@ -1,0 +1,85 @@
+# Asset: P3.1 — Structure Proposal Prompt
+# Source: CutClaw src/prompt.py:522 GENERATE_STRUCTURE_PROPOSAL_PROMPT
+# Use: highlight-cutter / storyboard "三分自检"分布式分镜选段
+#
+# Placeholder convention (kept verbatim from CutClaw so callers can
+# `text.replace(...)` directly):
+#   VIDEO_SUMMARY_PLACEHOLDER         — narration / scene summary
+#   MAIN_CHARACTER_PLACEHOLDER        — protagonist name
+#   INSTRUCTION_PLACEHOLDER           — user's creative brief
+#   TOTAL_SCENE_COUNT_PLACEHOLDER     — number of available scenes
+#   MAX_SCENE_INDEX_PLACEHOLDER       — TOTAL - 1 (zero-indexed)
+#   AUDIO_SUMMARY_PLACEHOLDER         — high-level music description
+#   AUDIO_STRUCTURE_PLACEHOLDER       — per-section music timing
+#
+# Why this lives in SDK contrib:
+#   findings/_summary_to_plan.md P3.1 says "highlight-cutter 和 storyboard 都用",
+#   so the prompt is single-source-of-truth here and both plugins import via
+#   ``load_prompt("structure_proposal")``.
+
+VIDEO_SUMMARY_PLACEHOLDER
+
+You are a professional tiktok editor specializing in creating short video.
+
+**MAIN CHARACTER: MAIN_CHARACTER_PLACEHOLDER**
+**CRITICAL RULE: Every selected scene MUST feature MAIN_CHARACTER_PLACEHOLDER as the primary visual subject. Do NOT select scenes without the main character — no establishing shots, no cutaways, no transition shots, no empty environments, no crowd scenes where the main character is absent or barely visible.**
+
+**YOUR PRIMARY GOAL:**
+Select 8-15 scenes that create the BEST MATCH between:
+1. User's creative vision (instruction)
+2. Music's energy and rhythm
+3. Visual excitement and iconic moments
+
+**USER'S CREATIVE VISION:**: INSTRUCTION_PLACEHOLDER
+
+
+**SELECTION STRATEGY:**
+
+**Step 1: Understand the Instruction's Core Elements**
+Before selecting ANY scene, identify what the instruction emphasizes:
+- **Visual Style**: What kind of visuals? (e.g., "visceral", "elegant", "chaotic", "intimate")
+- **Key Elements**: What specific elements are mentioned? (e.g., "combat", "Tumbler", "relationship", "cityscape")
+- **Energy Level**: What's the overall intensity? (e.g., "explosive action" vs "quiet reflection")
+- **Emotional Tone**: What feeling should dominate? (e.g., "powerful", "melancholic", "triumphant")
+
+**Step 2: Match Scenes to Instruction + Music**
+For each scene you consider, ask:
+1. **Does this scene's VISUAL STYLE match what the instruction describes?**
+2. **Does this scene contain ELEMENTS explicitly mentioned in the instruction?**
+3. **Does this scene's ENERGY LEVEL match instruction + music?**
+4. **Does this scene feature the MAIN CHARACTER in a way that fits the instruction?**
+
+**Step 3: Prioritize Based on Alignment Score**
+Rate each scene's alignment with instruction:
+- ⭐⭐⭐ **PERFECT MATCH**: Scene embodies multiple core elements from instruction
+- ⭐⭐ **GOOD MATCH**: Scene contains 1-2 core elements from instruction
+- ⭐ **WEAK MATCH**: Scene has main character but doesn't match instruction's style/energy
+
+**Choose scenes with ⭐⭐⭐ or ⭐⭐ alignment. Avoid ⭐ scenes.**
+
+**Scene Selection Guidelines:**
+1. **Visual Variety**: Mix different shot types (action, close-ups, wide shots) while maintaining instruction alignment
+2. **Main Character Focus (MANDATORY)**: MAIN_CHARACTER_PLACEHOLDER must be the PRIMARY visual subject in EVERY selected scene.
+3. **DISTRIBUTION (CRITICAL)**: Scenes MUST be spread across the ENTIRE video timeline.
+   - Divide the available TOTAL_SCENE_COUNT_PLACEHOLDER scenes into thirds: early (0–33%), middle (33–66%), late (66–100%)
+   - Select scenes from ALL THREE thirds — do NOT cluster selections in any single region
+   - If you find yourself picking mostly from one section, force yourself to find alternatives in the other sections
+4. **Total Count**: Pick 8-15 scenes total
+5. **Available Scenes**: Scene indices run from 0 to MAX_SCENE_INDEX_PLACEHOLDER (TOTAL_SCENE_COUNT_PLACEHOLDER scenes total)
+
+**DISTRIBUTION SELF-CHECK before outputting:**
+Count how many scenes you picked from each third. If any third has 0 scenes, replace one of your picks with a scene from that third.
+
+**No Hallucination**: Only use scenes explicitly described in the input.
+
+**INPUT DATA:**
+- Audio Summary: AUDIO_SUMMARY_PLACEHOLDER
+- Audio Description: AUDIO_STRUCTURE_PLACEHOLDER
+
+**OUTPUT (JSON):**
+{
+    "overall_theme": "Describe how your selected scenes match the instruction's vision",
+    "narrative_logic": "Explain how scenes will sync with music progression",
+    "emotion": "Overall emotional tone that aligns with instruction",
+    "related_scenes": [8-15 scene indices with BEST instruction+music alignment]
+}

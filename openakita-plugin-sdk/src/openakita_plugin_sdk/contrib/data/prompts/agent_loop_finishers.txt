@@ -1,0 +1,25 @@
+# Asset: P3.3 — Agent Loop Finisher Prompts
+# Source: CutClaw src/prompt.py:968 EDITOR_FINISH_PROMPT
+#         CutClaw src/prompt.py:970 EDITOR_USE_TOOL_PROMPT
+# Use: Injected by BaseAgentLoop after `finish_prompt_after_iters` rounds
+#      without a commit, OR when the model returns prose instead of a
+#      tool_calls payload.
+#
+# Two prompts in one file, separated by the line "---".  The loader
+# returns a dict keyed on the section name so callers can pick the one
+# they need:
+#
+#     finish     → posted as user message after N iterations without commit
+#     use_tool   → posted when model returned text-only response
+#
+# Both intentionally short — the loop already has the system prompt
+# (P3.2), tool definitions, and conversation history; these messages
+# only need to nudge.
+
+[finish]
+Please call the `commit` (or equivalent finalize) function to finish the task.
+
+---
+
+[use_tool]
+You must call a tool function. Do not output your reasoning as text — use the tool_calls format.

@@ -1,9 +1,9 @@
 """
-OrgRuntime — organization runtime engine
+OrgRuntime — 组织运行时引擎
 
-Responsible for organization lifecycle management, on-demand activation of node Agents,
-task scheduling, message dispatch, and WebSocket event broadcasting.
-Integrates heartbeat, scheduled tasks, scaling, inbox, notification, policy management and other subsystems.
+负责组织生命周期管理、节点 Agent 按需激活、
+任务调度、消息分发、WebSocket 事件广播。
+集成心跳、定时任务、扩编、收件箱、通知、制度管理等子系统。
 """
 
 from __future__ import annotations
@@ -15,9 +15,14 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..core.response_handler import request_expects_artifact
 from .blackboard import OrgBlackboard
 from .event_store import OrgEventStore
-from .failure_diagnoser import format_human_summary, summarize as _diagnose_failure
+from .failure_diagnoser import (
+    format_human_summary,
+    is_soft_verify_incomplete as _is_soft_verify_incomplete,
+    summarize as _diagnose_failure,
+)
 from .identity import OrgIdentity
 from .messenger import OrgMessenger
 from .models import (
@@ -121,8 +126,18 @@ class UserCommandTracker:
         "started_at",
         "warned_stuck",
         "auto_stopped",
+        # 区分 auto_stopped 的来源：True 表示由用户主动调用
+        # `cancel_user_command` 强制终止；False 表示由 _command_watchdog
+        # 卡死兜底触发。仅影响 send_command 终态文案，不改变流程。
+        "user_cancelled",
         "state",
         "summary_pushed_at",
+        # BUG-3：保存当前命令的用户原始指令内容，供子节点 system prompt
+        # 渲染（identity.build_org_context_prompt）和 _handle_org_delegate_task
+        # 注入"父任务硬边界"时取用。命令结束时 tracker 一并被 pop，自动失效。
+        "user_command_content",
+        # BUG-5：finalize phase 事件去重，避免同 phase 重复 emit。
+        "_last_phase_emitted",
     )
 
     def __init__(
@@ -130,6 +145,7 @@ class UserCommandTracker:
         org_id: str,
         root_node_id: str,
         command_id: str | None = None,
+        user_command_content: str = "",
     ) -> None:
         self.org_id = org_id
         self.root_node_id = root_node_id
@@ -146,10 +162,13 @@ class UserCommandTracker:
         self.started_at: float = now
         self.warned_stuck: bool = False
         self.auto_stopped: bool = False
+        self.user_cancelled: bool = False
         # See class docstring for state machine details.
         self.state: str = "running"
         # monotonic time when summary inbox push happened (debounce).
         self.summary_pushed_at: float = 0.0
+        self.user_command_content: str = user_command_content or ""
+        self._last_phase_emitted: str | None = None
 
     def _touch(self) -> None:
         self.last_progress_at = time.monotonic()
@@ -210,34 +229,59 @@ class OrgRuntime:
 
         self._chain_delegation_depth: dict[str, int] = {}  # chain_id -> delegation depth
         self._node_current_chain: dict[str, str] = {}  # org_id:node_id -> chain_id
-        # Child→parent chain mapping; maintained by `_handle_org_delegate_task` when
-        # `org_chain_parent_enforced=True`. The tracker uses upward pointers to
-        # walk the full chain subtree and decide whether all descendant chains are closed.
-        # key=chain_id, value=parent_chain_id or None (top-level chain).
+        # 子链 → 父链 映射；由 `_handle_org_delegate_task` 在
+        # `org_chain_parent_enforced=True` 时维护。tracker 据此沿向上指针
+        # 遍历整棵 chain 子树，决定是否所有后代 chain 都已关闭。
+        # key=chain_id, value=parent_chain_id 或 None（顶层 chain）。
         self._chain_parent: dict[str, str | None] = {}
-        # Chain-close events: created by `_handle_org_delegate_task`,
-        # set by `_mark_chain_closed` when a chain closes, for use by
-        # `org_wait_for_deliverable` to block-wait. Short-lived mapping:
-        # once capacity exceeds max_chain_events, entries are evicted LRU-first
-        # (already set before eviction, so waiting tasks have already been notified).
+        # chain 关闭事件：由 `_handle_org_delegate_task` 创建，
+        # 由 `_mark_chain_closed` 在关链时 set，供 `org_wait_for_deliverable`
+        # 工具阻塞等待。短期映射，超过 max_chain_events 后按 LRU 弹出（
+        # 弹出前事件已经被 set，wait 任务已经收到通知，不会误等）。
         self._chain_events: OrderedDict[str, asyncio.Event] = OrderedDict()
         self._max_chain_events: int = 2048
-        # Per-node inbox "new event" async signal: set when a sub-agent sends a
-        # question/escalate/etc. message that needs immediate coordinator attention,
-        # allowing `org_wait_for_deliverable` to break out of its block and avoid
-        # deadlocks where a coordinator is blocked waiting. key=org_id:node_id.
+        # 节点 inbox "新事件" 异步信号：sub-agent 发来 question/escalate 等
+        # 需要 coordinator 立即处理的消息时被 set，用于 `org_wait_for_deliverable`
+        # 跳出阻塞，避免 coordinator 阻塞导致的死锁。key=org_id:node_id。
         self._node_inbox_events: dict[str, asyncio.Event] = {}
-        # Set of accepted/rejected/cancelled task chains (per org). Used for:
-        #   1) suppressing messages on closed chains from re-waking agent ReAct;
-        #   2) blocking delegate/submit on closed chains;
-        #   3) other chain-lifecycle idempotency checks.
-        # Bounded: at most N recent entries per org, to prevent set growth in long-running orgs.
+        # 已验收/打回/取消的任务链集合（按组织维度）。用于：
+        #   1) 抑制已关闭 chain 的消息重新唤醒 agent ReAct；
+        #   2) 阻断对已关闭 chain 的 delegate/submit；
+        #   3) 其它与 chain 生命周期相关的幂等判断。
+        # 长度受限：每个 org 最多保留最近 N 个，防止长时间运行的组织集合膨胀。
         self._closed_chains: dict[str, "OrderedDict[str, float]"] = {}
         self._closed_chain_max_per_org: int = 512
         self.max_concurrent_per_node: int = 2
         self._idle_tasks: dict[str, asyncio.Task] = {}
 
-        # Org-level concurrency control: limit the number of nodes simultaneously active per org
+        # ── Idle probe 状态（实例级，跨 IDLE/ACTIVE 切换持久） ──
+        # 解决原实现把 thresholds 作为协程局部变量、节点 IDLE→ACTIVE→IDLE
+        # 切换被 pop 清零导致"自适应增长"实际从未生效的问题。
+        # 所有 key 形式统一为 f"{org_id}:{node_id}"。
+        self._idle_node_thresholds: dict[str, float] = {}
+        self._idle_node_last_probed: dict[str, float] = {}
+        # 独立的"有效行动"时间戳：仅在节点成功 outbound（delegate/send_msg/
+        # reply/submit/escalate）时由 tool_handler 写入。区别于 _node_last_activity
+        # （后者在每次 tool call 都更新，包含 idle_probe 自己触发的活动）。
+        self._node_last_effective: dict[str, float] = {}
+        # 节点收到 inbound（task/message/reply/feedback）的时间戳。由 messenger 写入。
+        self._node_last_inbound: dict[str, float] = {}
+        # 上次 idle_probe 触发时记录的时间，用于下一轮判定是否产生有效行动。
+        self._idle_probe_pending_since: dict[str, float] = {}
+        # 节点累计"无效唤醒次数"。≥ _idle_max_ineffective 时永久暂停 probe，
+        # 直到收到 inbound 才在 _on_inbound_for_node 重置。
+        self._idle_node_ineffective: dict[str, int] = {}
+        # 组织级"全员安静"起始时间。所有节点 IDLE + 无 in-progress chain +
+        # 无 pending message + 无 active user command 的连续起始时间。
+        self._idle_org_quiet_since: dict[str, float] = {}
+        # Idle probe 调参（实例属性而非常量，方便测试覆盖）
+        self._idle_base_threshold: float = 120.0
+        self._idle_max_threshold: float = 600.0
+        self._idle_max_ineffective: int = 2
+        self._idle_org_quiet_grace: float = 300.0   # 5 min 后熔断
+        self._idle_org_silent_interval: float = 1800.0  # 熔断后 30 min 心跳
+
+        # 组织级并发控制：限制每个组织同时激活的节点数
         self.max_concurrent_nodes_per_org: int = 5
         self._org_semaphores: dict[str, asyncio.Semaphore] = {}
 
@@ -250,23 +294,46 @@ class OrgRuntime:
         self._suppress_post_hook: dict[str, bool] = {}
         self._latest_root_result: dict[str, dict] = {}
 
-        # User-command lifecycle tracking: key=(org_id, root_node_id) -> UserCommandTracker.
-        # Created by send_command at command start, removed at end. Used for event-driven
-        # completion detection (all chains closed + root IDLE + root inbox empty) and to
-        # provide `last_progress_at` / `warned_stuck` state for the watchdog.
+        # 用户命令生命周期追踪：key=(org_id, root_node_id) → UserCommandTracker
+        # 由 send_command 在命令开始时创建、结束时移除。用于事件驱动的命令完成
+        # 判定（所有 chain 关闭 + root IDLE + root inbox 空），并给看门狗提供
+        # `last_progress_at` / `warned_stuck` 等状态。
         self._active_user_cmd: dict[tuple[str, str], UserCommandTracker] = {}
 
-        # Origin tag of the "next activation" of a root node; gates writes to _latest_root_result.
-        # key = f"{org_id}:{node_id}", value in {"user_command", "task_delivered",
+        # root 节点"下一次激活"的来源标签，控制 _latest_root_result 的写入门禁。
+        # key = f"{org_id}:{node_id}"，value ∈ {"user_command", "task_delivered",
         # "delivery_followup", "question", "answer", "feedback",
-        # "notification", "post_task_notify", "other"}. Popped in _activate_and_run_inner
-        # before _latest_root_result is written; only whitelisted origins are persisted.
+        # "notification", "post_task_notify", "other"}。在 _activate_and_run_inner
+        # 写入 _latest_root_result 前 pop 出来，只有在白名单内的来源才写入。
         self._root_activation_origin: dict[str, str] = {}
 
-        # IDs of recently explicitly stopped/deleted organizations (short-lived set used to let
-        # in-flight tool calls return a semantic error like "organization stopped, task cancelled"
-        # instead of "organization not running").
+        # 最近被显式停止/删除的组织 id（短期集合，用于让 in-flight tool 调用
+        # 返回"组织已停止，任务被取消"这样的语义化错误而不是"组织未运行"）
         self._recently_stopped_orgs: dict[str, float] = {}
+
+        # 失败/终止诊断卡片去重：在 _diagnosis_emit_window_secs 窗口内，
+        # 同一 (org_id, node_id, root_cause) 只 broadcast 一次，避免 verify_incomplete
+        # 反复重试或 watchdog 多次 emit 导致前端聊天气泡里出现多张相同的失败卡片。
+        # key = (org_id, node_id, root_cause), value = 上次 emit 的时间戳（秒）。
+        # 窗口 300s（5min）：原 30s 太短，verify_incomplete 在长任务里很容易跨过
+        # 30s 再次触发同根因诊断，造成聊天里反复出现"为什么失败"。
+        self._recent_diagnosis_emit: dict[tuple[str, str, str], float] = {}
+        self._diagnosis_emit_window_secs: float = 300.0
+
+        # 节点本任务内已成功登记的文件数量（_register_file_output 成功 +1）。
+        # 在 _activate_and_run_inner 进入 _run_agent_task 之前清零，agent.chat
+        # 返回后读取。auto-persist 兜底仅在 counter == 0 时触发，确保不会和
+        # LLM 自己调 write_file/generate_image/org_submit_deliverable 已经
+        # 产生的真实附件重复落盘。
+        # key = "{org_id}:{node_id}"（与 _node_last_activity 对齐），值 = int。
+        self._node_files_registered_in_task: dict[str, int] = {}
+
+        # 工具级在途锁：防止 LLM 在同一 ReAct iter 内 emit 多个相同 tool_use
+        # （如 3 次 org_delegate_task 给同一 to_node 同一 chain）造成下游
+        # mailbox 重复入队。key = "{tool}:{org_id}:{node_id}:{...}"，
+        # value = 抢到锁的时间戳（秒）。窗口外旧 key 可被覆盖。
+        self._tool_inflight_keys: dict[str, float] = {}
+        self._tool_inflight_window_secs: float = 5.0
 
         self._started = False
 
@@ -274,12 +341,58 @@ class OrgRuntime:
         _runtime_instance = self
 
     def _get_org_semaphore(self, org_id: str) -> asyncio.Semaphore:
-        """Get the org-level concurrency semaphore (limits simultaneously active nodes)."""
+        """获取组织级并发信号量（限制同时激活的节点数）。"""
         sem = self._org_semaphores.get(org_id)
         if sem is None:
             sem = asyncio.Semaphore(self.max_concurrent_nodes_per_org)
             self._org_semaphores[org_id] = sem
         return sem
+
+    def _should_skip_diagnosis_emit(
+        self, org_id: str, node_id: str, root_cause: str
+    ) -> bool:
+        """判定 (org, node, root_cause) 在去重窗口内是否已 emit 过失败卡片。
+
+        命中（应跳过）时仅刷新时间戳并返回 True；未命中（应 emit）时记录
+        时间戳并返回 False。窗口外的旧条目顺手清理，避免长时间运行内存累积。
+        """
+        import time as _t
+        now = _t.time()
+        key = (org_id, node_id, root_cause or "unknown")
+        last = self._recent_diagnosis_emit.get(key)
+        if last is not None and now - last < self._diagnosis_emit_window_secs:
+            self._recent_diagnosis_emit[key] = now
+            return True
+        self._recent_diagnosis_emit[key] = now
+        if len(self._recent_diagnosis_emit) > 4096:
+            cutoff = now - self._diagnosis_emit_window_secs * 4
+            stale = [k for k, ts in self._recent_diagnosis_emit.items() if ts < cutoff]
+            for k in stale:
+                self._recent_diagnosis_emit.pop(k, None)
+        return False
+
+    def _try_acquire_tool_inflight(self, key: str) -> bool:
+        """尝试获取工具在途锁。窗口内同 key 已被抢占则返回 False。
+
+        返回 True 表示当前调用是窗口内首次，调用方在 messenger 真正成功后
+        必须调用 :py:meth:`_release_tool_inflight` 释放（或不释放等待自然过期）。
+        """
+        import time as _t
+        now = _t.time()
+        last = self._tool_inflight_keys.get(key)
+        if last is not None and now - last < self._tool_inflight_window_secs:
+            return False
+        self._tool_inflight_keys[key] = now
+        if len(self._tool_inflight_keys) > 4096:
+            cutoff = now - self._tool_inflight_window_secs * 4
+            stale = [k for k, ts in self._tool_inflight_keys.items() if ts < cutoff]
+            for k in stale:
+                self._tool_inflight_keys.pop(k, None)
+        return True
+
+    def _release_tool_inflight(self, key: str) -> None:
+        """释放工具在途锁；幂等。"""
+        self._tool_inflight_keys.pop(key, None)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -342,7 +455,7 @@ class OrgRuntime:
             if messenger:
                 await messenger.stop_background_tasks()
 
-        # Release all pending command trackers to prevent send_command waiters from hanging
+        # 释放所有挂起的命令 tracker，防止 send_command 的等待者悬挂
         for tracker in list(self._active_user_cmd.values()):
             if not tracker.completed.is_set():
                 tracker.completed.set()
@@ -362,6 +475,13 @@ class OrgRuntime:
         self._node_current_chain.clear()
         self._chain_delegation_depth.clear()
         self._org_quota_failures.clear()
+        self._idle_node_thresholds.clear()
+        self._idle_node_last_probed.clear()
+        self._node_last_effective.clear()
+        self._node_last_inbound.clear()
+        self._idle_probe_pending_since.clear()
+        self._idle_node_ineffective.clear()
+        self._idle_org_quiet_since.clear()
 
         self._started = False
         logger.info("[OrgRuntime] Shutdown complete.")
@@ -382,8 +502,8 @@ class OrgRuntime:
         valid = self._VALID_TRANSITIONS.get(org.status, set())
         if target not in valid:
             raise ValueError(
-                f"Invalid state transition: {org.status.value} -> {target.value} "
-                f"(allowed targets: {', '.join(s.value for s in valid) or 'none'})"
+                f"无效状态转换: {org.status.value} -> {target.value} "
+                f"(允许的目标: {', '.join(s.value for s in valid) or '无'})"
             )
 
     # ------------------------------------------------------------------
@@ -396,8 +516,8 @@ class OrgRuntime:
         if not org:
             raise ValueError(f"Organization not found: {org_id}")
 
-        # Idempotent: if already ACTIVE/RUNNING, return directly to avoid throwing
-        # "Invalid state transition: active -> active" on double-click. Still blocks illegal jumps (e.g. ARCHIVED -> ACTIVE).
+        # 幂等：已经是 ACTIVE/RUNNING 就直接返回，避免双击启动按钮抛
+        # "无效状态转换: active -> active"。仍然拦住非法跳跃（如 ARCHIVED -> ACTIVE）。
         if org.status in (OrgStatus.ACTIVE, OrgStatus.RUNNING):
             return org
 
@@ -483,14 +603,13 @@ class OrgRuntime:
                 pass
 
     def mark_org_stopped(self, org_id: str) -> None:
-        """Mark the organization as "just stopped" so in-flight tool calls return a friendlier error.
+        """把组织标记为"刚被停止"，让 in-flight 工具调用返回更友好的错误。
 
-        Records a timestamp; considered expired after 15 minutes, at which point a missing
-        messenger falls back to the "organization not running" semantics (meaning not activated,
-        not just stopped).
+        记录一个时间戳；15 分钟后被认为已过期，此时仍找不到 messenger
+        可回到"组织未运行"的语义（说明是未激活，不是被停）。
         """
         self._recently_stopped_orgs[org_id] = time.monotonic()
-        # Cap collection size to avoid long-run memory leaks
+        # 限制集合大小，避免长时间运行后内存泄漏
         if len(self._recently_stopped_orgs) > 256:
             cutoff = time.monotonic() - 900
             self._recently_stopped_orgs = {
@@ -498,7 +617,7 @@ class OrgRuntime:
             }
 
     def is_org_recently_stopped(self, org_id: str) -> bool:
-        """Return whether the organization was explicitly stopped/deleted recently (within 15 minutes)."""
+        """返回组织是否在近期（15 分钟内）被显式 stop/delete。"""
         ts = self._recently_stopped_orgs.get(org_id)
         if ts is None:
             return False
@@ -508,12 +627,12 @@ class OrgRuntime:
         return True
 
     async def _cancel_busy_nodes(self, org: Organization, reason: str) -> None:
-        """Proactively cancel the tasks of all non-idle nodes before the org is stopped/deleted.
+        """在组织停止/删除前，主动取消所有未空闲节点的任务。
 
-        BUSY nodes go through cancel_node_task for cooperative cancellation so _activate_and_run
-        has a chance to exit and clean up node state; WAITING/ERROR nodes (which cancel_node_task
-        early-returns on) are forced to IDLE + mailbox cleared + a follow-up org:node_status
-        broadcast, ensuring the frontend sees the final state.
+        BUSY 节点走 cancel_node_task 触发协作式取消，让 _activate_and_run
+        有机会退出并清理 node 状态；WAITING/ERROR 节点（cancel_node_task
+        早返回不处理）则在这里直接强制 IDLE + 清 mailbox + 补一次
+        org:node_status 广播，确保前端拿到最终状态。
         """
         messenger = self._messengers.get(org.id)
         for node in list(org.nodes):
@@ -525,8 +644,8 @@ class OrgRuntime:
                         f"[OrgRuntime] cancel_node_task failed for {node.id}: {e}"
                     )
             elif node.status in (NodeStatus.WAITING, NodeStatus.ERROR):
-                # cancel_node_task early-returns for non-BUSY nodes, so we clean up manually here;
-                # otherwise these nodes would remain in WAITING/ERROR state after stop.
+                # cancel_node_task 对非 BUSY 节点直接早返回，这里手动收尾，
+                # 否则 stop 之后这些节点还会留着 WAITING/ERROR 状态。
                 try:
                     if messenger is not None:
                         messenger.clear_node_pending(node.id)
@@ -555,9 +674,9 @@ class OrgRuntime:
         if not org:
             raise ValueError(f"Organization not found: {org_id}")
 
-        # Idempotent: when already DORMANT, don't throw "Invalid state transition: dormant -> dormant";
-        # instead do another safety-net cleanup (to prevent leftover busy nodes / background tasks / mailbox)
-        # and re-broadcast status_change so the frontend has a chance to reset nodes cleanly.
+        # 幂等：已经 DORMANT 时不再抛 "无效状态转换: dormant -> dormant"，
+        # 而是再做一次兜底清理（防止之前残留的 busy 节点 / 后台任务 / mailbox），
+        # 并补播一次 status_change，让前端有机会把节点重置干净。
         if org.status == OrgStatus.DORMANT:
             self.mark_org_stopped(org_id)
             try:
@@ -579,11 +698,11 @@ class OrgRuntime:
 
         self._check_transition(org, OrgStatus.DORMANT)
 
-        # Mark stopped first so subsequent in-flight tool calls can distinguish "stopped" from "not running"
+        # 先标记停止状态，让后续 in-flight tool call 能区分"停止"与"未运行"
         self.mark_org_stopped(org_id)
 
-        # First cooperatively cancel per-node tasks, then close services / force-cancel asyncio tasks,
-        # so the logs no longer show the misleading "organization not running" error
+        # 先协作取消各节点任务，再关闭服务 / 强制取消 asyncio tasks，
+        # 这样日志里不会再出现"组织未运行"的误导性错误
         await self._cancel_busy_nodes(org, reason="org_stopped")
         await self._stop_org_services(org_id)
         await self._cancel_org_tasks(org_id)
@@ -620,17 +739,17 @@ class OrgRuntime:
         if not org:
             raise ValueError(f"Organization not found: {org_id}")
 
-        # Mark stopped immediately to avoid in-flight tool calls seeing "organization not running" during delete
+        # 立即标记停止，避免删除期间 in-flight 工具调用看到"组织未运行"
         self.mark_org_stopped(org_id)
 
-        # 1. Graceful stop (best-effort) — first cancel_busy_nodes, then clean up services
+        # 1. Graceful stop (best-effort) —— 会先 cancel_busy_nodes 再清理服务
         if org.status in (OrgStatus.ACTIVE, OrgStatus.RUNNING, OrgStatus.PAUSED):
             try:
                 await self.stop_org(org_id)
             except Exception as e:
                 logger.warning(f"[OrgRuntime] stop_org before delete failed for {org_id}: {e}")
         else:
-            # Dormant orgs should also cancel any leftover busy nodes / background tasks
+            # Dormant 组织也应取消任何遗留的 busy 节点 / 后台任务
             try:
                 await self._cancel_busy_nodes(org, reason="org_deleted")
             except Exception as e:
@@ -734,7 +853,7 @@ class OrgRuntime:
         org = self._active_orgs.get(org_id) or self._manager.get(org_id)
         if not org:
             raise ValueError(f"Organization not found: {org_id}")
-        # Idempotent: return directly if already PAUSED
+        # 幂等：已经 PAUSED 直接返回
         if org.status == OrgStatus.PAUSED:
             return org
         self._check_transition(org, OrgStatus.PAUSED)
@@ -751,7 +870,7 @@ class OrgRuntime:
         org = self._active_orgs.get(org_id) or self._manager.get(org_id)
         if not org:
             raise ValueError(f"Organization not found: {org_id}")
-        # Idempotent: return directly if already ACTIVE/RUNNING
+        # 幂等：已经 ACTIVE/RUNNING 直接返回
         if org.status in (OrgStatus.ACTIVE, OrgStatus.RUNNING):
             return org
         self._check_transition(org, OrgStatus.ACTIVE)
@@ -810,7 +929,7 @@ class OrgRuntime:
 
         persona = org.user_persona
         if persona and persona.label:
-            tagged_content = f"[From {persona.label}] {content}"
+            tagged_content = f"[来自 {persona.label}] {content}"
         else:
             tagged_content = content
 
@@ -826,20 +945,23 @@ class OrgRuntime:
                 result["chain_id"] = chain_id
             return result
 
-        # Event-driven command completion detection: create a UserCommandTracker for this command.
-        # It register_chain's on org_delegate_task invocations from the root node and
-        # unregister_chain's on _mark_chain_closed. When the first activation completes + all chains
-        # closed + root IDLE + root inbox empty, tracker.completed is set.
-        # A watchdog coroutine runs in parallel to handle the "truly stuck" case
-        # (warning / safety-net soft-stop); it does not participate in completion detection.
+        # 事件驱动的命令完成检测：为这条命令创建一个 UserCommandTracker，
+        # 它在 root 节点发起的 org_delegate_task 上 register_chain、
+        # 在 _mark_chain_closed 上 unregister_chain。首次激活完成 + 所有 chain
+        # 关闭 + root IDLE + root inbox 空时 tracker.completed 被 set。
+        # 与 tracker 并行跑一个看门狗协程，只负责"真正卡死"的预警/兜底，
+        # 不参与完成判定。
         tracker_key = (org_id, target.id)
         prior = self._active_user_cmd.pop(tracker_key, None)
         if prior is not None and not prior.completed.is_set():
-            # Very rare: two commands overlap on the same root. Mark the old one completed so its
-            # watchdog / waiters exit and nothing hangs.
+            # 极少见：同一 root 上两条命令重叠。先标记旧的 completed 让其
+            # 看门狗/等待者退出，避免悬挂。
             prior.completed.set()
 
-        tracker = UserCommandTracker(org_id, target.id)
+        tracker = UserCommandTracker(
+            org_id, target.id,
+            user_command_content=content,
+        )
         self._active_user_cmd[tracker_key] = tracker
 
         watchdog_task = asyncio.create_task(self._command_watchdog(tracker))
@@ -849,7 +971,7 @@ class OrgRuntime:
                 org, target, tagged_content,
                 chain_id=chain_id, activation_origin="user_command",
             )
-            # Check the completion condition immediately after the root's first ReAct round (hits directly when no delegation)
+            # root 首轮 ReAct 结束后立刻检查一次完成条件（无派工任务时直接命中）
             self._maybe_finalize_tracker(tracker)
             if not tracker.completed.is_set():
                 await tracker.completed.wait()
@@ -862,13 +984,13 @@ class OrgRuntime:
             except (asyncio.CancelledError, Exception):
                 pass
 
-        # Take _latest_root_result as the true "user-visible final result" — it is only written by
-        # the user_command / task_delivered / delivery_followup origins, so intermediate states
-        # (e.g. the CEO answering the CFO's budget question) do not pollute it.
+        # 取 _latest_root_result 作为真正的"用户可见最终结果"——它只会被
+        # user_command / task_delivered / delivery_followup 三类来源写入，
+        # 故 CEO 回复 CFO 预算问题等中间态不会污染这里。
         final_result = self._latest_root_result.pop(org_id, None)
         if final_result is None:
-            # Safety net: tracker completed but _latest_root_result was not written due to filtering
-            # or exception; fall back to the return value of the first _activate_and_run.
+            # 兜底：tracker 完成但 _latest_root_result 因过滤或异常未被写入，
+            # 回退到首轮 _activate_and_run 的返回值。
             if isinstance(result, dict):
                 final_result = dict(result)
             else:
@@ -879,10 +1001,17 @@ class OrgRuntime:
 
         if tracker.auto_stopped:
             final_result["stopped_by_watchdog"] = True
-            final_result.setdefault(
-                "warning",
-                "The organization had no progress for a long time and was auto-paused; this is the partial result so far.",
-            )
+            if tracker.user_cancelled:
+                final_result["cancelled_by_user"] = True
+                # 覆盖 warning（即使被前置流程 setdefault 过也要换成"用户主动"文案）
+                final_result["warning"] = (
+                    "已按用户请求强制终止当前任务，可立即发送新指令。"
+                )
+            else:
+                final_result.setdefault(
+                    "warning",
+                    "组织长时间无进度，已自动暂停，此为已有阶段性结果。",
+                )
 
         if chain_id:
             final_result["chain_id"] = chain_id
@@ -892,7 +1021,7 @@ class OrgRuntime:
         self,
         org_id: str,
         node_id: str,
-        reason: str = "User cancelled task",
+        reason: str = "用户取消任务",
     ) -> dict:
         """Cancel the running task on a specific node.
 
@@ -946,16 +1075,15 @@ class OrgRuntime:
         except Exception as e:
             logger.warning(f"[OrgRuntime] Failed to reset node status: {e}")
 
-        # (c2) If the cancelled node happens to be the root of an in-flight command, set its tracker
-        # as completed so send_command's waiters return immediately — avoids the deadlock where
-        # "after the user cancels via UI, the HTTP request hangs in the background waiting for the
-        # completed event".
+        # (c2) 如果取消的恰好是某个进行中命令的 root 节点，标记其 tracker 完成，
+        # 让 send_command 的等待者立即返回——避免"用户通过 UI 取消任务后
+        # HTTP 请求仍在后台挂着等 completed 事件"的死锁。
         tracker = self._active_user_cmd.get((org_id, node_id))
         if tracker is not None and not tracker.completed.is_set():
             tracker.completed.set()
 
-        # (c3) Wake any org_wait_for_deliverable / inbox waiters on this node so
-        # they unblock immediately after cancellation instead of hanging until timeout.
+        # (c3) 唤醒该节点的 org_wait_for_deliverable / inbox 等待者，避免
+        # 任务被取消后 wait 还在原超时上挂着不返回。
         try:
             inbox_key = f"{org_id}:{node_id}"
             ev = self._node_inbox_events.get(inbox_key)
@@ -987,24 +1115,24 @@ class OrgRuntime:
             if not roots:
                 return
             root = roots[0]
-            persona_label = org.user_persona.label if org.user_persona else "the owner"
+            persona_label = org.user_persona.label if org.user_persona else "负责人"
 
             prompt = (
-                f"[Organization startup — Business mandate]\n\n"
-                f"You are the {root.role_title} of \"{org.name}\"; the organization has just started.\n"
-                f"{persona_label} has entrusted you with full responsibility for the following core business:\n\n"
+                f"[组织启动 — 经营任务书]\n\n"
+                f"你是「{org.name}」的 {root.role_title}，组织刚刚启动。\n"
+                f"{persona_label}委托你全权负责以下核心业务：\n\n"
                 f"---\n{org.core_business.strip()}\n---\n\n"
-                f"## What you need to do now\n\n"
-                f"1. **Define a working strategy**: based on the core business goals, draft a concrete action plan and staged objectives\n"
-                f"2. **Break down and delegate**: decompose the work into concrete tasks and use org_delegate_task to assign them to suitable subordinates\n"
-                f"3. **Start executing**: do not wait for further instructions — begin advancing the highest-priority work immediately\n"
-                f"4. **Record decisions**: write the working strategy, task assignments, and staged goals onto the blackboard (org_write_blackboard)\n\n"
-                f"## Working principles\n\n"
-                f"- You are the highest-ranking person in this organization; judge and act autonomously and continuously, without waiting for {persona_label} to issue every step\n"
-                f"- {persona_label}'s instructions are directional adjustments and supplements; you fully own day-to-day decisions\n"
-                f"- For major decisions or risks, record them on the blackboard; {persona_label} will see them when checking the org's status\n"
-                f"- Review progress regularly, adjust strategy, and ensure continuous advancement toward the goal\n\n"
-                f"Get to work."
+                f"## 你现在需要做的\n\n"
+                f"1. **制定工作策略**：根据核心业务目标，拟定具体的行动计划和阶段性目标\n"
+                f"2. **分解和委派**：将工作拆解为具体任务，用 org_delegate_task 分派给合适的下属\n"
+                f"3. **启动执行**：不要等待进一步指令，立即开始推进最优先的工作\n"
+                f"4. **记录决策**：将工作策略、任务分工、阶段目标写入黑板（org_write_blackboard）\n\n"
+                f"## 工作原则\n\n"
+                f"- 你是本组织的最高负责人，应自主判断、持续推进，不需要等{persona_label}下达每一步指令\n"
+                f"- {persona_label}的指令是方向性调整和补充，日常工作由你全权决策\n"
+                f"- 遇到重大决策或风险时，通过黑板记录，{persona_label}会在查看组织状态时看到\n"
+                f"- 定期复盘进度，调整策略，确保持续向目标推进\n\n"
+                f"现在开始工作。"
             )
 
             self.get_event_store(org.id).emit(
@@ -1055,8 +1183,8 @@ class OrgRuntime:
             bucket[chain_id] = time.time()
             while len(bucket) > self._closed_chain_max_per_org:
                 bucket.popitem(last=False)
-        # Chain-close event -> notify all UserCommandTrackers for this org to remove this chain
-        # and attempt finalize. If all chains closed + root IDLE + inbox empty, the command is complete.
+        # 关链事件 → 通知所有该 org 下的 UserCommandTracker 移除此 chain 并
+        # 尝试 finalize。若所有 chain 都关闭 + root IDLE + inbox 空则命令完成。
         try:
             self._tracker_unregister_chain(org_id, chain_id)
         except Exception:
@@ -1064,10 +1192,9 @@ class OrgRuntime:
                 "[OrgRuntime] tracker unregister_chain failed",
                 exc_info=True,
             )
-        # Fire the chain's wait event (if any), so org_wait_for_deliverable returns
-        # immediately. Once set, the event stays set permanently; later waiters return
-        # right away. When capacity is exceeded, the earliest entry is evicted LRU-first
-        # (it is already set before eviction, so no waiter will miss the signal).
+        # 触发该 chain 的 wait event（如果有），让 org_wait_for_deliverable
+        # 立即返回。event 一旦 set 便永久保留 set 状态，后到的 wait 会立即返回；
+        # 容量超限时按 LRU 弹出最早的（弹出前已 set，无需阻塞 wait）。
         try:
             ev = self._chain_events.get(chain_id)
             if ev is not None:
@@ -1089,18 +1216,18 @@ class OrgRuntime:
         reason: str = "accepted",
         cascade_cancel_children: bool = True,
     ) -> None:
-        """Uniformly clean up runtime state for a closed task chain.
+        """统一清理一条已关闭任务链的运行时状态。
 
-        Triggered by: task accept / reject / cancel. It:
-          1. Adds the chain to the ``_closed_chains`` blacklist (consulted by `_on_node_message`
-             and the `org_*` tools for soft-block).
-          2. Removes every node binding in ``_node_current_chain`` that points to this chain.
-          3. Releases the messenger's task_affinity / delegation_depth (if not already released).
-          4. Cascades: marks the chain's unfinished child tasks in ProjectStore as CANCELLED and
-             broadcasts ``org:task_cancelled`` for UI sync.
+        触发时机：task accept / reject / cancel。做的事：
+          1. 将 chain 加入 ``_closed_chains`` 黑名单（供 `_on_node_message` 与
+             `org_*` 工具做软拦截）。
+          2. 清空 ``_node_current_chain`` 中所有指向该 chain 的节点绑定。
+          3. 释放 messenger 的 task_affinity / delegation_depth（若未释放）。
+          4. 级联把该 chain 在 ProjectStore 中的未完成子任务置为 CANCELLED，
+             并广播 ``org:task_cancelled`` 事件供 UI 同步。
 
-        Pure local state cleanup — it **does not** touch messages already in the mailbox queue;
-        that is handled by the soft gate inside `_on_node_message`.
+        纯本地状态清理，**不会**去动 mailbox 队列里已存在的消息——那部分
+        由 `_on_node_message` 的软门禁负责放行/抑制。
         """
         try:
             self._mark_chain_closed(org_id, chain_id)
@@ -1142,9 +1269,9 @@ class OrgRuntime:
     def _cancel_chain_children_in_store(
         self, org_id: str, chain_id: str, reason: str,
     ) -> None:
-        """Mark unfinished child tasks rooted at this chain in ProjectStore as CANCELLED.
+        """把 ProjectStore 中以该 chain 为根的未完成子任务标记为 CANCELLED。
 
-        Only affects child tasks with status TODO / IN_PROGRESS / DELIVERED; ACCEPTED ones are left alone.
+        只影响状态为 TODO / IN_PROGRESS / DELIVERED 的子任务；ACCEPTED 的保持不动。
         """
         from openakita.orgs.models import TaskStatus
         from openakita.orgs.project_store import ProjectStore
@@ -1223,9 +1350,9 @@ class OrgRuntime:
         as a fallback (legacy path). Prefer passing explicitly.
         """
         if node.status == NodeStatus.FROZEN:
-            return {"error": f"{node.role_title} is frozen and cannot execute tasks"}
+            return {"error": f"{node.role_title} 已被冻结，无法执行任务"}
         if node.status == NodeStatus.OFFLINE:
-            return {"error": f"{node.role_title} is offline"}
+            return {"error": f"{node.role_title} 已下线"}
 
         sem = self._get_org_semaphore(org.id)
         async with sem:
@@ -1240,11 +1367,11 @@ class OrgRuntime:
         *,
         activation_origin: str | None = None,
     ) -> dict:
-        """Inner implementation of _activate_and_run (already protected by the org semaphore)."""
+        """_activate_and_run 的内部实现（已在 org semaphore 保护下）。"""
         if node.status == NodeStatus.FROZEN:
-            return {"error": f"{node.role_title} is frozen and cannot execute tasks"}
+            return {"error": f"{node.role_title} 已被冻结，无法执行任务"}
         if node.status == NodeStatus.OFFLINE:
-            return {"error": f"{node.role_title} is offline"}
+            return {"error": f"{node.role_title} 已下线"}
 
         cache_key = f"{org.id}:{node.id}"
 
@@ -1257,6 +1384,10 @@ class OrgRuntime:
         self.set_current_chain_id(org.id, node.id, chain_id)
         if hasattr(agent, "_org_context"):
             agent._org_context["current_chain_id"] = chain_id or ""
+            # 同时把 org_id/node_id 注入到 agent context，供 reasoning_engine
+            # 在 verify 时查询本节点 chain-scoped/mailbox 信号（B4）。
+            agent._org_context["current_org_id"] = org.id
+            agent._org_context["current_node_id"] = node.id
 
         self._set_node_status(org, node, NodeStatus.BUSY, "task_started")
         self._node_last_activity[cache_key] = time.monotonic()
@@ -1280,6 +1411,11 @@ class OrgRuntime:
             if hasattr(agent, "brain") and hasattr(agent.brain, "drain_usage_accumulator"):
                 agent.brain.drain_usage_accumulator()
 
+            # per-task 文件计数器清零：本任务内每次成功的 _register_file_output
+            # 都会让该 counter +1。auto-persist 兜底仅在 counter==0 时触发，
+            # 杜绝"LLM 已自己写过文件 + 系统又兜底落盘"的双写。
+            self._node_files_registered_in_task[cache_key] = 0
+
             result_text = await self._run_agent_task(
                 agent, prompt, session_id, org, node,
             )
@@ -1287,23 +1423,159 @@ class OrgRuntime:
             if org.id not in self._active_orgs:
                 return {"node_id": node.id, "result": result_text}
 
-            # Distinguish the task's actual exit reason: normal/ask_user -> completed;
-            # loop_terminated -> force-terminated by the Supervisor;
-            # max_iterations -> exceeded max iterations;
-            # verify_incomplete -> TaskVerify judged incomplete but retries exhausted
+            # 区分 task 真实退出原因：normal/ask_user -> 完成；
+            # loop_terminated -> 被 Supervisor 强制终止；
+            # max_iterations -> 超过最大迭代；
+            # verify_incomplete -> TaskVerify 判定未完成但重试耗尽
+            #
+            # 软 verify_incomplete（is_soft_verify=True）：exit_reason=verify_incomplete
+            # 但 trace 中已存在成功的 org_accept_deliverable，说明协调者节点
+            # 实际已通过下属交付完成本任务；这种情况直接走 is_normal 路径，
+            # 触发 _post_task_hook 唤醒父级 drain，避免上级因子节点未发出
+            # "完成"信号而陷入 5+ 分钟 idle 等待（CmdWatchdog warn）。
             exit_reason = "normal"
             re_engine = None
+            react_trace: list[dict] | None = None
             try:
                 re_engine = getattr(agent, "reasoning_engine", None)
                 if re_engine is not None:
                     exit_reason = getattr(re_engine, "_last_exit_reason", "normal") or "normal"
+                    react_trace = getattr(re_engine, "_last_react_trace", None)
             except Exception:
                 exit_reason = "normal"
                 re_engine = None
+                react_trace = None
 
-            is_normal = exit_reason in ("normal", "ask_user")
+            # ======================================================
+            # 文件交付兜底（auto-persist final answer）
+            # ------------------------------------------------------
+            # 触发条件（必须全部满足，任一不满足直接跳过）：
+            #   1. org.auto_persist_final_answer 为 True（per-org 开关，
+            #      默认 True，UI 在组织设置页可关）；
+            #   2. 用户原始 prompt 命中 request_expects_artifact —— 用户确实
+            #      在要"附件/文件类"成果，否则强行落盘是噪音；
+            #   3. 本任务内 _register_file_output 计数 == 0 —— LLM 没自己
+            #      产出过任何文件（写过的不重复）；
+            #   4. result_text 是有意义的长文（≥200 字符）—— 短回复落盘
+            #      只会污染 workspace。
+            # 任何异常仅 warning，不影响主流程。
+            persisted_attachment: dict | None = None
+            try:
+                expects_artifact = request_expects_artifact(prompt)
+            except Exception:
+                expects_artifact = False
+            auto_persist_enabled = bool(
+                getattr(org, "auto_persist_final_answer", True)
+            )
+            files_registered = self._node_files_registered_in_task.get(cache_key, 0)
+            if (
+                auto_persist_enabled
+                and expects_artifact
+                and files_registered == 0
+                and isinstance(result_text, str)
+                and len(result_text.strip()) >= 200
+            ):
+                try:
+                    workspace_for_persist = self._resolve_org_workspace(org)
+                    persisted_attachment = self._tool_handler.auto_persist_node_final_answer(
+                        org_id=org.id,
+                        node_id=node.id,
+                        chain_id=chain_id,
+                        title=(prompt or "")[:60].strip() or "final_answer",
+                        body=result_text,
+                        workspace=workspace_for_persist,
+                    )
+                except Exception:
+                    logger.warning(
+                        "[OrgRuntime] auto_persist_node_final_answer hook failed",
+                        exc_info=True,
+                    )
+                    persisted_attachment = None
+
+            # 子节点合成 TASK_DELIVERED（auto-persist 兜底最后一公里）：
+            #
+            # P0-5 修订：旧注释说"关闭父节点 wait_for_deliverable"——这是误导。
+            # 父节点的 `org_wait_for_deliverable` 监听的是 `inbox_event` /
+            # `chain_event`，TASK_DELIVERED 消息进 mailbox 时**不会**额外发这两
+            # 个事件，所以这里合成的消息**无法**直接结束 wait。它真正的作用是：
+            #   1) 进父节点 mailbox → 后续父节点被激活时能看到"下属已交付 + 附件"
+            #   2) emit `task_delivered` event + ws → 前端时间线/项目卡片
+            #      自动更新为 delivered，避免一直停在 in_progress
+            #   3) `_link_project_task(status="delivered")` → ProjectTask 状态闭合
+            #   4) `_on_inbound_for_node(parent)` → 父节点 mailbox watcher
+            #      被推一下，让其在下次空闲时 drain
+            # 触发条件（P0-4 收紧）：
+            #   - 本节点不是 root（root 直接对用户回复，没有"父节点"概念）
+            #   - 本轮 LLM 没自己调过 org_submit_deliverable（防双发）
+            #   - chain_id 存在
+            #   - **activation_origin == "task_assign"**：仅当本次激活是被父节点
+            #     `org_delegate_task` 派下来时才合成。其它来源（user_command /
+            #     question / answer / feedback / report / handshake / broadcast …）
+            #     语义上不是"交付场景"，合成 TASK_DELIVERED 反而把 ProjectTask
+            #     状态错误推进到 delivered，污染验收流程。
+            if persisted_attachment is not None:
+                try:
+                    is_root_for_delivery = (
+                        node.level == 0 or not org.get_parent(node.id)
+                    )
+                    submit_called = self._react_trace_has_tool(
+                        react_trace, "org_submit_deliverable",
+                    )
+                    is_task_assign_origin = (activation_origin == "task_assign")
+                    if (
+                        not is_root_for_delivery
+                        and not submit_called
+                        and chain_id
+                        and is_task_assign_origin
+                    ):
+                        await self._synthesize_task_delivered_to_parent(
+                            org=org,
+                            from_node=node,
+                            chain_id=chain_id,
+                            deliverable_text=result_text,
+                            attachment=persisted_attachment,
+                        )
+                    elif persisted_attachment is not None and not is_task_assign_origin:
+                        logger.info(
+                            "[OrgRuntime] synth-TASK_DELIVERED skipped: "
+                            "activation_origin=%s is not task_assign (org=%s node=%s "
+                            "chain=%s)",
+                            activation_origin, org.id, node.id, chain_id,
+                        )
+                except Exception:
+                    logger.warning(
+                        "[OrgRuntime] synthesize task_delivered failed",
+                        exc_info=True,
+                    )
+
+            try:
+                is_soft_verify = _is_soft_verify_incomplete(exit_reason, react_trace)
+            except Exception:
+                is_soft_verify = False
+
+            # P0-2：根节点禁止走 soft verify 降级。根节点是用户最终看到的发言人，
+            # verify_incomplete 多半意味着"该综合下属交付给出最终回复，但 LLM 没
+            # 给"。如果根节点也降级 soft，会被静默判定为"完成"，于是出现用户
+            # 反馈的"最后由子节点说话、根节点没总结"问题。对根节点保持硬 verify_incomplete，
+            # 让 reasoning_engine 的重试 / 失败路径有机会强制 LLM 再总结一次。
+            try:
+                _is_root_node = org.get_parent(node.id) is None
+            except Exception:
+                _is_root_node = False
+            if _is_root_node and is_soft_verify:
+                logger.info(
+                    "[OrgRuntime] root node %s downgrade-to-soft denied; "
+                    "keep verify_incomplete strict so root will not silently exit "
+                    "without final summary.", node.id,
+                )
+                is_soft_verify = False
+
+            is_normal = exit_reason in ("normal", "ask_user") or is_soft_verify
             is_terminated = exit_reason == "loop_terminated"
-            is_failed = exit_reason in ("max_iterations", "verify_incomplete")
+            is_failed = (
+                exit_reason in ("max_iterations", "verify_incomplete")
+                and not is_soft_verify
+            )
 
             status_reason = "task_completed" if is_normal else (
                 "task_terminated" if is_terminated else "task_failed"
@@ -1319,17 +1591,51 @@ class OrgRuntime:
             if org.id not in self._active_orgs:
                 return {"node_id": node.id, "result": result_text}
 
-            # On non-normal exit, call failure_diagnoser to generate a "why-it-failed + suggestions" human-readable payload;
-            # the normal-exit path skips this to avoid unnecessary work on the hot path.
+            # 非正常退出 / 软 verify_incomplete 都生成 failure_diagnoser 诊断卡片：
+            # - 非正常退出：用于 task_failed/task_terminated 卡片展示根因+建议
+            # - 软 verify_incomplete：复用诊断模板生成"提示性"卡片，附在 task_complete
+            #   气泡末尾，让用户即使收起时间线也能看到「verify 提示但已通过下属交付完成」
+            # 正常退出（normal/ask_user）则跳过以避免热路径无用功。
             diagnosis: dict | None = None
-            if not is_normal:
+            need_diagnosis = (not is_normal) or is_soft_verify
+            if need_diagnosis:
                 try:
-                    react_trace = getattr(re_engine, "_last_react_trace", None) if re_engine else None
                     diagnosis = _diagnose_failure(react_trace, exit_reason)
                 except Exception as diag_err:
                     logger.debug(f"[OrgRuntime] failure diagnosis failed on {node.id}: {diag_err}")
                     diagnosis = None
-                # Append the human-readable summary to result_text so even frontends showing only the chat bubble see the conclusion
+
+                # 静默策略 1（硬 verify）：verify_incomplete + 用户原始 prompt 没有
+                # "附件交付意图"时，整张诊断卡片完全不展示——既不拼到 result_text、
+                # 也不进 event/ws payload。日志里仍然记录了 exit_reason=verify_incomplete。
+                # 静默策略 2（软 verify，P0-3）：is_soft_verify=True 表示协调者节点
+                # 通过下属交付实质完成本任务，是"积极信号"。历史版本会保留一张
+                # "ℹ️ 复盘提示"卡片提示用户"已通过下属交付完成"，但该卡片几乎
+                # 100% 是噪音（用户已经看到下属交付物 + task_complete 气泡），
+                # 反而引发"明明完成了为什么还有失败提示"的误解。这里同样彻底静默。
+                rc_for_silence = (diagnosis or {}).get("root_cause") if diagnosis else None
+                if (
+                    diagnosis
+                    and not is_soft_verify
+                    and rc_for_silence == "verify_incomplete"
+                    and not expects_artifact
+                ):
+                    logger.info(
+                        "[OrgRuntime] silencing verify_incomplete diagnosis card for "
+                        "org=%s node=%s (user prompt did not request file artifact)",
+                        org.id, node.id,
+                    )
+                    diagnosis = None
+                elif diagnosis and is_soft_verify:
+                    logger.info(
+                        "[OrgRuntime] silencing soft verify_incomplete diagnosis card "
+                        "for org=%s node=%s (already accepted child deliverable; "
+                        "review hint is pure noise to end users)",
+                        org.id, node.id,
+                    )
+                    diagnosis = None
+
+                # 把人话摘要追加到 result_text 末尾，这样即使前端只读 chat bubble 也能看到结论
                 if diagnosis:
                     try:
                         human_summary = format_human_summary(diagnosis)
@@ -1339,7 +1645,7 @@ class OrgRuntime:
                     except Exception as fmt_err:
                         logger.debug(f"[OrgRuntime] format_human_summary failed: {fmt_err}")
 
-            # Choose an event name matching exit_reason so the frontend can distinguish UI styles
+            # 选择与 exit_reason 匹配的事件名，供前端区分 UI 样式
             if is_normal:
                 event_name = "task_completed"
                 ws_event = "org:task_complete"
@@ -1356,6 +1662,11 @@ class OrgRuntime:
             }
             if diagnosis:
                 event_payload["diagnosis"] = diagnosis
+            if is_soft_verify:
+                # 软完成路径复用 task_complete 事件，但带上 warning=True 让需要
+                # 区分"完美完成"vs"提示性完成"的消费者（评测/统计）能识别。
+                # 老前端忽略此字段，行为不变。
+                event_payload["warning"] = True
             self.get_event_store(org.id).emit(event_name, node.id, event_payload)
 
             await self._broadcast_ws("org:node_status", {
@@ -1370,26 +1681,50 @@ class OrgRuntime:
             }
             if diagnosis:
                 ws_payload["diagnosis"] = diagnosis
-            await self._broadcast_ws(ws_event, ws_payload)
+            if is_soft_verify:
+                ws_payload["warning"] = True
+            # 失败/终止类卡片做窗口去重，避免 verify_incomplete 重试或多路径
+            # 触发同一节点同一根因被反复 emit 多张相同诊断卡片到聊天气泡。
+            # 正常完成（org:task_complete）保持原行为，不做任何抑制。
+            should_emit_ws = True
+            if not is_normal:
+                rc = (diagnosis or {}).get("root_cause", "unknown")
+                if self._should_skip_diagnosis_emit(org.id, node.id, rc):
+                    should_emit_ws = False
+                    logger.warning(
+                        f"[OrgRuntime] diagnosis emit dedupe drop: "
+                        f"org={org.id} node={node.id} root_cause={rc} event={ws_event}"
+                    )
+            if should_emit_ws:
+                await self._broadcast_ws(ws_event, ws_payload)
             if not is_normal:
                 root_cause_tag = (diagnosis or {}).get("root_cause", "unknown")
                 logger.warning(
                     f"[OrgRuntime] Node {node.id} ended with exit_reason={exit_reason}, "
                     f"root_cause={root_cause_tag}, emitting {event_name} (NOT task_completed)"
                 )
+            elif is_soft_verify:
+                root_cause_tag = (diagnosis or {}).get(
+                    "root_cause", "verify_incomplete_with_children",
+                )
+                logger.info(
+                    f"[OrgRuntime] Node {node.id} soft-completed: "
+                    f"exit_reason={exit_reason}, root_cause={root_cause_tag}; "
+                    f"treated as task_completed so post_task_hook can drain parent"
+                )
 
             is_root = (node.level == 0 or not org.get_parent(node.id))
             if is_root:
-                # Only activations whose origin is a "user-visible final state" may write _latest_root_result.
-                # See _origin_from_msg_type and _FINAL_RESULT_ORIGINS:
-                # - user_command: first activation dispatched by send_command
-                # - task_delivered: subordinate submitted a deliverable, waking root for a combined report
-                # - delivery_followup: post-acceptance follow-up handling
-                # Inter-agent communication such as QUESTION/ANSWER/FEEDBACK/NOTIFICATION does not write,
-                # to prevent the CEO's reply to a subordinate's question from being returned to the user as the "final result".
-                # Prefer the explicitly passed activation_origin; if not provided (legacy path),
-                # fall back to reading _root_activation_origin. Default conservatively to "user_command"
-                # to preserve the behavior of historical call sites that do not track commands.
+                # 只有来源属于"用户可见终态"的激活才允许写入 _latest_root_result。
+                # 见 _origin_from_msg_type 与 _FINAL_RESULT_ORIGINS：
+                # - user_command：send_command 下发的首次激活
+                # - task_delivered：下级提交交付物后唤醒 root 做综合汇报
+                # - delivery_followup：验收后的后续处理
+                # QUESTION/ANSWER/FEEDBACK/NOTIFICATION 等 inter-agent 通信不写入，
+                # 避免 CEO 回答下级问题的文字被当成"最终结果"返回给用户。
+                # 优先用显式传入的 activation_origin；若未传入（兼容旧路径）
+                # 则回退读 _root_activation_origin。默认保守按 "user_command"
+                # 处理，保证历史调用点（无命令跟踪）的行为不变。
                 if activation_origin:
                     origin = activation_origin
                 else:
@@ -1403,7 +1738,8 @@ class OrgRuntime:
                         "origin": origin,
                     }
 
-            # On non-normal exit, do not fire the post-task hook (to avoid passing "partial/failed results" downstream again)
+            # 非正常结束时不触发 post-task hook（避免把"部分/失败结果"再次下发下游）；
+            # 软 verify_incomplete 也走 hook，让父级能 drain 子节点交付队列。
             if is_normal:
                 asyncio.ensure_future(self._post_task_hook(org, node))
 
@@ -1414,6 +1750,8 @@ class OrgRuntime:
             }
             if diagnosis:
                 return_payload["diagnosis"] = diagnosis
+            if is_soft_verify:
+                return_payload["soft_complete"] = True
             return return_payload
 
         except Exception as e:
@@ -1442,7 +1780,7 @@ class OrgRuntime:
                     node.status = NodeStatus.FROZEN
                     node.frozen_by = "circuit_breaker"
                     node.frozen_reason = (
-                        f"Failed {self._node_consecutive_failures[fail_key]} times in a row; auto-frozen"
+                        f"连续失败 {self._node_consecutive_failures[fail_key]} 次，自动冻结"
                     )
                     self._set_node_status(org, node, NodeStatus.FROZEN, node.frozen_reason)
                 except Exception:
@@ -1538,11 +1876,11 @@ class OrgRuntime:
             inbox = self.get_inbox(org.id)
             inbox.push_warning(
                 org.id, "system",
-                title="API quota exhausted; organization auto-paused",
+                title="API 余额不足，组织已自动暂停",
                 body=(
-                    "All configured AI model endpoints are unusable due to insufficient balance or auth failure. "
-                    "The organization has been auto-paused to avoid repeated failures. "
-                    "Please top up on the respective platforms, then click 'Resume' on the organization panel to continue."
+                    "所有已配置的 AI 模型端点均因余额不足或认证失败而无法使用。"
+                    "组织已自动暂停以避免持续失败。"
+                    "请前往对应平台充值后，在组织面板点击「恢复」继续运行。"
                 ),
             )
 
@@ -1560,7 +1898,7 @@ class OrgRuntime:
             })
             await self._broadcast_ws("org:quota_exhausted", {
                 "org_id": org.id,
-                "message": "API quota exhausted; organization auto-paused. Please top up and resume.",
+                "message": "API 余额不足，组织已自动暂停。请充值后恢复。",
             })
             return True
         except Exception as pause_err:
@@ -1593,7 +1931,7 @@ class OrgRuntime:
                         logger.info(f"[OrgRuntime] Marked project task {task.id} as cancelled")
                 except Exception as e:
                     logger.debug(f"[OrgRuntime] Failed to update task status on cancel: {e}")
-            return "(Task cancelled)"
+            return "(任务已取消)"
         except Exception as e:
             logger.error(f"[OrgRuntime] Agent task error: {e}")
             raise
@@ -1666,6 +2004,7 @@ class OrgRuntime:
             blackboard_summary=blackboard_summary,
             dept_summary=dept_summary,
             node_summary=node_summary,
+            root_intent=self.get_active_root_intent(org.id),
         )
 
         profile = self._build_profile_for_node(node, org_context_prompt)
@@ -1689,6 +2028,17 @@ class OrgRuntime:
         })
 
         allowed_external = expand_tool_categories(node.external_tools) - _ORG_CONFLICT_TOOLS
+
+        # E0-4: 节点级"基础文件工具"开关。即便用户没在 external_tools 里勾选
+        # filesystem 类目，只要 enable_file_tools=True（默认），就给节点放行
+        # 一组安全的读写工具，避免出现"角色明明该交文件，但提示词里被告知
+        # 'write_file 不可用' 只能回纯文本"的死循环。这里刻意不包含 run_shell
+        # / delete_file —— 命令执行和删除属高风险，仍要走 external_tools 显式
+        # 授权。文件路径在 agent.file_tool.base_path 处被隔离到 org workspace。
+        if getattr(node, "enable_file_tools", True):
+            allowed_external = allowed_external | {
+                "write_file", "read_file", "edit_file", "list_directory",
+            }
 
         per_node_tools = build_org_node_tools(org, node)
         per_node_by_name: dict[str, dict] = {t["name"]: t for t in per_node_tools}
@@ -1819,7 +2169,7 @@ class OrgRuntime:
             else:
                 ext_tool_lines.append(line)
 
-        org_section = "\n".join(org_tool_lines) if org_tool_lines else "(none)"
+        org_section = "\n".join(org_tool_lines) if org_tool_lines else "(无)"
         has_external = bool(ext_tool_lines)
 
         parts = [org_context]
@@ -1843,65 +2193,65 @@ class OrgRuntime:
 
         shell_type = "PowerShell" if platform.system() == "Windows" else "bash"
         runtime_section = (
-            f"## Runtime environment\n"
-            f"- Current time: {current_time}\n"
-            f"- OS: {platform.system()} {platform.release()}\n"
-            f"- Working directory: {workspace or os.getcwd()}\n"
+            f"## 运行环境\n"
+            f"- 当前时间: {current_time}\n"
+            f"- 操作系统: {platform.system()} {platform.release()}\n"
+            f"- 工作目录: {workspace or os.getcwd()}\n"
             f"- Shell: {shell_type}"
         )
         if platform.system() == "Windows" and has_external:
             runtime_section += (
-                "\n- Shell note: on Windows, for complex text processing prefer write_file to save a Python script,"
-                " then run_shell python xxx.py to execute it — avoids PowerShell escaping issues."
+                "\n- Shell 注意: Windows 环境，复杂文本处理请用 write_file 写 Python 脚本"
+                " + run_shell python xxx.py 执行，避免 PowerShell 转义问题"
             )
         parts.append(runtime_section)
 
-        parts.append(f"## Organization collaboration tools (org_*)\n\n{org_section}")
+        parts.append(f"## 组织协作工具（org_*）\n\n{org_section}")
 
         if has_external:
             ext_section = "\n".join(ext_tool_lines)
-            parts.append(f"## External execution tools\n\n{ext_section}")
+            parts.append(f"## 外部执行工具\n\n{ext_section}")
 
         parts.append(
-            "Parameters marked * are required. Use get_tool_info(tool_name) to view a tool's full parameters."
+            "参数带 * 为必填。用 get_tool_info(tool_name) 可查看工具完整参数。"
         )
 
         rule_delivery = (
-            "6. **On completion, reply directly**. You are the top-level owner; when work is done, summarize results in your reply — do not use org_submit_deliverable.\n"
+            "6. **任务完成直接回复**。你是最高负责人，完成工作后在回复中总结成果即可，不要使用 org_submit_deliverable。\n"
             if is_root else
-            "6. **Task delivery flow**. After completing assigned work, use org_submit_deliverable to submit to the delegator for acceptance. If rejected, revise and resubmit.\n"
+            "6. **任务交付流程**。收到任务后完成工作，用 org_submit_deliverable 提交给委派人验收。被打回时修改后重新提交。\n"
         )
 
         if has_external:
             parts.append(
-                "## Behavior rules\n\n"
-                "1. **Use org_* tools for collaboration, external tools for execution**. Talk, delegate, and report via org_* tools; "
-                "search information, write files, make plans, and other actual execution via external tools.\n"
-                "2. **Share execution results**. Write important results obtained via external tools to the blackboard with org_write_blackboard for colleagues to read.\n"
-                "3. **Reply concisely**. After calling a tool, summarize the result in 1-2 sentences.\n"
-                "4. **Check before acting**. Use org_find_colleague when unsure who to contact; use org_search_policy when unsure about a process.\n"
-                "5. **Avoid duplicate writes**. Before writing to the blackboard, use org_read_blackboard to check for similar content.\n"
+                "## 行为准则\n\n"
+                "1. **协作用 org_* 工具，执行用外部工具**。与同事沟通、委派、汇报用 org_* 工具；"
+                "搜索信息、写文件、制定计划等实际执行工作用外部工具。\n"
+                "2. **执行结果要共享**。用外部工具得到的重要结果，用 org_write_blackboard 写入黑板，方便同事查阅。\n"
+                "3. **简洁回复**。完成工具调用后，用 1-2 句话总结结果即可。\n"
+                "4. **先查再做**。不确定找谁时用 org_find_colleague；不确定流程时用 org_search_policy。\n"
+                "5. **不要重复写入**。写黑板前先用 org_read_blackboard 检查是否已有相似内容。\n"
                 + rule_delivery +
-                "7. **Request missing tools**. If a task needs a tool you don't have, use org_request_tools to request it from a superior."
+                "7. **缺少工具时申请**。如果任务需要你没有的工具，用 org_request_tools 向上级申请。"
             )
         else:
             parts.append(
-                "## Behavior rules\n\n"
-                "1. **Use only the org_* tools above**. Do not call non-org tools like write_file, read_file, run_shell — they are unavailable.\n"
-                "2. **Reply concisely**. After calling a tool, summarize the result in 1-2 sentences.\n"
-                "3. **Check before acting**. Use org_find_colleague when unsure who to contact; use org_search_policy when unsure about a process.\n"
-                "4. **Record important information on the blackboard**. Use org_write_blackboard to record decisions, plans, progress for colleagues.\n"
-                "5. **Avoid duplicate writes**. Before writing to the blackboard, use org_read_blackboard to check for similar content.\n"
+                "## 行为准则\n\n"
+                "1. **只使用上述 org_* 工具**。不要调用 write_file、read_file、run_shell 等非组织工具，它们不可用；也不要用 `get_tool_info` 去探查这些被禁用的工具，对你来说一定查不到。\n"
+                "2. **简洁回复**。完成工具调用后，用 1-2 句话总结结果即可。\n"
+                "3. **先查再做**。不确定找谁时用 org_find_colleague；不确定流程时用 org_search_policy。\n"
+                "4. **重要信息写黑板**。决策、方案、进度等用 org_write_blackboard 记录，方便同事查阅。\n"
+                "5. **不要重复写入**。写黑板前先用 org_read_blackboard 检查是否已有相似内容。\n"
                 + rule_delivery +
-                "7. **Request missing tools**. If a task needs a tool you don't have, use org_request_tools to request it from a superior."
+                "7. **缺少工具时申请**。如果任务需要你没有的工具，用 org_request_tools 向上级申请。"
             )
 
         # Core policy guardrails
         parts.append(
-            "## Core policy red lines\n"
-            "- Do not fabricate information. When uncertain, say so explicitly — do not invent data or results.\n"
-            "- Do not pretend to execute. Without the corresponding tool, do not claim an operation was completed.\n"
-            "- Do not perform harmful actions. Do not delete user data (unless explicitly requested) and do not access sensitive system paths."
+            "## 核心策略红线\n"
+            "- 不编造信息。不确定时明确说明，不要虚构数据或结果。\n"
+            "- 不假装执行。没有对应工具就不要声称已完成操作。\n"
+            "- 不执行有害操作。不删除用户数据（除非明确要求），不访问敏感系统路径。"
         )
 
         lean_prompt = "\n\n".join(parts)
@@ -1976,13 +2326,10 @@ class OrgRuntime:
         if not node or node.status in (NodeStatus.FROZEN, NodeStatus.OFFLINE):
             return
 
-        # Signal the node's inbox event so any coordinator blocked in
-        # org_wait_for_deliverable can break out and process the new message
-        # immediately, avoiding a deadlock where a subordinate waits for a
-        # coordinator decision that is itself blocked.
-        # Only triggered for message types requiring immediate attention
-        # (QUESTION/ESCALATE/FEEDBACK); TASK_DELIVERED uses the chain_event
-        # channel instead to avoid duplicate signals.
+        # 触发节点 inbox event：让 org_wait_for_deliverable 阻塞中的 coordinator
+        # 立即跳出去处理新消息，避免下属在等 coordinator 决策时死等。
+        # 仅对 question/escalate/feedback 这类需要立即响应的消息触发；
+        # task_delivered 由 chain_event 通道触发，避免重复信号。
         try:
             if msg.msg_type in (
                 MsgType.QUESTION, MsgType.ESCALATE, MsgType.FEEDBACK,
@@ -1994,17 +2341,14 @@ class OrgRuntime:
         except Exception:
             logger.debug("[OrgRuntime] inbox_event set failed", exc_info=True)
 
-        # ---------- Soft gate for closed task chains ----------
-        # Purpose: after a task is accepted/rejected/cancelled, subsequent "non-assignment"
-        # messages on that chain must not re-wake the agent's ReAct loop (this is one of
-        # the main entry points for the user-reported "organization still assigns work on
-        # its own after the task ends" issue).
-        # Pass-through rules:
-        #   - New TASK_ASSIGN (even if it carries an old chain_id, treated as a new assignment)
-        #   - TASK_REJECTED (allow rework after rejection)
-        # All other types (REPORT/ANSWER/QUESTION/TASK_DELIVERED/TASK_ACCEPTED/
-        # FEEDBACK/NOTIFICATION ...) only broadcast a WebSocket event for UI visibility;
-        # they do not restart ReAct.
+        # ---------- 已关闭任务链软屏障 ----------
+        # 目的：任务被验收/打回/取消后，该 chain 的后续"非派工类"消息不应再
+        # 唤醒 agent 的 ReAct 循环（这是用户反馈的"任务结束后仍自主派活"的
+        # 根本入口之一）。放行规则：
+        #   - 新的 TASK_ASSIGN（即使声明旧 chain_id，也视为一次新派工）
+        #   - TASK_REJECTED（允许被打回重做）
+        # 其余类型（REPORT/ANSWER/QUESTION/TASK_DELIVERED/TASK_ACCEPTED/
+        # FEEDBACK/NOTIFICATION…）只广播 WebSocket 让 UI 可见，不重启 ReAct。
         try:
             from openakita.config import settings as _settings
             suppress_on = getattr(
@@ -2019,10 +2363,26 @@ class OrgRuntime:
                 bool(msg.metadata and msg.metadata.get("chain_closed"))
                 or self.is_chain_closed(org_id, chain_id_peek)
             )
+            # P0-1：根节点收到 TASK_DELIVERED 必须放行——这是根节点完成"汇总性
+            # 终态回复"的唯一触发点。如果继续静默，就出现用户反馈的"最后由
+            # 子节点（策划编辑）说话、根节点没有总结"问题：子任务交付后链路
+            # 被 close，TASK_DELIVERED 还没到根节点 mailbox 就被这条软屏障
+            # 吃掉了。只对根 + TASK_DELIVERED 这一组合放行，避免破坏其它
+            # 合法的 close 行为。
+            try:
+                _is_root_for_gate = bool(
+                    self.get_org(org_id) and
+                    self.get_org(org_id).get_parent(node_id) is None
+                )
+            except Exception:
+                _is_root_for_gate = False
+            _root_delivery_bypass = (
+                _is_root_for_gate and msg.msg_type == MsgType.TASK_DELIVERED
+            )
             if closed and msg.msg_type not in (
                 MsgType.TASK_ASSIGN,
                 MsgType.TASK_REJECTED,
-            ):
+            ) and not _root_delivery_bypass:
                 logger.info(
                     "[OrgRuntime] gate: skip ReAct activation for closed chain=%s "
                     "msg_type=%s from=%s to=%s",
@@ -2053,7 +2413,7 @@ class OrgRuntime:
                     except Exception:
                         pass
                 return
-        # ---------- End of soft gate ----------
+        # ---------- 软屏障结束 ----------
 
         active_count = self._node_active_count(org_id, node_id)
 
@@ -2066,13 +2426,12 @@ class OrgRuntime:
                 if mb and not mb.is_paused:
                     mb.mark_handler_processed(msg.id)
 
-        # Any dispatched message counts as a "the organization is breathing" progress signal.
-        # Placed before the message is actually delivered to the agent, so it also covers the path
-        # where "message received but the current node is at concurrency limit, message lingers in mailbox".
+        # 任一消息被派发都算一次"组织在呼吸"的进度信号。放在消息被真正投递
+        # 到 agent 前，覆盖 "收到消息但当前节点并发已满、消息滞留 mailbox" 的路径。
         self._touch_trackers_for_org(org_id)
 
-        # Compute the origin tag for "this activation" based on message type. Passed explicitly to
-        # _activate_and_run to avoid races where concurrent late messages overwrite a shared dict.
+        # 按消息类型为"本次激活"计算来源标签。显式参数传入 _activate_and_run，
+        # 避免并发场景下共享字典被后到消息覆盖的竞态。
         msg_origin = self._origin_from_msg_type(msg.msg_type)
 
         if active_count >= self.max_concurrent_per_node:
@@ -2168,47 +2527,92 @@ class OrgRuntime:
     def _format_incoming_message(self, msg: OrgMessage) -> str:
         """Format an OrgMessage into a prompt for the receiving agent."""
         type_labels = {
-            MsgType.TASK_ASSIGN: "Task received",
-            MsgType.TASK_RESULT: "Task result received",
-            MsgType.TASK_DELIVERED: "Task deliverable received",
-            MsgType.TASK_ACCEPTED: "Task accepted",
-            MsgType.TASK_REJECTED: "Task rejected",
-            MsgType.REPORT: "Report received",
-            MsgType.QUESTION: "Question received",
-            MsgType.ANSWER: "Answer received",
-            MsgType.ESCALATE: "Escalation received",
-            MsgType.BROADCAST: "Organization broadcast received",
-            MsgType.DEPT_BROADCAST: "Department broadcast received",
-            MsgType.FEEDBACK: "Feedback received",
-            MsgType.HANDSHAKE: "Handshake request received",
+            MsgType.TASK_ASSIGN: "收到任务",
+            MsgType.TASK_RESULT: "收到任务结果",
+            MsgType.TASK_DELIVERED: "收到任务交付",
+            MsgType.TASK_ACCEPTED: "任务已通过验收",
+            MsgType.TASK_REJECTED: "任务被打回",
+            MsgType.REPORT: "收到汇报",
+            MsgType.QUESTION: "收到提问",
+            MsgType.ANSWER: "收到回答",
+            MsgType.ESCALATE: "收到上报",
+            MsgType.BROADCAST: "收到组织公告",
+            MsgType.DEPT_BROADCAST: "收到部门公告",
+            MsgType.FEEDBACK: "收到反馈",
+            MsgType.HANDSHAKE: "收到握手请求",
         }
-        label = type_labels.get(msg.msg_type, "Message received")
-        prefix = f"[{label}] from {msg.from_node}"
+        label = type_labels.get(msg.msg_type, "收到消息")
+        prefix = f"[{label}] 来自 {msg.from_node}"
         if msg.reply_to:
-            prefix += f" (reply to message {msg.reply_to})"
+            prefix += f" (回复消息 {msg.reply_to})"
 
         chain_id = msg.metadata.get("task_chain_id", "")
         if chain_id:
-            prefix += f" [Task chain: {chain_id[:12]}]"
+            prefix += f" [任务链: {chain_id[:12]}]"
 
         extra = ""
         if msg.msg_type == MsgType.TASK_DELIVERED:
             deliverable = msg.metadata.get("deliverable", "")
             summary = msg.metadata.get("summary", "")
             if deliverable:
-                extra = f"\nDeliverable: {deliverable}"
+                extra = f"\n交付内容: {deliverable}"
             if summary:
-                extra += f"\nWork summary: {summary}"
-            extra += "\nPlease use org_accept_deliverable or org_reject_deliverable to review it."
+                extra += f"\n工作简述: {summary}"
+            # E0-2: 附件清单一定要显式喂给上级 LLM。否则父节点只看见一段文字，
+            # 看不到下属其实交了几个文件、什么名字、什么大小，结果就是验收时
+            # 错判（继续追问"你交付的文件呢"）或者打回一份本来已经合格的交付。
+            # metadata["file_attachments"] 由 _handle_org_submit_deliverable 写
+            # 入，结构是 [{"filename": str, "file_path": str, "file_size": int?}].
+            attachments = msg.metadata.get("file_attachments") or []
+            if isinstance(attachments, list) and attachments:
+                lines = []
+                for att in attachments[:20]:
+                    if not isinstance(att, dict):
+                        continue
+                    fname = att.get("filename") or att.get("name") or "(未命名)"
+                    fpath = att.get("file_path") or att.get("path") or ""
+                    size = att.get("file_size") or att.get("size_bytes") or 0
+                    if size and isinstance(size, int):
+                        if size >= 1024 * 1024:
+                            size_str = f" ({size / 1024 / 1024:.1f} MB)"
+                        elif size >= 1024:
+                            size_str = f" ({size / 1024:.1f} KB)"
+                        else:
+                            size_str = f" ({size} B)"
+                    else:
+                        size_str = ""
+                    if fpath:
+                        lines.append(f"  - **{fname}**{size_str} → `{fpath}`")
+                    else:
+                        lines.append(f"  - **{fname}**{size_str}")
+                if lines:
+                    extra += f"\n附件清单（共 {len(attachments)} 个）:\n" + "\n".join(lines)
+            extra += "\n请用 org_accept_deliverable 或 org_reject_deliverable 进行验收。"
         elif msg.msg_type == MsgType.TASK_REJECTED:
             reason = msg.metadata.get("rejection_reason", "")
             if reason:
-                extra = f"\nRejection reason: {reason}\nPlease revise based on feedback and resubmit with org_submit_deliverable."
+                extra = f"\n打回原因: {reason}\n请根据反馈修改后重新用 org_submit_deliverable 提交。"
         elif msg.msg_type == MsgType.TASK_ASSIGN:
             if chain_id:
-                extra = f"\nWhen finished, submit the deliverable via org_submit_deliverable with task_chain_id={chain_id}"
+                extra = f"\n完成后请用 org_submit_deliverable 提交交付物，task_chain_id={chain_id}"
             else:
-                extra = "\nWhen finished, submit the deliverable via org_submit_deliverable."
+                extra = "\n完成后请用 org_submit_deliverable 提交交付物。"
+
+        # 若上游通过 send_message + propagate_chain=true 接力了一条任务链，
+        # 显式提示接收方在交付时复用该 task_chain_id，避免接收方自己造一个
+        # 新链导致整棵任务树断裂（这是修复 delegate 误判 → send_message 兜底
+        # → 链路丢失这条工程上常见的失败模式的最后一环）。
+        if (
+            msg.metadata.get("propagate_chain")
+            and chain_id
+            and msg.msg_type != MsgType.TASK_ASSIGN
+        ):
+            relay_from = msg.metadata.get("relay_from_node") or msg.from_node
+            extra += (
+                f"\n[任务链接力] 上级 {relay_from} 把 task_chain_id={chain_id} 接力给你，"
+                f"完成后请用 org_submit_deliverable(task_chain_id=\"{chain_id}\") 提交，"
+                "不要自己生成新的 task_chain_id。"
+            )
 
         return f"{prefix}:\n{msg.content}{extra}"
 
@@ -2230,6 +2634,75 @@ class OrgRuntime:
             org_dir = self._manager._org_dir(org_id)
             self._event_stores[org_id] = OrgEventStore(org_dir, org_id)
         return self._event_stores[org_id]
+
+    # ------------------------------------------------------------------
+    # Verify-context accessors (B4 - 给 reasoning_engine 提供组织视角信号)
+    # ------------------------------------------------------------------
+
+    def get_accepted_child_count(self, org_id: str, chain_id: str) -> int:
+        """严格信号：当前激活 chain 子树下已 ACCEPTED 的子任务数。
+
+        通过 ProjectStore.find_task_by_chain 找到当前 task，再 get_subtasks
+        数 status==ACCEPTED 的儿子。chain_id 缺失或 task 不存在时返回 0，
+        不抛异常。仅用于「该协调者节点是否已通过下属交付完成本任务」判定。
+        """
+        if not chain_id:
+            return 0
+        try:
+            from openakita.orgs.models import TaskStatus
+            from openakita.orgs.project_store import ProjectStore
+
+            store = ProjectStore(self._manager._org_dir(org_id))
+            task = store.find_task_by_chain(chain_id)
+            if not task:
+                return 0
+            children = store.get_subtasks(task.id)
+            return sum(
+                1 for c in children if c.status == TaskStatus.ACCEPTED
+            )
+        except Exception as exc:  # pragma: no cover — 防御性
+            logger.debug(
+                "[Verify] get_accepted_child_count(%s, %s) failed: %s",
+                org_id, chain_id, exc,
+            )
+            return 0
+
+    def has_recent_accepted_signal(
+        self,
+        org_id: str,
+        node_id: str,
+        window_secs: float = 60.0,
+    ) -> bool:
+        """弱信号兜底：该节点最近 N 秒是否作为「验收方」处理过 task_accepted。
+
+        用于严格信号拿不到时（chain_id 缺失 / 没有 ProjectStore task）的兜底，
+        只在很短时间窗口内成立，避免把过去任务的成果错误带入新任务。
+        """
+        if not node_id:
+            return False
+        try:
+            from datetime import datetime, timedelta, timezone
+
+            store = self.get_event_store(org_id)
+            if store is None:
+                return False
+            cutoff = datetime.now(timezone.utc) - timedelta(
+                seconds=max(1.0, float(window_secs)),
+            )
+            cutoff_iso = cutoff.isoformat()
+            recent = store.query(
+                event_type="task_accepted",
+                actor=node_id,
+                since=cutoff_iso,
+                limit=5,
+            )
+            return bool(recent)
+        except Exception as exc:  # pragma: no cover — 防御性
+            logger.debug(
+                "[Verify] has_recent_accepted_signal(%s, %s) failed: %s",
+                org_id, node_id, exc,
+            )
+            return False
 
     def get_inbox(self, org_id: str) -> OrgInbox:
         return self._inbox
@@ -2298,10 +2771,9 @@ class OrgRuntime:
             f"[OrgRuntime] Node {node.id}: {old_status.value} -> {new_status.value}"
             + (f" ({reason})" if reason else "")
         )
-        # Any node status transition counts as a "the organization is breathing" progress signal,
-        # which resets the command watchdog timer. Additionally, when a node enters IDLE, the
-        # completion condition may be met, so trigger a finalize check (very cheap; O(0) when
-        # there is no matching entry in _active_user_cmd).
+        # 任一节点状态切换都算一次"组织在呼吸"的进度信号，重置命令看门狗
+        # 计时器；同时在节点进入 IDLE 时有可能满足命令完成条件，触发一次
+        # 终态检测（极廉价，未命中 _active_user_cmd 时 O(0)）。
         self._touch_trackers_for_org(org.id)
         if new_status == NodeStatus.IDLE:
             self._maybe_finalize_trackers_for_org(org.id)
@@ -2312,8 +2784,8 @@ class OrgRuntime:
 
     def _activate_org(self, org: Organization) -> None:
         """Set up runtime infrastructure for an organization."""
-        # When re-activating the same org, clear the "recently stopped" marker so that
-        # new-session tool calls are not misclassified as "organization stopped"
+        # 重新激活同一 org 时，清理"最近被停止"标记，避免新 session 的
+        # 工具调用被误判成"组织已停止"
         self._recently_stopped_orgs.pop(org.id, None)
         org_dir = self._manager._org_dir(org.id)
         self._active_orgs[org.id] = org
@@ -2334,8 +2806,8 @@ class OrgRuntime:
             inbox = self.get_inbox(_oid)
             inbox.push_warning(
                 _oid, "system",
-                title="Deadlock detected",
-                body=f"Circular wait detected between the following nodes: {cycles}",
+                title="检测到死锁",
+                body=f"以下节点间存在循环等待: {cycles}",
             )
         messenger.set_deadlock_handler(_on_deadlock)
 
@@ -2378,8 +2850,8 @@ class OrgRuntime:
             if k.startswith(f"{org_id}:"):
                 self._node_current_chain.pop(k, None)
 
-        # When an organization is deregistered, release all pending command trackers and origin
-        # tags to avoid send_command's `await tracker.completed.wait()` hanging forever.
+        # 组织被注销时释放所有挂起的命令 tracker 与 origin 标签，避免
+        # send_command 的 await tracker.completed.wait() 永久挂起。
         for key in list(self._active_user_cmd.keys()):
             if key[0] == org_id:
                 tracker = self._active_user_cmd.pop(key, None)
@@ -2587,19 +3059,26 @@ class OrgRuntime:
                 mailbox.consume_phantom(msg.id)
                 continue
 
-            # Same as the soft gate in `_on_node_message`: non-assignment messages on a closed
-            # chain no longer activate ReAct; just mark them processed and let them "disappear
-            # naturally" from the queue. Otherwise the drain path would bypass the handler gate.
+            # 同 `_on_node_message` 的软屏障：已关闭 chain 的非派工消息不再激活 ReAct，
+            # 只标记为已处理让其从队列中"自然消失"。否则 drain 路径会绕过 handler 门禁。
+            # P0-1：同样对 root + TASK_DELIVERED 放行，理由见 _on_node_message 的注释。
             if suppress_on:
                 chain_peek = msg.metadata.get("task_chain_id") if msg.metadata else None
                 closed = (
                     bool(msg.metadata and msg.metadata.get("chain_closed"))
                     or self.is_chain_closed(org.id, chain_peek)
                 )
+                try:
+                    _is_root_for_drain = org.get_parent(node.id) is None
+                except Exception:
+                    _is_root_for_drain = False
+                _root_delivery_bypass = (
+                    _is_root_for_drain and msg.msg_type == MsgType.TASK_DELIVERED
+                )
                 if closed and msg.msg_type not in (
                     MsgType.TASK_ASSIGN,
                     MsgType.TASK_REJECTED,
-                ):
+                ) and not _root_delivery_bypass:
                     logger.info(
                         "[OrgRuntime] drain-gate skip closed chain=%s msg=%s",
                         chain_peek, msg.id,
@@ -2663,15 +3142,13 @@ class OrgRuntime:
             if parent.status == NodeStatus.BUSY:
                 return
 
-            # "Auto-notify parent on task completion" is disabled by default — this is one of
-            # the main sources of the user-reported "organization runs autonomously for no reason"
-            # issue: after a child node finishes, the runtime proactively wakes the parent for
-            # ReAct, and the parent's LLM often ignores the "do not assign new work" prompt
-            # instruction and keeps assigning more tasks.
+            # 默认关闭"任务完成自动通知父级"——这是用户反馈的"组织莫名其妙自主运行"
+            # 的核心源头之一：子节点完成后 runtime 主动唤醒父节点做 ReAct，父节点
+            # 的 LLM 经常忽略"禁止派新活"的 prompt 指令，继续派更多任务。
             #
-            # The drain path above (`_drain_node_pending(parent)`) is preserved — if the parent
-            # really has a pending deliverable/question, it will still be handled.
-            # To keep the historical behavior, set org_post_task_notify_parent to True.
+            # 保留 drain 路径（上面 `_drain_node_pending(parent)`）——若父节点真有
+            # 待处理的 deliverable/question，依然会被正常推进。
+            # 如需要保持历史行为，可把 org_post_task_notify_parent 设为 True。
             try:
                 from openakita.config import settings as _settings
                 notify_parent = bool(getattr(
@@ -2692,13 +3169,12 @@ class OrgRuntime:
 
             role_title = node.role_title or node.id
             prompt = (
-                f"[Notice] {role_title} has completed a task.\n"
-                f"If there is a deliverable awaiting acceptance, please handle it. Otherwise, no action is required.\n"
-                f"⚠️ Prohibited: do not assign new tasks, do not expand the work scope, do not proactively start any new work."
+                f"[通知] {role_title} 已完成一项任务。\n"
+                f"如有待验收的交付物，请处理。如无，则无需任何操作。\n"
+                f"⚠️ 禁止：不要分配新任务、不要扩展工作范围、不要主动发起任何工作。"
             )
-            # post_task_notify is not part of the "user command path" and must not write
-            # _latest_root_result; otherwise the parent's handling of this notification would
-            # pollute the user-visible final result.
+            # post_task_notify 不是"用户命令路径"，不应写入 _latest_root_result，
+            # 否则父节点处理这条通知产生的文本会污染用户侧最终结果。
             await self._activate_and_run(
                 org, parent, prompt, activation_origin="post_task_notify",
             )
@@ -2709,8 +3185,6 @@ class OrgRuntime:
         "暂停", "停止", "取消", "别做了", "先不做", "到此为止",
         "不要继续", "停下来", "先暂停", "不用做了", "够了",
         "终止", "中止", "全部停止", "不做了",
-        "pause", "stop", "cancel", "halt", "abort", "stop it",
-        "don't continue", "quit", "enough", "no more",
     })
 
     def _is_stop_intent(self, content: str) -> bool:
@@ -2757,6 +3231,71 @@ class OrgRuntime:
             )
         self.get_event_store(org_id).emit("soft_stop", "user", {})
 
+    async def cancel_user_command(
+        self,
+        org_id: str,
+        command_id: str | None = None,
+    ) -> dict:
+        """用户主动强制终止当前在跑的用户命令。
+
+        语义：
+          - 把该 org 下所有未完成的 ``UserCommandTracker`` 标记为
+            ``user_cancelled=True`` + ``auto_stopped=True``，并 ``completed.set()``，
+            让 ``send_command`` 立刻 unblock 走"stopped_by_watchdog +
+            cancelled_by_user"分支返回阶段性结果。
+          - 复用 :meth:`_soft_stop_org` 取消所有 BUSY 节点 / 清 mailbox /
+            唤醒 inbox 等待者，但**不会**改变组织 OrgStatus —— 用户可立即
+            再发新指令。
+
+        Args:
+            org_id: 目标组织。
+            command_id: 仅用于审计日志；当前实现按 org 粒度终止该 org 下所有
+                未完成 trackers（实际同一 org 同一 root 至多一个 in-flight
+                tracker，故等价于按 command 粒度终止）。
+
+        Returns:
+            ``{"ok": True, "cancelled_roots": [...], "command_id": ...}``
+        """
+        cancelled_roots: list[str] = []
+        for (oid, root_id), tracker in list(self._active_user_cmd.items()):
+            if oid != org_id:
+                continue
+            if tracker.completed.is_set():
+                continue
+            tracker.user_cancelled = True
+            tracker.auto_stopped = True
+            tracker.completed.set()
+            cancelled_roots.append(root_id)
+
+        try:
+            await self._soft_stop_org(org_id)
+        except Exception as e:
+            logger.warning(
+                "[OrgRuntime] cancel_user_command soft_stop failed: %s", e,
+            )
+
+        try:
+            self.get_event_store(org_id).emit(
+                "user_command_cancelled",
+                "user",
+                {
+                    "command_id": command_id,
+                    "cancelled_roots": cancelled_roots,
+                },
+            )
+        except Exception:
+            pass
+
+        logger.info(
+            "[OrgRuntime] cancel_user_command: org=%s cmd=%s roots=%s",
+            org_id, command_id, cancelled_roots,
+        )
+        return {
+            "ok": True,
+            "command_id": command_id,
+            "cancelled_roots": cancelled_roots,
+        }
+
     def _has_active_delegations(self, org_id: str, root_node_id: str) -> bool:
         """Return True if any downstream work exists for this command.
 
@@ -2791,6 +3330,48 @@ class OrgRuntime:
     ) -> UserCommandTracker | None:
         return self._active_user_cmd.get((org_id, root_node_id))
 
+    def get_active_root_intent(self, org_id: str) -> str:
+        """Return the currently in-flight user command content for *org_id*.
+
+        Used by:
+        - ``identity.build_org_context_prompt`` to render "user current order"
+          into every node's system prompt while a command is running.
+        - ``_handle_org_delegate_task`` to inject "parent task hard boundary"
+          into delegated task content when the original user command has
+          explicit format/length constraints.
+
+        Returns "" when no command is in flight (zero-effect for callers).
+        Picks the first active tracker — in practice an org has at most one
+        in-flight user command at a time.
+        """
+        for (oid, _root_id), tracker in self._active_user_cmd.items():
+            if oid == org_id and not tracker.completed.is_set():
+                return tracker.user_command_content or ""
+        return ""
+
+    def _find_root_node_id(self, org_id: str, node_id: str) -> str | None:
+        """Walk up the hierarchy edges to find the root node id for *node_id*.
+
+        Returns *node_id* itself when it's already a root (no parent); None
+        when org/node is missing. Used by delegate tool to look up the
+        active root intent for the current command tree.
+        """
+        org = self.get_org(org_id)
+        if not org:
+            return None
+        node = org.get_node(node_id)
+        if not node:
+            return None
+        seen: set[str] = set()
+        cur = node
+        while cur and cur.id not in seen:
+            seen.add(cur.id)
+            parent = org.get_parent(cur.id)
+            if parent is None or parent.id == cur.id:
+                break
+            cur = parent
+        return cur.id if cur else node_id
+
     def _trackers_for_org(self, org_id: str) -> list[UserCommandTracker]:
         """Return all active trackers for an organization (usually 0 or 1)."""
         return [
@@ -2824,7 +3405,7 @@ class OrgRuntime:
             return set()
         subtree: set[str] = {root_chain_id}
         # _chain_parent maps child→parent; reverse-walk by scanning entries.
-        # Sub-tree size is small in practice (typically dozens), so O(n*depth) is fine.
+        # Sub-tree size is small in practice (<= 数十), so O(n*depth) is fine.
         changed = True
         while changed:
             changed = False
@@ -2930,6 +3511,21 @@ class OrgRuntime:
         tracker.completed.set()
         self._log_finalize_decision(tracker, "completed_unknown_state")
 
+    # 把 finalize 决策映射到一个面向用户的"阶段"短语，前端用它替代
+    # 单调的 "running"，让用户知道是"等汇总"还是真的卡住。这只是展示
+    # 层别名，不影响 tracker 状态机。
+    _FINALIZE_PHASE_MAP = {
+        "subtree_not_closed": "running",
+        "active_delegations": "running",
+        "root_not_idle": "running",
+        "summary_pushed": "awaiting_summary",
+        "completed_no_summary": "done",
+        "completed_after_summary": "done",
+        "completed_legacy": "done",
+        "completed_unknown_state": "done",
+        "no_org": "done",
+    }
+
     def _log_finalize_decision(
         self,
         tracker: UserCommandTracker,
@@ -2940,6 +3536,11 @@ class OrgRuntime:
 
         Helps diagnose "why didn't / did this command finish" without trawling
         events.jsonl. DEBUG level: opt-in by lowering openakita.orgs logger.
+
+        Also emits a single ``command_phase`` event to the org event store so
+        the HTTP layer can surface a user-friendly phase ("awaiting_summary"
+        instead of "running") to the frontend. Same-phase repeats are
+        debounced to avoid log spam.
         """
         try:
             subtree = self._collect_chain_subtree(tracker.root_chain_id)
@@ -2960,6 +3561,24 @@ class OrgRuntime:
             logger.debug("[Finalize] %s", payload)
         except Exception:
             logger.debug("[Finalize] log emit failed", exc_info=True)
+
+        try:
+            phase = self._FINALIZE_PHASE_MAP.get(decision, "running")
+            if phase == tracker._last_phase_emitted:
+                return  # 同 phase 不重复发，避免事件流灌爆
+            tracker._last_phase_emitted = phase
+            self.get_event_store(tracker.org_id).emit(
+                "command_phase",
+                tracker.root_node_id,
+                {
+                    "phase": phase,
+                    "decision": decision,
+                    "command_id": tracker.command_id or "",
+                    "root_chain_id": tracker.root_chain_id or "",
+                },
+            )
+        except Exception:
+            logger.debug("[Finalize] phase emit failed", exc_info=True)
 
     def _push_root_summary_prompt(
         self, tracker: UserCommandTracker,
@@ -3006,18 +3625,18 @@ class OrgRuntime:
             )
 
         recap = "\n".join(recap_parts) if recap_parts else (
-            "(No recognizable sub-task records found; summarize directly from the deliverables already received.)"
+            "（无可识别的子任务记录，请直接根据已收到的下级 deliverable 汇总）"
         )
         body = (
-            "[Final summary of user instruction] All delegated tasks triggered by the original user instruction are now closed. "
-            "Based on the deliverables submitted by each subordinate, produce a complete final summary for the user — "
-            "covering each subordinate's key outputs, important files/links, degree of completion, "
-            "and any remaining risks or next-step recommendations.\n\n"
-            "Closed sub-task overview:\n" + recap + "\n\n"
-            "Important constraint: this activation is solely for producing the summary text. "
-            "Do not call org_delegate_task / org_submit_deliverable / "
-            "org_wait_for_deliverable or any other tool that would restart task flow. "
-            "Reply to the user directly in natural language."
+            "[用户指令最终汇总] 你最初接到的用户指令所触发的所有委派任务均已关闭。"
+            "请基于下级各自交付的成果，向用户输出一份完整的最终汇总——"
+            "覆盖每位下级的产出要点、关键文件/链接、已完成程度、"
+            "以及任何遗留风险或下一步建议。\n\n"
+            "已关闭的子任务概览：\n" + recap + "\n\n"
+            "重要约束：本次激活只用于产出汇总文本，"
+            "禁止再调 org_delegate_task / org_submit_deliverable / "
+            "org_wait_for_deliverable 等会重启任务流转的工具，"
+            "直接以自然语言回复用户即可。"
         )
 
         # Inbox card (UI/notification only).
@@ -3027,7 +3646,7 @@ class OrgRuntime:
                 inbox.push_task_complete(
                     tracker.org_id,
                     tracker.root_node_id,
-                    task_name=(tracker.command_id or "user instruction"),
+                    task_name=(tracker.command_id or "用户指令"),
                     result_summary=body[:500],
                 )
         except Exception:
@@ -3337,8 +3956,8 @@ class OrgRuntime:
         if not messenger:
             return
         reason_text = {
-            "stuck_busy": f"no activity in BUSY state for {stuck_secs} seconds",
-            "error_not_recovering": "persistent ERROR state did not recover",
+            "stuck_busy": f"BUSY 状态无活跃度持续 {stuck_secs} 秒",
+            "error_not_recovering": "持续 ERROR 状态未恢复",
         }.get(reason, reason)
         msg = OrgMessage(
             org_id=org.id,
@@ -3346,10 +3965,10 @@ class OrgRuntime:
             to_node=parent.id,
             msg_type=MsgType.FEEDBACK,
             content=(
-                f"[Watchdog notice] Your subordinate {node.role_title}({node.id}) "
-                f"was auto-recovered because [{reason_text}]. "
-                f"The node has been reset to idle and its previous task was interrupted. "
-                f"If any delegated task is unfinished, please reassign or follow up."
+                f"[看门狗通知] 您的下属 {node.role_title}({node.id}) "
+                f"因[{reason_text}]被自动恢复。"
+                f"该节点已重置为空闲状态，之前的任务已被中断。"
+                f"如有未完成的委派任务，请重新分配或跟进。"
             ),
         )
         await messenger.send(msg)
@@ -3449,9 +4068,8 @@ class OrgRuntime:
                             root = roots[0]
                             if root.status == NodeStatus.IDLE:
                                 prompt = (
-                                    "[Watchdog kick] The organization has been silent for a long time. "
-                                    "Please check the blackboard and current progress, "
-                                    "and decide whether to push the work forward or assign a new task."
+                                    "[看门狗激活] 组织已静默较长时间。请查看黑板和当前进展，"
+                                    "决定是否需要推进工作或分配新任务。"
                                 )
                                 self._heartbeat.record_activity(org_id)
                                 asyncio.ensure_future(
@@ -3467,17 +4085,81 @@ class OrgRuntime:
                 logger.debug(f"[OrgRuntime] Watchdog error for {org_id}: {e}")
                 await asyncio.sleep(30)
 
+    def _mark_effective_action(self, org_id: str, node_id: str) -> None:
+        """记录节点产生了一次"有效 outbound 行动"。
+
+        由 OrgToolHandler 在 ``org_delegate_task`` / ``org_send_message`` /
+        ``org_reply_message`` / ``org_submit_deliverable`` / ``org_escalate``
+        成功完成后调用。
+
+        作用：
+        1. 重置 ``_idle_node_ineffective`` 计数（节点又"活"过来了）
+        2. 重置 ``_idle_node_thresholds`` 到 base（下一次 idle 重新从 120s 起）
+        3. 清掉 ``_idle_probe_pending_since``（不再把这一轮算成无效唤醒）
+        4. 同步 ``_node_last_effective`` 时间戳
+        5. 节点级"有效"动作意味着组织也活跃，清掉 ``_idle_org_quiet_since``
+        """
+        cache_key = f"{org_id}:{node_id}"
+        now = time.monotonic()
+        self._node_last_effective[cache_key] = now
+        self._idle_node_ineffective.pop(cache_key, None)
+        self._idle_node_thresholds.pop(cache_key, None)
+        self._idle_probe_pending_since.pop(cache_key, None)
+        self._idle_org_quiet_since.pop(org_id, None)
+
+    def _on_inbound_for_node(self, org_id: str, node_id: str) -> None:
+        """节点收到 inbound（task/message/reply/feedback）时调用。
+
+        由 OrgMessenger 在投递成功后回调。语义：节点又有真正的外部输入了，
+        重置无效唤醒计数和 threshold；这是从"已永久暂停"恢复的唯一入口。
+        """
+        cache_key = f"{org_id}:{node_id}"
+        now = time.monotonic()
+        self._node_last_inbound[cache_key] = now
+        self._idle_node_ineffective.pop(cache_key, None)
+        self._idle_node_thresholds.pop(cache_key, None)
+        self._idle_probe_pending_since.pop(cache_key, None)
+        self._idle_org_quiet_since.pop(org_id, None)
+
+    def _has_org_external_work(self, org: Organization) -> bool:
+        """判断组织是否还有"外部"待处理工作（用于组织级熔断决策）。
+
+        条件（任一为真即视为"还有活"）：
+        - 任一节点 status != IDLE / ERROR / FROZEN / OFFLINE
+        - 任一节点 mailbox pending > 0
+        - 存在未关闭的任务 chain（从 _chain_delegation_depth 推断）
+        - 存在 active user command tracker
+        """
+        for node in org.nodes:
+            if node.status not in (
+                NodeStatus.IDLE, NodeStatus.ERROR,
+                NodeStatus.FROZEN, NodeStatus.OFFLINE,
+            ):
+                return True
+        messenger = self.get_messenger(org.id)
+        if messenger:
+            for node in org.nodes:
+                if messenger.get_pending_count(node.id) > 0:
+                    return True
+        for chain_id in self._chain_delegation_depth:
+            if not self.is_chain_closed(org.id, chain_id):
+                return True
+        for (oid, _root), tracker in self._active_user_cmd.items():
+            if oid == org.id and not tracker.completed.is_set():
+                return True
+        return False
+
     async def _idle_probe_loop(self, org_id: str) -> None:
         """Periodically check for idle nodes and prompt them to seek work.
 
-        Uses per-node adaptive thresholds: each node's threshold grows after
-        being probed (120s → 180s → 270s → ... max 600s), and resets when
-        the node becomes busy again (indicating it received work).
+        实例级 threshold：跨 IDLE/ACTIVE 切换持久存在，不会被 status 变化清零。
+        节点级无效唤醒计数：连续被 probe 后既未产生有效 outbound 行动
+        也未收到新 inbound 时累加；达到 ``_idle_max_ineffective`` 后该节点的
+        idle probe 被永久暂停，直到 ``_on_inbound_for_node`` 被调用。
+        组织级熔断：当整个组织已"安静" ``_idle_org_quiet_grace`` 秒（全员 IDLE
+        且无 pending message / 未闭合 chain / 活跃 user command）时，
+        loop 进入 ``_idle_org_silent_interval`` 间隔的低频心跳模式。
         """
-        node_thresholds: dict[str, float] = {}
-        node_last_probed: dict[str, float] = {}
-        base_threshold = 120.0
-
         while True:
             try:
                 await asyncio.sleep(30)
@@ -3486,25 +4168,90 @@ class OrgRuntime:
                     break
 
                 now = time.monotonic()
+
+                # ── 组织级熔断：判断是否进入"全员安静"状态 ──
+                has_work = self._has_org_external_work(org)
+                if has_work:
+                    self._idle_org_quiet_since.pop(org_id, None)
+                else:
+                    quiet_since = self._idle_org_quiet_since.get(org_id)
+                    if quiet_since is None:
+                        self._idle_org_quiet_since[org_id] = now
+                    elif (now - quiet_since) >= self._idle_org_quiet_grace:
+                        # 已熔断：仅 root 节点以低频心跳被探测，其它节点全部跳过。
+                        # 心跳间隔由 _idle_org_silent_interval 控制。
+                        roots = org.get_root_nodes()
+                        for root in roots:
+                            cache_key = f"{org_id}:{root.id}"
+                            last_probe = self._idle_node_last_probed.get(cache_key, 0)
+                            if (now - last_probe) < self._idle_org_silent_interval:
+                                continue
+                            if root.status != NodeStatus.IDLE or root.is_clone:
+                                continue
+                            messenger = self.get_messenger(org_id)
+                            if messenger and messenger.get_pending_count(root.id) > 0:
+                                continue
+                            if self._suppress_post_hook.get(org_id):
+                                continue
+                            self._idle_node_last_probed[cache_key] = now
+                            self._idle_probe_pending_since[cache_key] = now
+                            prompt = (
+                                "[空闲心跳] 组织已长时间无外部任务输入。\n"
+                                "请简要确认当前状态。如无新工作，仅回复一句'保持待命'即可，"
+                                "无需调用任何 org_* 工具。"
+                            )
+                            await self._activate_and_run(
+                                org, root, prompt, activation_origin="idle_probe",
+                            )
+                            break
+                        continue
+
                 for node in org.nodes:
                     if node.status != NodeStatus.IDLE:
-                        node_thresholds.pop(node.id, None)
-                        node_last_probed.pop(node.id, None)
+                        # 注意：刻意不再 pop _idle_node_thresholds —— 上一次
+                        # 自适应增长的状态保留到下次 IDLE，避免 IDLE↔ACTIVE
+                        # 抖动把 threshold 重置回 base 的旧 bug。
                         continue
                     if node.is_clone:
                         continue
 
                     cache_key = f"{org_id}:{node.id}"
+
+                    # 检查：该节点是否已被永久暂停（无效唤醒达到上限）
+                    ineffective = self._idle_node_ineffective.get(cache_key, 0)
+                    if ineffective >= self._idle_max_ineffective:
+                        continue
+
+                    # 上一轮 probe 是否产生了有效行动？（先于本轮 probe 判定）
+                    pending_since = self._idle_probe_pending_since.get(cache_key)
+                    if pending_since is not None and (now - pending_since) >= 30:
+                        last_eff = self._node_last_effective.get(cache_key, 0)
+                        last_inb = self._node_last_inbound.get(cache_key, 0)
+                        if last_eff <= pending_since and last_inb <= pending_since:
+                            self._idle_node_ineffective[cache_key] = ineffective + 1
+                            ineffective += 1
+                            if ineffective >= self._idle_max_ineffective:
+                                logger.info(
+                                    "[OrgRuntime] idle probe paused for %s/%s "
+                                    "after %d ineffective wakeups",
+                                    org_id, node.id, ineffective,
+                                )
+                        self._idle_probe_pending_since.pop(cache_key, None)
+                        if ineffective >= self._idle_max_ineffective:
+                            continue
+
                     last_active = self._node_last_activity.get(cache_key, 0)
                     if last_active <= 0:
                         cached = self._agent_cache.get(cache_key)
                         last_active = cached.last_used if cached else 0
                     idle_secs = now - last_active if last_active > 0 else 0
 
-                    threshold = node_thresholds.get(node.id, base_threshold)
+                    threshold = self._idle_node_thresholds.get(
+                        cache_key, self._idle_base_threshold,
+                    )
 
                     if 0 < idle_secs >= threshold:
-                        last_probe = node_last_probed.get(node.id, 0)
+                        last_probe = self._idle_node_last_probed.get(cache_key, 0)
                         if last_probe > 0 and (now - last_probe) < threshold * 0.8:
                             continue
 
@@ -3518,18 +4265,21 @@ class OrgRuntime:
 
                         if is_root:
                             prompt = (
-                                f"[Idle check] You have been idle for {int(idle_secs)} seconds.\n"
-                                f"Please check the organization blackboard (org_read_blackboard) and see whether there is work to push forward.\n"
-                                f"If there are unfinished goals, plan the next step. If everything is fine, briefly describe the current status."
+                                f"[空闲检查] 你已空闲 {int(idle_secs)} 秒。\n"
+                                f"请查看组织黑板（org_read_blackboard），确认是否有待推进的工作。\n"
+                                f"如果有未完成的目标，请安排下一步任务。如果一切正常，简要说明当前状态即可。"
                             )
                         else:
                             prompt = (
-                                f"[Idle check] You have been idle for {int(idle_secs)} seconds.\n"
-                                f"Please check whether there is pending work, or report your idle status to your superior to request new tasks."
+                                f"[空闲检查] 你已空闲 {int(idle_secs)} 秒。\n"
+                                f"请查看是否有待办工作，或向上级汇报空闲状态以获取新任务。"
                             )
 
-                        node_last_probed[node.id] = now
-                        node_thresholds[node.id] = min(threshold * 1.5, 600)
+                        self._idle_node_last_probed[cache_key] = now
+                        self._idle_node_thresholds[cache_key] = min(
+                            threshold * 1.5, self._idle_max_threshold,
+                        )
+                        self._idle_probe_pending_since[cache_key] = now
                         if self._suppress_post_hook.get(org_id):
                             continue
                         await self._activate_and_run(
@@ -3620,23 +4370,23 @@ class OrgRuntime:
     # ------------------------------------------------------------------
 
     _FILE_EXT_LABELS: dict[str, str] = {
-        ".md": "Markdown document",
-        ".txt": "Text file",
-        ".csv": "CSV data",
-        ".json": "JSON data",
-        ".py": "Python script",
-        ".js": "JavaScript script",
-        ".html": "HTML page",
-        ".pdf": "PDF document",
-        ".png": "PNG image",
-        ".jpg": "JPEG image",
-        ".jpeg": "JPEG image",
-        ".gif": "GIF image",
-        ".webp": "WebP image",
-        ".svg": "SVG graphic",
-        ".xlsx": "Excel spreadsheet",
-        ".docx": "Word document",
-        ".zip": "Archive",
+        ".md": "Markdown 文档",
+        ".txt": "文本文件",
+        ".csv": "CSV 数据",
+        ".json": "JSON 数据",
+        ".py": "Python 脚本",
+        ".js": "JavaScript 脚本",
+        ".html": "HTML 页面",
+        ".pdf": "PDF 文档",
+        ".png": "PNG 图片",
+        ".jpg": "JPEG 图片",
+        ".jpeg": "JPEG 图片",
+        ".gif": "GIF 图片",
+        ".webp": "WebP 图片",
+        ".svg": "SVG 图形",
+        ".xlsx": "Excel 表格",
+        ".docx": "Word 文档",
+        ".zip": "压缩包",
     }
 
     def _register_file_output(
@@ -3678,10 +4428,24 @@ class OrgRuntime:
         if not p.exists() or not p.is_file():
             return None
 
-        size_bytes = p.stat().st_size
+        # E0-3: 拒绝把空文件登记成"产出"。空文件几乎只可能是 LLM 调用
+        # write_file 写入空字符串、或者插件创建占位文件还没写入数据时，被
+        # 误识别为"已交付"。一旦空文件混入黑板/ProjectTask，下游验收会以为
+        # 任务已经完成，导致整条任务被错判为成功。这里只看物理大小，未来
+        # 如果要做"语义为空检测"放在更上层。
+        try:
+            size_bytes = p.stat().st_size
+        except OSError:
+            return None
+        if size_bytes <= 0:
+            logger.info(
+                "[OrgRuntime] _register_file_output skip empty file: %s (org=%s node=%s)",
+                str(p), org_id, node_id,
+            )
+            return None
         resolved_name = filename or p.name
         ext = p.suffix.lower()
-        ext_label = self._FILE_EXT_LABELS.get(ext, "File")
+        ext_label = self._FILE_EXT_LABELS.get(ext, "文件")
 
         attachment = {
             "filename": resolved_name,
@@ -3694,7 +4458,7 @@ class OrgRuntime:
             return None
 
         entry = bb.write_org(
-            content=f"📎 Produced {ext_label}: **{resolved_name}**\n📂 Path: `{str(p)}`",
+            content=f"📎 产出{ext_label}：**{resolved_name}**\n📂 路径：`{str(p)}`",
             source_node=node_id,
             memory_type=MemoryType.RESOURCE,
             tags=["file_output", ext.lstrip(".")],
@@ -3719,10 +4483,10 @@ class OrgRuntime:
             except Exception:
                 pass
 
-        content_for_task = f"📎 Produced file: **{resolved_name}**\n📂 Path: `{str(p)}`"
+        content_for_task = f"📎 产出文件：**{resolved_name}**\n📂 路径：`{str(p)}`"
         if text_preview:
             content_for_task += (
-                f"\n\n<details><summary>File content preview</summary>\n\n"
+                f"\n\n<details><summary>文件内容预览</summary>\n\n"
                 f"{text_preview}\n\n</details>"
             )
 
@@ -3740,11 +4504,154 @@ class OrgRuntime:
             except Exception:
                 pass
 
+        # per-task 文件计数器 +1：auto-persist 兜底仅在本任务零文件时触发，
+        # 计数器是判定"LLM 是否已自己产出文件"的唯一信号源。计数失败不能
+        # 影响主流程，所以包在 try 里。
+        try:
+            counter_key = f"{org_id}:{node_id}"
+            self._node_files_registered_in_task[counter_key] = (
+                self._node_files_registered_in_task.get(counter_key, 0) + 1
+            )
+        except Exception:
+            pass
+
         return {
             "filename": resolved_name,
             "file_path": str(p),
             "file_size": size_bytes,
         }
+
+    @staticmethod
+    def _react_trace_has_tool(
+        react_trace: list[dict] | None, tool_name: str
+    ) -> bool:
+        """扫一遍最近一次 ReAct trace，判断指定工具是否真的被调用过。
+
+        用于 auto-persist 后的"是否需要合成 TASK_DELIVERED"决策——LLM 自己
+        已经走过 ``org_submit_deliverable`` 时，再合成一遍会和 messenger 5s
+        内容 hash 去重碰撞或重复唤醒父级。trace 缺失/异常时保守返回 False
+        （让上游有机会触发兜底）。
+        """
+        if not react_trace or not tool_name:
+            return False
+        try:
+            for iter_entry in react_trace:
+                if not isinstance(iter_entry, dict):
+                    continue
+                for tc in iter_entry.get("tool_calls") or ():
+                    if isinstance(tc, dict) and tc.get("name") == tool_name:
+                        return True
+        except Exception:
+            return False
+        return False
+
+    async def _synthesize_task_delivered_to_parent(
+        self,
+        *,
+        org: Organization,
+        from_node: OrgNode,
+        chain_id: str,
+        deliverable_text: str,
+        attachment: dict,
+    ) -> bool:
+        """子节点 auto-persist 后给父节点合成一条 ``TASK_DELIVERED``。
+
+        仅在 ``_activate_and_run_inner`` 走 auto-persist 且 LLM 整轮没自己调
+        ``org_submit_deliverable`` 时被触发。复用 ``_handle_org_submit_deliverable``
+        同款 ``OrgMessage(TASK_DELIVERED)`` 结构 + ``messenger.send`` 路径，
+        让父级 mailbox / wait_for_deliverable / 项目状态 / `org:task_delivered`
+        WS 广播全部正常闭环。
+
+        返回 True 表示消息已被 messenger 接收。任何失败都吞掉并 warning。
+        """
+        try:
+            parent = org.get_parent(from_node.id)
+        except Exception:
+            parent = None
+        if parent is None:
+            return False
+        messenger = self.get_messenger(org.id)
+        if messenger is None:
+            return False
+
+        body = (deliverable_text or "").strip()
+        summary = body[:200]
+        metadata: dict = {
+            "deliverable": body[:2000],
+            "summary": summary[:500],
+            "task_chain_id": chain_id,
+            "auto_synthesized": True,
+            "file_attachments": [attachment],
+        }
+        msg = OrgMessage(
+            org_id=org.id,
+            from_node=from_node.id,
+            to_node=parent.id,
+            msg_type=MsgType.TASK_DELIVERED,
+            content=f"任务交付（兜底落盘）: {body[:_LIM_EVENT]}",
+            metadata=metadata,
+        )
+
+        try:
+            ok = await messenger.send(msg)
+        except Exception:
+            logger.warning(
+                "[OrgRuntime] synthetic TASK_DELIVERED messenger.send failed",
+                exc_info=True,
+            )
+            return False
+        if not ok:
+            logger.info(
+                "[OrgRuntime] synthetic TASK_DELIVERED dropped by messenger "
+                "(dedupe/bandwidth/target-not-found): org=%s from=%s to=%s chain=%s",
+                org.id, from_node.id, parent.id, chain_id,
+            )
+            return False
+
+        try:
+            self.get_event_store(org.id).emit(
+                "task_delivered", from_node.id,
+                {
+                    "to": parent.id,
+                    "chain_id": chain_id,
+                    "deliverable_preview": body[:_LIM_EVENT],
+                    "file_count": 1,
+                    "auto_synthesized": True,
+                },
+            )
+        except Exception:
+            pass
+        try:
+            await self._broadcast_ws("org:task_delivered", {
+                "org_id": org.id,
+                "from_node": from_node.id,
+                "to_node": parent.id,
+                "chain_id": chain_id,
+                "summary": summary[:_LIM_WS],
+                "auto_synthesized": True,
+            })
+        except Exception:
+            pass
+        try:
+            self._tool_handler._link_project_task(
+                org.id, chain_id,
+                status="delivered",
+                deliverable_content=body[:2000],
+                delivery_summary=summary[:500],
+            )
+        except Exception:
+            pass
+        try:
+            self._on_inbound_for_node(org.id, parent.id)
+        except Exception:
+            pass
+        logger.info(
+            "[OrgRuntime] synthesized TASK_DELIVERED: org=%s from=%s to=%s "
+            "chain=%s file=%s",
+            org.id, from_node.id, parent.id, chain_id,
+            attachment.get("filename"),
+        )
+        return True
 
     def _record_file_output(
         self,
@@ -3819,7 +4726,7 @@ class OrgRuntime:
             # attachment chip just like it does for write_file outputs.
             try:
                 text = result or ""
-                # Some code paths append "\n\n[execution log]..." after the JSON.
+                # Some code paths append "\n\n[执行日志]..." after the JSON.
                 if "\n\n[执行日志]" in text:
                     text = text[: text.index("\n\n[执行日志]")]
                 data = _json.loads(text)

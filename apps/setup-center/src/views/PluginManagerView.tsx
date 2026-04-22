@@ -4,7 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { safeFetch } from "../providers";
 import { showInFolder, downloadFile } from "../platform";
-import { IconCode, IconPlug, IconFileText2, IconPackage, IconBook, IconGear, IconShield, IconFolderOpen, IconDownload, IconTerminal } from "../icons";
+import { IconCode, IconPlug, IconFileText2, IconPackage, IconBook, IconGear, IconShield, IconFolderOpen, IconDownload, IconTerminal, IconHeartPulse, IconRefresh } from "../icons";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "../components/ui/card";
@@ -33,6 +33,12 @@ interface PluginInfo {
   has_icon?: boolean;
   pending_permissions?: string[];
   granted_permissions?: string[];
+  // i18n: optional per-language overrides surfaced by the backend.
+  // Falls back to `name` / `description` when missing or empty.
+  display_name_i18n?: Record<string, string>;
+  description_i18n?: Record<string, string>;
+  ui_title?: string;
+  ui_title_i18n?: Record<string, string>;
 }
 
 interface PluginListResponse {
@@ -118,6 +124,35 @@ function categoryLabel(cat: string, lang: string): string {
   return lang.startsWith("zh") ? entry.zh : entry.en;
 }
 
+/**
+ * Pick a localized string from a plugin's i18n dict, with a string fallback.
+ *
+ * Resolution order (so the UI never shows an empty cell):
+ *   1) exact lang match (e.g. "zh-CN" → dict["zh-CN"])
+ *   2) language base match (e.g. "zh-CN" → dict["zh"])
+ *   3) "en" if present (most-likely-understood default)
+ *   4) any first value in the dict
+ *   5) the fallback string (manifest's plain `name` / `description`)
+ *
+ * Used for plugin display name and description in the manager list and the
+ * sidebar; both fields are optional in the manifest.
+ */
+function pickI18n(
+  dict: Record<string, string> | undefined | null,
+  lang: string,
+  fallback: string,
+): string {
+  if (dict && typeof dict === "object") {
+    if (dict[lang]) return dict[lang];
+    const base = lang.split("-")[0];
+    if (base && dict[base]) return dict[base];
+    if (dict.en) return dict.en;
+    const first = Object.values(dict).find((v) => typeof v === "string" && v);
+    if (first) return first;
+  }
+  return fallback;
+}
+
 const LEVEL_BADGE_STYLES: Record<string, { color: string; backgroundColor: string }> = {
   basic: { color: "var(--ok, #22c55e)", backgroundColor: "rgba(34, 197, 94, 0.12)" },
   advanced: { color: "var(--warning, #f59e0b)", backgroundColor: "rgba(245, 158, 11, 0.14)" },
@@ -126,6 +161,20 @@ const LEVEL_BADGE_STYLES: Record<string, { color: string; backgroundColor: strin
 
 const PANEL_CARD_CLASS = "rounded-xl border bg-muted/30 p-4";
 const FIELD_CLASS_NAME = "flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50";
+
+// Plugin install / uninstall / enable / disable can take noticeably longer than
+// a regular API call: on Windows uninstall may retry rmtree with exponential
+// backoff (clearing read-only bits and waiting for SQLite/HTTP handles to be
+// released by GC), and async on_unload + MCP graceful disconnect easily push
+// the round-trip past the default 10s safeFetch timeout. Use a longer signal
+// here so the UI does not show a misleading "signal timed out" while the
+// backend is still cleaning up successfully.
+const PLUGIN_OP_TIMEOUT_MS = 60_000;
+const longOpSignal = () => AbortSignal.timeout(PLUGIN_OP_TIMEOUT_MS);
+const isTimeoutError = (e: unknown): boolean => {
+  const msg = e instanceof Error ? e.message : String(e ?? "");
+  return /AbortError|signal timed out|timeout|timed out/i.test(msg);
+};
 
 function TypeIcon({ type }: { type: string }) {
   const style = { flexShrink: 0, color: "var(--muted)" } as const;
@@ -142,7 +191,7 @@ function PluginIcon({ plugin, apiBase }: { plugin: PluginInfo; apiBase: string }
   if (plugin.has_icon && !imgErr) {
     return (
       <img
-        src={`${apiBase}/api/plugins/${plugin.id}/icon`}
+        src={`${apiBase}/api/plugins/${plugin.id}/_admin/icon`}
         alt=""
         onError={() => setImgErr(true)}
         style={{ width: 28, height: 28, borderRadius: 6, objectFit: "cover", flexShrink: 0 }}
@@ -179,8 +228,29 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
   const [permDialog, setPermDialog] = useState<string | null>(null);
   const [granting, setGranting] = useState(false);
 
+  // Per-plugin in-flight action guard. Enable/Disable/Remove all hit the
+  // backend with non-trivial latency (uninstall on Windows can take >10s
+  // because of file-lock retries + on_unload teardown), so without a guard
+  // a single fast double-click queues two parallel requests and we end up
+  // showing two toasts (the second one usually a "plugin not found" error
+  // because the first request already removed it). Track which action is
+  // currently running for each plugin and disable the row's buttons until
+  // the request settles.
+  const [pendingAction, setPendingAction] = useState<Record<string, "enable" | "disable" | "delete" | "reload">>({});
+
   const [logsPanel, setLogsPanel] = useState<string | null>(null);
   const [logsContent, setLogsContent] = useState("");
+
+  const [tasksPanel, setTasksPanel] = useState<string | null>(null);
+  const [tasksData, setTasksData] = useState<{
+    running: number;
+    total: number;
+    tasks: { name: string; done: boolean; cancelled: boolean; coro: string }[];
+  } | null>(null);
+  const [tasksLoading, setTasksLoading] = useState(false);
+
+  const [devMode, setDevMode] = useState<"off" | "symlink">("off");
+  const [devModeSaving, setDevModeSaving] = useState(false);
 
   const [toast, setToast] = useState<{ msg: string; type: "ok" | "err" } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -201,6 +271,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     setConfigPanel(null);
     setPermDialog(null);
     setLogsPanel(null);
+    setTasksPanel(null);
   };
 
   const scrollToCard = (pluginId: string) => {
@@ -235,13 +306,77 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
 
   refreshRef.current = () => fetchPlugins(false);
 
+  const fetchDevMode = useCallback(async () => {
+    try {
+      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/dev-mode`);
+      const raw = await resp.json();
+      const data = raw.data ?? raw;
+      const m = data?.mode === "symlink" ? "symlink" : "off";
+      setDevMode(m);
+    } catch {
+      // Backend may not yet support dev-mode; leave the toggle off.
+    }
+  }, []);
+
   const mountedRef = useRef(false);
   useEffect(() => {
     if (visible && !mountedRef.current) {
       mountedRef.current = true;
       fetchPlugins(true);
+      fetchDevMode();
     }
-  }, [visible, fetchPlugins]);
+  }, [visible, fetchPlugins, fetchDevMode]);
+
+  const toggleDevMode = async (next: boolean) => {
+    const target: "off" | "symlink" = next ? "symlink" : "off";
+    const prev = devMode;
+    setDevMode(target);
+    setDevModeSaving(true);
+    try {
+      await safeFetch(`${apiBaseRef.current()}/api/plugins/dev-mode`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: target }),
+      });
+      showToast(target === "symlink" ? t("plugins.devModeOnHint") : t("plugins.devModeOffHint"));
+    } catch (e: any) {
+      setDevMode(prev);
+      showToast(e.message, "err");
+    } finally {
+      setDevModeSaving(false);
+    }
+  };
+
+  const toggleTasks = async (pluginId: string) => {
+    if (tasksPanel === pluginId) {
+      setTasksPanel(null);
+      return;
+    }
+    closeAllPanels();
+    setTasksPanel(pluginId);
+    setTasksData(null);
+    scrollToCard(pluginId);
+    await loadTasks(pluginId);
+  };
+
+  const loadTasks = async (pluginId: string) => {
+    setTasksLoading(true);
+    try {
+      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/spawned-tasks`);
+      const raw = await resp.json();
+      const data = raw.data ?? raw;
+      setTasksData({
+        running: data?.running ?? 0,
+        total: data?.total ?? 0,
+        tasks: Array.isArray(data?.tasks) ? data.tasks : [],
+      });
+    } catch (e: any) {
+      setTasksData({ running: 0, total: 0, tasks: [] });
+      showToast(e.message, "err");
+    } finally {
+      setTasksLoading(false);
+    }
+  };
 
   const updatePluginLocal = (id: string, patch: Partial<PluginInfo>) => {
     setPlugins((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
@@ -253,12 +388,14 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     setConfigPanel((prev) => (prev === id ? null : prev));
     setPermDialog((prev) => (prev === id ? null : prev));
     setLogsPanel((prev) => (prev === id ? null : prev));
+    setTasksPanel((prev) => (prev === id ? null : prev));
   };
 
   const ACTION_LABELS: Record<string, { ok: string; err: string }> = {
     enable:  { ok: t("plugins.toastEnabled"),     err: t("plugins.toastEnableFail") },
     disable: { ok: t("plugins.toastDisabled"),    err: t("plugins.toastDisableFail") },
     delete:  { ok: t("plugins.toastUninstalled"), err: t("plugins.toastUninstallFail") },
+    reload:  { ok: t("plugins.toastReloaded"),    err: t("plugins.toastReloadFail") },
   };
 
   // Notify the Sidebar (and any other listener) that the set of plugin UI apps
@@ -269,15 +406,62 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     } catch { /* ignore */ }
   };
 
-  const handleAction = async (id: string, action: "enable" | "disable" | "delete") => {
+  const handleAction = async (id: string, action: "enable" | "disable" | "delete" | "reload") => {
+    // Block re-entry while the previous request for this plugin is still
+    // in flight. The button is also visually disabled below, but this
+    // belt-and-suspenders check guards against keyboard / programmatic
+    // re-entry too.
+    if (pendingAction[id]) return;
+    setPendingAction((prev) => ({ ...prev, [id]: action }));
     try {
       const method = action === "delete" ? "DELETE" : "POST";
       const url =
         action === "delete"
           ? `${apiBaseRef.current()}/api/plugins/${id}`
-          : `${apiBaseRef.current()}/api/plugins/${id}/${action}`;
-      await safeFetch(url, { method });
+          : `${apiBaseRef.current()}/api/plugins/${id}/_admin/${action}`;
+      const resp = await safeFetch(url, { method, signal: longOpSignal() });
+
+      if (action === "reload") {
+        // Reload may change loaded/failed/error fields and (with dev mode)
+        // pick up source-code edits. Easiest correct UI is to refetch the
+        // whole list — small payload, avoids subtle local-state drift.
+        await fetchPlugins(false);
+        // Tell PluginAppHost to bust its iframe cache for THIS plugin.
+        // Backend reload_plugin() re-imports Python, but the browser still
+        // holds the old HTML/JS/CSS against the previous ?_v= query string,
+        // so without this event the UI tab keeps showing the stale build.
+        try {
+          window.dispatchEvent(
+            new CustomEvent("openakita:plugin-reloaded", { detail: { pluginId: id } }),
+          );
+        } catch { /* ignore */ }
+        showToast(ACTION_LABELS[action]?.ok ?? "OK");
+        notifyAppsChanged();
+        return;
+      }
+
       if (action === "delete") {
+        // Backend may answer 207 Multi-Status (partial uninstall — code dir
+        // could not be fully removed but db files were cleaned). Surface
+        // this as a non-blocking warning so the user understands a restart
+        // may be needed for a fully clean state.
+        let body: any = null;
+        try { body = await resp.json(); } catch { /* ignore */ }
+        if (resp.status === 207 || body?.ok === false) {
+          removePluginLocal(id);
+          const guidance = body?.error?.guidance ?? "";
+          const message = body?.error?.message ?? t("plugins.toastUninstalledPartial");
+          // Surface the concrete locked-file list so the user can see WHY
+          // the directory could not be removed (usually a SQLite WAL or
+          // a log file the plugin forgot to close in on_unload).
+          const detail = body?.error?.detail ?? "";
+          const lines = [message];
+          if (guidance) lines.push(guidance);
+          if (detail) lines.push(detail);
+          showToast(lines.join("\n"), "err");
+          notifyAppsChanged();
+          return;
+        }
         removePluginLocal(id);
       } else {
         updatePluginLocal(id, { enabled: action === "enable" });
@@ -285,8 +469,24 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
       showToast(ACTION_LABELS[action]?.ok ?? "OK");
       notifyAppsChanged();
     } catch (e: any) {
+      // A client-side timeout does NOT mean the backend operation failed —
+      // long uninstalls (Windows file locks + retries) can outlive our
+      // AbortSignal. Show a hint and refresh the list so the user sees the
+      // real state instead of a confusing "signal timed out" error.
+      if (isTimeoutError(e)) {
+        showToast(t("plugins.toastOpStillRunning"), "err");
+        await fetchPlugins(false);
+        notifyAppsChanged();
+        return;
+      }
       const msg = ACTION_LABELS[action]?.err ?? e.message;
       showToast(`${msg}: ${e.message}`, "err");
+    } finally {
+      setPendingAction((prev) => {
+        if (!prev[id]) return prev;
+        const { [id]: _, ...rest } = prev;
+        return rest;
+      });
     }
   };
 
@@ -300,14 +500,21 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ source: installUrl.trim() }),
+        signal: longOpSignal(),
       });
       setInstallUrl("");
       showToast(t("plugins.toastInstalled"));
       await fetchPlugins(false);
       notifyAppsChanged();
     } catch (e: any) {
-      showToast(e.message, "err");
-      setError(e.message);
+      if (isTimeoutError(e)) {
+        showToast(t("plugins.toastOpStillRunning"), "err");
+        await fetchPlugins(false);
+        notifyAppsChanged();
+      } else {
+        showToast(e.message, "err");
+        setError(e.message);
+      }
     } finally {
       setInstalling(false);
     }
@@ -323,7 +530,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     scrollToCard(pluginId);
     if (!readmeCache[pluginId]) {
       try {
-        const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/readme`);
+        const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/readme`);
         const raw = await resp.json();
         const data = raw.data ?? raw;
         setReadmeCache((prev) => ({ ...prev, [pluginId]: data.readme || t("plugins.noReadme") }));
@@ -346,8 +553,8 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     scrollToCard(pluginId);
     try {
       const [schemaResp, configResp] = await Promise.all([
-        safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/schema`),
-        safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/config`),
+        safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/schema`),
+        safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/config`),
       ]);
       const schemaRaw = await schemaResp.json();
       const configRaw = await configResp.json();
@@ -366,7 +573,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     setConfigSaving(true);
     setConfigMsg("");
     try {
-      await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/config`, {
+      await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/config`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(configValues),
@@ -382,7 +589,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
   const handleGrantPermissions = async (pluginId: string, perms: string[]) => {
     setGranting(true);
     try {
-      await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/permissions/grant`, {
+      await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/permissions/grant`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ permissions: perms, reload: true }),
@@ -399,7 +606,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
   const handleRevokePermission = async (pluginId: string, perm: string) => {
     setGranting(true);
     try {
-      await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/permissions/revoke`, {
+      await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/permissions/revoke`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ permissions: [perm], reload: true }),
@@ -415,7 +622,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
 
   const handleOpenFolder = async (pluginId: string) => {
     try {
-      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/open-folder`, {
+      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/open-folder`, {
         method: "POST",
       });
       const raw = await resp.json();
@@ -430,7 +637,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
 
   const handleExport = async (pluginId: string) => {
     try {
-      const url = `${apiBaseRef.current()}/api/plugins/${pluginId}/export`;
+      const url = `${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/export`;
       await downloadFile(url, `${pluginId}.zip`);
     } catch (e: any) {
       setError(e.message);
@@ -447,7 +654,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     scrollToCard(pluginId);
     setLogsContent("");
     try {
-      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/logs?lines=200`);
+      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/logs?lines=200`);
       const raw = await resp.json();
       const data = raw.data ?? raw;
       setLogsContent(data.logs || t("plugins.noLogs"));
@@ -459,7 +666,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
   const refreshLogs = async (pluginId: string) => {
     setLogsContent("");
     try {
-      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/logs?lines=200`);
+      const resp = await safeFetch(`${apiBaseRef.current()}/api/plugins/${pluginId}/_admin/logs?lines=200`);
       const raw = await resp.json();
       const data = raw.data ?? raw;
       setLogsContent(data.logs || t("plugins.noLogs"));
@@ -551,6 +758,36 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
             </div>
           </div>
 
+          {!notAvailable && (
+            <label
+              className={cn(
+                "flex items-start gap-3 rounded-xl border bg-muted/20 p-4 cursor-pointer transition-colors",
+                devMode === "symlink" && "border-primary/40 bg-primary/5",
+              )}
+            >
+              <Checkbox
+                checked={devMode === "symlink"}
+                onCheckedChange={(v) => toggleDevMode(Boolean(v))}
+                disabled={devModeSaving}
+                className="mt-0.5"
+              />
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
+                  <IconCode size={14} />
+                  {t("plugins.devModeTitle")}
+                  {devMode === "symlink" && (
+                    <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
+                      {t("plugins.devModeOn")}
+                    </Badge>
+                  )}
+                </div>
+                <div className="text-xs leading-5 text-muted-foreground">
+                  {t("plugins.devModeDesc")}
+                </div>
+              </div>
+            </label>
+          )}
+
           {!notAvailable && plugins.length > 0 && (
             <div className="rounded-xl border bg-muted/20 p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
@@ -616,7 +853,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                 className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/20 bg-background/80 p-4"
               >
                 <div className="min-w-0">
-                  <div className="truncate font-medium text-foreground" title={p.name}>{p.name}</div>
+                  <div className="truncate font-medium text-foreground" title={pickI18n(p.display_name_i18n, lang, p.name)}>{pickI18n(p.display_name_i18n, lang, p.name)}</div>
                   <div
                     className="mt-1 truncate text-sm leading-6 text-muted-foreground"
                     title={(p.pending_permissions || []).map((pp) => permLabel(pp, lang)).join(", ")}
@@ -660,6 +897,11 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
               configPanel === p.id ||
               logsPanel === p.id;
             const badgeStyle = p.permission_level ? LEVEL_BADGE_STYLES[p.permission_level] : null;
+            // Localize the plugin's display name and description per the active
+            // UI language, falling back to the plain manifest fields when the
+            // plugin doesn't ship i18n overrides.
+            const displayName = pickI18n(p.display_name_i18n, lang, p.name);
+            const displayDesc = pickI18n(p.description_i18n, lang, p.description || "");
 
             return (
               <div
@@ -681,7 +923,7 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                         </div>
                         <div className="min-w-0 flex-1 space-y-1">
                           <div className="flex min-w-0 items-center gap-2">
-                            <CardTitle className="min-w-0 truncate text-base leading-none" title={p.name}>{p.name}</CardTitle>
+                            <CardTitle className="min-w-0 truncate py-0.5 text-base leading-tight" title={displayName}>{displayName}</CardTitle>
                             {p.permission_level && (
                               <Badge
                                 variant="outline"
@@ -724,10 +966,10 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                             )}
                           </div>
 
-                          {p.description && (
+                          {displayDesc && (
                             <CardDescription className="max-w-3xl text-sm leading-5">
-                              <span className="block line-clamp-2" title={p.description}>
-                                {p.description}
+                              <span className="block line-clamp-2" title={displayDesc}>
+                                {displayDesc}
                               </span>
                             </CardDescription>
                           )}
@@ -811,6 +1053,27 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                         >
                           <IconTerminal size={14} />
                         </Button>
+                        <Button
+                          size="icon-sm"
+                          variant={tasksPanel === p.id ? "secondary" : "outline"}
+                          title={t("plugins.viewTasks")}
+                          aria-label={t("plugins.viewTasks")}
+                          onClick={() => toggleTasks(p.id)}
+                        >
+                          <IconHeartPulse size={14} />
+                        </Button>
+                        {p.enabled && (
+                          <Button
+                            size="icon-sm"
+                            variant="outline"
+                            title={t("plugins.reloadHint")}
+                            aria-label={t("plugins.reload")}
+                            disabled={!!pendingAction[p.id]}
+                            onClick={() => handleAction(p.id, "reload")}
+                          >
+                            <IconRefresh size={14} />
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </CardHeader>
@@ -1041,6 +1304,80 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                           </pre>
                         </div>
                       )}
+
+                      {tasksPanel === p.id && (
+                        <div className={PANEL_CARD_CLASS}>
+                          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                              <IconHeartPulse size={14} style={{ color: "var(--muted)" }} />
+                              {t("plugins.tasksTitle")}
+                              {tasksData && (
+                                <Badge variant="outline" className="ml-1 text-xs">
+                                  {t("plugins.tasksRunning", {
+                                    running: tasksData.running,
+                                    total: tasksData.total,
+                                  })}
+                                </Badge>
+                              )}
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => loadTasks(p.id)}
+                              disabled={tasksLoading}
+                            >
+                              {t("plugins.refresh")}
+                            </Button>
+                          </div>
+                          <div className="mb-3 text-xs leading-5 text-muted-foreground">
+                            {t("plugins.tasksDesc")}
+                          </div>
+                          {tasksLoading && !tasksData ? (
+                            <div className="rounded-lg border bg-background p-3 text-xs text-muted-foreground">
+                              {t("plugins.loading")}
+                            </div>
+                          ) : tasksData && tasksData.tasks.length === 0 ? (
+                            <div className="rounded-lg border bg-background p-3 text-xs text-muted-foreground">
+                              {t("plugins.tasksEmpty")}
+                            </div>
+                          ) : tasksData ? (
+                            <div className="space-y-2">
+                              {tasksData.tasks.map((task, idx) => (
+                                <div
+                                  key={`${task.name}-${idx}`}
+                                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-background/80 px-3 py-2 text-xs"
+                                >
+                                  <div className="min-w-0 flex-1">
+                                    <div className="truncate font-medium text-foreground" title={task.name}>
+                                      {task.name}
+                                    </div>
+                                    <div className="mt-0.5 truncate text-muted-foreground" title={task.coro}>
+                                      {task.coro || "-"}
+                                    </div>
+                                  </div>
+                                  <Badge
+                                    variant="outline"
+                                    className={cn(
+                                      "shrink-0 text-[10px]",
+                                      task.cancelled
+                                        ? "border-rose-500/40 bg-rose-500/10 text-rose-600"
+                                        : task.done
+                                        ? "border-slate-400/40 bg-slate-400/10 text-slate-500"
+                                        : "border-emerald-500/40 bg-emerald-500/10 text-emerald-600",
+                                    )}
+                                  >
+                                    {task.cancelled
+                                      ? t("plugins.tasksCancelled")
+                                      : task.done
+                                      ? t("plugins.tasksDone")
+                                      : t("plugins.tasksAlive")}
+                                  </Badge>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
                     </CardContent>
                   )}
 
@@ -1049,20 +1386,35 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
                       {p.id}
                     </div>
                     <div className="flex shrink-0 gap-2">
-                      <Button
-                        size="sm"
-                        variant={p.enabled === false ? "default" : "outline"}
-                        onClick={() => handleAction(p.id, p.enabled === false ? "enable" : "disable")}
-                      >
-                        {p.enabled === false ? t("plugins.enable") : t("plugins.disable")}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() => handleAction(p.id, "delete")}
-                      >
-                        {t("plugins.remove")}
-                      </Button>
+                      {(() => {
+                        const inflight = pendingAction[p.id];
+                        const isToggleEnable = p.enabled === false;
+                        const toggleAction = isToggleEnable ? "enable" : "disable";
+                        const toggleLabel = inflight === toggleAction
+                          ? (isToggleEnable ? t("plugins.enabling") : t("plugins.disabling"))
+                          : (isToggleEnable ? t("plugins.enable") : t("plugins.disable"));
+                        const removeLabel = inflight === "delete" ? t("plugins.removing") : t("plugins.remove");
+                        return (
+                          <>
+                            <Button
+                              size="sm"
+                              variant={isToggleEnable ? "default" : "outline"}
+                              onClick={() => handleAction(p.id, toggleAction)}
+                              disabled={!!inflight}
+                            >
+                              {toggleLabel}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => handleAction(p.id, "delete")}
+                              disabled={!!inflight}
+                            >
+                              {removeLabel}
+                            </Button>
+                          </>
+                        );
+                      })()}
                     </div>
                   </CardFooter>
                 </Card>

@@ -1,0 +1,49 @@
+{
+  "id": "highlight-cutter",
+  "name": "Highlight Cutter",
+  "display_name_zh": "精彩瞬间剪辑",
+  "display_name_en": "Highlight Cutter",
+  "version": "1.0.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Upload a long video and AI picks 3-10 highlight moments and cuts them automatically. Designed for users who don't know how to use video editing software.",
+  "description_i18n": {
+    "zh": "上传一段长视频，AI 找出 3-10 段精彩瞬间并自动剪好。专为不会用剪辑软件的小白。",
+    "en": "Upload a long video and AI picks 3-10 highlight moments and cuts them automatically. Designed for users who don't know how to use video editing software."
+  },
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["video", "highlight", "cut", "ffmpeg", "asr"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.4.0"
+  },
+  "provides": {
+    "tools": [
+      "highlight_cutter_create",
+      "highlight_cutter_status",
+      "highlight_cutter_list",
+      "highlight_cutter_cancel"
+    ],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "icon": "",
+    "title": "精彩瞬间剪辑",
+    "title_i18n": { "en": "Highlight Cutter", "zh": "精彩瞬间剪辑" },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme"]
+  }
+}

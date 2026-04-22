@@ -1,10 +1,16 @@
 {
   "id": "seedance-video",
   "name": "Seedance Video Generator",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "python",
   "entry": "plugin.py",
   "description": "AI video generation powered by Volcengine Seedance — supports text-to-video, image-to-video, multimodal, editing, extension, and long video stitching.",
+  "display_name_zh": "Seedance 视频生成",
+  "display_name_en": "Seedance Video Generator",
+  "description_i18n": {
+    "zh": "基于火山引擎 Seedance 的 AI 视频生成 — 支持文生视频、图生视频、多模态、视频编辑、视频续写、长视频拼接。",
+    "en": "AI video generation powered by Volcengine Seedance — supports text-to-video, image-to-video, multimodal, editing, extension, and long video stitching."
+  },
   "author": "OpenAkita",
   "category": "creative",
   "tags": ["video", "ai", "seedance", "volcengine"],
@@ -20,7 +26,8 @@
   "requires": {
     "openakita": ">=1.27.0",
     "plugin_api": "~1",
-    "plugin_ui_api": "~1"
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.4.0"
   },
   "provides": {
     "tools": ["seedance_create", "seedance_status", "seedance_list"],

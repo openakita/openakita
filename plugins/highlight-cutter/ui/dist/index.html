@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>精彩瞬间剪辑</title>
+  <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css">
+  <script src="/api/plugins/_sdk/bootstrap.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/icons.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/i18n.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/event-helpers.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/error-coach.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/cost-preview.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/task-panel.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/onboard-wizard.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/first-success-celebrate.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/dep-gate.js"></script>
+  <style>
+    body { padding: 16px; }
+    h1 { margin: 0 0 6px; font-size: 22px; display: inline-flex; align-items: center; gap: 10px; }
+    h1 .oa-icon { width: 22px; height: 22px; color: var(--oa-primary); }
+    .header-tip { color: var(--oa-text-muted); font-size: 12px; margin-bottom: 16px; }
+    .step-num { display: inline-block; width: 18px; height: 18px; border-radius: 50%; background: var(--oa-primary); color: #fff; text-align: center; line-height: 18px; font-size: 11px; margin-right: 6px; }
+  </style>
+</head>
+<body>
+  <h1>
+    <span class="oa-icon" data-icon="scissors"></span>
+    <span data-i18n="header.title"></span>
+  </h1>
+  <div class="header-tip" data-i18n="header.tip"></div>
+
+  <!-- Dependency gate: ffmpeg is required for cutting/encoding -->
+  <div data-oa-dep="ffmpeg"></div>
+
+  <!-- Step 1: upload -->
+  <div class="oa-card">
+    <h3><span class="step-num">1</span><span data-i18n="step1.title"></span></h3>
+    <p data-i18n="step1.desc"></p>
+    <div class="oa-row">
+      <input type="file" id="videoFile" accept="video/*" class="oa-input" style="flex:1">
+      <button class="oa-btn" id="pickBtn" data-i18n="step1.browse"></button>
+    </div>
+    <div id="uploadInfo" style="font-size:12px;color:var(--oa-text-muted);margin-top:6px"></div>
+  </div>
+
+  <!-- Step 2: hint + intent verify -->
+  <div class="oa-card">
+    <h3>
+      <span class="step-num">2</span>
+      <span data-i18n="step2.title"></span>
+      <span style="font-weight:400;font-size:12px;color:var(--oa-text-muted)" data-i18n="step2.optional"></span>
+    </h3>
+    <textarea id="hintInput" class="oa-textarea" data-i18n-placeholder="step2.placeholder"></textarea>
+    <div class="oa-row" style="margin-top:6px">
+      <button class="oa-btn" id="verifyBtn" data-i18n="step2.verify"></button>
+      <span id="verifyStatus" class="oa-thinking" style="display:none">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span> <span data-i18n="step2.thinking"></span>
+      </span>
+    </div>
+    <div id="intentBox" style="margin-top:10px"></div>
+  </div>
+
+  <!-- Step 3: params + cost preview -->
+  <div class="oa-card">
+    <h3><span class="step-num">3</span><span data-i18n="step3.title"></span></h3>
+    <div class="oa-grid cols-2">
+      <div>
+        <label class="oa-label" data-i18n="step3.targetCount"></label>
+        <input id="targetCount" class="oa-input" type="number" value="5" min="1" max="20">
+      </div>
+      <div>
+        <label class="oa-label" data-i18n="step3.segLen"></label>
+        <input id="segLen" class="oa-input" type="number" value="8" min="3" max="60">
+      </div>
+    </div>
+    <div id="costBox" style="margin-top:10px"></div>
+  </div>
+
+  <!-- Step 4: run + tasks -->
+  <div class="oa-card">
+    <h3><span class="step-num">4</span><span data-i18n="step4.title"></span></h3>
+    <div class="oa-row">
+      <button class="oa-btn oa-btn-primary" id="goBtn" disabled data-i18n="step4.go"></button>
+      <span id="goHint" style="font-size:12px;color:var(--oa-text-muted)" data-i18n="step4.hint"></span>
+    </div>
+    <div id="errorBox" style="margin-top:10px"></div>
+  </div>
+
+  <h3 style="margin: 18px 0 8px" data-i18n="tasks.title"></h3>
+  <div id="tasks"></div>
+
+<script>
+  // 1) Register dictionary -------------------------------------------------
+  OpenAkitaI18n.register({
+    zh: {
+      "header.title": "精彩瞬间剪辑",
+      "header.tip": "上传一段长视频 → AI 帮你挑 3~10 段精彩瞬间 → 自动剪好（全程在你电脑上跑，不花钱）",
+      "step1.title": "选一段视频",
+      "step1.desc": "支持 mp4 / mov / mkv，长度 30 秒~ 60 分钟最佳。",
+      "step1.browse": "浏览",
+      "step2.title": "用一句话说说你想要什么",
+      "step2.optional": "（可选）",
+      "step2.placeholder": "例：找出我的几个精彩反应、一些总结/金句、或者动作画面",
+      "step2.verify": "让 AI 复读一下我想要什么",
+      "step2.thinking": "思考中",
+      "step3.title": "剪几段，每段多长",
+      "step3.targetCount": "目标段数",
+      "step3.segLen": "每段 (秒)",
+      "step4.title": "开始剪",
+      "step4.go": "立即开剪",
+      "step4.hint": "先选视频，再点这里。",
+      "step4.hintReady": "可以开剪了",
+      "tasks.title": "最近的任务",
+      "upload.uploading": "上传中… ({mb} MB)",
+      "upload.done": "已上传：{name}",
+      "intent.understand": "AI 理解：",
+      "intent.questions": "还想确认：",
+      "intent.risks": "注意：",
+      "intent.empty": "(空)",
+      "err.upload.cause": "上传失败",
+      "err.upload.next": "检查网络或文件大小，然后重试。",
+      "err.create.cause": "创建失败",
+      "err.create.problem": "后端未返回错误信息",
+      "err.create.next": "稍后重试",
+      "err.network.cause": "网络错误",
+      "err.network.next": "检查网络再重试。",
+      "onboard.q": "你想用这个干什么？",
+      "onboard.opt.social": "剪短视频发朋友圈/抖音",
+      "onboard.opt.work": "挑会议/直播的关键片段",
+      "onboard.opt.study": "复盘课程/讲座的金句",
+      "onboard.opt.fun": "随便玩玩",
+      "success.title": "第一刀剪出来啦！",
+      "success.subtitle": "已经存到你电脑上了，下次直接来这里看历史。",
+      "share.title": "提示",
+      "share.body": "可以在历史任务里点视频、复制链接发给朋友。",
+      "rec.subtitle": "加上字幕，更适合发微信",
+      "rec.avatar": "让数字人帮你配段开场白"
+    },
+    en: {
+      "header.title": "Highlight Cutter",
+      "header.tip": "Upload a long video → AI picks 3-10 highlights → cuts them automatically (everything runs on your machine, free).",
+      "step1.title": "Pick a video",
+      "step1.desc": "Supports mp4 / mov / mkv. Works best between 30 seconds and 60 minutes.",
+      "step1.browse": "Browse",
+      "step2.title": "Tell me what you want in one sentence",
+      "step2.optional": "(optional)",
+      "step2.placeholder": "e.g. my best reactions, summary lines, or action shots",
+      "step2.verify": "Let AI repeat what I want",
+      "step2.thinking": "Thinking",
+      "step3.title": "How many cuts and how long each",
+      "step3.targetCount": "Target count",
+      "step3.segLen": "Each (sec)",
+      "step4.title": "Start cutting",
+      "step4.go": "Cut now",
+      "step4.hint": "Pick a video first, then click here.",
+      "step4.hintReady": "Ready to cut",
+      "tasks.title": "Recent tasks",
+      "upload.uploading": "Uploading… ({mb} MB)",
+      "upload.done": "Uploaded: {name}",
+      "intent.understand": "AI understands:",
+      "intent.questions": "Wants to confirm:",
+      "intent.risks": "Heads up:",
+      "intent.empty": "(empty)",
+      "err.upload.cause": "Upload failed",
+      "err.upload.next": "Check the network or file size, then retry.",
+      "err.create.cause": "Failed to create",
+      "err.create.problem": "Backend returned no error message",
+      "err.create.next": "Please try again later",
+      "err.network.cause": "Network error",
+      "err.network.next": "Check the network and retry.",
+      "onboard.q": "What will you use this for?",
+      "onboard.opt.social": "Short videos for social feeds",
+      "onboard.opt.work": "Key moments from meetings / streams",
+      "onboard.opt.study": "Highlights from courses / lectures",
+      "onboard.opt.fun": "Just exploring",
+      "success.title": "First cut is out!",
+      "success.subtitle": "Saved to your machine. Come back here to find your history.",
+      "share.title": "Tip",
+      "share.body": "Open the task history to play, copy a link and share.",
+      "rec.subtitle": "Add subtitles for messaging apps",
+      "rec.avatar": "Let an avatar narrate the intro"
+    }
+  });
+  const T = (k, vars) => OpenAkitaI18n.t(k, vars);
+
+  // 2) Render inline SVG icons --------------------------------------------
+  document.querySelectorAll("[data-icon]").forEach(function (el) {
+    var name = el.dataset.icon;
+    var fn = window.OpenAkitaIcons && window.OpenAkitaIcons[name];
+    if (fn) el.innerHTML = fn();
+  });
+
+  // 3) Apply i18n -------------------------------------------------------
+  OpenAkitaI18n.bindDom(document.body);
+
+  // 4) App logic --------------------------------------------------------
+  const apiBase = (OpenAkita.meta && OpenAkita.meta.apiBase) || '';
+  const api = (path, opts) => fetch(apiBase + path, opts).then(r => r.json().then(j => ({ ok: r.ok, status: r.status, body: j })));
+
+  let chosenSourcePath = null;
+  let chosenDuration = 60;
+
+  OnboardWizard.askOnce({
+    storageKey: 'highlight-cutter:audience',
+    question: T('onboard.q'),
+    options: [
+      { id: 'social', label: T('onboard.opt.social') },
+      { id: 'work',   label: T('onboard.opt.work')   },
+      { id: 'study',  label: T('onboard.opt.study')  },
+      { id: 'fun',    label: T('onboard.opt.fun')    },
+    ],
+    onChoose: (id) => { /* could load tailored templates here */ },
+  });
+
+  document.getElementById('pickBtn').addEventListener('click', () => document.getElementById('videoFile').click());
+  document.getElementById('videoFile').addEventListener('change', async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const info = document.getElementById('uploadInfo');
+    info.textContent = T('upload.uploading', { mb: (file.size/1024/1024).toFixed(1) });
+    const form = new FormData(); form.append('file', file);
+    try {
+      const r = await fetch(apiBase + '/upload', { method: 'POST', body: form });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      chosenSourcePath = j.path;
+      info.textContent = T('upload.done', { name: file.name });
+      document.getElementById('goBtn').disabled = false;
+      document.getElementById('goHint').removeAttribute('data-i18n');
+      document.getElementById('goHint').textContent = T('step4.hintReady');
+      refreshCost();
+    } catch (err) {
+      ErrorCoach.mount('#errorBox', { cause_category: T('err.upload.cause'), problem: err.message, next_step: T('err.upload.next'), severity: 'error' });
+    }
+  });
+
+  document.getElementById('verifyBtn').addEventListener('click', async () => {
+    const hint = document.getElementById('hintInput').value.trim();
+    const status = document.getElementById('verifyStatus');
+    status.style.display = 'inline-flex';
+    try {
+      const r = await api('/intent', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ hint, source_summary: chosenSourcePath ? `video: ${chosenSourcePath.split(/[\\/]/).pop()}` : '' }) });
+      const intent = r.body || {};
+      const qa = (intent.clarifying_questions || []).map(q => `<li>${q}</li>`).join('');
+      const risks = (intent.risks || []).map(x => `<li>${x}</li>`).join('');
+      document.getElementById('intentBox').innerHTML = `
+        <div class="oa-card" style="margin:0;background:var(--oa-bg)">
+          <div style="font-weight:600;margin-bottom:6px">${T('intent.understand')}</div>
+          <div>${intent.summary || T('intent.empty')}</div>
+          ${qa ? `<div style="margin-top:6px;font-size:12px;color:var(--oa-text-muted)">${T('intent.questions')}</div><ul style="font-size:12px;margin:4px 0 0 18px">${qa}</ul>` : ''}
+          ${risks ? `<div style="margin-top:6px;font-size:12px;color:var(--oa-warning)">${T('intent.risks')}</div><ul style="font-size:12px;margin:4px 0 0 18px">${risks}</ul>` : ''}
+        </div>`;
+    } finally { status.style.display = 'none'; }
+  });
+
+  async function refreshCost() {
+    const target = parseInt(document.getElementById('targetCount').value || '5', 10);
+    const seg = parseInt(document.getElementById('segLen').value || '8', 10);
+    const r = await api('/cost', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ source_duration_sec: chosenDuration, target_count: target, avg_segment_sec: seg }) });
+    CostPreview.mount('#costBox', r.body);
+  }
+  ['targetCount', 'segLen'].forEach(id => document.getElementById(id).addEventListener('input', refreshCost));
+  refreshCost();
+
+  document.getElementById('goBtn').addEventListener('click', async () => {
+    if (!chosenSourcePath) return;
+    const target = parseInt(document.getElementById('targetCount').value || '5', 10);
+    const seg = parseInt(document.getElementById('segLen').value || '8', 10);
+    const hint = document.getElementById('hintInput').value.trim();
+    document.getElementById('errorBox').innerHTML = '';
+    try {
+      const r = await api('/tasks', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ source_path: chosenSourcePath, target_count: target, min_segment_sec: 3, max_segment_sec: Math.max(seg, 3), intent_hint: hint }) });
+      if (!r.ok) {
+        ErrorCoach.mount('#errorBox', r.body.detail || { cause_category: T('err.create.cause'), problem: T('err.create.problem'), next_step: T('err.create.next'), severity: 'error' }, { onRetry: () => document.getElementById('goBtn').click() });
+        return;
+      }
+      taskPanel.refresh();
+    } catch (err) {
+      ErrorCoach.mount('#errorBox', { cause_category: T('err.network.cause'), problem: err.message, next_step: T('err.network.next'), severity: 'error', retryable: true }, { onRetry: () => document.getElementById('goBtn').click() });
+    }
+  });
+
+  const taskPanel = new TaskPanel({ root: '#tasks', apiBase, tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
+  taskPanel.start();
+
+  OpenAkita.onEvent('task_updated', (data) => {
+    taskPanel.refresh();
+    if (data && data.status === 'succeeded') {
+      FirstSuccessCelebrate.maybeFire({
+        storageKey: 'highlight-cutter:firstSuccess',
+        title: T('success.title'),
+        subtitle: T('success.subtitle'),
+        onShare: () => OpenAkita.notify({ title: T('share.title'), body: T('share.body') }),
+        recommendations: [
+          { id: 'subtitle-maker', label: T('rec.subtitle') },
+          { id: 'avatar-speaker', label: T('rec.avatar') },
+        ],
+        onRecommend: (id) => OpenAkita.navigate('plugin-app:' + id),
+      });
+    }
+  });
+</script>
+</body>
+</html>

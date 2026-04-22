@@ -1,0 +1,43 @@
+{
+  "id": "tts-studio",
+  "name": "TTS Studio",
+  "display_name_zh": "AI 配音工坊",
+  "display_name_en": "TTS Studio",
+  "version": "1.0.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Convert a script / dialogue into multiple voice-overs in one go (each segment can use a different speaker) and stitch them into one complete audio file. Reuses the TTS engine from avatar-speaker.",
+  "description_i18n": {
+    "zh": "把一份脚本/对话稿一次性转成多条配音 (每段独立设置说话人)，自动拼接成一条完整音频。复用 avatar-speaker 的 TTS 引擎。",
+    "en": "Convert a script / dialogue into multiple voice-overs in one go (each segment can use a different speaker) and stitch them into one complete audio file. Reuses the TTS engine from avatar-speaker."
+  },
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["tts", "dialogue", "podcast", "audiobook"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.4.0"
+  },
+  "provides": {
+    "tools": ["tts_studio_create", "tts_studio_status", "tts_studio_list", "tts_studio_cancel"],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "AI 配音工坊",
+    "title_i18n": { "zh": "AI 配音工坊", "en": "TTS Studio" },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme", "clipboard"]
+  }
+}

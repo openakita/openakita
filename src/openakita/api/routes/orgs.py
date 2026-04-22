@@ -766,12 +766,88 @@ async def get_command_status(request: Request, org_id: str, command_id: str):
     cmd = _command_store.get(command_id)
     if not cmd or cmd["org_id"] != org_id:
         raise HTTPException(404, "Command not found")
+
+    # phase 透传：从最近的 command_phase 事件取细分阶段
+    # （running / awaiting_summary / done），让前端能区分"全员 idle 但 running"
+    # 是真的卡住还是在等 root 汇总。命令已结束（done/error）时 phase 直接对齐
+    # status，避免 stale phase 干扰展示。
+    phase = cmd["status"]
+    if cmd["status"] == "running":
+        try:
+            rt = _get_runtime(request)
+            es = rt.get_event_store(org_id)
+            for ev in es.query(event_type="command_phase", limit=20) or []:
+                data = ev.get("data") or {}
+                if data.get("command_id") == command_id:
+                    phase = data.get("phase") or phase
+                    break
+        except Exception:
+            pass
+
     return {
         "command_id": cmd["command_id"],
         "status": cmd["status"],
+        "phase": phase,
         "result": cmd["result"],
         "error": cmd["error"],
         "elapsed_s": round(time.time() - cmd["created_at"], 1),
+    }
+
+
+@router.post("/{org_id}/commands/{command_id}/cancel")
+async def cancel_command(request: Request, org_id: str, command_id: str):
+    """用户主动强制终止当前在跑的组织命令。
+
+    流程：
+      1. 校验 ``command_id`` 属于本 org，已完成/出错则幂等返回 ``already_done``。
+      2. 在 engine loop 上 await ``runtime.cancel_user_command(org_id, command_id)``：
+         置 tracker.user_cancelled+auto_stopped+completed.set() 并 soft_stop_org。
+      3. 后台 ``_run`` 会因 tracker.completed 触发，正常走完落库 + 广播
+         ``org:command_done``（result 含 ``cancelled_by_user=True``），前端
+         自动收尾，无需此处再清理 ``_command_store``。
+
+    组织保持 RUNNING，用户可立即再发送新指令。
+    """
+    cmd = _command_store.get(command_id)
+    if not cmd or cmd["org_id"] != org_id:
+        raise HTTPException(404, "Command not found")
+
+    if cmd["status"] != "running":
+        return {"ok": True, "command_id": command_id, "already_done": True}
+
+    rt = _get_runtime(request)
+    try:
+        result = await to_engine(
+            rt.cancel_user_command(org_id, command_id)
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.warning("[OrgCmd] cancel_command failed: %s", e, exc_info=True)
+        raise HTTPException(500, f"cancel failed: {e}")
+
+    # 标记请求来源，方便审计 / 后续可能的 UI 展示。状态字段沿用 _run 自身回写。
+    cmd["cancel_requested_by_user"] = True
+    cmd["cancel_requested_at"] = time.time()
+
+    try:
+        from openakita.api.routes.websocket import broadcast_event
+        await broadcast_event(
+            "org:command_cancelled",
+            {
+                "org_id": org_id,
+                "command_id": command_id,
+                "by": "user",
+                "cancelled_roots": result.get("cancelled_roots", []),
+            },
+        )
+    except Exception:
+        logger.debug("[OrgCmd] broadcast org:command_cancelled failed", exc_info=True)
+
+    return {
+        "ok": True,
+        "command_id": command_id,
+        "cancelled_roots": result.get("cancelled_roots", []),
     }
 
 
@@ -918,6 +994,7 @@ async def preview_node_prompt(request: Request, org_id: str, node_id: str):
         blackboard_summary=blackboard_summary,
         dept_summary=dept_summary,
         node_summary=node_summary,
+        root_intent=rt.get_active_root_intent(org_id),
     )
 
     from openakita.orgs.tool_categories import expand_tool_categories

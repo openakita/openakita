@@ -1,0 +1,42 @@
+{
+  "id": "poster-maker",
+  "name": "Poster Maker",
+  "display_name_zh": "AI 海报生成",
+  "display_name_en": "Poster Maker",
+  "version": "1.0.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Generate a poster in 1 minute from a template + copy + a single image. Optionally calls AI image editing to polish the background.",
+  "description_i18n": {
+    "zh": "用模板 + 文案 + 一张配图，1 分钟生成一张海报。可选调用 AI 图编辑润色背景。",
+    "en": "Generate a poster in 1 minute from a template + copy + a single image. Optionally calls AI image editing to polish the background."
+  },
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["poster", "design", "marketing", "social"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.4.0"
+  },
+  "provides": {
+    "tools": ["poster_maker_create", "poster_maker_status", "poster_maker_list", "poster_maker_cancel", "poster_maker_templates"],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "AI 海报生成",
+    "title_i18n": { "zh": "AI 海报生成", "en": "Poster Maker" },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme"]
+  }
+}

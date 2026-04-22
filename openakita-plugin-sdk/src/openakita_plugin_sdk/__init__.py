@@ -8,7 +8,15 @@ Quick start::
     from openakita_plugin_sdk.testing import MockPluginAPI, assert_plugin_loads
     from openakita_plugin_sdk.scaffold import scaffold_plugin
 
-See ``docs/getting-started.md`` for the full walkthrough.
+For AI media plugins (video / image / audio), use the contrib subpackage::
+
+    from openakita_plugin_sdk.contrib import (
+        BaseTaskManager, BaseVendorClient, ErrorCoach, CostEstimator,
+        IntentVerifier, PromptOptimizer, QualityGates, build_render_pipeline,
+    )
+
+See ``docs/getting-started.md`` for the full walkthrough; see
+``docs/contrib.md`` for the AI media scaffolding reference.
 """
 
 from .core import PluginAPI, PluginBase, PluginManifest

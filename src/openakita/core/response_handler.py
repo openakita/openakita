@@ -1,11 +1,11 @@
 """
-Response handler
+响应处理器
 
-Response-handling logic extracted from agent.py, responsible for:
-- Cleaning LLM response text (thinking tags, simulated tool calls)
-- Task completion verification
-- Task retrospective analysis
-- Helper predicate functions
+从 agent.py 提取的响应处理逻辑，负责:
+- LLM 响应文本清理（思考标签、模拟工具调用）
+- 任务完成度验证
+- 任务复盘分析
+- 辅助判断函数
 """
 
 import logging
@@ -15,19 +15,19 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-# ==================== Text cleaning functions ====================
+# ==================== 文本清理函数 ====================
 
 
 def strip_thinking_tags(text: str) -> str:
     """
-    Remove internal-tag content from the response.
+    移除响应中的内部标签内容。
 
-    Tags to clean include:
+    需要清理的标签包括：
     - <thinking>...</thinking> - Claude extended thinking
-    - <think>...</think> - MiniMax/Qwen thinking format
+    - <think>...</think> - MiniMax/Qwen thinking 格式
     - <minimax:tool_call>...</minimax:tool_call>
     - <<|tool_calls_section_begin|>>...<<|tool_calls_section_end|>> - Kimi K2
-    - </thinking> - stray closing tags
+    - </thinking> - 残留的闭合标签
     """
     if not text:
         return text
@@ -55,14 +55,14 @@ def strip_thinking_tags(text: str) -> str:
         flags=re.DOTALL | re.IGNORECASE,
     )
 
-    # Remove any stray closing tags
+    # 移除残留的闭合标签
     cleaned = re.sub(r"</thinking>\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"</think>\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"</minimax:tool_call>\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"<<\|tool_calls_section_begin\|>>.*$", "", cleaned, flags=re.DOTALL)
     cleaned = re.sub(r"<\?xml[^>]*\?>\s*", "", cleaned)
 
-    # Fallback: clean up orphan opening tags (no closing tag, from the tag to the end of the string)
+    # 兜底：清理孤立的开标签（无闭合，从标签到字符串末尾）
     cleaned = re.sub(r"<thinking>\s*.*$", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
     cleaned = re.sub(r"<think>\s*.*$", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
 
@@ -71,18 +71,18 @@ def strip_thinking_tags(text: str) -> str:
 
 def strip_tool_simulation_text(text: str) -> str:
     """
-    Remove text where the LLM is simulating tool calls.
+    移除 LLM 在文本中模拟工具调用的内容。
 
-    When using fallback models that do not support native tool calling, the LLM
-    may "simulate" tool calls in text. Three cases are handled:
-    1. Entire line is a tool call (removed outright)
-    2. Inline .tool_name(args) embedded at line end (stripped from the end, keeping preceding prose)
-    3. <tool_call>...</tool_call> XML block (commonly leaked by LLMs in Ask mode)
+    当使用不支持原生工具调用的备用模型时，LLM 可能在文本中
+    "模拟"工具调用。支持三种情况：
+    1. 整行都是工具调用（直接移除）
+    2. 行内嵌入的 .tool_name(args)（从行尾剥离，保留前面的正文）
+    3. <tool_call>...</tool_call> XML 块（Ask 模式下 LLM 常泄漏此格式）
     """
     if not text:
         return text
 
-    # First, remove <tool_call>...</tool_call> blocks (may span multiple lines)
+    # 先移除 <tool_call>...</tool_call> 块（可能跨行）
     text = re.sub(
         r"<tool_call>\s*.*?\s*</tool_call>",
         "",
@@ -95,7 +95,7 @@ def strip_tool_simulation_text(text: str) -> str:
     pattern3 = r'^\{["\']?(tool|function|name)["\']?\s*:'
     pattern4 = r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$"
 
-    # Inline .tool_name(args) stripping: match the trailing .tool_name(args) part of a line
+    # 行内 .tool_name(args) 剥离：匹配行尾的 .tool_name(args) 部分
     inline_dot_pattern = re.compile(r"\s*\.[a-z][a-z0-9_]{2,}\s*\(.*\)\s*$", re.IGNORECASE)
 
     lines = text.split("\n")
@@ -123,7 +123,7 @@ def strip_tool_simulation_text(text: str) -> str:
         if is_tool_sim:
             continue
 
-        # Check whether the end of the line embeds .tool_name(args) (e.g., mixed text + tool call)
+        # 检查行尾是否嵌入了 .tool_name(args)（如混合文本+工具调用）
         m = inline_dot_pattern.search(stripped)
         if m and m.start() > 0:
             cleaned_lines.append(stripped[: m.start()].rstrip())
@@ -138,12 +138,12 @@ _LEADING_TIMESTAMP_RE = re.compile(r"^\s*\[\d{1,2}:\d{2}\]\s*")
 
 def clean_llm_response(text: str) -> str:
     """
-    Clean LLM response text.
+    清理 LLM 响应文本。
 
-    Applies, in order:
-    1. strip_thinking_tags - remove thinking tags
-    2. strip_tool_simulation_text - remove simulated tool calls
-    3. strip_intent_tag - remove intent-declaration markers
+    依次应用:
+    1. strip_thinking_tags - 移除思考标签
+    2. strip_tool_simulation_text - 移除模拟工具调用
+    3. strip_intent_tag - 移除意图声明标记
     4. strip leading [HH:MM] timestamp leaked from historical message formatting
     """
     if not text:
@@ -157,23 +157,23 @@ def clean_llm_response(text: str) -> str:
     return cleaned.strip()
 
 
-# ==================== Intent-declaration parsing ====================
+# ==================== 意图声明解析 ====================
 
 _INTENT_TAG_RE = re.compile(r"^\s*\[(ACTION|REPLY)\]\s*\n?", re.IGNORECASE)
 
 
 def parse_intent_tag(text: str) -> tuple[str | None, str]:
     """
-    Parse and strip the intent-declaration marker at the start of a response.
+    解析并剥离响应文本开头的意图声明标记。
 
-    In plain-text replies the model should declare [ACTION] or [REPLY] on the first line:
-    - [ACTION]: declares that a tool call is needed (a hallucination if none is actually made)
-    - [REPLY]: declares a pure conversational reply, no tools needed
+    模型在纯文本回复时应在第一行声明 [ACTION] 或 [REPLY]：
+    - [ACTION]: 声明需要调用工具（若实际未调用则为幻觉）
+    - [REPLY]: 声明纯对话回复，不需要工具
 
     Returns:
         (intent, stripped_text):
-        - intent: "ACTION" / "REPLY" / None (no marker)
-        - stripped_text: text with the marker removed
+        - intent: "ACTION" / "REPLY" / None（无标记）
+        - stripped_text: 移除标记后的文本
     """
     if not text:
         return None, text or ""
@@ -183,43 +183,106 @@ def parse_intent_tag(text: str) -> tuple[str | None, str]:
     return None, text
 
 
+# ==================== 文件交付意图识别（模块级 helper） ====================
+#
+# 该函数被 ResponseHandler / OrgRuntime / ReasoningEngine 共用：
+# 1. ResponseHandler.verify_task_completion 用它决定是否对纯文本最终答复
+#    施加"必须有附件证据"的硬校验；
+# 2. OrgRuntime._run_node_task 用它决定是否触发 auto-persist 兜底落盘，
+#    以及是否要静默 verify_incomplete 诊断卡片；
+# 3. ReasoningEngine._handle_final_answer 用它选择 retry prompt 文案
+#    （expects=True → 强约束指令；expects=False → 温和提示）。
+#
+# 设计要点：
+# - 仅看「用户原始请求」的文本特征，**不依赖** reasoning_engine 的 stale
+#   实例属性（verify 没执行的轮次该属性可能不可信）。
+# - 系统/组织合成的元指令前缀（如「[用户指令最终汇总]」）必须先剔除，
+#   避免命中其中包含的「文件/附件」字面值导致误判。
+# - 关键词偏向「交付意图」而非泛指「话题里出现了文件」。
+
+_SYSTEM_REQUEST_PREFIXES_TUPLE: tuple[str, ...] = (
+    "[用户指令最终汇总]",
+    "[系统]",
+    "[组织]",
+)
+
+_ARTIFACT_INTENT_KEYWORDS: tuple[str, ...] = (
+    "图片",
+    "照片",
+    "图像",
+    "海报",
+    "壁纸",
+    "配图",
+    "截图",
+    "附件",
+    "文件",
+    "下载",
+    "发我",
+    "发给我",
+    "给我一张",
+    "给我发",
+    "导出",
+    "另存",
+    "保存为",
+    "生成一份",
+    "出一份",
+    "做一份",
+    "写一份",
+    "image",
+    "photo",
+    "picture",
+    "file",
+    "attachment",
+    "download",
+    "send me",
+    "export",
+)
+
+
+def request_expects_artifact(user_request: str | None) -> bool:
+    """判断用户原始请求是否明显要求附件/文件类交付物。
+
+    返回 True 表示用户文本里出现了"交付物"信号，调用方据此决定是否
+    强约束 LLM 走 ``write_file`` / ``org_submit_deliverable(file_attachments=...)``
+    路径。返回 False 时调用方应避免向用户喷发"必须交付文件"的诊断噪音。
+    """
+    raw = (user_request or "").strip()
+    if not raw:
+        return False
+    if raw.startswith(_SYSTEM_REQUEST_PREFIXES_TUPLE):
+        return False
+    text = raw.lower()
+    return any(key in text for key in _ARTIFACT_INTENT_KEYWORDS)
+
+
 class ResponseHandler:
     """
-    Response handler.
+    响应处理器。
 
-    Handles post-processing of LLM responses, including task completion verification
-    and retrospective analysis.
+    负责 LLM 响应的后处理，包括任务完成度验证和复盘分析。
     """
 
     def __init__(self, brain: Any, memory_manager: Any = None) -> None:
         """
         Args:
-            brain: Brain instance, used for LLM calls
-            memory_manager: MemoryManager instance (optional, used to save retrospective results)
+            brain: Brain 实例，用于 LLM 调用
+            memory_manager: MemoryManager 实例（可选，用于保存复盘结果）
         """
         self._brain = brain
         self._memory_manager = memory_manager
 
+    # 系统/组织自动注入的元指令前缀。命中其中任何一个意味着「user_request」
+    # 实际上不是真正用户输入，而是后端合成的汇总/通知/系统消息，关键词命中
+    # （如「文件」「链接」「附件」）会导致 verify 误判。显式白名单 3 个前缀，
+    # 不写正则一刀切，避免误伤恰好以 "[" 开头的真实用户输入。
+    _SYSTEM_REQUEST_PREFIXES: tuple[str, ...] = _SYSTEM_REQUEST_PREFIXES_TUPLE  # type: ignore[name-defined]
+
     @staticmethod
     def _request_expects_artifact(user_request: str | None) -> bool:
-        text = (user_request or "").lower()
-        return any(
-            key in text
-            for key in (
-                "image",
-                "photo",
-                "picture",
-                "file",
-                "attachment",
-                "download",
-                "send me",
-                "poster",
-                "wallpaper",
-                "screenshot",
-                "give me a",
-                "send to me",
-            )
-        )
+        # 兼容旧调用点：转发到模块级 ``request_expects_artifact``。
+        # 该函数同时被 runtime / reasoning_engine 直接 import，避免依赖
+        # ResponseHandler 实例属性导致的 stale 信号问题。
+        return request_expects_artifact(user_request)
 
     async def verify_task_completion(
         self,
@@ -230,23 +293,25 @@ class ResponseHandler:
         tool_results: list[dict] | None = None,
         conversation_id: str | None = None,
         bypass: bool = False,
+        accepted_child_count: int = 0,
+        has_recent_accepted_signal: bool = False,
     ) -> bool:
         """
-        Task completion re-check.
+        任务完成度复核。
 
-        Ask the LLM to judge whether the current response truly fulfills the user's intent.
+        让 LLM 判断当前响应是否真正完成了用户的意图。
 
         Args:
-            user_request: original user request
-            assistant_response: current assistant response
-            executed_tools: list of tools that have been executed
-            delivery_receipts: delivery receipts
-            tool_results: accumulated tool execution results (including is_error flag)
-            conversation_id: conversation ID (used for Plan check)
-            bypass: skip verification when the Supervisor has already intervened
+            user_request: 用户原始请求
+            assistant_response: 助手当前响应
+            executed_tools: 已执行的工具列表
+            delivery_receipts: 交付回执
+            tool_results: 累积的工具执行结果（含 is_error 标记）
+            conversation_id: 对话 ID（用于 Plan 检查）
+            bypass: 当 Supervisor 已介入时跳过验证
 
         Returns:
-            True if the task is completed.
+            True 如果任务已完成
         """
         if bypass:
             logger.info("[TaskVerify] Bypassed (supervisor intervention active)")
@@ -266,6 +331,8 @@ class ResponseHandler:
                 delivery_receipts=delivery_receipts,
                 tool_results=tool_results or [],
                 conversation_id=conversation_id or "",
+                accepted_child_count=int(accepted_child_count or 0),
+                has_recent_accepted_signal=bool(has_recent_accepted_signal),
             )
             registry = create_default_registry()
             report = registry.run_all(val_context)
@@ -275,6 +342,7 @@ class ResponseHandler:
                     if output.result == ValidationResult.PASS and output.name in (
                         "ArtifactValidator",
                         "CompletePlanValidator",
+                        "OrgDelegationValidator",
                     ):
                         logger.info(
                             f"[TaskVerify] Deterministic PASS: {output.name} — {output.reason}"
@@ -288,16 +356,12 @@ class ResponseHandler:
                             f"[TaskVerify] PlanValidator FAIL (non-blocking): {output.reason}"
                         )
 
-                for output in report.outputs:
-                    if (
-                        output.result == ValidationResult.FAIL
-                        and output.name == "ArtifactValidator"
-                    ):
-                        logger.warning(
-                            f"[TaskVerify] ArtifactValidator FAIL but treating as PASS "
-                            f"(delivery failure is infra issue, not agent fault): {output.reason}"
-                        )
-                        return True
+                # NOTE: 历史上这里有一段把 ArtifactValidator FAIL 当 PASS 的"临时
+                # 兜底"（理由：交付失败是基础设施问题不算 agent 错），结果就是
+                # 哪怕 LLM 完全没产出文件、明明该交附件也只回了一段文字，验收
+                # 也会被静默放行 → 用户感觉"明明要附件结果一个文件没有"。这条
+                # 短路在 2025-04 被删除：FAIL 就让它 FAIL，下游 LLM 复核或硬
+                # verify_incomplete 路径会负责给出正确的失败原因和重试提示。
         except Exception as e:
             logger.debug(f"[TaskVerify] Deterministic validation skipped: {e}")
 
@@ -306,6 +370,12 @@ class ResponseHandler:
         # 足够长或带文件附件，说明已经实际产出，直接放行；否则才走 LLM 复核。
         # 这是修复"sub-agent 实际已经写好文档/代码并提交，但 LLM verify 误判
         # 'verify_incomplete' 反复重试"的关键。
+        # E1-1：trust-but-verify 在「expects_artifact=True」时收紧——纯文字
+        # 即便 ≥200 字符也不能 PASS，必须有附件。原因：用户明确要求"导出/写文件/
+        # 生成报告/做 PPT"等场景下，只回长文 = 没完成；放行就成了用户反馈的
+        # "明明要附件结果一个文件没有"。这条收紧只在 expects_artifact 才生效，
+        # 其它场景（普通问答 / 计划讨论 / 复盘）维持原 PASS 阈值，行为不变。
+        expects_artifact = self._request_expects_artifact(user_request)
         try:
             executed_set = set(executed_tools or [])
             tool_results_list = tool_results or []
@@ -343,41 +413,55 @@ class ResponseHandler:
                     if delivery_receipts:
                         attachments_count = max(attachments_count, len(delivery_receipts))
 
-                if submit_ok_run and (deliverable_len >= 200 or attachments_count >= 1):
+                # 阈值分两档：
+                #   - expects_artifact=True：必须 attachments_count >= 1，纯文本不算
+                #   - expects_artifact=False（普通讨论/答复）：保持历史行为
+                #     (deliverable_len>=200 或 attachments_count>=1) 任一即可
+                if expects_artifact:
+                    pass_ok = submit_ok_run and attachments_count >= 1
+                else:
+                    pass_ok = submit_ok_run and (
+                        deliverable_len >= 200 or attachments_count >= 1
+                    )
+
+                if pass_ok:
                     logger.info(
                         "[TaskVerify] trust-but-verify PASS: "
-                        "submit_deliverable executed, deliverable_len=%d files=%d",
-                        deliverable_len, attachments_count,
+                        "submit_deliverable executed, deliverable_len=%d files=%d "
+                        "expects_artifact=%s",
+                        deliverable_len, attachments_count, expects_artifact,
                     )
                     return True
                 if submit_ok_run:
                     logger.info(
                         "[TaskVerify] trust-but-verify INSUFFICIENT: "
-                        "deliverable_len=%d files=%d → fall back to LLM verify",
-                        deliverable_len, attachments_count,
+                        "deliverable_len=%d files=%d expects_artifact=%s "
+                        "→ fall back to LLM verify",
+                        deliverable_len, attachments_count, expects_artifact,
                     )
         except Exception as exc:
             logger.debug(
                 "[TaskVerify] trust-but-verify gate skipped: %s", exc,
             )
 
-        expects_artifact = self._request_expects_artifact(user_request)
-
-        # Claims delivery but has no evidence
+        # 宣称已交付但无证据
         if (
             any(
                 k in (assistant_response or "")
                 for k in (
-                    "sent",
-                    "delivered",
-                    "sent to you",
-                    "here is the image",
-                    "here is the picture",
-                    "give you a",
-                    "I sent it to you",
-                    "I generated an image for you",
-                    "the image is as follows",
-                    "the attachment is as follows",
+                    "已发送",
+                    "已交付",
+                    "已发给你",
+                    "已发给您",
+                    "下面是图片",
+                    "给你一张",
+                    "给您一张",
+                    "我给你发",
+                    "我给您发",
+                    "我为你生成了图片",
+                    "我为您生成了图片",
+                    "图片如下",
+                    "附件如下",
                 )
             )
             and not delivery_receipts
@@ -397,16 +481,17 @@ class ResponseHandler:
             return False
 
         _delivered_ok = any(r.get("status") == "delivered" for r in delivery_receipts)
-        # Claims the user already sees a UI/window on their own machine but has no delivery receipt or other verifiable path (isomorphic to "empty-promise delivery")
+        # 宣称用户在本机已看到界面/窗口，但无交付回执等可证实路径（与「空口交付」同构）
         if (
             any(
                 k in (assistant_response or "")
                 for k in (
-                    "you should be able to see",
-                    "on your screen",
-                    "on your desktop",
-                    "at your computer",
-                    "when you play the game",
+                    "你应该能看到",
+                    "你屏幕上",
+                    "你桌面上",
+                    "你的桌面",
+                    "在你电脑上",
+                    "你玩游戏时能看到",
                 )
             )
             and not _delivered_ok
@@ -415,7 +500,7 @@ class ResponseHandler:
             logger.info("[TaskVerify] user-visible UI claim without delivery/evidence, INCOMPLETE")
             return False
 
-        # LLM judgment
+        # LLM 判断
         from .tool_executor import smart_truncate
 
         user_display, _ = smart_truncate(user_request, 3000, save_full=False, label="verify_user")
@@ -426,73 +511,72 @@ class ResponseHandler:
         _plan_section = ""
         if plan_fail_reason:
             _plan_section = (
-                f"\n## Plan Status\n"
-                f"The current Plan has incomplete steps: {plan_fail_reason}\n"
-                f"Note: If the user intent is a **host-internal** task (writing files in workspace, host shell, host browser automation, etc.), "
-                f"it can be judged as COMPLETED if tools executed successfully and align with the Plan. "
-                f"If the user intent is **user-local observable** (local GUI windows, local software installation, in-game overlays, etc.), "
-                f"mere success of host-side run_shell, etc., is **insufficient**. There must be a delivery receipt, explicit steps for the user to execute on their own machine, "
-                f"or the assistant has clearly explained that 'effects are on the host and not visible on the user's screen' and provided a viable alternative.\n"
+                f"\n## Plan 状态\n"
+                f"当前 Plan 有未完成步骤: {plan_fail_reason}\n"
+                f"注意: 若用户意图是**宿主内**任务（工作区写文件、宿主 shell、宿主浏览器自动化等），"
+                f"工具已成功执行且与 Plan 一致时可判 COMPLETED。"
+                f"若用户意图是**用户本机可观测**（本机 GUI 窗口、本机软件安装、游戏内 overlay 等），"
+                f"仅宿主侧 run_shell 等成功**不足**；需有交付回执、用户可在自己机器上执行的明确步骤，"
+                f"或助手已清楚说明「效果在宿主、用户屏不可见」并给出可行替代方案。\n"
             )
-        verify_prompt = f"""Please determine if the following interaction has **successfully fulfilled** the user's intent.
 
-## User Message
+        verify_prompt = f"""请判断以下交互是否已经**完成**用户的意图。
+
+## 用户消息
 {user_display}
 
-## Assistant Response
+## 助手响应
 {response_display}
 
-## Executed Tools
-{", ".join(executed_tools) if executed_tools else "None"}
+## 已执行的工具
+{", ".join(executed_tools) if executed_tools else "无"}
 
-## Artifact Delivery Receipts (if any)
-{delivery_receipts if delivery_receipts else "None"}
+## 附件交付回执（如有）
+{delivery_receipts if delivery_receipts else "无"}
 {_plan_section}
-## Execution Domain Context (Read Carefully)
+## 执行域前提（必读）
 
-Tools are executed on the **OpenAkita Host**, which is **different by default** from the device/IM client where the user sends messages. Success on the host ≠ a window appearing or software being installed on the user's local machine.
+工具在 **OpenAkita 宿主**执行，与用户发消息的设备/IM 客户端**默认不同域**。宿主上命令成功 ≠ 用户本机已出现窗口或已安装软件。
 
-## Criteria
+## 判断标准
 
-### Non-Task Messages (Rate as COMPLETED)
-- If the user message is **Chit-chat/Greeting** and the assistant replied politely → **COMPLETED**
-- If the user message is **Simple confirmation/feedback** and the assistant gave a brief response → **COMPLETED**
-- If the user message is **Simple Q&A** and the assistant gave an answer → **COMPLETED**
+### 非任务类消息（直接判 COMPLETED）
+- 如果用户消息是**闲聊/问候**，助手已礼貌回复 → **COMPLETED**
+- 如果用户消息是**简单确认/反馈**，助手已简短回应 → **COMPLETED**
+- 如果用户消息是**简单问答**，助手已给出回答 → **COMPLETED**
 
-### Task-Oriented Messages — Hierarchical Standards
+### 任务类消息 — 分层完成标准
 
-**A. Host-Domain Verifiable Completion** (rate as COMPLETED if user intent falls here and any condition is met)
-- Executed `write_file` / `edit_file` etc., targeting files within the workspace.
-- Executed browser tools and the intent was to operate on a webpage on the **host side**.
-- Success receipt from **deliver_artifacts** (status=delivered), and the user requested a deliverable artifact.
-- Called **complete_todo** and the Plan semantics are closed.
-- Tools executed successfully on the host, and the user request **did not require** seeing the effect on their own screen/local system.
+**A. 宿主内可验证的完成**（以下任一满足且用户意图属此类 → 可 COMPLETED）
+- 已执行 write_file / edit_file 等且目标为工作区内保存文件
+- 已执行浏览器工具且意图是在**宿主侧**操作网页
+- 已有 **deliver_artifacts** 成功回执（status=delivered），且用户要的是可交付产物
+- 已调用 **complete_todo** 且 Plan 语义已闭环
+- 工具在宿主执行成功，且用户请求**未要求**在用户本人电脑屏幕/本机系统中看到效果
 
-**B. User-Local Observable Completion** (user explicitly requested seeing a window, local installation, in-game overlay effects, etc.)
-- A successful `run_shell` / Python execution on the host **cannot** alone serve as evidence of completion.
-- Requirement (at least one): Successful delivery (receipt), the response includes clear commands/steps for the user to execute on **their own machine**, or the assistant explicitly explained the boundary/limitations and the user's goal was adjusted to an achievable form.
+**B. 用户本机可观测的完成**（用户明确要求在本机看到窗口、本机安装、游戏画面内效果等）
+- 仅有宿主侧 run_shell / Python 成功**不能**单独作为完成证据
+- 需至少其一：成功交付（回执）、回复中含用户可在**自己机器**上执行的明确命令/步骤并已给出、或助手明确说明边界且用户目标已调整为可达成形态
 
-**C. Still In Progress**
-- The response is merely "Starting now..." or "Let me..." and key tools haven't been executed → **INCOMPLETE**
+**C. 仍在进行中**
+- 响应仅为「现在开始…」「让我…」且关键工具未执行 → **INCOMPLETE**
 
-**D. Upstream/Platform Hard Constraints**
-- The assistant actually attempted the task but encountered unavoidable API/platform limitations and explained them to the user → **COMPLETED**
-- If alternative viable paths still exist (different command, different path) → **INCOMPLETE**
+**D. 上游平台硬性限制**
+- 助手已实际尝试且遇不可绕过的 API/平台限制，并已向用户解释 → **COMPLETED**
+- 若仍有其他可行路径（换命令、换文件路径等）→ **INCOMPLETE**
 
-## Response Format
-STATUS: COMPLETED or INCOMPLETE
-EVIDENCE: Evidence of completion
-MISSING: What is missing
-NEXT: Suggested next step"""
+## 回答要求
+STATUS: COMPLETED 或 INCOMPLETE
+EVIDENCE: 完成的证据
+MISSING: 缺失的内容
+NEXT: 建议的下一步"""
 
         try:
             response = await self._brain.think_lightweight(
                 prompt=verify_prompt,
                 system=(
-                    "You are a task-completion judgment assistant. OpenAkita tools execute on the host environment, "
-                    "which is typically not the same machine as the user's chat device; "
-                    "you must distinguish 'verified completion on the host' from 'user-local observable completion', "
-                    "and must not judge the latter as completed solely because a host command exited successfully."
+                    "你是任务完成度判断助手。OpenAkita 工具在宿主环境执行，与用户聊天设备通常不是同一台机器；"
+                    "必须区分「宿主内已验证完成」与「用户本机可观测完成」，不要仅凭宿主命令退出成功判定后者已完成。"
                 ),
                 max_tokens=512,
             )
@@ -506,7 +590,7 @@ NEXT: Suggested next step"""
                 f"[TaskVerify] request={user_request[:50]}... result={'COMPLETED' if is_completed else 'INCOMPLETE'}"
             )
 
-            # Decision Trace: record the verification decision
+            # Decision Trace: 记录验证决策
             try:
                 from ..tracing.tracer import get_tracer
 
@@ -527,15 +611,15 @@ NEXT: Suggested next step"""
 
     async def do_task_retrospect(self, task_monitor: Any) -> str:
         """
-        Perform task retrospective analysis.
+        执行任务复盘分析。
 
-        When a task takes too long, have the LLM analyze the cause.
+        当任务耗时过长时，让 LLM 分析原因。
 
         Args:
-            task_monitor: TaskMonitor instance
+            task_monitor: TaskMonitor 实例
 
         Returns:
-            Retrospective analysis result.
+            复盘分析结果
         """
         try:
             from .task_monitor import RETROSPECT_PROMPT
@@ -545,7 +629,7 @@ NEXT: Suggested next step"""
 
             response = await self._brain.think_lightweight(
                 prompt=prompt,
-                system="You are an expert in analyzing task execution. Please concisely analyze task performance, identifying causes for delays and suggestions for improvement.",
+                system="你是一个任务执行分析专家。请简洁地分析任务执行情况，找出耗时原因和改进建议。",
                 max_tokens=512,
             )
 
@@ -553,17 +637,15 @@ NEXT: Suggested next step"""
 
             task_monitor.metrics.retrospect_result = result
 
-            # If a repeated-error pattern is found, record it to memory
-            if self._memory_manager and any(
-                kw in result.lower() for kw in ("repeat", "redundant", "useless", "detour")
-            ):
+            # 如果发现重复错误模式，记录到记忆
+            if self._memory_manager and any(kw in result for kw in ("重复", "无效", "弯路")):
                 try:
                     from ..memory.types import Memory, MemoryPriority, MemoryScope, MemoryType
 
                     memory = Memory(
                         type=MemoryType.ERROR,
                         priority=MemoryPriority.LONG_TERM,
-                        content=f"Task execution retrospective found issue: {result}",
+                        content=f"任务执行复盘发现问题：{result}",
                         source="retrospect",
                         importance_score=0.7,
                         scope=MemoryScope.AGENT,
@@ -582,7 +664,7 @@ NEXT: Suggested next step"""
 
     async def do_task_retrospect_background(self, task_monitor: Any, session_id: str) -> None:
         """
-        Perform task retrospective analysis in the background (does not block the main response).
+        后台执行任务复盘分析（不阻塞主响应）。
         """
         try:
             retrospect_result = await self.do_task_retrospect(task_monitor)
@@ -614,20 +696,20 @@ NEXT: Suggested next step"""
 
     @staticmethod
     def should_compile_prompt(message: str) -> bool:
-        """Determine if prompt compilation is needed."""
+        """判断是否需要进行 Prompt 编译"""
         if len(message.strip()) < 20:
             return False
         return True
 
     @staticmethod
     def get_last_user_request(messages: list[dict]) -> str:
-        """Get the last user request."""
+        """获取最后一条用户请求"""
         from .tool_executor import smart_truncate
 
         def _strip_context_prefix(text: str) -> str:
-            """Remove conversation history prefix and extract the actual user input."""
+            """移除对话历史前缀，提取真正的用户输入。"""
             _marker = "：]"
-            if text.startswith("[Previous conversation history:"):
+            if text.startswith("[以上是之前的对话历史"):
                 idx = text.find(_marker)
                 if idx != -1:
                     text = text[idx + len(_marker) :].strip()
@@ -636,7 +718,7 @@ NEXT: Suggested next step"""
         for msg in reversed(messages):
             if msg.get("role") == "user":
                 content = msg.get("content", "")
-                if isinstance(content, str) and not content.startswith("[System]"):
+                if isinstance(content, str) and not content.startswith("[系统]"):
                     content = _strip_context_prefix(content)
                     result, _ = smart_truncate(content, 3000, save_full=False, label="user_request")
                     return result
@@ -644,7 +726,7 @@ NEXT: Suggested next step"""
                     for part in content:
                         if isinstance(part, dict) and part.get("type") == "text":
                             text = part.get("text", "")
-                            if not text.startswith("[System]"):
+                            if not text.startswith("[系统]"):
                                 text = _strip_context_prefix(text)
                                 result, _ = smart_truncate(
                                     text, 3000, save_full=False, label="user_request"

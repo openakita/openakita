@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -24,6 +26,143 @@ logger = logging.getLogger(__name__)
 
 class PluginInstallError(Exception):
     """Installation could not complete."""
+
+
+# --- Windows-friendly file-system helpers -----------------------------------
+
+_RMTREE_ATTEMPTS = 5
+_RMTREE_BASE_DELAY = 0.2  # seconds; doubled each retry (max ~3.2 s total wait)
+
+
+def _on_rm_error(func: Any, path: str, exc_info: Any) -> None:
+    """``shutil.rmtree`` ``onerror`` hook: clear read-only bit then retry once."""
+    try:
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+        func(path)
+    except OSError:
+        # Re-raise so the outer retry loop in _robust_rmtree can take over.
+        raise
+
+
+def _robust_rmtree(path: Path, *, attempts: int = _RMTREE_ATTEMPTS) -> bool:
+    """Remove a directory tree with Windows-friendly retries.
+
+    Windows often refuses to delete a path immediately after a process closed
+    its handles (the kernel finalises the unlink lazily, especially across
+    SQLite WAL/SHM files). Exponential-backoff retries, plus a ``chmod`` to
+    clear the read-only bit, fix the vast majority of "[WinError 32] file in
+    use" failures during plugin uninstall / hot-reload.
+
+    Returns ``True`` on success; ``False`` if all retries fail. Never raises.
+    """
+    if not path.exists():
+        return True
+    last_err: OSError | None = None
+    for i in range(attempts):
+        try:
+            shutil.rmtree(path, onerror=_on_rm_error)
+        except OSError as e:
+            last_err = e
+        if not path.exists():
+            return True
+        time.sleep(_RMTREE_BASE_DELAY * (2**i))
+    if last_err is not None:
+        logger.warning(
+            "Could not remove %s after %d attempts: %s", path, attempts, last_err
+        )
+    return False
+
+
+def _robust_rename(src: Path, dst: Path, *, attempts: int = _RMTREE_ATTEMPTS) -> bool:
+    """Rename a path with Windows-friendly retries. Never raises; returns success."""
+    last_err: OSError | None = None
+    for i in range(attempts):
+        try:
+            src.rename(dst)
+            return True
+        except OSError as e:
+            last_err = e
+            time.sleep(_RMTREE_BASE_DELAY * (2**i))
+    if last_err is not None:
+        logger.warning(
+            "Could not rename %s -> %s after %d attempts: %s",
+            src,
+            dst,
+            attempts,
+            last_err,
+        )
+    return False
+
+
+def _list_locked_files(plugin_dir: Path, *, max_items: int = 10) -> list[str]:
+    """Probe each surviving file under ``plugin_dir`` to find likely locks.
+
+    Used after ``_robust_rmtree`` fails so the user/diagnostics can see
+    which files are actually held (DB vs log vs .pyc), narrowing the root
+    cause without naming the holding process. Pure read-only probe — does
+    NOT modify the filesystem.
+
+    Heuristic: ``os.replace(f, f)`` (rename-to-self) is the correct probe
+    for "can rmtree delete this?" on Windows. Renaming requires the
+    ``DELETE`` access right and ``FILE_SHARE_DELETE`` from any other open
+    handle — exactly the same combination ``os.unlink`` (and therefore
+    ``shutil.rmtree``) needs. SQLite/aiosqlite, Python's ``RotatingFileHandler``,
+    and most "open exclusively for write" handles deny ``FILE_SHARE_DELETE``,
+    so they show up here even though they happily allow ``open(f, "ab")``.
+
+    NOTE: an earlier version probed with ``open(f, "ab")``. That only checks
+    ``FILE_SHARE_WRITE`` and silently missed the most common offender
+    (a still-open SQLite connection from a leaked test/process), making the
+    user-facing 207/409 error a generic "目录无法清理" with no filenames.
+    """
+    locked: list[str] = []
+    try:
+        for f in plugin_dir.rglob("*"):
+            if not f.is_file():
+                continue
+            try:
+                # Rename-to-self: identity op on success, raises OSError if
+                # any other handle on the file denies DELETE share — i.e.
+                # exactly the rmtree blocker we want to surface.
+                os.replace(f, f)
+            except OSError:
+                try:
+                    rel = f.relative_to(plugin_dir).as_posix()
+                except ValueError:
+                    rel = str(f)
+                locked.append(rel)
+                if len(locked) >= max_items:
+                    break
+    except OSError as e:
+        logger.debug("Could not walk %s for lock probe: %s", plugin_dir, e)
+    return locked
+
+
+def _force_remove_db_files(plugin_dir: Path) -> bool:
+    """Last-resort: delete any SQLite files so a reinstall is not blocked.
+
+    Returns ``True`` if at least one file was removed.
+    """
+    cleaned = False
+    try:
+        for f in plugin_dir.rglob("*"):
+            if not f.is_file():
+                continue
+            name = f.name.lower()
+            if (
+                name.endswith(".db")
+                or name.endswith(".sqlite")
+                or name.endswith(".sqlite3")
+                or ".db-" in name  # *.db-shm, *.db-wal, *.db-journal
+            ):
+                try:
+                    f.unlink()
+                    cleaned = True
+                except OSError as e:
+                    logger.debug("Could not remove %s: %s", f, e)
+    except OSError as e:
+        logger.debug("Could not walk %s: %s", plugin_dir, e)
+    return cleaned
 
 
 class InstallProgress:
@@ -454,7 +593,19 @@ def install_from_url(
     return result
 
 
-def install_from_path(source: Path, plugins_dir: Path) -> str:
+def install_from_path(
+    source: Path,
+    plugins_dir: Path,
+    *,
+    dev_mode: bool = False,
+) -> str:
+    """Install a plugin from a local directory.
+
+    When ``dev_mode`` is ``True`` we **symlink** instead of copying so source
+    edits are immediately visible after a hot-reload — ideal for plugin
+    developers. If the OS refuses the symlink (Windows without dev-mode /
+    admin), we fall back transparently to a regular copy and emit a warning.
+    """
     source = source.resolve()
     plugins_dir = plugins_dir.resolve()
     if not source.is_dir():
@@ -476,25 +627,41 @@ def install_from_path(source: Path, plugins_dir: Path) -> str:
             same = False
         if same:
             return _finalize_install(dest, remove_on_failure=False)
-        backup = dest.with_suffix(".bak")
-        try:
-            if backup.exists():
-                shutil.rmtree(backup)
-            dest.rename(backup)
-        except OSError as e:
-            raise PluginInstallError(
-                f"Cannot upgrade: failed to backup existing plugin: {e}"
-            ) from e
-
-    try:
-        shutil.copytree(source, dest)
-    except OSError as e:
-        if backup is not None:
+        # If dest is already a symlink pointing at source, just refresh.
+        if dest.is_symlink():
             try:
-                backup.rename(dest)
+                if Path(os.readlink(dest)).resolve() == source:
+                    return _finalize_install(dest, remove_on_failure=False)
             except OSError:
                 pass
-        raise PluginInstallError(f"Could not copy plugin: {e}") from e
+        backup = dest.with_suffix(".bak")
+        if backup.exists():
+            _robust_rmtree(backup)
+        if not _robust_rename(dest, backup):
+            raise PluginInstallError(
+                f"Cannot upgrade: failed to backup existing plugin at {dest}"
+            )
+
+    linked = False
+    if dev_mode:
+        try:
+            os.symlink(source, dest, target_is_directory=True)
+            linked = True
+            logger.info("Plugin '%s' linked from %s (dev mode)", manifest.id, source)
+        except (OSError, NotImplementedError) as e:
+            logger.warning(
+                "Plugin '%s' dev-mode symlink failed (%s); falling back to copy",
+                manifest.id,
+                e,
+            )
+
+    if not linked:
+        try:
+            shutil.copytree(source, dest)
+        except OSError as e:
+            if backup is not None:
+                _robust_rename(backup, dest)
+            raise PluginInstallError(f"Could not copy plugin: {e}") from e
 
     try:
         result = _finalize_install(dest)
@@ -502,15 +669,125 @@ def install_from_path(source: Path, plugins_dir: Path) -> str:
         if backup is not None and backup.exists():
             try:
                 if dest.exists():
-                    shutil.rmtree(dest)
-                backup.rename(dest)
+                    if dest.is_symlink():
+                        dest.unlink()
+                    else:
+                        _robust_rmtree(dest)
+                _robust_rename(backup, dest)
             except OSError:
                 pass
         raise
 
     if backup is not None and backup.exists():
-        shutil.rmtree(backup, ignore_errors=True)
+        _robust_rmtree(backup)
     return result
+
+
+def uninstall(
+    plugin_id: str,
+    plugins_dir: Path,
+    *,
+    purge_data: bool = False,
+    data_root: Path | None = None,
+) -> dict[str, Any]:
+    """Remove a plugin from disk and optionally purge its persistent data.
+
+    Returns a structured result dict (no exceptions for "expected" failures —
+    the API layer turns these into HTTP responses with proper error codes):
+
+    .. code-block:: python
+
+        {
+            "removed": bool,        # plugin code dir is gone
+            "partial": bool,        # code dir survived but *.db* files cleaned
+            "purged_data": bool,    # data_root/<plugin_id> also removed
+            "warnings": [str, ...], # human-readable hints (UI surfaces these)
+        }
+
+    A symlinked plugin (dev mode) is unlinked, never recursively deleted.
+    """
+    plugins_dir = plugins_dir.resolve()
+    out: dict[str, Any] = {
+        "removed": False,
+        "partial": False,
+        "purged_data": False,
+        "warnings": [],
+    }
+
+    if not plugins_dir.is_dir():
+        out["warnings"].append(f"plugins dir not found: {plugins_dir}")
+        return out
+
+    target: Path | None = None
+    for child in plugins_dir.iterdir():
+        if not child.is_dir():
+            continue
+        try:
+            manifest = parse_manifest(child)
+        except ManifestError:
+            continue
+        if manifest.id == plugin_id:
+            target = child
+            break
+
+    if target is None:
+        out["warnings"].append(f"plugin '{plugin_id}' not installed")
+        return out
+
+    # Symlink fast-path: just unlink, never delete the linked source tree.
+    if target.is_symlink():
+        try:
+            target.unlink()
+            out["removed"] = True
+        except OSError as e:
+            out["warnings"].append(f"failed to unlink {target}: {e}")
+    else:
+        if _robust_rmtree(target):
+            out["removed"] = True
+        else:
+            # Probe which files survived — actionable info for the user
+            # ("the DB is held" vs "a .pyc is held" points to very different
+            # root causes; in practice it's almost always the SQLite WAL or a
+            # log file that the plugin failed to close in on_unload).
+            locked = _list_locked_files(target)
+            if locked:
+                preview = ", ".join(locked[:5])
+                more = f" (+{len(locked) - 5} 更多)" if len(locked) > 5 else ""
+                out["warnings"].append(
+                    f"以下文件仍被占用: {preview}{more}"
+                )
+            # Graceful degradation: clear DB files so the next install isn't
+            # blocked by a still-locked SQLite file inside the leftover dir.
+            if _force_remove_db_files(target):
+                out["partial"] = True
+                out["warnings"].append(
+                    f"目录 {target} 无法完全删除（可能仍被占用），"
+                    "已清理其中的 *.db / *.db-shm / *.db-wal 文件"
+                )
+            else:
+                out["warnings"].append(f"目录 {target} 完全无法清理")
+
+    if purge_data and data_root is not None:
+        data_root_resolved = data_root.resolve()
+        data_dir = (data_root_resolved / plugin_id).resolve()
+        try:
+            data_dir.relative_to(data_root_resolved)
+        except ValueError:
+            out["warnings"].append(
+                "data path traversal check failed; skipping purge_data"
+            )
+        else:
+            if data_dir.exists():
+                if _robust_rmtree(data_dir):
+                    out["purged_data"] = True
+                else:
+                    out["warnings"].append(
+                        f"plugin_data {data_dir} 无法完全删除"
+                    )
+            else:
+                out["purged_data"] = True  # nothing to purge → success
+
+    return out
 
 
 def install_bundle(source: str, plugins_dir: Path) -> str:
@@ -579,25 +856,3 @@ def install_bundle(source: str, plugins_dir: Path) -> str:
             pass
 
     return _finalize_install(dest)
-
-
-def uninstall(plugin_id: str, plugins_dir: Path) -> bool:
-    plugins_dir = plugins_dir.resolve()
-    if not plugins_dir.is_dir():
-        return False
-
-    for child in plugins_dir.iterdir():
-        if not child.is_dir():
-            continue
-        try:
-            manifest = parse_manifest(child)
-        except ManifestError:
-            continue
-        if manifest.id == plugin_id:
-            try:
-                shutil.rmtree(child)
-            except OSError as e:
-                logger.error("Could not remove %s: %s", child, e)
-                return False
-            return True
-    return False

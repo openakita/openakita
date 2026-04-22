@@ -7,6 +7,49 @@
 ; (StrFunc.nsh is included by installer.nsi before this file)
 ${StrRep}
 
+; ── Legacy install migration ──
+; Detect old "OpenAkita Desktop" installs so the new "OpenAkitaDesktop"
+; installer can silently uninstall the old version and migrate CLI/PATH.
+!define LEGACY_PRODUCTNAME "OpenAkita Desktop"
+!define LEGACY_UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${LEGACY_PRODUCTNAME}"
+!define LEGACY_MANUPRODUCTKEY "Software\OpenAkita\${LEGACY_PRODUCTNAME}"
+
+Var LegacyInstallDir
+Var LegacyUninstallString
+Var LegacyCliOpenakita
+Var LegacyCliOa
+Var LegacyCliAddPath
+Var LegacyMigrated
+
+!macro _OpenAkita_DetectLegacyInstall
+  StrCpy $LegacyInstallDir ""
+  StrCpy $LegacyUninstallString ""
+  StrCpy $LegacyMigrated 0
+
+  ; Primary source: MANUPRODUCTKEY stores $INSTDIR without quotes
+  ReadRegStr $LegacyInstallDir HKCU "${LEGACY_MANUPRODUCTKEY}" ""
+  ${If} $LegacyInstallDir == ""
+    ; Fallback: InstallLocation has surrounding quotes — strip them
+    ReadRegStr $LegacyInstallDir HKCU "${LEGACY_UNINSTKEY}" "InstallLocation"
+    StrCpy $R0 $LegacyInstallDir 1
+    ${If} $R0 == '"'
+      StrLen $R1 $LegacyInstallDir
+      IntOp $R1 $R1 - 2
+      StrCpy $LegacyInstallDir $LegacyInstallDir $R1 1
+    ${EndIf}
+  ${EndIf}
+
+  ; UninstallString keeps its embedded quotes (ExecWait needs them)
+  ReadRegStr $LegacyUninstallString HKCU "${LEGACY_UNINSTKEY}" "UninstallString"
+
+  ; Save CLI preferences BEFORE running old uninstaller (it deletes the key)
+  ${If} $LegacyInstallDir != ""
+    ReadRegDWORD $LegacyCliOpenakita HKCU "Software\OpenAkita\CLI" "openakita"
+    ReadRegDWORD $LegacyCliOa HKCU "Software\OpenAkita\CLI" "oa"
+    ReadRegDWORD $LegacyCliAddPath HKCU "Software\OpenAkita\CLI" "addToPath"
+  ${EndIf}
+!macroend
+
 ; ── PATH 辅助脚本 ──
 ; 通过 PowerShell 安全地读写 PATH 注册表值，解决：
 ; 1. NSIS ReadRegStr 字符串长度上限导致长 PATH 被截断/清空
@@ -134,8 +177,13 @@ ${StrRep}
 ;   1. Kills by process name (Stop-Process + taskkill /T for child trees)
 ;   2. Kills by PID files (reads openakita-*.pid from data dirs)
 ;   3. Kills by install path (catches orphaned/detached child processes)
-;   4. Verifies file lock on VCRUNTIME140.dll (the most commonly locked file)
-;   5. Retries with increasing delays if still locked (handles AV scanning, slow I/O)
+;   4. Batch-verifies file locks on every *.dll/*.pyd/*.exe under resources/
+;      (single-file VCRUNTIME140.dll sentinel gives false negatives because AV
+;       releases MS-signed runtimes first while still holding bundled .pyd files)
+;   5. Retries with increasing delays; on persistent lock, writes _oa_locked.txt
+;      so NSIS_HOOK_PREINSTALL / PREUNINSTALL can MessageBox + Abort with a
+;      clear message instead of letting NSIS's native File command surface a
+;      cryptic "Cannot open file for writing" dialog.
 ; All logic in ONE PowerShell process — eliminates 6+ separate PS startup overhead.
 !macro _OpenAkita_WriteKillScript
   InitPluginsDir
@@ -186,14 +234,38 @@ ${StrRep}
   FileWrite $R9 "        $$s.Close(); return $$false$\r$\n"
   FileWrite $R9 "    } catch { return $$true }$\r$\n"
   FileWrite $R9 "}$\r$\n"
-  ; ── main: kill + verify + retry ──
-  FileWrite $R9 "$$sentinel = Join-Path $$InstDir 'resources\openakita-server\_internal\VCRUNTIME140.dll'$\r$\n"
-  FileWrite $R9 "for ($$i = 0; $$i -lt 3; $$i++) {$\r$\n"
-  FileWrite $R9 "    Kill-OA$\r$\n"
-  FileWrite $R9 "    Start-Sleep -Seconds (3 + $$i * 2)$\r$\n"
-  FileWrite $R9 "    if (-not (Test-Locked $$sentinel)) { exit 0 }$\r$\n"
+  ; ── main: kill + batch-verify + retry ──
+  ; Reset locked-file marker from any previous invocation in this NSIS run
+  ; (e.g., the reinst_uninstall path in installer.nsi calls KILLPROCS first).
+  FileWrite $R9 "$$lockedListPath = Join-Path (Split-Path $$PSCommandPath) '_oa_locked.txt'$\r$\n"
+  FileWrite $R9 "Remove-Item $$lockedListPath -Force -EA $$EA$\r$\n"
+  ; Enumerate every file the live process may be holding.
+  FileWrite $R9 "$$resRoot = Join-Path $$InstDir 'resources'$\r$\n"
+  FileWrite $R9 "$$sentinels = @()$\r$\n"
+  ; -LiteralPath: $InstDir defaults to $LOCALAPPDATA\OpenAkita; tolerate Chinese
+  ;   usernames or rare bracket chars in path without wildcard interpretation.
+  ; -File: skip directories and reparse points cleanly.
+  ; Where-Object Extension -in: more deterministic than -Include in PS 5.1.
+  FileWrite $R9 "if (Test-Path -LiteralPath $$resRoot) {$\r$\n"
+  FileWrite $R9 "    $$sentinels = @(Get-ChildItem -LiteralPath $$resRoot -File -Recurse -Force -EA $$EA |$\r$\n"
+  FileWrite $R9 "        Where-Object { $$_.Extension -in '.dll','.pyd','.exe' } |$\r$\n"
+  FileWrite $R9 "        ForEach-Object { $$_.FullName })$\r$\n"
   FileWrite $R9 "}$\r$\n"
-  FileWrite $R9 "exit 0$\r$\n"
+  ; 4 rounds, sleep 2/4/6/8 = 20s total. Plus 1s settle after success to let
+  ; AV scanners release any tail-end oplock before NSIS's File loop begins.
+  FileWrite $R9 "$$stillLocked = @()$\r$\n"
+  FileWrite $R9 "for ($$i = 0; $$i -lt 4; $$i++) {$\r$\n"
+  FileWrite $R9 "    Kill-OA$\r$\n"
+  FileWrite $R9 "    Start-Sleep -Seconds (2 + $$i * 2)$\r$\n"
+  FileWrite $R9 "    $$stillLocked = @($$sentinels | Where-Object { Test-Locked $$_ })$\r$\n"
+  FileWrite $R9 "    if ($$stillLocked.Count -eq 0) {$\r$\n"
+  FileWrite $R9 "        Start-Sleep -Milliseconds 1000$\r$\n"
+  FileWrite $R9 "        exit 0$\r$\n"
+  FileWrite $R9 "    }$\r$\n"
+  FileWrite $R9 "}$\r$\n"
+  ; Persistent lock — surface to NSIS instead of silent exit 0 + obscure File error.
+  FileWrite $R9 "$$stillLocked | Out-File -FilePath $$lockedListPath -Encoding utf8 -Force$\r$\n"
+  FileWrite $R9 "exit 1$\r$\n"
   FileClose $R9
 !macroend
 
@@ -209,6 +281,72 @@ ${StrRep}
 !macro NSIS_HOOK_PREINSTALL
   DetailPrint "Stopping OpenAkita processes..."
   !insertmacro NSIS_HOOK_PREINSTALL_KILLPROCS
+
+  ; Persistent file lock detected by _oa_kill.ps1 (4 rounds × 20s could not
+  ; release every *.dll/*.pyd/*.exe under resources/). Abort with a clear
+  ; instruction instead of letting NSIS's native File command fail later
+  ; with the obscure "Cannot open file for writing" dialog.
+  ; /SD IDOK: defensive default for any future /S (silent) invocation —
+  ; passive mode (/P used by Tauri updater) does not call SetSilent so the
+  ; MessageBox still shows interactively; this only kicks in if /S is added.
+  ${If} ${FileExists} "$PLUGINSDIR\_oa_locked.txt"
+    MessageBox MB_OK|MB_ICONSTOP "$(installAbortLocked)" /SD IDOK
+    Abort
+  ${EndIf}
+
+  ; ── Legacy "OpenAkita Desktop" → "OpenAkitaDesktop" migration ──
+  ${If} $LegacyInstallDir != ""
+  ${AndIf} $LegacyUninstallString != ""
+    DetailPrint "Migrating from legacy install at $LegacyInstallDir..."
+
+    ; Run old uninstaller in passive mode (NOT /UPDATE) so it fully cleans
+    ; shortcuts, Run entry, PATH, CLI registry, and uninstall key.
+    ; User data is safe: $DeleteAppDataCheckboxState defaults to "" (unchecked)
+    ; and /P skips the confirm page so it can never become 1.
+    ; _?= makes ExecWait truly synchronous (uninstaller runs in-place).
+    ExecWait '$LegacyUninstallString /P _?=$LegacyInstallDir' $0
+
+    ; Residual cleanup — old uninstaller cannot self-delete (running via _?=)
+    ; and may have been blocked by AV.
+    Delete "$LegacyInstallDir\uninstall.exe"
+    RMDir /r "$LegacyInstallDir"
+
+    ; Clean leftover registry
+    DeleteRegKey HKCU "${LEGACY_UNINSTKEY}"
+    DeleteRegKey HKCU "${LEGACY_MANUPRODUCTKEY}"
+    DeleteRegKey /ifempty HKCU "Software\OpenAkita"
+
+    ; Clean leftover shortcuts (in case old uninstaller failed)
+    Delete "$SMPROGRAMS\${LEGACY_PRODUCTNAME}\${LEGACY_PRODUCTNAME}.lnk"
+    RMDir "$SMPROGRAMS\${LEGACY_PRODUCTNAME}"
+    Delete "$SMPROGRAMS\${LEGACY_PRODUCTNAME}.lnk"
+    Delete "$DESKTOP\${LEGACY_PRODUCTNAME}.lnk"
+
+    ; Clean leftover autostart Run entry
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${LEGACY_PRODUCTNAME}"
+
+    ; Write back CLI preferences (old uninstaller deleted the key)
+    ${If} $LegacyCliOpenakita != ""
+      WriteRegDWORD HKCU "Software\OpenAkita\CLI" "openakita" $LegacyCliOpenakita
+      WriteRegDWORD HKCU "Software\OpenAkita\CLI" "oa" $LegacyCliOa
+      WriteRegDWORD HKCU "Software\OpenAkita\CLI" "addToPath" $LegacyCliAddPath
+    ${EndIf}
+
+    ; Log migration result for passive/silent installs where UI is hidden
+    ExpandEnvStrings $R0 "%USERPROFILE%\.openakita\logs"
+    CreateDirectory "$R0"
+    ${If} $0 = 0
+      FileOpen $R1 "$R0\migration.log" w
+      FileWrite $R1 "Migration from $LegacyInstallDir completed successfully (exit code 0)$\r$\n"
+      FileClose $R1
+    ${Else}
+      FileOpen $R1 "$R0\migration.log" w
+      FileWrite $R1 "Migration from $LegacyInstallDir: old uninstaller exited with code $0 (residuals force-cleaned)$\r$\n"
+      FileClose $R1
+    ${EndIf}
+
+    StrCpy $LegacyMigrated 1
+  ${EndIf}
 
   ; Skip cleanup entirely when no data dir exists (fresh install).
   ; If default root doesn't exist, custom_root.txt can't exist either.
@@ -236,6 +374,13 @@ ${StrRep}
 
 !macro NSIS_HOOK_PREUNINSTALL
   !insertmacro NSIS_HOOK_PREINSTALL_KILLPROCS
+
+  ; Same persistent-lock guard as PREINSTALL (uninstaller has its own
+  ; $PLUGINSDIR, so the marker file is independent of the install side).
+  ${If} ${FileExists} "$PLUGINSDIR\_oa_locked.txt"
+    MessageBox MB_OK|MB_ICONSTOP "$(installAbortLocked)" /SD IDOK
+    Abort
+  ${EndIf}
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL

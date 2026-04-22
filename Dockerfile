@@ -21,11 +21,15 @@ COPY src/ src/
 COPY skills/ skills/
 COPY mcps/ mcps/
 COPY identity/ identity/
+# Bundle the plugin SDK so AI media plugins (openakita_plugin_sdk.contrib)
+# resolve at runtime without relying on PyPI 0.3.0 being published.
+COPY openakita-plugin-sdk/ openakita-plugin-sdk/
 
 COPY --from=frontend /app/apps/setup-center/dist-web/ apps/setup-center/dist-web/
 RUN mkdir -p docs-site/.vitepress/dist
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir . \
+    && pip install --no-cache-dir ./openakita-plugin-sdk
 
 # ── Stage 3: Final runtime image ──
 FROM python:3.11-slim

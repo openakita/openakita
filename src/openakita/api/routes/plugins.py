@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
@@ -102,6 +102,23 @@ def _find_icon(plugin_dir: Path) -> str | None:
 def _manifest_meta(manifest, plugin_dir: Path) -> dict[str, Any]:
     """Common metadata extracted from manifest + files."""
     icon_file = _find_icon(plugin_dir)
+    # i18n surfacing: pass through the manifest's per-language fields so
+    # the frontend can pick the right text without doing a second API call.
+    # We always include the dict (even if empty) so the client can do a
+    # straightforward `meta.display_name?.[lang] ?? meta.name` lookup.
+    display_name_i18n: dict[str, str] = {}
+    if getattr(manifest, "display_name_zh", ""):
+        display_name_i18n["zh"] = manifest.display_name_zh
+    if getattr(manifest, "display_name_en", ""):
+        display_name_i18n["en"] = manifest.display_name_en
+    description_i18n: dict[str, str] = dict(getattr(manifest, "description_i18n", {}) or {})
+    ui_title = ""
+    ui_title_i18n: dict[str, str] = {}
+    ui_cfg = getattr(manifest, "ui", None)
+    if ui_cfg is not None:
+        ui_title = getattr(ui_cfg, "title", "") or ""
+        ui_title_i18n = dict(getattr(ui_cfg, "title_i18n", {}) or {})
+
     meta: dict[str, Any] = {
         "id": manifest.id,
         "name": manifest.name,
@@ -118,6 +135,11 @@ def _manifest_meta(manifest, plugin_dir: Path) -> dict[str, Any]:
         "has_config_schema": (plugin_dir / "config_schema.json").is_file(),
         "has_icon": icon_file is not None,
         "onboard": manifest.raw.get("onboard"),
+        # i18n: clients should prefer these when present, fall back to `name`/`description`.
+        "display_name_i18n": display_name_i18n,
+        "description_i18n": description_i18n,
+        "ui_title": ui_title,
+        "ui_title_i18n": ui_title_i18n,
     }
     return meta
 
@@ -292,7 +314,17 @@ async def _do_install(src: str, plugins_dir: Path, progress: InstallProgress, re
     else:
         local = Path(src)
         if (local / "plugin.json").is_file():
-            plugin_id = await asyncio.to_thread(installer.install_from_path, local, plugins_dir)
+            pm_for_dev = _get_plugin_manager(request)
+            dev_mode_on = bool(
+                pm_for_dev is not None
+                and getattr(pm_for_dev.state, "dev_mode_enabled", False)
+            )
+            plugin_id = await asyncio.to_thread(
+                installer.install_from_path,
+                local,
+                plugins_dir,
+                dev_mode=dev_mode_on,
+            )
         else:
             plugin_id = await asyncio.to_thread(installer.install_bundle, local, plugins_dir)
 
@@ -397,46 +429,152 @@ async def install_progress_sse(install_id: str):
 
 
 @router.delete("/{plugin_id}")
-async def uninstall_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
+async def uninstall_plugin(
+    plugin_id: str,
+    request: Request,
+    purge_data: bool = False,
+) -> dict[str, Any]:
+    """Uninstall a plugin.
+
+    Query params:
+      purge_data: if true, also delete ``data/plugin_data/<id>``
+                  (the plugin's persistent storage). Defaults to false to
+                  avoid surprising data loss.
+
+    Status codes:
+      200 — fully uninstalled (code dir gone; data purged if requested)
+      207 — partially uninstalled (dir survived, but db files cleared so the
+            next install / reinstall will not be blocked); UI should advise
+            the user to retry after restart for a clean state
+      409 — completely failed (e.g. dir locked and even db files are held)
+    """
     _check_plugin_id(plugin_id)
     async with _plugin_op_lock:
         plugins_dir = _plugins_dir()
+        data_root = plugins_dir.parent / "plugin_data"
         state_path = _plugin_state_path()
         pm = _get_plugin_manager(request)
+
+        # 1. Stop the running instance first so the file handles drop.
         if pm:
             await pm.unload_plugin(plugin_id)
-            pm.state.remove_plugin(plugin_id)
+
+        # 2. Try to delete the on-disk plugin directory.
+        #
+        #    CRITICAL: do NOT touch persistent state until we know the
+        #    deletion outcome. The previous order ("remove_plugin then
+        #    uninstall") had a nasty failure mode: when uninstall returned
+        #    partial/failure, the state file lost the entry but the plugin
+        #    directory survived. On the next /list call, _sync_new_plugins
+        #    rediscovered the leftover dir, and PluginState.is_enabled()
+        #    returns True for unknown ids — so the plugin would silently
+        #    "come back to life" after a refresh.
+        result = await asyncio.to_thread(
+            installer.uninstall,
+            plugin_id,
+            plugins_dir,
+            purge_data=purge_data,
+            data_root=data_root,
+        )
+
+        warnings: list[str] = list(result.get("warnings") or [])
+
+        # 3. Reconcile state with the actual filesystem outcome.
+        if result.get("removed"):
+            # Code dir is gone — drop state entry entirely. Also forget
+            # any in-memory load-failure record, otherwise the UI keeps
+            # rendering the ghost error block for a plugin that no
+            # longer exists. ``unload_plugin`` already does this for
+            # cleanly-loaded plugins, but a plugin that *failed* to
+            # load was never in ``_loaded`` and was a no-op there.
+            if pm:
+                pm.state.remove_plugin(plugin_id)
+                pm.state.save(state_path)
+                pm.forget_failure(plugin_id)
+            else:
+                state = PluginState.load(state_path)
+                state.remove_plugin(plugin_id)
+                state.save(state_path)
+            return {
+                "ok": True,
+                "data": {
+                    "plugin_id": plugin_id,
+                    "purged_data": bool(result.get("purged_data")),
+                    "warnings": warnings,
+                },
+            }
+
+        # Partial / total failure: keep an entry in plugin_state so the leftover
+        # directory is NOT silently re-discovered & auto-loaded as a "new"
+        # plugin on the next refresh. Mark it disabled with a clear reason so
+        # the user can see what happened in the UI.
+        disabled_reason = (
+            "pending_removal_partial" if result.get("partial") else "pending_removal_failed"
+        )
+        if pm:
+            pm.state.disable(plugin_id, reason=disabled_reason)
             pm.state.save(state_path)
         else:
             state = PluginState.load(state_path)
-            state.remove_plugin(plugin_id)
+            state.disable(plugin_id, reason=disabled_reason)
             state.save(state_path)
 
-        await asyncio.to_thread(installer.uninstall, plugin_id, plugins_dir)
-        return {"ok": True, "data": {"plugin_id": plugin_id}}
+        if result.get("partial"):
+            # 207 Multi-Status — surface the partial outcome to the UI.
+            # Returned via JSONResponse (not HTTPException) so the front-end
+            # treats it as a 2xx response and can read the body normally.
+            return JSONResponse(
+                status_code=207,
+                content={
+                    "ok": False,
+                    "data": {
+                        "plugin_id": plugin_id,
+                        "partial": True,
+                        "purged_data": bool(result.get("purged_data")),
+                        "warnings": warnings,
+                    },
+                    "error": {
+                        "code": PluginErrorCode.UNINSTALL_FAILED.value,
+                        "message": "插件目录无法完全删除",
+                        "guidance": "已尽力清理 db 文件，建议重启后端后重新安装以彻底清理",
+                        "detail": "; ".join(warnings),
+                    },
+                },
+            )
+
+        # Total failure — 409 Conflict (resource is in a state that prevents the op).
+        raise HTTPException(
+            status_code=409,
+            detail=make_error_response(
+                PluginErrorCode.UNINSTALL_FAILED,
+                detail="; ".join(warnings) or "目录无法删除",
+            ),
+        )
 
 
-@router.post("/{plugin_id}/enable")
+@router.post("/{plugin_id}/_admin/enable")
 async def enable_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
     _check_plugin_id(plugin_id)
-    pm = _require_manager(request)
-    await pm.enable_plugin(plugin_id)
-    return {"ok": True, "data": {"plugin_id": plugin_id, "enabled": True}}
+    async with _plugin_op_lock:
+        pm = _require_manager(request)
+        await pm.enable_plugin(plugin_id)
+        return {"ok": True, "data": {"plugin_id": plugin_id, "enabled": True}}
 
 
-@router.post("/{plugin_id}/disable")
+@router.post("/{plugin_id}/_admin/disable")
 async def disable_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
     _check_plugin_id(plugin_id)
-    pm = _require_manager(request)
-    await pm.disable_plugin(plugin_id)
-    return {"ok": True, "data": {"plugin_id": plugin_id, "enabled": False}}
+    async with _plugin_op_lock:
+        pm = _require_manager(request)
+        await pm.disable_plugin(plugin_id)
+        return {"ok": True, "data": {"plugin_id": plugin_id, "enabled": False}}
 
 
 def _plugin_config_path(plugin_id: str) -> Path:
     return _plugins_dir() / plugin_id / "config.json"
 
 
-@router.get("/{plugin_id}/config")
+@router.get("/{plugin_id}/_admin/config")
 async def get_plugin_config(plugin_id: str) -> dict[str, Any]:
     _check_plugin_id(plugin_id)
     plugin_dir = _plugins_dir() / plugin_id
@@ -459,7 +597,7 @@ async def get_plugin_config(plugin_id: str) -> dict[str, Any]:
         ) from e
 
 
-@router.put("/{plugin_id}/config")
+@router.put("/{plugin_id}/_admin/config")
 async def update_plugin_config(
     plugin_id: str,
     body: Annotated[dict[str, Any], Body()],
@@ -524,7 +662,7 @@ async def update_plugin_config(
     return {"ok": True, "data": current}
 
 
-@router.get("/{plugin_id}/readme")
+@router.get("/{plugin_id}/_admin/readme")
 async def get_plugin_readme(plugin_id: str) -> dict[str, str]:
     _check_plugin_id(plugin_id)
     plugin_dir = _plugins_dir() / plugin_id
@@ -537,7 +675,7 @@ async def get_plugin_readme(plugin_id: str) -> dict[str, str]:
     return {"ok": True, "data": {"readme": readme}}
 
 
-@router.get("/{plugin_id}/schema")
+@router.get("/{plugin_id}/_admin/schema")
 async def get_plugin_config_schema(plugin_id: str) -> dict[str, Any]:
     _check_plugin_id(plugin_id)
     plugin_dir = _plugins_dir() / plugin_id
@@ -555,7 +693,7 @@ class PermissionGrantBody(BaseModel):
     reload: bool = Field(True, description="Reload plugin after granting permissions")
 
 
-@router.post("/{plugin_id}/permissions/grant")
+@router.post("/{plugin_id}/_admin/permissions/grant")
 async def grant_permissions(
     plugin_id: str, body: PermissionGrantBody, request: Request
 ) -> dict[str, Any]:
@@ -573,7 +711,7 @@ class PermissionRevokeBody(BaseModel):
     reload: bool = Field(True, description="Reload plugin after revoking permissions")
 
 
-@router.post("/{plugin_id}/permissions/revoke")
+@router.post("/{plugin_id}/_admin/permissions/revoke")
 async def revoke_permissions(
     plugin_id: str, body: PermissionRevokeBody, request: Request
 ) -> dict[str, Any]:
@@ -586,7 +724,7 @@ async def revoke_permissions(
     return {"ok": True, "data": {"revoked": body.permissions}}
 
 
-@router.get("/{plugin_id}/permissions")
+@router.get("/{plugin_id}/_admin/permissions")
 async def get_plugin_permissions(plugin_id: str, request: Request) -> dict[str, Any]:
     """Get detailed permission info for a plugin."""
     _check_plugin_id(plugin_id)
@@ -642,7 +780,7 @@ async def get_plugin_permissions(plugin_id: str, request: Request) -> dict[str, 
     }
 
 
-@router.post("/{plugin_id}/reload")
+@router.post("/{plugin_id}/_admin/reload")
 async def reload_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
     """Reload a plugin (useful after granting permissions or changing config)."""
     _check_plugin_id(plugin_id)
@@ -652,7 +790,7 @@ async def reload_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
         return {"ok": True, "data": {"plugin_id": plugin_id}}
 
 
-@router.get("/{plugin_id}/logs")
+@router.get("/{plugin_id}/_admin/logs")
 async def get_plugin_logs(
     plugin_id: str,
     request: Request,
@@ -672,7 +810,7 @@ async def get_plugin_logs(
     return {"ok": True, "data": {"logs": text}}
 
 
-@router.get("/{plugin_id}/icon")
+@router.get("/{plugin_id}/_admin/icon")
 async def get_plugin_icon(plugin_id: str) -> Response:
     """Serve the plugin's icon file (png/svg/jpg)."""
     _check_plugin_id(plugin_id)
@@ -700,7 +838,7 @@ async def get_plugin_icon(plugin_id: str) -> Response:
     return Response(content=data, media_type=media_map.get(ext, "application/octet-stream"))
 
 
-@router.post("/{plugin_id}/open-folder")
+@router.post("/{plugin_id}/_admin/open-folder")
 async def open_plugin_folder(plugin_id: str) -> dict[str, str]:
     """Return the absolute path so frontend can open it via Tauri/OS."""
     _check_plugin_id(plugin_id)
@@ -713,7 +851,7 @@ async def open_plugin_folder(plugin_id: str) -> dict[str, str]:
     return {"ok": True, "data": {"path": str(plugin_dir.resolve())}}
 
 
-@router.get("/{plugin_id}/export")
+@router.get("/{plugin_id}/_admin/export")
 async def export_plugin(plugin_id: str) -> Response:
     """Export a plugin as a .zip file for sharing."""
     _check_plugin_id(plugin_id)
@@ -843,7 +981,7 @@ async def check_updates(request: Request) -> dict[str, Any]:
     }
 
 
-@router.post("/{plugin_id}/update")
+@router.post("/{plugin_id}/_admin/update")
 async def update_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
     """Update a specific plugin to the latest version. Requires marketplace."""
     _check_plugin_id(plugin_id)
@@ -853,5 +991,106 @@ async def update_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
             "code": "NOT_IMPLEMENTED",
             "message": "One-click upgrade will be available once the marketplace launches",
             "guidance": "For now, please manually reinstall the latest version",
+        },
+    }
+
+
+# --- Developer mode (live-edit local plugins via symlink) -------------------
+
+
+_VALID_DEV_MODES = ("off", "symlink")
+
+
+@router.get("/dev-mode")
+async def get_dev_mode(request: Request) -> dict[str, Any]:
+    """Return current global developer-mode setting.
+
+    Affects how ``install_from_path`` materialises plugins:
+      - ``off``     → copy files (default, stable for prod)
+      - ``symlink`` → symlink the source dir so on-disk edits are seen
+                       after a plain hot-reload, no reinstall required
+    """
+    pm = _get_plugin_manager(request)
+    state_path = _plugin_state_path()
+    state = pm.state if pm is not None else PluginState.load(state_path)
+    return {
+        "ok": True,
+        "data": {
+            "mode": state.dev_mode,
+            "enabled": state.dev_mode_enabled,
+            "supported_modes": list(_VALID_DEV_MODES),
+        },
+    }
+
+
+class DevModeBody(BaseModel):
+    mode: str = Field(..., min_length=1)
+
+
+@router.put("/dev-mode")
+async def set_dev_mode(body: DevModeBody, request: Request) -> dict[str, Any]:
+    """Update global developer-mode setting and persist immediately."""
+    mode = body.mode.strip().lower()
+    if mode not in _VALID_DEV_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=make_error_response(
+                PluginErrorCode.CONFIG_INVALID,
+                detail=f"mode must be one of {list(_VALID_DEV_MODES)}",
+            ),
+        )
+
+    state_path = _plugin_state_path()
+    pm = _get_plugin_manager(request)
+    if pm is not None:
+        pm.state.set_dev_mode(mode)
+        pm.state.save(state_path)
+        new_mode = pm.state.dev_mode
+    else:
+        state = PluginState.load(state_path)
+        state.set_dev_mode(mode)
+        state.save(state_path)
+        new_mode = state.dev_mode
+
+    return {
+        "ok": True,
+        "data": {
+            "mode": new_mode,
+            "enabled": new_mode != "off",
+        },
+    }
+
+
+# --- Background-task diagnostics --------------------------------------------
+
+
+@router.get("/{plugin_id}/_admin/spawned-tasks")
+async def list_plugin_tasks(plugin_id: str, request: Request) -> dict[str, Any]:
+    """List background tasks the plugin scheduled via ``api.spawn_task``.
+
+    Useful for diagnosing leaks: tasks shown here are guaranteed to be
+    cancelled and awaited during ``unload_plugin``; tasks created via raw
+    ``asyncio.create_task`` are **not** tracked and will not appear.
+    """
+    _check_plugin_id(plugin_id)
+    pm = _require_manager(request)
+    loaded = pm.get_loaded(plugin_id)
+    if loaded is None:
+        raise HTTPException(
+            status_code=404,
+            detail=make_error_response(
+                PluginErrorCode.NOT_FOUND,
+                detail=f"plugin '{plugin_id}' is not currently loaded",
+            ),
+        )
+    tasks = loaded.api.list_spawned_tasks()
+    running = sum(1 for t in tasks if not t["done"])
+    return {
+        "ok": True,
+        "data": {
+            "plugin_id": plugin_id,
+            "running": running,
+            "total": len(tasks),
+            "tasks": tasks,
         },
     }

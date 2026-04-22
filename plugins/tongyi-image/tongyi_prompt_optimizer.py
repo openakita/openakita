@@ -344,15 +344,414 @@ MODE_FORMULAS = {
 }
 
 
-def get_prompt_guide_data() -> dict:
-    """Return the full prompt guide data structure for the UI."""
+# ---------------------------------------------------------------------------
+# i18n payloads for the prompt guide page.
+#
+# Strategy (intentionally hybrid, matches the UI's "wide table" layout):
+#
+#   * Short keywords (style / lighting):
+#       Returned as bilingual {zh, en} pairs so the UI can render them
+#       SIDE-BY-SIDE in any locale. This costs almost no payload (~20 KB)
+#       and avoids a refetch when the user toggles language for a single
+#       chip-list page.
+#
+#   * Long-form copy (mode formulas / templates / negative presets):
+#       Returned in ONE locale per request. Translating a paragraph into the
+#       wrong language is much worse than refetching, so we let the client
+#       pass ?locale=zh|en and serve the matching dictionary.
+#
+#   * composition_keywords:
+#       Already shipped with bilingual {zh, en} keyword entries. We additionally
+#       localize the per-category `label` and the per-keyword `desc` text so
+#       the headings and tooltips follow the active locale.
+#
+# To add a new locale, add a "<lang>" entry to the *_I18N dicts below; missing
+# entries silently fall back to the request's base language and finally to "zh".
+# ---------------------------------------------------------------------------
+
+# --- Short keywords: bilingual entries, no locale switching needed ---------
+
+_STYLE_KEYWORDS_I18N: dict[str, list[dict[str, str]]] = {
+    "realistic":   [
+        {"zh": "写实摄影", "en": "Photorealistic"},
+        {"zh": "超写实",   "en": "Hyperrealistic"},
+        {"zh": "照片级",   "en": "Photographic"},
+        {"zh": "电影画质", "en": "Cinematic"},
+        {"zh": "高清细腻", "en": "High detail"},
+    ],
+    "watercolor":  [
+        {"zh": "水彩",       "en": "Watercolor"},
+        {"zh": "水彩风格",   "en": "Watercolor style"},
+        {"zh": "透明水彩",   "en": "Transparent watercolor"},
+        {"zh": "湿画法",     "en": "Wet-on-wet"},
+        {"zh": "晕染效果",   "en": "Wash gradient"},
+    ],
+    "oil_painting": [
+        {"zh": "油画",       "en": "Oil painting"},
+        {"zh": "厚涂油画",   "en": "Impasto oil"},
+        {"zh": "印象派",     "en": "Impressionist"},
+        {"zh": "古典油画",   "en": "Classical oil"},
+        {"zh": "笔触质感",   "en": "Visible brushstrokes"},
+    ],
+    "3d_cartoon":  [
+        {"zh": "3D卡通",       "en": "3D cartoon"},
+        {"zh": "皮克斯风格",   "en": "Pixar-style"},
+        {"zh": "迪士尼风格",   "en": "Disney-style"},
+        {"zh": "Blender渲染",  "en": "Blender render"},
+        {"zh": "C4D风格",      "en": "Cinema 4D style"},
+    ],
+    "chinese_ink": [
+        {"zh": "水墨",       "en": "Ink wash"},
+        {"zh": "写意水墨",   "en": "Freehand ink"},
+        {"zh": "工笔画",     "en": "Gongbi (fine brush)"},
+        {"zh": "国画",       "en": "Chinese painting"},
+        {"zh": "宣纸质感",   "en": "Xuan paper texture"},
+    ],
+    "anime":       [
+        {"zh": "二次元",       "en": "Anime"},
+        {"zh": "日系动漫",     "en": "Japanese anime"},
+        {"zh": "赛璐珞",       "en": "Cel-shaded"},
+        {"zh": "轻小说插画",   "en": "Light-novel illustration"},
+        {"zh": "动漫风格",     "en": "Anime style"},
+    ],
+    "flat_vector": [
+        {"zh": "扁平插画",   "en": "Flat illustration"},
+        {"zh": "矢量插画",   "en": "Vector illustration"},
+        {"zh": "几何图形",   "en": "Geometric shapes"},
+        {"zh": "极简主义",   "en": "Minimalism"},
+        {"zh": "图形设计",   "en": "Graphic design"},
+    ],
+    "surreal":     [
+        {"zh": "超现实主义", "en": "Surrealism"},
+        {"zh": "梦幻",       "en": "Dreamlike"},
+        {"zh": "达利风格",   "en": "Dalí-style"},
+        {"zh": "魔幻现实",   "en": "Magical realism"},
+        {"zh": "意识流",     "en": "Stream of consciousness"},
+    ],
+    "cyberpunk":   [
+        {"zh": "赛博朋克",   "en": "Cyberpunk"},
+        {"zh": "蒸汽朋克",   "en": "Steampunk"},
+        {"zh": "复古未来",   "en": "Retro-futurism"},
+        {"zh": "霓虹",       "en": "Neon-lit"},
+        {"zh": "数字艺术",   "en": "Digital art"},
+    ],
+    "origami":     [
+        {"zh": "折纸",       "en": "Origami"},
+        {"zh": "纸艺",       "en": "Paper craft"},
+        {"zh": "剪纸",       "en": "Papercut"},
+        {"zh": "立体纸雕",   "en": "3D paper sculpture"},
+        {"zh": "纸质感",     "en": "Paper texture"},
+    ],
+    "clay":        [
+        {"zh": "粘土",       "en": "Clay"},
+        {"zh": "定格动画",   "en": "Stop-motion"},
+        {"zh": "手办",       "en": "Figurine"},
+        {"zh": "微缩模型",   "en": "Diorama miniature"},
+        {"zh": "黏土质感",   "en": "Clay texture"},
+    ],
+    "pixel":       [
+        {"zh": "像素画",     "en": "Pixel art"},
+        {"zh": "8bit风格",   "en": "8-bit style"},
+        {"zh": "复古游戏",   "en": "Retro game"},
+        {"zh": "点阵风格",   "en": "Dot-matrix style"},
+    ],
+}
+
+_LIGHTING_KEYWORDS_I18N: dict[str, list[dict[str, str]]] = {
+    "natural":     [
+        {"zh": "自然光",         "en": "Natural light"},
+        {"zh": "窗光",           "en": "Window light"},
+        {"zh": "柔和日光",       "en": "Soft daylight"},
+        {"zh": "正午阳光",       "en": "Noon sunlight"},
+        {"zh": "多云天漫射光",   "en": "Overcast diffuse light"},
+    ],
+    "dramatic":    [
+        {"zh": "逆光",       "en": "Backlight"},
+        {"zh": "侧逆光",     "en": "Rim back-light"},
+        {"zh": "轮廓光",     "en": "Rim light"},
+        {"zh": "伦勃朗光",   "en": "Rembrandt lighting"},
+        {"zh": "分割光",     "en": "Split lighting"},
+    ],
+    "atmospheric": [
+        {"zh": "丁达尔效应", "en": "Tyndall effect"},
+        {"zh": "体积光",     "en": "Volumetric light"},
+        {"zh": "氛围光",     "en": "Ambient light"},
+        {"zh": "雾气光线",   "en": "Misty light shafts"},
+        {"zh": "光束穿透",   "en": "God rays"},
+    ],
+    "artificial":  [
+        {"zh": "霓虹灯",     "en": "Neon lights"},
+        {"zh": "聚光灯",     "en": "Spotlight"},
+        {"zh": "环形灯",     "en": "Ring light"},
+        {"zh": "LED灯带",    "en": "LED strip"},
+        {"zh": "烛光",       "en": "Candlelight"},
+    ],
+    "golden_hour": [
+        {"zh": "金色时刻",   "en": "Golden hour"},
+        {"zh": "日落光线",   "en": "Sunset light"},
+        {"zh": "暖色调光",   "en": "Warm tone lighting"},
+        {"zh": "夕阳余晖",   "en": "Afterglow"},
+    ],
+    "blue_hour":   [
+        {"zh": "蓝调时刻",   "en": "Blue hour"},
+        {"zh": "冷色调光",   "en": "Cool tone lighting"},
+        {"zh": "月光",       "en": "Moonlight"},
+        {"zh": "星光",       "en": "Starlight"},
+    ],
+    "studio":      [
+        {"zh": "摄影棚光",   "en": "Studio lighting"},
+        {"zh": "柔光箱",     "en": "Softbox"},
+        {"zh": "反光板",     "en": "Reflector"},
+        {"zh": "蝴蝶光",     "en": "Butterfly lighting"},
+        {"zh": "美人光",     "en": "Beauty lighting"},
+    ],
+}
+
+# --- Composition: localize label + desc; keywords already bilingual --------
+
+_COMPOSITION_LABELS_I18N: dict[str, dict[str, str]] = {
+    "distance": {"zh": "景别", "en": "Shot size"},
+    "angle":    {"zh": "视角", "en": "Camera angle"},
+    "lens":     {"zh": "镜头", "en": "Lens"},
+}
+
+# Keyed by zh so we can look up the EN tooltip without changing COMPOSITION_KEYWORDS.
+_COMPOSITION_DESC_EN: dict[str, str] = {
+    "特写":         "Tight focus on a small detail",
+    "近景":         "From the chest up",
+    "中景":         "From the waist up",
+    "全景":         "Whole subject in frame",
+    "远景":         "Subject small within environment",
+    "平视":         "Eye-level perspective",
+    "俯视":         "Looking down from above",
+    "仰视":         "Looking up from below; conveys grandeur",
+    "航拍":         "Bird's-eye / aerial view",
+    "虫眼视角":     "Extreme low angle",
+    "微距":         "Macro close-up of fine detail",
+    "广角":         "Wide field of view, exaggerated perspective",
+    "长焦":         "Compressed depth of field",
+    "鱼眼":         "Spherical fisheye distortion",
+    "移轴":         "Tilt-shift miniature effect",
+}
+
+# --- Long-form: full localized copies (one shot per locale) ----------------
+
+_MODE_FORMULAS_EN: dict[str, dict] = {
+    "text2img": {
+        "basic":    "Subject + Scene/Background + Style",
+        "advanced": "Subject + Scene/Background + Camera language + Lighting/Mood + Style + Detail modifiers",
+        "tips": [
+            "Subject first: describe the focal point of the image up front.",
+            "Be explicit about style: photorealistic, watercolor, oil, 3D, etc.",
+            "Add lighting (backlight, Tyndall effect…) to shape mood.",
+            "Combine shot sizes (close-up, medium, long) to control framing.",
+        ],
+    },
+    "img_edit": {
+        "basic":    "Reference image + Edit instruction",
+        "advanced": "Reference image + Specific edit instruction + Elements to preserve + Output style",
+        "tips": [
+            "Be specific about WHAT to change.",
+            "Combine with bbox selection to localize the edit.",
+            "When mixing multiple images, describe the role of each.",
+        ],
+    },
+    "style_repaint": {
+        "basic": "Portrait photo + Target style",
+        "tips": [
+            "High-resolution frontal portraits give the best results.",
+            "Avoid faces that are too small in the frame.",
+            "Avoid extreme poses or exaggerated expressions.",
+        ],
+    },
+    "background": {
+        "basic": "Subject (transparent background) + Text/image guidance",
+        "tips": [
+            "Subject image must have an RGBA transparent background.",
+            "Text guidance describes the target background scene.",
+            "Image guidance provides a reference background.",
+        ],
+    },
+    "outpaint": {
+        "basic": "Original image + Expansion mode (ratio / direction / rotation)",
+        "tips": [
+            "Supports both aspect-ratio and proportional outpainting.",
+            "Specify pixel padding for top/bottom/left/right.",
+            "Rotation outpainting can correct tilted photos.",
+        ],
+    },
+    "sketch": {
+        "basic": "Sketch + Text description + Style",
+        "tips": [
+            "The sketch provides shape and layout.",
+            "Text fills in detail and atmosphere.",
+            "`sketch_weight` controls how strictly to follow the sketch.",
+        ],
+    },
+    "ecommerce": {
+        "basic":    "Product name/description + Pick scene types",
+        "advanced": "Product name/description + Product image (optional) + Choose scenes to generate",
+        "tips": [
+            "Upload a transparent-background product photo to swap backgrounds automatically.",
+            "Without an upload, the AI synthesizes the product from the description.",
+            "Pick multiple scenes to batch-generate in one click.",
+            "Hero / white-background shots are best for marketplace listings.",
+            "Scene / lifestyle shots are best for detail pages.",
+        ],
+    },
+}
+
+_PROMPT_TEMPLATES_EN: list[dict] = [
+    {
+        "id": "portrait",
+        "name": "Portrait",
+        "name_en": "Portrait",
+        "description": "Character portraits, headshots, half-body shots.",
+        "categories": ["text2img"],
+        "template": "A {age} {gender}, {features}, wearing {clothing}, {pose}, {background}, {lighting}, {style} photography, ultra-detailed",
+        "example": "A young woman with flowing long hair, wearing a white dress, looking back over her shoulder with a smile, lavender field background, golden backlight at sunset, photorealistic photography, ultra-detailed",
+    },
+    {
+        "id": "landscape",
+        "name": "Landscape",
+        "name_en": "Landscape",
+        "description": "Natural scenery, mountains and waters, starry sky.",
+        "categories": ["text2img"],
+        "template": "{scene}, {time}, {weather}, {details}, {style} style, {quality}",
+        "example": "Snow-capped mountains reflected in a lake, sunrise, drifting mist, distant peaks, wildflowers in the foreground, landscape photography, 8K ultra HD",
+    },
+    {
+        "id": "ecommerce",
+        "name": "E-commerce poster",
+        "name_en": "E-commerce",
+        "description": "Product shots, marketing posters, merchandise display.",
+        "categories": ["text2img", "background"],
+        "template": "{product}, {placement}, {background}, {lighting}, commercial product photography, {quality}",
+        "example": "An elegant perfume bottle placed at a 45° angle on a marble surface, soft pink gradient backdrop, gentle side light with rim highlights, commercial product photography, premium high-resolution",
+    },
+    {
+        "id": "chinese_ink",
+        "name": "Chinese ink",
+        "name_en": "Chinese Ink",
+        "description": "Traditional Chinese ink wash paintings, Guofeng illustration.",
+        "categories": ["text2img"],
+        "template": "{subject}, {scene}, traditional Chinese ink wash style, {ink_style}, {composition}, Xuan paper texture",
+        "example": "An ancient temple in the mountains, swirling clouds among pine trees, traditional Chinese ink wash, rich tonal range from dry to wet, generous negative space, Xuan paper texture",
+    },
+    {
+        "id": "3d_render",
+        "name": "3D render",
+        "name_en": "3D Render",
+        "description": "3D models, product renders, C4D-style imagery.",
+        "categories": ["text2img"],
+        "template": "{subject}, 3D render style, {material}, {lighting}, {background}, {quality}",
+        "example": "A cute cartoon bear mascot, 3D render style, smooth plastic material, soft ambient lighting, solid color backdrop, Blender render, 8K HD",
+    },
+    {
+        "id": "illustration",
+        "name": "Illustration",
+        "name_en": "Illustration",
+        "description": "Flat illustration, concept design, children's book art.",
+        "categories": ["text2img", "sketch"],
+        "template": "{subject}, {scene}, {illustration_style} illustration style, {colors} palette, {quality}",
+        "example": "A little girl holding a balloon walking down the street of a fairytale town, flanked by colorful candy houses, flat vector illustration, macaron color palette, crisp HD",
+    },
+    {
+        "id": "cyberpunk",
+        "name": "Cyberpunk",
+        "name_en": "Cyberpunk",
+        "description": "Future cities, neon lights, sci-fi scenes.",
+        "categories": ["text2img"],
+        "template": "{subject}, cyberpunk style, {scene}, neon lighting, {details}, {quality}",
+        "example": "A future city street on a rainy night, cyberpunk style, giant holographic billboards casting blue-violet light, wet pavement reflecting neon, photorealistic render, 8K ultra HD",
+    },
+    {
+        "id": "food",
+        "name": "Food photography",
+        "name_en": "Food Photography",
+        "description": "Food, dining, food advertising.",
+        "categories": ["text2img"],
+        "template": "{food}, {plating}, {props}, {lighting}, food photography, {quality}",
+        "example": "An elegant Japanese sashimi platter on a white ceramic plate, garnished with fresh wasabi and shiso leaves, natural side window light, food photography, mouth-watering HD",
+    },
+]
+
+_NEGATIVE_PROMPT_PRESETS_EN: dict[str, str] = {
+    "general":   "low quality, blurry, deformed, ugly, watermark, text, logo, lowres, bad quality",
+    "portrait":  "deformed hands, extra fingers, distorted face, asymmetric eyes, blurry face, bad anatomy, deformed body proportions",
+    "landscape": "people, text, watermark, deformed buildings, unnatural colors, oversaturated",
+}
+
+_PROMPT_TEMPLATES_I18N: dict[str, list[dict]] = {
+    "zh": PROMPT_TEMPLATES,
+    "en": _PROMPT_TEMPLATES_EN,
+}
+_MODE_FORMULAS_I18N: dict[str, dict[str, dict]] = {
+    "zh": MODE_FORMULAS,
+    "en": _MODE_FORMULAS_EN,
+}
+_NEGATIVE_PROMPT_PRESETS_I18N: dict[str, dict[str, str]] = {
+    "zh": NEGATIVE_PROMPT_PRESETS,
+    "en": _NEGATIVE_PROMPT_PRESETS_EN,
+}
+
+
+def _normalize_locale(locale: str | None) -> str:
+    """Normalize an incoming locale string to one of the keys we ship.
+
+    Falls back to ``zh`` (the project default) for unknown / empty input.
+    Accepts ``zh-CN``, ``en-US``, etc. by stripping the regional suffix.
+    """
+    if not locale:
+        return "zh"
+    base = str(locale).split("-")[0].split("_")[0].lower()
+    if base in ("zh", "en"):
+        return base
+    return "zh"
+
+
+def _localize_composition(locale: str) -> dict:
+    """Project COMPOSITION_KEYWORDS with localized label + desc.
+
+    The keyword entries themselves are already shipped as bilingual
+    {zh, en} pairs and are returned as-is (the UI renders both, separated
+    by " / ", so the user can read whichever matches the active locale).
+    """
+    out: dict[str, dict] = {}
+    for cat, data in COMPOSITION_KEYWORDS.items():
+        label_map = _COMPOSITION_LABELS_I18N.get(cat, {})
+        label = label_map.get(locale) or data.get("label", cat)
+        kws = []
+        for kw in data.get("keywords", []):
+            new_kw = dict(kw)
+            if locale == "en":
+                en_desc = _COMPOSITION_DESC_EN.get(kw.get("zh", ""))
+                if en_desc:
+                    new_kw["desc"] = en_desc
+            kws.append(new_kw)
+        out[cat] = {"label": label, "keywords": kws}
+    return out
+
+
+def get_prompt_guide_data(locale: str | None = None) -> dict:
+    """Return the full prompt guide data structure for the UI.
+
+    Args:
+        locale: Requested UI locale. Currently honours ``zh`` and ``en``;
+            unknown values fall back to ``zh``. Pass-through to the language
+            variants of templates / mode formulas / negative presets, while
+            short keyword lists are returned as bilingual {zh,en} entries
+            regardless (the UI renders both side-by-side).
+    """
+    loc = _normalize_locale(locale)
     return {
-        "templates": PROMPT_TEMPLATES,
-        "style_keywords": STYLE_KEYWORDS,
-        "lighting_keywords": LIGHTING_KEYWORDS,
-        "composition_keywords": COMPOSITION_KEYWORDS,
-        "negative_presets": NEGATIVE_PROMPT_PRESETS,
-        "mode_formulas": MODE_FORMULAS,
+        "locale": loc,
+        "templates": _PROMPT_TEMPLATES_I18N.get(loc, PROMPT_TEMPLATES),
+        "style_keywords": _STYLE_KEYWORDS_I18N,
+        "lighting_keywords": _LIGHTING_KEYWORDS_I18N,
+        "composition_keywords": _localize_composition(loc),
+        "negative_presets": _NEGATIVE_PROMPT_PRESETS_I18N.get(loc, NEGATIVE_PROMPT_PRESETS),
+        "mode_formulas": _MODE_FORMULAS_I18N.get(loc, MODE_FORMULAS),
     }
 
 

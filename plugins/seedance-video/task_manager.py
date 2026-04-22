@@ -216,22 +216,52 @@ class TaskManager:
         tasks = [self._row_to_task(r) for r in rows]
         return tasks, total
 
+    # Whitelist of caller-facing keys → physical column names.  Anything outside
+    # this map is rejected to prevent SQL injection via column-name interpolation
+    # in the UPDATE statement below (Sprint 7 / A4 hardening).
+    _UPDATABLE_COLUMNS: dict[str, str] = {
+        "ark_task_id": "ark_task_id",
+        "status": "status",
+        "prompt": "prompt",
+        "mode": "mode",
+        "model": "model",
+        "params": "params_json",
+        "video_url": "video_url",
+        "local_video_path": "local_video_path",
+        "thumbnail_path": "thumbnail_path",
+        "service_tier": "service_tier",
+        "is_draft": "is_draft",
+        "draft_parent_id": "draft_parent_id",
+        "callback_url": "callback_url",
+        "revised_prompt": "revised_prompt",
+        "last_frame_url": "last_frame_url",
+        "error_message": "error_message",
+    }
+    _JSON_ENCODED_KEYS: frozenset[str] = frozenset({"params"})
+
     async def update_task(self, task_id: str, **kwargs: Any) -> bool:
         assert self._db
+        if not kwargs:
+            return False
         sets: list[str] = []
         args: list[Any] = []
         for k, v in kwargs.items():
-            if k == "params":
-                sets.append("params_json = ?")
-                args.append(json.dumps(v))
+            col = self._UPDATABLE_COLUMNS.get(k)
+            if col is None:
+                raise ValueError(
+                    f"update_task: column '{k}' is not whitelisted "
+                    f"(allowed: {sorted(self._UPDATABLE_COLUMNS)})"
+                )
+            sets.append(f"{col} = ?")
+            if k in self._JSON_ENCODED_KEYS:
+                args.append(json.dumps(v, ensure_ascii=False))
+            elif k == "is_draft":
+                args.append(1 if v else 0)
             else:
-                sets.append(f"{k} = ?")
                 args.append(v)
         sets.append("updated_at = ?")
         args.append(time.time())
         args.append(task_id)
-        if not sets:
-            return False
         result = await self._db.execute(
             f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", args
         )

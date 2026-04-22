@@ -1,0 +1,41 @@
+{
+  "id": "bgm-suggester",
+  "name": "BGM Suggester",
+  "display_name_zh": "AI 配乐顾问",
+  "display_name_en": "BGM Suggester",
+  "version": "0.1.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Turn a scene + mood + duration into a structured BGM brief (style/bpm/mood-arc/keywords) and bridge it into Suno AI prompts and YouTube/Spotify/Epidemic search queries. No ffmpeg or model download needed.",
+  "description_i18n": {
+    "zh": "把一段场景描述+情绪+时长，变成结构化 BGM 简报（风格/节拍/情绪曲线/关键词），并桥接到 Suno AI 和 YouTube/Spotify/Epidemic 搜索词。无需 ffmpeg 或模型下载。",
+    "en": "Turn a scene + mood + duration into a structured BGM brief (style/bpm/mood-arc/keywords) and bridge it into Suno AI prompts and YouTube/Spotify/Epidemic search queries. No ffmpeg or model download needed."
+  },
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["bgm", "music", "suno", "ai-music", "soundtrack"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.4.0"
+  },
+  "provides": {
+    "tools": [
+      "bgm_create",
+      "bgm_status",
+      "bgm_list",
+      "bgm_cancel"
+    ],
+    "routes": true
+  }
+}

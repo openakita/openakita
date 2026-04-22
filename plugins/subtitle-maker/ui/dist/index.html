@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 字幕匠</title>
+  <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css">
+  <script src="/api/plugins/_sdk/bootstrap.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/icons.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/i18n.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/event-helpers.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/error-coach.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/task-panel.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/onboard-wizard.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/first-success-celebrate.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/dep-gate.js"></script>
+  <style>
+    body { padding: 16px; }
+    h1 { margin:0 0 6px; font-size: 22px; display: inline-flex; align-items: center; gap: 10px; }
+    h1 .oa-icon { width: 22px; height: 22px; color: var(--oa-primary); }
+    .header-tip { color: var(--oa-text-muted); font-size: 12px; margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <h1>
+    <span class="oa-icon" data-icon="edit"></span>
+    <span data-i18n="header.title"></span>
+  </h1>
+  <div class="header-tip" data-i18n="header.tip"></div>
+
+  <!-- Dependency gate: ffmpeg + whisper.cpp are required for transcription -->
+  <div data-oa-dep="ffmpeg,whisper.cpp"></div>
+
+  <div class="oa-card">
+    <h3>1. <span data-i18n="step1.title"></span></h3>
+    <div class="oa-row">
+      <input type="file" id="file" accept="video/*,audio/*" class="oa-input" style="flex:1">
+      <button class="oa-btn" id="pick" data-i18n="step1.browse"></button>
+    </div>
+    <div id="info" style="font-size:12px;color:var(--oa-text-muted);margin-top:6px"></div>
+  </div>
+
+  <div class="oa-card">
+    <h3>2. <span data-i18n="step2.title"></span></h3>
+    <div class="oa-grid cols-3">
+      <div>
+        <label class="oa-label" data-i18n="form.lang"></label>
+        <select id="lang" class="oa-input">
+          <option value="auto" data-i18n="lang.auto"></option>
+          <option value="zh"   data-i18n="lang.zh"></option>
+          <option value="en"   data-i18n="lang.en"></option>
+          <option value="ja"   data-i18n="lang.ja"></option>
+        </select>
+      </div>
+      <div>
+        <label class="oa-label" data-i18n="form.model"></label>
+        <select id="model" class="oa-input">
+          <option value="tiny"   data-i18n="model.tiny"></option>
+          <option value="base" selected data-i18n="model.base"></option>
+          <option value="small"  data-i18n="model.small"></option>
+          <option value="medium" data-i18n="model.medium"></option>
+        </select>
+      </div>
+      <div>
+        <label class="oa-label" data-i18n="form.fmt"></label>
+        <select id="fmt" class="oa-input">
+          <option value="both" selected>SRT + VTT</option>
+          <option value="srt">SRT</option>
+          <option value="vtt">VTT</option>
+        </select>
+      </div>
+    </div>
+    <label style="margin-top:8px;display:flex;align-items:center;gap:6px">
+      <input type="checkbox" id="burn"> <span data-i18n="form.burn"></span>
+    </label>
+  </div>
+
+  <div class="oa-card">
+    <button class="oa-btn oa-btn-primary" id="go" disabled data-i18n="actions.go"></button>
+    <span id="goHint" style="font-size:12px;color:var(--oa-text-muted);margin-left:8px" data-i18n="actions.hint"></span>
+    <div id="errorBox" style="margin-top:10px"></div>
+  </div>
+
+  <h3 style="margin: 18px 0 8px" data-i18n="tasks.title"></h3>
+  <div id="tasks"></div>
+
+<script>
+  OpenAkitaI18n.register({
+    zh: {
+      "header.title": "AI 字幕匠",
+      "header.tip": "上传视频/音频 → 自动转字幕 → 一键导出 SRT/VTT 或烧录回视频",
+      "step1.title": "选文件",
+      "step1.browse": "浏览",
+      "step2.title": "选项",
+      "form.lang": "语言",
+      "lang.auto": "自动检测",
+      "lang.zh": "中文",
+      "lang.en": "英文",
+      "lang.ja": "日文",
+      "form.model": "模型",
+      "model.tiny": "tiny (最快)",
+      "model.base": "base (平衡)",
+      "model.small": "small (准)",
+      "model.medium": "medium (最准)",
+      "form.fmt": "输出",
+      "form.burn": "同时烧录回视频 (硬字幕)",
+      "actions.go": "开始转字幕",
+      "actions.hint": "先上传文件",
+      "actions.hintReady": "可以开始了",
+      "tasks.title": "最近的任务",
+      "upload.uploading": "上传中… ({mb} MB)",
+      "upload.done": "已上传：{name}",
+      "err.create.problem": "创建失败",
+      "err.create.next": "稍后重试",
+      "result.title": "字幕生成完成",
+      "result.dlSrt": "下载 SRT",
+      "result.dlVtt": "下载 VTT",
+      "result.dlBurned": "下载烧录视频",
+      "onboard.q": "你打算用字幕做什么？",
+      "onboard.opt.social": "发抖音/小红书 (硬字幕)",
+      "onboard.opt.video": "加到剪映/Pr 里编辑 (SRT)",
+      "onboard.opt.web": "上传 B 站/YouTube (VTT)",
+      "onboard.opt.study": "听写/学习",
+      "success.title": "字幕做好了！",
+      "rec.translator": "把字幕翻译成英文/日文",
+      "rec.highlight": "挑出最好的几段"
+    },
+    en: {
+      "header.title": "Subtitle Maker",
+      "header.tip": "Upload video/audio → auto-transcribe → one-click export SRT/VTT or burn back into video.",
+      "step1.title": "Pick a file",
+      "step1.browse": "Browse",
+      "step2.title": "Options",
+      "form.lang": "Language",
+      "lang.auto": "Auto-detect",
+      "lang.zh": "Chinese",
+      "lang.en": "English",
+      "lang.ja": "Japanese",
+      "form.model": "Model",
+      "model.tiny": "tiny (fastest)",
+      "model.base": "base (balanced)",
+      "model.small": "small (accurate)",
+      "model.medium": "medium (most accurate)",
+      "form.fmt": "Output",
+      "form.burn": "Also burn into video (hard subtitles)",
+      "actions.go": "Start transcribing",
+      "actions.hint": "Upload a file first",
+      "actions.hintReady": "Ready to go",
+      "tasks.title": "Recent tasks",
+      "upload.uploading": "Uploading… ({mb} MB)",
+      "upload.done": "Uploaded: {name}",
+      "err.create.problem": "Failed to create task",
+      "err.create.next": "Please try again later",
+      "result.title": "Subtitles ready",
+      "result.dlSrt": "Download SRT",
+      "result.dlVtt": "Download VTT",
+      "result.dlBurned": "Download burned video",
+      "onboard.q": "What will you do with the subtitles?",
+      "onboard.opt.social": "Post to short-video apps (hard subs)",
+      "onboard.opt.video": "Edit in CapCut / Premiere (SRT)",
+      "onboard.opt.web": "Upload to Bilibili / YouTube (VTT)",
+      "onboard.opt.study": "Transcribe / study",
+      "success.title": "Subtitles done!",
+      "rec.translator": "Translate subtitles to English / Japanese",
+      "rec.highlight": "Pick the best segments"
+    }
+  });
+  const T = (k, vars) => OpenAkitaI18n.t(k, vars);
+
+  document.querySelectorAll("[data-icon]").forEach(function (el) {
+    var name = el.dataset.icon;
+    var fn = window.OpenAkitaIcons && window.OpenAkitaIcons[name];
+    if (fn) el.innerHTML = fn();
+  });
+  OpenAkitaI18n.bindDom(document.body);
+
+  const apiBase = (OpenAkita.meta && OpenAkita.meta.apiBase) || '';
+  const api = (path, opts) => fetch(apiBase + path, opts).then(r => r.json().then(j => ({ ok: r.ok, status: r.status, body: j })));
+  const $ = (id) => document.getElementById(id);
+  let chosenPath = null;
+  let lastTaskId = null;
+
+  OnboardWizard.askOnce({
+    storageKey: 'subtitle-maker:audience',
+    question: T('onboard.q'),
+    options: [
+      { id: 'social', label: T('onboard.opt.social') },
+      { id: 'video',  label: T('onboard.opt.video')  },
+      { id: 'web',    label: T('onboard.opt.web')    },
+      { id: 'study',  label: T('onboard.opt.study')  },
+    ],
+  });
+
+  $('pick').addEventListener('click', () => $('file').click());
+  $('file').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    $('info').textContent = T('upload.uploading', { mb: (f.size/1024/1024).toFixed(1) });
+    const form = new FormData(); form.append('file', f);
+    const r = await fetch(apiBase + '/upload', { method:'POST', body: form });
+    const j = await r.json();
+    chosenPath = j.path;
+    $('info').textContent = T('upload.done', { name: f.name });
+    $('go').disabled = false;
+    $('goHint').removeAttribute('data-i18n');
+    $('goHint').textContent = T('actions.hintReady');
+  });
+
+  $('go').addEventListener('click', async () => {
+    if (!chosenPath) return;
+    $('errorBox').innerHTML = '';
+    const r = await api('/tasks', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ source_path: chosenPath, language: $('lang').value, asr_model: $('model').value,
+                             output_format: $('fmt').value, burn_into_video: $('burn').checked })});
+    if (!r.ok) { ErrorCoach.mount('#errorBox', r.body.detail || { problem: T('err.create.problem'), next_step: T('err.create.next') }, { onRetry: () => $('go').click() }); return; }
+    lastTaskId = r.body.task_id;
+    taskPanel.refresh();
+  });
+
+  const taskPanel = new TaskPanel({ root: '#tasks', apiBase, tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
+  taskPanel.start();
+
+  OpenAkita.onEvent('task_updated', (data) => {
+    taskPanel.refresh();
+    if (data && data.status === 'succeeded' && data.id === lastTaskId) {
+      const links = [`<a class="oa-btn" href="${apiBase}/tasks/${data.id}/srt">${T('result.dlSrt')}</a>`,
+                     `<a class="oa-btn" href="${apiBase}/tasks/${data.id}/vtt">${T('result.dlVtt')}</a>`];
+      if (data.burned_video_path) links.push(`<a class="oa-btn" href="${apiBase}/tasks/${data.id}/burned-video">${T('result.dlBurned')}</a>`);
+      const div = document.createElement('div');
+      div.className = 'oa-card';
+      div.innerHTML = `<h3>${T('result.title')}</h3><div class="oa-row">${links.join(' ')}</div>`;
+      $('errorBox').innerHTML = '';
+      $('errorBox').appendChild(div);
+
+      FirstSuccessCelebrate.maybeFire({
+        storageKey: 'subtitle-maker:firstSuccess',
+        title: T('success.title'),
+        recommendations: [
+          { id: 'video-translator', label: T('rec.translator') },
+          { id: 'highlight-cutter', label: T('rec.highlight') },
+        ],
+        onRecommend: (id) => OpenAkita.navigate('plugin-app:' + id),
+      });
+    }
+  });
+</script>
+</body>
+</html>

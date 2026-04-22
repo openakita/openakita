@@ -173,12 +173,17 @@ def _check_sdk(plugin_id: str, spec: str, result: CompatResult) -> None:
 
     if sdk is None:
         result.warnings.append(
-            f"Plugin '{plugin_id}' recommends SDK {spec}, but openakita-plugin-sdk is not installed"
+            f"Plugin '{plugin_id}' needs openakita-plugin-sdk {spec} but it is not "
+            f"installed. Fix it with `pip install \"openakita[plugins]\"` "
+            f"(or `pip install -e ./openakita-plugin-sdk` in monorepo dev). "
+            f"Plugins importing from openakita_plugin_sdk.contrib will fail to load "
+            f"until this is resolved."
         )
     elif sdk < req:
         result.warnings.append(
-            f"Plugin '{plugin_id}' recommends SDK {spec}, "
-            f"installed is {'.'.join(str(x) for x in sdk)}"
+            f"Plugin '{plugin_id}' recommends openakita-plugin-sdk {spec}, "
+            f"installed is {'.'.join(str(x) for x in sdk)}. "
+            f"Upgrade with `pip install -U openakita-plugin-sdk`."
         )
 
 

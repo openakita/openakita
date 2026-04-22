@@ -694,7 +694,7 @@ export function OrgEditorView({
 
   // MCP/Skill lists for selection
   const [availableMcpServers, setAvailableMcpServers] = useState<{ name: string; status: string }[]>([]);
-  const [availableSkills, setAvailableSkills] = useState<{ name: string; description?: string; name_i18n?: string; description_i18n?: string }[]>([]);
+  const [availableSkills, setAvailableSkills] = useState<{ name: string; description?: string; name_i18n?: string; description_i18n?: string; category?: string | null }[]>([]);
 
   // Blackboard panel ref (data managed by OrgBlackboardPanel)
   const bbPanelRef = useRef<OrgBlackboardPanelHandle>(null);
@@ -827,6 +827,14 @@ export function OrgEditorView({
       setAvailableSkills(data.skills || []);
     } catch { /* skills endpoint may not be available */ }
   }, [apiBaseUrl]);
+
+  // 实时刷新：监听 App.tsx 桥接的 'openakita:skills-changed' 事件，
+  // 与 SkillManager.tsx 共享同一事件源，避免后端技能变更后该面板看到旧列表
+  useEffect(() => {
+    const onChange = () => { fetchAvailableSkills().catch(() => {}); };
+    window.addEventListener("openakita:skills-changed", onChange);
+    return () => window.removeEventListener("openakita:skills-changed", onChange);
+  }, [fetchAvailableSkills]);
 
 
   const fetchAgentProfiles = useCallback(async () => {
@@ -1084,6 +1092,8 @@ export function OrgEditorView({
       operation_mode: (currentOrg as any).operation_mode || "command",
       core_business: currentOrg.core_business || "",
       workspace_dir: (currentOrg as any).workspace_dir || "",
+      auto_persist_final_answer:
+        (currentOrg as any).auto_persist_final_answer !== false,
       heartbeat_enabled: currentOrg.heartbeat_enabled,
       heartbeat_interval_s: currentOrg.heartbeat_interval_s,
       standup_enabled: currentOrg.standup_enabled,
@@ -1259,6 +1269,7 @@ export function OrgEditorView({
         is_clone: false,
         clone_source: null,
         external_tools: [],
+        enable_file_tools: true,
         ephemeral: false,
         frozen_by: null,
         frozen_reason: null,
@@ -1420,6 +1431,28 @@ export function OrgEditorView({
     return { ...((e.data as any) || {}), source: e.source, target: e.target, _id: e.id };
   }, [selectedEdgeId, edges]);
 
+  // 渲染用 edges：把 edge 动画 / 流量计数合并到 edge 对象。
+  // 必须 useMemo —— 否则拖拽时 useNodesState 每帧刷新 nodes 会让父组件重渲，
+  // 内联 edges.map(...) 会重建所有 edge 引用，ReactFlow 按引用 diff 时
+  // 会判定"全部边都变了"并重画所有 SVG / marker，导致拖拽和动画一顿一顿。
+  // 拖拽只改 nodes，不在本 memo 依赖里，所以拖拽期间 ReactFlow 收到的是同一引用。
+  const flowEdges = useMemo(() => {
+    return edges.map((e) => {
+      const anim = edgeAnimations[e.id];
+      const flowCount = liveMode ? edgeFlowCounts[e.id] : undefined;
+      const base = flowCount && flowCount > 0
+        ? { ...e, label: `${(e.data as any)?.label || ""} ${flowCount > 0 ? `(${flowCount})` : ""}`.trim() || undefined }
+        : e;
+      if (!anim) return base;
+      return {
+        ...base,
+        animated: true,
+        style: { ...base.style, stroke: anim.color, strokeWidth: 3, filter: `drop-shadow(0 0 4px ${anim.color})` },
+        markerEnd: { ...(base.markerEnd as any), color: anim.color },
+      };
+    });
+  }, [edges, edgeAnimations, edgeFlowCounts, liveMode]);
+
   const updateEdgeData = useCallback((field: string, value: any) => {
     if (!selectedEdgeId) return;
     setEdges((prev) =>
@@ -1517,7 +1550,7 @@ export function OrgEditorView({
       department: "", custom_prompt: "", identity_dir: null, mcp_servers: [], skills: [],
       skills_mode: "all", preferred_endpoint: null, max_concurrent_tasks: 1, timeout_s: 0,
       can_delegate: true, can_escalate: true, can_request_scaling: true, is_clone: false,
-      clone_source: null, external_tools: [], ephemeral: false, frozen_by: null,
+      clone_source: null, external_tools: [], enable_file_tools: true, ephemeral: false, frozen_by: null,
       frozen_reason: null, frozen_at: null, avatar: null, status: "idle",
     };
     setNodes((prev) => [...prev, orgNodeToFlowNode(newNode, { _liveMode: liveMode })]);
@@ -2026,20 +2059,7 @@ export function OrgEditorView({
                 reactFlowRef.current = instance;
               }}
               nodes={nodes}
-              edges={edges.map((e) => {
-                const anim = edgeAnimations[e.id];
-                const flowCount = liveMode ? edgeFlowCounts[e.id] : undefined;
-                const base = flowCount && flowCount > 0
-                  ? { ...e, label: `${(e.data as any)?.label || ""} ${flowCount > 0 ? `(${flowCount})` : ""}`.trim() || undefined }
-                  : e;
-                if (!anim) return base;
-                return {
-                  ...base,
-                  animated: true,
-                  style: { ...base.style, stroke: anim.color, strokeWidth: 3, filter: `drop-shadow(0 0 4px ${anim.color})` },
-                  markerEnd: { ...(base.markerEnd as any), color: anim.color },
-                };
-              })}
+              edges={flowEdges}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={onConnect}
@@ -3779,6 +3799,39 @@ export function OrgEditorView({
                       );
                     })}
                   </CardContent>
+                  {/* 基础文件工具开关：与上面 6 个类目正交 —— 即便没勾选
+                      "文件/命令"，只要打开这个开关就给节点放行 write_file /
+                      read_file / edit_file / list_directory，让需要交付文件
+                      的角色可以把交付物落盘后走 file_attachments 提交。
+                      run_shell / 删除等高风险工具仍由"文件/命令"类目控制。 */}
+                  <div className="border-t px-3 py-3" style={{ borderColor: "var(--line)" }}>
+                    {(() => {
+                      const checked = selectedNode.enable_file_tools !== false;
+                      return (
+                        <label
+                          className="flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-xs transition-colors"
+                          style={{
+                            borderColor: checked ? "color-mix(in srgb, var(--primary) 45%, var(--line))" : "var(--line)",
+                            background: checked ? "color-mix(in srgb, var(--primary) 10%, transparent)" : "var(--card-bg)",
+                          }}
+                        >
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(value) => updateNodeData("enable_file_tools", value === true)}
+                            className="mt-[2px]"
+                          />
+                          <div className="flex flex-col gap-1">
+                            <span className="font-medium">基础文件工具</span>
+                            <span className="text-[11px] leading-4 text-muted-foreground">
+                              即便未勾选"文件/命令"也允许使用 write_file / read_file /
+                              edit_file / list_directory，专门用于把交付物落盘成附件。
+                              文件路径限定在组织 workspace 目录内。默认开启。
+                            </span>
+                          </div>
+                        </label>
+                      );
+                    })()}
+                  </div>
                 </Card>
 
                 {/* ── Section 2: MCP 服务器 ── */}
@@ -3868,9 +3921,9 @@ export function OrgEditorView({
                     </CardContent>
                   )}
                   {availableSkills.length > 0 ? (
-                    <CardContent className="max-h-[150px] space-y-2 overflow-y-auto px-3 py-3">
-                      {availableSkills
-                        .filter((skill) => {
+                    <CardContent className="max-h-[260px] space-y-3 overflow-y-auto px-3 py-3">
+                      {(() => {
+                        const filtered = availableSkills.filter((skill) => {
                           if (!skillSearch) return true;
                           const q = skillSearch.toLowerCase();
                           const ni = skill.name_i18n;
@@ -3880,50 +3933,102 @@ export function OrgEditorView({
                           return nameStr.toLowerCase().includes(q)
                             || skill.name.toLowerCase().includes(q)
                             || descStr.toLowerCase().includes(q)
-                            || (skill.description || "").toLowerCase().includes(q);
-                        })
-                        .map((skill) => {
-                        const checked = selectedNode.skills.includes(skill.name);
-                        const rawName = skill.name_i18n;
-                        const displayName = (typeof rawName === "object" && rawName !== null)
-                          ? (rawName as any).zh || (rawName as any).en || skill.name
-                          : rawName || skill.name;
-                        const rawDesc = skill.description_i18n;
-                        const displayDesc = (typeof rawDesc === "object" && rawDesc !== null)
-                          ? (rawDesc as any).zh || (rawDesc as any).en || skill.description || ""
-                          : rawDesc || skill.description || "";
-                        return (
-                          <label
-                            key={skill.name}
-                            className="flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-xs transition-colors"
-                            style={{
-                              borderColor: checked ? "color-mix(in srgb, var(--primary) 45%, var(--line))" : "var(--line)",
-                              background: checked ? "color-mix(in srgb, var(--primary) 10%, transparent)" : "var(--card-bg)",
-                            }}
-                          >
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={() => {
-                                const next = checked
-                                  ? selectedNode.skills.filter((s: string) => s !== skill.name)
-                                  : [...selectedNode.skills, skill.name];
-                                updateNodeData("skills", next);
+                            || (skill.description || "").toLowerCase().includes(q)
+                            || ((skill.category || "").toLowerCase().includes(q));
+                        });
+                        // 按 category 分组（参考 hermes 范式：分类字典序，组内按 name 字典序）
+                        const grouped: Record<string, typeof filtered> = {};
+                        for (const s of filtered) {
+                          const k = s.category || "Uncategorized";
+                          (grouped[k] ||= [] as typeof filtered).push(s);
+                        }
+                        const sortedNames = Object.keys(grouped).sort((a, b) => a.localeCompare(b));
+                        for (const k of sortedNames) grouped[k].sort((a, b) => a.name.localeCompare(b.name));
+
+                        const renderSkillRow = (skill: typeof filtered[number]) => {
+                          const checked = selectedNode.skills.includes(skill.name);
+                          const rawName = skill.name_i18n;
+                          const displayName = (typeof rawName === "object" && rawName !== null)
+                            ? (rawName as any).zh || (rawName as any).en || skill.name
+                            : rawName || skill.name;
+                          const rawDesc = skill.description_i18n;
+                          const displayDesc = (typeof rawDesc === "object" && rawDesc !== null)
+                            ? (rawDesc as any).zh || (rawDesc as any).en || skill.description || ""
+                            : rawDesc || skill.description || "";
+                          return (
+                            <label
+                              key={skill.name}
+                              className="flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-xs transition-colors"
+                              style={{
+                                borderColor: checked ? "color-mix(in srgb, var(--primary) 45%, var(--line))" : "var(--line)",
+                                background: checked ? "color-mix(in srgb, var(--primary) 10%, transparent)" : "var(--card-bg)",
                               }}
-                              className="mt-0.5"
-                            />
-                            <div className="min-w-0 flex-1 overflow-hidden">
-                              <div className="overflow-hidden text-ellipsis whitespace-nowrap">
-                                {displayName}
-                              </div>
-                              {displayDesc && (
-                                <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-muted-foreground">
-                                  {displayDesc}
+                            >
+                              <Checkbox
+                                checked={checked}
+                                onCheckedChange={() => {
+                                  const next = checked
+                                    ? selectedNode.skills.filter((s: string) => s !== skill.name)
+                                    : [...selectedNode.skills, skill.name];
+                                  updateNodeData("skills", next);
+                                }}
+                                className="mt-0.5"
+                              />
+                              <div className="min-w-0 flex-1 overflow-hidden">
+                                <div className="overflow-hidden text-ellipsis whitespace-nowrap">
+                                  {displayName}
                                 </div>
-                              )}
+                                {displayDesc && (
+                                  <div className="overflow-hidden text-ellipsis whitespace-nowrap text-[10px] text-muted-foreground">
+                                    {displayDesc}
+                                  </div>
+                                )}
+                              </div>
+                            </label>
+                          );
+                        };
+
+                        return sortedNames.map((catName) => {
+                          const items = grouped[catName];
+                          const groupNames = items.map(s => s.name);
+                          const allChecked = groupNames.every(n => selectedNode.skills.includes(n));
+                          return (
+                            <div key={catName} className="flex flex-col gap-1.5">
+                              <div className="flex items-center gap-2">
+                                <div className="text-[11px] font-semibold text-foreground/80">
+                                  {catName}
+                                </div>
+                                <span className="text-[10px] text-muted-foreground">{items.length}</span>
+                                <div className="flex-1" />
+                                <button
+                                  type="button"
+                                  className="text-[10px] text-muted-foreground hover:text-foreground"
+                                  onClick={() => {
+                                    if (allChecked) {
+                                      // 反选：仅作用于 agent profile 的 enabled_skills，
+                                      // **不**下发到全局 allowlist（这是 OrgEditor 的语义）
+                                      const next = selectedNode.skills.filter(
+                                        (s: string) => !groupNames.includes(s)
+                                      );
+                                      updateNodeData("skills", next);
+                                    } else {
+                                      const next = Array.from(
+                                        new Set([...selectedNode.skills, ...groupNames])
+                                      );
+                                      updateNodeData("skills", next);
+                                    }
+                                  }}
+                                >
+                                  {allChecked ? "全不选" : "全选"}
+                                </button>
+                              </div>
+                              <div className="flex flex-col gap-1.5">
+                                {items.map(renderSkillRow)}
+                              </div>
                             </div>
-                          </label>
-                        );
-                      })}
+                          );
+                        });
+                      })()}
                     </CardContent>
                   ) : (
                     <CardContent className="px-4 py-3 text-[11px] text-muted-foreground">
@@ -4337,6 +4442,40 @@ export function OrgEditorView({
             <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4, lineHeight: 1.5 }}>
               {t("orgEditor.outputPathHint", "组织编排产出的文件将保存在此目录。留空则使用默认路径。")}
             </div>
+          </div>
+
+          {/* ── 交付兜底 ── */}
+          <div className="card" style={{ padding: 10, marginBottom: 10 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
+              {t("orgEditor.autoPersistTitle", "交付兜底")}
+            </div>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                style={{ marginTop: 3 }}
+                checked={(currentOrg as any).auto_persist_final_answer !== false}
+                onChange={(e) =>
+                  setCurrentOrg({
+                    ...currentOrg,
+                    auto_persist_final_answer: e.target.checked,
+                  } as any)
+                }
+              />
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ fontSize: 12 }}>
+                  {t("orgEditor.autoPersistLabel", "自动把长文回复落盘为附件")}
+                </span>
+                <span style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.5 }}>
+                  {t(
+                    "orgEditor.autoPersistHint",
+                    "用户原始指令明确要求文件/附件、但节点本轮没产出任何文件且只回了 ≥200 字长文时，"
+                    + "系统会把该长文自动保存为 .md 附件到工作目录的 deliverables/ 下，"
+                    + "并给上级合成一条「任务交付」消息。关闭后只走 LLM 自己的工具调用，"
+                    + "不做兜底。"
+                  )}
+                </span>
+              </div>
+            </label>
           </div>
 
           {/* ── 核心业务 (仅自主模式) ── */}

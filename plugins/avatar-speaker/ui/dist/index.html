@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 配音员</title>
+  <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css">
+  <script src="/api/plugins/_sdk/bootstrap.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/icons.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/i18n.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/event-helpers.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/error-coach.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/cost-preview.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/task-panel.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/onboard-wizard.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/first-success-celebrate.js"></script>
+  <style>
+    body { padding: 16px; }
+    h1 { margin: 0 0 6px; font-size: 22px; display: inline-flex; align-items: center; gap: 10px; }
+    h1 .oa-icon { width: 22px; height: 22px; color: var(--oa-primary); }
+    h3 { display: inline-flex; align-items: center; gap: 8px; }
+    h3 .oa-icon { width: 16px; height: 16px; color: var(--oa-text-muted); }
+    .header-tip { color: var(--oa-text-muted); font-size: 12px; margin-bottom: 16px; }
+    audio { width: 100%; }
+  </style>
+</head>
+<body>
+  <h1>
+    <span class="oa-icon" data-icon="mic"></span>
+    <span data-i18n="header.title"></span>
+  </h1>
+  <div class="header-tip" data-i18n="header.tip"></div>
+
+  <div class="oa-card">
+    <h3>
+      <span class="oa-icon" data-icon="edit"></span>
+      <span data-i18n="card.text.title"></span>
+    </h3>
+    <textarea id="text" class="oa-textarea" rows="6" data-i18n-placeholder="card.text.placeholder"></textarea>
+    <div class="oa-grid cols-2" style="margin-top:6px">
+      <div>
+        <label class="oa-label" data-i18n="form.voice"></label>
+        <select id="voice" class="oa-input"></select>
+      </div>
+      <div>
+        <label class="oa-label" data-i18n="form.engine"></label>
+        <select id="provider" class="oa-input">
+          <option value="auto" data-i18n="form.engine.auto"></option>
+          <option value="edge" data-i18n="form.engine.edge"></option>
+          <option value="dashscope" data-i18n="form.engine.dashscope"></option>
+          <option value="openai" data-i18n="form.engine.openai"></option>
+        </select>
+      </div>
+    </div>
+    <div class="oa-grid cols-2" style="margin-top:6px">
+      <div>
+        <label class="oa-label" data-i18n="form.rate"></label>
+        <input id="rate" class="oa-input" value="+0%" placeholder="-50% ~ +50%">
+      </div>
+      <div>
+        <label class="oa-label" data-i18n="form.pitch"></label>
+        <input id="pitch" class="oa-input" value="+0Hz" placeholder="-50Hz ~ +50Hz">
+      </div>
+    </div>
+    <div id="costBox" style="margin-top:10px"></div>
+    <div class="oa-row" style="margin-top:8px">
+      <button class="oa-btn oa-btn-primary" id="goBtn" data-i18n="actions.go"></button>
+    </div>
+    <div id="errorBox" style="margin-top:10px"></div>
+  </div>
+
+  <div id="resultCard" style="display:none" class="oa-card">
+    <h3>
+      <span class="oa-icon" data-icon="headphones"></span>
+      <span data-i18n="result.title"></span>
+    </h3>
+    <audio id="player" controls></audio>
+    <div class="oa-row" style="margin-top:6px">
+      <a id="dlBtn" class="oa-btn" data-i18n="actions.download"></a>
+      <button class="oa-btn" id="copyLinkBtn" data-i18n="actions.copyLink"></button>
+    </div>
+  </div>
+
+  <h3 style="margin: 18px 0 8px" data-i18n="tasks.title"></h3>
+  <div id="tasks"></div>
+
+<script>
+  // 1) Register dictionary -------------------------------------------------
+  OpenAkitaI18n.register({
+    zh: {
+      "header.title": "AI 配音员",
+      "header.tip": "写一段文字 → 选个声音 → 一键生成配音。无需配置即可用 (Edge TTS 免费)。",
+      "card.text.title": "想说什么",
+      "card.text.placeholder": "例：大家好，欢迎来到我的频道...",
+      "form.voice": "声音",
+      "form.engine": "引擎",
+      "form.engine.auto": "自动 (推荐)",
+      "form.engine.edge": "Edge TTS (免费)",
+      "form.engine.dashscope": "通义 CosyVoice (付费)",
+      "form.engine.openai": "OpenAI TTS (付费)",
+      "form.rate": "语速",
+      "form.pitch": "音高",
+      "actions.go": "生成配音",
+      "result.title": "配音结果",
+      "actions.download": "下载",
+      "actions.copyLink": "复制链接",
+      "tasks.title": "最近的任务",
+      "onboard.q": "配音用来干什么？",
+      "onboard.opt.video": "给短视频配旁白",
+      "onboard.opt.audiobook": "听文章/读小说",
+      "onboard.opt.edu": "做教学/课程配音",
+      "onboard.opt.other": "其他",
+      "err.text.empty.cause": "输入为空",
+      "err.text.empty.problem": "先写一段文字。",
+      "err.text.empty.next": "在上面文本框写几句话。",
+      "err.cost.fail": "无法估算成本",
+      "err.create.fail": "创建失败",
+      "err.create.next": "稍后重试",
+      "toast.copied.title": "已复制",
+      "toast.copied.body": "链接已复制到剪贴板",
+      "success.title": "配音好了！",
+      "rec.highlight": "把它配到你的视频里",
+      "rec.storyboard": "为下一段写脚本"
+    },
+    en: {
+      "header.title": "Avatar Speaker",
+      "header.tip": "Write text → pick a voice → generate audio. Works out of the box (Edge TTS is free).",
+      "card.text.title": "What do you want to say?",
+      "card.text.placeholder": "e.g. Hello everyone, welcome to my channel...",
+      "form.voice": "Voice",
+      "form.engine": "Engine",
+      "form.engine.auto": "Auto (recommended)",
+      "form.engine.edge": "Edge TTS (free)",
+      "form.engine.dashscope": "Tongyi CosyVoice (paid)",
+      "form.engine.openai": "OpenAI TTS (paid)",
+      "form.rate": "Rate",
+      "form.pitch": "Pitch",
+      "actions.go": "Generate",
+      "result.title": "Result",
+      "actions.download": "Download",
+      "actions.copyLink": "Copy link",
+      "tasks.title": "Recent tasks",
+      "onboard.q": "What will you use this for?",
+      "onboard.opt.video": "Voice-over for short videos",
+      "onboard.opt.audiobook": "Listen to articles / audiobooks",
+      "onboard.opt.edu": "Tutorial / course narration",
+      "onboard.opt.other": "Other",
+      "err.text.empty.cause": "Empty input",
+      "err.text.empty.problem": "Write some text first.",
+      "err.text.empty.next": "Type a few sentences in the box above.",
+      "err.cost.fail": "Unable to estimate cost",
+      "err.create.fail": "Failed to create task",
+      "err.create.next": "Please try again later",
+      "toast.copied.title": "Copied",
+      "toast.copied.body": "Link copied to clipboard",
+      "success.title": "Voice ready!",
+      "rec.highlight": "Layer it onto your video",
+      "rec.storyboard": "Write the next script"
+    }
+  });
+  const T = (k, vars) => OpenAkitaI18n.t(k, vars);
+
+  // 2) Render inline SVG icons --------------------------------------------
+  function renderIcons(root) {
+    (root || document).querySelectorAll("[data-icon]").forEach(function (el) {
+      var name = el.dataset.icon;
+      var fn = window.OpenAkitaIcons && window.OpenAkitaIcons[name];
+      if (fn) el.innerHTML = fn();
+    });
+  }
+  renderIcons();
+
+  // 3) Apply i18n to all data-i18n* attributes + auto re-apply on change ---
+  OpenAkitaI18n.bindDom(document.body);
+
+  // 4) App logic ----------------------------------------------------------
+  const apiBase = (OpenAkita.meta && OpenAkita.meta.apiBase) || '';
+  const api = (path, opts) => fetch(apiBase + path, opts).then(r => r.json().then(j => ({ ok: r.ok, status: r.status, body: j })));
+  const $ = (id) => document.getElementById(id);
+  let lastTaskId = null;
+
+  OnboardWizard.askOnce({
+    storageKey: 'avatar-speaker:audience',
+    question: T('onboard.q'),
+    options: [
+      { id: 'video', label: T('onboard.opt.video') },
+      { id: 'audiobook', label: T('onboard.opt.audiobook') },
+      { id: 'edu', label: T('onboard.opt.edu') },
+      { id: 'other', label: T('onboard.opt.other') },
+    ],
+  });
+
+  api('/voices').then(r => {
+    const sel = $('voice'); sel.innerHTML = '';
+    (r.body.presets || []).forEach(v => {
+      const o = document.createElement('option');
+      o.value = v.id; o.textContent = `${v.label} [${v.provider}]`;
+      sel.appendChild(o);
+    });
+  });
+
+  async function refreshCost() {
+    const r = await api('/cost', { method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ text: $('text').value, provider: $('provider').value })});
+    if (r.ok) CostPreview.mount('#costBox', r.body);
+    else ErrorCoach.mount('#costBox', r.body.detail || { problem: T('err.cost.fail') });
+  }
+  $('text').addEventListener('input', () => { clearTimeout(window.__cT); window.__cT = setTimeout(refreshCost, 400); });
+  $('provider').addEventListener('change', refreshCost);
+  refreshCost();
+
+  $('goBtn').addEventListener('click', async () => {
+    $('errorBox').innerHTML = '';
+    const text = $('text').value.trim();
+    if (!text) {
+      ErrorCoach.mount('#errorBox', {
+        cause_category: T('err.text.empty.cause'),
+        problem: T('err.text.empty.problem'),
+        next_step: T('err.text.empty.next'),
+        severity: 'warning'
+      });
+      return;
+    }
+    const r = await api('/tasks', { method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ text, voice: $('voice').value, rate: $('rate').value, pitch: $('pitch').value, provider: $('provider').value })});
+    if (!r.ok) {
+      ErrorCoach.mount('#errorBox', r.body.detail || { problem: T('err.create.fail'), next_step: T('err.create.next') });
+      return;
+    }
+    lastTaskId = r.body.task_id;
+    taskPanel.refresh();
+  });
+
+  function showResult(taskId, rec) {
+    const url = apiBase + '/audio/' + taskId;
+    $('resultCard').style.display = 'block';
+    $('player').src = url;
+    const a = $('dlBtn'); a.href = url; a.download = '';
+    $('copyLinkBtn').onclick = async () => {
+      await navigator.clipboard.writeText(url);
+      OpenAkita.notify({ title: T('toast.copied.title'), body: T('toast.copied.body') });
+    };
+  }
+
+  const taskPanel = new TaskPanel({ root: '#tasks', apiBase, tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
+  taskPanel.start();
+
+  OpenAkita.onEvent('task_updated', (data) => {
+    taskPanel.refresh();
+    if (data && data.id === lastTaskId && data.status === 'succeeded') {
+      showResult(lastTaskId, data);
+      FirstSuccessCelebrate.maybeFire({
+        storageKey: 'avatar-speaker:firstSuccess',
+        title: T('success.title'),
+        recommendations: [
+          { id: 'highlight-cutter', label: T('rec.highlight') },
+          { id: 'storyboard', label: T('rec.storyboard') },
+        ],
+        onRecommend: (id) => OpenAkita.navigate('plugin-app:' + id),
+      });
+    }
+  });
+</script>
+</body>
+</html>

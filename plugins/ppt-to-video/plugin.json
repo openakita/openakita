@@ -1,0 +1,49 @@
+{
+  "id": "ppt-to-video",
+  "name": "PPT to Video",
+  "display_name_zh": "PPT 转视频",
+  "display_name_en": "PPT to Video",
+  "version": "1.0.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Turn a .pptx into a narrated video: each slide becomes one image clip with a TTS voice-over of the speaker notes. Reuses LibreOffice (soffice) for pptx → png conversion, python-pptx for note extraction, and the avatar-speaker TTS providers for narration.",
+  "description_i18n": {
+    "zh": "把 .pptx 一键转成带配音的视频：每张幻灯片自动转图片，再用 TTS 把演讲者备注读出来，最后拼成 mp4。复用 LibreOffice 转图、python-pptx 抽备注、avatar-speaker 的 TTS 引擎。",
+    "en": "Turn a .pptx into a narrated video: each slide becomes one image clip with a TTS voice-over of the speaker notes. Reuses LibreOffice (soffice) for pptx -> png conversion, python-pptx for note extraction, and the avatar-speaker TTS providers for narration."
+  },
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["ppt", "pptx", "slideshow", "video", "tts", "narration"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.4.0"
+  },
+  "provides": {
+    "tools": [
+      "ppt_to_video_create",
+      "ppt_to_video_status",
+      "ppt_to_video_list",
+      "ppt_to_video_cancel",
+      "ppt_to_video_check_deps"
+    ],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "PPT 转视频",
+    "title_i18n": { "zh": "PPT 转视频", "en": "PPT to Video" },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme"]
+  }
+}

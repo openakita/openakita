@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>PPT 转视频</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Microsoft YaHei", sans-serif;
+        max-width: 720px;
+        margin: 56px auto;
+        padding: 0 24px;
+        line-height: 1.65;
+        color: #222;
+      }
+      @media (prefers-color-scheme: dark) {
+        body { color: #ddd; background: #1b1b1b; }
+        code { background: #2a2a2a; }
+      }
+      h1 { display: flex; align-items: center; gap: 12px; }
+      .badge {
+        font-size: 12px;
+        background: #f59e0b;
+        color: #fff;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-weight: 500;
+      }
+      code { background: #f3f4f6; padding: 2px 6px; border-radius: 3px; }
+      ul { padding-left: 22px; }
+      li { margin-bottom: 6px; }
+      .hint { color: #6b7280; font-size: 13px; margin-top: 32px; }
+    </style>
+  </head>
+  <body>
+    <h1>PPT 转视频<span class="badge">UI scaffolding pending</span></h1>
+    <p>
+      后端 (FastAPI 路由 + brain tools) 已就绪。可视化前端尚未开始构建；
+      在前端落地之前，可以通过下方 HTTP 路由或 Akita brain tools 直接驱动。
+    </p>
+    <h3>核心路由</h3>
+    <ul>
+      <li><code>GET  /healthz</code> — 健康检查 + 依赖状态</li>
+      <li><code>GET  /check-deps</code> — soffice / python-pptx / ffmpeg 准备情况</li>
+      <li><code>GET  /config</code> · <code>POST /config</code> — 默认 voice / TTS provider / 静音兜底秒数</li>
+      <li><code>POST /preview</code> — 校验输入 + 返回计划好的 output_path（不渲染）</li>
+      <li><code>POST /tasks</code> — 创建任务</li>
+      <li><code>GET  /tasks</code> · <code>GET /tasks/{id}</code> — 查询任务</li>
+      <li><code>GET  /tasks/{id}/video</code> — 下载渲染好的 mp4</li>
+      <li><code>POST /tasks/{id}/cancel</code> · <code>DELETE /tasks/{id}</code> — 取消 / 删除</li>
+    </ul>
+    <h3>Brain tools</h3>
+    <ul>
+      <li><code>ppt_to_video_create</code></li>
+      <li><code>ppt_to_video_status</code></li>
+      <li><code>ppt_to_video_list</code></li>
+      <li><code>ppt_to_video_cancel</code></li>
+      <li><code>ppt_to_video_check_deps</code></li>
+    </ul>
+    <p class="hint">
+      详见 <code>plugins/ppt-to-video/README.md</code> 与
+      <code>plugins/ppt-to-video/SKILL.md</code>。
+    </p>
+  </body>
+</html>

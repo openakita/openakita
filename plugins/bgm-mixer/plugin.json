@@ -1,0 +1,48 @@
+{
+  "id": "bgm-mixer",
+  "name": "BGM Mixer",
+  "display_name_zh": "节拍混音 (BGM Mixer)",
+  "display_name_en": "BGM Mixer",
+  "version": "0.1.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Mix a voice track with a background music track, using beat-aware ducking and beat-snapped cuts (CutClaw / madmom inspired). Falls back to a deterministic stub beat tracker when madmom is not installed so the plugin works on any machine.",
+  "description_i18n": {
+    "zh": "把人声 (旁白 / 对话) 和背景音乐合成一条最终音频：自动 ducking 让人声始终清晰、自动找节拍切口让 BGM 不会硬切。没装 madmom 也能跑 (使用确定性 stub beat tracker)。",
+    "en": "Mix a voice track with a background music track, using beat-aware ducking and beat-snapped cuts (CutClaw / madmom inspired). Falls back to a deterministic stub beat tracker when madmom is not installed so the plugin works on any machine."
+  },
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["bgm", "mixing", "audio", "podcast", "ducking", "madmom"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.4.0"
+  },
+  "provides": {
+    "tools": [
+      "bgm_mixer_create",
+      "bgm_mixer_status",
+      "bgm_mixer_list",
+      "bgm_mixer_cancel",
+      "bgm_mixer_preview"
+    ],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "节拍混音",
+    "title_i18n": { "zh": "节拍混音", "en": "BGM Mixer" },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme"]
+  }
+}

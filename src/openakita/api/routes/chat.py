@@ -767,7 +767,14 @@ async def _stream_chat(
             pass
 
         if not _client_disconnected and not _agent_errored:
-            yield _sse("done", {"usage": _usage_data})
+            # 透传本轮真实生效的 mode（IntentAnalyzer 可能把 CHAT 类闲聊静默
+            # 降级为 ask），让前端能识别"用户传 agent 但被降为 ask"的场景。
+            _eff_mode = getattr(actual_agent, "_last_effective_mode", None) or chat_request.mode
+            yield _sse("done", {
+                "usage": _usage_data,
+                "effective_mode": _eff_mode,
+                "requested_mode": chat_request.mode,
+            })
 
     except Exception as e:
         logger.error(f"Chat stream error: {e}", exc_info=True)

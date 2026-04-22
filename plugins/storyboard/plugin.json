@@ -1,0 +1,48 @@
+{
+  "id": "storyboard",
+  "name": "Storyboard",
+  "display_name_zh": "AI 分镜师",
+  "display_name_en": "Storyboard",
+  "version": "1.0.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Break a text script into a shot list (visual, camera language, duration, dialogue per shot), one-click export to CSV/JSON or hand off to seedance/tongyi for image generation. Designed for users who can't write a script.",
+  "description_i18n": {
+    "zh": "把一段文字脚本拆成分镜表（每个镜头有画面、镜头语言、时长、台词），可一键导出 CSV/JSON 或交给 seedance/tongyi 生图。专为不会写脚本的小白。",
+    "en": "Break a text script into a shot list (visual, camera language, duration, dialogue per shot), one-click export to CSV/JSON or hand off to seedance/tongyi for image generation. Designed for users who can't write a script."
+  },
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["storyboard", "shotlist", "script", "ai-writer"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.4.0"
+  },
+  "provides": {
+    "tools": [
+      "storyboard_create",
+      "storyboard_status",
+      "storyboard_list",
+      "storyboard_cancel"
+    ],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "AI 分镜师",
+    "title_i18n": { "zh": "AI 分镜师", "en": "Storyboard" },
+    "sidebar_group": "apps",
+    "permissions": ["download", "notifications", "theme", "clipboard"]
+  }
+}

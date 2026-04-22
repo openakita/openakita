@@ -30,6 +30,50 @@ let _connected = false;
 let _intentionallyClosed = false;
 let _apiBaseUrlOverride = "";
 
+// 事件级去重：在 200ms 滑窗内，相同 (event + payload) 只投递一次。
+// 主要兜底两种情况：
+//  1) React.StrictMode dev 双 mount 把同一 useEffect 注册两遍
+//  2) Vite HMR 模块热替换后，旧 closure 残留在 _handlers 内
+// 后端 manager.broadcast 写入的 ts 字段不参与 key，确保真正不同的事件
+// （即便 payload 重复）只要时间间隔 > DEDUPE_WINDOW_MS 就不会被吃掉。
+const DEDUPE_WINDOW_MS = 200;
+const _dedupeMap = new Map<string, number>();
+const _DEDUPE_MAX_KEYS = 1024;
+
+function _dedupeKey(event: string, data: unknown): string {
+  // 仅对结构化 data 做去重；非对象 payload 直接拼字符串
+  let payload: string;
+  try {
+    payload = typeof data === "object" && data !== null
+      ? JSON.stringify(data)
+      : String(data);
+  } catch {
+    return `${event}::__unserializable__`;
+  }
+  // 控制单 key 长度，避免极端大 payload 撑爆内存
+  if (payload.length > 512) payload = payload.slice(0, 512);
+  return `${event}::${payload}`;
+}
+
+function _shouldDedupe(event: string, data: unknown, now: number): boolean {
+  const key = _dedupeKey(event, data);
+  const last = _dedupeMap.get(key);
+  if (last !== undefined && now - last < DEDUPE_WINDOW_MS) {
+    _dedupeMap.set(key, now);
+    return true;
+  }
+  _dedupeMap.set(key, now);
+  // 简单 LRU：超过上限时清掉最旧的若干项
+  if (_dedupeMap.size > _DEDUPE_MAX_KEYS) {
+    const cutoff = now - DEDUPE_WINDOW_MS * 4;
+    for (const [k, ts] of _dedupeMap) {
+      if (ts < cutoff) _dedupeMap.delete(k);
+      if (_dedupeMap.size <= _DEDUPE_MAX_KEYS) break;
+    }
+  }
+  return false;
+}
+
 function _normalizeApiBaseUrl(apiBaseUrl: string | null | undefined): string {
   const raw = (apiBaseUrl || "").trim();
   if (!raw) return "";
@@ -98,7 +142,14 @@ function _connect(): void {
         _ws?.send("ping");
         return;
       }
+      // 事件级去重：抑制 200ms 内同 (event + payload) 的重复投递
+      if (_shouldDedupe(event, data, Date.now())) return;
+      // handler 集合去重：兜底防御 _handlers 内出现同函数引用多份
+      // （Vite HMR 残留 / 异常路径累积），保证每个 handler 只被触发一次
+      const seen = new Set<WsEventHandler>();
       for (const handler of _handlers) {
+        if (seen.has(handler)) continue;
+        seen.add(handler);
         try {
           handler(event, data);
         } catch (e) {
@@ -146,7 +197,11 @@ function _scheduleReconnect(): void {
 export function onWsEvent(handler: WsEventHandler): () => void {
   if (_skipWs()) return () => {};
 
-  _handlers.push(handler);
+  // 注册级去重：同一 handler 函数引用重复 onWsEvent 不会进数组多次。
+  // 主要防御 React.StrictMode dev 双 mount + Vite HMR 旧闭包残留。
+  if (!_handlers.includes(handler)) {
+    _handlers.push(handler);
+  }
   // Ensure connection is started
   if (!_ws && !_reconnectTimer) {
     _connect();
@@ -198,4 +253,24 @@ export function reconnectWsNow(): void {
 
 export function isWsConnected(): boolean {
   return _connected;
+}
+
+// Vite HMR：模块热替换前清空 handler 列表并断开旧 WebSocket，
+// 防止旧的 closure 残留在 _handlers 内造成事件被多次投递。
+// 仅 dev 生效（import.meta.hot 只在 Vite dev 中可用），生产构建为 undefined。
+if (typeof import.meta !== "undefined" && (import.meta as ImportMeta & { hot?: { dispose: (cb: () => void) => void } }).hot) {
+  (import.meta as ImportMeta & { hot?: { dispose: (cb: () => void) => void } }).hot!.dispose(() => {
+    _handlers = [];
+    _dedupeMap.clear();
+    if (_ws) {
+      try { _ws.close(); } catch { /* ignore */ }
+      _ws = null;
+    }
+    if (_reconnectTimer) {
+      clearTimeout(_reconnectTimer);
+      _reconnectTimer = null;
+    }
+    _connected = false;
+    _intentionallyClosed = true;
+  });
 }

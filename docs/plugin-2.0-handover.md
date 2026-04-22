@@ -99,7 +99,7 @@ Plugin Python 代码
 | `plugins/seedance-video/ark_client.py` | 火山引擎 Seedance API 客户端 (httpx) |
 | `plugins/seedance-video/task_manager.py` | SQLite 任务/配置/素材管理 (WAL 模式) |
 | `plugins/seedance-video/models.py` | Seedance 模型定义 (2.0/2.0-pro/1.5 等) |
-| `plugins/seedance-video/prompt_optimizer.py` | 提示词优化: 模板 + 镜头关键词 + LLM 优化 |
+| `plugins/seedance-video/prompt_optimizer.py` | LLM 提示词优化 + Seedance 静态字典（CAMERA / ATMOSPHERE / MODE_FORMULAS / PROMPT_TEMPLATES）。Sprint 18 因 grep 结论错误一度被删,已于 2026-04-21 还原 — 见 [docs/sprint18-cleanup-assessment.md](sprint18-cleanup-assessment.md#b8-prompt_optimizer-迁移评估) §A 修订说明 |
 | `plugins/seedance-video/long_video.py` | 长视频: 分镜拆解(Brain.think) + 链式生成 + ffmpeg 拼接 |
 | `plugins/seedance-video/ui/dist/index.html` | 单文件 React 前端: 创建/任务列表/设置/提示词指南/分镜工作台 |
 | `plugins/seedance-video/config.json` | 持久化配置 (api_key 等) |
@@ -287,12 +287,15 @@ onEvent(handler)          // 接收 broadcast_ui_event 推送
 GET  /api/plugins/list           # 列表（含 failed）
 GET  /api/plugins/ui-apps        # UI 插件列表（侧边栏用）
 POST /api/plugins/install        # 安装 {source, background}
-GET  /api/plugins/{id}/config    # 读配置
-PUT  /api/plugins/{id}/config    # 写配置（jsonschema 校验）
-POST /api/plugins/{id}/enable    # 启用
-POST /api/plugins/{id}/disable   # 禁用
-POST /api/plugins/{id}/reload    # 热重载
-GET  /api/plugins/{id}/logs      # 日志（?lines=100）
+GET  /api/plugins/{id}/_admin/config    # 读配置
+PUT  /api/plugins/{id}/_admin/config    # 写配置（jsonschema 校验）
+POST /api/plugins/{id}/_admin/enable    # 启用
+POST /api/plugins/{id}/_admin/disable   # 禁用
+POST /api/plugins/{id}/_admin/reload    # 热重载
+GET  /api/plugins/{id}/_admin/logs      # 日志（?lines=100）
+
+# 注：所有针对单个插件的管理接口都挂在 /_admin/ 下，避免和插件自己注册的
+# /tasks、/config 等业务路径冲突。_admin/* 是宿主保留命名空间。
 GET  /api/plugins/health         # 健康检查
 ```
 

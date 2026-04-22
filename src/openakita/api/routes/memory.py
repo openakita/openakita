@@ -149,12 +149,16 @@ async def list_memories(
     request: Request,
     type: str | None = None,
     search: str | None = None,
+    q: str | None = None,
     min_score: float = 0.0,
     limit: int = 200,
 ):
     store = _get_store(request)
     if not store:
         raise HTTPException(503, "Memory store not available")
+
+    # 兼容别名：?q= 与 ?search= 等价；search 优先，避免同时给两个值时行为不一致
+    search = search or q
 
     if search:
         results = store.search_semantic(search, limit=limit, filter_type=type)

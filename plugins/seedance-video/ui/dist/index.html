@@ -5,6 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Seedance Video Generator</title>
   <script src="/api/plugins/_sdk/bootstrap.js"></script>
+  <!-- OpenAkita Plugin UI Kit (shared, theme-aware; safe oa-* prefix only) -->
+  <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css?v=20260419-1">
+  <script src="/api/plugins/_sdk/ui-kit/icons.js?v=20260419-1"></script>
+  <script src="/api/plugins/_sdk/ui-kit/i18n.js?v=20260419-1"></script>
+  <script src="/api/plugins/_sdk/ui-kit/markdown-mini.js?v=20260419-1"></script>
+  <script src="/api/plugins/_sdk/ui-kit/dep-gate.js?v=20260419-1"></script>
+  <!--
+    Preload CDN deps in parallel (script tags below remain synchronous so
+    React/ReactDOM/Babel still execute in declared order; preload only
+    starts the downloads earlier so they finish faster).
+  -->
+  <link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js" />
+  <link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js" />
+  <link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/@babel/standalone@7/babel.min.js" />
   <style>
     :root {
       --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
@@ -139,6 +153,7 @@
 </head>
 <body>
 <div id="root"></div>
+<div data-oa-dep="ffmpeg"></div>
 <script>
 // ── Minimal Bridge SDK with direct HTTP fallback ──
 const BRIDGE_VER = 1;
@@ -247,6 +262,23 @@ function showToast(body, type) {
   console.log("[Toast]", type, body);
 }
 
+// Bridge-layer i18n shim: prefers OpenAkitaI18n (which has built-in bridge.*
+// defaults, see ui-kit/i18n.js), and falls back to the literal English text
+// when i18n.js is not yet loaded so we never show raw "bridge.x.y" keys.
+function _bt(key, vars, fallback) {
+  if (window.OpenAkitaI18n && typeof window.OpenAkitaI18n.t === "function") {
+    var v = window.OpenAkitaI18n.t(key, vars);
+    if (v && v !== key) return v;
+  }
+  if (!fallback) return key;
+  if (vars) {
+    return String(fallback).replace(/\{(\w+)\}/g, function (_m, n) {
+      return vars[n] != null ? String(vars[n]) : "{" + n + "}";
+    });
+  }
+  return fallback;
+}
+
 // ── Standard SDK: downloadFile ──
 function downloadFile(url, filename) {
   var resolvedUrl = url.startsWith("http") ? url : _detectApiBase() + url;
@@ -257,12 +289,15 @@ function downloadFile(url, filename) {
     _pending[id] = {
       resolve: function(payload) {
         if (payload && payload.ok) {
-          showToast("已保存到: " + (payload.path || "Downloads 文件夹"), "success");
+          var path = payload.path || _bt("bridge.download.okFolder", null, "Saved to Downloads folder");
+          showToast(payload.path
+            ? _bt("bridge.download.ok", { path: path }, "Saved to: {path}")
+            : path, "success");
         } else {
-          showToast("下载失败: " + (payload && payload.error || "未知错误"), "error");
+          showToast(_bt("bridge.download.fail", { msg: (payload && payload.error) || _bt("bridge.unknownError", null, "Unknown error") }, "Download failed: {msg}"), "error");
         }
       },
-      reject: function(err) { showToast("下载失败: " + err, "error"); },
+      reject: function(err) { showToast(_bt("bridge.download.fail", { msg: err }, "Download failed: {msg}"), "error"); },
     };
     post({ type: "bridge:download", requestId: id, payload: { url: resolvedUrl, filename: fname } });
     return;
@@ -270,8 +305,8 @@ function downloadFile(url, filename) {
 
   if (window.__TAURI_INTERNALS__) {
     window.__TAURI_INTERNALS__.invoke("download_file", { url: resolvedUrl, filename: fname })
-      .then(function(path) { showToast("已保存到: " + path, "success"); })
-      .catch(function(err) { showToast("下载失败: " + err, "error"); });
+      .then(function(path) { showToast(_bt("bridge.download.ok", { path: path }, "Saved to: {path}"), "success"); })
+      .catch(function(err) { showToast(_bt("bridge.download.fail", { msg: err }, "Download failed: {msg}"), "error"); });
     return;
   }
 
@@ -282,7 +317,7 @@ function downloadFile(url, filename) {
   document.body.appendChild(a);
   a.click();
   setTimeout(function() { document.body.removeChild(a); }, 300);
-  showToast("下载已开始", "success");
+  showToast(_bt("bridge.download.started", null, "Download started"), "success");
 }
 
 // ── Standard SDK: showInFolder ──
@@ -300,7 +335,7 @@ function pickFolder(title) {
     return new Promise(function(resolve) {
       var id = uid();
       _pending[id] = { resolve: function(payload) { resolve(payload && payload.path || null); }, reject: function() { resolve(null); } };
-      post({ type: "bridge:pick-folder", requestId: id, payload: { title: title || "选择文件夹" } });
+      post({ type: "bridge:pick-folder", requestId: id, payload: { title: title || _bt("bridge.pickFolder.title", null, "Pick a folder") } });
       setTimeout(function() { if (_pending[id]) { delete _pending[id]; resolve(null); } }, 60000);
     });
   }
@@ -311,11 +346,11 @@ function pickFolder(title) {
 function copyToClipboard(text) {
   if (_inIframe && _bridgeConnected) {
     var id = uid();
-    _pending[id] = { resolve: function() { showToast("已复制到剪贴板"); }, reject: function() {} };
+    _pending[id] = { resolve: function() { showToast(_bt("bridge.clipboard.ok", null, "Copied to clipboard")); }, reject: function() {} };
     post({ type: "bridge:clipboard", requestId: id, payload: { text: text } });
     return;
   }
-  if (navigator.clipboard) { navigator.clipboard.writeText(text).then(function() { showToast("已复制到剪贴板"); }); }
+  if (navigator.clipboard) { navigator.clipboard.writeText(text).then(function() { showToast(_bt("bridge.clipboard.ok", null, "Copied to clipboard")); }); }
 }
 
 window.__bridge = {
@@ -334,6 +369,551 @@ window.__bridge = {
 <script type="text/babel" data-type="module">
 const { useState, useEffect, useCallback, useRef } = React;
 const { pluginApi, onEvent, uploadFile, downloadFile, showToast, showInFolder, pickFolder, copyToClipboard } = window.__bridge;
+
+// ── i18n dictionary — keep keys sorted by scope: app/tabs/banner/modes/ratios/
+//    create/preview/tasks/assets/guide/storyboard/settings/status/toast/err.
+const I18N_DICT = {
+  zh: {
+    "app.title": "Seedance 视频生成",
+    "app.subtitle": "AI 视频创作",
+    "app.api.label": "API Key",
+    "app.api.missing": "请先配置 API Key",
+    "app.api.tooltip": "点击前往设置页配置 API Key",
+    "tabs.create": "创建",
+    "tabs.tasks": "任务列表",
+    "tabs.assets": "素材库",
+    "tabs.guide": "提示词指南",
+    "tabs.storyboard": "分镜工作台",
+    "tabs.settings": "设置",
+    "banner.noKey.title": "尚未配置 ARK API Key",
+    "banner.noKey.desc": "所有创建任务都会失败。请前往设置页填入火山引擎 Volcengine Ark API Key。",
+    "banner.noKey.cta": "前往配置",
+    "modes.t2v": "文生视频",
+    "modes.i2v": "首帧",
+    "modes.i2v_end": "首尾帧",
+    "modes.multimodal": "多模态",
+    "modes.edit": "编辑",
+    "modes.extend": "延长",
+    "create.section.mode": "生成模式",
+    "create.section.firstFrame": "首帧上传",
+    "create.section.firstLastFrame": "首尾帧上传",
+    "create.section.multimodal": "参考素材",
+    "create.section.editVideo": "原始视频",
+    "create.section.extendVideo": "待延长视频",
+    "create.section.prompt": "提示词",
+    "create.section.params": "参数配置",
+    "create.section.advanced": "高级选项",
+    "create.label.model": "模型",
+    "create.label.ratio": "比例",
+    "create.label.resolution": "分辨率",
+    "create.label.duration": "时长 ({min}-{max}秒)",
+    "create.label.tier": "推理模式",
+    "create.tier.online": "在线",
+    "create.tier.flex": "离线半价",
+    "create.toggle.audio": "声音",
+    "create.toggle.watermark": "水印",
+    "create.toggle.lastFrame": "返回尾帧",
+    "create.toggle.draft": "样片模式",
+    "create.toggle.webSearch": "联网搜索",
+    "create.prompt.placeholder": "描述你想生成的视频内容...",
+    "create.prompt.counter": "{n}/5000",
+    "create.btn.optimize": "AI 优化提示词",
+    "create.btn.startVideo": "生成视频",
+    "create.btn.startDraft": "生成样片预览",
+    "create.btn.startFlex": "提交离线任务",
+    "create.upload.firstHint": "拖拽或点击上传首帧图片",
+    "create.upload.firstSubHint": "建议高清图片 (300-6000px)，比例与目标视频一致",
+    "create.upload.startFrame": "首帧图片",
+    "create.upload.startFrameHint": "起始画面",
+    "create.upload.endFrame": "尾帧图片",
+    "create.upload.endFrameHint": "结束画面",
+    "create.upload.endFrameTip": "首尾帧间的过渡由 AI 自动补全，差异越大效果越戏剧化",
+    "create.upload.multimodal": "拖拽或点击上传参考素材（可多选）",
+    "create.upload.multimodalHint": "支持图片/视频/音频，提示词中用「图片1」「视频2」引用",
+    "create.upload.multimodalTip": "提示词引用方式: 在提示词中写「图片1」「视频2」「音频1」，序号为同类素材的上传顺序",
+    "create.upload.editLabel": "拖拽或点击上传待编辑的视频",
+    "create.upload.extendLabel": "拖拽或点击上传待延长的视频",
+    "create.upload.videoHint": "支持 mp4/mov/webp 格式",
+    "create.upload.uploading": "上传中: {name}",
+    "create.upload.uploaded": "已上传: {name}",
+    "create.tip.t2v": "文生视频随机性较大，适合激发灵感。如有明确预期，建议先生图再图生视频",
+    "create.tip.i2v": "建议上传高清高质量图片（300-6000px），图片比例建议与目标视频一致以避免裁切",
+    "create.tip.i2v_end": "首尾帧间的画面由 AI 自动过渡补全，尾帧差异越大效果越戏剧化",
+    "create.tip.multimodal": "提示词中用「图片1」「视频2」「音频1」引用素材，序号为同类素材上传顺序",
+    "create.tip.edit": "描述要替换/增加/删除的元素、时机和位置，强调保持不变的部分",
+    "create.tip.extend": "向前/向后延长视频，或多段串联。描述延长内容 + 过渡方式",
+    "preview.empty.title": "AI 视频制作就绪",
+    "preview.empty.hint": "填写参数后点击生成",
+    "preview.running.title": "正在生成中...",
+    "preview.running.hint": "通常需要 1~3 分钟，请耐心等待",
+    "preview.failed": "生成失败",
+    "preview.waiting": "等待结果...",
+    "preview.revised": "修改后提示词: {text}",
+    "preview.btn.download": "下载",
+    "preview.btn.new": "新建",
+    "preview.ctrl.stepBack": "逐帧后退",
+    "preview.ctrl.stepFwd": "逐帧前进",
+    "preview.ctrl.loop": "循环",
+    "modal.taskStarted.title": "任务已开始",
+    "modal.taskStarted.draft": "样片预览正在生成，通常需要 30 秒~1 分钟。可前往任务列表查看进度。",
+    "modal.taskStarted.flex": "离线任务已提交，半价模式通常需要 5~30 分钟。可前往任务列表查看进度。",
+    "modal.taskStarted.online": "视频正在云端异步生成，通常需要 1~3 分钟。可前往任务列表查看生成进度。",
+    "modal.taskStarted.continue": "继续创建",
+    "modal.taskStarted.goTasks": "前往任务列表",
+    "tasks.filter.all": "全部",
+    "tasks.filter.running": "进行中",
+    "tasks.filter.succeeded": "已完成",
+    "tasks.filter.failed": "失败",
+    "tasks.filter.draft": "样片",
+    "tasks.filter.flex": "离线",
+    "tasks.refresh": "刷新",
+    "tasks.empty": "暂无任务",
+    "tasks.noPrompt": "(无提示词)",
+    "tasks.total": "共 {n} 个任务",
+    "tasks.tag.flex": "Flex半价",
+    "tasks.tag.draft": "样片",
+    "tasks.tag.downloaded": "已下载",
+    "tasks.tag.failed": "失败",
+    "tasks.tag.running": "生成中",
+    "tasks.tag.done": "完成",
+    "tasks.btn.retry": "重试",
+    "tasks.btn.delete": "删除",
+    "assets.filter.all": "全部",
+    "assets.filter.image": "图片",
+    "assets.filter.video": "视频",
+    "assets.filter.audio": "音频",
+    "assets.empty.title": "暂无素材",
+    "assets.empty.hint": "在创建面板上传素材后会自动显示在这里",
+    "assets.count": "{n} 个素材",
+    "assets.btn.delete": "删除",
+    "guide.search.placeholder": "搜索模板或关键词...",
+    "guide.section.templates": "模板库（点击查看 / 套用）",
+    "guide.section.cameras": "镜头语言速查",
+    "guide.section.atmosphere": "氛围关键词库",
+    "guide.section.formulas": "提示词公式",
+    "guide.section.tips": "提示词编写技巧",
+    "guide.templates.empty": "暂无模板数据（后端未连接或正在加载中）",
+    "guide.atmosphere.light": "光影",
+    "guide.atmosphere.color": "色调",
+    "guide.atmosphere.texture": "质感",
+    "guide.atmosphere.mood": "情绪",
+    "guide.tips.body": "1. 建议 80-200 字，不超过 300 字（5000字符上限）\n2. 使用**时间轴格式**让镜头有节奏：「0-3s: 推镜头, 4-6s: 特写」\n3. 加入**镜头语言**：推/拉/摇/移/跟/环绕/升降/希区柯克变焦\n4. 加入**声音设计**：配乐风格 + 环境音效 + 人声\n5. 避免出现**人脸/真人面孔**相关描述（当前模型限制）\n6. 描述越具体，AI 越能精准生成你想要的视频",
+    "story.section.input": "故事输入",
+    "story.section.usage": "使用说明",
+    "story.section.params": "生成参数",
+    "story.label.story": "故事 / 脚本内容",
+    "story.label.totalDuration": "目标总时长 (秒)",
+    "story.label.segDuration": "每段时长 (秒)",
+    "story.label.ratio": "画面比例",
+    "story.label.style": "视觉风格",
+    "story.label.model": "模型",
+    "story.label.resolution": "分辨率",
+    "story.label.genMode": "生成模式",
+    "story.label.transition": "拼接过渡",
+    "story.story.placeholder": "请输入你的视频故事内容，AI 会自动拆解为多段分镜脚本...\n\n示例：一只小猫在阳光明媚的花园里探索，先好奇地闻花朵，然后追逐蝴蝶，最后在树荫下打盹。",
+    "story.estimate": "预计将拆解为 {n} 个视频片段，每段 {seg} 秒，总时长约 {total} 秒",
+    "story.decompose.idle": "AI 分镜拆解",
+    "story.decompose.busy": "AI 拆解中...",
+    "story.decompose.connect": "正在连接 AI 模型...",
+    "story.decompose.analyze": "AI 正在分析故事结构，生成分镜脚本...",
+    "story.decompose.batch": "正在生成 {n} 段分镜，请耐心等待...",
+    "story.decompose.long": "LLM 推理中，较长的故事可能需要 20-40 秒...",
+    "story.usage.body": "1. 输入你的故事或脚本，AI 会将其拆解为多段 Seedance 分镜\n2. 可以编辑每段分镜的提示词、时长和过渡方式\n3. 串行模式下，每段视频会使用上一段的尾帧作为参考，保证画面连贯\n4. 生成完成后可用 ffmpeg 拼接为完整长视频",
+    "story.usage.warn": "**注意：**Seedance 2.0 不支持含真人面部的参考图。串行链接如遇人脸审核，系统会自动降级为纯文本生成，画面连贯性可能降低。建议使用虚拟人物、动物、风景等主题。",
+    "story.edit.title": "分镜编辑 — {n} 段",
+    "story.edit.hint": "点击段落展开编辑，拖动排序，自由调整",
+    "story.btn.back": "返回",
+    "story.btn.addSeg": "添加段",
+    "story.btn.startGen": "开始生成 ({mode})",
+    "story.btn.startGenSerial": "串行接力",
+    "story.btn.startGenParallel": "并行独立",
+    "story.btn.moveUp": "上移",
+    "story.btn.moveDown": "下移",
+    "story.btn.delete": "删除",
+    "story.btn.newProject": "新建项目",
+    "story.btn.backEdit": "返回编辑",
+    "story.btn.openFolder": "打开所在文件夹",
+    "story.gen.title": "正在生成 {n} 段视频...",
+    "story.gen.serialDesc": "串行模式: 逐段生成，每段使用上一段结果作为参考",
+    "story.gen.parallelDesc": "并行模式: 所有段落同时生成",
+    "story.gen.estimate": "预计需要 {min} 分钟，请耐心等待",
+    "story.results.done": "长视频生成完成",
+    "story.results.title": "生成结果",
+    "story.results.summary": "总计: {total} 段 · 成功 {ok}{fail}",
+    "story.results.failPart": " · 失败 {n}",
+    "story.concat.title": "拼接完成",
+    "story.concat.tip": "可拼接 {n} 个视频片段",
+    "story.concat.idle": "拼接为长视频 ({mode})",
+    "story.concat.busy": "拼接中...",
+    "story.concat.modeCut": "硬切",
+    "story.concat.modeFade": "交叉淡化",
+    "story.totalEstimate": "共 {n} 段，预计总时长 {sec} 秒",
+    "story.statTotal": "总计:",
+    "story.statSuccess": "成功:",
+    "story.statFail": "失败:",
+    "settings.section.api": "API 配置",
+    "settings.section.defaults": "默认参数",
+    "settings.section.folder": "文件夹设置",
+    "settings.section.webhook": "Webhook 设置",
+    "settings.label.apiKey": "ARK API Key",
+    "settings.api.placeholder": "输入 Volcengine Ark API Key",
+    "settings.api.show": "显示",
+    "settings.api.hide": "隐藏",
+    "settings.api.save": "保存",
+    "settings.api.required": "必填项",
+    "settings.api.help": "获取方式: 前往 console.volcengine.com/ark 创建 API Key",
+    "settings.label.tier": "默认推理模式",
+    "settings.tier.online": "在线推理",
+    "settings.tier.flex": "离线推理 (半价)",
+    "settings.label.poll": "轮询间隔",
+    "settings.poll.10": "10 秒",
+    "settings.poll.15": "15 秒",
+    "settings.poll.30": "30 秒",
+    "settings.poll.60": "60 秒",
+    "settings.label.optimizeLevel": "优化级别",
+    "settings.optimize.light": "轻度润色",
+    "settings.optimize.professional": "专业重写",
+    "settings.optimize.storyboard": "分镜脚本",
+    "settings.label.outputDir": "视频输出目录",
+    "settings.outputDir.placeholder": "默认: ~/seedance-output/",
+    "settings.btn.browse": "浏览",
+    "settings.btn.open": "打开",
+    "settings.label.subdir": "子目录结构",
+    "settings.subdir.date": "按日期",
+    "settings.subdir.project": "按项目",
+    "settings.subdir.flat": "扁平",
+    "settings.label.naming": "文件命名规则",
+    "settings.toggle.autoDownload": "自动下载完成的视频",
+    "settings.label.assetsDir": "素材文件夹",
+    "settings.assetsDir.placeholder": "默认: ~/seedance-assets/",
+    "settings.stats.outputDir": "视频输出",
+    "settings.stats.assetsDir": "素材",
+    "settings.stats.cacheDir": "缓存",
+    "settings.stats.fileCount": "{n} 个文件",
+    "settings.label.callback": "回调 URL（可选）",
+    "settings.callback.placeholder": "https://...",
+    "settings.callback.help": "配置后任务状态变化时自动通知，减少轮询",
+    "settings.toast.saved": "设置已保存",
+    "settings.toast.keyError": "API Key 保存异常，请重试",
+    "settings.toast.saveFailed": "保存失败: {msg}",
+    "settings.pickOutput": "选择视频输出目录",
+    "settings.pickAssets": "选择素材文件夹",
+    "toast.optimizeOk": "提示词优化完成",
+    "toast.optimizeFail": "提示词优化失败: {msg}",
+    "toast.optimizeNoChange": "提示词无需优化或 LLM 返回了相同内容",
+    "toast.optimizeError": "提示词优化请求失败: {msg}",
+    "toast.copyOk": "已复制到剪贴板",
+    "toast.downloadOk": "已保存到: {path}",
+    "toast.downloadFail": "下载失败: {msg}",
+    "toast.downloadStarted": "下载已开始",
+    "toast.networkError": "网络错误: {msg}",
+    "toast.requestFail": "请求失败: {msg}",
+    "toast.decomposeOk": "分镜拆解完成，共 {n} 段",
+    "toast.decomposeFail": "分镜拆解失败: {msg}",
+    "toast.genFail": "生成失败: {msg}",
+    "toast.concatNeed2": "至少需要 2 个成功的视频片段",
+    "toast.concatFail": "拼接失败: {msg}",
+    "toast.unknownErr": "未知错误",
+    "err.title": "插件 UI 渲染出错",
+    "err.retry": "重试渲染",
+  },
+  en: {
+    "app.title": "Seedance Video",
+    "app.subtitle": "AI Video Studio",
+    "app.api.label": "API Key",
+    "app.api.missing": "Configure API Key first",
+    "app.api.tooltip": "Click to open Settings and configure your API Key",
+    "tabs.create": "Create",
+    "tabs.tasks": "Tasks",
+    "tabs.assets": "Assets",
+    "tabs.guide": "Prompt Guide",
+    "tabs.storyboard": "Storyboard",
+    "tabs.settings": "Settings",
+    "banner.noKey.title": "ARK API Key not configured",
+    "banner.noKey.desc": "All create requests will fail. Open Settings and paste your Volcengine Ark API Key.",
+    "banner.noKey.cta": "Open Settings",
+    "modes.t2v": "Text → Video",
+    "modes.i2v": "First Frame",
+    "modes.i2v_end": "First+Last Frame",
+    "modes.multimodal": "Multimodal",
+    "modes.edit": "Edit",
+    "modes.extend": "Extend",
+    "create.section.mode": "Mode",
+    "create.section.firstFrame": "First Frame",
+    "create.section.firstLastFrame": "First & Last Frame",
+    "create.section.multimodal": "Reference Assets",
+    "create.section.editVideo": "Source Video",
+    "create.section.extendVideo": "Video to Extend",
+    "create.section.prompt": "Prompt",
+    "create.section.params": "Parameters",
+    "create.section.advanced": "Advanced",
+    "create.label.model": "Model",
+    "create.label.ratio": "Aspect ratio",
+    "create.label.resolution": "Resolution",
+    "create.label.duration": "Duration ({min}-{max}s)",
+    "create.label.tier": "Inference",
+    "create.tier.online": "Online",
+    "create.tier.flex": "Flex (50% off)",
+    "create.toggle.audio": "Audio",
+    "create.toggle.watermark": "Watermark",
+    "create.toggle.lastFrame": "Return last frame",
+    "create.toggle.draft": "Draft",
+    "create.toggle.webSearch": "Web search",
+    "create.prompt.placeholder": "Describe the video you want to generate…",
+    "create.prompt.counter": "{n}/5000",
+    "create.btn.optimize": "AI Optimize",
+    "create.btn.startVideo": "Generate Video",
+    "create.btn.startDraft": "Generate Draft Preview",
+    "create.btn.startFlex": "Submit Flex Job",
+    "create.upload.firstHint": "Drag or click to upload first-frame image",
+    "create.upload.firstSubHint": "HD image (300–6000px). Match your target aspect ratio.",
+    "create.upload.startFrame": "First frame",
+    "create.upload.startFrameHint": "Starting picture",
+    "create.upload.endFrame": "Last frame",
+    "create.upload.endFrameHint": "Ending picture",
+    "create.upload.endFrameTip": "AI fills the in-between transition. Larger differences = more dramatic.",
+    "create.upload.multimodal": "Drag or click to upload reference assets (multi-select)",
+    "create.upload.multimodalHint": "Image/video/audio supported. Reference as 'image1' / 'video2' / 'audio1'.",
+    "create.upload.multimodalTip": "Refer to assets in the prompt as 'image1', 'video2', 'audio1' (in upload order).",
+    "create.upload.editLabel": "Drag or click to upload the video to edit",
+    "create.upload.extendLabel": "Drag or click to upload the video to extend",
+    "create.upload.videoHint": "mp4 / mov / webm",
+    "create.upload.uploading": "Uploading: {name}",
+    "create.upload.uploaded": "Uploaded: {name}",
+    "create.tip.t2v": "Text-to-video is exploratory. For predictable results, generate an image first then image-to-video.",
+    "create.tip.i2v": "Use HD images (300–6000px). Match the target video aspect ratio to avoid cropping.",
+    "create.tip.i2v_end": "AI fills the in-between transition. Larger frame differences create more drama.",
+    "create.tip.multimodal": "Reference assets in the prompt as 'image1' / 'video2' / 'audio1' by upload order.",
+    "create.tip.edit": "Describe what to replace / add / remove, when, and where. Call out what stays the same.",
+    "create.tip.extend": "Extend forward, backward, or chain. Describe new content + transition style.",
+    "preview.empty.title": "Ready to create",
+    "preview.empty.hint": "Fill in parameters and press generate",
+    "preview.running.title": "Generating…",
+    "preview.running.hint": "Usually 1–3 minutes. Hold tight.",
+    "preview.failed": "Generation failed",
+    "preview.waiting": "Waiting for result…",
+    "preview.revised": "Revised prompt: {text}",
+    "preview.btn.download": "Download",
+    "preview.btn.new": "New",
+    "preview.ctrl.stepBack": "Step back",
+    "preview.ctrl.stepFwd": "Step forward",
+    "preview.ctrl.loop": "Loop",
+    "modal.taskStarted.title": "Task started",
+    "modal.taskStarted.draft": "Draft preview is generating (~30s–1min). Check Tasks for progress.",
+    "modal.taskStarted.flex": "Flex job submitted (~5–30 min, half-price). Check Tasks for progress.",
+    "modal.taskStarted.online": "Video is generating in the cloud (~1–3 min). Check Tasks for progress.",
+    "modal.taskStarted.continue": "Keep creating",
+    "modal.taskStarted.goTasks": "Open Tasks",
+    "tasks.filter.all": "All",
+    "tasks.filter.running": "Running",
+    "tasks.filter.succeeded": "Done",
+    "tasks.filter.failed": "Failed",
+    "tasks.filter.draft": "Draft",
+    "tasks.filter.flex": "Flex",
+    "tasks.refresh": "Refresh",
+    "tasks.empty": "No tasks yet",
+    "tasks.noPrompt": "(no prompt)",
+    "tasks.total": "{n} tasks total",
+    "tasks.tag.flex": "Flex 50%",
+    "tasks.tag.draft": "Draft",
+    "tasks.tag.downloaded": "Saved",
+    "tasks.tag.failed": "Failed",
+    "tasks.tag.running": "Running",
+    "tasks.tag.done": "Done",
+    "tasks.btn.retry": "Retry",
+    "tasks.btn.delete": "Delete",
+    "assets.filter.all": "All",
+    "assets.filter.image": "Images",
+    "assets.filter.video": "Videos",
+    "assets.filter.audio": "Audio",
+    "assets.empty.title": "No assets",
+    "assets.empty.hint": "Files you upload from Create show up here.",
+    "assets.count": "{n} assets",
+    "assets.btn.delete": "Delete",
+    "guide.search.placeholder": "Search templates or keywords…",
+    "guide.section.templates": "Templates (click to view / apply)",
+    "guide.section.cameras": "Camera language",
+    "guide.section.atmosphere": "Atmosphere keywords",
+    "guide.section.formulas": "Prompt formulas",
+    "guide.section.tips": "Prompt-writing tips",
+    "guide.templates.empty": "No templates yet (backend offline or still loading).",
+    "guide.atmosphere.light": "Light",
+    "guide.atmosphere.color": "Color",
+    "guide.atmosphere.texture": "Texture",
+    "guide.atmosphere.mood": "Mood",
+    "guide.tips.body": "1. 80–200 chars works well; hard cap 5000.\n2. Use a **timeline** for rhythm: '0–3s: push-in, 4–6s: close-up'.\n3. Add **camera language**: push / pull / pan / dolly / orbit / crane / dolly-zoom.\n4. Add **sound design**: music style + ambience + voice.\n5. Avoid **human faces** (current model limit).\n6. The more concrete you are, the closer the video gets to your idea.",
+    "story.section.input": "Story",
+    "story.section.usage": "How to use",
+    "story.section.params": "Generation parameters",
+    "story.label.story": "Story / script",
+    "story.label.totalDuration": "Total duration (seconds)",
+    "story.label.segDuration": "Per-segment duration",
+    "story.label.ratio": "Aspect ratio",
+    "story.label.style": "Visual style",
+    "story.label.model": "Model",
+    "story.label.resolution": "Resolution",
+    "story.label.genMode": "Generation mode",
+    "story.label.transition": "Concatenation transition",
+    "story.story.placeholder": "Type your story; AI will break it into a sequence of storyboard segments…\n\nExample: A kitten explores a sunny garden — first sniffs flowers, then chases a butterfly, finally naps under a tree.",
+    "story.estimate": "Estimated {n} segments × {seg}s ≈ {total}s total",
+    "story.decompose.idle": "AI Storyboard",
+    "story.decompose.busy": "Decomposing…",
+    "story.decompose.connect": "Connecting to the AI model…",
+    "story.decompose.analyze": "AI is analysing the story and drafting segments…",
+    "story.decompose.batch": "Generating {n} segments — hold on…",
+    "story.decompose.long": "LLM still thinking; longer stories may take 20–40s…",
+    "story.usage.body": "1. Type your story; AI breaks it into Seedance segments.\n2. Edit each segment — prompt, duration, transition.\n3. Serial mode reuses each segment's last frame as the next reference for visual continuity.\n4. After generation, ffmpeg concatenates everything into a long video.",
+    "story.usage.warn": "**Note:** Seedance 2.0 does not accept reference images with human faces. Serial linking will fall back to text-only generation if the safety check trips, which can reduce continuity. Prefer animated characters, animals, or scenery.",
+    "story.edit.title": "Edit storyboard — {n} segments",
+    "story.edit.hint": "Click a segment to expand and edit. Reorder freely.",
+    "story.btn.back": "Back",
+    "story.btn.addSeg": "Add segment",
+    "story.btn.startGen": "Start generation ({mode})",
+    "story.btn.startGenSerial": "Serial",
+    "story.btn.startGenParallel": "Parallel",
+    "story.btn.moveUp": "Up",
+    "story.btn.moveDown": "Down",
+    "story.btn.delete": "Delete",
+    "story.btn.newProject": "New project",
+    "story.btn.backEdit": "Back to editor",
+    "story.btn.openFolder": "Open folder",
+    "story.gen.title": "Generating {n} segments…",
+    "story.gen.serialDesc": "Serial: each segment uses the previous result as reference.",
+    "story.gen.parallelDesc": "Parallel: all segments run at the same time.",
+    "story.gen.estimate": "Approx {min} minutes — please be patient.",
+    "story.results.done": "Long video generated",
+    "story.results.title": "Results",
+    "story.results.summary": "Total: {total} · Success {ok}{fail}",
+    "story.results.failPart": " · Failed {n}",
+    "story.concat.title": "Concatenated",
+    "story.concat.tip": "Ready to concatenate {n} segments",
+    "story.concat.idle": "Concatenate ({mode})",
+    "story.concat.busy": "Concatenating…",
+    "story.concat.modeCut": "Hard cut",
+    "story.concat.modeFade": "Crossfade",
+    "story.totalEstimate": "{n} segments · ~{sec}s total",
+    "story.statTotal": "Total:",
+    "story.statSuccess": "Success:",
+    "story.statFail": "Failed:",
+    "settings.section.api": "API",
+    "settings.section.defaults": "Defaults",
+    "settings.section.folder": "Folders",
+    "settings.section.webhook": "Webhook",
+    "settings.label.apiKey": "ARK API Key",
+    "settings.api.placeholder": "Paste your Volcengine Ark API Key",
+    "settings.api.show": "Show",
+    "settings.api.hide": "Hide",
+    "settings.api.save": "Save",
+    "settings.api.required": "Required",
+    "settings.api.help": "Get one at console.volcengine.com/ark",
+    "settings.label.tier": "Default inference",
+    "settings.tier.online": "Online",
+    "settings.tier.flex": "Flex (half-price)",
+    "settings.label.poll": "Polling interval",
+    "settings.poll.10": "10 s",
+    "settings.poll.15": "15 s",
+    "settings.poll.30": "30 s",
+    "settings.poll.60": "60 s",
+    "settings.label.optimizeLevel": "Optimization level",
+    "settings.optimize.light": "Light polish",
+    "settings.optimize.professional": "Pro rewrite",
+    "settings.optimize.storyboard": "Storyboard",
+    "settings.label.outputDir": "Video output folder",
+    "settings.outputDir.placeholder": "Default: ~/seedance-output/",
+    "settings.btn.browse": "Browse",
+    "settings.btn.open": "Open",
+    "settings.label.subdir": "Sub-folder layout",
+    "settings.subdir.date": "By date",
+    "settings.subdir.project": "By project",
+    "settings.subdir.flat": "Flat",
+    "settings.label.naming": "File naming",
+    "settings.toggle.autoDownload": "Auto-download finished videos",
+    "settings.label.assetsDir": "Assets folder",
+    "settings.assetsDir.placeholder": "Default: ~/seedance-assets/",
+    "settings.stats.outputDir": "Output",
+    "settings.stats.assetsDir": "Assets",
+    "settings.stats.cacheDir": "Cache",
+    "settings.stats.fileCount": "{n} files",
+    "settings.label.callback": "Callback URL (optional)",
+    "settings.callback.placeholder": "https://…",
+    "settings.callback.help": "Push status changes instead of polling.",
+    "settings.toast.saved": "Settings saved",
+    "settings.toast.keyError": "API Key did not save correctly — try again",
+    "settings.toast.saveFailed": "Save failed: {msg}",
+    "settings.pickOutput": "Pick video output folder",
+    "settings.pickAssets": "Pick assets folder",
+    "toast.optimizeOk": "Prompt optimized",
+    "toast.optimizeFail": "Optimization failed: {msg}",
+    "toast.optimizeNoChange": "Prompt unchanged — LLM returned identical text",
+    "toast.optimizeError": "Optimization request failed: {msg}",
+    "toast.copyOk": "Copied to clipboard",
+    "toast.downloadOk": "Saved to: {path}",
+    "toast.downloadFail": "Download failed: {msg}",
+    "toast.downloadStarted": "Download started",
+    "toast.networkError": "Network error: {msg}",
+    "toast.requestFail": "Request failed: {msg}",
+    "toast.decomposeOk": "Storyboard ready: {n} segments",
+    "toast.decomposeFail": "Decompose failed: {msg}",
+    "toast.genFail": "Generation failed: {msg}",
+    "toast.concatNeed2": "Need at least 2 successful segments to concat",
+    "toast.concatFail": "Concat failed: {msg}",
+    "toast.unknownErr": "Unknown error",
+    "err.title": "Plugin UI render error",
+    "err.retry": "Retry render",
+  },
+};
+
+const _i18n = (function () {
+  if (window.OpenAkitaI18n && window.OpenAkitaI18n.register) {
+    window.OpenAkitaI18n.register(I18N_DICT);
+    return window.OpenAkitaI18n;
+  }
+  let loc = (navigator && navigator.language) || "zh";
+  const subs = new Set();
+  return {
+    t: function (k, vars) {
+      const base = (loc || "zh").split(/[-_]/)[0];
+      const tpl = (I18N_DICT[loc] && I18N_DICT[loc][k])
+        || (I18N_DICT[base] && I18N_DICT[base][k])
+        || (I18N_DICT.en && I18N_DICT.en[k])
+        || k;
+      return vars
+        ? String(tpl).replace(/\{(\w+)\}/g, (_, n) => vars[n] != null ? String(vars[n]) : "{" + n + "}")
+        : tpl;
+    },
+    locale: () => loc,
+    setLocale: (l) => { loc = l; subs.forEach(fn => { try { fn(l); } catch (_) {} }); },
+    onChange: (fn) => { subs.add(fn); return () => subs.delete(fn); },
+  };
+})();
+
+function useT() {
+  const [, setTick] = useState(0);
+  useEffect(() => _i18n.onChange(() => setTick(x => x + 1)), []);
+  return _i18n.t;
+}
+
+function useLocale() {
+  const [loc, setLoc] = useState(() => _i18n.locale());
+  useEffect(() => _i18n.onChange((l) => setLoc(l)), []);
+  return loc;
+}
+
+function _tr(key, vars, fallback) {
+  if (window.OpenAkitaI18n && window.OpenAkitaI18n.t) {
+    const v = window.OpenAkitaI18n.t(key, vars);
+    if (v && v !== key) return v;
+  }
+  if (fallback) {
+    if (vars) {
+      return String(fallback).replace(/\{(\w+)\}/g, (_, n) =>
+        vars[n] != null ? String(vars[n]) : "{" + n + "}",
+      );
+    }
+    return fallback;
+  }
+  return key;
+}
 
 // SVG Icon system — replaces all emoji
 const I = {
@@ -378,17 +958,18 @@ function Ico({ name, style: s }) { return <span className="ico" style={s}>{I[nam
 
 // ── Task Started Modal ──
 function TaskStartedModal({ open, onClose, onGoToTasks, title, desc }) {
+  const t = useT();
   if (!open) return null;
   return (
     <div className="modal-mask" onClick={onClose}>
       <div className="modal-card" onClick={e => e.stopPropagation()}>
         <div className="modal-icon"><Ico name="check"/></div>
-        <div className="modal-title">{title || "任务已开始"}</div>
+        <div className="modal-title">{title || t("modal.taskStarted.title")}</div>
         <div className="modal-desc">{desc}</div>
         <div className="modal-actions">
-          <button className="btn" onClick={onClose}>继续创建</button>
+          <button className="btn" onClick={onClose}>{t("modal.taskStarted.continue")}</button>
           <button className="btn btn-primary" onClick={() => { onClose(); onGoToTasks && onGoToTasks(); }}>
-            前往任务列表
+            {t("modal.taskStarted.goTasks")}
           </button>
         </div>
       </div>
@@ -397,16 +978,11 @@ function TaskStartedModal({ open, onClose, onGoToTasks, title, desc }) {
 }
 
 // ── Constants ──
-const MODES = [
-  { id: "t2v", label: "文生视频" },
-  { id: "i2v", label: "首帧" },
-  { id: "i2v_end", label: "首尾帧" },
-  { id: "multimodal", label: "多模态" },
-  { id: "edit", label: "编辑" },
-  { id: "extend", label: "延长" },
-];
+// Mode/Tab labels are i18n keys; resolved via t() at render time so locale
+// changes re-render correctly. Order is part of the UI contract — never sort.
+const MODE_IDS = ["t2v", "i2v", "i2v_end", "multimodal", "edit", "extend"];
 const RATIOS = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
-const TABS = ["创建", "任务列表", "素材库", "提示词指南", "分镜工作台", "设置"];
+const TAB_IDS = ["create", "tasks", "assets", "guide", "storyboard", "settings"];
 
 // ── Hooks ──
 function useModels() {
@@ -442,6 +1018,7 @@ function useTasks() {
 // ── Components ──
 
 function FileUploadZone({ id, accept, multiple, onUpload, label, hint }) {
+  const t = useT();
   const [uploading, setUploading] = useState(false);
   const [fileName, setFileName] = useState("");
   const [dragOver, setDragOver] = useState(false);
@@ -468,13 +1045,13 @@ function FileUploadZone({ id, accept, multiple, onUpload, label, hint }) {
       {uploading ? (
         <div className="flex items-center gap-2" style={{justifyContent:"center"}}>
           <div className="spinner" style={{width:16,height:16}} />
-          <span className="text-sm">上传中: {fileName}</span>
+          <span className="text-sm">{t("create.upload.uploading", { name: fileName })}</span>
         </div>
       ) : (
         <>
           <p style={{fontSize:13}}>{label}</p>
           {hint && <p className="text-xs text-dim" style={{marginTop:4}}>{hint}</p>}
-          {fileName && <p className="text-xs text-success" style={{marginTop:4}}><Ico name="check"/> 已上传: {fileName}</p>}
+          {fileName && <p className="text-xs text-success" style={{marginTop:4}}><Ico name="check"/> {t("create.upload.uploaded", { name: fileName })}</p>}
         </>
       )}
     </div>
@@ -482,6 +1059,7 @@ function FileUploadZone({ id, accept, multiple, onUpload, label, hint }) {
 }
 
 function VideoPlayer({ task }) {
+  const t = useT();
   const videoRef = useRef(null);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCt] = useState(0);
@@ -517,8 +1095,8 @@ function VideoPlayer({ task }) {
     <div className="video-player-wrap">
       <div className="empty-state">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M15 10l-4 3V7l4 3z"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
-        <p>AI 视频制作就绪</p>
-        <p className="text-xs text-dim" style={{marginTop:4}}>填写参数后点击生成</p>
+        <p>{t("preview.empty.title")}</p>
+        <p className="text-xs text-dim" style={{marginTop:4}}>{t("preview.empty.hint")}</p>
       </div>
     </div>
   );
@@ -529,8 +1107,8 @@ function VideoPlayer({ task }) {
         {task.status === "running" || task.status === "pending" ? (
           <div className="empty-state">
             <div className="spinner" style={{width:32,height:32,marginBottom:12}}/>
-            <p>正在生成中...</p>
-            <p className="text-xs text-dim" style={{marginTop:6}}>通常需要 1~3 分钟，请耐心等待</p>
+            <p>{t("preview.running.title")}</p>
+            <p className="text-xs text-dim" style={{marginTop:6}}>{t("preview.running.hint")}</p>
           </div>
         ) : task.status === "succeeded" && videoSrc ? (
           <video ref={videoRef} src={videoSrc} loop={loop} autoPlay muted
@@ -540,19 +1118,19 @@ function VideoPlayer({ task }) {
             style={{width:"100%",height:"100%",objectFit:"contain"}} />
         ) : task.status === "failed" ? (
           <div className="empty-state">
-            <p style={{color:"var(--text-danger,#dc2626)"}}>{task.error_message || "生成失败"}</p>
+            <p style={{color:"var(--text-danger,#dc2626)"}}>{task.error_message || t("preview.failed")}</p>
           </div>
         ) : (
           <div className="empty-state">
-            <p>等待结果...</p>
+            <p>{t("preview.waiting")}</p>
           </div>
         )}
       </div>
       {task.status === "succeeded" && videoSrc && (
         <div className="video-controls">
-          <button onClick={() => stepFrame(-1)} title="逐帧后退"><Ico name="skipBack"/></button>
+          <button onClick={() => stepFrame(-1)} title={t("preview.ctrl.stepBack")}><Ico name="skipBack"/></button>
           <button onClick={togglePlay}>{playing ? <Ico name="pause"/> : <Ico name="play"/>}</button>
-          <button onClick={() => stepFrame(1)} title="逐帧前进"><Ico name="skipFwd"/></button>
+          <button onClick={() => stepFrame(1)} title={t("preview.ctrl.stepFwd")}><Ico name="skipFwd"/></button>
           <div className="progress-bar" onClick={(e) => {
             const rect = e.currentTarget.getBoundingClientRect();
             const pct = (e.clientX - rect.left) / rect.width;
@@ -562,12 +1140,12 @@ function VideoPlayer({ task }) {
           </div>
           <span>{currentTime.toFixed(1)}s / {duration.toFixed(1)}s</span>
           <button onClick={changeSpeed}>{speed}x</button>
-          <button onClick={() => setLoop(!loop)} style={{opacity: loop?1:.5}} title="循环"><Ico name="repeat"/></button>
+          <button onClick={() => setLoop(!loop)} style={{opacity: loop?1:.5}} title={t("preview.ctrl.loop")}><Ico name="repeat"/></button>
         </div>
       )}
       {task.revised_prompt && (
         <div style={{padding:"8px 12px",fontSize:12,color:"var(--text-dim)",fontStyle:"italic"}}>
-          修改后提示词: {task.revised_prompt}
+          {t("preview.revised", { text: task.revised_prompt })}
         </div>
       )}
     </div>
@@ -609,14 +1187,9 @@ function CreateTab({ models, onGoToTasks }) {
   const can1080 = currentModel?.resolutions?.includes("1080p") || false;
   const canWebSearch = currentModel?.supports_web_search && mode === "t2v";
 
-  const MODE_TIPS = {
-    t2v: "文生视频随机性较大，适合激发灵感。如有明确预期，建议先生图再图生视频",
-    i2v: "建议上传高清高质量图片（300-6000px），图片比例建议与目标视频一致以避免裁切",
-    i2v_end: "首尾帧间的画面由 AI 自动过渡补全，尾帧差异越大效果越戏剧化",
-    multimodal: "提示词中用「图片1」「视频2」「音频1」引用素材，序号为同类素材上传顺序",
-    edit: "描述要替换/增加/删除的元素、时机和位置，强调保持不变的部分",
-    extend: "向前/向后延长视频，或多段串联。描述延长内容 + 过渡方式",
-  };
+  const t = useT();
+  // MODE_TIPS body lives in I18N_DICT (create.tip.<id>); resolve via t() so
+  // locale switches without re-creating the component.
 
   useEffect(() => {
     if (duration < minDur) setDuration(minDur);
@@ -639,17 +1212,17 @@ function CreateTab({ models, onGoToTasks }) {
         setActiveTask(r.body.task);
         setTaskStartedDesc(
           draft
-            ? "样片预览正在生成，通常需要 30 秒~1 分钟。可前往任务列表查看进度。"
+            ? t("modal.taskStarted.draft")
             : serviceTier === "flex"
-              ? "离线任务已提交，半价模式通常需要 5~30 分钟。可前往任务列表查看进度。"
-              : "视频正在云端异步生成，通常需要 1~3 分钟。可前往任务列表查看生成进度。"
+              ? t("modal.taskStarted.flex")
+              : t("modal.taskStarted.online")
         );
         setTaskStartedOpen(true);
       } else {
-        var msg = r.body?.detail || r.body?.error || "请求失败 (HTTP " + r.status + ")";
+        var msg = r.body?.detail || r.body?.error || _tr("toast.requestFail", { msg: "HTTP " + r.status }, "Request failed: {msg}");
         setCreateError(msg);
       }
-    } catch (e) { setCreateError("网络错误: " + e.message); }
+    } catch (e) { setCreateError(_tr("toast.networkError", { msg: e.message }, "Network error: {msg}")); }
     setLoading(false);
   };
 
@@ -661,14 +1234,14 @@ function CreateTab({ models, onGoToTasks }) {
       const r = await directFetch("POST", base + "/prompt-optimize", { prompt, mode, duration, ratio });
       if (r.body?.ok && r.body?.result && r.body.result !== prompt) {
         setPrompt(r.body.result);
-        showToast("提示词优化完成", "success");
+        showToast(_tr("toast.optimizeOk", null, "Prompt optimized"), "success");
       } else if (!r.body?.ok) {
-        showToast("提示词优化失败: " + (r.body?.error || r.body?.detail || "LLM 不可用"), "error");
+        showToast(_tr("toast.optimizeFail", { msg: r.body?.error || r.body?.detail || "LLM unavailable" }, "Optimization failed: {msg}"), "error");
       } else {
-        showToast("提示词无需优化或 LLM 返回了相同内容", "warning");
+        showToast(_tr("toast.optimizeNoChange", null, "Prompt unchanged"), "warning");
       }
     } catch (e) {
-      showToast("提示词优化请求失败: " + (e.message || "网络错误"), "error");
+      showToast(_tr("toast.optimizeError", { msg: e.message || "network" }, "Optimization request failed: {msg}"), "error");
     }
     setOptimizing(false);
   };
@@ -678,89 +1251,100 @@ function CreateTab({ models, onGoToTasks }) {
     <div className="split-layout">
       <div className="split-left">
         <div className="card">
-          <div className="card-title">生成模式</div>
+          <div className="oa-section-label">{t("create.section.mode")}</div>
           <div className="flex gap-2 flex-wrap">
-            {MODES.map(m => (
-              <button key={m.id} className={`mode-btn ${mode===m.id?"active":""}`}
-                onClick={() => setMode(m.id)}
-                disabled={currentModel && !currentModel.modes?.includes(m.id)}
-              >{m.label}</button>
+            {MODE_IDS.map(id => (
+              <button key={id} className={`mode-btn ${mode===id?"active":""}`}
+                onClick={() => setMode(id)}
+                disabled={currentModel && !currentModel.modes?.includes(id)}
+              >{t("modes." + id)}</button>
             ))}
           </div>
         </div>
 
-        {MODE_TIPS[mode] && <div className="tip-bar"><Ico name="lightbulb"/> {MODE_TIPS[mode]}</div>}
+        <div className="tip-bar"><Ico name="lightbulb"/> {t("create.tip." + mode)}</div>
 
         {mode === "i2v" && (
           <div className="card">
-            <div className="card-title">首帧上传</div>
+            <div className="oa-section-label">{t("create.section.firstFrame")}</div>
             <FileUploadZone id="upload-first-frame" accept="image/*"
               onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
-              label="拖拽或点击上传首帧图片"
-              hint="建议高清图片 (300-6000px)，比例与目标视频一致" />
+              label={t("create.upload.firstHint")}
+              hint={t("create.upload.firstSubHint")} />
           </div>
         )}
 
         {mode === "i2v_end" && (
           <div className="card">
-            <div className="card-title">首尾帧上传</div>
+            <div className="oa-section-label">{t("create.section.firstLastFrame")}</div>
             <div className="grid-2">
               <FileUploadZone id="upload-start-frame" accept="image/*"
                 onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
-                label="首帧图片" hint="起始画面" />
+                label={t("create.upload.startFrame")} hint={t("create.upload.startFrameHint")} />
               <FileUploadZone id="upload-end-frame" accept="image/*"
                 onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
-                label="尾帧图片" hint="结束画面" />
+                label={t("create.upload.endFrame")} hint={t("create.upload.endFrameHint")} />
             </div>
-            <p className="text-xs text-dim" style={{marginTop:6}}>首尾帧间的过渡由 AI 自动补全，差异越大效果越戏剧化</p>
+            <p className="text-xs text-dim" style={{marginTop:6}}>{t("create.upload.endFrameTip")}</p>
           </div>
         )}
 
         {mode === "multimodal" && (
           <div className="card">
-            <div className="card-title">参考素材</div>
+            <div className="oa-section-label">{t("create.section.multimodal")}</div>
             <FileUploadZone id="upload-multimodal" accept="image/*,video/*,audio/*" multiple
               onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
-              label="拖拽或点击上传参考素材（可多选）"
-              hint="支持图片/视频/音频，提示词中用「图片1」「视频2」引用" />
+              label={t("create.upload.multimodal")}
+              hint={t("create.upload.multimodalHint")} />
             <div className="tip-bar" style={{marginTop:8}}>
-              <Ico name="lightbulb"/> 提示词引用方式: 在提示词中写「图片1」「视频2」「音频1」，序号为同类素材的上传顺序
+              <Ico name="lightbulb"/> {t("create.upload.multimodalTip")}
             </div>
           </div>
         )}
 
         {(mode === "edit" || mode === "extend") && (
           <div className="card">
-            <div className="card-title">{mode === "edit" ? "原始视频" : "待延长视频"}</div>
+            <div className="oa-section-label">{mode === "edit" ? t("create.section.editVideo") : t("create.section.extendVideo")}</div>
             <FileUploadZone id="upload-source-video" accept="video/*"
               onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
-              label={`拖拽或点击上传${mode === "edit" ? "待编辑" : "待延长"}的视频`}
-              hint="支持 mp4/mov/webp 格式" />
+              label={mode === "edit" ? t("create.upload.editLabel") : t("create.upload.extendLabel")}
+              hint={t("create.upload.videoHint")} />
           </div>
         )}
 
         <div className="card">
-          <div className="card-title">提示词</div>
-          <textarea className="input textarea" value={prompt} onChange={e => setPrompt(e.target.value)}
-            placeholder="描述你想生成的视频内容..." rows={4} />
-          <div className="flex items-center justify-between" style={{marginTop:8}}>
-            <span className="text-xs text-dim">{prompt.length}/5000</span>
-            <button className="btn btn-sm" onClick={handleOptimize} disabled={optimizing || !prompt.trim()}>
-              {optimizing ? <span className="spinner" style={{width:12,height:12}}/> : <Ico name="sparkles"/>} AI 优化提示词
+          <div className="oa-section-label oa-section-label--inline">
+            <span>{t("create.section.prompt")}</span>
+            <button type="button"
+              className="oa-ai-btn"
+              onClick={handleOptimize}
+              disabled={optimizing || !prompt.trim()}
+              title={t("create.btn.optimize")}>
+              {optimizing
+                ? <span className="spinner" style={{width:12,height:12}} />
+                : <span className="oa-ai-btn__icon" aria-hidden="true">
+                    <Ico name="sparkles"/>
+                  </span>}
+              <span>{t("create.btn.optimize")}</span>
             </button>
+          </div>
+          <textarea className="input textarea" value={prompt} onChange={e => setPrompt(e.target.value)}
+            placeholder={t("create.prompt.placeholder")} rows={4} />
+          <div className="flex items-center justify-between" style={{marginTop:8}}>
+            <span className="text-xs text-dim">{t("create.prompt.counter", { n: prompt.length })}</span>
           </div>
         </div>
 
         <div className="card">
-          <div className="card-title">参数配置</div>
+          <div className="oa-section-label">{t("create.section.params")}</div>
           <div className="form-row">
-            <label className="label">模型</label>
+            <label className="label">{t("create.label.model")}</label>
             <select className="input select" value={model} onChange={e => setModel(e.target.value)}>
               {models.map(m => <option key={m.id} value={m.id}>{m.name} · RPM {m.rpm}</option>)}
             </select>
           </div>
           <div className="form-row">
-            <label className="label">比例</label>
+            <label className="label">{t("create.label.ratio")}</label>
             <div className="flex gap-2 flex-wrap">
               {RATIOS.map(r => (
                 <div key={r} className={`ratio-btn ${ratio===r?"active":""}`} onClick={() => setRatio(r)}>{r}</div>
@@ -768,7 +1352,7 @@ function CreateTab({ models, onGoToTasks }) {
             </div>
           </div>
           <div className="form-row">
-            <label className="label">分辨率</label>
+            <label className="label">{t("create.label.resolution")}</label>
             <div className="flex gap-2">
               {["480p","720p","1080p"].map(r => (
                 <button key={r} className={`mode-btn ${resolution===r?"active":""}`}
@@ -779,43 +1363,43 @@ function CreateTab({ models, onGoToTasks }) {
             </div>
           </div>
           <div className="form-row">
-            <label className="label">时长 ({minDur}-{maxDur}秒)</label>
+            <label className="label">{t("create.label.duration", { min: minDur, max: maxDur })}</label>
             <div className="slider-wrap">
               <input type="range" min={minDur} max={maxDur} value={duration} onChange={e => setDuration(+e.target.value)} />
               <span className="slider-val">{duration}s</span>
             </div>
           </div>
           <div className="form-row">
-            <label className="label">推理模式</label>
+            <label className="label">{t("create.label.tier")}</label>
             <div className="flex gap-2">
-              <button className={`mode-btn ${serviceTier==="default"?"active":""}`} onClick={() => setServiceTier("default")}><Ico name="online"/> 在线</button>
-              <button className={`mode-btn ${serviceTier==="flex"?"active":""}`} onClick={() => setServiceTier("flex")}><Ico name="offline"/> 离线半价</button>
+              <button className={`mode-btn ${serviceTier==="default"?"active":""}`} onClick={() => setServiceTier("default")}><Ico name="online"/> {t("create.tier.online")}</button>
+              <button className={`mode-btn ${serviceTier==="flex"?"active":""}`} onClick={() => setServiceTier("flex")}><Ico name="offline"/> {t("create.tier.flex")}</button>
             </div>
           </div>
           <div style={{borderTop:"1px solid var(--border)", marginTop:12, paddingTop:10}}>
-            <div className="label" style={{marginBottom:8, fontWeight:600, color:"var(--text)", fontSize:12}}>高级选项</div>
+            <div className="oa-section-label" style={{fontSize:12,marginBottom:8}}>{t("create.section.advanced")}</div>
             <div className="grid-2">
               <div className="flex items-center justify-between">
-                <span className="text-sm">声音</span>
+                <span className="text-sm">{t("create.toggle.audio")}</span>
                 <div className={`switch ${audio?"on":""}`} onClick={() => setAudio(!audio)} />
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-sm">水印</span>
+                <span className="text-sm">{t("create.toggle.watermark")}</span>
                 <div className={`switch ${watermark?"on":""}`} onClick={() => setWatermark(!watermark)} />
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-sm">返回尾帧</span>
+                <span className="text-sm">{t("create.toggle.lastFrame")}</span>
                 <div className={`switch ${returnLastFrame?"on":""}`} onClick={() => setReturnLastFrame(!returnLastFrame)} />
               </div>
               {canDraft && (
                 <div className="flex items-center justify-between">
-                  <span className="text-sm">样片模式</span>
+                  <span className="text-sm">{t("create.toggle.draft")}</span>
                   <div className={`switch ${draft?"on":""}`} onClick={() => setDraft(!draft)} />
                 </div>
               )}
               {canWebSearch && (
                 <div className="flex items-center justify-between">
-                  <span className="text-sm">联网搜索</span>
+                  <span className="text-sm">{t("create.toggle.webSearch")}</span>
                   <div className={`switch ${webSearch?"on":""}`} onClick={() => setWebSearch(!webSearch)} />
                 </div>
               )}
@@ -831,18 +1415,20 @@ function CreateTab({ models, onGoToTasks }) {
         <button className="btn btn-primary" style={{width:"100%",padding:"12px",fontSize:14}}
           onClick={handleCreate} disabled={loading || !prompt.trim()}>
           {loading ? <span className="spinner" style={{width:16,height:16}}/> : null}
-          {draft ? "生成样片预览" : serviceTier==="flex" ? "提交离线任务" : "生成视频"}
+          {draft ? t("create.btn.startDraft") : serviceTier==="flex" ? t("create.btn.startFlex") : t("create.btn.startVideo")}
         </button>
       </div>
 
       <div className="split-right">
-        <VideoPlayer task={activeTask} />
-        {activeTask && (
-          <div className="flex gap-2" style={{marginTop:12}}>
-            <button className="btn btn-sm" onClick={() => downloadFile(`/api/plugins/seedance-video/videos/${activeTask.id}?download=1`, `seedance_${activeTask.prompt?.slice(0,20) || activeTask.id}.mp4`)}><Ico name="download"/> 下载</button>
-            <button className="btn btn-sm" onClick={() => { setActiveTask(null); }}><Ico name="refresh"/> 新建</button>
-          </div>
-        )}
+        <div className="oa-preview-area oa-preview-area--centered">
+          <VideoPlayer task={activeTask} />
+          {activeTask && (
+            <div className="flex gap-2" style={{marginTop:12, justifyContent:"center"}}>
+              <button className="btn btn-sm" onClick={() => downloadFile(`/api/plugins/seedance-video/videos/${activeTask.id}?download=1`, `seedance_${activeTask.prompt?.slice(0,20) || activeTask.id}.mp4`)}><Ico name="download"/> {t("preview.btn.download")}</button>
+              <button className="btn btn-sm" onClick={() => { setActiveTask(null); }}><Ico name="refresh"/> {t("preview.btn.new")}</button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
     <TaskStartedModal
@@ -856,94 +1442,115 @@ function CreateTab({ models, onGoToTasks }) {
 }
 
 function TaskListTab() {
+  const t = useT();
   const { tasks, total, reload } = useTasks();
   const [filter, setFilter] = useState("all");
   const [selected, setSelected] = useState(null);
 
-  const filtered = tasks.filter(t => {
-    if (filter === "running") return t.status === "running" || t.status === "pending";
-    if (filter === "succeeded") return t.status === "succeeded";
-    if (filter === "failed") return t.status === "failed";
-    if (filter === "draft") return t.is_draft;
-    if (filter === "flex") return t.service_tier === "flex";
+  const FILTER_IDS = ["all","running","succeeded","failed","draft","flex"];
+  const safeTasks = Array.isArray(tasks) ? tasks : [];
+  const filtered = safeTasks.filter(it => {
+    if (filter === "running") return it.status === "running" || it.status === "pending";
+    if (filter === "succeeded") return it.status === "succeeded";
+    if (filter === "failed") return it.status === "failed";
+    if (filter === "draft") return it.is_draft;
+    if (filter === "flex") return it.service_tier === "flex";
     return true;
   });
 
   return (
     <div className="split-layout">
-      <div className="split-left" style={{width:"50%"}}>
-        <div className="flex gap-2 flex-wrap" style={{marginBottom:12}}>
-          {["all","running","succeeded","failed","draft","flex"].map(f => (
+      <div className="split-left oa-list-panel" style={{width:"50%"}}>
+        <div className="oa-list-panel__filters">
+          {FILTER_IDS.map(f => (
             <button key={f} className={`mode-btn ${filter===f?"active":""}`} onClick={() => setFilter(f)}>
-              {{all:"全部",running:"进行中",succeeded:"已完成",failed:"失败",draft:"样片",flex:"离线"}[f]}
+              {t("tasks.filter." + f)}
             </button>
           ))}
-          <button className="btn btn-sm" onClick={() => reload()} style={{marginLeft:"auto"}}>刷新</button>
+          <button className="btn btn-sm" onClick={() => reload()} style={{marginLeft:"auto"}}>{t("tasks.refresh")}</button>
         </div>
+        <div className="oa-list-panel__divider" />
+        <div className="oa-list-panel__items">
         {filtered.length === 0 ? (
-          <div className="empty-state"><p>暂无任务</p></div>
-        ) : filtered.map(t => (
-          <div key={t.id} className="task-card" onClick={() => setSelected(t)} style={{marginBottom:8, border: selected?.id===t.id ? `1px solid var(--primary)` : undefined}}>
+          <div className="empty-state"><p>{t("tasks.empty")}</p></div>
+        ) : filtered.map(it => (
+          <div key={it.id} className="task-card" onClick={() => setSelected(it)} style={{marginBottom:8, border: selected?.id===it.id ? `1px solid var(--primary)` : undefined}}>
             <div className="task-thumb">
-              {t.status === "running" && <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%"}}><div className="spinner"/></div>}
+              {it.status === "running" && <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100%"}}><div className="spinner"/></div>}
             </div>
             <div className="task-info">
-              <h4>{t.prompt || "(无提示词)"}</h4>
+              <h4>{it.prompt || t("tasks.noPrompt")}</h4>
               <div className="task-meta">
-                <span>{t.model}</span>
-                <span>{t.mode}</span>
-                <span>{t.params?.ratio || "16:9"}</span>
-                <span>{t.params?.duration || 5}s</span>
-                {t.service_tier === "flex" && <span className="tag tag-blue">Flex半价</span>}
-                {t.is_draft && <span className="tag tag-orange">样片</span>}
-                {t.status === "succeeded" && t.local_video_path && <span className="tag tag-green">已下载</span>}
-                {t.status === "failed" && <span className="tag tag-red">失败</span>}
-                {t.status === "running" && <span className="tag tag-blue">生成中</span>}
-                {t.status === "succeeded" && !t.local_video_path && <span className="tag tag-green"><Ico name="check"/>完成</span>}
+                <span>{it.model}</span>
+                <span>{it.mode}</span>
+                <span>{it.params?.ratio || "16:9"}</span>
+                <span>{it.params?.duration || 5}s</span>
+                {it.service_tier === "flex" && <span className="tag tag-blue">{t("tasks.tag.flex")}</span>}
+                {it.is_draft && <span className="tag tag-orange">{t("tasks.tag.draft")}</span>}
+                {it.status === "succeeded" && it.local_video_path && <span className="tag tag-green">{t("tasks.tag.downloaded")}</span>}
+                {it.status === "failed" && <span className="tag tag-red">{t("tasks.tag.failed")}</span>}
+                {it.status === "running" && <span className="tag tag-blue">{t("tasks.tag.running")}</span>}
+                {it.status === "succeeded" && !it.local_video_path && <span className="tag tag-green"><Ico name="check"/>{t("tasks.tag.done")}</span>}
               </div>
             </div>
           </div>
         ))}
-        <div className="text-xs text-dim" style={{marginTop:8}}>共 {total} 个任务</div>
+        </div>
+        <div className="oa-list-panel__footer">
+          <span className="text-xs text-dim">{t("tasks.total", { n: total })}</span>
+        </div>
       </div>
       <div className="split-right">
-        <VideoPlayer task={selected} />
-        {selected && (
-          <div className="flex gap-2" style={{marginTop:12}}>
-            <button className="btn btn-sm" onClick={() => downloadFile(`/api/plugins/seedance-video/videos/${selected.id}?download=1`, `seedance_${selected.prompt?.slice(0,20) || selected.id}.mp4`)}><Ico name="download"/> 下载</button>
-            <button className="btn btn-sm" onClick={() => pluginApi("POST", `/tasks/${selected.id}/retry`)}><Ico name="refresh"/> 重试</button>
-            <button className="btn btn-sm btn-danger" onClick={async () => {
-              await pluginApi("DELETE", `/tasks/${selected.id}`);
-              setSelected(null); reload();
-            }}>删除</button>
-          </div>
-        )}
+        <div className="oa-preview-area oa-preview-area--centered">
+          <VideoPlayer task={selected} />
+          {selected && (
+            <div className="flex gap-2" style={{marginTop:12, justifyContent:"center"}}>
+              <button className="btn btn-sm" onClick={() => downloadFile(`/api/plugins/seedance-video/videos/${selected.id}?download=1`, `seedance_${selected.prompt?.slice(0,20) || selected.id}.mp4`)}><Ico name="download"/> {t("preview.btn.download")}</button>
+              <button className="btn btn-sm" onClick={() => pluginApi("POST", `/tasks/${selected.id}/retry`)}><Ico name="refresh"/> {t("tasks.btn.retry")}</button>
+              <button className="btn btn-sm btn-danger" onClick={async () => {
+                await pluginApi("DELETE", `/tasks/${selected.id}`);
+                setSelected(null); reload();
+              }}>{t("tasks.btn.delete")}</button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
 function AssetsTab() {
+  const t = useT();
   const [assets, setAssets] = useState([]);
   const [filter, setFilter] = useState(null);
   const load = () => {
     const q = filter ? `?type=${filter}` : "";
-    pluginApi("GET", `/assets${q}`).then(r => r.body?.assets && setAssets(r.body.assets)).catch(() => {});
+    pluginApi("GET", `/assets${q}`).then(r => {
+      const list = Array.isArray(r.body && r.body.assets) ? r.body.assets : [];
+      setAssets(list);
+    }).catch(() => {});
   };
   useEffect(load, [filter]);
+
+  const FILTERS = [
+    { v: null,    k: "assets.filter.all" },
+    { v: "image", k: "assets.filter.image" },
+    { v: "video", k: "assets.filter.video" },
+    { v: "audio", k: "assets.filter.audio" },
+  ];
 
   return (
     <div>
       <div className="flex gap-2 items-center" style={{marginBottom:16}}>
-        {[null,"image","video","audio"].map(f => (
-          <button key={f||"all"} className={`mode-btn ${filter===f?"active":""}`} onClick={() => setFilter(f)}>
-            {{null:"全部",image:"图片",video:"视频",audio:"音频"}[f]}
+        {FILTERS.map(f => (
+          <button key={String(f.v)} className={`mode-btn ${filter===f.v?"active":""}`} onClick={() => setFilter(f.v)}>
+            {t(f.k)}
           </button>
         ))}
-        <span className="text-xs text-dim" style={{marginLeft:"auto"}}>{assets.length} 个素材</span>
+        <span className="text-xs text-dim" style={{marginLeft:"auto"}}>{t("assets.count", { n: assets.length })}</span>
       </div>
       {assets.length === 0 ? (
-        <div className="empty-state"><p>暂无素材</p><p className="text-xs text-dim">在创建面板上传素材后会自动显示在这里</p></div>
+        <div className="empty-state"><p>{t("assets.empty.title")}</p><p className="text-xs text-dim">{t("assets.empty.hint")}</p></div>
       ) : (
         <div className="grid-3" style={{gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))"}}>
           {assets.map(a => (
@@ -955,7 +1562,7 @@ function AssetsTab() {
               <div className="text-xs text-dim">{a.type} · {a.size_bytes ? Math.round(a.size_bytes/1024)+"KB" : "?"}</div>
               <button className="btn btn-sm btn-danger" style={{marginTop:6,width:"100%"}} onClick={async () => {
                 await pluginApi("DELETE", `/assets/${a.id}`); load();
-              }}>删除</button>
+              }}>{t("assets.btn.delete")}</button>
             </div>
           ))}
         </div>
@@ -965,6 +1572,8 @@ function AssetsTab() {
 }
 
 function PromptGuideTab() {
+  const t = useT();
+  const locale = useLocale();
   const FALLBACK_CAMERAS = [
     {zh:"推镜头",en:"Push in",desc:"向前靠近主体"},{zh:"拉镜头",en:"Pull out",desc:"向后远离主体"},
     {zh:"摇镜头",en:"Pan",desc:"水平旋转拍摄"},{zh:"移镜头",en:"Dolly/Tracking",desc:"平移跟随"},
@@ -994,11 +1603,15 @@ function PromptGuideTab() {
   const [selectedTemplate, setSelectedTemplate] = useState(null);
 
   useEffect(() => {
-    pluginApi("GET", "/prompt-guide").then(r => {
+    const q = `?locale=${encodeURIComponent(locale || "zh")}`;
+    pluginApi("GET", "/prompt-guide" + q).then(r => {
       if (r.body?.cameras) setGuide({ cameras: r.body.cameras, atmosphere: r.body.atmosphere || FALLBACK_ATMOSPHERE, formulas: r.body.formulas || FALLBACK_FORMULAS });
     }).catch(() => {});
-    pluginApi("GET", "/prompt-templates").then(r => r.body?.templates && setTemplates(r.body.templates)).catch(() => {});
-  }, []);
+    pluginApi("GET", "/prompt-templates" + q).then(r => {
+      const list = Array.isArray(r.body && r.body.templates) ? r.body.templates : [];
+      setTemplates(list);
+    }).catch(() => {});
+  }, [locale]);
 
   const toggleSection = (key) => setExpanded(prev => ({...prev, [key]: !prev[key]}));
 
@@ -1006,30 +1619,32 @@ function PromptGuideTab() {
     !search || t.name.includes(search) || (t.name_en||"").toLowerCase().includes(search.toLowerCase()) || t.description.includes(search)
   );
 
-  const CAT_NAMES = {light:"光影",color:"色调",texture:"质感",mood:"情绪"};
+  const tipsHtml = (window.OpenAkitaMD && typeof window.OpenAkitaMD.render === "function")
+    ? window.OpenAkitaMD.render(t("guide.tips.body"))
+    : null;
 
   return (
     <div style={{maxWidth:800}}>
-      <input className="input" placeholder="搜索模板或关键词..." value={search} onChange={e => setSearch(e.target.value)} style={{marginBottom:16}} />
+      <input className="input" placeholder={t("guide.search.placeholder")} value={search} onChange={e => setSearch(e.target.value)} style={{marginBottom:16}} />
 
       <div className="card" style={{cursor:"pointer"}} onClick={() => toggleSection("templates")}>
-        <div className="card-title flex justify-between items-center">
-          <span><Ico name="fileText"/> 模板库（点击查看 / 套用）</span>
+        <div className="oa-section-label oa-section-label--inline" style={{justifyContent:"space-between"}}>
+          <span><Ico name="fileText"/> {t("guide.section.templates")}</span>
           <span className="text-dim">{expanded.templates ? "▲" : "▼"}</span>
         </div>
         {expanded.templates && (
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:8,marginTop:8}} onClick={e => e.stopPropagation()}>
-            {filteredTemplates.length === 0 && <p className="text-sm text-dim">暂无模板数据（后端未连接或正在加载中）</p>}
-            {filteredTemplates.map(t => (
-              <div key={t.id} className="template-card" onClick={() => setSelectedTemplate(selectedTemplate?.id === t.id ? null : t)}>
-                <h4>{t.name} <span className="text-xs text-dim">{t.name_en}</span></h4>
-                <p>{t.description}</p>
+            {filteredTemplates.length === 0 && <p className="text-sm text-dim">{t("guide.templates.empty")}</p>}
+            {filteredTemplates.map(tpl => (
+              <div key={tpl.id} className="template-card" onClick={() => setSelectedTemplate(selectedTemplate?.id === tpl.id ? null : tpl)}>
+                <h4>{tpl.name} <span className="text-xs text-dim">{tpl.name_en}</span></h4>
+                <p>{tpl.description}</p>
                 <div className="flex gap-2 flex-wrap" style={{marginTop:4}}>
-                  {t.modes?.map(m => <span key={m} className="tag tag-blue">{m}</span>)}
+                  {tpl.modes?.map(m => <span key={m} className="tag tag-blue">{m}</span>)}
                 </div>
-                {selectedTemplate?.id === t.id && t.template && (
+                {selectedTemplate?.id === tpl.id && tpl.template && (
                   <div style={{marginTop:8,padding:8,background:"var(--bg)",borderRadius:6,fontSize:12,whiteSpace:"pre-wrap",color:"var(--text-muted)"}}>
-                    {t.template}
+                    {tpl.template}
                   </div>
                 )}
               </div>
@@ -1039,8 +1654,8 @@ function PromptGuideTab() {
       </div>
 
       <div className="card" style={{cursor:"pointer"}} onClick={() => toggleSection("cameras")}>
-        <div className="card-title flex justify-between items-center">
-          <span><Ico name="camera"/> 镜头语言速查</span>
+        <div className="oa-section-label oa-section-label--inline" style={{justifyContent:"space-between"}}>
+          <span><Ico name="camera"/> {t("guide.section.cameras")}</span>
           <span className="text-dim">{expanded.cameras ? "▲" : "▼"}</span>
         </div>
         {expanded.cameras && (
@@ -1056,15 +1671,15 @@ function PromptGuideTab() {
       </div>
 
       <div className="card" style={{cursor:"pointer"}} onClick={() => toggleSection("atmosphere")}>
-        <div className="card-title flex justify-between items-center">
-          <span><Ico name="palette"/> 氛围关键词库</span>
+        <div className="oa-section-label oa-section-label--inline" style={{justifyContent:"space-between"}}>
+          <span><Ico name="palette"/> {t("guide.section.atmosphere")}</span>
           <span className="text-dim">{expanded.atmosphere ? "▲" : "▼"}</span>
         </div>
         {expanded.atmosphere && (
           <div style={{marginTop:8}} onClick={e => e.stopPropagation()}>
             {Object.entries(guide.atmosphere).map(([cat, words]) => (
               <div key={cat} style={{marginBottom:10}}>
-                <span className="label" style={{marginBottom:4,display:"inline-block"}}>{CAT_NAMES[cat] || cat}</span>
+                <span className="label" style={{marginBottom:4,display:"inline-block"}}>{t("guide.atmosphere." + cat) || cat}</span>
                 <div className="flex gap-2 flex-wrap">
                   {words.map(w => <span key={w} className="keyword-tag">{w}</span>)}
                 </div>
@@ -1075,17 +1690,15 @@ function PromptGuideTab() {
       </div>
 
       <div className="card" style={{cursor:"pointer"}} onClick={() => toggleSection("formulas")}>
-        <div className="card-title flex justify-between items-center">
-          <span><Ico name="ruler"/> 提示词公式</span>
+        <div className="oa-section-label oa-section-label--inline" style={{justifyContent:"space-between"}}>
+          <span><Ico name="ruler"/> {t("guide.section.formulas")}</span>
           <span className="text-dim">{expanded.formulas ? "▲" : "▼"}</span>
         </div>
         {expanded.formulas && (
           <div style={{marginTop:8}} onClick={e => e.stopPropagation()}>
             {Object.entries(guide.formulas).map(([mode, formula]) => (
               <div key={mode} style={{marginBottom:8,padding:8,background:"var(--bg)",borderRadius:6}}>
-                <span className="tag tag-blue" style={{marginRight:8}}>{
-                  {t2v:"文生视频",i2v:"首帧",i2v_end:"首尾帧",multimodal:"多模态",edit:"编辑",extend:"延长"}[mode] || mode
-                }</span>
+                <span className="tag tag-blue" style={{marginRight:8}}>{t("modes." + mode) || mode}</span>
                 <span className="text-sm">{formula}</span>
               </div>
             ))}
@@ -1094,21 +1707,17 @@ function PromptGuideTab() {
       </div>
 
       <div className="card">
-        <div className="card-title"><Ico name="lightbulb"/> 提示词编写技巧</div>
-        <div style={{fontSize:13,color:"var(--text-muted)",lineHeight:2}}>
-          <p>1. 建议 80-200 字，不超过 300 字（5000字符上限）</p>
-          <p>2. 使用<strong>时间轴格式</strong>让镜头有节奏：「0-3s: 推镜头, 4-6s: 特写」</p>
-          <p>3. 加入<strong>镜头语言</strong>：推/拉/摇/移/跟/环绕/升降/希区柯克变焦</p>
-          <p>4. 加入<strong>声音设计</strong>：配乐风格 + 环境音效 + 人声</p>
-          <p>5. 避免出现<strong>人脸/真人面孔</strong>相关描述（当前模型限制）</p>
-          <p>6. 描述越具体，AI 越能精准生成你想要的视频</p>
-        </div>
+        <div className="oa-section-label"><Ico name="lightbulb"/> {t("guide.section.tips")}</div>
+        {tipsHtml
+          ? <div className="oa-md-content" dangerouslySetInnerHTML={{ __html: tipsHtml }} />
+          : <pre style={{whiteSpace:"pre-wrap",fontSize:13,color:"var(--text-muted)",lineHeight:1.8,fontFamily:"inherit"}}>{t("guide.tips.body")}</pre>}
       </div>
     </div>
   );
 }
 
 function StoryboardTab() {
+  const t = useT();
   const [story, setStory] = useState("");
   const [totalDuration, setTotalDuration] = useState(60);
   const [segDuration, setSegDuration] = useState(10);
@@ -1139,10 +1748,10 @@ function StoryboardTab() {
   const decompose = async () => {
     if (!story.trim()) return;
     setDecomposing(true);
-    setDecomposeProgress("正在连接 AI 模型...");
-    var timer = setTimeout(() => setDecomposeProgress("AI 正在分析故事结构，生成分镜脚本..."), 3000);
-    var timer2 = setTimeout(() => setDecomposeProgress("正在生成 " + Math.max(1, Math.round(totalDuration / segDuration)) + " 段分镜，请耐心等待..."), 10000);
-    var timer3 = setTimeout(() => setDecomposeProgress("LLM 推理中，较长的故事可能需要 20-40 秒..."), 20000);
+    setDecomposeProgress(_tr("story.decompose.connect"));
+    var timer = setTimeout(() => setDecomposeProgress(_tr("story.decompose.analyze")), 3000);
+    var timer2 = setTimeout(() => setDecomposeProgress(_tr("story.decompose.batch", { n: Math.max(1, Math.round(totalDuration / segDuration)) })), 10000);
+    var timer3 = setTimeout(() => setDecomposeProgress(_tr("story.decompose.long")), 20000);
     try {
       const r = await pluginApi("POST", "/long-video/storyboard", {
         story, total_duration: totalDuration, segment_duration: segDuration, ratio, style,
@@ -1150,11 +1759,11 @@ function StoryboardTab() {
       if (r.body?.ok && r.body.storyboard?.segments) {
         setSegments(r.body.storyboard.segments);
         setStep("edit");
-        showToast("分镜拆解完成，共 " + r.body.storyboard.segments.length + " 段");
+        showToast(_tr("toast.decomposeOk", { n: r.body.storyboard.segments.length }));
       } else {
-        showToast("分镜拆解失败: " + (r.body?.error || "未知错误"), "error");
+        showToast(_tr("toast.decomposeFail", { msg: r.body?.error || _tr("toast.unknownErr") }), "error");
       }
-    } catch (e) { showToast("请求失败: " + e.message, "error"); }
+    } catch (e) { showToast(_tr("toast.requestFail", { msg: e.message }), "error"); }
     clearTimeout(timer); clearTimeout(timer2); clearTimeout(timer3);
     setDecomposing(false);
     setDecomposeProgress("");
@@ -1197,11 +1806,11 @@ function StoryboardTab() {
         setGenResults(r.body.results || []);
         setStep("results");
       } else {
-        showToast("生成失败: " + (r.body?.error || ""), "error");
+        showToast(_tr("toast.genFail", { msg: r.body?.error || "" }), "error");
         setStep("edit");
       }
     } catch (e) {
-      showToast("请求失败: " + e.message, "error");
+      showToast(_tr("toast.requestFail", { msg: e.message }), "error");
       setStep("edit");
     }
     setGenerating(false);
@@ -1209,7 +1818,7 @@ function StoryboardTab() {
 
   const doConcat = async () => {
     const successIds = genResults.filter(r => r.status === "succeeded" && r.id).map(r => r.id);
-    if (successIds.length < 2) { showToast("至少需要 2 个成功的视频片段", "warning"); return; }
+    if (successIds.length < 2) { showToast(_tr("toast.concatNeed2"), "warning"); return; }
     setConcatenating(true);
     try {
       for (const tid of successIds) {
@@ -1225,81 +1834,58 @@ function StoryboardTab() {
         setConcatPath(r.body.output_path);
         setStep("done");
       } else {
-        showToast("拼接失败: " + (r.body?.detail || r.body?.error || ""), "error");
+        showToast(_tr("toast.concatFail", { msg: r.body?.detail || r.body?.error || "" }), "error");
       }
-    } catch (e) { showToast("拼接失败: " + e.message, "error"); }
+    } catch (e) { showToast(_tr("toast.concatFail", { msg: e.message }), "error"); }
     setConcatenating(false);
   };
 
   const segCountEst = Math.max(1, Math.round(totalDuration / segDuration));
 
   if (step === "input") {
+    const usageHtml = (window.OpenAkitaMD && typeof window.OpenAkitaMD.render === "function")
+      ? window.OpenAkitaMD.render(t("story.usage.body") + "\n\n" + t("story.usage.warn"))
+      : null;
     return (
       <div style={{maxWidth:720}}>
         <div className="card">
-          <div className="card-title"><Ico name="book"/> 故事输入</div>
+          <div className="oa-section-label"><Ico name="book"/> {t("story.section.input")}</div>
           <div className="form-row">
-            <label className="label">故事 / 脚本内容</label>
+            <label className="label">{t("story.label.story")}</label>
             <textarea className="input textarea" rows={6} value={story} onChange={e => setStory(e.target.value)}
-              placeholder="请输入你的视频故事内容，AI 会自动拆解为多段分镜脚本...&#10;&#10;示例：一只小猫在阳光明媚的花园里探索，先好奇地闻花朵，然后追逐蝴蝶，最后在树荫下打盹。" />
+              placeholder={t("story.story.placeholder")} />
           </div>
 
           <div className="grid-2">
             <div className="form-row">
-              <label className="label">目标总时长 (秒)</label>
+              <label className="label">{t("story.label.totalDuration")}</label>
               <input className="input" type="number" min={10} max={600} value={totalDuration}
                 onChange={e => setTotalDuration(+e.target.value)} />
             </div>
             <div className="form-row">
-              <label className="label">每段时长 (秒)</label>
+              <label className="label">{t("story.label.segDuration")}</label>
               <select className="input select" value={segDuration} onChange={e => setSegDuration(+e.target.value)}>
-                <option value={5}>5 秒</option><option value={8}>8 秒</option>
-                <option value={10}>10 秒</option><option value={15}>15 秒</option>
+                <option value={5}>5</option><option value={8}>8</option>
+                <option value={10}>10</option><option value={15}>15</option>
               </select>
             </div>
             <div className="form-row">
-              <label className="label">画面比例</label>
+              <label className="label">{t("story.label.ratio")}</label>
               <select className="input select" value={ratio} onChange={e => setRatio(e.target.value)}>
-                <option value="16:9">16:9 横屏</option><option value="9:16">9:16 竖屏</option>
-                <option value="1:1">1:1 方形</option><option value="4:3">4:3</option>
-                <option value="3:4">3:4</option><option value="21:9">21:9 超宽</option>
+                <option value="16:9">16:9</option><option value="9:16">9:16</option>
+                <option value="1:1">1:1</option><option value="4:3">4:3</option>
+                <option value="3:4">3:4</option><option value="21:9">21:9</option>
               </select>
             </div>
             <div className="form-row">
-              <label className="label">视觉风格</label>
-              <input className="input" value={style} onChange={e => setStyle(e.target.value)} placeholder="电影级画质" />
+              <label className="label">{t("story.label.style")}</label>
+              <input className="input" value={style} onChange={e => setStyle(e.target.value)} />
             </div>
           </div>
 
           <div style={{padding:"10px 12px",background:"var(--bg)",borderRadius:6,marginBottom:14,fontSize:13,color:"var(--text-muted)"}}>
-            预计将拆解为 <strong style={{color:"var(--primary)"}}>{segCountEst}</strong> 个视频片段，
-            每段 {segDuration} 秒，总时长约 {segCountEst * segDuration} 秒
+            {t("story.estimate", { n: segCountEst, seg: segDuration, total: segCountEst * segDuration })}
           </div>
-
-          {ffmpegOk === false && (
-            <div style={{padding:12,background:"rgba(245,158,11,.08)",border:"1px solid rgba(245,158,11,.3)",borderRadius:6,marginBottom:14}}>
-              <div className="flex items-center gap-2" style={{marginBottom:6}}>
-                <span style={{color:"var(--warning)",fontWeight:600,fontSize:13}}><Ico name="warn"/> ffmpeg 未安装</span>
-                <span className="text-xs text-dim">（视频拼接功能需要 ffmpeg）</span>
-              </div>
-              <div style={{fontSize:12,color:"var(--text-muted)",lineHeight:1.8}}>
-                <p><strong>安装方式：</strong></p>
-                <p>• <strong>Windows</strong>：<code style={{background:"var(--bg)",padding:"1px 6px",borderRadius:3}}>winget install ffmpeg</code> 或从 ffmpeg.org 下载</p>
-                <p>• <strong>macOS</strong>：<code style={{background:"var(--bg)",padding:"1px 6px",borderRadius:3}}>brew install ffmpeg</code></p>
-                <p>• <strong>Linux</strong>：<code style={{background:"var(--bg)",padding:"1px 6px",borderRadius:3}}>sudo apt install ffmpeg</code></p>
-                <p style={{marginTop:4}}>安装后重启应用即可自动检测。分镜拆解和单段生成不需要 ffmpeg，仅拼接长视频时需要。</p>
-              </div>
-              <button className="btn btn-sm" style={{marginTop:8}} onClick={() => {
-                pluginApi("GET", "/long-video/ffmpeg-check").then(r => setFfmpegOk(r.body?.available ?? false)).catch(() => {});
-              }}><Ico name="refresh"/> 重新检测 ffmpeg</button>
-            </div>
-          )}
-
-          {ffmpegOk === true && (
-            <div style={{padding:8,background:"rgba(34,197,94,.08)",border:"1px solid rgba(34,197,94,.2)",borderRadius:6,marginBottom:14,fontSize:13,color:"var(--success)"}}>
-              <Ico name="check"/> ffmpeg 已就绪，可以拼接长视频
-            </div>
-          )}
 
           <div className="flex gap-2 justify-between items-center">
             {decomposing && decomposeProgress ? (
@@ -1309,20 +1895,18 @@ function StoryboardTab() {
               </div>
             ) : <div />}
             <button className="btn btn-primary" disabled={!story.trim() || decomposing} onClick={decompose}>
-              {decomposing ? "AI 拆解中..." : <><Ico name="film"/> AI 分镜拆解</>}
+              {decomposing
+                ? t("story.decompose.busy")
+                : <><Ico name="film"/> {t("story.decompose.idle")}</>}
             </button>
           </div>
         </div>
 
         <div className="card">
-          <div className="card-title"><Ico name="lightbulb"/> 使用说明</div>
-          <div style={{fontSize:13,color:"var(--text-muted)",lineHeight:1.8}}>
-            <p><strong>1.</strong> 输入你的故事或脚本，AI 会将其拆解为多段 Seedance 分镜</p>
-            <p><strong>2.</strong> 可以编辑每段分镜的提示词、时长和过渡方式</p>
-            <p><strong>3.</strong> 串行模式下，每段视频会使用上一段的尾帧作为参考，保证画面连贯</p>
-            <p><strong>4.</strong> 生成完成后可用 ffmpeg 拼接为完整长视频</p>
-            <p style={{color:"var(--warning)",marginTop:6}}><strong>注意：</strong>Seedance 2.0 不支持含真人面部的参考图。串行链接如遇人脸审核，系统会自动降级为纯文本生成，画面连贯性可能降低。建议使用虚拟人物、动物、风景等主题。</p>
-          </div>
+          <div className="oa-section-label"><Ico name="lightbulb"/> {t("story.section.usage")}</div>
+          {usageHtml
+            ? <div className="oa-md-content" dangerouslySetInnerHTML={{ __html: usageHtml }} />
+            : <pre style={{whiteSpace:"pre-wrap",fontSize:13,color:"var(--text-muted)",lineHeight:1.8,fontFamily:"inherit"}}>{t("story.usage.body") + "\n\n" + t("story.usage.warn")}</pre>}
         </div>
       </div>
     );
@@ -1333,20 +1917,20 @@ function StoryboardTab() {
       <div style={{maxWidth:800}}>
         <div className="flex justify-between items-center" style={{marginBottom:14}}>
           <div>
-            <h3 style={{fontSize:16,fontWeight:600}}>分镜编辑 — {segments.length} 段</h3>
-            <p className="text-xs text-dim">点击段落展开编辑，拖动排序，自由调整</p>
+            <h3 style={{fontSize:16,fontWeight:600}}>{t("story.edit.title", { n: segments.length })}</h3>
+            <p className="text-xs text-dim">{t("story.edit.hint")}</p>
           </div>
           <div className="flex gap-2">
-            <button className="btn btn-sm" onClick={() => setStep("input")}><Ico name="arrowLeft"/> 返回</button>
-            <button className="btn btn-sm" onClick={addSeg}><Ico name="plus"/> 添加段</button>
+            <button className="btn btn-sm" onClick={() => setStep("input")}><Ico name="arrowLeft"/> {t("story.btn.back")}</button>
+            <button className="btn btn-sm" onClick={addSeg}><Ico name="plus"/> {t("story.btn.addSeg")}</button>
           </div>
         </div>
 
         <div className="card" style={{marginBottom:14}}>
-          <div className="card-title"><Ico name="settings"/> 生成参数</div>
+          <div className="oa-section-label"><Ico name="settings"/> {t("story.section.params")}</div>
           <div className="grid-2">
             <div className="form-row">
-              <label className="label">模型</label>
+              <label className="label">{t("story.label.model")}</label>
               <select className="input select" value={model} onChange={e => setModel(e.target.value)}>
                 <option value="2.0">Seedance 2.0</option>
                 <option value="1.0-pro">Seedance 1.0 Pro</option>
@@ -1354,28 +1938,28 @@ function StoryboardTab() {
               </select>
             </div>
             <div className="form-row">
-              <label className="label">分辨率</label>
+              <label className="label">{t("story.label.resolution")}</label>
               <select className="input select" value={resolution} onChange={e => setResolution(e.target.value)}>
                 <option value="720p">720p</option><option value="1080p">1080p</option>
               </select>
             </div>
             <div className="form-row">
-              <label className="label">生成模式</label>
+              <label className="label">{t("story.label.genMode")}</label>
               <select className="input select" value={genMode} onChange={e => setGenMode(e.target.value)}>
-                <option value="serial">串行 (首尾帧接力, 画面连贯)</option>
-                <option value="parallel">并行 (独立生成, 速度快)</option>
+                <option value="serial">{t("story.btn.startGenSerial")}</option>
+                <option value="parallel">{t("story.btn.startGenParallel")}</option>
               </select>
             </div>
             <div className="form-row">
-              <label className="label">拼接过渡</label>
+              <label className="label">{t("story.label.transition")}</label>
               <div className="flex gap-2">
                 <select className="input select flex-1" value={transition} onChange={e => setTransition(e.target.value)}>
-                  <option value="none">硬切 (无过渡)</option>
-                  <option value="crossfade">交叉淡化</option>
+                  <option value="none">{t("story.concat.modeCut")}</option>
+                  <option value="crossfade">{t("story.concat.modeFade")}</option>
                 </select>
                 {transition === "crossfade" && (
                   <input className="input" type="number" step={0.1} min={0.2} max={2} value={fadeDur}
-                    onChange={e => setFadeDur(+e.target.value)} style={{width:80}} title="淡化时长(秒)" />
+                    onChange={e => setFadeDur(+e.target.value)} style={{width:80}} />
                 )}
               </div>
             </div>
@@ -1387,7 +1971,7 @@ function StoryboardTab() {
             <div className="flex justify-between items-center" style={{cursor:"pointer"}} onClick={() => setEditIdx(editIdx === idx ? -1 : idx)}>
               <div className="flex gap-2 items-center">
                 <span className="badge badge-info" style={{minWidth:28,textAlign:"center"}}>{seg.index || idx+1}</span>
-                <span style={{fontWeight:500,fontSize:14}}>{seg.prompt ? seg.prompt.slice(0, 60) + (seg.prompt.length > 60 ? "..." : "") : "(空提示词)"}</span>
+                <span style={{fontWeight:500,fontSize:14}}>{seg.prompt ? seg.prompt.slice(0, 60) + (seg.prompt.length > 60 ? "..." : "") : t("tasks.noPrompt")}</span>
               </div>
               <div className="flex gap-2 items-center">
                 <span className="text-xs text-dim">{seg.duration || segDuration}s</span>
@@ -1399,58 +1983,55 @@ function StoryboardTab() {
             {editIdx === idx && (
               <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid var(--border)"}}>
                 <div className="form-row">
-                  <label className="label">提示词</label>
+                  <label className="label">{t("create.section.prompt")}</label>
                   <textarea className="input textarea" rows={3} value={seg.prompt || ""}
-                    onChange={e => updateSeg(idx, "prompt", e.target.value)}
-                    placeholder="这一段的 Seedance 时间轴提示词" />
+                    onChange={e => updateSeg(idx, "prompt", e.target.value)} />
                 </div>
                 <div className="grid-2">
                   <div className="form-row">
-                    <label className="label">时长 (秒)</label>
+                    <label className="label">{t("story.label.segDuration")}</label>
                     <input className="input" type="number" min={4} max={15} value={seg.duration || segDuration}
                       onChange={e => updateSeg(idx, "duration", +e.target.value)} />
                   </div>
                   <div className="form-row">
-                    <label className="label">过渡方式</label>
+                    <label className="label">{t("story.label.transition")}</label>
                     <select className="input select" value={seg.transition_to_next || "cut"}
                       onChange={e => updateSeg(idx, "transition_to_next", e.target.value)}>
-                      <option value="cut">硬切</option>
-                      <option value="crossfade">交叉淡化</option>
-                      <option value="ai_extend">AI 延长过渡</option>
+                      <option value="cut">{t("story.concat.modeCut")}</option>
+                      <option value="crossfade">{t("story.concat.modeFade")}</option>
+                      <option value="ai_extend">AI</option>
                     </select>
                   </div>
                 </div>
                 <div className="grid-2">
                   <div className="form-row">
-                    <label className="label">起始画面描述</label>
+                    <label className="label">{t("create.upload.startFrame")}</label>
                     <input className="input" value={seg.key_frame_description || ""}
-                      onChange={e => updateSeg(idx, "key_frame_description", e.target.value)}
-                      placeholder="首帧画面描述" />
+                      onChange={e => updateSeg(idx, "key_frame_description", e.target.value)} />
                   </div>
                   <div className="form-row">
-                    <label className="label">结束画面描述</label>
+                    <label className="label">{t("create.upload.endFrame")}</label>
                     <input className="input" value={seg.end_frame_description || ""}
-                      onChange={e => updateSeg(idx, "end_frame_description", e.target.value)}
-                      placeholder="尾帧画面描述" />
+                      onChange={e => updateSeg(idx, "end_frame_description", e.target.value)} />
                   </div>
                 </div>
                 <div className="grid-2">
                   <div className="form-row">
-                    <label className="label">镜头语言</label>
+                    <label className="label">{t("guide.section.cameras")}</label>
                     <input className="input" value={seg.camera_notes || ""}
-                      onChange={e => updateSeg(idx, "camera_notes", e.target.value)} placeholder="如: 慢推 + 浅景深" />
+                      onChange={e => updateSeg(idx, "camera_notes", e.target.value)} />
                   </div>
                   <div className="form-row">
-                    <label className="label">声音设计</label>
+                    <label className="label">{t("create.toggle.audio")}</label>
                     <input className="input" value={seg.audio_notes || ""}
-                      onChange={e => updateSeg(idx, "audio_notes", e.target.value)} placeholder="如: 轻柔背景音乐" />
+                      onChange={e => updateSeg(idx, "audio_notes", e.target.value)} />
                   </div>
                 </div>
                 <div className="flex gap-2" style={{marginTop:8}}>
-                  <button className="btn btn-sm" disabled={idx===0} onClick={() => moveSeg(idx, -1)}><Ico name="arrowUp"/> 上移</button>
-                  <button className="btn btn-sm" disabled={idx===segments.length-1} onClick={() => moveSeg(idx, 1)}><Ico name="arrowDown"/> 下移</button>
+                  <button className="btn btn-sm" disabled={idx===0} onClick={() => moveSeg(idx, -1)}><Ico name="arrowUp"/> {t("story.btn.moveUp")}</button>
+                  <button className="btn btn-sm" disabled={idx===segments.length-1} onClick={() => moveSeg(idx, 1)}><Ico name="arrowDown"/> {t("story.btn.moveDown")}</button>
                   <div style={{flex:1}} />
-                  <button className="btn btn-sm btn-danger" onClick={() => removeSeg(idx)}>删除</button>
+                  <button className="btn btn-sm btn-danger" onClick={() => removeSeg(idx)}>{t("story.btn.delete")}</button>
                 </div>
               </div>
             )}
@@ -1459,10 +2040,10 @@ function StoryboardTab() {
 
         <div className="flex justify-between" style={{marginTop:16}}>
           <p className="text-sm text-dim">
-            共 {segments.length} 段，预计总时长 {segments.reduce((s, seg) => s + (seg.duration || segDuration), 0)} 秒
+            {t("story.totalEstimate", { n: segments.length, sec: segments.reduce((s, seg) => s + (seg.duration || segDuration), 0) })}
           </p>
           <button className="btn btn-primary" disabled={segments.length === 0 || generating} onClick={startGeneration}>
-            <Ico name="rocket"/> 开始生成 ({genMode === "serial" ? "串行接力" : "并行独立"})
+            <Ico name="rocket"/> {t("story.btn.startGen", { mode: genMode === "serial" ? t("story.btn.startGenSerial") : t("story.btn.startGenParallel") })}
           </button>
         </div>
       </div>
@@ -1470,16 +2051,17 @@ function StoryboardTab() {
   }
 
   if (step === "generating") {
+    const minRange = genMode === "serial" ? (segments.length * 2 + "-" + segments.length * 5) : "2-5";
     return (
       <div style={{maxWidth:640}}>
         <div className="card" style={{textAlign:"center",padding:40}}>
           <div className="spinner" style={{margin:"0 auto 16px"}} />
-          <p style={{fontSize:16,fontWeight:500}}>正在生成 {segments.length} 段视频...</p>
+          <p style={{fontSize:16,fontWeight:500}}>{t("story.gen.title", { n: segments.length })}</p>
           <p className="text-sm text-dim" style={{marginTop:8}}>
-            {genMode === "serial" ? "串行模式: 逐段生成，每段使用上一段结果作为参考" : "并行模式: 所有段落同时生成"}
+            {genMode === "serial" ? t("story.gen.serialDesc") : t("story.gen.parallelDesc")}
           </p>
           <p className="text-sm text-dim" style={{marginTop:4}}>
-            预计需要 {genMode === "serial" ? segments.length * 2 + "~" + segments.length * 5 : "2~5"} 分钟，请耐心等待
+            {t("story.gen.estimate", { min: minRange })}
           </p>
         </div>
       </div>
@@ -1494,21 +2076,21 @@ function StoryboardTab() {
       <div style={{maxWidth:800}}>
         <div className="flex justify-between items-center" style={{marginBottom:14}}>
           <h3 style={{fontSize:16,fontWeight:600}}>
-            {step === "done" ? <><Ico name="check"/> 长视频生成完成</> : "生成结果"}
+            {step === "done" ? <><Ico name="check"/> {t("story.results.done")}</> : t("story.results.title")}
           </h3>
           <div className="flex gap-2">
             <button className="btn btn-sm" onClick={() => { setStep("input"); setSegments([]); setGenResults([]); setConcatPath(""); }}>
-              新建项目
+              {t("story.btn.newProject")}
             </button>
-            <button className="btn btn-sm" onClick={() => setStep("edit")}>返回编辑</button>
+            <button className="btn btn-sm" onClick={() => setStep("edit")}>{t("story.btn.backEdit")}</button>
           </div>
         </div>
 
         <div className="card">
           <div className="flex gap-4" style={{fontSize:13}}>
-            <span>总计: <strong>{genResults.length}</strong> 段</span>
-            <span style={{color:"var(--success)"}}>成功: <strong>{succCount}</strong></span>
-            {failCount > 0 && <span style={{color:"var(--danger)"}}>失败: <strong>{failCount}</strong></span>}
+            <span>{t("story.statTotal")} <strong>{genResults.length}</strong></span>
+            <span style={{color:"var(--success)"}}>{t("story.statSuccess")} <strong>{succCount}</strong></span>
+            {failCount > 0 && <span style={{color:"var(--danger)"}}>{t("story.statFail")} <strong>{failCount}</strong></span>}
           </div>
         </div>
 
@@ -1522,7 +2104,7 @@ function StoryboardTab() {
                 <span style={{fontSize:13}}>{r.prompt ? r.prompt.slice(0, 50) + "..." : segments[idx]?.prompt?.slice(0, 50) || ""}</span>
               </div>
               <span className={"badge badge-" + (r.status === "succeeded" ? "success" : "error")}>
-                {r.status === "succeeded" ? <><Ico name="check"/> 成功</> : r.error ? <><Ico name="x"/> 失败</> : r.status || "未知"}
+                {r.status === "succeeded" ? <><Ico name="check"/> {t("tasks.tag.done")}</> : r.error ? <><Ico name="x"/> {t("tasks.tag.failed")}</> : r.status || ""}
               </span>
             </div>
             {r.error && <p className="text-xs" style={{color:"var(--danger)",marginTop:6}}>{r.error}</p>}
@@ -1536,31 +2118,24 @@ function StoryboardTab() {
 
         {step === "done" && concatPath && (
           <div className="card" style={{borderLeft:"3px solid var(--success)",background:"rgba(34,197,94,.05)"}}>
-            <div className="card-title"><Ico name="film"/> 拼接完成</div>
+            <div className="oa-section-label"><Ico name="film"/> {t("story.concat.title")}</div>
             <p style={{fontSize:13,color:"var(--text-muted)",wordBreak:"break-all"}}>{concatPath}</p>
             <button className="btn btn-sm" style={{marginTop:8}} onClick={() =>
               showInFolder(concatPath)
-            }><Ico name="folderOpen"/> 打开所在文件夹</button>
+            }><Ico name="folderOpen"/> {t("story.btn.openFolder")}</button>
           </div>
         )}
 
         {step === "results" && succCount >= 2 && (
           <div style={{marginTop:16}}>
-            {!ffmpegOk && (
-              <div style={{padding:10,background:"rgba(245,158,11,.08)",border:"1px solid rgba(245,158,11,.2)",borderRadius:6,marginBottom:12,fontSize:12,color:"var(--text-muted)"}}>
-                <Ico name="warn"/> ffmpeg 未安装，无法拼接视频。请安装 ffmpeg 后点击
-                <button className="btn btn-sm" style={{margin:"0 4px"}} onClick={() => {
-                  pluginApi("GET", "/long-video/ffmpeg-check").then(r => setFfmpegOk(r.body?.available ?? false)).catch(() => {});
-                }}>重新检测</button>
-                （Windows: <code>winget install ffmpeg</code> / Mac: <code>brew install ffmpeg</code>）
-              </div>
-            )}
             <div className="flex justify-between items-center">
               <p className="text-sm text-dim">
-                {ffmpegOk ? <><Ico name="check"/> 可拼接 {succCount} 个视频片段</> : ""}
+                {ffmpegOk ? <><Ico name="check"/> {t("story.concat.tip", { n: succCount })}</> : ""}
               </p>
               <button className="btn btn-primary" disabled={!ffmpegOk || concatenating} onClick={doConcat}>
-                {concatenating ? "拼接中..." : <><Ico name="scissors"/> 拼接为长视频 ({transition === "crossfade" ? "交叉淡化" : "硬切"})</>}
+                {concatenating
+                  ? t("story.concat.busy")
+                  : <><Ico name="scissors"/> {t("story.concat.idle", { mode: transition === "crossfade" ? t("story.concat.modeFade") : t("story.concat.modeCut") })}</>}
               </button>
             </div>
           </div>
@@ -1573,6 +2148,7 @@ function StoryboardTab() {
 }
 
 function SettingsTab({ onKeyChange }) {
+  const t = useT();
   const [config, setConfig] = useState({});
   const [saving, setSaving] = useState(false);
   const [apiKey, setApiKey] = useState("");
@@ -1593,7 +2169,7 @@ function SettingsTab({ onKeyChange }) {
       if (r.body?.config) {
         setConfig(r.body.config);
         if (updates.ark_api_key && r.body.config.ark_api_key !== updates.ark_api_key) {
-          showToast("API Key 保存异常，请重试", "error");
+          showToast(_tr("settings.toast.keyError"), "error");
           setSaving(false);
           return;
         }
@@ -1602,9 +2178,9 @@ function SettingsTab({ onKeyChange }) {
         setApiKey("");
         if (onKeyChange && r.body?.config?.ark_api_key) onKeyChange(r.body.config.ark_api_key);
       }
-      showToast("设置已保存");
+      showToast(_tr("settings.toast.saved"));
     } catch (e) {
-      showToast("保存失败: " + e.message, "error");
+      showToast(_tr("settings.toast.saveFailed", { msg: e.message }), "error");
     }
     setSaving(false);
   };
@@ -1614,102 +2190,104 @@ function SettingsTab({ onKeyChange }) {
     pluginApi("GET", "/storage/stats").then(r => r.body?.stats && setStats(r.body.stats)).catch(() => {});
   }, []);
 
+  const statKeyMap = {output_dir:"settings.stats.outputDir", assets_dir:"settings.stats.assetsDir", cache_dir:"settings.stats.cacheDir"};
   return (
     <div style={{maxWidth:640}}>
-      <div className="setting-section">
-        <h3><Ico name="key"/> API 配置</h3>
-        <div className="form-row">
-          <label className="label">ARK API Key</label>
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"><Ico name="key"/> {t("settings.section.api")}</h3>
+        <div className={"form-row" + (config.ark_api_key ? "" : " oa-config-field-callout")}
+             data-callout={config.ark_api_key ? undefined : t("settings.api.required")}>
+          <label className="label">{t("settings.label.apiKey")}</label>
           <div className="flex gap-2">
             <input className="input flex-1" type={showKey?"text":"password"}
               value={apiKey !== "" ? apiKey : (config.ark_api_key || "")} onChange={e => setApiKey(e.target.value)}
-              placeholder="输入 Volcengine Ark API Key" />
-            <button className="btn btn-sm" onClick={() => setShowKey(!showKey)}>{showKey?"隐藏":"显示"}</button>
-            <button className="btn btn-sm btn-primary" disabled={!apiKey} onClick={() => save({ark_api_key: apiKey})}>保存</button>
+              placeholder={t("settings.api.placeholder")} />
+            <button className="btn btn-sm" onClick={() => setShowKey(!showKey)}>{showKey ? t("settings.api.hide") : t("settings.api.show")}</button>
+            <button className="btn btn-sm btn-primary" disabled={!apiKey} onClick={() => save({ark_api_key: apiKey})}>{t("settings.api.save")}</button>
           </div>
-          <p className="text-xs text-dim" style={{marginTop:4}}>获取方式: 前往 console.volcengine.com/ark 创建 API Key</p>
+          <p className="text-xs text-dim" style={{marginTop:4}}>{t("settings.api.help")}</p>
         </div>
       </div>
 
-      <div className="setting-section">
-        <h3><Ico name="settings"/> 默认参数</h3>
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"><Ico name="settings"/> {t("settings.section.defaults")}</h3>
         <div className="grid-2">
           <div className="form-row">
-            <label className="label">默认推理模式</label>
+            <label className="label">{t("settings.label.tier")}</label>
             <select className="input select" value={config.service_tier_default || "default"}
               onChange={e => save({service_tier_default: e.target.value})}>
-              <option value="default">在线推理</option>
-              <option value="flex">离线推理 (半价)</option>
+              <option value="default">{t("settings.tier.online")}</option>
+              <option value="flex">{t("settings.tier.flex")}</option>
             </select>
           </div>
           <div className="form-row">
-            <label className="label">轮询间隔</label>
+            <label className="label">{t("settings.label.poll")}</label>
             <select className="input select" value={config.poll_interval || "15"}
               onChange={e => save({poll_interval: e.target.value})}>
-              <option value="10">10 秒</option>
-              <option value="15">15 秒</option>
-              <option value="30">30 秒</option>
-              <option value="60">60 秒</option>
+              <option value="10">{t("settings.poll.10")}</option>
+              <option value="15">{t("settings.poll.15")}</option>
+              <option value="30">{t("settings.poll.30")}</option>
+              <option value="60">{t("settings.poll.60")}</option>
             </select>
           </div>
           <div className="form-row">
-            <label className="label">优化级别</label>
+            <label className="label">{t("settings.label.optimizeLevel")}</label>
             <select className="input select" value={config.llm_optimize_level || "professional"}
               onChange={e => save({llm_optimize_level: e.target.value})}>
-              <option value="light">轻度润色</option>
-              <option value="professional">专业重写</option>
-              <option value="storyboard">分镜脚本</option>
+              <option value="light">{t("settings.optimize.light")}</option>
+              <option value="professional">{t("settings.optimize.professional")}</option>
+              <option value="storyboard">{t("settings.optimize.storyboard")}</option>
             </select>
           </div>
         </div>
       </div>
 
-      <div className="setting-section">
-        <h3><Ico name="folder"/> 文件夹设置</h3>
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"><Ico name="folder"/> {t("settings.section.folder")}</h3>
         <div className="form-row">
-          <label className="label">视频输出目录</label>
+          <label className="label">{t("settings.label.outputDir")}</label>
           <div className="folder-row">
-            <input className="input" value={config.output_dir || ""} placeholder="默认: ~/seedance-output/"
+            <input className="input" value={config.output_dir || ""} placeholder={t("settings.outputDir.placeholder")}
               onChange={e => setConfig({...config, output_dir: e.target.value})}
               onBlur={e => save({output_dir: e.target.value})} />
-            <button className="btn btn-sm" onClick={async () => { var p = await pickFolder("选择视频输出目录"); if (p) { setConfig({...config, output_dir: p}); save({output_dir: p}); } }}>浏览</button>
-            <button className="btn btn-sm" onClick={() => showInFolder(config.output_dir || "")}>打开</button>
+            <button className="btn btn-sm" onClick={async () => { var p = await pickFolder(_tr("settings.pickOutput")); if (p) { setConfig({...config, output_dir: p}); save({output_dir: p}); } }}>{t("settings.btn.browse")}</button>
+            <button className="btn btn-sm" onClick={() => showInFolder(config.output_dir || "")}>{t("settings.btn.open")}</button>
           </div>
           <div className="grid-2" style={{marginTop:6}}>
             <div>
-              <label className="label">子目录结构</label>
+              <label className="label">{t("settings.label.subdir")}</label>
               <select className="input select" value={config.output_subdir_mode || "date"}
                 onChange={e => save({output_subdir_mode: e.target.value})}>
-                <option value="date">按日期</option>
-                <option value="project">按项目</option>
-                <option value="flat">扁平</option>
+                <option value="date">{t("settings.subdir.date")}</option>
+                <option value="project">{t("settings.subdir.project")}</option>
+                <option value="flat">{t("settings.subdir.flat")}</option>
               </select>
             </div>
             <div>
-              <label className="label">文件命名规则</label>
+              <label className="label">{t("settings.label.naming")}</label>
               <select className="input select" value={config.output_naming_rule || "{date}_{prompt_prefix}"}
                 onChange={e => save({output_naming_rule: e.target.value})}>
                 <option value="{'{'}task_id{'}'}">{'{'}task_id{'}'}.mp4</option>
-                <option value="{'{'}date{'}'}_{'{'}prompt_prefix{'}'}">{'{'}date{'}'}_{'{'}提示词前20字{'}'}.mp4</option>
+                <option value="{'{'}date{'}'}_{'{'}prompt_prefix{'}'}">{'{'}date{'}'}_{'{'}prompt{'}'}.mp4</option>
                 <option value="{'{'}date{'}'}_{'{'}mode{'}'}_{'{'}seq{'}'}">{'{'}date{'}'}_{'{'}mode{'}'}_{'{'}seq{'}'}.mp4</option>
               </select>
             </div>
           </div>
           <div className="flex items-center justify-between" style={{marginTop:8}}>
-            <span className="text-sm">自动下载完成的视频</span>
+            <span className="text-sm">{t("settings.toggle.autoDownload")}</span>
             <div className={`switch ${config.auto_download==="true"?"on":""}`}
               onClick={() => save({auto_download: config.auto_download==="true"?"false":"true"})} />
           </div>
         </div>
 
         <div className="form-row">
-          <label className="label">素材文件夹</label>
+          <label className="label">{t("settings.label.assetsDir")}</label>
           <div className="folder-row">
-            <input className="input" value={config.assets_dir || ""} placeholder="默认: ~/seedance-assets/"
+            <input className="input" value={config.assets_dir || ""} placeholder={t("settings.assetsDir.placeholder")}
               onChange={e => setConfig({...config, assets_dir: e.target.value})}
               onBlur={e => save({assets_dir: e.target.value})} />
-            <button className="btn btn-sm" onClick={async () => { var p = await pickFolder("选择素材文件夹"); if (p) { setConfig({...config, assets_dir: p}); save({assets_dir: p}); } }}>浏览</button>
-            <button className="btn btn-sm" onClick={() => showInFolder(config.assets_dir || "")}>打开</button>
+            <button className="btn btn-sm" onClick={async () => { var p = await pickFolder(_tr("settings.pickAssets")); if (p) { setConfig({...config, assets_dir: p}); save({assets_dir: p}); } }}>{t("settings.btn.browse")}</button>
+            <button className="btn btn-sm" onClick={() => showInFolder(config.assets_dir || "")}>{t("settings.btn.open")}</button>
           </div>
         </div>
 
@@ -1717,23 +2295,23 @@ function SettingsTab({ onKeyChange }) {
           <div className="grid-3" style={{marginTop:12}}>
             {Object.entries(stats).map(([k, s]) => (
               <div key={k} className="card" style={{padding:10,textAlign:"center"}}>
-                <div className="text-xs text-dim">{{output_dir:"视频输出",assets_dir:"素材",cache_dir:"缓存"}[k]||k}</div>
+                <div className="text-xs text-dim">{statKeyMap[k] ? t(statKeyMap[k]) : k}</div>
                 <div style={{fontSize:18,fontWeight:600,color:"var(--primary)",margin:"4px 0"}}>{s.size_mb} MB</div>
-                <div className="text-xs text-dim">{s.file_count} 个文件</div>
+                <div className="text-xs text-dim">{t("settings.stats.fileCount", { n: s.file_count })}</div>
               </div>
             ))}
           </div>
         )}
       </div>
 
-      <div className="setting-section">
-        <h3><Ico name="link"/> Webhook 设置</h3>
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"><Ico name="link"/> {t("settings.section.webhook")}</h3>
         <div className="form-row">
-          <label className="label">回调 URL（可选）</label>
-          <input className="input" value={config.callback_url || ""} placeholder="https://..."
+          <label className="label">{t("settings.label.callback")}</label>
+          <input className="input" value={config.callback_url || ""} placeholder={t("settings.callback.placeholder")}
             onChange={e => setConfig({...config, callback_url: e.target.value})}
             onBlur={e => save({callback_url: e.target.value})} />
-          <p className="text-xs text-dim" style={{marginTop:4}}>配置后任务状态变化时自动通知，减少轮询</p>
+          <p className="text-xs text-dim" style={{marginTop:4}}>{t("settings.callback.help")}</p>
         </div>
       </div>
     </div>
@@ -1742,6 +2320,7 @@ function SettingsTab({ onKeyChange }) {
 
 // ── Main App ──
 function App() {
+  const t = useT();
   const [activeTab, setActiveTab] = useState(0);
   const models = useModels();
   const [configLoaded, setConfigLoaded] = useState(false);
@@ -1754,34 +2333,96 @@ function App() {
     }).catch(() => setConfigLoaded(true));
   }, []);
 
+  const settingsIdx = TAB_IDS.indexOf("settings");
+
   return (
     <div className="app">
       <div className="header">
-        <h1><Ico name="video"/> Seedance 视频生成</h1>
+        <h1 className="oa-hero-title">
+          <span className="oa-hero-title__icon"><Ico name="video"/></span>
+          <span className="oa-hero-title__text">
+            {t("app.title")}
+            <span className="oa-hero-title__sub">{t("app.subtitle")}</span>
+          </span>
+        </h1>
         <div className="header-right">
           {keyStatus
-            ? <span title={keyStatus} style={{cursor:"default"}}>API Key: {keyStatus.length > 12 ? keyStatus.slice(0,4)+"..."+keyStatus.slice(-4) : keyStatus}</span>
-            : <span className="text-warning text-xs" style={{display:"inline-flex",alignItems:"center",gap:4}}><Ico name="warn"/> 请先配置 API Key</span>}
+            ? <span title={keyStatus} style={{cursor:"default"}}>{t("app.api.label")}: {keyStatus.length > 12 ? keyStatus.slice(0,4)+"..."+keyStatus.slice(-4) : keyStatus}</span>
+            : <span className="text-warning text-xs" onClick={() => setActiveTab(settingsIdx)}
+                style={{display:"inline-flex",alignItems:"center",gap:4,cursor:"pointer"}}
+                title={t("app.api.tooltip")}>
+                <Ico name="warn"/> {t("app.api.missing")}
+              </span>}
         </div>
       </div>
       <div className="tabs">
-        {TABS.map((t, i) => (
-          <div key={t} className={`tab ${activeTab===i?"active":""}`} onClick={() => setActiveTab(i)}>{t}</div>
+        {TAB_IDS.map((id, i) => (
+          <div key={id} className={`tab ${activeTab===i?"active":""}`} onClick={() => setActiveTab(i)}>{t("tabs." + id)}</div>
         ))}
       </div>
+      {!keyStatus && configLoaded && activeTab !== settingsIdx && (
+        <div className="oa-config-banner" role="alert"
+             style={{margin:"12px 16px 0", flexShrink:0}}>
+          <span className="oa-icon oa-config-banner__icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.warning() : ""}} />
+          <div className="oa-config-banner__text">
+            <strong>{t("banner.noKey.title")}</strong>
+            <div style={{fontSize:12, color:"var(--text-muted)", marginTop:2}}>
+              {t("banner.noKey.desc")}
+            </div>
+          </div>
+          <button className="oa-config-banner__action" type="button"
+                  onClick={() => setActiveTab(settingsIdx)}>
+            {t("banner.noKey.cta")}
+            <span className="oa-icon"
+                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.arrowRight() : ""}} />
+          </button>
+        </div>
+      )}
       <div className="content">
         {activeTab === 0 && <CreateTab models={models} onGoToTasks={() => setActiveTab(1)} />}
         {activeTab === 1 && <TaskListTab />}
         {activeTab === 2 && <AssetsTab />}
         {activeTab === 3 && <PromptGuideTab />}
         {activeTab === 4 && <StoryboardTab />}
-        {activeTab === 5 && <SettingsTab onKeyChange={k => setKeyStatus(k)} />}
+        {activeTab === settingsIdx && <SettingsTab onKeyChange={k => setKeyStatus(k)} />}
       </div>
     </div>
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+// React 18 production build unmounts the root if a child throws —
+// resulting in the entire iframe going blank. Wrap App in a boundary so
+// users see a recoverable message instead of a 5-second blank screen.
+class PluginErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { err: null }; }
+  static getDerivedStateFromError(err) { return { err }; }
+  componentDidCatch(err, info) { console.error("[seedance-video]", err, info); }
+  reset = () => this.setState({ err: null });
+  render() {
+    if (!this.state.err) return this.props.children;
+    const tr = (k) => _i18n.t(k);
+    return (
+      <div style={{padding: 24, maxWidth: 720}}>
+        <strong style={{color: "var(--danger,#ef4444)"}}>{tr("err.title")}</strong>
+        <pre style={{whiteSpace: "pre-wrap", marginTop: 8, padding: 12, background: "var(--bg)"}}>
+          {String(this.state.err && this.state.err.stack || this.state.err)}
+        </pre>
+        <button className="btn btn-sm btn-primary" onClick={this.reset}>{tr("err.retry")}</button>
+      </div>
+    );
+  }
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <PluginErrorBoundary><App /></PluginErrorBoundary>
+);
+// Tell the host we have rendered the first frame so it can dismiss the
+// loading overlay accurately (instead of guessing from iframe.onLoad,
+// which fires before Babel-standalone compiles this script).
+if (window.OpenAkita && typeof window.OpenAkita.ready === "function") {
+  window.OpenAkita.ready();
+}
 </script>
 </body>
 </html>

@@ -244,6 +244,20 @@ onEvent("task_updated", (data) => {
 });
 ```
 
+> **关于命名空间 / About namespaces**: 后端 `api.broadcast_ui_event(event_type, data)`
+> 在广播时会自动给 `event_type` 加 `plugin:<plugin_id>:` 前缀。
+> 推荐引入 `ui-kit/event-helpers.js`，它提供 `OpenAkita.onEvent("event_name", fn)`，
+> **自动 strip 前缀**且向后兼容老代码（仍可用全名匹配）。
+>
+> ```html
+> <script src="/api/plugins/_sdk/bootstrap.js"></script>
+> <script src="/api/plugins/_sdk/ui-kit/event-helpers.js"></script>
+> <script>
+>   OpenAkita.onEvent("task_updated", (data) => { /* ... */ }); // bare name 自动剥离前缀
+>   OpenAkita.onEvent("plugin:other-plugin:something", fn);     // 全名匹配亦可
+> </script>
+> ```
+
 ### 完整 SDK 模板 / Full SDK Template
 
 ```html
@@ -374,6 +388,12 @@ window.addEventListener("message", function(e) {
       (d.payload.theme || "").includes("dark") ? "dark" : "light");
   }
   // 处理宿主事件 / Handle host events
+  // 注：宿主的 broadcast_ui_event 会自动给 type 加 "plugin:<id>:" 前缀。
+  // 推荐直接用 ui-kit/event-helpers.js 提供的 OpenAkita.onEvent("event_name", fn)，
+  // 它会自动 strip 前缀、向后兼容老代码。
+  // Note: host's broadcast_ui_event prefixes types with "plugin:<id>:".
+  // Prefer using ui-kit/event-helpers.js OpenAkita.onEvent("event_name", fn) which
+  // strips the prefix automatically and is fully backwards compatible.
   if (d.type === "bridge:event" && d.payload) {
     var et = d.payload.eventType;
     ((_eventListeners[et] || []).forEach(function(fn) { fn(d.payload.data); }));
@@ -461,7 +481,7 @@ npm run build   # 输出到 dist/
 **热开发提示 / Hot Dev Tips:**
 - 宿主会在每次 iframe 加载时附加 `?_v=timestamp` 防止缓存
 - 修改 `index.html` 后，在桌面端侧边栏重新点击插件入口即可刷新
-- 后端路由修改后需重启宿主（或使用 `POST /api/plugins/{id}/reload`）
+- 后端路由修改后需重启宿主（或使用 `POST /api/plugins/{id}/_admin/reload`）
 
 ---
 
@@ -492,9 +512,9 @@ class Plugin(PluginBase):
             return {"ok": True, "task_id": "xxx"}
 ```
 
-所有路由自动挂载在 `/api/plugins/<plugin_id>/` 前缀下。
+所有路由自动挂载在 `/api/plugins/<plugin_id>/` 前缀下。**注意：`_admin/*` 是宿主保留命名空间**——宿主插件管理 / 诊断接口（启用、禁用、读写配置、重载、日志、`spawned-tasks` 等）都在 `/api/plugins/<plugin_id>/_admin/...` 上，插件不能也不应该在 `_admin/` 下注册路由（`register_api_routes` 会自动剥离并打 warning）。所以放心地使用常见的业务路径如 `/tasks`、`/config`、`/status`，它们不会再被宿主接口屏蔽。
 
-All routes are auto-mounted under `/api/plugins/<plugin_id>/` prefix.
+All routes are auto-mounted under `/api/plugins/<plugin_id>/` prefix. **Note: `_admin/*` is a reserved namespace owned by the host** — host management / diagnostic endpoints (enable, disable, config, reload, logs, `spawned-tasks`, …) live at `/api/plugins/<plugin_id>/_admin/...`. Plugins must not register routes under `_admin/` (the host strips and warns about them at `register_api_routes` time). Common business paths like `/tasks`, `/config`, `/status` are safe to use and will no longer be shadowed by host endpoints.
 
 ### 文件响应 / File Response
 

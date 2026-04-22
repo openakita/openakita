@@ -1,16 +1,14 @@
 """
-Deterministic Validators (Agent Harness)
+确定性验证器 (Agent Harness: Deterministic Validators)
 
-Mixes deterministic checks with LLM judgment during task-completion validation,
-reducing reliance on LLM-based verification.
-Deterministic validators do not depend on LLM; they use rules, file checks,
-exit codes, and other deterministic methods to verify task outcomes.
+在任务完成验证中混合使用确定性检查和 LLM 判断，减少对 LLM 验证的依赖。
+确定性验证器不依赖 LLM，使用规则、文件检查、退出码等确定性方法验证任务结果。
 
-Validator types:
-- PlanValidator: Validates the status of all Plan steps
-- ArtifactValidator: Validates artifact completeness (based on delivery_receipts)
-- ToolSuccessValidator: Validates whether critical tools executed successfully
-- FileValidator: Validates file operation results (disk existence/size checks)
+验证器类型:
+- PlanValidator: 验证 Plan 所有步骤状态
+- ArtifactValidator: 验证交付物是否完整（基于 delivery_receipts）
+- ToolSuccessValidator: 验证关键工具是否执行成功
+- FileValidator: 验证文件操作结果（磁盘存在性/大小校验）
 """
 
 from __future__ import annotations
@@ -26,27 +24,27 @@ logger = logging.getLogger(__name__)
 
 
 class ValidationResult(StrEnum):
-    """Validation result"""
+    """验证结果"""
 
     PASS = "pass"
     WARN = "warn"
     FAIL = "fail"
-    SKIP = "skip"  # Validator not applicable to the current scenario
+    SKIP = "skip"  # 验证器不适用于当前场景
 
 
 @dataclass
 class ValidatorOutput:
-    """Output from a single validator"""
+    """单个验证器的输出"""
 
     name: str
     result: ValidationResult
     reason: str = ""
-    confidence: float = 1.0  # Deterministic validator = 1.0
+    confidence: float = 1.0  # 确定性验证器 = 1.0
 
 
 @dataclass
 class ValidationReport:
-    """Aggregate validation report"""
+    """综合验证报告"""
 
     outputs: list[ValidatorOutput] = field(default_factory=list)
 
@@ -76,7 +74,7 @@ class ValidationReport:
         return sum(1 for o in self.outputs if o.result != ValidationResult.SKIP)
 
     def get_summary(self) -> str:
-        """Generate a human-readable summary"""
+        """生成人可读摘要"""
         parts = []
         for o in self.outputs:
             if o.result == ValidationResult.SKIP:
@@ -91,7 +89,7 @@ class ValidationReport:
 
 
 class BaseValidator(ABC):
-    """Base class for validators"""
+    """验证器基类"""
 
     @property
     @abstractmethod
@@ -103,7 +101,7 @@ class BaseValidator(ABC):
 
 @dataclass
 class ValidationContext:
-    """Validation context (data passed to all validators)"""
+    """验证上下文（传递给所有验证器的数据）"""
 
     user_request: str = ""
     assistant_response: str = ""
@@ -111,10 +109,15 @@ class ValidationContext:
     delivery_receipts: list[dict] = field(default_factory=list)
     tool_results: list[dict] = field(default_factory=list)
     conversation_id: str = ""
+    # --- 组织视角字段（默认值确保向后兼容；非组织 agent 永远是 0/False） ---
+    # 当前激活 chain 子树下已 ACCEPTED 的子任务数（严格信号）
+    accepted_child_count: int = 0
+    # 该节点 mailbox 最近 60s 内是否收到过 deliverable_accepted 类事件（弱信号兜底）
+    has_recent_accepted_signal: bool = False
 
 
 class PlanValidator(BaseValidator):
-    """Plan step completion validator (deterministic, no LLM)"""
+    """Plan 步骤完成度验证（确定性，不用 LLM）"""
 
     @property
     def name(self) -> str:
@@ -181,7 +184,7 @@ class PlanValidator(BaseValidator):
 
 
 class ArtifactValidator(BaseValidator):
-    """Artifact completeness validator"""
+    """交付物完整性验证"""
 
     @property
     def name(self) -> str:
@@ -220,7 +223,7 @@ class ArtifactValidator(BaseValidator):
 
 
 class ToolSuccessValidator(BaseValidator):
-    """Critical tool execution success validator"""
+    """关键工具执行成功验证"""
 
     @property
     def name(self) -> str:
@@ -259,7 +262,7 @@ class ToolSuccessValidator(BaseValidator):
 
 
 class CompletePlanValidator(BaseValidator):
-    """Validates whether the complete_todo tool was called"""
+    """验证 complete_todo 工具是否被调用"""
 
     @property
     def name(self) -> str:
@@ -293,12 +296,11 @@ class CompletePlanValidator(BaseValidator):
 
 
 class FileValidator(BaseValidator):
-    """File operation result validator (disk-level deterministic checks)
+    """文件操作结果验证（磁盘级确定性校验）
 
-    Extracts file paths from tool_results text and verifies their actual
-    state on disk:
-    - write_file / edit_file: file should exist and have size > 0
-    - delete_file: file should no longer exist
+    从 tool_results 文本中提取路径，校验文件在磁盘上的实际状态：
+    - write_file / edit_file: 文件应存在且大小 > 0
+    - delete_file: 文件应已不存在
     """
 
     _WRITE_PATH_RE = re.compile(
@@ -329,7 +331,7 @@ class FileValidator(BaseValidator):
             if tr.get("is_error"):
                 continue
 
-            # write / edit: file should exist
+            # write / edit: 文件应存在
             m = self._WRITE_PATH_RE.search(content)
             if m:
                 fpath = m.group(1).strip()
@@ -337,21 +339,21 @@ class FileValidator(BaseValidator):
                 try:
                     p = Path(fpath)
                     if not p.exists():
-                        issues.append(f"write/edit target does not exist: {fpath}")
+                        issues.append(f"write/edit 目标不存在: {fpath}")
                     elif p.stat().st_size == 0:
-                        issues.append(f"write/edit target is empty file: {fpath}")
+                        issues.append(f"write/edit 目标为空文件: {fpath}")
                 except OSError as e:
-                    issues.append(f"Cannot check {fpath}: {e}")
+                    issues.append(f"无法检查 {fpath}: {e}")
                 continue
 
-            # delete: file should no longer exist
+            # delete: 文件应已不存在
             m = self._DELETE_PATH_RE.search(content)
             if m:
                 fpath = m.group(1).strip()
                 checked += 1
                 try:
                     if Path(fpath).exists():
-                        issues.append(f"delete target still exists: {fpath}")
+                        issues.append(f"delete 目标仍存在: {fpath}")
                 except OSError:
                     pass
                 continue
@@ -377,7 +379,57 @@ class FileValidator(BaseValidator):
         )
 
 
-# ==================== Validator Registry ====================
+class OrgDelegationValidator(BaseValidator):
+    """组织协作者交付完成度验证。
+
+    协调者节点（如 Editor-in-Chief / PlanningEditor）完成的方式是「下属
+    交付物均已验收」，本身并不会调用 ``deliver_artifacts``。这种场景下
+    原有 ArtifactValidator 不适用，verify 容易把汇总文本误判为
+    ``verify_incomplete``。本 validator 在以下两种信号成立时回 ``PASS``：
+
+    1) 严格信号：``accepted_child_count >= 1`` —— 当前激活 chain 子树下
+       至少有 1 个子任务已 ACCEPTED（来自 ProjectStore）。
+    2) 弱信号兜底：``has_recent_accepted_signal=True`` —— 该节点 mailbox
+       最近 60s 内有 ``deliverable_accepted`` 类事件（runtime 层面）。
+
+    非组织 agent 默认两个字段都是 0/False，validator 永远 SKIP，
+    与原有 verify 流程行为一致。
+    """
+
+    @property
+    def name(self) -> str:
+        return "OrgDelegationValidator"
+
+    def validate(self, context: ValidationContext) -> ValidatorOutput:
+        accepted = int(getattr(context, "accepted_child_count", 0) or 0)
+        recent = bool(getattr(context, "has_recent_accepted_signal", False))
+
+        if accepted >= 1:
+            return ValidatorOutput(
+                name=self.name,
+                result=ValidationResult.PASS,
+                reason=(
+                    f"{accepted} downstream task(s) already ACCEPTED in current chain — "
+                    "treating coordinator response as completed"
+                ),
+            )
+        if recent:
+            return ValidatorOutput(
+                name=self.name,
+                result=ValidationResult.PASS,
+                reason=(
+                    "recent deliverable_accepted signal in node mailbox — "
+                    "treating coordinator response as completed (weak signal)"
+                ),
+            )
+        return ValidatorOutput(
+            name=self.name,
+            result=ValidationResult.SKIP,
+            reason="no accepted child task / no recent deliverable_accepted signal",
+        )
+
+
+# ==================== 验证器注册表 ====================
 
 _DEFAULT_VALIDATORS: list[BaseValidator] = [
     PlanValidator(),
@@ -385,11 +437,12 @@ _DEFAULT_VALIDATORS: list[BaseValidator] = [
     ToolSuccessValidator(),
     FileValidator(),
     CompletePlanValidator(),
+    OrgDelegationValidator(),
 ]
 
 
 class ValidatorRegistry:
-    """Validator registry"""
+    """验证器注册表"""
 
     def __init__(self, validators: list[BaseValidator] | None = None) -> None:
         self._validators = validators or list(_DEFAULT_VALIDATORS)
@@ -398,7 +451,7 @@ class ValidatorRegistry:
         self._validators.append(validator)
 
     def run_all(self, context: ValidationContext) -> ValidationReport:
-        """Run all validators"""
+        """运行所有验证器"""
         report = ValidationReport()
 
         for validator in self._validators:
@@ -445,5 +498,5 @@ class ValidatorRegistry:
 
 
 def create_default_registry() -> ValidatorRegistry:
-    """Create a default validator registry"""
+    """创建默认验证器注册表"""
     return ValidatorRegistry()

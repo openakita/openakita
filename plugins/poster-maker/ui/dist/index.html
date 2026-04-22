@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 海报生成</title>
+  <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css">
+  <script src="/api/plugins/_sdk/bootstrap.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/icons.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/i18n.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/event-helpers.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/error-coach.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/task-panel.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/onboard-wizard.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/first-success-celebrate.js"></script>
+  <style>
+    body { padding: 16px; }
+    h1 { margin:0 0 6px; font-size: 22px; display: inline-flex; align-items: center; gap: 10px; }
+    h1 .oa-icon { width: 22px; height: 22px; color: var(--oa-primary); }
+    .header-tip { color: var(--oa-text-muted); font-size: 12px; margin-bottom: 16px; }
+    .preview-box { background: #0f172a; border: 1px solid var(--oa-border); border-radius: 6px; padding: 10px; text-align:center; }
+    .preview-box img { max-width: 100%; max-height: 360px; }
+  </style>
+</head>
+<body>
+  <h1>
+    <span class="oa-icon" data-icon="image"></span>
+    <span data-i18n="header.title"></span>
+  </h1>
+  <div class="header-tip" data-i18n="header.tip"></div>
+
+  <div class="oa-card">
+    <h3>① <span data-i18n="step1.title"></span></h3>
+    <div id="tplList" class="oa-row" style="flex-wrap:wrap"></div>
+  </div>
+
+  <div class="oa-card">
+    <h3>② <span data-i18n="step2.title"></span></h3>
+    <div id="slots"></div>
+  </div>
+
+  <div class="oa-card">
+    <h3>③ <span data-i18n="step3.title"></span></h3>
+    <input id="bgFile" type="file" accept="image/*">
+    <div id="bgInfo" style="font-size:12px;color:var(--oa-text-muted);margin-top:4px"></div>
+    <div style="margin-top:6px">
+      <label class="oa-label" data-i18n="step3.aiLabel"></label>
+      <input id="aiPrompt" class="oa-input" data-i18n-placeholder="step3.aiPlaceholder">
+    </div>
+  </div>
+
+  <div class="oa-row" style="margin: 0 0 14px">
+    <button class="oa-btn oa-btn-primary" id="goBtn" data-i18n="actions.go"></button>
+  </div>
+  <div id="errorBox"></div>
+
+  <h3 style="margin: 18px 0 8px" data-i18n="tasks.title"></h3>
+  <div id="tasks"></div>
+
+<script>
+  OpenAkitaI18n.register({
+    zh: {
+      "header.title": "AI 海报生成",
+      "header.tip": "挑模板 → 填字 → (可选) 上传配图 → 一键生成。文字会自动换行 + 适配大小。",
+      "step1.title": "选模板",
+      "step2.title": "填字",
+      "step3.title": "配图（可选）",
+      "step3.aiLabel": "AI 润色 prompt（可选，留空则不调用 AI）",
+      "step3.aiPlaceholder": "例如：把背景换成蓝紫色渐变星空",
+      "actions.go": "生成海报",
+      "actions.download": "下载",
+      "tasks.title": "最近的任务",
+      "bg.uploadFail": "上传失败",
+      "bg.uploaded": "已上传：{name}",
+      "err.tpl.required": "请先选一个模板",
+      "err.create.fail": "生成失败",
+      "result.title": "海报生成完成",
+      "onboard.q": "你做这张海报是给谁看的？",
+      "onboard.opt.wechat": "朋友圈 / 微信群",
+      "onboard.opt.xhs": "小红书 / 抖音封面",
+      "onboard.opt.event": "线下活动",
+      "onboard.opt.web": "网页 / 视频封面",
+      "success.title": "第一张海报出炉啦！",
+      "rec.imageEdit": "继续 P 图",
+      "rec.tongyi": "换张配图"
+    },
+    en: {
+      "header.title": "Poster Maker",
+      "header.tip": "Pick a template → fill text → (optionally) upload an image → generate. Text auto-wraps and fits.",
+      "step1.title": "Pick a template",
+      "step2.title": "Fill in text",
+      "step3.title": "Image (optional)",
+      "step3.aiLabel": "AI polish prompt (optional, leave empty to skip AI)",
+      "step3.aiPlaceholder": "e.g. replace background with a blue-purple gradient starscape",
+      "actions.go": "Generate poster",
+      "actions.download": "Download",
+      "tasks.title": "Recent tasks",
+      "bg.uploadFail": "Upload failed",
+      "bg.uploaded": "Uploaded: {name}",
+      "err.tpl.required": "Please pick a template first",
+      "err.create.fail": "Failed to generate",
+      "result.title": "Poster ready",
+      "onboard.q": "Who is this poster for?",
+      "onboard.opt.wechat": "Moments / WeChat groups",
+      "onboard.opt.xhs": "Xiaohongshu / Douyin cover",
+      "onboard.opt.event": "Offline event",
+      "onboard.opt.web": "Web page / video cover",
+      "success.title": "First poster is out!",
+      "rec.imageEdit": "Keep editing the image",
+      "rec.tongyi": "Try a different image"
+    }
+  });
+  const T = (k, vars) => OpenAkitaI18n.t(k, vars);
+
+  document.querySelectorAll("[data-icon]").forEach(function (el) {
+    var name = el.dataset.icon;
+    var fn = window.OpenAkitaIcons && window.OpenAkitaIcons[name];
+    if (fn) el.innerHTML = fn();
+  });
+  OpenAkitaI18n.bindDom(document.body);
+
+  const apiBase = (OpenAkita.meta && OpenAkita.meta.apiBase) || '';
+  const api = (path, opts) => fetch(apiBase + path, opts).then(r => r.json().then(j => ({ ok: r.ok, status: r.status, body: j })));
+  const $ = (id) => document.getElementById(id);
+
+  let templates = []; let chosen = null; let bgPath = null; let lastTaskId = null;
+
+  OnboardWizard.askOnce({
+    storageKey: 'poster-maker:audience',
+    question: T('onboard.q'),
+    options: [
+      { id: 'wechat', label: T('onboard.opt.wechat') },
+      { id: 'xhs',    label: T('onboard.opt.xhs')    },
+      { id: 'event',  label: T('onboard.opt.event')  },
+      { id: 'web',    label: T('onboard.opt.web')    },
+    ],
+  });
+
+  api('/templates').then(r => {
+    templates = (r.body && r.body.templates) || [];
+    const root = $('tplList'); root.innerHTML = '';
+    templates.forEach(t => {
+      const b = document.createElement('button');
+      b.className = 'oa-btn'; b.style.minWidth = '140px';
+      b.innerHTML = `<div style="font-weight:600">${t.name}</div><div style="font-size:11px;opacity:.7">${t.width}×${t.height}</div>`;
+      b.addEventListener('click', () => choose(t.id));
+      root.appendChild(b);
+    });
+    if (templates.length) choose(templates[0].id);
+  });
+
+  function choose(id) {
+    chosen = templates.find(t => t.id === id);
+    if (!chosen) return;
+    [...$('tplList').children].forEach((b, i) => {
+      b.classList.toggle('oa-btn-primary', templates[i].id === id);
+    });
+    const root = $('slots'); root.innerHTML = '';
+    chosen.slots.forEach(s => {
+      const wrap = document.createElement('div');
+      wrap.style.marginBottom = '8px';
+      wrap.innerHTML = `<label class="oa-label">${s.label}</label><input class="oa-input" data-slot="${s.name}" placeholder="${s.placeholder}">`;
+      root.appendChild(wrap);
+    });
+  }
+
+  $('bgFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const fd = new FormData(); fd.append('file', f);
+    const r = await fetch(apiBase + '/upload-background', { method:'POST', body: fd });
+    if (!r.ok) { $('bgInfo').textContent = T('bg.uploadFail'); return; }
+    const j = await r.json(); bgPath = j.path;
+    $('bgInfo').textContent = T('bg.uploaded', { name: f.name });
+  });
+
+  $('goBtn').addEventListener('click', async () => {
+    $('errorBox').innerHTML = '';
+    if (!chosen) { ErrorCoach.mount('#errorBox', { problem: T('err.tpl.required') }); return; }
+    const text_values = {};
+    $('slots').querySelectorAll('input[data-slot]').forEach(i => {
+      if (i.value) text_values[i.dataset.slot] = i.value;
+    });
+    const r = await api('/tasks', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ template_id: chosen.id, text_values,
+                              background_image_path: bgPath, ai_enhance_prompt: $('aiPrompt').value || null })});
+    if (!r.ok) { ErrorCoach.mount('#errorBox', r.body.detail || { problem: T('err.create.fail') }); return; }
+    lastTaskId = r.body.task_id;
+    taskPanel.refresh();
+  });
+
+  const taskPanel = new TaskPanel({ root: '#tasks', apiBase, tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
+  taskPanel.start();
+
+  OpenAkita.onEvent('task_updated', (data) => {
+    taskPanel.refresh();
+    if (data && data.status === 'succeeded' && data.id === lastTaskId) {
+      const url = apiBase + '/tasks/' + data.id + '/poster';
+      const div = document.createElement('div');
+      div.className = 'oa-card';
+      div.innerHTML = `<h3>${T('result.title')}</h3>
+        <div class="preview-box"><img src="${url}" alt="poster"></div>
+        <div class="oa-row" style="margin-top:6px"><a class="oa-btn" href="${url}" download>${T('actions.download')}</a></div>`;
+      $('errorBox').innerHTML = ''; $('errorBox').appendChild(div);
+      FirstSuccessCelebrate.maybeFire({
+        storageKey: 'poster-maker:firstSuccess',
+        title: T('success.title'),
+        recommendations: [
+          { id: 'image-edit',  label: T('rec.imageEdit') },
+          { id: 'tongyi-image', label: T('rec.tongyi') },
+        ],
+        onRecommend: (id) => OpenAkita.navigate('plugin-app:' + id),
+      });
+    }
+  });
+</script>
+</body>
+</html>

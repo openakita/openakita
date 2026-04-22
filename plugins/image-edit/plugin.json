@@ -1,0 +1,48 @@
+{
+  "id": "image-edit",
+  "name": "Image Edit",
+  "display_name_zh": "AI 改图",
+  "display_name_en": "Image Edit",
+  "version": "1.0.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Upload an image, mask the part you want changed, describe the result in one sentence. Designed for users who don't know Photoshop. Powered by gpt-image-1 with Tongyi Wanxiang fallback.",
+  "description_i18n": {
+    "zh": "上传一张图，框出要改的部分，用一句话描述想要的效果。专为不会用 PS 的小白。基于 gpt-image-1，可降级到通义万相。",
+    "en": "Upload an image, mask the part you want changed, describe the result in one sentence. Designed for users who don't know Photoshop. Powered by gpt-image-1 with Tongyi Wanxiang fallback."
+  },
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["image", "edit", "inpaint", "mask", "gpt-image", "dashscope"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.4.0"
+  },
+  "provides": {
+    "tools": [
+      "image_edit_create",
+      "image_edit_status",
+      "image_edit_list",
+      "image_edit_cancel"
+    ],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "AI 改图",
+    "title_i18n": { "zh": "AI 改图", "en": "Image Edit" },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme", "clipboard"]
+  }
+}

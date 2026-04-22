@@ -1521,7 +1521,18 @@ export function ChatView({
         setOrgCommandPending(true);
 
         const progressLines: string[] = [];
+        // 进度行 1s 去重：兜底 WebSocket 事件 fan-out（platform 已做事件级
+        // 去重，这里再加一层 UI 级保险，避免相邻同行被重复 push 到气泡）。
+        let lastProgressLine = "";
+        let lastProgressAtMs = 0;
+        const PROGRESS_DEDUPE_MS = 1000;
         const pushProgress = (line: string) => {
+          const now = Date.now();
+          if (line === lastProgressLine && now - lastProgressAtMs < PROGRESS_DEDUPE_MS) {
+            return;
+          }
+          lastProgressLine = line;
+          lastProgressAtMs = now;
           progressLines.push(line);
           const preview = progressLines.slice(-8).map(l => `> ${l}`).join("\n");
           updateOrgMessages((prev) => prev.map(m =>

@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 改图</title>
+  <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css">
+  <script src="/api/plugins/_sdk/bootstrap.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/icons.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/i18n.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/event-helpers.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/error-coach.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/cost-preview.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/task-panel.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/onboard-wizard.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/first-success-celebrate.js"></script>
+  <style>
+    body { padding: 16px; }
+    h1 { margin: 0 0 6px; font-size: 22px; display: inline-flex; align-items: center; gap: 10px; }
+    h1 .oa-icon { width: 22px; height: 22px; color: var(--oa-primary); }
+    .header-tip { color: var(--oa-text-muted); font-size: 12px; margin-bottom: 16px; }
+    .canvas-wrap { position: relative; display: inline-block; max-width: 100%; }
+    .canvas-wrap canvas { display:block; max-width: 100%; cursor: crosshair; border:1px solid var(--oa-border); border-radius:6px; background:#000; }
+    .toolbar { display: flex; gap: 6px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+    .step-num { display: inline-block; width: 18px; height: 18px; border-radius: 50%; background: var(--oa-primary); color: #fff; text-align:center; line-height: 18px; font-size: 11px; margin-right: 6px; }
+  </style>
+</head>
+<body>
+  <h1>
+    <span class="oa-icon" data-icon="brush"></span>
+    <span data-i18n="header.title"></span>
+  </h1>
+  <div class="header-tip" data-i18n="header.tip"></div>
+
+  <!-- Step 1 -->
+  <div class="oa-card">
+    <h3><span class="step-num">1</span><span data-i18n="step1.title"></span></h3>
+    <div class="oa-row">
+      <input type="file" id="imgFile" accept="image/*" class="oa-input" style="flex:1">
+      <button class="oa-btn" id="pickBtn" data-i18n="step1.browse"></button>
+    </div>
+  </div>
+
+  <!-- Step 2 -->
+  <div class="oa-card" id="paintCard" style="display:none">
+    <h3>
+      <span class="step-num">2</span>
+      <span data-i18n="step2.title"></span>
+      <span style="font-weight:400;font-size:12px;color:var(--oa-text-muted)" data-i18n="step2.optional"></span>
+    </h3>
+    <div class="canvas-wrap">
+      <canvas id="bg"></canvas>
+      <canvas id="paint" style="position:absolute;left:0;top:0"></canvas>
+    </div>
+    <div class="toolbar">
+      <label data-i18n="step2.brush"></label>
+      <input type="range" id="brush" min="5" max="100" value="30">
+      <button class="oa-btn" id="clearBtn" data-i18n="step2.clear"></button>
+      <span style="color:var(--oa-text-muted);font-size:12px" data-i18n="step2.legend"></span>
+    </div>
+  </div>
+
+  <!-- Step 3 -->
+  <div class="oa-card" id="promptCard" style="display:none">
+    <h3><span class="step-num">3</span><span data-i18n="step3.title"></span></h3>
+    <textarea id="prompt" class="oa-textarea" data-i18n-placeholder="step3.placeholder"></textarea>
+    <div class="oa-grid cols-3" style="margin-top:6px">
+      <div>
+        <label class="oa-label" data-i18n="step3.size"></label>
+        <select id="size" class="oa-input">
+          <option>1024x1024</option><option>1024x1536</option><option>1536x1024</option>
+        </select>
+      </div>
+      <div>
+        <label class="oa-label" data-i18n="step3.count"></label>
+        <input id="n" type="number" min="1" max="4" value="1" class="oa-input">
+      </div>
+      <div>
+        <label class="oa-label" data-i18n="step3.engine"></label>
+        <select id="provider" class="oa-input">
+          <option value="auto" data-i18n="step3.engine.auto"></option>
+          <option value="openai" data-i18n="step3.engine.openai"></option>
+          <option value="dashscope" data-i18n="step3.engine.dashscope"></option>
+        </select>
+      </div>
+    </div>
+    <div class="oa-row" style="margin-top:8px">
+      <button class="oa-btn" id="verifyBtn" data-i18n="step3.verify"></button>
+      <span id="verifyStatus" class="oa-thinking" style="display:none">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span> <span data-i18n="step3.thinking"></span>
+      </span>
+    </div>
+    <div id="intentBox" style="margin-top:10px"></div>
+    <div id="costBox" style="margin-top:10px"></div>
+  </div>
+
+  <!-- Step 4 -->
+  <div class="oa-card" id="goCard" style="display:none">
+    <h3><span class="step-num">4</span><span data-i18n="step4.title"></span></h3>
+    <button class="oa-btn oa-btn-primary" id="goBtn" data-i18n="step4.go"></button>
+    <div id="errorBox" style="margin-top:10px"></div>
+  </div>
+
+  <h3 style="margin: 18px 0 8px" data-i18n="tasks.title"></h3>
+  <div id="tasks"></div>
+
+<script>
+  OpenAkitaI18n.register({
+    zh: {
+      "header.title": "AI 改图",
+      "header.tip": "上传一张图 → 把要改的地方涂出来 → 一句话说想改成什么 → 等几秒",
+      "step1.title": "选一张图",
+      "step1.browse": "浏览",
+      "step2.title": "涂出要改的部分",
+      "step2.optional": "（可选 — 不涂就改全图）",
+      "step2.brush": "笔刷",
+      "step2.clear": "清除",
+      "step2.legend": "白色 = 要改的区域",
+      "step3.title": "说一下想改成什么",
+      "step3.placeholder": "例：把背景换成樱花、把天空变成日落、给杯子加上热气、删掉左边的人...",
+      "step3.size": "尺寸",
+      "step3.count": "出图数量",
+      "step3.engine": "引擎",
+      "step3.engine.auto": "自动选最佳",
+      "step3.engine.openai": "OpenAI gpt-image-1",
+      "step3.engine.dashscope": "通义万相",
+      "step3.verify": "让 AI 复核一下",
+      "step3.thinking": "思考中",
+      "step4.title": "开始改图",
+      "step4.go": "立即改图",
+      "tasks.title": "最近的任务",
+      "intent.understand": "AI 理解：",
+      "intent.empty": "(空)",
+      "intent.questions": "还想确认：",
+      "intent.risks": "注意：",
+      "err.cost.problem": "无法估算成本",
+      "err.cost.next": "检查 API Key",
+      "err.create.problem": "创建失败",
+      "err.create.next": "稍后重试",
+      "onboard.q": "主要想用 AI 改图干什么？",
+      "onboard.opt.remove": "去除画面里的物体/人",
+      "onboard.opt.replace": "换背景 / 换风格",
+      "onboard.opt.add": "加点东西进去",
+      "onboard.opt.fix": "修复老照片 / 修瑕疵",
+      "success.title": "改好了！",
+      "success.subtitle": "想再加字、做海报、或合成视频？看下面的推荐。",
+      "rec.poster": "把它做成海报",
+      "rec.storyboard": "生成一组故事图"
+    },
+    en: {
+      "header.title": "Image Edit",
+      "header.tip": "Upload an image → paint the area to change → describe what you want → wait a few seconds",
+      "step1.title": "Pick an image",
+      "step1.browse": "Browse",
+      "step2.title": "Paint the area to change",
+      "step2.optional": "(optional — empty paints the whole image)",
+      "step2.brush": "Brush",
+      "step2.clear": "Clear",
+      "step2.legend": "White = area to edit",
+      "step3.title": "Describe the result",
+      "step3.placeholder": "e.g. replace the background with cherry blossoms, turn the sky into sunset, add steam to the cup, remove the person on the left...",
+      "step3.size": "Size",
+      "step3.count": "Number of outputs",
+      "step3.engine": "Engine",
+      "step3.engine.auto": "Auto (best fit)",
+      "step3.engine.openai": "OpenAI gpt-image-1",
+      "step3.engine.dashscope": "Tongyi Wanxiang",
+      "step3.verify": "Let AI double-check",
+      "step3.thinking": "Thinking",
+      "step4.title": "Start editing",
+      "step4.go": "Edit now",
+      "tasks.title": "Recent tasks",
+      "intent.understand": "AI understands:",
+      "intent.empty": "(empty)",
+      "intent.questions": "Wants to confirm:",
+      "intent.risks": "Heads up:",
+      "err.cost.problem": "Unable to estimate cost",
+      "err.cost.next": "Check the API key",
+      "err.create.problem": "Failed to create task",
+      "err.create.next": "Please try again later",
+      "onboard.q": "What will you mostly do with AI image editing?",
+      "onboard.opt.remove": "Remove objects / people",
+      "onboard.opt.replace": "Replace background / style",
+      "onboard.opt.add": "Add something to the scene",
+      "onboard.opt.fix": "Restore old photos / retouch",
+      "success.title": "Done!",
+      "success.subtitle": "Want to add text, make a poster, or compose a video? See the recommendations below.",
+      "rec.poster": "Turn it into a poster",
+      "rec.storyboard": "Build a storyboard set"
+    }
+  });
+  const T = (k, vars) => OpenAkitaI18n.t(k, vars);
+
+  document.querySelectorAll("[data-icon]").forEach(function (el) {
+    var name = el.dataset.icon;
+    var fn = window.OpenAkitaIcons && window.OpenAkitaIcons[name];
+    if (fn) el.innerHTML = fn();
+  });
+  OpenAkitaI18n.bindDom(document.body);
+
+  const apiBase = (OpenAkita.meta && OpenAkita.meta.apiBase) || '';
+  const api = (path, opts) => fetch(apiBase + path, opts).then(r => r.json().then(j => ({ ok: r.ok, status: r.status, body: j })));
+  const $ = (id) => document.getElementById(id);
+
+  let chosen = { sourcePath: null, maskPath: null, width: 0, height: 0 };
+
+  OnboardWizard.askOnce({
+    storageKey: 'image-edit:audience',
+    question: T('onboard.q'),
+    options: [
+      { id: 'remove', label: T('onboard.opt.remove') },
+      { id: 'replace', label: T('onboard.opt.replace') },
+      { id: 'add', label: T('onboard.opt.add') },
+      { id: 'fix', label: T('onboard.opt.fix') },
+    ],
+  });
+
+  $('pickBtn').addEventListener('click', () => $('imgFile').click());
+  $('imgFile').addEventListener('change', async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const form = new FormData(); form.append('file', file); form.append('kind', 'image');
+    const r = await fetch(apiBase + '/upload', { method: 'POST', body: form });
+    const j = await r.json();
+    chosen.sourcePath = j.path;
+    await loadImageToCanvas(file);
+    $('paintCard').style.display = 'block';
+    $('promptCard').style.display = 'block';
+    $('goCard').style.display = 'block';
+    refreshCost();
+  });
+
+  const bg = $('bg'), paint = $('paint');
+  const bgCtx = bg.getContext('2d'), pCtx = paint.getContext('2d');
+  let drawing = false;
+
+  async function loadImageToCanvas(file) {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+    const maxW = 800;
+    const scale = Math.min(1, maxW / img.naturalWidth);
+    const w = Math.round(img.naturalWidth * scale);
+    const h = Math.round(img.naturalHeight * scale);
+    bg.width = paint.width = w; bg.height = paint.height = h;
+    chosen.width = w; chosen.height = h;
+    bgCtx.drawImage(img, 0, 0, w, h);
+    pCtx.clearRect(0, 0, w, h);
+  }
+
+  paint.addEventListener('mousedown', e => { drawing = true; draw(e); });
+  paint.addEventListener('mousemove', e => { if (drawing) draw(e); });
+  paint.addEventListener('mouseup', () => drawing = false);
+  paint.addEventListener('mouseleave', () => drawing = false);
+  function draw(e) {
+    const rect = paint.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (paint.width / rect.width);
+    const y = (e.clientY - rect.top)  * (paint.height / rect.height);
+    pCtx.fillStyle = 'rgba(255,255,255,0.85)';
+    pCtx.beginPath();
+    pCtx.arc(x, y, parseInt($('brush').value), 0, Math.PI*2);
+    pCtx.fill();
+  }
+  $('clearBtn').addEventListener('click', () => pCtx.clearRect(0, 0, paint.width, paint.height));
+
+  async function exportMaskIfPainted() {
+    const data = pCtx.getImageData(0, 0, paint.width, paint.height).data;
+    let painted = false;
+    for (let i = 3; i < data.length; i += 4) { if (data[i] > 0) { painted = true; break; } }
+    if (!painted) return null;
+    const off = document.createElement('canvas');
+    off.width = paint.width; off.height = paint.height;
+    const ctx = off.getContext('2d');
+    ctx.fillStyle = '#000'; ctx.fillRect(0, 0, off.width, off.height);
+    ctx.drawImage(paint, 0, 0);
+    const blob = await new Promise(res => off.toBlob(res, 'image/png'));
+    const form = new FormData(); form.append('file', blob, 'mask.png'); form.append('kind', 'mask');
+    const r = await fetch(apiBase + '/upload', { method: 'POST', body: form });
+    const j = await r.json();
+    return j.path;
+  }
+
+  $('verifyBtn').addEventListener('click', async () => {
+    const hint = $('prompt').value.trim();
+    $('verifyStatus').style.display = 'inline-flex';
+    try {
+      const r = await api('/intent', { method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ hint, has_mask: hasPainted() }) });
+      const intent = r.body || {};
+      const qa = (intent.clarifying_questions || []).map(q => `<li>${q}</li>`).join('');
+      const risks = (intent.risks || []).map(x => `<li>${x}</li>`).join('');
+      $('intentBox').innerHTML = `
+        <div class="oa-card" style="margin:0;background:var(--oa-bg)">
+          <div style="font-weight:600;margin-bottom:6px">${T('intent.understand')}</div>
+          <div>${intent.summary || T('intent.empty')}</div>
+          ${qa ? `<div style="margin-top:6px;font-size:12px;color:var(--oa-text-muted)">${T('intent.questions')}</div><ul style="font-size:12px;margin:4px 0 0 18px">${qa}</ul>` : ''}
+          ${risks ? `<div style="margin-top:6px;font-size:12px;color:var(--oa-warning)">${T('intent.risks')}</div><ul style="font-size:12px;margin:4px 0 0 18px">${risks}</ul>` : ''}
+        </div>`;
+    } finally { $('verifyStatus').style.display = 'none'; }
+  });
+  function hasPainted() {
+    if (!paint.width) return false;
+    const data = pCtx.getImageData(0, 0, paint.width, paint.height).data;
+    for (let i = 3; i < data.length; i += 4) if (data[i] > 0) return true;
+    return false;
+  }
+
+  async function refreshCost() {
+    const r = await api('/cost', { method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ provider: $('provider').value, n: parseInt($('n').value), size: $('size').value }) });
+    if (r.ok) CostPreview.mount('#costBox', r.body);
+    else ErrorCoach.mount('#costBox', r.body.detail || { problem: T('err.cost.problem'), next_step: T('err.cost.next') });
+  }
+  ['provider', 'n', 'size'].forEach(id => $(id).addEventListener('change', refreshCost));
+
+  $('goBtn').addEventListener('click', async () => {
+    if (!chosen.sourcePath) return;
+    $('errorBox').innerHTML = '';
+    const maskPath = await exportMaskIfPainted();
+    const r = await api('/tasks', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({
+      source_path: chosen.sourcePath, mask_path: maskPath,
+      prompt: $('prompt').value.trim(), provider: $('provider').value,
+      size: $('size').value, n: parseInt($('n').value, 10),
+    })});
+    if (!r.ok) {
+      ErrorCoach.mount('#errorBox', r.body.detail || { problem: T('err.create.problem'), next_step: T('err.create.next'), severity: 'error' },
+        { onRetry: () => $('goBtn').click() });
+      return;
+    }
+    taskPanel.refresh();
+  });
+
+  const taskPanel = new TaskPanel({ root: '#tasks', apiBase, tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
+  taskPanel.start();
+
+  OpenAkita.onEvent('task_updated', (data) => {
+    taskPanel.refresh();
+    if (data && data.status === 'succeeded') {
+      FirstSuccessCelebrate.maybeFire({
+        storageKey: 'image-edit:firstSuccess',
+        title: T('success.title'),
+        subtitle: T('success.subtitle'),
+        recommendations: [
+          { id: 'poster-maker', label: T('rec.poster') },
+          { id: 'storyboard',   label: T('rec.storyboard') },
+        ],
+        onRecommend: (id) => OpenAkita.navigate('plugin-app:' + id),
+      });
+    }
+  });
+</script>
+</body>
+</html>

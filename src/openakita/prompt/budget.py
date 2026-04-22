@@ -1,20 +1,20 @@
 """
-Prompt Budget - Token budget trimming module
+Prompt Budget - Token 预算裁剪模块
 
-Controls token budgets for each part, ensuring system prompts stay within limits.
+控制各部分的 token 预算，确保系统提示词不超出限制。
 
-Budget allocation:
+预算分配:
 - identity_budget: 6000 tokens (SOUL.md ~60% + agent.core ~25% + user_policies ~15%)
-  - SOUL.md simplified to ~60 lines of behavior constraints (~500 tokens)
-  - agent.core compiled approximately ~600 tokens
-  - User-defined policies (optional)
+  - SOUL.md 已精简为 ~60 行行为约束（~500 tokens）
+  - agent.core 编译后约 ~600 tokens
+  - 用户自定义策略（可选）
 - catalogs_budget: 8000 tokens (tools 33% + skills 55% + mcp 10%)
-  - Tool definitions passed via API tools parameter, catalog in system prompt only supplements descriptions
+  - 工具定义已通过 API tools 参数传递，system prompt 中的 catalog 仅补充描述
 - user_budget: 300 tokens (user.summary + runtime_facts)
-- memory_budget: 2500 tokens (retriever output)
+- memory_budget: 2500 tokens (retriever 输出)
 
-Default total budget approximately ~14000 tokens.
-For small context window models, use BudgetConfig.for_context_window(ctx) for adaptive scaling.
+默认总预算约 ~14000 tokens。
+对于小上下文窗口模型，使用 BudgetConfig.for_context_window(ctx) 自适应缩放。
 """
 
 import logging
@@ -22,44 +22,44 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
-# Token estimation constants
-CHARS_PER_TOKEN = 4  # Conservative estimate: Chinese approximately 1.5-2, English approximately 4
+# Token 估算常量
+CHARS_PER_TOKEN = 4  # 保守估计，中文约 1.5-2，英文约 4
 
 
 @dataclass
 class BudgetConfig:
-    """Token budget configuration"""
+    """Token 预算配置"""
 
-    # Budget for each part (tokens)
+    # 各部分预算（tokens）
     identity_budget: int = 6000  # SOUL.md(60%) + agent.core(25%) + user_policies(15%)
     catalogs_budget: int = (
-        8000  # tools(33%) + skills(55%) + mcp(10%) — tool definitions passed via API tools parameter
+        8000  # tools(33%) + skills(55%) + mcp(10%) — 工具定义已通过 API tools 参数传递
     )
     user_budget: int = 300  # user.summary + runtime_facts
-    memory_budget: int = 2500  # retriever output (includes MEMORY.md + pinned rules + vector memory)
+    memory_budget: int = 2500  # retriever 输出（含 MEMORY.md + pinned rules + vector memory）
 
-    # Total budget (as hard limit)
+    # 总预算（作为硬限制）
     total_budget: int = 18000
 
-    # Trimming priority (lower numbers trimmed first)
-    # Higher priority content is retained when budget is insufficient
+    # 裁剪优先级（数字越小越先被裁剪）
+    # 高优先级的内容会在预算不足时保留
     priority_order: list = field(
         default_factory=lambda: [
-            "memory",  # 1 - trimmed first (can keep only most relevant)
-            "skills",  # 2 - keep only recently used
-            "mcp",  # 3 - keep only enabled
-            "user",  # 4 - user information
-            "tools",  # 5 - tool catalog (more important)
-            "identity",  # 6 - identity information (trimmed last)
+            "memory",  # 1 - 最先裁剪（可以只保留最相关的）
+            "skills",  # 2 - 只保留最近使用的
+            "mcp",  # 3 - 只保留已启用的
+            "user",  # 4 - 用户信息
+            "tools",  # 5 - 工具清单（较重要）
+            "identity",  # 6 - 身份信息（最后裁剪）
         ]
     )
 
     @classmethod
     def for_context_window(cls, context_window: int) -> "BudgetConfig":
-        """Adaptively adjust budget based on model context window size.
+        """根据模型上下文窗口大小自适应调整预算。
 
-        System prompts should be limited to 40% of context_window (remainder for conversation and output).
-        For windows larger than 64K, use default budget (optimized for large models).
+        系统提示词应控制在 context_window 的 40% 以内（剩余留给对话和输出）。
+        大于 64K 时使用默认预算（为大模型优化）。
         """
         if context_window <= 0 or context_window > 64000:
             return cls()
@@ -104,9 +104,9 @@ class BudgetConfig:
 
     @classmethod
     def for_tier(cls, tier: "PromptTier", context_window: int = 0) -> "BudgetConfig":
-        """Allocate budget based on PromptTier (recommended, replaces for_context_window).
+        """根据 PromptTier 分配预算（推荐使用，取代 for_context_window）。
 
-        PromptTier is determined by resolve_tier(), used together with this method:
+        PromptTier 由 resolve_tier() 判定，与此方法配合使用：
             tier = resolve_tier(context_window)
             budget = BudgetConfig.for_tier(tier, context_window)
         """
@@ -136,7 +136,7 @@ class BudgetConfig:
 
 @dataclass
 class BudgetResult:
-    """Budget trimming result"""
+    """预算裁剪结果"""
 
     content: str
     original_tokens: int
@@ -147,34 +147,34 @@ class BudgetResult:
 
 def estimate_tokens(text: str) -> int:
     """
-    Estimate token count for text
+    估算文本的 token 数量
 
-    Simple estimation without calling tokenizer.
-    Uses average for mixed Chinese and English content.
+    简单估算，不调用 tokenizer。
+    中英文混合内容使用平均值。
 
     Args:
-        text: Input text
+        text: 输入文本
 
     Returns:
-        Estimated token count
+        估算的 token 数
     """
     if not text:
         return 0
 
-    # Count Chinese characters
+    # 统计中文字符数量
     chinese_chars = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
     total_chars = len(text)
     english_chars = total_chars - chinese_chars
 
-    # Chinese approximately 1.5 chars/token, English approximately 4 chars/token
+    # 中文约 1.5 字符/token，英文约 4 字符/token
     chinese_tokens = chinese_chars / 1.5
     english_tokens = english_chars / 4
 
     return int(chinese_tokens + english_tokens)
 
 
-_TRUNCATE_THRESHOLD_PCT = 20  # Only truncate if over budget by 20% or more
-_TOKEN_TO_CHAR_RATIO = 3.5  # token → character estimation ratio
+_TRUNCATE_THRESHOLD_PCT = 20  # 超预算 20% 以上才截断
+_TOKEN_TO_CHAR_RATIO = 3.5  # token → 字符估算系数
 
 
 def apply_budget(
@@ -184,16 +184,16 @@ def apply_budget(
     truncate_strategy: str = "end",
 ) -> BudgetResult:
     """
-    Apply token budget to content.
+    对内容应用 token 预算。
 
-    - Within budget or slightly over (<20%): log and return as-is
-    - Over budget ≥20%: truncate using truncate_strategy
+    - 在预算内或轻微超标（<20%）：记录日志，原样返回
+    - 超标 ≥20%：按 truncate_strategy 截断
 
     Args:
-        content: Original content
-        budget_tokens: Budget token count
-        section_name: Section name (for logging)
-        truncate_strategy: "end" (default) / "start" / "middle"
+        content: 原始内容
+        budget_tokens: 预算 token 数
+        section_name: 区域名称（用于日志）
+        truncate_strategy: "end"（默认）/ "start" / "middle"
     """
     if not content:
         return BudgetResult(
@@ -232,6 +232,20 @@ def apply_budget(
             truncated=False,
         )
 
+    if truncate_strategy == "none":
+        # 显式不截断（用于 skills：与 hermes-agent 的零截断范式对齐，
+        # 避免新装技能因排序靠后被剔除导致 LLM 看不见）
+        logger.info(
+            f"[Budget] {section_name}: {original_tokens} tokens over budget "
+            f"{budget_tokens} but strategy=none, allowing full content"
+        )
+        return BudgetResult(
+            content=content,
+            original_tokens=original_tokens,
+            final_tokens=original_tokens,
+            truncated=False,
+        )
+
     target_chars = int(budget_tokens * _TOKEN_TO_CHAR_RATIO)
 
     if truncate_strategy == "start":
@@ -256,47 +270,47 @@ def apply_budget(
 
 
 def _truncate_end(content: str, target_chars: int) -> str:
-    """Truncate from end"""
+    """从末尾截断"""
     if len(content) <= target_chars:
         return content
 
     truncated = content[:target_chars]
 
-    # Try to truncate at last complete line
+    # 尝试在最后一个完整行处截断
     last_newline = truncated.rfind("\n")
     if last_newline > target_chars * 0.8:
         truncated = truncated[:last_newline]
 
-    return truncated + "\n...(truncated)"
+    return truncated + "\n...(已截断)"
 
 
 def _truncate_start(content: str, target_chars: int) -> str:
-    """Truncate from start (keep newest content)"""
+    """从开头截断（保留最新内容）"""
     if len(content) <= target_chars:
         return content
 
     start = len(content) - target_chars
     truncated = content[start:]
 
-    # Try to truncate at first complete line
+    # 尝试在第一个完整行处截断
     first_newline = truncated.find("\n")
     if first_newline > 0 and first_newline < len(truncated) * 0.2:
         truncated = truncated[first_newline + 1 :]
 
-    return "...(truncated)\n" + truncated
+    return "...(已截断)\n" + truncated
 
 
 def _truncate_middle(content: str, target_chars: int) -> str:
-    """Truncate middle, keep head and tail"""
+    """截断中间，保留首尾"""
     if len(content) <= target_chars:
         return content
 
-    # Keep 40% of head and 40% of tail
+    # 保留首 40% 和尾 40%
     keep_each = int(target_chars * 0.4)
     head = content[:keep_each]
     tail = content[-keep_each:]
 
-    # Try to truncate at complete lines
+    # 尝试在完整行处截断
     last_newline_head = head.rfind("\n")
     if last_newline_head > keep_each * 0.7:
         head = head[:last_newline_head]
@@ -305,7 +319,7 @@ def _truncate_middle(content: str, target_chars: int) -> str:
     if first_newline_tail > 0 and first_newline_tail < len(tail) * 0.3:
         tail = tail[first_newline_tail + 1 :]
 
-    return head + "\n...(middle truncated)...\n" + tail
+    return head + "\n...(中间已截断)...\n" + tail
 
 
 def apply_budget_to_sections(
@@ -313,20 +327,20 @@ def apply_budget_to_sections(
     config: BudgetConfig,
 ) -> dict[str, BudgetResult]:
     """
-    Apply budget to multiple sections
+    对多个区域应用预算
 
-    Trim by priority order, ensure total budget is not exceeded.
+    按优先级顺序裁剪，确保总预算不超限。
 
     Args:
-        sections: Section name -> content
-        config: Budget configuration
+        sections: 区域名称 -> 内容
+        config: 预算配置
 
     Returns:
-        Section name -> BudgetResult
+        区域名称 -> BudgetResult
     """
     results = {}
 
-    # Allocate budget by section
+    # 按区域分配预算
     budget_map = {
         "soul": config.identity_budget * 60 // 100,
         "agent_core": config.identity_budget * 25 // 100,
@@ -339,15 +353,18 @@ def apply_budget_to_sections(
         "memory": config.memory_budget,
     }
 
-    # Truncation strategy
+    # 截断策略
+    # NOTE: skills 段刻意改为 "none" — 与 hermes-agent 的零截断范式对齐，
+    # 由 SkillCatalog.get_grouped_compact_catalog 通过紧凑分组本身控制规模，
+    # 避免新装技能因排序靠后或预算紧张被截断从而对 LLM 不可见。
     strategy_map = {
-        "memory": "start",  # memory keeps newest
-        "skills": "end",  # skills truncate from end
-        "mcp": "end",  # mcp truncate from end
-        "tools": "end",  # tools truncate from end
+        "memory": "start",  # 记忆保留最新
+        "skills": "none",  # 技能不截断（紧凑分组本身已小）
+        "mcp": "end",  # MCP 截断末尾
+        "tools": "end",  # 工具截断末尾
     }
 
-    # Apply budget
+    # 应用预算
     total_tokens = 0
     for name, content in sections.items():
         if not content:
@@ -359,14 +376,14 @@ def apply_budget_to_sections(
             )
             continue
 
-        budget = budget_map.get(name, 200)  # Default 200 tokens
+        budget = budget_map.get(name, 200)  # 默认 200 tokens
         strategy = strategy_map.get(name, "end")
 
         result = apply_budget(content, budget, name, strategy)
         results[name] = result
         total_tokens += result.final_tokens
 
-    # Summary log
+    # 汇总日志
     if total_tokens > config.total_budget:
         logger.warning(
             f"[Budget] TOTAL: {total_tokens} tokens "

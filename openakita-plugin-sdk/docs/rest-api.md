@@ -1,8 +1,12 @@
 # 管理 REST API / Management REST API
 
-所有插件管理端点的基础前缀为 `/api/plugins`。插件自身注册的路由前缀为 `/api/plugins/<plugin_id>/`。
+所有插件管理端点的基础前缀为 `/api/plugins`。**针对单个插件的管理 / 诊断接口统一挂在 `/api/plugins/<plugin_id>/_admin/` 子前缀下**——`_admin/*` 是宿主保留命名空间，插件自己注册的路由不能落到这里（宿主在 `register_api_routes` 时会拒绝并打印 warning）。插件自身注册的业务路由前缀为 `/api/plugins/<plugin_id>/`，**禁止以 `_admin/` 开头**。
 
-All plugin management endpoints share the base prefix `/api/plugins`. Plugin-registered routes use prefix `/api/plugins/<plugin_id>/`.
+All plugin management endpoints share the base prefix `/api/plugins`. **Per-plugin management / diagnostic endpoints all live under `/api/plugins/<plugin_id>/_admin/`** — `_admin/*` is a reserved namespace owned by the host. Plugin-registered business routes use prefix `/api/plugins/<plugin_id>/` and **must not start with `_admin/`** (the host strips and warns about any such route at `register_api_routes` time).
+
+> **为什么有 `_admin/` 前缀？** 之前宿主的诊断接口（如 `/{plugin_id}/tasks`、`/{plugin_id}/config`）和插件常用的 `/tasks`、`/config` 在 FastAPI 路由表里完全同路径——按注册顺序，宿主总是先匹配，导致插件的同名接口被永久屏蔽。`_admin/` 隔离从根上消除了这一类冲突。
+>
+> **Why the `_admin/` prefix?** Previously the host's diagnostic routes (`/{plugin_id}/tasks`, `/{plugin_id}/config`, …) collided with the very common plugin-side `/tasks`, `/config` endpoints — FastAPI matches in registration order, so the host always shadowed the plugin's. The `_admin/` namespace eliminates the entire class of collisions.
 
 ---
 
@@ -155,19 +159,19 @@ Uninstall and remove a plugin.
 
 ## 启用与禁用 / Enable & Disable
 
-### `POST /api/plugins/{plugin_id}/enable`
+### `POST /api/plugins/{plugin_id}/_admin/enable`
 
 启用插件（加载并运行）。
 
 Enable a plugin (loads and runs it).
 
-### `POST /api/plugins/{plugin_id}/disable`
+### `POST /api/plugins/{plugin_id}/_admin/disable`
 
 禁用插件（卸载但保留文件）。
 
 Disable a plugin (unloads but keeps files).
 
-### `POST /api/plugins/{plugin_id}/reload`
+### `POST /api/plugins/{plugin_id}/_admin/reload`
 
 热重载插件（先卸载再加载）。
 
@@ -177,7 +181,7 @@ Hot-reload a plugin (unload then load).
 
 ## 配置管理 / Configuration
 
-### `GET /api/plugins/{plugin_id}/config`
+### `GET /api/plugins/{plugin_id}/_admin/config`
 
 读取插件当前配置。
 
@@ -189,7 +193,7 @@ Read the plugin's current configuration.
 { "ok": true, "data": { "api_key": "sk-***", "model": "v3" } }
 ```
 
-### `PUT /api/plugins/{plugin_id}/config`
+### `PUT /api/plugins/{plugin_id}/_admin/config`
 
 更新插件配置（合并更新，非覆盖）。
 
@@ -213,7 +217,7 @@ If a `config_schema.json` exists, the merged config is validated with `jsonschem
 
 After a successful save, the host dispatches the `on_config_change` hook.
 
-### `GET /api/plugins/{plugin_id}/schema`
+### `GET /api/plugins/{plugin_id}/_admin/schema`
 
 获取插件的配置 JSON Schema（如果存在）。
 
@@ -223,7 +227,7 @@ Get the plugin's config JSON Schema (if available).
 
 ## 权限管理 / Permission Management
 
-### `GET /api/plugins/{plugin_id}/permissions`
+### `GET /api/plugins/{plugin_id}/_admin/permissions`
 
 获取插件的权限状态。
 
@@ -240,7 +244,7 @@ Get the plugin's permission state.
 }
 ```
 
-### `POST /api/plugins/{plugin_id}/permissions/grant`
+### `POST /api/plugins/{plugin_id}/_admin/permissions/grant`
 
 批准插件权限。
 
@@ -252,7 +256,7 @@ Grant permissions to a plugin.
 { "permissions": ["routes.register", "brain.access"] }
 ```
 
-### `POST /api/plugins/{plugin_id}/permissions/revoke`
+### `POST /api/plugins/{plugin_id}/_admin/permissions/revoke`
 
 撤销插件权限。
 
@@ -268,31 +272,37 @@ Revoke permissions from a plugin.
 
 ## 信息查询 / Information
 
-### `GET /api/plugins/{plugin_id}/readme`
+### `GET /api/plugins/{plugin_id}/_admin/readme`
 
 获取插件 README 内容（Markdown 文本）。
 
 Get the plugin's README content (Markdown text).
 
-### `GET /api/plugins/{plugin_id}/icon`
+### `GET /api/plugins/{plugin_id}/_admin/icon`
 
 获取插件图标文件。
 
 Get the plugin's icon file.
 
-### `GET /api/plugins/{plugin_id}/logs`
+### `GET /api/plugins/{plugin_id}/_admin/logs`
 
 获取插件最近的日志输出（默认最后 100 行，可通过 `?lines=N` 调整）。
 
 Get the plugin's recent log output (default: last 100 lines, adjustable via `?lines=N`).
 
-### `GET /api/plugins/{plugin_id}/export`
+### `GET /api/plugins/{plugin_id}/_admin/spawned-tasks`
+
+获取该插件通过 `api.spawn_task` 注册的后台 asyncio 任务列表（用于诊断任务泄漏；不会包含原生 `asyncio.create_task` 创建的任务）。注意这是宿主侧的诊断接口，与插件自己定义的 `/tasks` 业务路由完全独立。
+
+List the plugin's tracked background asyncio tasks (those scheduled via `api.spawn_task` — useful for diagnosing leaks). Tasks created via raw `asyncio.create_task` will not appear. This is the **host's** diagnostic endpoint and is fully independent of any `/tasks` business route a plugin may define.
+
+### `GET /api/plugins/{plugin_id}/_admin/export`
 
 导出插件为 ZIP 文件。
 
 Export the plugin as a ZIP file.
 
-### `POST /api/plugins/{plugin_id}/open-folder`
+### `POST /api/plugins/{plugin_id}/_admin/open-folder`
 
 在系统文件管理器中打开插件目录。
 
@@ -322,7 +332,7 @@ Search marketplace plugins.
 
 Check for available updates for installed plugins.
 
-### `POST /api/plugins/{plugin_id}/update`
+### `POST /api/plugins/{plugin_id}/_admin/update`
 
 更新插件到最新版本。
 

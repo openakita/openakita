@@ -1,16 +1,16 @@
 """
-Agent main class - coordinates all modules
+Agent 主类 - 协调所有模块
 
-This is the core of OpenAkita, responsible for:
-- Receiving user input
-- Coordinating all modules
-- Executing tool calls
-- Running the Ralph loop
-- Managing conversation and memory
-- Self-evolution (skill search, install, generate)
+这是 OpenAkita 的核心，负责:
+- 接收用户输入
+- 协调各个模块
+- 执行工具调用
+- 执行 Ralph 循环
+- 管理对话和记忆
+- 自我进化（技能搜索、安装、生成）
 
-The Skills system follows the Agent Skills spec (agentskills.io)
-The MCP system follows the Model Context Protocol spec (modelcontextprotocol.io)
+Skills 系统遵循 Agent Skills 规范 (agentskills.io)
+MCP 系统遵循 Model Context Protocol 规范 (modelcontextprotocol.io)
 """
 
 import asyncio
@@ -33,21 +33,21 @@ if TYPE_CHECKING:
 
 from ..config import settings
 
-# Memory system
+# 记忆系统
 from ..memory import MemoryManager
 
-# Prompt compilation pipeline (v2)
-# Skill system (SKILL.md spec)
+# Prompt 编译管线 (v2)
+# 技能系统 (SKILL.md 规范)
 from ..skills import SkillCatalog, SkillLoader, SkillRegistry
 
-# System tool catalog (progressive disclosure)
+# 系统工具目录（渐进式披露）
 from ..tools.catalog import ToolCatalog
 
-# System tool definitions (imported from tools/definitions)
+# 系统工具定义（从 tools/definitions 导入）
 from ..tools.definitions import BASE_TOOLS
 from ..tools.file import FileTool
 
-# Handler Registry (modular tool execution)
+# Handler Registry（模块化工具执行）
 from ..tools.handlers import SystemHandlerRegistry
 from ..tools.handlers.agent import create_handler as create_agent_tool_handler
 from ..tools.handlers.agent_hub import create_handler as create_agent_hub_handler
@@ -85,7 +85,7 @@ from ..tools.handlers.web_fetch import create_handler as create_web_fetch_handle
 from ..tools.handlers.web_search import create_handler as create_web_search_handler
 from ..tools.handlers.worktree import create_handler as create_worktree_handler
 
-# MCP system
+# MCP 系统
 from ..tools.mcp import mcp_client
 from ..tools.mcp_catalog import mcp_catalog as _shared_mcp_catalog
 from ..tools.shell import ShellTool
@@ -122,10 +122,10 @@ _desktop_tool_handler = None
 
 
 def _ensure_desktop():
-    """Lazy-load the desktop-automation module.
+    """延迟加载桌面自动化模块。
 
-    pyautogui can init extremely slowly or even hang on some Windows environments;
-    set OPENAKITA_SKIP_DESKTOP=1 to skip it entirely.
+    pyautogui 在部分 Windows 环境下初始化极慢甚至卡死，
+    通过环境变量 OPENAKITA_SKIP_DESKTOP=1 可完全跳过。
     """
     global _DESKTOP_AVAILABLE, _desktop_tool_handler
     if _DESKTOP_AVAILABLE is not None:
@@ -145,14 +145,65 @@ def _ensure_desktop():
 
 logger = logging.getLogger(__name__)
 
-# Context-management constants (some moved to context_manager.py; compression-related ones still defined here)
+
+# ---- 本地图片附件 → data URL（BUG-1 修复） ----
+# 上传到 /api/uploads/<name> 的图片只能在本机通过 HTTP 访问，
+# 远端云模型（通义/OpenAI vision）无法回调 127.0.0.1，会报 InvalidParameter。
+# 本函数把这类本地 URL 解析回磁盘文件并转为 data URL；超过阈值或失败时返回 None。
+_LOCAL_UPLOAD_RE = re.compile(
+    r"^(?:https?://(?:127\.0\.0\.1|localhost|0\.0\.0\.0)(?::\d+)?)?/api/uploads/([\w\-.]+)$",
+    re.IGNORECASE,
+)
+_INLINE_IMAGE_MAX_BYTES = 5 * 1024 * 1024  # 5 MB，超出走文本降级
+
+
+def _maybe_inline_local_image(att_url: str, att_mime: str) -> str | None:
+    """If *att_url* points to a locally served upload, return a base64 data URL.
+
+    Returns None when the URL is not local, file is missing/too large, or
+    any IO error occurs — caller falls back to its existing degraded path.
+    """
+    if not att_url or att_url.startswith("data:"):
+        return None
+    m = _LOCAL_UPLOAD_RE.match(att_url.strip())
+    if not m:
+        return None
+    filename = m.group(1)
+    try:
+        from ..api.routes.upload import get_upload_dir
+
+        upload_dir = get_upload_dir().resolve()
+        filepath = (upload_dir / filename).resolve()
+        filepath.relative_to(upload_dir)  # 防穿越
+        if not filepath.is_file():
+            return None
+        size = filepath.stat().st_size
+        if size > _INLINE_IMAGE_MAX_BYTES:
+            logger.info(
+                "[InlineImage] skip %s: %.1f MB exceeds limit",
+                filename, size / 1024 / 1024,
+            )
+            return None
+        mime = att_mime or ""
+        if not mime.startswith("image/"):
+            import mimetypes
+            mime = mimetypes.guess_type(str(filepath))[0] or "image/png"
+        data = filepath.read_bytes()
+        b64 = base64.b64encode(data).decode("ascii")
+        return f"data:{mime};base64,{b64}"
+    except Exception as exc:
+        logger.warning("[InlineImage] failed to inline %s: %s", att_url, exc)
+        return None
+
+
+# 上下文管理常量（部分迁移至 context_manager.py，压缩相关仍需就地定义）
 from .context_manager import CHARS_PER_TOKEN, CHUNK_MAX_TOKENS
 
 COMPRESSION_RATIO = 0.15
 LARGE_TOOL_RESULT_THRESHOLD = 5000
 MIN_RECENT_TURNS = 4
 
-# Core tool whitelist for small-context-window models (only the most basic execution capability)
+# 小上下文窗口模型的核心工具白名单（仅保留最基本的执行能力）
 SMALL_CTX_CORE_TOOLS = {
     "run_shell",
     "read_file",
@@ -163,7 +214,7 @@ SMALL_CTX_CORE_TOOLS = {
     "ask_user",
     "get_tool_info",
 }
-# Additional tools included for medium-context-window models
+# 中等上下文窗口模型额外包含的工具
 MEDIUM_CTX_EXTRA_TOOLS = {
     "add_memory",
     "search_memory",
@@ -180,81 +231,81 @@ MEDIUM_CTX_EXTRA_TOOLS = {
     "delete_file",
 }
 
-# Prompt Compiler system prompt (first stage of two-stage prompting)
-PROMPT_COMPILER_SYSTEM = """[Role]
-You are the Prompt Compiler, not a solver model.
+# Prompt Compiler 系统提示词（两段式 Prompt 第一阶段）
+PROMPT_COMPILER_SYSTEM = """【角色】
+你是 Prompt Compiler，不是解题模型。
 
-[Input]
-The user's raw request.
+【输入】
+用户的原始请求。
 
-[Goal]
-Turn the request into a structured, explicit, executable task definition.
+【目标】
+将请求转化为一个结构化、明确、可执行的任务定义。
 
-[Output structure]
-Output in the following YAML format:
+【输出结构】
+请用以下 YAML 格式输出：
 
 ```yaml
-task_type: [task type: question/action/creation/analysis/reminder/other]
-goal: [one-sentence task goal]
+task_type: [任务类型: question/action/creation/analysis/reminder/other]
+goal: [一句话描述任务目标]
 inputs:
-  given: [list of given information]
-  missing: [list of missing but potentially needed information, empty if none]
-constraints: [list of constraints, empty if none]
-output_requirements: [list of output requirements]
-risks_or_ambiguities: [list of risks or ambiguities, empty if none]
+  given: [已提供的信息列表]
+  missing: [缺失但可能需要的信息列表，如果没有则为空]
+constraints: [约束条件列表，如果没有则为空]
+output_requirements: [输出要求列表]
+risks_or_ambiguities: [风险或歧义点列表，如果没有则为空]
 ```
 
-[Rules]
-- Do not solve the task
-- Do not give advice
-- Do not output the final answer
-- Do not fabricate capabilities: do not invent facts like 'tools execute on the user's local machine'; however, if the task involves **effects only observable on the user's local machine** (local GUI, local installation, in-game overlays, etc.), you MUST record deployment boundaries like 'executes only on the OpenAkita host by default, possibly a different domain from the user's chat device' truthfully in `constraints` or `risks_or_ambiguities` -- this is a factual constraint, different from 'assumed capability limits'
-- Output only the structured task definition in YAML
-- Keep it concise, one sentence per item at most
+【规则】
+- 不要解决任务
+- 不要给建议
+- 不要输出最终答案
+- 不要编造能力：不得虚构「工具在用户本机执行」等事实；但若任务涉及**用户本机才可观测的效果**（本机 GUI、本机安装、游戏内 overlay 等），必须在 `constraints` 或 `risks_or_ambiguities` 中**如实**写出「默认仅在 OpenAkita 宿主执行、与用户聊天设备可能不同域」等部署边界——这与「假设能力限制」不同，是事实约束
+- 只输出 YAML 格式的结构化任务定义
+- 保持简洁，每项不超过一句话
 
-[Example]
-User: "Write a Python script that reads a CSV file and computes the average of each column"
+【示例】
+用户: "帮我写一个Python脚本，读取CSV文件并统计每列的平均值"
 
-Output:
+输出:
 ```yaml
 task_type: creation
-goal: Create a Python script that reads a CSV file and computes the average of each column
+goal: 创建一个读取CSV文件并计算各列平均值的Python脚本
 inputs:
   given:
-    - The file format to process is CSV
-    - The statistic to compute is the average
-    - Use the Python language
+    - 需要处理的文件格式是CSV
+    - 需要统计的是平均值
+    - 使用Python语言
   missing:
-    - Path to the CSV file or an example
-    - Whether non-numeric columns should be handled
+    - CSV文件的路径或示例
+    - 是否需要处理非数值列
 output_requirements:
-  - An executable Python script
-  - Capable of reading a CSV file
-  - Outputs the average of each column
+  - 可执行的Python脚本
+  - 能够读取CSV文件
+  - 输出每列的平均值
 constraints: []
 risks_or_ambiguities:
-  - How to handle columns with non-numeric data is unspecified
-  - Output format is unspecified (print to console or save to file)
+  - 未指定如何处理包含非数值数据的列
+  - 未指定输出格式（打印到控制台还是保存到文件）
 ```"""
 
 
 class Agent:
     """
-    OpenAkita main class
+    OpenAkita 主类
 
-    An all-in-one, self-evolving AI assistant that never gives up, based on the Ralph Wiggum pattern.
+    一个全能自进化AI助手，基于 Ralph Wiggum 模式永不放弃。
     """
 
-    # Base tool definitions (Claude API tool-use format)
-    # BASE_TOOLS has been moved to the tools/definitions/ directory
-    # Import via `from ..tools.definitions import BASE_TOOLS`
+    # 基础工具定义 (Claude API tool use format)
+    # BASE_TOOLS 已移至 tools/definitions/ 目录
+    # 通过 from ..tools.definitions import BASE_TOOLS 导入
 
-    # Note: historically this used class variables to store IM context, with a risk of concurrent cross-talk.
-    # We now use contextvars from `openakita.core.im_context` (coroutine-isolated).
-    _current_im_session = None  # legacy: kept to avoid crashing external references (no longer used)
-    _current_im_gateway = None  # legacy: kept to avoid crashing external references (no longer used)
+    # 说明：历史上这里用类变量保存 IM 上下文，存在并发串台风险。
+    # 现在改为使用 `openakita.core.im_context` 中的 contextvars（协程隔离）。
+    _current_im_session = None  # legacy: 保留字段避免外部引用崩溃（不再使用）
+    _current_im_gateway = None  # legacy: 保留字段避免外部引用崩溃（不再使用）
 
-    # Stop-task command list (when the user sends one of these, the current task stops immediately)
+    # 停止任务的指令列表（用户发送这些指令时会立即停止当前任务）
     STOP_COMMANDS = {
         "停止",
         "停",
@@ -367,7 +418,7 @@ class Agent:
     ):
         self.name = name or settings.agent_name
 
-        # Initialize core components
+        # 初始化核心组件
         self.identity = Identity()
         self.brain = brain or Brain(api_key=api_key)
         self.ralph = RalphLoop(
@@ -376,14 +427,20 @@ class Agent:
             on_error=self._on_error,
         )
 
-        # Initialize base tools
+        # 初始化基础工具
         self.shell_tool = ShellTool()
         self.file_tool = FileTool()
         self.web_tool = WebTool()
 
-        # Initialize the skill system (SKILL.md spec)
+        # 初始化技能系统 (SKILL.md 规范)
+        from ..skills.categories import CategoryRegistry
+
         self.skill_registry = SkillRegistry()
-        self.skill_loader = SkillLoader(self.skill_registry)
+        self.skill_category_registry = CategoryRegistry()
+        self.skill_loader = SkillLoader(
+            self.skill_registry,
+            category_registry=self.skill_category_registry,
+        )
 
         # F6/F9: usage tracker + watcher (created early, wired after load)
         from ..skills.usage import SkillUsageTracker
@@ -394,6 +451,7 @@ class Agent:
         self.skill_catalog = SkillCatalog(
             self.skill_registry,
             usage_tracker=self._skill_usage_tracker,
+            category_registry=self.skill_category_registry,
         )
 
         # F8: conditional activation manager
@@ -404,7 +462,7 @@ class Agent:
         # F9: skill file watcher (started after skills are loaded)
         self._skill_watcher = None
 
-        # Lazy-import the self-evolution system (to avoid circular imports)
+        # 延迟导入自进化系统（避免循环导入）
         from ..evolution.generator import SkillGenerator
 
         self.skill_generator = SkillGenerator(
@@ -413,20 +471,20 @@ class Agent:
             skill_registry=self.skill_registry,
         )
 
-        # MCP system (globally shared: mcp_client and mcp_catalog are module-level singletons,
-        # so all Agent instances including pool agents share a single server config and connection state)
+        # MCP 系统（全局共享：mcp_client 和 mcp_catalog 为模块级单例，
+        # 所有 Agent 实例（含 pool agent）共享同一份服务器配置和连接状态）
         self.mcp_client = mcp_client
         self.mcp_catalog = _shared_mcp_catalog
-        self.browser_manager = None  # Started in _start_builtin_mcp_servers
+        self.browser_manager = None  # 在 _start_builtin_mcp_servers 中启动
         self.pw_tools = None
         self._builtin_mcp_count = 0
 
-        # Restore runtime state (must run before the tool catalog is built, otherwise multi_agent_enabled, etc., may still hold old values)
+        # 恢复运行时状态（必须在工具目录构建之前，否则 multi_agent_enabled 等可能还是旧值）
         from ..config import runtime_state
 
         runtime_state.load()
 
-        # System tool catalog (progressive disclosure)
+        # 系统工具目录（渐进式披露）
         _all_tools = list(BASE_TOOLS)
         if _ensure_desktop():
             from ..tools.desktop import DESKTOP_TOOLS as _DT
@@ -447,10 +505,10 @@ class Agent:
             _all_tools.extend(_CA)
         self.tool_catalog = ToolCatalog(_all_tools)
 
-        # Scheduled-task scheduler
-        self.task_scheduler = None  # Started in initialize()
+        # 定时任务调度器
+        self.task_scheduler = None  # 在 initialize() 中启动
 
-        # Memory system
+        # 记忆系统
         self.memory_manager = MemoryManager(
             data_dir=settings.project_root / "data" / "memory",
             memory_md_path=settings.memory_path,
@@ -465,25 +523,25 @@ class Agent:
             agent_id=self.name,
         )
 
-        # User-profile manager
+        # 用户档案管理器
         self.profile_manager = get_profile_manager()
 
-        # ==================== Persona system + liveness + stickers ====================
+        # ==================== 人格系统 + 活人感 + 表情包 ====================
         from ..tools.sticker import StickerEngine
         from .persona import PersonaManager
         from .proactive import ProactiveConfig, ProactiveEngine
         from .trait_miner import TraitMiner
 
-        # Persona manager
+        # 人格管理器
         self.persona_manager = PersonaManager(
             personas_dir=settings.personas_path,
             active_preset=settings.persona_name,
         )
 
-        # Preference-mining engine (pass brain; the LLM analyzes preferences instead of using keyword matching)
+        # 偏好挖掘引擎（传入 brain，由 LLM 分析偏好而非关键词匹配）
         self.trait_miner = TraitMiner(persona_manager=self.persona_manager, brain=self.brain)
 
-        # Liveness engine
+        # 活人感引擎
         proactive_config = ProactiveConfig(
             enabled=settings.proactive_enabled,
             max_daily_messages=settings.proactive_max_daily_messages,
@@ -499,7 +557,7 @@ class Agent:
             memory_manager=self.memory_manager,
         )
 
-        # Sticker engine
+        # 表情包引擎
         self.sticker_engine = (
             StickerEngine(
                 data_dir=settings.sticker_data_path,
@@ -509,7 +567,7 @@ class Agent:
             else None
         )
 
-        # Dynamic tool list (base tools + skill tools)
+        # 动态工具列表（基础工具 + 技能工具）
         self._tools = list(BASE_TOOLS)
         self._skill_tool_names: set[str] = set()
 
@@ -552,16 +610,16 @@ class Agent:
 
         self._update_shell_tool_description()
 
-        # Conversation context
+        # 对话上下文
         self._context = Context()
         self._conversation_history: list[dict] = []
 
-        # Message-interrupt mechanism
-        self._current_session = None  # Reference to the current session
-        self._interrupt_enabled = True  # Whether interrupt checking is enabled
+        # 消息中断机制
+        self._current_session = None  # 当前会话引用
+        self._interrupt_enabled = True  # 是否启用中断检查
 
-        # Task-cancellation mechanism -- uniformly use TaskState.cancelled / agent_state.is_task_cancelled
-        # (the old self._task_cancelled is deprecated; cancellation state is bound to the TaskState instance to avoid global races)
+        # 任务取消机制 — 统一使用 TaskState.cancelled / agent_state.is_task_cancelled
+        # (旧 self._task_cancelled 已废弃，取消状态绑定到 TaskState 实例，避免全局竞态)
 
         # Discovered tools — populated by tool_search handler; tools in this set
         # are promoted from deferred to full-schema in _effective_tools.
@@ -574,10 +632,10 @@ class Agent:
             {"delegate_to_agent", "delegate_parallel", "create_agent", "spawn_agent"}
         )
 
-        # Current task monitor (only set during IM task execution; used by system tools to dynamically adjust timeout policy)
+        # 当前任务监控器（仅在 IM 任务执行期间设置；供 system 工具动态调整超时策略）
         self._current_task_monitor = None
 
-        # State
+        # 状态
         self._initialized = False
         self._running = False
 
@@ -592,44 +650,44 @@ class Agent:
         # Set by exit_plan_mode tool, consumed by chat_with_session_stream
         self._plan_exit_pending: dict[str, dict] = {}
 
-        # Handler Registry (modular tool execution)
+        # Handler Registry（模块化工具执行）
         self.handler_registry = SystemHandlerRegistry()
         self._init_handlers()
         self._core_tool_names: set[str] = set(self.handler_registry.list_tools())
 
-        # === Tool-parallel execution infrastructure (parallelism is off by default, tool_max_parallel=1)===
-        # Parallel execution only affects the tool-batching phase when the model returns multiple tool_use/tool_calls in a single turn.
-        # Note: stateful tools like browser/desktop/mcp are mutually exclusive by default to prevent concurrent state clobbering.
+        # === 工具并行执行基础设施（默认不开启并行，tool_max_parallel=1）===
+        # 并行执行只影响“同一轮模型返回多个 tool_use/tool_calls”的工具批处理阶段。
+        # 注意：browser/desktop/mcp 等状态型工具默认互斥，避免并发踩踏状态。
         self._tool_semaphore = asyncio.Semaphore(max(1, settings.tool_max_parallel))
         self._tool_handler_locks: dict[str, asyncio.Lock] = {}
         for hn in ("browser", "desktop", "mcp"):
             self._tool_handler_locks[hn] = asyncio.Lock()
         self._task_monitor_lock = asyncio.Lock()
 
-        # ==================== Phase 2: new submodules ====================
-        # Structured state management
+        # ==================== Phase 2: 新增子模块 ====================
+        # 结构化状态管理
         self.agent_state = AgentState()
         self._pending_cancels: dict[str, str] = {}  # session_id → reason
 
-        # Tool-execution engine (delegates from _execute_tool / _execute_tool_calls_batch)
+        # 工具执行引擎（委托自 _execute_tool / _execute_tool_calls_batch）
         self.tool_executor = ToolExecutor(
             handler_registry=self.handler_registry,
             max_parallel=max(1, settings.tool_max_parallel),
         )
         self.tool_executor._agent_ref = self
 
-        # Context manager (delegates from _compress_context, etc.)
+        # 上下文管理器（委托自 _compress_context 等）
         self.context_manager = ContextManager(brain=self.brain)
 
-        # Response handler (see ResponseHandler.verify_task_completion for task-completion checks; called by ReasoningEngine)
+        # 响应处理器（任务完成度复核见 ResponseHandler.verify_task_completion，由 ReasoningEngine 调用）
         self.response_handler = ResponseHandler(
             brain=self.brain,
             memory_manager=self.memory_manager,
         )
 
-        # Skill manager (only responsible for Git/URL downloads + the initial loader.load_skill).
-        # Catalog-cache refresh, Pool notification, and SkillEvent broadcast are all handled by ``propagate_skill_change``,
-        # so no callback is passed here anymore, avoiding a half-configured refresh path.
+        # 技能管理器（仅负责从 Git/URL 落盘 + 首次 loader.load_skill）。
+        # 刷新目录缓存、通知 Pool、广播 SkillEvent 统一由 ``propagate_skill_change`` 负责，
+        # 此处不再传入回调，避免半套刷新路径。
         self.skill_manager = SkillManager(
             skill_registry=self.skill_registry,
             skill_loader=self.skill_loader,
@@ -637,10 +695,10 @@ class Agent:
             shell_tool=self.shell_tool,
         )
 
-        # Plugin catalog (set in _load_plugins)
+        # 插件目录（在 _load_plugins 中设置）
         self.plugin_catalog = None
 
-        # Prompt assembler (delegates from _build_system_prompt, etc.)
+        # 提示词组装器（委托自 _build_system_prompt 等）
         self.prompt_assembler = PromptAssembler(
             tool_catalog=self.tool_catalog,
             skill_catalog=self.skill_catalog,
@@ -651,7 +709,7 @@ class Agent:
             persona_manager=self.persona_manager,
         )
 
-        # Reasoning engine (replaces _chat_with_tools_and_context)
+        # 推理引擎（替代 _chat_with_tools_and_context）
         self.reasoning_engine = ReasoningEngine(
             brain=self.brain,
             tool_executor=self.tool_executor,
@@ -789,7 +847,7 @@ class Agent:
         return sorted(categories)
 
     def _get_tool_handler_name(self, tool_name: str) -> str | None:
-        """Get the handler name for a tool (used for mutex/concurrency policy)"""
+        """获取工具对应的 handler 名称（用于互斥/并发策略）"""
         try:
             return self.handler_registry.get_handler_name_for_tool(tool_name)
         except Exception:
@@ -804,10 +862,10 @@ class Agent:
         capture_delivery_receipts: bool = False,
     ) -> tuple[list[dict], list[str], list | None]:
         """
-        [DEPRECATED] Please use self.tool_executor.execute_batch() instead.
+        [DEPRECATED] 请使用 self.tool_executor.execute_batch() 代替。
 
-        This method bypasses PolicyEngine safety checks and is kept only as a temporary compatibility shim.
-        All new code paths have been migrated to ToolExecutor.execute_batch().
+        此方法绕过 PolicyEngine 安全检查，仅作为临时兼容保留。
+        所有新代码路径已迁移到 ToolExecutor.execute_batch()。
         """
         import warnings
 
@@ -822,8 +880,8 @@ class Agent:
         if not tool_calls:
             return [], executed_tool_names, delivery_receipts
 
-        # Parallel execution lowers the granularity of inter-tool interrupt checks (no natural gaps between tools when parallel)
-        # Default: if interrupt checks are enabled -> serial; parallelism can be enabled explicitly via configuration.
+        # 并行执行会降低“工具间中断检查”的插入粒度（并行时没有天然的工具间隙）
+        # 默认：启用中断检查 => 串行；可通过配置显式允许并行。
         allow_parallel_with_interrupts = bool(
             getattr(settings, "allow_parallel_tools_with_interrupt_checks", False)
         )
@@ -831,7 +889,7 @@ class Agent:
             (not allow_interrupt_checks) or allow_parallel_with_interrupts
         )
 
-        # Get cancel_event / skip_event for race-cancel/skip during tool execution
+        # 获取 cancel_event / skip_event 用于工具执行竞速取消/跳过
         _tool_cancel_event = (
             self.agent_state.current_task.cancel_event
             if self.agent_state and self.agent_state.current_task
@@ -854,7 +912,7 @@ class Agent:
                     {
                         "type": "tool_result",
                         "tool_use_id": tool_use_id,
-                        "content": "[Task stopped by user]",
+                        "content": "[任务已被用户停止]",
                         "is_error": True,
                     },
                     None,
@@ -887,8 +945,8 @@ class Agent:
                         else:
                             return await self._execute_tool(tool_name, tool_input)
 
-                # Race tool execution against cancel_event / skip_event (three-way)
-                # Note: do not clear_skip() here; let any already-arrived skip signal be consumed naturally by the race
+                # 将工具执行与 cancel_event / skip_event 三路竞速
+                # 注意: 不在此处 clear_skip()，让已到达的 skip 信号自然被竞速消费
                 tool_task = asyncio.create_task(_do_exec())
                 cancel_waiter = asyncio.create_task(_tool_cancel_event.wait())
                 skip_waiter = asyncio.create_task(_tool_skip_event.wait())
@@ -906,10 +964,10 @@ class Agent:
                         pass
 
                 if cancel_waiter in done_set and tool_task not in done_set:
-                    # cancel_event fired first; the tool is interrupted (terminates the whole task)
+                    # cancel_event 先触发，工具被中断（终止整个任务）
                     logger.info(f"[StopTask] Tool {tool_name} interrupted by user cancel")
                     success = False
-                    result_str = f"[Tool {tool_name} interrupted by user]"
+                    result_str = f"[工具 {tool_name} 被用户中断]"
                     return (
                         idx,
                         {
@@ -923,17 +981,17 @@ class Agent:
                     )
 
                 if skip_waiter in done_set and tool_task not in done_set:
-                    # skip_event fired first; only the current tool is skipped (task is not terminated)
+                    # skip_event 先触发，仅跳过当前工具（不终止任务）
                     _skip_reason = (
                         self.agent_state.current_task.skip_reason
                         if self.agent_state and self.agent_state.current_task
-                        else "user requested skip"
+                        else "用户请求跳过"
                     )
                     if self.agent_state and self.agent_state.current_task:
                         self.agent_state.current_task.clear_skip()
                     logger.info(f"[SkipStep] Tool {tool_name} skipped by user: {_skip_reason}")
                     success = True
-                    result_str = f"[User skipped this step: {_skip_reason}]"
+                    result_str = f"[用户跳过了此步骤: {_skip_reason}]"
                     return (
                         idx,
                         {
@@ -948,10 +1006,10 @@ class Agent:
 
                 result = tool_task.result()
 
-                # Support multimodal tool results: handlers may return a list (text + image)
+                # 支持多模态 tool result：处理器可返回 list（文本+图片）
                 if isinstance(result, list):
                     result_content = result
-                    # Extract plain text for logging/monitoring
+                    # 提取纯文本用于日志/监控
                     result_str = (
                         "\n".join(
                             p.get("text", "")
@@ -961,15 +1019,15 @@ class Agent:
                         or "(multimodal content)"
                     )
                 else:
-                    result_str = str(result) if result is not None else "Operation completed"
+                    result_str = str(result) if result is not None else "操作已完成"
                     result_content = result_str
 
                 logger.info(f"[Tool] {tool_name} → {result_str}")
 
-                # Aligned with tool_executor: deliver_artifacts is direct delivery,
-                # org_accept_deliverable is 'relay delivery' (the parent accepts the child's file-bearing
-                # artifacts; receipts.status == "relayed"). Both cases let
-                # TaskVerify see real delivery evidence.
+                # 与 tool_executor 对齐：deliver_artifacts 为直接交付，
+                # org_accept_deliverable 为"中继交付"（父节点验收子节点带文件
+                # 的交付物，receipts.status == "relayed"）。两种场景都让
+                # TaskVerify 看到真实的交付证据。
                 if (
                     capture_delivery_receipts
                     and tool_name in ("deliver_artifacts", "org_accept_deliverable")
@@ -994,11 +1052,11 @@ class Agent:
             except Exception as e:
                 success = False
                 result_str = str(e)
-                logger.info(f"[Tool] {tool_name} ERROR: {result_str}")
+                logger.info(f"[Tool] {tool_name} ❌ 错误: {result_str}")
                 out = {
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
-                    "content": f"Tool execution error: {result_str}",
+                    "content": f"工具执行错误: {result_str}",
                     "is_error": True,
                 }
                 return idx, out, None, None
@@ -1042,38 +1100,38 @@ class Agent:
 
     async def initialize(self, start_scheduler: bool = True, lightweight: bool = False) -> None:
         """
-        Initialize the Agent
+        初始化 Agent
 
         Args:
-            start_scheduler: whether to start the scheduler (should be False when executing a scheduled task)
-            lightweight: lightweight mode (sub-agent); skip warm-up, stickers, persona traits, and other non-essential init
+            start_scheduler: 是否启动定时任务调度器（定时任务执行时应设为 False）
+            lightweight: 轻量模式（sub-agent），跳过预热、表情包、人格特征等非必要初始化
         """
         if self._initialized:
             return
 
-        # Initialize token-usage tracking
+        # 初始化 token 用量追踪
         init_token_tracking(str(settings.db_full_path))
 
-        # Auto-generate/load the device ID (used for platform authentication)
+        # 自动生成/加载设备 ID（用于平台认证）
         if not settings.hub_device_id:
             from openakita.hub.device import get_or_create_device_id
 
             data_dir = Path(settings.project_root) / "data"
             settings.hub_device_id = get_or_create_device_id(data_dir)
 
-        # Load the identity document
+        # 加载身份文档
         self.identity.load()
 
-        # Load installed skills
+        # 加载已安装的技能
         await self._load_installed_skills()
 
-        # Load MCP configuration
+        # 加载 MCP 配置
         if not lightweight:
             await self._load_mcp_servers()
         else:
             await self._start_builtin_mcp_servers()
 
-        # === Load plugins ===
+        # === 加载插件 ===
         try:
             await self._load_plugins()
         except Exception as e:
@@ -1085,29 +1143,29 @@ class Agent:
             except Exception as e:
                 logger.debug(f"on_init hook dispatch error: {e}")
 
-        # Start the memory session
+        # 启动记忆会话
         session_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + str(uuid.uuid4())[:8]
         self.memory_manager.start_session(session_id)
         self._current_session_id = session_id
         if hasattr(self, "_memory_handler"):
             self._memory_handler.reset_guide()
 
-        # Start the scheduler (skip when executing a scheduled task to avoid recursion)
+        # 启动定时任务调度器（定时任务执行时跳过，避免重复）
         if start_scheduler:
             await self._start_scheduler()
 
-        # Set the system prompt (including skill list, MCP list, and related memories)
+        # 设置系统提示词 (包含技能清单、MCP 清单和相关记忆)
         self._context.system = self._build_system_prompt()
 
         if lightweight:
             self._initialized = True
             return
 
-        # === Startup warm-up (hoist expensive-but-reusable init to the startup phase) ===
-        # Goal: avoid deferring embedding / vector-store loading and list generation to the first user message, which would significantly delay the first IM response.
+        # === 启动预热（把昂贵但可复用的初始化提前到启动阶段）===
+        # 目标：避免首条用户消息才加载 embedding/向量库、生成清单等，导致 IM 首响应显著变慢。
         try:
-            # 1) Warm up list caches (so build_system_prompt doesn't regenerate every time)
-            # Note: these methods already cache internally; calling them once ensures the caches are populated.
+            # 1) 预热清单缓存（避免每次 build_system_prompt 都重新生成）
+            # 注意：这些方法内部已有缓存；这里调用一次确保缓存命中。
             with contextlib.suppress(Exception):
                 self.tool_catalog.get_catalog()
             with contextlib.suppress(Exception):
@@ -1115,22 +1173,22 @@ class Agent:
             with contextlib.suppress(Exception):
                 self.mcp_catalog.get_catalog()
 
-            # 2) Warm up the vector store (embedding model + ChromaDB)
-            # Run in a thread to avoid blocking the event loop; subsequent searches will be noticeably faster once init completes.
+            # 2) 预热向量库（embedding 模型 + ChromaDB）
+            # 放到线程中执行，避免阻塞事件循环；初始化完成后后续搜索会明显更快。
             if self.memory_manager.vector_store is not None:
                 await asyncio.to_thread(lambda: bool(self.memory_manager.vector_store.enabled))
         except Exception as e:
-            # Warm-up failure must not affect startup (e.g. if chromadb isn't installed, it will be auto-disabled)
+            # 预热失败不应影响启动（例如 chromadb 未安装时会自动禁用）
             logger.debug(f"[Prewarm] skipped/failed: {e}")
 
-        # === Sticker-engine initialization ===
+        # === 表情包引擎初始化 ===
         if self.sticker_engine:
             try:
                 await self.sticker_engine.initialize()
             except Exception as e:
                 logger.debug(f"[Sticker] initialization skipped/failed: {e}")
 
-        # === Load PERSONA_TRAIT from the memory system ===
+        # === 从记忆系统加载 PERSONA_TRAIT ===
         try:
             persona_memories = [
                 m.to_dict()
@@ -1143,7 +1201,7 @@ class Agent:
         except Exception as e:
             logger.debug(f"[Persona] trait loading skipped: {e}")
 
-        # --- Todo state recovery + debounced save loop ---
+        # --- Todo 状态恢复 + 防抖保存循环 ---
         try:
             from ..tools.handlers.plan import register_active_todo, register_plan_handler
 
@@ -1250,47 +1308,47 @@ class Agent:
 
     def _init_handlers(self) -> None:
         """
-        Initialize system tool handlers
+        初始化系统工具处理器
 
-        Register each module's handlers with handler_registry
+        将各个模块的处理器注册到 handler_registry
         """
-        # Filesystem
+        # 文件系统
         self.handler_registry.register("filesystem", create_filesystem_handler(self))
 
-        # Memory system
+        # 记忆系统
         self.handler_registry.register("memory", create_memory_handler(self))
 
-        # Browser
+        # 浏览器
         self.handler_registry.register("browser", create_browser_handler(self))
 
-        # Scheduled tasks
+        # 定时任务
         self.handler_registry.register("scheduled", create_scheduled_handler(self))
 
         # MCP
         self.handler_registry.register("mcp", create_mcp_handler(self))
 
-        # User profile
+        # 用户档案
         self.handler_registry.register("profile", create_profile_handler(self))
 
-        # Plan mode
+        # Plan 模式
         self.handler_registry.register("plan", create_todo_handler(self))
 
-        # System tools
+        # 系统工具
         self.handler_registry.register("system", create_system_handler(self))
 
-        # IM channel
+        # IM 渠道
         self.handler_registry.register("im_channel", create_im_channel_handler(self))
 
-        # Skill management
+        # 技能管理
         self.handler_registry.register("skills", create_skills_handler(self))
 
-        # Web search
+        # Web 搜索
         self.handler_registry.register("web_search", create_web_search_handler(self))
 
-        # Web Fetch (lightweight URL-content fetcher)
+        # Web Fetch（轻量 URL 内容获取）
         self.handler_registry.register("web_fetch", create_web_fetch_handler(self))
 
-        # Code Quality (linter diagnostics)
+        # Code Quality（linter 诊断）
         self.handler_registry.register("code_quality", create_code_quality_handler(self))
 
         # Semantic Search
@@ -1302,57 +1360,57 @@ class Agent:
         # Notebook
         self.handler_registry.register("notebook", create_notebook_handler(self))
 
-        # Persona system
+        # 人格系统
         self.handler_registry.register("persona", create_persona_handler(self))
 
-        # Stickers
+        # 表情包
         self.handler_registry.register("sticker", create_sticker_handler(self))
 
-        # System configuration
+        # 系统配置
         self.handler_registry.register("config", create_config_handler(self))
 
-        # Plugin query
+        # 插件查询
         self.handler_registry.register("plugins", create_plugins_handler(self))
 
-        # Agent package (import/export)
+        # Agent 包（导入/导出）
         self.handler_registry.register("agent_package", create_agent_package_handler(self))
 
-        # LSP (code intelligence)
+        # LSP（代码智能）
         self.handler_registry.register("lsp", create_lsp_handler(self))
 
-        # Sleep (interruptible wait)
+        # Sleep（可中断等待）
         self.handler_registry.register("sleep", create_sleep_handler(self))
 
-        # Structured Output
+        # Structured Output（结构化输出）
         self.handler_registry.register("structured_output", create_structured_output_handler(self))
 
-        # Tool Search
+        # Tool Search（工具搜索）
         self.handler_registry.register("tool_search", create_tool_search_handler(self))
 
-        # Worktree (Git worktrees)
+        # Worktree（Git 工作树）
         self.handler_registry.register("worktree", create_worktree_handler(self))
 
-        # Agent Hub + Skill Store (platform interaction; registered only when hub_enabled)
+        # Agent Hub + Skill Store（平台交互，仅在 hub_enabled 时注册）
         if settings.hub_enabled:
             self.handler_registry.register("agent_hub", create_agent_hub_handler(self))
             self.handler_registry.register("skill_store", create_skill_store_handler(self))
 
-        # PowerShell (registered only on Windows)
+        # PowerShell（仅 Windows 平台注册）
         import platform
 
         if platform.system() == "Windows":
             self.handler_registry.register("powershell", create_powershell_handler(self))
 
-        # Desktop tools (registered only on Windows when deps are available; stays in sync with _tools/ToolCatalog)
+        # 桌面工具（仅 Windows 且依赖可用时注册，与 _tools/ToolCatalog 保持一致）
         if _ensure_desktop():
             self.handler_registry.register("desktop", create_desktop_handler(self))
 
-        # OpenCLI (website operations; registered only when opencli is installed)
+        # OpenCLI（网站操作，仅在 opencli 已安装时注册）
         if opencli_available():
             self.handler_registry.register("opencli", create_opencli_handler(self))
             logger.info("OpenCLI handler registered (opencli detected on PATH)")
 
-        # CLI-Anything (desktop-software control; registered only when cli-anything-* tools are present)
+        # CLI-Anything（桌面软件控制，仅在有 cli-anything-* 工具时注册）
         if cli_anything_available():
             self.handler_registry.register("cli_anything", create_cli_anything_handler(self))
             logger.info("CLI-Anything handler registered (cli-anything-* tools detected)")
@@ -1368,16 +1426,16 @@ class Agent:
 
     async def _load_installed_skills(self) -> None:
         """
-        Load installed skills (following the Agent Skills spec)
+        加载已安装的技能 (遵循 Agent Skills 规范)
 
-        Skills are loaded from the following directories:
-        - skills/ (project-level)
-        - .cursor/skills/ (Cursor compatibility)
+        技能从以下目录加载:
+        - skills/ (项目级别)
+        - .cursor/skills/ (Cursor 兼容)
         """
         await self.skill_manager.load_installed_skills()
         self._skill_catalog_text = self.skill_manager.catalog_text
 
-        # Update the tool list with skill tools
+        # 更新工具列表，添加技能工具
         self._update_skill_tools()
 
         # F8: register conditional skills
@@ -1389,7 +1447,7 @@ class Agent:
         # F9: start skill file watcher
         self._start_skill_watcher()
 
-        # Notify that the first load has completed so the API/WS layer can sync
+        # 通知首次加载完成，让 API/WS 层同步
         try:
             from ..skills.events import SkillEvent, notify_skills_changed
 
@@ -1426,9 +1484,9 @@ class Agent:
             logger.debug("Failed to start skill watcher: %s", e)
 
     def _on_skills_dir_changed(self) -> None:
-        """F9: watchdog callback (runs in the watcher's dedicated Timer thread).
+        """F9: Watchdog 回调（运行在 watcher 的独立 Timer 线程中）。
 
-        All refresh logic is funneled into ``propagate_skill_change``; this callback only handles cross-thread dispatch.
+        全部刷新逻辑收敛到 ``propagate_skill_change``；此回调只负责跨线程调度。
         """
         try:
             from ..skills.events import SkillEvent
@@ -1452,7 +1510,7 @@ class Agent:
             pass
 
     def _update_shell_tool_description(self) -> None:
-        """Append current OS info to the end of the run_shell description (without overwriting the original)"""
+        """在 run_shell 描述末尾追加当前操作系统信息（不覆盖原始描述）"""
         import platform
 
         if os.name == "nt":
@@ -1470,14 +1528,14 @@ class Agent:
                 break
 
     def _update_skill_tools(self) -> None:
-        """Sync system skills' tool_name -> handler mapping into handler_registry.
+        """同步系统技能的 tool_name → handler 映射到 handler_registry。
 
-        After skill loading, system skills (system: true) may define tool_name and handler fields.
-        Those mappings must be synced into handler_registry, or the LLM will see "Tool not found" when calling the tool.
+        技能加载后，系统技能（system: true）可能定义了 tool_name 和 handler 字段。
+        这些映射需要同步到 handler_registry，否则 LLM 调用对应工具时会返回 "Tool not found"。
 
-        This method performs two-way sync:
-        1. Add mappings defined by newly-loaded skills (without overwriting built-in _init_handlers mappings)
-        2. Clean up stale mappings that are no longer in skill_registry (only those dynamically added by skills)
+        此方法执行双向同步:
+        1. 添加新技能定义的映射（不覆盖 _init_handlers 内置映射）
+        2. 清理已不存在于 skill_registry 中的旧映射（仅清理由技能动态添加的）
         """
         current_skill_tools: set[str] = set()
 
@@ -1507,9 +1565,9 @@ class Agent:
 
     @staticmethod
     def notify_pools_skills_changed() -> None:
-        """Notify all global Agent instance pools that skills have changed.
+        """通知所有全局 Agent 实例池技能已变更。
 
-        Older pooled Agents will be lazily rebuilt on the next get_or_create.
+        池中旧版本 Agent 将在下次 get_or_create 时惰性重建。
         """
         try:
             from openakita.main import _desktop_pool, _orchestrator
@@ -1529,24 +1587,24 @@ class Agent:
         *,
         rescan: bool = True,
     ) -> None:
-        """The single entry point for refreshing on skill-state changes.
+        """技能状态变更的唯一刷新入口。
 
-        Callers (API routes, tool handlers, config endpoints, watchdog callbacks, SkillManager install)
-        must and must only use this method to refresh after any operation that affects skill visibility / content,
-        ensuring that:
-          1. Parser / Loader internal caches are cleared so disk changes are visible on the next ``load_all``;
-          2. The external_allowlist defined in ``data/skills.json`` is re-applied;
-          3. ``SkillCatalog`` and ``_skill_catalog_text`` stay in sync with the registry;
-          4. The tool -> handler mapping for system skills is synced into handler_registry;
-          5. The F8 conditional-activation registry is refreshed;
-          6. The ``_context.system`` cache used by the long-lived CLI path is invalidated and rebuilt;
-          7. The global Agent-pool version is bumped so the next Desktop Chat request gets a fresh Agent;
-          8. Cross-layer ``notify_skills_changed`` fires only here (API HTTP cache + WebSocket broadcast).
+        调用方（API 路由、工具处理器、配置端点、watchdog 回调、SkillManager 安装）
+        触达任何会影响技能可见性 / 内容的操作后，**必须且只能**通过此方法完成刷新，
+        从而保证：
+          1. Parser / Loader 内部缓存被清空，磁盘改动能被下一次 ``load_all`` 看见；
+          2. ``data/skills.json`` 定义的 external_allowlist 被重新应用；
+          3. ``SkillCatalog`` 与 ``_skill_catalog_text`` 与注册表保持一致；
+          4. 系统 skill 的 tool→handler 映射同步到 handler_registry；
+          5. F8 条件激活注册表刷新；
+          6. CLI 长驻路径使用的 ``_context.system`` 缓存失效重建；
+          7. 全局 Agent 实例池版本号自增，使 Desktop Chat 下条请求拿到新 Agent；
+          8. 跨层 ``notify_skills_changed`` 仅此处触发（API HTTP 缓存 + WebSocket 广播）。
 
         Args:
-            action: a ``SkillEvent`` enum or string, used only for broadcast and logging; it does not affect the refresh path.
-            rescan: when False, skip ``loader.load_all`` and run only the allowlist->catalog->pool
-                refresh chain (common for start/stop and configuration-panel scenarios to avoid repeated scans).
+            action: ``SkillEvent`` 枚举或字符串，仅用于广播与日志，不影响刷新路径。
+            rescan: 为 False 时跳过 ``loader.load_all``，仅走 allowlist→catalog→pool
+                刷新链（启停 / 配置面板场景常用，避免重复扫描）。
         """
         from ..skills.events import SkillEvent, notify_skills_changed
         from ..skills.watcher import clear_all_skill_caches
@@ -1625,23 +1683,23 @@ class Agent:
         subdir: str | None = None,
         extra_files: list[str] | None = None,
     ) -> str:
-        """Install a skill -- delegates to SkillManager."""
+        """安装技能 — 委托给 SkillManager。"""
         return await self.skill_manager.install_skill(source, name, subdir, extra_files)
 
     async def _load_mcp_servers(self) -> None:
         """
-        Load MCP server configuration
+        加载 MCP 服务器配置
 
-        Load only project-local MCP, not Cursor's (since we can't actually invoke them)
+        只加载项目本地的 MCP，不加载 Cursor 的（因为无法实际调用）
         """
         if not settings.mcp_enabled:
             logger.info("MCP disabled via MCP_ENABLED=false")
             await self._start_builtin_mcp_servers()
             return
 
-        # Scan MCP config directories: built-in (read-only) + workspace (writable)
-        # Built-in: mcps/ (shipped with the project), .mcp/ (compat)
-        # Workspace: data/mcp/servers/ (added by AI or user; writable in packaged mode)
+        # 扫描 MCP 配置目录：内置(只读) + 工作区(可写)
+        # 内置: mcps/ (随项目分发), .mcp/ (兼容)
+        # 工作区: data/mcp/servers/ (AI 和用户添加的，打包模式可写)
         possible_dirs = [
             settings.mcp_builtin_path,
             settings.project_root / ".mcp",
@@ -1657,8 +1715,8 @@ class Agent:
                     total_count += count
                     logger.info(f"Loaded {count} MCP servers from {dir_path}")
 
-        # Sync discovered MCP servers into MCPClient (otherwise they'd be 'visible in the catalog but not callable')
-        # The catalog (mcp_catalog) handles discovery and prompt disclosure; the client (mcp_client) handles real connections and calls.
+        # 将扫描到的 MCP 服务器同步注册到 MCPClient（否则“目录可见但不可调用”）
+        # 目录（mcp_catalog）负责发现与提示词披露；执行（mcp_client）负责真实连接与调用。
         try:
             from ..tools.mcp import MCPServerConfig
 
@@ -1688,17 +1746,17 @@ class Agent:
         except Exception as e:
             logger.warning(f"Failed to register MCP servers into MCPClient: {e}")
 
-        # Start the built-in browser service
+        # 启动内置浏览器服务
         await self._start_builtin_mcp_servers()
 
-        # Warm up the catalog cache (list even when a server has no tools, to help the AI discover and connect)
+        # 预热 catalog 缓存（即使服务器暂无工具也应列出，方便 AI 发现并连接）
         self.mcp_catalog.generate_catalog()
         if total_count > 0:
             logger.info(f"Total MCP servers: {total_count}")
         else:
             logger.info("No MCP servers configured")
 
-        # Auto-connect: global switch -> connect all; otherwise -> honor per-server autoConnect flags
+        # 自动连接：全局开关 → 连接所有；否则 → 按 per-server autoConnect 标志
         all_server_names = set(self.mcp_client.list_servers())
         if settings.mcp_auto_connect:
             auto_connect_ids = all_server_names
@@ -1747,7 +1805,7 @@ class Agent:
                 logger.info("MCP catalog refreshed after auto-connect tool discovery")
 
     async def _start_builtin_mcp_servers(self) -> None:
-        """Start the built-in browser service (Playwright, independent of the MCP system)"""
+        """启动内置浏览器服务 (Playwright，独立于 MCP 体系)"""
         self._builtin_mcp_count = 0
 
         try:
@@ -1755,7 +1813,7 @@ class Agent:
 
             pw_hint = import_or_hint("playwright")
             if pw_hint:
-                logger.warning(f"Browser automation unavailable: {pw_hint}")
+                logger.warning(f"浏览器自动化不可用: {pw_hint}")
             else:
                 from ..tools.browser import BrowserManager, PlaywrightTools
 
@@ -1766,25 +1824,25 @@ class Agent:
             logger.warning(f"Failed to start browser service: {e}")
 
     async def _start_scheduler(self) -> None:
-        """Start the scheduled-task scheduler"""
+        """启动定时任务调度器"""
         try:
             from ..scheduler import TaskScheduler
             from ..scheduler.executor import TaskExecutor
 
-            # Create the executor (gateway is set later via set_scheduler_gateway)
+            # 创建执行器（gateway 稍后通过 set_scheduler_gateway 设置）
             self._task_executor = TaskExecutor(timeout_seconds=settings.scheduler_task_timeout)
-            # Pre-populate persona/memory/proactive references for system tasks like the liveness heartbeat
+            # 预设 persona/memory/proactive 引用，供活人感心跳等系统任务使用
             self._task_executor.persona_manager = getattr(self, "persona_manager", None)
             self._task_executor.memory_manager = getattr(self, "memory_manager", None)
             self._task_executor.proactive_engine = getattr(self, "proactive_engine", None)
 
-            # Create the scheduler
+            # 创建调度器
             self.task_scheduler = TaskScheduler(
                 storage_path=settings.project_root / "data" / "scheduler",
                 executor=self._task_executor.execute,
             )
 
-            # Register the auto-disable notification callback
+            # 注册自动禁用通知回调
             executor_ref = self._task_executor
 
             async def _on_auto_disabled(task):
@@ -1794,9 +1852,9 @@ class Agent:
                             channel=task.channel_id,
                             chat_id=task.chat_id,
                             text=(
-                                f"WARNING: Task '{task.name}' has been automatically paused\n\n"
-                                f"Reason: {task.fail_count} consecutive failures\n"
-                                f"To resume, tell me 'resume task {task.id}'"
+                                f"⚠️ 任务「{task.name}」已被自动暂停\n\n"
+                                f"原因：连续失败 {task.fail_count} 次\n"
+                                f"如需恢复，请告诉我「恢复任务 {task.id}」"
                             ),
                         )
                     except Exception as e:
@@ -1813,13 +1871,13 @@ class Agent:
                 lines = []
                 for t in missed_list[:10]:
                     missed_at = t.metadata.get("missed_at") or t.metadata.get("last_missed_at", "")
-                    lines.append(f"  · {t.name}（scheduled for {missed_at[:16]}）")
+                    lines.append(f"  · {t.name}（原定 {missed_at[:16]}）")
                 if len(missed_list) > 10:
-                    lines.append(f"  ...total {len(missed_list)}")
+                    lines.append(f"  ...共 {len(missed_list)} 个")
                 msg = (
-                    f"⚠️ While I was asleep, {len(missed_list)} tasks/reminders missed their scheduled time:\n"
+                    f"⚠️ 在我休息期间，有 {len(missed_list)} 个任务/提醒错过了执行时间：\n"
                     + "\n".join(lines)
-                    + "\n\nRecurring tasks have been rescheduled to their next run time; one-shot tasks have been marked as missed."
+                    + "\n\n周期性任务已自动调整到下一次执行时间，一次性任务已标记为错过。"
                 )
                 ch, cid = targets[0]
                 try:
@@ -1832,13 +1890,13 @@ class Agent:
             if hasattr(self, "_plugin_manager") and self._plugin_manager:
                 self.task_scheduler._plugin_hooks = self._plugin_manager.hook_registry
 
-            # Start the scheduler
+            # 启动调度器
             await self.task_scheduler.start()
 
-            # Register built-in system tasks (daily memory consolidation + daily self-check)
+            # 注册内置系统任务（每日记忆整理 + 每日自检）
             await self._register_system_tasks()
 
-            # Publish as a global singleton so pool agents share it in multi-Agent mode
+            # 发布为全局单例，供多 Agent 模式下的 pool agent 共享
             from ..scheduler import set_active_scheduler
 
             set_active_scheduler(self.task_scheduler, self._task_executor)
@@ -1852,12 +1910,12 @@ class Agent:
 
     async def _register_system_tasks(self) -> None:
         """
-        Register built-in system tasks
+        注册内置系统任务
 
-        Including:
-        - Memory consolidation (3:00 AM; during the adaptive period, every N hours)
-        - System self-check (4:00 AM)
-        - Liveness heartbeat (every 30 minutes)
+        包括:
+        - 记忆整理（凌晨 3:00，适应期内每 N 小时一次）
+        - 系统自检（凌晨 4:00）
+        - 活人感心跳（每 30 分钟）
         """
         from ..config import settings
         from ..scheduler import ScheduledTask, TriggerType
@@ -1867,7 +1925,7 @@ class Agent:
         if not self.task_scheduler:
             return
 
-        # Initialize the consolidation-time tracker
+        # 初始化整理时间追踪器
         tracker = ConsolidationTracker(settings.project_root / "data" / "scheduler")
         is_onboarding = tracker.is_onboarding(settings.memory_consolidation_onboarding_days)
 
@@ -1882,9 +1940,9 @@ class Agent:
         existing_tasks = self.task_scheduler.list_tasks()
         existing_ids = {t.id for t in existing_tasks}
 
-        # Task 1: memory consolidation
-        # Adaptive period: use interval mode (every N hours)
-        # Normal period: cron mode (3:00 AM)
+        # 任务 1: 记忆整理
+        # 适应期: 改为 interval 模式（每 N 小时一次）
+        # 正常期: cron 模式（凌晨 3:00）
         memory_task_id = "system_daily_memory"
         existing_memory_task = self.task_scheduler.get_task(memory_task_id)
 
@@ -1892,20 +1950,20 @@ class Agent:
             interval_h = settings.memory_consolidation_onboarding_interval_hours
             desired_trigger = TriggerType.INTERVAL
             desired_config = {"interval_minutes": interval_h * 60}
-            desired_desc = f"Adaptive-period memory consolidation (every {interval_h} hours)"
+            desired_desc = f"适应期记忆整理（每 {interval_h} 小时）"
         else:
             desired_trigger = TriggerType.CRON
             desired_config = {"cron": "0 3 * * *"}
-            desired_desc = "Consolidate conversation history, extract memories, refresh MEMORY.md"
+            desired_desc = "整理对话历史，提取记忆，刷新 MEMORY.md"
 
         if memory_task_id not in existing_ids:
             memory_task = ScheduledTask(
                 id=memory_task_id,
-                name="Memory consolidation",
+                name="记忆整理",
                 trigger_type=desired_trigger,
                 trigger_config=desired_config,
                 action="system:daily_memory",
-                prompt="Run memory consolidation: tidy conversation history, extract key memories, refresh MEMORY.md",
+                prompt="执行记忆整理：整理对话历史，提取精华记忆，刷新 MEMORY.md",
                 description=desired_desc,
                 task_type=TaskType.TASK,
                 enabled=True,
@@ -1922,7 +1980,7 @@ class Agent:
                 if not getattr(existing_memory_task, "action", None):
                     existing_memory_task.action = "system:daily_memory"
                     changed = True
-                # Update the trigger on adaptive-period <-> normal-period transitions
+                # 适应期 ↔ 正常期切换时，更新触发器
                 if existing_memory_task.trigger_type != desired_trigger:
                     await self.task_scheduler.update_task(
                         memory_task_id,
@@ -1932,23 +1990,23 @@ class Agent:
                             "description": desired_desc,
                         },
                     )
-                    changed = False  # update_task already persisted it
+                    changed = False  # update_task 已保存
                     logger.info(
                         f"Switched memory task trigger to {desired_trigger.value}: {desired_desc}"
                     )
                 if changed:
                     await self.task_scheduler.save()
 
-        # Task 2: system self-check (4:00 AM)
+        # 任务 2: 系统自检（凌晨 4:00）
         if "system_daily_selfcheck" not in existing_ids:
             selfcheck_task = ScheduledTask(
                 id="system_daily_selfcheck",
-                name="System self-check",
+                name="系统自检",
                 trigger_type=TriggerType.CRON,
                 trigger_config={"cron": "0 4 * * *"},
                 action="system:daily_selfcheck",
-                prompt="Run system self-check: analyze ERROR logs, attempt to fix tool issues, generate a report",
-                description="Analyze ERROR logs, attempt to fix tool issues, generate a report",
+                prompt="执行系统自检：分析 ERROR 日志，尝试修复工具问题，生成报告",
+                description="分析 ERROR 日志、尝试修复工具问题、生成报告",
                 task_type=TaskType.TASK,
                 enabled=True,
                 deletable=False,
@@ -1968,17 +2026,17 @@ class Agent:
                 if changed:
                     await self.task_scheduler.save()
 
-        # Task 3: liveness heartbeat (fires every 30 minutes)
+        # 任务 3: 活人感心跳（每 30 分钟触发）
         try:
             if "system_proactive_heartbeat" not in existing_ids:
                 heartbeat_task = ScheduledTask(
                     id="system_proactive_heartbeat",
-                    name="Liveness heartbeat",
+                    name="活人感心跳",
                     trigger_type=TriggerType.INTERVAL,
                     trigger_config={"interval_minutes": 30},
                     action="system:proactive_heartbeat",
-                    prompt="Check whether a proactive message (greeting/reminder/follow-up) should be sent",
-                    description="Periodically check and send proactive messages",
+                    prompt="检查是否需要发送主动消息（问候/提醒/跟进）",
+                    description="定时检查并发送主动消息",
                     task_type=TaskType.TASK,
                     enabled=True,
                     deletable=False,
@@ -1989,7 +2047,7 @@ class Agent:
         except Exception as e:
             logger.warning(f"Failed to register proactive_heartbeat task: {e}")
 
-        # Task 4: memory review (Memory Nudge)
+        # 任务 4: 记忆回顾（Memory Nudge）
         try:
             nudge_task_id = "system_memory_nudge"
             if settings.memory_nudge_enabled and settings.memory_nudge_interval > 0:
@@ -1997,12 +2055,12 @@ class Agent:
                 if nudge_task_id not in existing_ids:
                     nudge_task = ScheduledTask(
                         id=nudge_task_id,
-                        name="Memory review",
+                        name="记忆回顾",
                         trigger_type=TriggerType.INTERVAL,
                         trigger_config={"interval_minutes": interval_min},
                         action="system:memory_nudge_review",
-                        prompt="Review recent conversation and extract missed important memories",
-                        description=f"Every {interval_min} minutes review recent conversation to extract missed memories",
+                        prompt="审视最近对话，提取遗漏的重要记忆",
+                        description=f"每 {interval_min} 分钟审视最近对话提取遗漏记忆",
                         task_type=TaskType.TASK,
                         enabled=True,
                         deletable=False,
@@ -2018,7 +2076,7 @@ class Agent:
         except Exception as e:
             logger.warning(f"Failed to register memory_nudge task: {e}")
 
-        # Task 5: periodic workspace backup (controlled by user settings)
+        # 任务 5: 工作区定时备份（根据用户设置）
         try:
             from ..workspace.backup import read_backup_settings
 
@@ -2031,12 +2089,12 @@ class Agent:
                     cron = bs.get("cron", "0 2 * * *")
                     backup_task = ScheduledTask(
                         id=backup_task_id,
-                        name="Workspace backup",
+                        name="工作区备份",
                         trigger_type=TriggerType.CRON,
                         trigger_config={"cron": cron},
                         action="system:workspace_backup",
-                        prompt="Run workspace data backup",
-                        description="Periodically back up workspace configuration and user data",
+                        prompt="执行工作区数据备份",
+                        description="定时备份工作区配置和用户数据",
                         task_type=TaskType.TASK,
                         enabled=True,
                         deletable=False,
@@ -2059,13 +2117,13 @@ class Agent:
         task_description: str = "",
         session_type: str = "cli",
     ) -> str:
-        """Build the system prompt (uniformly using the compilation pipeline v2)."""
+        """构建系统提示词（统一使用编译管线 v2）。"""
         return self._build_system_prompt_compiled_sync(task_description, session_type=session_type)
 
     def _build_system_prompt_compiled_sync(
         self, task_description: str = "", session_type: str = "cli"
     ) -> str:
-        """Synchronous version: build the initial system prompt at startup (the event loop may not yet be ready)"""
+        """同步版本：启动时构建初始系统提示词（此时事件循环可能未就绪）"""
         if getattr(self, "_org_context", None):
             ctx = getattr(self, "_context", None)
             if ctx and hasattr(ctx, "system") and ctx.system:
@@ -2091,19 +2149,19 @@ class Agent:
         session: "Session | None" = None,
     ) -> str:
         """
-        Build the system prompt using the compilation pipeline (v2)
+        使用编译管线构建系统提示词 (v2)
 
-        Token usage is reduced by ~55%, from ~6300 to ~2800.
-        Async version: perform vector search asynchronously up front to avoid blocking the event loop.
+        Token 消耗降低约 55%，从 ~6300 降到 ~2800。
+        异步版本：预先异步执行向量搜索，避免阻塞事件循环。
 
         Args:
-            task_description: Task description (used to retrieve relevant memories)
-            session_type: Session type, "cli" or "im"
-            tools_enabled: Whether tools are enabled (pass False on the lightweight CHAT path)
-            session: Current Session instance (used to extract metadata)
+            task_description: 任务描述 (用于检索相关记忆)
+            session_type: 会话类型 "cli" 或 "im"
+            tools_enabled: 是否启用工具（CHAT 轻量路径传 False）
+            session: 当前 Session 实例（用于提取元数据）
 
         Returns:
-            The compiled system prompt
+            编译后的系统提示词
         """
         if getattr(self, "_org_context", None):
             ctx = getattr(self, "_context", None)
@@ -2149,8 +2207,12 @@ class Agent:
             from .intent_analyzer import IntentType
 
             if intent.intent == IntentType.CHAT:
-                _effective_mode = "ask"
-                _skip_catalogs = True
+                # 带图片附件时禁止降级为 ask，否则 vision 工具会被砍 + Ask 模式
+                # 提示词会让 LLM 拒绝执行视觉理解，用户体验断裂。
+                _has_image_atts = getattr(self, "_has_pending_image_attachments", False)
+                if not _has_image_atts:
+                    _effective_mode = "ask"
+                    _skip_catalogs = True
             elif intent.intent == IntentType.QUERY:
                 _skip_catalogs = True
 
@@ -2177,6 +2239,9 @@ class Agent:
             prompt_profile=_prompt_profile,
             prompt_tier=_prompt_tier,
         )
+        # 记录本轮最终使用的 mode，供 chat.py done 事件透传给前端，让用户
+        # 看到"我传 agent 但实际跑的是 ask"这类静默降级。
+        self._last_effective_mode = _effective_mode
         if self._custom_prompt_suffix:
             prompt += f"\n\n{self._custom_prompt_suffix}"
         prompt += self._build_multi_agent_prompt_section()
@@ -2212,26 +2277,26 @@ class Agent:
         if self._is_sub_agent_call:
             return (
                 "\n\n---\n"
-                "## Sub-Agent work mode\n"
-                "You are currently a **sub-Agent** delegated by a main Agent; focus on the task you were assigned.\n"
-                "**Do NOT** use delegate_to_agent, delegate_parallel, create_agent, "
-                "spawn_agent, or other delegation tools. Do not create or delegate to other Agents.\n"
-                "Use your own specialized tools (such as web_search, browser, read_file, etc.) to finish the task.\n"
+                "## 🔒 子 Agent 工作模式\n"
+                "你当前是被主 Agent 委派的**子 Agent**，专注完成被分配的任务即可。\n"
+                "**禁止**使用 delegate_to_agent、delegate_parallel、create_agent、"
+                "spawn_agent 等委派工具。不要创建或委派其他 Agent。\n"
+                "直接用你自己的专业工具（如 web_search、browser、read_file 等）完成任务。\n"
                 "\n"
-                "### Zero-fabrication rule for data conclusions (MUST follow)\n"
-                "- If the task requires numeric/statistical/simulation/computation results, you must obtain them by running Python via run_shell "
-                "or by calling the corresponding tool; never estimate from memory.\n"
-                "- Any number, percentage, mean, standard deviation, or probability without tool output as evidence is considered a violation.\n"
-                "- When real data cannot be obtained, explicitly return: \"Cannot execute: <specific reason>, suggest <alternative>\","
-                "fabricating placeholder data is prohibited.\n"
+                "### 数据结论零伪造原则（必须遵守）\n"
+                "- 若任务要求数值/统计/模拟/计算结果，必须通过 run_shell 执行 python "
+                "或调用对应工具获得，不得凭经验估算。\n"
+                "- 任何没有工具输出佐证的数字、百分比、均值、标准差、概率一律视为违规。\n"
+                "- 无法获得真实数据时，明确返回：\"无法执行：<具体原因>，建议 <替代方案>\"，"
+                "禁止编造数据占位。\n"
             )
 
         profile = self._agent_profile
         if profile:
-            identity_section = f"You are '{profile.name}' ({profile.icon}), {profile.description}."
+            identity_section = f"你是「{profile.name}」({profile.icon})，{profile.description}。"
             my_id = profile.id
         else:
-            identity_section = "You are the default general assistant."
+            identity_section = "你是默认通用助手。"
             my_id = "default"
 
         # Roster — compact format (no skill lists to save tokens)
@@ -2255,89 +2320,89 @@ class Agent:
         except Exception:
             pass
 
-        roster = "\n".join(agents_lines) if agents_lines else "  (no other Agents available)"
+        roster = "\n".join(agents_lines) if agents_lines else "  （暂无其他可用 Agent）"
 
         # Skills list omitted from prompt to save tokens; use list_skills tool to discover
 
         return f"""
 
-## Multi-agent collaboration
+## 多Agent协作
 
 {identity_section}
-You have a team of Agents; delegate to specialized Agents first and handle only simple generic Q&A yourself.
+你有一支 Agent 团队，优先委派给专业 Agent，自己只处理简单通用问答。
 
-### Agent team
+### Agent 团队
 
 {roster}
 
-### Delegation priority (highest to lowest)
+### 委派优先级（从高到低）
 
-1. `delegate_to_agent(agent_id, message, reason)` -- preferred, direct delegation
-2. `spawn_agent(inherit_from, message, ...)` -- when customization or parallel copies are needed
-3. `delegate_parallel(tasks=[...])` -- multiple independent tasks in parallel
-4. `create_agent(...)` -- last resort, only when no relevant Agent exists
+1. `delegate_to_agent(agent_id, message, reason)` — 首选，直接委派
+2. `spawn_agent(inherit_from, message, ...)` — 需要定制或并行副本时
+3. `delegate_parallel(tasks=[...])` — 多个独立任务同时执行
+4. `create_agent(...)` — 最后手段，系统中完全没有相关 Agent 时才用
 
-### Rules
+### 规则
 
-- Match specialization: documents -> office-doc, code -> code-assistant, browsing -> browser-agent, data -> data-analyst
-- Use `delegate_parallel` for independent tasks; serialize dependent ones
-- The message must contain enough context for the target Agent to work independently
-- After results come back, merge them and reply in your own voice
-- Delegation depth cap is 5 levels; up to 5 dynamic Agents per session
-- [Sub-Agent work summary] and [Execution summary] in the conversation history are completed facts; do not re-execute"""
+- 专业对口：文档→office-doc，代码→code-assistant，浏览→browser-agent，数据→data-analyst
+- 独立任务用 `delegate_parallel` 并行，有依赖的串行
+- message 必须包含充分上下文，让目标 Agent 独立完成
+- 结果返回后整合并用你自己的语气回复用户
+- 委派深度上限 5 层，每会话最多 5 个动态 Agent
+- 对话历史中的 [子Agent工作总结] 和 [执行摘要] 是已完成的事实，不要重复执行"""
 
     def _generate_tools_text(self) -> str:
         """
         .. deprecated::
-            The tool list is now generated automatically by the prompt.builder compilation pipeline; this method is no longer used.
+            工具清单现由 prompt.builder 的编译管线自动生成，此方法不再使用。
         """
         return ""
 
     def _get_max_context_tokens(self) -> int:
-        """Dynamically obtain the current model's available context token count."""
+        """动态获取当前模型的可用上下文 token 数。"""
         return _shared_get_max_context_tokens(self.brain)
 
     def _get_raw_context_window(self) -> int:
-        """Get the raw context_window value configured for the current endpoint (used for the budgeting system)."""
+        """获取当前端点配置的原始 context_window 值（用于传递给预算系统）。"""
         return _shared_get_raw_context_window(self.brain)
 
-    # NOTE: _estimate_tokens / _group_messages have been moved to context_utils / context_manager
-    # Below are v1.25.x compatibility methods that delegate to the shared implementation
+    # NOTE: _estimate_tokens / _group_messages 已迁移至 context_utils / context_manager
+    # 以下保留 v1.25.x 的兼容方法，委托给共享实现
     def _estimate_tokens(self, text: str) -> int:
         """
-        Estimate the token count of text
+        估算文本的 token 数量
 
-        Uses a bilingual-aware algorithm: ~1.5 chars/token for Chinese, ~4 chars/token for English.
-        Kept consistent with prompt.budget.estimate_tokens() to avoid estimation drift across the codebase.
+        使用中英文感知算法：中文约 1.5 字符/token，英文约 4 字符/token。
+        与 prompt.budget.estimate_tokens() 保持一致，避免各处估算值差异过大。
         """
         if not text:
             return 0
-        # Count Chinese characters
+        # 统计中文字符数量
         chinese_chars = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
         total_chars = len(text)
         english_chars = total_chars - chinese_chars
-        # ~1.5 chars/token for Chinese, ~4 chars/token for English
+        # 中文约 1.5 字符/token，英文约 4 字符/token
         chinese_tokens = chinese_chars / 1.5
         english_tokens = english_chars / 4
         return max(int(chinese_tokens + english_tokens), 1)
 
     def _estimate_messages_tokens(self, messages: list[dict]) -> int:
-        """Estimate the token count of a message list (delegates to context_manager's unified algorithm)"""
+        """估算消息列表的 token 数量（委托给 context_manager 的统一算法）"""
         return self.context_manager.estimate_messages_tokens(messages)
 
     @staticmethod
     def _group_messages(messages: list[dict]) -> list[list[dict]]:
         """
-        Group the message list into 'tool interaction groups' so that tool_calls/tool pairs are not split
+        将消息列表分组为"工具交互组"，保证 tool_calls/tool 配对不被拆散
 
-        Grouping rules:
-        - If an assistant message contains tool_calls (i.e. content has type=tool_use),
-          then group that assistant message with all immediately-following role=user messages that contain only tool_result
-        - Other messages each form their own group
-        - System-injected plain-text user messages (e.g. LoopGuard hints) form their own group
+        分组规则：
+        - assistant 消息如果包含 tool_calls（即 content 中有 type=tool_use），
+          则该 assistant 和紧随其后所有 role=user 且仅含 tool_result 的消息归为同一组
+        - 其他消息各自独立成组
+        - 系统注入的纯文本 user 消息（如 LoopGuard 提示）独立成组
 
         Returns:
-            A list of groups where each element is a list[dict] of messages
+            分组后的列表，每个元素是一组消息（list[dict]）
         """
         if not messages:
             return []
@@ -2350,7 +2415,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             role = msg.get("role", "")
             content = msg.get("content", "")
 
-            # Detect whether an assistant message contains tool_use
+            # 检测 assistant 消息是否包含 tool_use
             has_tool_calls = False
             if role == "assistant" and isinstance(content, list):
                 has_tool_calls = any(
@@ -2358,7 +2423,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 )
 
             if has_tool_calls:
-                # Start a tool-interaction group: assistant(tool_calls) + subsequent tool_result messages
+                # 开始一个工具交互组：assistant(tool_calls) + 后续的 tool_result 消息
                 group = [msg]
                 i += 1
                 while i < len(messages):
@@ -2366,7 +2431,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     next_role = next_msg.get("role", "")
                     next_content = next_msg.get("content", "")
 
-                    # user message containing only tool_result -> belongs to this tool group
+                    # user 消息仅含 tool_result → 属于本工具组
                     if next_role == "user" and isinstance(next_content, list):
                         all_tool_results = all(
                             isinstance(item, dict) and item.get("type") == "tool_result"
@@ -2378,18 +2443,18 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                             i += 1
                             continue
 
-                    # tool-role message (OpenAI format) -> also belongs to this tool group
+                    # tool 角色消息（OpenAI 格式）→ 也属于本工具组
                     if next_role == "tool":
                         group.append(next_msg)
                         i += 1
                         continue
 
-                    # Any other message type -> end the tool group
+                    # 其他消息类型 → 工具组结束
                     break
 
                 groups.append(group)
             else:
-                # Plain messages form their own group
+                # 普通消息独立成组
                 groups.append([msg])
                 i += 1
 
@@ -2406,7 +2471,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         pending_files: list | None,
         desktop_attachments: list | None,
     ) -> None:
-        """Record media/files sent by the user this turn into the memory system"""
+        """将本轮用户发送的媒体/文件记录到记忆系统"""
         if not self.memory_manager:
             return
 
@@ -2478,7 +2543,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         tool_calls: list[dict],
         tool_results: list[dict],
     ) -> list[dict]:
-        """Extract generated files from the assistant's tool calls"""
+        """从 assistant 工具调用中提取生成的文件"""
         attachments: list[dict] = []
         _FILE_TOOLS = {"write_file", "save_file", "create_file", "download_file"}
         _MEDIA_EXTENSIONS = {
@@ -2557,7 +2622,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         system_prompt: str = None,
         conversation_id: str | None = None,
     ) -> list[dict]:
-        """Delegates to the unified context_manager.compress_if_needed()."""
+        """委托给统一的 context_manager.compress_if_needed()。"""
         _sp = system_prompt or getattr(self._context, "system", "")
         _tools = getattr(self, "_tools", None)
         _conv_id = conversation_id or getattr(self, "_current_session_id", None)
@@ -2581,10 +2646,10 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
     async def _compress_large_tool_results(
         self, messages: list[dict], threshold: int = LARGE_TOOL_RESULT_THRESHOLD
     ) -> list[dict]:
-        """Compress oversized tool_result / tool_use.input via LLM summarization.
+        """压缩超大 tool_result / tool_use.input，使用 LLM 摘要。
 
-        Scan one by one; for any tool_result with tokens > threshold, compress to a terse summary via LLM,
-        preserving structure (role/type remain unchanged).
+        逐条扫描，tokens > threshold 的 tool_result 调 LLM 压缩为精简摘要，
+        保留结构（role/type 等不变）。
         """
         from .tool_executor import OVERFLOW_MARKER
 
@@ -2648,10 +2713,10 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         return result
 
     async def _cancellable_await(self, coro, cancel_event: asyncio.Event | None = None):
-        """Wrap an arbitrary coroutine so it can be interrupted immediately by cancel_event.
+        """将任意协程包装为可被 cancel_event 立即中断的操作。
 
-        If cancel_event fires before coro completes, raise UserCancelledError.
-        If cancel_event is None or the task has no active asyncio.Task, just await coro directly.
+        如果 cancel_event 先于 coro 完成，抛出 UserCancelledError。
+        如果 cancel_event 为 None 或任务无活跃 task，直接 await coro。
         """
         if cancel_event is None:
             if self.agent_state and self.agent_state.current_task:
@@ -2676,7 +2741,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         if task in done:
             return task.result()
         raise UserCancelledError(
-            reason=self._cancel_reason or "user requested stop",
+            reason=self._cancel_reason or "用户请求停止",
             source="cancellable_await",
         )
 
@@ -2684,40 +2749,40 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         self, text: str, target_tokens: int, context_type: str = "general"
     ) -> str:
         """
-        Use the LLM to compress a block of text to the target token count
+        使用 LLM 压缩一段文本到目标 token 数
 
         Args:
-            text: Text to compress
-            target_tokens: Target token count
-            context_type: Context type (tool_result/tool_input/conversation)
+            text: 要压缩的文本
+            target_tokens: 目标 token 数
+            context_type: 上下文类型（tool_result/tool_input/conversation）
 
         Returns:
-            Compressed text
+            压缩后的文本
         """
-        # If the text itself exceeds the LLM's context budget, hard-truncate it first
+        # 如果文本本身超出 LLM 上下文能处理的范围，先做硬截断
         max_input = CHUNK_MAX_TOKENS * CHARS_PER_TOKEN
         if len(text) > max_input:
-            # Keep the head and tail; truncate the middle
+            # 保留头尾，中间截断
             head_size = int(max_input * 0.6)
             tail_size = int(max_input * 0.3)
-            text = text[:head_size] + "\n...(middle content too long, omitted)...\n" + text[-tail_size:]
+            text = text[:head_size] + "\n...(中间内容过长已省略)...\n" + text[-tail_size:]
 
         target_chars = target_tokens * CHARS_PER_TOKEN
 
         if context_type == "tool_result":
             system_prompt = (
-                "You are an information-compression assistant. Compress the following tool execution result into a concise summary, "
-                "keep key data, status codes, error messages, and important output; drop redundant detail."
+                "你是一个信息压缩助手。请将以下工具执行结果压缩为简洁摘要，"
+                "保留关键数据、状态码、错误信息和重要输出，去掉冗余细节。"
             )
         elif context_type == "tool_input":
             system_prompt = (
-                "You are an information-compression assistant. Compress the following tool-call arguments into a concise summary, "
-                "keep key parameter names and values; drop redundant content."
+                "你是一个信息压缩助手。请将以下工具调用参数压缩为简洁摘要，"
+                "保留关键参数名和值，去掉冗余内容。"
             )
         else:
             system_prompt = (
-                "You are a conversation-compression assistant. Compress the following conversation into a concise summary, "
-                "keep user intent, key decisions, execution results, and current state."
+                "你是一个对话压缩助手。请将以下对话内容压缩为简洁摘要，"
+                "保留用户意图、关键决策、执行结果和当前状态。"
             )
 
         _tt = set_tracking_context(
@@ -2735,7 +2800,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     messages=[
                         {
                             "role": "user",
-                            "content": f"Compress the following to within {target_chars} characters:\n\n{text}",
+                            "content": f"请将以下内容压缩到 {target_chars} 字以内:\n\n{text}",
                         }
                     ],
                     use_thinking=False,
@@ -2747,7 +2812,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 if block.type == "text":
                     summary += block.text
                 elif block.type == "thinking" and hasattr(block, "thinking"):
-                    # thinking-block fallback: when the model puts the summary inside thinking
+                    # thinking 块 fallback：当模型把摘要放在 thinking 中时
                     if not summary:
                         summary = (
                             block.thinking
@@ -2755,7 +2820,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                             else str(block.thinking)
                         )
 
-            # If it's still empty, log a warning and fall back to hard truncation
+            # 如果仍然为空，记录警告并回退到硬截断
             if not summary.strip():
                 logger.warning(
                     f"[Compress] LLM returned empty summary (tokens_out={response.usage.output_tokens}), "
@@ -2764,7 +2829,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 if len(text) > target_chars:
                     head = int(target_chars * 0.7)
                     tail = int(target_chars * 0.2)
-                    return text[:head] + "\n...(compression failed, truncated)...\n" + text[-tail:]
+                    return text[:head] + "\n...(压缩失败，已截断)...\n" + text[-tail:]
                 return text
 
             return summary.strip()
@@ -2776,22 +2841,22 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             if len(text) > target_chars:
                 head = int(target_chars * 0.7)
                 tail = int(target_chars * 0.2)
-                return text[:head] + "\n...(compression failed, truncated)...\n" + text[-tail:]
+                return text[:head] + "\n...(压缩失败，已截断)...\n" + text[-tail:]
             return text
         finally:
             reset_tracking_context(_tt)
 
     def _extract_message_text(self, msg: dict) -> str:
         """
-        Extract text content from a message (including tool_use/tool_result structured info)
+        从消息中提取文本内容（包括 tool_use/tool_result 结构化信息）
 
         Args:
-            msg: Message dict
+            msg: 消息字典
 
         Returns:
-            Extracted text content
+            提取的文本内容
         """
-        role = "User" if msg["role"] == "user" else "Assistant"
+        role = "用户" if msg["role"] == "user" else "助手"
         content = msg.get("content", "")
 
         if isinstance(content, str):
@@ -2812,7 +2877,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                         input_summary, _ = _st(
                             input_summary, 3000, save_full=False, label="compress_input"
                         )
-                        texts.append(f"[Tool call: {name}, args: {input_summary}]")
+                        texts.append(f"[调用工具: {name}, 参数: {input_summary}]")
                     elif item.get("type") == "tool_result":
                         from .tool_executor import smart_truncate as _st
 
@@ -2830,8 +2895,8 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                             result_text, 10000, save_full=False, label="compress_result"
                         )
                         is_error = item.get("is_error", False)
-                        status = "error" if is_error else "ok"
-                        texts.append(f"[Tool result({status}): {result_text}]")
+                        status = "错误" if is_error else "成功"
+                        texts.append(f"[工具结果({status}): {result_text}]")
             if texts:
                 return f"{role}: {' '.join(texts)}\n"
 
@@ -2839,22 +2904,22 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
     async def _summarize_messages_chunked(self, messages: list[dict], target_tokens: int) -> str:
         """
-        Chunked LLM summarization for message lists
+        分块 LLM 摘要消息列表
 
-        Split messages into chunks of CHUNK_MAX_TOKENS and compress each via an independent LLM call,
-        then concatenate the summaries. If the combined summary is still long, do one more aggregate-compression pass.
+        将消息按 CHUNK_MAX_TOKENS 分块，每块独立调 LLM 压缩，
+        最后将所有块的摘要拼接。如果摘要拼接后还很长，再做一次汇总压缩。
 
         Args:
-            messages: List of messages to summarize
-            target_tokens: Final target token count
+            messages: 要摘要的消息列表
+            target_tokens: 最终目标 token 数
 
         Returns:
-            Summary text
+            摘要文本
         """
         if not messages:
             return ""
 
-        # Convert messages to text and split into chunks
+        # 将消息转换为文本并分块
         chunks: list[str] = []
         current_chunk = ""
         current_chunk_tokens = 0
@@ -2879,11 +2944,11 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
         logger.info(f"Splitting {len(messages)} messages into {len(chunks)} chunks for compression")
 
-        # Compress each chunk independently
+        # 每块独立压缩
         chunk_summaries = []
         for i, chunk in enumerate(chunks):
             chunk_tokens = self._estimate_tokens(chunk)
-            # Target per chunk = total target / number of chunks (even split)
+            # 每块的目标 = 总目标 / 块数（均分）
             chunk_target = max(int(target_tokens / len(chunks)), 100)
 
             _tt2 = set_tracking_context(
@@ -2898,20 +2963,20 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                         model=self.brain.model,
                         max_tokens=chunk_target,
                         system=(
-                            "You are a conversation-compression assistant. Compress the following conversation segment into a concise summary.\n"
-                            "Requirements:\n"
-                            "1. Preserve the user's original intent and key instructions\n"
-                            "2. Preserve tool-call names, key parameters, and results (success/failure/key output)\n"
-                            "3. Preserve important state changes and decisions\n"
-                            "4. Remove duplicates, redundant output, and intermediate details\n"
-                            "5. Use concise prose; original formatting need not be preserved"
+                            "你是一个对话压缩助手。请将以下对话片段压缩为简洁摘要。\n"
+                            "要求：\n"
+                            "1. 保留用户的原始意图和关键指令\n"
+                            "2. 保留工具调用的名称、关键参数和执行结果（成功/失败/关键输出）\n"
+                            "3. 保留重要的状态变化和决策\n"
+                            "4. 去掉重复信息、冗余输出和中间过程细节\n"
+                            "5. 使用简练的描述，不需要保留原文格式"
                         ),
                         messages=[
                             {
                                 "role": "user",
                                 "content": (
-                                    f"Compress the following conversation segment (chunk {i + 1}/{len(chunks)}, "
-                                    f"approx {chunk_tokens} tokens) to within {chunk_target * CHARS_PER_TOKEN} characters:\n\n"
+                                    f"请将以下对话片段（第 {i + 1}/{len(chunks)} 块，"
+                                    f"约 {chunk_tokens} tokens）压缩到 {chunk_target * CHARS_PER_TOKEN} 字以内:\n\n"
                                     f"{chunk}"
                                 ),
                             }
@@ -2925,7 +2990,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     if block.type == "text":
                         summary += block.text
                     elif block.type == "thinking" and hasattr(block, "thinking"):
-                        # thinking-block fallback: when the model puts the summary inside thinking
+                        # thinking 块 fallback：当模型把摘要放在 thinking 中时
                         if not summary:
                             summary = (
                                 block.thinking
@@ -2934,14 +2999,14 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                             )
 
                 if not summary.strip():
-                    # Summary is empty; fall back to hard truncation
+                    # 摘要为空，回退到硬截断
                     logger.warning(
                         f"[Compress] Chunk {i + 1} returned empty summary, using hard truncation"
                     )
                     max_chars = chunk_target * CHARS_PER_TOKEN
                     if len(chunk) > max_chars:
                         chunk_summaries.append(
-                            chunk[: max_chars // 2] + "\n...(summarization failed, truncated)...\n"
+                            chunk[: max_chars // 2] + "\n...(摘要失败，已截断)...\n"
                         )
                     else:
                         chunk_summaries.append(chunk)
@@ -2958,17 +3023,17 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 logger.warning(f"Failed to summarize chunk {i + 1}: {e}")
                 max_chars = chunk_target * CHARS_PER_TOKEN
                 if len(chunk) > max_chars:
-                    chunk_summaries.append(chunk[: max_chars // 2] + "\n...(summarization failed, truncated)...\n")
+                    chunk_summaries.append(chunk[: max_chars // 2] + "\n...(摘要失败，已截断)...\n")
                 else:
                     chunk_summaries.append(chunk)
             finally:
                 reset_tracking_context(_tt2)
 
-        # Concatenate all chunk summaries
+        # 拼接所有块摘要
         combined = "\n---\n".join(chunk_summaries)
         combined_tokens = self._estimate_tokens(combined)
 
-        # If the concatenation still exceeds 2x the target, run another aggregate pass
+        # 如果拼接后还超过目标的 2 倍，再做一次汇总压缩
         if combined_tokens > target_tokens * 2 and len(chunks) > 1:
             logger.info(
                 f"Combined summary still large ({combined_tokens} tokens), "
@@ -2982,26 +3047,26 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
     async def _compress_further(self, messages: list[dict], max_tokens: int) -> list[dict]:
         """
-        Recursive compression: reduce the number of recent groups kept and continue compressing (preserving tool-call/result pairing)
+        递归压缩：减少保留的最近组数量，继续压缩（保证 tool 配对完整性）
 
         Args:
-            messages: Current message list
-            max_tokens: Target token upper bound
+            messages: 当前消息列表
+            max_tokens: 目标 token 上限
 
         Returns:
-            Compressed message list
+            压缩后的消息列表
         """
         current_tokens = self._estimate_messages_tokens(messages)
 
         if current_tokens <= max_tokens:
             return messages
 
-        # Split at group boundaries, keeping the last 2 groups (fewer than _compress_context's MIN_RECENT_TURNS)
+        # 按组边界切割，保留最近 2 组（比 _compress_context 的 MIN_RECENT_TURNS 更少）
         groups = self._group_messages(messages)
         recent_group_count = min(2, len(groups))
 
         if len(groups) <= recent_group_count:
-            # Only a few recent groups remain; do one last tool_result compression pass
+            # 只有最近的几个组了，做最后一次 tool_result 压缩
             logger.warning("Cannot compress further, attempting final tool_result compression")
             return await self._compress_large_tool_results(messages, threshold=1000)
 
@@ -3011,7 +3076,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         early_messages = [msg for group in early_groups for msg in group]
         recent_messages = [msg for group in recent_groups for msg in group]
 
-        # Compress earlier messages via LLM
+        # 用 LLM 压缩早期消息
         early_tokens = self._estimate_messages_tokens(early_messages)
         target = max(int(early_tokens * COMPRESSION_RATIO), 100)
         summary = await self._summarize_messages_chunked(early_messages, target)
@@ -3026,13 +3091,13 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
     def _hard_truncate_if_needed(self, messages: list[dict], hard_limit: int) -> list[dict]:
         """
-        Hard floor: when LLM compression still exceeds hard_limit, hard-truncate so we can submit to the API
+        硬保底：当 LLM 压缩后仍超过 hard_limit，直接硬截断保证能提交到 API
 
-        Strategy:
-        1. Drop from the oldest messages first, keeping the most recent
-        2. Enqueue the dropped messages onto the extraction queue to avoid losing them forever
-        3. Character-truncate any remaining single message whose content is still too large
-        4. Add a truncation notice so the model knows the context is incomplete
+        策略：
+        1. 从最早的消息开始丢弃，保留最近的消息
+        2. 将丢弃的消息入队到提取队列避免永久丢失
+        3. 对剩余消息中仍然过大的单条内容做字符级截断
+        4. 添加截断提示让模型知道上下文不完整
         """
         current_tokens = self._estimate_messages_tokens(messages)
         if current_tokens <= hard_limit:
@@ -3057,7 +3122,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
             ContextManager._enqueue_dropped_for_extraction(dropped_messages, self.memory_manager)
 
-        # Strategy 2: if even 2 messages remain over-limit, character-truncate individual message content
+        # 策略二：如果只剩 2 条还是超限，对单条消息内容做字符级截断
         if self._estimate_messages_tokens(truncated) > hard_limit:
             max_chars_per_msg = (hard_limit * CHARS_PER_TOKEN) // max(len(truncated), 1)
             for i, msg in enumerate(truncated):
@@ -3069,12 +3134,12 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                         **msg,
                         "content": (
                             content[:keep_head]
-                            + "\n\n...[content too long, hard-truncated]...\n\n"
+                            + "\n\n...[内容过长已硬截断]...\n\n"
                             + content[-keep_tail:]
                         ),
                     }
                 elif isinstance(content, list):
-                    # For list-type content, truncate any oversized text block within
+                    # 对 list 类型内容，截断其中过大的文本块
                     new_content = []
                     for item in content:
                         if isinstance(item, dict):
@@ -3084,7 +3149,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                                     keep_h = int(max_chars_per_msg * 0.7)
                                     keep_t = int(max_chars_per_msg * 0.2)
                                     item = dict(item)
-                                    item[key] = val[:keep_h] + "\n...[hard truncation]...\n" + val[-keep_t:]
+                                    item[key] = val[:keep_h] + "\n...[硬截断]...\n" + val[-keep_t:]
                         new_content.append(item)
                     truncated[i] = {**msg, "content": new_content}
 
@@ -3093,7 +3158,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             {
                 "role": "user",
                 "content": (
-                    "[context_note: earlier conversation has been auto-consolidated] Reply normally, keeping the same detail level and output quality."
+                    "[context_note: 早期对话已自动整理] 请正常回复，保持详细程度和输出质量不变。"
                 ),
             },
         )
@@ -3107,42 +3172,42 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
     async def chat(self, message: str, session_id: str | None = None) -> str:
         """
-        Chat interface - delegates to chat_with_session() to reuse the full pipeline
+        对话接口 - 委托给 chat_with_session() 复用完整处理链路
 
-        Internally creates/reuses a persistent CLI Session so the CLI gains the same capabilities as the IM channel:
-        Prompt Compiler, advanced loop detection, Task Monitor, memory retrieval, context compression, etc.
+        内部创建/复用一个持久的 CLI Session，使 CLI 获得与 IM 通道一致的能力：
+        Prompt Compiler、高级循环检测、Task Monitor、记忆检索、上下文压缩等。
 
         Args:
-            message: user message
-            session_id: optional session identifier (used for logging)
+            message: 用户消息
+            session_id: 可选的会话标识（用于日志）
 
         Returns:
-            Agent response
+            Agent 响应
         """
         if not self._initialized:
             await self.initialize()
 
-        # Lazily initialize the CLI Session (persistent for the Agent's lifetime)
+        # 懒初始化 CLI Session（在 Agent 生命周期内持久存在）
         if not hasattr(self, "_cli_session") or self._cli_session is None:
             from ..sessions.session import Session
 
             self._cli_session = Session.create(channel="cli", chat_id="cli", user_id="user")
             self._cli_session.set_metadata("_memory_manager", self.memory_manager)
 
-        # Mimic the Gateway's message-management flow: record the user message into the Session first
+        # 模拟 Gateway 的消息管理流程：先记录用户消息到 Session
         self._cli_session.add_message("user", message)
         session_messages = self._cli_session.context.get_messages()
 
-        # Delegate to the unified chat_with_session
+        # 委托给统一的 chat_with_session
         response = await self.chat_with_session(
             message=message,
             session_messages=session_messages,
             session_id=session_id or self._cli_session.id,
             session=self._cli_session,
-            gateway=None,  # CLI has no Gateway
+            gateway=None,  # CLI 无 Gateway
         )
 
-        # Record the assistant response into the Session (tool-execution summary as a separate field)
+        # 记录 Assistant 响应到 Session（工具执行摘要作为独立字段）
         _cli_meta: dict = {}
         try:
             _cli_tool_summary = self.build_tool_trace_summary()
@@ -3152,21 +3217,21 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             pass
         self._cli_session.add_message("assistant", response, **_cli_meta)
 
-        # Also update legacy attributes (backward compat: conversation_history, /status command, etc. depend on them)
+        # 同步更新旧属性（保持向后兼容：conversation_history 属性、/status 命令等依赖）
         self._conversation_history.append(
             {"role": "user", "content": message, "timestamp": datetime.now().isoformat()}
         )
         self._conversation_history.append(
             {"role": "assistant", "content": response, "timestamp": datetime.now().isoformat()}
         )
-        # Prevent memory leaks: cap _conversation_history size (keep the most recent 200 entries)
+        # 防止内存泄漏：限制 _conversation_history 大小（保留最近 200 条）
         _max_cli_history = 200
         if len(self._conversation_history) > _max_cli_history:
             self._conversation_history = self._conversation_history[-_max_cli_history:]
 
         return response
 
-    # ==================== Session pipeline: shared prepare / finalize / entry ====================
+    # ==================== 会话流水线: 共享准备 / 收尾 / 入口 ====================
 
     async def _prepare_session_context(
         self,
@@ -3181,40 +3246,40 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         mode: str = "agent",
     ) -> tuple[list[dict], str, "TaskMonitor", str, Any]:
         """
-        Session pipeline - shared prepare stage.
+        会话流水线 - 共享准备阶段。
 
-        chat_with_session() and chat_with_session_stream() share this method,
-        ensuring IM/Desktop take identical prepare logic.
+        chat_with_session() 和 chat_with_session_stream() 共用此方法，
+        确保 IM/Desktop 两条路径走完全一致的准备逻辑。
 
-        Steps:
+        步骤:
         1. Memory session align
         2. IM context setup
         3. Agent state / log session setup
         4. Proactive engine update
         5. User turn memory record
         6. Trait mining
-        7. Prompt Compiler (first stage of two-stage prompting)
-        8. Plan-mode auto detection
+        7. Prompt Compiler (两段式第一阶段)
+        8. Plan 模式自动检测
         9. Task definition setup
-        10. Message history build (including context boundary markers and multimodal/attachments)
+        10. Message history build (含上下文边界标记、多模态/附件)
         11. Context compression
         12. TaskMonitor creation
 
         Args:
-            message: user message
-            session_messages: Session's conversation history
-            session_id: session ID (used for logging)
-            session: Session object
-            gateway: MessageGateway object
-            conversation_id: stable conversation-thread ID
-            attachments: Desktop Chat attachment list (optional)
+            message: 用户消息
+            session_messages: Session 的对话历史
+            session_id: 会话 ID（用于日志）
+            session: Session 对象
+            gateway: MessageGateway 对象
+            conversation_id: 稳定对话线程 ID
+            attachments: Desktop Chat 附件列表 (可选)
 
         Returns:
             (messages, session_type, task_monitor, conversation_id, im_tokens)
         """
-        # 1. Align the MemoryManager session
-        # memory safe_id is derived uniformly from session.session_key, matching the im_channel fallback
-        # and the query logic used by sessions/manager backfill.
+        # 1. 对齐 MemoryManager 会话
+        # memory safe_id 统一用 session.session_key 派生，与 im_channel fallback
+        # 和 sessions/manager backfill 的查询逻辑保持一致。
         try:
             _memory_key = (
                 session.session_key
@@ -3227,7 +3292,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 self.memory_manager.start_session(conversation_safe_id)
                 if hasattr(self, "_memory_handler"):
                     self._memory_handler.reset_guide()
-                # 1.5 On a new session, clear the Scratchpad working memory to avoid cross-session leakage
+                # 1.5 新会话时清空 Scratchpad 工作记忆，避免跨会话泄漏
                 try:
                     store = getattr(self.memory_manager, "store", None)
                     if store and hasattr(store, "save_scratchpad"):
@@ -3242,7 +3307,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         except Exception as e:
             logger.warning(f"[Memory] Failed to align memory session: {e}")
 
-        # 2. IM context setup (coroutine-isolated)
+        # 2. IM context setup（协程隔离）
         from .im_context import set_im_context
 
         im_tokens = set_im_context(
@@ -3250,7 +3315,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             gateway=gateway,
         )
 
-        # 2.5 Inject memory_manager into session metadata (so extraction can be enqueued when the session is truncated)
+        # 2.5 注入 memory_manager 到 session metadata（供 session 截断时入队提取）
         if session is not None:
             session.set_metadata("_memory_manager", self.memory_manager)
 
@@ -3264,7 +3329,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
         logger.info(f"[Session:{session_id}] User: {message}")
 
-        # 4. Proactive engine: record user interaction time
+        # 4. Proactive engine: 记录用户互动时间
         if hasattr(self, "proactive_engine") and self.proactive_engine:
             self.proactive_engine.update_user_interaction()
 
@@ -3357,6 +3422,22 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 intent_result = _make_default(message)
 
         self._current_intent = intent_result
+        # BUG-EFF-4 守卫：本轮是否带图片附件。CHAT 意图通常被强制降级为 ask
+        # （省 token 设计），但带附件时降级会砍掉 vision 工具，导致用户看到
+        # "图片在哪？"之类的回复。这里记录一个轻量标志供 _build_system_prompt_compiled
+        # 判断是否抑制降级。其他非 chat 入口路径不会进入 _prepare_session_context，
+        # 标志默认 False，对它们零影响。
+        try:
+            self._has_pending_image_attachments = bool(attachments) and any(
+                (
+                    (getattr(a, "type", "") or "") == "image"
+                    or (getattr(a, "mime_type", "") or "").startswith("image/")
+                    or (getattr(a, "url", "") or "").startswith("data:image/")
+                )
+                for a in attachments
+            )
+        except Exception:
+            self._has_pending_image_attachments = False
         compiler_summary = intent_result.task_definition
         compiled_message = message
         logger.info(
@@ -3366,7 +3447,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             f"memory_keywords: {intent_result.memory_keywords}"
         )
 
-        # 8. Plan mode detection (Agent mode only -- Plan/Ask modes are controlled by the prompt and tool filtering)
+        # 8. Plan mode detection (仅 Agent 模式 — Plan/Ask 模式由提示词和工具过滤控制)
         if mode in ("plan", "ask"):
             from ..tools.handlers.plan import require_todo_for_session
 
@@ -3383,11 +3464,11 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         self._current_task_definition = compiler_summary
         self._current_task_query = compiler_summary or message
 
-        # 9.5 Topic-switch detection -- IM channels only (telegram/wechat/feishu, etc.)
-        # Desktop/CLI skip topic detection, keeping the full conversation history and letting the LLM handle context itself.
-        # Defensive shallow copy: _detect_topic_change may insert() boundary markers,
-        # If we operated on the live reference to session.context.messages, boundary messages would accumulate indefinitely and cause
-        # consecutive user-role messages -> API error / model confusion / repeated tool execution
+        # 9.5 话题切换检测 — 仅 IM 通道（telegram/wechat/feishu 等）
+        # Desktop/CLI 不做话题检测，完整保留对话历史让 LLM 自行处理上下文。
+        # 防御性浅拷贝：_detect_topic_change 可能通过 insert() 注入边界标记，
+        # 如果直接操作 session.context.messages 的活引用，边界消息会永久积累导致
+        # 连续 user 角色消息 → API 报错 / 模型混乱 / 工具重复执行
         session_messages = list(session_messages)
         topic_changed = False
         _channel = getattr(session, "channel", None) if session else None
@@ -3405,15 +3486,15 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             if topic_changed:
                 _boundary_msg = {
                     "role": "user",
-                    "content": "[Context boundary]",
+                    "content": "[上下文边界]",
                     "timestamp": datetime.now().isoformat(),
                 }
-                # Insert the boundary marker at the second-to-last position of session_messages (before the current message)
+                # 将边界标记插入到 session_messages 的倒数第二位（当前消息之前）
                 if session_messages and session_messages[-1].get("role") == "user":
                     session_messages.insert(-1, _boundary_msg)
                 else:
                     session_messages.append(_boundary_msg)
-                # Sync the topic-boundary index on the Session model
+                # 同步更新 Session 模型的话题边界索引
                 if hasattr(session.context, "mark_topic_boundary"):
                     session.context.mark_topic_boundary()
                 logger.info(
@@ -3450,7 +3531,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                         f"[Session:{session_id}] Topic-change extraction scheduling failed: {_tc_err}"
                     )
 
-        # 9.7 Sync the current task in Scratchpad (skip for CHAT intent to avoid overwriting task focus)
+        # 9.7 同步更新 Scratchpad 当前任务 (skip for CHAT intent to avoid overwriting task focus)
         _new_task = compiler_summary or message[:200]
         if _new_task and intent_result.intent != IntentType.CHAT:
             try:
@@ -3473,15 +3554,15 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 logger.debug(f"[Scratchpad] sync failed: {_sp_err}")
 
         # 10. Message history build
-        # session_messages already contains the current turn's user message (add_message was called before gateway),
-        # the current turn is appended separately via compiled_message below, so exclude the last entry to avoid duplication.
+        # session_messages 已包含当前轮用户消息（gateway 调用前 add_message），
+        # 当前轮由下方 compiled_message 单独追加，需排除最后一条避免重复。
         history_messages = session_messages
         if history_messages and history_messages[-1].get("role") == "user":
             history_messages = history_messages[:-1]
 
         # Dedup: remove near-duplicate messages within a sliding window.
         # A pure global dedup would incorrectly remove legitimate repeated
-        # short messages (e.g. user saying "ok" twice in different contexts).
+        # short messages (e.g. user saying "好的" twice in different contexts).
         # Window-based dedup only catches retry/reconnection artifacts.
         _DEDUP_WINDOW = 6
         if len(history_messages) >= 2:
@@ -3510,7 +3591,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 )
             history_messages = deduped
 
-        _STRIP_MARKERS = ["\n\n[Sub-Agent work summary]", "\n\n[Execution summary]"]
+        _STRIP_MARKERS = ["\n\n[子Agent工作总结]", "\n\n[执行摘要]"]
         _RE_TIME_PREFIX = re.compile(r"^\[\d{1,2}:\d{2}\]\s")
 
         messages: list[dict] = []
@@ -3530,9 +3611,9 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                             if pos != -1 and (next_section == -1 or pos < next_section):
                                 next_section = pos
                         content = before + after[next_section:] if next_section != -1 else before
-                if content.startswith("[Execution summary]") or content.startswith("[Sub-Agent work summary]"):
+                if content.startswith("[执行摘要]") or content.startswith("[子Agent工作总结]"):
                     content = ""
-                # Restore tool_summary from metadata (cross-turn tool-context recovery)
+                # 从 metadata 还原 tool_summary（跨轮工具上下文恢复）
                 _tool_summary = msg.get("tool_summary")
                 if _tool_summary and isinstance(_tool_summary, str) and content:
                     content = content.rstrip() + "\n\n" + _tool_summary
@@ -3550,7 +3631,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 else:
                     messages.append({"role": role, "content": content})
 
-        # 10.5 Inject sub-Agent delegation-result summary into the last assistant message
+        # 10.5 注入子 Agent 委派结果摘要到最后一条 assistant 消息
         if session and hasattr(session, "context"):
             sub_records = getattr(session.context, "sub_agent_records", None)
             if sub_records and messages:
@@ -3561,26 +3642,26 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     if preview:
                         summary_parts.append(f"- {name}: {preview[:500]}")
                 if summary_parts:
-                    delegation_summary = "\n\n[Delegated-task execution record]\n" + "\n".join(summary_parts)
+                    delegation_summary = "\n\n[委派任务执行记录]\n" + "\n".join(summary_parts)
                     for i in range(len(messages) - 1, -1, -1):
                         if messages[i]["role"] == "assistant":
                             messages[i]["content"] += delegation_summary
                             break
 
-        # Context-continuation marker (merged as a prefix on the current user message to avoid fake assistant replies breaking conversation coherence)
+        # 上下文连续标记（合并到当前用户消息前缀，避免插入假 assistant 回复破坏对话连贯性）
         _has_history = bool(messages)
         logger.debug(
             f"[Session:{session_id}] _prepare_session_context: "
             f"{len(messages)} history msgs, has_history={_has_history}"
         )
 
-        # Current user message (multimodal-capable)
+        # 当前用户消息（支持多模态）
         pending_images = session.get_metadata("pending_images") if session else None
         pending_videos = session.get_metadata("pending_videos") if session else None
         pending_audio = session.get_metadata("pending_audio") if session else None
         pending_files = session.get_metadata("pending_files") if session else None
 
-        # Handle PDF/document files -- build a DocumentBlock if the LLM supports PDF, otherwise fall back to text extraction
+        # 处理 PDF/文档文件 — 如果 LLM 支持 PDF 则构建 DocumentBlock，否则降级提取文本
         document_blocks = []
         if pending_files:
             llm_client_for_pdf = getattr(self.brain, "_llm_client", None)
@@ -3592,7 +3673,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     document_blocks.append(fdata)
                     logger.info(f"[Session:{session_id}] PDF → native DocumentBlock")
                 else:
-                    # Fallback: extract text content from the PDF
+                    # 降级: 从 PDF 中提取文本内容
                     fname = fdata.get("filename", "unknown")
                     local_path = fdata.get("local_path", "")
                     extracted = ""
@@ -3609,27 +3690,27 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     if extracted and extracted.strip():
                         _PDF_TEXT_LIMIT = 80_000
                         if len(extracted) > _PDF_TEXT_LIMIT:
-                            extracted = extracted[:_PDF_TEXT_LIMIT] + "\n...(document too long, truncated)"
+                            extracted = extracted[:_PDF_TEXT_LIMIT] + "\n...(文档过长，已截断)"
                         compiled_message += (
-                            f"\n\n--- PDF file: {fname} ---\n{extracted}\n--- End of file ---"
+                            f"\n\n--- PDF文件: {fname} ---\n{extracted}\n--- 文件结束 ---"
                         )
                         logger.info(
                             f"[Session:{session_id}] PDF → text fallback ({len(extracted)} chars)"
                         )
                     else:
-                        compiled_message += f"\n[Document attachment: {fname}, local path: {local_path}]"
+                        compiled_message += f"\n[文档附件: {fname}，本地路径: {local_path}]"
                         logger.warning(
                             f"[Session:{session_id}] PDF text extraction empty, path provided"
                         )
 
-        # Three-tier audio decision: LLM-native audio > online STT > local Whisper
+        # 三级音频决策：LLM原生audio > 在线STT > 本地Whisper
         audio_blocks = []
         if pending_audio:
             llm_client = getattr(self.brain, "_llm_client", None)
             has_audio_cap = llm_client and llm_client.has_any_endpoint_with_capability("audio")
 
             if has_audio_cap:
-                # Tier 1: LLM-native audio input
+                # Tier 1: LLM 原生音频输入
                 for aud in pending_audio:
                     local_path = aud.get("local_path", "")
                     if local_path and Path(local_path).exists():
@@ -3654,7 +3735,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                         except Exception as e:
                             logger.error(f"[Session:{session_id}] Failed to build AudioBlock: {e}")
             else:
-                # Tier 2: online STT (if available)
+                # Tier 2: 在线 STT（如果可用）
                 stt_client = None
                 im_gateway = gateway or (session.get_metadata("_gateway") if session else None)
                 if im_gateway and hasattr(im_gateway, "stt_client"):
@@ -3665,7 +3746,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                         local_path = aud.get("local_path", "")
                         existing_transcription = aud.get("transcription")
                         if existing_transcription:
-                            continue  # Whisper result already present; do not call again
+                            continue  # 已有 Whisper 结果，不重复调用
                         if local_path and Path(local_path).exists():
                             try:
                                 stt_result = await stt_client.transcribe(local_path)
@@ -3673,7 +3754,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                                     if not compiled_message.strip() or "[语音:" in compiled_message:
                                         compiled_message = stt_result
                                     else:
-                                        compiled_message = f"{compiled_message}\n\n[Voice content (online STT): {stt_result}]"
+                                        compiled_message = f"{compiled_message}\n\n[语音内容(在线识别): {stt_result}]"
                                     media_ref = aud.get("_media_ref")
                                     if media_ref is not None:
                                         media_ref.transcription = stt_result
@@ -3682,25 +3763,25 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                                     )
                             except Exception as e:
                                 logger.warning(f"[Session:{session_id}] Online STT failed: {e}")
-                # Tier 3: local Whisper (already handled by Gateway; transcription is already in input_text)
-                # No additional action needed
+                # Tier 3: 本地 Whisper（已由 Gateway 处理，transcription 已在 input_text 中）
+                # 不需要额外操作
 
         if _has_history and compiled_message and isinstance(compiled_message, str):
-            compiled_message = f"[Latest message]\n{compiled_message}"
+            compiled_message = f"[最新消息]\n{compiled_message}"
 
-        # === Role-alternation protection ===
-        # If the end of history is a user message (typically produced by a context boundary marker),
-        # merge its text as a prefix on the current message to avoid consecutive same-role messages causing API errors or model confusion
+        # === 角色交替保护 ===
+        # 如果历史末尾是 user 消息（通常由上下文边界标记产生），
+        # 将其文本合并到当前消息前缀，避免连续同角色消息导致 API 错误或模型混乱
         if messages and messages[-1]["role"] == "user":
             _trailing_user = messages.pop()
             _trailing_text = _trailing_user.get("content", "")
             if isinstance(_trailing_text, str) and _trailing_text:
                 compiled_message = _trailing_text + "\n" + compiled_message
             elif _trailing_text:
-                # Non-string content (e.g. multimodal list) cannot be merged; restore it in place
+                # 非字符串内容（如多模态 list），无法文本合并，恢复原位
                 messages.append(_trailing_user)
 
-        # Desktop Chat attachment handling (aligned with IM's pending_images)
+        # Desktop Chat 附件处理（与 IM 的 pending_images 对齐）
         if attachments and not pending_images:
             _desk_llm_client = getattr(self.brain, "_llm_client", None)
             _desk_has_vision = (
@@ -3733,30 +3814,40 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
                 if is_image and att_url:
                     if _desk_has_vision:
-                        content_blocks.append({"type": "image_url", "image_url": {"url": att_url}})
+                        # 本地 /api/uploads/* URL 远端模型访问不到，先转 data URL
+                        _inlined = _maybe_inline_local_image(att_url, att_mime)
+                        _final_url = _inlined or att_url
+                        if _inlined is None and _LOCAL_UPLOAD_RE.match(att_url.strip()):
+                            _degraded_notices.append(
+                                f"[图片 {att_name} 体积过大或读取失败，已降级为文本，请缩小后重试]"
+                            )
+                        else:
+                            content_blocks.append(
+                                {"type": "image_url", "image_url": {"url": _final_url}}
+                            )
                     else:
                         _degraded_notices.append(
-                            f"[User sent image {att_name}; the current model does not support image input]"
+                            f"[用户发送了图片 {att_name}，当前模型不支持图片输入]"
                         )
                 elif is_video and att_url:
                     if _desk_has_video:
                         content_blocks.append({"type": "video_url", "video_url": {"url": att_url}})
                     else:
                         _degraded_notices.append(
-                            f"[User sent video {att_name}; the current model does not support video input]"
+                            f"[用户发送了视频 {att_name}，当前模型不支持视频输入]"
                         )
                 elif att_type == "document" and att_url:
                     content_blocks.append(
                         {
                             "type": "text",
-                            "text": f"[Document: {att_name} ({att_mime})] URL: {att_url}",
+                            "text": f"[文档: {att_name} ({att_mime})] URL: {att_url}",
                         }
                     )
                 elif att_url:
                     content_blocks.append(
                         {
                             "type": "text",
-                            "text": f"[Attachment: {att_name} ({att_mime})] URL: {att_url}",
+                            "text": f"[附件: {att_name} ({att_mime})] URL: {att_url}",
                         }
                     )
 
@@ -3780,8 +3871,8 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             elif compiled_message:
                 messages.append({"role": "user", "content": compiled_message})
         elif pending_images or pending_videos or audio_blocks or document_blocks:
-            # IM path: multimodal (images + videos + audio + documents)
-            # Align with the audio/PDF pattern: check capability first, fall back to text when unavailable
+            # IM 路径: 多模态（图片 + 视频 + 音频 + 文档）
+            # 对齐 audio/PDF 的模式：先检查能力，无能力时降级为文本
             content_parts: list[dict] = []
             _text_for_llm = compiled_message.strip()
 
@@ -3792,44 +3883,44 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             embed_images = pending_images if has_vision else None
             embed_videos = pending_videos if has_video else None
 
-            # Image placeholder substitution (only switch to 'please view directly' when actually embedded)
+            # 图片占位符替换（仅在实际嵌入时才改为「请直接查看」）
             _is_img_placeholder = _text_for_llm and re.fullmatch(
                 r"(\[图片: [^\]]+\]\s*)+", _text_for_llm
             )
             if pending_images and _is_img_placeholder:
                 if embed_images:
                     _text_for_llm = (
-                        f"User sent {len(pending_images)} image(s)"
-                        "(attached to the message; please view directly)."
-                        "Please describe or respond to what you see in the images."
+                        f"用户发送了 {len(pending_images)} 张图片"
+                        "（已附在消息中，请直接查看）。"
+                        "请描述或回应你所看到的图片内容。"
                     )
                 else:
                     _text_for_llm = ""
 
-            # Video placeholder substitution
+            # 视频占位符替换
             _is_vid_placeholder = _text_for_llm and re.fullmatch(
                 r"(\[视频: [^\]]+\]\s*)+", _text_for_llm
             )
             if pending_videos and _is_vid_placeholder:
                 if embed_videos:
                     _text_for_llm = (
-                        f"User sent {len(pending_videos)} video(s)"
-                        "(attached to the message; please view directly)."
-                        "Please describe or respond to what you see in the videos."
+                        f"用户发送了 {len(pending_videos)} 个视频"
+                        "（已附在消息中，请直接查看）。"
+                        "请描述或回应你所看到的视频内容。"
                     )
                 else:
                     _text_for_llm = ""
 
-            # Image fallback notice
+            # 图片降级提示
             if pending_images and not has_vision:
                 img_paths = [
                     img.get("local_path", "") for img in pending_images if img.get("local_path")
                 ]
-                notice = f"[User sent {len(pending_images)} image(s); the current model does not support image input"
+                notice = f"[用户发送了 {len(pending_images)} 张图片，当前模型不支持图片输入"
                 if img_paths:
                     notice += (
-                        f". File path: {'; '.join(img_paths)}"
-                        f". To view image content, use the view_image tool"
+                        f"。文件路径: {'; '.join(img_paths)}"
+                        f"。如需查看图片内容，请使用 view_image 工具"
                     )
                 notice += "]"
                 _text_for_llm = f"{_text_for_llm}\n\n{notice}" if _text_for_llm else notice
@@ -3838,12 +3929,12 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     f"degrading {len(pending_images)} images to text notice"
                 )
 
-            # Video fallback notice
+            # 视频降级提示
             if pending_videos and not has_video:
                 vid_paths = [v.get("local_path", "") for v in pending_videos if v.get("local_path")]
-                notice = f"[User sent {len(pending_videos)} video(s); the current model does not support video input"
+                notice = f"[用户发送了 {len(pending_videos)} 个视频，当前模型不支持视频输入"
                 if vid_paths:
-                    notice += f". File path: {'; '.join(vid_paths)}"
+                    notice += f"。文件路径: {'; '.join(vid_paths)}"
                 notice += "]"
                 _text_for_llm = f"{_text_for_llm}\n\n{notice}" if _text_for_llm else notice
                 logger.info(
@@ -3851,7 +3942,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     f"degrading {len(pending_videos)} videos to text notice"
                 )
 
-            # Assemble content_parts
+            # 组装 content_parts
             if _text_for_llm:
                 content_parts.append({"type": "text", "text": _text_for_llm})
             if embed_images:
@@ -3863,7 +3954,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             if document_blocks:
                 content_parts.extend(document_blocks)
 
-            # If all media was demoted to text, send a plain-text message instead of a multimodal list
+            # 如果所有媒体均已降级为文本，发纯文本消息而非多模态 list
             has_media = embed_images or embed_videos or audio_blocks or document_blocks
             if has_media:
                 messages.append({"role": "user", "content": content_parts})
@@ -3885,7 +3976,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     f"[Session:{session_id}] Multimodal message with {', '.join(media_info)}"
                 )
         else:
-            # Plain text message
+            # 普通文本消息
             messages.append({"role": "user", "content": compiled_message})
 
         # 10.5. Record incoming attachments (images/videos/files) to memory
@@ -3914,9 +4005,9 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         task_monitor.start(self.brain.model)
         self._current_task_monitor = task_monitor
 
-        # session_type detection
-        # The desktop chat panel and the CLI are both local interactions, so ForceToolCall acceptance should be enabled
-        # Only actual IM channels (telegram/wechat/feishu, etc.) use im mode
+        # session_type 检测
+        # desktop 聊天面板与 CLI 同属本地交互，应启用 ForceToolCall 验收
+        # 仅真正的 IM 通道（telegram/wechat/feishu 等）使用 im 模式
         _channel = getattr(session, "channel", None) if session else None
         session_type = "im" if _channel and _channel not in ("cli", "desktop") else "cli"
         self._current_session_type = session_type
@@ -3931,24 +4022,24 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         task_monitor: "TaskMonitor",
     ) -> None:
         """
-        Session pipeline - shared finalize stage.
+        会话流水线 - 共享收尾阶段。
 
-        chat_with_session() and chat_with_session_stream() share this method.
+        chat_with_session() 和 chat_with_session_stream() 共用此方法。
 
-        Steps:
-        1. Write the react_trace summary to session metadata (used by IM)
-        2. Finalize TaskMonitor + background retrospective
-        3. Record assistant responses to memory
-        4. Clean up transient state
+        步骤:
+        1. 将 react_trace 摘要写入 session metadata（供 IM 使用）
+        2. 完成 TaskMonitor + 后台复盘
+        3. 记录 assistant 响应到 memory
+        4. 清理临时状态
         """
-        # 0. Snapshot the current trace (prevents concurrent sessions from overwriting _last_react_trace)
+        # 0. 快照当前 trace（防止并发会话覆盖 _last_react_trace）
         _trace_snapshot = list(getattr(self.reasoning_engine, "_last_react_trace", None) or [])
         self._last_finalized_trace = _trace_snapshot
 
-        # 0b. Extract a lightweight token-usage summary (readable by SSE/API after cleanup)
+        # 0b. 提取轻量 token 用量摘要（供 SSE/API 在 cleanup 后仍可读取）
         self._last_usage_summary = self._extract_usage_summary(_trace_snapshot)
 
-        # 1. Reasoning-chain summary -> session metadata
+        # 1. 思维链摘要 → session metadata
         if session:
             try:
                 chain_summary = self._build_chain_summary(_trace_snapshot)
@@ -3963,7 +4054,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             asyncio.create_task(self._do_task_retrospect_background(task_monitor, session_id))
             logger.info(f"[Session:{session_id}] Task retrospect scheduled (background)")
 
-        # 3. Memory: record the assistant response (including tool-call data)
+        # 3. Memory: 记录 assistant 响应（含工具调用数据）
         _trace = _trace_snapshot
         _all_tool_calls: list[dict] = []
         _all_tool_results: list[dict] = []
@@ -3993,12 +4084,12 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 f"[Session:{session_id}] Agent: (response logged, {len(response_text)} chars)"
             )
 
-        # 4. Auto-close any unfinished Plan
-        # Fallback in case the LLM did not explicitly call complete_todo:
-        # - Mark remaining step statuses (in_progress -> completed, pending -> skipped)
-        # - Save and unregister the Plan
-        # Note: do not close the Plan on ask_user exit (execution resumes after the user replies)
-        # Note: do not close the Plan on sub-Agent calls (the Plan belongs to the parent Agent)
+        # 4. 自动关闭未完成的 Plan
+        # 如果 LLM 未显式调用 complete_todo，此处兜底：
+        # - 标记剩余步骤状态（in_progress→completed, pending→skipped）
+        # - 保存并注销 Plan
+        # 注意：ask_user 退出时不关闭 Plan（用户回复后需继续执行）
+        # 注意：子 Agent 调用时不关闭 Plan（Plan 属于父 Agent）
         exit_reason = getattr(self.reasoning_engine, "_last_exit_reason", "normal")
         is_sub_agent = getattr(self, "_is_sub_agent_call", False)
         if exit_reason != "ask_user" and not is_sub_agent:
@@ -4011,7 +4102,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             except Exception as e:
                 logger.debug(f"[Todo] auto_close_todo failed: {e}")
 
-            # End the memory session promptly to trigger memory extraction
+            # 及时结束 memory session，触发记忆提取
             try:
                 task_desc = (getattr(self, "_current_task_query", "") or "").strip()[:200]
                 self.memory_manager.end_session(task_desc, success=True)
@@ -4019,15 +4110,15 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             except Exception as e:
                 logger.debug(f"[Session:{session_id}] memory end_session failed: {e}")
 
-        # 5. Cleanup (always runs; placed in finally by the caller)
-        # Note: this method does not perform cleanup; cleanup is centralized in _cleanup_session_state()
+        # 5. Cleanup（总是执行，放在 finally 中由调用方保证）
+        # 注意：此方法不做 cleanup，cleanup 统一在 _cleanup_session_state() 中
 
     def _cleanup_session_state(self, im_tokens: Any) -> None:
         """
-        Session pipeline - state cleanup (always invoked from finally).
+        会话流水线 - 状态清理（总是在 finally 中调用）。
 
-        im_tokens may be None (when _prepare_session_context throws before/after step 2),
-        any leftover contextvar is overwritten by the next set_im_context, so it's fine to skip the reset here.
+        im_tokens 可能为 None（_prepare_session_context 在 step 2 之前/之后异常时）,
+        此时 contextvar 残留由下次 set_im_context 覆盖，这里跳过 reset 即可。
         """
         self._current_task_definition = ""
         self._current_task_query = ""
@@ -4040,7 +4131,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         self._current_session = None
         self.agent_state.current_session = None
         self._current_task_monitor = None
-        # Reset task state so that cancelled/completed tasks don't leak into the next session
+        # 重置任务状态，避免已取消/已完成的任务泄漏到下一次会话
         _sid = self._current_session_id
         _conv_id = self._current_conversation_id
         _cleaned = set()
@@ -4057,7 +4148,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 _ct_key = _ct.session_id or _ct.task_id
                 self.agent_state.reset_task(session_id=_ct_key)
 
-        # P1-7: clean up PolicyEngine session state + ToolExecutor pending-approval cache
+        # P1-7: 清理 PolicyEngine 会话状态 + ToolExecutor 待确认缓存
         try:
             from .policy import get_policy_engine
 
@@ -4078,7 +4169,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         self._current_session_id = None
         self._current_conversation_id = None
 
-        # Clean up Plan/Todo module-level state to prevent handler memory leaks
+        # 清理 Plan/Todo 模块级状态，防止 handler 内存泄漏
         for _clean_id in (_sid, _conv_id):
             if _clean_id:
                 try:
@@ -4088,10 +4179,10 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 except Exception:
                     pass
 
-        # Release large residual objects from the reasoning engine (working_messages / checkpoints),
-        # working_messages can hold tens of MB of tool results (base64 screenshots, web content, etc.)
-        # Note: do not clean _last_finalized_trace; it's read by the orchestrator/SSE
-        # and will be overwritten naturally on the next _finalize_session
+        # 释放推理引擎中残留的大对象（working_messages / checkpoints），
+        # working_messages 可能持有数十 MB 的工具结果（截图 base64、网页内容等）
+        # 注意：不清理 _last_finalized_trace，它由 orchestrator/SSE 读取，
+        # 会在下次 _finalize_session 时自然被覆盖
         if hasattr(self, "reasoning_engine"):
             self.reasoning_engine.release_large_buffers()
 
@@ -4109,43 +4200,43 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         thinking_depth: str | None = None,
     ) -> str:
         """
-        Chat using externally-provided Session history (for IM / CLI channels).
+        使用外部 Session 历史进行对话（用于 IM / CLI 通道）。
 
-        Runs the full Agent pipeline: Prompt Compiler -> context build -> ReasoningEngine.run().
-        Shares _prepare_session_context / _finalize_session with chat_with_session_stream().
+        走完整的 Agent 流水线：Prompt Compiler → 上下文构建 → ReasoningEngine.run()。
+        与 chat_with_session_stream() 共享 _prepare_session_context / _finalize_session。
 
         Args:
-            message: user message
-            session_messages: Session's conversation history
-            session_id: session ID
-            session: Session object
-            gateway: MessageGateway object
-            mode: interaction mode (ask/plan/agent), defaults to agent
-            endpoint_override: endpoint override (uses _preferred_endpoint when None)
-            thinking_mode: thinking-mode override ('auto'/'on'/'off'/None)
-            thinking_depth: thinking depth ('low'/'medium'/'high'/None)
+            message: 用户消息
+            session_messages: Session 的对话历史
+            session_id: 会话 ID
+            session: Session 对象
+            gateway: MessageGateway 对象
+            mode: 交互模式 (ask/plan/agent)，默认 agent
+            endpoint_override: 端点覆盖（为 None 时使用 _preferred_endpoint）
+            thinking_mode: 思考模式覆盖 ('auto'/'on'/'off'/None)
+            thinking_depth: 思考深度 ('low'/'medium'/'high'/None)
 
         Returns:
-            Agent response
+            Agent 响应
         """
         if not self._initialized:
             await self.initialize()
 
         endpoint_override = endpoint_override or self._preferred_endpoint
 
-        # === Stop-command detection ===
+        # === 停止指令检测 ===
         message_lower = message.strip().lower()
         if message_lower in self.STOP_COMMANDS or message.strip() in self.STOP_COMMANDS:
-            self.cancel_current_task(f"User sent stop command: {message}", session_id=session_id)
+            self.cancel_current_task(f"用户发送停止指令: {message}", session_id=session_id)
             logger.info(f"[StopTask] User requested to stop (session={session_id}): {message}")
-            return "✅ Got it, current task stopped. Anything else I can help with?"
+            return "✅ 好的，已停止当前任务。有什么其他需要帮助的吗？"
 
-        # Resolve conversation_id (done early so cleanup uses the right key)
+        # 解析 conversation_id（提前，以便清理时使用正确的 key）
         self._current_session_id = session_id
         conversation_id = self._resolve_conversation_id(session, session_id)
         self._current_conversation_id = conversation_id
 
-        # Clean up leftover task state from the previous turn (session-scoped)
+        # 清理上一轮残留的任务状态（按 session 隔离）
         _prev_task = None
         _reset_key = session_id
         if self.agent_state:
@@ -4166,25 +4257,25 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 _prev_task.clear_skip()
                 await _prev_task.drain_user_inserts()
 
-        # Clear leftover pending_cancels from the previous turn (a disconnect watcher may write them after cleanup)
+        # 清除上一轮残留的 pending_cancels（disconnect watcher 可能在清理后写入）
         self._pending_cancels.pop(session_id, None) if session_id else None
 
-        # User proactively sends a new message -> unconditionally clear all endpoint cooldowns so last turn's errors don't block this one
+        # 用户主动发新消息 → 无条件清除所有端点冷却期，不让上一轮的错误阻塞本轮
         llm_client = getattr(self.brain, "_llm_client", None)
         if llm_client:
             llm_client.reset_all_cooldowns(force_all=True)
 
         im_tokens = None
         try:
-            # Pre-prepare check: only catches cancel signals that arrive right before prepare begins
+            # 准备阶段前检查：仅捕获 prepare 开始前一刻的取消信号
             if self._is_session_cancelled(session_id):
                 self._consume_pending_cancel(session_id)
                 logger.info(
                     f"[Session:{session_id}] Cancelled before prepare, returning immediately"
                 )
-                return "✅ Got it, current task stopped."
+                return "✅ 好的，已停止当前任务。"
 
-            # === Shared prepare ===
+            # === 共享准备 ===
             (
                 messages,
                 session_type,
@@ -4200,7 +4291,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 conversation_id=conversation_id,
             )
 
-            # Post-prepare check (including pending cancel)
+            # 准备阶段后检查（含 pending cancel）
             _conv_cancel_id = conversation_id or session_id
             if self._is_session_cancelled(session_id) or self._is_session_cancelled(
                 _conv_cancel_id
@@ -4210,9 +4301,9 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 logger.info(
                     f"[Session:{session_id}] Cancelled during prepare, returning immediately"
                 )
-                return "✅ Got it, current task stopped."
+                return "✅ 好的，已停止当前任务。"
 
-            # === Read thinking preference from session metadata (used by the IM channel) ===
+            # === 从 session metadata 读取 thinking 偏好（IM 通道使用） ===
             _thinking_mode = thinking_mode
             _thinking_depth = thinking_depth
             if session and (_thinking_mode is None or _thinking_depth is None):
@@ -4224,8 +4315,8 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 except Exception:
                     pass
 
-            # === Build the IM reasoning-chain progress callback ===
-            # Controlled by the im_chain_push switch: off by default to reduce noise; does not affect internal trace saving
+            # === 构建 IM 思维链进度回调 ===
+            # 受 im_chain_push 开关控制：默认关闭以减少刷屏，不影响内部 trace 保存
             _progress_cb = None
             if gateway and session:
                 _chain_push = session.get_metadata("chain_push")
@@ -4259,8 +4350,8 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
                     _fast_system = (
                         f"{_identity_snippet}\n\n"
-                        "The user sent a short greeting/confirmation message. Reply briefly in your persona's style; "
-                        "do not use any tools; do not over-explain. Keep it light and natural, 1-3 sentences is enough."
+                        "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
+                        "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
                     ).strip()
 
                     _fast_resp = await self.brain.think_lightweight(
@@ -4270,12 +4361,12 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     _fast_usage = _fast_resp.usage
                     response_text = (
                         clean_llm_response(_fast_resp.content if _fast_resp.content else "")
-                        or "Hello! How can I help you?"
+                        or "你好！有什么我可以帮你的吗？"
                     )
                     _fast_handled = True
                 except Exception as e:
                     logger.error(f"[FastReply] Failed: {e}")
-                    response_text = "Hello! How can I help you?"
+                    response_text = "你好！有什么我可以帮你的吗？"
                     _fast_handled = True
 
             elif _intent and _intent.intent == _IT.QUERY and getattr(_intent, "fast_reply", False):
@@ -4299,9 +4390,9 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     _fast_system = (
                         f"{_identity_snippet}\n\n"
                         f"{_runtime_info}\n\n"
-                        "The user asked a simple knowledge/math/date question."
-                        "Give an accurate and concise answer directly. Do not use any tools."
-                        "If it involves date/time, answer based on the runtime environment info above."
+                        "用户提出了一个简单的知识/计算/日期问题。"
+                        "请直接给出准确、简洁的回答。不要使用任何工具。"
+                        "如果涉及日期/时间，请根据上面的运行环境信息回答。"
                     ).strip()
 
                     logger.info(f"[FastQuery] Answering '{message}' without tools")
@@ -4334,14 +4425,14 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     intent_result=_intent,
                 )
 
-            # === Flush any remaining IM progress messages so the reasoning chain arrives before the answer ===
+            # === flush 残留的 IM 进度消息，确保思维链先于回答到达 ===
             if gateway and session:
                 try:
                     await gateway.flush_progress(session)
                 except Exception:
                     pass
 
-            # === Shared finalize ===
+            # === 共享收尾 ===
             await self._finalize_session(
                 response_text=response_text,
                 session=session,
@@ -4349,8 +4440,8 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 task_monitor=task_monitor,
             )
 
-            # fast_reply bypasses ReasoningEngine, leaving trace empty so _last_usage_summary = {}.
-            # Fill in from Response.usage.
+            # fast_reply 不经过 ReasoningEngine，trace 为空导致 _last_usage_summary = {}。
+            # 从 Response.usage 补充。
             if _fast_handled and not self._last_usage_summary and isinstance(_fast_usage, dict):
                 self._last_usage_summary = {
                     "input_tokens": _fast_usage.get("input_tokens", 0),
@@ -4378,53 +4469,53 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         thinking_depth: str | None = None,
     ):
         """
-        Streaming version of chat_with_session; yields SSE event dicts.
+        流式版 chat_with_session，yield SSE 事件字典。
 
-        Runs the exact same Agent pipeline as chat_with_session() (shared prepare/finalize),
-        with the middle reasoning portion using reasoning_engine.reason_stream() for streaming output.
+        走与 chat_with_session() 完全一致的 Agent 流水线（共享准备/收尾），
+        中间推理部分使用 reasoning_engine.reason_stream() 实现流式输出。
 
-        Used for the SSE channel of the Desktop Chat API (/api/chat).
+        用于 Desktop Chat API (/api/chat) 的 SSE 通道。
 
         Args:
-            message: user message
-            session_messages: Session's conversation history
-            session_id: session ID
-            session: Session object
-            gateway: MessageGateway object
-            plan_mode: whether to enable Plan mode (deprecated, use mode)
-            mode: interaction mode (ask/plan/agent)
-            endpoint_override: endpoint override
-            attachments: Desktop Chat attachment list
-            thinking_mode: thinking-mode override ('auto'/'on'/'off'/None)
-            thinking_depth: thinking depth ('low'/'medium'/'high'/None)
+            message: 用户消息
+            session_messages: Session 的对话历史
+            session_id: 会话 ID
+            session: Session 对象
+            gateway: MessageGateway 对象
+            plan_mode: 是否启用 Plan 模式 (deprecated, use mode)
+            mode: 交互模式 (ask/plan/agent)
+            endpoint_override: 端点覆盖
+            attachments: Desktop Chat 附件列表
+            thinking_mode: 思考模式覆盖 ('auto'/'on'/'off'/None)
+            thinking_depth: 思考深度 ('low'/'medium'/'high'/None)
 
         Yields:
-            SSE event dict {"type": "...", ...}
+            SSE 事件字典 {"type": "...", ...}
         """
         if not self._initialized:
             await self.initialize()
 
         endpoint_override = endpoint_override or self._preferred_endpoint
 
-        # === Stop-command detection ===
+        # === 停止指令检测 ===
         message_lower = message.strip().lower()
         if message_lower in self.STOP_COMMANDS or message.strip() in self.STOP_COMMANDS:
-            self.cancel_current_task(f"User sent stop command: {message}", session_id=session_id)
+            self.cancel_current_task(f"用户发送停止指令: {message}", session_id=session_id)
             logger.info(f"[StopTask] User requested to stop (session={session_id}): {message}")
             yield {"type": "todo_cancelled"}
             yield {
                 "type": "text_delta",
-                "content": "✅ Got it, current task stopped. Anything else I can help with?",
+                "content": "✅ 好的，已停止当前任务。有什么其他需要帮助的吗？",
             }
             yield {"type": "done"}
             return
 
-        # Resolve conversation_id (done early so cleanup uses the right key)
+        # 解析 conversation_id（提前，以便清理时使用正确的 key）
         self._current_session_id = session_id
         conversation_id = self._resolve_conversation_id(session, session_id)
         self._current_conversation_id = conversation_id
 
-        # Clean up leftover task state from the previous turn (session-scoped)
+        # 清理上一轮残留的任务状态（按 session 隔离）
         _prev_task = None
         _reset_key = session_id
         if self.agent_state:
@@ -4445,10 +4536,10 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 _prev_task.clear_skip()
                 await _prev_task.drain_user_inserts()
 
-        # Clear leftover pending_cancels from the previous turn (a disconnect watcher may write them after cleanup)
+        # 清除上一轮残留的 pending_cancels（disconnect watcher 可能在清理后写入）
         self._pending_cancels.pop(session_id, None) if session_id else None
 
-        # User proactively sends a new message -> unconditionally clear all endpoint cooldowns
+        # 用户主动发新消息 → 无条件清除所有端点冷却期
         llm_client = getattr(self.brain, "_llm_client", None)
         if llm_client:
             llm_client.reset_all_cooldowns(force_all=True)
@@ -4456,20 +4547,20 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         im_tokens = None
         _reply_text = ""
         try:
-            # Send a heartbeat immediately so the frontend knows the request is received (the prepare stage can contain multiple LLM calls)
+            # 立即发送心跳，让前端知道请求已被接收（准备阶段可能包含多个 LLM 调用）
             yield {"type": "heartbeat"}
 
-            # Pre-prepare check: if the session has a pending cancel signal, exit immediately
+            # 准备阶段前检查：如果 session 有挂起的取消信号，立即退出
             if self._is_session_cancelled(session_id):
                 self._consume_pending_cancel(session_id)
                 logger.info(
                     f"[Session:{session_id}] Cancelled before prepare, returning immediately"
                 )
-                yield {"type": "text_delta", "content": "✅ Got it, current task stopped."}
+                yield {"type": "text_delta", "content": "✅ 好的，已停止当前任务。"}
                 yield {"type": "done"}
                 return
 
-            # === Shared prepare ===
+            # === 共享准备 ===
             (
                 messages,
                 session_type,
@@ -4489,7 +4580,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
             yield {"type": "heartbeat"}
 
-            # Post-prepare check: if a cancel signal arrived during prepare (including pending cancel)
+            # 准备阶段后检查：如果准备期间收到了取消信号（含 pending cancel）
             _conv_cancel_id = conversation_id or session_id
             if self._is_session_cancelled(session_id) or self._is_session_cancelled(
                 _conv_cancel_id
@@ -4499,11 +4590,11 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 logger.info(
                     f"[Session:{session_id}] Cancelled during prepare, returning immediately"
                 )
-                yield {"type": "text_delta", "content": "✅ Got it, current task stopped."}
+                yield {"type": "text_delta", "content": "✅ 好的，已停止当前任务。"}
                 yield {"type": "done"}
                 return
 
-            # === Build the System Prompt (matching _chat_with_tools_and_context) ===
+            # === 构建 System Prompt（与 _chat_with_tools_and_context 一致） ===
             # Pre-compute _effective_tools so the catalog's deferred annotations
             # are up-to-date before the system prompt is built.
             _ = self._effective_tools
@@ -4518,7 +4609,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 session=session,
             )
 
-            # Inject TaskDefinition
+            # 注入 TaskDefinition
             task_def = (getattr(self, "_current_task_definition", "") or "").strip()
             if task_def:
                 system_prompt += f"\n\n## Developer: TaskDefinition\n{task_def}\n"
@@ -4535,7 +4626,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             # Update plan_mode flag to match potentially changed mode
             plan_mode = mode == "plan"
 
-            # === Read thinking preference from session metadata (used by the IM channel) ===
+            # === 从 session metadata 读取 thinking 偏好（IM 通道使用） ===
             _thinking_mode = thinking_mode
             _thinking_depth = thinking_depth
             if session and (_thinking_mode is None or _thinking_depth is None):
@@ -4583,8 +4674,8 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
                     _fast_system = (
                         f"{_identity_snippet}\n\n"
-                        "The user sent a short greeting/confirmation message. Reply briefly in your persona's style; "
-                        "do not use any tools; do not over-explain. Keep it light and natural, 1-3 sentences is enough."
+                        "用户发来了一条简短的问候/确认消息。请用你的人设风格简短回复，"
+                        "不要使用任何工具，不要过度展开。保持轻松自然，1-3句话即可。"
                     ).strip()
 
                     _fast_response = await self.brain.think_lightweight(
@@ -4598,12 +4689,12 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     if _reply_text:
                         yield {"type": "text_delta", "content": _reply_text}
                     else:
-                        yield {"type": "text_delta", "content": "Hello! How can I help you?"}
-                        _reply_text = "Hello! How can I help you?"
+                        yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
+                        _reply_text = "你好！有什么我可以帮你的吗？"
                 except Exception as e:
                     logger.error(f"[FastReply] Failed: {e}")
-                    yield {"type": "text_delta", "content": "Hello! How can I help you?"}
-                    _reply_text = "Hello! How can I help you?"
+                    yield {"type": "text_delta", "content": "你好！有什么我可以帮你的吗？"}
+                    _reply_text = "你好！有什么我可以帮你的吗？"
                 yield {"type": "done"}
 
                 await self._finalize_session(
@@ -4643,9 +4734,9 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     _fast_system = (
                         f"{_identity_snippet}\n\n"
                         f"{_runtime_info}\n\n"
-                        "The user asked a simple knowledge/math/date question."
-                        "Give an accurate and concise answer directly. Do not use any tools."
-                        "If it involves date/time, answer based on the runtime environment info above."
+                        "用户提出了一个简单的知识/计算/日期问题。"
+                        "请直接给出准确、简洁的回答。不要使用任何工具。"
+                        "如果涉及日期/时间，请根据上面的运行环境信息回答。"
                     ).strip()
 
                     logger.info(f"[FastQuery-Stream] Answering '{message}' without tools")
@@ -4700,8 +4791,8 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     "adding soft plan suggestion to context"
                 )
                 soft_hint = (
-                    "\n\n[System notice: this task is fairly complex; please give a brief plan in your reply before executing."
-                    "You do not need to pause for user confirmation, proceed directly.]"
+                    "\n\n[系统提示：此任务较复杂，建议在回复中先给出简要计划再执行。"
+                    "但无需中断用户确认，直接继续。]"
                 )
                 if messages and isinstance(messages[-1], dict):
                     messages = list(messages)
@@ -4728,14 +4819,14 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 force_tool_retries=_force_tool_retries,
                 is_sub_agent=getattr(self, "_is_sub_agent_call", False),
             ):
-                # Collect reply text (used for session persistence & memory)
+                # 收集回复文本（用于 session 保存 & memory）
                 if event.get("type") == "text_delta":
                     _reply_text += event.get("content", "")
                 elif event.get("type") == "ask_user" and not _reply_text:
                     _reply_text = event.get("question", "")
                 yield event
 
-            # === Shared finalize (always runs; record memory/trace even if reply text is empty) ===
+            # === 共享收尾（始终执行，即使回复文本为空也要记录 memory/trace） ===
             await self._finalize_session(
                 response_text=_reply_text,
                 session=session,
@@ -4830,21 +4921,21 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         return system_prompt, mode
 
     def _resolve_conversation_id(self, session: Any, session_id: str) -> str:
-        """Return the caller-supplied session_id directly as the canonical conversation_id.
+        """将调用方传入的 session_id 作为规范 conversation_id 直接返回。
 
-        Desktop path: session_id = raw chat_id (passed in as conversation_id from the frontend)
-        IM path:      session_id = session.id (passed in by orchestrator._call_agent)
-        CLI path:     session_id = "cli_<uuid>"
+        Desktop 路径: session_id = raw chat_id (由前端 conversation_id 传入)
+        IM 路径:      session_id = session.id (由 orchestrator._call_agent 传入)
+        CLI 路径:     session_id = "cli_<uuid>"
 
-        We no longer read session.session_key to avoid the task key drifting away from the pool key.
+        不再取 session.session_key，避免 task key 与 pool key 不一致。
         """
         return session_id
 
     def _extract_usage_summary(self, trace: list[dict]) -> dict:
-        """Extract a lightweight token-usage summary from react_trace.
+        """从 react_trace 提取轻量 token 用量摘要。
 
-        Called from _finalize_session to cache the result up front.
-        After cleanup frees the large objects, chat.py can still read this summary without needing the full trace.
+        在 _finalize_session 中调用，提前缓存结果。
+        cleanup 释放大对象后，chat.py 仍可读取此摘要而不依赖完整 trace。
         """
         if not trace:
             return {}
@@ -4855,7 +4946,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             "output_tokens": total_out,
             "total_tokens": total_in + total_out,
         }
-        # Estimate the context token count
+        # 估算上下文 token 数
         try:
             re = self.reasoning_engine
             ctx_mgr = getattr(self, "context_manager", None) or getattr(
@@ -4879,19 +4970,19 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
     def build_tool_trace_summary(self) -> str:
         """
-        Generate tool-execution summary text from the latest react_trace.
+        从最新的 react_trace 生成工具执行摘要文本。
 
-        Return format:
+        返回格式:
 
-          [Sub-Agent work summary]      (only present when multi-Agent delegation occurs)
-          1. [web-scout] task: ... | status: done | delivered files: ...
-          2. [doc-helper] task: ... | status: done | delivered files: ...
+          [子Agent工作总结]      (仅多Agent委派时存在)
+          1. [网探] 任务: ... | 状态: ✅完成 | 交付文件: ...
+          2. [文助] 任务: ... | 状态: ✅完成 | 交付文件: ...
 
-          [Execution summary]
+          [执行摘要]
           - tool_name({key: val}) → result_hint...
 
-        Callers must store the return value in the message's ``tool_summary`` metadata field (do not concatenate into content).
-        An empty string indicates there were no tool calls.
+        调用方将返回值存入消息的 ``tool_summary`` 元数据字段（不要拼入 content）。
+        空字符串表示无工具调用。
         """
         from .tool_executor import save_overflow, smart_truncate
 
@@ -4961,7 +5052,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         if truncated_full_results:
             overflow_content = "\n\n".join(truncated_full_results)
             overflow_path = save_overflow("trace_summary", overflow_content)
-            lines.append(f"[Some tool results were truncated; full content: {overflow_path}, readable via read_file]")
+            lines.append(f"[部分工具结果已截断, 完整内容: {overflow_path}, 可用 read_file 查看]")
 
         parts: list[str] = []
 
@@ -4970,14 +5061,14 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             if ws_section:
                 parts.append(ws_section)
 
-        parts.append("\n\n[Execution summary]\n" + "\n".join(lines))
+        parts.append("\n\n[执行摘要]\n" + "\n".join(lines))
 
         return "".join(parts)
 
     def _build_work_summary_section(self) -> str:
-        """Build [Sub-Agent work summary] section from sub_agent_records.
+        """Build [子Agent工作总结] section from sub_agent_records.
 
-        Placed BEFORE [Execution summary] so that high-level task summaries appear
+        Placed BEFORE [执行摘要] so that high-level task summaries appear
         before low-level tool call details, improving readability and
         ContextManager summarization quality.
         """
@@ -4990,16 +5081,16 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         summaries = [r.get("work_summary", "") for r in records if r.get("work_summary")]
         if not summaries:
             return ""
-        lines = ["\n\n[Sub-Agent work summary]"]
+        lines = ["\n\n[子Agent工作总结]"]
         for i, ws in enumerate(summaries, 1):
             lines.append(f"{i}. {ws}")
         return "\n".join(lines)
 
     def _build_chain_summary(self, react_trace: list[dict]) -> list[dict] | None:
         """
-        Build a reasoning-chain summary from the ReAct trace (used for IM message metadata).
+        从 ReAct trace 构建思维链摘要（用于 IM 消息 metadata）。
 
-        Produce one summary entry per iteration, including a thinking preview and the list of tool calls.
+        每个迭代生成一个摘要项，包含 thinking 预览和工具调用列表。
         """
         if not react_trace:
             return None
@@ -5033,46 +5124,46 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
     async def _compile_prompt(self, user_message: str) -> tuple[str, str]:
         """
-        First stage of two-stage prompting: Prompt Compiler
+        两段式 Prompt 第一阶段：Prompt Compiler
 
-        Turn the user's raw request into a structured task definition.
-        Uses an isolated context; does not enter the core conversation history.
+        将用户的原始请求转化为结构化的任务定义。
+        使用独立上下文，不进入核心对话历史。
 
         Args:
-            user_message: raw user message
+            user_message: 用户原始消息
 
         Returns:
             (compiled_prompt, raw_compiler_output)
-            - compiled_prompt: the compiled prompt (defaults to the raw user message to avoid polluting the main messages)
-            - raw_compiler_output: raw output of the Prompt Compiler (used for logging)
+            - compiled_prompt: 编译后的提示词（默认保持用户原始消息，避免污染主对话 messages）
+            - raw_compiler_output: Prompt Compiler 的原始输出（用于日志）
         """
         try:
-            # Invoke Brain's Compiler-specific method (separate fast model, thinking disabled, falls back to the main model on failure)
+            # 调用 Brain 的 Compiler 专用方法（独立快速模型，禁用思考，失败回退主模型）
             response = await self.brain.compiler_think(
                 prompt=user_message,
                 system=PROMPT_COMPILER_SYSTEM,
             )
 
-            # Strip thinking tags (the fallback-to-main-model path may produce them)
+            # 移除 thinking 标签（回退到主模型时可能带有）
             compiler_output = (
                 strip_thinking_tags(response.content).strip() if response.content else ""
             )
             logger.info(f"Prompt compiled: {compiler_output}")
 
-            # Key strategy: do not stuff compiler_output back into the user message (to avoid polluting the main model's messages)
-            # A short summary is injected into the system/developer segment later, and reused as the memory-retrieval query
+            # 关键策略：不把 compiler_output 直接塞回 user message（避免污染主模型 messages）
+            # 后续会将短摘要注入 system/developer 段，并复用为 memory 检索 query
             return user_message, compiler_output
 
         except Exception as e:
             logger.warning(f"Prompt compilation failed: {e}, using original message")
-            # On compile failure, just use the raw message
+            # 编译失败时直接使用原始消息
             return user_message, ""
 
     def _summarize_compiler_output(self, compiler_output: str, max_chars: int = 600) -> str:
         """
-        Condense the Prompt Compiler's YAML output into a short summary (used for system/developer injection and as the memory query).
+        将 Prompt Compiler 的 YAML 输出压缩为短摘要（用于 system/developer 注入与 memory query）。
 
-        Goals: stable, short, reusable; does not pollute the main messages.
+        目标：稳定、短、可复用，不污染主 messages。
         """
         if not compiler_output:
             return ""
@@ -5100,33 +5191,33 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
     async def _do_task_retrospect(self, task_monitor: TaskMonitor) -> str:
         """
-        Run task retrospective analysis
+        执行任务复盘分析
 
-        When a task takes too long, have the LLM analyze causes and suggest improvements.
+        当任务耗时过长时，让 LLM 分析原因，找出可以改进的地方。
 
         Args:
-            task_monitor: task monitor
+            task_monitor: 任务监控器
 
         Returns:
-            Retrospective analysis result
+            复盘分析结果
         """
         try:
             context = task_monitor.get_retrospect_context()
             prompt = RETROSPECT_PROMPT.format(context=context)
 
-            # Use think_lightweight for the retrospective (disable reasoning chain to save tokens)
+            # 使用 think_lightweight 进行复盘（禁用思考链，节省 token）
             response = await self.brain.think_lightweight(
                 prompt=prompt,
-                system="You are a task-execution analysis expert. Concisely analyze task execution, identify causes of slowness, and suggest improvements.",
+                system="你是一个任务执行分析专家。请简洁地分析任务执行情况，找出耗时原因和改进建议。",
                 max_tokens=512,
             )
 
             result = strip_thinking_tags(response.content).strip() if response.content else ""
 
-            # Save the retrospective result to the monitor
+            # 保存复盘结果到监控器
             task_monitor.metrics.retrospect_result = result
 
-            # If an obvious repeated-error pattern is detected, record it to memory
+            # 如果发现明显的重复错误模式，记录到记忆中
             if "重复" in result or "无效" in result or "弯路" in result:
                 try:
                     from ..memory.types import Memory, MemoryPriority, MemoryType
@@ -5134,7 +5225,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     memory = Memory(
                         type=MemoryType.ERROR,
                         priority=MemoryPriority.LONG_TERM,
-                        content=f"Task execution retrospective found an issue: {result}",
+                        content=f"任务执行复盘发现问题：{result}",
                         source="retrospect",
                         importance_score=0.7,
                     )
@@ -5152,23 +5243,23 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         self, task_monitor: TaskMonitor, session_id: str
     ) -> None:
         """
-        Run task retrospective analysis in the background
+        后台执行任务复盘分析
 
-        This method runs asynchronously in the background without blocking the main response.
-        Retrospective results are saved to files for the daily self-check system to aggregate.
+        这个方法在后台异步执行，不阻塞主响应。
+        复盘结果会保存到文件，供每日自检系统读取汇总。
 
         Args:
-            task_monitor: task monitor
-            session_id: session ID
+            task_monitor: 任务监控器
+            session_id: 会话 ID
         """
         try:
-            # Run the retrospective analysis
+            # 执行复盘分析
             retrospect_result = await self._do_task_retrospect(task_monitor)
 
             if not retrospect_result:
                 return
 
-            # Save to the retrospective store
+            # 保存到复盘存储
             from .task_monitor import RetrospectRecord, get_retrospect_storage
 
             record = RetrospectRecord(
@@ -5193,36 +5284,36 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
     def _should_compile_prompt(self, message: str) -> bool:
         """
-        Decide whether prompt compilation is needed
+        判断是否需要进行 Prompt 编译
 
-        Based on length only: very short messages carry too little information to produce a meaningful TaskDefinition,
-        so compilation is pure overhead. Message classification (chit-chat/Q&A/task) is left to the LLM itself,
-        we do not do keyword/regex matching here.
+        仅基于长度判断：极短消息信息量不足以产生有意义的 TaskDefinition，
+        编译是纯浪费。消息类型分类（闲聊/问答/任务）由大模型自己决定，
+        不在此处做关键词/正则匹配。
         """
-        # Very short messages do not need compilation (too little info to produce a meaningful structured TaskDefinition)
+        # 极短消息不需要编译（信息量不足以产生有意义的结构化 TaskDefinition）
         if len(message.strip()) < 20:
             return False
 
-        # Pure image/voice messages do not need compilation (the Compiler cannot see multimodal content and would produce misleading task definitions)
+        # 纯图片/语音消息不需要编译（Compiler 看不到多模态内容，编译只会产生误导性任务定义）
         stripped = message.strip()
         if re.fullmatch(r"(\[图片: [^\]]+\]\s*)+", stripped):
             return False
         if re.fullmatch(r"(\[语音转文字: [^\]]+\]\s*)+", stripped):
             return False
 
-        # In all other cases, compile
+        # 其他情况都进行编译
         return True
 
     async def _detect_topic_change(
         self, session_messages: list[dict], new_message: str, session: Any = None
     ) -> bool:
-        """Detect whether the current message is a new topic (unrelated to the recent conversation).
+        """检测当前消息是否是新话题（与近期对话无关）。
 
-        Combines multiple layers of context (current task, conversation summary, recent messages) and lets the LLM judge holistically.
-        Only invoked on the IM channel.
+        结合多层上下文（当前任务、对话摘要、近期消息）让 LLM 做综合判断。
+        仅在 IM 通道调用。
 
         Returns:
-            True indicates a topic switch was detected
+            True 表示检测到话题切换
         """
         if not new_message or len(new_message.strip()) < 5:
             return False
@@ -5231,11 +5322,11 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
         _new = new_message.strip()
 
-        # ---- Build multi-layer context ----
+        # ---- 构建多层上下文 ----
 
         context_parts: list[str] = []
 
-        # Layer 1: current task/topic (if any)
+        # Layer 1: 当前任务/话题（如果有）
         if session:
             task_desc = (
                 session.context.get_variable("task_description")
@@ -5243,7 +5334,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 else None
             )
             if task_desc:
-                context_parts.append(f"Current task: {task_desc}")
+                context_parts.append(f"当前任务: {task_desc}")
             summary = (
                 getattr(session.context, "summary", None) if hasattr(session, "context") else None
             )
@@ -5251,21 +5342,21 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 from .tool_executor import smart_truncate as _st
 
                 summary_trunc, _ = _st(summary, 600, save_full=False, label="topic_summary")
-                context_parts.append(f"Conversation summary: {summary_trunc}")
+                context_parts.append(f"对话摘要: {summary_trunc}")
 
         from .tool_executor import smart_truncate as _st
 
         recent = session_messages[-6:]
         dialog_lines: list[str] = []
         for msg in recent:
-            role = "User" if msg.get("role") == "user" else "Assistant"
+            role = "用户" if msg.get("role") == "user" else "助手"
             content = msg.get("content", "")
             if isinstance(content, str) and content:
                 preview, _ = _st(content, 500, save_full=False, label="topic_content")
                 preview = preview.replace("\n", " ")
                 dialog_lines.append(f"{role}: {preview}")
         if dialog_lines:
-            context_parts.append("Recent conversation:\n" + "\n".join(dialog_lines))
+            context_parts.append("近期对话:\n" + "\n".join(dialog_lines))
 
         if not context_parts:
             return False
@@ -5277,17 +5368,17 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             response = await self.brain.compiler_think(
                 prompt=(
                     f"{full_context}\n\n"
-                    f"New message: {new_trunc}\n\n"
-                    "Judge: does the new message continue the current topic (CONTINUE) or start a new one (NEW)?\n"
-                    "Output only one word: CONTINUE or NEW"
+                    f"新消息: {new_trunc}\n\n"
+                    "判断：新消息是延续当前话题(CONTINUE)，还是开启全新话题(NEW)？\n"
+                    "只输出一个单词：CONTINUE 或 NEW"
                 ),
                 system=(
-                    "You are a topic-switch detector. Based on the current task and recent conversation context,"
-                    "decide whether the new message belongs to the same topic.\n"
-                    "CONTINUE: the new message follows up on, supplements, confirms, or asks further about the current topic,"
-                    "or is a follow-up action related to the current task.\n"
-                    "NEW: the new message introduces a new topic or task unrelated to the current conversation.\n"
-                    "Output only one word."
+                    "你是话题切换检测器。结合当前任务和近期对话上下文，"
+                    "判断新消息是否属于同一话题。\n"
+                    "CONTINUE: 新消息是对当前话题的跟进、补充、确认、追问，"
+                    "或与当前任务相关的后续操作。\n"
+                    "NEW: 新消息引入了与当前对话完全无关的新话题或新任务。\n"
+                    "只输出一个单词。"
                 ),
             )
             result = (response.content or "").strip().upper()
@@ -5300,7 +5391,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             return False
 
     def _get_last_user_request(self, messages: list[dict]) -> str:
-        """Get the last user request (same source as TaskVerify; delegates to ResponseHandler)."""
+        """获取最后一条用户请求（与 TaskVerify 同源，委托 ResponseHandler）。"""
         return ResponseHandler.get_last_user_request(messages)
 
     @staticmethod
@@ -5308,7 +5399,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         executed_tool_names: list[str],
         delivery_receipts: list[dict],
     ) -> str | None:
-        """When the LLM repeatedly fails to return visible text, build a fallback summary from the tool-execution records."""
+        """当 LLM 多次未返回可见文本时，从工具执行记录构建 fallback 摘要。"""
         parts: list[str] = []
 
         if delivery_receipts:
@@ -5317,24 +5408,24 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 if desc:
                     parts.append(f"• {desc}")
             if parts:
-                return "Completed the following operations:\n" + "\n".join(parts)
+                return "已完成以下操作：\n" + "\n".join(parts)
 
         if executed_tool_names:
             unique = list(dict.fromkeys(executed_tool_names))
             tool_summary = "、".join(unique[:10])
             if len(unique) > 10:
-                tool_summary += f", {len(unique)} items in total"
-            return f"Task execution finished (tools used: {tool_summary}), but the model produced no text summary. Please re-ask if you need details."
+                tool_summary += f" 等共 {len(unique)} 项"
+            return f"任务已执行完毕（使用了工具：{tool_summary}），但模型未生成文本总结。如需详情请重新提问。"
 
         return None
 
     async def _cancellable_llm_call(self, cancel_event: asyncio.Event, **kwargs) -> Any:
-        """Wrap the LLM call as a cancellable asyncio.Task, racing it against cancel_event.
+        """将 LLM 调用包装为可取消的 asyncio.Task，配合 cancel_event 竞速。
 
-        When cancel_event is set() before the LLM returns, raise UserCancelledError.
+        当 cancel_event 先于 LLM 返回被 set() 时，抛出 UserCancelledError。
         """
         logger.info(
-            f"[CancellableLLM] dispatching cancellable LLM call, cancel_event.is_set={cancel_event.is_set()}"
+            f"[CancellableLLM] 发起可取消 LLM 调用, cancel_event.is_set={cancel_event.is_set()}"
         )
         _tt = set_tracking_context(
             TokenTrackingContext(
@@ -5362,12 +5453,12 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     pass
 
             if llm_task in done:
-                logger.info("[CancellableLLM] LLM call completed first; returning normally")
+                logger.info("[CancellableLLM] LLM 调用先完成，正常返回")
                 return llm_task.result()
             else:
-                reason = self._cancel_reason or "user requested stop"
+                reason = self._cancel_reason or "用户请求停止"
                 logger.info(
-                    f"[CancellableLLM] cancel_event fired first; raising UserCancelledError: {reason!r}"
+                    f"[CancellableLLM] cancel_event 先触发，抛出 UserCancelledError: {reason!r}"
                 )
                 raise UserCancelledError(
                     reason=reason,
@@ -5382,21 +5473,21 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         system_prompt: str,
         current_model: str,
     ) -> str:
-        """Return default text immediately after cancellation; dispatch LLM farewell in the background.
+        """取消后立即返回默认文本，后台异步发起 LLM 收尾。
 
         Args:
-            working_messages: current working message list
-            system_prompt: current system prompt
-            current_model: currently used model
+            working_messages: 当前的工作消息列表
+            system_prompt: 当前的系统提示词
+            current_model: 当前使用的模型
 
         Returns:
-            Fixed cancellation text (does not wait for the LLM)
+            固定的取消文本（不等待 LLM）
         """
-        cancel_reason = self._cancel_reason or "user requested stop"
-        default_farewell = "✅ Got it, current task stopped."
+        cancel_reason = self._cancel_reason or "用户请求停止"
+        default_farewell = "✅ 好的，已停止当前任务。"
 
         logger.info(
-            f"[StopTask][CancelFarewell] returning default text immediately; dispatching LLM farewell in background: "
+            f"[StopTask][CancelFarewell] 立即返回默认文本，后台发起 LLM 收尾: "
             f"cancel_reason={cancel_reason!r}, model={current_model}"
         )
 
@@ -5415,13 +5506,13 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         current_model: str,
         cancel_reason: str,
     ) -> None:
-        """Run the LLM farewell call in the background and persist the result to the context (non-blocking for the user)."""
-        farewell_text = "✅ Got it, current task stopped."
+        """后台执行 LLM 收尾调用，将结果持久化到上下文（不阻塞用户）。"""
+        farewell_text = "✅ 好的，已停止当前任务。"
         try:
             cancel_msg = (
-                f"[System notice] User sent stop command '{cancel_reason}';"
-                "Please stop the current operation immediately and briefly tell the user it has stopped along with current progress (1-2 sentences)."
-                "Do not call any tools."
+                f"[系统通知] 用户发送了停止指令「{cancel_reason}」，"
+                "请立即停止当前操作，简要告知用户已停止以及当前进度（1~2 句话即可）。"
+                "不要调用任何工具。"
             )
             working_messages.append({"role": "user", "content": cancel_msg})
 
@@ -5446,22 +5537,22 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     if block.type == "text" and block.text.strip():
                         farewell_text = block.text.strip()
                         break
-                logger.info(f"[StopTask][BgFarewell] LLM farewell complete: {farewell_text[:100]}")
+                logger.info(f"[StopTask][BgFarewell] LLM farewell 完成: {farewell_text[:100]}")
             except (asyncio.TimeoutError, TimeoutError):
-                logger.warning("[StopTask][BgFarewell] LLM farewell timed out (5s)")
+                logger.warning("[StopTask][BgFarewell] LLM farewell 超时 (5s)")
             except Exception as e:
-                logger.warning(f"[StopTask][BgFarewell] LLM farewell failed: {e}")
+                logger.warning(f"[StopTask][BgFarewell] LLM farewell 失败: {e}")
             finally:
                 reset_tracking_context(_tt)
         except Exception as e:
-            logger.warning(f"[StopTask][BgFarewell] background farewell exception: {e}")
+            logger.warning(f"[StopTask][BgFarewell] 后台收尾异常: {e}")
 
         self._persist_cancel_to_context(cancel_reason, farewell_text)
 
     def _persist_cancel_to_context(self, cancel_reason: str, farewell_text: str) -> None:
-        """Persist the interrupt event into the _context.messages conversation history.
+        """将中断事件持久化到 _context.messages 对话历史。
 
-        Ensures the LLM sees prior interrupt history in later turns.
+        确保后续对话中 LLM 能看到之前的中断历史。
         """
         try:
             ctx = getattr(self, "_context", None)
@@ -5469,7 +5560,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 ctx.messages.append(
                     {
                         "role": "user",
-                        "content": f"[User interrupted the previous task: {cancel_reason}]",
+                        "content": f"[用户中断了上一个任务: {cancel_reason}]",
                     }
                 )
                 ctx.messages.append(
@@ -5537,7 +5628,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     return cleaned
 
                 if _has_tool_use:
-                    return "Got it, message received."
+                    return "好的，已收到你的信息。"
 
                 if attempt < self._LIGHTWEIGHT_EMPTY_MAX_RETRIES:
                     logger.warning(
@@ -5545,11 +5636,11 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                         f"(attempt {attempt + 1}), retrying..."
                     )
                     continue
-                return cleaned or "Sorry, the model can't generate a reply right now. Please try again later."
+                return cleaned or "抱歉，模型暂时无法生成回复，请稍后再试。"
             except Exception as e:
                 logger.error(f"[ChatLightweight] LLM call failed: {e}")
-                return "Sorry, unable to reply right now. Please try again later."
-        return "Sorry, the model can't generate a reply right now. Please try again later."
+                return "抱歉，暂时无法回复，请稍后再试。"
+        return "抱歉，模型暂时无法生成回复，请稍后再试。"
 
     async def _chat_with_tools_and_context(
         self,
@@ -5565,26 +5656,26 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         intent_result: Any = None,
     ) -> str:
         """
-        Chat using the specified message context (delegates to ReasoningEngine)
+        使用指定的消息上下文进行对话（委托给 ReasoningEngine）
 
-        Phase 2 refactor: retain the system-prompt / task_description construction logic,
-        and delegate the core reasoning loop to self.reasoning_engine.run().
+        Phase 2 重构: 保留 system prompt / task_description 的构建逻辑，
+        将核心推理循环委托给 self.reasoning_engine.run()。
 
         Args:
-            messages: conversation message list
-            use_session_prompt: whether to use the Session-specific System Prompt
-            task_monitor: task monitor
-            session_type: session type ("cli" or "im")
-            thinking_mode: thinking-mode override ('auto'/'on'/'off'/None)
-            thinking_depth: thinking depth ('low'/'medium'/'high'/None)
-            progress_callback: progress callback async fn(str) -> None, for the IM real-time reasoning chain
-            endpoint_override: endpoint override
+            messages: 对话消息列表
+            use_session_prompt: 是否使用 Session 专用的 System Prompt
+            task_monitor: 任务监控器
+            session_type: 会话类型 ("cli" 或 "im")
+            thinking_mode: 思考模式覆盖 ('auto'/'on'/'off'/None)
+            thinking_depth: 思考深度 ('low'/'medium'/'high'/None)
+            progress_callback: 进度回调 async fn(str) -> None，IM 实时思维链
+            endpoint_override: 端点覆盖
             intent_result: IntentResult from IntentAnalyzer (drives ForceToolCall policy)
 
         Returns:
-            Final response text
+            最终响应文本
         """
-        # === Build System Prompt ===
+        # === 构建 System Prompt ===
         task_description = self._get_last_user_request(messages).strip()
         if not task_description:
             task_description = (getattr(self, "_current_task_query", "") or "").strip()
@@ -5598,7 +5689,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         else:
             system_prompt = self._context.system
 
-        # Inject TaskDefinition
+        # 注入 TaskDefinition
         task_def = (getattr(self, "_current_task_definition", "") or "").strip()
         if task_def:
             system_prompt += f"\n\n## Developer: TaskDefinition\n{task_def}\n"
@@ -5623,7 +5714,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             else:
                 force_tool_retries = max(0, getattr(settings, "force_tool_call_max_retries", 2) - 1)
 
-        # === Delegate to ReasoningEngine ===
+        # === 委托给 ReasoningEngine ===
         return await self.reasoning_engine.run(
             messages,
             tools=self._effective_tools,
@@ -5642,11 +5733,11 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             is_sub_agent=getattr(self, "_is_sub_agent_call", False),
         )
 
-    # ==================== Cancellation-state proxy properties ====================
+    # ==================== 取消状态代理属性 ====================
 
     @property
     def _task_cancelled(self) -> bool:
-        """Unified cancellation-state query (delegates to TaskState; kept for legacy references)"""
+        """统一的取消状态查询（委托到 TaskState，兼容旧代码引用）"""
         return (
             hasattr(self, "agent_state")
             and self.agent_state is not None
@@ -5655,42 +5746,42 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
     @property
     def _cancel_reason(self) -> str:
-        """Unified cancellation-reason query (delegates to TaskState; kept for legacy references)"""
+        """统一的取消原因查询（委托到 TaskState，兼容旧代码引用）"""
         if hasattr(self, "agent_state") and self.agent_state:
             return self.agent_state.task_cancel_reason
         return ""
 
     def set_interrupt_enabled(self, enabled: bool) -> None:
         """
-        Set whether interrupt checking is enabled
+        设置是否启用中断检查
 
         Args:
-            enabled: whether to enable
+            enabled: 是否启用
         """
         self._interrupt_enabled = enabled
         logger.info(f"Interrupt check {'enabled' if enabled else 'disabled'}")
 
     def cancel_current_task(
-        self, reason: str = "user requested stop", session_id: str | None = None
+        self, reason: str = "用户请求停止", session_id: str | None = None
     ) -> None:
         """
-        Cancel the currently running task.
+        取消正在执行的任务。
 
-        If session_id is given, only cancel that session's task and plan; otherwise cancel all.
-        When the session has no active task (e.g. in the prepare stage), store the cancel in _pending_cancels,
-        to be consumed by a later checkpoint.
+        如果指定 session_id，仅取消该会话的任务和计划；否则取消所有。
+        当 session 没有活跃 task 时（如处于准备阶段），将 cancel 存入 _pending_cancels，
+        等待后续检查点消费。
 
         Args:
-            reason: cancellation reason
-            session_id: optional session ID to provide per-channel isolation
+            reason: 取消原因
+            session_id: 可选会话 ID，实现跨通道隔离
         """
         has_state = hasattr(self, "agent_state") and self.agent_state
 
         if session_id and has_state:
             task = self.agent_state.get_task_for_session(session_id)
             _effective_sid = session_id
-            # task key = session_id (raw chat_id); an exact match usually hits.
-            # If still not found, fall back to _current_conversation_id / _current_session_id.
+            # task key = session_id (raw chat_id)，一般精确匹配即可命中。
+            # 若仍未找到，兜底用 _current_conversation_id / _current_session_id。
             if not task:
                 for _alt_key in (self._current_conversation_id, self._current_session_id):
                     if _alt_key and _alt_key != session_id:
@@ -5700,7 +5791,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                             break
             task_status = task.status.value if task else "N/A"
             logger.info(
-                f"[StopTask] cancel_current_task invoked: reason={reason!r}, "
+                f"[StopTask] cancel_current_task 被调用: reason={reason!r}, "
                 f"session_id={session_id}, effective_sid={_effective_sid!r}, "
                 f"task_status={task_status}"
             )
@@ -5715,7 +5806,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             has_task = self.agent_state.current_task is not None
             task_status = self.agent_state.current_task.status.value if has_task else "N/A"
             logger.info(
-                f"[StopTask] cancel_current_task invoked: reason={reason!r}, "
+                f"[StopTask] cancel_current_task 被调用: reason={reason!r}, "
                 f"has_state={has_state}, has_task={has_task}, task_status={task_status}"
             )
             self.agent_state.cancel_task(reason)
@@ -5738,52 +5829,52 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         logger.info(f"[StopTask] Task cancellation completed: {reason}")
 
     def _is_session_cancelled(self, session_id: str | None = None) -> bool:
-        """Check whether the given session has a pending cancel signal written during the prepare stage.
+        """检查指定 session 是否有 prepare 阶段写入的挂起取消信号。
 
-        Only checks _pending_cancels (written by cancel_current_task when no task exists).
-        Does not check task.cancelled, since that may be a stale task from the previous turn and could mislead.
-        Real-time cancellation is handled internally by the cancel_event mechanism in reason_stream/run.
+        仅检查 _pending_cancels（task 不存在时由 cancel_current_task 写入）。
+        不检查 task.cancelled，因为那可能是上一轮残留的旧 task，会导致误判。
+        实时取消由 cancel_event 机制在 reason_stream/run 内部处理。
         """
         return bool(session_id and session_id in self._pending_cancels)
 
     def _consume_pending_cancel(self, session_id: str | None = None) -> str | None:
-        """Consume and return the pending cancel reason, or None if there is none."""
+        """消费并返回挂起的取消原因，如果没有则返回 None。"""
         if session_id:
             return self._pending_cancels.pop(session_id, None)
         return None
 
     def is_stop_command(self, message: str) -> bool:
         """
-        Check whether the message is a stop command
+        检查消息是否为停止指令
 
         Args:
-            message: user message
+            message: 用户消息
 
         Returns:
-            Whether it is a stop command
+            是否为停止指令
         """
         msg_lower = message.strip().lower()
         return msg_lower in self.STOP_COMMANDS or message.strip() in self.STOP_COMMANDS
 
     def is_skip_command(self, message: str) -> bool:
         """
-        Check whether the message is a skip-current-step command
+        检查消息是否为跳过当前步骤指令
 
         Args:
-            message: user message
+            message: 用户消息
 
         Returns:
-            Whether it is a skip command
+            是否为跳过指令
         """
         msg_lower = message.strip().lower()
         return msg_lower in self.SKIP_COMMANDS or message.strip() in self.SKIP_COMMANDS
 
     def classify_interrupt(self, message: str) -> str:
         """
-        Classify the interrupt message type
+        分类中断消息类型
 
         Args:
-            message: user message
+            message: 用户消息
 
         Returns:
             "stop" / "skip" / "insert"
@@ -5796,17 +5887,17 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
             return "insert"
 
     def skip_current_step(
-        self, reason: str = "user requested to skip current step", session_id: str | None = None
+        self, reason: str = "用户请求跳过当前步骤", session_id: str | None = None
     ) -> bool:
         """
-        Skip the currently-executing tool/step (without terminating the entire task)
+        跳过当前正在执行的工具/步骤（不终止整个任务）
 
         Args:
-            reason: skip reason
-            session_id: optional session ID to provide per-channel isolation
+            reason: 跳过原因
+            session_id: 可选会话 ID，实现跨通道隔离
 
         Returns:
-            Whether skip was set successfully (False means no active task)
+            是否成功设置 skip（False 表示无活跃任务）
         """
         has_state = hasattr(self, "agent_state") and self.agent_state
         if not has_state:
@@ -5839,14 +5930,14 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
     async def insert_user_message(self, text: str, session_id: str | None = None) -> bool:
         """
-        Inject a user message into the current task (non-command messages during task execution)
+        向当前任务注入用户消息（任务执行期间的非指令消息）
 
         Args:
-            text: user message text
-            session_id: optional session ID to provide per-channel isolation
+            text: 用户消息文本
+            session_id: 可选会话 ID，实现跨通道隔离
 
         Returns:
-            Whether enqueue succeeded (False means no active task; the message was dropped)
+            是否成功入队（False 表示无活跃任务，消息被丢弃）
         """
         has_state = hasattr(self, "agent_state") and self.agent_state
         if not has_state:
@@ -5878,33 +5969,33 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
     async def _chat_with_tools(self, message: str) -> str:
         """
-        DEPRECATED: this method is deprecated; chat() now delegates to chat_with_session() + _chat_with_tools_and_context().
-        Kept solely for backward compatibility; will be removed in a future release.
+        DEPRECATED: 此方法已废弃，chat() 现已委托给 chat_with_session() + _chat_with_tools_and_context()。
+        保留仅为向后兼容，后续版本将移除。
 
-        Chat handling with tool-call support
+        对话处理，支持工具调用
 
-        Let the LLM decide whether tools are needed; no hard-coded logic
+        让 LLM 自己决定是否需要工具，不做硬编码判断
 
         Args:
-            message: user message
+            message: 用户消息
 
         Returns:
-            Final response text
+            最终响应文本
         """
-        # Use the full conversation history (already includes the current user message)
-        # Make a copy so that intermediate tool-call messages don't pollute the original context
+        # 使用完整的对话历史（已包含当前用户消息）
+        # 复制一份，避免工具调用的中间消息污染原始上下文
         messages = list(self._context.messages)
 
-        # Check and compress the context (if near the limit)
+        # 检查并压缩上下文（如果接近限制）
         messages = await self._compress_context(messages)
 
-        max_iterations = settings.max_iterations  # Ralph Wiggum mode: never give up
+        max_iterations = settings.max_iterations  # Ralph Wiggum 模式：永不放弃
 
-        # === Plan persistence: save the base prompt without Plan, append active Plan dynamically inside the loop ===
+        # === Plan 持久化：保存不含 Plan 的基础提示词，循环内动态追加 ===
         _base_system_prompt_cli = self._context.system
 
         def _build_effective_system_prompt_cli() -> str:
-            """Append the active Plan section to the base prompt dynamically (CLI path)"""
+            """在基础提示词上动态追加活跃 Plan 段落（CLI 路径）"""
             from ..tools.handlers.plan import get_active_todo_prompt
 
             _cid = getattr(self, "_current_conversation_id", None) or getattr(
@@ -5917,11 +6008,11 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     prompt += f"\n\n{plan_section}\n"
             return prompt
 
-        # Loop-detection guard
+        # 防止循环检测
         recent_tool_calls: list[str] = []
         max_repeated_calls = 3
 
-        # Get cancel_event (used to race-cancel the LLM call)
+        # 获取 cancel_event（用于 LLM 调用竞速取消）
         _cancel_event = (
             self.agent_state.current_task.cancel_event
             if self.agent_state and self.agent_state.current_task
@@ -5929,19 +6020,19 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         )
 
         for iteration in range(max_iterations):
-            # C8: check cancellation on each iteration
+            # C8: 每轮迭代检查取消
             if self._task_cancelled:
                 logger.info(f"[StopTask] Task cancelled in _chat_with_tools: {self._cancel_reason}")
-                return "✅ Task stopped."
+                return "✅ 任务已停止。"
 
             try:
-                # Before each iteration, check context size (tool calls may produce large output)
+                # 每次迭代前检查上下文大小（工具调用可能产生大量输出）
                 if iteration > 0:
                     messages = await self._compress_context(
                         messages, system_prompt=_build_effective_system_prompt_cli()
                     )
 
-                # Call Brain (can be interrupted by cancel_event)
+                # 调用 Brain（可被 cancel_event 中断）
                 response = await self._cancellable_llm_call(
                     _cancel_event,
                     model=self.brain.model,
@@ -5956,14 +6047,14 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     messages, _build_effective_system_prompt_cli(), self.brain.model
                 )
 
-            # Detect max_tokens truncation
+            # 检测 max_tokens 截断
             _cli_stop = getattr(response, "stop_reason", "")
             if str(_cli_stop) == "max_tokens":
                 logger.warning(
                     f"[CLI] ⚠️ LLM output truncated (stop_reason=max_tokens, limit={self.brain.max_tokens})"
                 )
 
-            # Handle the response
+            # 处理响应
             tool_calls = []
             text_content = ""
 
@@ -5979,13 +6070,13 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                         }
                     )
 
-            # If there were no tool calls, return the text directly
+            # 如果没有工具调用，直接返回文本
             if not tool_calls:
                 _cleaned = strip_thinking_tags(text_content)
                 _, _cleaned = parse_intent_tag(_cleaned)
                 return _cleaned
 
-            # Loop detection
+            # 循环检测
             call_signature = "|".join(
                 [f"{tc['name']}:{sorted(tc['input'].items())}" for tc in tool_calls]
             )
@@ -5997,18 +6088,18 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 logger.warning(
                     f"[Loop Detection] Same tool call repeated {max_repeated_calls} times, ending chat"
                 )
-                return "Repeated operation detected; automatically terminated."
+                return "检测到重复操作，已自动结束。"
 
-            # Tool calls present; execute them
+            # 有工具调用，需要执行
             logger.info(f"Chat iteration {iteration + 1}, {len(tool_calls)} tool calls")
 
-            # Build the assistant message
-            # MiniMax M2.1 interleaved-thinking support:
-            # Thinking blocks must be fully preserved to maintain reasoning-chain continuity
+            # 构建 assistant 消息
+            # MiniMax M2.1 Interleaved Thinking 支持：
+            # 必须完整保留 thinking 块以保持思维链连续性
             assistant_content = []
             for block in response.content:
                 if block.type == "thinking":
-                    # Preserve thinking blocks (required by MiniMax M2.1)
+                    # 保留 thinking 块（MiniMax M2.1 要求）
                     assistant_content.append(
                         {
                             "type": "thinking",
@@ -6031,7 +6122,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
             messages.append({"role": "assistant", "content": assistant_content})
 
-            # P0-1: unified path via ToolExecutor (with PolicyEngine checks + skip/cancel race)
+            # P0-1: 统一走 ToolExecutor（含 PolicyEngine 检查 + skip/cancel 竞速）
             tool_results, _, _ = await self.tool_executor.execute_batch(
                 tool_calls,
                 state=self.agent_state.current_task if self.agent_state else None,
@@ -6042,34 +6133,34 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
             messages.append({"role": "user", "content": tool_results})
 
-            # === Unified handling of skip-reflection + user-inserted messages ===
+            # === 统一处理 skip 反思 + 用户插入消息 ===
             if self.agent_state and self.agent_state.current_task:
                 await self.agent_state.current_task.process_post_tool_signals(messages)
 
-            # Check termination
+            # 检查是否结束
             if response.stop_reason == "end_turn":
                 break
 
-        # Return the last text response (with thinking tags + intent markers filtered)
+        # 返回最后一次的文本响应（过滤 thinking 标签 + 意图标记）
         _final = strip_thinking_tags(text_content)
         _, _final = parse_intent_tag(_final)
-        return _final or "Operation complete"
+        return _final or "操作完成"
 
     async def execute_task_from_message(self, message: str) -> TaskResult:
-        """Create and execute a task from a message"""
+        """从消息创建并执行任务"""
         task = Task(
             id=str(uuid.uuid4())[:8],
             description=message,
-            session_id=getattr(self, "_current_session_id", None),  # associate with the current session
+            session_id=getattr(self, "_current_session_id", None),  # 关联当前会话
             priority=1,
         )
         return await self.execute_task(task)
 
     async def _execute_tool(self, tool_name: str, tool_input: dict) -> str:
         """
-        [DEPRECATED] Please use self.tool_executor.execute_tool() instead.
+        [DEPRECATED] 请使用 self.tool_executor.execute_tool() 代替。
 
-        This method bypasses PolicyEngine safety checks and is kept only as a temporary compatibility shim.
+        此方法绕过 PolicyEngine 安全检查，仅作为临时兼容保留。
         """
         import warnings
 
@@ -6081,7 +6172,7 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
         logger.info(f"Executing tool: {tool_name} with {tool_input}")
 
         # ============================================
-        # Todo enforcement check (Agent mode only; skipped in plan/ask mode)
+        # Todo 强制检查（仅 Agent 模式；plan/ask 模式跳过）
         # ============================================
         _effective_mode = getattr(self.tool_executor, "_current_mode", "agent")
         if _effective_mode not in ("plan", "ask"):
@@ -6098,32 +6189,32 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 session_id = getattr(self, "_current_session_id", None)
                 if session_id and is_todo_required(session_id) and not has_active_todo(session_id):
                     return (
-                        "⚠️ **This looks like a multi-step task; consider creating a Todo first!**\n\n"
-                        "Please call the `create_todo` tool to create a task plan before running concrete operations.\n\n"
-                        "Example:\n"
+                        "⚠️ **这是一个多步骤任务，建议先创建 Todo！**\n\n"
+                        "请先调用 `create_todo` 工具创建任务计划，然后再执行具体操作。\n\n"
+                        "示例：\n"
                         "```\n"
                         "create_todo(\n"
-                        "  task_summary='write a script to get and display the time',\n"
+                        "  task_summary='写脚本获取时间并显示',\n"
                         "  steps=[\n"
-                        "    {id: 'step1', description: 'create a Python script', tool: 'write_file'},\n"
-                        "    {id: 'step2', description: 'run the script', tool: 'run_shell'},\n"
-                        "    {id: 'step3', description: 'read the result', tool: 'read_file'}\n"
+                        "    {id: 'step1', description: '创建Python脚本', tool: 'write_file'},\n"
+                        "    {id: 'step2', description: '执行脚本', tool: 'run_shell'},\n"
+                        "    {id: 'step3', description: '读取结果', tool: 'read_file'}\n"
                         "  ]\n"
                         ")\n"
                         "```"
                     )
 
-        # Import the log cache
+        # 导入日志缓存
         from ..logging import get_session_log_buffer
 
         log_buffer = get_session_log_buffer()
 
-        # Record log count before execution
+        # 记录执行前的日志数量
         logs_before = log_buffer.get_logs(count=500)
         logs_before_count = len(logs_before)
 
         try:
-            # Prefer executing via handler_registry
+            # 优先使用 handler_registry 执行
             if self.handler_registry.has_tool(tool_name):
                 result = await self.handler_registry.execute_by_tool(tool_name, tool_input)
             else:
@@ -6137,13 +6228,13 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                     or set(name_lower.split("_")) & set(t.lower().split("_"))
                 ][:5]
                 hint = (
-                    f" Did you mean: {', '.join(similar)}?"
+                    f" 你是否想使用: {', '.join(similar)}？"
                     if similar
-                    else " Please check that the tool name is correct."
+                    else " 请检查工具名称是否正确。"
                 )
-                return f"❌ Unknown tool: {tool_name}. {hint}"
+                return f"❌ 未知工具: {tool_name}。{hint}"
 
-            # Collect new logs produced during execution (WARNING/ERROR/CRITICAL)
+            # 获取执行期间产生的新日志（WARNING/ERROR/CRITICAL）
             all_logs = log_buffer.get_logs(count=500)
             new_logs = [
                 log
@@ -6151,32 +6242,32 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
                 if log["level"] in ("WARNING", "ERROR", "CRITICAL")
             ]
 
-            # If there are warning/error logs, append them to the result
+            # 如果有警告/错误日志，附加到结果
             if new_logs:
-                result += "\n\n[Execution log]:\n"
-                for log in new_logs[-10:]:  # Show at most 10 entries
+                result += "\n\n[执行日志]:\n"
+                for log in new_logs[-10:]:  # 最多显示 10 条
                     result += f"[{log['level']}] {log['module']}: {log['message']}\n"
 
-            # Generic truncation guard (matches ToolExecutor._guard_truncate)
+            # ★ 通用截断守卫（与 ToolExecutor._guard_truncate 逻辑一致）
             result = ToolExecutor._guard_truncate(tool_name, result)
 
             return result
 
         except Exception as e:
             logger.error(f"Tool execution error: {e}", exc_info=True)
-            return f"Tool execution error: {str(e)}"
+            return f"工具执行错误: {str(e)}"
 
     async def execute_task(self, task: Task) -> TaskResult:
         """
-        Execute a task (with tool calls)
+        执行任务（带工具调用）
 
-        Safe model-switching strategy:
-        1. On timeout or error, retry up to 3 times first
-        2. Only switch to the fallback model after retries are exhausted
-        3. On switch, discard the tool-call history and restart from the original task description
+        安全模型切换策略：
+        1. 超时或错误时先重试 3 次
+        2. 重试次数用尽后才切换到备用模型
+        3. 切换时废弃已有的工具调用历史，从任务原始描述开始重新处理
 
         Args:
-            task: task object
+            task: 任务对象
 
         Returns:
             TaskResult
@@ -6190,43 +6281,43 @@ You have a team of Agents; delegate to specialized Agents first and handle only 
 
         logger.info(f"Executing task: {task.description}")
 
-        # === Create task monitor ===
+        # === 创建任务监控器 ===
         task_monitor = TaskMonitor(
             task_id=task.id,
             description=task.description,
             session_id=task.session_id,
             timeout_seconds=settings.progress_timeout_seconds,
             hard_timeout_seconds=settings.hard_timeout_seconds,
-            retrospect_threshold=180,  # retrospective threshold: 180 seconds
-            fallback_model=self.brain.get_fallback_model(task.session_id),  # dynamically fetch the fallback model
-            retry_before_switch=3,  # retry 3 times before switching
+            retrospect_threshold=180,  # 复盘阈值：180秒
+            fallback_model=self.brain.get_fallback_model(task.session_id),  # 动态获取备用模型
+            retry_before_switch=3,  # 切换前重试 3 次
         )
         task_monitor.start(self.brain.model)
 
-        # Use the already-built system prompt (including the skill catalog)
-        # The skill catalog has already been injected into _context.system during initialization
+        # 使用已构建的系统提示词 (包含技能清单)
+        # 技能清单已在初始化时注入到 _context.system 中
         system_prompt = (
             self._context.system
             + """
 
 ## Task Execution Strategy
 
-Use tools to actually execute the task:
+请使用工具来实际执行任务:
 
-1. **Check skill catalog above** - the skill catalog is listed above; use descriptions to decide if a matching skill exists
+1. **Check skill catalog above** - 技能清单已在上方，根据描述判断是否有匹配的技能
 2. **If skill matches**: Use `get_skill_info(skill_name)` to load full instructions
 3. **Run script**: Use `run_skill_script(skill_name, script_name, args)`
 4. **If no skill matches**: Use `skill-creator` skill to create one, then `load_skill` to load it
 
-Never give up until the task is complete!"""
+永不放弃，直到任务完成！"""
         )
 
-        # === Plan persistence: save the base prompt without Plan, append active Plan dynamically inside the loop ===
+        # === Plan 持久化：保存不含 Plan 的基础提示词，循环内动态追加 ===
         _base_system_prompt_task = system_prompt
         _task_conversation_id = task.session_id or f"task:{task.id}"
 
         def _build_effective_system_prompt_task() -> str:
-            """Append the active Plan section to the base prompt dynamically (Task path)"""
+            """在基础提示词上动态追加活跃 Plan 段落（Task 路径）"""
             from ..tools.handlers.plan import get_active_todo_prompt
 
             prompt = _base_system_prompt_task
@@ -6235,18 +6326,18 @@ Never give up until the task is complete!"""
                 prompt += f"\n\n{plan_section}\n"
             return prompt
 
-        # === Critical: save the original task description so we can reset context on model switch ===
+        # === 关键：保存原始任务描述，用于模型切换时重置上下文 ===
         original_task_message = {"role": "user", "content": task.description}
         messages = [original_task_message.copy()]
 
-        max_tool_iterations = settings.max_iterations  # Ralph Wiggum mode: never give up
+        max_tool_iterations = settings.max_iterations  # Ralph Wiggum 模式：永不放弃
         iteration = 0
         final_response = ""
         current_model = self.brain.model
         conversation_id = task.session_id or f"task:{task.id}"
 
         def _resolve_endpoint_name(model_or_endpoint: str) -> str | None:
-            """Resolve 'endpoint_name' or 'model' to an endpoint_name (task-loop specific, minimal compat)."""
+            """将 'endpoint_name' 或 'model' 解析为 endpoint_name（任务循环专用，最小兼容）。"""
             try:
                 llm_client = getattr(self.brain, "_llm_client", None)
                 if not llm_client:
@@ -6261,20 +6352,20 @@ Never give up until the task is complete!"""
             except Exception:
                 return None
 
-        # Loop-detection guard
-        recent_tool_calls: list[str] = []  # record of recent tool calls
-        max_repeated_calls = 3  # force-terminate when the same call repeats more than this many times
+        # 防止循环检测
+        recent_tool_calls: list[str] = []  # 记录最近的工具调用
+        max_repeated_calls = 3  # 连续相同调用超过此次数则强制结束
 
         MAX_TASK_MODEL_SWITCHES = 2
         _task_switch_count = 0
         _total_llm_retries = 0
         MAX_TOTAL_LLM_RETRIES = 3
 
-        # Follow-up counter: when the LLM does not call tools, how many times to re-prompt
+        # 追问计数器：当 LLM 没有调用工具时，最多追问几次
         no_tool_call_count = 0
         max_no_tool_retries = max(0, int(getattr(settings, "force_tool_call_max_retries", 2)))
 
-        # Get cancel_event (used to race-cancel the LLM call)
+        # 获取 cancel_event（用于 LLM 调用竞速取消）
         _cancel_event = (
             self.agent_state.current_task.cancel_event
             if self.agent_state and self.agent_state.current_task
@@ -6283,21 +6374,21 @@ Never give up until the task is complete!"""
 
         try:
             while iteration < max_tool_iterations:
-                # C8: check at iteration start whether the task has been cancelled
+                # C8: 每轮迭代开始时检查任务是否被取消
                 if self._task_cancelled:
                     logger.info(f"[StopTask] Task cancelled in execute_task: {self._cancel_reason}")
-                    return "✅ Task stopped."
+                    return "✅ 任务已停止。"
 
                 iteration += 1
                 logger.info(f"Task iteration {iteration}")
 
-                # Task monitoring: iteration start
+                # 任务监控：开始迭代
                 task_monitor.begin_iteration(iteration, current_model)
 
-                # === Safe model-switch check ===
-                # Check whether we timed out and retries are exhausted
+                # === 安全模型切换检查 ===
+                # 检查是否超时且重试次数已用尽
                 if task_monitor.should_switch_model:
-                    # Circuit-breaker check: prevent infinite model-switching loops
+                    # 熔断检查：防止无限模型切换循环
                     _task_switch_count += 1
                     if _task_switch_count > MAX_TASK_MODEL_SWITCHES:
                         logger.error(
@@ -6305,8 +6396,8 @@ Never give up until the task is complete!"""
                             f"({MAX_TASK_MODEL_SWITCHES}), aborting task"
                         )
                         return (
-                            "Task execution failed; already tried multiple models but could not recover.\n"
-                            "You can simply resend to retry."
+                            "❌ 任务执行失败，已尝试多个模型仍无法恢复。\n"
+                            "💡 你可以直接重新发送来重试。"
                         )
 
                     new_model = task_monitor.fallback_model
@@ -6314,10 +6405,10 @@ Never give up until the task is complete!"""
                         logger.warning(
                             "[ModelSwitch] No fallback model available for sub-agent timeout"
                         )
-                        return "Task failed: all model endpoints are unavailable; please check your network connection."
+                        return "任务失败：所有模型端点均不可用，请检查网络连接。"
                     task_monitor.switch_model(
                         new_model,
-                        f"Task exceeded {task_monitor.timeout_seconds} seconds; switching after {task_monitor.retry_count} retries",
+                        f"任务执行超过 {task_monitor.timeout_seconds} 秒，重试 {task_monitor.retry_count} 次后切换",
                         reset_context=True,
                     )
 
@@ -6335,44 +6426,44 @@ Never give up until the task is complete!"""
                                 f"Aborting task (no healthy endpoint)."
                             )
                             return (
-                                f"Task failed: model switch failed ({msg}); cannot continue.\n"
-                                "Suggestion: check your network connection, or open the Setup Center and confirm at least one model is correctly configured."
+                                f"❌ 任务失败：模型切换失败（{msg}），无法继续执行。\n"
+                                "💡 建议：请检查网络连接，或在设置中心确认至少有一个模型配置正确。"
                             )
                     else:
                         logger.warning(f"[ModelSwitch] Cannot resolve endpoint for '{new_model}'")
 
                     current_model = new_model
 
-                    # === Critical: reset context and discard tool-call history ===
+                    # === 关键：重置上下文，废弃工具调用历史 ===
                     logger.warning(
                         f"[ModelSwitch] Task {task.id}: Switching to {new_model}, resetting context. "
                         f"Discarding {len(messages) - 1} tool-related messages"
                     )
                     messages = [original_task_message.copy()]
 
-                    # Add a model-switch notice + tool-state revalidation barrier
+                    # 添加模型切换说明 + tool-state revalidation barrier
                     messages.append(
                         {
                             "role": "user",
                             "content": (
-                                "[System notice] A model switch occurred: previous tool_use/tool_result history has been cleared; all tool state must now be treated as unknown.\n"
-                                "Before invoking any stateful tool, re-check state first: browser -> browser_open; MCP -> list_mcp_servers; desktop -> desktop_window/desktop_inspect.\n"
-                                "Please process the task request above from scratch."
+                                "[系统提示] 发生模型切换：之前的 tool_use/tool_result 历史已清除。现在所有工具状态一律视为未知。\n"
+                                "在执行任何状态型工具前，必须先做状态复核：浏览器先 browser_open；MCP 先 list_mcp_servers；桌面先 desktop_window/desktop_inspect。\n"
+                                "请从头开始处理上面的任务请求。"
                             ),
                         }
                     )
 
-                    # Reset loop detection
+                    # 重置循环检测
                     recent_tool_calls.clear()
 
                 try:
-                    # Check and compress context (task execution may produce large tool output)
+                    # 检查并压缩上下文（任务执行可能产生大量工具输出）
                     if iteration > 1:
                         messages = await self._compress_context(
                             messages, system_prompt=_build_effective_system_prompt_task()
                         )
 
-                    # Call Brain (can be interrupted by cancel_event)
+                    # 调用 Brain（可被 cancel_event 中断）
                     response = await self._cancellable_llm_call(
                         _cancel_event,
                         max_tokens=self.brain.max_tokens,
@@ -6382,7 +6473,7 @@ Never give up until the task is complete!"""
                         conversation_id=conversation_id,
                     )
 
-                    # Successful call; reset retry counter
+                    # 成功调用，重置重试计数
                     task_monitor.reset_retry_count()
 
                 except UserCancelledError:
@@ -6396,7 +6487,7 @@ Never give up until the task is complete!"""
                 except Exception as e:
                     logger.error(f"[LLM] Brain call failed in task {task.id}: {e}")
 
-                    # -- global retry counter --
+                    # ── 全局重试计数 ──
                     _total_llm_retries += 1
                     if _total_llm_retries > MAX_TOTAL_LLM_RETRIES:
                         logger.error(
@@ -6404,12 +6495,12 @@ Never give up until the task is complete!"""
                             f"({_total_llm_retries}/{MAX_TOTAL_LLM_RETRIES}), aborting"
                         )
                         return (
-                            f"Task execution failed; retried {MAX_TOTAL_LLM_RETRIES} times without recovery.\n"
-                            f"Error: {str(e)[:200]}\n"
-                            "You can simply resend to retry."
+                            f"❌ 任务执行失败，已重试 {MAX_TOTAL_LLM_RETRIES} 次仍无法恢复。\n"
+                            f"错误: {str(e)[:200]}\n"
+                            "💡 你可以直接重新发送来重试。"
                         )
 
-                    # -- structural errors: fast circuit-break --
+                    # ── 结构性错误快速熔断 ──
                     from ..llm.types import AllEndpointsFailedError as _Aefe
                     from .reasoning_engine import ReasoningEngine
 
@@ -6430,12 +6521,12 @@ Never give up until the task is complete!"""
                                 continue
                         logger.error(f"[Task:{task.id}] Structural error, aborting: {str(e)[:200]}")
                         return (
-                            f"API request format error; cannot recover.\n"
-                            f"Error: {str(e)[:200]}\n"
-                            "You can simply resend to retry."
+                            f"❌ API 请求格式错误，无法恢复。\n"
+                            f"错误: {str(e)[:200]}\n"
+                            "💡 你可以直接重新发送来重试。"
                         )
 
-                    # Record the error and decide whether to retry
+                    # 记录错误并判断是否应该重试
                     should_retry = task_monitor.record_error(str(e))
 
                     if should_retry:
@@ -6458,9 +6549,9 @@ Never give up until the task is complete!"""
                                 f"({MAX_TASK_MODEL_SWITCHES}), aborting task"
                             )
                             return (
-                                f"Task execution failed; already tried multiple models but could not recover.\n"
-                                f"Error: {str(e)[:200]}\n"
-                                "You can simply resend to retry."
+                                f"❌ 任务执行失败，已尝试多个模型仍无法恢复。\n"
+                                f"错误: {str(e)[:200]}\n"
+                                "💡 你可以直接重新发送来重试。"
                             )
 
                         new_model = task_monitor.fallback_model
@@ -6468,10 +6559,10 @@ Never give up until the task is complete!"""
                             logger.warning(
                                 "[ModelSwitch] No fallback model available for sub-agent error"
                             )
-                            return "Task failed: all model endpoints are unavailable; please check your network connection."
+                            return "任务失败：所有模型端点均不可用，请检查网络连接。"
                         task_monitor.switch_model(
                             new_model,
-                            f"LLM call failed; switching after {task_monitor.retry_count} retries: {e}",
+                            f"LLM 调用失败，重试 {task_monitor.retry_count} 次后切换: {e}",
                             reset_context=True,
                         )
                         endpoint_name = _resolve_endpoint_name(new_model)
@@ -6487,11 +6578,11 @@ Never give up until the task is complete!"""
                                     f"[ModelSwitch] switch_model failed: {msg}. "
                                     f"Not resetting retry_count."
                                 )
-                                # switch_model failed (target is in cooldown); do not reset retry_count
-                                # break directly to avoid infinite retries
+                                # switch_model 失败（目标在冷静期），不重置 retry_count
+                                # 直接 break，避免无限重试
                                 return (
-                                    f"Task failed: model switch failed ({msg}); cannot continue.\n"
-                                    "Suggestion: check your network connection, or open the Setup Center and confirm at least one model is correctly configured."
+                                    f"❌ 任务失败：模型切换失败（{msg}），无法继续执行。\n"
+                                    "💡 建议：请检查网络连接，或在设置中心确认至少有一个模型配置正确。"
                                 )
                         else:
                             logger.warning(
@@ -6499,7 +6590,7 @@ Never give up until the task is complete!"""
                             )
                         current_model = new_model
 
-                        # Reset context + barrier
+                        # 重置上下文 + barrier
                         logger.warning(
                             f"[ModelSwitch] Task {task.id}: Switching to {new_model} due to errors, resetting context"
                         )
@@ -6508,23 +6599,23 @@ Never give up until the task is complete!"""
                             {
                                 "role": "user",
                                 "content": (
-                                    "[System notice] A model switch occurred: previous tool_use/tool_result history has been cleared; all tool state must now be treated as unknown.\n"
-                                    "Before invoking any stateful tool, re-check state first: browser -> browser_open; MCP -> list_mcp_servers; desktop -> desktop_window/desktop_inspect.\n"
-                                    "Please process the task request above from scratch."
+                                    "[系统提示] 发生模型切换：之前的 tool_use/tool_result 历史已清除。现在所有工具状态一律视为未知。\n"
+                                    "在执行任何状态型工具前，必须先做状态复核：浏览器先 browser_open；MCP 先 list_mcp_servers；桌面先 desktop_window/desktop_inspect。\n"
+                                    "请从头开始处理上面的任务请求。"
                                 ),
                             }
                         )
                         recent_tool_calls.clear()
                         continue
 
-                # Detect max_tokens truncation
+                # 检测 max_tokens 截断
                 _task_stop = getattr(response, "stop_reason", "")
                 if str(_task_stop) == "max_tokens":
                     logger.warning(
                         f"[Task:{task.id}] ⚠️ LLM output truncated (stop_reason=max_tokens, limit={self.brain.max_tokens})"
                     )
 
-                # Handle the response
+                # 处理响应
                 tool_calls = []
                 text_content = ""
 
@@ -6540,28 +6631,28 @@ Never give up until the task is complete!"""
                             }
                         )
 
-                # Task monitoring: iteration end
+                # 任务监控：结束迭代
                 task_monitor.end_iteration(text_content if text_content else "")
 
-                # If a text response is present, save it (filtering thinking tags and simulated tool-call text)
+                # 如果有文本响应，保存（过滤 thinking 标签和工具调用模拟文本）
                 if text_content:
                     cleaned_text = clean_llm_response(text_content)
-                    # Only save the text as the final response when there are no tool calls
-                    # When tool calls are present, this text may just be the LLM's thinking process
+                    # 只有在没有工具调用时才保存文本作为最终响应
+                    # 如果有工具调用，这个文本可能是 LLM 的思考过程
                     if not tool_calls and cleaned_text:
                         final_response = cleaned_text
 
-                # If there were no tool calls, check whether we should force one
+                # 如果没有工具调用，检查是否需要强制要求调用工具
                 if not tool_calls:
                     no_tool_call_count += 1
 
-                    # If follow-up attempts remain, force a tool call
+                    # 如果还有追问次数，强制要求调用工具
                     if no_tool_call_count <= max_no_tool_retries:
                         logger.warning(
                             f"[ForceToolCall] Task LLM returned text without tool calls (attempt {no_tool_call_count}/{max_no_tool_retries})"
                         )
 
-                        # Append the LLM's response to history
+                        # 将 LLM 的响应加入历史
                         if text_content:
                             messages.append(
                                 {
@@ -6570,46 +6661,46 @@ Never give up until the task is complete!"""
                                 }
                             )
 
-                        # Append a message forcing a tool call
+                        # 追加强制要求调用工具的消息
                         messages.append(
                             {
                                 "role": "user",
-                                "content": "[System] If a tool is truly needed, call the corresponding tool; if not (pure chat/Q&A), answer directly without reciting system rules.",
+                                "content": "[系统] 若确实需要工具，请调用相应工具；若不需要工具（纯对话/问答），请直接回答，不要复述系统规则。",
                             }
                         )
-                        continue  # loop again so the LLM calls a tool
+                        continue  # 继续循环，让 LLM 调用工具
 
-                    # Follow-up attempts exhausted; task complete
+                    # 追问次数用尽，任务完成
                     break
 
-                # Loop detection: record tool-call signatures
+                # 循环检测：记录工具调用签名
                 call_signature = "|".join(
                     [f"{tc['name']}:{sorted(tc['input'].items())}" for tc in tool_calls]
                 )
                 recent_tool_calls.append(call_signature)
 
-                # Keep only the most recent call records
+                # 只保留最近的调用记录
                 if len(recent_tool_calls) > max_repeated_calls:
                     recent_tool_calls = recent_tool_calls[-max_repeated_calls:]
 
-                # Detect consecutive duplicate calls
+                # 检测连续重复调用
                 if len(recent_tool_calls) >= max_repeated_calls:
                     if len(set(recent_tool_calls)) == 1:
                         logger.warning(
                             f"[Loop Detection] Same tool call repeated {max_repeated_calls} times, forcing task end"
                         )
                         final_response = (
-                            "Repeated operation detected during task execution; automatically terminated. To continue, please restate the task."
+                            "任务执行中检测到重复操作，已自动结束。如需继续，请重新描述任务。"
                         )
                         break
 
-                # Execute tool calls
-                # MiniMax M2.1 interleaved-thinking support:
-                # Thinking blocks must be preserved intact to maintain reasoning-chain continuity
+                # 执行工具调用
+                # MiniMax M2.1 Interleaved Thinking 支持：
+                # 必须完整保留 thinking 块以保持思维链连续性
                 assistant_content = []
                 for block in response.content:
                     if block.type == "thinking":
-                        # Preserve thinking blocks (required by MiniMax M2.1)
+                        # 保留 thinking 块（MiniMax M2.1 要求）
                         assistant_content.append(
                             {
                                 "type": "thinking",
@@ -6632,8 +6723,8 @@ Never give up until the task is complete!"""
 
                 messages.append({"role": "assistant", "content": assistant_content})
 
-                # Execute each tool and collect results
-                # execute_task() does not strictly require inter-tool interrupt checks, so parallelism can be enabled per config
+                # 执行每个工具并收集结果
+                # execute_task() 场景没有“工具间中断检查”的强需求，可按配置启用并行
                 tool_results, executed_names, _ = await self.tool_executor.execute_batch(
                     tool_calls,
                     state=self.agent_state.current_task if self.agent_state else None,
@@ -6644,20 +6735,20 @@ Never give up until the task is complete!"""
 
                 messages.append({"role": "user", "content": tool_results})
 
-                # === Unified handling of skip-reflection + user-inserted messages ===
+                # === 统一处理 skip 反思 + 用户插入消息 ===
                 if self.agent_state and self.agent_state.current_task:
                     await self.agent_state.current_task.process_post_tool_signals(messages)
 
-                # Note: do not check stop_reason after tool execution; let the loop continue to fetch the LLM's final summary
-            # After the loop exits, if final_response is empty, ask the LLM to produce a summary
+                # 注意：不在工具执行后检查 stop_reason，让循环继续获取 LLM 的最终总结
+            # 循环结束后，如果 final_response 为空，尝试让 LLM 生成一个总结
             if not final_response or len(final_response.strip()) < 10:
                 logger.info("Task completed but no final response, requesting summary...")
                 try:
-                    # Ask the LLM to generate a task-completion summary
+                    # 请求 LLM 生成任务完成总结
                     messages.append(
                         {
                             "role": "user",
-                            "content": "Task execution is complete. Please briefly summarize the results and completion status.",
+                            "content": "任务执行完毕。请简要总结一下执行结果和完成情况。",
                         }
                     )
                     _tt_sum = set_tracking_context(
@@ -6684,24 +6775,24 @@ Never give up until the task is complete!"""
                             final_response = clean_llm_response(block.text)
                             break
                 except UserCancelledError:
-                    final_response = "✅ Task stopped."
+                    final_response = "✅ 任务已停止。"
                 except Exception as e:
                     logger.warning(f"Failed to get summary: {e}")
-                    final_response = "Task execution completed."
+                    final_response = "任务已执行完成。"
         finally:
-            # Clean up per-conversation overrides to avoid affecting later tasks/sessions
+            # 清理 per-conversation override，避免影响后续任务/会话
             with contextlib.suppress(Exception):
                 self.brain.restore_default_model(conversation_id=conversation_id)
 
-        # === Finalize task monitoring ===
+        # === 完成任务监控 ===
         metrics = task_monitor.complete(
             success=True,
             response=final_response,
         )
 
-        # === Background retrospective analysis (if the task took too long; does not block the response) ===
+        # === 后台复盘分析（如果任务耗时过长，不阻塞响应） ===
         if metrics.retrospect_needed:
-            # Create a background task to run the retrospective without awaiting the result
+            # 创建后台任务执行复盘，不等待结果
             asyncio.create_task(
                 self._do_task_retrospect_background(task_monitor, task.session_id or task.id)
             )
@@ -6711,7 +6802,7 @@ Never give up until the task is complete!"""
 
         duration = time.time() - start_time
 
-        # === Desktop notifications (local channels only: cli/desktop; IM channels have their own notification mechanism) ===
+        # === 桌面通知（仅本地通道：cli/desktop；IM 通道已有自己的通知机制）===
         if settings.desktop_notify_enabled:
             _session = getattr(self, "_current_session", None)
             _channel = getattr(_session, "channel", "cli") if _session else "cli"
@@ -6735,32 +6826,32 @@ Never give up until the task is complete!"""
         )
 
     def _format_task_result(self, result: TaskResult) -> str:
-        """Format the task result"""
+        """格式化任务结果"""
         if result.success:
-            return f"""Task completed
+            return f"""✅ 任务完成
 
 {result.data}
 
 ---
-Iterations: {result.iterations}
-Elapsed: {result.duration_seconds:.2f}s"""
+迭代次数: {result.iterations}
+耗时: {result.duration_seconds:.2f}秒"""
         else:
-            return f"""Task did not complete
+            return f"""❌ 任务未能完成
 
-Error: {result.error}
+错误: {result.error}
 
 ---
-Attempts: {result.iterations}
-Elapsed: {result.duration_seconds:.2f}s
+尝试次数: {result.iterations}
+耗时: {result.duration_seconds:.2f}秒
 
-I will continue trying other approaches..."""
+我会继续尝试其他方法..."""
 
     async def self_check(self) -> dict[str, Any]:
         """
-        Self-check
+        自检
 
         Returns:
-            Self-check result
+            自检结果
         """
         logger.info("Running self-check...")
 
@@ -6770,9 +6861,9 @@ I will continue trying other approaches..."""
             "checks": {},
         }
 
-        # Check Brain
+        # 检查 Brain
         try:
-            response = await self.brain.think("Hello, this is a test. Please reply with 'OK'.")
+            response = await self.brain.think("你好，这是一个测试。请回复'OK'。")
             results["checks"]["brain"] = {
                 "status": "ok"
                 if "OK" in response.content or "ok" in response.content.lower()
@@ -6786,7 +6877,7 @@ I will continue trying other approaches..."""
             }
             results["status"] = "unhealthy"
 
-        # Check Identity
+        # 检查 Identity
         try:
             soul = self.identity.soul
             agent = self.identity.agent
@@ -6800,34 +6891,34 @@ I will continue trying other approaches..."""
                 "message": str(e),
             }
 
-        # Check configuration
+        # 检查配置
         results["checks"]["config"] = {
             "status": "ok" if settings.anthropic_api_key else "error",
             "message": "API key configured" if settings.anthropic_api_key else "API key missing",
         }
 
-        # Check the skill system (SKILL.md spec)
+        # 检查技能系统 (SKILL.md 规范)
         skill_count = self.skill_registry.count
         results["checks"]["skills"] = {
             "status": "ok",
-            "message": f"{skill_count} skills installed (Agent Skills spec)",
+            "message": f"已安装 {skill_count} 个技能 (Agent Skills 规范)",
             "count": skill_count,
             "skills": [s.name for s in self.skill_registry.list_all()],
         }
 
-        # Check the skill catalog
+        # 检查技能目录
         skills_path = settings.skills_path
         results["checks"]["skills_dir"] = {
             "status": "ok" if skills_path.exists() else "warning",
             "message": str(skills_path),
         }
 
-        # Check the MCP client
+        # 检查 MCP 客户端
         mcp_servers = self.mcp_client.list_servers()
         mcp_connected = self.mcp_client.list_connected()
         results["checks"]["mcp"] = {
             "status": "ok",
-            "message": f"configured {len(mcp_servers)} servers; {len(mcp_connected)} connected",
+            "message": f"配置 {len(mcp_servers)} 个服务器, 已连接 {len(mcp_connected)} 个",
             "servers": mcp_servers,
             "connected": mcp_connected,
         }
@@ -6837,37 +6928,37 @@ I will continue trying other approaches..."""
         return results
 
     def _on_iteration(self, iteration: int, task: Task) -> None:
-        """Ralph-loop iteration callback"""
+        """Ralph 循环迭代回调"""
         logger.debug(f"Ralph iteration {iteration} for task {task.id}")
 
     def _on_error(self, error: str, task: Task) -> None:
-        """Ralph-loop error callback"""
+        """Ralph 循环错误回调"""
         logger.warning(f"Ralph error for task {task.id}: {error}")
 
     @property
     def is_initialized(self) -> bool:
-        """Whether initialization is complete"""
+        """是否已初始化"""
         return self._initialized
 
     @property
     def conversation_history(self) -> list[dict]:
-        """Conversation history"""
+        """对话历史"""
         return self._conversation_history.copy()
 
-    # ==================== Memory-system methods ====================
+    # ==================== 记忆系统方法 ====================
 
     def set_scheduler_gateway(self, gateway: Any) -> None:
         """
-        Set the message gateway for the scheduled-task scheduler
+        设置定时任务调度器的消息网关
 
-        Used to send notifications to IM channels after scheduled tasks run
+        用于定时任务执行后发送通知到 IM 通道
 
         Args:
-            gateway: MessageGateway instance
+            gateway: MessageGateway 实例
         """
         if hasattr(self, "_task_executor") and self._task_executor:
             self._task_executor.gateway = gateway
-            # Also pass persona/memory/proactive references for system tasks like the liveness heartbeat
+            # 同时传递 persona/memory/proactive 引用，供活人感心跳等系统任务使用
             self._task_executor.persona_manager = getattr(self, "persona_manager", None)
             self._task_executor.memory_manager = getattr(self, "memory_manager", None)
             self._task_executor.proactive_engine = getattr(self, "proactive_engine", None)
@@ -6877,16 +6968,16 @@ I will continue trying other approaches..."""
         self, task_description: str = "", success: bool = True, errors: list = None
     ) -> None:
         """
-        Shut down the Agent and persist memory
+        关闭 Agent 并保存记忆
 
         Args:
-            task_description: main task description of the session
-            success: whether the task succeeded
-            errors: list of encountered errors
+            task_description: 会话的主要任务描述
+            success: 任务是否成功
+            errors: 遇到的错误列表
         """
         logger.info("Shutting down agent...")
 
-        # Plugin-system cleanup: dispatch on_shutdown -> unload -> clear global map
+        # 插件系统清理：dispatch on_shutdown → unload → 清全局 map
         pm = getattr(self, "_plugin_manager", None)
         if pm is not None:
             try:
@@ -6912,10 +7003,10 @@ I will continue trying other approaches..."""
             except Exception:
                 pass
 
-        # F9: clean up skill-related resources
+        # F9: 清理技能相关资源
         self._cleanup_skill_resources()
 
-        # Close SkillStoreClient (if any)
+        # 关闭 SkillStoreClient (如有)
         skill_store_client = getattr(self, "_skill_store_client", None)
         if skill_store_client and hasattr(skill_store_client, "close"):
             try:
@@ -6923,20 +7014,20 @@ I will continue trying other approaches..."""
             except Exception:
                 pass
 
-        # End the memory session
+        # 结束记忆会话
         self.memory_manager.end_session(
             task_description=task_description,
             success=success,
             errors=errors or [],
         )
 
-        # Wait for pending async tasks in the memory system (e.g. episode generation)
+        # 等待记忆系统挂起的异步任务（episode 生成等）
         try:
             await self.memory_manager.await_pending_tasks(timeout=15.0)
         except Exception as e:
             logger.warning(f"Failed to await memory pending tasks: {e}")
 
-        # Flush TodoStore and stop the debounce loop
+        # Flush TodoStore 并停止防抖循环
         try:
             todo_save_task = getattr(self, "_todo_save_task", None)
             if todo_save_task and not todo_save_task.done():
@@ -6957,16 +7048,16 @@ I will continue trying other approaches..."""
 
     async def consolidate_memories(self) -> dict:
         """
-        Consolidate memory (batch-process unprocessed sessions)
+        整理记忆 (批量处理未处理的会话)
 
-        Suitable for invocation by a cron job during idle hours (e.g. overnight)
+        适合在空闲时段 (如凌晨) 由 cron job 调用
 
         Returns:
-            Consolidation result statistics
+            整理结果统计
         """
         logger.info("Starting memory consolidation...")
         return await self.memory_manager.consolidate_daily()
 
     def get_memory_stats(self) -> dict:
-        """Get memory statistics"""
+        """获取记忆统计"""
         return self.memory_manager.get_stats()

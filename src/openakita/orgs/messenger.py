@@ -154,6 +154,14 @@ class OrgMessenger:
         self._deadlock_task: asyncio.Task | None = None
         self._ttl_task: asyncio.Task | None = None
 
+        # 内存级 send 去重：在 _send_dedupe_window_secs 窗口内，
+        # 同 (chain_id, to_node, msg_type, content_hash) 的多次 send 仅放行第一次。
+        # 主要兜底 LLM 在同一 ReAct iter emit 多个相同 tool_use（如 3 次
+        # delegate_task 给同一 chain 同一目标）造成下游 mailbox 被重复入队。
+        # key = (chain_id, to_node, msg_type, content_md5_short), value = 时间戳
+        self._recent_send_keys: dict[tuple[str, str, str, str], float] = {}
+        self._send_dedupe_window_secs: float = 5.0
+
         for node in org.nodes:
             self._mailboxes[node.id] = NodeMailbox(node.id)
 
@@ -298,6 +306,33 @@ class OrgMessenger:
     # Send
     # ------------------------------------------------------------------
 
+    def _is_duplicate_send(self, msg: OrgMessage, chain_id: str) -> bool:
+        """判定 (chain_id, to_node, msg_type, content_hash) 在窗口内是否重复。
+
+        命中（应丢弃）时刷新时间戳并返回 True；首次出现时记录时间戳并返回 False。
+        窗口外的旧条目顺手清理，避免长时间运行内存累积。
+        """
+        import hashlib
+        try:
+            content_seed = (msg.content or "")[:512].encode("utf-8", errors="replace")
+        except Exception:
+            content_seed = b""
+        content_hash = hashlib.md5(content_seed).hexdigest()[:16]
+        mt = getattr(msg.msg_type, "value", str(msg.msg_type))
+        key = (chain_id, msg.to_node or "", mt, content_hash)
+        now = time.time()
+        last = self._recent_send_keys.get(key)
+        if last is not None and now - last < self._send_dedupe_window_secs:
+            self._recent_send_keys[key] = now
+            return True
+        self._recent_send_keys[key] = now
+        if len(self._recent_send_keys) > 4096:
+            cutoff = now - self._send_dedupe_window_secs * 4
+            stale = [k for k, ts in self._recent_send_keys.items() if ts < cutoff]
+            for k in stale:
+                self._recent_send_keys.pop(k, None)
+        return False
+
     async def send(self, msg: OrgMessage) -> bool:
         """Route a message to the target node's mailbox."""
         if msg.to_node is None:
@@ -315,6 +350,16 @@ class OrgMessenger:
                 if actual and actual.status not in (NodeStatus.FROZEN, NodeStatus.OFFLINE):
                     msg.to_node = affinity_node
                     logger.debug(f"[Messenger] Task affinity: chain {chain_id} -> {affinity_node}")
+
+        # 5s 内存级去重：同 (chain_id, to_node, msg_type, content_hash) 命中直接 drop。
+        # 仅在 chain_id 非空时启用，避免影响无 chain 的系统通知/广播路径。
+        if chain_id and self._is_duplicate_send(msg, chain_id):
+            logger.warning(
+                f"[Messenger] dedupe drop msg id={msg.id} chain={chain_id} "
+                f"to={msg.to_node} type={getattr(msg.msg_type, 'value', msg.msg_type)} "
+                f"(window={self._send_dedupe_window_secs}s)"
+            )
+            return False
 
         target = self._org.get_node(msg.to_node)
         if target is None:

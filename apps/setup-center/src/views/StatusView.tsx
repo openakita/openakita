@@ -85,9 +85,24 @@ export function StatusView(props: StatusViewProps) {
   const [imChecking, setImChecking] = useState(false);
   const [logLevelFilter, setLogLevelFilter] = useState<Set<string>>(new Set(["INFO", "WARN", "ERROR", "DEBUG"]));
   const [logAtBottom, setLogAtBottom] = useState(true);
+  // Local guard for the "Start backend" button. The parent App.tsx exposes a
+  // `busy` prop, but it is currently hard-coded to null upstream, so without
+  // a local in-flight flag a rapid double-click fires startLocalServiceWithConflictCheck
+  // multiple times in parallel and each one queues its own loading toast,
+  // producing the "toast spam" the user complained about.
+  const [startingService, setStartingService] = useState(false);
 
   const effectiveWsId = currentWorkspaceId || workspaces[0]?.id || null;
   const ws = workspaces.find((w) => w.id === effectiveWsId) || workspaces[0] || null;
+  const startBackend = async () => {
+    if (startingService || !!busy || !effectiveWsId) return;
+    setStartingService(true);
+    try {
+      await startLocalServiceWithConflictCheck(effectiveWsId);
+    } finally {
+      setStartingService(false);
+    }
+  };
   const im = [
     { k: "TELEGRAM_ENABLED", name: "Telegram", required: ["TELEGRAM_BOT_TOKEN"] },
     { k: "FEISHU_ENABLED", name: t("status.feishu"), required: ["FEISHU_APP_ID", "FEISHU_APP_SECRET"] },
@@ -121,10 +136,12 @@ export function StatusView(props: StatusViewProps) {
             </div>
           <Button
             size="sm"
-            onClick={async () => { await startLocalServiceWithConflictCheck(effectiveWsId); }}
-            disabled={!!busy}
+            onClick={startBackend}
+            disabled={!!busy || startingService}
           >
-            {busy ? <><Loader2 className="animate-spin mr-1" size={14} />{busy}</> : <><Play size={14} className="mr-1" />{t("topbar.start")}</>}
+            {startingService || busy
+              ? <><Loader2 className="animate-spin mr-1" size={14} />{busy || t("topbar.starting")}</>
+              : <><Play size={14} className="mr-1" />{t("topbar.start")}</>}
           </Button>
           </CardContent>
         </Card>
@@ -183,9 +200,11 @@ export function StatusView(props: StatusViewProps) {
           {IS_TAURI && (
           <div className="statusPanelActions">
             {!serviceStatus?.running && serviceStatus !== null && effectiveWsId && (
-              <Button size="sm" className="statusBtn" onClick={async () => {
-                await startLocalServiceWithConflictCheck(effectiveWsId);
-              }} disabled={!!busy}>{busy ? <><Loader2 className="animate-spin" size={13} />{busy}</> : <><Play size={13} />{t("topbar.start")}</>}</Button>
+              <Button size="sm" className="statusBtn" onClick={startBackend} disabled={!!busy || startingService}>
+                {startingService || busy
+                  ? <><Loader2 className="animate-spin" size={13} />{busy || t("topbar.starting")}</>
+                  : <><Play size={13} />{t("topbar.start")}</>}
+              </Button>
             )}
             {serviceStatus?.running && effectiveWsId && (<>
               <Button size="sm" variant="destructive" className="statusBtn" onClick={async () => {

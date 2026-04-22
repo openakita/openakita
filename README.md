@@ -435,7 +435,35 @@ OpenAkita provides a complete plugin architecture with `plugin.json` manifest de
 
 Plugins have **automatic fault isolation**: error count exceeding threshold triggers auto-disable, preventing a single plugin from crashing the system.
 
-> Developer docs: [Plugin System Overview](docs/plugin-system-overview.md)
+### Bundled AI-Media Plugins (20)
+
+Built on the `openakita-plugin-sdk` (`contrib/` 6 modules: `verification`, `quality_gates`, `intent_verifier`, `provider_score`, `error_coach`, `slideshow_risk` / `source_review`). All ship with `SKILL.md` + `README.md` + tests.
+
+| Plugin | Capability | Tests |
+|--------|-----------|-------|
+| `tongyi-image` | DashScope text-to-image / image-edit / outpaint / background-gen | 107 |
+| `seedance-video` | Volcengine Ark Seedance text/image-to-video, long-form chaining | 58 |
+| `tts-studio` | Multi-provider TTS dialogue rendering | 6 |
+| `avatar-speaker` | Digital-human avatar + TTS | 7 |
+| `image-edit` | Image editing dispatcher | 5 |
+| `subtitle-maker` | Generate subtitles | 4 |
+| `video-translator` | Translate video subtitles | 14 |
+| `highlight-cutter` | Highlight reel generator | 5 |
+| `poster-maker` | Static poster composition | 8 |
+| `storyboard` | Scene plan generator (uses `slideshow_risk` + `intent_verifier`) | 39 |
+| `bgm-suggester` | LLM-driven BGM brief (uses `verification`) | 45 |
+| `bgm-mixer` | madmom beat-aware BGM mixing | 68 |
+| `transcribe-archive` | Long-form transcription with `parallel_executor` + `checkpoint` | 95 |
+| `video-bg-remove` | RVM background removal (uses `dep_gate` + `checkpoint`) | 72 |
+| `video-color-grade` | ffmpeg auto color grading via `auto_color_grade_filter` | 49 |
+| `smart-poster-grid` | 4-aspect poster batches (uses `verification`) | 50 |
+| `ppt-to-video` | LibreOffice + tts-studio narrated slideshows | 79 |
+| `local-sd-flux` | Local ComfyUI (SD 1.5 / SDXL / FLUX) + provider ranker | 99 |
+| `shorts-batch` | Batch shorts orchestrator (uses `slideshow_risk`) | 51 |
+| `dub-it` | Video dubbing pipeline (uses `source_review`) | 52 |
+| **Total** | | **913** |
+
+> Developer docs: [Plugin System Overview](docs/plugin-system-overview.md) · [SDK contrib catalog](openakita-plugin-sdk/docs/contrib.md) · [Sprint 18 Cleanup Assessment](docs/sprint18-cleanup-assessment.md)
 
 ---
 

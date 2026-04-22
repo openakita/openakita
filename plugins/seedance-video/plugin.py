@@ -13,24 +13,41 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Query
-from pydantic import BaseModel, Field
-
-from openakita.plugins.api import PluginAPI, PluginBase
-
 from ark_client import ArkClient
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from long_video import (
-    ChainGenerator, concat_videos, decompose_storyboard, ffmpeg_available,
+    ChainGenerator,
+    concat_videos,
+    decompose_storyboard,
+    ffmpeg_available,
 )
 from models import (
-    SEEDANCE_MODELS, RESOLUTION_PIXEL_MAP, MODELS_BY_ID,
-    get_model, model_to_dict,
+    MODELS_BY_ID,
+    RESOLUTION_PIXEL_MAP,
+    SEEDANCE_MODELS,
+    get_model,
+    model_to_dict,
+)
+from openakita_plugin_sdk.contrib import (
+    CostTracker,
+    add_upload_preview_route,
+    build_preview_url,
+    collect_storage_stats,
+    restore_from_snapshot,
+    take_checkpoint,
 )
 from prompt_optimizer import (
-    PROMPT_TEMPLATES, CAMERA_KEYWORDS, ATMOSPHERE_KEYWORDS,
-    MODE_FORMULAS, optimize_prompt, PromptOptimizeError,
+    ATMOSPHERE_KEYWORDS,
+    CAMERA_KEYWORDS,
+    MODE_FORMULAS,
+    PROMPT_TEMPLATES,
+    PromptOptimizeError,
+    optimize_prompt,
 )
+from pydantic import BaseModel, Field
 from task_manager import TaskManager
+
+from openakita.plugins.api import PluginAPI, PluginBase
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +162,7 @@ class Plugin(PluginBase):
             },
         ], handler=self._handle_tool)
 
-        asyncio.get_event_loop().create_task(self._async_init())
+        api.spawn_task(self._async_init(), name="seedance-video:init")
         api.log("Seedance Video plugin loaded")
 
     async def _async_init(self) -> None:
@@ -155,13 +172,24 @@ class Plugin(PluginBase):
             self._ark = ArkClient(api_key)
         self._start_polling()
 
-    def on_unload(self) -> None:
-        if self._poll_task:
+    async def on_unload(self) -> None:
+        if self._poll_task and not self._poll_task.done():
             self._poll_task.cancel()
-        loop = asyncio.get_event_loop()
-        if self._ark:
-            loop.create_task(self._ark.close())
-        loop.create_task(self._tm.close())
+            try:
+                await self._poll_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                logger.warning("seedance-video poll task drain error: %s", exc)
+        if self._ark is not None:
+            try:
+                await self._ark.close()
+            except Exception as exc:
+                logger.warning("seedance-video Ark client close error: %s", exc)
+        try:
+            await self._tm.close()
+        except Exception as exc:
+            logger.warning("seedance-video task manager close error: %s", exc)
 
     # ── Tool handler ──
 
@@ -241,7 +269,9 @@ class Plugin(PluginBase):
     # ── Polling ──
 
     def _start_polling(self) -> None:
-        self._poll_task = asyncio.get_event_loop().create_task(self._poll_loop())
+        self._poll_task = self._api.spawn_task(
+            self._poll_loop(), name="seedance-video:poll"
+        )
 
     async def _poll_loop(self) -> None:
         while True:
@@ -305,8 +335,9 @@ class Plugin(PluginBase):
 
                     auto_dl = await self._tm.get_config("auto_download")
                     if auto_dl == "true" and video_url:
-                        asyncio.get_event_loop().create_task(
-                            self._download_video(task["id"], video_url)
+                        self._api.spawn_task(
+                            self._download_video(task["id"], video_url),
+                            name=f"seedance-video:dl:{task['id']}",
                         )
 
                     self._broadcast_update(task["id"], "succeeded")
@@ -362,13 +393,27 @@ class Plugin(PluginBase):
 
     def _broadcast_update(self, task_id: str, status: str) -> None:
         try:
-            self._api.broadcast_ui_event("task_update", {"task_id": task_id, "status": status})
-        except Exception:
-            pass
+            self._api.broadcast_ui_event(
+                "task_update", {"task_id": task_id, "status": status}
+            )
+        except Exception as exc:
+            # Don't let UI broadcast failures bring down the polling loop, but
+            # log them so an operator can spot a stuck WebSocket / event bus.
+            logger.warning("broadcast_ui_event failed for %s: %s", task_id, exc)
 
     # ── Route registration ──
 
     def _register_routes(self, router: APIRouter) -> None:
+
+        # Sprint 7 / C1 (issue #479) — register a safe GET /uploads/{rel_path:path}
+        # so the UI can preview uploaded reference images via
+        # <img src="/api/plugins/seedance-video/uploads/<file>"> after upload.
+        # base_dir is plugin-owned data so the URL stays stable even if the
+        # user later changes assets_dir in /settings.
+        add_upload_preview_route(
+            router,
+            base_dir=self._api.get_data_dir() / "uploads",
+        )
 
         # --- Tasks CRUD ---
 
@@ -459,8 +504,11 @@ class Plugin(PluginBase):
 
         @router.post("/upload")
         async def upload_file(file: UploadFile = File(...)) -> dict:
-            config = await self._tm.get_all_config()
-            assets_dir = config.get("assets_dir") or str(Path.home() / "seedance-assets")
+            # Sprint 7 / C1 — uploads now land in plugin data dir so the
+            # preview GET route above can serve them back without exposing
+            # the user's home directory.  Old files in legacy assets_dir
+            # remain accessible by absolute path (asset table stores it).
+            uploads_dir = self._api.get_data_dir() / "uploads"
             content = await file.read()
             ext = Path(file.filename or "file").suffix.lower()
 
@@ -477,13 +525,14 @@ class Plugin(PluginBase):
                 subdir = "other"
                 atype = "file"
 
-            dest_dir = Path(assets_dir) / subdir
+            dest_dir = uploads_dir / subdir
             dest_dir.mkdir(parents=True, exist_ok=True)
 
             import uuid as _uuid
             filename = f"{_uuid.uuid4().hex[:8]}_{file.filename or 'file'}"
             filepath = dest_dir / filename
             filepath.write_bytes(content)
+            rel_path = f"{subdir}/{filename}"
 
             b64 = base64.b64encode(content).decode("ascii")
             asset = await self._tm.create_asset(
@@ -495,7 +544,12 @@ class Plugin(PluginBase):
             return {
                 "ok": True,
                 "asset": asset,
-                "base64": f"data:{file.content_type};base64,{b64}" if len(content) < 10_000_000 else None,
+                "url": build_preview_url("seedance-video", rel_path),
+                "base64": (
+                    f"data:{file.content_type};base64,{b64}"
+                    if len(content) < 10_000_000
+                    else None
+                ),
             }
 
         @router.get("/videos/{task_id}")
@@ -660,28 +714,31 @@ class Plugin(PluginBase):
 
         @router.get("/storage/stats")
         async def storage_stats() -> dict:
+            # Sprint 7 / C4 — switched to SDK collect_storage_stats so the
+            # walk runs off-loop and is hard-capped at max_files (avoids UI
+            # stalls when users accumulate thousands of generated videos).
             config = await self._tm.get_all_config()
-            stats = {}
+            stats: dict[str, dict] = {}
+            truncated_any = False
             for key, default in [
                 ("output_dir", str(Path.home() / "seedance-output")),
                 ("assets_dir", str(Path.home() / "seedance-assets")),
                 ("cache_dir", str(self._api.get_data_dir() / "cache")),
+                ("uploads", str(self._api.get_data_dir() / "uploads")),
             ]:
                 d = Path(config.get(key) or default)
-                total_size = 0
-                file_count = 0
-                if d.is_dir():
-                    for f in d.rglob("*"):
-                        if f.is_file():
-                            total_size += f.stat().st_size
-                            file_count += 1
+                report = await collect_storage_stats(
+                    d, max_files=20000, sample_paths=0, skip_hidden=True,
+                )
+                truncated_any = truncated_any or report.truncated
                 stats[key] = {
                     "path": str(d),
-                    "size_bytes": total_size,
-                    "size_mb": round(total_size / 1048576, 1),
-                    "file_count": file_count,
+                    "size_bytes": report.total_bytes,
+                    "size_mb": round(report.total_bytes / 1048576, 1),
+                    "file_count": report.total_files,
+                    "truncated": report.truncated,
                 }
-            return {"ok": True, "stats": stats}
+            return {"ok": True, "stats": stats, "truncated": truncated_any}
 
         @router.post("/storage/cleanup")
         async def storage_cleanup(dir_type: str = "cache") -> dict:
@@ -706,7 +763,8 @@ class Plugin(PluginBase):
             path = body.get("path", "")
             if not path:
                 raise HTTPException(status_code=400, detail="Missing path")
-            import subprocess, sys
+            import subprocess
+            import sys
             p = Path(path)
             p.mkdir(parents=True, exist_ok=True)
             if sys.platform == "win32":
@@ -784,15 +842,37 @@ class Plugin(PluginBase):
                 name += ".mp4"
             output_path = str(output_dir / name)
 
-            ok = await concat_videos(
-                video_paths, output_path,
-                transition=body.transition,
-                fade_duration=body.fade_duration,
+            # Sprint 7 / Sprint 6 B9 活体验证：take_checkpoint 在 concat 之前
+            # 拍下 cost ledger 快照与上下文，ffmpeg concat 失败时 restore 回滚。
+            # 真实业务里 cost_tracker 应当跨 generate→concat 共享（plugin 级单例），
+            # 这里 demo 用本地实例先证明 API 可用、可恢复。
+            ct = CostTracker()
+            checkpoint = take_checkpoint(
+                "pre-concat",
+                cost_tracker=ct,
+                extra={
+                    "task_ids": list(body.task_ids),
+                    "transition": body.transition,
+                    "output_path": output_path,
+                },
             )
+            try:
+                ok = await concat_videos(
+                    video_paths, output_path,
+                    transition=body.transition,
+                    fade_duration=body.fade_duration,
+                )
+            except Exception as exc:
+                await restore_from_snapshot(checkpoint, cost_tracker=ct)
+                logger.exception("concat raised, rolled back to checkpoint")
+                raise HTTPException(
+                    status_code=500, detail=f"ffmpeg concat error: {exc}"
+                ) from exc
             if not ok:
+                await restore_from_snapshot(checkpoint, cost_tracker=ct)
                 raise HTTPException(status_code=500, detail="ffmpeg concat failed")
 
-            return {"ok": True, "output_path": output_path}
+            return {"ok": True, "output_path": output_path, "checkpoint": checkpoint.name}
 
         @router.get("/long-video/tasks/{group_id}")
         async def get_chain_tasks(group_id: str) -> dict:

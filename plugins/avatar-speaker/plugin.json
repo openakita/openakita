@@ -1,0 +1,48 @@
+{
+  "id": "avatar-speaker",
+  "name": "Avatar Speaker",
+  "display_name_zh": "AI 配音员",
+  "display_name_en": "Avatar Speaker",
+  "version": "1.0.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Turn text into natural-sounding voice-over (TTS); reserves a digital-human avatar skeleton for future one-click talking-head synthesis. Designed for users who don't know how to use voice-over software.",
+  "description_i18n": {
+    "zh": "把一段文字变成自然好听的配音 (TTS)；预留数字人形象骨架，后续可一键合成「会说话的头像」。专为不会用配音软件的小白。",
+    "en": "Turn text into natural-sounding voice-over (TTS); reserves a digital-human avatar skeleton for future one-click talking-head synthesis. Designed for users who don't know how to use voice-over software."
+  },
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["tts", "voice", "audio", "avatar", "digital-human"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.4.0"
+  },
+  "provides": {
+    "tools": [
+      "avatar_speaker_synthesize",
+      "avatar_speaker_status",
+      "avatar_speaker_list",
+      "avatar_speaker_cancel"
+    ],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "AI 配音员",
+    "title_i18n": { "zh": "AI 配音员", "en": "Avatar Speaker" },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme", "clipboard"]
+  }
+}

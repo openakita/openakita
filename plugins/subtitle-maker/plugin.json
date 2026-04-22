@@ -1,0 +1,43 @@
+{
+  "id": "subtitle-maker",
+  "name": "Subtitle Maker",
+  "display_name_zh": "AI 字幕匠",
+  "display_name_en": "Subtitle Maker",
+  "version": "1.0.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "Upload a video/audio file, automatically generate SRT/VTT subtitles, and one-click burn them back into the video. Reuses the ASR engine from highlight-cutter.",
+  "description_i18n": {
+    "zh": "上传一段视频/音频，自动生成 SRT/VTT 字幕，可一键烧录回视频。复用 highlight-cutter 的 ASR 引擎。",
+    "en": "Upload a video/audio file, automatically generate SRT/VTT subtitles, and one-click burn them back into the video. Reuses the ASR engine from highlight-cutter."
+  },
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["subtitle", "srt", "vtt", "asr", "burn-in"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.4.0"
+  },
+  "provides": {
+    "tools": ["subtitle_maker_create", "subtitle_maker_status", "subtitle_maker_list", "subtitle_maker_cancel"],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "AI 字幕匠",
+    "title_i18n": { "zh": "AI 字幕匠", "en": "Subtitle Maker" },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme", "clipboard"]
+  }
+}

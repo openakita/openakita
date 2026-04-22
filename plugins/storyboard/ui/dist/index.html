@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 分镜师</title>
+  <link rel="stylesheet" href="/api/plugins/_sdk/ui-kit/styles.css">
+  <script src="/api/plugins/_sdk/bootstrap.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/icons.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/i18n.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/event-helpers.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/error-coach.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/task-panel.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/onboard-wizard.js"></script>
+  <script src="/api/plugins/_sdk/ui-kit/first-success-celebrate.js"></script>
+  <style>
+    body { padding: 16px; }
+    h1 { margin: 0 0 6px; font-size: 22px; display: inline-flex; align-items: center; gap: 10px; }
+    h1 .oa-icon { width: 22px; height: 22px; color: var(--oa-primary); }
+    h3 { display: inline-flex; align-items: center; gap: 8px; }
+    h3 .oa-icon { width: 16px; height: 16px; color: var(--oa-text-muted); }
+    .header-tip { color: var(--oa-text-muted); font-size: 12px; margin-bottom: 16px; }
+    table.shots { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+    table.shots th, table.shots td { border: 1px solid var(--oa-border); padding: 6px 8px; vertical-align: top; }
+    table.shots th { background: var(--oa-bg); text-align: left; font-weight: 600; }
+    .check { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+    .check span { font-size: 12px; padding: 2px 8px; border-radius: 8px; background: var(--oa-bg); border: 1px solid var(--oa-border); }
+  </style>
+</head>
+<body>
+  <h1>
+    <span class="oa-icon" data-icon="film"></span>
+    <span data-i18n="header.title"></span>
+  </h1>
+  <div class="header-tip" data-i18n="header.tip"></div>
+
+  <div class="oa-card">
+    <h3>
+      <span class="oa-icon" data-icon="edit"></span>
+      <span data-i18n="card.script.title"></span>
+    </h3>
+    <textarea id="script" class="oa-textarea" rows="8" data-i18n-placeholder="card.script.placeholder"></textarea>
+    <div class="oa-grid cols-3" style="margin-top:6px">
+      <div>
+        <label class="oa-label" data-i18n="form.title"></label>
+        <input id="title" class="oa-input" data-i18n-placeholder="form.title.placeholder">
+      </div>
+      <div>
+        <label class="oa-label" data-i18n="form.duration"></label>
+        <input id="duration" type="number" min="5" max="300" value="30" class="oa-input">
+      </div>
+      <div>
+        <label class="oa-label" data-i18n="form.style"></label>
+        <select id="style" class="oa-input">
+          <option data-i18n="style.shortVideo"></option>
+          <option data-i18n="style.cinematic"></option>
+          <option data-i18n="style.ad"></option>
+          <option data-i18n="style.animation"></option>
+          <option data-i18n="style.documentary"></option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-top:10px">
+      <button class="oa-btn oa-btn-primary" id="goBtn" data-i18n="actions.go"></button>
+    </div>
+    <div id="errorBox" style="margin-top:10px"></div>
+  </div>
+
+  <div id="resultCard" style="display:none" class="oa-card">
+    <h3>
+      <span class="oa-icon" data-icon="target"></span>
+      <span data-i18n="result.title"></span> — <span id="sbTitle"></span>
+    </h3>
+    <div id="checkBar" class="check"></div>
+    <table class="shots" id="shotTable">
+      <thead><tr>
+        <th>#</th>
+        <th data-i18n="th.duration"></th>
+        <th data-i18n="th.visual"></th>
+        <th data-i18n="th.camera"></th>
+        <th data-i18n="th.dialogue"></th>
+        <th data-i18n="th.sound"></th>
+        <th data-i18n="th.notes"></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="oa-row" style="margin-top:8px">
+      <button class="oa-btn" id="exportBtn" data-i18n="actions.exportCsv"></button>
+      <button class="oa-btn" id="copyBtn" data-i18n="actions.copyJson"></button>
+    </div>
+  </div>
+
+  <h3 style="margin: 18px 0 8px" data-i18n="tasks.title"></h3>
+  <div id="tasks"></div>
+
+<script>
+  OpenAkitaI18n.register({
+    zh: {
+      "header.title": "AI 分镜师",
+      "header.tip": "写一段故事或想法 → AI 帮你拆成镜头 → 一键导出 CSV，可直接给摄影师或 AI 生图用",
+      "card.script.title": "你的脚本 / 想法",
+      "card.script.placeholder": "例：一个加班晚归的程序员，回家路上看到一只流浪猫躲雨，最后把猫带回家，第二天早上猫坐在键盘上看他写代码…",
+      "form.title": "标题",
+      "form.title.placeholder": "(可选)",
+      "form.duration": "目标时长 (秒)",
+      "form.style": "风格",
+      "style.shortVideo": "短视频 / vlog",
+      "style.cinematic": "电影感 / 慢节奏",
+      "style.ad": "广告 / 高强度",
+      "style.animation": "动画 / 卡通",
+      "style.documentary": "纪录片",
+      "actions.go": "生成分镜",
+      "actions.exportCsv": "导出 CSV",
+      "actions.copyJson": "复制 JSON",
+      "result.title": "分镜表",
+      "tasks.title": "最近的任务",
+      "th.duration": "时长",
+      "th.visual": "画面",
+      "th.camera": "镜头",
+      "th.dialogue": "台词",
+      "th.sound": "声音",
+      "th.notes": "备注",
+      "err.empty.cause": "输入为空",
+      "err.empty.problem": "先写一段脚本或想法。",
+      "err.empty.next": "在上面文本框写几句你想拍/做的内容。",
+      "err.create.problem": "创建失败",
+      "err.create.next": "稍后重试",
+      "toast.copied.title": "已复制",
+      "toast.copied.body": "JSON 已复制到剪贴板",
+      "onboard.q": "你打算用分镜表干什么？",
+      "onboard.opt.shoot": "指导拍摄",
+      "onboard.opt.gen": "喂给 AI 生图/生视频",
+      "onboard.opt.pitch": "给客户/老板讲方案",
+      "onboard.opt.study": "学习分镜知识",
+      "success.title": "分镜出来啦！",
+      "rec.tongyi": "把每一镜画出来",
+      "rec.seedance": "把每一镜拍成视频"
+    },
+    en: {
+      "header.title": "Storyboard",
+      "header.tip": "Write a story or idea → AI breaks it into shots → one-click export CSV for your DP or AI image generators.",
+      "card.script.title": "Your script / idea",
+      "card.script.placeholder": "e.g. A programmer works late, walks home in the rain, finds a stray cat, brings it home; next morning the cat sits on the keyboard while he codes...",
+      "form.title": "Title",
+      "form.title.placeholder": "(optional)",
+      "form.duration": "Target duration (sec)",
+      "form.style": "Style",
+      "style.shortVideo": "Short video / vlog",
+      "style.cinematic": "Cinematic / slow",
+      "style.ad": "Ad / high intensity",
+      "style.animation": "Animation / cartoon",
+      "style.documentary": "Documentary",
+      "actions.go": "Generate storyboard",
+      "actions.exportCsv": "Export CSV",
+      "actions.copyJson": "Copy JSON",
+      "result.title": "Shot list",
+      "tasks.title": "Recent tasks",
+      "th.duration": "Dur.",
+      "th.visual": "Visual",
+      "th.camera": "Camera",
+      "th.dialogue": "Dialogue",
+      "th.sound": "Sound",
+      "th.notes": "Notes",
+      "err.empty.cause": "Empty input",
+      "err.empty.problem": "Write a script or idea first.",
+      "err.empty.next": "Type a few sentences in the box above describing what you want to shoot.",
+      "err.create.problem": "Failed to create task",
+      "err.create.next": "Please try again later",
+      "toast.copied.title": "Copied",
+      "toast.copied.body": "JSON copied to clipboard",
+      "onboard.q": "What will you do with the shot list?",
+      "onboard.opt.shoot": "Guide a shoot",
+      "onboard.opt.gen": "Feed AI image / video models",
+      "onboard.opt.pitch": "Pitch to a client / boss",
+      "onboard.opt.study": "Learn storyboarding",
+      "success.title": "Storyboard is out!",
+      "rec.tongyi": "Render each shot as an image",
+      "rec.seedance": "Turn each shot into a video"
+    }
+  });
+  const T = (k, vars) => OpenAkitaI18n.t(k, vars);
+
+  document.querySelectorAll("[data-icon]").forEach(function (el) {
+    var name = el.dataset.icon;
+    var fn = window.OpenAkitaIcons && window.OpenAkitaIcons[name];
+    if (fn) el.innerHTML = fn();
+  });
+  OpenAkitaI18n.bindDom(document.body);
+
+  const apiBase = (OpenAkita.meta && OpenAkita.meta.apiBase) || '';
+  const api = (path, opts) => fetch(apiBase + path, opts).then(r => r.json().then(j => ({ ok: r.ok, status: r.status, body: j })));
+  const $ = (id) => document.getElementById(id);
+  let lastTaskId = null;
+
+  OnboardWizard.askOnce({
+    storageKey: 'storyboard:audience',
+    question: T('onboard.q'),
+    options: [
+      { id: 'shoot', label: T('onboard.opt.shoot') },
+      { id: 'gen',   label: T('onboard.opt.gen')   },
+      { id: 'pitch', label: T('onboard.opt.pitch') },
+      { id: 'study', label: T('onboard.opt.study') },
+    ],
+  });
+
+  $('goBtn').addEventListener('click', async () => {
+    $('errorBox').innerHTML = '';
+    const script = $('script').value.trim();
+    if (!script) {
+      ErrorCoach.mount('#errorBox', { cause_category: T('err.empty.cause'), problem: T('err.empty.problem'), next_step: T('err.empty.next'), severity: 'warning' });
+      return;
+    }
+    const r = await api('/tasks', { method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ script, title: $('title').value.trim(),
+        target_duration_sec: parseFloat($('duration').value), style_hint: $('style').value })});
+    if (!r.ok) { ErrorCoach.mount('#errorBox', r.body.detail || { problem: T('err.create.problem'), next_step: T('err.create.next') }); return; }
+    lastTaskId = r.body.task_id;
+    taskPanel.refresh();
+  });
+
+  function renderResult(rec) {
+    const sb = (rec.result || {}).storyboard;
+    const ck = (rec.result || {}).self_check;
+    if (!sb) return;
+    $('resultCard').style.display = 'block';
+    $('sbTitle').textContent = sb.title;
+    const tbody = $('shotTable').querySelector('tbody');
+    tbody.innerHTML = '';
+    (sb.shots || []).forEach(s => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${s.index}</td><td>${s.duration_sec}s</td>
+        <td>${escapeHtml(s.visual)}</td><td>${escapeHtml(s.camera)}</td>
+        <td>${escapeHtml(s.dialogue)}</td><td>${escapeHtml(s.sound)}</td>
+        <td>${escapeHtml(s.notes)}</td>`;
+      tbody.appendChild(tr);
+    });
+    $('checkBar').innerHTML = ck ? `
+      <span>${escapeHtml(ck.duration_match)}</span>
+      <span>${escapeHtml(ck.distribution_balance)}</span>
+      <span>${escapeHtml(ck.minimum_count)}</span>
+      ${(ck.suggestions || []).map(s => `<span style="background:var(--oa-warning-bg,#fff7e6);">${escapeHtml(s)}</span>`).join('')}
+    ` : '';
+  }
+
+  function escapeHtml(s) { return (s || '').toString().replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  $('exportBtn').addEventListener('click', () => {
+    if (!lastTaskId) return;
+    window.open(apiBase + '/tasks/' + lastTaskId + '/export.csv', '_blank');
+  });
+  $('copyBtn').addEventListener('click', async () => {
+    if (!lastTaskId) return;
+    const r = await api('/tasks/' + lastTaskId);
+    if (r.ok && r.body.result && r.body.result.storyboard) {
+      await navigator.clipboard.writeText(JSON.stringify(r.body.result.storyboard, null, 2));
+      OpenAkita.notify({ title: T('toast.copied.title'), body: T('toast.copied.body') });
+    }
+  });
+
+  const taskPanel = new TaskPanel({ root: '#tasks', apiBase, tasksPath: '/tasks', cancelPath: '/tasks/{id}/cancel' });
+  taskPanel.start();
+
+  OpenAkita.onEvent('task_updated', async (data) => {
+    taskPanel.refresh();
+    if (data && data.id === lastTaskId && data.status === 'succeeded') {
+      const r = await api('/tasks/' + lastTaskId);
+      if (r.ok) renderResult(r.body);
+      FirstSuccessCelebrate.maybeFire({
+        storageKey: 'storyboard:firstSuccess',
+        title: T('success.title'),
+        recommendations: [
+          { id: 'tongyi-image',  label: T('rec.tongyi') },
+          { id: 'seedance-video', label: T('rec.seedance') },
+        ],
+        onRecommend: (id) => OpenAkita.navigate('plugin-app:' + id),
+      });
+    }
+  });
+</script>
+</body>
+</html>

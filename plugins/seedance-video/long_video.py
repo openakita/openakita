@@ -4,7 +4,6 @@ and ffmpeg concatenation/crossfade."""
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import shutil
 import subprocess
@@ -12,7 +11,19 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from openakita_plugin_sdk.contrib import (
+    CostTracker,
+    parse_llm_json_object,
+    run_parallel,
+)
+
 logger = logging.getLogger(__name__)
+
+# Sprint 7 / Sprint 6 三件套活体验证：每段 Seedance 视频按 USD 0.05 估算预留，
+# 真实费率由 Volcengine Ark 计费决定 — 这里只是为了走通
+# CostTracker.reserve / reconcile / refund / commit 全链路，证明 SDK 接口对
+# 真实长视频流水线可用。失败的段会 refund，全成功 commit。
+DEFAULT_SEGMENT_COST_USD = 0.05
 
 
 def ffmpeg_available() -> bool:
@@ -86,11 +97,25 @@ async def decompose_storyboard(
         else:
             return {"error": "No LLM available"}
 
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start >= 0 and end > start:
-            return json.loads(text[start:end])
-        return {"error": "Failed to parse storyboard JSON", "raw": text}
+        # Sprint 7 / C5 — use SDK 5-level fallback parser (handles fenced ```json
+        # blocks, leading prose, escaped quotes, etc.) instead of the brittle
+        # ``text.find("{") / text.rfind("}")`` heuristic which used to drop
+        # entire storyboards when the model wrapped output in a fence.
+        # ``parse_llm_json_object`` never raises — it returns the empty
+        # fallback dict on total failure, and the ``errors`` out-param
+        # explains which level (L1/L2/L3/L4/L5) gave up.  We map an empty
+        # result to the legacy ``{"error": ..., "raw": ...}`` envelope so
+        # downstream callers (UI, /long-video/decompose) can still
+        # surface the raw text for debugging.
+        parse_errors: list[str] = []
+        parsed = parse_llm_json_object(text, errors=parse_errors)
+        if not parsed:
+            logger.warning(
+                "Storyboard JSON parse failed (5-level): %s",
+                "; ".join(parse_errors),
+            )
+            return {"error": "Failed to parse storyboard JSON", "raw": text}
+        return parsed
 
     except Exception as e:
         logger.error("Storyboard decomposition failed: %s", e)
@@ -236,19 +261,36 @@ class ChainGenerator:
         ratio: str = "16:9",
         resolution: str = "720p",
         mode: str = "serial",
+        cost_tracker: CostTracker | None = None,
+        max_parallel: int = 3,
     ) -> list[dict]:
         """Generate all segments with chaining.
 
         mode: "serial" — each segment uses previous as reference_video (AI extend)
               "parallel" — each uses return_last_frame for next's first_frame
+
+        ``cost_tracker`` (optional) — if supplied the chain reserves
+        ``DEFAULT_SEGMENT_COST_USD`` per segment up front.  Successful segments
+        ``reconcile`` the reservation against the actual estimate; failed
+        segments ``refund`` so unused budget returns to the pool.  This is the
+        Sprint 6 B5 / Sprint 7 activation point — see SKILL.md "Cost tracking".
+
+        ``max_parallel`` (parallel mode only) — bounded concurrency for the
+        SDK ``run_parallel`` worker that submits the per-segment Ark calls.
+        Always returns a result for every input (no silent skip — N1.1).
         """
-        results = []
+        results: list[dict] = []
+        ct = cost_tracker or CostTracker()
 
         if mode == "serial":
             prev_task = None
             for seg in segments:
+                idx = seg.get("index", 0)
                 content = self._build_content(seg, prev_task)
-                has_frame = prev_task and prev_task.get("last_frame_url")
+                has_frame = bool(prev_task and prev_task.get("last_frame_url"))
+                reservation_id = f"seg-{idx}-{id(seg):x}"
+                await ct.reserve(reservation_id, DEFAULT_SEGMENT_COST_USD,
+                                 label=f"chain segment {idx} ({mode})")
                 try:
                     result = await self._ark.create_task(
                         model=model_id,
@@ -263,7 +305,7 @@ class ChainGenerator:
                         logger.warning(
                             "Chain segment %d: image rejected (likely human face), "
                             "retrying as pure text-to-video",
-                            seg.get("index", 0),
+                            idx,
                         )
                         content = [{"type": "text", "text": seg.get("prompt", "")}]
                         has_frame = False
@@ -277,11 +319,12 @@ class ChainGenerator:
                                 return_last_frame=True,
                             )
                         except Exception as e2:
-                            idx = seg.get("index", 0)
+                            await ct.refund(reservation_id)
                             logger.error("Chain segment %d retry also failed: %s", idx, e2)
                             results.append(self._make_error(seg, e2))
                             break
                     else:
+                        await ct.refund(reservation_id)
                         results.append(self._make_error(seg, e))
                         break
 
@@ -293,13 +336,17 @@ class ChainGenerator:
                     model=model_id,
                 )
                 results.append(task)
+                await ct.reconcile(reservation_id, DEFAULT_SEGMENT_COST_USD)
 
                 task = await self._wait_for_task(task["id"])
                 prev_task = task
 
         elif mode == "parallel":
-            tasks = []
-            for seg in segments:
+            async def submit(seg: dict) -> dict:
+                idx = seg.get("index", 0)
+                reservation_id = f"seg-{idx}-{id(seg):x}"
+                await ct.reserve(reservation_id, DEFAULT_SEGMENT_COST_USD,
+                                 label=f"chain segment {idx} (parallel)")
                 content = [{"type": "text", "text": seg.get("prompt", "")}]
                 try:
                     result = await self._ark.create_task(
@@ -317,16 +364,34 @@ class ChainGenerator:
                         mode="t2v",
                         model=model_id,
                     )
-                    tasks.append(task)
-                except Exception as e:
-                    tasks.append({"error": str(e), "index": seg.get("index", 0)})
+                    await ct.reconcile(reservation_id, DEFAULT_SEGMENT_COST_USD)
+                    return task
+                except Exception:
+                    await ct.refund(reservation_id)
+                    raise
 
-            for task in tasks:
-                if "error" not in task:
-                    completed = await self._wait_for_task(task["id"])
-                    results.append(completed)
+            # N1.1 防御：run_parallel 保证每个 input 都有 ParallelResult，
+            # 无论 success / failed / cancelled，绝不静默丢弃。
+            submit_results = await run_parallel(
+                segments, submit, max_concurrency=max(1, max_parallel),
+            )
+            for pr in submit_results:
+                # ``ParallelResult`` exposes ``.ok`` / ``.failed`` / ``.cancelled``
+                # (NOT ``.success`` — that attribute does not exist and would
+                # raise AttributeError at runtime; Sprint 7 caught this via
+                # tests/test_long_video.py).
+                if pr.ok and pr.value is not None:
+                    results.append(pr.value)
                 else:
-                    results.append(task)
+                    seg = pr.item if isinstance(pr.item, dict) else {}
+                    err = pr.error or RuntimeError("unknown failure")
+                    results.append(self._make_error(seg, err))
+
+            for entry in list(results):
+                if "error" not in entry and entry.get("id"):
+                    completed = await self._wait_for_task(entry["id"])
+                    idx = results.index(entry)
+                    results[idx] = completed
 
         return results
 
