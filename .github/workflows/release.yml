@@ -123,21 +123,10 @@ jobs:
           gh release upload "${{ env.RELEASE_TAG }}" dist/* --clobber
           gh release upload "${{ env.RELEASE_TAG }}" dist-sdk/* --clobber
 
-      - name: Publish main package to PyPI (Trusted Publishing / OIDC)
-        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags') && env.PYPI_API_TOKEN == '' }}
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist/
-
-      - name: Publish main package to PyPI (API token)
-        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags') && env.PYPI_API_TOKEN != '' }}
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ env.PYPI_API_TOKEN }}
-        run: |
-          pip install twine
-          twine upload dist/* --skip-existing
-
+      # 必须先发 Plugin SDK 再发 main package：
+      # main 的 [plugins]/[all] extras 依赖 openakita-plugin-sdk>=X，
+      # 如果先发 main，PyPI 上会出现 "main 已上架但 SDK 还没上架" 的窗口，
+      # 此期间 `pip install openakita[all]` 会因找不到 SDK 版本而失败。
       - name: Publish Plugin SDK to PyPI (Trusted Publishing / OIDC)
         if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags') && env.PYPI_API_TOKEN == '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -152,6 +141,37 @@ jobs:
         run: |
           pip install twine
           twine upload dist-sdk/* --skip-existing
+
+      - name: Wait for SDK to be indexed on PyPI
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags') }}
+        run: |
+          SDK_VERSION=$(python -c "import tomllib; print(tomllib.load(open('openakita-plugin-sdk/pyproject.toml','rb'))['project']['version'])")
+          echo "Waiting for openakita-plugin-sdk==${SDK_VERSION} to appear on PyPI..."
+          for i in $(seq 1 60); do
+            if pip index versions openakita-plugin-sdk 2>/dev/null | grep -q "${SDK_VERSION}"; then
+              echo "SDK ${SDK_VERSION} is available on PyPI (attempt ${i})"
+              exit 0
+            fi
+            echo "Attempt ${i}/60: not yet indexed, sleeping 5s..."
+            sleep 5
+          done
+          echo "Timed out waiting for SDK ${SDK_VERSION} on PyPI" >&2
+          exit 1
+
+      - name: Publish main package to PyPI (Trusted Publishing / OIDC)
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags') && env.PYPI_API_TOKEN == '' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+      - name: Publish main package to PyPI (API token)
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags') && env.PYPI_API_TOKEN != '' }}
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ env.PYPI_API_TOKEN }}
+        run: |
+          pip install twine
+          twine upload dist/* --skip-existing
 
   # ── Job 2b: Desktop 安装包构建（多平台矩阵） ──
   desktop_release:
