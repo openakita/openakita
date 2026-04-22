@@ -7,7 +7,7 @@ Validates all paths identified in the plan:
 - Interrupt: card recreated after consumption, cleaned by clear_typing
 - Split message: first fragment consumes card, rest sent normally
 - Fast response: no card created
-- Media message: card updated to "处理完成", media sent normally
+- Media message: card updated to "Done", media sent normally
 - AI Card: upgrade path with fallback to StandardCard
 - Stream thinking / chain text / compose display / footer
 """
@@ -344,7 +344,7 @@ class TestTypingLifecycle:
         assert sk not in adapter._thinking_cards
         put_body = adapter._http_client.put.call_args.kwargs["json"]
         assert put_body["cardBizId"] == card_state.card_id
-        assert "处理完成" in json.loads(put_body["cardData"])["contents"][0]["text"]
+        assert "Done" in json.loads(put_body["cardData"])["contents"][0]["text"]
 
     @pytest.mark.asyncio
     async def test_card_recreation_after_consumption(self, adapter):
@@ -532,11 +532,11 @@ class TestStreamThinking:
         await adapter.stream_thinking("conv_group", "Let me analyze this...")
 
         assert adapter._streaming_thinking[sk] == "Let me analyze this..."
-        assert adapter._typing_status[sk] == "深度思考"
+        assert adapter._typing_status[sk] == "Deep thinking"
         adapter._http_client.put.assert_called_once()
         body = adapter._http_client.put.call_args.kwargs["json"]
         card_data = json.loads(body["cardData"])
-        assert "思考过程" in card_data["contents"][0]["text"]
+        assert "Thinking process" in card_data["contents"][0]["text"]
 
     @pytest.mark.asyncio
     async def test_thinking_replaces_not_appends(self, adapter):
@@ -591,7 +591,7 @@ class TestStreamChainText:
         await adapter.stream_chain_text("conv_group", "分析: 数据解读")
 
         assert len(adapter._streaming_chain[sk]) == 2
-        assert adapter._typing_status[sk] == "调用工具"
+        assert adapter._typing_status[sk] == "Calling tool"
 
     @pytest.mark.asyncio
     async def test_chain_text_throttle(self, adapter):
@@ -617,7 +617,7 @@ class TestComposeThinkingDisplay:
 
     def test_empty_state_shows_default(self, adapter):
         display = adapter._compose_thinking_display("unknown_sk:")
-        assert "思考中" in display
+        assert "Thinking" in display
 
     def test_thinking_only(self, adapter):
         sk = "conv_group:"
@@ -625,7 +625,7 @@ class TestComposeThinkingDisplay:
         adapter._streaming_thinking_ms[sk] = 3200
 
         display = adapter._compose_thinking_display(sk)
-        assert "思考过程" in display
+        assert "Thinking process" in display
         assert "(3.2s)" in display
         assert "分析用户需求" in display
 
@@ -659,7 +659,7 @@ class TestComposeThinkingDisplay:
         adapter._streaming_buffers[sk] = "结果"
 
         display = adapter._compose_thinking_display(sk)
-        assert "思考过程" in display
+        assert "Thinking process" in display
         assert "搜索: 查询" in display
         assert "---" in display
         assert "结果 ▍" in display
@@ -680,11 +680,11 @@ class TestBuildFooterNote:
     def test_in_progress_footer(self, adapter):
         sk = "conv_group:"
         adapter._typing_start_time[sk] = time.time() - 5.0
-        adapter._typing_status[sk] = "深度思考"
+        adapter._typing_status[sk] = "Deep thinking"
 
         footer = adapter._build_footer_note(sk)
         assert "⏱" in footer
-        assert "深度思考" in footer
+        assert "Deep thinking" in footer
         assert "5." in footer or "4." in footer
 
     def test_final_footer(self, adapter):
@@ -692,7 +692,7 @@ class TestBuildFooterNote:
         adapter._typing_start_time[sk] = time.time() - 3.0
 
         footer = adapter._build_footer_note(sk, final=True)
-        assert "完成" in footer
+        assert "done" in footer
         assert "3." in footer or "2." in footer
 
     def test_no_start_time(self, adapter):
@@ -702,10 +702,10 @@ class TestBuildFooterNote:
     def test_status_only(self, adapter):
         sk = "conv_group:"
         adapter._typing_start_time[sk] = time.time()
-        adapter._typing_status[sk] = "生成回复"
+        adapter._typing_status[sk] = "Generating reply"
 
         footer = adapter._build_footer_note(sk)
-        assert "生成回复" in footer
+        assert "Generating reply" in footer
 
 
 class TestCacheCleanup:
@@ -718,7 +718,7 @@ class TestCacheCleanup:
         adapter._streaming_thinking[sk] = "thought"
         adapter._streaming_thinking_ms[sk] = 1000
         adapter._streaming_chain[sk] = ["step"]
-        adapter._typing_status[sk] = "深度思考"
+        adapter._typing_status[sk] = "Deep thinking"
         adapter._typing_start_time[sk] = time.time()
         adapter._http_client.put = AsyncMock(return_value=_mock_card_response())
 
@@ -737,7 +737,7 @@ class TestCacheCleanup:
         adapter._streaming_thinking[sk] = "thought"
         adapter._streaming_thinking_ms[sk] = 2000
         adapter._streaming_chain[sk] = ["chain"]
-        adapter._typing_status[sk] = "生成回复"
+        adapter._typing_status[sk] = "Generating reply"
         adapter._typing_start_time[sk] = time.time() - 3.0
         adapter._http_client.put = AsyncMock(return_value=_mock_card_response())
 
@@ -756,7 +756,7 @@ class TestCacheCleanup:
         adapter._thinking_cards[sk] = _CardState(card_id="biz_msg", is_ai_card=False)
         adapter._streaming_thinking[sk] = "thought"
         adapter._streaming_chain[sk] = ["chain"]
-        adapter._typing_status[sk] = "深度思考"
+        adapter._typing_status[sk] = "Deep thinking"
         adapter._typing_start_time[sk] = time.time()
         adapter._http_client.put = AsyncMock(return_value=_mock_card_response())
 

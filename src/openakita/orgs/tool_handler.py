@@ -1351,10 +1351,10 @@ class OrgToolHandler:
             node_id,
         )
         return (
-            f"任务已分配给 {to_node}（chain: {chain_id[:12]}）: {args['task'][:50]}\n"
-            f"⚠️ 注意：任务已异步下发，下级尚未完成。"
-            f"请勿立即汇报「已完成」，应使用 org_list_delegated_tasks 跟踪进度，"
-            f"或等待下级通过 org_submit_deliverable 提交结果后再做最终汇报。"
+            f"Task assigned to {to_node} (chain: {chain_id[:12]}): {args['task'][:50]}\n"
+            f"⚠️ Note: the task was dispatched asynchronously and the subordinate hasn't finished yet. "
+            f"Do NOT immediately report 'completed'; use org_list_delegated_tasks to track progress, "
+            f"or wait for the subordinate to call org_submit_deliverable before reporting the final result."
         )
 
     async def _handle_org_escalate(
@@ -2275,8 +2275,8 @@ class OrgToolHandler:
             from openakita.config import settings as _s_wait
             if not getattr(_s_wait, "org_wait_primitive_enabled", True):
                 return (
-                    "[org_wait_for_deliverable 已禁用] "
-                    "请改用 org_list_delegated_tasks 查询进度。"
+                    "[org_wait_for_deliverable disabled] "
+                    "Please use org_list_delegated_tasks to query progress instead."
                 )
         except Exception:
             pass
@@ -2312,9 +2312,9 @@ class OrgToolHandler:
         ]
         if not open_targets:
             return (
-                "没有需要等待的未关闭子链。可能下级已全部交付——"
-                "请检查 inbox 中的 deliverable 消息后用 org_accept_deliverable 验收，"
-                "或调用 org_list_delegated_tasks 确认状态。"
+                "No open sub-chains to wait for. Subordinates may have delivered everything — "
+                "check for deliverable messages in inbox and accept them with org_accept_deliverable, "
+                "or call org_list_delegated_tasks to confirm status."
             )
 
         # 准备 chain events（缺失时按需补建）
@@ -2371,11 +2371,11 @@ class OrgToolHandler:
 
         if not done:
             return (
-                f"[等待超时] {timeout}s 内未收到下级新交付/新消息。"
-                f"未关闭子链：{open_targets[:5]}{'...' if len(open_targets) > 5 else ''}。"
-                "建议：用 org_list_delegated_tasks 查看具体进度，"
-                "或继续 org_wait_for_deliverable 再等一轮；"
-                "若已等待较久且确实需要推进，可向用户输出阶段性汇总。"
+                f"[Wait timed out] No new deliverable/message received from subordinates within {timeout}s. "
+                f"Open sub-chains: {open_targets[:5]}{'...' if len(open_targets) > 5 else ''}. "
+                "Suggestions: use org_list_delegated_tasks to inspect progress, "
+                "or call org_wait_for_deliverable again for another round; "
+                "if you've already waited a while and need to move forward, report a staged summary to the user."
             )
 
         parts: list[str] = []
@@ -2383,17 +2383,17 @@ class OrgToolHandler:
             preview = closed_chains_now[:5]
             extra = "..." if len(closed_chains_now) > 5 else ""
             parts.append(
-                f"以下子链已关闭，请检查相关 deliverable：{preview}{extra}"
+                f"The following sub-chains are closed, please check related deliverables: {preview}{extra}"
             )
         if inbox_triggered:
             parts.append(
-                "下级有新消息（question/escalate）需要你立即响应——"
-                "请先处理 inbox 中的消息，处理完可继续 org_wait_for_deliverable 等剩余子链。"
+                "Subordinate has a new message (question/escalate) that needs your immediate response — "
+                "handle the inbox messages first, then call org_wait_for_deliverable again for any remaining sub-chains."
             )
         if not parts:
             parts.append(
-                "[wait 已返回] 未识别到具体事件来源，可能是命令被取消或事件被竞态消化。"
-                "请检查组织状态后决定下一步。"
+                "[wait returned] No specific event source identified; the command may have been cancelled "
+                "or the event consumed in a race. Check organization state before deciding next steps."
             )
         return " | ".join(parts)
 
