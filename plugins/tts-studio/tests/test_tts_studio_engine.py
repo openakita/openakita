@@ -5,13 +5,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
 _HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_HERE))
 
 from studio_engine import (  # noqa: E402
-    Script, Segment, concat_audio_command, parse_dialogue_script,
+    concat_audio_command,
+    parse_dialogue_script,
 )
 
 
@@ -57,7 +56,8 @@ def test_parser_empty_input_returns_empty_segments() -> None:
 
 def test_concat_command_writes_list_file(tmp_path) -> None:
     parts = [tmp_path / "a.mp3", tmp_path / "b.mp3"]
-    for p in parts: p.write_bytes(b"x")
+    for p in parts:
+        p.write_bytes(b"x")
     list_file = tmp_path / "list.txt"
     cmd = concat_audio_command(parts=parts, list_file=list_file,
                                 output=tmp_path / "out.mp3", ffmpeg="ffmpeg")

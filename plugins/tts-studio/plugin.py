@@ -4,23 +4,41 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
-
-from openakita.plugins.api import PluginAPI, PluginBase
 from openakita_plugin_sdk.contrib import (
-    ErrorCoach, QualityGates, TaskStatus, UIEventEmitter,
+    ErrorCoach,
+    QualityGates,
+    TaskStatus,
+    UIEventEmitter,
 )
-
+from pydantic import BaseModel, Field
 from studio_engine import (
-    PRESET_VOICES_ZH, concat_audio_command, parse_dialogue_script,
+    PRESET_VOICES_ZH,
+    concat_audio_command,
+    configure_credentials,
+    parse_dialogue_script,
     select_tts_provider,
 )
 from task_manager import StudioTaskManager
+
+from openakita.plugins.api import PluginAPI, PluginBase
+
+_SENSITIVE_CONFIG_KEYS = {"dashscope_api_key", "openai_api_key"}
+
+
+def _redacted_config(cfg: dict[str, str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for k, v in cfg.items():
+        if k in _SENSITIVE_CONFIG_KEYS and v:
+            out[k] = f"***{v[-4:]}" if len(v) > 4 else "***"
+        else:
+            out[k] = v
+    return out
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +46,7 @@ logger = logging.getLogger(__name__)
 class CreateBody(BaseModel):
     script: str = Field(..., min_length=1)
     title: str = "未命名"
-    default_voice: str = "zh-CN-XiaoxiaoNeural"
+    default_voice: str = "Cherry"
     voice_map: dict[str, str] = Field(default_factory=dict)   # {"A": "voiceId", ...}
     provider: str = "auto"
 
@@ -69,7 +87,15 @@ class Plugin(PluginBase):
             ],
             self._handle_tool_call,
         )
+        api.spawn_task(self._load_credentials())
         api.log("tts-studio loaded")
+
+    async def _load_credentials(self) -> None:
+        cfg = await self._tm.get_config()
+        configure_credentials(
+            dashscope_api_key=cfg.get("dashscope_api_key") or os.environ.get("DASHSCOPE_API_KEY", ""),
+            openai_api_key=cfg.get("openai_api_key") or os.environ.get("OPENAI_API_KEY", ""),
+        )
 
     async def on_unload(self) -> None:
         workers = [t for t in list(self._workers.values()) if not t.done()]
@@ -116,12 +142,23 @@ class Plugin(PluginBase):
 
         @router.get("/config")
         async def get_config():
-            return await self._tm.get_config()
+            return _redacted_config(await self._tm.get_config())
 
         @router.post("/config")
         async def set_config(updates: dict):
             await self._tm.set_config({k: str(v) for k, v in updates.items()})
-            return await self._tm.get_config()
+            await self._load_credentials()
+            return _redacted_config(await self._tm.get_config())
+
+        @router.get("/settings")
+        async def get_settings():
+            return _redacted_config(await self._tm.get_config())
+
+        @router.post("/settings")
+        async def set_settings(updates: dict):
+            await self._tm.set_config({k: str(v) for k, v in updates.items()})
+            await self._load_credentials()
+            return _redacted_config(await self._tm.get_config())
 
         @router.post("/preview")
         async def preview(body: CreateBody):
@@ -193,7 +230,8 @@ class Plugin(PluginBase):
 
     async def _run(self, task_id: str) -> None:
         rec = await self._tm.get_task(task_id)
-        if rec is None: return
+        if rec is None:
+            return
         params = rec.params
 
         try:
@@ -203,7 +241,7 @@ class Plugin(PluginBase):
 
             script = parse_dialogue_script(
                 params.get("script", ""),
-                default_voice=params.get("default_voice", "zh-CN-XiaoxiaoNeural"),
+                default_voice=params.get("default_voice", "Cherry"),
                 voice_map=params.get("voice_map") or {},
                 title=params.get("title", "未命名"),
             )

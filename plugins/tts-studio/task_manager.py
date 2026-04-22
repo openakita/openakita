@@ -15,6 +15,9 @@ class StudioTaskManager(BaseTaskManager):
 
     def default_config(self):
         return {
-            "default_voice": "zh-CN-XiaoxiaoNeural",
+            "default_voice": "Cherry",
             "preferred_provider": "auto",
+            "dashscope_api_key": "",
+            "openai_api_key": "",
+            "ffmpeg_path": "ffmpeg",
         }
