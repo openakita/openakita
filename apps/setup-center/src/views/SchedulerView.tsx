@@ -43,6 +43,8 @@ type ScheduledTask = {
   created_at: string;
   updated_at: string;
   metadata: Record<string, any>;
+  action?: string | null;
+  agent_profile_id?: string;
 };
 
 type TaskExecution = {
@@ -273,6 +275,25 @@ function taskToForm(task: ScheduledTask): TaskForm {
     if (mode === "monthly") f.dayOfMonth = safeInt(parts[2], 1);
   }
 
+  // Playbook metadata hydration — surface the stored playbook block back into
+  // the form when editing an existing playbook task.
+  if (task.task_type === "playbook" || task.action === "system:autorun_playbook") {
+    f.task_type = "playbook";
+    const pb = (task.metadata || {}).playbook || {};
+    f.playbook = {
+      documents: (pb.documents || []).map((d: any, i: number) => ({
+        key: `doc-saved-${i}-${Math.random().toString(36).slice(2, 8)}`,
+        filename: d.filename || "",
+        reset_on_completion: !!d.reset_on_completion,
+      })),
+      prompt: pb.prompt || defaultForm.playbook.prompt,
+      loop_enabled: !!pb.loop_enabled,
+      max_loops: typeof pb.max_loops === "number" ? pb.max_loops : null,
+      worktree_enabled: !!(pb.worktree && pb.worktree.enabled),
+      agent_profile_id: (task as any).agent_profile_id || "default",
+    };
+  }
+
   return f;
 }
 
@@ -299,6 +320,24 @@ function formToTrigger(f: TaskForm): { trigger_type: string; trigger_config: Rec
     case "custom":
       return { trigger_type: "cron", trigger_config: { cron: f.cronExpr } };
   }
+}
+
+function formToPlaybookMetadata(f: TaskForm): Record<string, any> {
+  const pb = f.playbook;
+  return {
+    playbook: {
+      documents: pb.documents
+        .filter(d => d.filename.trim())
+        .map(d => ({
+          filename: d.filename.trim(),
+          reset_on_completion: d.reset_on_completion,
+        })),
+      prompt: pb.prompt,
+      loop_enabled: pb.loop_enabled,
+      max_loops: pb.loop_enabled ? pb.max_loops : null,
+      worktree: { enabled: pb.worktree_enabled },
+    },
+  };
 }
 
 /** Human-readable trigger description for task list cards */
@@ -480,14 +519,27 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
     if (form.task_type === "task" && !form.prompt.trim()) {
       showMsg(t("scheduler.promptPlaceholder"), false); return;
     }
+    if (form.task_type === "playbook") {
+      const docs = form.playbook.documents.filter(d => d.filename.trim());
+      if (docs.length === 0) {
+        showMsg(t("scheduler.playbook.noDocuments"), false); return;
+      }
+      if (!form.playbook.prompt.trim()) {
+        showMsg(t("scheduler.playbook.prompt"), false); return;
+      }
+    }
 
     const { trigger_type, trigger_config } = formToTrigger(form);
 
     setBusy(true);
     try {
-      const payload = {
+      const isPlaybook = form.task_type === "playbook";
+      const payload: Record<string, any> = {
         name: form.name.trim(),
-        task_type: form.task_type,
+        // Backend TaskType enum only accepts reminder | task. Playbook rides on
+        // `task` because the LLM-backed execution path is the one that gets
+        // overridden by `action = system:autorun_playbook`.
+        task_type: isPlaybook ? "task" : form.task_type,
         trigger_type,
         trigger_config,
         reminder_message: form.task_type === "reminder" ? form.reminder_message : null,
@@ -496,6 +548,11 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
         chat_id: form.chat_id || "",
         enabled: form.enabled,
       };
+      if (isPlaybook) {
+        payload.action = "system:autorun_playbook";
+        payload.agent_profile_id = form.playbook.agent_profile_id || "default";
+        payload.metadata = formToPlaybookMetadata(form);
+      }
 
       let res: Response;
       if (editingId) {
@@ -1140,7 +1197,11 @@ export function SchedulerView({ serviceRunning, apiBaseUrl = "" }: { serviceRunn
                         <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4.5 bg-muted/50">{t("scheduler.system")}</Badge>
                       )}
                       <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5">
-                        {task.task_type === "reminder" ? t("scheduler.typeReminder") : t("scheduler.typeTask")}
+                        {task.action === "system:autorun_playbook"
+                          ? t("scheduler.typePlaybook")
+                          : task.task_type === "reminder"
+                            ? t("scheduler.typeReminder")
+                            : t("scheduler.typeTask")}
                       </Badge>
                       <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4.5">
                         {triggerBadgeLabel(task.trigger_type, task.trigger_config)}
