@@ -213,6 +213,35 @@ function pluginApi(method, path, body) {
   return apiCall(method, base + path, body);
 }
 
+// Native download via host bridge. On Tauri the host invokes the native
+// `download_file` Rust command (reqwest -> disk) and resolves with the
+// REAL filesystem path the file was saved to. On web mode the host falls
+// back to <a download>, so the resolved `path` is just the filename — in
+// that case the caller should fall through to the in-page <a download>
+// path so the browser handles the location.
+function bridgeDownload(url, fname) {
+  return new Promise(function(resolve) {
+    if (!_inIframe || !_bridgeConnected) { resolve({ ok: false, error: "no-bridge" }); return; }
+    var id = uid();
+    _pending[id] = { resolve: resolve, reject: function(e) { resolve({ ok: false, error: String(e) }); } };
+    post({ type: "bridge:download", requestId: id, payload: { url: url, filename: fname } });
+    setTimeout(function() {
+      if (_pending[id]) { delete _pending[id]; resolve({ ok: false, error: "timeout" }); }
+    }, 60000);
+  });
+}
+
+// Ask the host to reveal a file in the OS file manager (Explorer / Finder).
+// Best-effort: silently no-ops if the host doesn't support it (e.g. plain web).
+function bridgeShowInFolder(path) {
+  if (!_inIframe || !_bridgeConnected || !path) return;
+  if (_caps.length && _caps.indexOf("show-in-folder") === -1) return;
+  var id = uid();
+  _pending[id] = { resolve: function() {}, reject: function() {} };
+  post({ type: "bridge:show-in-folder", requestId: id, payload: { path: path } });
+  setTimeout(function() { if (_pending[id]) delete _pending[id]; }, 10000);
+}
+
 window.addEventListener("message", function(e) {
   var d = e.data;
   if (!d || !d.__akita_bridge) return;
@@ -272,12 +301,44 @@ async function downloadImage(taskId, idx, promptHint) {
     showToast(_tr("toast.downloading", null, "Downloading..."));
     var base = _detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/tongyi-image");
     var url = base + "/images/" + taskId + "?idx=" + (idx || 0) + "&download=1";
+    // Default extension; refined below when we actually fetch the blob in
+    // the web fallback path. The Tauri host preserves whatever Content-Type
+    // the server sends, so a .png suffix is a safe default for the native
+    // path too (DashScope wan27 returns PNG).
+    var fname = "tongyi_" + (promptHint || "image").slice(0, 20).replace(/[\\/:*?"<>|\s]/g, "_") + "_" + idx + ".png";
+
+    // Preferred path: ask the host to do a native download. On Tauri this
+    // saves into the user's Downloads directory and returns the absolute
+    // path so we can both (a) tell the user exactly where it landed and
+    // (b) reveal it in the OS file manager. On plain web the host returns
+    // just the filename — we treat that as "no native path" and fall back.
+    if (_inIframe && _bridgeConnected) {
+      var native = await bridgeDownload(url, fname);
+      // A return value with a path that looks absolute (contains a slash
+      // or backslash) means the host actually wrote the file to disk.
+      if (native && native.ok && native.path && /[\\/]/.test(String(native.path))) {
+        showToast(_tr("toast.downloadedTo", { path: native.path }, "Saved to: {path}"));
+        // Reveal the file so the user immediately sees where it went —
+        // this is the whole point of switching off <a download>.
+        bridgeShowInFolder(native.path);
+        return;
+      }
+      // If native failed for a real reason (not just web fallback), tell
+      // the user — then still try the in-page download as a last resort.
+      if (native && !native.ok && native.error && native.error !== "no-bridge") {
+        console.warn("[downloadImage] bridge download failed, falling back:", native.error);
+      }
+    }
+
+    // Fallback: in-page <a download>. Browser decides the save location,
+    // so we explicitly tell the user to look in their default Downloads
+    // folder instead of leaving them guessing.
     var resp = await fetch(url);
     if (!resp.ok) throw new Error(_tr("toast.serverReturned", { status: resp.status }, "Server returned {status}"));
     var blob = await resp.blob();
-    var objUrl = URL.createObjectURL(blob);
     var ext = blob.type === "image/jpeg" ? ".jpg" : blob.type === "image/webp" ? ".webp" : ".png";
-    var fname = "tongyi_" + (promptHint || "image").slice(0, 20).replace(/[\\/:*?"<>|\s]/g, "_") + "_" + idx + ext;
+    if (!fname.endsWith(ext)) fname = fname.replace(/\.[a-z]+$/, ext);
+    var objUrl = URL.createObjectURL(blob);
     var a = document.createElement("a");
     a.href = objUrl;
     a.download = fname;
@@ -285,7 +346,7 @@ async function downloadImage(taskId, idx, promptHint) {
     a.click();
     document.body.removeChild(a);
     setTimeout(function() { URL.revokeObjectURL(objUrl); }, 3000);
-    showToast(_tr("toast.downloaded", { name: fname }, "Downloaded: {name}"));
+    showToast(_tr("toast.downloadedBrowser", { name: fname }, "Downloaded {name} — check your browser's default Downloads folder."));
   } catch (e) {
     showToast(_tr("toast.downloadFailed", { msg: e.message }, "Download failed: {msg}"));
   }
@@ -463,6 +524,8 @@ const I18N_DICT = {
     "toast.downloading": "正在下载...",
     "toast.downloadFailed": "下载失败: {msg}",
     "toast.downloaded": "已下载: {name}",
+    "toast.downloadedTo": "已保存到: {path}（已为你打开所在文件夹）",
+    "toast.downloadedBrowser": "已下载: {name}（请在浏览器默认下载文件夹中查看）",
     "toast.serverReturned": "服务端返回 {status}",
     "toast.optimizeOk": "提示词优化完成",
     "toast.optimizeFail": "优化失败",
@@ -616,6 +679,8 @@ const I18N_DICT = {
     "toast.downloading": "Downloading…",
     "toast.downloadFailed": "Download failed: {msg}",
     "toast.downloaded": "Downloaded: {name}",
+    "toast.downloadedTo": "Saved to: {path} (folder opened for you)",
+    "toast.downloadedBrowser": "Downloaded {name} — check your browser's default Downloads folder.",
     "toast.serverReturned": "Server returned {status}",
     "toast.optimizeOk": "Prompt optimized",
     "toast.optimizeFail": "Optimize failed",
@@ -749,6 +814,16 @@ function App() {
   const [tab, setTab] = useState("create");
   const [apiReady, setApiReady] = useState(false);
   const [tabsMounted, setTabsMounted] = useState({ create: true });
+  // Bumped whenever the user navigates to the tasks tab so that a mounted
+  // TasksTab can re-fetch its list. Without this, switching back from
+  // "create" after starting a job leaves the list stale until the 15s
+  // polling tick or a filter change triggers another load.
+  const [tasksRefreshSignal, setTasksRefreshSignal] = useState(0);
+
+  const goToTab = useCallback((id) => {
+    setTab(id);
+    if (id === "tasks") setTasksRefreshSignal(s => s + 1);
+  }, []);
 
   useEffect(() => {
     pluginApi("GET", "/settings").then(r => {
@@ -789,7 +864,7 @@ function App() {
       <div className="tabs">
         {TABS.map(item => (
           <div key={item.id} className={`tab ${tab === item.id ? "active" : ""}`}
-               onClick={() => setTab(item.id)}>{item.name}</div>
+               onClick={() => goToTab(item.id)}>{item.name}</div>
         ))}
       </div>
       {!apiReady && tab !== "settings" && (
@@ -813,10 +888,10 @@ function App() {
       )}
       <div className="content">
         <div style={{ display: tab === "create" ? "block" : "none", height: "100%" }}>
-          <CreateTab apiReady={apiReady} goToTasks={() => setTab("tasks")} />
+          <CreateTab apiReady={apiReady} goToTasks={() => goToTab("tasks")} />
         </div>
         <div style={{ display: tab === "tasks" ? "block" : "none", height: "100%" }}>
-          {tabsMounted.tasks && <TasksTab />}
+          {tabsMounted.tasks && <TasksTab refreshSignal={tasksRefreshSignal} />}
         </div>
         <div style={{ display: tab === "guide" ? "block" : "none", height: "100%" }}>
           {tabsMounted.guide && <GuideTab />}
@@ -1397,7 +1472,7 @@ function CreateTab({ apiReady, goToTasks }) {
 }
 
 // ─── Tasks Tab ───
-function TasksTab() {
+function TasksTab({ refreshSignal = 0 }) {
   const t = useT();
   const MODES = modeList(t);
   const [tasks, setTasks] = useState([]);
@@ -1426,6 +1501,18 @@ function TasksTab() {
   }, [filter, modeFilter]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Re-load whenever the parent bumps the refresh signal (e.g. user just
+  // navigated to the tasks tab after creating a job). We use a ref so we
+  // always invoke the latest `load` (which closes over current filter
+  // values) without making this effect re-run on every load identity
+  // change — that would cause a redundant fetch alongside the existing
+  // `useEffect(() => load(), [load])` above.
+  const loadRef = useRef(load);
+  useEffect(() => { loadRef.current = load; }, [load]);
+  useEffect(() => {
+    if (refreshSignal > 0) loadRef.current();
+  }, [refreshSignal]);
 
   useEffect(() => {
     onEvent("plugin:tongyi-image:task_update", () => load());
@@ -1557,16 +1644,30 @@ function TasksTab() {
 
               {selected.status === "succeeded" && (
                 selected.image_urls?.length > 0 ? (
-                  <div className="image-gallery" style={{justifyItems: "center"}}>
-                    {selected.image_urls.map((url, i) => (
-                      <div key={i} className="image-card" onClick={() => setLightbox(url)} style={{maxWidth: 320, width: "100%"}}>
-                        <img src={url} alt="" />
-                        <div className="image-card-actions">
-                          <button onClick={e => { e.stopPropagation(); downloadImage(selected.id, i, selected.prompt); }}>{t("preview.image.download")}</button>
-                        </div>
+                  // Mirror the create-preview branch (CreateTab) so a single
+                  // result image renders in its native aspect ratio (capped
+                  // at 600px wide, object-fit: contain) instead of being
+                  // squashed into a 320px square via the multi-image grid's
+                  // aspect-ratio: 1 + object-fit: cover. Multi-image tasks
+                  // keep the grid layout — only the 1-image case differs.
+                  (() => {
+                    const isSingle = selected.image_urls.length === 1;
+                    const galleryClass = isSingle ? "image-gallery image-gallery--single" : "image-gallery";
+                    const galleryStyle = isSingle ? undefined : {justifyItems: "center"};
+                    const cardStyle = isSingle ? undefined : {maxWidth: 320, width: "100%"};
+                    return (
+                      <div className={galleryClass} style={galleryStyle}>
+                        {selected.image_urls.map((url, i) => (
+                          <div key={i} className="image-card" onClick={() => setLightbox(url)} style={cardStyle}>
+                            <img src={url} alt="" />
+                            <div className="image-card-actions">
+                              <button onClick={e => { e.stopPropagation(); downloadImage(selected.id, i, selected.prompt); }}>{t("preview.image.download")}</button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    );
+                  })()
                 ) : (
                   <div className="empty-state" style={{padding: "30px 20px"}}>
                     <span className="oa-icon" style={{fontSize: 28, marginBottom: 8, opacity: .5, color:"var(--success)"}}
