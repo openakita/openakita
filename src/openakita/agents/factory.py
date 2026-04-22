@@ -136,6 +136,9 @@ class AgentFactory:
         parent_brain: Any = None,
         **kwargs: Any,
     ) -> Agent:
+        if profile.type == AgentType.EXTERNAL_CLI:
+            return await self._create_external_cli(profile)
+
         from openakita.core.agent import Agent
 
         agent = Agent(name=profile.get_display_name(), brain=parent_brain, **kwargs)
@@ -213,6 +216,66 @@ class AgentFactory:
             f"preferred_endpoint={profile.preferred_endpoint or 'auto'})"
         )
         return agent
+
+    async def _create_external_cli(self, profile: AgentProfile) -> Any:
+        """Build an ExternalCliAgent with MCP filter + permission_rules applied.
+
+        Skill/tool/plugin/identity/memory filters are deliberately skipped — the
+        external CLI owns its own tool belt. See spec §AgentFactory skip-list.
+        """
+        from openakita.agents.cli_providers import PROVIDERS
+        from openakita.agents.external_cli import ExternalCliAgent
+
+        if profile.cli_provider_id is None:
+            raise ValueError(
+                f"Profile {profile.id} has type=EXTERNAL_CLI but cli_provider_id is None"
+            )
+        adapter = PROVIDERS.get(profile.cli_provider_id)
+        if adapter is None:
+            raise ValueError(
+                f"No provider adapter registered for cli_provider_id={profile.cli_provider_id!r}"
+            )
+
+        mcp_servers_filtered = self._filter_mcp_for_external_cli(profile)
+
+        agent = ExternalCliAgent(
+            profile,
+            adapter,
+            mcp_servers_filtered=mcp_servers_filtered,
+            limiter=self._external_cli_limiter,
+        )
+
+        if profile.permission_rules:
+            agent._permission_rules = list(profile.permission_rules)
+        if profile.custom_prompt:
+            agent._custom_prompt_suffix = profile.custom_prompt
+        if profile.preferred_endpoint:
+            agent._preferred_endpoint = profile.preferred_endpoint
+
+        logger.info(
+            f"AgentFactory created EXTERNAL_CLI: {profile.id} "
+            f"(provider={profile.cli_provider_id.value}, "
+            f"permission_mode={profile.cli_permission_mode.value}, "
+            f"mcp_servers={len(mcp_servers_filtered)})"
+        )
+        return agent
+
+    @staticmethod
+    def _filter_mcp_for_external_cli(profile: AgentProfile) -> list[str]:
+        """Apply profile.mcp_mode filter to profile.mcp_servers without
+        touching the native mcp_catalog. Returns the list of server ids the
+        external CLI is allowed to see."""
+        from openakita.agents.profile import FilterMode
+
+        servers = list(profile.mcp_servers or [])
+        mode = profile.mcp_mode
+        if mode == FilterMode.ALL or mode == "all":
+            return servers
+        if mode == FilterMode.INCLUSIVE or mode == "inclusive":
+            return servers
+        if mode == FilterMode.EXCLUSIVE or mode == "exclusive":
+            return []
+        return servers
 
     @staticmethod
     def _normalize_skill_name(name: str) -> str:
