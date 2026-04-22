@@ -18,8 +18,12 @@ class AvatarSpeakerTaskManager(BaseTaskManager):
     def default_config(self):
         return {
             "preferred_provider": "auto",
-            "default_voice": "zh-CN-XiaoxiaoNeural",
+            "default_voice": "Cherry",
             "default_rate": "+0%",
             "default_pitch": "+0Hz",
-            "avatar_provider": "none",   # none | stub | (future: heygen | sadtalker)
+            "avatar_provider": "none",
+            # API keys; sourced via _tm.get_config and surfaced through
+            # /settings. Empty default lets bootstrap fall back to env.
+            "dashscope_api_key": "",
+            "openai_api_key": "",
         }

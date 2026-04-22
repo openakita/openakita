@@ -7,22 +7,28 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
-
-from openakita.plugins.api import PluginAPI, PluginBase
 from openakita_plugin_sdk.contrib import (
-    CostEstimator, ErrorCoach, QualityGates, TaskStatus,
-    UIEventEmitter, VendorError, add_upload_preview_route,
-    build_preview_url, collect_storage_stats,
+    CostEstimator,
+    ErrorCoach,
+    QualityGates,
+    TaskStatus,
+    UIEventEmitter,
+    VendorError,
+    add_upload_preview_route,
+    build_preview_url,
 )
-
 from providers import (
     PRESET_VOICES_ZH,
-    select_avatar, select_tts_provider,
+    configure_credentials,
+    select_avatar,
+    select_tts_provider,
 )
+from pydantic import BaseModel, Field
 from task_manager import AvatarSpeakerTaskManager
+
+from openakita.plugins.api import PluginAPI, PluginBase
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +48,30 @@ class CostBody(BaseModel):
     provider: str = "auto"
 
 
+_REDACT_KEYS = ("api_key", "api_token", "secret", "access_key")
+
+
+def _redacted_config(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Mask API-key-like values when echoing config back to the UI."""
+    out: dict[str, Any] = {}
+    for k, v in (cfg or {}).items():
+        if any(token in k.lower() for token in _REDACT_KEYS) and v:
+            sv = str(v)
+            out[k] = sv[:4] + "***" + sv[-2:] if len(sv) > 6 else "***"
+        else:
+            out[k] = v
+    return out
+
+
 _PRICE_TABLE = {
+    "edge":              {"per_1k_chars": 0.0,   "currency": "CNY"},
+    "qwen3_tts_flash":   {"per_1k_chars": 0.04,  "currency": "CNY"},
+    "cosyvoice":         {"per_1k_chars": 0.05,  "currency": "CNY"},
+    "openai":            {"per_1k_chars": 0.015, "currency": "USD"},
+    "stub-silent":       {"per_1k_chars": 0.0,   "currency": "CNY"},
     "edge-tts":            {"per_1k_chars": 0.0,   "currency": "CNY"},
     "dashscope-cosyvoice": {"per_1k_chars": 0.05,  "currency": "CNY"},
     "openai-tts":          {"per_1k_chars": 0.015, "currency": "USD"},
-    "stub-silent":         {"per_1k_chars": 0.0,   "currency": "CNY"},
 }
 
 
@@ -58,6 +83,12 @@ class Plugin(PluginBase):
         self._coach = ErrorCoach()
         self._events = UIEventEmitter(api)
         self._workers: dict[str, asyncio.Task] = {}
+
+        # Wire credentials from per-plugin config first; ``configure_credentials``
+        # is idempotent so ``POST /settings`` can re-call it without restart.
+        # ``_load_credentials`` is async so it runs as a fire-and-forget task —
+        # the first request after boot will see the keys (or fall back to env).
+        api.spawn_task(self._load_credentials())
 
         router = APIRouter()
         self._register_routes(router)
@@ -88,6 +119,27 @@ class Plugin(PluginBase):
             self._handle_tool_call,
         )
         api.log("avatar-speaker loaded")
+
+    async def _load_credentials(self) -> None:
+        """Read API keys from plugin config (with env bootstrap fallback)
+        and push them into the providers module.
+
+        Mirrors the tongyi-image pattern: config first, env only as
+        bootstrap when no key has been saved yet. Tests can stub this by
+        calling :func:`configure_credentials` directly.
+        """
+        import os as _os
+
+        try:
+            cfg = await self._tm.get_config()
+        except Exception:  # noqa: BLE001 — never let creds break boot
+            cfg = {}
+        dashscope = cfg.get("dashscope_api_key") or _os.environ.get("DASHSCOPE_API_KEY")
+        openai = cfg.get("openai_api_key") or _os.environ.get("OPENAI_API_KEY")
+        configure_credentials(
+            dashscope_api_key=dashscope or "",
+            openai_api_key=openai or "",
+        )
 
     async def on_unload(self) -> None:
         workers = [t for t in list(self._workers.values()) if not t.done()]
@@ -142,12 +194,27 @@ class Plugin(PluginBase):
 
         @router.get("/config")
         async def get_config():
-            return await self._tm.get_config()
+            return _redacted_config(await self._tm.get_config())
 
         @router.post("/config")
         async def set_config(updates: dict):
             await self._tm.set_config({k: str(v) for k, v in updates.items()})
-            return await self._tm.get_config()
+            await self._load_credentials()
+            return _redacted_config(await self._tm.get_config())
+
+        # Section 7 (overhaul template): every plugin must expose
+        # ``GET/POST /settings`` so the host-wide settings panel can wire
+        # in. Aliases of /config; ``POST /settings`` triggers credential
+        # hot-reload identically.
+        @router.get("/settings")
+        async def get_settings():
+            return {"ok": True, "config": _redacted_config(await self._tm.get_config())}
+
+        @router.post("/settings")
+        async def set_settings(updates: dict):
+            await self._tm.set_config({k: str(v) for k, v in updates.items()})
+            await self._load_credentials()
+            return {"ok": True, "config": _redacted_config(await self._tm.get_config())}
 
         @router.get("/providers")
         async def providers():
@@ -249,7 +316,8 @@ class Plugin(PluginBase):
 
     async def _run(self, task_id: str) -> None:
         rec = await self._tm.get_task(task_id)
-        if rec is None: return
+        if rec is None:
+            return
         params = rec.params
 
         try:

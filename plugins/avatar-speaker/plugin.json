@@ -3,7 +3,7 @@
   "name": "Avatar Speaker",
   "display_name_zh": "AI 配音员",
   "display_name_en": "Avatar Speaker",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "python",
   "entry": "plugin.py",
   "description": "Turn text into natural-sounding voice-over (TTS); reserves a digital-human avatar skeleton for future one-click talking-head synthesis. Designed for users who don't know how to use voice-over software.",
@@ -27,7 +27,7 @@
     "openakita": ">=1.27.0",
     "plugin_api": "~2",
     "plugin_ui_api": "~1",
-    "sdk": ">=0.4.0"
+    "sdk": ">=0.6.0,<1.0.0"
   },
   "provides": {
     "tools": [
