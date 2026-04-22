@@ -90,6 +90,9 @@ class TaskCreateRequest(BaseModel):
     channel_id: str | None = None
     chat_id: str | None = None
     enabled: bool = True
+    action: str | None = None
+    metadata: dict | None = None
+    agent_profile_id: str | None = None
 
 
 class TaskUpdateRequest(BaseModel):
@@ -171,6 +174,14 @@ async def create_task(request: Request, body: TaskCreateRequest):
         )
 
     description = body.reminder_message or body.prompt or body.name
+    extra: dict = {}
+    if body.action is not None:
+        extra["action"] = body.action
+    if body.metadata is not None:
+        extra["metadata"] = body.metadata
+    if body.agent_profile_id is not None:
+        extra["agent_profile_id"] = body.agent_profile_id
+
     task = ScheduledTask.create(
         name=body.name,
         description=description,
@@ -179,6 +190,7 @@ async def create_task(request: Request, body: TaskCreateRequest):
         task_type=task_type,
         reminder_message=body.reminder_message,
         prompt=body.prompt,
+        **extra,
     )
     task.task_source = TaskSource.MANUAL
     task.channel_id = body.channel_id or None
