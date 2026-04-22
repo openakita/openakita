@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -67,3 +68,31 @@ async def test_stream_cli_subprocess_honors_cancellation(tmp_path):
 
     await consume()
     assert len(lines) < 50
+
+
+def test_autoload_registers_well_formed_providers(tmp_path, monkeypatch):
+    import sys
+
+    from openakita.agents import cli_providers
+    from openakita.agents.cli_detector import CliProviderId
+
+    pkg_path = Path(cli_providers.__file__).parent
+    target = pkg_path / "testfakeprovider.py"
+    target.write_text(
+        "from openakita.agents.cli_detector import CliProviderId\n"
+        "class _FakeAdapter:\n"
+        "    def build_argv(self, request): return []\n"
+        "    def build_env(self, request): return {}\n"
+        "    async def run(self, request, argv, env, *, on_spawn): return None\n"
+        "    async def cleanup(self): pass\n"
+        "PROVIDER = _FakeAdapter()\n"
+        "CLI_PROVIDER_ID = CliProviderId.GOOSE\n"
+    )
+    try:
+        sys.modules.pop("openakita.agents.cli_providers.testfakeprovider", None)
+        cli_providers._autoload()
+        assert CliProviderId.GOOSE in cli_providers.PROVIDERS
+    finally:
+        target.unlink(missing_ok=True)
+        cli_providers.PROVIDERS.pop(CliProviderId.GOOSE, None)
+        sys.modules.pop("openakita.agents.cli_providers.testfakeprovider", None)
