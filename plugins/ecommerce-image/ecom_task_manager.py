@@ -37,6 +37,37 @@ def _validate_transition(old_status: str, new_status: str) -> bool:
     return new_status in VALID_TRANSITIONS.get(old_status, set())
 
 
+# Whitelist of columns that may be mutated via update_task(**fields).
+# Anything else is silently dropped (with a warning) to defend against any
+# caller — including future plugins or LLM-generated handlers — accidentally
+# attempting to inject column names.  ``status`` is allowed here so callers
+# that already validated the transition (e.g. update_task_status) can pass it
+# through; ``updated_at`` is set internally by update_task itself.
+_UPDATABLE_COLS: frozenset[str] = frozenset({
+    "feature_id",
+    "module",
+    "task_type",
+    "api_task_id",
+    "api_provider",
+    "status",
+    "prompt",
+    "params_json",
+    "image_urls",
+    "local_paths",
+    "video_url",
+    "local_video_path",
+    "last_frame_url",
+    "progress_current",
+    "progress_total",
+    "failed_at_step",
+    "model",
+    "execution_mode",
+    "batch_parent_id",
+    "error_message",
+    "revised_prompt",
+})
+
+
 # ---------------------------------------------------------------------------
 # SQL
 # ---------------------------------------------------------------------------
@@ -210,9 +241,25 @@ class TaskManager:
     async def update_task(self, task_id: str, **fields: Any) -> None:
         if not fields:
             return
-        fields["updated_at"] = time.time()
-        set_clause = ", ".join(f"{k} = ?" for k in fields)
-        values = list(fields.values()) + [task_id]
+        # Drop unknown columns to keep the dynamic SET clause SQL-injection-free.
+        # We log so misspellings (e.g. "image_url" instead of "image_urls") are
+        # discoverable rather than silently lost.
+        clean: dict[str, Any] = {}
+        dropped: list[str] = []
+        for k, v in fields.items():
+            if k in _UPDATABLE_COLS:
+                clean[k] = v
+            else:
+                dropped.append(k)
+        if dropped:
+            logger.warning(
+                "update_task(%s): dropping unknown columns: %s", task_id, dropped,
+            )
+        if not clean:
+            return
+        clean["updated_at"] = time.time()
+        set_clause = ", ".join(f"{k} = ?" for k in clean)
+        values = list(clean.values()) + [task_id]
         await self._db.execute(
             f"UPDATE tasks SET {set_clause} WHERE id = ?", values,
         )

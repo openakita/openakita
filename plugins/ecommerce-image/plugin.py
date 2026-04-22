@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -91,6 +91,9 @@ class Plugin(PluginBase):
         self._tm = None  # TaskManager, set in _async_init
         self._dashscope = None  # EcomClient
         self._ark = None  # EcomVideoClient
+        # Both tasks are placeholders so on_unload can cancel/await them safely
+        # even if on_load races with hot-reload before they have been scheduled.
+        self._init_task: asyncio.Task | None = None
         self._poll_task: asyncio.Task | None = None
         self._semaphore = asyncio.Semaphore(8)
 
@@ -100,7 +103,9 @@ class Plugin(PluginBase):
         # zero I/O, so it is safe in the synchronous on_load path.
         self._load_features()
 
-        router = APIRouter()
+        # Single router-level dependency replaces per-handler guard boilerplate:
+        # every request is short-circuited with 503 until _async_init finishes.
+        router = APIRouter(dependencies=[Depends(self._ensure_ready)])
         self._register_feature_routes(router)
         self._register_task_routes(router)
         self._register_file_routes(router)
@@ -154,7 +159,8 @@ class Plugin(PluginBase):
             },
         ], handler=self._handle_tool)
 
-        asyncio.get_event_loop().create_task(self._async_init())
+        # Use api.spawn_task so the host can cancel + drain on unload.
+        self._init_task = api.spawn_task(self._async_init(), name="ecommerce-image:init")
         api.log("E-Commerce Content plugin loaded")
 
     async def _async_init(self) -> None:
@@ -192,20 +198,51 @@ class Plugin(PluginBase):
         except Exception as e:
             logger.error("Failed to load features: %s", e)
 
-    def on_unload(self) -> None:
-        if self._poll_task:
-            self._poll_task.cancel()
-        loop = asyncio.get_event_loop()
-        if self._dashscope:
-            loop.create_task(self._dashscope.close())
-        if self._ark:
-            loop.create_task(self._ark.close())
-        if self._tm:
-            loop.create_task(self._tm.close())
+    async def on_unload(self) -> None:
+        # Cancel + await background tasks first so polling stops touching closed
+        # clients / db handles below. spawn_task tasks are also tracked by the
+        # host (defence-in-depth), but we cancel here for prompt shutdown.
+        for task in (self._init_task, self._poll_task):
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+        # Close clients / db. Each guarded individually so a single failure
+        # does not leak the others.
+        for closer in (
+            getattr(self._dashscope, "close", None),
+            getattr(self._ark, "close", None),
+            getattr(self._tm, "close", None),
+        ):
+            if closer is None:
+                continue
+            try:
+                result = closer()
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception as e:
+                logger.debug("ecommerce-image close error: %s", e)
+
+    # ── Lifecycle guards ──
+
+    def _ensure_ready(self) -> None:
+        """Raise 503 if backend is still warming up.
+
+        ``_async_init`` runs concurrently with ``on_load`` returning, so the
+        very first UI requests can hit routes before ``self._tm`` exists. We
+        prefer a clean 503 over a stack trace / spinner.
+        """
+        if self._tm is None:
+            raise HTTPException(
+                503, "ecommerce-image backend is initializing, try again in a moment",
+            )
 
     # ── Tool handler ──
 
     async def _handle_tool(self, tool_name: str, args: dict) -> str:
+        self._ensure_ready()
         if tool_name == "ecom_image_create":
             feature_id = args.get("feature_id", "image_main_gen")
             task = await self._execute_feature(feature_id, args)
@@ -301,7 +338,10 @@ class Plugin(PluginBase):
             progress_current=0,
             progress_total=1,
         )
-        asyncio.get_event_loop().create_task(self._mock_complete(task["id"], feature))
+        self._api.spawn_task(
+            self._mock_complete(task["id"], feature),
+            name=f"ecommerce-image:mock:{task['id']}",
+        )
         try:
             self._api.broadcast_ui_event("task_update", {"task_id": task["id"], "status": "running"})
         except Exception:
@@ -363,7 +403,7 @@ class Plugin(PluginBase):
     # ── Polling ──
 
     def _start_polling(self) -> None:
-        self._poll_task = asyncio.get_event_loop().create_task(self._poll_loop())
+        self._poll_task = self._api.spawn_task(self._poll_loop(), name="ecommerce-image:poll")
 
     async def _poll_loop(self) -> None:
         counter = 0
@@ -780,9 +820,21 @@ class Plugin(PluginBase):
 
     def _register_file_routes(self, router: APIRouter) -> None:
 
+        # Streamed read: never load >50 MB into memory; 1 MiB chunks.
+        MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+        CHUNK = 1024 * 1024
+
         @router.post("/upload")
-        async def upload_file(file: UploadFile = File(...)) -> dict:
-            content = await file.read()
+        async def upload_file(
+            request: Request, file: UploadFile = File(...),
+        ) -> dict:
+            # Pre-check Content-Length so giant uploads die before we touch disk.
+            cl = request.headers.get("content-length")
+            if cl and cl.isdigit() and int(cl) > MAX_UPLOAD_BYTES:
+                raise HTTPException(
+                    413, f"Upload exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
+                )
+
             ext = Path(file.filename or "file").suffix.lower()
             assets_dir = self._data_dir / "assets"
             assets_dir.mkdir(parents=True, exist_ok=True)
@@ -790,21 +842,54 @@ class Plugin(PluginBase):
             import uuid
             filename = f"{uuid.uuid4().hex[:8]}_{file.filename or 'file'}"
             filepath = assets_dir / filename
-            filepath.write_bytes(content)
+
+            total = 0
+            sha = None  # placeholder; could hash if dedup needed later
+            try:
+                with filepath.open("wb") as fp:
+                    while True:
+                        chunk = await file.read(CHUNK)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > MAX_UPLOAD_BYTES:
+                            fp.close()
+                            try:
+                                filepath.unlink(missing_ok=True)
+                            except Exception:
+                                pass
+                            raise HTTPException(
+                                413,
+                                f"Upload exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
+                            )
+                        fp.write(chunk)
+            except HTTPException:
+                raise
+            except Exception as e:
+                try:
+                    filepath.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                raise HTTPException(500, f"Upload failed: {e}") from e
 
             asset = await self._tm.create_asset(
                 type="image" if ext in (".jpg", ".jpeg", ".png", ".webp", ".gif") else "file",
                 file_path=str(filepath),
                 original_name=file.filename,
-                size_bytes=len(content),
+                size_bytes=total,
             )
 
-            b64 = base64.b64encode(content).decode("ascii")
-            return {
-                "ok": True,
-                "asset": asset,
-                "base64": f"data:{file.content_type};base64,{b64}" if len(content) < 10_000_000 else None,
-            }
+            # Inline base64 only for small images (<10 MB) so the UI can preview
+            # without an extra round-trip; large files are referenced by path.
+            base64_payload: str | None = None
+            if total < 10 * 1024 * 1024:
+                try:
+                    b64 = base64.b64encode(filepath.read_bytes()).decode("ascii")
+                    base64_payload = f"data:{file.content_type};base64,{b64}"
+                except Exception:
+                    base64_payload = None
+
+            return {"ok": True, "asset": asset, "base64": base64_payload}
 
         @router.get("/images/{task_id}")
         async def proxy_image(task_id: str, idx: int = 0):
