@@ -18,34 +18,39 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
-
-from openakita.plugins.api import PluginAPI, PluginBase
 from openakita_plugin_sdk.contrib import (
     ErrorCoach,
     QualityGates,
     TaskStatus,
     UIEventEmitter,
 )
-
+from pipeline_orchestrator import (
+    PipelineConfig,
+    run_pipeline,
+)
+from pipeline_orchestrator import (
+    to_verification as pipeline_to_verification,
+)
+from pydantic import BaseModel, Field
 from shorts_engine import (
     ALLOWED_ASPECTS,
-    DEFAULT_MAX_PARALLEL,
     DEFAULT_MAX_SHOTS,
     DEFAULT_MIN_SHOTS,
     BatchResult,
     ShortBrief,
     ShortPlan,
     default_scene_planner,
-    plan_brief,
     plan_briefs,
     run_briefs,
     to_verification,
 )
+
+from openakita.plugins.api import PluginAPI, PluginBase
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +78,21 @@ class PreviewRiskBody(BaseModel):
     briefs: list[BriefBody] = Field(..., min_length=1, max_length=50)
     min_shots: int = DEFAULT_MIN_SHOTS
     max_shots: int = DEFAULT_MAX_SHOTS
+
+
+class PipelineBody(BaseModel):
+    """Run the 6-stage video-pipeline orchestrator for a single brief.
+
+    Stages default to deterministic stubs so the call is safe to issue
+    without external API keys; see :mod:`pipeline_orchestrator` for how
+    a host wires real downstream plugins.
+    """
+
+    brief: BriefBody
+    skip_video_stage: bool = True
+    skip_subtitle_stage: bool = False
+    burn_subtitles: bool = False
+    target_language: str = "zh"
 
 
 # ── stub renderer ─────────────────────────────────────────────────────
@@ -120,6 +140,9 @@ class Plugin(PluginBase):
         self._renderer: Callable[[ShortPlan], tuple[str, int]] = (
             _make_stub_renderer(data_dir / "outputs")
         )
+        # 6-stage pipeline: missing keys fall back to the default stubs in
+        # pipeline_orchestrator. Hosts override per stage via set_pipeline_stage.
+        self._pipeline_stages: dict[str, Callable[..., Any]] = {}
 
         router = APIRouter()
         self._register_routes(router)
@@ -195,6 +218,21 @@ class Plugin(PluginBase):
     ) -> None:
         """Swap in a real renderer (e.g. seedance-video bridge)."""
         self._renderer = renderer
+
+    def set_pipeline_stage(self, stage: str, fn: Callable[..., Any]) -> None:
+        """Override one stage of the 6-step video pipeline orchestrator.
+
+        ``stage`` must be one of ``plan|image|video|audio|subtitle|mux``.
+        Pass ``None``-equivalent (call again with the default callable)
+        to revert to the deterministic stub from
+        :mod:`pipeline_orchestrator`.
+        """
+        from pipeline_orchestrator import STAGE_IDS
+        if stage not in STAGE_IDS:
+            raise ValueError(
+                f"unknown pipeline stage {stage!r}; expected one of {STAGE_IDS}"
+            )
+        self._pipeline_stages[stage] = fn
 
     # ── brain tool dispatcher ───────────────────────────────────────
 
@@ -330,6 +368,49 @@ class Plugin(PluginBase):
                     status_code=404, detail={"problem": "task not found"},
                 )
             return {"ok": True}
+
+        @router.post("/pipeline")
+        async def run_pipeline_route(body: PipelineBody) -> dict[str, Any]:
+            """Execute the 6-stage video-pipeline orchestrator synchronously.
+
+            This is the Phase-3 surface area: a single brief flows through
+            plan → image → video → audio → subtitle → mux. The default
+            stages are deterministic stubs (1-byte placeholders) so this
+            endpoint is safe to call in CI / dry-runs. Real pipelines wire
+            ``Plugin.set_pipeline_stage()`` at boot to swap in
+            ``tongyi-image`` / ``seedance-video`` / ``subtitle-maker`` /
+            ffmpeg implementations.
+            """
+            try:
+                brief = _brief_from_pydantic(body.brief)
+            except (ValueError, KeyError) as exc:
+                rendered = self._coach.render(exc, raw_message=str(exc))
+                raise HTTPException(status_code=400, detail=rendered.to_dict()) from exc
+
+            cfg = PipelineConfig(
+                out_dir=self._data_dir / "pipeline_runs"
+                / f"{int(asyncio.get_event_loop().time() * 1000)}",
+                skip_video_stage=body.skip_video_stage,
+                skip_subtitle_stage=body.skip_subtitle_stage,
+                burn_subtitles=body.burn_subtitles,
+                target_language=body.target_language,
+            )
+            stages = self._pipeline_stages
+            result = await asyncio.to_thread(
+                run_pipeline,
+                brief,
+                cfg,
+                plan_stage=stages.get("plan"),
+                image_stage=stages.get("image"),
+                video_stage=stages.get("video"),
+                audio_stage=stages.get("audio"),
+                subtitle_stage=stages.get("subtitle"),
+                mux_stage=stages.get("mux"),
+            )
+            verification = pipeline_to_verification(result)
+            payload = result.to_dict()
+            payload["verification"] = verification.to_dict()
+            return payload
 
     # ── lifecycle helpers ───────────────────────────────────────────
 

@@ -3,10 +3,10 @@
   "name": "Shorts Batch",
   "display_name_zh": "短视频批量生成",
   "display_name_en": "Shorts Batch",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "type": "python",
   "entry": "plugin.py",
-  "description": "Batch-generate multiple short videos in one job. Each brief is expanded into a 4-12 shot scene plan, scored with the slideshow_risk heuristic (D2.1), and rendered through a pluggable downstream renderer (default: stub; production: seedance-video / ppt-to-video).",
+  "description": "Batch-generate multiple short videos in one job AND host the project's 6-stage video-pipeline orchestrator (Phase 3). Each brief is expanded into a 4-12 shot scene plan, scored with the slideshow_risk heuristic (D2.1), and either rendered through a pluggable downstream renderer (legacy: seedance-video / ppt-to-video) or driven through the full plan→image→video→audio→subtitle→mux pipeline.",
   "description_i18n": {
     "zh": "一次性批量生成多个短视频。每条 brief 先扩成 4-12 个分镜，过 slideshow_risk 启发式打分（D2.1），再交给可插拔的下游渲染器（默认：占位渲染；生产：seedance-video / ppt-to-video）。",
     "en": "Batch-generate multiple short videos in one job. Each brief is expanded into a 4-12 shot scene plan, scored with the slideshow_risk heuristic (D2.1), and rendered through a pluggable downstream renderer (default: stub; production: seedance-video / ppt-to-video)."
@@ -27,7 +27,7 @@
     "openakita": ">=1.27.0",
     "plugin_api": "~2",
     "plugin_ui_api": "~1",
-    "sdk": ">=0.4.0"
+    "sdk": ">=0.6.0,<1.0.0"
   },
   "provides": {
     "tools": [
