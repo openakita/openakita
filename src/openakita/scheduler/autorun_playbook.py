@@ -135,6 +135,39 @@ class PlaybookRun:
             "filename": d.filename, "total": 0, "checked": 0, "stalled": False,
         })) for d in self.cfg.documents]
 
+    async def _run_doc_pass(self, agent, loop_iter: int) -> bool:
+        """Iterate over every doc; per doc, keep driving the agent until either
+        all boxes are checked or MAX_CONSECUTIVE_NO_CHANGES consecutive turns
+        failed to flip a box. Returns True iff any box was checked during the
+        pass (used by execute() as the outer-loop "made progress" signal)."""
+        any_progress = False
+        for doc in self.cfg.documents:
+            path = Path(self._effective_path(doc, loop_iter))
+            no_change_streak = 0
+            content = path.read_text()
+            counts = count_checkboxes(content)
+            self._refresh_doc_snapshot(doc, path, counts)
+            while counts.unchecked > 0 and no_change_streak < MAX_CONSECUTIVE_NO_CHANGES:
+                if self._stopping:
+                    return any_progress
+                before = counts.checked
+                await agent.execute_task_from_message(self.cfg.prompt)
+                content = path.read_text()
+                counts = count_checkboxes(content)
+                self._refresh_doc_snapshot(doc, path, counts)
+                after = counts.checked
+                if after > before:
+                    no_change_streak = 0
+                    any_progress = True
+                    await self._broadcast(active_doc=doc.filename, delta=after - before)
+                    continue
+                no_change_streak += 1
+                stalled = no_change_streak >= MAX_CONSECUTIVE_NO_CHANGES
+                if stalled:
+                    self._doc_snapshots[doc.filename]["stalled"] = True
+                await self._broadcast(active_doc=doc.filename, stalled=stalled)
+        return any_progress
+
     async def _broadcast(self, **extra) -> None:
         """One full-state push per reducer step (Maestro parity). Extra kwargs
         land on the event payload verbatim so callers can attach loop_iter,

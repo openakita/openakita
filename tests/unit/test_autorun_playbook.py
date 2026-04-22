@@ -321,3 +321,102 @@ async def test_broadcast_defaults_to_none_fields(tmp_path, make_task, monkeypatc
     assert payload["active_doc"] is None
     assert payload["delta"] is None
     assert payload["error"] is None
+
+
+def _make_flipping_agent(path: Path):
+    """Return an AsyncMock agent whose execute_task_from_message flips one
+    unchecked box per call (simulates the agent editing the file itself)."""
+    async def _flip(_prompt):
+        text = path.read_text()
+        # Maestro regex parity: replace first "- [ ]" (or "* [ ]", with optional
+        # whitespace inside the brackets) with "- [x]"
+        import re
+        text2, n = re.subn(r"^(\s*[-*]\s*)\[\s*\]", r"\1[x]", text, count=1, flags=re.MULTILINE)
+        if n:
+            path.write_text(text2)
+
+    agent = AsyncMock()
+    agent.execute_task_from_message = AsyncMock(side_effect=_flip)
+    agent.shutdown = AsyncMock()
+    return agent
+
+
+@pytest.mark.asyncio
+async def test_run_doc_pass_flips_all_boxes(tmp_path, make_task, monkeypatch,
+                                            profile_store_mock, agent_factory_mock):
+    from openakita.scheduler import autorun_playbook as ap
+    from openakita.scheduler.autorun_playbook import PlaybookRun, PlaybookState
+
+    factory, _ = agent_factory_mock
+    md = tmp_path / "x.md"
+    md.write_text("- [ ] a\n- [ ] b\n- [ ] c\n")
+    task = make_task(documents=[{"filename": str(md)}])
+    run = PlaybookRun(task, executor=MagicMock(),
+                     profile_store=profile_store_mock, agent_factory=factory)
+    run.state = PlaybookState.RUNNING
+    run._refresh_all_doc_snapshots(loop_iter=0)
+    monkeypatch.setattr(ap, "broadcast_event", AsyncMock())
+
+    agent = _make_flipping_agent(md)
+    progressed = await run._run_doc_pass(agent, loop_iter=0)
+
+    assert progressed is True
+    assert agent.execute_task_from_message.await_count == 3
+    assert md.read_text().count("[x]") == 3
+    assert md.read_text().count("[ ]") == 0
+
+
+@pytest.mark.asyncio
+async def test_run_doc_pass_breaks_on_stall(tmp_path, make_task, monkeypatch,
+                                            profile_store_mock, agent_factory_mock):
+    """Agent that never flips a box — must break after MAX_CONSECUTIVE_NO_CHANGES."""
+    from openakita.scheduler import autorun_playbook as ap
+    from openakita.scheduler.autorun_playbook import (
+        MAX_CONSECUTIVE_NO_CHANGES,
+        PlaybookRun,
+        PlaybookState,
+    )
+
+    factory, _ = agent_factory_mock
+    md = tmp_path / "x.md"
+    md.write_text("- [ ] a\n- [ ] b\n")
+    task = make_task(documents=[{"filename": str(md)}])
+    run = PlaybookRun(task, executor=MagicMock(),
+                     profile_store=profile_store_mock, agent_factory=factory)
+    run.state = PlaybookState.RUNNING
+    run._refresh_all_doc_snapshots(loop_iter=0)
+    monkeypatch.setattr(ap, "broadcast_event", AsyncMock())
+
+    noop_agent = AsyncMock()
+    noop_agent.execute_task_from_message = AsyncMock(return_value=None)  # never edits
+
+    progressed = await run._run_doc_pass(noop_agent, loop_iter=0)
+
+    assert progressed is False
+    assert noop_agent.execute_task_from_message.await_count == MAX_CONSECUTIVE_NO_CHANGES
+    assert run._doc_snapshots[str(md)]["stalled"] is True
+
+
+@pytest.mark.asyncio
+async def test_run_doc_pass_honors_stopping(tmp_path, make_task, monkeypatch,
+                                            profile_store_mock, agent_factory_mock):
+    """If state flips to STOPPING mid-loop, the pass returns immediately."""
+    from openakita.scheduler import autorun_playbook as ap
+    from openakita.scheduler.autorun_playbook import PlaybookRun, PlaybookState
+
+    factory, _ = agent_factory_mock
+    md = tmp_path / "x.md"
+    md.write_text("- [ ] a\n- [ ] b\n")
+    task = make_task(documents=[{"filename": str(md)}])
+    run = PlaybookRun(task, executor=MagicMock(),
+                     profile_store=profile_store_mock, agent_factory=factory)
+    run.state = PlaybookState.STOPPING
+    run._refresh_all_doc_snapshots(loop_iter=0)
+    monkeypatch.setattr(ap, "broadcast_event", AsyncMock())
+
+    agent = _make_flipping_agent(md)
+    progressed = await run._run_doc_pass(agent, loop_iter=0)
+
+    assert progressed is False
+    agent.execute_task_from_message.assert_not_awaited()
+    assert md.read_text().count("[ ]") == 2  # unchanged
