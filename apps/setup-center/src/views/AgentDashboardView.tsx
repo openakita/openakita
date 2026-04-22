@@ -19,6 +19,8 @@ type TopoNode = {
   tools_total: number;
   elapsed_s: number;
   conversation_title: string;
+  agent_type?: "system" | "custom" | "dynamic" | "external_cli";
+  cli_provider_id?: string | null;
 };
 
 type TopoEdge = { from: string; to: string; type: string };
@@ -122,6 +124,23 @@ function toolIcon(name: string): string {
     if (lc.includes(k)) return v;
   }
   return "*";
+}
+
+const CLI_ICONS: Record<string, string> = {
+  claude_code: "🧑‍💻",
+  codex: "🛠️",
+  opencode: "📟",
+  gemini: "✨",
+  copilot: "🤖",
+  droid: "🤖",
+  cursor: "➤",
+  qwen: "🐉",
+  goose: "🪿",
+};
+
+function cliIcon(providerId: string | null | undefined): string {
+  if (!providerId) return "🖥️";
+  return CLI_ICONS[providerId] ?? "🖥️";
 }
 
 // SVG icon paths for canvas rendering (must match AgentManagerView)
