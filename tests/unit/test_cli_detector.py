@@ -95,3 +95,45 @@ async def test_discover_all_caches_under_ttl(monkeypatch):
     await discover_all()
     await discover_all()  # cached — no new calls
     assert calls["n"] == len(CliProviderId)  # one sweep only
+
+
+@pytest.mark.asyncio
+async def test_discover_all_reports_nonzero_exit_error(monkeypatch):
+    reset_cache()
+    monkeypatch.setattr(
+        "openakita.agents.cli_detector.which_command",
+        lambda name: f"/usr/bin/{name}",
+    )
+
+    async def fake_exec(*args, **kwargs):
+        return _FakeProc(rc=1, stderr=b"bad auth\nmore stuff\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    result = await discover_all()
+    assert result[CliProviderId.CLAUDE_CODE].error == "bad auth"
+    assert result[CliProviderId.CLAUDE_CODE].version is None
+
+
+@pytest.mark.asyncio
+async def test_discover_all_reports_timeout_error(monkeypatch):
+    reset_cache()
+    monkeypatch.setattr(
+        "openakita.agents.cli_detector.which_command",
+        lambda name: f"/usr/bin/{name}",
+    )
+
+    fake_proc = _FakeProc(rc=0, stdout=b"1.0.0\n")
+
+    async def fake_exec(*args, **kwargs):
+        return fake_proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    async def fake_wait_for(coro, **kwargs):
+        coro.close()  # avoid unawaited-coroutine warning
+        raise TimeoutError
+
+    monkeypatch.setattr("openakita.agents.cli_detector.asyncio.wait_for", fake_wait_for)
+    result = await discover_all()
+    assert result[CliProviderId.CLAUDE_CODE].error == "probe timed out"
+    assert result[CliProviderId.CLAUDE_CODE].version is None
+    assert fake_proc.returncode == -9
