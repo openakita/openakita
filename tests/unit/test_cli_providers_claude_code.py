@@ -308,3 +308,31 @@ async def test_run_honors_cancellation(tmp_path):
         req, argv, env={}, on_spawn=lambda _: None,
     )
     assert result.exit_reason == ExitReason.CANCELLED
+
+
+def test_build_argv_adds_mcp_config_when_servers_present(tmp_path):
+    from unittest.mock import MagicMock, patch as mock_patch
+    from openakita.agents.cli_providers import claude_code
+
+    fake_info = MagicMock(command="npx", args=["-y", "pkg"], env={})
+    with mock_patch.object(claude_code, "_resolve_binary", return_value="/usr/bin/claude"), \
+         mock_patch("openakita.agents.cli_providers.codex.MCPCatalog") as Catalog:
+        Catalog.return_value.get_server = MagicMock(return_value=fake_info)
+        argv = PROVIDERS[CliProviderId.CLAUDE_CODE].build_argv(
+            _make_request(_make_profile(), mcp_servers=("web-search",))
+        )
+
+    assert "--mcp-config" in argv
+    cfg_path = argv[argv.index("--mcp-config") + 1]
+    assert cfg_path.endswith(".json")
+
+
+def test_build_argv_omits_mcp_config_when_servers_empty():
+    from openakita.agents.cli_providers import claude_code
+
+    with patch.object(claude_code, "_resolve_binary", return_value="/usr/bin/claude"):
+        argv = PROVIDERS[CliProviderId.CLAUDE_CODE].build_argv(
+            _make_request(_make_profile())
+        )
+
+    assert "--mcp-config" not in argv

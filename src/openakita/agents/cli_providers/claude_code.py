@@ -21,13 +21,16 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from openakita.agents.cli_detector import CliProviderId
 from openakita.agents.cli_providers._common import stream_cli_subprocess
+from openakita.agents.cli_providers.codex import write_mcp_config
 from openakita.agents.cli_runner import (
     CliRunRequest,
     ExitReason,
@@ -174,7 +177,10 @@ def _git_diff_names(cwd: Path) -> set[str]:
 
 
 class ClaudeCodeAdapter:
-    """Claude Code CLI adapter. Instances are shared across calls -- keep no state."""
+    """Claude Code CLI adapter. Shares an instance across calls; per-turn MCP tempdirs are cleaned up in run()."""
+
+    def __init__(self) -> None:
+        self._mcp_tmpdirs: list[Path] = []
 
     def build_argv(self, request: CliRunRequest) -> list[str]:
         binary = _resolve_binary()
@@ -192,6 +198,14 @@ class ClaudeCodeAdapter:
         ]
         if request.profile.cli_permission_mode == CliPermissionMode.WRITE:
             argv.append("--dangerously-skip-permissions")
+        # MCP config: write a JSON file in a per-run tempdir and reference it.
+        # The tempdir lives until cleanup() or the run() finally block drains it.
+        if request.mcp_servers:
+            tmp = Path(tempfile.mkdtemp(prefix="claude-mcp-"))
+            self._mcp_tmpdirs.append(tmp)
+            path = write_mcp_config(tmp, request.mcp_servers, fmt="json")
+            if path is not None:
+                argv += ["--mcp-config", str(path)]
         if request.resume_id:
             argv += ["--resume", request.resume_id]
         if request.system_prompt_extra:
@@ -235,57 +249,65 @@ class ClaudeCodeAdapter:
         if request.cancelled.is_set():
             return _cancelled_result(acc)
 
-        proc = proc_ref.get("p")
-        exit_code = 0
-        if proc is not None:
-            try:
-                exit_code = await asyncio.wait_for(proc.wait(), timeout=2.0)
-            except TimeoutError:
-                exit_code = -1
-            if proc.stderr is not None:
+        try:
+            proc = proc_ref.get("p")
+            exit_code = 0
+            if proc is not None:
                 try:
-                    stderr_buffer.append(await proc.stderr.read())
-                except Exception:
-                    logger.debug("stderr read failed", exc_info=True)
-        stderr_text = b"".join(stderr_buffer).decode("utf-8", "replace")
+                    exit_code = await asyncio.wait_for(proc.wait(), timeout=2.0)
+                except TimeoutError:
+                    exit_code = -1
+                if proc.stderr is not None:
+                    try:
+                        stderr_buffer.append(await proc.stderr.read())
+                    except Exception:
+                        logger.debug("stderr read failed", exc_info=True)
+            stderr_text = b"".join(stderr_buffer).decode("utf-8", "replace")
 
-        if acc.errored or exit_code != 0:
-            err_type = classify_cli_error(
-                exit_code=exit_code,
-                stderr=stderr_text,
-                exception=None,
-            )
+            if acc.errored or exit_code != 0:
+                err_type = classify_cli_error(
+                    exit_code=exit_code,
+                    stderr=stderr_text,
+                    exception=None,
+                )
+                return ProviderRunResult(
+                    final_text="".join(acc.text_parts),
+                    tools_used=list(acc.tools_used),
+                    artifacts=[],
+                    session_id=acc.session_id,
+                    input_tokens=acc.input_tokens,
+                    output_tokens=acc.output_tokens,
+                    exit_reason=ExitReason.ERROR,
+                    errored=True,
+                    error_message=acc.error_message or f"{err_type.value}: {stderr_text[:200]}",
+                )
+
+            post_diff = _git_diff_names(request.cwd) \
+                if request.profile.cli_permission_mode == CliPermissionMode.WRITE else set()
+            artifacts = sorted(post_diff - pre_diff)
+
             return ProviderRunResult(
                 final_text="".join(acc.text_parts),
                 tools_used=list(acc.tools_used),
-                artifacts=[],
+                artifacts=artifacts,
                 session_id=acc.session_id,
                 input_tokens=acc.input_tokens,
                 output_tokens=acc.output_tokens,
-                exit_reason=ExitReason.ERROR,
-                errored=True,
-                error_message=acc.error_message or f"{err_type.value}: {stderr_text[:200]}",
+                exit_reason=ExitReason.COMPLETED,
+                errored=False,
+                error_message=None,
             )
-
-        post_diff = _git_diff_names(request.cwd) \
-            if request.profile.cli_permission_mode == CliPermissionMode.WRITE else set()
-        artifacts = sorted(post_diff - pre_diff)
-
-        return ProviderRunResult(
-            final_text="".join(acc.text_parts),
-            tools_used=list(acc.tools_used),
-            artifacts=artifacts,
-            session_id=acc.session_id,
-            input_tokens=acc.input_tokens,
-            output_tokens=acc.output_tokens,
-            exit_reason=ExitReason.COMPLETED,
-            errored=False,
-            error_message=None,
-        )
+        finally:
+            # Clean up this turn's MCP config tempdir(s) before returning.
+            while self._mcp_tmpdirs:
+                d = self._mcp_tmpdirs.pop()
+                shutil.rmtree(d, ignore_errors=True)
 
     async def cleanup(self) -> None:
-        """No persistent provider-level resources."""
-        return None
+        """Remove any per-run MCP-config tempdirs that outlived their turn."""
+        while self._mcp_tmpdirs:
+            d = self._mcp_tmpdirs.pop()
+            shutil.rmtree(d, ignore_errors=True)
 
 
 PROVIDER: ClaudeCodeAdapter = ClaudeCodeAdapter()
