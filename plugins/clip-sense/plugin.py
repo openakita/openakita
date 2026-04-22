@@ -205,7 +205,8 @@ class Plugin(PluginBase):
         # 1. POST /tasks — create task
         @router.post("/tasks")
         async def create_task(body: CreateTaskBody) -> dict[str, Any]:
-            task = await self._create_task_internal(body.dict())
+            d = body.model_dump() if hasattr(body, "model_dump") else body.dict()
+            task = await self._create_task_internal(d)
             return task
 
         # 2. GET /tasks — list tasks
@@ -371,7 +372,8 @@ class Plugin(PluginBase):
         @router.get("/ffmpeg/status")
         async def ffmpeg_status() -> dict[str, Any]:
             if self._ffmpeg:
-                return self._ffmpeg.detect()
+                loop = asyncio.get_running_loop()
+                return await loop.run_in_executor(None, self._ffmpeg.detect)
             return {"available": False, "version": "", "path": ""}
 
         # 18. GET /modes
