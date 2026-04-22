@@ -134,10 +134,8 @@ plugins/*
 !plugins/ecommerce-image/**
 
 # Archived plugins (not auto-loaded; not for GitHub)
-# 整个目录忽略，只保留 README 和 .gitkeep 占位
-plugins-archive/*
-!plugins-archive/.gitkeep
-!plugins-archive/README.md
+# 整个目录及其所有内容都不进入 git
+plugins-archive/
 
 # Tests - only ignore test outputs, not test source code
 tests/__pycache__/
@@ -314,3 +312,44 @@ docs/plugin-overhaul-template.md
 # 插件目录下的用户测试用例文档（手测笔记，非自动化测试）
 plugins/*/USER_TEST_CASES.md
 plugins-archive/*/USER_TEST_CASES.md
+
+# ─────────────────────────────────────────────────────────────
+# 仓库收紧 第二轮（2026-04-22）：
+# docs/ 下的架构设计、流程规范、过程性产物、调试参考
+# 这些文档对本地开发者有用，但不属于面向用户/部署的发布文档
+# ─────────────────────────────────────────────────────────────
+
+# 架构与设计文档（开发者本地参考）
+docs/architecture.md
+docs/microservices-architecture.md
+docs/multi-agent-architecture.md
+docs/memory_architecture.md
+docs/tool-system-architecture.md
+docs/skill-loading-architecture.md
+docs/android-architecture.md
+docs/android-app-architecture.md
+docs/agent-org-technical-design.md
+docs/plugin-system-overview.md
+docs/plugin-context-cheatsheet.md
+docs/plugin-2.0-handover.md
+docs/agent-sharing-spec.md
+docs/tool-definition-spec.md
+docs/org-orchestration-compat-matrix.md
+docs/message-queue-and-interrupt.md
+docs/persona-and-liveness.md
+docs/prompt_structure.md
+docs/llm-tool-call-formats.md
+docs/mcp-integration.md
+docs/desktop-terminal-improvements.md
+docs/dependencies.md
+
+# 流程/任务/进度（过程性文档）
+docs/code-review-process.md
+docs/progress-tracking.md
+docs/im-channel-tasks.md
+
+# 测试用例快照
+docs/test-cases.md
+
+# Prompt 调试参考（本地开发用）
+docs/prompts/
