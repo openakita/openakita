@@ -122,6 +122,13 @@ class AgentFactory:
     - Set agent name/icon
     """
 
+    def __init__(self) -> None:
+        from openakita.agents.cli_runner import ExternalCliLimiter
+        from openakita.config import settings
+        self._external_cli_limiter = ExternalCliLimiter(
+            max_concurrent=settings.external_cli_max_concurrent,
+        )
+
     async def create(
         self,
         profile: AgentProfile,

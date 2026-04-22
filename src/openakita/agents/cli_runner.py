@@ -68,6 +68,7 @@ class ProviderRunResult:
 
 class ExternalCliLimiter:
     def __init__(self, max_concurrent: int = DEFAULT_MAX_CONCURRENT_EXTERNAL_CLIS) -> None:
+        self._max_concurrent = max_concurrent
         self._sem = asyncio.Semaphore(max(1, max_concurrent))
 
     async def __aenter__(self) -> None:
