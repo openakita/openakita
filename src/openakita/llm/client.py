@@ -297,7 +297,7 @@ class LLMClient:
                         f"Permanently disabled until config reload."
                     )
                 results[name] = "auth_failed"
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 results[name] = "error: timeout (15s)"
                 logger.warning(f"[HealthCheck] endpoint={name} timed out (15s)")
             except Exception as e:
@@ -630,7 +630,8 @@ class LLMClient:
             if cancel_event and cancel_event.is_set():
                 raise UserCancelledError(reason="User requested stop", source="llm_stream")
 
-            yielded = False
+            semantic_yielded = False
+            buffered_events: list[dict] = []
             try:
                 logger.info(
                     f"[LLM-Stream] endpoint={provider.name} model={provider.model} "
@@ -642,8 +643,28 @@ class LLMClient:
                             reason="User requested stop",
                             source="llm_stream_mid",
                         )
-                    yielded = True
-                    yield event
+                    if self._stream_event_has_semantic_output(event):
+                        if not semantic_yielded:
+                            for buffered in buffered_events:
+                                yield buffered
+                            buffered_events.clear()
+                        semantic_yielded = True
+                        yield event
+                    elif semantic_yielded:
+                        yield event
+                    else:
+                        buffered_events.append(event)
+                if not semantic_yielded:
+                    last_error = LLMError(
+                        f"Stream returned no semantic output from '{provider.name}'"
+                    )
+                    provider.mark_unhealthy(str(last_error))
+                    logger.warning(
+                        f"[LLM-Stream] endpoint={provider.name} completed with no "
+                        "text/thinking/tool output"
+                        + (", trying next endpoint..." if i < len(eligible) - 1 else "")
+                    )
+                    continue
                 async with self._endpoint_lock:
                     self._last_success_endpoint = provider.name
                 return
@@ -653,7 +674,7 @@ class LLMClient:
 
             except LLMError as e:
                 last_error = e
-                if yielded:
+                if semantic_yielded:
                     logger.error(
                         f"[LLM-Stream] endpoint={provider.name} mid-stream failure: {e}. "
                         f"Cannot failover (partial response already sent)."
@@ -673,14 +694,37 @@ class LLMClient:
                         f"retrying same endpoint"
                     )
                     try:
+                        retry_semantic_yielded = False
+                        retry_buffered_events: list[dict] = []
                         async for event in provider.chat_stream(request):
                             if cancel_event and cancel_event.is_set():
                                 raise UserCancelledError(
                                     reason="User requested stop",
                                     source="llm_stream_413_retry",
                                 )
-                            yielded = True
-                            yield event
+                            if self._stream_event_has_semantic_output(event):
+                                if not retry_semantic_yielded:
+                                    for buffered in retry_buffered_events:
+                                        yield buffered
+                                    retry_buffered_events.clear()
+                                retry_semantic_yielded = True
+                                semantic_yielded = True
+                                yield event
+                            elif retry_semantic_yielded:
+                                yield event
+                            else:
+                                retry_buffered_events.append(event)
+                        if not retry_semantic_yielded:
+                            last_error = LLMError(
+                                f"Stream returned no semantic output from '{provider.name}' "
+                                "after 413 retry"
+                            )
+                            provider.mark_unhealthy(str(last_error))
+                            logger.warning(
+                                f"[LLM-Stream] endpoint={provider.name} "
+                                "413 retry completed with no text/thinking/tool output"
+                            )
+                            continue
                         async with self._endpoint_lock:
                             self._last_success_endpoint = provider.name
                         return
@@ -710,7 +754,7 @@ class LLMClient:
                                 reason="User requested stop",
                                 source="llm_stream_backoff",
                             )
-                        except (asyncio.TimeoutError, TimeoutError):
+                        except TimeoutError:
                             pass
                     else:
                         await asyncio.sleep(delay)
@@ -722,7 +766,7 @@ class LLMClient:
 
             except Exception as e:
                 last_error = e
-                if yielded:
+                if semantic_yielded:
                     raise
                 provider.mark_unhealthy(str(e))
                 logger.warning(
@@ -735,6 +779,32 @@ class LLMClient:
         raise AllEndpointsFailedError(
             f"Stream: all {len(eligible)} endpoints failed. {hint} Last error: {last_error}"
         )
+
+    @staticmethod
+    def _stream_event_has_semantic_output(event: dict) -> bool:
+        """Return True when a stream event carries reasoning, text, or tool-call content."""
+        event_type = event.get("type")
+
+        if event_type == "content_block_start":
+            block = event.get("content_block") or {}
+            return block.get("type") == "tool_use"
+
+        if event_type != "content_block_delta":
+            return False
+
+        delta = event.get("delta") or {}
+        delta_type = delta.get("type")
+        if delta_type in ("text", "thinking"):
+            return bool(delta.get("text"))
+        if delta_type == "text_delta":
+            return bool(delta.get("text"))
+        if delta_type == "thinking_delta":
+            return bool(delta.get("thinking"))
+        if delta_type == "input_json_delta":
+            return bool(delta.get("partial_json"))
+        if delta_type == "tool_use":
+            return bool(delta.get("id") or delta.get("name") or delta.get("arguments"))
+        return False
 
     # ==================== Shared fallback strategy ====================
 
@@ -873,7 +943,7 @@ class LLMClient:
                                     reason="User requested stop",
                                     source="llm_cooldown_wait",
                                 )
-                            except (asyncio.TimeoutError, TimeoutError):
+                            except TimeoutError:
                                 pass
                         else:
                             await asyncio.sleep(wait_seconds)
@@ -1066,8 +1136,8 @@ class LLMClient:
             eligible.insert(0, override_provider)
         elif override_provider and override_provider not in eligible:
             # The user's explicitly selected endpoint was excluded by capability inference.
-            # Only append it as a fallback when only the thinking capability is missing (thinking inference is the least reliable).
-            # When hard capabilities like tools/vision are missing, don't append - this avoids every request failing then falling back, adding latency.
+            # Thinking is soft, so a thinking-only mismatch keeps the override first.
+            # Hard capabilities still skip the override to avoid every request failing then falling back.
             missing = []
             cfg = override_provider.config
             if require_tools and not cfg.has_capability("tools"):
@@ -1085,11 +1155,13 @@ class LLMClient:
 
             hard_missing = [m for m in missing if m != "thinking"]
             if not hard_missing:
-                # Only missing thinking - append as fallback (at the end); doesn't affect normal endpoint priority
-                eligible.append(override_provider)
+                # Only missing thinking: thinking is a soft capability, so honor the
+                # user's explicit endpoint choice and let provider request-building
+                # omit thinking params for that endpoint.
+                eligible.insert(0, override_provider)
                 logger.info(
                     f"[LLM] User-selected endpoint {override_provider.name} "
-                    f"lacks thinking capability; appended as non-thinking fallback"
+                    f"lacks thinking capability; using it as non-thinking preferred endpoint"
                 )
             elif not eligible:
                 # No other available endpoints, must use this one
@@ -1228,7 +1300,7 @@ class LLMClient:
                                 reason="User requested stop",
                                 source="llm_retry_backoff",
                             )
-                        except (asyncio.TimeoutError, TimeoutError):
+                        except TimeoutError:
                             pass
                     else:
                         await asyncio.sleep(delay)
