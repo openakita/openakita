@@ -336,20 +336,29 @@ class Plugin(PluginBase):
         model_id_str = model_info.model_id if model_info else params.get("model", "wan2.7-image-pro")
         use_async = model_info and model_info.api_type in ("async", "both")
 
+        # DashScope's multimodal-generation endpoint (used by wan2.x-image,
+        # qwen-image, etc.) requires its NATIVE content-item format, NOT the
+        # OpenAI-compatible {"type": "image_url", "image_url": {...}} shape.
+        # Each content item must contain exactly ONE of:
+        #     {"text": "..."}   (max one per message — the prompt / instruction)
+        #     {"image": "url"}  (zero or more — reference / edit-source images)
+        # Items with neither key — including the OpenAI-style image_url envelope —
+        # trigger DashScope's validator with the misleading message:
+        #     "Either 'text' or 'image' must be provided, but not both."
+        # See: https://www.alibabacloud.com/help/en/model-studio/wan-image-generation-api-reference
+        # and the dashscope-sdk-python `_preprocess_messages` reference impl.
         if mode == "img_edit":
             images = params.get("images", [])
             edit_instruction = params.get("edit_instruction", "") or prompt
-            content: list[dict] = []
+            content: list[dict] = [{"text": edit_instruction}]
             for img_url in images:
-                content.append({"type": "image_url", "image_url": {"url": img_url}})
-            content.append({"type": "text", "text": edit_instruction})
+                content.append({"image": img_url})
             messages = [{"role": "user", "content": content}]
         else:
-            content_items: list[dict] = []
+            content_items: list[dict] = [{"text": prompt}]
             ref_images = params.get("images") or []
             for img_url in ref_images:
-                content_items.append({"type": "image_url", "image_url": {"url": img_url}})
-            content_items.append({"type": "text", "text": prompt})
+                content_items.append({"image": img_url})
             messages = [{"role": "user", "content": content_items}]
 
         kwargs: dict[str, Any] = {
