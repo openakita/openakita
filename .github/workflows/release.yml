@@ -279,6 +279,13 @@ jobs:
         shell: bash
         run: |
           mkdir -p docs-site/.vitepress/dist
+          # 先装 monorepo 本地 SDK，避免 desktop 矩阵 job 与 python_release job
+          # 之间的 PyPI 索引时序竞争（即使发布顺序已是 SDK→main，索引刷新仍有
+          # 数秒延迟；多平台/多 runner 并发起手时不一定都能拿到新版本）。
+          # 非 editable：PyInstaller 必须把 SDK 当作普通 site-packages 条目收集
+          # 进 openakita-server 镜像，editable 安装会让打包遗漏 SDK 代码与 web/
+          # 资源（与 ci.yml 第 341 行保持一致）。
+          pip install ./openakita-plugin-sdk
           pip install -e ".[all]"
           pip install "pyinstaller>=6.18.0"
 

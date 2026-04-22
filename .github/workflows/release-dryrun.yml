@@ -56,17 +56,25 @@ jobs:
           mkdir -p docs-site/.vitepress/dist
           python -m build --wheel
 
+      # 同时构建 Plugin SDK wheel 到 dist/，让 [all] extras 验证能从本地解析到
+      # monorepo 当前版本的 SDK（PyPI 上的版本通常滞后），真实模拟"SDK 已先发到
+      # PyPI、用户随后 pip install openakita[all]"的发布完成态。
+      - name: Build Plugin SDK wheel
+        run: python -m build --wheel openakita-plugin-sdk/ --outdir dist/
+
       - name: Verify wheel installs correctly
         run: |
           python -m venv /tmp/test-venv
-          /tmp/test-venv/bin/pip install dist/*.whl
+          /tmp/test-venv/bin/pip install dist/openakita-*.whl
           /tmp/test-venv/bin/openakita --help
 
       - name: Verify extras install correctly
         run: |
           python -m venv /tmp/test-all
-          WHL=$(ls dist/*.whl)
-          /tmp/test-all/bin/pip install "${WHL}[all]"
+          WHL=$(ls dist/openakita-*.whl)
+          # --find-links dist/ 让 pip 优先从本地索引解析 openakita-plugin-sdk，
+          # 既能验证 wheel 自身的依赖声明，又不被 PyPI 滞后版本卡住。
+          /tmp/test-all/bin/pip install --find-links dist/ "${WHL}[all]"
           /tmp/test-all/bin/openakita --help
 
       - name: Upload wheel artifact
@@ -172,6 +180,13 @@ jobs:
         shell: bash
         run: |
           mkdir -p docs-site/.vitepress/dist
+          # 先装 monorepo 内的 SDK（PyPI 版本通常滞后于本地 pyproject.toml），
+          # 再装主项目；这样 [all] extras 的 openakita-plugin-sdk 约束会被本地
+          # 已装版本满足，不再向 PyPI 索取。
+          # SDK 用非 editable 安装：PyInstaller 需要把 SDK 当成普通 site-packages
+          # 条目收集进 openakita-server 镜像，editable 安装的 .pth 跳转方式会让
+          # 打包遗漏 SDK 的代码与 web/ 资源（与 ci.yml 第 341 行保持一致）。
+          pip install ./openakita-plugin-sdk
           pip install -e ".[all]"
           pip install "pyinstaller>=6.18.0"
 
