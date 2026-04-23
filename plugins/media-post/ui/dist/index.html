@@ -382,9 +382,14 @@ const I18N_DICT = {
     "mediaPost.forms.template.label": "卡片模板",
     "mediaPost.forms.template.modern": "现代（modern）",
     "mediaPost.forms.template.minimal": "极简（minimal）",
-    "mediaPost.forms.template.dark": "深色（dark）",
-    "mediaPost.forms.template.colorful": "活力（colorful）",
-    "mediaPost.forms.template.podcast": "播客（podcast）",
+    "mediaPost.forms.template.retro": "复古（retro）",
+    "mediaPost.forms.template.youtube_style": "YouTube 风格（youtube_style）",
+    "mediaPost.forms.template.custom": "自定义（custom）",
+    "mediaPost.forms.template.modern.desc": "白底高对比，适合教程／发布会等正式场景",
+    "mediaPost.forms.template.minimal.desc": "纯文字极简卡，适合资讯类、文档配套",
+    "mediaPost.forms.template.retro.desc": "暗色复古配色，适合深度访谈／纪录片",
+    "mediaPost.forms.template.youtube_style.desc": "粗体大字＋强调色，对标 YouTube 章节卡视觉",
+    "mediaPost.forms.template.custom.desc": "读取自定义模板目录下 <id>.html，需自行准备 HTML 文件",
     "mediaPost.forms.size.label": "卡片尺寸",
     "mediaPost.forms.size.16_9": "横版 16:9 (1280×720)",
     "mediaPost.forms.size.1_1": "方版 1:1 (1080×1080)",
@@ -456,25 +461,52 @@ const I18N_DICT = {
     "mediaPost.settings.api.title": "🔑 API Key",
     "mediaPost.settings.api.label": "DashScope API Key",
     "mediaPost.settings.api.helper": "前往阿里云百炼控制台 → API Key 管理获取；本地仅保存，不上传",
+    "mediaPost.settings.api.placeholder": "sk-...",
+    "mediaPost.settings.api.required": "必填项",
+    "mediaPost.settings.api.show": "显示",
+    "mediaPost.settings.api.hide": "隐藏",
+    "mediaPost.settings.api.saveBtn": "保存",
     "mediaPost.settings.api.test": "测试连接",
-    "mediaPost.settings.api.ok": "已连接",
+    "mediaPost.settings.api.ok": "已配置",
     "mediaPost.settings.api.missing": "未配置",
+    "mediaPost.settings.api.toast.saved": "API Key 已保存",
+    "mediaPost.settings.api.toast.cleared": "API Key 已清除",
     "mediaPost.settings.vlm.title": "⚙️ VLM 参数",
     "mediaPost.settings.vlm.fps": "采样帧率（multi_aspect）",
     "mediaPost.settings.vlm.batch": "VLM 批大小（固定 8）",
     "mediaPost.settings.vlm.concurrency": "并发批数",
     "mediaPost.settings.chapter.title": "🎨 章节卡",
     "mediaPost.settings.chapter.template": "默认模板",
+    "mediaPost.settings.chapter.template.helper": "新建「章节卡」任务时使用的默认 HTML 模板；可在 Create 页临时切换",
     "mediaPost.settings.chapter.templates_dir": "自定义模板目录",
     "mediaPost.settings.chapter.playwright": "Playwright 渲染状态",
-    "mediaPost.settings.chapter.test": "测试",
+    "mediaPost.settings.chapter.playwright.checking": "检测中…",
+    "mediaPost.settings.chapter.playwright.ok": "Playwright 就绪 · A 路（HTML 渲染）",
+    "mediaPost.settings.chapter.playwright.fallback": "未就绪 · 自动降级 B 路（ffmpeg drawtext）",
+    "mediaPost.settings.chapter.playwright.recheck": "重新检测",
+    "mediaPost.settings.chapter.playwright.help": "若希望使用 A 路得到更精致的 HTML 卡片，请按下方命令安装；未安装也不影响出片，B 路仅样式较朴素。",
+    "mediaPost.settings.chapter.playwright.cmd1": "1. 安装库：",
+    "mediaPost.settings.chapter.playwright.cmd2": "2. 安装 Chromium：",
+    "mediaPost.settings.chapter.playwright.copy": "复制",
+    "mediaPost.settings.chapter.playwright.error": "上次错误：",
     "mediaPost.settings.cost.title": "🚀 成本控制",
     "mediaPost.settings.cost.warn": "单任务确认阈值 ¥",
     "mediaPost.settings.cost.duration": "multi_aspect 时长上限（分钟）",
+    "mediaPost.settings.storage.title": "💾 数据存储",
+    "mediaPost.settings.storage.dataDir": "插件数据目录（由宿主分配，只读）",
+    "mediaPost.settings.storage.openFolder": "打开文件夹",
+    "mediaPost.settings.storage.copyPath": "复制路径",
+    "mediaPost.settings.storage.uploads": "上传素材 (uploads)",
+    "mediaPost.settings.storage.tasks": "任务产物 (tasks)",
+    "mediaPost.settings.storage.fileCount": "{n} 个文件",
+    "mediaPost.settings.storage.refresh": "刷新统计",
+    "mediaPost.settings.storage.totals": "合计：{files} 个文件 · {mb} MB",
+    "mediaPost.settings.storage.note": "本插件不暴露自定义存放路径：所有上传与产物均归属于宿主指定的数据目录，便于统一备份与清理。",
     "mediaPost.settings.handoff.title": "🔗 跨插件协同（v2.0 启用）",
     "mediaPost.settings.handoff.disabled": "等待 v2.0 — 将与 clip-sense / subtitle-craft / avatar-studio 互通素材",
     "mediaPost.settings.save": "保存设置",
     "mediaPost.settings.saved": "已保存",
+    "mediaPost.settings.saveFailed": "保存失败",
     // Common
     "mediaPost.common.start": "开始",
     "mediaPost.common.cancel": "取消",
@@ -571,9 +603,14 @@ const I18N_DICT = {
     "mediaPost.forms.template.label": "Card template",
     "mediaPost.forms.template.modern": "Modern",
     "mediaPost.forms.template.minimal": "Minimal",
-    "mediaPost.forms.template.dark": "Dark",
-    "mediaPost.forms.template.colorful": "Colorful",
-    "mediaPost.forms.template.podcast": "Podcast",
+    "mediaPost.forms.template.retro": "Retro",
+    "mediaPost.forms.template.youtube_style": "YouTube style",
+    "mediaPost.forms.template.custom": "Custom",
+    "mediaPost.forms.template.modern.desc": "High-contrast white card; great for tutorials & launches",
+    "mediaPost.forms.template.minimal.desc": "Pure-text minimal card; great for news / docs companion",
+    "mediaPost.forms.template.retro.desc": "Dark retro palette; great for interviews & documentaries",
+    "mediaPost.forms.template.youtube_style.desc": "Bold-large-type with accent colour, mirrors YouTube chapter cards",
+    "mediaPost.forms.template.custom.desc": "Reads <id>.html from your custom templates dir; bring your own HTML",
     "mediaPost.forms.size.label": "Card size",
     "mediaPost.forms.size.16_9": "Landscape 16:9 (1280×720)",
     "mediaPost.forms.size.1_1": "Square 1:1 (1080×1080)",
@@ -641,25 +678,52 @@ const I18N_DICT = {
     "mediaPost.settings.api.title": "🔑 API Key",
     "mediaPost.settings.api.label": "DashScope API Key",
     "mediaPost.settings.api.helper": "Get one from Aliyun Bailian console → API Key. Stored locally only.",
+    "mediaPost.settings.api.placeholder": "sk-...",
+    "mediaPost.settings.api.required": "Required",
+    "mediaPost.settings.api.show": "Show",
+    "mediaPost.settings.api.hide": "Hide",
+    "mediaPost.settings.api.saveBtn": "Save",
     "mediaPost.settings.api.test": "Test connection",
-    "mediaPost.settings.api.ok": "Connected",
+    "mediaPost.settings.api.ok": "Configured",
     "mediaPost.settings.api.missing": "Not configured",
+    "mediaPost.settings.api.toast.saved": "API Key saved",
+    "mediaPost.settings.api.toast.cleared": "API Key cleared",
     "mediaPost.settings.vlm.title": "⚙️ VLM Parameters",
     "mediaPost.settings.vlm.fps": "Sample fps (multi_aspect)",
     "mediaPost.settings.vlm.batch": "VLM batch size (locked to 8)",
     "mediaPost.settings.vlm.concurrency": "Concurrent batches",
     "mediaPost.settings.chapter.title": "🎨 Chapter cards",
     "mediaPost.settings.chapter.template": "Default template",
+    "mediaPost.settings.chapter.template.helper": "HTML template the Chapter Cards mode picks by default; you can override per task on Create",
     "mediaPost.settings.chapter.templates_dir": "Custom templates dir",
     "mediaPost.settings.chapter.playwright": "Playwright status",
-    "mediaPost.settings.chapter.test": "Test",
+    "mediaPost.settings.chapter.playwright.checking": "Probing…",
+    "mediaPost.settings.chapter.playwright.ok": "Playwright ready · A path (HTML render)",
+    "mediaPost.settings.chapter.playwright.fallback": "Not ready · auto fallback to B path (ffmpeg drawtext)",
+    "mediaPost.settings.chapter.playwright.recheck": "Re-check",
+    "mediaPost.settings.chapter.playwright.help": "Install commands below if you want the prettier A path; without it, the plugin still produces cards via the simpler B path.",
+    "mediaPost.settings.chapter.playwright.cmd1": "1. Install lib:",
+    "mediaPost.settings.chapter.playwright.cmd2": "2. Install Chromium:",
+    "mediaPost.settings.chapter.playwright.copy": "Copy",
+    "mediaPost.settings.chapter.playwright.error": "Last error: ",
     "mediaPost.settings.cost.title": "🚀 Cost control",
     "mediaPost.settings.cost.warn": "Per-task confirm threshold ¥",
+    "mediaPost.settings.storage.title": "💾 Storage",
+    "mediaPost.settings.storage.dataDir": "Plugin data directory (host-allocated, read-only)",
+    "mediaPost.settings.storage.openFolder": "Open folder",
+    "mediaPost.settings.storage.copyPath": "Copy path",
+    "mediaPost.settings.storage.uploads": "Uploads",
+    "mediaPost.settings.storage.tasks": "Task outputs",
+    "mediaPost.settings.storage.fileCount": "{n} files",
+    "mediaPost.settings.storage.refresh": "Refresh",
+    "mediaPost.settings.storage.totals": "Total: {files} files · {mb} MB",
+    "mediaPost.settings.storage.note": "This plugin doesn't expose custom paths — every upload and artifact lives under the host-managed data dir, which keeps backups and cleanup centralized.",
     "mediaPost.settings.cost.duration": "multi_aspect duration cap (min)",
     "mediaPost.settings.handoff.title": "🔗 Cross-plugin handoff (v2.0)",
     "mediaPost.settings.handoff.disabled": "Pending v2.0 — clip-sense / subtitle-craft / avatar-studio handoff",
     "mediaPost.settings.save": "Save settings",
     "mediaPost.settings.saved": "Saved",
+    "mediaPost.settings.saveFailed": "Save failed",
     "mediaPost.common.start": "Start",
     "mediaPost.common.cancel": "Cancel",
     "mediaPost.common.retry": "Retry",
@@ -891,9 +955,9 @@ function ChapterCardsForm({ value, onChange, t }) {
                 onChange={e => onChange({ template_id: e.target.value })}>
           <option value="modern">{t("mediaPost.forms.template.modern")}</option>
           <option value="minimal">{t("mediaPost.forms.template.minimal")}</option>
-          <option value="dark">{t("mediaPost.forms.template.dark")}</option>
-          <option value="colorful">{t("mediaPost.forms.template.colorful")}</option>
-          <option value="podcast">{t("mediaPost.forms.template.podcast")}</option>
+          <option value="retro">{t("mediaPost.forms.template.retro")}</option>
+          <option value="youtube_style">{t("mediaPost.forms.template.youtube_style")}</option>
+          <option value="custom">{t("mediaPost.forms.template.custom")}</option>
         </select>
       </div>
       <div className="form-row">
@@ -1466,37 +1530,142 @@ function LibraryTab({ t }) {
 }
 
 // ─── Settings tab — 5 sections ──────────────────────────────────────────
+// Chapter card template IDs MUST mirror mediapost_chapter_renderer.builtin_template_ids().
+// Mismatch = "validation failed: template_id 'dark' not in [...]" at task creation.
+const MP_TEMPLATE_IDS = ["modern", "minimal", "retro", "youtube_style", "custom"];
+
 function SettingsTab({ t, settings, onSaved }) {
   const [draft, setDraft] = useState(settings || {});
   const [savedFlash, setSavedFlash] = useState(false);
+  const [savingApi, setSavingApi] = useState(false);
+  const [keyDraft, setKeyDraft] = useState("");
+  const [showKey, setShowKey] = useState(false);
+
+  // Real-time Playwright probe (single source of truth for the pill;
+  // we ignore the cached `playwright_enabled` config flag in the UI so
+  // status reflects the live runtime, mirroring seedance-video's approach).
+  const [pw, setPw] = useState({ status: "idle", available: false, error: "" });
+  // Storage stats for the host-allocated data dir. Read-only display +
+  // open-folder shortcut; this plugin doesn't expose user-selectable paths
+  // because uploads/tasks are managed centrally by the host SDK.
+  const [storage, setStorage] = useState(null);
+
   useEffect(() => { setDraft(settings || {}); }, [settings]);
   function set(k, v) { setDraft(d => ({ ...d, [k]: v })); }
-  async function save() {
-    const r = await pluginApi("PUT", "/settings", { updates: draft });
-    if (r.ok) { setSavedFlash(true); setTimeout(() => setSavedFlash(false), 1500); onSaved && onSaved(); }
+
+  async function probePlaywright() {
+    setPw(s => ({ ...s, status: "checking" }));
+    try {
+      const r = await pluginApi("GET", "/playwright/probe");
+      if (r.ok && r.body) {
+        setPw({
+          status: "done",
+          available: !!r.body.available,
+          error: r.body.error || "",
+        });
+      } else {
+        setPw({ status: "done", available: false, error: "probe failed" });
+      }
+    } catch (e) {
+      setPw({ status: "done", available: false, error: String(e && e.message || e) });
+    }
   }
+  async function loadStorage() {
+    try {
+      const r = await pluginApi("GET", "/storage/stats");
+      if (r.ok) setStorage(r.body);
+    } catch (_) {}
+  }
+  useEffect(() => { probePlaywright(); loadStorage(); }, []);
+
+  async function saveApiKey() {
+    setSavingApi(true);
+    try {
+      const r = await pluginApi("PUT", "/settings", { updates: { dashscope_api_key: keyDraft } });
+      if (r.ok) {
+        set("dashscope_api_key", keyDraft);
+        setKeyDraft("");
+        showToast(t(keyDraft ? "mediaPost.settings.api.toast.saved" : "mediaPost.settings.api.toast.cleared"));
+        onSaved && onSaved();
+      } else {
+        showToast(t("mediaPost.settings.saveFailed"), "error");
+      }
+    } catch (e) {
+      showToast(t("mediaPost.settings.saveFailed") + ": " + (e && e.message || e), "error");
+    }
+    setSavingApi(false);
+  }
+
+  async function save() {
+    // Bulk save excludes the API key (handled by its own Save button so the
+    // visible password value never travels with unrelated edits).
+    const updates = { ...draft };
+    delete updates.dashscope_api_key;
+    const r = await pluginApi("PUT", "/settings", { updates });
+    if (r.ok) {
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 1500);
+      onSaved && onSaved();
+    } else {
+      showToast(t("mediaPost.settings.saveFailed"), "error");
+    }
+  }
+
   const apiOk = !!draft.dashscope_api_key;
+  const tplId = draft.chapter_template_default || "modern";
+  const tplDescKey = "mediaPost.forms.template." + tplId + ".desc";
+
+  function copyText(s) {
+    if (!s) return;
+    if (window.OpenAkita && typeof window.OpenAkita.clipboard === "function") {
+      window.OpenAkita.clipboard(s);
+    } else if (navigator.clipboard) {
+      navigator.clipboard.writeText(s);
+    }
+    showToast("Copied");
+  }
+  function openFolder(p) {
+    if (!p) return;
+    if (window.OpenAkita && typeof window.OpenAkita.showInFolder === "function") {
+      window.OpenAkita.showInFolder(p);
+    } else if (window.parent && window.parent !== window) {
+      try { window.parent.postMessage({ type: "bridge:show-in-folder", payload: { path: p } }, "*"); } catch (_) {}
+    }
+  }
 
   return (
     <div style={{maxWidth: 640}}>
+      {/* ── API Key (Seedance-style field-level callout) ──────────────── */}
       <div className="setting-section oa-settings-section">
-        <div className="oa-settings-section__title">{t("mediaPost.settings.api.title")}</div>
-        <div className="form-row">
-          <div className="label">{t("mediaPost.settings.api.label")}</div>
-          <input className="input" type="password" value={draft.dashscope_api_key || ""}
-                 onChange={e => set("dashscope_api_key", e.target.value)}
-                 placeholder="sk-..." />
-          <div className="text-xs text-dim" style={{marginTop:4}}>{t("mediaPost.settings.api.helper")}</div>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className={`oa-pill ${apiOk ? "green" : "red"}`}>
-            {apiOk ? t("mediaPost.settings.api.ok") : t("mediaPost.settings.api.missing")}
-          </span>
+        <h3 className="oa-settings-section__title">{t("mediaPost.settings.api.title")}</h3>
+        <div className={"form-row" + (apiOk ? "" : " oa-config-field-callout")}
+             data-callout={apiOk ? undefined : t("mediaPost.settings.api.required")}>
+          <label className="label">{t("mediaPost.settings.api.label")}</label>
+          <div className="flex gap-2">
+            <input className="input flex-1" type={showKey ? "text" : "password"}
+                   value={keyDraft !== "" ? keyDraft : (draft.dashscope_api_key || "")}
+                   onChange={e => setKeyDraft(e.target.value)}
+                   placeholder={t("mediaPost.settings.api.placeholder")} />
+            <button className="btn btn-sm" onClick={() => setShowKey(!showKey)}>
+              {showKey ? t("mediaPost.settings.api.hide") : t("mediaPost.settings.api.show")}
+            </button>
+            <button className="btn btn-sm btn-primary" disabled={!keyDraft || savingApi}
+                    onClick={saveApiKey}>
+              {t("mediaPost.settings.api.saveBtn")}
+            </button>
+          </div>
+          <p className="text-xs text-dim" style={{marginTop:4}}>{t("mediaPost.settings.api.helper")}</p>
+          <div className="flex items-center gap-2" style={{marginTop:6}}>
+            <span className={"oa-pill " + (apiOk ? "green" : "red")}>
+              {apiOk ? t("mediaPost.settings.api.ok") : t("mediaPost.settings.api.missing")}
+            </span>
+          </div>
         </div>
       </div>
 
+      {/* ── VLM parameters ─────────────────────────────────────────────── */}
       <div className="oa-settings-section">
-        <div className="oa-settings-section__title">{t("mediaPost.settings.vlm.title")}</div>
+        <h3 className="oa-settings-section__title">{t("mediaPost.settings.vlm.title")}</h3>
         <div className="grid-2">
           <div className="form-row">
             <div className="label">{t("mediaPost.settings.vlm.fps")}</div>
@@ -1516,25 +1685,71 @@ function SettingsTab({ t, settings, onSaved }) {
         </div>
       </div>
 
+      {/* ── Chapter cards (template + live Playwright probe) ──────────── */}
       <div className="oa-settings-section">
-        <div className="oa-settings-section__title">{t("mediaPost.settings.chapter.title")}</div>
+        <h3 className="oa-settings-section__title">{t("mediaPost.settings.chapter.title")}</h3>
         <div className="form-row">
           <div className="label">{t("mediaPost.settings.chapter.template")}</div>
-          <select className="input select" value={draft.chapter_template_default || "modern"}
+          <select className="input select" value={tplId}
                   onChange={e => set("chapter_template_default", e.target.value)}>
-            {["modern","minimal","dark","colorful","podcast"].map(tpl => <option key={tpl} value={tpl}>{tpl}</option>)}
+            {MP_TEMPLATE_IDS.map(id => (
+              <option key={id} value={id}>{t("mediaPost.forms.template." + id)}</option>
+            ))}
           </select>
+          <div className="text-xs text-dim" style={{marginTop:4}}>{t(tplDescKey)}</div>
+          <div className="text-xs text-dim" style={{marginTop:2}}>{t("mediaPost.settings.chapter.template.helper")}</div>
         </div>
+
         <div className="form-row">
-          <div className="label">{t("mediaPost.settings.chapter.playwright")}</div>
-          <span className={`oa-pill ${draft.playwright_enabled === "true" ? "green" : "gray"}`}>
-            {draft.playwright_enabled === "true" ? "Playwright OK" : "drawtext fallback"}
-          </span>
+          <div className="flex items-center justify-between">
+            <div className="label" style={{margin:0}}>{t("mediaPost.settings.chapter.playwright")}</div>
+            <button className="btn btn-sm" onClick={probePlaywright} disabled={pw.status === "checking"}>
+              {pw.status === "checking" ? t("mediaPost.settings.chapter.playwright.checking") : t("mediaPost.settings.chapter.playwright.recheck")}
+            </button>
+          </div>
+          <div style={{marginTop:6}}>
+            {pw.status === "checking" && (
+              <span className="oa-pill gray">{t("mediaPost.settings.chapter.playwright.checking")}</span>
+            )}
+            {pw.status !== "checking" && pw.available && (
+              <span className="oa-pill green">{t("mediaPost.settings.chapter.playwright.ok")}</span>
+            )}
+            {pw.status !== "checking" && !pw.available && (
+              <span className="oa-pill red">{t("mediaPost.settings.chapter.playwright.fallback")}</span>
+            )}
+          </div>
+          {pw.status !== "checking" && !pw.available && (
+            <div className="text-xs text-dim" style={{marginTop:6, lineHeight:1.6}}>
+              <div>{t("mediaPost.settings.chapter.playwright.help")}</div>
+              <div style={{marginTop:6}}>
+                {t("mediaPost.settings.chapter.playwright.cmd1")}{" "}
+                <code style={{padding:"1px 6px",background:"var(--bg-2,#f3f4f6)",borderRadius:4}}>pip install playwright</code>{" "}
+                <button className="btn btn-sm" style={{marginLeft:6}}
+                        onClick={() => copyText("pip install playwright")}>
+                  {t("mediaPost.settings.chapter.playwright.copy")}
+                </button>
+              </div>
+              <div style={{marginTop:4}}>
+                {t("mediaPost.settings.chapter.playwright.cmd2")}{" "}
+                <code style={{padding:"1px 6px",background:"var(--bg-2,#f3f4f6)",borderRadius:4}}>python -m playwright install chromium</code>{" "}
+                <button className="btn btn-sm" style={{marginLeft:6}}
+                        onClick={() => copyText("python -m playwright install chromium")}>
+                  {t("mediaPost.settings.chapter.playwright.copy")}
+                </button>
+              </div>
+              {pw.error && (
+                <div style={{marginTop:6, color:"var(--danger,#b91c1c)"}}>
+                  {t("mediaPost.settings.chapter.playwright.error")}{pw.error}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
+      {/* ── Cost control ───────────────────────────────────────────────── */}
       <div className="oa-settings-section">
-        <div className="oa-settings-section__title">{t("mediaPost.settings.cost.title")}</div>
+        <h3 className="oa-settings-section__title">{t("mediaPost.settings.cost.title")}</h3>
         <div className="grid-2">
           <div className="form-row">
             <div className="label">{t("mediaPost.settings.cost.warn")}</div>
@@ -1549,15 +1764,74 @@ function SettingsTab({ t, settings, onSaved }) {
         </div>
       </div>
 
+      {/* ── Storage (read-only — host owns the path) ──────────────────── */}
       <div className="oa-settings-section">
-        <div className="oa-settings-section__title disabled">{t("mediaPost.settings.handoff.title")}</div>
+        <h3 className="oa-settings-section__title">{t("mediaPost.settings.storage.title")}</h3>
+        <div className="form-row">
+          <label className="label">{t("mediaPost.settings.storage.dataDir")}</label>
+          <div className="flex gap-2 items-center">
+            <input className="input flex-1" readOnly value={storage?.data_dir || ""} />
+            <button className="btn btn-sm" disabled={!storage?.data_dir}
+                    onClick={() => openFolder(storage?.data_dir)}>
+              {t("mediaPost.settings.storage.openFolder")}
+            </button>
+            <button className="btn btn-sm" disabled={!storage?.data_dir}
+                    onClick={() => copyText(storage?.data_dir)}>
+              {t("mediaPost.settings.storage.copyPath")}
+            </button>
+          </div>
+          <div className="text-xs text-dim" style={{marginTop:4}}>{t("mediaPost.settings.storage.note")}</div>
+        </div>
+        {storage?.per_dir && (
+          <div className="grid-2" style={{marginTop:8}}>
+            {[
+              {key:"uploads_dir", label:t("mediaPost.settings.storage.uploads")},
+              {key:"tasks_dir",   label:t("mediaPost.settings.storage.tasks")},
+            ].map(({key, label}) => {
+              const s = storage.per_dir[key] || {};
+              return (
+                <div key={key} className="card" style={{padding:10}}>
+                  <div className="text-xs text-dim">{label}</div>
+                  <div style={{fontSize:18, fontWeight:600, color:"var(--primary)", margin:"4px 0"}}>
+                    {(s.size_mb || 0)} MB
+                  </div>
+                  <div className="text-xs text-dim">
+                    {t("mediaPost.settings.storage.fileCount", { n: s.file_count || 0 })}
+                  </div>
+                  <button className="btn btn-sm" style={{marginTop:6}}
+                          disabled={!s.path}
+                          onClick={() => openFolder(s.path)}>
+                    {t("mediaPost.settings.storage.openFolder")}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="flex items-center justify-between" style={{marginTop:10}}>
+          <span className="text-xs text-dim">
+            {storage ? t("mediaPost.settings.storage.totals", {
+              files: storage.total_files || 0,
+              mb: storage.total_size_mb || 0,
+            }) : ""}
+          </span>
+          <button className="btn btn-sm" onClick={loadStorage}>
+            {t("mediaPost.settings.storage.refresh")}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Handoff (disabled, v2.0) ──────────────────────────────────── */}
+      <div className="oa-settings-section">
+        <h3 className="oa-settings-section__title disabled">{t("mediaPost.settings.handoff.title")}</h3>
         <div className="text-sm text-muted">{t("mediaPost.settings.handoff.disabled")}</div>
         <span className="oa-pill gray" style={{marginTop:8}}>v2.0 only</span>
       </div>
 
-      <div className="flex items-center gap-2">
-        <button className="btn btn-primary" onClick={save}>{t("mediaPost.settings.save")}</button>
+      {/* ── Bottom save bar — right-aligned per UX feedback ───────────── */}
+      <div className="flex items-center justify-end gap-2" style={{marginTop:12}}>
         {savedFlash && <span className="oa-pill green">{t("mediaPost.settings.saved")}</span>}
+        <button className="btn btn-primary" onClick={save}>{t("mediaPost.settings.save")}</button>
       </div>
     </div>
   );

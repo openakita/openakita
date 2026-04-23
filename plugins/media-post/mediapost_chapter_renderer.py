@@ -411,6 +411,41 @@ def builtin_template_ids() -> Iterable[str]:
     return ("modern", "minimal", "retro", "youtube_style", "custom")
 
 
+async def probe_playwright_runtime() -> dict[str, Any]:
+    """Public Settings-UI probe.
+
+    Returns a small dict with import + browser launch results so the renderer
+    selection (A path vs B path) is observable without firing a full task.
+    Browser launch is wrapped in a 10s timeout so the route stays responsive
+    even when Chromium is missing.
+    """
+    result: dict[str, Any] = {
+        "import_ok": False,
+        "browser_ok": False,
+        "error": "",
+    }
+    try:
+        import playwright  # noqa: F401
+    except ImportError as exc:
+        result["error"] = f"playwright not installed: {exc}"
+        return result
+    result["import_ok"] = True
+    try:
+        from playwright.async_api import async_playwright
+
+        async with async_playwright() as pw:
+            browser = await asyncio.wait_for(
+                pw.chromium.launch(headless=True), timeout=10.0
+            )
+            try:
+                result["browser_ok"] = True
+            finally:
+                await browser.close()
+    except Exception as exc:  # pragma: no cover — purely informational
+        result["error"] = str(exc)
+    return result
+
+
 async def _safe_call(cb: Callable[..., Any], *args: Any) -> None:
     try:
         result = cb(*args)
@@ -421,6 +456,7 @@ async def _safe_call(cb: Callable[..., Any], *args: Any) -> None:
 
 
 __all__ = [
+    "probe_playwright_runtime",
     "ChapterCardSpec",
     "ChapterRenderContext",
     "DEFAULT_TEMPLATE_HEIGHT",

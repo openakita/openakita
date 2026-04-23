@@ -33,7 +33,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from mediapost_chapter_renderer import builtin_template_ids
+from mediapost_chapter_renderer import (
+    builtin_template_ids,
+    probe_playwright_runtime,
+)
 from mediapost_inline.storage_stats import collect_storage_stats
 from mediapost_inline.upload_preview import (
     add_upload_preview_route,
@@ -445,14 +448,53 @@ class Plugin(PluginBase):
                     self._vlm_client = None
             return {"status": "ok"}
 
-        # Route #21: GET /storage/stats
+        # Route #21: GET /storage/stats — returns per-directory aggregates plus
+        # the host-allocated data root so the Settings UI can render a card grid
+        # similar to seedance-video and offer an "open folder" shortcut.
         @router.get("/storage/stats")
         async def storage_stats() -> dict[str, Any]:
-            roots = [self._data_dir / "uploads", self._data_dir / "tasks"]
-            stats = await collect_storage_stats(
-                [r for r in roots if r.exists()]
-            )
-            return stats.to_dict()
+            named_roots = {
+                "uploads_dir": self._data_dir / "uploads",
+                "tasks_dir": self._data_dir / "tasks",
+            }
+            per_dir: dict[str, dict[str, Any]] = {}
+            for key, root in named_roots.items():
+                stats = await collect_storage_stats([root]) if root.exists() else None
+                size_bytes = stats.total_bytes if stats else 0
+                per_dir[key] = {
+                    "path": str(root),
+                    "exists": root.exists(),
+                    "file_count": stats.total_files if stats else 0,
+                    "size_bytes": size_bytes,
+                    "size_mb": round(size_bytes / (1024 * 1024), 2),
+                    "truncated": bool(stats.truncated) if stats else False,
+                }
+            total_files = sum(d["file_count"] for d in per_dir.values())
+            total_bytes = sum(d["size_bytes"] for d in per_dir.values())
+            return {
+                "data_dir": str(self._data_dir),
+                "per_dir": per_dir,
+                "total_files": total_files,
+                "total_bytes": total_bytes,
+                "total_size_mb": round(total_bytes / (1024 * 1024), 2),
+            }
+
+        # Route #22b: GET /playwright/probe — realtime detection so the Settings
+        # UI can render an accurate "Playwright OK / drawtext fallback" pill
+        # plus install hints, instead of trusting the cached config flag.
+        @router.get("/playwright/probe")
+        async def playwright_probe() -> dict[str, Any]:
+            probe = await probe_playwright_runtime()
+            available = bool(probe.get("import_ok") and probe.get("browser_ok"))
+            return {
+                "available": available,
+                "import_ok": bool(probe.get("import_ok")),
+                "browser_ok": bool(probe.get("browser_ok")),
+                "render_path": "playwright" if available else "drawtext",
+                "error": str(probe.get("error") or ""),
+                "hint_install": "pip install playwright",
+                "hint_browsers": "python -m playwright install chromium",
+            }
 
         # Route #22: GET /errors — public 9-key error catalog (UI ErrorPanel).
         @router.get("/errors")
