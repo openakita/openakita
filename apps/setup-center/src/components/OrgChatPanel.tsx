@@ -490,7 +490,7 @@ export function OrgChatPanel({ orgId, nodeId, apiBaseUrl, compact, showHeader, t
         const st = d.status as string;
         if (st === "busy") {
           const task = (d.current_task || "") as string;
-          if (task.startsWith("[通知]")) return;
+          if (task.startsWith("[Notification]")) return;
           const seg = findOrCreateSeg(nid);
           if (pushSegLine(seg, `● **${nn(nid)}** started${task ? `: ${task}` : ""}`)) {
             updatePreview();

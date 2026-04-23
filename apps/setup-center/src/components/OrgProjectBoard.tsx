@@ -75,20 +75,20 @@ interface OrgProjectBoardProps {
 }
 
 const STATUS_META: Record<string, { label: string; color: string; order: number }> = {
-  todo:        { label: "待办",   color: "#64748b", order: 0 },
-  in_progress: { label: "进行中", color: "#3b82f6", order: 1 },
-  delivered:   { label: "已交付", color: "#8b5cf6", order: 2 },
-  rejected:    { label: "已打回", color: "#f97316", order: 3 },
-  accepted:    { label: "已验收", color: "#22c55e", order: 4 },
-  blocked:     { label: "已阻塞", color: "#ef4444", order: 5 },
-  cancelled:   { label: "已取消", color: "#94a3b8", order: 6 },
+  todo:        { label: "Todo",        color: "#64748b", order: 0 },
+  in_progress: { label: "In Progress", color: "#3b82f6", order: 1 },
+  delivered:   { label: "Delivered",   color: "#8b5cf6", order: 2 },
+  rejected:    { label: "Rejected",    color: "#f97316", order: 3 },
+  accepted:    { label: "Accepted",    color: "#22c55e", order: 4 },
+  blocked:     { label: "Blocked",     color: "#ef4444", order: 5 },
+  cancelled:   { label: "Cancelled",   color: "#94a3b8", order: 6 },
 };
 
 const COLUMNS = Object.entries(STATUS_META).map(([key, v]) => ({ key, ...v }));
 
-const PROJECT_TYPE_LABEL: Record<string, string> = { temporary: "临时", permanent: "持续" };
+const PROJECT_TYPE_LABEL: Record<string, string> = { temporary: "Temporary", permanent: "Ongoing" };
 const PROJECT_STATUS_LABEL: Record<string, string> = {
-  planning: "规划中", active: "进行中", paused: "暂停", completed: "已完成", archived: "已归档",
+  planning: "Planning", active: "In Progress", paused: "Paused", completed: "Completed", archived: "Archived",
 };
 const PROJECT_STATUS_COLOR: Record<string, string> = {
   planning: "#f59e0b", active: "#3b82f6", paused: "#94a3b8", completed: "#22c55e", archived: "#6b7280",
@@ -325,7 +325,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
   if (loading) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--muted)" }}>
-        加载中...
+        Loading...
       </div>
     );
   }
@@ -655,8 +655,8 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
                           e.stopPropagation();
                           openEditProject(project);
                         }}
-                        title={`编辑项目 ${project.name}`}
-                        aria-label={`编辑项目 ${project.name}`}
+                        title={`Edit project ${project.name}`}
+                        aria-label={`Edit project ${project.name}`}
                       >
                         <Pencil />
                       </Button>
@@ -668,8 +668,8 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
                           e.stopPropagation();
                           setProjectPendingDelete(project);
                         }}
-                        title={`删除项目 ${project.name}`}
-                        aria-label={`删除项目 ${project.name}`}
+                        title={`Delete project ${project.name}`}
+                        aria-label={`Delete project ${project.name}`}
                       >
                         <X />
                       </Button>
@@ -687,19 +687,19 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
                         </div>
                         <div className="opb-project-card__summary">
                           <div className="opb-project-card__title">{project.name}</div>
-                          <div className="opb-project-card__desc">{project.description || "暂无项目描述"}</div>
+                          <div className="opb-project-card__desc">{project.description || "No description"}</div>
                         </div>
                         <div className="opb-project-card__stats">
                           <div>
-                            任务
+                            Tasks
                             <strong>{total}</strong>
                           </div>
                           <div>
-                            完成
+                            Completed
                             <strong>{done}</strong>
                           </div>
                           <div>
-                            进度
+                            Progress
                             <strong>{total > 0 ? Math.round((done / total) * 100) : 0}%</strong>
                           </div>
                         </div>
@@ -730,7 +730,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
             }}>
               <CardContent className="flex h-full flex-col items-center justify-center gap-2 px-3 py-3 text-center">
                 <span className="text-lg leading-none">+</span>
-                <span className="text-xs font-medium">新项目</span>
+                <span className="text-xs font-medium">New Project</span>
               </CardContent>
             </Card>
           </div>
@@ -743,24 +743,24 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
           <div className="opb-stats-summary">
             {projectStats.total > 0 ? (<>
               <span className="opb-stat-chip">
-                共 <strong>{projectStats.total}</strong>
+                Total <strong>{projectStats.total}</strong>
               </span>
               {projectStats.inProgress > 0 && (
                 <span className="opb-stat-chip" style={{ color: "#3b82f6" }}>
                   <span className="opb-status-dot" style={{ background: "#3b82f6", width: 6, height: 6 }} />
-                  进行中 {projectStats.inProgress}
+                  In Progress {projectStats.inProgress}
                 </span>
               )}
               {projectStats.done > 0 && (
                 <span className="opb-stat-chip" style={{ color: "#22c55e" }}>
                   <span className="opb-status-dot" style={{ background: "#22c55e", width: 6, height: 6 }} />
-                  已完成 {projectStats.done}
+                  Completed {projectStats.done}
                 </span>
               )}
               {projectStats.blocked > 0 && (
                 <span className="opb-stat-chip" style={{ color: "#ef4444" }}>
                   <span className="opb-status-dot" style={{ background: "#ef4444", width: 6, height: 6 }} />
-                  异常 {projectStats.blocked}
+                  Error {projectStats.blocked}
                 </span>
               )}
 
@@ -771,7 +771,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
               </div>
               <span style={{ fontSize: 11, fontWeight: 600, minWidth: 32, textAlign: "right" }}>{projectStats.pct}%</span>
             </>) : (
-              <span style={{ color: "var(--muted)", fontSize: 12 }}>暂无任务</span>
+              <span style={{ color: "var(--muted)", fontSize: 12 }}>No tasks</span>
             )}
           </div>
 
@@ -780,14 +780,14 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
               onValueChange={v => { if (v) setViewTab(v as "gantt" | "kanban"); }}
               className="h-8">
               <ToggleGroupItem value="gantt" className={`text-xs px-3 h-7 ${viewTab === "gantt" ? "!bg-primary !text-primary-foreground !border-primary" : ""}`}>
-                任务列表
+                Task List
               </ToggleGroupItem>
               <ToggleGroupItem value="kanban" className={`text-xs px-3 h-7 ${viewTab === "kanban" ? "!bg-primary !text-primary-foreground !border-primary" : ""}`}>
-                看板
+                Board
               </ToggleGroupItem>
             </ToggleGroup>
             <Button size="sm" className="h-7 text-xs" onClick={() => setShowNewTask(true)}>
-              + 新任务
+              + New Task
             </Button>
           </div>
         </div>
@@ -826,9 +826,9 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
             <path d="M3 3h7l2 2h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/>
             <line x1="12" y1="10" x2="12" y2="14"/><line x1="10" y1="12" x2="14" y2="12"/>
           </svg>
-          <span style={{ fontSize: 14 }}>还没有项目</span>
-          <span style={{ fontSize: 12 }}>创建一个项目来管理组织的任务和进度</span>
-          <Button onClick={() => setShowNewProject(true)}>创建第一个项目</Button>
+          <span style={{ fontSize: 14 }}>No projects yet</span>
+          <span style={{ fontSize: 12 }}>Create a project to manage your organization's tasks and progress</span>
+          <Button onClick={() => setShowNewProject(true)}>Create Your First Project</Button>
         </div>
       )}
 
@@ -839,21 +839,21 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
       }}>
         <DialogContent className="sm:max-w-md" onOpenAutoFocus={e => e.preventDefault()}>
           <DialogHeader>
-            <DialogTitle>{editingProject ? "编辑项目" : "新建项目"}</DialogTitle>
+            <DialogTitle>{editingProject ? "Edit Project" : "New Project"}</DialogTitle>
             <DialogDescription className="sr-only">
-              {editingProject ? "编辑当前组织项目" : "创建一个新的组织项目"}
+              {editingProject ? "Edit the current organization project" : "Create a new organization project"}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2">
             <div className="grid grid-cols-3 gap-3">
               <div className="col-span-2 grid gap-2">
-                <Label htmlFor="project-name">项目名称 *</Label>
-                <Input id="project-name" placeholder="例如：Q2 产品迭代" value={newProjectName}
+                <Label htmlFor="project-name">Project Name *</Label>
+                <Input id="project-name" placeholder="e.g. Q2 Product Iteration" value={newProjectName}
                   onChange={e => setNewProjectName(e.target.value)}
                   onKeyDown={e => e.key === "Enter" && submitProject()} />
               </div>
               <div className="grid gap-2">
-                <Label>项目类型</Label>
+                <Label>Project Type</Label>
                 <ToggleGroup type="single" variant="outline" value={newProjectType}
                   onValueChange={v => { if (v) setNewProjectType(v as "temporary" | "permanent"); }}
                   className="h-9">
@@ -867,8 +867,8 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
               </div>
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="project-desc">项目描述</Label>
-              <Textarea id="project-desc" placeholder="项目目标和范围..."
+              <Label htmlFor="project-desc">Project Description</Label>
+              <Textarea id="project-desc" placeholder="Project goals and scope..."
                 value={newProjectDesc} onChange={e => setNewProjectDesc(e.target.value)}
                 className="min-h-[80px] resize-y" />
             </div>
@@ -877,8 +877,8 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
             <Button variant="outline" onClick={() => {
               setShowNewProject(false);
               resetProjectForm();
-            }}>取消</Button>
-            <Button onClick={submitProject}>{editingProject ? "保存" : "创建"}</Button>
+            }}>Cancel</Button>
+            <Button onClick={submitProject}>{editingProject ? "Save" : "Create"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -887,30 +887,30 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
       <Dialog open={showNewTask} onOpenChange={setShowNewTask}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>新建任务</DialogTitle>
-            <DialogDescription className="sr-only">为当前项目创建新任务</DialogDescription>
+            <DialogTitle>New Task</DialogTitle>
+            <DialogDescription className="sr-only">Create a new task for the current project</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2">
             <div className="grid gap-2">
-              <Label htmlFor="task-title">任务标题 *</Label>
-              <Input id="task-title" placeholder="例如：设计首页原型" value={newTaskTitle}
+              <Label htmlFor="task-title">Task Title *</Label>
+              <Input id="task-title" placeholder="e.g. Design homepage prototype" value={newTaskTitle}
                 onChange={e => setNewTaskTitle(e.target.value)} autoFocus
                 onKeyDown={e => e.key === "Enter" && createTask()} />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="task-desc">任务描述</Label>
-              <Textarea id="task-desc" placeholder="任务详细说明..."
+              <Label htmlFor="task-desc">Task Description</Label>
+              <Textarea id="task-desc" placeholder="Task details..."
                 value={newTaskDesc} onChange={e => setNewTaskDesc(e.target.value)}
                 className="min-h-[60px] resize-y" />
             </div>
             <div className="grid gap-2">
-              <Label>指派给</Label>
+              <Label>Assign to</Label>
               <Select value={newTaskAssignee || "__none__"} onValueChange={v => setNewTaskAssignee(v === "__none__" ? "" : v)}>
                 <SelectTrigger>
-                  <SelectValue placeholder="未分配" />
+                  <SelectValue placeholder="Unassigned" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">未分配</SelectItem>
+                  <SelectItem value="__none__">Unassigned</SelectItem>
                   {nodes.map(n => (
                     <SelectItem key={n.id} value={n.id}>{n.role_title || n.id}</SelectItem>
                   ))}
@@ -919,8 +919,8 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowNewTask(false)}>取消</Button>
-            <Button onClick={createTask}>添加</Button>
+            <Button variant="outline" onClick={() => setShowNewTask(false)}>Cancel</Button>
+            <Button onClick={createTask}>Add</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -928,13 +928,13 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
       <AlertDialog open={!!projectPendingDelete} onOpenChange={(open) => { if (!open) setProjectPendingDelete(null); }}>
         <AlertDialogContent size="sm">
           <AlertDialogHeader>
-            <AlertDialogTitle>删除项目？</AlertDialogTitle>
+            <AlertDialogTitle>Delete project?</AlertDialogTitle>
             <AlertDialogDescription className="whitespace-pre-wrap">
-              {projectPendingDelete ? `确定删除项目「${projectPendingDelete.name}」？\n此操作不可恢复，项目下的任务也会一并删除。` : ""}
+              {projectPendingDelete ? `Are you sure you want to delete project "${projectPendingDelete.name}"?\nThis action cannot be undone, and the tasks within the project will also be deleted.` : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
               onClick={() => {
@@ -944,7 +944,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
                 setProjectPendingDelete(null);
               }}
             >
-              删除
+              Delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -953,13 +953,13 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
       <AlertDialog open={!!taskPendingDelete} onOpenChange={(open) => { if (!open) setTaskPendingDelete(null); }}>
         <AlertDialogContent size="sm">
           <AlertDialogHeader>
-            <AlertDialogTitle>删除任务？</AlertDialogTitle>
+            <AlertDialogTitle>Delete task?</AlertDialogTitle>
             <AlertDialogDescription className="whitespace-pre-wrap">
-              {taskPendingDelete ? `确定删除任务「${taskPendingDelete.taskTitle}」？\n此操作不可恢复。` : ""}
+              {taskPendingDelete ? `Are you sure you want to delete task "${taskPendingDelete.taskTitle}"?\nThis action cannot be undone.` : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
               onClick={() => {
@@ -969,7 +969,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
                 setTaskPendingDelete(null);
               }}
             >
-              删除
+              Delete
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -980,12 +980,12 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
         <div className="opb-detail-overlay" onClick={closeTaskDetail}>
           <div className="opb-detail-panel" onClick={e => e.stopPropagation()}>
             <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-              <span style={{ fontSize: 14, fontWeight: 600 }}>任务详情</span>
+              <span style={{ fontSize: 14, fontWeight: 600 }}>Task Details</span>
               <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground" onClick={closeTaskDetail}>×</Button>
             </div>
             <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
               {taskDetailLoading ? (
-                <div style={{ color: "var(--muted)", fontSize: 12, padding: 24 }}>加载中...</div>
+                <div style={{ color: "var(--muted)", fontSize: 12, padding: 24 }}>Loading...</div>
               ) : taskDetail ? (
                 <TaskDetailContent
                   task={taskDetail} timeline={taskTimeline} nodeMap={nodeMap}
@@ -1009,7 +1009,7 @@ export function OrgProjectBoard({ orgId, apiBaseUrl, nodes = [], compact = false
                   cancellingTaskId={cancellingTaskId}
                 />
               ) : (
-                <div style={{ color: "var(--muted)", fontSize: 12, padding: 24 }}>无法加载任务详情</div>
+                <div style={{ color: "var(--muted)", fontSize: 12, padding: 24 }}>Unable to load task details</div>
               )}
             </div>
           </div>
@@ -1082,7 +1082,7 @@ function GanttView({
     <div className="opb-gantt">
       {sorted.length === 0 ? (
         <div style={{ padding: 40, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
-          暂无任务，点击「+ 新任务」开始
+          No tasks yet. Click "+ New Task" to begin.
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column" }}>
@@ -1098,7 +1098,7 @@ function GanttView({
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 13, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.title}</div>
                     <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 1 }}>
-                      {assignee ? (assignee.role_title || assignee.id) : "未分配"}
+                      {assignee ? (assignee.role_title || assignee.id) : "Unassigned"}
                       <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 500, opacity: 0.68 }}>#{task.id.slice(0, 8)}</span>
                     </div>
                   </div>
@@ -1114,34 +1114,34 @@ function GanttView({
                         <Button variant="outline" size="xs" className="h-6 px-2"
                           onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}>
                           <Play className="h-3 w-3" />
-                          {dispatchingTaskId === task.id ? "…" : "派发"}
+                          {dispatchingTaskId === task.id ? "…" : "Dispatch"}
                         </Button>
                       )}
                       {task.status === "in_progress" && (
                         <Button variant="outline" size="xs" className="h-6 px-2 text-destructive border-destructive/40 hover:bg-destructive/10"
-                          onClick={() => onCancel(task.id)} disabled={cancellingTaskId === task.id} title="终止正在执行的任务">
+                          onClick={() => onCancel(task.id)} disabled={cancellingTaskId === task.id} title="Abort the running task">
                           <X className="h-3 w-3" />
-                          {cancellingTaskId === task.id ? "终止中…" : "终止"}
+                          {cancellingTaskId === task.id ? "Aborting…" : "Abort"}
                         </Button>
                       )}
                       {task.status === "delivered" && (<>
                         <Button variant="outline" size="xs" className="h-6 px-2" onClick={() => onStatusChange(task.id, "accepted")}>
-                          <Check className="h-3 w-3" />验收
+                          <Check className="h-3 w-3" />Accept
                         </Button>
                         <Button variant="outline" size="xs" className="h-6 px-2 text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => onStatusChange(task.id, "rejected")}>
-                          <CornerUpLeft className="h-3 w-3" />打回
+                          <CornerUpLeft className="h-3 w-3" />Reject
                         </Button>
                       </>)}
                       {(task.status === "rejected" || task.status === "blocked" || task.status === "cancelled") && (
                         <Button variant="outline" size="xs" className="h-6 px-2"
                           onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}>
                           <RefreshCw className="h-3 w-3" />
-                          {dispatchingTaskId === task.id ? "…" : "重新派发"}
+                          {dispatchingTaskId === task.id ? "…" : "Redispatch"}
                         </Button>
                       )}
                       <Button variant="outline" size="xs" className="h-6 px-2 text-muted-foreground hover:text-destructive hover:border-destructive/40 hover:bg-destructive/10"
                         onClick={() => onDelete(task)}
-                        title="删除任务"><Trash2 className="h-3 w-3" /></Button>
+                        title="Delete task"><Trash2 className="h-3 w-3" /></Button>
                     </div>
                   </div>
                 </div>
@@ -1224,36 +1224,36 @@ function KanbanView({
                     <div className="opb-kanban-card__footer">
                       <div className="opb-kanban-card__owner">
                         <OrgAvatar avatarId={(assignee as any)?.avatar || null} size={16} />
-                        <span className="opb-kanban-card__owner-label">{assignee ? (assignee.role_title || assignee.id) : "未分配"}</span>
+                        <span className="opb-kanban-card__owner-label">{assignee ? (assignee.role_title || assignee.id) : "Unassigned"}</span>
                       </div>
                       <div className="opb-kanban-card__actions" onClick={e => e.stopPropagation()}>
                         {col.key === "todo" && (
                           <Button variant="outline" size="xs" className="h-6 px-2"
                             onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}>
                             <Play className="h-3 w-3" />
-                            {dispatchingTaskId === task.id ? "…" : "派发"}
+                            {dispatchingTaskId === task.id ? "…" : "Dispatch"}
                           </Button>
                         )}
                         {col.key === "in_progress" && (
                           <Button variant="outline" size="xs" className="h-6 px-2 text-destructive border-destructive/40 hover:bg-destructive/10"
-                            onClick={() => onCancel(task.id)} disabled={cancellingTaskId === task.id} title="终止正在执行的任务">
+                            onClick={() => onCancel(task.id)} disabled={cancellingTaskId === task.id} title="Abort the running task">
                             <X className="h-3 w-3" />
-                            {cancellingTaskId === task.id ? "…" : "终止"}
+                            {cancellingTaskId === task.id ? "…" : "Abort"}
                           </Button>
                         )}
                         {col.key === "delivered" && (<>
-                          <Button variant="outline" size="xs" className="h-6 px-2" onClick={() => onStatusChange(task.id, "accepted")} title="验收">
-                            <Check className="h-3 w-3" />验收
+                          <Button variant="outline" size="xs" className="h-6 px-2" onClick={() => onStatusChange(task.id, "accepted")} title="Accept">
+                            <Check className="h-3 w-3" />Accept
                           </Button>
-                          <Button variant="outline" size="xs" className="h-6 px-2 text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => onStatusChange(task.id, "rejected")} title="打回">
-                            <CornerUpLeft className="h-3 w-3" />打回
+                          <Button variant="outline" size="xs" className="h-6 px-2 text-destructive border-destructive/40 hover:bg-destructive/10" onClick={() => onStatusChange(task.id, "rejected")} title="Reject">
+                            <CornerUpLeft className="h-3 w-3" />Reject
                           </Button>
                         </>)}
                         {(col.key === "rejected" || col.key === "blocked" || col.key === "cancelled") && (
                           <Button variant="outline" size="xs" className="h-6 px-2"
                             onClick={() => onDispatch(task.id)} disabled={dispatchingTaskId === task.id}>
                             <RefreshCw className="h-3 w-3" />
-                            {dispatchingTaskId === task.id ? "…" : "重新派发"}
+                            {dispatchingTaskId === task.id ? "…" : "Redispatch"}
                           </Button>
                         )}
                         <Button variant="outline" size="xs" className="h-6 px-2 text-muted-foreground hover:text-destructive hover:border-destructive/40 hover:bg-destructive/10"
@@ -1313,31 +1313,31 @@ function TaskDetailContent({
   const progress = Math.min(100, Math.max(0, task.progress_pct ?? 0));
 
   const statusContext = (() => {
-    const assigneeName = assignee ? (assignee.role_title || assignee.id) : "未分配";
+    const assigneeName = assignee ? (assignee.role_title || assignee.id) : "Unassigned";
     const actionBtn = "h-7 px-2.5 text-xs shrink-0";
     switch (task.status) {
       case "todo":
         return (
           <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed px-3 py-2">
-            <span className="min-w-0 flex-1 text-xs text-muted-foreground">此任务尚未派发</span>
+            <span className="min-w-0 flex-1 text-xs text-muted-foreground">This task has not been dispatched yet</span>
             <Button variant="outline" size="sm" className={actionBtn} onClick={onDispatch} disabled={dispatchingTaskId === task.id}>
-              <Play className="h-3 w-3 mr-1" />{dispatchingTaskId === task.id ? "派发中…" : "派发"}
+              <Play className="h-3 w-3 mr-1" />{dispatchingTaskId === task.id ? "Dispatching…" : "Dispatch"}
             </Button>
           </div>
         );
       case "in_progress":
         return (
           <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
-            <span className="min-w-0 flex-1 text-xs">正在由 <strong>{assigneeName}</strong> 执行中</span>
+            <span className="min-w-0 flex-1 text-xs">Currently being executed by <strong>{assigneeName}</strong></span>
             <Button variant="outline" size="sm" className={`${actionBtn} text-destructive border-destructive/40 hover:bg-destructive/10`} onClick={onCancel} disabled={cancellingTaskId === task.id}>
-              <X className="h-3 w-3 mr-1" />{cancellingTaskId === task.id ? "终止中…" : "终止"}
+              <X className="h-3 w-3 mr-1" />{cancellingTaskId === task.id ? "Aborting…" : "Abort"}
             </Button>
           </div>
         );
       case "delivered":
         return (
           <div className="rounded-lg border border-amber-500/50 bg-amber-50/30 dark:bg-amber-950/20 p-3 space-y-2">
-            <div className="text-xs font-medium text-amber-700 dark:text-amber-400">待审阅</div>
+            <div className="text-xs font-medium text-amber-700 dark:text-amber-400">Pending Review</div>
             {task.delivery_summary && (
               <div className="text-xs text-muted-foreground">{task.delivery_summary}</div>
             )}
@@ -1352,7 +1352,7 @@ function TaskDetailContent({
                 )}
               </div>
             ) : (
-              <div className="text-muted-foreground text-xs italic">交付内容未记录</div>
+              <div className="text-muted-foreground text-xs italic">Deliverable content not recorded</div>
             )}
             {task.file_attachments && task.file_attachments.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
@@ -1363,10 +1363,10 @@ function TaskDetailContent({
             )}
             <div className="flex gap-2 justify-end">
               <Button variant="outline" size="sm" className={actionBtn} onClick={() => onStatusChange("accepted")}>
-                <Check className="h-3 w-3 mr-1" />验收
+                <Check className="h-3 w-3 mr-1" />Accept
               </Button>
               <Button variant="outline" size="sm" className={`${actionBtn} text-destructive border-destructive/40 hover:bg-destructive/10`} onClick={() => onStatusChange("rejected")}>
-                <CornerUpLeft className="h-3 w-3 mr-1" />打回
+                <CornerUpLeft className="h-3 w-3 mr-1" />Reject
               </Button>
             </div>
           </div>
@@ -1374,7 +1374,7 @@ function TaskDetailContent({
       case "accepted":
         return (
           <div className="rounded-lg border border-green-500/50 bg-green-50/30 dark:bg-green-950/20 p-3 space-y-2">
-            <div className="text-xs font-medium text-green-700 dark:text-green-400">已验收通过</div>
+            <div className="text-xs font-medium text-green-700 dark:text-green-400">Accepted</div>
             {task.deliverable_content ? (
               <div className="bg-muted/50 rounded p-2 text-xs max-h-40 overflow-y-auto chatMdContent">
                 {md ? (
@@ -1400,9 +1400,9 @@ function TaskDetailContent({
       case "rejected":
         return (
           <div className="flex items-center justify-between gap-3 rounded-lg border border-red-500/50 px-3 py-2">
-            <span className="min-w-0 flex-1 text-xs text-red-600 dark:text-red-400">已打回</span>
+            <span className="min-w-0 flex-1 text-xs text-red-600 dark:text-red-400">Rejected</span>
             <Button variant="outline" size="sm" className={actionBtn} onClick={onDispatch} disabled={dispatchingTaskId === task.id}>
-              <RefreshCw className="h-3 w-3 mr-1" />{dispatchingTaskId === task.id ? "…" : "重新派发"}
+              <RefreshCw className="h-3 w-3 mr-1" />{dispatchingTaskId === task.id ? "…" : "Redispatch"}
             </Button>
           </div>
         );
@@ -1410,9 +1410,9 @@ function TaskDetailContent({
       case "cancelled":
         return (
           <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed px-3 py-2">
-            <span className="min-w-0 flex-1 text-xs text-muted-foreground">{task.status === "blocked" ? "任务已阻塞" : "任务已取消"}</span>
+            <span className="min-w-0 flex-1 text-xs text-muted-foreground">{task.status === "blocked" ? "Task blocked" : "Task cancelled"}</span>
             <Button variant="outline" size="sm" className={actionBtn} onClick={onDispatch} disabled={dispatchingTaskId === task.id}>
-              <RefreshCw className="h-3 w-3 mr-1" />{dispatchingTaskId === task.id ? "…" : "重新派发"}
+              <RefreshCw className="h-3 w-3 mr-1" />{dispatchingTaskId === task.id ? "…" : "Redispatch"}
             </Button>
           </div>
         );
@@ -1427,7 +1427,7 @@ function TaskDetailContent({
 
       {(task.ancestors?.length ?? 0) > 0 && (
         <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
-          <span>父任务:</span>
+          <span>Parent task:</span>
           {(task.ancestors || []).map((a: any, i: number) => (
             <span key={a.id} className="inline-flex items-center gap-1">
               {i > 0 && <span className="text-muted-foreground/60">/</span>}
@@ -1460,7 +1460,7 @@ function TaskDetailContent({
         <CardContent className="space-y-4 px-4 py-4">
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-muted-foreground">进度</span>
+              <span className="text-muted-foreground">Progress</span>
               <span className="font-semibold">{progress}%</span>
             </div>
             <div
@@ -1483,18 +1483,18 @@ function TaskDetailContent({
           <div className="grid gap-2 text-xs sm:grid-cols-2">
             {assignee && (
               <div className="rounded-lg border px-3 py-2">
-                <div className="text-[11px] text-muted-foreground">执行人</div>
+                <div className="text-[11px] text-muted-foreground">Assignee</div>
                 <div className="mt-1 font-medium">{assignee.role_title || assignee.id}</div>
               </div>
             )}
             {delegatedBy && (
               <div className="rounded-lg border px-3 py-2">
-                <div className="text-[11px] text-muted-foreground">委派者</div>
+                <div className="text-[11px] text-muted-foreground">Delegated by</div>
                 <div className="mt-1 font-medium">{delegatedBy.role_title || delegatedBy.id}</div>
               </div>
             )}
             <div className="rounded-lg border px-3 py-2 sm:col-span-2">
-              <div className="text-[11px] text-muted-foreground">创建时间</div>
+              <div className="text-[11px] text-muted-foreground">Created at</div>
               <div className="mt-1 font-medium">{fmt(task.created_at)}</div>
             </div>
           </div>
@@ -1504,17 +1504,17 @@ function TaskDetailContent({
       {(task.plan_steps?.length ?? 0) > 0 && (
         <Card className="gap-0 py-0">
           <CardHeader className="px-4 pt-4 pb-0">
-            <CardTitle className="text-base">计划步骤</CardTitle>
+            <CardTitle className="text-base">Plan Steps</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 px-4 py-4">
             {(task.plan_steps || []).map((s: any, i: number) => {
               const st = s.status || "pending";
-              const label = st === "completed" ? "已完成" : st === "in_progress" ? "进行中" : "待处理";
+              const label = st === "completed" ? "Completed" : st === "in_progress" ? "In Progress" : "Pending";
               const c = st === "completed" ? "#22c55e" : st === "in_progress" ? "#3b82f6" : "#94a3b8";
               return (
                 <div key={s.id || i} className="flex items-start gap-3 rounded-lg border px-3 py-2">
                   <span className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: c }} />
-                  <div className="min-w-0 flex-1 text-sm leading-5">{s.description || s.title || `步骤 ${i + 1}`}</div>
+                  <div className="min-w-0 flex-1 text-sm leading-5">{s.description || s.title || `Step ${i + 1}`}</div>
                   <Badge variant="outline" className="text-[10px]" style={{ color: c }}>
                     {label}
                   </Badge>
@@ -1529,9 +1529,9 @@ function TaskDetailContent({
         <Card className="gap-0 py-0">
           <CardHeader className="px-4 pt-4 pb-0">
             <div className="flex items-center justify-between gap-2">
-              <CardTitle className="text-base">子任务</CardTitle>
+              <CardTitle className="text-base">Subtasks</CardTitle>
               <Button variant="ghost" size="xs" className="text-xs text-muted-foreground" onClick={() => setSubtasksExpanded(!subtasksExpanded)}>
-                {subtasksExpanded ? "收起" : "展开"} {task.subtasks.length}
+                {subtasksExpanded ? "Collapse" : "Expand"} {task.subtasks.length}
               </Button>
             </div>
           </CardHeader>
@@ -1549,7 +1549,7 @@ function TaskDetailContent({
                       </Badge>
                     </div>
                     <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                      <span>进度</span>
+                      <span>Progress</span>
                       <span>{subProgress}%</span>
                     </div>
                     <div
@@ -1577,11 +1577,11 @@ function TaskDetailContent({
 
       <Card className="gap-0 py-0">
         <CardHeader className="px-4 pt-4 pb-0">
-          <CardTitle className="text-base">执行时间线</CardTitle>
+          <CardTitle className="text-base">Execution Timeline</CardTitle>
         </CardHeader>
         <CardContent className="px-4 py-4">
         {timeline.length === 0 ? (
-          <div className="text-xs text-muted-foreground">暂无事件</div>
+          <div className="text-xs text-muted-foreground">No events</div>
         ) : (
           <div className="flex max-h-[240px] flex-col gap-2 overflow-y-auto pr-1">
             {timeline.map((ev: any, i: number) => (

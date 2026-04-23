@@ -39,17 +39,17 @@ function NodeTasksTabContent({
   const getNodeLabel = (id: string | null) => (id ? nodeMap.get(id) || id : "-");
 
   if (loading) {
-    return <div style={{ fontSize: 12, color: "var(--muted)", padding: 12 }}>加载中...</div>;
+    return <div style={{ fontSize: 12, color: "var(--muted)", padding: 12 }}>Loading...</div>;
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, fontSize: 12 }}>
       {nodeActivePlan && (
         <div className="card" style={{ padding: 10 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "#b45309" }}>当前任务</div>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "#b45309" }}>Current Task</div>
           <div style={{ fontWeight: 500, marginBottom: 6 }}>{nodeActivePlan.title}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <span style={{ fontSize: 10, color: "var(--muted)" }}>进度</span>
+            <span style={{ fontSize: 10, color: "var(--muted)" }}>Progress</span>
             <div style={{ flex: 1, height: 4, borderRadius: 2, background: "var(--line)", overflow: "hidden" }}>
               <div style={{ height: "100%", borderRadius: 2, background: "var(--accent)", width: `${nodeActivePlan.progress_pct ?? 0}%` }} />
             </div>
@@ -64,7 +64,7 @@ function NodeTasksTabContent({
                 return (
                   <div key={s.id || i} style={{ display: "flex", gap: 6, alignItems: "flex-start", marginBottom: 4 }}>
                     <span style={{ color, fontWeight: 600, flexShrink: 0 }}>{icon}</span>
-                    <span style={{ color: "var(--text)" }}>{s.description || s.title || `步骤 ${i + 1}`}</span>
+                    <span style={{ color: "var(--text)" }}>{s.description || s.title || `Step ${i + 1}`}</span>
                   </div>
                 );
               })}
@@ -74,9 +74,9 @@ function NodeTasksTabContent({
       )}
 
       <div className="card" style={{ padding: 10 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>分配给我的任务</div>
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Tasks Assigned to Me</div>
         {(nodeTasks?.assigned?.length ?? 0) === 0 ? (
-          <div style={{ fontSize: 11, color: "var(--muted)" }}>暂无</div>
+          <div style={{ fontSize: 11, color: "var(--muted)" }}>None</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {(nodeTasks?.assigned || []).map((t: any) => (
@@ -98,9 +98,9 @@ function NodeTasksTabContent({
       </div>
 
       <div className="card" style={{ padding: 10 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>我委派的任务</div>
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Tasks I Delegated</div>
         {(nodeTasks?.delegated?.length ?? 0) === 0 ? (
-          <div style={{ fontSize: 11, color: "var(--muted)" }}>暂无</div>
+          <div style={{ fontSize: 11, color: "var(--muted)" }}>None</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {(nodeTasks?.delegated || []).map((t: any) => (
@@ -111,7 +111,7 @@ function NodeTasksTabContent({
                     {TASK_STATUS_LABELS[t.status] || t.status}
                   </span>
                   <span style={{ color: "var(--muted)" }}>{(t.progress_pct ?? 0)}%</span>
-                  <span style={{ color: "var(--muted)", marginLeft: "auto" }}>执行人: {getNodeLabel(t.assignee_node_id)}</span>
+                  <span style={{ color: "var(--muted)", marginLeft: "auto" }}>Assignee: {getNodeLabel(t.assignee_node_id)}</span>
                 </div>
                 <div style={{ marginTop: 4, height: 3, borderRadius: 2, background: "var(--line)", overflow: "hidden" }}>
                   <div style={{ height: "100%", borderRadius: 2, background: "var(--accent)", width: `${Math.min(100, t.progress_pct ?? 0)}%` }} />
@@ -231,7 +231,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
       }}
     >
       <div style={{ padding: "12px 12px 8px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontWeight: 600, fontSize: 13 }}>运行监控</div>
+        <div style={{ fontWeight: 600, fontSize: 13 }}>Runtime Monitor</div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <span style={{
             fontSize: 10, padding: "1px 6px", borderRadius: 4,
@@ -241,8 +241,8 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
           }}>
             {STATUS_LABELS[selectedNode.status] || selectedNode.status}
           </span>
-          {selectedNode.is_clone && <span style={{ fontSize: 9, color: "#0369a1" }}>副本</span>}
-          {selectedNode.ephemeral && <span style={{ fontSize: 9, color: "#b45309" }}>临时</span>}
+          {selectedNode.is_clone && <span style={{ fontSize: 9, color: "#0369a1" }}>Clone</span>}
+          {selectedNode.ephemeral && <span style={{ fontSize: 9, color: "#b45309" }}>Ephemeral</span>}
         </div>
       </div>
       <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -258,7 +258,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
         {/* Schedules */}
         {nodeSchedules.length > 0 && (
           <div className="card" style={{ padding: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>定时任务</div>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Scheduled Tasks</div>
             {nodeSchedules.map((s: any) => (
               <div key={s.id} style={{ padding: "4px 0", borderBottom: "1px solid var(--line)", fontSize: 11 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -268,11 +268,11 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                     background: s.enabled ? "#dcfce7" : "#f3f4f6",
                     color: s.enabled ? "#166534" : "#9ca3af",
                   }}>
-                    {s.enabled ? "启用" : "禁用"}
+                    {s.enabled ? "Enabled" : "Disabled"}
                   </span>
                 </div>
                 {s.last_run_at && (
-                  <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>上次: {fmtDateTime(s.last_run_at)}</div>
+                  <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>Last: {fmtDateTime(s.last_run_at)}</div>
                 )}
                 {s.last_result_summary && (
                   <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -287,13 +287,13 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
         {/* Recent events */}
         <div className="card" style={{ padding: 10 }}>
           <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-            最近活动
+            Recent Activity
             {nodeEvents.length > 0 && (
               <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400, marginLeft: 4 }}>({nodeEvents.length})</span>
             )}
           </div>
           {nodeEvents.length === 0 ? (
-            <div style={{ fontSize: 11, color: "var(--muted)" }}>暂无活动记录</div>
+            <div style={{ fontSize: 11, color: "var(--muted)" }}>No activity records</div>
           ) : (
             <div style={{ maxHeight: 300, overflowY: "auto" }}>
               {nodeEvents.slice(0, 15).map((evt: any, i: number) => {
@@ -334,7 +334,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                       </div>
                     )}
                     {!isEvtExpanded && fullText.length > 80 && (
-                      <div style={{ fontSize: 9, color: "var(--primary)", marginTop: 2, marginLeft: 12 }}>点击展开全文</div>
+                      <div style={{ fontSize: 9, color: "var(--primary)", marginTop: 2, marginLeft: 12 }}>Click to expand</div>
                     )}
                   </div>
                 );
@@ -346,13 +346,13 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
         {/* Thought chain */}
         <div className="card" style={{ padding: 10 }}>
           <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-            思维链
+            Thought Chain
             {nodeThinking.length > 0 && (
               <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400, marginLeft: 4 }}>({nodeThinking.length})</span>
             )}
           </div>
           {nodeThinking.length === 0 ? (
-            <div style={{ fontSize: 11, color: "var(--muted)" }}>暂无思维链记录</div>
+            <div style={{ fontSize: 11, color: "var(--muted)" }}>No thought chain records</div>
           ) : (
             <div style={{ maxHeight: 400, overflowY: "auto" }}>
               {nodeThinking.slice(0, 30).map((item: any, i: number) => {
@@ -411,7 +411,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                         )}
                       </div>
                       {!isExpanded && (item.content || "").length > 150 && (
-                        <div style={{ fontSize: 9, color: "var(--primary)", marginTop: 2 }}>点击展开全文</div>
+                        <div style={{ fontSize: 9, color: "var(--primary)", marginTop: 2 }}>Click to expand</div>
                       )}
                     </div>
                   );
@@ -456,7 +456,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                       })()}
                       {!isExpanded && item.data && Object.keys(item.data).length > 3 && (
                         <div style={{ fontSize: 9, color: "var(--primary)", marginTop: 2, marginLeft: 12 }}>
-                          点击查看全部 {Object.keys(item.data).length} 个字段
+                          Click to view all {Object.keys(item.data).length} fields
                         </div>
                       )}
                     </div>

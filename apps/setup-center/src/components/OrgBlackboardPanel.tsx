@@ -76,10 +76,10 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
     };
 
     const SCOPES = [
-      { key: "all" as const, label: "全部" },
-      { key: "org" as const, label: "组织级" },
-      { key: "department" as const, label: "部门级" },
-      { key: "node" as const, label: "节点级" },
+      { key: "all" as const, label: "All" },
+      { key: "org" as const, label: "Organization" },
+      { key: "department" as const, label: "Department" },
+      { key: "node" as const, label: "Node" },
     ];
 
     return (
@@ -93,7 +93,7 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
         }}
       >
         <div style={{ padding: "12px 14px 8px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontWeight: 600, fontSize: 13 }}>组织黑板</div>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>Organization Blackboard</div>
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <div style={{ display: "flex", gap: 2 }}>
               {SCOPES.map((s) => (
@@ -119,13 +119,13 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
               onClick={() => fetchData(scope)}
               disabled={loading}
             >
-              {loading ? "..." : "刷新"}
+              {loading ? "..." : "Refresh"}
             </button>
             {onClose && (
               <button
                 onClick={onClose}
                 style={{ background: "none", border: "none", cursor: "pointer", color: "var(--muted)", padding: 2, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", marginLeft: 2 }}
-                title="关闭黑板"
+                title="Close blackboard"
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
@@ -139,14 +139,14 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
               fontSize: 12, color: "var(--muted)", padding: "32px 16px",
               textAlign: "center", border: "1px dashed var(--line)", borderRadius: 8,
             }}>
-              {loading ? "加载中..." : scope === "node"
-                ? "节点级黑板用于存储各 Agent 的私有记录，当前暂无节点级数据。"
-                : "暂无黑板记录"}
+              {loading ? "Loading..." : scope === "node"
+                ? "Node-level blackboard stores each Agent's private records. No node-level data yet."
+                : "No blackboard records"}
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {entries.map((entry: any) => {
-                const scopeLabel = entry.scope === "org" ? "组织" : entry.scope === "department" ? entry.scope_owner : resolveNodeName(entry.source_node) || "节点";
+                const scopeLabel = entry.scope === "org" ? "Organization" : entry.scope === "department" ? entry.scope_owner : resolveNodeName(entry.source_node) || "Node";
                 return (
                   <div
                     key={entry.id}
@@ -173,7 +173,7 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
                         <button
                           className="btnSmall"
                           style={{ fontSize: 11, padding: "0 4px", color: "var(--muted)" }}
-                          title="删除此条"
+                          title="Delete this entry"
                           onClick={() => handleDelete(entry.id)}
                         >
                           ×
@@ -212,7 +212,7 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
                     )}
                     {entry.source_node && (
                       <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
-                        来自 {resolveNodeName(entry.source_node)}
+                        From {resolveNodeName(entry.source_node)}
                       </div>
                     )}
                   </div>
