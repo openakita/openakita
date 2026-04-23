@@ -1,0 +1,1540 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Media Post — 媒体发布套件</title>
+  <!--
+    Self-contained plugin UI: bootstrap + UI Kit are inlined under _assets/.
+    The 5-file _assets bundle is a verbatim copy of plugins/tongyi-image/
+    ui/dist/_assets/ per docs/media-post-plan.md §9.7. Plugins MUST NOT
+    depend on host-mounted /api/plugins/_sdk/* (removed in SDK 0.7.0).
+  -->
+  <script src="_assets/bootstrap.js"></script>
+  <link rel="stylesheet" href="_assets/styles.css">
+  <script src="_assets/icons.js"></script>
+  <script src="_assets/markdown-mini.js"></script>
+  <script src="_assets/i18n.js"></script>
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react@18/umd/react.production.min.js" />
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" />
+  <link rel="preload" as="script" href="https://unpkg.com/@babel/standalone/babel.min.js" />
+  <style>
+    :root {
+      --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
+      --text: #1e293b; --text-muted: #64748b; --text-dim: #94a3b8;
+      --primary: #6366f1; --primary-hover: #4f46e5; --primary-light: rgba(99,102,241,.1);
+      --success: #22c55e; --warning: #f59e0b; --danger: #ef4444;
+      --border: #e2e8f0; --radius: 8px;
+    }
+    [data-theme="dark"] {
+      --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+      --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
+      --border: #334155;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+        --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
+        --border: #334155;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+    .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    .header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--bg-card); }
+    .header h1 { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .header-right { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-muted); }
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--bg-card); padding: 0 16px; }
+    .tab { padding: 10px 18px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--text-muted); transition: all .15s; white-space: nowrap; }
+    .tab:hover { color: var(--text); background: var(--bg-hover); }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
+    .content { flex: 1; overflow: hidden; padding: 20px; position: relative; }
+    .content > div { overflow-y: auto; height: 100%; }
+    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+    .card-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+    .btn { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-size: 13px; cursor: pointer; transition: all .15s; display: inline-flex; align-items: center; gap: 6px; }
+    .btn:hover { background: var(--bg-hover); }
+    .btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .btn-danger { color: var(--danger); border-color: var(--danger); }
+    .input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px; outline: none; }
+    .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(99,102,241,.15); }
+    .textarea { resize: vertical; min-height: 80px; font-family: inherit; }
+    .select { appearance: none; padding-right: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
+    .label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text); margin: 0 0 8px; line-height: 1.3; }
+    .label::before { content: ""; display: inline-block; width: 3px; height: 14px; border-radius: 2px; background: var(--primary); flex-shrink: 0; }
+    .form-row { margin-bottom: 14px; }
+    .flex { display: flex; } .gap-2 { gap: 8px; } .gap-3 { gap: 12px; }
+    .items-center { align-items: center; } .justify-between { justify-content: space-between; }
+    .flex-1 { flex: 1; } .flex-wrap { flex-wrap: wrap; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .text-sm { font-size: 13px; } .text-xs { font-size: 11px; }
+    .text-muted { color: var(--text-muted); } .text-dim { color: var(--text-dim); }
+    .text-success { color: var(--success); } .text-warning { color: var(--warning); } .text-danger { color: var(--danger); }
+    .tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+    .tag-blue { background: rgba(99,102,241,.15); color: #818cf8; }
+    .tag-orange { background: rgba(245,158,11,.15); color: #fbbf24; }
+    .tag-green { background: rgba(34,197,94,.15); color: #4ade80; }
+    .tag-red { background: rgba(239,68,68,.15); color: #f87171; }
+    .tag-gray { background: rgba(148,163,184,.15); color: #94a3b8; }
+    .mode-btn { padding: 10px 14px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-size: 13px; cursor: pointer; transition: all .15s; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; }
+    .mode-btn:hover { background: var(--bg-hover); color: var(--text); }
+    .mode-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .mode-btn.active .mode-btn__desc { color: rgba(255,255,255,.85); }
+    .mode-btn__title { font-weight: 600; }
+    .mode-btn__desc { font-size: 11px; color: var(--text-dim); }
+    .upload-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 24px; text-align: center; cursor: pointer; transition: .15s; color: var(--text-muted); }
+    .upload-zone:hover { border-color: var(--primary); background: rgba(99,102,241,.04); }
+    .upload-zone.has-image { padding: 8px; border-style: solid; }
+    .upload-preview { max-width: 100%; max-height: 180px; border-radius: 6px; object-fit: contain; }
+    .split-layout { display: flex; gap: 20px; height: 100%; }
+    .split-left { width: 42%; min-width: 380px; overflow-y: auto; flex-shrink: 0; }
+    .split-right { flex: 1; overflow-y: auto; }
+    .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: var(--text-dim); text-align: center; }
+    .image-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+    .image-card { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; cursor: pointer; transition: .15s; position: relative; background: var(--bg-card); }
+    .image-card:hover { border-color: var(--primary); box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+    .image-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; background: var(--bg-hover); }
+    .image-card-actions { position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(transparent, rgba(0,0,0,.7)); padding: 8px; display: flex; gap: 4px; justify-content: flex-end; opacity: 0; transition: .2s; }
+    .image-card:hover .image-card-actions { opacity: 1; }
+    .image-card-actions button { background: rgba(255,255,255,.2); border: none; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; backdrop-filter: blur(4px); }
+    .image-card-actions button:hover { background: rgba(255,255,255,.4); }
+    .image-card__caption { padding: 8px 10px; font-size: 12px; color: var(--text-muted); border-top: 1px solid var(--border); }
+    .task-card { display: flex; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); transition: .15s; cursor: pointer; margin-bottom: 8px; background: var(--bg-card); }
+    .task-card:hover { background: var(--bg-hover); }
+    .task-card.selected { border-color: var(--primary); background: var(--primary-light); }
+    .task-thumb { width: 64px; height: 64px; border-radius: 6px; background: var(--bg-hover); flex-shrink: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--text-dim); }
+    .task-info { flex: 1; min-width: 0; }
+    .task-info h4 { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+    .task-meta { font-size: 11px; color: var(--text-dim); display: flex; gap: 8px; flex-wrap: wrap; }
+    .spinner-sm { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    /* OA Kit helpers (minimal subset; rest comes from styles.css) */
+    .oa-section-label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text); margin: 0 0 12px; }
+    .oa-section-label::before { content: ""; display: inline-block; width: 3px; height: 16px; border-radius: 2px; background: var(--primary); }
+    .oa-hero-title { font-size: 18px; font-weight: 600; margin-bottom: 4px; color: var(--text); }
+    .oa-hero-title__sub { font-size: 12px; color: var(--text-muted); margin-bottom: 16px; }
+    .oa-pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 500; background: var(--bg-hover); color: var(--text-muted); }
+    .oa-pill.green { background: rgba(34,197,94,.15); color: #16a34a; }
+    .oa-pill.red { background: rgba(239,68,68,.15); color: #dc2626; }
+    .oa-pill.orange { background: rgba(245,158,11,.15); color: #d97706; }
+    .oa-pill.gray { background: var(--bg-hover); color: var(--text-dim); }
+    .oa-config-banner { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: var(--radius); border: 1px solid rgba(245,158,11,.4); background: rgba(245,158,11,.08); color: var(--text); font-size: 13px; margin-bottom: 12px; }
+    .oa-config-banner.info { border-color: rgba(99,102,241,.4); background: rgba(99,102,241,.08); }
+    .oa-config-banner.danger { border-color: rgba(239,68,68,.4); background: rgba(239,68,68,.08); }
+    .oa-config-banner__icon { font-size: 18px; }
+    .oa-config-banner__text { flex: 1; }
+    .oa-config-banner__action { padding: 4px 10px; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-card); color: var(--text); cursor: pointer; }
+    .oa-cost { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border-radius: 6px; background: rgba(34,197,94,.08); border: 1px solid rgba(34,197,94,.3); font-size: 12px; color: var(--text); margin: 12px 0; }
+    .oa-cost.warn { background: rgba(245,158,11,.08); border-color: rgba(245,158,11,.3); }
+    .oa-cost.danger { background: rgba(239,68,68,.08); border-color: rgba(239,68,68,.3); }
+    .oa-cost__amount { font-weight: 600; font-size: 14px; }
+    .oa-error-coach { padding: 12px 14px; border-radius: var(--radius); background: rgba(239,68,68,.06); border: 1px solid rgba(239,68,68,.3); margin-bottom: 12px; }
+    .oa-error-coach__title { font-size: 13px; font-weight: 600; color: var(--danger); margin-bottom: 6px; }
+    .oa-error-coach__list { list-style: disc; margin-left: 20px; font-size: 12px; color: var(--text); }
+    .oa-error-coach__actions { margin-top: 10px; display: flex; gap: 8px; }
+    .oa-settings-section { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-bottom: 16px; }
+    .oa-settings-section__title { font-size: 14px; font-weight: 600; margin-bottom: 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+    .oa-settings-section__title.disabled { color: var(--text-dim); }
+    .oa-filter-group { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+    .oa-filter-group .input { width: auto; flex: 1; min-width: 100px; }
+    .oa-list-panel { padding: 4px; }
+    .oa-collapse { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; background: var(--bg-card); }
+    .oa-collapse__header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: pointer; font-size: 13px; font-weight: 500; }
+    .oa-collapse__header:hover { background: var(--bg-hover); }
+    .oa-collapse__body { padding: 0 14px 12px; display: none; }
+    .oa-collapse.open .oa-collapse__body { display: block; }
+    .oa-collapse__arrow { transition: transform .2s; font-size: 10px; }
+    .oa-collapse.open .oa-collapse__arrow { transform: rotate(90deg); }
+    .oa-dep-banner { display: flex; gap: 10px; padding: 10px 14px; border-radius: var(--radius); border: 1px solid rgba(239,68,68,.4); background: rgba(239,68,68,.08); margin-bottom: 12px; font-size: 13px; }
+    .oa-md-content { font-size: 13px; line-height: 1.6; color: var(--text); }
+    .progress { height: 6px; background: var(--bg-hover); border-radius: 3px; overflow: hidden; margin: 6px 0; }
+    .progress > div { height: 100%; background: var(--primary); transition: width .25s; }
+    .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; z-index: 2000; padding: 20px; }
+    .modal-card { background: var(--bg-card); border-radius: 12px; padding: 22px 24px; max-width: 420px; width: 100%; box-shadow: 0 20px 50px rgba(0,0,0,.25); }
+    .modal-icon { width: 42px; height: 42px; border-radius: 50%; background: rgba(34,197,94,.12); color: var(--success); display: flex; align-items: center; justify-content: center; margin-bottom: 14px; font-size: 22px; font-weight: 700; }
+    .modal-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+    .modal-desc { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 18px; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    @media (max-width: 860px) { .split-layout { flex-direction: column; } .split-left { width: 100%; min-width: unset; } }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+// ─── Bridge SDK ──
+const BRIDGE_VER = 1;
+let _ctx = null, _caps = [], _pending = {}, _handlers = {};
+let _bridgeConnected = false;
+const _inIframe = window.parent !== window;
+const PLUGIN_ID = "media-post";
+function uid() { return Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
+function post(msg) { if (_inIframe) window.parent.postMessage({ __akita_bridge: true, version: BRIDGE_VER, ...msg }, "*"); }
+function _detectApiBase() {
+  if (_ctx && _ctx.apiBase) return _ctx.apiBase;
+  var loc = window.location;
+  if (loc.port === "5173" || loc.port === "1420") return "http://127.0.0.1:18900";
+  return loc.origin;
+}
+function directFetch(method, path, body) {
+  var url = path.startsWith("http") ? path : _detectApiBase() + path;
+  var opts = { method: method, headers: { "Content-Type": "application/json" } };
+  if (body && method !== "GET" && method !== "HEAD") {
+    if (body instanceof FormData) { opts.body = body; delete opts.headers["Content-Type"]; }
+    else { opts.body = JSON.stringify(body); }
+  }
+  return fetch(url, opts).then(function(resp) {
+    return resp.json().then(function(json) { return { ok: resp.ok, status: resp.status, body: json }; }).catch(function() { return { ok: resp.ok, status: resp.status, body: null }; });
+  });
+}
+function apiCall(method, path, body) {
+  if (!_inIframe || !_bridgeConnected) return directFetch(method, path, body);
+  return new Promise(function(resolve, reject) {
+    var id = uid();
+    _pending[id] = { resolve: resolve, reject: reject };
+    post({ type: "bridge:api-request", requestId: id, payload: { method: method, path: path, body: body } });
+    setTimeout(function() {
+      if (_pending[id]) { delete _pending[id]; directFetch(method, path, body).then(resolve).catch(reject); }
+    }, 5000);
+  });
+}
+function pluginApi(method, path, body) {
+  return apiCall(method, "/api/plugins/" + PLUGIN_ID + path, body);
+}
+function uploadFile(file) {
+  var base = _detectApiBase() + "/api/plugins/" + PLUGIN_ID;
+  var fd = new FormData(); fd.append("file", file);
+  return fetch(base + "/upload", { method: "POST", body: fd }).then(function(r) { return r.json(); });
+}
+window.addEventListener("message", function(e) {
+  var d = e.data;
+  if (!d || !d.__akita_bridge) return;
+  if (d.type === "bridge:init" && d.payload) {
+    _ctx = d.payload; _bridgeConnected = true;
+    if (_ctx.theme) document.documentElement.setAttribute("data-theme", _ctx.theme.includes("dark") ? "dark" : "light");
+  }
+  if (d.type === "bridge:handshake-ack" && d.payload) { _caps = d.payload.capabilities || []; _bridgeConnected = true; }
+  var acks = ["bridge:api-response","bridge:clipboard-ack","bridge:download-ack","bridge:show-in-folder-ack"];
+  if (acks.indexOf(d.type) !== -1 && d.requestId && _pending[d.requestId]) {
+    _pending[d.requestId].resolve(d.payload); delete _pending[d.requestId];
+  }
+  if (d.type === "bridge:theme-change" && d.payload) {
+    document.documentElement.setAttribute("data-theme", (d.payload.theme || "").includes("dark") ? "dark" : "light");
+  }
+  if (d.type === "bridge:event" && d.payload) {
+    var h = _handlers[d.payload.eventType];
+    if (h) h.forEach(function(fn) { fn(d.payload.data); });
+  }
+});
+function _sendReady() { post({ type: "bridge:ready" }); post({ type: "bridge:handshake", payload: { sdkVersion: "1.0.0" } }); }
+_sendReady();
+if (_inIframe) {
+  var _readyInterval = setInterval(function() { if (_bridgeConnected) { clearInterval(_readyInterval); return; } _sendReady(); }, 300);
+  setTimeout(function() { if (_readyInterval) clearInterval(_readyInterval); }, 20000);
+}
+function onEvent(type, fn) { (_handlers[type] = _handlers[type] || []).push(fn); }
+function copyToClipboard(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).then(function() { return true; }).catch(function() { return false; });
+  }
+  var ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); document.body.removeChild(ta); return Promise.resolve(true); }
+  catch (e) { document.body.removeChild(ta); return Promise.resolve(false); }
+}
+function showToast(body, type) {
+  type = type || "success";
+  if (_inIframe && _bridgeConnected) { post({ type: "bridge:notification", payload: { title: "", body: body, type: type } }); return; }
+  console.log("[Toast]", type, body);
+}
+function buildPreviewUrl(rel) { return _detectApiBase() + "/api/plugins/" + PLUGIN_ID + "/uploads/" + String(rel || "").replace(/\\/g, "/").replace(/^\//, ""); }
+</script>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+// ─── i18n dictionary (8 namespaces × zh/en, ~180 keys per locale) ───────
+const I18N_DICT = {
+  zh: {
+    "app.title": "媒体发布套件",
+    "app.subtitle": "DashScope · 智能选封面 / 横竖屏适配 / SEO 包 / 章节卡",
+    // Tabs
+    "mediaPost.tabs.create": "创建",
+    "mediaPost.tabs.tasks": "任务",
+    "mediaPost.tabs.library": "素材库",
+    "mediaPost.tabs.settings": "设置",
+    "mediaPost.tabs.create.sub": "选择模式 → 上传视频 → 调参 → 一键运行",
+    "mediaPost.tabs.tasks.sub": "实时进度 / 历史任务 / 详情查看",
+    "mediaPost.tabs.library.sub": "封面 / 多尺寸 / SEO 文案 / 章节卡 — 沉淀的素材",
+    "mediaPost.tabs.settings.sub": "API Key / VLM 参数 / 章节卡 / 成本控制 / 协同",
+    // Modes
+    "mediaPost.modes.cover_pick.title": "智能选封面",
+    "mediaPost.modes.cover_pick.desc": "VLM 6 维评分排序 top 8",
+    "mediaPost.modes.multi_aspect.title": "横竖屏适配",
+    "mediaPost.modes.multi_aspect.desc": "smart-recompose 主体跟踪",
+    "mediaPost.modes.seo_pack.title": "5 平台 SEO 包",
+    "mediaPost.modes.seo_pack.desc": "抖音 / B 站 / 视频号 / 小红书 / YouTube",
+    "mediaPost.modes.chapter_cards.title": "章节卡 PNG",
+    "mediaPost.modes.chapter_cards.desc": "Playwright HTML 渲染 + drawtext 兜底",
+    // Forms
+    "mediaPost.forms.video.label": "视频文件",
+    "mediaPost.forms.video.placeholder": "点击或拖拽上传 mp4 / mkv / mov",
+    "mediaPost.forms.video.helper": "建议时长 ≤30 分钟，否则成本与耗时增长较快",
+    "mediaPost.forms.quantity.label": "需要的封面数",
+    "mediaPost.forms.quantity.helper": "8 张为推荐值；VLM 一次评分 8 帧",
+    "mediaPost.forms.threshold.label": "最低评分阈值",
+    "mediaPost.forms.threshold.helper": "0~10；低于该分的候选会被淘汰，3.0 为默认",
+    "mediaPost.forms.platformHint.label": "平台偏好（影响构图建议）",
+    "mediaPost.forms.platformHint.universal": "通用（无偏好）",
+    "mediaPost.forms.platformHint.tiktok": "抖音 / TikTok（偏向人脸特写）",
+    "mediaPost.forms.platformHint.bilibili": "B 站（偏向信息密度）",
+    "mediaPost.forms.platformHint.youtube": "YouTube（偏向氛围感）",
+    "mediaPost.forms.aspects.label": "目标比例（多选）",
+    "mediaPost.forms.aspects.9_16": "竖版 9:16（抖音/视频号）",
+    "mediaPost.forms.aspects.1_1": "方版 1:1（视频号方图）",
+    "mediaPost.forms.fps.label": "帧采样率 (fps)",
+    "mediaPost.forms.fps.helper": "默认 2.0；越高主体跟踪越细但成本越高",
+    "mediaPost.forms.platforms.label": "目标平台（多选）",
+    "mediaPost.forms.platforms.tiktok": "抖音 / TikTok",
+    "mediaPost.forms.platforms.bilibili": "B 站",
+    "mediaPost.forms.platforms.wechat": "视频号",
+    "mediaPost.forms.platforms.xiaohongshu": "小红书",
+    "mediaPost.forms.platforms.youtube": "YouTube",
+    "mediaPost.forms.titleHint.label": "标题灵感（可选）",
+    "mediaPost.forms.titleHint.placeholder": "例如：开箱深度评测 / 旅行 vlog / 游戏教程...",
+    "mediaPost.forms.subtitle.label": "字幕摘录 / 剧情提示",
+    "mediaPost.forms.subtitle.placeholder": "粘贴 1~3 段关键字幕，或直接描述视频主题",
+    "mediaPost.forms.instruction.label": "额外指令（可选）",
+    "mediaPost.forms.instruction.placeholder": "例如：突出科技感 / 适合 25-35 岁人群 / 多用 emoji",
+    "mediaPost.forms.includeChapters.label": "在描述中追加章节时间戳",
+    "mediaPost.forms.chapters.label": "章节列表",
+    "mediaPost.forms.chapters.helper": "格式：每行一章，'00:00 章节标题'；可粘贴 YouTube 章节",
+    "mediaPost.forms.chapters.placeholder": "00:00 开场\n02:30 第二段\n05:10 总结",
+    "mediaPost.forms.template.label": "卡片模板",
+    "mediaPost.forms.template.modern": "现代（modern）",
+    "mediaPost.forms.template.minimal": "极简（minimal）",
+    "mediaPost.forms.template.dark": "深色（dark）",
+    "mediaPost.forms.template.colorful": "活力（colorful）",
+    "mediaPost.forms.template.podcast": "播客（podcast）",
+    "mediaPost.forms.size.label": "卡片尺寸",
+    "mediaPost.forms.size.16_9": "横版 16:9 (1280×720)",
+    "mediaPost.forms.size.1_1": "方版 1:1 (1080×1080)",
+    "mediaPost.forms.size.9_16": "竖版 9:16 (1080×1920)",
+    "mediaPost.forms.start.cover_pick": "开始智能选封面",
+    "mediaPost.forms.start.multi_aspect": "开始横竖屏适配",
+    "mediaPost.forms.start.seo_pack": "开始生成 SEO 包",
+    "mediaPost.forms.start.chapter_cards": "开始渲染章节卡",
+    "mediaPost.forms.start.confirm": "确认并继续 (¥{cost})",
+    // Tasks tab
+    "mediaPost.tasks.all": "全部任务",
+    "mediaPost.tasks.filter.mode": "模式",
+    "mediaPost.tasks.filter.status": "状态",
+    "mediaPost.tasks.filter.all": "全部",
+    "mediaPost.tasks.filter.search": "搜索任务 ID 或视频名…",
+    "mediaPost.tasks.empty": "尚无任务，去创建页开始第一个任务",
+    "mediaPost.tasks.detail.empty": "请在左侧选择一个任务以查看详情",
+    "mediaPost.tasks.actions.cancel": "取消",
+    "mediaPost.tasks.actions.retry": "重试",
+    "mediaPost.tasks.actions.approve": "确认成本继续",
+    "mediaPost.tasks.actions.delete": "删除",
+    "mediaPost.tasks.actions.copyId": "复制任务 ID",
+    "mediaPost.tasks.detail.cover": "封面候选（共 {n} 张）",
+    "mediaPost.tasks.detail.recompose": "横竖屏输出",
+    "mediaPost.tasks.detail.seo": "SEO 文案（{n} 个平台）",
+    "mediaPost.tasks.detail.chapters": "章节卡（共 {n} 张）",
+    "mediaPost.tasks.detail.copy": "复制",
+    "mediaPost.tasks.detail.copyAll": "复制全部",
+    "mediaPost.tasks.detail.download": "下载",
+    "mediaPost.tasks.detail.scoreLabel": "总分",
+    // Library tab
+    "mediaPost.library.covers": "封面库",
+    "mediaPost.library.aspects": "多尺寸库",
+    "mediaPost.library.seo": "SEO 文案库",
+    "mediaPost.library.chapters": "章节卡库",
+    "mediaPost.library.empty": "暂无素材，先在「创建」页跑一个任务",
+    // Errors
+    "mediaPost.errors.network.label": "网络错误",
+    "mediaPost.errors.network.h1": "请检查网络连接",
+    "mediaPost.errors.network.h2": "若使用代理请确认 dashscope.aliyuncs.com 可达",
+    "mediaPost.errors.network.h3": "稍后自动重试 3 次",
+    "mediaPost.errors.timeout.label": "超时",
+    "mediaPost.errors.timeout.h1": "视频太长可能引发超时（multi_aspect 建议 ≤30 分钟）",
+    "mediaPost.errors.timeout.h2": "可在 Settings 调高超时阈值",
+    "mediaPost.errors.timeout.h3": "或分段处理",
+    "mediaPost.errors.auth.label": "认证错误",
+    "mediaPost.errors.auth.h1": "Settings → API Key 重新填写",
+    "mediaPost.errors.auth.h2": "确认 Key 与 base_url 地域匹配",
+    "mediaPost.errors.quota.label": "额度不足或并发受限",
+    "mediaPost.errors.quota.h1": "阿里云百炼控制台充值或升级账户配额",
+    "mediaPost.errors.quota.h2": "DashScope VLM 并发上限较低，等待当前任务完成",
+    "mediaPost.errors.quota.h3": "或在 Settings 切换 API Key",
+    "mediaPost.errors.moderation.label": "内容审核未过",
+    "mediaPost.errors.moderation.h1": "VLM 拒绝分析（敏感内容）",
+    "mediaPost.errors.moderation.h2": "可手动选封面或换视频",
+    "mediaPost.errors.dependency.label": "依赖缺失",
+    "mediaPost.errors.dependency.h1": "前往 Settings 查看 ffmpeg 安装引导",
+    "mediaPost.errors.dependency.h2": "章节卡 HTML 渲染需要 Playwright + 中文字体；已自动降级到 drawtext",
+    "mediaPost.errors.format.label": "格式错误",
+    "mediaPost.errors.format.h1": "确认是有效 mp4/mkv/mov",
+    "mediaPost.errors.format.h2": "ffprobe 无法解析说明文件损坏",
+    "mediaPost.errors.duration.label": "时长 / 体积超限",
+    "mediaPost.errors.duration.h1": "multi_aspect 模式建议 ≤30 分钟（成本随时长线性增长）",
+    "mediaPost.errors.duration.h2": "cover_pick / seo_pack 可处理任意时长",
+    "mediaPost.errors.unknown.label": "未知错误",
+    "mediaPost.errors.unknown.h1": "请将 task_id 反馈给开发者",
+    "mediaPost.errors.unknown.h2": "截图 metadata.json 一并提供",
+    // Settings
+    "mediaPost.settings.api.title": "🔑 API Key",
+    "mediaPost.settings.api.label": "DashScope API Key",
+    "mediaPost.settings.api.helper": "前往阿里云百炼控制台 → API Key 管理获取；本地仅保存，不上传",
+    "mediaPost.settings.api.test": "测试连接",
+    "mediaPost.settings.api.ok": "已连接",
+    "mediaPost.settings.api.missing": "未配置",
+    "mediaPost.settings.vlm.title": "⚙️ VLM 参数",
+    "mediaPost.settings.vlm.fps": "采样帧率（multi_aspect）",
+    "mediaPost.settings.vlm.batch": "VLM 批大小（固定 8）",
+    "mediaPost.settings.vlm.concurrency": "并发批数",
+    "mediaPost.settings.chapter.title": "🎨 章节卡",
+    "mediaPost.settings.chapter.template": "默认模板",
+    "mediaPost.settings.chapter.templates_dir": "自定义模板目录",
+    "mediaPost.settings.chapter.playwright": "Playwright 渲染状态",
+    "mediaPost.settings.chapter.test": "测试",
+    "mediaPost.settings.cost.title": "🚀 成本控制",
+    "mediaPost.settings.cost.warn": "单任务确认阈值 ¥",
+    "mediaPost.settings.cost.duration": "multi_aspect 时长上限（分钟）",
+    "mediaPost.settings.handoff.title": "🔗 跨插件协同（v2.0 启用）",
+    "mediaPost.settings.handoff.disabled": "等待 v2.0 — 将与 clip-sense / subtitle-craft / avatar-studio 互通素材",
+    "mediaPost.settings.save": "保存设置",
+    "mediaPost.settings.saved": "已保存",
+    // Common
+    "mediaPost.common.start": "开始",
+    "mediaPost.common.cancel": "取消",
+    "mediaPost.common.retry": "重试",
+    "mediaPost.common.delete": "删除",
+    "mediaPost.common.copy": "复制",
+    "mediaPost.common.download": "下载",
+    "mediaPost.common.copyLog": "复制日志",
+    "mediaPost.common.continue": "继续创建",
+    "mediaPost.common.goTasks": "前往任务列表",
+    "mediaPost.common.taskStarted": "任务已开始",
+    "mediaPost.common.refresh": "刷新",
+    "mediaPost.common.loading": "加载中…",
+    "mediaPost.common.status.pending": "等待中",
+    "mediaPost.common.status.running": "运行中",
+    "mediaPost.common.status.completed": "已完成",
+    "mediaPost.common.status.failed": "失败",
+    "mediaPost.common.status.cancelled": "已取消",
+    "mediaPost.common.status.approval_required": "等待确认",
+    "mediaPost.common.api.missing.title": "尚未配置 DashScope API Key",
+    "mediaPost.common.api.missing.desc": "cover_pick / multi_aspect / seo_pack 模式都需要 Key 才能运行。",
+    "mediaPost.common.api.missing.cta": "前往设置",
+    // Cost
+    "mediaPost.cost.estimate": "预估成本",
+    "mediaPost.cost.free": "免费（本地运行）",
+    "mediaPost.cost.warn_10": "成本超过 ¥10，需要确认",
+    "mediaPost.cost.warn_30": "成本超过 ¥30，请仔细确认",
+  },
+  en: {
+    "app.title": "Media Post",
+    "app.subtitle": "DashScope · Smart Cover / Recompose / SEO / Chapter Cards",
+    "mediaPost.tabs.create": "Create",
+    "mediaPost.tabs.tasks": "Tasks",
+    "mediaPost.tabs.library": "Library",
+    "mediaPost.tabs.settings": "Settings",
+    "mediaPost.tabs.create.sub": "Pick a mode → upload video → tune params → run",
+    "mediaPost.tabs.tasks.sub": "Live progress / history / detail panels",
+    "mediaPost.tabs.library.sub": "Covers / aspects / SEO copy / chapter cards",
+    "mediaPost.tabs.settings.sub": "API Key / VLM / Chapters / Cost / Cross-plugin",
+    "mediaPost.modes.cover_pick.title": "Smart Cover Pick",
+    "mediaPost.modes.cover_pick.desc": "Qwen-VL 6-axis aesthetic scoring",
+    "mediaPost.modes.multi_aspect.title": "Smart Recompose",
+    "mediaPost.modes.multi_aspect.desc": "EMA-smoothed subject tracking crop",
+    "mediaPost.modes.seo_pack.title": "5-Platform SEO Pack",
+    "mediaPost.modes.seo_pack.desc": "TikTok / Bilibili / WeChat / Xiaohongshu / YouTube",
+    "mediaPost.modes.chapter_cards.title": "Chapter Cards",
+    "mediaPost.modes.chapter_cards.desc": "Playwright + ffmpeg drawtext fallback",
+    "mediaPost.forms.video.label": "Video file",
+    "mediaPost.forms.video.placeholder": "Click or drop mp4 / mkv / mov",
+    "mediaPost.forms.video.helper": "≤30 min recommended; cost grows linearly with duration",
+    "mediaPost.forms.quantity.label": "Cover count",
+    "mediaPost.forms.quantity.helper": "8 is recommended (one VLM batch)",
+    "mediaPost.forms.threshold.label": "Min score threshold",
+    "mediaPost.forms.threshold.helper": "0..10; candidates below this are dropped (default 3.0)",
+    "mediaPost.forms.platformHint.label": "Platform preference (affects framing)",
+    "mediaPost.forms.platformHint.universal": "Universal (no preference)",
+    "mediaPost.forms.platformHint.tiktok": "TikTok (face close-ups)",
+    "mediaPost.forms.platformHint.bilibili": "Bilibili (information density)",
+    "mediaPost.forms.platformHint.youtube": "YouTube (atmosphere)",
+    "mediaPost.forms.aspects.label": "Target aspects (multi-select)",
+    "mediaPost.forms.aspects.9_16": "Vertical 9:16 (TikTok / WeChat)",
+    "mediaPost.forms.aspects.1_1": "Square 1:1 (WeChat square)",
+    "mediaPost.forms.fps.label": "Frame sample rate (fps)",
+    "mediaPost.forms.fps.helper": "Default 2.0; higher = finer tracking but costlier",
+    "mediaPost.forms.platforms.label": "Target platforms (multi-select)",
+    "mediaPost.forms.platforms.tiktok": "TikTok",
+    "mediaPost.forms.platforms.bilibili": "Bilibili",
+    "mediaPost.forms.platforms.wechat": "WeChat Channels",
+    "mediaPost.forms.platforms.xiaohongshu": "Xiaohongshu",
+    "mediaPost.forms.platforms.youtube": "YouTube",
+    "mediaPost.forms.titleHint.label": "Title hint (optional)",
+    "mediaPost.forms.titleHint.placeholder": "e.g. Unboxing review / travel vlog / game tutorial",
+    "mediaPost.forms.subtitle.label": "Subtitle excerpt / topic",
+    "mediaPost.forms.subtitle.placeholder": "Paste 1-3 key subtitle lines or describe the topic",
+    "mediaPost.forms.instruction.label": "Extra instruction (optional)",
+    "mediaPost.forms.instruction.placeholder": "e.g. tech vibe / target 25-35 / use emojis",
+    "mediaPost.forms.includeChapters.label": "Append chapter timestamps to description",
+    "mediaPost.forms.chapters.label": "Chapters",
+    "mediaPost.forms.chapters.helper": "One per line: '00:00 Chapter title' (YouTube format works)",
+    "mediaPost.forms.chapters.placeholder": "00:00 Intro\n02:30 Second segment\n05:10 Wrap up",
+    "mediaPost.forms.template.label": "Card template",
+    "mediaPost.forms.template.modern": "Modern",
+    "mediaPost.forms.template.minimal": "Minimal",
+    "mediaPost.forms.template.dark": "Dark",
+    "mediaPost.forms.template.colorful": "Colorful",
+    "mediaPost.forms.template.podcast": "Podcast",
+    "mediaPost.forms.size.label": "Card size",
+    "mediaPost.forms.size.16_9": "Landscape 16:9 (1280×720)",
+    "mediaPost.forms.size.1_1": "Square 1:1 (1080×1080)",
+    "mediaPost.forms.size.9_16": "Vertical 9:16 (1080×1920)",
+    "mediaPost.forms.start.cover_pick": "Start cover pick",
+    "mediaPost.forms.start.multi_aspect": "Start recompose",
+    "mediaPost.forms.start.seo_pack": "Start SEO pack",
+    "mediaPost.forms.start.chapter_cards": "Render chapter cards",
+    "mediaPost.forms.start.confirm": "Confirm & continue (¥{cost})",
+    "mediaPost.tasks.all": "All tasks",
+    "mediaPost.tasks.filter.mode": "Mode",
+    "mediaPost.tasks.filter.status": "Status",
+    "mediaPost.tasks.filter.all": "All",
+    "mediaPost.tasks.filter.search": "Search task ID or video…",
+    "mediaPost.tasks.empty": "No tasks yet — create one from the Create tab",
+    "mediaPost.tasks.detail.empty": "Pick a task on the left to view details",
+    "mediaPost.tasks.actions.cancel": "Cancel",
+    "mediaPost.tasks.actions.retry": "Retry",
+    "mediaPost.tasks.actions.approve": "Approve cost",
+    "mediaPost.tasks.actions.delete": "Delete",
+    "mediaPost.tasks.actions.copyId": "Copy task ID",
+    "mediaPost.tasks.detail.cover": "Cover candidates ({n})",
+    "mediaPost.tasks.detail.recompose": "Recomposed outputs",
+    "mediaPost.tasks.detail.seo": "SEO copy ({n} platforms)",
+    "mediaPost.tasks.detail.chapters": "Chapter cards ({n})",
+    "mediaPost.tasks.detail.copy": "Copy",
+    "mediaPost.tasks.detail.copyAll": "Copy all",
+    "mediaPost.tasks.detail.download": "Download",
+    "mediaPost.tasks.detail.scoreLabel": "Score",
+    "mediaPost.library.covers": "Covers",
+    "mediaPost.library.aspects": "Recomposed",
+    "mediaPost.library.seo": "SEO pack",
+    "mediaPost.library.chapters": "Chapter cards",
+    "mediaPost.library.empty": "Empty — run a task from Create",
+    "mediaPost.errors.network.label": "Network error",
+    "mediaPost.errors.network.h1": "Check network",
+    "mediaPost.errors.network.h2": "Verify proxy reaches dashscope.aliyuncs.com",
+    "mediaPost.errors.network.h3": "Will auto-retry 3 times",
+    "mediaPost.errors.timeout.label": "Timeout",
+    "mediaPost.errors.timeout.h1": "Long video may timeout (multi_aspect ≤30 min)",
+    "mediaPost.errors.timeout.h2": "Increase timeout in Settings",
+    "mediaPost.errors.timeout.h3": "Or split video",
+    "mediaPost.errors.auth.label": "Auth error",
+    "mediaPost.errors.auth.h1": "Re-enter API Key",
+    "mediaPost.errors.auth.h2": "Verify region matches",
+    "mediaPost.errors.quota.label": "Quota / Rate Limit",
+    "mediaPost.errors.quota.h1": "Top up at Bailian console or upgrade quota",
+    "mediaPost.errors.quota.h2": "VLM concurrent limit reached; wait for current task",
+    "mediaPost.errors.quota.h3": "Or switch API Key",
+    "mediaPost.errors.moderation.label": "Content Moderation",
+    "mediaPost.errors.moderation.h1": "VLM refused (sensitive content)",
+    "mediaPost.errors.moderation.h2": "Pick cover manually or switch video",
+    "mediaPost.errors.dependency.label": "Missing Dependency",
+    "mediaPost.errors.dependency.h1": "See ffmpeg install guide",
+    "mediaPost.errors.dependency.h2": "Chapter cards need Playwright + CJK fonts; fell back to drawtext",
+    "mediaPost.errors.format.label": "Format Error",
+    "mediaPost.errors.format.h1": "Verify mp4/mkv/mov",
+    "mediaPost.errors.format.h2": "File corrupted if ffprobe fails",
+    "mediaPost.errors.duration.label": "Duration / Size Exceeded",
+    "mediaPost.errors.duration.h1": "multi_aspect ≤30 min recommended",
+    "mediaPost.errors.duration.h2": "cover_pick / seo_pack handle any length",
+    "mediaPost.errors.unknown.label": "Unknown Error",
+    "mediaPost.errors.unknown.h1": "Report task_id to developer",
+    "mediaPost.errors.unknown.h2": "Screenshot metadata.json",
+    "mediaPost.settings.api.title": "🔑 API Key",
+    "mediaPost.settings.api.label": "DashScope API Key",
+    "mediaPost.settings.api.helper": "Get one from Aliyun Bailian console → API Key. Stored locally only.",
+    "mediaPost.settings.api.test": "Test connection",
+    "mediaPost.settings.api.ok": "Connected",
+    "mediaPost.settings.api.missing": "Not configured",
+    "mediaPost.settings.vlm.title": "⚙️ VLM Parameters",
+    "mediaPost.settings.vlm.fps": "Sample fps (multi_aspect)",
+    "mediaPost.settings.vlm.batch": "VLM batch size (locked to 8)",
+    "mediaPost.settings.vlm.concurrency": "Concurrent batches",
+    "mediaPost.settings.chapter.title": "🎨 Chapter cards",
+    "mediaPost.settings.chapter.template": "Default template",
+    "mediaPost.settings.chapter.templates_dir": "Custom templates dir",
+    "mediaPost.settings.chapter.playwright": "Playwright status",
+    "mediaPost.settings.chapter.test": "Test",
+    "mediaPost.settings.cost.title": "🚀 Cost control",
+    "mediaPost.settings.cost.warn": "Per-task confirm threshold ¥",
+    "mediaPost.settings.cost.duration": "multi_aspect duration cap (min)",
+    "mediaPost.settings.handoff.title": "🔗 Cross-plugin handoff (v2.0)",
+    "mediaPost.settings.handoff.disabled": "Pending v2.0 — clip-sense / subtitle-craft / avatar-studio handoff",
+    "mediaPost.settings.save": "Save settings",
+    "mediaPost.settings.saved": "Saved",
+    "mediaPost.common.start": "Start",
+    "mediaPost.common.cancel": "Cancel",
+    "mediaPost.common.retry": "Retry",
+    "mediaPost.common.delete": "Delete",
+    "mediaPost.common.copy": "Copy",
+    "mediaPost.common.download": "Download",
+    "mediaPost.common.copyLog": "Copy log",
+    "mediaPost.common.continue": "Continue creating",
+    "mediaPost.common.goTasks": "Go to tasks",
+    "mediaPost.common.taskStarted": "Task started",
+    "mediaPost.common.refresh": "Refresh",
+    "mediaPost.common.loading": "Loading…",
+    "mediaPost.common.status.pending": "Pending",
+    "mediaPost.common.status.running": "Running",
+    "mediaPost.common.status.completed": "Completed",
+    "mediaPost.common.status.failed": "Failed",
+    "mediaPost.common.status.cancelled": "Cancelled",
+    "mediaPost.common.status.approval_required": "Awaiting approval",
+    "mediaPost.common.api.missing.title": "DashScope API Key not configured",
+    "mediaPost.common.api.missing.desc": "cover_pick / multi_aspect / seo_pack all need a key.",
+    "mediaPost.common.api.missing.cta": "Open settings",
+    "mediaPost.cost.estimate": "Estimated cost",
+    "mediaPost.cost.free": "Free (local)",
+    "mediaPost.cost.warn_10": "Cost above ¥10, please confirm",
+    "mediaPost.cost.warn_30": "Cost above ¥30, double-check before continuing",
+  },
+};
+
+// i18n bootstrap
+if (window.OpenAkitaI18n && window.OpenAkitaI18n.register) {
+  window.OpenAkitaI18n.register(I18N_DICT);
+}
+function _detectLocale() {
+  if (window.OpenAkitaI18n && window.OpenAkitaI18n.locale) return window.OpenAkitaI18n.locale();
+  return (navigator.language || "zh").startsWith("zh") ? "zh" : "en";
+}
+function useI18n() {
+  const [locale, setLocale] = useState(_detectLocale());
+  useEffect(() => {
+    if (window.OpenAkitaI18n && window.OpenAkitaI18n.onChange) {
+      return window.OpenAkitaI18n.onChange(setLocale);
+    }
+    return undefined;
+  }, []);
+  const t = useCallback((key, vars) => {
+    if (window.OpenAkitaI18n && window.OpenAkitaI18n.t) {
+      const v = window.OpenAkitaI18n.t(key, vars);
+      if (v && v !== key) return v;
+    }
+    const dict = I18N_DICT[locale] || I18N_DICT.zh;
+    let raw = dict[key] || I18N_DICT.zh[key] || key;
+    if (vars) raw = raw.replace(/\{(\w+)\}/g, (_, n) => vars[n] != null ? String(vars[n]) : "{" + n + "}");
+    return raw;
+  }, [locale]);
+  return { t, locale };
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────────
+const STATUS_TAG = {
+  pending: "tag-gray", running: "tag-blue",
+  completed: "tag-green", failed: "tag-red",
+  cancelled: "tag-gray", approval_required: "tag-orange",
+};
+function fmtDate(s) { try { return new Date(s).toLocaleString(); } catch (e) { return s || ""; } }
+function fmtBytes(n) { if (!n) return "0 B"; const u = ["B","KB","MB","GB"]; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return n.toFixed(1) + " " + u[i]; }
+function clamp(n, lo, hi) { return Math.min(hi, Math.max(lo, Number(n) || 0)); }
+function parseChapters(text) {
+  if (!text) return [];
+  const lines = String(text).split(/\r?\n/);
+  const out = [];
+  let idx = 0;
+  for (const ln of lines) {
+    const m = ln.trim().match(/^(\d{1,2}:\d{1,2}(?::\d{1,2})?)\s+(.+)$/);
+    if (m) { idx++; out.push({ chapter_index: idx, timestamp: m[1], title: m[2], subtitle: "" }); }
+    else if (ln.trim()) { idx++; out.push({ chapter_index: idx, timestamp: "", title: ln.trim(), subtitle: "" }); }
+  }
+  return out;
+}
+
+// ─── Cost preview & API key banner ──────────────────────────────────────
+function CostBanner({ preview, t }) {
+  if (!preview) return null;
+  const klass = preview.cost_kind === "danger" ? "danger" : preview.cost_kind === "warn" ? "warn" : "";
+  const amount = preview.total_cny > 0 ? `¥${preview.total_cny.toFixed(4)}` : t("mediaPost.cost.free");
+  return (
+    <div className={`oa-cost ${klass}`}>
+      <span>{t("mediaPost.cost.estimate")} · {preview.items.map(i => i.description).join(" / ") || "—"}</span>
+      <span className="oa-cost__amount">{amount}</span>
+    </div>
+  );
+}
+
+function ApiKeyBanner({ missing, t, onGo }) {
+  if (!missing) return null;
+  return (
+    <div className="oa-config-banner">
+      <span className="oa-config-banner__icon">⚠️</span>
+      <div className="oa-config-banner__text">
+        <strong>{t("mediaPost.common.api.missing.title")}</strong>
+        <div className="text-xs text-muted">{t("mediaPost.common.api.missing.desc")}</div>
+      </div>
+      <button className="oa-config-banner__action" onClick={onGo}>
+        {t("mediaPost.common.api.missing.cta")}
+      </button>
+    </div>
+  );
+}
+
+// ─── Mode forms ─────────────────────────────────────────────────────────
+function CoverPickForm({ value, onChange, t }) {
+  return (
+    <>
+      <div className="form-row">
+        <div className="label">{t("mediaPost.forms.quantity.label")}</div>
+        <input className="input" type="number" min="1" max="32" value={value.quantity}
+               onChange={e => onChange({ quantity: clamp(e.target.value, 1, 32) })} />
+        <div className="text-xs text-dim" style={{marginTop: 4}}>{t("mediaPost.forms.quantity.helper")}</div>
+      </div>
+      <div className="form-row">
+        <div className="label">{t("mediaPost.forms.threshold.label")}</div>
+        <input className="input" type="number" step="0.1" min="0" max="10"
+               value={value.min_score_threshold}
+               onChange={e => onChange({ min_score_threshold: clamp(e.target.value, 0, 10) })} />
+        <div className="text-xs text-dim" style={{marginTop: 4}}>{t("mediaPost.forms.threshold.helper")}</div>
+      </div>
+      <div className="form-row">
+        <div className="label">{t("mediaPost.forms.platformHint.label")}</div>
+        <select className="input select" value={value.platform_hint}
+                onChange={e => onChange({ platform_hint: e.target.value })}>
+          <option value="universal">{t("mediaPost.forms.platformHint.universal")}</option>
+          <option value="tiktok">{t("mediaPost.forms.platformHint.tiktok")}</option>
+          <option value="bilibili">{t("mediaPost.forms.platformHint.bilibili")}</option>
+          <option value="youtube">{t("mediaPost.forms.platformHint.youtube")}</option>
+        </select>
+      </div>
+    </>
+  );
+}
+
+function MultiAspectForm({ value, onChange, t }) {
+  const aspects = value.target_aspects || ["9:16"];
+  function toggle(id) {
+    const next = aspects.includes(id) ? aspects.filter(a => a !== id) : [...aspects, id];
+    onChange({ target_aspects: next.length ? next : ["9:16"] });
+  }
+  return (
+    <>
+      <div className="form-row">
+        <div className="label">{t("mediaPost.forms.aspects.label")}</div>
+        <div className="flex gap-2 flex-wrap">
+          {[
+            { id: "9:16", k: "mediaPost.forms.aspects.9_16" },
+            { id: "1:1", k: "mediaPost.forms.aspects.1_1" },
+          ].map(a => (
+            <button key={a.id} type="button"
+                    className={`mode-btn ${aspects.includes(a.id) ? "active" : ""}`}
+                    style={{padding: "6px 12px"}}
+                    onClick={() => toggle(a.id)}>
+              <span className="mode-btn__title">{a.id}</span>
+              <span className="mode-btn__desc">{t(a.k)}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="form-row">
+        <div className="label">{t("mediaPost.forms.fps.label")}</div>
+        <input className="input" type="number" step="0.5" min="0.5" max="10"
+               value={value.recompose_fps}
+               onChange={e => onChange({ recompose_fps: clamp(e.target.value, 0.5, 10) })} />
+        <div className="text-xs text-dim" style={{marginTop: 4}}>{t("mediaPost.forms.fps.helper")}</div>
+      </div>
+    </>
+  );
+}
+
+function SeoPackForm({ value, onChange, t }) {
+  const platforms = value.platforms || [];
+  function toggle(id) {
+    onChange({ platforms: platforms.includes(id) ? platforms.filter(p => p !== id) : [...platforms, id] });
+  }
+  return (
+    <>
+      <div className="form-row">
+        <div className="label">{t("mediaPost.forms.platforms.label")}</div>
+        <div className="flex gap-2 flex-wrap">
+          {["tiktok","bilibili","wechat","xiaohongshu","youtube"].map(p => (
+            <button key={p} type="button"
+                    className={`mode-btn ${platforms.includes(p) ? "active" : ""}`}
+                    style={{padding: "6px 12px"}}
+                    onClick={() => toggle(p)}>
+              <span className="mode-btn__title">{t(`mediaPost.forms.platforms.${p}`)}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="form-row">
+        <div className="label">{t("mediaPost.forms.titleHint.label")}</div>
+        <input className="input" value={value.video_title_hint || ""}
+               placeholder={t("mediaPost.forms.titleHint.placeholder")}
+               onChange={e => onChange({ video_title_hint: e.target.value })} />
+      </div>
+      <div className="form-row">
+        <div className="label">{t("mediaPost.forms.subtitle.label")}</div>
+        <textarea className="input textarea" value={value.subtitle_excerpt || ""}
+                  placeholder={t("mediaPost.forms.subtitle.placeholder")}
+                  onChange={e => onChange({ subtitle_excerpt: e.target.value })} />
+      </div>
+      <div className="form-row">
+        <div className="label">{t("mediaPost.forms.instruction.label")}</div>
+        <textarea className="input textarea" value={value.instruction || ""}
+                  placeholder={t("mediaPost.forms.instruction.placeholder")}
+                  onChange={e => onChange({ instruction: e.target.value })} />
+      </div>
+      <div className="form-row flex items-center gap-2">
+        <input type="checkbox" checked={!!value.include_chapters}
+               onChange={e => onChange({ include_chapters: e.target.checked })} />
+        <span className="text-sm">{t("mediaPost.forms.includeChapters.label")}</span>
+      </div>
+    </>
+  );
+}
+
+function ChapterCardsForm({ value, onChange, t }) {
+  return (
+    <>
+      <div className="form-row">
+        <div className="label">{t("mediaPost.forms.template.label")}</div>
+        <select className="input select" value={value.template_id}
+                onChange={e => onChange({ template_id: e.target.value })}>
+          <option value="modern">{t("mediaPost.forms.template.modern")}</option>
+          <option value="minimal">{t("mediaPost.forms.template.minimal")}</option>
+          <option value="dark">{t("mediaPost.forms.template.dark")}</option>
+          <option value="colorful">{t("mediaPost.forms.template.colorful")}</option>
+          <option value="podcast">{t("mediaPost.forms.template.podcast")}</option>
+        </select>
+      </div>
+      <div className="form-row">
+        <div className="label">{t("mediaPost.forms.size.label")}</div>
+        <select className="input select"
+                value={`${value.width}x${value.height}`}
+                onChange={e => {
+                  const [w, h] = e.target.value.split("x").map(Number);
+                  onChange({ width: w, height: h });
+                }}>
+          <option value="1280x720">{t("mediaPost.forms.size.16_9")}</option>
+          <option value="1080x1080">{t("mediaPost.forms.size.1_1")}</option>
+          <option value="1080x1920">{t("mediaPost.forms.size.9_16")}</option>
+        </select>
+      </div>
+      <div className="form-row">
+        <div className="label">{t("mediaPost.forms.chapters.label")}</div>
+        <textarea className="input textarea" rows="6" value={value.chapters_text || ""}
+                  placeholder={t("mediaPost.forms.chapters.placeholder")}
+                  onChange={e => onChange({ chapters_text: e.target.value })} />
+        <div className="text-xs text-dim" style={{marginTop: 4}}>{t("mediaPost.forms.chapters.helper")}</div>
+      </div>
+    </>
+  );
+}
+
+// ─── Create tab ─────────────────────────────────────────────────────────
+const DEFAULT_FORMS = {
+  cover_pick: { quantity: 8, min_score_threshold: 3.0, platform_hint: "universal" },
+  multi_aspect: { target_aspects: ["9:16"], recompose_fps: 2.0 },
+  seo_pack: { platforms: ["tiktok","bilibili","xiaohongshu"], subtitle_excerpt: "", instruction: "", video_title_hint: "", include_chapters: false },
+  chapter_cards: { template_id: "modern", width: 1280, height: 720, chapters_text: "" },
+};
+
+function CreateTab({ t, settings, onTaskCreated, gotoSettings }) {
+  const [mode, setMode] = useState(() => localStorage.getItem("mediapost.mode") || "cover_pick");
+  const [forms, setForms] = useState(() => {
+    const saved = {};
+    for (const m of Object.keys(DEFAULT_FORMS)) {
+      try {
+        const s = localStorage.getItem(`mediapost.draft.${m}`);
+        saved[m] = s ? { ...DEFAULT_FORMS[m], ...JSON.parse(s) } : DEFAULT_FORMS[m];
+      } catch (e) { saved[m] = DEFAULT_FORMS[m]; }
+    }
+    return saved;
+  });
+  const [video, setVideo] = useState(null); // {path, url, filename, duration_sec}
+  const [uploading, setUploading] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [costApproved, setCostApproved] = useState(false);
+  const [startedTask, setStartedTask] = useState(null);
+  const fileRef = useRef(null);
+
+  function patchForm(patch) {
+    setForms(prev => {
+      const next = { ...prev, [mode]: { ...prev[mode], ...patch } };
+      try { localStorage.setItem(`mediapost.draft.${mode}`, JSON.stringify(next[mode])); } catch (e) {}
+      return next;
+    });
+  }
+  useEffect(() => {
+    try { localStorage.setItem("mediapost.mode", mode); } catch (e) {}
+    setCostApproved(false);
+  }, [mode]);
+
+  // Recompute preview whenever the relevant form / video changes.
+  useEffect(() => {
+    let cancelled = false;
+    async function run() {
+      const f = forms[mode];
+      const body = { mode };
+      if (mode === "cover_pick") body.quantity = f.quantity;
+      if (mode === "multi_aspect") {
+        body.target_aspects = f.target_aspects;
+        body.recompose_fps = f.recompose_fps;
+        body.duration_sec = video ? (video.duration_sec || 0) : 0;
+      }
+      if (mode === "seo_pack") body.platforms = f.platforms;
+      if (mode === "chapter_cards") body.chapter_count = parseChapters(f.chapters_text).length;
+      try {
+        const r = await pluginApi("POST", "/estimate", body);
+        if (!cancelled && r.ok) setPreview(r.body);
+      } catch (e) { /* ignore */ }
+    }
+    run();
+    return () => { cancelled = true; };
+  }, [mode, forms, video]);
+
+  async function onUpload(file) {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const r = await uploadFile(file);
+      setVideo({ path: r.path, filename: r.filename, url: r.url, size: r.size, duration_sec: 0 });
+    } catch (e) {
+      showToast("Upload failed: " + e.message, "error");
+    } finally { setUploading(false); }
+  }
+
+  function videoRequired() { return mode === "cover_pick" || mode === "multi_aspect"; }
+  const apiMissing = !settings || !settings.dashscope_api_key;
+  const apiMissingForMode = apiMissing && mode !== "chapter_cards";
+
+  async function startTask() {
+    if (videoRequired() && !video) {
+      showToast(t("mediaPost.forms.video.label") + " ?", "error");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const f = forms[mode];
+      const params = { ...f };
+      if (mode === "chapter_cards") params.chapters = parseChapters(f.chapters_text);
+      const body = {
+        mode,
+        video_path: video ? video.path : "",
+        params,
+        cost_approved: costApproved,
+      };
+      const r = await pluginApi("POST", "/tasks", body);
+      if (!r.ok) {
+        showToast("Create failed: " + JSON.stringify(r.body || {}), "error");
+        return;
+      }
+      setStartedTask(r.body);
+      onTaskCreated && onTaskCreated(r.body);
+    } finally { setSubmitting(false); }
+  }
+
+  const f = forms[mode];
+  const startKey = `mediaPost.forms.start.${mode}`;
+  const needsConfirm = preview && preview.cost_kind !== "ok" && !costApproved;
+  const startLabel = needsConfirm
+    ? t("mediaPost.forms.start.confirm", { cost: preview.total_cny.toFixed(2) })
+    : t(startKey);
+
+  const modes = [
+    { id: "cover_pick" },
+    { id: "multi_aspect" },
+    { id: "seo_pack" },
+    { id: "chapter_cards" },
+  ];
+
+  return (
+    <div>
+      <div className="oa-hero-title">{t("mediaPost.tabs.create")}</div>
+      <div className="oa-hero-title__sub">{t("mediaPost.tabs.create.sub")}</div>
+      <div className="split-layout">
+        <div className="split-left">
+          <ApiKeyBanner missing={apiMissingForMode} t={t} onGo={gotoSettings} />
+          <div className="form-row">
+            <div className="oa-section-label">{t("mediaPost.tabs.create")}</div>
+            <div className="grid-2" style={{gap: 8}}>
+              {modes.map(m => (
+                <button key={m.id} type="button"
+                        className={`mode-btn ${mode === m.id ? "active" : ""}`}
+                        onClick={() => setMode(m.id)}>
+                  <span className="mode-btn__title">{t(`mediaPost.modes.${m.id}.title`)}</span>
+                  <span className="mode-btn__desc">{t(`mediaPost.modes.${m.id}.desc`)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          {videoRequired() && (
+            <div className="form-row">
+              <div className="label">{t("mediaPost.forms.video.label")}</div>
+              <div className={`upload-zone ${video ? "has-image" : ""}`}
+                   onClick={() => fileRef.current && fileRef.current.click()}>
+                {uploading
+                  ? <span className="spinner-sm" />
+                  : video
+                    ? (<>
+                        <video className="upload-preview" src={video.url} controls />
+                        <div className="text-xs text-muted" style={{marginTop:6}}>{video.filename} · {fmtBytes(video.size)}</div>
+                      </>)
+                    : <>{t("mediaPost.forms.video.placeholder")}</>}
+              </div>
+              <div className="text-xs text-dim" style={{marginTop: 4}}>{t("mediaPost.forms.video.helper")}</div>
+              <input ref={fileRef} type="file" accept="video/*" hidden
+                     onChange={e => onUpload(e.target.files[0])} />
+            </div>
+          )}
+          {mode === "cover_pick" && <CoverPickForm value={f} onChange={patchForm} t={t} />}
+          {mode === "multi_aspect" && <MultiAspectForm value={f} onChange={patchForm} t={t} />}
+          {mode === "seo_pack" && <SeoPackForm value={f} onChange={patchForm} t={t} />}
+          {mode === "chapter_cards" && <ChapterCardsForm value={f} onChange={patchForm} t={t} />}
+          <CostBanner preview={preview} t={t} />
+          {preview && preview.cost_kind === "warn" && (
+            <div className="oa-config-banner">
+              <span className="oa-config-banner__icon">💰</span>
+              <div className="oa-config-banner__text">{t("mediaPost.cost.warn_10")}</div>
+            </div>
+          )}
+          {preview && preview.cost_kind === "danger" && (
+            <div className="oa-config-banner danger">
+              <span className="oa-config-banner__icon">🛑</span>
+              <div className="oa-config-banner__text">{t("mediaPost.cost.warn_30")}</div>
+            </div>
+          )}
+          <button className="btn btn-primary" disabled={submitting || apiMissingForMode}
+                  style={{width: "100%", justifyContent: "center"}}
+                  onClick={() => { if (needsConfirm) setCostApproved(true); else startTask(); }}>
+            {submitting && <span className="spinner-sm" />}
+            {needsConfirm ? startLabel : t(startKey)}
+          </button>
+          {needsConfirm && costApproved && (
+            <button className="btn btn-primary" style={{width:"100%", marginTop:8, justifyContent:"center"}}
+                    onClick={startTask}>
+              {t("mediaPost.common.start")}
+            </button>
+          )}
+        </div>
+        <div className="split-right">
+          {!startedTask && (
+            <div className="empty-state">
+              <div style={{fontSize:48}}>🎬</div>
+              <p>{t("mediaPost.tabs.create.sub")}</p>
+            </div>
+          )}
+          {startedTask && (
+            <div className="modal-mask" onClick={() => setStartedTask(null)}>
+              <div className="modal-card" onClick={e => e.stopPropagation()}>
+                <div className="modal-icon">✓</div>
+                <div className="modal-title">{t("mediaPost.common.taskStarted")}</div>
+                <div className="modal-desc">
+                  ID: <code>{startedTask.id}</code><br/>
+                  {t("mediaPost.cost.estimate")}: ¥{(startedTask.cost_estimated || 0).toFixed(4)}
+                </div>
+                <div className="modal-actions">
+                  <button className="btn" onClick={() => setStartedTask(null)}>{t("mediaPost.common.continue")}</button>
+                  <button className="btn btn-primary" onClick={() => { setStartedTask(null); onTaskCreated && onTaskCreated(startedTask, true); }}>
+                    {t("mediaPost.common.goTasks")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Tasks tab — list + 4 detail panels ─────────────────────────────────
+function TaskCard({ task, selected, onClick, t }) {
+  return (
+    <div className={`task-card ${selected ? "selected" : ""}`} onClick={onClick}>
+      <div className="task-thumb">{ {cover_pick:"📷",multi_aspect:"📐",seo_pack:"#️⃣",chapter_cards:"📑"}[task.mode] || "•"}</div>
+      <div className="task-info">
+        <h4>{task.id} · {t(`mediaPost.modes.${task.mode}.title`)}</h4>
+        <div className="task-meta">
+          <span className={`tag ${STATUS_TAG[task.status] || "tag-gray"}`}>{t(`mediaPost.common.status.${task.status}`) || task.status}</span>
+          <span>{fmtDate(task.created_at)}</span>
+          {task.cost_estimated > 0 && <span>¥{task.cost_estimated.toFixed(4)}</span>}
+        </div>
+        {task.status === "running" && (
+          <div className="progress"><div style={{width: `${(task.progress || 0) * 100}%`}} /></div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CoverGallery({ taskId, t }) {
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    pluginApi("GET", `/tasks/${taskId}/results/cover`).then(r => r.ok && setItems(r.body || []));
+  }, [taskId]);
+  if (!items.length) return <div className="empty-state">{t("mediaPost.tasks.detail.empty")}</div>;
+  return (
+    <div>
+      <div className="oa-section-label">{t("mediaPost.tasks.detail.cover", { n: items.length })}</div>
+      <div className="image-gallery">
+        {items.map(it => (
+          <div key={it.id} className="image-card">
+            <img src={buildPreviewUrl(it.cover_path)} alt={`cover-${it.rank}`} />
+            <div className="image-card__caption">
+              #{it.rank} · {t("mediaPost.tasks.detail.scoreLabel")} {(it.overall_score || 0).toFixed(2)}
+            </div>
+            <div className="image-card-actions">
+              <button onClick={() => copyToClipboard(it.cover_path)}>{t("mediaPost.tasks.detail.copy")}</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RecomposeViewer({ taskId, t }) {
+  const [items, setItems] = useState([]);
+  const [open, setOpen] = useState({});
+  useEffect(() => {
+    pluginApi("GET", `/tasks/${taskId}/results/recompose`).then(r => r.ok && setItems(r.body || []));
+  }, [taskId]);
+  if (!items.length) return <div className="empty-state">{t("mediaPost.tasks.detail.empty")}</div>;
+  return (
+    <div>
+      <div className="oa-section-label">{t("mediaPost.tasks.detail.recompose")}</div>
+      {items.map(it => (
+        <div key={it.id} className={`oa-collapse ${open[it.id] ? "open" : ""}`}>
+          <div className="oa-collapse__header" onClick={() => setOpen({...open, [it.id]: !open[it.id]})}>
+            <span><strong>{it.aspect}</strong> · {it.output_w}×{it.output_h} · {(it.duration_sec || 0).toFixed(1)}s</span>
+            <span className="oa-collapse__arrow">▶</span>
+          </div>
+          <div className="oa-collapse__body">
+            <video controls style={{width: "100%", maxHeight: 320, background: "#000", borderRadius: 6}}
+                   src={buildPreviewUrl(it.output_path)} />
+            <div className="text-xs text-muted" style={{marginTop:6}}>
+              fps={it.fps_used} · ema={it.ema_alpha_used} · scenes={it.scene_cut_count}
+            </div>
+            <div className="flex gap-2" style={{marginTop:8}}>
+              <button className="btn btn-sm" onClick={() => copyToClipboard(it.output_path)}>{t("mediaPost.tasks.detail.copy")}</button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SeoTabbedPanel({ taskId, t }) {
+  const [items, setItems] = useState([]);
+  const [active, setActive] = useState(null);
+  useEffect(() => {
+    pluginApi("GET", `/tasks/${taskId}/results/seo`).then(r => {
+      if (r.ok) { setItems(r.body || []); setActive((r.body || [])[0] && r.body[0].platform); }
+    });
+  }, [taskId]);
+  if (!items.length) return <div className="empty-state">{t("mediaPost.tasks.detail.empty")}</div>;
+  const cur = items.find(i => i.platform === active) || items[0];
+  const payload = (cur && cur.payload) || {};
+  return (
+    <div>
+      <div className="oa-section-label">{t("mediaPost.tasks.detail.seo", { n: items.length })}</div>
+      <div className="tabs" style={{padding:0, marginBottom:12, background:"transparent"}}>
+        {items.map(it => (
+          <div key={it.platform} className={`tab ${cur.platform === it.platform ? "active" : ""}`}
+               onClick={() => setActive(it.platform)}>
+            {t(`mediaPost.forms.platforms.${it.platform}`) || it.platform}
+            {payload._error ? " ⚠" : ""}
+          </div>
+        ))}
+      </div>
+      {payload._error
+        ? <div className="oa-error-coach"><div className="oa-error-coach__title">{payload._error}</div></div>
+        : (<div className="card">
+            {Object.entries(payload).map(([k, v]) => (
+              <div key={k} className="form-row">
+                <div className="label flex justify-between" style={{display:"flex"}}>
+                  <span>{k}</span>
+                  <button className="btn btn-sm" onClick={() => copyToClipboard(typeof v === "string" ? v : JSON.stringify(v))}>{t("mediaPost.tasks.detail.copy")}</button>
+                </div>
+                <div className="oa-md-content" style={{whiteSpace:"pre-wrap"}}>{typeof v === "string" ? v : JSON.stringify(v, null, 2)}</div>
+              </div>
+            ))}
+            <button className="btn btn-sm" onClick={() => copyToClipboard(JSON.stringify(payload, null, 2))}>
+              {t("mediaPost.tasks.detail.copyAll")}
+            </button>
+          </div>)}
+    </div>
+  );
+}
+
+function ChaptersGallery({ taskId, t }) {
+  const [items, setItems] = useState([]);
+  useEffect(() => {
+    pluginApi("GET", `/tasks/${taskId}/results/chapters`).then(r => r.ok && setItems(r.body || []));
+  }, [taskId]);
+  if (!items.length) return <div className="empty-state">{t("mediaPost.tasks.detail.empty")}</div>;
+  return (
+    <div>
+      <div className="oa-section-label">{t("mediaPost.tasks.detail.chapters", { n: items.length })}</div>
+      <div className="image-gallery">
+        {items.map(it => (
+          <div key={it.id} className="image-card">
+            <img src={buildPreviewUrl(it.png_path)} alt={`ch-${it.chapter_index}`} />
+            <div className="image-card__caption">#{it.chapter_index} · {it.title}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ErrorCoach({ task, t, onRetry }) {
+  if (!task || task.status !== "failed") return null;
+  const kind = task.error_kind || "unknown";
+  return (
+    <div className="oa-error-coach">
+      <div className="oa-error-coach__title">{t(`mediaPost.errors.${kind}.label`)} · {task.error_message || ""}</div>
+      <ul className="oa-error-coach__list">
+        {[1,2,3].map(i => {
+          const k = `mediaPost.errors.${kind}.h${i}`;
+          const v = t(k);
+          return v && v !== k ? <li key={i}>{v}</li> : null;
+        })}
+      </ul>
+      <div className="oa-error-coach__actions">
+        <button className="btn btn-sm" onClick={onRetry}>{t("mediaPost.common.retry")}</button>
+        <button className="btn btn-sm" onClick={() => copyToClipboard(JSON.stringify(task, null, 2))}>{t("mediaPost.common.copyLog")}</button>
+      </div>
+    </div>
+  );
+}
+
+function TasksTab({ t, refreshTrigger }) {
+  const [tasks, setTasks] = useState([]);
+  const [filterMode, setFilterMode] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [search, setSearch] = useState("");
+  const [selectedId, setSelectedId] = useState(null);
+  const [selectedTask, setSelectedTask] = useState(null);
+
+  const refresh = useCallback(async () => {
+    const q = [];
+    if (filterMode) q.push(`mode=${filterMode}`);
+    if (filterStatus) q.push(`status=${filterStatus}`);
+    const r = await pluginApi("GET", `/tasks${q.length ? "?" + q.join("&") : ""}`);
+    if (r.ok && r.body && r.body.tasks) setTasks(r.body.tasks);
+  }, [filterMode, filterStatus]);
+
+  useEffect(() => { refresh(); }, [refresh, refreshTrigger]);
+  useEffect(() => {
+    const id = setInterval(refresh, 3000);
+    return () => clearInterval(id);
+  }, [refresh]);
+  useEffect(() => {
+    return onEvent("task_update", () => refresh());
+  }, [refresh]);
+  useEffect(() => {
+    if (!selectedId) return;
+    pluginApi("GET", `/tasks/${selectedId}`).then(r => r.ok && setSelectedTask(r.body));
+  }, [selectedId, tasks]);
+
+  const filtered = tasks.filter(tk => !search || tk.id.includes(search) || (tk.video_path || "").includes(search));
+
+  async function cancel() { if (selectedId) { await pluginApi("POST", `/tasks/${selectedId}/cancel`); refresh(); } }
+  async function retry() { if (selectedId) { const r = await pluginApi("POST", `/tasks/${selectedId}/retry`); if (r.ok) refresh(); } }
+  async function approve() { if (selectedId) { await pluginApi("POST", `/tasks/${selectedId}/approve`); refresh(); } }
+  async function del() { if (selectedId) { await pluginApi("DELETE", `/tasks/${selectedId}`); setSelectedId(null); refresh(); } }
+
+  const detail = (() => {
+    if (!selectedTask) return <div className="empty-state">{t("mediaPost.tasks.detail.empty")}</div>;
+    const tk = selectedTask;
+    return (
+      <div>
+        <div className="flex items-center justify-between" style={{marginBottom:12}}>
+          <div>
+            <div className="oa-hero-title">{t(`mediaPost.modes.${tk.mode}.title`)}</div>
+            <div className="text-xs text-dim">ID: <code>{tk.id}</code> · {fmtDate(tk.created_at)}</div>
+          </div>
+          <div className="flex gap-2">
+            <span className={`oa-pill ${tk.status === "completed" ? "green" : tk.status === "failed" ? "red" : tk.status === "approval_required" ? "orange" : "gray"}`}>
+              {t(`mediaPost.common.status.${tk.status}`) || tk.status}
+            </span>
+            {tk.status === "running" && <button className="btn btn-sm" onClick={cancel}>{t("mediaPost.tasks.actions.cancel")}</button>}
+            {tk.status === "approval_required" && <button className="btn btn-sm btn-primary" onClick={approve}>{t("mediaPost.tasks.actions.approve")}</button>}
+            {(tk.status === "failed" || tk.status === "cancelled") && <button className="btn btn-sm" onClick={retry}>{t("mediaPost.tasks.actions.retry")}</button>}
+            <button className="btn btn-sm btn-danger" onClick={del}>{t("mediaPost.tasks.actions.delete")}</button>
+          </div>
+        </div>
+        {tk.status === "running" && (
+          <div className="progress"><div style={{width: `${(tk.progress || 0) * 100}%`}} /></div>
+        )}
+        <ErrorCoach task={tk} t={t} onRetry={retry} />
+        {tk.mode === "cover_pick" && <CoverGallery taskId={tk.id} t={t} />}
+        {tk.mode === "multi_aspect" && <RecomposeViewer taskId={tk.id} t={t} />}
+        {tk.mode === "seo_pack" && <SeoTabbedPanel taskId={tk.id} t={t} />}
+        {tk.mode === "chapter_cards" && <ChaptersGallery taskId={tk.id} t={t} />}
+      </div>
+    );
+  })();
+
+  return (
+    <div>
+      <div className="oa-hero-title">{t("mediaPost.tabs.tasks")}</div>
+      <div className="oa-hero-title__sub">{t("mediaPost.tabs.tasks.sub")}</div>
+      <div className="split-layout">
+        <div className="split-left">
+          <div className="oa-section-label">
+            {t("mediaPost.tasks.all")} <span className="oa-pill">{tasks.length}</span>
+          </div>
+          <div className="oa-filter-group">
+            <select className="input select" value={filterMode} onChange={e => setFilterMode(e.target.value)}>
+              <option value="">{t("mediaPost.tasks.filter.all")} · {t("mediaPost.tasks.filter.mode")}</option>
+              {["cover_pick","multi_aspect","seo_pack","chapter_cards"].map(m => (
+                <option key={m} value={m}>{t(`mediaPost.modes.${m}.title`)}</option>
+              ))}
+            </select>
+            <select className="input select" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+              <option value="">{t("mediaPost.tasks.filter.all")} · {t("mediaPost.tasks.filter.status")}</option>
+              {["pending","running","completed","failed","cancelled","approval_required"].map(s => (
+                <option key={s} value={s}>{t(`mediaPost.common.status.${s}`)}</option>
+              ))}
+            </select>
+            <input className="input" placeholder={t("mediaPost.tasks.filter.search")} value={search} onChange={e => setSearch(e.target.value)} />
+            <button className="btn btn-sm" onClick={refresh}>{t("mediaPost.common.refresh")}</button>
+          </div>
+          <div className="oa-list-panel">
+            {filtered.length === 0 && <div className="empty-state">{t("mediaPost.tasks.empty")}</div>}
+            {filtered.map(tk => (
+              <TaskCard key={tk.id} task={tk} selected={tk.id === selectedId}
+                        onClick={() => setSelectedId(tk.id)} t={t} />
+            ))}
+          </div>
+        </div>
+        <div className="split-right">{detail}</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Library tab ────────────────────────────────────────────────────────
+function LibraryTab({ t }) {
+  const [sub, setSub] = useState("covers");
+  return (
+    <div>
+      <div className="oa-hero-title">{t("mediaPost.tabs.library")}</div>
+      <div className="oa-hero-title__sub">{t("mediaPost.tabs.library.sub")}</div>
+      <div className="tabs" style={{padding:0, marginBottom:12, background:"transparent"}}>
+        {["covers","aspects","seo","chapters"].map(s => (
+          <div key={s} className={`tab ${sub === s ? "active" : ""}`} onClick={() => setSub(s)}>
+            {t(`mediaPost.library.${s}`)}
+          </div>
+        ))}
+      </div>
+      <div className="empty-state">{t("mediaPost.library.empty")}</div>
+    </div>
+  );
+}
+
+// ─── Settings tab — 5 sections ──────────────────────────────────────────
+function SettingsTab({ t, settings, onSaved }) {
+  const [draft, setDraft] = useState(settings || {});
+  const [savedFlash, setSavedFlash] = useState(false);
+  useEffect(() => { setDraft(settings || {}); }, [settings]);
+  function set(k, v) { setDraft(d => ({ ...d, [k]: v })); }
+  async function save() {
+    const r = await pluginApi("PUT", "/settings", { updates: draft });
+    if (r.ok) { setSavedFlash(true); setTimeout(() => setSavedFlash(false), 1500); onSaved && onSaved(); }
+  }
+  const apiOk = !!draft.dashscope_api_key;
+
+  return (
+    <div>
+      <div className="oa-hero-title">{t("mediaPost.tabs.settings")}</div>
+      <div className="oa-hero-title__sub">{t("mediaPost.tabs.settings.sub")}</div>
+
+      <div className="oa-settings-section">
+        <div className="oa-settings-section__title">{t("mediaPost.settings.api.title")}</div>
+        <div className="form-row">
+          <div className="label">{t("mediaPost.settings.api.label")}</div>
+          <input className="input" type="password" value={draft.dashscope_api_key || ""}
+                 onChange={e => set("dashscope_api_key", e.target.value)}
+                 placeholder="sk-..." />
+          <div className="text-xs text-dim" style={{marginTop:4}}>{t("mediaPost.settings.api.helper")}</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`oa-pill ${apiOk ? "green" : "red"}`}>
+            {apiOk ? t("mediaPost.settings.api.ok") : t("mediaPost.settings.api.missing")}
+          </span>
+        </div>
+      </div>
+
+      <div className="oa-settings-section">
+        <div className="oa-settings-section__title">{t("mediaPost.settings.vlm.title")}</div>
+        <div className="grid-2">
+          <div className="form-row">
+            <div className="label">{t("mediaPost.settings.vlm.fps")}</div>
+            <input className="input" type="number" step="0.5" min="0.5" max="10"
+                   value={draft.recompose_fps || "2.0"}
+                   onChange={e => set("recompose_fps", e.target.value)} />
+          </div>
+          <div className="form-row">
+            <div className="label">{t("mediaPost.settings.vlm.batch")}</div>
+            <input className="input" disabled value={draft.vlm_batch_size || "8"} />
+          </div>
+          <div className="form-row">
+            <div className="label">{t("mediaPost.settings.vlm.concurrency")}</div>
+            <input className="input" type="number" min="1" max="8" value={draft.vlm_concurrency || "4"}
+                   onChange={e => set("vlm_concurrency", e.target.value)} />
+          </div>
+        </div>
+      </div>
+
+      <div className="oa-settings-section">
+        <div className="oa-settings-section__title">{t("mediaPost.settings.chapter.title")}</div>
+        <div className="form-row">
+          <div className="label">{t("mediaPost.settings.chapter.template")}</div>
+          <select className="input select" value={draft.chapter_template_default || "modern"}
+                  onChange={e => set("chapter_template_default", e.target.value)}>
+            {["modern","minimal","dark","colorful","podcast"].map(tpl => <option key={tpl} value={tpl}>{tpl}</option>)}
+          </select>
+        </div>
+        <div className="form-row">
+          <div className="label">{t("mediaPost.settings.chapter.playwright")}</div>
+          <span className={`oa-pill ${draft.playwright_enabled === "true" ? "green" : "gray"}`}>
+            {draft.playwright_enabled === "true" ? "Playwright OK" : "drawtext fallback"}
+          </span>
+        </div>
+      </div>
+
+      <div className="oa-settings-section">
+        <div className="oa-settings-section__title">{t("mediaPost.settings.cost.title")}</div>
+        <div className="grid-2">
+          <div className="form-row">
+            <div className="label">{t("mediaPost.settings.cost.warn")}</div>
+            <input className="input" type="number" step="1" value={draft.cost_warn_threshold_cny || "10"}
+                   onChange={e => set("cost_warn_threshold_cny", e.target.value)} />
+          </div>
+          <div className="form-row">
+            <div className="label">{t("mediaPost.settings.cost.duration")}</div>
+            <input className="input" type="number" step="1" value={draft.multi_aspect_max_minutes || "30"}
+                   onChange={e => set("multi_aspect_max_minutes", e.target.value)} />
+          </div>
+        </div>
+      </div>
+
+      <div className="oa-settings-section">
+        <div className="oa-settings-section__title disabled">{t("mediaPost.settings.handoff.title")}</div>
+        <div className="text-sm text-muted">{t("mediaPost.settings.handoff.disabled")}</div>
+        <span className="oa-pill gray" style={{marginTop:8}}>v2.0 only</span>
+      </div>
+
+      <div className="flex items-center gap-2">
+        <button className="btn btn-primary" onClick={save}>{t("mediaPost.settings.save")}</button>
+        {savedFlash && <span className="oa-pill green">{t("mediaPost.settings.saved")}</span>}
+      </div>
+    </div>
+  );
+}
+
+// ─── App shell ──────────────────────────────────────────────────────────
+function App() {
+  const { t, locale } = useI18n();
+  const [tab, setTab] = useState("create");
+  const [settings, setSettings] = useState(null);
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+
+  const reloadSettings = useCallback(async () => {
+    const r = await pluginApi("GET", "/settings");
+    if (r.ok) setSettings(r.body);
+  }, []);
+  useEffect(() => { reloadSettings(); }, [reloadSettings]);
+
+  function onTaskCreated(_task, gotoTasks) {
+    setRefreshTrigger(x => x + 1);
+    if (gotoTasks) setTab("tasks");
+  }
+  function toggleTheme() {
+    const cur = document.documentElement.getAttribute("data-theme");
+    document.documentElement.setAttribute("data-theme", cur === "dark" ? "light" : "dark");
+  }
+  function toggleLocale() {
+    const next = locale === "zh" ? "en" : "zh";
+    if (window.OpenAkitaI18n && window.OpenAkitaI18n.setLocale) window.OpenAkitaI18n.setLocale(next);
+  }
+
+  return (
+    <div className="app">
+      <div className="header">
+        <h1><span style={{fontSize:18}}>🎬</span> {t("app.title")}</h1>
+        <div className="header-right">
+          <span className={`oa-pill ${settings && settings.dashscope_api_key ? "green" : "gray"}`}>
+            {settings && settings.dashscope_api_key ? t("mediaPost.settings.api.ok") : t("mediaPost.settings.api.missing")}
+          </span>
+          <button className="btn btn-sm" onClick={toggleTheme}>🌓</button>
+          <button className="btn btn-sm" onClick={toggleLocale}>{locale === "zh" ? "EN" : "中"}</button>
+        </div>
+      </div>
+      <div className="tabs">
+        {["create","tasks","library","settings"].map(k => (
+          <div key={k} className={`tab ${tab === k ? "active" : ""}`} data-tab={k} onClick={() => setTab(k)}>
+            {t(`mediaPost.tabs.${k}`)}
+          </div>
+        ))}
+      </div>
+      <div className="content">
+        {tab === "create" && <CreateTab t={t} settings={settings} onTaskCreated={onTaskCreated} gotoSettings={() => setTab("settings")} />}
+        {tab === "tasks" && <TasksTab t={t} refreshTrigger={refreshTrigger} />}
+        {tab === "library" && <LibraryTab t={t} />}
+        {tab === "settings" && <SettingsTab t={t} settings={settings} onSaved={reloadSettings} />}
+      </div>
+    </div>
+  );
+}
+
+class PluginErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error("[media-post] render error:", error, info); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div style={{padding: 24}}>
+        <div className="oa-config-banner danger">
+          <span className="oa-config-banner__icon">⚠️</span>
+          <div className="oa-config-banner__text">
+            <strong>UI render error</strong>
+            <div className="text-xs">{String(this.state.error.message || this.state.error)}</div>
+          </div>
+          <button className="oa-config-banner__action" onClick={() => this.setState({ error: null })}>Reset</button>
+        </div>
+      </div>
+    );
+  }
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <PluginErrorBoundary><App /></PluginErrorBoundary>
+);
+if (window.OpenAkita && typeof window.OpenAkita.ready === "function") {
+  window.OpenAkita.ready();
+}
+</script>
+</body>
+</html>
