@@ -103,6 +103,7 @@ class ProfileCreateRequest(BaseModel):
     id: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z0-9_-]+$")
     name: str = Field(..., min_length=1, max_length=100)
     description: str = Field("", max_length=500)
+    type: Literal["custom", "external_cli"] = "custom"
     icon: str = Field("🤖", max_length=4)
     color: str = Field("#6b7280", max_length=20)
     skills: list[str] = Field(default_factory=list)
@@ -119,6 +120,8 @@ class ProfileCreateRequest(BaseModel):
     identity_mode: Literal["shared", "custom"] = "shared"
     memory_mode: Literal["shared", "isolated"] = "shared"
     memory_inherit_global: bool = True
+    cli_provider_id: str | None = None
+    cli_permission_mode: Literal["plan", "write"] = "write"
     cli_env: dict[str, str] = Field(default_factory=dict, max_length=100)
 
 
@@ -141,6 +144,8 @@ class ProfileUpdateRequest(BaseModel):
     identity_mode: Literal["shared", "custom"] | None = None
     memory_mode: Literal["shared", "isolated"] | None = None
     memory_inherit_global: bool | None = None
+    cli_provider_id: str | None = None
+    cli_permission_mode: Literal["plan", "write"] | None = None
     cli_env: dict[str, str] | None = Field(None, max_length=100)
 
 
@@ -407,6 +412,47 @@ async def delete_category(category_id: str):
 # ─── Agent profile routes ───────────────────────────────────────────────
 
 
+_CLI_ONLY_PROFILE_FIELDS = frozenset({"cli_provider_id", "cli_permission_mode", "cli_env"})
+
+
+def _format_cli_only_fields(fields: set[str] | frozenset[str]) -> str:
+    return ", ".join(sorted(fields))
+
+
+def _parse_cli_provider_id(raw: str | None):
+    from openakita.agents.cli_detector import CliProviderId
+
+    if raw is None:
+        return None
+    try:
+        return CliProviderId(raw)
+    except ValueError:
+        allowed = ", ".join(p.value for p in CliProviderId)
+        raise HTTPException(
+            status_code=400,
+            detail=f"cli_provider_id must be one of: {allowed}",
+        ) from None
+
+
+def _validate_create_profile_body(body: ProfileCreateRequest) -> None:
+    if body.type == "external_cli":
+        if not body.cli_provider_id:
+            raise HTTPException(
+                status_code=400,
+                detail="cli_provider_id is required when type is external_cli",
+            )
+        _parse_cli_provider_id(body.cli_provider_id)
+        return
+
+    cli_only_fields = body.model_fields_set & _CLI_ONLY_PROFILE_FIELDS
+    if cli_only_fields:
+        field_names = _format_cli_only_fields(cli_only_fields)
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_names} is only valid when type is external_cli",
+        )
+
+
 @router.get("/api/agents/profiles")
 async def list_agent_profiles(include_hidden: bool = False):
     """Return available agent profiles (system presets + user-created).
@@ -448,7 +494,15 @@ async def list_agent_profiles(include_hidden: bool = False):
 @router.post("/api/agents/profiles")
 async def create_agent_profile(body: ProfileCreateRequest):
     """Create a new custom agent profile."""
-    from openakita.agents.profile import AgentProfile, AgentType, SkillsMode, get_profile_store
+    from openakita.agents.profile import (
+        AgentProfile,
+        AgentType,
+        CliPermissionMode,
+        SkillsMode,
+        get_profile_store,
+    )
+
+    _validate_create_profile_body(body)
 
     valid_modes = {"all", "inclusive", "exclusive"}
     if body.skills_mode not in valid_modes:
@@ -470,11 +524,20 @@ async def create_agent_profile(body: ProfileCreateRequest):
                 detail=f"{field_name} must be one of: {', '.join(valid_mode_values)}",
             )
 
+    profile_type = AgentType.EXTERNAL_CLI if body.type == "external_cli" else AgentType.CUSTOM
+    cli_provider_id = _parse_cli_provider_id(body.cli_provider_id)
+    cli_permission_mode = (
+        CliPermissionMode(body.cli_permission_mode)
+        if profile_type == AgentType.EXTERNAL_CLI
+        else CliPermissionMode.WRITE
+    )
+    cli_env = dict(body.cli_env) if profile_type == AgentType.EXTERNAL_CLI else {}
+
     profile = AgentProfile(
         id=body.id,
         name=body.name,
         description=body.description,
-        type=AgentType.CUSTOM,
+        type=profile_type,
         skills=body.skills,
         skills_mode=SkillsMode(body.skills_mode),
         tools=body.tools,
@@ -491,6 +554,9 @@ async def create_agent_profile(body: ProfileCreateRequest):
         identity_mode=body.identity_mode,
         memory_mode=body.memory_mode,
         memory_inherit_global=body.memory_inherit_global,
+        cli_provider_id=cli_provider_id,
+        cli_permission_mode=cli_permission_mode,
+        cli_env=cli_env,
         created_by="user",
     )
 
@@ -513,6 +579,27 @@ async def update_agent_profile(profile_id: str, body: ProfileUpdateRequest, requ
 
     store = get_profile_store()
     update_data = body.model_dump(exclude_unset=True)
+
+    existing = store.get(profile_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"Profile '{profile_id}' not found")
+
+    cli_only_fields = set(update_data) & _CLI_ONLY_PROFILE_FIELDS
+    if existing.type.value != "external_cli" and cli_only_fields:
+        field_names = _format_cli_only_fields(cli_only_fields)
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_names} is only valid for external_cli profiles",
+        )
+
+    if "cli_provider_id" in update_data:
+        if update_data["cli_provider_id"] is None:
+            raise HTTPException(
+                status_code=400,
+                detail="cli_provider_id cannot be cleared for external_cli profiles",
+            )
+        parsed = _parse_cli_provider_id(update_data["cli_provider_id"])
+        update_data["cli_provider_id"] = parsed.value
 
     try:
         updated = store.update(profile_id, update_data)
