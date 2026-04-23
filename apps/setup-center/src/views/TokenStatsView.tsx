@@ -178,11 +178,11 @@ export function TokenStatsView({
       {/* ── Header: title + toggle ── */}
       <div className="flex items-start justify-between gap-4 overflow-x-auto">
         <div className="space-y-1.5 min-w-0">
-          <h2 className="truncate text-lg font-bold tracking-tight" title={t("tokenStats.title", "Token 用量统计")}>
-            {t("tokenStats.title", "Token 用量统计")}
+          <h2 className="truncate text-lg font-bold tracking-tight" title={t("tokenStats.title", "Token Usage Statistics")}>
+            {t("tokenStats.title", "Token Usage Statistics")}
           </h2>
-          <p className="truncate text-xs text-muted-foreground leading-relaxed" title={t("tokenStats.disclaimer", "注意：本地 token 计算与服务商算法无法保证完全一致，实际用量以服务商账单为准，此处统计仅供参考。")}>
-            {t("tokenStats.disclaimer", "注意：本地 token 计算与服务商算法无法保证完全一致，实际用量以服务商账单为准，此处统计仅供参考。")}
+          <p className="truncate text-xs text-muted-foreground leading-relaxed" title={t("tokenStats.disclaimer", "Note: local token counting may not exactly match the provider's algorithm. Actual usage is based on the provider's billing; statistics here are for reference only.")}>
+            {t("tokenStats.disclaimer", "Note: local token counting may not exactly match the provider's algorithm. Actual usage is based on the provider's billing; statistics here are for reference only.")}
           </p>
         </div>
         {onToggleDisabled && (
@@ -204,7 +204,7 @@ export function TokenStatsView({
       {disabled ? (
         <Card className="opacity-50">
           <CardContent className="py-10 text-center">
-            <p className="text-muted-foreground text-sm">{t("tokenStats.disabledHint", "此模块已禁用，点击上方开关启用")}</p>
+            <p className="text-muted-foreground text-sm">{t("tokenStats.disabledHint", "This module is disabled. Click the toggle above to enable.")}</p>
           </CardContent>
         </Card>
       ) : (
@@ -222,9 +222,9 @@ export function TokenStatsView({
                 {t(PERIOD_I18N[pk])}
               </Button>
             ))}
-            <Button size="xs" variant="outline" className="shrink-0" onClick={fetchAll} disabled={loading} title={t("tokenStats.refresh", "刷新")}>
-              <span className="hidden xl:inline">{loading ? "..." : t("tokenStats.refresh", "刷新")}</span>
-              <span className="xl:hidden">{loading ? "..." : t("tokenStats.refresh", "刷新")}</span>
+            <Button size="xs" variant="outline" className="shrink-0" onClick={fetchAll} disabled={loading} title={t("tokenStats.refresh", "Refresh")}>
+              <span className="hidden xl:inline">{loading ? "..." : t("tokenStats.refresh", "Refresh")}</span>
+              <span className="xl:hidden">{loading ? "..." : t("tokenStats.refresh", "Refresh")}</span>
             </Button>
           </div>
 
@@ -232,11 +232,11 @@ export function TokenStatsView({
           {total && (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
               {[
-                { label: t("tokenStats.totalTokens", "总 Token"), value: fmtNum(total.total_tokens), color: STAT_COLORS[0] },
-                { label: t("tokenStats.inputTokens", "输入"), value: fmtNum(total.total_input), color: STAT_COLORS[1] },
-                { label: t("tokenStats.outputTokens", "输出"), value: fmtNum(total.total_output), color: STAT_COLORS[2] },
-                { label: t("tokenStats.requests", "请求数"), value: fmtNum(total.request_count), color: STAT_COLORS[3] },
-                { label: t("tokenStats.estimatedCost", "预估费用"), value: fmtCost(total.total_cost), color: STAT_COLORS[4] },
+                { label: t("tokenStats.totalTokens", "Total Tokens"), value: fmtNum(total.total_tokens), color: STAT_COLORS[0] },
+                { label: t("tokenStats.inputTokens", "Input"), value: fmtNum(total.total_input), color: STAT_COLORS[1] },
+                { label: t("tokenStats.outputTokens", "Output"), value: fmtNum(total.total_output), color: STAT_COLORS[2] },
+                { label: t("tokenStats.requests", "Requests"), value: fmtNum(total.request_count), color: STAT_COLORS[3] },
+                { label: t("tokenStats.estimatedCost", "Estimated Cost"), value: fmtCost(total.total_cost), color: STAT_COLORS[4] },
               ].map((card) => (
                 <Card key={card.label} className="p-0 gap-0 overflow-hidden border-border/50 shadow-sm">
                   <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 pt-4 px-5">
@@ -254,7 +254,7 @@ export function TokenStatsView({
           {timeline.length > 0 && (
             <Card className="p-0 gap-0 border-border/50 shadow-sm">
               <div className="px-5 py-3 border-b border-border/50">
-                <div className="text-sm font-semibold">{t("tokenStats.timeline", "时间线")}</div>
+                <div className="text-sm font-semibold">{t("tokenStats.timeline", "Timeline")}</div>
               </div>
               <CardContent className="px-5 pt-4 pb-5 space-y-3">
                 <div className="flex items-end gap-[3px] h-32 rounded-lg bg-muted/20 p-2 border border-border/50">
@@ -299,11 +299,11 @@ export function TokenStatsView({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <Card className="p-0 gap-0 border-border/50 shadow-sm">
               <div className="px-5 py-3 border-b border-border/50">
-                <div className="text-sm font-semibold">{t("tokenStats.byEndpoint", "按端点")}</div>
+                <div className="text-sm font-semibold">{t("tokenStats.byEndpoint", "By Endpoint")}</div>
               </div>
               <CardContent className="px-5 pt-4 pb-5 space-y-4">
                 {byEndpoint.length === 0 ? (
-                  <p className="text-sm text-muted-foreground/50 py-4 text-center">{t("tokenStats.noData", "暂无数据")}</p>
+                  <p className="text-sm text-muted-foreground/50 py-4 text-center">{t("tokenStats.noData", "No data available")}</p>
                 ) : byEndpoint.map((row) => {
                   const totalTokens = total?.total_tokens || 1;
                   return (
@@ -321,7 +321,7 @@ export function TokenStatsView({
                       </div>
                       <MiniBar value={row.total_tokens} max={totalTokens} color="#3b82f6" />
                       <div className="text-[11px] text-muted-foreground">
-                        {t("tokenStats.shareOfTotal", { pct: fmtPct(row.total_tokens, totalTokens), defaultValue: "占本时段总 Token {{pct}}" })}
+                        {t("tokenStats.shareOfTotal", { pct: fmtPct(row.total_tokens, totalTokens), defaultValue: "{{pct}} of total tokens in this period" })}
                       </div>
                     </div>
                   );
@@ -331,11 +331,11 @@ export function TokenStatsView({
 
             <Card className="p-0 gap-0 border-border/50 shadow-sm">
               <div className="px-5 py-3 border-b border-border/50">
-                <div className="text-sm font-semibold">{t("tokenStats.byOperation", "按操作类型")}</div>
+                <div className="text-sm font-semibold">{t("tokenStats.byOperation", "By Operation Type")}</div>
               </div>
               <CardContent className="px-5 pt-4 pb-5 space-y-4">
                 {byOp.length === 0 ? (
-                  <p className="text-sm text-muted-foreground/50 py-4 text-center">{t("tokenStats.noData", "暂无数据")}</p>
+                  <p className="text-sm text-muted-foreground/50 py-4 text-center">{t("tokenStats.noData", "No data available")}</p>
                 ) : byOp.map((row) => {
                   const totalTokens = total?.total_tokens || 1;
                   return (
@@ -358,7 +358,7 @@ export function TokenStatsView({
           {sessions.length > 0 && (
             <Card className="p-0 gap-0 border-border/50 shadow-sm overflow-hidden">
               <div className="px-5 py-3 border-b border-border/50">
-                <div className="text-sm font-semibold">{t("tokenStats.sessions", "按会话")}</div>
+                <div className="text-sm font-semibold">{t("tokenStats.sessions", "By Session")}</div>
               </div>
               <CardContent className="p-0">
                 <Table>

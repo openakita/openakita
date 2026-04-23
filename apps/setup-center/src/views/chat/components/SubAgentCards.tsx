@@ -72,12 +72,12 @@ export function SubAgentCards({ tasks }: { tasks: SubAgentTask[] }) {
 
   const statusLabel = (s: string) => {
     switch (s) {
-      case "starting": return t("chat.subAgentStarting", "启动中");
-      case "running": return t("chat.subAgentRunning", "执行中");
-      case "completed": return t("chat.subAgentDone", "已完成");
-      case "error": return t("chat.subAgentError", "出错");
-      case "timeout": return t("chat.subAgentTimeout", "超时");
-      case "cancelled": return t("chat.subAgentCancelled", "已取消");
+      case "starting": return t("chat.subAgentStarting", "Starting");
+      case "running": return t("chat.subAgentRunning", "Running");
+      case "completed": return t("chat.subAgentDone", "Completed");
+      case "error": return t("chat.subAgentError", "Error");
+      case "timeout": return t("chat.subAgentTimeout", "Timeout");
+      case "cancelled": return t("chat.subAgentCancelled", "Cancelled");
       default: return s;
     }
   };
@@ -109,10 +109,10 @@ export function SubAgentCards({ tasks }: { tasks: SubAgentTask[] }) {
   return (
     <div className="sacContainer">
       <div className="sacHeader">
-        <span className="sacTitle">{t("chat.subAgentPanel", "子 Agent 进度")}</span>
+        <span className="sacTitle">{t("chat.subAgentPanel", "Sub-agent progress")}</span>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {fadedIds.size > 0 && (
-            <button className="sacPageBtn" onClick={restoreFaded} title={t("chat.showCompleted", "显示已完成")}>
+            <button className="sacPageBtn" onClick={restoreFaded} title={t("chat.showCompleted", "Show completed")}>
               +{fadedIds.size}
             </button>
           )}
@@ -144,11 +144,11 @@ export function SubAgentCards({ tasks }: { tasks: SubAgentTask[] }) {
                 </span>
               </div>
               <div className="sacCardMeta">
-                <span>{t("chat.subAgentIter", "迭代")} {task.iteration}</span>
+                <span>{t("chat.subAgentIter", "Iteration")} {task.iteration}</span>
                 <span className="sacDot">·</span>
                 <span>{formatElapsed(task.elapsed_s)}</span>
                 <span className="sacDot">·</span>
-                <span>{t("chat.subAgentTools", "工具")} ×{task.tools_total}</span>
+                <span>{t("chat.subAgentTools", "Tools")} ×{task.tools_total}</span>
                 {formatTokens(task.tokens_used) && (
                   <>
                     <span className="sacDot">·</span>
@@ -158,7 +158,7 @@ export function SubAgentCards({ tasks }: { tasks: SubAgentTask[] }) {
                 {task.queue_count != null && task.queue_count > 0 && (
                   <>
                     <span className="sacDot">·</span>
-                    <span>{t("chat.subAgentQueue", "排队")} {task.queue_count}</span>
+                    <span>{t("chat.subAgentQueue", "Queued")} {task.queue_count}</span>
                   </>
                 )}
               </div>
@@ -185,7 +185,7 @@ export function SubAgentCards({ tasks }: { tasks: SubAgentTask[] }) {
                 })}
                 {!isExpanded && (task.tools_executed ?? []).length > 3 && (
                   <div className="sacToolItem" style={{ opacity: 0.5, fontSize: 11 }}>
-                    ... {(task.tools_executed ?? []).length - 3} {t("chat.more", "更多")}
+                    ... {(task.tools_executed ?? []).length - 3} {t("chat.more", "more")}
                   </div>
                 )}
               </div>

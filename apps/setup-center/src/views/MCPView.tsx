@@ -210,7 +210,7 @@ function MCPConfigForm({
       await onSave(schema.map(f => f.key));
       toast.success(t("mcp.configSaved"));
     } catch {
-      toast.error(t("mcp.configSaveFailed") || "保存失败");
+      toast.error(t("mcp.configSaveFailed") || "Save failed");
     }
     setSaving(false);
   };
@@ -225,7 +225,7 @@ function MCPConfigForm({
       });
       const data = await res.json();
       if (data.status === "connected" || data.status === "already_connected") {
-        toast.success(t("mcp.testConnectSuccess") || `${serverName} 连接成功`);
+        toast.success(t("mcp.testConnectSuccess") || `${serverName} Connection succeeded`);
         if (data.status === "connected") {
           try {
             await safeFetch(`${apiBaseUrl}/api/mcp/disconnect`, {
@@ -239,10 +239,10 @@ function MCPConfigForm({
       } else if (data.status === "config_incomplete") {
         toast.error(data.message || t("mcp.configRequired"));
       } else {
-        toast.error(`${t("mcp.testConnectFailed") || "测试连接失败"}: ${data.error || ""}`);
+        toast.error(`${t("mcp.testConnectFailed") || "Test connection failed"}: ${data.error || ""}`);
       }
     } catch (e) {
-      toast.error(`${t("mcp.testConnectFailed") || "测试连接失败"}: ${e}`);
+      toast.error(`${t("mcp.testConnectFailed") || "Test connection failed"}: ${e}`);
     }
     setTesting(false);
   };
@@ -347,7 +347,7 @@ function MCPConfigForm({
         <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={handleTestConnection} disabled={testing || saving}>
             {testing ? <Loader2 className="animate-spin" size={14} /> : <Plug size={14} />}
-            {t("mcp.testConnect") || "测试连接"}
+            {t("mcp.testConnect") || "Test Connection"}
           </Button>
           <Button size="sm" onClick={handleSave} disabled={saving}>
             {saving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
@@ -449,10 +449,10 @@ function QuickConfigDialog({
           })}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>{t("common.cancel") || "取消"}</Button>
+          <Button variant="outline" onClick={onClose}>{t("common.cancel") || "Cancel"}</Button>
           <Button onClick={handleSaveAndConnect} disabled={saving}>
             {saving ? <Loader2 className="animate-spin" size={14} /> : <Plug size={14} />}
-            {t("mcp.saveAndConnect") || "保存并连接"}
+            {t("mcp.saveAndConnect") || "Save and Connect"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -628,7 +628,7 @@ export function MCPView({
             connMsg = `\n[!] ${t("mcp.autoConnectFailed")}: ${cr.error || t("mcp.unknownError")}`;
           }
         }
-        showMsg(`[OK] 已添加 ${name}${connMsg}`, !cr || cr.connected !== false);
+        showMsg(`[OK] Added ${name}${connMsg}`, !cr || cr.connected !== false);
         setForm({ ...emptyForm });
         setShowAdd(false);
         await fetchServers();
@@ -664,7 +664,7 @@ export function MCPView({
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
         <IconLink size={48} />
         <div className="mt-3 font-semibold">MCP</div>
-        <div className="mt-1 text-xs opacity-50">后端服务未启动，请启动后再进行使用</div>
+        <div className="mt-1 text-xs opacity-50">Backend service is not running. Please start it before using.</div>
       </div>
     );
   }
@@ -690,9 +690,9 @@ export function MCPView({
                     <Badge
                       variant="outline"
                       className="max-w-full shrink overflow-hidden text-ellipsis whitespace-nowrap border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                      title={t("mcp.disabled") || "MCP 已禁用"}
+                      title={t("mcp.disabled") || "MCP Disabled"}
                     >
-                      {t("mcp.disabled") || "MCP 已禁用"}
+                      {t("mcp.disabled") || "MCP Disabled"}
                     </Badge>
                   )}
                 </div>
@@ -742,8 +742,8 @@ export function MCPView({
               {form.transport === "stdio"
                 ? t("mcp.stdioDesc")
                 : form.transport === "sse"
-                  ? "使用 SSE 端点接入远程 MCP 服务。"
-                  : "使用 Streamable HTTP 端点接入远程 MCP 服务。"}
+                  ? "Connect to a remote MCP service using an SSE endpoint."
+                  : "Connect to a remote MCP service using a Streamable HTTP endpoint."}
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 px-6 py-4 md:grid-cols-2">
@@ -779,7 +779,7 @@ export function MCPView({
                 <Input
                   value={form.url}
                   onChange={e => setForm({ ...form, url: e.target.value })}
-                  placeholder={form.transport === "sse" ? "如: http://127.0.0.1:8080/sse" : "如: http://127.0.0.1:12306/mcp"}
+                  placeholder={form.transport === "sse" ? "e.g. http://127.0.0.1:8080/sse" : "e.g. http://127.0.0.1:12306/mcp"}
                 />
               </div>
             )}
@@ -789,7 +789,7 @@ export function MCPView({
                 <Textarea
                   value={form.args}
                   onChange={e => setForm({ ...form, args: e.target.value })}
-                  placeholder={'如: -m openakita.mcp_servers.web_search\n或每行一个参数:\n-y\n@anthropic/mcp-server-filesystem\n"C:\\My Path\\dir"'}
+                  placeholder={'e.g. -m openakita.mcp_servers.web_search\nor one argument per line:\n-y\n@anthropic/mcp-server-filesystem\n"C:\\My Path\\dir"'}
                   rows={3}
                   className="resize-y font-mono text-xs"
                 />
@@ -807,7 +807,7 @@ export function MCPView({
             </div>
             {(form.transport === "streamable_http" || form.transport === "sse") && (
               <div className="space-y-2 md:col-span-2">
-                <Label>{t("mcp.headersLabel") || "请求头 (Headers)"}</Label>
+                <Label>{t("mcp.headersLabel") || "Request Headers"}</Label>
                 <Textarea
                   value={form.headers}
                   onChange={e => setForm({ ...form, headers: e.target.value })}
@@ -816,7 +816,7 @@ export function MCPView({
                   className="resize-y font-mono text-xs"
                 />
                 <p className="text-xs text-muted-foreground">
-                  {t("mcp.headersHint") || "每行一个，格式 KEY=VALUE。支持 ${VAR} 变量替换（从 .env 文件读取）。"}
+                  {t("mcp.headersHint") || "One per line, format KEY=VALUE. Supports ${VAR} variable substitution (read from .env file)."}
                 </p>
               </div>
             )}

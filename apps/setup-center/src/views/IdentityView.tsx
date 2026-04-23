@@ -238,7 +238,7 @@ export function IdentityView({ serviceRunning, apiBaseUrl }: Props) {
       <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
         <IconFingerprint size={48} />
         <div className="mt-3 font-semibold">{t("identity.title")}</div>
-        <div className="mt-1 text-xs opacity-50">后端服务未启动，请启动后再进行使用</div>
+        <div className="mt-1 text-xs opacity-50">Backend service is not running. Start it before using this feature.</div>
       </div>
     );
   }
