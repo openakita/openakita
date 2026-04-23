@@ -179,7 +179,7 @@ Fragment memory + MDRM relational graph (causal chains · timelines · entity gr
 **Fully GUI-based, no command line** — this is what sets OpenAkita apart from other open-source AI assistants:
 
 <p align="center">
-  <img src="docs/assets/desktop_quick_config.gif" alt="OpenAkita Quick Setup" width="800" />
+  <img src="docs/assets/en/desktop_quick_config.gif" alt="OpenAkita Quick Setup" width="800" />
 </p>
 
 | Step | What You Do | Time |
