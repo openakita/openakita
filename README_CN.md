@@ -14,6 +14,8 @@
   <a href="https://openakita.ai/download"><img src="https://img.shields.io/badge/📥_下载-Desktop_App-blue?style=for-the-badge" alt="Download" height="28" /></a>
   &nbsp;
   <a href="https://discord.gg/vFwxNVNH"><img src="https://img.shields.io/badge/💬_Discord-加入社区-5865F2?style=for-the-badge" alt="Discord" height="28" /></a>
+  &nbsp;
+  <a href="README.md"><img src="https://img.shields.io/badge/🌍_English-README-gray?style=for-the-badge" alt="English" height="28" /></a>
 </p>
 
 <p align="center">
