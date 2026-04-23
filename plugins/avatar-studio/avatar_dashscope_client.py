@@ -100,7 +100,16 @@ DASHSCOPE_BASE_URL_SG = "https://dashscope-intl.aliyuncs.com"
 # Endpoint paths (kept centralised so a vendor URL change is one edit).
 PATH_S2V_DETECT = "/api/v1/services/aigc/image2video/face-detect"
 PATH_S2V_SUBMIT = "/api/v1/services/aigc/image2video/video-synthesis"
-PATH_VIDEORETALK_SUBMIT = "/api/v1/services/aigc/video-generation/video-retalk"
+# NOTE: videoretalk shares the SAME ``image2video/video-synthesis``
+# endpoint as wan2.2-s2v / wan2.2-animate-mix — only ``model`` in the
+# request body differentiates them. The previous path
+# ``/api/v1/services/aigc/video-generation/video-retalk`` was wrong:
+# DashScope responded with the cryptic ``InvalidParameter: url error,
+# please check url！`` error (documented as "model name does not match
+# API endpoint") instead of a clean 404, which made the regression hard
+# to spot. See https://help.aliyun.com/zh/model-studio/videoretalk-api
+# (北京区).
+PATH_VIDEORETALK_SUBMIT = "/api/v1/services/aigc/image2video/video-synthesis"
 PATH_ANIMATE_MIX_SUBMIT = "/api/v1/services/aigc/image2video/video-synthesis"
 PATH_I2I_SUBMIT = "/api/v1/services/aigc/image2image/image-synthesis"
 PATH_WAN27_IMAGE = "/api/v1/services/aigc/multimodal-generation/generation"
@@ -603,10 +612,35 @@ class AvatarDashScopeClient(BaseVendorClient):
         *,
         video_url: str,
         audio_url: str,
+        ref_image_url: str = "",
+        video_extension: bool = True,
     ) -> str:
+        # Pre-flight URL guard: DashScope returns the same generic
+        # ``InvalidParameter: url error`` whether the path is wrong, the
+        # URL is empty, or the URL is unreachable. Catching the empty
+        # case here turns it into an actionable 422 instead of a remote
+        # 400 burning a request_id with no diagnostic value.
+        for label, u in (("video_url", video_url), ("audio_url", audio_url)):
+            if not u or not str(u).strip():
+                raise VendorError(
+                    f"videoretalk requires a non-empty {label} (got empty)",
+                    status=422,
+                    retryable=False,
+                    kind=ERROR_KIND_CLIENT,
+                )
+
+        input_obj: dict[str, Any] = {"video_url": video_url, "audio_url": audio_url}
+        if ref_image_url:
+            input_obj["ref_image_url"] = ref_image_url
         body = {
             "model": MODEL_VIDEORETALK,
-            "input": {"video_url": video_url, "audio_url": audio_url},
+            "input": input_obj,
+            # ``video_extension=true`` lets DashScope loop the source
+            # video back-and-forth when the audio is longer than the
+            # video — without it, an audio that overruns the video gets
+            # silently truncated, which is almost never what the user
+            # wants for a "lip-sync to my new audio" workflow.
+            "parameters": {"video_extension": bool(video_extension)},
         }
         return await self._submit_async(PATH_VIDEORETALK_SUBMIT, body)
 
@@ -663,12 +697,20 @@ class AvatarDashScopeClient(BaseVendorClient):
                 retryable=False,
                 kind=ERROR_KIND_CLIENT,
             )
-        params: dict[str, Any] = {}
+        params: dict[str, Any] = {"n": 1}
         if size:
             params["size"] = size
+        # NOTE: wan2.5-i2i-preview's official body field is ``images``,
+        # NOT ``ref_images_url`` (ref_images_url is wan2.7-image-edit's
+        # multimodal-generation schema). Sending the wrong key produced
+        # the cryptic upstream error
+        # ``image compose failed: images field is required``. The
+        # function arg is kept as ``ref_images_url`` for symmetry with
+        # the wan2.7 method and the UI's payload key. See
+        # https://help.aliyun.com/zh/model-studio/wan2-5-image-edit-api-reference
         body = {
             "model": MODEL_I2I,
-            "input": {"prompt": prompt, "ref_images_url": list(ref_images_url)},
+            "input": {"prompt": prompt, "images": list(ref_images_url)},
             "parameters": params,
         }
         return await self._submit_async(PATH_I2I_SUBMIT, body)
@@ -1071,7 +1113,7 @@ class AvatarDashScopeClient(BaseVendorClient):
 
     @staticmethod
     def _extract_output_url(out: dict[str, Any]) -> tuple[str | None, str | None]:
-        """Three-shape probe — tries the three known DashScope payload styles.
+        """Multi-shape probe — tries known DashScope payload styles.
 
         Inspired by the Pixelle ComfyUI lesson: never bind to a single field
         path because DashScope's response shape varies between models.
@@ -1086,8 +1128,15 @@ class AvatarDashScopeClient(BaseVendorClient):
         i = out.get("image_url")
         if isinstance(i, str) and i:
             return i, "image"
-        # Shape 3: ``output.results[*].url`` (image batch APIs)
+        # Shape 3: ``output.results`` — can be list OR dict depending on model.
+        # wan2.2-s2v returns ``results: {video_url: "..."}`` (dict).
+        # Image batch APIs return ``results: [{url: "..."}, ...]`` (list).
         results = out.get("results")
+        if isinstance(results, dict):
+            u = results.get("video_url") or results.get("url") or results.get("image_url")
+            if isinstance(u, str) and u:
+                kind = "video" if u.lower().endswith((".mp4", ".webm", ".mov")) else "image"
+                return u, kind
         if isinstance(results, list) and results:
             first = results[0]
             if isinstance(first, dict):

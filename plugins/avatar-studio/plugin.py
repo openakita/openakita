@@ -16,6 +16,7 @@ Routes (24):
              GET  /tasks/{id}       POST /tasks/{id}/retry
              DELETE /tasks/{id}
   Voices     GET  /voices           POST /voices
+             POST /voices/{id}/rename
              DELETE /voices/{id}    POST /voices/{id}/sample
   Figures    GET  /figures          POST /figures
              DELETE /figures/{id}
@@ -53,9 +54,11 @@ from avatar_dashscope_client import (
 )
 from avatar_model_registry import REGISTRY as MODEL_REGISTRY
 from avatar_models import (
+    AUDIO_LIMITS,
     DEFAULT_COST_THRESHOLD_CNY,
     MODES_BY_ID,
     build_catalog,
+    check_audio_duration,
     estimate_cost,
 )
 from avatar_tts_edge import EDGE_VOICES
@@ -171,6 +174,84 @@ def _sniff_extension(blob: bytes, *, kind: str) -> str | None:
     return None
 
 
+# Limits enforced by the strictest DashScope endpoint we feed images to
+# (wan2.5-i2i-preview): 384 ≤ side ≤ 5000. wan2.7-image / wan2.2-s2v are
+# even tighter on the upper bound (4096), and videoretalk's ref_image_url
+# tops at 4096 too. Picking 4096 as the resize ceiling keeps a single
+# normalised asset valid for ALL downstream models — Pixelle "one good
+# input file" principle, no per-mode forking.
+_IMAGE_MAX_SIDE = 4096
+_IMAGE_MIN_SIDE = 384
+
+
+def _normalize_image_bytes(blob: bytes, ext: str) -> tuple[bytes, str] | None:
+    """Downscale very-large images so DashScope accepts them.
+
+    Returns ``(new_bytes, new_ext)`` if the image was modified, or
+    ``None`` if no change was needed / Pillow couldn't decode the blob.
+    Decoder failures are swallowed (we'd rather upload the original
+    bytes and let DashScope return its own format error than 500 the
+    upload route on a corrupt PNG).
+
+    The previous code uploaded raw bytes verbatim, so users who dropped
+    a phone-resolution portrait (e.g. 4541×6812) hit
+    ``image compose failed: Image dimensions must be in [384, 5000]``
+    deep in the pipeline — by which point ¥0.20 was already burned and
+    the task spent ~30s polling before failing. Doing this once at
+    upload time is the cheapest reliable fix.
+    """
+    try:
+        from io import BytesIO
+
+        from PIL import Image, ImageOps
+    except Exception:  # noqa: BLE001 - Pillow may be missing in dev installs
+        return None
+
+    try:
+        with Image.open(BytesIO(blob)) as im:
+            # Honour EXIF orientation BEFORE measuring — phone portraits
+            # often carry orientation tags that flip width/height.
+            im = ImageOps.exif_transpose(im)
+            w, h = im.size
+            longest = max(w, h)
+            shortest = min(w, h)
+
+            if shortest < _IMAGE_MIN_SIDE:
+                return None
+
+            if longest <= _IMAGE_MAX_SIDE:
+                return None
+
+            scale = _IMAGE_MAX_SIDE / float(longest)
+            new_w = max(_IMAGE_MIN_SIDE, int(round(w * scale)))
+            new_h = max(_IMAGE_MIN_SIDE, int(round(h * scale)))
+            resized = im.resize((new_w, new_h), Image.LANCZOS)
+
+            # Re-encode: keep PNG for PNGs (lossless, alpha-safe), use
+            # JPEG for everything else (much smaller — a 4096-side JPEG
+            # is ~1MB vs a ~10MB PNG, and DashScope caps total payload
+            # downloads at 10MB for images). Never go to webp because
+            # wan2.5-i2i-preview's docs only guarantee jpg/jpeg/png.
+            buf = BytesIO()
+            ext_low = (ext or "").lower()
+            if ext_low == "png" and im.mode in {"RGBA", "LA", "P"}:
+                if resized.mode == "P":
+                    resized = resized.convert("RGBA")
+                resized.save(buf, format="PNG", optimize=True)
+                new_ext = "png"
+            else:
+                if resized.mode != "RGB":
+                    resized = resized.convert("RGB")
+                resized.save(buf, format="JPEG", quality=92, optimize=True)
+                new_ext = "jpg"
+            return buf.getvalue(), new_ext
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "avatar-studio: image normalize failed (%s); uploading original", e
+        )
+        return None
+
+
 def _safe_rmtree_path(path: Path) -> None:
     """Remove ``path`` recursively, swallowing FileNotFound and PermErrors.
 
@@ -218,25 +299,45 @@ class CreateTaskBody(BaseModel):
     text_chars: int | None = None
     figure_id: str = ""
     cost_approved: bool = False
-    assets: dict[str, str] = Field(default_factory=dict)
+    # See note on ``CostPreviewBody.assets`` below — ``avatar_compose``
+    # sends ``ref_images_url`` as a list[str] and the strict-by-default
+    # ``dict[str, str]`` would 422-reject before the task ever spawns.
+    assets: dict[str, str | list[str]] = Field(default_factory=dict)
 
 
 class CostPreviewBody(BaseModel):
     model_config = _strict_model()
 
     mode: str
+    backend: str = "dashscope"
+    workflow_id: str | None = None
     prompt: str = ""
     text: str = ""
     voice_id: str = ""
     resolution: str = "480P"
     duration: int | None = None
     mode_pro: bool = False
+    watermark: bool = False
     use_qwen_vl: bool = False
     qwen_token_estimate: int = 600
     ref_image_count: int = 1
     video_duration_sec: float | None = None
     audio_duration_sec: float | None = None
     text_chars: int | None = None
+    seed: int = -1
+    compose_prompt: str = ""
+    compose_size: str = ""
+    figure_id: str = ""
+    cost_approved: bool = False
+    aspect: str = "16:9"
+    # Values are usually a single OSS URL (image_url / video_url /
+    # audio_url) but ``ref_images_url`` for ``avatar_compose`` is a
+    # ``list[str]`` (1..3 reference portraits). Declaring this as
+    # ``dict[str, str]`` would reject the list with a 422 *before*
+    # cost_preview runs — manifesting in the UI as "估价失败" with no
+    # actionable detail. Cost estimation only reads URLs by length so
+    # the looser type is safe here.
+    assets: dict[str, str | list[str]] = Field(default_factory=dict)
 
 
 class CreateVoiceBody(BaseModel):
@@ -260,6 +361,24 @@ class CreateVoiceBody(BaseModel):
     sample_url: str | None = None
     language: str = "zh-CN"
     gender: str = "unknown"
+
+
+class UpdateVoiceBody(BaseModel):
+    """POST /voices/{id}/rename payload — currently only ``label`` is editable.
+
+    DashScope cosyvoice voices are immutable server-side once enrolled
+    (you can re-clone but not rename them), so this update is purely a
+    local-DB cosmetic. We expose it as a POST sub-resource (mirroring
+    /voices/{id}/sample) instead of PATCH because the iframe API bridge
+    only guarantees GET/POST/PUT/DELETE and a PATCH would otherwise
+    fall through to a 5 s timeout before retrying via direct fetch.
+
+    Keeping the body minimal & strict makes adding future fields
+    (e.g. tags) explicit rather than accidental."""
+
+    model_config = _strict_model()
+
+    label: str
 
 
 class CreateFigureBody(BaseModel):
@@ -1015,6 +1134,18 @@ class Plugin(PluginBase):
         # image every time the user picks it from the library.
         params = await self._resolve_figure_id(dict(params))
 
+        # Hard audio-duration guard. Catching this here saves the user
+        # ~¥0.20 (face-detect + i2i) plus 30~60s of polling that would
+        # otherwise end with the misleading
+        # ``video synth failed: The input audio is longer than 20s``
+        # from DashScope's s2v endpoint.
+        audio_err = check_audio_duration(mode, params.get("audio_duration_sec"))
+        if audio_err:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "audio_duration_out_of_range", "message": audio_err},
+            )
+
         # Pre-flight cost preview so the API consumer (UI / tool / curl)
         # always sees the breakdown alongside the new task row.
         preview = estimate_cost(
@@ -1038,6 +1169,12 @@ class Plugin(PluginBase):
         # publish the synthesised audio without importing OssUploader
         # (keeps the pipeline layer free of Aliyun-specific imports).
         ctx.params["_oss_upload_audio"] = self._make_oss_upload_audio(task_id)
+        # Defensive re-normaliser for images already in OSS (or any
+        # reachable URL): handles legacy uploads from before we started
+        # shrinking at upload time, and third-party links pasted via
+        # 形象库 import. Returns a possibly-new URL list — callers MUST
+        # use the return value, not the input, for the DashScope body.
+        ctx.params["_ensure_images_safe"] = self._make_ensure_images_safe(task_id)
         # Spawn the pipeline; tracking handle so on_unload can cancel.
         self._poll_tasks[task_id] = self._api.spawn_task(
             self._run_one_pipeline(ctx),
@@ -1061,6 +1198,106 @@ class Plugin(PluginBase):
                 self._oss.upload_file, path, key=key
             )
         return _upload
+
+    def _make_ensure_images_safe(self, task_id: str) -> Any:
+        """Return ``async (urls: list[str]) -> list[str]``.
+
+        For each URL, fetches the image, checks whether its dimensions
+        exceed DashScope's 4096-side comfort zone, and if so downscales
+        the file + re-uploads to OSS under ``tasks/{task_id}/`` so the
+        DashScope CDN URL we hand to ``submit_image_edit`` is always
+        valid. URLs that are already in range (or that we can't decode)
+        pass through untouched.
+
+        This is the second line of defence — the first being
+        ``_normalize_image_bytes`` at upload time. Legacy assets (e.g.
+        figures added before the upload-time fix shipped, or pasted
+        third-party URLs) only hit this path.
+        """
+        import httpx
+
+        async def _ensure(urls: list[str]) -> list[str]:
+            if not urls:
+                return urls
+            out: list[str] = []
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as hc:
+                for url in urls:
+                    new_url = await self._maybe_resize_remote_image(
+                        hc, url, task_id
+                    )
+                    out.append(new_url)
+            return out
+
+        return _ensure
+
+    async def _maybe_resize_remote_image(
+        self, hc: Any, url: str, task_id: str
+    ) -> str:
+        """Download → inspect → (optionally) resize + re-upload one URL."""
+        if not url or not url.startswith(("http://", "https://")):
+            return url
+        try:
+            resp = await hc.get(url)
+            resp.raise_for_status()
+            blob = resp.content
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "avatar-studio: pre-compose fetch failed for %s: %s", url, e
+            )
+            return url
+
+        # Guess extension from Content-Type, falling back to the URL path.
+        ctype = (resp.headers.get("content-type") or "").split(";", 1)[0].strip()
+        ext_map = {
+            "image/jpeg": "jpg",
+            "image/jpg": "jpg",
+            "image/png": "png",
+            "image/webp": "webp",
+            "image/gif": "gif",
+            "image/bmp": "bmp",
+        }
+        ext = ext_map.get(ctype.lower()) or (
+            Path(url.split("?", 1)[0]).suffix.lower().lstrip(".") or "jpg"
+        )
+
+        normalized = await asyncio.to_thread(_normalize_image_bytes, blob, ext)
+        if normalized is None:
+            return url
+
+        new_bytes, new_ext = normalized
+        fname = f"resized_{uuid.uuid4().hex[:8]}.{new_ext}"
+        tmp_dir = self._data_dir / "tasks" / task_id / "resized"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        local_path = tmp_dir / fname
+        local_path.write_bytes(new_bytes)
+
+        if not self._oss.is_configured():
+            logger.warning(
+                "avatar-studio: image %s needs resize but OSS is not "
+                "configured; using original URL and letting DashScope reject",
+                url,
+            )
+            return url
+
+        try:
+            key = self._oss.build_object_key(
+                scope=f"tasks/{task_id}/resized", filename=fname
+            )
+            new_url = await asyncio.to_thread(
+                self._oss.upload_file, local_path, key=key
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "avatar-studio: resized image upload failed (%s); "
+                "falling back to original URL", e
+            )
+            return url
+
+        logger.info(
+            "avatar-studio: resized oversized image for task %s (%d → %d bytes)",
+            task_id, len(blob), len(new_bytes),
+        )
+        return new_url
 
     async def _run_one_pipeline(self, ctx: AvatarPipelineContext) -> None:
         try:
@@ -1202,19 +1439,103 @@ class Plugin(PluginBase):
             task = await self._create_task_internal(mode, params)
             return {"ok": True, "task": task}
 
+        @router.post("/tasks/{task_id}/recheck")
+        async def recheck_task(task_id: str) -> dict[str, Any]:
+            """Re-query DashScope for a succeeded task missing its output URL.
+
+            When the CDN URL is found, also download the video locally so
+            that ``/tasks/{id}/video`` can serve it after the CDN expires.
+            """
+            row = await self._tm.get_task(task_id)
+            if not row:
+                raise HTTPException(status_code=404, detail="task not found")
+            ds_id = row.get("dashscope_id")
+            if not ds_id:
+                return {"ok": False, "message": "no dashscope_id on this task"}
+            try:
+                res = await self._client.query_task(ds_id)
+            except Exception as exc:
+                return {"ok": False, "message": str(exc)}
+            url = res.get("output_url")
+            if not url:
+                return {"ok": False, "message": "DashScope 未返回输出文件，链接可能已过期（24 小时有效）"}
+            local_path: str | None = None
+            try:
+                import httpx
+                task_dir = self._data_dir / "tasks" / task_id
+                task_dir.mkdir(parents=True, exist_ok=True)
+                async with httpx.AsyncClient(timeout=90.0) as hc:
+                    r = await hc.get(url, follow_redirects=True)
+                    r.raise_for_status()
+                    fname = "output.mp4"
+                    dest = task_dir / fname
+                    dest.write_bytes(r.content)
+                    local_path = str(dest)
+            except Exception as dl_err:  # noqa: BLE001
+                logger.warning("recheck download failed for %s: %s", task_id, dl_err)
+            await self._tm.update_task_safe(
+                task_id,
+                output_url=url,
+                output_path=local_path,
+            )
+            return {"ok": True, "output_url": url, "local_path": local_path}
+
+        @router.get("/tasks/{task_id}/video")
+        async def serve_task_video(task_id: str):
+            """Serve the locally cached output video for a task."""
+            from fastapi.responses import FileResponse
+
+            row = await self._tm.get_task(task_id)
+            if not row:
+                raise HTTPException(status_code=404, detail="task not found")
+            local = row.get("output_path")
+            if local:
+                p = Path(local)
+                if p.is_file():
+                    return FileResponse(p, media_type="video/mp4")
+            task_dir = self._data_dir / "tasks" / task_id
+            for ext in ("mp4", "webm", "mov"):
+                candidate = task_dir / f"output.{ext}"
+                if candidate.is_file():
+                    return FileResponse(candidate, media_type=f"video/{ext}")
+            raise HTTPException(status_code=404, detail="video file not found locally")
+
         # Cost preview ────────────────────────────────────────────────
 
         @router.post("/cost-preview")
         async def cost_preview(body: CostPreviewBody) -> dict[str, Any]:
             d = body.model_dump()
             mode = d.pop("mode")
+            # Hard duration guard — return the cap as part of the preview
+            # so the UI can disable the submit button + show the inline
+            # banner without needing a second round-trip. We still return
+            # ``ok: true`` and the breakdown so the user can see what the
+            # *would-be* charge is; the ``audio_warning`` is purely
+            # advisory at the preview stage and becomes a 422 only when
+            # the user actually clicks 提交任务 (see /tasks below).
+            warning = check_audio_duration(mode, d.get("audio_duration_sec"))
             preview = estimate_cost(
                 mode,
                 d,
                 audio_duration_sec=d.get("audio_duration_sec"),
                 text_chars=d.get("text_chars"),
             )
-            return {"ok": True, "preview": preview}
+            limit = AUDIO_LIMITS.get(mode)
+            audio_limit_payload = (
+                {
+                    "min_sec": limit.min_sec,
+                    "max_sec": limit.max_sec,
+                    "model_label": limit.model_label,
+                }
+                if limit
+                else None
+            )
+            return {
+                "ok": True,
+                "preview": preview,
+                "audio_warning": warning,
+                "audio_limit": audio_limit_payload,
+            }
 
         # Voices ──────────────────────────────────────────────────────
 
@@ -1288,6 +1609,27 @@ class Plugin(PluginBase):
                 "voice_id": voice_id,
                 "dashscope_voice_id": ds_voice_id,
             }
+
+        @router.post("/voices/{voice_id}/rename")
+        async def rename_voice(voice_id: str, body: UpdateVoiceBody) -> dict[str, Any]:
+            label = body.label.strip()
+            if not label:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "empty_label", "message": "音色名称不能为空"},
+                )
+            if len(label) > 64:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "label_too_long", "message": "音色名称最长 64 个字符"},
+                )
+            ok = await self._tm.update_custom_voice_label(voice_id, label)
+            if not ok:
+                raise HTTPException(
+                    status_code=404,
+                    detail={"code": "not_found", "message": "未找到该自定义音色（或为系统音色不可改名）"},
+                )
+            return {"ok": True, "voice_id": voice_id, "label": label}
 
         @router.delete("/voices/{voice_id}")
         async def delete_voice(voice_id: str) -> dict[str, Any]:
@@ -1889,9 +2231,32 @@ class Plugin(PluginBase):
             # 100% of those failures into successes.
             if not ext or ext == "bin":
                 ext = _sniff_extension(content, kind=kind) or ext or "bin"
+
+            # Image-only: pre-shrink anything outside DashScope's
+            # accepted dimension band. Keeps ALL downstream calls
+            # (s2v / videoretalk / i2i / animate-mix) safe with one
+            # normalised file. No-op when Pillow is missing or the
+            # blob is already in range.
+            normalize_note: str | None = None
+            if kind == "image":
+                normalized = await asyncio.to_thread(
+                    _normalize_image_bytes, content, ext
+                )
+                if normalized is not None:
+                    new_bytes, new_ext = normalized
+                    if new_ext != ext:
+                        ext = new_ext
+                    normalize_note = (
+                        f"image auto-resized to fit DashScope "
+                        f"({len(content)} → {len(new_bytes)} bytes)"
+                    )
+                    content = new_bytes
+
             fname = f"{uuid.uuid4().hex[:12]}.{ext}"
             local_path = uploads_dir / fname
             local_path.write_bytes(content)
+            if normalize_note:
+                logger.info("avatar-studio: %s — %s", normalize_note, fname)
             rel = f"{subdir}/{fname}"
             preview_url = build_preview_url(PLUGIN_ID, rel)
 

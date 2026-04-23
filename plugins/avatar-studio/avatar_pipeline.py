@@ -69,6 +69,7 @@ from avatar_dashscope_client import (
 )
 from avatar_models import (
     MODES_BY_ID,
+    check_audio_duration,
     estimate_cost,
     hint_for,
 )
@@ -214,6 +215,19 @@ async def run_pipeline(
         await _step_estimate_cost(ctx, tm, emit)
         await _step_prepare_assets(ctx, plugin_id, client, tm, emit)
         await _step_tts_synth(ctx, plugin_id, client, tm, emit, get_audio_duration)
+        # Re-check the audio duration once we know the final length —
+        # /tasks already validates user-supplied audio uploads, but TTS
+        # output length is only knowable AFTER synthesis (a 200-char
+        # script can hit ~22s for some voice tones). Failing here saves
+        # the user the s2v charge that's about to be billed per second.
+        post_tts_err = check_audio_duration(ctx.mode, ctx.tts_audio_duration_sec)
+        if post_tts_err:
+            raise VendorError(
+                post_tts_err,
+                status=422,
+                retryable=False,
+                kind="client",
+            )
         await _step_image_compose(ctx, plugin_id, client, tm, emit, poll)
         await _step_video_synth(ctx, client, tm, emit, poll)
         await _step_finalize(
@@ -525,6 +539,21 @@ async def _step_image_compose(
             retryable=False,
             kind="client",
         )
+
+    # Last-mile safety net — legacy OSS assets (or pasted third-party
+    # URLs) may still exceed DashScope's 384-5000 dimension band even
+    # though POST /upload now pre-shrinks new uploads. The plugin layer
+    # injects a callable that fetches + resizes + re-uploads whatever
+    # is out of range; in-range URLs pass through unchanged.
+    ensure_safe = ctx.params.get("_ensure_images_safe")
+    if callable(ensure_safe):
+        try:
+            refs = await ensure_safe(refs[:3])
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "avatar_studio: ensure_images_safe failed (%s); "
+                "forwarding original URLs and letting DashScope reject", e,
+            )
 
     # Submit and poll (i2i is a separate async job from s2v).
     i2i_task_id = await client.submit_image_edit(

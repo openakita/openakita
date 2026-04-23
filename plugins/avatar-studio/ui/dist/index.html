@@ -154,7 +154,7 @@
        plugins/seedance-video so the look-and-feel of 「浏览」 matches
        across our plugins. The picker overrides .modal-card paddings to
        lay out a header / sidebar / list / footer four-pane layout. */
-    .folder-picker { width: min(820px, 96vw); max-width: min(820px, 96vw); max-height: 82vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+    .folder-picker { width: min(960px, 96vw); max-width: min(960px, 96vw); max-height: 82vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
     .folder-picker__head { padding: 16px 20px 12px; border-bottom: 1px solid var(--border); }
     .folder-picker__title { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text); }
     .folder-picker__crumbs { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); flex-wrap: wrap; min-height: 22px; }
@@ -226,7 +226,7 @@
     .tag-gray { background: rgba(148,163,184,.15); color: #94a3b8; }
     /* ── Mode chip group (CreateTab top row) ── */
     .mode-group {
-      display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
       gap: 10px; margin-bottom: 14px;
     }
     .mode-chip {
@@ -256,6 +256,30 @@
     .upload-zone__preview-row { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin-bottom: 8px; }
     .upload-zone__preview-row img { max-height: 100px; border-radius: 6px; }
     .upload-zone .progress { margin-top: 6px; }
+    /* Audio file card — used when uploaded item is an audio file. The
+       previous behaviour rendered only a small filename in muted text,
+       which was easy to miss (users complained the file wasn't there).
+       This card explicitly shows the file with a music icon, name, size,
+       and an inline player so it's unmistakable. */
+    .upload-zone__audio {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 12px; margin: 0 auto 8px; max-width: 420px;
+      background: var(--card-2, rgba(99,102,241,.06));
+      border: 1px solid var(--border); border-radius: 8px;
+      text-align: left;
+    }
+    .upload-zone__audio .ico {
+      width: 32px; height: 32px; flex-shrink: 0;
+      color: var(--primary, #6366f1);
+    }
+    .upload-zone__audio .ico svg { width: 100%; height: 100%; }
+    .upload-zone__audio-meta { min-width: 0; flex: 1; color: var(--text); }
+    .upload-zone__audio-name {
+      font-size: 13px; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .upload-zone__audio-sub { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+    .upload-zone__audio audio { width: 100%; height: 28px; margin-top: 4px; }
     /* ── Split layout (Create tab) ── */
     .split-layout { display: flex; gap: 16px; height: 100%; }
     .split-left { width: 55%; min-width: 380px; overflow-y: auto; flex-shrink: 0; padding-right: 4px; }
@@ -264,6 +288,41 @@
       .split-layout { flex-direction: column; }
       .split-left { width: 100%; min-width: unset; }
     }
+    /* ── Video player ── */
+    .video-player-wrap { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; aspect-ratio: 16/9; position: relative; display: flex; align-items: center; justify-content: center; margin-bottom: 10px; }
+    .video-player-wrap video { max-width: 100%; max-height: 100%; }
+    /* ── Loading / "task in progress" state for the preview pane ──
+       Designed for the dark video-player-wrap; tries hard to NOT look
+       like an interactive control (the previous version had a tiny
+       white spinner ring that read as "button" and a cancel button
+       that rendered solid white because it inherited .btn defaults).
+       Keep the visual very simple: spinner → title → optional bar →
+       optional ghost cancel button. */
+    .oa-loader { position: relative; }
+    .oa-loader--dark { background: #0b0d10 !important; border-color: #16191e !important; }
+    .oa-loader__inner {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 14px; padding: 20px; max-width: 80%; text-align: center;
+    }
+    .oa-loader__spinner {
+      width: 44px; height: 44px; border-radius: 50%;
+      border: 3px solid rgba(255,255,255,.12);
+      border-top-color: rgba(255,255,255,.85);
+      animation: spin .9s linear infinite;
+    }
+    .oa-loader__title { color: rgba(255,255,255,.78); font-size: 13px; line-height: 1.5; }
+    .oa-loader__progress { width: min(260px, 70%); display: flex; flex-direction: column; gap: 4px; align-items: center; }
+    .oa-loader__bar { width: 100%; height: 4px; background: rgba(255,255,255,.12); border-radius: 999px; overflow: hidden; }
+    .oa-loader__bar-fill { height: 100%; background: linear-gradient(90deg, #6366f1, #8b5cf6); border-radius: 999px; transition: width .4s ease; }
+    .oa-loader__pct { color: rgba(255,255,255,.55); font-size: 11px; }
+    .oa-loader__cancel {
+      margin-top: 4px; padding: 5px 14px;
+      background: transparent; color: rgba(255,255,255,.85);
+      border: 1px solid rgba(255,255,255,.28); border-radius: 6px;
+      font-size: 12px; cursor: pointer; transition: all .15s;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .oa-loader__cancel:hover { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.5); }
     /* ── Spinner & progress ── */
     .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; }
     .spinner-sm { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; display: inline-block; vertical-align: -2px; }
@@ -936,6 +995,10 @@ const I18N_DICT = {
     "voices.create.submit": "提交克隆",
     "voices.empty.custom": "暂无自定义音色，上传一段录音即可克隆",
     "voices.delete.confirm": "确认删除该自定义音色？",
+    "voices.rename": "重命名",
+    "voices.rename.empty": "音色名称不能为空",
+    "voices.rename.ok": "音色名称已更新",
+    "voices.rename.fail": "重命名失败",
     "voices.preview": "试听",
     "voices.preview.busy": "合成中…",
     "voices.preview.text": "你好，欢迎使用数字人工作室",
@@ -1222,6 +1285,10 @@ const I18N_DICT = {
     "voices.create.submit": "Submit clone",
     "voices.empty.custom": "No custom voices yet — upload a sample to clone one",
     "voices.delete.confirm": "Delete this custom voice?",
+    "voices.rename": "Rename",
+    "voices.rename.empty": "Voice name can't be empty",
+    "voices.rename.ok": "Voice renamed",
+    "voices.rename.fail": "Rename failed",
     "voices.preview": "Preview",
     "voices.preview.busy": "Synthesising…",
     "voices.preview.text": "Hello, welcome to Avatar Studio.",
@@ -1461,6 +1528,10 @@ function formatTime(ts) {
   return d.getMonth() + 1 + "/" + d.getDate() + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
 }
 function shortId(s) { return s ? s.slice(0, 8) : ""; }
+function taskVideoUrl(taskId) {
+  var base = _detectApiBase() + "/api/plugins/" + ((_ctx && _ctx.pluginId) || PLUGIN_ID_DEFAULT);
+  return base + "/tasks/" + taskId + "/video";
+}
 
 const DRAFT_PREFIX = "avatar-studio:draft:";
 function loadDraft(key) {
@@ -1515,6 +1586,8 @@ const ICONS = {
   cloud: '<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>',
   server: '<rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>',
   cpu: '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/>',
+  music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  edit: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
 };
 function Ico(props) {
   const svg = ICONS[props.name] || "";
@@ -1558,6 +1631,7 @@ function StatusBadge({ status }) {
     pending: { cls: "badge-pending", label: t("tasks.filter.pending") },
     running: { cls: "badge-running", label: t("tasks.filter.running") },
     done: { cls: "badge-done", label: t("tasks.filter.done") },
+    succeeded: { cls: "badge-done", label: t("tasks.filter.done") },
     failed: { cls: "badge-failed", label: t("tasks.filter.failed") },
     cancelled: { cls: "badge-cancelled", label: t("tasks.filter.cancelled") },
     approval_required: { cls: "badge-approval", label: "待确认" },
@@ -1939,6 +2013,18 @@ function FileUploadZone({ accept, multiple, onUploaded, value, max, kind, hint }
     const url = previewSrc(it) || ""; const name = (it.filename || it.name || "").toLowerCase();
     return /\.(mp4|webm|mov|avi)(\?|$)/i.test(url) || /\.(mp4|webm|mov|avi)$/i.test(name);
   };
+  const isAudio = function (it) {
+    if (kind === "audio") return true;
+    const url = previewSrc(it) || ""; const name = (it.filename || it.name || "").toLowerCase();
+    return /\.(mp3|wav|m4a|aac|ogg|flac|opus)(\?|$)/i.test(url)
+        || /\.(mp3|wav|m4a|aac|ogg|flac|opus)$/i.test(name);
+  };
+  const fmtSize = function (n) {
+    if (!n || isNaN(n)) return "";
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    return (n / 1024 / 1024).toFixed(2) + " MB";
+  };
 
   return (
     <div className={"upload-zone " + (items.length ? "has-file" : "")}
@@ -1950,7 +2036,23 @@ function FileUploadZone({ accept, multiple, onUploaded, value, max, kind, hint }
              onChange={function (e) { handleFiles(e.target.files); e.target.value = ""; }} />
       {items.length > 0 ? (
         <div>
-          {items.length === 1 && !isVideo(items[0]) && previewSrc(items[0]) && (
+          {items.length === 1 && isAudio(items[0]) && (
+            <div className="upload-zone__audio" onClick={function (e) { e.stopPropagation(); }}>
+              <Ico name="music" />
+              <div className="upload-zone__audio-meta">
+                <div className="upload-zone__audio-name" title={items[0].filename || items[0].name || "audio"}>
+                  {items[0].filename || items[0].name || "audio file"}
+                </div>
+                <div className="upload-zone__audio-sub">
+                  {[items[0].mime || "audio", fmtSize(items[0].size)].filter(Boolean).join(" · ")}
+                </div>
+                {previewSrc(items[0]) && (
+                  <audio src={previewSrc(items[0])} controls preload="metadata" />
+                )}
+              </div>
+            </div>
+          )}
+          {items.length === 1 && !isAudio(items[0]) && !isVideo(items[0]) && previewSrc(items[0]) && (
             <img src={previewSrc(items[0])} alt="" className="upload-zone__preview" />
           )}
           {items.length === 1 && isVideo(items[0]) && previewSrc(items[0]) && (
@@ -1959,6 +2061,17 @@ function FileUploadZone({ accept, multiple, onUploaded, value, max, kind, hint }
           {items.length > 1 && (
             <div className="upload-zone__preview-row">
               {items.map(function (it, i) {
+                if (isAudio(it)) {
+                  return (
+                    <div key={i} className="upload-zone__audio" style={{margin: 0, padding: "6px 10px"}}>
+                      <Ico name="music" />
+                      <div className="upload-zone__audio-meta">
+                        <div className="upload-zone__audio-name">{it.filename || it.name || "audio"}</div>
+                        <div className="upload-zone__audio-sub">{fmtSize(it.size)}</div>
+                      </div>
+                    </div>
+                  );
+                }
                 return previewSrc(it)
                   ? (isVideo(it)
                     ? <video key={i} src={previewSrc(it)} muted />
@@ -1967,9 +2080,14 @@ function FileUploadZone({ accept, multiple, onUploaded, value, max, kind, hint }
               })}
             </div>
           )}
-          <div className="text-xs text-muted">
-            {items.map(function (it) { return it.filename || it.name || "file"; }).join(", ")}
-          </div>
+          {/* For non-audio items keep the legacy filename caption.
+              Audio cards already show the filename inside the card,
+              so duplicating it here would just add noise. */}
+          {!(items.length === 1 && isAudio(items[0])) && (
+            <div className="text-xs text-muted">
+              {items.map(function (it) { return it.filename || it.name || "file"; }).join(", ")}
+            </div>
+          )}
           <button type="button" className="btn btn-sm" style={{marginTop: 8}}
                   onClick={function (e) { e.stopPropagation(); inputRef.current && inputRef.current.click(); }}>
             <Ico name="refresh"/> {t("create.assets.replace")}
@@ -2047,16 +2165,21 @@ function useTasks() {
       if (!data || !data.task_id) return;
       setTasks(function (prev) {
         const idx = prev.findIndex(function (x) { return x.id === data.task_id; });
-        if (idx === -1) {
-          // optimistic insert if backend created the task without us seeing GET
-          return prev;
-        }
+        if (idx === -1) return prev;
         const copy = prev.slice();
         copy[idx] = Object.assign({}, copy[idx], data);
         return copy;
       });
     });
   }, []);
+  useEffect(function () {
+    var hasActive = tasks.some(function (t) {
+      return t.status === "running" || t.status === "pending";
+    });
+    if (!hasActive) return;
+    var timer = setInterval(function () { refresh(); }, 8000);
+    return function () { clearInterval(timer); };
+  }, [tasks, refresh]);
   return { tasks, loading, refresh, setTasks };
 }
 
@@ -2122,9 +2245,10 @@ const MODE_DEFS = [
     model: "wan2.2-s2v + wan2.2-s2v-detect",
     price: "¥0.60/s（标准）",
     resolutions: ["480P", "720P"],
-    maxDuration: "≤ 60s",
+    maxDuration: "音频 ≤ 20s",
+    audioMinSec: 0.5, audioMaxSec: 19.5,
     inputs: "1 张正面证件照（≥ 512px）+ 文本/音频",
-    notes: "需要先做人脸预检（s2v-detect）。1080P 暂不支持。",
+    notes: "需要先做人脸预检（s2v-detect）。1080P 暂不支持。音频时长由 wan2.2-s2v 限制为 20 秒以内。",
   },
   {
     id: "video_relip", icon: "film",
@@ -2133,9 +2257,10 @@ const MODE_DEFS = [
     model: "videoretalk",
     price: "¥0.40/s",
     resolutions: ["原视频分辨率"],
-    maxDuration: "≤ 30s",
+    maxDuration: "音频/视频 2-120s",
+    audioMinSec: 2.0, audioMaxSec: 120.0,
     inputs: "原视频（人物正脸时长 ≥ 60%）+ 新音频/文本",
-    notes: "保留原视频画面与动作，仅替换嘴型；输出与输入同分辨率。",
+    notes: "保留原视频画面与动作，仅替换嘴型；输出与输入同分辨率。音频与视频时长须在 2~120 秒之间。",
   },
   {
     id: "video_reface", icon: "swap",
@@ -2152,12 +2277,13 @@ const MODE_DEFS = [
     id: "avatar_compose", icon: "layers",
     needsImage: false, needsVideo: false, needsTts: true,
     needsRefImage: false, needsCompose: true,
-    model: "wan2.7-image → wan2.2-s2v",
+    model: "wan2.5-i2i-preview → wan2.2-s2v",
     price: "¥0.20/张（合成） + ¥0.60/s（口播）",
     resolutions: ["480P", "720P"],
-    maxDuration: "≤ 60s",
+    maxDuration: "音频 ≤ 20s",
+    audioMinSec: 0.5, audioMaxSec: 19.5,
     inputs: "1-3 张参考图 + 中文融合 prompt + 文本/音频",
-    notes: "qwen-vl-max 可代写 prompt；融合后才进入口播管线。",
+    notes: "qwen-vl-max 可代写 prompt；融合后才进入口播管线。口播阶段由 wan2.2-s2v 限制音频 ≤ 20s。",
   },
   {
     id: "pose_drive", icon: "walk",
@@ -2207,15 +2333,16 @@ function BackendSelector({ active, onChange, settings }) {
       <div className="label" style={{marginBottom: 4}}>选择后端</div>
       <div className="mode-group">
         {backends.map(function (b) {
+          var isActive = active === b.id;
           return (
             <button key={b.id} type="button"
-              className={"mode-chip " + (active === b.id ? "active" : "")}
+              className={"mode-chip " + (isActive ? "active" : "")}
               onClick={function () { onChange(b.id); }}
               style={{opacity: b.configured ? 1 : 0.5}}>
               <span className="mode-chip__title">
                 <Ico name={b.icon}/>
                 {b.label}
-                {b.configured ? " \u2713" : ""}
+                {isActive ? " \u2713" : ""}
               </span>
             </button>
           );
@@ -2424,9 +2551,64 @@ function CreateTab({ onGoToTasks, settings, voices, figures }) {
   const [submitting, setSubmitting] = useState(false);
   const [pendingPreview, setPendingPreview] = useState(null);
   const [startedTaskId, setStartedTaskId] = useState(null);
+  const [previewTaskId, setPreviewTaskId] = useState(null);
   const [aiBusy, setAiBusy] = useState(false);
+  // Real audio duration (seconds) for the user-uploaded audio file.
+  // Measured via the browser's <audio> element so we can validate
+  // against the per-mode cap (wan2.2-s2v ≤ 20s) BEFORE the user pays
+  // for face-detect / i2i / TTS.
+  const [audioFileDuration, setAudioFileDuration] = useState(null);
 
   const update = function (k, v) { setForm(Object.assign({}, form, { [k]: v })); };
+
+  // Probe the uploaded audio for its real duration.
+  // The upload route doesn't measure server-side (would force ffprobe
+  // dependency) so we use the browser's HTMLAudioElement which is free.
+  useEffect(function () {
+    var audioVal = form.audio;
+    if (!audioVal) { setAudioFileDuration(null); return; }
+    var url = audioVal.preview_url || audioVal.url || audioVal.oss_url;
+    if (!url) { setAudioFileDuration(null); return; }
+    var probe = document.createElement("audio");
+    probe.preload = "metadata";
+    var done = false;
+    var onload = function () {
+      if (done) return; done = true;
+      var d = Number(probe.duration);
+      setAudioFileDuration(isFinite(d) && d > 0 ? d : null);
+    };
+    probe.addEventListener("loadedmetadata", onload);
+    probe.addEventListener("error", function () { if (!done) { done = true; setAudioFileDuration(null); } });
+    probe.src = url;
+    return function () {
+      probe.removeEventListener("loadedmetadata", onload);
+      probe.src = "";
+    };
+  }, [form.audio]);
+
+  // Estimated TTS duration from text (rough heuristic: cosyvoice ~3.5
+  // Chinese chars/sec at default speed; English drops to ~5 chars/sec
+  // but we keep one number — being slightly conservative is safer for
+  // a 20s hard cap than missing it).
+  const estimateTtsDuration = function (text) {
+    if (!text) return 0;
+    var len = text.length;
+    return len / 3.5;
+  };
+
+  // Effective duration the backend will validate against.
+  // Priority: uploaded audio duration > TTS text estimate.
+  const effectiveAudioDuration = (function () {
+    if (audioFileDuration && audioFileDuration > 0) return audioFileDuration;
+    if (md.needsTts && form.text) return estimateTtsDuration(form.text);
+    return null;
+  })();
+
+  // Static caps from MODE_DEFS — only apply to TTS-bearing modes.
+  const audioCap = (md.audioMaxSec && md.needsTts) ? md.audioMaxSec : null;
+  const audioFloor = (md.audioMinSec && md.needsTts) ? md.audioMinSec : null;
+  const audioOverLimit = audioCap && effectiveAudioDuration && effectiveAudioDuration > audioCap;
+  const audioUnderLimit = audioFloor && audioFileDuration && audioFileDuration > 0 && audioFileDuration < audioFloor;
 
   // Pick the URL DashScope can actually fetch.
   //   - POST /upload returns `url` already pointing at OSS (signed
@@ -2483,6 +2665,12 @@ function CreateTab({ onGoToTasks, settings, voices, figures }) {
       compose_size: form.compose_size || "",
       figure_id: figureId,
       assets,
+      // Send the real measured duration (not the TTS estimate) so the
+      // backend's hard guard kicks in when the user uploads a 21-second
+      // mp3, but still accepts the case where TTS is about to run and
+      // the duration is unknown.
+      audio_duration_sec: audioFileDuration || undefined,
+      text_chars: (form.text || "").length || undefined,
       cost_approved: !!cost_approved,
     };
   };
@@ -2496,6 +2684,25 @@ function CreateTab({ onGoToTasks, settings, voices, figures }) {
     }
     if (backend === "comfyui_local" && !settings.comfyui_configured) {
       showToast("请先配置 ComfyUI 地址", "error"); return;
+    }
+    // Hard audio-duration check — block submission rather than burn
+    // money on TTS + face-detect just to fail at video synth.
+    if (audioOverLimit) {
+      showToast(
+        "音频时长 " + effectiveAudioDuration.toFixed(1) + "s 超过 "
+        + audioCap + "s 上限（" + (md.model || "video synth") + " 限制），"
+        + "请缩短台词或截短音频。",
+        "error",
+      );
+      return;
+    }
+    if (audioUnderLimit) {
+      showToast(
+        "上传的音频时长仅 " + audioFileDuration.toFixed(1) + "s，"
+        + "低于 " + audioFloor + "s 下限，请上传更长的音频。",
+        "error",
+      );
+      return;
     }
     const payload = buildPayload(false);
     if (backend !== "dashscope" && !payload.workflow_id) {
@@ -2517,7 +2724,7 @@ function CreateTab({ onGoToTasks, settings, voices, figures }) {
       await actuallyCreate(payload);
     } finally { setSubmitting(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form, mode, settings]);
+  }, [form, mode, backend, settings]);
 
   const actuallyCreate = useCallback(async function (payload) {
     setSubmitting(true);
@@ -2536,7 +2743,7 @@ function CreateTab({ onGoToTasks, settings, voices, figures }) {
       );
       if (tid) {
         setStartedTaskId(tid);
-        // Clear ALL drafts for this mode so the form is fresh next time.
+        setPreviewTaskId(tid);
         clearDraft("form:" + mode);
       }
     } finally { setSubmitting(false); }
@@ -2562,7 +2769,7 @@ function CreateTab({ onGoToTasks, settings, voices, figures }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.composeImages]);
 
-  const liveTask = useTaskHeartbeat(startedTaskId);
+  const liveTask = useTaskHeartbeat(previewTaskId);
 
   return (
     <div className="split-layout">
@@ -2684,6 +2891,58 @@ function CreateTab({ onGoToTasks, settings, voices, figures }) {
         {md.needsTts && (
           <div className="card">
             <div className="label"><Ico name="mic"/>{t("create.section.text")}</div>
+            {audioCap && (() => {
+              var cur = effectiveAudioDuration;
+              var bad = audioOverLimit || audioUnderLimit;
+              var pct = cur && audioCap ? Math.min(100, (cur / audioCap) * 100) : 0;
+              var label;
+              if (audioFileDuration && audioFileDuration > 0) {
+                label = "已上传音频时长 " + audioFileDuration.toFixed(1) + "s";
+              } else if (form.text) {
+                label = "TTS 文本预估约 " + (cur || 0).toFixed(1) + "s（按 3.5 字/秒）";
+              } else {
+                label = "尚未输入文本或上传音频";
+              }
+              return (
+                <div style={{
+                  marginBottom: 10, padding: "8px 10px", borderRadius: 6,
+                  background: bad ? "rgba(255,82,82,.08)" : "rgba(80,140,255,.08)",
+                  border: "1px solid " + (bad ? "rgba(255,82,82,.35)" : "rgba(80,140,255,.25)"),
+                  fontSize: 12, color: bad ? "#ff6b6b" : "var(--text-muted, #8b8b8b)",
+                }}>
+                  <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
+                    <span>
+                      <Ico name={bad ? "warn" : "info"}/>
+                      {" "}音频时长上限 <b>{audioFloor || 0}s ~ {audioCap}s</b>
+                      {" "}（{md.model.split(" ")[0]} 限制）
+                    </span>
+                    <span style={{opacity: .8}}>{label}</span>
+                  </div>
+                  {cur > 0 && (
+                    <div style={{
+                      marginTop: 6, height: 4, borderRadius: 2,
+                      background: "rgba(255,255,255,.1)", overflow: "hidden",
+                    }}>
+                      <div style={{
+                        width: pct + "%", height: "100%",
+                        background: bad ? "#ff5252" : "#4a8bf5",
+                        transition: "width .25s",
+                      }}/>
+                    </div>
+                  )}
+                  {audioOverLimit && (
+                    <div style={{marginTop: 4}}>
+                      超过 {audioCap}s 上限，请缩短文本或截短音频后再提交。
+                    </div>
+                  )}
+                  {audioUnderLimit && (
+                    <div style={{marginTop: 4}}>
+                      低于 {audioFloor}s 下限，请上传更长的音频。
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             <textarea className="input textarea"
                       placeholder={t("create.text.placeholder")}
                       value={form.text}
@@ -2815,66 +3074,93 @@ function CreateTab({ onGoToTasks, settings, voices, figures }) {
       </div>
 
       {/* ── Right preview pane (tongyi-image style) ──────────── */}
-      <div className={"split-right oa-preview-area" + (!startedTaskId ? " oa-preview-area--centered" : "")}>
-        {startedTaskId && liveTask ? (
+      <div className={"split-right oa-preview-area" + (!previewTaskId ? " oa-preview-area--centered" : "")}>
+        {previewTaskId && liveTask ? (
           <div style={{width: "100%"}}>
-            <div className="card">
-              <div className="flex items-center justify-between" style={{marginBottom: 12}}>
-                <span className="card-title" style={{marginBottom: 0}}>{t("preview.result.title")}</span>
-                <StatusBadge status={liveTask.status}/>
-              </div>
-
-              {(liveTask.status === "running" || liveTask.status === "pending") && (
-                <div className="empty-state" style={{padding: "40px 20px"}}>
-                  <div className="spinner" style={{width: 32, height: 32, marginBottom: 12}}/>
-                  <span className="text-sm text-muted">{t("preview.result.runningHint")}</span>
-                  {liveTask.progress != null && (
-                    <div style={{width: "70%", marginTop: 12}}>
-                      <div className="progress"><div className="progress-fill" style={{width: Math.round((liveTask.progress || 0) * 100) + "%"}}/></div>
-                      <div className="text-xs text-dim" style={{marginTop: 4, textAlign: "center"}}>
-                        {Math.round((liveTask.progress || 0) * 100)}%
-                      </div>
-                    </div>
+            <div className="card" style={{paddingBottom: 8}}>
+              <div className="flex items-center justify-between" style={{marginBottom: 0}}>
+                <span className="card-title" style={{marginBottom: 0}}>
+                  {t("preview.result.title")}
+                </span>
+                <div className="flex gap-2" style={{alignItems: "center"}}>
+                  <StatusBadge status={liveTask.status}/>
+                  {(liveTask.status === "done" || liveTask.status === "succeeded") && liveTask.output_url && (
+                    <button className="btn btn-sm btn-primary"
+                            onClick={function () { downloadFile(liveTask.output_url, "avatar-studio_" + shortId(liveTask.id) + ".mp4"); }}>
+                      <Ico name="download"/> {t("tasks.detail.download")}
+                    </button>
                   )}
-                  <button className="btn btn-sm" style={{marginTop: 12}} onClick={onGoToTasks}>
+                  <button className="btn btn-sm" onClick={onGoToTasks}>
                     <Ico name="list"/> {t("preview.result.viewInTasks")}
                   </button>
                 </div>
-              )}
+              </div>
+            </div>
 
-              {liveTask.status === "done" && (
-                liveTask.output_url ? (
-                  <div>
-                    <video src={liveTask.output_url} controls
-                           style={{width: "100%", maxHeight: 480, borderRadius: 8, background: "#000"}} />
-                    <div className="flex gap-2" style={{marginTop: 10}}>
-                      <button className="btn btn-sm btn-primary"
-                              onClick={function () { downloadFile(liveTask.output_url, "avatar-studio_" + shortId(liveTask.id) + ".mp4"); }}>
-                        <Ico name="download"/> {t("tasks.detail.download")}
-                      </button>
-                      <button className="btn btn-sm" onClick={onGoToTasks}>
-                        <Ico name="list"/> {t("preview.result.viewInTasks")}
-                      </button>
+            {(liveTask.status === "running" || liveTask.status === "pending") && (
+              <div className="video-player-wrap oa-loader oa-loader--dark">
+                <div className="oa-loader__inner">
+                  <div className="oa-loader__spinner"/>
+                  <div className="oa-loader__title">{t("preview.result.runningHint")}</div>
+                  {/* Backend emits ``progress`` as 0..100 already — do
+                      NOT multiply by 100 again. Skip the bar entirely
+                      when no progress is reported (most DashScope steps
+                      have no fine-grained progress, so an "always 0%"
+                      bar is just visual noise). */}
+                  {liveTask.progress != null && Number(liveTask.progress) > 0 && (
+                    <div className="oa-loader__progress">
+                      <div className="oa-loader__bar">
+                        <div className="oa-loader__bar-fill"
+                             style={{width: Math.min(100, Math.round(Number(liveTask.progress) || 0)) + "%"}}/>
+                      </div>
+                      <div className="oa-loader__pct">
+                        {Math.min(100, Math.round(Number(liveTask.progress) || 0))}%
+                      </div>
                     </div>
-                  </div>
-                ) : (
-                  <div className="empty-state" style={{padding: "30px 20px"}}>
-                    <Ico name="check" cls="text-success"/>
-                    <span className="text-sm text-muted" style={{marginTop: 8}}>{t("preview.result.completedNoOutput")}</span>
-                    <button className="btn btn-sm" style={{marginTop: 8}}
-                            onClick={function () { pluginApi("GET", "/tasks/" + startedTaskId); }}>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {(liveTask.status === "done" || liveTask.status === "succeeded") && (
+              liveTask.output_url ? (
+                <div className="video-player-wrap">
+                  <video src={taskVideoUrl(liveTask.id)} controls loop
+                         onError={function (e) { e.target.src = liveTask.output_url; }}
+                         style={{width: "100%", height: "100%", objectFit: "contain"}} />
+                </div>
+              ) : (
+                <div className="video-player-wrap" style={{background: "var(--bg-card)"}}>
+                  <div className="empty-state" style={{padding: 0}}>
+                    <Ico name="warn" cls="text-warn"/>
+                    <span style={{color: "var(--text-muted)", fontSize: 13, marginTop: 10}}>
+                      {t("preview.result.completedNoOutput")}
+                    </span>
+                    <button className="btn btn-sm" style={{marginTop: 12,
+                            background: "rgba(245,158,11,.12)", color: "#d97706",
+                            borderColor: "rgba(245,158,11,.4)"}}
+                            onClick={async function () {
+                              var r = await pluginApi("POST", "/tasks/" + previewTaskId + "/recheck", {});
+                              if (r.ok && r.body && r.body.output_url) {
+                                showToast("已找回视频并下载到本地");
+                              } else {
+                                showToast((r.body && r.body.message) || "DashScope 未返回输出，链接可能已过期", "warn");
+                              }
+                            }}>
                       <Ico name="refresh"/> {t("preview.result.refresh")}
                     </button>
                   </div>
+                </div>
                 )
               )}
 
-              {liveTask.status === "failed" && liveTask.error_kind && (
+            {liveTask.status === "failed" && liveTask.error_kind && (
+              <div className="card">
                 <ErrorPanel kind={liveTask.error_kind}
                             message={liveTask.error_message}
                             hints={liveTask.error_hints} />
-              )}
-            </div>
+              </div>
+            )}
 
             {liveTask.cost_breakdown && (
               <div className="card">
@@ -2906,8 +3192,8 @@ function CreateTab({ onGoToTasks, settings, voices, figures }) {
       )}
       {startedTaskId && !pendingPreview && (
         <TaskStartedModal taskId={startedTaskId}
-                          onGotoTasks={function () { setStartedTaskId(null); onGoToTasks(); }}
-                          onClose={function () { setStartedTaskId(null); }} />
+                          onGotoTasks={function () { setStartedTaskId(null); setPreviewTaskId(null); onGoToTasks(); }}
+                          onClose={function () { setStartedTaskId(null); resetForm(); }} />
       )}
     </div>
   );
@@ -2994,7 +3280,7 @@ function TasksTab() {
     { v: "all",       l: t("tasks.filter.all") },
     { v: "running",   l: t("tasks.filter.running") },
     { v: "pending",   l: t("tasks.filter.pending") },
-    { v: "done",      l: t("tasks.filter.done") },
+    { v: "succeeded", l: t("tasks.filter.done") },
     { v: "failed",    l: t("tasks.filter.failed") },
     { v: "cancelled", l: t("tasks.filter.cancelled") },
   ];
@@ -3057,7 +3343,7 @@ function TasksTab() {
                      onClick={function () { setActiveId(tk.id); }}>
                   <div className="task-thumb">
                     {tk.output_url
-                      ? <video src={tk.output_url} muted preload="metadata"/>
+                      ? <video src={taskVideoUrl(tk.id)} muted preload="metadata"/>
                       : tk.status === "running" || tk.status === "pending"
                           ? <div style={{display: "flex", alignItems: "center", justifyContent: "center", height: "100%"}}>
                               <span className="spinner-sm"/>
@@ -3098,8 +3384,9 @@ function TasksTab() {
       <div className={"split-right oa-preview-area" + (!active ? " oa-preview-area--centered" : "")}>
         {active ? (
           <div style={{width: "100%"}}>
+            {/* ── Header + action buttons ── */}
             <div className="card">
-              <div className="flex items-center justify-between" style={{marginBottom: 12}}>
+              <div className="flex items-center justify-between" style={{marginBottom: 0}}>
                 <span className="card-title" style={{marginBottom: 0}}>
                   {t("tasks.detail.title")}
                   <code className="inline" style={{marginLeft: 8, fontSize: 11}}>{shortId(active.id)}</code>
@@ -3108,9 +3395,9 @@ function TasksTab() {
                   <button className="btn btn-sm" onClick={function () { copyToClipboard(active.id); }}>
                     <Ico name="copy"/> {t("tasks.detail.copyId")}
                   </button>
-                  {(active.status === "running" || active.status === "pending") && (
-                    <button className="btn btn-sm" onClick={function () { cancelTask(active.id); }}>
-                      <Ico name="cancel"/> {t("tasks.action.cancel")}
+                  {(active.status === "done" || active.status === "succeeded") && active.output_url && (
+                    <button className="btn btn-sm btn-primary" onClick={function () { downloadOutput(active); }}>
+                      <Ico name="download"/> {t("tasks.detail.download")}
                     </button>
                   )}
                   {active.status === "failed" && (
@@ -3118,62 +3405,92 @@ function TasksTab() {
                       <Ico name="refresh"/> {t("tasks.detail.retry")}
                     </button>
                   )}
-                  {active.output_url && (
-                    <button className="btn btn-sm btn-primary" onClick={function () { downloadOutput(active); }}>
-                      <Ico name="download"/> {t("tasks.detail.download")}
-                    </button>
-                  )}
                   <button className="btn btn-sm btn-danger" onClick={function () { deleteTask(active.id); }}>
                     <Ico name="trash"/> {t("tasks.detail.delete")}
                   </button>
                 </div>
               </div>
+            </div>
 
-              {active.status === "done" && (
-                active.output_url
-                  ? <video src={active.output_url} controls
-                           style={{width: "100%", maxHeight: 480, borderRadius: 8, background: "#000"}} />
-                  : (
-                    <div className="empty-state" style={{padding: "30px 20px"}}>
-                      <Ico name="check" cls="text-success"/>
-                      <span className="text-sm text-muted" style={{marginTop: 8}}>{t("tasks.detail.completedNoOutput")}</span>
-                      <button className="btn btn-sm btn-primary" style={{marginTop: 8}}
-                              onClick={refresh}>
-                        <Ico name="refresh"/> {t("tasks.detail.recheck")}
-                      </button>
-                    </div>
-                  )
-              )}
-
-              {(active.status === "running" || active.status === "pending") && (
-                <div className="empty-state" style={{padding: "40px 20px"}}>
-                  <div className="spinner" style={{width: 32, height: 32, marginBottom: 12}}/>
-                  <span className="text-sm text-muted">{t("tasks.detail.runningHint")}</span>
-                  {active.progress != null && (
-                    <div style={{width: "60%", marginTop: 12}}>
-                      <div className="progress"><div className="progress-fill" style={{width: Math.round((active.progress || 0) * 100) + "%"}}/></div>
-                      <div className="text-xs text-dim" style={{marginTop: 4, textAlign: "center"}}>
-                        {Math.round((active.progress || 0) * 100)}%
+            {/* ── Video / status area ── */}
+            {(active.status === "running" || active.status === "pending") ? (
+              <div className="video-player-wrap oa-loader oa-loader--dark">
+                <div className="oa-loader__inner">
+                  <div className="oa-loader__spinner"/>
+                  <div className="oa-loader__title">{t("tasks.detail.runningHint")}</div>
+                  {/* Same progress fix as the Create-tab preview — see
+                      note there. Backend emits a 0..100 integer, never
+                      a 0..1 decimal. */}
+                  {active.progress != null && Number(active.progress) > 0 && (
+                    <div className="oa-loader__progress">
+                      <div className="oa-loader__bar">
+                        <div className="oa-loader__bar-fill"
+                             style={{width: Math.min(100, Math.round(Number(active.progress) || 0)) + "%"}}/>
+                      </div>
+                      <div className="oa-loader__pct">
+                        {Math.min(100, Math.round(Number(active.progress) || 0))}%
                       </div>
                     </div>
                   )}
+                  {/* The cancel "button" used to render as a solid
+                      white rectangle because ``.btn`` defaults to
+                      ``background: var(--bg-card)`` (light) while we
+                      only overrode color/border to white — white-on-
+                      white made the icon+label invisible. The new
+                      ``.oa-loader__cancel`` class sets a transparent
+                      background with a translucent white outline. */}
+                  <button type="button"
+                          className="oa-loader__cancel"
+                          onClick={function () { cancelTask(active.id); }}>
+                    <Ico name="cancel"/> {t("tasks.action.cancel")}
+                  </button>
                 </div>
-              )}
-
-              {active.status === "failed" && active.error_kind && (
-                <ErrorPanel kind={active.error_kind}
-                            message={active.error_message}
-                            hints={active.error_hints} />
-              )}
-
-              {active.status === "cancelled" && (
-                <div style={{padding: 12, background: "rgba(245,158,11,.08)", borderRadius: 6,
-                             color: "var(--text-muted)", fontSize: 13, textAlign: "center"}}>
-                  {t("tasks.filter.cancelled")}
+              </div>
+            ) : (active.status === "done" || active.status === "succeeded") ? (
+              active.output_url ? (
+                <div className="video-player-wrap">
+                  <video src={taskVideoUrl(active.id)} controls loop
+                         onError={function (e) { e.target.src = active.output_url; }}
+                         style={{width: "100%", height: "100%", objectFit: "contain"}} />
                 </div>
-              )}
-            </div>
+              ) : (
+                <div className="video-player-wrap" style={{background: "var(--bg-card)"}}>
+                  <div className="empty-state" style={{padding: 0}}>
+                    <Ico name="warn" cls="text-warn"/>
+                    <span style={{color: "var(--text-muted)", fontSize: 13, marginTop: 10}}>
+                      {t("tasks.detail.completedNoOutput")}
+                    </span>
+                    <button className="btn btn-sm" style={{marginTop: 12,
+                            background: "rgba(245,158,11,.12)", color: "#d97706",
+                            borderColor: "rgba(245,158,11,.4)"}}
+                            onClick={async function () {
+                              var r = await pluginApi("POST", "/tasks/" + active.id + "/recheck", {});
+                              if (r.ok && r.body && r.body.output_url) {
+                                showToast("已找回视频并下载到本地"); refresh();
+                              } else {
+                                showToast((r.body && r.body.message) || "DashScope 未返回输出，链接可能已过期", "warn");
+                              }
+                            }}>
+                      <Ico name="refresh"/> {t("tasks.detail.recheck")}
+                    </button>
+                  </div>
+                </div>
+              )
+            ) : active.status === "failed" ? (
+              <div className="card">
+                {active.error_kind && (
+                  <ErrorPanel kind={active.error_kind}
+                              message={active.error_message}
+                              hints={active.error_hints} />
+                )}
+              </div>
+            ) : active.status === "cancelled" ? (
+              <div className="card" style={{textAlign: "center", color: "var(--text-muted)", fontSize: 13}}>
+                {t("tasks.filter.cancelled")}
+              </div>
+            ) : null}
 
+            {/* ── Info cards below, scroll naturally ── */}
             <div className="card">
               <div className="grid-2">
                 <div>
@@ -3236,7 +3553,7 @@ function TasksTab() {
 }
 
 /* ─── VoicesTab ──────────────────────────────────────────────────── */
-function VoiceCard({ voice, onDelete, hasApiKey, onGoSettings }) {
+function VoiceCard({ voice, onDelete, onRename, hasApiKey, onGoSettings }) {
   // Per-card preview state. Clicking "试听" calls
   // POST /voices/{dashscope_voice_id}/sample which synthesises a short
   // demo via cosyvoice-v2 and returns a preview URL we can play inline.
@@ -3250,9 +3567,34 @@ function VoiceCard({ voice, onDelete, hasApiKey, onGoSettings }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
   const [url, setUrl] = useState(voice.sample_url || "");
+  // ── Rename state ────────────────────────────────────────────────
+  // Editing the label is a local-only UX flow: when the user clicks
+  // the pencil, we swap the title text for an inline input. Pressing
+  // Enter / clicking save calls onRename(newLabel) which the parent
+  // routes to PATCH /voices/{id}; on success the parent re-fetches
+  // the catalog so this card unmounts/remounts with fresh props.
+  const [editing, setEditing] = useState(false);
+  const [draftLabel, setDraftLabel] = useState(voice.label || "");
+  const [savingLabel, setSavingLabel] = useState(false);
   const v = voice;
   const cosyId = v.dashscope_voice_id || v.id;
   const previewText = t("voices.preview.text");
+
+  const startEdit = function () {
+    setDraftLabel(v.label || v.label_zh || "");
+    setEditing(true);
+  };
+  const cancelEdit = function () { setEditing(false); };
+  const commitEdit = async function () {
+    const next = (draftLabel || "").trim();
+    if (!next) { showToast(t("voices.rename.empty"), "warn"); return; }
+    if (next === (v.label || "")) { setEditing(false); return; }
+    setSavingLabel(true);
+    try {
+      const ok = await onRename(v, next);
+      if (ok) setEditing(false);
+    } finally { setSavingLabel(false); }
+  };
 
   const playPreview = async function () {
     // Short-circuit: cosyvoice-v2 needs the DashScope key. Without one the
@@ -3287,16 +3629,51 @@ function VoiceCard({ voice, onDelete, hasApiKey, onGoSettings }) {
     <div className="lib-card">
       <div className="lib-card__head">
         <div style={{minWidth: 0, flex: 1}}>
-          <div className="lib-card__title truncate">{v.label || v.label_zh || v.id}</div>
+          {editing ? (
+            <div style={{display: "flex", gap: 6, alignItems: "center"}}>
+              <input className="input" autoFocus value={draftLabel}
+                     disabled={savingLabel}
+                     maxLength={64}
+                     onChange={function (e) { setDraftLabel(e.target.value); }}
+                     onKeyDown={function (e) {
+                       if (e.key === "Enter") { e.preventDefault(); commitEdit(); }
+                       else if (e.key === "Escape") { e.preventDefault(); cancelEdit(); }
+                     }}
+                     style={{height: 28, fontSize: 13, padding: "2px 6px", flex: 1, minWidth: 0}} />
+              <button className="btn btn-sm btn-primary" disabled={savingLabel}
+                      title={t("common.save")}
+                      onClick={commitEdit}
+                      style={{padding: "2px 6px"}}>
+                {savingLabel ? <span className="spinner-sm"/> : <Ico name="check"/>}
+              </button>
+              <button className="btn btn-sm" disabled={savingLabel}
+                      title={t("common.cancel")}
+                      onClick={cancelEdit}
+                      style={{padding: "2px 6px"}}>
+                <Ico name="close"/>
+              </button>
+            </div>
+          ) : (
+            <div className="lib-card__title truncate">{v.label || v.label_zh || v.id}</div>
+          )}
           <div className="lib-card__sub truncate">
             {(v.gender || "—") + " · " + (v.style || v.style_zh || v.language || "zh")}
           </div>
         </div>
-        {v.is_system
-          ? <span className="tag tag-blue">系统</span>
-          : <button className="btn btn-sm btn-danger" onClick={function () { onDelete(v); }}>
+        {v.is_system ? (
+          <span className="tag tag-blue">系统</span>
+        ) : !editing && (
+          <div style={{display: "flex", gap: 4}}>
+            <button className="btn btn-sm" title={t("voices.rename")}
+                    onClick={startEdit}>
+              <Ico name="edit"/>
+            </button>
+            <button className="btn btn-sm btn-danger" title={t("common.delete")}
+                    onClick={function () { onDelete(v); }}>
               <Ico name="trash"/>
-            </button>}
+            </button>
+          </div>
+        )}
       </div>
       <div className="text-xs text-dim truncate" title={cosyId}>
         <code className="inline">{cosyId}</code>
@@ -3376,6 +3753,22 @@ function VoicesTab({ hasApiKey, onGoSettings }) {
     const r = await pluginApi("DELETE", "/voices/" + v.id);
     if (r.ok) refresh();
   };
+  // ── Inline rename ────────────────────────────────────────────────
+  // Returns truthy when the PATCH succeeds so VoiceCard can collapse
+  // its edit form. Errors stay on screen (input remains editable) so
+  // the user can correct typos without losing draft state.
+  const rename = async function (v, label) {
+    const r = await pluginApi("POST", "/voices/" + v.id + "/rename", { label });
+    if (r.ok) {
+      showToast(t("voices.rename.ok"));
+      refresh();
+      return true;
+    }
+    const msg = (r.body && (r.body.message
+      || (r.body.detail && r.body.detail.message))) || t("voices.rename.fail");
+    showToast(msg, "error");
+    return false;
+  };
 
   const sys = voices.filter(function (v) { return v.is_system; });
   const cust = voices.filter(function (v) { return !v.is_system; });
@@ -3438,7 +3831,7 @@ function VoicesTab({ hasApiKey, onGoSettings }) {
 
       <div className="lib-grid" style={{marginBottom: 18}}>
         {sys.map(function (v) {
-          return <VoiceCard key={v.id} voice={v} onDelete={del}
+          return <VoiceCard key={v.id} voice={v} onDelete={del} onRename={rename}
                             hasApiKey={hasApiKey} onGoSettings={onGoSettings} />;
         })}
       </div>
@@ -3451,7 +3844,7 @@ function VoicesTab({ hasApiKey, onGoSettings }) {
         : (
           <div className="lib-grid">
             {cust.map(function (v) {
-              return <VoiceCard key={v.id} voice={v} onDelete={del}
+              return <VoiceCard key={v.id} voice={v} onDelete={del} onRename={rename}
                                 hasApiKey={hasApiKey} onGoSettings={onGoSettings} />;
             })}
           </div>
@@ -4341,13 +4734,19 @@ function SettingsTab({ settings, onSaved, voices }) {
             <label style={{display: "flex", alignItems: "center", gap: 4, cursor: "pointer"}}>
               <input type="radio" name="tts_engine"
                      checked={(draft.tts_engine || "cosyvoice") === "cosyvoice"}
-                     onChange={function () { update("tts_engine", "cosyvoice"); save({ tts_engine: "cosyvoice" }); }} />
+                     onChange={function () {
+                       update("tts_engine", "cosyvoice");
+                       pluginApi("PUT", "/settings", { tts_engine: "cosyvoice" });
+                     }} />
               CosyVoice（百炼付费）
             </label>
             <label style={{display: "flex", alignItems: "center", gap: 4, cursor: "pointer"}}>
               <input type="radio" name="tts_engine"
                      checked={draft.tts_engine === "edge"}
-                     onChange={function () { update("tts_engine", "edge"); save({ tts_engine: "edge" }); }} />
+                     onChange={function () {
+                       update("tts_engine", "edge");
+                       pluginApi("PUT", "/settings", { tts_engine: "edge" });
+                     }} />
               Edge-TTS（免费）
             </label>
           </div>
@@ -4463,6 +4862,11 @@ function SettingsTab({ settings, onSaved, voices }) {
               {t("settings.btn.open")}
             </button>
           </div>
+          {settings.data_dir_active && (
+            <div className="text-xs text-muted" style={{marginTop: 2}}>
+              {t("settings.storage.dir.active")} {settings.data_dir_active}
+            </div>
+          )}
           {/* Subdir + naming sit *under* the data dir like seedance — the
               naming template applies to the final mp4/mp3 inside outputs/
               so it belongs to the same logical group as the output root. */}

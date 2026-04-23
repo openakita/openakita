@@ -60,6 +60,62 @@ def test_parallel_executor_import() -> None:
     assert callable(run_parallel)
 
 
+def test_normalize_image_bytes_downscales_oversized() -> None:
+    """Phone-resolution portraits (>4096px) must be shrunk at upload."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    from plugin import _IMAGE_MAX_SIDE, _normalize_image_bytes
+
+    # User-reported case: 4541×6812 JPEG blew past the i2i 5000-px cap.
+    buf = BytesIO()
+    Image.new("RGB", (4541, 6812), color=(123, 45, 67)).save(
+        buf, format="JPEG", quality=85
+    )
+    out = _normalize_image_bytes(buf.getvalue(), "jpg")
+    assert out is not None, "oversized image should be normalised"
+    new_bytes, new_ext = out
+    assert new_ext == "jpg"
+    with Image.open(BytesIO(new_bytes)) as im:
+        assert max(im.size) == _IMAGE_MAX_SIDE
+        # Aspect ratio preserved within rounding
+        ratio = im.size[1] / im.size[0]
+        assert 6812 / 4541 - 0.01 < ratio < 6812 / 4541 + 0.01
+
+
+def test_normalize_image_bytes_passes_through_in_range() -> None:
+    """Images already inside the accepted band must not be re-encoded."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    from plugin import _normalize_image_bytes
+
+    buf = BytesIO()
+    Image.new("RGB", (1024, 768), color=(200, 200, 200)).save(buf, format="JPEG")
+    assert _normalize_image_bytes(buf.getvalue(), "jpg") is None
+
+
+def test_normalize_image_bytes_keeps_png_alpha() -> None:
+    """PNG with alpha must stay PNG after downscale (no JPEG flattening)."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    from plugin import _normalize_image_bytes
+
+    buf = BytesIO()
+    Image.new("RGBA", (6000, 4000), color=(10, 20, 30, 128)).save(buf, format="PNG")
+    out = _normalize_image_bytes(buf.getvalue(), "png")
+    assert out is not None
+    new_bytes, new_ext = out
+    assert new_ext == "png"
+    with Image.open(BytesIO(new_bytes)) as im:
+        assert im.mode in {"RGBA", "LA"}
+        assert max(im.size) <= 4096
+
+
 def test_assets_present() -> None:
     """5 vendored UI Kit assets must be on disk for Phase 5 to load."""
     from pathlib import Path

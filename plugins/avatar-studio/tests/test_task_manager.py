@@ -137,6 +137,19 @@ async def test_voice_crud(tm: AvatarTaskManager) -> None:
     assert await tm.delete_custom_voice(vid) is False
 
 
+async def test_voice_rename(tm: AvatarTaskManager) -> None:
+    vid = await tm.create_custom_voice(
+        label="initial-name",
+        source_audio_path="/tmp/sample.wav",
+        dashscope_voice_id="cust_ds_002",
+    )
+    assert await tm.update_custom_voice_label(vid, "renamed") is True
+    row = await tm.get_voice(vid)
+    assert row is not None
+    assert row["label"] == "renamed"
+    assert await tm.update_custom_voice_label("vc_does_not_exist", "x") is False
+
+
 # ─── Figures ─────────────────────────────────────────────────────────
 
 

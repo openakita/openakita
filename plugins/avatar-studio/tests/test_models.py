@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from avatar_models import (
+    AUDIO_LIMITS,
     DEFAULT_COST_THRESHOLD_CNY,
     ERROR_HINTS,
     MODES,
@@ -12,6 +13,7 @@ from avatar_models import (
     SYSTEM_VOICES,
     VOICES_BY_ID,
     build_catalog,
+    check_audio_duration,
     estimate_cost,
     hint_for,
 )
@@ -155,6 +157,48 @@ def test_estimate_cost_pose_drive_std_and_pro() -> None:
 def test_estimate_cost_unknown_mode_raises() -> None:
     with pytest.raises(ValueError, match="unknown mode"):
         estimate_cost("not_a_mode", {})
+
+
+def test_audio_limits_known_modes() -> None:
+    """wan2.2-s2v has a hard 20s cap; videoretalk is 2-120s; others n/a."""
+    assert "photo_speak" in AUDIO_LIMITS
+    assert AUDIO_LIMITS["photo_speak"].max_sec <= 20
+    assert "avatar_compose" in AUDIO_LIMITS
+    assert AUDIO_LIMITS["avatar_compose"].max_sec <= 20
+    assert AUDIO_LIMITS["video_relip"].max_sec >= 100
+    assert AUDIO_LIMITS["video_relip"].min_sec >= 1.5
+    assert "video_reface" not in AUDIO_LIMITS
+    assert "pose_drive" not in AUDIO_LIMITS
+
+
+def test_check_audio_duration_blocks_oversized_for_s2v() -> None:
+    """The user-reported case: 21s audio must be flagged before submission."""
+    msg = check_audio_duration("photo_speak", 21.0)
+    assert msg is not None
+    assert "wan2.2-s2v" in msg
+    assert "20" in msg or "19.5" in msg
+    msg2 = check_audio_duration("avatar_compose", 25.0)
+    assert msg2 is not None
+    assert "wan2.2-s2v" in msg2
+
+
+def test_check_audio_duration_passes_in_range() -> None:
+    assert check_audio_duration("photo_speak", 10.0) is None
+    assert check_audio_duration("video_relip", 30.0) is None
+    assert check_audio_duration("avatar_compose", 5.0) is None
+
+
+def test_check_audio_duration_blocks_undersized_for_videoretalk() -> None:
+    msg = check_audio_duration("video_relip", 1.0)
+    assert msg is not None
+    assert "videoretalk" in msg
+
+
+def test_check_audio_duration_no_op_for_modes_without_audio() -> None:
+    """video_reface / pose_drive are video-driven, not audio-driven."""
+    assert check_audio_duration("video_reface", 999.0) is None
+    assert check_audio_duration("pose_drive", 999.0) is None
+    assert check_audio_duration("photo_speak", None) is None
 
 
 def test_cost_preview_no_milk_tea_in_formatted_total() -> None:

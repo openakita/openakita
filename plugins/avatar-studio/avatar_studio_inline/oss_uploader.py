@@ -42,9 +42,16 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+# Aliyun OSS bucket naming rules (verified against console error text):
+# 3–63 chars, lowercase letters / digits / hyphens, must start+end with
+# letter or digit. We reject upper-case / underscores / dots / spaces /
+# the user accidentally pasting the full endpoint URL.
+_BUCKET_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +116,19 @@ class OssConfig:
                 "Aliyun OSS not configured (missing: " + ", ".join(missing) + "). "
                 "Open Settings → OSS to fill them in."
             )
+        # Cheap format check — catches the most common UX mistakes
+        # (bucket field gets the full endpoint URL pasted in, or a
+        # capital-letter project name) at config-build time so the
+        # error surfaces in Settings rather than 5 seconds into a
+        # task. We only validate ``bucket`` for now: endpoint mistakes
+        # produce equally clear oss2 errors and we don't want a regex
+        # to lag behind Aliyun's ever-growing list of regions.
+        if not _BUCKET_NAME_RE.match(bucket):
+            raise OssNotConfigured(
+                f"OSS bucket 名 {bucket!r} 不合法。"
+                "应当只含小写字母 / 数字 / 连字符 (-)，长度 3-63，"
+                "首尾必须是字母或数字。请不要把 endpoint URL 粘到 bucket 字段里。"
+            )
         # Normalise endpoint: oss2 wants the *full* endpoint URL incl scheme.
         if not endpoint.startswith(("http://", "https://")):
             endpoint = "https://" + endpoint
@@ -171,8 +191,25 @@ class OssUploader:
                 "for image/video/audio inputs.)",
                 cause=e,
             ) from e
-        auth = oss2.Auth(cfg.access_key_id, cfg.access_key_secret)
-        return oss2.Bucket(auth, cfg.endpoint, cfg.bucket)
+        # ``oss2.Bucket(...)`` validates the bucket name eagerly and
+        # raises ``ClientError`` for things like wrong length, illegal
+        # characters, or the user pasting the full endpoint URL into
+        # the bucket field by mistake. Wrapping the constructor here
+        # means the upload routes only need to catch ``OssUploadError``
+        # — they never see a raw oss2 exception leak through and turn
+        # into a 500 (which the UI then renders as the opaque
+        # 「上传失败：SyntaxError: Unexpected token 'I'」 you've seen).
+        try:
+            auth = oss2.Auth(cfg.access_key_id, cfg.access_key_secret)
+            return oss2.Bucket(auth, cfg.endpoint, cfg.bucket)
+        except Exception as e:  # noqa: BLE001 - re-raise as our type
+            raise OssUploadError(
+                f"OSS bucket 配置无效（{cfg.bucket!r} @ {cfg.endpoint}）："
+                f"{e}。请检查「设置 → 阿里云 OSS」中 bucket 名是否只含"
+                "小写字母 / 数字 / 连字符，长度 3-63，且 endpoint 不要"
+                "和 bucket 名混填。",
+                cause=e,
+            ) from e
 
     # ── core ──────────────────────────────────────────────────────────
 
