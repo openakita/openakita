@@ -193,6 +193,7 @@ time.txt
 todo.txt
 test_file.txt
 indentity_compiler.txt
+.tmp_validation/
 
 # Report generation scripts (temporary)
 *_report*.py
