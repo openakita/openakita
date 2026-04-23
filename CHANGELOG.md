@@ -5,7 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - 2026-04-21
+## [Unreleased] - 2026-04-23
+
+### Added — External-CLI agents, presets, and session APIs
+
+- Added `AgentType.EXTERNAL_CLI` profiles with provider-specific adapters for
+  Claude Code, Codex, OpenCode, Gemini, GitHub Copilot, Droid, Cursor, Qwen,
+  and Goose. External-CLI agents now run through a shared concurrency limiter
+  (`external_cli_max_concurrent`) and preserve turn/session bookkeeping.
+- Setup Center now detects installed CLIs, offers a CLI-backed agent creation
+  wizard, ships starter presets (`claude-code-pair`, `codex-writer`,
+  `local-goose`, `multi-cli-planner`), and surfaces CLI providers in
+  Extensions plus the agent graph UI.
+- Added read-only session browsing APIs under `/api/sessions/external-cli/*`,
+  including installed-provider detection, per-provider historical session
+  listing, and byte-offset paginated message streaming for Claude Code / Codex
+  transcripts.
+
+### Added — Scheduler playbook autorun tasks
+
+- Scheduler now supports `system:autorun_playbook` tasks with `PlaybookRun`
+  orchestration, worktree acquisition, document-loop execution, checkbox reset
+  helpers, stall guarding, and `autorun:state` WebSocket broadcasts.
+- `SchedulerView` can create/edit playbook tasks, choose an agent profile,
+  reorder docs, submit autorun jobs, and render live progress cards from
+  `autorun:state` events.
+
+### Added — Live progress streaming for agent runs
+
+- Sub-agent runs can now stream live progress over WebSocket into the chat UI
+  instead of only reporting a final summary after completion.
+- Added progress-aware timeout utilities so long-running agent / orchestration
+  flows time out on inactivity rather than a fixed wall-clock deadline.
 
 ### Added — Per-agent external CLI environment variables
 
@@ -27,6 +58,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Migration:** if a Claude Code / Codex / Goose agent was relying on an
   inherited `ANTHROPIC_API_KEY` or similar, add it to that agent's Environment
   section in Setup Center. OpenAkita's own LLM access is unaffected.
+
+### Changed — English is now the default user-facing language
+
+- Setup Center, Tauri desktop error messages, agent/org/runtime views,
+  toasts/modals, shared constants, MCP/identity/token-stats screens, and
+  user-facing backend strings were localized to English.
+- English is now forced as the default UI language; auto-translation is
+  disabled; legacy `*_zh` parallel fields were dropped from backend responses;
+  `ReAct` transition enums now use `StrEnum`.
+
+### Changed — Stream failover and runtime environment handling
+
+- Empty or semantic-noop provider streams now trigger failover instead of
+  silently ending without a usable answer; thinking-capability handling was
+  tightened at the same time.
+- Cross-platform `PATH` resolution now explicitly covers Linux, and
+  external-CLI env assembly merges allow-listed base variables with per-agent
+  overrides.
+
+### Changed — IM and desktop packaging compatibility
+
+- WhatsApp support was upgraded from Baileys 6.x to 7.x for LID / ESM / Node 20
+  compatibility.
+- IM dependencies were refreshed, QQ voice uploads accept more direct-upload
+  formats, and the desktop installer now migrates legacy installs under the new
+  `OpenAkitaDesktop` product name.
+
+### Fixed — External-CLI execution stability
+
+- Fixed profile persistence / clone / factory gaps so external-CLI fields
+  survive CRUD, cloning, and self-improvement bridge handoff.
+- Session routes are now mounted under the sessions API, orchestrator state is
+  exposed correctly for external-CLI agents, and autorun prompts include the
+  active playbook context.
+- Streaming progress is now emitted consistently across Claude Code, Codex,
+  Goose, OpenCode, Gemini, Copilot, Droid, Cursor, and Qwen; stderr is drained
+  concurrently; cancellation now reaps subprocesses correctly and fallback
+  triggers on provider-side failures.
+
+### Fixed — Reliability and safety follow-ups
+
+- Prevented fire-and-forget conversation lifecycle tasks from being garbage
+  collected before completion.
+- Fixed a supervisor false-positive that could terminate sessions after five
+  tool calls even when the agent was still making progress.
+- File creation is no longer hard-denied by security confirmation, and
+  repeated shell confirmation prompts were reduced.
 
 ### Fixed — 插件加载系统三件套
 
