@@ -1,11 +1,10 @@
 # src/openakita/agents/cli_providers/codex.py
 """Codex CLI provider adapter.
 
-Per-run isolation: each `run()` allocates a `tempfile.TemporaryDirectory` as
-`CODEX_HOME`, writes `config.toml` (MCP servers) and optionally
-`AGENTS.override.md` (first-turn system-prompt channel), then cleans up in
-`finally`. The directory lives only for the duration of one turn — adapters
-stay reentrant.
+The adapter deliberately preserves the user's real Codex home. Subscription
+login state lives under `$CODEX_HOME` (normally `~/.codex/auth.json`), so
+per-run temp homes would hide valid login state from systemd-launched
+OpenAkita.
 
 Session history lives at `~/.codex/sessions/<session-id>.jsonl`. The
 `SESSION_ROOT` constant is consumed by `api/routes/sessions.py` for the
@@ -16,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,7 +24,6 @@ from openakita.agents.cli_providers._common import (
     binary_not_found_error,
     build_cli_env,
     stream_cli_subprocess,
-    write_mcp_config,
 )
 from openakita.agents.cli_runner import (
     CliRunRequest,
@@ -35,6 +32,7 @@ from openakita.agents.cli_runner import (
 )
 from openakita.agents.profile import CliPermissionMode
 from openakita.tools.errors import classify_cli_error
+from openakita.tools.mcp_catalog import MCPCatalog
 from openakita.utils.path_helper import which_command
 
 logger = logging.getLogger(__name__)
@@ -47,12 +45,46 @@ def _resolve_binary() -> str | None:
     return which_command("codex")
 
 
-def _write_agents_override(dst_dir: Path, content: str) -> Path | None:
-    if not content:
-        return None
-    path = dst_dir / "AGENTS.override.md"
-    path.write_text(content)
-    return path
+def _prompt_with_extra(request: CliRunRequest) -> str:
+    if not request.system_prompt_extra:
+        return request.message
+    return f"{request.system_prompt_extra}\n\n{request.message}"
+
+
+def _mcp_section_name(server_id: str) -> str:
+    return server_id.replace("-", "_")
+
+
+def _mcp_config_overrides(server_ids: tuple[str, ...]) -> list[str]:
+    if not server_ids:
+        return []
+
+    try:
+        catalog = MCPCatalog()
+    except Exception as exc:
+        logger.warning("codex mcp config unavailable: %s", exc)
+        return []
+
+    overrides: list[str] = []
+    for server_id in server_ids:
+        info = catalog.get_server(server_id)
+        if info is None or not info.command:
+            logger.warning("codex mcp config: no catalog entry for %r", server_id)
+            continue
+
+        section = _mcp_section_name(server_id)
+        prefix = f"mcp_servers.{section}"
+        overrides.extend(["-c", f"{prefix}.command={json.dumps(info.command)}"])
+        if info.args:
+            overrides.extend(["-c", f"{prefix}.args={json.dumps(list(info.args))}"])
+        if info.env:
+            env_value = (
+                "{ "
+                + ", ".join(f"{k} = {json.dumps(v)}" for k, v in dict(info.env).items())
+                + " }"
+            )
+            overrides.extend(["-c", f"{prefix}.env={env_value}"])
+    return overrides
 
 
 @dataclass(frozen=True)
@@ -137,26 +169,22 @@ class CodexAdapter:
                 binary="codex",
                 install_hint="npm install -g @openai/codex",
             )
-        argv = [binary, "exec", "--json"]
+        options = ["--json", *_mcp_config_overrides(request.mcp_servers)]
+        if request.profile.cli_permission_mode == CliPermissionMode.PLAN and not request.resume_id:
+            options += ["--sandbox", "read-only"]
         if request.profile.cli_permission_mode == CliPermissionMode.WRITE:
-            argv.append("--skip-git-repo-check")
+            options += ["--full-auto", "--skip-git-repo-check"]
+
+        argv = [binary, "exec"]
         if request.resume_id:
-            argv += ["--session", request.resume_id]
-        argv.append(request.message)
+            argv += ["resume", *options, request.resume_id]
+        else:
+            argv += options
+        argv.append(_prompt_with_extra(request))
         return argv
 
     def build_env(self, request: CliRunRequest) -> dict[str, str]:
-        env = build_cli_env(request.profile)
-        # CODEX_HOME is populated in run() with an absolute per-turn tempdir.
-        # For build_env introspection (tests) we allocate a stub path so callers
-        # can assert CODEX_HOME is set; run() overwrites before spawn.
-        # Note: if a user sets CODEX_HOME in profile.cli_env it surfaces here
-        # via build_cli_env's overlay, but run() still overrides it with a
-        # per-turn tempdir to keep MCP config isolated between runs.
-        env["CODEX_HOME"] = env.get("CODEX_HOME") or str(
-            Path(tempfile.gettempdir()) / "codex-home-stub"
-        )
-        return env
+        return build_cli_env(request.profile)
 
     async def run(
         self,
@@ -193,59 +221,40 @@ class CodexAdapter:
 
         stderr_buffer: list[bytes] = []
 
-        with tempfile.TemporaryDirectory(prefix="codex-home-") as tmp:
-            home_dir = Path(tmp)
-            write_mcp_config(home_dir, request.mcp_servers, fmt="toml")
-            if request.system_prompt_extra and not request.resume_id:
-                _write_agents_override(home_dir, request.system_prompt_extra)
-            env = {**env, "CODEX_HOME": str(home_dir)}
+        try:
+            async for line in stream_cli_subprocess(
+                argv,
+                env,
+                request.cwd,
+                request.cancelled,
+                on_spawn=track,
+                on_stderr=stderr_buffer.append,
+            ):
+                ev = _parse_stream_line(line)
+                if ev is not None:
+                    acc.apply(ev)
+                    await emit_progress(ev)
+        except asyncio.CancelledError:
+            if progress_cancelled:
+                raise
+            return _cancelled_result(acc)
 
+        if request.cancelled.is_set():
+            return _cancelled_result(acc)
+
+        proc = proc_ref.get("p")
+        exit_code = 0
+        if proc is not None:
             try:
-                async for line in stream_cli_subprocess(
-                    argv,
-                    env,
-                    request.cwd,
-                    request.cancelled,
-                    on_spawn=track,
-                    on_stderr=stderr_buffer.append,
-                ):
-                    ev = _parse_stream_line(line)
-                    if ev is not None:
-                        acc.apply(ev)
-                        await emit_progress(ev)
-            except asyncio.CancelledError:
-                if progress_cancelled:
-                    raise
-                return _cancelled_result(acc)
+                exit_code = await asyncio.wait_for(proc.wait(), timeout=2.0)
+            except TimeoutError:
+                exit_code = -1
+        stderr_text = b"".join(stderr_buffer).decode("utf-8", "replace")
 
-            if request.cancelled.is_set():
-                return _cancelled_result(acc)
-
-            proc = proc_ref.get("p")
-            exit_code = 0
-            if proc is not None:
-                try:
-                    exit_code = await asyncio.wait_for(proc.wait(), timeout=2.0)
-                except TimeoutError:
-                    exit_code = -1
-            stderr_text = b"".join(stderr_buffer).decode("utf-8", "replace")
-
-            if acc.errored or exit_code != 0:
-                err_type = classify_cli_error(
-                    exit_code=exit_code, stderr=stderr_text, exception=None,
-                )
-                return ProviderRunResult(
-                    final_text="".join(acc.text_parts),
-                    tools_used=list(acc.tools_used),
-                    artifacts=[],
-                    session_id=acc.session_id,
-                    input_tokens=acc.input_tokens,
-                    output_tokens=acc.output_tokens,
-                    exit_reason=ExitReason.ERROR,
-                    errored=True,
-                    error_message=acc.error_message or f"{err_type.value}: {stderr_text[:200]}",
-                )
-
+        if acc.errored or exit_code != 0:
+            err_type = classify_cli_error(
+                exit_code=exit_code, stderr=stderr_text, exception=None,
+            )
             return ProviderRunResult(
                 final_text="".join(acc.text_parts),
                 tools_used=list(acc.tools_used),
@@ -253,10 +262,22 @@ class CodexAdapter:
                 session_id=acc.session_id,
                 input_tokens=acc.input_tokens,
                 output_tokens=acc.output_tokens,
-                exit_reason=ExitReason.COMPLETED,
-                errored=False,
-                error_message=None,
+                exit_reason=ExitReason.ERROR,
+                errored=True,
+                error_message=acc.error_message or f"{err_type.value}: {stderr_text[:200]}",
             )
+
+        return ProviderRunResult(
+            final_text="".join(acc.text_parts),
+            tools_used=list(acc.tools_used),
+            artifacts=[],
+            session_id=acc.session_id,
+            input_tokens=acc.input_tokens,
+            output_tokens=acc.output_tokens,
+            exit_reason=ExitReason.COMPLETED,
+            errored=False,
+            error_message=None,
+        )
 
     async def cleanup(self) -> None:
         return None

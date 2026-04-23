@@ -40,6 +40,36 @@ async def test_call_agent_raises_for_external_cli_error_result():
 
 
 @pytest.mark.asyncio
+async def test_call_agent_raises_external_cli_error_field_when_text_empty():
+    profile = AgentProfile(
+        id="codex-writer",
+        name="Codex Writer",
+        type=AgentType.EXTERNAL_CLI,
+        cli_provider_id=CliProviderId.CODEX,
+    )
+
+    class FailingCliAgent:
+        _agent_profile = profile
+        agent_state = None
+
+        async def chat_with_session(self, **kwargs):
+            return {
+                "text": "",
+                "error": "auth_permanent: codex login required",
+                "tools_used": [],
+                "artifacts": [],
+                "exit_reason": "error",
+            }
+
+    session = MagicMock()
+    session.id = "sid-1"
+    session.context.get_messages.return_value = []
+
+    with pytest.raises(RuntimeError, match="auth_permanent: codex login required"):
+        await AgentOrchestrator._call_agent(FailingCliAgent(), session, "work")
+
+
+@pytest.mark.asyncio
 async def test_call_agent_preserves_custom_agent_error_result_behavior():
     profile = AgentProfile(
         id="custom-helper",

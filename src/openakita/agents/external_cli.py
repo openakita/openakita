@@ -462,4 +462,5 @@ class ExternalCliAgent:
             "artifacts": outcome.artifacts,
             "elapsed_s": outcome.elapsed_s,
             "exit_reason": outcome.exit_reason.value,
+            "error": outcome.error,
         }

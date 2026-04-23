@@ -91,6 +91,30 @@ async def test_chat_with_session_returns_delegation_result(cli_profile, stub_ada
 
 
 @pytest.mark.asyncio
+async def test_chat_with_session_returns_error_detail(cli_profile, stub_adapter):
+    stub_adapter.run = AsyncMock(return_value=ProviderRunResult(
+        final_text="",
+        tools_used=[],
+        artifacts=[],
+        session_id=None,
+        input_tokens=0,
+        output_tokens=0,
+        exit_reason=ExitReason.ERROR,
+        errored=True,
+        error_message="auth_permanent: codex login required",
+    ))
+    agent = ExternalCliAgent(cli_profile, stub_adapter,
+                             limiter=ExternalCliLimiter(1))
+    session = MagicMock(id="sid-x", conversation_id="conv-x", cwd="/tmp")
+
+    result = await agent.chat_with_session(session, "hello")
+
+    assert result["text"] == ""
+    assert result["exit_reason"] == "error"
+    assert result["error"] == "auth_permanent: codex login required"
+
+
+@pytest.mark.asyncio
 async def test_execute_task_from_message_maps_to_task_result(cli_profile, stub_adapter):
     agent = ExternalCliAgent(cli_profile, stub_adapter,
                              limiter=ExternalCliLimiter(1))

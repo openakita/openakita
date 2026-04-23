@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -56,6 +55,7 @@ def test_build_argv_base_flags():
     assert argv[0] == "/usr/bin/codex"
     assert "exec" in argv
     assert "--json" in argv
+    assert argv[argv.index("--sandbox") + 1] == "read-only"
     # Message is the trailing positional
     assert argv[-1] == "Refactor module X"
 
@@ -69,6 +69,8 @@ def test_build_argv_write_mode_adds_skip_checks():
         argv = PROVIDERS[CliProviderId.CODEX].build_argv(_make_request(profile))
 
     assert "--skip-git-repo-check" in argv
+    assert "--full-auto" in argv
+    assert "--dangerously-bypass-approvals-and-sandbox" not in argv
 
 
 def test_build_argv_resume_uses_session_id():
@@ -79,24 +81,64 @@ def test_build_argv_resume_uses_session_id():
             _make_request(_make_profile(), resume_id="codex-session-abc")
         )
 
-    # Codex resume takes a session id via a positional or --session flag;
-    # the adapter emits `--session <id>` for grep-friendly test assertions.
-    assert "--session" in argv
-    assert argv[argv.index("--session") + 1] == "codex-session-abc"
+    assert argv[:3] == ["/usr/bin/codex", "exec", "resume"]
+    assert "--session" not in argv
+    assert "--json" in argv
+    assert "--sandbox" not in argv
+    assert argv[-2] == "codex-session-abc"
+    assert argv[-1] == "Refactor module X"
 
 
-def test_build_env_sets_codex_home_to_per_turn_tempdir():
+def test_build_argv_folds_system_prompt_extra_into_prompt():
     from openakita.agents.cli_providers import codex
 
+    with patch.object(codex, "_resolve_binary", return_value="/usr/bin/codex"):
+        argv = PROVIDERS[CliProviderId.CODEX].build_argv(
+            _make_request(_make_profile(), system_prompt_extra="ORG FACT")
+        )
+
+    assert argv[-1] == "ORG FACT\n\nRefactor module X"
+
+
+def test_build_argv_adds_mcp_config_overrides():
+    from openakita.agents.cli_providers import codex
+
+    fake_info = MagicMock(command="npx", args=["-y", "pkg"], env={"TOKEN": "abc"})
+    with patch.object(codex, "_resolve_binary", return_value="/usr/bin/codex"), \
+         patch("openakita.agents.cli_providers.codex.MCPCatalog") as Catalog:
+        Catalog.return_value.get_server = MagicMock(return_value=fake_info)
+        argv = PROVIDERS[CliProviderId.CODEX].build_argv(
+            _make_request(_make_profile(), mcp_servers=("web-search",))
+        )
+
+    joined = "\n".join(argv)
+    assert 'mcp_servers.web_search.command="npx"' in joined
+    assert 'mcp_servers.web_search.args=["-y", "pkg"]' in joined
+    assert 'mcp_servers.web_search.env={ TOKEN = "abc" }' in joined
+
+
+def test_build_env_preserves_subscription_codex_home_default(monkeypatch):
+    from openakita.agents.cli_providers import codex
+
+    monkeypatch.delenv("CODEX_HOME", raising=False)
     profile = _make_profile()
-    req = _make_request(profile, mcp_servers=("web-search",))
+    req = _make_request(profile)
     with patch.object(codex, "_resolve_binary", return_value="/usr/bin/codex"):
         env = PROVIDERS[CliProviderId.CODEX].build_env(req)
 
-    assert "CODEX_HOME" in env
-    # Path exists only for the scope of this turn — we don't check existence here;
-    # that's covered by the end-to-end run test. We check the value is absolute.
-    assert os.path.isabs(env["CODEX_HOME"])
+    assert "CODEX_HOME" not in env
+
+
+def test_build_env_preserves_explicit_codex_home(monkeypatch):
+    from openakita.agents.cli_providers import codex
+
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    profile = _make_profile(cli_env={"CODEX_HOME": "/tmp/codex-real-home"})
+    req = _make_request(profile)
+    with patch.object(codex, "_resolve_binary", return_value="/usr/bin/codex"):
+        env = PROVIDERS[CliProviderId.CODEX].build_env(req)
+
+    assert env["CODEX_HOME"] == "/tmp/codex-real-home"
 
 
 def test_write_mcp_config_toml_contains_server_sections(tmp_path):
@@ -183,17 +225,17 @@ async def test_run_honors_cancellation(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_codex_home_tempdir_is_cleaned_up(tmp_path):
+async def test_run_preserves_codex_home_env(tmp_path):
     from openakita.agents.cli_providers import codex
 
     captured_home: dict[str, str] = {}
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
     argv = [
         "sh", "-c",
         'echo {\\"type\\":\\"turn_end\\",\\"usage\\":{\\"input_tokens\\":1,\\"output_tokens\\":1}}',
     ]
 
-    # Monkey-patch stream_cli_subprocess to capture the env CODEX_HOME value,
-    # then yield the one canned line.
     from openakita.agents.cli_providers import _common as common_mod
 
     async def fake_stream(argv, env, cwd, cancelled, *, on_spawn, on_stderr=None):
@@ -205,9 +247,29 @@ async def test_codex_home_tempdir_is_cleaned_up(tmp_path):
     with patch.object(common_mod, "stream_cli_subprocess", fake_stream), \
          patch("openakita.agents.cli_providers.codex.stream_cli_subprocess", fake_stream):
         profile = _make_profile(cli_permission_mode=CliPermissionMode.WRITE)
-        req = _make_request(profile, cwd=tmp_path, mcp_servers=("web-search",))
-        await codex.PROVIDER.run(req, argv, env={}, on_spawn=lambda _: None)
+        req = _make_request(profile, cwd=tmp_path)
+        await codex.PROVIDER.run(
+            req,
+            argv,
+            env={"CODEX_HOME": str(codex_home)},
+            on_spawn=lambda _: None,
+        )
 
-    assert captured_home["home"]
-    # After run returns, the tempdir must no longer exist.
-    assert not Path(captured_home["home"]).exists()
+    assert captured_home["home"] == str(codex_home)
+    assert codex_home.exists()
+
+
+@pytest.mark.asyncio
+async def test_run_returns_classified_stderr_on_failure(tmp_path):
+    from openakita.agents.cli_providers import codex
+
+    profile = _make_profile()
+    req = _make_request(profile, cwd=tmp_path)
+    argv = ["sh", "-c", "printf 'codex login required' >&2; exit 1"]
+
+    result = await codex.PROVIDER.run(req, argv, env={}, on_spawn=lambda _: None)
+
+    assert result.exit_reason == ExitReason.ERROR
+    assert result.errored is True
+    assert result.error_message is not None
+    assert "auth_permanent: codex login required" in result.error_message
