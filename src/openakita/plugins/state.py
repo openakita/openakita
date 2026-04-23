@@ -21,6 +21,13 @@ class PluginStateEntry:
     error_count: int = 0
     last_error: str = ""
     last_error_time: float = 0.0
+    # Absolute path or URL the plugin was originally installed from.
+    # When this points at a still-existing local directory we can re-sync
+    # ``data/plugins/<id>`` from it on every reload — that is what makes
+    # the "Reload" button actually pick up source-code edits without the
+    # user having to remove + reinstall. URL/git sources are recorded for
+    # traceability only and are NOT auto-resynced on reload.
+    install_source: str = ""
 
 
 _SCHEMA_VERSION = 2
@@ -108,6 +115,7 @@ class PluginState:
                     "error_count": e.error_count,
                     "last_error": e.last_error,
                     "last_error_time": e.last_error_time,
+                    "install_source": e.install_source,
                 }
                 for pid, e in self.plugins.items()
             },
@@ -149,6 +157,7 @@ class PluginState:
                 error_count=pdata.get("error_count", 0),
                 last_error=pdata.get("last_error", ""),
                 last_error_time=pdata.get("last_error_time", 0),
+                install_source=pdata.get("install_source", "") or "",
             )
         state.active_backends = data.get("active_backends", {})
         loaded_dev_mode = data.get("dev_mode", "off")

@@ -156,6 +156,34 @@ class TestSaveLoad:
         assert p2.error_count == 1
         assert p2.last_error == "some error"
 
+    def test_install_source_roundtrip(self, tmp_path):
+        # install_source is what lets the "Reload" button re-sync source-code
+        # edits without requiring uninstall + reinstall — its persistence is
+        # therefore part of the public contract, not just a metadata nicety.
+        state = PluginState()
+        entry = state.ensure_entry("p1")
+        entry.install_source = "/abs/path/to/plugins/avatar-studio"
+
+        path = tmp_path / "state.json"
+        state.save(path)
+        loaded = PluginState.load(path)
+        assert loaded.get_entry("p1").install_source == (
+            "/abs/path/to/plugins/avatar-studio"
+        )
+
+    def test_install_source_default_empty_for_legacy_files(self, tmp_path):
+        # Older state.json files predate install_source; load() must tolerate
+        # the missing key without crashing and without inventing a value.
+        path = tmp_path / "legacy.json"
+        path.write_text(
+            '{"schema_version": 2, "plugins": {"old": {"enabled": true}}}',
+            encoding="utf-8",
+        )
+        loaded = PluginState.load(path)
+        entry = loaded.get_entry("old")
+        assert entry is not None
+        assert entry.install_source == ""
+
     def test_load_corrupt_file(self, tmp_path):
         path = tmp_path / "state.json"
         path.write_text("{bad json", encoding="utf-8")

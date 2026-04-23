@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import uuid
 import zipfile
@@ -175,6 +176,20 @@ def _build_plugin_list(pm, plugins_dir: Path) -> tuple[list[dict[str, Any]], dic
         enabled = state.is_enabled(pid)
         entry = state.get_entry(pid)
         meta = _manifest_meta(manifest, child)
+        # Surface install_source so the UI can hint whether "Reload" will
+        # actually re-sync from a known source dir, vs. just rerunning the
+        # same copied files (which is what the old behaviour did).
+        install_source = entry.install_source if entry else ""
+        # Distinguish symlink (live edits flow on every reload) from copy
+        # (resync still works if install_source is set, but is a fresh copy
+        # rather than a live link). Skip the (cheap) check when the dir
+        # is missing — that case is already handled by the "invalid" branch.
+        try:
+            is_symlinked = child.is_symlink()
+        except OSError:
+            is_symlinked = False
+        meta["install_source"] = install_source
+        meta["is_symlinked"] = is_symlinked
 
         from ...plugins.manifest import BASIC_PERMISSIONS as _BASIC_PERMS
 
@@ -226,6 +241,57 @@ def _build_plugin_list(pm, plugins_dir: Path) -> tuple[list[dict[str, Any]], dic
     return plugins, failed
 
 
+def _backfill_install_source_from_symlink(pm, plugins_dir: Path) -> None:
+    """Recover ``install_source`` for symlinked plugins that predate the field.
+
+    Older OpenAkita versions did not record where a plugin was installed
+    from. For users who were using developer mode (so ``data/plugins/<id>``
+    is a symlink) we can recover the source path by ``os.readlink``-ing
+    that symlink — which means after upgrading they get the new
+    "Reload re-syncs from source" behaviour without needing to uninstall +
+    reinstall every existing plugin first.
+
+    Plugins that were installed as a *copy* cannot be recovered this way
+    (we would have to guess where the user's source dir lives) — those
+    still need a one-time uninstall + reinstall to gain the source link.
+    """
+    if pm is None or not plugins_dir.is_dir():
+        return
+    state = pm.state
+    if state is None:
+        return
+    changed = False
+    try:
+        for child in plugins_dir.iterdir():
+            if not child.is_dir() or not (child / "plugin.json").is_file():
+                continue
+            if not child.is_symlink():
+                continue
+            entry = state.get_entry(child.name)
+            if entry is None or entry.install_source:
+                continue
+            try:
+                target = Path(os.readlink(child)).resolve()
+            except OSError:
+                continue
+            if not (target / "plugin.json").is_file():
+                continue
+            entry.install_source = str(target)
+            changed = True
+            logger.info(
+                "Backfilled install_source for symlinked plugin '%s' -> %s",
+                child.name,
+                target,
+            )
+    except OSError as e:
+        logger.debug("Symlink-backfill scan error: %s", e)
+    if changed:
+        try:
+            state.save(_plugin_state_path())
+        except Exception as e:
+            logger.debug("Backfill save error: %s", e)
+
+
 async def _sync_new_plugins(pm, plugins_dir: Path) -> None:
     """Detect plugins on disk that are not yet loaded and hot-load them.
 
@@ -261,6 +327,10 @@ async def list_plugins(request: Request) -> dict[str, Any]:
     try:
         pm = _get_plugin_manager(request)
         plugins_dir = _plugins_dir()
+        # Best-effort recovery for upgraded users who installed plugins
+        # before install_source was tracked. Cheap (just a dir scan) and
+        # idempotent — entries that already have install_source are skipped.
+        _backfill_install_source_from_symlink(pm, plugins_dir)
         await _sync_new_plugins(pm, plugins_dir)
         plugins, failed = _build_plugin_list(pm, plugins_dir)
         return {"ok": True, "data": {"plugins": plugins, "failed": failed}}
@@ -293,6 +363,85 @@ class InstallBody(BaseModel):
 
 
 _PROGRESS_TTL = 120
+
+
+def _record_install_source(pm, plugin_id: str, source: str) -> None:
+    """Persist the original install source on the plugin's state entry.
+
+    This is what makes the "Reload" button able to pick up source-code
+    edits without a full uninstall + reinstall: on every reload we look
+    at ``install_source``, and if it still points at a valid local
+    plugin directory we re-sync ``data/plugins/<id>`` from it (symlink
+    in dev-mode, copy otherwise). Without this record we have no idea
+    where the user's editable source actually lives.
+    """
+    if pm is None or not source:
+        return
+    try:
+        entry = pm.state.ensure_entry(plugin_id)
+        entry.install_source = source
+        pm.state.save(_plugin_state_path())
+    except Exception as e:
+        logger.debug("Could not record install_source for '%s': %s", plugin_id, e)
+
+
+def _is_local_plugin_source(source: str) -> bool:
+    """Return True iff ``source`` is a local directory containing plugin.json.
+
+    URL / git sources are recorded for traceability but are NOT auto-resynced
+    on reload — re-downloading on every reload click would be surprising and
+    slow. Only paths that the user can edit in-place benefit from resync.
+    """
+    if not source:
+        return False
+    if source.startswith(("http://", "https://")) or installer._is_git_url(source):
+        return False
+    try:
+        return (Path(source) / "plugin.json").is_file()
+    except OSError:
+        return False
+
+
+async def _resync_plugin_from_source(pm, plugin_id: str) -> tuple[bool, str]:
+    """Re-materialise ``data/plugins/<plugin_id>`` from its recorded source.
+
+    Returns ``(resynced, info)`` where ``resynced`` is True iff the on-disk
+    plugin directory was rebuilt from the original source path. When dev
+    mode is on this rewrites the path as a symlink (so subsequent edits in
+    the source directory are immediately live); when dev mode is off it
+    re-copies the source so source-code edits still flow through on reload,
+    just without the symlink-edit-loop convenience.
+
+    IMPORTANT: callers MUST have already called ``pm.unload_plugin(...)``
+    before this — Windows holds file handles on imported .py files, on
+    SQLite DB files, on log files, etc., and the rmtree inside
+    ``install_from_path`` will fail with WinError 32 otherwise.
+    """
+    if pm is None:
+        return False, "no plugin manager"
+    entry = pm.state.get_entry(plugin_id)
+    if entry is None or not entry.install_source:
+        return False, "no recorded source"
+    source = entry.install_source
+    if not _is_local_plugin_source(source):
+        return False, "source is not a local plugin directory"
+
+    plugins_dir = _plugins_dir()
+    dev_mode_on = bool(getattr(pm.state, "dev_mode_enabled", False))
+    try:
+        await asyncio.to_thread(
+            installer.install_from_path,
+            Path(source),
+            plugins_dir,
+            dev_mode=dev_mode_on,
+        )
+    except installer.PluginInstallError as e:
+        logger.warning("Resync from source failed for '%s': %s", plugin_id, e)
+        return False, str(e)
+    except Exception as e:
+        logger.exception("Unexpected resync error for '%s'", plugin_id)
+        return False, str(e)
+    return True, "symlink" if dev_mode_on else "copy"
 
 
 async def _do_install(src: str, plugins_dir: Path, progress: InstallProgress, request: Request):
@@ -329,6 +478,18 @@ async def _do_install(src: str, plugins_dir: Path, progress: InstallProgress, re
             plugin_id = await asyncio.to_thread(installer.install_bundle, local, plugins_dir)
 
     pm = _get_plugin_manager(request)
+    # Persist the install source so the next "Reload" can pull fresh code
+    # from it. We resolve local paths to absolute form so a later cwd change
+    # does not break the resync. For URLs we keep the original string.
+    recorded_source = src
+    try:
+        local_candidate = Path(src)
+        if (local_candidate / "plugin.json").is_file():
+            recorded_source = str(local_candidate.resolve())
+    except OSError:
+        pass
+    _record_install_source(pm, plugin_id, recorded_source)
+
     hot_loaded = False
     if pm is not None:
         try:
@@ -782,12 +943,49 @@ async def get_plugin_permissions(plugin_id: str, request: Request) -> dict[str, 
 
 @router.post("/{plugin_id}/_admin/reload")
 async def reload_plugin(plugin_id: str, request: Request) -> dict[str, Any]:
-    """Reload a plugin (useful after granting permissions or changing config)."""
+    """Reload a plugin and re-sync its files from the original install source.
+
+    Workflow (so the "Reload" button actually picks up source-code edits
+    without forcing the user to uninstall + reinstall):
+
+    1. ``unload_plugin`` — drops Python modules, cancels background tasks,
+       closes httpx/SQLite handles, unmounts the UI static-file route.
+       This step is mandatory on Windows, where any held file handle
+       blocks the rmtree in step 2.
+    2. ``_resync_plugin_from_source`` — if we recorded an ``install_source``
+       at install time AND it is still a valid local plugin directory,
+       re-materialise ``data/plugins/<id>`` from it using the *current*
+       dev-mode setting (symlink in dev mode, copy otherwise). This is
+       what bridges the user's edits in ``plugins/<id>`` (the source) to
+       the runtime location (``data/plugins/<id>``).
+    3. ``reload_plugin`` — re-imports the plugin module from the (now-fresh)
+       ``data/plugins/<id>`` and re-mounts the UI.
+
+    Plugins installed from URL/git URLs are NOT auto-resynced here (we do
+    not silently re-download on every reload click). Plugins installed
+    before this version was deployed have no recorded ``install_source``
+    and behave as before — for those the user still needs to uninstall +
+    reinstall once to start benefiting from auto-resync.
+    """
     _check_plugin_id(plugin_id)
     async with _plugin_op_lock:
         pm = _require_manager(request)
+        # Step 1: drop modules / handles so the source dir can be rewritten.
+        await pm.unload_plugin(plugin_id)
+        # Step 2: rebuild data/plugins/<id> from the recorded source.
+        resynced, resync_info = await _resync_plugin_from_source(pm, plugin_id)
+        # Step 3: re-import & re-mount. ``reload_plugin`` finds the manifest
+        # by scanning the on-disk dir, so the freshly-resynced files are
+        # what gets loaded.
         await pm.reload_plugin(plugin_id)
-        return {"ok": True, "data": {"plugin_id": plugin_id}}
+        return {
+            "ok": True,
+            "data": {
+                "plugin_id": plugin_id,
+                "resynced": resynced,
+                "resync_mode": resync_info if resynced else "",
+            },
+        }
 
 
 @router.get("/{plugin_id}/_admin/logs")
