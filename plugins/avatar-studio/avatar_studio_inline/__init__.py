@@ -18,4 +18,7 @@ Modules:
   parsing qwen-vl-max scene/prompt suggestions during avatar_compose.
 - :mod:`avatar_studio_inline.parallel_executor` — ``run_parallel`` for the
   multi-frame face check fan-out used by future video_reface refinements.
+- :mod:`avatar_studio_inline.oss_uploader`      — ``OssUploader`` /
+  ``OssNotConfigured`` / ``OssUploadError`` — pushes user uploads + TTS
+  output to Aliyun OSS so DashScope can fetch them via signed URL.
 """

@@ -17,3 +17,24 @@
 # user-supplied audio) keeps working. Only TTS / voice preview will
 # raise a friendly `error_kind: dependency` until you `pip install`.
 dashscope>=1.20.0
+
+# Aliyun OSS Python SDK — used by avatar_studio_inline/oss_uploader.py to
+# push user-uploaded image/video/audio (and pipeline-generated TTS audio)
+# to a bucket the user owns, then hand DashScope a *signed* HTTPS URL.
+#
+# Required because all DashScope video models (wan2.2-s2v /
+# wan2.2-animate-mix / videoretalk / wan2.2-s2v-detect) need a
+# server-side-fetchable URL — the plugin's local
+# `/api/plugins/avatar-studio/uploads/...` route does not satisfy that.
+#
+# Without `oss2` installed (or with OSS settings empty), every
+# task-creation route returns HTTP 400 with a clear "configure OSS"
+# hint, and the UI shows a yellow setup banner.
+oss2>=2.18.0
+
+# Audio metadata reader — used to compute the *actual* mp3/wav duration
+# of cosyvoice-v2 TTS output so step 6 (s2v) gets the correct
+# `duration` parameter (DashScope bills per generated second). Without
+# this we fall back to a 5-second placeholder which makes the cost
+# preview wildly inaccurate for anything longer than a one-liner.
+mutagen>=1.47.0

@@ -139,11 +139,29 @@ def emit_recorder() -> tuple[Callable[..., Any], list[tuple[str, dict[str, Any]]
 # ─── Helpers ────────────────────────────────────────────────────────────
 
 
+async def _fake_oss_upload(_path: Path, fname: str) -> str:
+    """Stand-in for the OssUploader the plugin layer normally injects.
+
+    The pipeline's TTS step *requires* a callable on
+    ``ctx.params['_oss_upload_audio']`` (otherwise it errors out with
+    "OSS not configured"). Tests don't exercise the OSS network path,
+    so we hand back a stable fake URL that satisfies the public-URL
+    validator in ``_step_prepare_assets``.
+    """
+    return f"https://oss.example.com/tts/{fname}"
+
+
 async def _make_ctx(
     tm: AvatarTaskManager, mode: str, params: dict[str, Any]
 ) -> AvatarPipelineContext:
+    # Persist only the JSON-serialisable subset (the create_task DAO
+    # json-dumps the dict). Then inject non-serialisable runtime hooks
+    # like ``_oss_upload_audio`` directly onto the in-memory context —
+    # this mirrors how plugin.py wires the real OssUploader at task-
+    # spawn time without trying to round-trip a callable through SQLite.
     task_id = await tm.create_task(mode=mode, params=params)
-    return AvatarPipelineContext(task_id=task_id, mode=mode, params=params)
+    runtime_params = {**params, "_oss_upload_audio": _fake_oss_upload}
+    return AvatarPipelineContext(task_id=task_id, mode=mode, params=runtime_params)
 
 
 _FAST_POLL = PollSchedule(
@@ -172,7 +190,7 @@ async def test_photo_speak_happy_path_passes_audio_duration_to_s2v(
         tm,
         "photo_speak",
         {
-            "assets": {"image": "tasks/x/portrait.png"},
+            "assets": {"image_url": "https://oss.example.com/x/portrait.png"},
             "text": "hello world",
             "voice_id": "longxiaochun",
             "resolution": "720P",
@@ -230,7 +248,7 @@ async def test_photo_speak_face_detect_failure_classifies_dependency(
         tm,
         "photo_speak",
         {
-            "assets": {"image": "tasks/x/portrait.png"},
+            "assets": {"image_url": "https://oss.example.com/x/portrait.png"},
             "text": "hi",
             "voice_id": "longxiaochun",
         },
@@ -267,7 +285,7 @@ async def test_video_relip_skips_face_detect_and_image_compose(
         tm,
         "video_relip",
         {
-            "assets": {"video": "tasks/x/in.mp4"},
+            "assets": {"video_url": "https://oss.example.com/x/in.mp4"},
             "text": "你好",
             "voice_id": "longxiaobai",
         },
@@ -309,8 +327,8 @@ async def test_video_reface_no_tts_no_detect(
         "video_reface",
         {
             "assets": {
-                "image": "tasks/x/actor.png",
-                "video": "tasks/x/scene.mp4",
+                "image_url": "https://oss.example.com/x/actor.png",
+                "video_url": "https://oss.example.com/x/scene.mp4",
             },
             # 5s × 0.60 = 3元 (under threshold) so no approval gate fires.
             "video_duration_sec": 5,
@@ -351,7 +369,12 @@ async def test_avatar_compose_chains_i2i_detect_s2v(
         tm,
         "avatar_compose",
         {
-            "assets": {"image": "tasks/x/portrait.png", "image_scene": "tasks/x/scene.png"},
+            "assets": {
+                "ref_images_url": [
+                    "https://oss.example.com/x/portrait.png",
+                    "https://oss.example.com/x/scene.png",
+                ],
+            },
             "text": "hi there",
             "voice_id": "longxiaochun",
             "resolution": "480P",
@@ -399,7 +422,10 @@ async def test_cost_gate_pauses_until_approved(
         tm,
         "video_reface",
         {
-            "assets": {"image": "x.png", "video": "x.mp4"},
+            "assets": {
+                "image_url": "https://oss.example.com/x.png",
+                "video_url": "https://oss.example.com/x.mp4",
+            },
             # 60s × 1.20元/s = 72元 — well over default 5元 threshold
             "video_duration_sec": 60,
             "mode_pro": True,
@@ -436,7 +462,10 @@ async def test_cost_gate_passes_when_approved(
         tm,
         "video_reface",
         {
-            "assets": {"image": "x.png", "video": "x.mp4"},
+            "assets": {
+                "image_url": "https://oss.example.com/x.png",
+                "video_url": "https://oss.example.com/x.mp4",
+            },
             "video_duration_sec": 60,
             "mode_pro": True,
         },
@@ -473,7 +502,13 @@ async def test_cancellation_mid_poll_marks_status_cancelled(
     ctx = await _make_ctx(
         tm,
         "video_reface",
-        {"assets": {"image": "x.png", "video": "x.mp4"}, "video_duration_sec": 3},
+        {
+            "assets": {
+                "image_url": "https://oss.example.com/x.png",
+                "video_url": "https://oss.example.com/x.mp4",
+            },
+            "video_duration_sec": 3,
+        },
     )
 
     async def cancel_after_first_poll() -> None:
@@ -519,7 +554,13 @@ async def test_polling_total_timeout_classifies_timeout(
     ctx = await _make_ctx(
         tm,
         "video_reface",
-        {"assets": {"image": "x.png", "video": "x.mp4"}, "video_duration_sec": 3},
+        {
+            "assets": {
+                "image_url": "https://oss.example.com/x.png",
+                "video_url": "https://oss.example.com/x.mp4",
+            },
+            "video_duration_sec": 3,
+        },
     )
     out = await run_pipeline(
         ctx,
@@ -554,7 +595,7 @@ async def test_cost_breakdown_persisted_as_json(
         tm,
         "photo_speak",
         {
-            "assets": {"image": "x.png"},
+            "assets": {"image_url": "https://oss.example.com/x.png"},
             "text": "hi",
             "voice_id": "longxiaochun",
         },
@@ -589,7 +630,11 @@ async def test_metadata_json_written_to_task_dir(
     ctx = await _make_ctx(
         tm,
         "video_relip",
-        {"assets": {"video": "x.mp4"}, "text": "hi", "voice_id": "longxiaochun"},
+        {
+            "assets": {"video_url": "https://oss.example.com/x.mp4"},
+            "text": "hi",
+            "voice_id": "longxiaochun",
+        },
     )
     await run_pipeline(
         ctx,
@@ -653,7 +698,7 @@ async def test_synth_voice_failure_propagates_kind(
         tm,
         "photo_speak",
         {
-            "assets": {"image": "x.png"},
+            "assets": {"image_url": "https://oss.example.com/x.png"},
             "text": "hi",
             "voice_id": "longxiaochun",
         },

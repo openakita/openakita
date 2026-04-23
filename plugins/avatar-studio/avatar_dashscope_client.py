@@ -64,6 +64,35 @@ from avatar_studio_inline.vendor_client import (
 logger = logging.getLogger(__name__)
 
 
+def _wrap_pcm_as_wav(
+    pcm: bytes,
+    *,
+    sample_rate: int = 22050,
+    channels: int = 1,
+    bits_per_sample: int = 16,
+) -> bytes:
+    """Prepend a minimal RIFF/WAVE header to raw little-endian PCM.
+
+    cosyvoice-v2 occasionally returns headerless PCM even when MP3 was
+    requested (depends on workspace / region). A 44-byte WAV header is
+    enough for every browser <audio> element to decode and seek, so we
+    wrap rather than reject — silent playback is much worse UX than a
+    slightly larger file.
+    """
+    import struct
+
+    byte_rate = sample_rate * channels * bits_per_sample // 8
+    block_align = channels * bits_per_sample // 8
+    data_len = len(pcm)
+    riff_len = 36 + data_len
+    header = (
+        b"RIFF" + struct.pack("<I", riff_len) + b"WAVE"
+        + b"fmt " + struct.pack("<IHHIIHH", 16, 1, channels, sample_rate, byte_rate, block_align, bits_per_sample)
+        + b"data" + struct.pack("<I", data_len)
+    )
+    return header + pcm
+
+
 # Default DashScope base URLs; set in Settings to switch region.
 DASHSCOPE_BASE_URL_BJ = "https://dashscope.aliyuncs.com"
 DASHSCOPE_BASE_URL_SG = "https://dashscope-intl.aliyuncs.com"
@@ -225,6 +254,235 @@ class AvatarDashScopeClient(BaseVendorClient):
 
     def has_api_key(self) -> bool:
         return bool(self._settings().get("api_key"))
+
+    async def ping_api_key(self, api_key: str | None = None) -> dict[str, Any]:
+        """Cheap liveness probe: hit DashScope's OpenAI-compatible models
+        endpoint and report whether the credential is actually accepted.
+
+        We deliberately bypass :meth:`request` (which adds the
+        ``X-DashScope-Async`` header and would also retry on 401) and call
+        ``httpx`` directly with a *single* attempt. ``GET /v1/models`` returns
+        the catalogue — no tokens are billed and the answer is unambiguous:
+        HTTP 200 = key valid, 401/403 = key invalid, anything else = network
+        or service trouble.
+
+        ``api_key`` lets the caller test a key that has not yet been saved
+        to disk; if omitted we test whatever ``self._settings()`` returns.
+        Returns ``{ok, status, message}``.
+        """
+        try:
+            import httpx  # local import: keeps cold-start cheap.
+        except ImportError as e:
+            return {"ok": False, "status": None, "message": f"httpx missing: {e}"}
+
+        key = (api_key if api_key is not None else self._settings().get("api_key") or "")
+        key = str(key).strip()
+        if not key:
+            return {"ok": False, "status": None, "message": "API Key is empty"}
+
+        # Pin to the OpenAI-compatible models endpoint regardless of the
+        # configured base_url — that path is stable across regions and never
+        # bills tokens. We hard-code the BJ host because the compat endpoint
+        # is only published there at the time of writing (2025-Q4); if the
+        # user is on the SG region the BJ endpoint still resolves their key
+        # because account-scoped credentials are global.
+        url = "https://dashscope.aliyuncs.com/compatible-mode/v1/models"
+        headers = {"Authorization": f"Bearer {key}"}
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(url, headers=headers)
+        except httpx.TimeoutException:
+            return {"ok": False, "status": None, "message": "请求超时（10s）"}
+        except httpx.NetworkError as e:
+            return {"ok": False, "status": None, "message": f"网络错误: {e}"}
+
+        if resp.status_code == 200:
+            return {"ok": True, "status": 200, "message": "OK"}
+        if resp.status_code in (401, 403):
+            # 401 = bad key, 403 = key valid but missing scope. Both mean
+            # the user's current credential will not work for our calls.
+            return {
+                "ok": False,
+                "status": resp.status_code,
+                "message": f"API Key 无效或权限不足 (HTTP {resp.status_code})",
+            }
+        # Anything else (5xx, 429, etc.) we can't pin on the user's key.
+        return {
+            "ok": False,
+            "status": resp.status_code,
+            "message": f"DashScope 响应异常 (HTTP {resp.status_code})",
+        }
+
+    async def probe_models(
+        self,
+        models: list[tuple[str, str]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Probe each DashScope model the plugin uses for access.
+
+        ``models`` is a list of ``(model_id, endpoint_path)`` tuples;
+        when omitted we probe every model wired up by this plugin
+        (s2v-detect, s2v, videoretalk, animate-mix, i2i, qwen-vl,
+        cosyvoice-v2).
+
+        How the probe works — there is no DashScope "describe model"
+        endpoint, so we POST a deliberately-malformed body
+        (``{"model": M, "input": {}}``) to the model's real submission
+        URL and read the HTTP status:
+
+        * **400** — DashScope reached the validator, meaning the key
+          *can* invoke this model. We map this to ``available``.
+        * **401 / 403** — credential or marketplace permission missing.
+          Mapped to ``denied`` so the UI can prompt the user to open
+          the model's marketplace page.
+        * **404** — endpoint moved or the account's region doesn't ship
+          this model. Mapped to ``denied`` with a different hint.
+        * **200** — we accidentally created a real task (very unlikely
+          with an empty input). We immediately POST cancel and report
+          ``available`` so the user is never billed by the probe.
+        * Anything else (timeout, 5xx, 429) → ``unknown``.
+
+        Probes run in parallel with a 12s wall clock each. cosyvoice-v2
+        uses the WebSocket SDK rather than HTTP, so it gets a
+        ``compatible-mode/v1/models`` lookup instead.
+        """
+        try:
+            import httpx
+        except ImportError as e:
+            return [{"model": "*", "status": "unknown", "message": f"httpx missing: {e}"}]
+
+        s = self._settings()
+        api_key = str(s.get("api_key") or "").strip()
+        if not api_key:
+            return [{"model": "*", "status": "unknown", "message": "API Key 未配置"}]
+        base_url = str(s.get("base_url") or DASHSCOPE_BASE_URL_BJ).rstrip("/")
+
+        # Default probe set covers every model the plugin actually
+        # invokes anywhere in avatar_pipeline.py — keep this in sync if
+        # a new mode is added, otherwise the Settings UI will report it
+        # as 「未知」 even when the user does have access.
+        if models is None:
+            models = [
+                (MODEL_S2V_DETECT, PATH_S2V_DETECT),
+                (MODEL_S2V, PATH_S2V_SUBMIT),
+                (MODEL_VIDEORETALK, PATH_VIDEORETALK_SUBMIT),
+                (MODEL_ANIMATE_MIX, PATH_ANIMATE_MIX_SUBMIT),
+                (MODEL_I2I, PATH_I2I_SUBMIT),
+                (MODEL_QWEN_VL, PATH_QWEN_VL),
+                (MODEL_COSYVOICE_V2, "__compat_models__"),
+            ]
+
+        async def _probe_one(
+            client: httpx.AsyncClient, model_id: str, path: str,
+        ) -> dict[str, Any]:
+            # cosyvoice-v2 uses the WebSocket SDK (no HTTP probe path).
+            # We instead look it up in the OpenAI-compat /v1/models list,
+            # which DashScope updates when an account gets activated for
+            # speech models.
+            if path == "__compat_models__":
+                try:
+                    r = await client.get(
+                        f"{base_url}/compatible-mode/v1/models",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                    )
+                except (httpx.TimeoutException, httpx.NetworkError) as e:
+                    return {"model": model_id, "status": "unknown", "http": None,
+                            "message": f"网络错误: {e!s}"}
+                if r.status_code in (401, 403):
+                    return {"model": model_id, "status": "denied", "http": r.status_code,
+                            "message": "未授权访问 compatible-mode/models"}
+                if r.status_code != 200:
+                    return {"model": model_id, "status": "unknown", "http": r.status_code,
+                            "message": f"HTTP {r.status_code}"}
+                try:
+                    body = r.json()
+                except ValueError:
+                    body = {}
+                ids = []
+                for item in (body.get("data") or []):
+                    if isinstance(item, dict) and item.get("id"):
+                        ids.append(str(item["id"]))
+                hit = any(model_id in i for i in ids)
+                return {
+                    "model": model_id,
+                    "status": "available" if hit else "unknown",
+                    "http": 200,
+                    "message": "在 /v1/models 列表中找到" if hit
+                               else "未在 /v1/models 列表中找到（可能仍可用——DashScope 不会列出所有 WebSocket 模型）",
+                }
+
+            url = f"{base_url}{path}"
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "X-DashScope-Async": "enable",
+            }
+            body = {"model": model_id, "input": {}}
+            try:
+                r = await client.post(url, headers=headers, json=body)
+            except httpx.TimeoutException:
+                return {"model": model_id, "status": "unknown", "http": None,
+                        "message": "请求超时"}
+            except httpx.NetworkError as e:
+                return {"model": model_id, "status": "unknown", "http": None,
+                        "message": f"网络错误: {e!s}"}
+            code = r.status_code
+            try:
+                payload = r.json()
+            except ValueError:
+                payload = {}
+            err_code = str(payload.get("code") or "")
+            err_msg = str(payload.get("message") or "")[:160]
+            if code == 200:
+                # We accidentally got a task back — cancel it so the
+                # user is never billed by the probe.
+                tid = ""
+                out = payload.get("output") if isinstance(payload, dict) else None
+                if isinstance(out, dict):
+                    tid = str(out.get("task_id") or "")
+                if tid:
+                    try:
+                        await client.post(
+                            f"{base_url}{PATH_TASK_CANCEL.format(id=tid)}",
+                            headers=headers,
+                        )
+                    except (httpx.TimeoutException, httpx.NetworkError):
+                        pass
+                return {"model": model_id, "status": "available", "http": 200,
+                        "message": "可用（探测时意外创建了任务，已自动取消）"}
+            if code == 400:
+                # The interesting case: DashScope reached its parameter
+                # validator, which means the key *can* invoke this
+                # endpoint — the request just wouldn't have been a real
+                # one. That's exactly what we want to know.
+                return {"model": model_id, "status": "available", "http": 400,
+                        "message": err_msg or "可用（参数校验拒绝了空输入，符合预期）"}
+            if code in (401, 403):
+                return {"model": model_id, "status": "denied", "http": code,
+                        "message": err_msg or f"未授权 (HTTP {code})；请到百炼控制台开通该模型"}
+            if code == 404:
+                return {"model": model_id, "status": "denied", "http": 404,
+                        "message": err_msg or "该地域/账号下未提供此模型 (HTTP 404)"}
+            if code == 429:
+                # We probably hit a rate limit — the key is valid but we
+                # can't tell about the model. Don't mis-classify.
+                return {"model": model_id, "status": "unknown", "http": 429,
+                        "message": err_msg or "限流，请稍后重试 (HTTP 429)"}
+            return {"model": model_id, "status": "unknown", "http": code,
+                    "message": err_msg or f"未知响应 (HTTP {code} {err_code})"}
+
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            results = await asyncio.gather(
+                *[_probe_one(client, m, p) for m, p in models],
+                return_exceptions=True,
+            )
+        out: list[dict[str, Any]] = []
+        for (m, _p), res in zip(models, results, strict=True):
+            if isinstance(res, BaseException):
+                out.append({"model": m, "status": "unknown", "http": None,
+                            "message": f"探测异常: {res!s}"})
+            else:
+                out.append(res)
+        return out
 
     # ── cancellation ──────────────────────────────────────────────────
 
@@ -449,15 +707,47 @@ class AvatarDashScopeClient(BaseVendorClient):
         # to follow Pixelle A10 (read settings on every call, never cache).
         dashscope.api_key = api_key
 
-        fmt_const = getattr(AudioFormat, f"{format.upper()}_24000HZ_MONO_16BIT", None)
-        synth = SpeechSynthesizer(model=MODEL_COSYVOICE_V2, voice=voice_id)
-        # The SDK is sync; offload to a thread.
+        # Pick a real ``AudioFormat`` constant. Two prior bugs collided here:
+        #   1. ``MP3_24000HZ_MONO_16BIT`` does NOT exist — MP3 is bitrate-
+        #      indexed, e.g. ``MP3_22050HZ_MONO_256KBPS``. ``getattr(...,
+        #      None)`` therefore *always* returned None, so the fallback
+        #      branch ran and we synthesised with ``AudioFormat.DEFAULT``.
+        #   2. ``format=`` is a constructor argument; ``call()`` only takes
+        #      ``(text, timeout_millis)``. Passing it to ``call()`` would
+        #      either raise TypeError or be silently dropped depending on
+        #      the SDK minor version. Either way it had no effect.
+        # Net effect of (1)+(2): the SDK returned raw PCM bytes (the
+        # default codec) which we wrote to a ``.mp3`` file — the browser
+        # then refused to decode, giving the 0:00/0:00 progress bar.
+        fmt_candidates = {
+            "mp3": ("MP3_22050HZ_MONO_256KBPS", "MP3_24000HZ_MONO_256KBPS",
+                    "MP3_44100HZ_MONO_256KBPS", "MP3_16000HZ_MONO_128KBPS"),
+            "wav": ("WAV_22050HZ_MONO_16BIT", "WAV_24000HZ_MONO_16BIT",
+                    "WAV_16000HZ_MONO_16BIT"),
+            "pcm": ("PCM_22050HZ_MONO_16BIT", "PCM_24000HZ_MONO_16BIT"),
+        }
+        fmt_const = None
+        for name in fmt_candidates.get(format.lower(), ()):
+            fmt_const = getattr(AudioFormat, name, None)
+            if fmt_const is not None:
+                break
+        if fmt_const is None:
+            # SDK shipped without any expected constant; fall back to the
+            # SDK's own DEFAULT and *force* the file extension to .bin so
+            # we never lie about the codec to the browser later on.
+            fmt_const = getattr(AudioFormat, "DEFAULT", None)
+            actual_ext = "bin"
+        else:
+            actual_ext = format.lower()
+
+        synth = SpeechSynthesizer(
+            model=MODEL_COSYVOICE_V2,
+            voice=voice_id,
+            format=fmt_const,  # MUST go on the constructor — `.call()` ignores it.
+        )
         loop = asyncio.get_running_loop()
         try:
-            audio_bytes = await loop.run_in_executor(
-                None,
-                lambda: synth.call(text, format=fmt_const) if fmt_const else synth.call(text),
-            )
+            audio_bytes = await loop.run_in_executor(None, lambda: synth.call(text))
         except Exception as e:  # noqa: BLE001
             raise VendorError(
                 f"cosyvoice-v2 synth failed: {e}",
@@ -471,13 +761,160 @@ class AvatarDashScopeClient(BaseVendorClient):
                 retryable=False,
                 kind=ERROR_KIND_DEPENDENCY,
             )
+
+        # Unconditional diagnostic log so we can tell, post-hoc, exactly
+        # what the SDK actually returned for any given preview click —
+        # critical for debugging the "0:00/0:00 silent player" class of
+        # bug where the file lands on disk but the browser refuses it.
+        head = audio_bytes[:16]
+        head_hex = head.hex(" ")
+        logger.info(
+            "cosyvoice-v2 returned %d bytes for voice=%s fmt=%s magic=[%s]",
+            len(audio_bytes), voice_id,
+            getattr(fmt_const, "name", str(fmt_const)),
+            head_hex,
+        )
+
+        # Detect the *actual* container we got, regardless of what we asked
+        # for. This auto-corrects the file extension when the SDK ignores
+        # our format request (which is the most common "silent player"
+        # failure mode in production).
+        detected: str | None = None
+        if head.startswith(b"ID3") or (len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0):
+            detected = "mp3"
+        elif head.startswith(b"RIFF") and audio_bytes[8:12] == b"WAVE":
+            detected = "wav"
+        elif head.startswith(b"OggS"):
+            detected = "ogg"
+        elif head.startswith(b"fLaC"):
+            detected = "flac"
+
+        if detected is None:
+            # Almost certainly raw PCM (16-bit signed mono @ 22050Hz is the
+            # cosyvoice-v2 default). Wrap it in a minimal WAV header so the
+            # browser can decode it natively — far better UX than handing
+            # the user a .bin they can't play.
+            sample_rate, channels, bits = 22050, 1, 16
+            try:
+                # Use the AudioFormat enum tuple if we asked for PCM; fall
+                # back to the cosyvoice-v2 default (22050/mono/16) otherwise.
+                tup = getattr(fmt_const, "value", None)
+                if isinstance(tup, tuple) and len(tup) >= 4 and tup[0] == "pcm":
+                    sample_rate, channels = int(tup[1]), 1
+                    bits = int(tup[3])
+            except (TypeError, ValueError):
+                pass
+            audio_bytes = _wrap_pcm_as_wav(
+                audio_bytes, sample_rate=sample_rate, channels=channels, bits_per_sample=bits,
+            )
+            detected = "wav"
+            logger.warning(
+                "cosyvoice-v2 returned headerless audio (%d bytes); "
+                "wrapped as WAV %dHz mono %dbit so the browser can play it",
+                len(audio_bytes), sample_rate, bits,
+            )
+
         return {
             "audio_bytes": audio_bytes,
-            "format": format,
+            "format": detected,
             # Caller computes the precise duration after writing the file
             # (mp3 frame counting); here we return None so we never bluff.
             "duration_sec": None,
         }
+
+    async def clone_voice(
+        self,
+        *,
+        sample_url: str,
+        prefix: str = "avatar",
+        language: str = "zh",
+    ) -> dict[str, Any]:
+        """Train a custom cosyvoice-v2 voice from a single sample URL.
+
+        Returns ``{"voice_id": <str>, "request_id": <str|None>}``.
+
+        Implementation notes
+        --------------------
+
+        * Uses ``dashscope.audio.tts_v2.VoiceEnrollmentService.create_voice``
+          (the only documented path for cosyvoice clone — there is no
+          REST endpoint for it).  The SDK call is **synchronous**, so we
+          run it in a worker thread to keep the FastAPI loop responsive.
+        * ``url`` MUST be publicly fetchable by Aliyun — i.e. an OSS
+          signed URL minted by ``OssUploader``. A local
+          ``/api/plugins/...`` URL will fail at the DashScope side with
+          a opaque "url unreachable" error.
+        * ``prefix`` becomes part of the returned voice id; we hard-code
+          a short fixed prefix ("avatar") because the user-supplied
+          label is free-form Chinese which the SDK rejects.
+        """
+        try:
+            import dashscope  # type: ignore[import-not-found]
+            from dashscope.audio.tts_v2 import (  # type: ignore[import-not-found]
+                VoiceEnrollmentService,
+            )
+        except ImportError as e:  # pragma: no cover
+            raise VendorError(
+                "未安装 cosyvoice-v2 所需的 dashscope SDK；"
+                "请到插件目录运行 pip install dashscope",
+                status=500,
+                retryable=False,
+                kind="dependency",
+            ) from e
+
+        api_key = self._read_settings().get("api_key") or ""
+        if not api_key:
+            raise VendorError(
+                "DashScope API Key 未配置；无法克隆音色",
+                status=400,
+                retryable=False,
+                kind="auth",
+            )
+        if not sample_url:
+            raise VendorError(
+                "clone_voice requires sample_url (an OSS signed URL)",
+                status=422,
+                retryable=False,
+                kind="client",
+            )
+        # Set the SDK-global key (the SDK has no per-call api_key kwarg
+        # on this service). Setting it on every call costs nothing and
+        # also makes hot-rotation work without a process restart.
+        dashscope.api_key = api_key
+
+        def _sync() -> tuple[str, str | None]:
+            svc = VoiceEnrollmentService()
+            vid = svc.create_voice(
+                target_model=MODEL_COSYVOICE_V2,
+                prefix=str(prefix)[:10] or "avatar",
+                url=sample_url,
+                language_hints=[language] if language else None,
+            )
+            try:
+                req_id = svc.get_last_request_id()
+            except Exception:  # noqa: BLE001
+                req_id = None
+            return str(vid), req_id
+
+        try:
+            voice_id, req_id = await asyncio.to_thread(_sync)
+        except VendorError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise VendorError(
+                f"VoiceEnrollmentService.create_voice failed: {e}",
+                status=500,
+                retryable=True,
+                kind=_classify_dashscope_body({}, ERROR_KIND_SERVER),
+            ) from e
+        if not voice_id:
+            raise VendorError(
+                "VoiceEnrollmentService returned an empty voice_id",
+                status=500,
+                retryable=True,
+                kind=ERROR_KIND_SERVER,
+            )
+        return {"voice_id": voice_id, "request_id": req_id}
 
     async def caption_with_qwen_vl(
         self,

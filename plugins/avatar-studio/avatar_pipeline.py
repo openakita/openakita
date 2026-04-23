@@ -69,7 +69,6 @@ from avatar_models import (
     estimate_cost,
     hint_for,
 )
-from avatar_studio_inline.upload_preview import build_preview_url
 from avatar_studio_inline.vendor_client import VendorError
 from avatar_task_manager import AvatarTaskManager
 
@@ -278,54 +277,106 @@ async def _step_estimate_cost(
 
 async def _step_prepare_assets(
     ctx: AvatarPipelineContext,
-    plugin_id: str,
+    plugin_id: str,  # noqa: ARG001 - kept for symmetry with other steps
     client: AvatarDashScopeClient,
     tm: AvatarTaskManager,
     emit: EmitFn,
 ) -> None:
     """Materialise every required asset into ``asset_urls``.
 
-    Inputs are expected to already live under the plugin data dir (the
-    upload route persisted them and stored the relative path in
-    ``ctx.params['assets'][kind]``). This step:
+    The UI's ``buildPayload`` (ui/dist/index.html) populates
+    ``params['assets']`` with **already-public URLs** (Aliyun OSS signed
+    HTTPS) keyed by the same names DashScope expects:
 
-    1. Resolves each kind → absolute path → preview URL.
-    2. For modes that need it, runs ``client.face_detect`` on the portrait
-       so we fail fast (saves the s2v unit charge — Pixelle "fail-fast on
-       expensive remote calls").
+      ``image_url``        — single image (photo_speak, video_reface,
+                              first ref for avatar_compose)
+      ``video_url``        — source video (video_relip, video_reface)
+      ``audio_url``        — pre-recorded audio (any mode that skips TTS)
+      ``ref_images_url``   — list[str], 1..3 (avatar_compose)
+
+    We do NOT re-wrap these with ``build_preview_url`` — that would
+    double-prefix them with ``/api/plugins/...`` and produce an
+    unreachable garbage URL.  Instead we validate they look public
+    (start with ``https://``) and surface a clear 422 if a local
+    ``/api/...`` path leaked through (which means OSS upload at
+    ``POST /upload`` time silently fell back to the local URL — the
+    user needs to fix Settings → OSS).
+
+    Per-mode validation lives here too so we fail BEFORE running the
+    expensive ``face_detect`` / ``submit_*`` calls (Pixelle "fail-fast
+    on expensive remote calls").
     """
     raw_assets = ctx.params.get("assets") or {}
     if not isinstance(raw_assets, dict):
         raise VendorError(
-            "params.assets must be a dict {kind: relative_path}",
+            "params.assets must be a dict {url_kind: public_url}",
             status=422,
             retryable=False,
             kind="client",
         )
 
-    for kind, rel in raw_assets.items():
-        if not rel:
+    # Copy verbatim (lists too — ref_images_url is a list[str]) under the
+    # same key names so step 6 can read ctx.asset_urls["image_url"] etc.
+    for kind, val in raw_assets.items():
+        if val is None or val == "":
             continue
-        rel_str = str(rel).replace("\\", "/").lstrip("/")
-        ctx.asset_paths[kind] = Path(rel_str)
-        ctx.asset_urls[kind] = build_preview_url(plugin_id, rel_str)
+        if isinstance(val, list):
+            cleaned = [str(v).strip() for v in val if str(v or "").strip()]
+            if cleaned:
+                ctx.asset_urls[kind] = cleaned  # type: ignore[assignment]
+        else:
+            ctx.asset_urls[kind] = str(val).strip()
 
-    # Modes that ultimately drive s2v need a humanoid pre-check on the
-    # portrait. ``avatar_compose`` runs the check AFTER step 5 because the
-    # composed image is what feeds s2v, not the raw inputs.
-    if ctx.mode == "photo_speak":
-        if "image" not in ctx.asset_urls:
+    # Reject any URL DashScope can't fetch — `/api/...` is local-only,
+    # `data:` is currently unused but worth blocking until we actually
+    # wire base64 fallback. The hint deliberately points at OSS Settings
+    # because that's the *only* reason a value would still be a local
+    # URL after POST /upload (it falls back when OSS is not configured).
+    for kind, val in list(ctx.asset_urls.items()):
+        urls = val if isinstance(val, list) else [val]
+        for u in urls:
+            u_low = (u or "").lower()
+            if u_low.startswith(("/api/", "/")) and not u_low.startswith(("//", "/data:")):
+                raise VendorError(
+                    f"asset {kind!r} is a local URL ({u!r}); "
+                    "DashScope cannot fetch it. Open Settings → OSS and "
+                    "fill in endpoint/bucket/key/secret, then re-upload.",
+                    status=422,
+                    retryable=False,
+                    kind="client",
+                )
+
+    # Per-mode required-input gate. Names match what UI buildPayload
+    # actually emits; if you add a new mode, add its required keys here
+    # too — silent drop-throughs is what got us into this audit in the
+    # first place.
+    required: dict[str, list[str]] = {
+        "photo_speak": ["image_url"],
+        "video_relip": ["video_url"],
+        "video_reface": ["image_url", "video_url"],
+        "avatar_compose": ["ref_images_url"],
+    }
+    for need in required.get(ctx.mode, []):
+        if need not in ctx.asset_urls:
             raise VendorError(
-                "photo_speak requires an 'image' asset",
+                f"{ctx.mode} requires asset '{need}' (not provided by UI)",
                 status=422,
                 retryable=False,
                 kind="client",
             )
-        await client.face_detect(ctx.asset_urls["image"])
+
+    # Modes that ultimately drive s2v need a humanoid pre-check on the
+    # portrait. ``avatar_compose`` runs the check AFTER step 5 because
+    # the composed image is what feeds s2v, not the raw inputs.
+    if ctx.mode == "photo_speak":
+        await client.face_detect(str(ctx.asset_urls["image_url"]))
 
     await tm.update_task_safe(
         ctx.task_id,
-        asset_paths_json={k: str(v) for k, v in ctx.asset_paths.items()},
+        asset_paths_json={
+            k: (v if isinstance(v, str) else ",".join(v))
+            for k, v in ctx.asset_urls.items()
+        },
     )
     await _emit(emit, "task_update", _ctx_payload(ctx, progress=15))
 
@@ -335,7 +386,7 @@ async def _step_prepare_assets(
 
 async def _step_tts_synth(
     ctx: AvatarPipelineContext,
-    plugin_id: str,
+    plugin_id: str,  # noqa: ARG001 - kept for symmetry; OSS provides public URL
     client: AvatarDashScopeClient,
     tm: AvatarTaskManager,
     emit: EmitFn,
@@ -346,7 +397,7 @@ async def _step_tts_synth(
 
     # Mode 3 (video_reface) doesn't always need TTS; modes 1/2/4 typically
     # do but the user MAY have uploaded an audio asset instead.
-    if "audio" in ctx.asset_urls:
+    if "audio_url" in ctx.asset_urls:
         # Real audio uploaded — skip TTS entirely; the upload handler is
         # expected to have populated params['audio_duration_sec'].
         ctx.tts_audio_duration_sec = _safe_float(ctx.params.get("audio_duration_sec"))
@@ -367,13 +418,49 @@ async def _step_tts_synth(
             kind="client",
         )
 
+    # ── Synth ───────────────────────────────────────────────────────
     res = await client.synth_voice(text=text, voice_id=str(voice_id))
-    audio_path = ctx.task_dir / "audio.mp3"
-    audio_path.write_bytes(res["audio_bytes"])
-    ctx.tts_audio_path = audio_path
-    rel = _rel_to_data_dir(audio_path, plugin_id)
-    ctx.asset_urls["audio"] = build_preview_url(plugin_id, rel)
+    actual_format = str(res.get("format") or "mp3").lower()
+    audio_bytes = res["audio_bytes"]
 
+    # ── Persist locally with the *actual* container's extension ────
+    # Two prior bugs cohabitated the old ``audio.mp3`` line:
+    #   (a) the file lived under ``tasks/{tid}/`` but the upload-preview
+    #       route was scoped to ``uploads/`` only — so the URL we built
+    #       returned 404, and DashScope (which would have fetched it)
+    #       would have failed too.
+    #   (b) the extension was always ``.mp3`` even when synth_voice
+    #       returned WAV-wrapped PCM (its raw-PCM fallback) — so the
+    #       browser's <audio> tag silently refused to decode.
+    # Fix: write under ``uploads/audios/`` with the real extension; the
+    # local URL is only used for the preview row in metadata.json — the
+    # *actual* URL handed to DashScope is the OSS one we sign below.
+    audios_dir = (ctx.task_dir.parent.parent / "uploads" / "audios")
+    audios_dir.mkdir(parents=True, exist_ok=True)
+    fname = f"tts_{ctx.task_id}.{actual_format}"
+    audio_path = audios_dir / fname
+    audio_path.write_bytes(audio_bytes)
+    ctx.tts_audio_path = audio_path
+
+    # ── Hand DashScope a public URL ─────────────────────────────────
+    # Pipeline doesn't import OssUploader directly — that would cross
+    # the layering. Instead the plugin layer pre-stuffed an uploader
+    # into ``ctx.params['_oss_upload_audio']`` (a coroutine factory)
+    # whenever OSS is configured. If it's missing we fail early with a
+    # clear message rather than handing DashScope an unreachable URL.
+    upload_fn = ctx.params.get("_oss_upload_audio")
+    if not callable(upload_fn):
+        raise VendorError(
+            "TTS audio cannot be sent to DashScope without OSS configured. "
+            "Open Settings → OSS and fill in the four fields.",
+            status=400,
+            retryable=False,
+            kind="client",
+        )
+    audio_public_url = await upload_fn(audio_path, fname)
+    ctx.asset_urls["audio_url"] = audio_public_url
+
+    # ── Compute real duration so step 6 / cost gate are accurate ────
     if get_audio_duration is not None:
         dur = get_audio_duration(audio_path)
         if asyncio.iscoroutine(dur):
@@ -402,7 +489,19 @@ async def _step_image_compose(
     if ctx.mode != "avatar_compose":
         return
 
-    refs = [u for k, u in ctx.asset_urls.items() if k.startswith("image")]
+    # ``ref_images_url`` is the canonical name (matches the UI's
+    # buildPayload + the wan2.5-i2i-preview body field). Fall back to a
+    # single ``image_url`` so a manual API caller can pass one image
+    # without having to wrap it in a list.
+    ref_val = ctx.asset_urls.get("ref_images_url")
+    if isinstance(ref_val, list):
+        refs = [str(u) for u in ref_val if u]
+    elif ref_val:
+        refs = [str(ref_val)]
+    else:
+        single = str(ctx.asset_urls.get("image_url") or "").strip()
+        refs = [single] if single else []
+
     prompt = (ctx.params.get("compose_prompt") or "").strip()
     if not prompt:
         # Fallback prompt — keeps the call legal even if the user did not
@@ -411,7 +510,7 @@ async def _step_image_compose(
         prompt = "把人物自然地融合到场景中，保留人物的面部特征"
     if not refs:
         raise VendorError(
-            "avatar_compose requires at least one image asset",
+            "avatar_compose requires at least one image asset (ref_images_url)",
             status=422,
             retryable=False,
             kind="client",
@@ -438,9 +537,11 @@ async def _step_image_compose(
             kind="server",
         )
     # Persist the composed URL only — we don't proxy-download the bytes
-    # because s2v can fetch the DashScope CDN URL directly.
+    # because s2v can fetch the DashScope CDN URL directly. Stored under
+    # the ``composed_image_url`` key (matches the dashscope field naming
+    # used by step 6) so a single rename never desyncs.
     ctx.composed_image_url = composed_url
-    ctx.asset_urls["composed_image"] = composed_url
+    ctx.asset_urls["composed_image_url"] = composed_url
 
     # Now face-detect the composed image (Pixelle "fail-fast on expensive
     # remote calls" — s2v charges per second, detect is per-image).
@@ -448,8 +549,11 @@ async def _step_image_compose(
     await tm.update_task_safe(
         ctx.task_id,
         asset_paths_json={
-            **{k: str(v) for k, v in ctx.asset_paths.items()},
-            "composed_image": composed_url,
+            **{
+                k: (v if isinstance(v, str) else ",".join(v))
+                for k, v in ctx.asset_urls.items()
+            },
+            "composed_image_url": composed_url,
         },
     )
     await _emit(emit, "task_update", _ctx_payload(ctx, progress=55))
@@ -465,40 +569,54 @@ async def _step_video_synth(
     emit: EmitFn,
     poll: PollSchedule,
 ) -> None:
+    # All keys are the post-fix names from _step_prepare_assets — see
+    # the docstring there for the UI contract. The cast to ``str`` is
+    # defensive: ``ref_images_url`` is the only list-valued asset, and
+    # the video pipeline never reads it directly (it's consumed in
+    # step 5 by image_compose), so anything we read here MUST be a str.
+    image_url = str(ctx.asset_urls.get("image_url") or "")
+    video_url = str(ctx.asset_urls.get("video_url") or "")
+    audio_url = str(ctx.asset_urls.get("audio_url") or "")
+
     if ctx.mode == "photo_speak":
         ctx.dashscope_endpoint = MODEL_S2V
         ctx.dashscope_id = await client.submit_s2v(
-            image_url=ctx.asset_urls["image"],
-            audio_url=ctx.asset_urls["audio"],
+            image_url=image_url,
+            audio_url=audio_url,
             resolution=str(ctx.params.get("resolution") or "480P"),
             duration=ctx.tts_audio_duration_sec,
         )
     elif ctx.mode == "video_relip":
         ctx.dashscope_endpoint = MODEL_VIDEORETALK
         ctx.dashscope_id = await client.submit_videoretalk(
-            video_url=ctx.asset_urls["video"],
-            audio_url=ctx.asset_urls["audio"],
+            video_url=video_url,
+            audio_url=audio_url,
         )
     elif ctx.mode == "video_reface":
         ctx.dashscope_endpoint = MODEL_ANIMATE_MIX
         ctx.dashscope_id = await client.submit_animate_mix(
-            image_url=ctx.asset_urls["image"],
-            video_url=ctx.asset_urls["video"],
+            image_url=image_url,
+            video_url=video_url,
             mode_pro=bool(ctx.params.get("mode_pro")),
             watermark=bool(ctx.params.get("watermark")),
         )
     elif ctx.mode == "avatar_compose":
         ctx.dashscope_endpoint = MODEL_S2V
-        composed = ctx.composed_image_url or ctx.asset_urls.get("composed_image")
+        # Step 5 stored the composed portrait under both
+        # ``ctx.composed_image_url`` AND ``asset_urls["composed_image_url"]``
+        # for downstream symmetry with the other modes.
+        composed = ctx.composed_image_url or str(
+            ctx.asset_urls.get("composed_image_url") or ""
+        )
         if not composed:
             raise VendorError(
-                "avatar_compose video_synth missing composed_image",
+                "avatar_compose video_synth missing composed_image_url",
                 retryable=False,
                 kind="server",
             )
         ctx.dashscope_id = await client.submit_s2v(
             image_url=composed,
-            audio_url=ctx.asset_urls["audio"],
+            audio_url=audio_url,
             resolution=str(ctx.params.get("resolution") or "480P"),
             duration=ctx.tts_audio_duration_sec,
         )
@@ -533,18 +651,47 @@ async def _step_video_synth(
 
 async def _step_finalize(
     ctx: AvatarPipelineContext,
-    plugin_id: str,
+    plugin_id: str,  # noqa: ARG001 - kept for symmetry with other steps
     tm: AvatarTaskManager,
     emit: EmitFn,
 ) -> None:
-    # We DON'T proxy-download the bytes by default — the DashScope CDN URL
-    # works fine in <video> tags. ``output_path`` is only set if the
-    # plugin's settings opted into local archival (left to the plugin
-    # layer). Here we just persist the URL.
+    # DashScope CDN URLs expire after ~24 hours. The earlier version of
+    # this step only persisted ``output_url``, which made every task
+    # 「broken video」 the next morning. Now we eagerly download the
+    # bytes into ``ctx.task_dir`` and store BOTH the local path and the
+    # CDN URL — the UI prefers the CDN URL while it's still warm and
+    # falls back to the local copy after expiry.
+    #
+    # Filename comes from the URL when possible (so an mp4/png/jpg
+    # extension survives), otherwise we infer from ``output_kind`` set
+    # by ``_extract_output_url`` upstream.
+    output_local: Path | None = None
+    if ctx.output_url:
+        try:
+            output_local = await _download_output(ctx)
+        except Exception as e:  # noqa: BLE001
+            # Don't fail the task just because archival broke — surface
+            # a warning in metadata so the UI can show a "未本地归档"
+            # badge but keep the succeeded status.
+            logger.warning(
+                "avatar-studio: archive download failed for task %s: %s",
+                ctx.task_id, e,
+            )
+    if output_local is not None:
+        ctx.output_path = output_local
+
+    # ``ctx.params`` may contain non-serialisable runtime hooks (e.g.
+    # the ``_oss_upload_audio`` callable injected by the plugin layer).
+    # Strip private/underscored keys before persisting metadata so a
+    # function reference doesn't crash the json.dumps below.
+    persistable_params = {
+        k: v for k, v in ctx.params.items()
+        if not (isinstance(k, str) and k.startswith("_"))
+    }
     metadata = {
         "task_id": ctx.task_id,
         "mode": ctx.mode,
-        "params": ctx.params,
+        "params": persistable_params,
         "asset_urls": ctx.asset_urls,
         "tts_audio_duration_sec": ctx.tts_audio_duration_sec,
         "video_duration_sec": ctx.video_duration_sec,
@@ -552,6 +699,7 @@ async def _step_finalize(
         "dashscope_id": ctx.dashscope_id,
         "dashscope_endpoint": ctx.dashscope_endpoint,
         "output_url": ctx.output_url,
+        "output_path": str(ctx.output_path) if ctx.output_path else None,
         "elapsed_sec": round(time.time() - ctx.started_at, 2),
     }
     (ctx.task_dir / "metadata.json").write_text(
@@ -562,10 +710,51 @@ async def _step_finalize(
         ctx.task_id,
         status="succeeded",
         output_url=ctx.output_url,
+        output_path=str(ctx.output_path) if ctx.output_path else None,
         video_duration_sec=ctx.video_duration_sec,
         completed_at=time.time(),
     )
     await _emit(emit, "task_update", _ctx_payload(ctx, progress=100))
+
+
+async def _download_output(ctx: AvatarPipelineContext) -> Path:
+    """Pull the DashScope CDN URL into ``ctx.task_dir`` for offline replay.
+
+    Uses ``httpx`` (already a project dep via vendor_client) with a 90-
+    second timeout — generated videos are typically < 10 MB, so this is
+    plenty.  Raises on non-200 so the caller logs and moves on without
+    blocking task completion.
+    """
+    import httpx  # local import keeps the pipeline module light
+
+    url = str(ctx.output_url or "")
+    if not url:
+        raise ValueError("no output_url to download")
+
+    # Pick the extension from the URL (works for the standard
+    # `.../output.mp4?Expires=...` shape DashScope uses) before falling
+    # back to a generic .bin so the file at least exists somewhere.
+    name = url.split("?", 1)[0].rsplit("/", 1)[-1] or "output.bin"
+    if "." not in name:
+        name = name + ".mp4"
+    target = ctx.task_dir / name
+
+    # Short connect timeout (5 s) keeps test runs and "DashScope CDN
+    # is throttling us today" scenarios from blocking the entire
+    # pipeline for the full 90 s read window — once the TCP handshake
+    # succeeds we still allow the full 90 s for the download itself.
+    timeout = httpx.Timeout(connect=5.0, read=90.0, write=10.0, pool=5.0)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as cli:
+        resp = await cli.get(url)
+        if resp.status_code != 200:
+            raise VendorError(
+                f"output download failed: {resp.status_code}",
+                status=resp.status_code,
+                retryable=False,
+                kind="server",
+            )
+        target.write_bytes(resp.content)
+    return target
 
 
 # ─── Step 8 · handle_exception ────────────────────────────────────────

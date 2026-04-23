@@ -386,8 +386,111 @@
     .lib-card__sub { font-size: 11px; color: var(--text-muted); }
     .lib-card__media { display: flex; align-items: center; gap: 6px; }
     .lib-card__media audio { height: 28px; flex: 1; min-width: 0; }
+    /* Voice-card preview slot — fixed height so the preview button below
+       never moves when state flips between empty / loading / audio. */
+    .voice-media {
+      min-height: 40px;
+      display: flex; align-items: center; justify-content: center;
+      padding: 4px 6px;
+      border-radius: 6px;
+      background: var(--bg-soft, #f8fafc);
+      border: 1px dashed var(--border);
+    }
+    .voice-media audio { width: 100%; height: 32px; }
+    .voice-media__empty {
+      font-size: 11px; color: var(--text-muted); line-height: 1.3;
+      text-align: center;
+    }
+    .voice-media__busy {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 12px; color: var(--text);
+    }
+    /* Preview action — colour + icon + 1 row, instead of the cramped
+       generic .btn-sm that used to render two near-identical loaders. */
+    .voice-play-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      gap: 6px; width: 100%; padding: 7px 12px;
+      border-radius: 6px; border: 1px solid transparent;
+      font-size: 12.5px; font-weight: 500; cursor: pointer;
+      color: #fff;
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+      transition: filter .15s, transform .15s, box-shadow .15s;
+      box-shadow: 0 1px 2px rgba(99,102,241,.25);
+    }
+    .voice-play-btn:hover:not(:disabled) {
+      filter: brightness(1.05);
+      transform: translateY(-1px);
+      box-shadow: 0 3px 8px rgba(99,102,241,.30);
+    }
+    .voice-play-btn:active:not(:disabled) { transform: translateY(0); }
+    .voice-play-btn:disabled { opacity: .65; cursor: progress; }
+    .voice-play-btn.is-disabled {
+      background: var(--bg-soft, #f1f5f9);
+      color: var(--text-muted);
+      border-color: var(--border);
+      box-shadow: none; cursor: not-allowed;
+    }
+    .voice-play-btn .oa-icon { display: inline-flex; align-items: center; }
     .lib-card img.fig-thumb {
       width: 100%; aspect-ratio: 1/1; object-fit: cover; border-radius: 6px; background: #000;
+      display: block;
+    }
+    /* Wrapper exists so the absolute-positioned overlay can target the
+       image's own box (1:1 ratio) instead of the entire card — that
+       keeps the title/tag/trash row below the overlay, not under it. */
+    .fig-thumb-wrap { position: relative; border-radius: 6px; overflow: hidden; }
+    .lib-card.is-pending .fig-thumb { filter: grayscale(.85) brightness(.78); }
+    .fig-overlay {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 6px;
+      background: rgba(15, 23, 42, .35);
+      color: #fff;
+      font-size: 12px; font-weight: 500;
+      letter-spacing: .02em;
+      pointer-events: none; /* trash icon sits in the row below — overlay
+                               must not steal its click target. */
+    }
+    .fig-overlay__text { text-shadow: 0 1px 2px rgba(0,0,0,.4); }
+    /* White spinner for use on top of the gray overlay — the default
+       .spinner-sm picks up --primary which can be invisible on a dark tint. */
+    .spinner-sm.spinner-light {
+      border-color: rgba(255,255,255,.35);
+      border-top-color: #fff;
+    }
+    /* Amber tag for the 'skipped' (= no API key at upload) verdict, so
+       it visually differs from the red 'fail' tag — the user action is
+       different too (configure key vs. swap photo). */
+    .tag-amber { background: rgba(245,158,11,.15); color: #f59e0b; }
+    /* ── Settings → 模型可用性检测 mini-table ── */
+    .probe-table { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+    .probe-row {
+      display: grid; grid-template-columns: 110px 1fr 90px;
+      gap: 8px; align-items: center;
+      padding: 8px 10px; font-size: 12px;
+      border-top: 1px solid var(--border);
+    }
+    .probe-row:first-child { border-top: none; }
+    .probe-row--head {
+      background: var(--bg-soft, #f8fafc);
+      font-weight: 600; color: var(--text-muted);
+    }
+    .probe-mode { font-weight: 500; color: var(--text); }
+    .probe-deps { display: flex; flex-wrap: wrap; gap: 4px; }
+    .probe-chip {
+      display: inline-flex; align-items: center; gap: 3px;
+      font-size: 10.5px; padding: 2px 6px; border-radius: 4px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      cursor: help; /* signals there's a tooltip with the HTTP detail */
+    }
+    .lib-card__hint {
+      font-size: 11px; color: var(--text-muted); line-height: 1.45;
+      padding-top: 4px; border-top: 1px dashed var(--border);
+      /* Long DashScope error blobs would otherwise blow out the card width;
+         clamp + ellipsis keeps the grid tidy and the full message lives in
+         the title attribute (hover to read). */
+      display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+      overflow: hidden;
     }
     /* ── Toast (fallback when not in iframe) ── */
     .ak-toast-stack { position: fixed; right: 20px; bottom: 20px; z-index: 3000; display: flex; flex-direction: column; gap: 8px; }
@@ -679,10 +782,14 @@ const I18N_DICT = {
     "voices.empty.custom": "暂无自定义音色，上传一段录音即可克隆",
     "voices.delete.confirm": "确认删除该自定义音色？",
     "voices.preview": "试听",
-    "voices.preview.busy": "合成中...",
+    "voices.preview.busy": "合成中…",
     "voices.preview.text": "你好，欢迎使用数字人工作室",
     "voices.preview.fail": "试听合成失败：{msg}",
-    "voices.preview.empty": "尚未生成试听音频，点击「试听」按钮试听",
+    "voices.preview.empty": "尚未生成试听音频，点击下方「试听」按钮",
+    "voices.preview.needKey": "请先到「设置」中填写 DashScope API Key 后再试听",
+    "voices.source.title": "数据来源",
+    "voices.source.body": "下列系统音色来自 阿里云百炼 cosyvoice-v2 官方音色目录；中文显示名 / 风格描述与官方一致，调用时实际传入的标识符是行内显示的 longxxxxxx_v2。",
+    "voices.source.link": "查看官方音色列表",
     "create.section.modelInfo": "模型与计费",
     "create.modelInfo.model": "底层模型",
     "create.modelInfo.price": "计费",
@@ -732,10 +839,14 @@ const I18N_DICT = {
     "figures.upload.image": "人像图（png/jpg，单人正面）",
     "figures.upload.submit": "上传并预检",
     "figures.empty": "形象库为空，上传一张正面人像图开始",
-    "figures.detect.pending": "等待预检",
+    "figures.detect.pending": "预检中…",
     "figures.detect.pass": "可用",
     "figures.detect.fail": "预检未通过",
+    "figures.detect.skipped": "未预检",
     "figures.detect.hint": "请确保是真人正面照，无水印、无遮挡",
+    "figures.detect.pendingHint": "正在调用 wan2.2-s2v-detect 进行人像预检，约 5–30 秒；点击右上角即可中止并删除",
+    "figures.detect.failHint": "DashScope 拒绝了该图，常见原因：非真人 / 非正面 / 多人 / 有水印。删除后换图重传即可。",
+    "figures.detect.skippedHint": "上传时 API Key 还没配，已跳过预检；填好 Key 后请删除并重新上传。",
     "figures.delete.confirm": "确认删除该形象？",
     "settings.section.api": "API Key",
     "settings.section.defaults": "默认偏好",
@@ -743,12 +854,27 @@ const I18N_DICT = {
     "settings.section.advanced": "高级",
     "settings.section.about": "关于",
     "settings.api.placeholder": "sk-xxxxxxxxxxxxxxxx",
+    "settings.api.savedBadge": "已保存",
     "settings.api.test": "测试连接",
     "settings.api.test.ok": "API Key 有效",
     "settings.api.test.fail": "API Key 无效：{msg}",
     "settings.api.region": "服务地域",
     "settings.api.region.bj": "北京 (默认)",
     "settings.api.region.sg": "新加坡",
+    "settings.api.region.hint": "国内「阿里云百炼」用户保持「北京」即可。仅在使用 alibabacloud.com 国际站账号或将服务部署在境外时才需要切到「新加坡」。两套接入点账号体系隔离，国内 key 在新加坡端会直接 401。",
+    "settings.api.advanced": "高级（服务地域 / 模型可用性）",
+    "settings.api.probe.title": "模型可用性检测",
+    "settings.api.probe.desc": "用当前 API Key 探测每个模型的访问权限。100% 不会创建真实任务、不会扣费——后台只发送故意残缺的请求，DashScope 返回 400 = 可用 / 401-403 = 未授权 / 404 = 该地域未开通，cosyvoice-v2 通过 /v1/models 列表确认。",
+    "settings.api.probe.btn": "开始检测",
+    "settings.api.probe.btn.busy": "检测中…",
+    "settings.api.probe.never": "尚未检测",
+    "settings.api.probe.col.mode": "功能",
+    "settings.api.probe.col.models": "依赖模型",
+    "settings.api.probe.col.status": "状态",
+    "settings.api.probe.status.available": "可用",
+    "settings.api.probe.status.denied": "未授权",
+    "settings.api.probe.status.unknown": "未知",
+    "settings.api.probe.openConsole": "前往百炼模型广场开通",
     "settings.defaults.resolution": "默认分辨率",
     "settings.defaults.voice": "默认音色",
     "settings.defaults.threshold": "成本确认阈值（元）",
@@ -896,10 +1022,14 @@ const I18N_DICT = {
     "voices.empty.custom": "No custom voices yet — upload a sample to clone one",
     "voices.delete.confirm": "Delete this custom voice?",
     "voices.preview": "Preview",
-    "voices.preview.busy": "Synthesising...",
+    "voices.preview.busy": "Synthesising…",
     "voices.preview.text": "Hello, welcome to Avatar Studio.",
     "voices.preview.fail": "Preview synth failed: {msg}",
-    "voices.preview.empty": "No sample yet — click Preview to synthesise one.",
+    "voices.preview.empty": "No sample yet — click Preview below.",
+    "voices.preview.needKey": "Configure a DashScope API Key in Settings before previewing.",
+    "voices.source.title": "Where these come from",
+    "voices.source.body": "The system voices below are the official cosyvoice-v2 catalog from Aliyun Bailian. The Chinese labels and style descriptions match the official catalog; the actual identifier sent to the API is the longxxxxxx_v2 string shown on each card.",
+    "voices.source.link": "View the official voice list",
     "create.section.modelInfo": "Model & pricing",
     "create.modelInfo.model": "Backing model",
     "create.modelInfo.price": "Pricing",
@@ -949,10 +1079,14 @@ const I18N_DICT = {
     "figures.upload.image": "Portrait (png/jpg, frontal single person)",
     "figures.upload.submit": "Upload & pre-check",
     "figures.empty": "Figure library is empty — add a frontal portrait to start",
-    "figures.detect.pending": "Awaiting pre-check",
+    "figures.detect.pending": "Pre-checking…",
     "figures.detect.pass": "Ready",
     "figures.detect.fail": "Pre-check failed",
+    "figures.detect.skipped": "Not pre-checked",
     "figures.detect.hint": "Use a clear frontal photo, no watermark, no occlusion",
+    "figures.detect.pendingHint": "Calling wan2.2-s2v-detect (~5–30s). Hit the trash icon to abort & delete.",
+    "figures.detect.failHint": "DashScope rejected the image. Usual causes: not a real human / not frontal / multiple faces / watermark. Delete and re-upload a fresh photo.",
+    "figures.detect.skippedHint": "API Key was missing when this was uploaded. Configure it, then delete & re-upload.",
     "figures.delete.confirm": "Delete this figure?",
     "settings.section.api": "API Key",
     "settings.section.defaults": "Defaults",
@@ -960,12 +1094,27 @@ const I18N_DICT = {
     "settings.section.advanced": "Advanced",
     "settings.section.about": "About",
     "settings.api.placeholder": "sk-xxxxxxxxxxxxxxxx",
+    "settings.api.savedBadge": "Saved",
     "settings.api.test": "Test connection",
     "settings.api.test.ok": "API Key works",
     "settings.api.test.fail": "API Key invalid: {msg}",
     "settings.api.region": "Region",
     "settings.api.region.bj": "Beijing (default)",
     "settings.api.region.sg": "Singapore",
+    "settings.api.region.hint": "Mainland Aliyun Bailian users should keep \"Beijing\". Switch to \"Singapore\" only if your account is on alibabacloud.com (international site) or your deployment is outside mainland China — the two endpoints have separate account systems and a Bailian key will 401 against the Singapore endpoint.",
+    "settings.api.advanced": "Advanced (region / model availability)",
+    "settings.api.probe.title": "Model availability check",
+    "settings.api.probe.desc": "Probe every model your current key needs. We never create a real task or incur charges — the backend sends a deliberately empty request and reads HTTP status: 400 → available, 401/403 → not authorised, 404 → not available in this region. cosyvoice-v2 is checked via /v1/models.",
+    "settings.api.probe.btn": "Run check",
+    "settings.api.probe.btn.busy": "Probing…",
+    "settings.api.probe.never": "Not checked yet",
+    "settings.api.probe.col.mode": "Feature",
+    "settings.api.probe.col.models": "Required models",
+    "settings.api.probe.col.status": "Status",
+    "settings.api.probe.status.available": "Available",
+    "settings.api.probe.status.denied": "Not authorised",
+    "settings.api.probe.status.unknown": "Unknown",
+    "settings.api.probe.openConsole": "Open Bailian model marketplace",
     "settings.defaults.resolution": "Default resolution",
     "settings.defaults.voice": "Default voice",
     "settings.defaults.threshold": "Cost confirm threshold (¥)",
@@ -1441,8 +1590,30 @@ function useFigures() {
     const r = await pluginApi("GET", "/figures");
     if (r.ok && r.body && Array.isArray(r.body.figures)) setFigures(r.body.figures);
   }, []);
+  // Local-only removal so the FiguresTab can drop a card the moment the
+  // user confirms 删除, even though the backend DELETE is still in
+  // flight (it has to fire-and-forget cancel the in-progress detect
+  // probe, which can take a couple of seconds in the worst case). The
+  // next refresh() will reconcile if anything went wrong server-side.
+  const removeOptimistic = useCallback(function (fig_id) {
+    setFigures(function (prev) {
+      return prev.filter(function (f) { return f.id !== fig_id; });
+    });
+  }, []);
   useEffect(function () { refresh(); }, [refresh]);
-  return { figures, refresh };
+  // Auto-poll while any figure is still in pre-check. We use detect_status
+  // (the new server field) and keep a 4s cadence — fast enough that the
+  // Library card flips to 「可用」/「预检未通过」 within a heartbeat of
+  // the wan2.2-s2v-detect call returning, slow enough to not hammer the
+  // backend if the user keeps the tab open. The interval is torn down the
+  // instant nothing's pending, so steady-state cost is zero.
+  useEffect(function () {
+    const pending = figures.some(function (f) { return (f.detect_status || "pending") === "pending"; });
+    if (!pending) return undefined;
+    const h = setInterval(refresh, 4000);
+    return function () { clearInterval(h); };
+  }, [figures, refresh]);
+  return { figures, refresh, removeOptimistic };
 }
 
 /* ─── CreateTab ───────────────────────────────────────────────────── */
@@ -1621,7 +1792,14 @@ function VoicePicker({ voices, value, onChange }) {
 
 function FigurePicker({ figures, onPick }) {
   const t = useT();
-  const ready = figures.filter(function (f) { return f.detect_pass; });
+  // Only surface figures whose pre-check actually passed. After the
+  // schema migration `detect_status='pass'` is the source of truth;
+  // legacy rows fall back to the old `detect_pass` truthy check so we
+  // don't hide working library entries from users on older DBs.
+  const ready = figures.filter(function (f) {
+    if (f.detect_status) return f.detect_status === "pass";
+    return !!f.detect_pass;
+  });
   if (!ready.length) return null;
   return (
     <details style={{marginTop: 6}}>
@@ -1678,15 +1856,36 @@ function CreateTab({ onGoToTasks, settings, voices, figures }) {
 
   const update = function (k, v) { setForm(Object.assign({}, form, { [k]: v })); };
 
+  // Pick the URL DashScope can actually fetch.
+  //   - POST /upload returns `url` already pointing at OSS (signed
+  //     HTTPS) when OSS is configured; falls back to local /api/...
+  //     so the upload doesn't fail outright.
+  //   - FigurePicker now stores `oss_url` separately so we never
+  //     accidentally feed DashScope a local /api/... URL.
+  // Order: oss_url > url > preview_url (preview_url is local-only so
+  // it should *never* end up in `assets` — backend rejects it with a
+  // clear "configure OSS" error if it ever does).
+  const pickAssetUrl = function (it) {
+    if (!it) return "";
+    return it.oss_url || it.url || it.preview_url || "";
+  };
+
   const buildPayload = function (cost_approved) {
     const assets = {};
-    if (md.needsImage && form.image) assets.image_url = form.image.preview_url || form.image.url;
-    if (md.needsVideo && form.video) assets.video_url = form.video.preview_url || form.video.url;
-    if (md.needsRefImage && form.refImage) assets.image_url = form.refImage.preview_url || form.refImage.url;
+    if (md.needsImage && form.image) assets.image_url = pickAssetUrl(form.image);
+    if (md.needsVideo && form.video) assets.video_url = pickAssetUrl(form.video);
+    if (md.needsRefImage && form.refImage) assets.image_url = pickAssetUrl(form.refImage);
     if (md.needsCompose && form.composeImages && form.composeImages.length) {
-      assets.ref_images_url = form.composeImages.map(function (it) { return it.preview_url || it.url; });
+      assets.ref_images_url = form.composeImages.map(pickAssetUrl).filter(Boolean);
     }
-    if (form.audio) assets.audio_url = form.audio.preview_url || form.audio.url;
+    if (form.audio) assets.audio_url = pickAssetUrl(form.audio);
+    // ``figure_id`` is the canonical way to reference a previously
+    // pre-checked library figure — backend resolves it to the
+    // persisted OSS URL so the UI doesn't have to know about OSS for
+    // this case (matches FigurePicker's onPick contract).
+    const figureId = (form.image && form.image.figure_id)
+                   || (form.refImage && form.refImage.figure_id)
+                   || "";
     return {
       mode,
       prompt: "",
@@ -1700,6 +1899,7 @@ function CreateTab({ onGoToTasks, settings, voices, figures }) {
       seed: form.seed != null ? form.seed : -1,
       compose_prompt: form.compose_prompt || "",
       compose_size: form.compose_size || "",
+      figure_id: figureId,
       assets,
       cost_approved: !!cost_approved,
     };
@@ -1782,7 +1982,19 @@ function CreateTab({ onGoToTasks, settings, voices, figures }) {
                             value={form.image}
                             onUploaded={function (v) { update("image", v); }}
                             hint="png/jpg，正面单人照效果最佳" />
-            <FigurePicker figures={figures} onPick={function (f) { update("image", { preview_url: f.preview_url, url: f.preview_url, filename: f.label }); }} />
+            <FigurePicker figures={figures} onPick={function (f) {
+              // Store BOTH preview_url (for local <img> render) and
+              // oss_url (for the DashScope payload). Stash figure_id so
+              // backend can re-resolve if oss_url is empty (figure was
+              // created before OSS was configured).
+              update("image", {
+                preview_url: f.preview_url,
+                url: f.oss_url || f.preview_url,
+                oss_url: f.oss_url || "",
+                figure_id: f.id,
+                filename: f.label,
+              });
+            }} />
           </div>
         )}
         {md.needsVideo && (
@@ -1801,7 +2013,15 @@ function CreateTab({ onGoToTasks, settings, voices, figures }) {
                             value={form.refImage}
                             onUploaded={function (v) { update("refImage", v); }}
                             hint="想要替换成的人物正面照" />
-            <FigurePicker figures={figures} onPick={function (f) { update("refImage", { preview_url: f.preview_url, url: f.preview_url, filename: f.label }); }} />
+            <FigurePicker figures={figures} onPick={function (f) {
+              update("refImage", {
+                preview_url: f.preview_url,
+                url: f.oss_url || f.preview_url,
+                oss_url: f.oss_url || "",
+                figure_id: f.id,
+                filename: f.label,
+              });
+            }} />
           </div>
         )}
         {md.needsCompose && (
@@ -2388,10 +2608,17 @@ function TasksTab() {
 }
 
 /* ─── VoicesTab ──────────────────────────────────────────────────── */
-function VoiceCard({ voice, onDelete }) {
+function VoiceCard({ voice, onDelete, hasApiKey, onGoSettings }) {
   // Per-card preview state. Clicking "试听" calls
   // POST /voices/{dashscope_voice_id}/sample which synthesises a short
   // demo via cosyvoice-v2 and returns a preview URL we can play inline.
+  //
+  // Layout invariant: the media slot has a FIXED min-height so toggling
+  // between empty hint / spinner / <audio> never shifts the button below.
+  // Previously the empty hint (one line of dim text) was unmounted when
+  // `busy` flipped, the audio element height jumped from 0 to 32px, and
+  // the loader Ico (which doesn't exist in our ICONS table) rendered as
+  // an empty <span> — net effect was the whole card 'jumping up'.
   const t = useT();
   const [busy, setBusy] = useState(false);
   const [url, setUrl] = useState(voice.sample_url || "");
@@ -2400,6 +2627,14 @@ function VoiceCard({ voice, onDelete }) {
   const previewText = t("voices.preview.text");
 
   const playPreview = async function () {
+    // Short-circuit: cosyvoice-v2 needs the DashScope key. Without one the
+    // backend would 400 with kind:auth and the user only sees a red toast.
+    // Front-loading the check turns it into an actionable empty-state.
+    if (!hasApiKey) {
+      showToast(t("voices.preview.needKey"), "warn");
+      if (onGoSettings) onGoSettings();
+      return;
+    }
     setBusy(true);
     try {
       const r = await pluginApi(
@@ -2438,21 +2673,34 @@ function VoiceCard({ voice, onDelete }) {
       <div className="text-xs text-dim truncate" title={cosyId}>
         <code className="inline">{cosyId}</code>
       </div>
-      <div className="lib-card__media" style={{flexDirection: "column", alignItems: "stretch", gap: 6}}>
-        {url
-          ? <audio src={url} controls preload="none" style={{width: "100%", height: 32}} />
-          : <div className="text-xs text-dim" style={{padding: "4px 0"}}>{t("voices.preview.empty")}</div>}
-        <button className="btn btn-sm" disabled={busy} onClick={playPreview}>
-          {busy && <span className="spinner-sm"/>}
-          <Ico name={busy ? "loader" : "play"}/>
-          {busy ? t("voices.preview.busy") : t("voices.preview")}
-        </button>
+      {/* Fixed-height media slot — keeps the button anchored regardless of state. */}
+      <div className="voice-media">
+        {url ? (
+          <audio src={url} controls preload="none" />
+        ) : busy ? (
+          <div className="voice-media__busy">
+            <span className="spinner-sm" />
+            <span>{t("voices.preview.busy")}</span>
+          </div>
+        ) : (
+          <div className="voice-media__empty">{t("voices.preview.empty")}</div>
+        )}
       </div>
+      <button className={"voice-play-btn" + (busy ? " is-busy" : "") + (!hasApiKey ? " is-disabled" : "")}
+              type="button"
+              disabled={busy}
+              title={hasApiKey ? "" : t("voices.preview.needKey")}
+              onClick={playPreview}>
+        {busy
+          ? <span className="spinner-sm" />
+          : <span className="oa-icon" dangerouslySetInnerHTML={{__html: '<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M8 5v14l11-7z"/></svg>'}} />}
+        <span>{busy ? t("voices.preview.busy") : t("voices.preview")}</span>
+      </button>
     </div>
   );
 }
 
-function VoicesTab() {
+function VoicesTab({ hasApiKey, onGoSettings }) {
   const t = useT();
   const { voices, refresh } = useVoices();
   const [showCreate, setShowCreate] = useState(false);
@@ -2461,18 +2709,32 @@ function VoicesTab() {
 
   const submitClone = async function () {
     if (!draft.label || !draft.audio) { showToast("请填写名称并上传音频", "warn"); return; }
+    if (!draft.audio.oss_url) {
+      // VoiceEnrollmentService.create_voice MUST receive a public URL
+      // (DashScope pulls the sample from there server-side). A local
+      // /api/... URL would fail with an opaque "url unreachable" error
+      // 30-90 s into training, so we block at submit time instead.
+      showToast("OSS 未配置，无法克隆音色（DashScope 需公网拉取样本）。请到「设置 → 阿里云 OSS」配置。", "error");
+      return;
+    }
     setBusy(true);
     try {
       const r = await pluginApi("POST", "/voices", {
         label: draft.label,
-        source_audio_path: draft.audio.path || draft.audio.preview_url || draft.audio.url,
+        source_audio_path: draft.audio.path || "",
+        source_audio_oss_url: draft.audio.oss_url,
+        sample_url: draft.audio.preview_url || draft.audio.url,
       });
       if (r.ok) {
-        showToast("克隆任务已提交，请等待 dashscope 处理");
+        showToast("音色已克隆：" + (r.body && r.body.dashscope_voice_id || "(no id)"));
         setDraft({ label: "", audio: null });
         setShowCreate(false);
         refresh();
-      } else { showToast("提交失败：" + (r.body && r.body.message || ""), "error"); }
+      } else {
+        const msg = (r.body && (r.body.message
+          || (r.body.detail && r.body.detail.message))) || "提交失败";
+        showToast("提交失败：" + msg, "error");
+      }
     } finally { setBusy(false); }
   };
   const del = async function (v) {
@@ -2486,6 +2748,32 @@ function VoicesTab() {
 
   return (
     <div>
+      {/* Inline documentation card — explains where the system voice list
+          comes from so the user is never confused by the "longxxxxx_v2"
+          identifiers (they're DashScope's official cosyvoice-v2 catalog,
+          not strings we made up). */}
+      <div style={{
+        display: "flex", gap: 10, alignItems: "flex-start",
+        padding: "10px 12px", marginBottom: 14,
+        background: "var(--info-bg, #eff6ff)",
+        border: "1px solid var(--info-border, #bfdbfe)",
+        borderRadius: 8, fontSize: 12, lineHeight: 1.55,
+      }}>
+        <span className="oa-icon" style={{color: "var(--info, #2563eb)", marginTop: 1, flexShrink: 0}}>
+          <Ico name="info" />
+        </span>
+        <div style={{minWidth: 0, flex: 1, color: "var(--text)"}}>
+          <strong style={{fontWeight: 600}}>{t("voices.source.title")}</strong>
+          <span style={{margin: "0 6px", color: "var(--text-muted)"}}>·</span>
+          <span style={{color: "var(--text-muted)"}}>{t("voices.source.body")}</span>
+          <a href="https://help.aliyun.com/zh/model-studio/cosyvoice-quick-start"
+             target="_blank" rel="noopener"
+             style={{marginLeft: 6, color: "var(--primary)", whiteSpace: "nowrap"}}>
+            {t("voices.source.link")} ↗
+          </a>
+        </div>
+      </div>
+
       <div className="flex items-center justify-between" style={{marginBottom: 12}}>
         <h3 style={{fontSize: 14, fontWeight: 600}}>{t("voices.system")} <span className="text-xs text-muted">· {sys.length}</span></h3>
         <button className="btn btn-primary btn-sm" onClick={function () { setShowCreate(!showCreate); }}>
@@ -2515,7 +2803,10 @@ function VoicesTab() {
       )}
 
       <div className="lib-grid" style={{marginBottom: 18}}>
-        {sys.map(function (v) { return <VoiceCard key={v.id} voice={v} onDelete={del} />; })}
+        {sys.map(function (v) {
+          return <VoiceCard key={v.id} voice={v} onDelete={del}
+                            hasApiKey={hasApiKey} onGoSettings={onGoSettings} />;
+        })}
       </div>
 
       <h3 style={{fontSize: 14, fontWeight: 600, marginBottom: 8}}>
@@ -2525,7 +2816,10 @@ function VoicesTab() {
         ? <EmptyState icon="mic" title={t("voices.empty.custom")} />
         : (
           <div className="lib-grid">
-            {cust.map(function (v) { return <VoiceCard key={v.id} voice={v} onDelete={del} />; })}
+            {cust.map(function (v) {
+              return <VoiceCard key={v.id} voice={v} onDelete={del}
+                                hasApiKey={hasApiKey} onGoSettings={onGoSettings} />;
+            })}
           </div>
         )}
     </div>
@@ -2535,22 +2829,41 @@ function VoicesTab() {
 /* ─── FiguresTab ─────────────────────────────────────────────────── */
 function FiguresTab() {
   const t = useT();
-  const { figures, refresh } = useFigures();
+  const { figures, refresh, removeOptimistic } = useFigures();
   const [showCreate, setShowCreate] = useState(false);
   const [draft, setDraft] = useState({ label: "", image: null });
   const [busy, setBusy] = useState(false);
+  // Track which figure ids have a DELETE in flight, so the trash icon
+  // becomes a spinner instead of looking unresponsive while the backend
+  // cancels the in-flight wan2.2-s2v-detect probe.
+  const [deletingIds, setDeletingIds] = useState({});
 
   const submitFig = async function () {
     if (!draft.label || !draft.image) { showToast("请填写名称并上传人像图", "warn"); return; }
+    if (!draft.image.oss_url) {
+      // POST /upload only fills oss_url when OSS is fully configured;
+      // an empty value means face-detect would skip and the figure
+      // would land in 'skipped'. Tell the user up front so they can
+      // open Settings → OSS, instead of finding out 5 seconds later
+      // from a yellow tag on the card.
+      if (!confirm(
+        "OSS 未配置，DashScope 无法 fetch 该图片，"
+        + "形象会跳过预检（下次任务需重新上传）。仍要保存吗？")) {
+        return;
+      }
+    }
     setBusy(true);
     try {
       const r = await pluginApi("POST", "/figures", {
         label: draft.label,
         image_path: draft.image.path || draft.image.preview_url,
         preview_url: draft.image.preview_url || draft.image.url,
+        oss_url: draft.image.oss_url || "",
+        oss_key: draft.image.oss_key || "",
       });
       if (r.ok) {
-        showToast("已提交预检");
+        showToast(r.body && r.body.oss_configured
+          ? "已提交预检" : "已保存（未配置 OSS，已跳过预检）");
         setDraft({ label: "", image: null });
         setShowCreate(false);
         refresh();
@@ -2558,9 +2871,28 @@ function FiguresTab() {
     } finally { setBusy(false); }
   };
   const del = async function (f) {
+    if (deletingIds[f.id]) return;
     if (!confirm(t("figures.delete.confirm"))) return;
-    const r = await pluginApi("DELETE", "/figures/" + f.id);
-    if (r.ok) refresh();
+    // Optimistically yank the card out of the grid the instant the user
+    // confirms. The DELETE request runs in the background; if it fails
+    // we re-fetch and the row reappears with whatever its current
+    // detect_status is. This is what makes 「点了没反应」 go away even
+    // when the backend's cancellation path is still draining httpx.
+    setDeletingIds(function (prev) { return Object.assign({}, prev, { [f.id]: true }); });
+    removeOptimistic(f.id);
+    try {
+      const r = await pluginApi("DELETE", "/figures/" + f.id);
+      if (!r.ok) {
+        showToast("删除失败：" + (r.body && r.body.message || "未知错误"), "error");
+        refresh();
+      }
+    } finally {
+      setDeletingIds(function (prev) {
+        const next = Object.assign({}, prev);
+        delete next[f.id];
+        return next;
+      });
+    }
   };
 
   return (
@@ -2599,24 +2931,180 @@ function FiguresTab() {
         : (
           <div className="lib-grid">
             {figures.map(function (f) {
-              const detect = f.detect_pass === true ? "pass" : f.detect_pass === false ? "fail" : "pending";
-              const detectLabel = t("figures.detect." + detect);
-              const cls = detect === "pass" ? "tag-green" : detect === "fail" ? "tag-red" : "tag-gray";
+              // Server-of-truth status field. Falls back to the legacy
+              // detect_pass bool for figures created before the schema
+              // migration so we never crash on stale rows. SQLite stores
+              // booleans as 0/1, so "=== true" never matched — that's
+              // why the old card was perpetually 「等待预检」.
+              const status = f.detect_status
+                || (f.detect_pass === 1 || f.detect_pass === true ? "pass"
+                    : f.detect_pass === 0 || f.detect_pass === false ? "pending"
+                    : "pending");
+              const detectLabel = t("figures.detect." + status);
+              const cls = status === "pass" ? "tag-green"
+                        : status === "fail" ? "tag-red"
+                        : status === "skipped" ? "tag-amber"
+                        : "tag-gray";
+              const isPending = status === "pending";
+              const hint = status === "pending" ? t("figures.detect.pendingHint")
+                         : status === "fail" ? (f.detect_message || t("figures.detect.failHint"))
+                         : status === "skipped" ? t("figures.detect.skippedHint")
+                         : "";
               return (
-                <div key={f.id} className="lib-card">
-                  {f.preview_url && <img className="fig-thumb" src={f.preview_url} alt={f.label} />}
-                  <div className="lib-card__head">
-                    <div>
-                      <div className="lib-card__title">{f.label}</div>
-                      <div className="lib-card__sub"><span className={"tag " + cls}>{detectLabel}</span></div>
-                    </div>
-                    <button className="btn btn-sm btn-danger" onClick={function () { del(f); }}><Ico name="trash"/></button>
+                <div key={f.id} className={"lib-card" + (isPending ? " is-pending" : "")}>
+                  <div className="fig-thumb-wrap">
+                    {f.preview_url && <img className="fig-thumb" src={f.preview_url} alt={f.label} />}
+                    {isPending && (
+                      <div className="fig-overlay" aria-label={detectLabel}>
+                        <span className="spinner-sm spinner-light"/>
+                        <span className="fig-overlay__text">{detectLabel}</span>
+                      </div>
+                    )}
                   </div>
+                  <div className="lib-card__head">
+                    <div style={{minWidth: 0, flex: 1}}>
+                      <div className="lib-card__title">{f.label}</div>
+                      <div className="lib-card__sub">
+                        <span className={"tag " + cls}>
+                          {isPending && <span className="spinner-sm" style={{marginRight: 4}}/>}
+                          {detectLabel}
+                        </span>
+                      </div>
+                    </div>
+                    {/* Trash is intentionally always-on — it's the only
+                        action a user has on a figure, and during a long
+                        pre-check the DELETE handler will cancel the
+                        in-flight wan2.2-s2v-detect probe (no orphaned
+                        DashScope traffic, no orphaned DB row). The
+                        spinner appears once the user has confirmed, so
+                        a double-click can't fire a second DELETE. */}
+                    <button className="btn btn-sm btn-danger"
+                            title={t("common.delete")}
+                            disabled={!!deletingIds[f.id]}
+                            onClick={function () { del(f); }}>
+                      {deletingIds[f.id]
+                        ? <span className="spinner-sm spinner-light"/>
+                        : <Ico name="trash"/>}
+                    </button>
+                  </div>
+                  {hint && (
+                    <div className="lib-card__hint" title={hint}>{hint}</div>
+                  )}
                 </div>
               );
             })}
           </div>
         )}
+    </div>
+  );
+}
+
+/* ─── ModelProbePanel ───────────────────────────────────────────────
+ * On-demand "which models can my key actually invoke?" check that
+ * lives inside the Settings → 高级 collapsible. Every probe goes to
+ * POST /capabilities/probe which does parallel HTTP probes and rolls
+ * the per-model verdict up to per-mode 「可用 / 未授权 / 未知」 — see
+ * AvatarDashScopeClient.probe_models() for the protocol. Verdicts are
+ * cached in component state so revisiting the tab doesn't auto-rerun.
+ * ──────────────────────────────────────────────────────────────────── */
+function ModelProbePanel({ hasApiKey }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [data, setData] = useState(null); // { ts, modes:[…], models:[…] }
+  const [error, setError] = useState("");
+
+  const run = async function () {
+    setBusy(true); setError("");
+    try {
+      const r = await pluginApi("POST", "/capabilities/probe", {});
+      if (r.ok && r.body && r.body.ok) {
+        setData(r.body);
+      } else {
+        const msg = (r.body && r.body.message) || (r.error && r.error.message) || "probe failed";
+        setError(msg);
+      }
+    } finally { setBusy(false); }
+  };
+
+  const STATUS_META = {
+    available: { cls: "tag-green", label: t("settings.api.probe.status.available"), icon: "✓" },
+    denied:    { cls: "tag-red",   label: t("settings.api.probe.status.denied"),    icon: "✗" },
+    unknown:   { cls: "tag-gray",  label: t("settings.api.probe.status.unknown"),   icon: "?" },
+  };
+
+  return (
+    <div>
+      <div style={{
+        fontSize: 12, fontWeight: 600, color: "var(--text)",
+        marginBottom: 4, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+      }}>
+        <span>{t("settings.api.probe.title")}</span>
+        <button className="btn btn-sm btn-primary"
+                disabled={busy || !hasApiKey}
+                title={!hasApiKey ? "请先配置并保存 API Key" : ""}
+                onClick={run}>
+          {busy && <span className="spinner-sm spinner-light" style={{marginRight: 4}}/>}
+          {busy ? t("settings.api.probe.btn.busy") : t("settings.api.probe.btn")}
+        </button>
+      </div>
+      <div className="text-xs text-dim" style={{marginBottom: 8, lineHeight: 1.55}}>
+        {t("settings.api.probe.desc")}
+      </div>
+      {error && (
+        <div style={{
+          fontSize: 12, color: "var(--danger, #b91c1c)",
+          background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.3)",
+          borderRadius: 6, padding: "6px 10px", marginBottom: 8,
+        }}>{error}</div>
+      )}
+      {!data && !busy && !error && (
+        <div className="text-xs text-muted" style={{padding: "6px 0"}}>
+          {t("settings.api.probe.never")}
+        </div>
+      )}
+      {data && (
+        <div className="probe-table">
+          <div className="probe-row probe-row--head">
+            <div>{t("settings.api.probe.col.mode")}</div>
+            <div>{t("settings.api.probe.col.models")}</div>
+            <div>{t("settings.api.probe.col.status")}</div>
+          </div>
+          {(data.modes || []).map(function (m) {
+            const meta = STATUS_META[m.status] || STATUS_META.unknown;
+            return (
+              <div key={m.id} className="probe-row">
+                <div className="probe-mode">{m.label_zh || m.id}</div>
+                <div className="probe-deps">
+                  {(m.deps || []).map(function (d) {
+                    const dm = STATUS_META[d.status] || STATUS_META.unknown;
+                    return (
+                      <span key={d.model} className={"probe-chip " + dm.cls}
+                            title={(d.message || "") + (d.http ? " (HTTP " + d.http + ")" : "")}>
+                        {dm.icon} {d.model}
+                      </span>
+                    );
+                  })}
+                </div>
+                <div>
+                  <span className={"tag " + meta.cls}>{meta.icon} {meta.label}</span>
+                </div>
+              </div>
+            );
+          })}
+          {/* If anything is denied we also surface the marketplace link
+              once at the bottom — clicking 「未授权」 chips would be
+              nicer but the marketplace search is global, not per-model. */}
+          {(data.modes || []).some(function (m) { return m.status === "denied"; }) && (
+            <div style={{marginTop: 8, fontSize: 12}}>
+              <a href="https://bailian.console.aliyun.com/?tab=model#/model-market"
+                 target="_blank" rel="noopener"
+                 style={{color: "var(--primary)"}}>
+                {t("settings.api.probe.openConsole")} →
+              </a>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -2629,6 +3117,8 @@ function SettingsTab({ settings, onSaved, voices }) {
   // soft yellow frame when no key has been entered yet (Pixelle C5).
   const t = useT();
   const [draft, setDraft] = useState(function () { return Object.assign({}, settings); });
+  // Backend GET /settings echoes the api_key back as-is, so a plain
+  // resync after save / parent refresh is now correct.
   useEffect(function () { setDraft(Object.assign({}, settings)); }, [settings]);
   const [keyVisible, setKeyVisible] = useState(false);
   const [testBusy, setTestBusy] = useState(false);
@@ -2662,22 +3152,42 @@ function SettingsTab({ settings, onSaved, voices }) {
       timeout_sec: Number(draft.timeout_sec != null ? draft.timeout_sec : 60),
       max_retries: Number(draft.max_retries != null ? draft.max_retries : 2),
       retention_days: Number(draft.retention_days != null ? draft.retention_days : 30),
+      oss_endpoint: draft.oss_endpoint || "",
+      oss_bucket: draft.oss_bucket || "",
+      oss_access_key_id: draft.oss_access_key_id || "",
+      oss_access_key_secret: draft.oss_access_key_secret || "",
+      oss_path_prefix: draft.oss_path_prefix || "avatar-studio",
     });
   };
 
   const saveKey = async function () {
+    // Empty save is a deliberate "clear key" action (per UX request).
+    // We do NOT prompt — a Settings tab user has no other way to wipe a
+    // stale credential, and the green 「已保存」 badge will disappear
+    // immediately after, providing the feedback they need.
     setSavingKey(true);
-    try { await save({ api_key: draft.api_key || "" }); }
+    try { await save({ api_key: (draft.api_key || "").trim() }); }
     finally { setSavingKey(false); }
   };
 
   const testConn = async function () {
     setTestBusy(true);
     try {
-      await pluginApi("PUT", "/settings", { api_key: draft.api_key || "" });
-      const r = await pluginApi("GET", "/healthz");
-      if (r.ok && r.body && r.body.api_reachable) showToast(t("settings.api.test.ok"));
-      else showToast(t("settings.api.test.fail", { msg: r.body && r.body.message || "unreachable" }), "error");
+      // Send the *typed* draft key in the request body so the probe
+      // tests what's currently in the input — without first persisting
+      // it. That means an obviously-wrong key never overwrites a known-
+      // good stored one just to be tested. The backend hits DashScope's
+      // /v1/models endpoint and reports a real 401 vs 200, so a typo
+      // like "sk-wrong-key-12345" will now fail loudly here.
+      const probeKey = (draft.api_key || "").trim();
+      const r = await pluginApi("POST", "/test-connection",
+        probeKey ? { api_key: probeKey } : {});
+      if (r.ok && r.body && r.body.ok) {
+        showToast(t("settings.api.test.ok"));
+      } else {
+        const msg = (r.body && r.body.message) || (r.error && r.error.message) || "unreachable";
+        showToast(t("settings.api.test.fail", { msg }), "error");
+      }
     } finally { setTestBusy(false); }
   };
 
@@ -2710,36 +3220,74 @@ function SettingsTab({ settings, onSaved, voices }) {
     <div style={{maxWidth: 720, margin: "0 auto"}}>
       {/* ── API 配置 ─────────────────────────────────────────── */}
       <div className="setting-section oa-settings-section">
-        <h3 className="oa-settings-section__title">
-          <span className="oa-icon"><Ico name="cog"/></span>
-          {t("settings.section.api")}
+        {/* Section title doubles as the action bar — putting 测试连接 here
+            (instead of on its own row below the input) avoids a half-empty
+            line between the input and the 高级 disclosure. */}
+        <h3 className="oa-settings-section__title"
+            style={{display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8}}>
+          <span style={{display: "inline-flex", alignItems: "center", gap: 6}}>
+            <span className="oa-icon"><Ico name="cog"/></span>
+            {t("settings.section.api")}
+          </span>
+          <button className="btn btn-sm" type="button"
+                  style={{fontWeight: 400}}
+                  disabled={testBusy} onClick={testConn}>
+            {testBusy && <span className="spinner-sm"/>} {t("settings.api.test")}
+          </button>
         </h3>
-        <div className={"form-row" + (draft.api_key ? "" : " oa-config-field-callout")}
-             data-callout={draft.api_key ? undefined : "必填项"}>
-          <div className="label">DashScope API Key</div>
-          <div className="flex gap-2">
-            <input className="input flex-1" type={keyVisible ? "text" : "password"}
-                   value={draft.api_key || ""} placeholder={t("settings.api.placeholder")}
-                   onChange={function (e) { update("api_key", e.target.value); }} />
-            <button className="btn btn-sm" type="button"
-                    onClick={function () { setKeyVisible(!keyVisible); }}>
-              {keyVisible ? "隐藏" : "显示"}
-            </button>
-            <button className="btn btn-sm btn-primary" type="button"
-                    disabled={savingKey} onClick={saveKey}>
-              {savingKey && <span className="spinner-sm"/>} 保存
-            </button>
-          </div>
-          <div className="text-xs text-dim" style={{marginTop: 4}}>
-            获取地址：
-            <a href="https://bailian.console.aliyun.com/#/api-key" target="_blank" rel="noopener"
-               style={{color: "var(--primary)"}}>阿里云百炼控制台</a>
-          </div>
-        </div>
-        <div className="form-row">
-          <div className="text-xs text-muted" style={{marginBottom: 4}}>{t("settings.api.region")}</div>
-          <div className="flex gap-2">
-            <select className="input select flex-1" value={draft.base_url || ""}
+        {(function () {
+          // Driven off the live draft value (the backend now echoes the
+          // real key back, so draft.api_key === "what's on disk" once
+          // settings have loaded). Yellow callout = nothing in the field,
+          // green badge = same value already persisted server-side.
+          const keyConfigured = !!draft.api_key;
+          const keySaved = !!settings.has_api_key
+            && !!draft.api_key
+            && draft.api_key === settings.api_key;
+          return (
+            <div className={"form-row" + (keyConfigured ? "" : " oa-config-field-callout")}
+                 data-callout={keyConfigured ? undefined : "必填项"}>
+              <div className="label" style={{display: "flex", alignItems: "center", gap: 6}}>
+                <span>DashScope API Key</span>
+                {keySaved && (
+                  <span style={{
+                    fontSize: 11, padding: "1px 7px", borderRadius: 8,
+                    background: "var(--success-bg, #ecfdf5)",
+                    color: "var(--success, #059669)",
+                    border: "1px solid var(--success-border, #a7f3d0)",
+                    fontWeight: 500,
+                  }}>{t("settings.api.savedBadge")}</span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <input className="input flex-1" type={keyVisible ? "text" : "password"}
+                       value={draft.api_key || ""}
+                       placeholder={t("settings.api.placeholder")}
+                       onChange={function (e) { update("api_key", e.target.value); }} />
+                <button className="btn btn-sm" type="button"
+                        onClick={function () { setKeyVisible(!keyVisible); }}>
+                  {keyVisible ? "隐藏" : "显示"}
+                </button>
+                <button className="btn btn-sm btn-primary" type="button"
+                        disabled={savingKey} onClick={saveKey}>
+                  {savingKey && <span className="spinner-sm"/>} 保存
+                </button>
+              </div>
+              <div className="text-xs text-dim" style={{marginTop: 4}}>
+                获取地址：
+                <a href="https://bailian.console.aliyun.com/#/api-key" target="_blank" rel="noopener"
+                   style={{color: "var(--primary)"}}>阿里云百炼控制台</a>
+              </div>
+            </div>
+          );
+        })()}
+        {/* Advanced subsection — region picker + per-model probe.
+            Collapsed by default because 99% of users only ever care
+            about it once (when first wiring up a key). */}
+        <Collapsible title={t("settings.api.advanced")} defaultOpen={false}>
+          <div className="form-row">
+            <div className="text-xs text-muted" style={{marginBottom: 4}}>{t("settings.api.region")}</div>
+            <select className="input select" value={draft.base_url || ""}
                     onChange={function (e) {
                       update("base_url", e.target.value);
                       save({ base_url: e.target.value });
@@ -2747,9 +3295,92 @@ function SettingsTab({ settings, onSaved, voices }) {
               <option value="">{t("settings.api.region.bj")}</option>
               <option value="https://dashscope-intl.aliyuncs.com">{t("settings.api.region.sg")}</option>
             </select>
-            <button className="btn btn-sm" disabled={testBusy} onClick={testConn}>
-              {testBusy && <span className="spinner-sm"/>} {t("settings.api.test")}
-            </button>
+            <div className="text-xs text-dim" style={{marginTop: 6, lineHeight: 1.5}}>
+              {t("settings.api.region.hint")}
+            </div>
+          </div>
+          {/* Visual divider — without it the model probe panel feels
+              like it's still part of the region picker above. */}
+          <div style={{height: 1, background: "var(--border)", margin: "14px 0"}}/>
+          <ModelProbePanel hasApiKey={!!(settings.api_key || settings.has_api_key)}/>
+        </Collapsible>
+      </div>
+
+      {/* ── 阿里云 OSS ──────────────────────────────────────── */}
+      {/* DashScope cannot fetch local /api/... URLs. Every video model
+          (s2v / animate-mix / videoretalk / face-detect) needs a public
+          HTTPS URL. We push uploads + TTS audio to a bucket the user
+          owns and hand DashScope a 6h signed URL. The four fields here
+          are read by avatar_studio_inline/oss_uploader.py — empty values
+          on any of them disables OSS entirely. */}
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"
+            style={{display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8}}>
+          <span style={{display: "inline-flex", alignItems: "center", gap: 6}}>
+            <span className="oa-icon"><Ico name="layers"/></span>
+            阿里云 OSS（DashScope 素材访问）
+          </span>
+          {settings.oss_configured && (
+            <span style={{
+              fontSize: 11, padding: "1px 7px", borderRadius: 8,
+              background: "var(--success-bg, #ecfdf5)",
+              color: "var(--success, #059669)",
+              border: "1px solid var(--success-border, #a7f3d0)",
+              fontWeight: 500,
+            }}>已生效</span>
+          )}
+        </h3>
+        <div className="text-xs text-dim" style={{marginBottom: 10, lineHeight: 1.5}}>
+          百炼 / DashScope 的视频类模型只能 fetch 公网 URL；本插件会把上传的图片、视频、音频，
+          以及 TTS 合成出来的语音，自动推到这个 bucket，再用签名 URL（6 小时）传给 DashScope。
+          需要先在阿里云控制台创建 bucket：
+          <a href="https://oss.console.aliyun.com/bucket" target="_blank" rel="noopener"
+             style={{color: "var(--primary)", marginLeft: 4}}>OSS 控制台</a>
+        </div>
+        <div className="grid-2">
+          <div className="form-row">
+            <div className="label">Endpoint</div>
+            <input className="input" type="text"
+                   placeholder="https://oss-cn-beijing.aliyuncs.com"
+                   value={draft.oss_endpoint || ""}
+                   onChange={function (e) { update("oss_endpoint", e.target.value); }}
+                   onBlur={function () { save({ oss_endpoint: draft.oss_endpoint || "" }); }} />
+          </div>
+          <div className="form-row">
+            <div className="label">Bucket</div>
+            <input className="input" type="text"
+                   placeholder="my-bucket"
+                   value={draft.oss_bucket || ""}
+                   onChange={function (e) { update("oss_bucket", e.target.value); }}
+                   onBlur={function () { save({ oss_bucket: draft.oss_bucket || "" }); }} />
+          </div>
+          <div className="form-row">
+            <div className="label">AccessKey ID</div>
+            <input className="input" type="text"
+                   placeholder="LTAI…"
+                   value={draft.oss_access_key_id || ""}
+                   onChange={function (e) { update("oss_access_key_id", e.target.value); }}
+                   onBlur={function () { save({ oss_access_key_id: draft.oss_access_key_id || "" }); }} />
+          </div>
+          <div className="form-row">
+            <div className="label">AccessKey Secret</div>
+            <input className="input" type="password"
+                   placeholder={settings.oss_secret_set ? "已保存（重新输入将覆盖）" : "Secret"}
+                   value={draft.oss_access_key_secret || ""}
+                   onChange={function (e) { update("oss_access_key_secret", e.target.value); }}
+                   onBlur={function () { save({ oss_access_key_secret: draft.oss_access_key_secret || "" }); }} />
+          </div>
+        </div>
+        <div className="form-row">
+          <div className="label">对象路径前缀（可选）</div>
+          <input className="input" type="text"
+                 placeholder="avatar-studio"
+                 value={draft.oss_path_prefix || ""}
+                 onChange={function (e) { update("oss_path_prefix", e.target.value); }}
+                 onBlur={function () { save({ oss_path_prefix: draft.oss_path_prefix || "" }); }} />
+          <div className="text-xs text-dim" style={{marginTop: 4}}>
+            所有对象会写到 <code className="inline">{draft.oss_path_prefix || "avatar-studio"}/uploads/...</code> 下，
+            方便和你 bucket 里其他内容区分。
           </div>
         </div>
       </div>
@@ -2992,9 +3623,21 @@ function App() {
   const { voices } = useVoices();
   const { figures } = useFigures();
 
+  // Truthy whenever the backend has a key on disk — regardless of whether
+  // ``settings.api_key`` was echoed back as the real value (current
+  // behaviour) or masked to "" (pre-2026-04 behaviour). Using the
+  // ``has_api_key`` flag as a fallback means an old cached backend
+  // response can no longer falsely trigger the "尚未配置" banner.
+  const hasKey = !!(settings.api_key || settings.has_api_key);
   const apiKeyDisplay = settings.api_key ? (settings.api_key.length > 12 ? settings.api_key.slice(0, 4) + "..." + settings.api_key.slice(-4) : settings.api_key) : "";
   const settingsIdx = TAB_IDS.indexOf("settings");
-  const showKeyBanner = settingsLoaded && !settings.api_key && activeTab !== settingsIdx;
+  const showKeyBanner = settingsLoaded && !hasKey && activeTab !== settingsIdx;
+  // OSS banner: shown only when key is set (otherwise the API-key
+  // banner takes precedence — no point asking the user to wire up
+  // OSS before they've even got an API key). DashScope cannot fetch
+  // local /api/... URLs, so any task with assets will 422 without OSS.
+  const ossConfigured = !!settings.oss_configured;
+  const showOssBanner = settingsLoaded && hasKey && !ossConfigured && activeTab !== settingsIdx;
 
   return (
     <div className="app">
@@ -3039,11 +3682,30 @@ function App() {
           </button>
         </div>
       )}
+      {showOssBanner && (
+        <div className="oa-config-banner" role="alert"
+             style={{margin: "12px 20px 0", flexShrink: 0}}>
+          <span className="oa-icon oa-config-banner__icon"><Ico name="warn"/></span>
+          <div className="oa-config-banner__text">
+            <strong>阿里云 OSS 未配置</strong>
+            <div style={{fontSize: 12, color: "var(--text-muted)", marginTop: 2}}>
+              DashScope 无法 fetch 本地 URL，所有任务都需要先把素材推到你自己的 OSS bucket。
+              到「设置 → 阿里云 OSS」填入 4 个字段（endpoint / bucket / key / secret）。
+            </div>
+          </div>
+          <button className="oa-config-banner__action" type="button"
+                  onClick={function () { setActiveTab(settingsIdx); }}>
+            前往配置
+            <span className="oa-icon"><Ico name="play"/></span>
+          </button>
+        </div>
+      )}
       <div className="content">
         {activeTab === 0 && <CreateTab onGoToTasks={function () { setActiveTab(1); }}
                                        settings={settings} voices={voices} figures={figures} />}
         {activeTab === 1 && <TasksTab/>}
-        {activeTab === 2 && <VoicesTab/>}
+        {activeTab === 2 && <VoicesTab hasApiKey={!!(settings.api_key || settings.has_api_key)}
+                                        onGoSettings={function () { setActiveTab(settingsIdx); }} />}
         {activeTab === 3 && <FiguresTab/>}
         {activeTab === 4 && <PromptGuideTab/>}
         {activeTab === 5 && <SettingsTab settings={settings} voices={voices}

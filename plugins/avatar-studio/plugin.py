@@ -9,7 +9,7 @@ Backend entry point. Wires:
   background ``asyncio.Task`` via ``api.spawn_task``.
 - ``add_upload_preview_route`` — vendored upload preview helper (issue #479).
 
-Routes (16):
+Routes (24):
 
   Tasks      POST /tasks            POST /cost-preview
              GET  /tasks            POST /tasks/{id}/cancel
@@ -20,8 +20,11 @@ Routes (16):
   Figures    GET  /figures          POST /figures
              DELETE /figures/{id}
   System     GET  /settings         PUT  /settings   GET /healthz
+             POST /test-connection  POST /capabilities/probe
+             POST /cleanup
   Upload     POST /upload           GET  /uploads/{rel_path:path}
-  Catalog    GET  /catalog
+  Catalog    GET  /catalog          GET  /prompt-guide
+  AI Helper  POST /ai/compose-prompt
 
 Pixelle hardening
 -----------------
@@ -57,6 +60,11 @@ from avatar_pipeline import (
     AvatarPipelineContext,
     run_pipeline,
 )
+from avatar_studio_inline.oss_uploader import (
+    OssNotConfigured,
+    OssUploader,
+    OssUploadError,
+)
 from avatar_studio_inline.upload_preview import (
     add_upload_preview_route,
     build_preview_url,
@@ -73,6 +81,45 @@ logger = logging.getLogger(__name__)
 
 PLUGIN_ID = "avatar-studio"
 SETTINGS_KEY = "avatar_studio_settings"
+
+
+def _read_audio_duration(path: Path) -> float | None:
+    """Best-effort audio duration probe (mp3 / wav / opus / m4a).
+
+    Used by the pipeline's TTS step to capture cosyvoice-v2's *actual*
+    output length so step 6 can pass it to wan2.2-s2v as the
+    ``duration`` parameter (DashScope bills per generated second). A
+    failed read returns ``None`` and the pipeline falls back to its
+    5-second placeholder — which is fine for cost preview but produces
+    a video that's exactly 5 s long regardless of how much was said,
+    so the placeholder really is a fallback only.
+    """
+    try:
+        from mutagen import File as MutagenFile  # type: ignore[import-not-found]
+    except ImportError:  # pragma: no cover - declared in requirements.txt
+        return None
+    try:
+        info = MutagenFile(str(path))
+        if info is None or not getattr(info, "info", None):
+            return None
+        return float(info.info.length)
+    except Exception as e:  # noqa: BLE001 - never break the pipeline
+        logger.info("avatar-studio: audio duration probe failed for %s: %s", path, e)
+        return None
+
+
+def _safe_rmtree_path(path: Path) -> None:
+    """Remove ``path`` recursively, swallowing FileNotFound and PermErrors.
+
+    Used when scrubbing per-task directories on delete/cleanup — a stuck
+    file handle on Windows shouldn't bubble up as a 500 to the UI.
+    """
+    import shutil
+    try:
+        if path.exists():
+            shutil.rmtree(path, ignore_errors=True)
+    except Exception as e:  # noqa: BLE001
+        logger.info("avatar-studio: rmtree skipped for %s: %s", path, e)
 
 
 # ─── Pydantic request bodies (Pixelle C6 — strict, 422-on-unknown) ─────
@@ -131,11 +178,19 @@ class CreateVoiceBody(BaseModel):
     model_config = _strict_model()
 
     label: str
-    source_audio_path: str
-    # ``dashscope_voice_id`` is optional — when the UI submits a fresh
-    # clone request we don't know the DashScope-assigned id yet; the
-    # backend allocates a placeholder and the cosyvoice-v2 clone
-    # workflow fills it in once DashScope returns.
+    # Local relative path returned by POST /upload (kept so a future
+    # cleanup can reach the source on disk). Optional because cosyvoice
+    # only needs the OSS URL — a manual API caller may pass just the URL.
+    source_audio_path: str = ""
+    # ``source_audio_oss_url`` is the *required* trigger for actual
+    # cloning — POST /voices used to be a pure DB insert, which produced
+    # rows with no real DashScope voice id and a "Voice not found" 400
+    # the moment anyone tried to use them. Now the route invokes
+    # ``client.clone_voice(sample_url=this)`` and persists the returned id.
+    source_audio_oss_url: str = ""
+    # If the caller already has a DashScope voice id (e.g. created via
+    # the bailian console) they can skip the cloning step by passing it
+    # here — we then just write the row.
     dashscope_voice_id: str = ""
     sample_url: str | None = None
     language: str = "zh-CN"
@@ -148,6 +203,12 @@ class CreateFigureBody(BaseModel):
     label: str
     image_path: str
     preview_url: str
+    # ``oss_url`` and ``oss_key`` come from POST /upload's response.
+    # When OSS is configured they're populated; when not, they're empty
+    # and the figure ends up in 'pending' detect_status forever (the
+    # /figures POST handler emits a clear hint in that case).
+    oss_url: str = ""
+    oss_key: str = ""
     detect_pass: bool = False
     detect_humanoid: bool = False
     detect_message: str | None = None
@@ -167,12 +228,35 @@ class SettingsBody(BaseModel):
     retention_days: int | None = None
     default_resolution: str | None = None
     default_voice: str | None = None
+    # ── Aliyun OSS — required for any task that uploads image/video/audio.
+    # All four fields must be present together; partial config is rejected at
+    # use-time with a 400 + "open Settings → OSS" hint (see OssNotConfigured
+    # in avatar_studio_inline/oss_uploader.py). Empty string means "clear",
+    # exactly like api_key.
+    oss_endpoint: str | None = None
+    oss_bucket: str | None = None
+    oss_access_key_id: str | None = None
+    oss_access_key_secret: str | None = None
+    oss_path_prefix: str | None = None  # default "avatar-studio"
 
 
 class CleanupBody(BaseModel):
     model_config = _strict_model()
 
     retention_days: int = 30
+
+
+class TestConnectionBody(BaseModel):
+    """Body for ``POST /test-connection``.
+
+    Both fields are optional so the UI can send ``{}`` to probe the
+    currently-saved key, or ``{"api_key": "sk-…"}`` to probe a key the
+    user just typed but hasn't persisted yet.
+    """
+
+    model_config = _strict_model()
+
+    api_key: str | None = None
 
 
 class AiComposePromptBody(BaseModel):
@@ -315,7 +399,15 @@ class Plugin(PluginBase):
 
         self._tm = AvatarTaskManager(self._data_dir / "avatar_studio.db")
         self._client = AvatarDashScopeClient(read_settings=self._read_settings)
+        # Single ``OssUploader`` instance — it lazy-reads settings on every
+        # call so a key rotation in Settings takes effect without reload.
+        self._oss = OssUploader(read_settings=self._read_settings)
         self._poll_tasks: dict[str, asyncio.Task[Any]] = {}
+        # Background ``wan2.2-s2v-detect`` jobs spawned from POST /figures.
+        # Tracked separately from pipeline polls so DELETE /figures/{id}
+        # can cancel a still-running probe before the row goes away,
+        # and on_unload can drain them cleanly.
+        self._figure_detect_tasks: dict[str, asyncio.Task[Any]] = {}
 
         # Validate settings — C5: warn, never raise.
         cfg = self._load_settings()
@@ -342,6 +434,21 @@ class Plugin(PluginBase):
 
     async def _async_init(self) -> None:
         await self._tm.init()
+        # Resume any detect probe that was interrupted by a process
+        # restart — without this, the row is stuck on 'pending' forever
+        # because the in-memory task that would have updated it is gone.
+        try:
+            pending = await self._tm.list_pending_figures()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("avatar-studio: resume figure detects failed: %s", exc)
+            pending = []
+        for fig in pending:
+            # Prefer the OSS URL — local preview URLs are only useful
+            # for the UI img tag, DashScope can't fetch them. If a row
+            # has no oss_url at all the detect helper will mark it
+            # 'skipped' with a helpful message instead of looping.
+            url = (fig.get("oss_url") or "").strip() or fig.get("preview_url") or ""
+            self._spawn_figure_detect(fig["id"], url)
 
     async def on_unload(self) -> None:
         # Cancel every in-flight pipeline task.
@@ -354,10 +461,84 @@ class Plugin(PluginBase):
                     pass
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("avatar-studio: pipeline %s cleanup error: %s", tid, exc)
+        # Same drain logic for figure pre-check probes — these are short
+        # (≤30s) so we await each one rather than fire-and-forget.
+        for fid, t in list(self._figure_detect_tasks.items()):
+            if not t.done():
+                t.cancel()
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("avatar-studio: detect %s cleanup error: %s", fid, exc)
         try:
             await self._tm.close()
         except Exception as exc:  # noqa: BLE001
             logger.warning("avatar-studio: tm close error: %s", exc)
+
+    # ── figure pre-check ──────────────────────────────────────────────
+
+    def _spawn_figure_detect(self, fig_id: str, image_url: str) -> None:
+        """Schedule a background ``wan2.2-s2v-detect`` for a figure row.
+
+        Idempotent: if a probe is already in-flight for this figure id we
+        leave it alone (prevents the on_load resume from doubling up with
+        a manual re-trigger). The closure captures ``fig_id`` so the
+        finally-clause can pop the right key — never iterate over the
+        dict here.
+        """
+        if fig_id in self._figure_detect_tasks and not self._figure_detect_tasks[fig_id].done():
+            return
+        coro = self._run_figure_detect(fig_id, image_url)
+        task = self._api.spawn_task(coro, name=f"{PLUGIN_ID}:detect:{fig_id}")
+        self._figure_detect_tasks[fig_id] = task
+
+    async def _run_figure_detect(self, fig_id: str, image_url: str) -> None:
+        # Decide upfront whether we *can* run a probe at all. Without an
+        # API key DashScope returns 401 immediately, which is misleading
+        # noise on the figure card — surface 'skipped' instead so the user
+        # knows to configure Settings rather than retry forever.
+        if not image_url:
+            await self._tm.update_figure_detect(
+                fig_id, status="fail", message="missing preview_url"
+            )
+            self._figure_detect_tasks.pop(fig_id, None)
+            return
+        if not self._client.has_api_key():
+            await self._tm.update_figure_detect(
+                fig_id,
+                status="skipped",
+                message="API Key 未配置，已跳过预检；填入后请重新上传",
+            )
+            self._figure_detect_tasks.pop(fig_id, None)
+            return
+        try:
+            result = await self._client.face_detect(image_url)
+            await self._tm.update_figure_detect(
+                fig_id,
+                status="pass",
+                message="OK",
+                humanoid=bool(result.get("humanoid")),
+            )
+        except asyncio.CancelledError:
+            # User clicked 删除 mid-probe; the DELETE handler also wipes
+            # the row, so we deliberately do NOT touch the DB here. Just
+            # let the cancellation propagate.
+            raise
+        except VendorError as e:
+            # Reuse the same hint logic the pipeline uses so the message
+            # the user sees on the card matches what they'd get on a real
+            # task failure with the same input.
+            msg = f"[{e.kind}] {str(e)[:280]}"
+            await self._tm.update_figure_detect(fig_id, status="fail", message=msg)
+        except Exception as e:  # noqa: BLE001 - never bubble out of detect
+            logger.exception("figure-detect %s crashed", fig_id)
+            await self._tm.update_figure_detect(
+                fig_id, status="fail", message=f"unexpected: {e!s}"[:500]
+            )
+        finally:
+            self._figure_detect_tasks.pop(fig_id, None)
 
     # ── settings ──────────────────────────────────────────────────────
 
@@ -373,6 +554,13 @@ class Plugin(PluginBase):
             "retention_days": 30,
             "default_resolution": "480P",
             "default_voice": "longxiaochun_v2",
+            # OSS — empty string means "not configured yet"; all four
+            # *must* be filled in for any task to actually run.
+            "oss_endpoint": "",
+            "oss_bucket": "",
+            "oss_access_key_id": "",
+            "oss_access_key_secret": "",
+            "oss_path_prefix": "avatar-studio",
         }
         for k in list(merged):
             if k in cfg and cfg[k] not in (None, ""):
@@ -422,14 +610,26 @@ class Plugin(PluginBase):
         ] + [
             {
                 "name": "avatar_voice_create",
-                "description": "克隆一个自定义 cosyvoice-v2 音色",
+                "description": (
+                    "克隆一个自定义 cosyvoice-v2 音色。"
+                    "需要先 POST /upload 拿到 source_audio_oss_url。"
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "label": {"type": "string"},
                         "source_audio_path": {"type": "string"},
+                        "source_audio_oss_url": {
+                            "type": "string",
+                            "description": (
+                                "样本音频的公网 URL — DashScope "
+                                "VoiceEnrollmentService 会拉取它来训练音色"
+                            ),
+                        },
+                        "language": {"type": "string", "default": "zh-CN"},
+                        "gender": {"type": "string", "default": "unknown"},
                     },
-                    "required": ["label", "source_audio_path"],
+                    "required": ["label", "source_audio_oss_url"],
                 },
             },
             {
@@ -443,14 +643,31 @@ class Plugin(PluginBase):
             },
             {
                 "name": "avatar_figure_create",
-                "description": "把一张人像照添加进形象库（自动跑 face-detect）",
+                "description": (
+                    "把一张人像照添加进形象库（自动跑 face-detect）。"
+                    "需要先 POST /upload 拿到 oss_url + preview_url。"
+                ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "label": {"type": "string"},
-                        "image_path": {"type": "string"},
+                        "image_path": {
+                            "type": "string",
+                            "description": "POST /upload 返回的 path 字段",
+                        },
+                        "preview_url": {
+                            "type": "string",
+                            "description": "本地预览 URL（UI 展示用）",
+                        },
+                        "oss_url": {
+                            "type": "string",
+                            "description": (
+                                "OSS 签名 URL — DashScope face-detect 用它，"
+                                "缺失则形象会停在 skipped 状态"
+                            ),
+                        },
                     },
-                    "required": ["label", "image_path"],
+                    "required": ["label", "image_path", "preview_url"],
                 },
             },
             {
@@ -506,14 +723,32 @@ class Plugin(PluginBase):
             ok = await self._tm.delete_custom_voice(str(args.get("voice_id", "")))
             return "ok" if ok else "not found"
         if tool_name == "avatar_figure_create":
+            preview_url = str(args.get("preview_url", ""))
+            oss_url = str(args.get("oss_url", "")).strip()
             fig_id = await self._tm.create_figure(
                 label=str(args.get("label", "figure")),
                 image_path=str(args.get("image_path", "")),
-                preview_url=str(args.get("preview_url", "")),
+                preview_url=preview_url,
+                oss_url=oss_url,
+                detect_status="pending" if oss_url else "skipped",
+                detect_message=(
+                    None if oss_url
+                    else "OSS 未配置或 oss_url 缺失，已跳过预检"
+                ),
             )
-            return f"形象已创建：{fig_id}"
+            # Match the REST endpoint's behaviour — the tool flow must
+            # also kick off pre-check (only when we have an OSS URL),
+            # otherwise figures created via the AI-tool route would stay
+            # in 'pending' forever.
+            if oss_url:
+                self._spawn_figure_detect(fig_id, oss_url)
+            return f"形象已创建：{fig_id}（detect_status={'pending' if oss_url else 'skipped'}）"
         if tool_name == "avatar_figure_delete":
-            ok = await self._tm.delete_figure(str(args.get("figure_id", "")))
+            fig_id = str(args.get("figure_id", ""))
+            handle = self._figure_detect_tasks.pop(fig_id, None)
+            if handle is not None and not handle.done():
+                handle.cancel()
+            ok = await self._tm.delete_figure(fig_id)
             return "ok" if ok else "not found"
         return f"unknown tool: {tool_name}"
 
@@ -530,6 +765,32 @@ class Plugin(PluginBase):
                     "message": "DashScope API Key 未配置；请到「设置」填写后再提交任务",
                 },
             )
+        # OSS is required for any task that flows assets to DashScope.
+        # Photo_speak / video_relip / video_reface / avatar_compose all
+        # need at least one image_url / video_url / audio_url, and
+        # those URLs MUST be public — DashScope cannot fetch our
+        # ``/api/plugins/...`` route. Reject early with a clear pointer
+        # to Settings → OSS rather than letting the pipeline blow up
+        # 30 seconds in with a confusing 422.
+        if not self._oss.is_configured():
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "oss_not_configured",
+                    "message": (
+                        "Aliyun OSS 未配置；DashScope 无法 fetch 本地 URL。"
+                        "请到「设置 → 阿里云 OSS」填入 endpoint / bucket / "
+                        "access key / secret 后重试。"
+                    ),
+                },
+            )
+
+        # Resolve `figure_id` (if supplied) into a real public URL so the
+        # FigurePicker UI doesn't have to know about OSS — it just sends
+        # the figure_id and we look up the OSS URL persisted on POST
+        # /figures. Without this, UI would have to re-upload the figure
+        # image every time the user picks it from the library.
+        params = await self._resolve_figure_id(dict(params))
 
         # Pre-flight cost preview so the API consumer (UI / tool / curl)
         # always sees the breakdown alongside the new task row.
@@ -550,6 +811,10 @@ class Plugin(PluginBase):
 
         ctx = AvatarPipelineContext(task_id=task_id, mode=mode, params=dict(params))
         ctx.cost_approved = bool(params.get("cost_approved"))
+        # Stash the OSS upload helper on ctx.params so the TTS step can
+        # publish the synthesised audio without importing OssUploader
+        # (keeps the pipeline layer free of Aliyun-specific imports).
+        ctx.params["_oss_upload_audio"] = self._make_oss_upload_audio(task_id)
         # Spawn the pipeline; tracking handle so on_unload can cancel.
         self._poll_tasks[task_id] = self._api.spawn_task(
             self._run_one_pipeline(ctx),
@@ -558,6 +823,21 @@ class Plugin(PluginBase):
 
         row = await self._tm.get_task(task_id)
         return row or {"id": task_id, "mode": mode, "status": "pending"}
+
+    def _make_oss_upload_audio(self, task_id: str) -> Any:
+        """Return ``async (path, fname) -> public_url`` bound to a task.
+
+        Keeps OSS access tightly scoped and eliminates the temptation to
+        let pipeline code reach for ``self._oss`` directly.
+        """
+        async def _upload(path: Path, fname: str) -> str:
+            key = self._oss.build_object_key(
+                scope=f"tasks/{task_id}", filename=fname,
+            )
+            return await asyncio.to_thread(
+                self._oss.upload_file, path, key=key
+            )
+        return _upload
 
     async def _run_one_pipeline(self, ctx: AvatarPipelineContext) -> None:
         try:
@@ -568,11 +848,57 @@ class Plugin(PluginBase):
                 emit=self._emit,
                 plugin_id=PLUGIN_ID,
                 base_data_dir=self._data_dir,
+                # Pass the duration helper so step 4 stores the *real*
+                # cosyvoice-v2 audio length (the form's
+                # ``audio_duration_sec`` is only a UI-side estimate
+                # used for the cost gate; s2v needs the actual length).
+                get_audio_duration=_read_audio_duration,
             )
         except Exception:
             logger.exception("avatar-studio: pipeline crashed for task %s", ctx.task_id)
         finally:
             self._poll_tasks.pop(ctx.task_id, None)
+
+    async def _resolve_figure_id(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Inline the OSS URL of a chosen figure into ``assets.image_url``.
+
+        FigurePicker only sends ``figure_id`` — pipeline code never
+        needs to know that figures exist. The figure row carries
+        ``oss_url`` (set at POST /figures time when OSS was configured);
+        we copy that into the canonical ``assets.image_url`` slot,
+        overriding any local URL the form might have left there.
+
+        If the figure was created BEFORE OSS was configured (or if the
+        OSS upload failed at the time), ``oss_url`` will be empty and
+        we leave assets untouched — the pipeline's URL-shape guard
+        then raises a 422 with a clear "re-upload this figure" hint.
+        """
+        fid = str(params.get("figure_id") or "").strip()
+        if not fid:
+            return params
+        row = await self._tm.get_figure(fid)
+        if not row:
+            return params
+        oss_url = str(row.get("oss_url") or "").strip()
+        if not oss_url:
+            # No public URL on file — leave assets alone so the pipeline
+            # guard surfaces the right error to the user instead of us
+            # silently swapping in a stale local URL.
+            return params
+        assets = dict(params.get("assets") or {})
+        # Both fields are valid figure consumers; pick by mode at write
+        # time so video_reface picks up the figure-as-target, while
+        # photo_speak picks it up as the portrait.
+        mode = str(params.get("mode") or "")
+        if mode == "avatar_compose":
+            existing = assets.get("ref_images_url") or []
+            if isinstance(existing, str):
+                existing = [existing] if existing else []
+            assets["ref_images_url"] = list(existing) + [oss_url]
+        else:
+            assets["image_url"] = oss_url
+        params["assets"] = assets
+        return params
 
     def _emit(self, event: str, payload: dict[str, Any]) -> None:
         try:
@@ -615,6 +941,11 @@ class Plugin(PluginBase):
             if handle and not handle.done():
                 handle.cancel()
             ok = await self._tm.delete_task(task_id)
+            # Wipe the per-task directory too — previously DELETE only
+            # nuked the DB row and left audio/video on disk forever,
+            # so the data dir grew unbounded even when the user kept
+            # cleaning up the task list. Failure here is non-fatal.
+            _safe_rmtree_path(self._data_dir / "tasks" / task_id)
             return {"ok": ok}
 
         @router.post("/tasks/{task_id}/cancel")
@@ -668,8 +999,66 @@ class Plugin(PluginBase):
 
         @router.post("/voices")
         async def create_voice(body: CreateVoiceBody) -> dict[str, Any]:
-            voice_id = await self._tm.create_custom_voice(**body.model_dump())
-            return {"ok": True, "voice_id": voice_id}
+            data = body.model_dump()
+            ds_voice_id = (data.get("dashscope_voice_id") or "").strip()
+            sample_oss = (data.get("source_audio_oss_url") or "").strip()
+
+            # Three accepted modes (in priority order):
+            #   1. Caller already has a DashScope voice id → skip clone,
+            #      just persist the row (admin-style import).
+            #   2. Caller supplied an OSS sample URL → call
+            #      VoiceEnrollmentService.create_voice and persist the
+            #      returned id.
+            #   3. Neither → reject with a clear 400. We refuse to
+            #      pre-create empty rows the way the old code did,
+            #      because that's exactly what produced the
+            #      "音色克隆只是塞了条假数据" bug.
+            if not ds_voice_id and not sample_oss:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "code": "missing_clone_input",
+                        "message": (
+                            "需要 source_audio_oss_url（先通过 POST /upload "
+                            "拿到 oss_url）或已存在的 dashscope_voice_id"
+                        ),
+                    },
+                )
+            if not ds_voice_id:
+                if not self._oss.is_configured():
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "code": "oss_not_configured",
+                            "message": "克隆音色需要先配置 OSS（DashScope 拉样本）",
+                        },
+                    )
+                try:
+                    res = await self._client.clone_voice(
+                        sample_url=sample_oss,
+                        prefix="avatar",
+                        language=("zh" if data["language"].startswith("zh") else "en"),
+                    )
+                except VendorError as e:
+                    raise HTTPException(
+                        status_code=400,
+                        detail={"kind": e.kind, "message": str(e)},
+                    ) from e
+                ds_voice_id = res["voice_id"]
+
+            voice_id = await self._tm.create_custom_voice(
+                label=data["label"],
+                source_audio_path=data.get("source_audio_path") or "",
+                dashscope_voice_id=ds_voice_id,
+                sample_url=data.get("sample_url"),
+                language=data["language"],
+                gender=data["gender"],
+            )
+            return {
+                "ok": True,
+                "voice_id": voice_id,
+                "dashscope_voice_id": ds_voice_id,
+            }
 
         @router.delete("/voices/{voice_id}")
         async def delete_voice(voice_id: str) -> dict[str, Any]:
@@ -680,16 +1069,42 @@ class Plugin(PluginBase):
         async def synth_sample(
             voice_id: str, text: str = "你好，欢迎使用数字人工作室"
         ) -> dict[str, Any]:
+            # voice_id can be either:
+            #   - a system voice id (longxiaochun_v2 etc.) — used directly
+            #   - an internal vc_xxxxxxxx id from create_custom_voice — must
+            #     resolve to the DashScope voice id stored on the row
+            #     (otherwise cosyvoice-v2 returns "voice not found").
+            ds_voice_id = voice_id
+            if voice_id.startswith("vc_"):
+                row = await self._tm.get_voice(voice_id)
+                if row and row.get("dashscope_voice_id"):
+                    ds_voice_id = str(row["dashscope_voice_id"])
             try:
-                res = await self._client.synth_voice(text=text, voice_id=voice_id)
+                res = await self._client.synth_voice(text=text, voice_id=ds_voice_id)
             except VendorError as e:
-                raise HTTPException(status_code=400, detail={"kind": e.kind, "message": str(e)})
-            sample_dir = self._data_dir / "voice_samples"
+                raise HTTPException(
+                    status_code=400, detail={"kind": e.kind, "message": str(e)}
+                ) from e
+            # Write under uploads/ so the preview route can serve it —
+            # the previous data_dir/voice_samples location was OUTSIDE
+            # the route's base_dir and quietly returned 404, leaving the
+            # UI with a 0:00/0:00 audio element.
+            sample_dir = self._data_dir / "uploads" / "voice_samples"
             sample_dir.mkdir(parents=True, exist_ok=True)
             fname = f"{voice_id}_{uuid.uuid4().hex[:8]}.{res['format']}"
-            (sample_dir / fname).write_bytes(res["audio_bytes"])
+            file_path = sample_dir / fname
+            file_path.write_bytes(res["audio_bytes"])
             url = build_preview_url(PLUGIN_ID, f"voice_samples/{fname}")
-            return {"ok": True, "url": url}
+            # Surface size + magic in the response payload so the UI (or
+            # curl) can spot a wrong-codec save without trawling the log.
+            head_hex = res["audio_bytes"][:16].hex(" ")
+            return {
+                "ok": True,
+                "url": url,
+                "size_bytes": len(res["audio_bytes"]),
+                "format": res["format"],
+                "magic": head_hex,
+            }
 
         # Figures ─────────────────────────────────────────────────────
 
@@ -699,11 +1114,63 @@ class Plugin(PluginBase):
 
         @router.post("/figures")
         async def create_figure(body: CreateFigureBody) -> dict[str, Any]:
-            fig_id = await self._tm.create_figure(**body.model_dump())
-            return {"ok": True, "figure_id": fig_id}
+            # ``detect_*`` columns are server-managed: the row starts
+            # 'pending' and the background probe (below) flips it to
+            # 'pass' / 'fail' / 'skipped'. We deliberately ignore any
+            # client-supplied detect_* fields so a stale UI can't mark a
+            # bad figure as 'pass' just by POSTing detect_pass=true.
+            data = body.model_dump()
+            oss_url = (data.get("oss_url") or "").strip()
+            oss_key = (data.get("oss_key") or "").strip()
+
+            # Without an OSS URL we can't run face_detect against
+            # DashScope (cloud cannot fetch our local /api/... URL).
+            # Persist the row in a 'skipped' state with a friendly
+            # message rather than spinning forever in 'pending'.
+            initial_status = "pending" if oss_url else "skipped"
+            initial_msg = (
+                None if oss_url
+                else "OSS 未配置或上传失败，DashScope 无法 fetch 该图片，已跳过预检"
+            )
+
+            fig_id = await self._tm.create_figure(
+                label=data["label"],
+                image_path=data["image_path"],
+                preview_url=data["preview_url"],
+                oss_url=oss_url,
+                oss_key=oss_key,
+                detect_status=initial_status,
+                detect_message=initial_msg,
+            )
+            if oss_url:
+                # Probe with the OSS URL — this is the URL DashScope
+                # will fetch when the figure is later picked from the
+                # library, so verifying it now is the most accurate
+                # readiness signal we can give the user.
+                self._spawn_figure_detect(fig_id, oss_url)
+            return {
+                "ok": True,
+                "figure_id": fig_id,
+                "detect_status": initial_status,
+                "oss_configured": bool(oss_url),
+            }
 
         @router.delete("/figures/{fig_id}")
         async def delete_figure(fig_id: str) -> dict[str, Any]:
+            # Cancel any in-flight detect probe **fire-and-forget**.
+            # An earlier version awaited the cancellation here — that
+            # made DELETE block for as long as httpx took to unwind the
+            # in-flight POST (often 2-3s, occasionally longer if the
+            # remote socket was already half-open), and from the user's
+            # POV the trash button "did nothing" until then. Now:
+            #   1. Wipe the DB row immediately (so the next /figures
+            #      poll returns without it).
+            #   2. .cancel() the bg task and walk away. If it manages to
+            #      reach update_figure_detect() before unwinding, the
+            #      UPDATE will hit zero rows — harmless.
+            handle = self._figure_detect_tasks.pop(fig_id, None)
+            if handle is not None and not handle.done():
+                handle.cancel()
             ok = await self._tm.delete_figure(fig_id)
             return {"ok": ok}
 
@@ -711,9 +1178,22 @@ class Plugin(PluginBase):
 
         @router.get("/settings")
         async def get_settings() -> dict[str, Any]:
+            # Echo the api_key back as-is. The Settings tab needs to be able
+            # to display it (gated behind a 「显示」 toggle that defaults to
+            # masked) so the user can both verify what was saved and copy it
+            # out if they're rotating keys. Anyone who can call this endpoint
+            # already has the host-issued plugin token, so masking the key
+            # here didn't add real defense-in-depth — it only broke the
+            # 'click 保存 then field empties' UX without protecting anything.
             cfg = self._load_settings()
             cfg["has_api_key"] = bool(cfg.get("api_key"))
-            cfg["api_key"] = ""  # Never echo the secret back.
+            # Single source of truth for the UI's OSS banner: derived,
+            # never persisted, so editing one field at a time can't push
+            # us into a half-true state. ``oss_secret_set`` echoes back a
+            # bool (not the secret) so the form can render a 「已保存」
+            # badge without leaking the value.
+            cfg["oss_configured"] = self._oss.is_configured()
+            cfg["oss_secret_set"] = bool(str(cfg.get("oss_access_key_secret") or "").strip())
             return {"ok": True, "config": cfg}
 
         @router.put("/settings")
@@ -733,19 +1213,109 @@ class Plugin(PluginBase):
                         storage_bytes += p.stat().st_size
             except OSError:
                 pass
+            # ``api_reachable`` here is a *local* heuristic — "is there a
+            # non-empty key on disk?". Settings tab's 测试连接 button uses
+            # the dedicated /test-connection probe below, which actually
+            # round-trips DashScope. Do not promote this flag to mean
+            # "credential is valid" without changing the probe semantics.
             return {
                 "ok": True,
                 "plugin": PLUGIN_ID,
                 "ts": time.time(),
                 "has_api_key": self._client.has_api_key(),
                 "api_reachable": self._client.has_api_key(),
+                "oss_configured": self._oss.is_configured(),
                 "in_flight": len(self._poll_tasks),
                 "storage": {"bytes_used": storage_bytes, "dir": str(self._data_dir)},
             }
 
+        @router.post("/test-connection")
+        async def test_connection(body: TestConnectionBody) -> dict[str, Any]:
+            # Optional ``api_key`` in the body lets the user test a freshly
+            # typed (but not yet persisted) key — handy when rotating creds.
+            # An empty/missing key falls back to whatever's saved on disk.
+            probe_key = (body.api_key or "").strip() or None
+            res = await self._client.ping_api_key(probe_key)
+            return {
+                "ok": bool(res.get("ok")),
+                "status": res.get("status"),
+                "message": res.get("message") or "",
+            }
+
+        @router.post("/capabilities/probe")
+        async def capabilities_probe() -> dict[str, Any]:
+            """Probe DashScope to see which of *our* models the key can
+            actually invoke, then roll the per-model verdict up to the
+            per-mode level so the Settings tab can display
+            「照片说话 ✓ 可用 / 视频换人 ✗ 未开通」 directly.
+            """
+            if not self._client.has_api_key():
+                return {
+                    "ok": False,
+                    "message": "API Key 未配置；先到上方填写并保存后再检测",
+                    "models": [],
+                    "modes": [],
+                }
+            results = await self._client.probe_models()
+            by_model: dict[str, dict[str, Any]] = {r["model"]: r for r in results}
+
+            # Each plugin mode depends on a known set of models — keep
+            # this map next to the dashscope client constants so a new
+            # mode added to MODES_BY_ID doesn't silently drop off the
+            # availability panel. The first miss wins for the verdict
+            # so the worst case (denied > unknown > available) bubbles up.
+            MODE_DEPS: dict[str, list[str]] = {
+                "photo_speak": ["wan2.2-s2v-detect", "wan2.2-s2v", "cosyvoice-v2"],
+                "video_relip": ["videoretalk", "cosyvoice-v2"],
+                "video_reface": ["wan2.2-animate-mix"],
+                "avatar_compose": [
+                    "wan2.5-i2i-preview",
+                    "wan2.2-s2v-detect",
+                    "wan2.2-s2v",
+                    "cosyvoice-v2",
+                ],
+            }
+            modes_out: list[dict[str, Any]] = []
+            for mode_id, spec in MODES_BY_ID.items():
+                deps = [d for d in MODE_DEPS.get(mode_id, []) if d]
+                per_dep: list[dict[str, Any]] = []
+                worst = "available"
+                for dep in deps:
+                    r = by_model.get(dep) or {
+                        "model": dep, "status": "unknown",
+                        "http": None, "message": "未参与本次探测",
+                    }
+                    per_dep.append(r)
+                    if r["status"] == "denied":
+                        worst = "denied"
+                    elif r["status"] == "unknown" and worst != "denied":
+                        worst = "unknown"
+                modes_out.append({
+                    "id": mode_id,
+                    "label_zh": spec.label_zh,
+                    "label_en": spec.label_en,
+                    "status": worst,
+                    "deps": per_dep,
+                })
+            return {
+                "ok": True,
+                "ts": time.time(),
+                "models": results,
+                "modes": modes_out,
+            }
+
         @router.post("/cleanup")
         async def cleanup(body: CleanupBody) -> dict[str, Any]:
+            # Snapshot the IDs we're about to drop so we can scrub their
+            # task dirs from disk in the same call — without this, the
+            # SQLite row vanished but the mp4/wav/png blobs stayed
+            # behind, defeating the whole point of the button.
+            cutoff_ids = await self._tm.list_expired_task_ids(
+                retention_days=body.retention_days,
+            )
             removed = await self._tm.cleanup_expired(retention_days=body.retention_days)
+            for tid in cutoff_ids:
+                _safe_rmtree_path(self._data_dir / "tasks" / tid)
             return {"ok": True, "removed": removed}
 
         @router.post("/ai/compose-prompt")
@@ -799,6 +1369,20 @@ class Plugin(PluginBase):
             file: UploadFile = File(...),
             kind: str = "image",
         ) -> dict[str, Any]:
+            # Two-stage upload:
+            #   1. Persist locally so the UI can render a fast preview
+            #      (`preview_url`) and so we can re-upload to OSS later
+            #      (e.g. on retry / voice clone) without asking the user
+            #      to re-pick the file.
+            #   2. Push to Aliyun OSS and sign a 6h URL — this is what
+            #      we hand to DashScope (`url`, kept under that name for
+            #      backwards compatibility with the UI's `form.image.url`
+            #      reads, which is what `buildPayload` puts into `assets`).
+            #
+            # If OSS isn't configured yet we still return 200 with the
+            # local artefact so the UI can warn the user inline rather
+            # than fail the upload entirely; the task-creation route
+            # then refuses with a clear "configure OSS first" message.
             ext = Path(file.filename or "file").suffix.lower().lstrip(".") or "bin"
             subdir = {
                 "image": "images",
@@ -809,12 +1393,39 @@ class Plugin(PluginBase):
             uploads_dir.mkdir(parents=True, exist_ok=True)
             fname = f"{uuid.uuid4().hex[:12]}.{ext}"
             content = await file.read()
-            (uploads_dir / fname).write_bytes(content)
+            local_path = uploads_dir / fname
+            local_path.write_bytes(content)
             rel = f"{subdir}/{fname}"
+            preview_url = build_preview_url(PLUGIN_ID, rel)
+
+            oss_url: str | None = None
+            oss_key: str | None = None
+            oss_error: str | None = None
+            if self._oss.is_configured():
+                try:
+                    oss_key = self._oss.build_object_key(
+                        scope=f"uploads/{subdir}", filename=fname
+                    )
+                    oss_url = await asyncio.to_thread(
+                        self._oss.upload_file, local_path, key=oss_key
+                    )
+                except (OssNotConfigured, OssUploadError) as e:
+                    oss_error = str(e)
+                    logger.warning("avatar-studio: OSS upload failed: %s", e)
+
             return {
                 "ok": True,
                 "path": rel,
-                "url": build_preview_url(PLUGIN_ID, rel),
+                "preview_url": preview_url,
+                # ``url`` is the OSS signed URL when configured; falls
+                # back to the local preview URL only so the UI doesn't
+                # crash — buildPayload still puts whatever's here into
+                # ``assets``, and a local URL there will trip the
+                # task-creation route's OSS guard with a helpful error.
+                "url": oss_url or preview_url,
+                "oss_url": oss_url,
+                "oss_key": oss_key,
+                "oss_error": oss_error,
                 "size": len(content),
             }
 

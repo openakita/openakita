@@ -156,6 +156,50 @@ async def test_figure_crud_with_detect_flags(tm: AvatarTaskManager) -> None:
     assert await tm.delete_figure(fid) is True
 
 
+async def test_figure_default_status_is_pending_until_updated(
+    tm: AvatarTaskManager,
+) -> None:
+    """New figure rows must surface as ``pending`` so the UI can show a
+    spinner — the bug we just fixed was that rows defaulted to
+    ``detect_pass=0`` and the UI mis-classified that as 'pending' only
+    by accident, with no way to distinguish a never-checked figure from
+    a failed one. ``detect_status`` now carries the verdict explicitly."""
+    fid = await tm.create_figure(
+        label="actor 02",
+        image_path="/tmp/02.png",
+        preview_url="/api/plugins/avatar-studio/uploads/figures/02.png",
+    )
+    figure = await tm.get_figure(fid)
+    assert figure is not None
+    assert figure["detect_status"] == "pending"
+    assert figure["detect_pass"] == 0
+
+    pending = await tm.list_pending_figures()
+    assert any(r["id"] == fid for r in pending)
+
+    assert await tm.update_figure_detect(
+        fid, status="pass", message="OK", humanoid=True
+    ) is True
+    figure = await tm.get_figure(fid)
+    assert figure["detect_status"] == "pass"
+    assert figure["detect_pass"] == 1
+    assert figure["detect_humanoid"] == 1
+    assert figure["detect_message"] == "OK"
+
+    pending = await tm.list_pending_figures()
+    assert all(r["id"] != fid for r in pending)
+
+
+async def test_figure_update_detect_rejects_unknown_status(
+    tm: AvatarTaskManager,
+) -> None:
+    fid = await tm.create_figure(
+        label="actor 03", image_path="/tmp/03.png", preview_url="/p/03.png",
+    )
+    with pytest.raises(ValueError, match="unknown detect_status"):
+        await tm.update_figure_detect(fid, status="bogus")
+
+
 # ─── Bulk helpers ─────────────────────────────────────────────────────
 
 

@@ -75,9 +75,18 @@ CREATE TABLE IF NOT EXISTS figures (
     label               TEXT NOT NULL,
     image_path          TEXT NOT NULL,
     preview_url         TEXT NOT NULL,
+    -- ``oss_url`` is the *signed* HTTPS URL pushed by POST /figures
+    -- when OSS is configured. This is the URL we hand DashScope
+    -- (face-detect during pre-check, and later s2v / animate-mix when
+    -- the figure is picked from the library). Empty string means the
+    -- figure was created before OSS was wired up — pre-check will be
+    -- stuck on 'pending' and the user must re-upload.
+    oss_url             TEXT NOT NULL DEFAULT '',
+    oss_key             TEXT NOT NULL DEFAULT '',
     detect_pass         INTEGER NOT NULL DEFAULT 0,
     detect_humanoid     INTEGER NOT NULL DEFAULT 0,
     detect_message      TEXT,
+    detect_status       TEXT NOT NULL DEFAULT 'pending',
     created_at          REAL NOT NULL
 );
 
@@ -177,7 +186,53 @@ class AvatarTaskManager:
         await self._db.execute("PRAGMA synchronous=NORMAL")
         await self._db.execute("PRAGMA foreign_keys=ON")
         await self._db.executescript(SCHEMA_SQL)
+        # Lightweight schema migration for `figures.detect_status` so users
+        # with a pre-existing DB (no column) don't crash on first read. We
+        # check the column list rather than relying on `ALTER TABLE … IF NOT
+        # EXISTS` which SQLite < 3.35 doesn't support.
+        await self._migrate_figures_detect_status()
+        await self._migrate_figures_oss_columns()
         await self._db.commit()
+
+    async def _migrate_figures_detect_status(self) -> None:
+        """Add ``figures.detect_status`` if the column is missing.
+
+        Backfills the value from the legacy ``detect_pass`` flag so the
+        Library UI doesn't suddenly show every existing row as 'pending'
+        after the upgrade. ``detect_pass=1`` → 'pass', otherwise 'pending'
+        (we deliberately don't infer 'fail' from a 0 because the original
+        code wrote 0 *both* on insert and on failure).
+        """
+        async with self._conn.execute("PRAGMA table_info(figures)") as cur:
+            cols = {row[1] for row in await cur.fetchall()}
+        if "detect_status" in cols:
+            return
+        await self._conn.execute(
+            "ALTER TABLE figures ADD COLUMN detect_status TEXT NOT NULL DEFAULT 'pending'"
+        )
+        await self._conn.execute(
+            "UPDATE figures SET detect_status = 'pass' WHERE detect_pass = 1"
+        )
+
+    async def _migrate_figures_oss_columns(self) -> None:
+        """Add ``figures.oss_url`` / ``figures.oss_key`` if missing.
+
+        Backfill is intentionally NOT done — there's no way to recover
+        an OSS URL for a row that was inserted before OSS was wired up.
+        Pre-existing figures will surface as "请重新上传" in the UI when
+        the user tries to use them; this is the correct UX (we can't
+        promise DashScope can fetch a URL we never minted).
+        """
+        async with self._conn.execute("PRAGMA table_info(figures)") as cur:
+            cols = {row[1] for row in await cur.fetchall()}
+        if "oss_url" not in cols:
+            await self._conn.execute(
+                "ALTER TABLE figures ADD COLUMN oss_url TEXT NOT NULL DEFAULT ''"
+            )
+        if "oss_key" not in cols:
+            await self._conn.execute(
+                "ALTER TABLE figures ADD COLUMN oss_key TEXT NOT NULL DEFAULT ''"
+            )
 
     async def close(self) -> None:
         if self._db is not None:
@@ -299,6 +354,21 @@ class AvatarTaskManager:
         await self._conn.commit()
         return cur.rowcount > 0
 
+    async def list_expired_task_ids(self, *, retention_days: int = 30) -> list[str]:
+        """Return ids that ``cleanup_expired`` would remove.
+
+        Surfaced separately so the plugin layer can ``rmtree`` each
+        task's data directory in the same call — the SQL DELETE alone
+        leaves orphaned mp4/wav/png blobs on disk forever.
+        """
+        cutoff = _now() - max(0, retention_days) * 86400
+        async with self._conn.execute(
+            "SELECT id FROM tasks WHERE created_at < ? AND status IN ('succeeded','failed','cancelled')",
+            (cutoff,),
+        ) as cur:
+            rows = await cur.fetchall()
+        return [str(r[0]) for r in rows]
+
     async def cleanup_expired(self, *, retention_days: int = 30) -> int:
         """Delete tasks older than the retention window. Returns rows removed."""
         cutoff = _now() - max(0, retention_days) * 86400
@@ -317,6 +387,19 @@ class AvatarTaskManager:
         ) as cur:
             rows = await cur.fetchall()
         return [dict(r) for r in rows]
+
+    async def get_voice(self, voice_id: str) -> dict[str, Any] | None:
+        """Look up a single custom-voice row by internal id (vc_xxxx).
+
+        Returns ``None`` when the row doesn't exist OR is a system voice
+        (system voices have no DB row to begin with). Caller is expected
+        to fall back to the in-code SYSTEM_VOICES list in that case.
+        """
+        async with self._conn.execute(
+            "SELECT * FROM voices WHERE id = ? LIMIT 1", (voice_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        return dict(row) if row else None
 
     async def create_custom_voice(
         self,
@@ -370,31 +453,87 @@ class AvatarTaskManager:
         label: str,
         image_path: str,
         preview_url: str,
+        oss_url: str = "",
+        oss_key: str = "",
         detect_pass: bool = False,
         detect_humanoid: bool = False,
         detect_message: str | None = None,
+        detect_status: str = "pending",
     ) -> str:
         fig_id = _new_id("fig")
         await self._conn.execute(
             """
             INSERT INTO figures (
-                id, label, image_path, preview_url, detect_pass,
-                detect_humanoid, detect_message, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                id, label, image_path, preview_url, oss_url, oss_key,
+                detect_pass, detect_humanoid, detect_message, detect_status,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 fig_id,
                 label,
                 image_path,
                 preview_url,
+                oss_url,
+                oss_key,
                 1 if detect_pass else 0,
                 1 if detect_humanoid else 0,
                 detect_message,
+                detect_status,
                 _now(),
             ),
         )
         await self._conn.commit()
         return fig_id
+
+    async def get_figure(self, fig_id: str) -> dict[str, Any] | None:
+        async with self._conn.execute(
+            "SELECT * FROM figures WHERE id = ?", (fig_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        return dict(row) if row else None
+
+    async def update_figure_detect(
+        self,
+        fig_id: str,
+        *,
+        status: str,
+        message: str | None = None,
+        humanoid: bool | None = None,
+    ) -> bool:
+        """Update the post-upload pre-check verdict for a figure.
+
+        ``status`` is one of ``pending`` | ``pass`` | ``fail`` | ``skipped``.
+        ``detect_pass`` (the legacy bool used by the s2v pipeline as a
+        cache hint) stays in sync: pass → 1, anything else → 0. We trim
+        ``message`` so a runaway DashScope error blob doesn't bloat the row.
+        """
+        if status not in {"pending", "pass", "fail", "skipped"}:
+            raise ValueError(f"unknown detect_status {status!r}")
+        msg = (message or "")[:500] or None
+        sets = ["detect_status = ?", "detect_message = ?", "detect_pass = ?"]
+        binds: list[Any] = [status, msg, 1 if status == "pass" else 0]
+        if humanoid is not None:
+            sets.append("detect_humanoid = ?")
+            binds.append(1 if humanoid else 0)
+        binds.append(fig_id)
+        cur = await self._conn.execute(
+            f"UPDATE figures SET {', '.join(sets)} WHERE id = ?", tuple(binds)
+        )
+        await self._conn.commit()
+        return cur.rowcount > 0
+
+    async def list_pending_figures(self) -> list[dict[str, Any]]:
+        """Return figures still in ``detect_status='pending'``.
+
+        Called on plugin load to resume detect jobs that were interrupted
+        by a process restart.
+        """
+        async with self._conn.execute(
+            "SELECT * FROM figures WHERE detect_status = 'pending' ORDER BY created_at"
+        ) as cur:
+            rows = await cur.fetchall()
+        return [dict(r) for r in rows]
 
     async def delete_figure(self, fig_id: str) -> bool:
         cur = await self._conn.execute("DELETE FROM figures WHERE id = ?", (fig_id,))
