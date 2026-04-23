@@ -107,6 +107,81 @@
       font-size: 13px; outline: none; transition: border-color .15s, box-shadow .15s;
     }
     .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(99,102,241,.18); }
+    /* Invalid form input — red border + ring. Paired with the
+       ``.field-warn-icon`` to the right of the input so the user
+       sees both a colour cue and a focusable element they can hover
+       to read the validation message. Avoids the always-on hint
+       block under each field that adds visual noise even when
+       the value is correct. */
+    .input.is-invalid { border-color: #dc2626; }
+    .input.is-invalid:focus { box-shadow: 0 0 0 2px rgba(220,38,38,.18); }
+    /* Hovering the field promotes the whole wrap above its sibling
+       form-rows so the tooltip is never overdrawn by the next input
+       (which used to be the case for the rightmost / bottom-of-grid
+       fields, where the next row painted on top of the dark bubble). */
+    .field-wrap { position: relative; z-index: 1; }
+    .field-wrap:hover, .field-wrap:focus-within { z-index: 999; }
+    .field-warn-icon {
+      position: absolute; top: 50%; right: 8px; transform: translateY(-50%);
+      width: 18px; height: 18px; border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: rgba(220,38,38,.12); color: #dc2626;
+      font-size: 12px; font-weight: 700; cursor: help;
+      border: 1px solid rgba(220,38,38,.35);
+    }
+    .field-warn-icon:hover .field-warn-tip,
+    .field-warn-icon:focus .field-warn-tip { opacity: 1; pointer-events: auto; }
+    /* Tooltip prefers to render *above* the icon because settings sections
+       live inside ``.content`` (overflow: hidden); a downward tooltip in
+       the last row would be clipped at the section bottom and the second
+       line of the message would be lost. Anchor at bottom of icon, expand
+       upward. */
+    .field-warn-tip {
+      position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 1000;
+      width: max-content; min-width: 220px; max-width: 320px; padding: 8px 10px;
+      background: #1f2937; color: #f9fafb; font-size: 12px; line-height: 1.55;
+      border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.28);
+      opacity: 0; pointer-events: none; transition: opacity .12s ease-out;
+      text-align: left; font-weight: 400; white-space: normal;
+    }
+    /* Arrow points DOWN from the bubble toward the icon. */
+    /* Folder picker row — input grows, buttons hug right (matches the
+       seedance-video Settings layout users asked us to align with). */
+    .folder-row { display: flex; align-items: center; gap: 8px; }
+    .folder-row .input,
+    .folder-row .field-wrap { flex: 1; min-width: 0; }
+    /* In-plugin folder picker (FolderPickerModal). Lifted verbatim from
+       plugins/seedance-video so the look-and-feel of 「浏览」 matches
+       across our plugins. The picker overrides .modal-card paddings to
+       lay out a header / sidebar / list / footer four-pane layout. */
+    .folder-picker { width: min(820px, 96vw); max-width: min(820px, 96vw); max-height: 82vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+    .folder-picker__head { padding: 16px 20px 12px; border-bottom: 1px solid var(--border); }
+    .folder-picker__title { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text); }
+    .folder-picker__crumbs { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); flex-wrap: wrap; min-height: 22px; }
+    .folder-picker__crumb { padding: 2px 8px; border-radius: 4px; cursor: pointer; transition: background .12s; user-select: none; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .folder-picker__crumb:hover { background: var(--bg-hover, rgba(99,102,241,.08)); color: var(--text); }
+    .folder-picker__crumb-sep { color: var(--text-muted); opacity: .5; }
+    .folder-picker__body { display: flex; flex: 1; min-height: 360px; max-height: 60vh; overflow: hidden; }
+    .folder-picker__sidebar { width: 160px; border-right: 1px solid var(--border); padding: 8px 0; overflow-y: auto; background: var(--bg-hover, rgba(99,102,241,.05)); flex-shrink: 0; }
+    .folder-picker__shortcut { display: flex; align-items: center; gap: 8px; padding: 7px 14px; font-size: 12px; color: var(--text); cursor: pointer; transition: background .12s; }
+    .folder-picker__shortcut:hover { background: var(--bg-card); }
+    .folder-picker__shortcut.active { background: var(--bg-card); color: var(--primary); font-weight: 500; }
+    .folder-picker__list { flex: 1; overflow-y: auto; padding: 4px 0; }
+    .folder-picker__item { display: flex; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px; color: var(--text); cursor: pointer; transition: background .1s; user-select: none; }
+    .folder-picker__item:hover { background: var(--bg-hover, rgba(99,102,241,.08)); }
+    .folder-picker__item.selected { background: rgba(99, 102, 241, .12); color: var(--primary); }
+    .folder-picker__item-icon { width: 16px; height: 16px; flex-shrink: 0; opacity: .8; }
+    .folder-picker__item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .folder-picker__empty { padding: 32px 16px; text-align: center; font-size: 12px; color: var(--text-muted); }
+    .folder-picker__error { padding: 16px; background: rgba(239, 68, 68, .08); border-bottom: 1px solid rgba(239, 68, 68, .25); color: var(--danger); font-size: 12px; }
+    .folder-picker__foot { display: flex; align-items: center; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--border); background: var(--bg-card); }
+    .folder-picker__current { flex: 1; font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .folder-picker__newinput { flex: 1; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; background: var(--bg-card); color: var(--text); }
+    .field-warn-tip::after {
+      content: ""; position: absolute; right: 6px; bottom: -5px;
+      border-left: 5px solid transparent; border-right: 5px solid transparent;
+      border-top: 5px solid #1f2937;
+    }
     .textarea { resize: vertical; min-height: 80px; font-family: inherit; }
     .select {
       appearance: none; padding-right: 28px;
@@ -618,7 +693,24 @@ function uploadFile(file, kind) {
   const fd = new FormData();
   fd.append("file", file);
   if (kind) fd.append("kind", kind);
-  return fetch(base + "/upload", { method: "POST", body: fd }).then(function (r) { return r.json(); });
+  // Read body as text first so a non-JSON 500 (FastAPI's text/plain
+  // 「Internal Server Error」 from any unhandled backend exception)
+  // doesn't blow up the caller with 「Unexpected token 'I'」 — surface
+  // the raw payload instead so the upload zone can show what actually
+  // happened.
+  return fetch(base + "/upload", { method: "POST", body: fd }).then(async function (r) {
+    const txt = await r.text();
+    try {
+      const body = JSON.parse(txt);
+      if (!r.ok && !body.error) body.error = "HTTP " + r.status;
+      return body;
+    } catch (e) {
+      return {
+        ok: false,
+        error: "HTTP " + r.status + "：" + (txt || r.statusText || "服务端无响应"),
+      };
+    }
+  });
 }
 function showToast(body, type) {
   type = type || "success";
@@ -668,8 +760,68 @@ function copyToClipboard(text) {
   }
   if (navigator.clipboard) navigator.clipboard.writeText(text).then(function () { showToast("已复制"); });
 }
+// Standard OpenAkita bridge — let the host show the path in OS file
+// manager (Explorer / Finder). Outside an iframe we silently no-op
+// because there's no API for the page to spawn an OS shell on its own.
+function showInFolder(path) {
+  if (_inIframe && _bridgeConnected && path) {
+    post({ type: "bridge:show-in-folder", payload: { path: path } });
+    return Promise.resolve(true);
+  }
+  return Promise.resolve(false);
+}
+// Standard OpenAkita bridge — open the host's native folder picker.
+// Resolves with the selected absolute path, or null if the user
+// cancelled / the bridge isn't ready (we still want the input field
+// to remain editable as a typed-path fallback).
+function pickFolder(title) {
+  if (_inIframe && _bridgeConnected) {
+    return new Promise(function (resolve) {
+      const id = uid();
+      _pending[id] = {
+        resolve: function (payload) { resolve(payload && payload.path || null); },
+        reject: function () { resolve(null); },
+      };
+      post({ type: "bridge:pick-folder", requestId: id,
+             payload: { title: title || "选择文件夹" } });
+      setTimeout(function () { if (_pending[id]) { delete _pending[id]; resolve(null); } }, 60000);
+    });
+  }
+  return Promise.resolve(null);
+}
+// In-page confirm dialog. window.confirm() is silently disabled inside
+// cross-origin iframes (Chrome 92+), which is exactly how this plugin is
+// hosted by OpenAkita's setup-center. The native dialog used to work in
+// dev (browsing the file directly) but produced "click does nothing"
+// in production — surfaced to the user as both 「删除按键还是没用」 and
+// 「点上传并预检没反应」. ``oaConfirm`` returns a Promise<bool> that
+// resolves when the user clicks ok/cancel on a real React-rendered modal,
+// so the same call site works regardless of host context.
+let _confirmSubscriber = null;
+let _confirmCounter = 0;
+function oaConfirm(opts) {
+  return new Promise(function (resolve) {
+    if (typeof _confirmSubscriber !== "function") {
+      // Mounted before App? Fall back so we never silently lose a click.
+      resolve(typeof window.confirm === "function" ? window.confirm(opts && opts.message || "") : true);
+      return;
+    }
+    _confirmSubscriber({
+      id: ++_confirmCounter,
+      title: (opts && opts.title) || "请确认",
+      message: (opts && opts.message) || "",
+      okText: (opts && opts.okText) || "确认",
+      cancelText: (opts && opts.cancelText) || "取消",
+      danger: !!(opts && opts.danger),
+      resolve: resolve,
+    });
+  });
+}
+function _registerConfirmSubscriber(fn) { _confirmSubscriber = fn; }
 window.__bridge = {
   apiCall, pluginApi, onEvent, uploadFile, downloadFile, showToast, copyToClipboard,
+  showInFolder, pickFolder,
+  oaConfirm,
   getCtx: function () { return _ctx; },
 };
 </script>
@@ -683,7 +835,8 @@ window.__bridge = {
      ───────────────────────────────────────────────────────────────────── -->
 <script type="text/babel" data-type="module">
 const { useState, useEffect, useCallback, useMemo, useRef } = React;
-const { pluginApi, onEvent, uploadFile, downloadFile, showToast, copyToClipboard } = window.__bridge;
+const { pluginApi, onEvent, uploadFile, downloadFile, showToast, copyToClipboard,
+        showInFolder, pickFolder } = window.__bridge;
 
 /* ─── i18n dictionary (zh / en) ─────────────────────────────────────── */
 const I18N_DICT = {
@@ -880,9 +1033,53 @@ const I18N_DICT = {
     "settings.defaults.threshold": "成本确认阈值（元）",
     "settings.defaults.thresholdHint": "单次任务超过此金额时弹窗确认",
     "settings.storage.dir": "数据目录",
+    "settings.storage.dir.placeholder": "留空 = 使用默认目录（由 OpenAkita 管理）",
+    "settings.storage.dir.hint": "可改成更大的盘 / 别的用户目录。仅支持绝对路径。",
+    "settings.storage.dir.active": "当前生效：",
+    "settings.storage.dir.pending": "已保存，重新加载插件后生效",
+    "settings.storage.dir.reset": "恢复默认",
+    "settings.storage.dir.browse": "浏览",
+    "settings.storage.dir.open": "打开",
+    "settings.storage.dir.pickTitle": "选择数据目录",
+    "settings.storage.subdir": "子目录结构",
+    "settings.storage.subdir.task": "按任务（tasks/{task_id}/，默认）",
+    "settings.storage.subdir.date": "按日期（outputs/2026-04-22/）",
+    "settings.storage.subdir.mode": "按功能（outputs/photo_speak/）",
+    "settings.storage.subdir.dateMode": "按日期+功能（outputs/2026-04-22/photo_speak/）",
+    "settings.storage.subdir.flat": "平铺（outputs/）",
+    "settings.storage.naming": "文件命名规则",
+    "settings.storage.naming.filename": "{filename}（DashScope 原始文件名，默认）",
+    "settings.storage.naming.task": "{task_id}.{ext}",
+    "settings.storage.naming.dateMode": "{date}_{mode}_{short_id}.{ext}",
+    "settings.storage.naming.dateTime": "{date}_{time}_{short_id}.{ext}",
+    "settings.storage.naming.modeShort": "{mode}_{short_id}.{ext}",
+    "settings.storage.naming.hint": "可用占位符：{task_id} {short_id} {date} {time} {datetime} {mode} {filename} {ext}",
     "settings.storage.usage": "当前占用：{n}",
+    "settings.storage.retention": "保留天数",
     "settings.storage.cleanup": "清理 {n} 天前的过期任务",
     "settings.storage.cleanup.btn": "立即清理",
+    "settings.btn.browse": "浏览",
+    "settings.btn.open": "打开",
+    "settings.stats.dataDir": "数据目录",
+    "settings.stats.outputs": "成品 outputs",
+    "settings.stats.uploads": "原始素材 uploads",
+    "settings.stats.tasks": "任务缓存 tasks",
+    "settings.stats.fileCount": "{n} 个文件",
+    "settings.folder.openFailed": "打开文件夹失败：{msg}",
+    "settings.folder.savedTo": "已保存路径：{path}",
+    "picker.title": "选择文件夹",
+    "picker.crumb.root": "返回锚点",
+    "picker.shortcut.start": "起点",
+    "picker.loading": "加载中…",
+    "picker.empty": "此目录下没有子文件夹",
+    "picker.error.load": "加载失败：{msg}",
+    "picker.error.create": "创建失败：{msg}",
+    "picker.created": "已创建：{name}",
+    "picker.newFolder.placeholder": "输入新文件夹名…",
+    "picker.btn.cancel": "取消",
+    "picker.btn.choose": "选择此目录",
+    "picker.btn.newFolder": "新建文件夹",
+    "picker.btn.confirmCreate": "创建",
     "settings.advanced.timeout": "DashScope 请求超时（秒）",
     "settings.advanced.maxRetry": "最大重试次数",
     "settings.about.version": "版本",
@@ -1120,9 +1317,53 @@ const I18N_DICT = {
     "settings.defaults.threshold": "Cost confirm threshold (¥)",
     "settings.defaults.thresholdHint": "Show a confirmation modal when a single task exceeds this amount",
     "settings.storage.dir": "Data directory",
+    "settings.storage.dir.placeholder": "Leave empty to use the default (managed by OpenAkita)",
+    "settings.storage.dir.hint": "Useful when you want to point at a larger drive or a shared folder. Absolute paths only.",
+    "settings.storage.dir.active": "In use:",
+    "settings.storage.dir.pending": "Saved — reload the plugin for the new path to take effect.",
+    "settings.storage.dir.reset": "Reset to default",
+    "settings.storage.dir.browse": "Browse",
+    "settings.storage.dir.open": "Open",
+    "settings.storage.dir.pickTitle": "Pick data directory",
+    "settings.storage.subdir": "Subdirectory layout",
+    "settings.storage.subdir.task": "Per task (tasks/{task_id}/, default)",
+    "settings.storage.subdir.date": "By date (outputs/2026-04-22/)",
+    "settings.storage.subdir.mode": "By mode (outputs/photo_speak/)",
+    "settings.storage.subdir.dateMode": "Date + mode (outputs/2026-04-22/photo_speak/)",
+    "settings.storage.subdir.flat": "Flat (outputs/)",
+    "settings.storage.naming": "Filename template",
+    "settings.storage.naming.filename": "{filename} (original DashScope name, default)",
+    "settings.storage.naming.task": "{task_id}.{ext}",
+    "settings.storage.naming.dateMode": "{date}_{mode}_{short_id}.{ext}",
+    "settings.storage.naming.dateTime": "{date}_{time}_{short_id}.{ext}",
+    "settings.storage.naming.modeShort": "{mode}_{short_id}.{ext}",
+    "settings.storage.naming.hint": "Placeholders: {task_id} {short_id} {date} {time} {datetime} {mode} {filename} {ext}",
     "settings.storage.usage": "Current usage: {n}",
+    "settings.storage.retention": "Retention (days)",
     "settings.storage.cleanup": "Remove tasks older than {n} days",
     "settings.storage.cleanup.btn": "Clean up now",
+    "settings.btn.browse": "Browse",
+    "settings.btn.open": "Open",
+    "settings.stats.dataDir": "Data dir",
+    "settings.stats.outputs": "Outputs",
+    "settings.stats.uploads": "Uploads",
+    "settings.stats.tasks": "Task scratch",
+    "settings.stats.fileCount": "{n} files",
+    "settings.folder.openFailed": "Cannot open folder: {msg}",
+    "settings.folder.savedTo": "Saved path: {path}",
+    "picker.title": "Pick a folder",
+    "picker.crumb.root": "Back to anchors",
+    "picker.shortcut.start": "Start",
+    "picker.loading": "Loading…",
+    "picker.empty": "No subfolders here",
+    "picker.error.load": "Load failed: {msg}",
+    "picker.error.create": "Create failed: {msg}",
+    "picker.created": "Created: {name}",
+    "picker.newFolder.placeholder": "New folder name…",
+    "picker.btn.cancel": "Cancel",
+    "picker.btn.choose": "Choose this folder",
+    "picker.btn.newFolder": "New folder",
+    "picker.btn.confirmCreate": "Create",
     "settings.advanced.timeout": "DashScope request timeout (s)",
     "settings.advanced.maxRetry": "Max retries",
     "settings.about.version": "Version",
@@ -1404,6 +1645,223 @@ function CostExceedModal({ preview, threshold, onConfirm, onCancel }) {
   );
 }
 
+/* ─── FolderPickerModal ───────────────────────────────────────────
+ * In-plugin folder browser, ported from plugins/seedance-video. Uses
+ * GET /storage/list-dir and POST /storage/mkdir so we don't depend on
+ * Tauri's native folder dialog (which has been unreliable across
+ * capabilities and host versions). Same shape of props as seedance:
+ *   open, title, initialPath, onCancel, onSelect(path)                   */
+function FolderPickerModal({ open, title, initialPath, onCancel, onSelect }) {
+  const t = useT();
+  const [path, setPath] = useState("");
+  const [items, setItems] = useState([]);
+  const [parent, setParent] = useState(null);
+  const [isAnchor, setIsAnchor] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [newFolderMode, setNewFolderMode] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const newFolderInputRef = useRef(null);
+
+  // Load anchors initially. If initialPath is set, navigate straight
+  // there; on failure (path no longer exists) fall back to anchors so
+  // the modal is never blank.
+  const load = useCallback(async function (p) {
+    setLoading(true);
+    setError(null);
+    try {
+      const qs = p ? "?path=" + encodeURIComponent(p) : "";
+      const r = await pluginApi("GET", "/storage/list-dir" + qs);
+      if (r.ok && r.body && r.body.ok) {
+        setPath(r.body.path || "");
+        setParent(r.body.parent || null);
+        setItems(r.body.items || []);
+        setIsAnchor(!!r.body.is_anchor);
+      } else {
+        setError((r.body && r.body.detail) || ("HTTP " + (r.status || "?")));
+        if (p) {
+          const r2 = await pluginApi("GET", "/storage/list-dir");
+          if (r2.ok && r2.body && r2.body.ok) {
+            setPath("");
+            setParent(null);
+            setItems(r2.body.items || []);
+            setIsAnchor(true);
+          }
+        }
+      }
+    } catch (e) {
+      setError(String((e && e.message) || e));
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(function () {
+    if (!open) return;
+    setNewFolderMode(false);
+    setNewFolderName("");
+    load(initialPath || "");
+  }, [open, initialPath, load]);
+
+  useEffect(function () {
+    if (newFolderMode && newFolderInputRef.current) {
+      newFolderInputRef.current.focus();
+    }
+  }, [newFolderMode]);
+
+  const handleNavigate = function (p) {
+    setNewFolderMode(false);
+    load(p);
+  };
+
+  const handleCreate = async function () {
+    const name = (newFolderName || "").trim();
+    if (!name || !path) return;
+    try {
+      const r = await pluginApi("POST", "/storage/mkdir", { parent: path, name });
+      if (r.ok && r.body && r.body.ok) {
+        showToast(t("picker.created", { name }));
+        setNewFolderMode(false);
+        setNewFolderName("");
+        await load(path);
+      } else {
+        showToast(t("picker.error.create", { msg: (r.body && r.body.detail) || "" }), "error");
+      }
+    } catch (e) {
+      showToast(t("picker.error.create", { msg: String((e && e.message) || e) }), "error");
+    }
+  };
+
+  // Build breadcrumbs from `path`, handling Windows ("C:\Users\Foo")
+  // and POSIX ("/home/foo") layouts. Each segment is clickable and
+  // navigates to the cumulative path.
+  const crumbs = (function () {
+    if (!path) return [];
+    const norm = path.replace(/\\/g, "/");
+    const parts = norm.split("/").filter(Boolean);
+    const out = [];
+    if (norm.startsWith("/")) {
+      out.push({ name: "/", path: "/" });
+      let acc = "";
+      for (const seg of parts) {
+        acc += "/" + seg;
+        out.push({ name: seg, path: acc });
+      }
+    } else if (parts[0] && /^[A-Za-z]:$/.test(parts[0])) {
+      out.push({ name: parts[0], path: parts[0] + "/" });
+      let acc = parts[0];
+      for (let i = 1; i < parts.length; i++) {
+        acc += "/" + parts[i];
+        out.push({ name: parts[i], path: acc });
+      }
+    } else {
+      out.push({ name: path, path });
+    }
+    return out;
+  })();
+
+  if (!open) return null;
+  return (
+    <div className="modal-mask" onClick={onCancel}>
+      <div className="modal-card folder-picker" onClick={function (e) { e.stopPropagation(); }}>
+        <div className="folder-picker__head">
+          <div className="folder-picker__title">{title || t("picker.title")}</div>
+          <div className="folder-picker__crumbs">
+            <span
+              className="folder-picker__crumb"
+              onClick={function () { handleNavigate(""); }}
+              title={t("picker.crumb.root")}
+            ><Ico name="folder"/></span>
+            {crumbs.map(function (c, i) {
+              return (
+                <React.Fragment key={i}>
+                  <span className="folder-picker__crumb-sep">/</span>
+                  <span
+                    className="folder-picker__crumb"
+                    onClick={function () { handleNavigate(c.path); }}
+                    title={c.path}
+                  >{c.name}</span>
+                </React.Fragment>
+              );
+            })}
+          </div>
+        </div>
+
+        {error && (
+          <div className="folder-picker__error">{t("picker.error.load", { msg: error })}</div>
+        )}
+
+        <div className="folder-picker__body">
+          <div className="folder-picker__sidebar">
+            <div className="folder-picker__shortcut" onClick={function () { handleNavigate(""); }}>
+              <Ico name="folder"/>{t("picker.shortcut.start")}
+            </div>
+          </div>
+          <div className="folder-picker__list">
+            {loading && <div className="folder-picker__empty">{t("picker.loading")}</div>}
+            {!loading && !isAnchor && parent != null && (
+              <div className="folder-picker__item" onClick={function () { handleNavigate(parent); }}>
+                <span className="folder-picker__item-icon">↰</span>
+                <span className="folder-picker__item-name">..</span>
+              </div>
+            )}
+            {!loading && items.length === 0 && (
+              <div className="folder-picker__empty">{t("picker.empty")}</div>
+            )}
+            {!loading && items.map(function (it) {
+              return (
+                <div
+                  key={it.path}
+                  className="folder-picker__item"
+                  onClick={function () { handleNavigate(it.path); }}
+                  title={it.path}
+                >
+                  <span className="folder-picker__item-icon"><Ico name="folder"/></span>
+                  <span className="folder-picker__item-name">{it.name}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="folder-picker__foot">
+          {newFolderMode ? (
+            <React.Fragment>
+              <input
+                ref={newFolderInputRef}
+                className="folder-picker__newinput"
+                value={newFolderName}
+                onChange={function (e) { setNewFolderName(e.target.value); }}
+                onKeyDown={function (e) {
+                  if (e.key === "Enter") handleCreate();
+                  if (e.key === "Escape") { setNewFolderMode(false); setNewFolderName(""); }
+                }}
+                placeholder={t("picker.newFolder.placeholder")}
+              />
+              <button className="btn btn-sm" onClick={function () { setNewFolderMode(false); setNewFolderName(""); }}>{t("picker.btn.cancel")}</button>
+              <button className="btn btn-sm btn-primary" disabled={!newFolderName.trim()} onClick={handleCreate}>{t("picker.btn.confirmCreate")}</button>
+            </React.Fragment>
+          ) : (
+            <React.Fragment>
+              <span className="folder-picker__current" title={path}>{path || ""}</span>
+              <button
+                className="btn btn-sm"
+                disabled={!path || isAnchor}
+                onClick={function () { setNewFolderMode(true); }}
+              >{t("picker.btn.newFolder")}</button>
+              <button className="btn btn-sm" onClick={onCancel}>{t("picker.btn.cancel")}</button>
+              <button
+                className="btn btn-sm btn-primary"
+                disabled={!path || isAnchor}
+                onClick={function () { onSelect(path); }}
+              >{t("picker.btn.choose")}</button>
+            </React.Fragment>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TaskStartedModal({ taskId, onGotoTasks, onClose }) {
   const t = useT();
   if (!taskId) return null;
@@ -1445,7 +1903,17 @@ function FileUploadZone({ accept, multiple, onUploaded, value, max, kind, hint }
     for (let i = 0; i < list.length; i++) {
       try {
         const r = await uploadFile(list[i], kind);
-        if (r && (r.ok || r.url || r.preview_url || r.path)) results.push(r);
+        if (r && (r.ok || r.url || r.preview_url || r.path)) {
+          // Local file persisted OK but OSS push failed (e.g. invalid
+          // bucket name, expired key). Keep the preview so the user
+          // sees their image but warn loudly so they don't think they
+          // can submit a task — the s2v call would fail with the same
+          // OSS misconfig 5 s later.
+          if (r.oss_error) {
+            showToast("OSS 上传失败：" + r.oss_error, "error");
+          }
+          results.push(r);
+        }
         else { showToast("上传失败：" + (r && r.error || "unknown"), "error"); }
       } catch (e) { showToast("上传失败：" + e, "error"); }
       setProgress(Math.round(((i + 1) / list.length) * 100));
@@ -1538,7 +2006,17 @@ function useSettings() {
   useEffect(function () { refresh(); }, [refresh]);
   const save = useCallback(async function (patch) {
     const r = await pluginApi("PUT", "/settings", patch);
-    if (r.ok) { setS(Object.assign({}, s, patch)); showToast(_tr("settings.save.ok")); }
+    if (r.ok) {
+      // PUT /settings returns the *full* config (including derived
+      // fields like ``oss_configured`` / ``oss_status_message``), so
+      // prefer the server's shape over a local merge — otherwise the
+      // OSS banner can't react to the bucket name we just typed
+      // (Object.assign would overwrite ``oss_configured`` with stale
+      // truthiness from the previous successful save).
+      const fresh = (r.body && r.body.config) || null;
+      setS(fresh ? Object.assign({}, s, fresh) : Object.assign({}, s, patch));
+      showToast(_tr("settings.save.ok"));
+    }
     else { showToast("保存失败", "error"); }
     return r;
   }, [s]);
@@ -2738,7 +3216,13 @@ function VoicesTab({ hasApiKey, onGoSettings }) {
     } finally { setBusy(false); }
   };
   const del = async function (v) {
-    if (!confirm(t("voices.delete.confirm"))) return;
+    const ok = await oaConfirm({
+      title: t("voices.delete.confirm"),
+      okText: t("common.delete"),
+      cancelText: t("common.cancel"),
+      danger: true,
+    });
+    if (!ok) return;
     const r = await pluginApi("DELETE", "/voices/" + v.id);
     if (r.ok) refresh();
   };
@@ -2846,11 +3330,14 @@ function FiguresTab() {
       // would land in 'skipped'. Tell the user up front so they can
       // open Settings → OSS, instead of finding out 5 seconds later
       // from a yellow tag on the card.
-      if (!confirm(
-        "OSS 未配置，DashScope 无法 fetch 该图片，"
-        + "形象会跳过预检（下次任务需重新上传）。仍要保存吗？")) {
-        return;
-      }
+      const ok = await oaConfirm({
+        title: "OSS 未配置",
+        message: "DashScope 无法 fetch 该图片，形象会跳过预检（下次任务需重新上传）。仍要保存吗？",
+        okText: "仍然保存",
+        cancelText: "去配置 OSS",
+        danger: true,
+      });
+      if (!ok) return;
     }
     setBusy(true);
     try {
@@ -2872,7 +3359,13 @@ function FiguresTab() {
   };
   const del = async function (f) {
     if (deletingIds[f.id]) return;
-    if (!confirm(t("figures.delete.confirm"))) return;
+    const ok = await oaConfirm({
+      title: t("figures.delete.confirm"),
+      okText: t("common.delete"),
+      cancelText: t("common.cancel"),
+      danger: true,
+    });
+    if (!ok) return;
     // Optimistically yank the card out of the grid the instant the user
     // confirms. The DELETE request runs in the background; if it fails
     // we re-fetch and the row reappears with whatever its current
@@ -3135,6 +3628,86 @@ function ModelProbePanel({ hasApiKey }) {
 }
 
 /* ─── SettingsTab ────────────────────────────────────────────────── */
+/* ─── OSS field validators ────────────────────────────────────────────
+   Mirrors the regex / shape checks the backend's OssConfig.from_settings
+   runs, so the user gets the red badge BEFORE the on-blur PUT round-trip
+   completes. Each validator returns "" when the value is acceptable
+   (including empty — empty means "user hasn't filled it yet" which is
+   not an error in itself, only when the user tries to use OSS) or a
+   short message describing what's wrong. */
+function validateOssEndpoint(v) {
+  const s = (v || "").trim();
+  if (!s) return "";
+  // Accept with or without scheme; reject obvious bucket-name-style values.
+  const host = s.replace(/^https?:\/\//i, "").replace(/\/$/, "");
+  if (!/\.aliyuncs\.com$/i.test(host)) {
+    return "Endpoint 应当以 .aliyuncs.com 结尾，例如 https://oss-cn-beijing.aliyuncs.com";
+  }
+  // If the user pasted a bucket-prefixed endpoint
+  // (e.g. avatar-studio.oss-cn-hangzhou.aliyuncs.com), warn — that
+  // belongs in the Bucket field instead.
+  if (host.split(".").length > 3) {
+    return "看起来你把 bucket 名也粘进来了；这里只填地域 endpoint，bucket 名移到下面那个字段。";
+  }
+  return "";
+}
+function validateOssBucket(v) {
+  const s = (v || "").trim();
+  if (!s) return "";
+  if (s.includes(".")) {
+    return "Bucket 字段不能包含 . — 你可能把完整域名 xxx.oss-cn-xxx.aliyuncs.com 填到这里了，只保留 bucket 名（第一个 . 之前的部分）。";
+  }
+  if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(s)) {
+    return "Bucket 名只能含小写字母 / 数字 / 连字符 (-)，长度 3-63，首尾必须是字母或数字。";
+  }
+  return "";
+}
+function validateOssAk(v) {
+  const s = (v || "").trim();
+  if (!s) return "";
+  if (!/^LTAI[A-Za-z0-9]{10,}$/.test(s)) {
+    return "AccessKey ID 通常以 LTAI 开头，且长度 ≥ 14 位；请确认未把 Secret 粘到这里。";
+  }
+  return "";
+}
+function validateOssSecret(v, secretSet) {
+  const s = (v || "").trim();
+  // ``secretSet`` is the backend-echoed flag — when true, the user
+  // already saved a secret on a previous session; the input may stay
+  // empty without that being a real error.
+  if (!s) return "";
+  if (s.length < 16) {
+    return "Secret 长度看起来不够（实际 AccessKey Secret 通常为 30 位）。";
+  }
+  return "";
+}
+
+/* Generic input + tooltip wrapper. Only renders the red-badge corner +
+   tooltip when ``error`` is non-empty, so a valid (or empty) field looks
+   exactly like a normal <input>. */
+function ValidatedInput(props) {
+  const { error, type, placeholder, value, onChange, onBlur } = props;
+  const hasError = !!error;
+  return (
+    <div className="field-wrap">
+      <input className={"input" + (hasError ? " is-invalid" : "")}
+             type={type || "text"}
+             placeholder={placeholder || ""}
+             value={value || ""}
+             onChange={onChange}
+             onBlur={onBlur}
+             style={hasError ? { paddingRight: 32 } : undefined} />
+      {hasError && (
+        <span className="field-warn-icon" tabIndex={0} role="img"
+              aria-label={error} title="">
+          !
+          <span className="field-warn-tip">{error}</span>
+        </span>
+      )}
+    </div>
+  );
+}
+
 function SettingsTab({ settings, onSaved, voices }) {
   // Visual layout follows tongyi-image: each section is a separate
   // .oa-settings-section card with a leading icon. The first row of
@@ -3149,12 +3722,60 @@ function SettingsTab({ settings, onSaved, voices }) {
   const [testBusy, setTestBusy] = useState(false);
   const [savingKey, setSavingKey] = useState(false);
   const [storage, setStorage] = useState(null);
+  // Per-folder storage rollup: {data_dir, outputs, uploads, tasks} →
+  // {path, size_mb, file_count, ...}. Mirrors plugins/seedance-video so
+  // we can render the same grid-3 stat cards under the folder rows.
+  const [stats, setStats] = useState(null);
+  // FolderPickerModal state — {key, title, initialPath} | null. Same
+  // 「open one folder picker at a time」 contract as seedance.
+  const [folderPicker, setFolderPicker] = useState(null);
+
+  const refreshStats = useCallback(function () {
+    pluginApi("GET", "/storage/stats").then(function (r) {
+      if (r.ok && r.body && r.body.ok) setStats(r.body.stats);
+    }).catch(function () {});
+  }, []);
 
   useEffect(function () {
     pluginApi("GET", "/healthz").then(function (r) {
       if (r.ok && r.body && r.body.storage) setStorage(r.body.storage);
     }).catch(function () {});
-  }, []);
+    refreshStats();
+  }, [refreshStats]);
+
+  // Open a folder via the backend so the action works even when the
+  // path hasn't been customized yet — backend resolves `key` to the
+  // built-in default (mirrors /storage/stats). This is the seedance-
+  // video pattern; it deliberately bypasses any host bridge.
+  const openFolderByKey = async function (key) {
+    try {
+      const r = await pluginApi("POST", "/storage/open-folder", { key });
+      if (!r.ok || !r.body || !r.body.ok) {
+        showToast(t("settings.folder.openFailed", { msg: (r.body && r.body.detail) || "" }), "error");
+      }
+    } catch (e) {
+      showToast(t("settings.folder.openFailed", { msg: (e && e.message) || String(e) }), "error");
+    }
+  };
+
+  const openFolderPicker = function (configKey, titleKey) {
+    setFolderPicker({
+      key: configKey,
+      title: t(titleKey),
+      initialPath: (draft[configKey] || "").trim(),
+    });
+  };
+
+  const handleFolderPickerSelect = function (path) {
+    if (!folderPicker) return;
+    const k = folderPicker.key;
+    setFolderPicker(null);
+    if (path) {
+      update(k, path);
+      save({ [k]: path }).then(refreshStats);
+      showToast(t("settings.folder.savedTo", { path }));
+    }
+  };
 
   const update = function (k, v) { setDraft(Object.assign({}, draft, { [k]: v })); };
 
@@ -3182,6 +3803,25 @@ function SettingsTab({ settings, onSaved, voices }) {
       oss_access_key_id: draft.oss_access_key_id || "",
       oss_access_key_secret: draft.oss_access_key_secret || "",
       oss_path_prefix: draft.oss_path_prefix || "avatar-studio",
+      custom_data_dir: (draft.custom_data_dir || "").trim(),
+      output_subdir_mode: draft.output_subdir_mode || "task",
+      output_naming_rule: draft.output_naming_rule || "{filename}",
+      rh_api_key: (draft.rh_api_key || "").trim(),
+      rh_instance_type: draft.rh_instance_type || "plus",
+      rh_wf_photo_speak: (draft.rh_wf_photo_speak || "").trim(),
+      rh_wf_video_relip: (draft.rh_wf_video_relip || "").trim(),
+      rh_wf_video_reface: (draft.rh_wf_video_reface || "").trim(),
+      rh_wf_avatar_compose: (draft.rh_wf_avatar_compose || "").trim(),
+      rh_wf_pose_drive: (draft.rh_wf_pose_drive || "").trim(),
+      comfyui_url: (draft.comfyui_url || "").trim(),
+      comfyui_api_key: (draft.comfyui_api_key || "").trim(),
+      comfyui_wf_photo_speak: (draft.comfyui_wf_photo_speak || "").trim(),
+      comfyui_wf_video_relip: (draft.comfyui_wf_video_relip || "").trim(),
+      comfyui_wf_video_reface: (draft.comfyui_wf_video_reface || "").trim(),
+      comfyui_wf_avatar_compose: (draft.comfyui_wf_avatar_compose || "").trim(),
+      comfyui_wf_pose_drive: (draft.comfyui_wf_pose_drive || "").trim(),
+      tts_engine: draft.tts_engine || "cosyvoice",
+      tts_voice_edge: draft.tts_voice_edge || "zh-CN-YunxiNeural",
     });
   };
 
@@ -3241,18 +3881,18 @@ function SettingsTab({ settings, onSaved, voices }) {
     return out;
   }, [voices, draft.default_voice]);
 
+  // Outer wrap mirrors tongyi-image / seedance-video SettingsTab:
+  // cap at 640px, left-aligned (no margin: 0 auto). Keeps the panel
+  // flush with the rest of the plugin's tabs.
   return (
-    <div style={{maxWidth: 720, margin: "0 auto"}}>
-      {/* ── API 配置 ─────────────────────────────────────────── */}
+    <div style={{maxWidth: 640}}>
+      {/* ── Section 1: 阿里云 DashScope (API + OSS merged) ────── */}
       <div className="setting-section oa-settings-section">
-        {/* Section title doubles as the action bar — putting 测试连接 here
-            (instead of on its own row below the input) avoids a half-empty
-            line between the input and the 高级 disclosure. */}
         <h3 className="oa-settings-section__title"
             style={{display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8}}>
           <span style={{display: "inline-flex", alignItems: "center", gap: 6}}>
-            <span className="oa-icon"><Ico name="cog"/></span>
-            {t("settings.section.api")}
+            <span className="oa-icon"><Ico name="cloud"/></span>
+            阿里云 DashScope
           </span>
           <button className="btn btn-sm" type="button"
                   style={{fontWeight: 400}}
@@ -3261,10 +3901,6 @@ function SettingsTab({ settings, onSaved, voices }) {
           </button>
         </h3>
         {(function () {
-          // Driven off the live draft value (the backend now echoes the
-          // real key back, so draft.api_key === "what's on disk" once
-          // settings have loaded). Yellow callout = nothing in the field,
-          // green badge = same value already persisted server-side.
           const keyConfigured = !!draft.api_key;
           const keySaved = !!settings.has_api_key
             && !!draft.api_key
@@ -3306,9 +3942,6 @@ function SettingsTab({ settings, onSaved, voices }) {
             </div>
           );
         })()}
-        {/* Advanced subsection — region picker + per-model probe.
-            Collapsed by default because 99% of users only ever care
-            about it once (when first wiring up a key). */}
         <Collapsible title={t("settings.api.advanced")} defaultOpen={false}>
           <div className="form-row">
             <div className="text-xs text-muted" style={{marginBottom: 4}}>{t("settings.api.region")}</div>
@@ -3324,89 +3957,281 @@ function SettingsTab({ settings, onSaved, voices }) {
               {t("settings.api.region.hint")}
             </div>
           </div>
-          {/* Visual divider — without it the model probe panel feels
-              like it's still part of the region picker above. */}
           <div style={{height: 1, background: "var(--border)", margin: "14px 0"}}/>
           <ModelProbePanel hasApiKey={!!(settings.api_key || settings.has_api_key)}/>
         </Collapsible>
+        <Collapsible title={"OSS 对象存储" + (settings.oss_configured ? " ✓" : "")} defaultOpen={false}>
+          <div className="text-xs text-dim" style={{marginBottom: 10, lineHeight: 1.5}}>
+            DashScope 后端必须配置 OSS 才能提交任务。上传素材和 TTS 音频会自动推到这个 bucket，
+            再用签名 URL 传给 DashScope。
+            <a href="https://oss.console.aliyun.com/bucket" target="_blank" rel="noopener"
+               style={{color: "var(--primary)", marginLeft: 4}}>OSS 控制台</a>
+          </div>
+          <div className="grid-2">
+            <div className="form-row">
+              <div className="label">终端地址 (Endpoint)</div>
+              <ValidatedInput
+                placeholder="https://oss-cn-beijing.aliyuncs.com"
+                value={draft.oss_endpoint}
+                error={validateOssEndpoint(draft.oss_endpoint)}
+                onChange={function (e) { update("oss_endpoint", e.target.value); }}
+                onBlur={function () {
+                  if (!validateOssEndpoint(draft.oss_endpoint)) {
+                    save({ oss_endpoint: draft.oss_endpoint || "" });
+                  }
+                }} />
+            </div>
+            <div className="form-row">
+              <div className="label">存储桶 (Bucket)</div>
+              <ValidatedInput
+                placeholder="my-bucket"
+                value={draft.oss_bucket}
+                error={validateOssBucket(draft.oss_bucket)}
+                onChange={function (e) { update("oss_bucket", e.target.value); }}
+                onBlur={function () {
+                  if (!validateOssBucket(draft.oss_bucket)) {
+                    save({ oss_bucket: draft.oss_bucket || "" });
+                  }
+                }} />
+            </div>
+            <div className="form-row">
+              <div className="label">访问密钥 ID (AccessKey ID)</div>
+              <ValidatedInput
+                placeholder="LTAI…"
+                value={draft.oss_access_key_id}
+                error={validateOssAk(draft.oss_access_key_id)}
+                onChange={function (e) { update("oss_access_key_id", e.target.value); }}
+                onBlur={function () {
+                  if (!validateOssAk(draft.oss_access_key_id)) {
+                    save({ oss_access_key_id: draft.oss_access_key_id || "" });
+                  }
+                }} />
+            </div>
+            <div className="form-row">
+              <div className="label">访问密钥 Secret (AccessKey Secret)</div>
+              <ValidatedInput
+                type="password"
+                placeholder={settings.oss_secret_set ? "已保存（重新输入将覆盖）" : "Secret"}
+                value={draft.oss_access_key_secret}
+                error={validateOssSecret(draft.oss_access_key_secret, settings.oss_secret_set)}
+                onChange={function (e) { update("oss_access_key_secret", e.target.value); }}
+                onBlur={function () {
+                  if (!validateOssSecret(draft.oss_access_key_secret, settings.oss_secret_set)) {
+                    save({ oss_access_key_secret: draft.oss_access_key_secret || "" });
+                  }
+                }} />
+            </div>
+          </div>
+          <div className="form-row">
+            <div className="label">对象路径前缀 (Path prefix，可选)</div>
+            <input className="input" type="text"
+                   placeholder="avatar-studio"
+                   value={draft.oss_path_prefix || ""}
+                   onChange={function (e) { update("oss_path_prefix", e.target.value); }}
+                   onBlur={function () { save({ oss_path_prefix: draft.oss_path_prefix || "" }); }} />
+            <div className="text-xs text-dim" style={{marginTop: 4}}>
+              所有对象会写到 <code className="inline">{draft.oss_path_prefix || "avatar-studio"}/uploads/...</code> 下。
+            </div>
+          </div>
+        </Collapsible>
       </div>
 
-      {/* ── 阿里云 OSS ──────────────────────────────────────── */}
-      {/* DashScope cannot fetch local /api/... URLs. Every video model
-          (s2v / animate-mix / videoretalk / face-detect) needs a public
-          HTTPS URL. We push uploads + TTS audio to a bucket the user
-          owns and hand DashScope a 6h signed URL. The four fields here
-          are read by avatar_studio_inline/oss_uploader.py — empty values
-          on any of them disables OSS entirely. */}
+      {/* ── Section 2: RunningHub ──────────────────────────────── */}
       <div className="setting-section oa-settings-section">
         <h3 className="oa-settings-section__title"
             style={{display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8}}>
           <span style={{display: "inline-flex", alignItems: "center", gap: 6}}>
-            <span className="oa-icon"><Ico name="layers"/></span>
-            阿里云 OSS（DashScope 素材访问）
+            <span className="oa-icon"><Ico name="server"/></span>
+            RunningHub
           </span>
-          {settings.oss_configured && (
+          {settings.rh_configured && (
             <span style={{
               fontSize: 11, padding: "1px 7px", borderRadius: 8,
               background: "var(--success-bg, #ecfdf5)",
               color: "var(--success, #059669)",
               border: "1px solid var(--success-border, #a7f3d0)",
               fontWeight: 500,
-            }}>已生效</span>
+            }}>已配置</span>
           )}
         </h3>
-        <div className="text-xs text-dim" style={{marginBottom: 10, lineHeight: 1.5}}>
-          百炼 / DashScope 的视频类模型只能 fetch 公网 URL；本插件会把上传的图片、视频、音频，
-          以及 TTS 合成出来的语音，自动推到这个 bucket，再用签名 URL（6 小时）传给 DashScope。
-          需要先在阿里云控制台创建 bucket：
-          <a href="https://oss.console.aliyun.com/bucket" target="_blank" rel="noopener"
-             style={{color: "var(--primary)", marginLeft: 4}}>OSS 控制台</a>
-        </div>
-        <div className="grid-2">
-          <div className="form-row">
-            <div className="label">Endpoint</div>
-            <input className="input" type="text"
-                   placeholder="https://oss-cn-beijing.aliyuncs.com"
-                   value={draft.oss_endpoint || ""}
-                   onChange={function (e) { update("oss_endpoint", e.target.value); }}
-                   onBlur={function () { save({ oss_endpoint: draft.oss_endpoint || "" }); }} />
+        <div className="form-row">
+          <div className="label">RunningHub API Key</div>
+          <div className="flex gap-2">
+            <input className="input flex-1" type="password"
+                   value={draft.rh_api_key || ""}
+                   placeholder="输入 RunningHub API Key"
+                   onChange={function (e) { update("rh_api_key", e.target.value); }}
+                   onBlur={function () { save({ rh_api_key: (draft.rh_api_key || "").trim() }); }} />
+            <button className="btn btn-sm" type="button"
+                    onClick={function () {
+                      pluginApi("POST", "/test-backend", {
+                        backend: "runninghub",
+                        rh_api_key: (draft.rh_api_key || "").trim()
+                      }).then(function (r) {
+                        if (r.ok && r.body && r.body.ok) showToast("RunningHub 连接成功");
+                        else showToast("连接失败: " + ((r.body && r.body.message) || "未知错误"), "error");
+                      });
+                    }}>测试连接</button>
           </div>
-          <div className="form-row">
-            <div className="label">Bucket</div>
-            <input className="input" type="text"
-                   placeholder="my-bucket"
-                   value={draft.oss_bucket || ""}
-                   onChange={function (e) { update("oss_bucket", e.target.value); }}
-                   onBlur={function () { save({ oss_bucket: draft.oss_bucket || "" }); }} />
-          </div>
-          <div className="form-row">
-            <div className="label">AccessKey ID</div>
-            <input className="input" type="text"
-                   placeholder="LTAI…"
-                   value={draft.oss_access_key_id || ""}
-                   onChange={function (e) { update("oss_access_key_id", e.target.value); }}
-                   onBlur={function () { save({ oss_access_key_id: draft.oss_access_key_id || "" }); }} />
-          </div>
-          <div className="form-row">
-            <div className="label">AccessKey Secret</div>
-            <input className="input" type="password"
-                   placeholder={settings.oss_secret_set ? "已保存（重新输入将覆盖）" : "Secret"}
-                   value={draft.oss_access_key_secret || ""}
-                   onChange={function (e) { update("oss_access_key_secret", e.target.value); }}
-                   onBlur={function () { save({ oss_access_key_secret: draft.oss_access_key_secret || "" }); }} />
+          <div className="text-xs text-dim" style={{marginTop: 4}}>
+            获取地址：<a href="https://www.runninghub.cn" target="_blank" rel="noopener"
+               style={{color: "var(--primary)"}}>RunningHub 控制台</a>
           </div>
         </div>
         <div className="form-row">
-          <div className="label">对象路径前缀（可选）</div>
-          <input className="input" type="text"
-                 placeholder="avatar-studio"
-                 value={draft.oss_path_prefix || ""}
-                 onChange={function (e) { update("oss_path_prefix", e.target.value); }}
-                 onBlur={function () { save({ oss_path_prefix: draft.oss_path_prefix || "" }); }} />
-          <div className="text-xs text-dim" style={{marginTop: 4}}>
-            所有对象会写到 <code className="inline">{draft.oss_path_prefix || "avatar-studio"}/uploads/...</code> 下，
-            方便和你 bucket 里其他内容区分。
+          <div className="label">实例规格 (Instance Type)</div>
+          <select className="input select" value={draft.rh_instance_type || "plus"}
+                  onChange={function (e) {
+                    update("rh_instance_type", e.target.value);
+                    save({ rh_instance_type: e.target.value });
+                  }}>
+            <option value="standard">Standard</option>
+            <option value="plus">Plus</option>
+          </select>
+        </div>
+        <Collapsible title="Workflow 预设" defaultOpen={false}>
+          <div className="text-xs text-dim" style={{marginBottom: 8, lineHeight: 1.5}}>
+            为每个模式预设 RunningHub workflow_id，创建任务时可直接选用。
           </div>
+          {["photo_speak", "video_relip", "video_reface", "avatar_compose", "pose_drive"].map(function (m) {
+            var key = "rh_wf_" + m;
+            var labels = {photo_speak: "照片说话", video_relip: "视频换嘴", video_reface: "视频换人", avatar_compose: "数字人合成", pose_drive: "图生动作"};
+            return (
+              <div key={key} className="form-row" style={{marginBottom: 6}}>
+                <div className="label" style={{fontSize: 12}}>{labels[m]}</div>
+                <input className="input" type="text"
+                       placeholder="粘贴 workflow_id"
+                       value={draft[key] || ""}
+                       onChange={function (e) { update(key, e.target.value); }}
+                       onBlur={function () { save({ [key]: (draft[key] || "").trim() }); }} />
+              </div>
+            );
+          })}
+        </Collapsible>
+      </div>
+
+      {/* ── Section 3: 本地 ComfyUI ────────────────────────────── */}
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"
+            style={{display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8}}>
+          <span style={{display: "inline-flex", alignItems: "center", gap: 6}}>
+            <span className="oa-icon"><Ico name="cpu"/></span>
+            本地 ComfyUI
+          </span>
+          {settings.comfyui_configured && (
+            <span style={{
+              fontSize: 11, padding: "1px 7px", borderRadius: 8,
+              background: "var(--success-bg, #ecfdf5)",
+              color: "var(--success, #059669)",
+              border: "1px solid var(--success-border, #a7f3d0)",
+              fontWeight: 500,
+            }}>已配置</span>
+          )}
+        </h3>
+        <div className="form-row">
+          <div className="label">ComfyUI 地址 (URL)</div>
+          <div className="flex gap-2">
+            <input className="input flex-1" type="text"
+                   value={draft.comfyui_url || ""}
+                   placeholder="http://127.0.0.1:8188"
+                   onChange={function (e) { update("comfyui_url", e.target.value); }}
+                   onBlur={function () { save({ comfyui_url: (draft.comfyui_url || "").trim() }); }} />
+            <button className="btn btn-sm" type="button"
+                    onClick={function () {
+                      pluginApi("POST", "/test-backend", {
+                        backend: "comfyui_local",
+                        comfyui_url: (draft.comfyui_url || "").trim(),
+                        comfyui_api_key: (draft.comfyui_api_key || "").trim()
+                      }).then(function (r) {
+                        if (r.ok && r.body && r.body.ok) showToast("ComfyUI 连接成功");
+                        else showToast("连接失败: " + ((r.body && r.body.message) || "未知错误"), "error");
+                      });
+                    }}>测试连接</button>
+          </div>
+        </div>
+        <div className="form-row">
+          <div className="label">API Key（可选）</div>
+          <input className="input" type="password"
+                 value={draft.comfyui_api_key || ""}
+                 placeholder="留空则不鉴权"
+                 onChange={function (e) { update("comfyui_api_key", e.target.value); }}
+                 onBlur={function () { save({ comfyui_api_key: (draft.comfyui_api_key || "").trim() }); }} />
+        </div>
+        <Collapsible title="Workflow 预设" defaultOpen={false}>
+          <div className="text-xs text-dim" style={{marginBottom: 8, lineHeight: 1.5}}>
+            为每个模式预设本地 workflow_id 或 .json 文件路径。
+          </div>
+          {["photo_speak", "video_relip", "video_reface", "avatar_compose", "pose_drive"].map(function (m) {
+            var key = "comfyui_wf_" + m;
+            var labels = {photo_speak: "照片说话", video_relip: "视频换嘴", video_reface: "视频换人", avatar_compose: "数字人合成", pose_drive: "图生动作"};
+            return (
+              <div key={key} className="form-row" style={{marginBottom: 6}}>
+                <div className="label" style={{fontSize: 12}}>{labels[m]}</div>
+                <input className="input" type="text"
+                       placeholder="workflow_id 或本地路径"
+                       value={draft[key] || ""}
+                       onChange={function (e) { update(key, e.target.value); }}
+                       onBlur={function () { save({ [key]: (draft[key] || "").trim() }); }} />
+              </div>
+            );
+          })}
+        </Collapsible>
+      </div>
+
+      {/* ── Section 4: TTS 引擎 ───────────────────────────────── */}
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title">
+          <span style={{display: "inline-flex", alignItems: "center", gap: 6}}>
+            <span className="oa-icon"><Ico name="mic"/></span>
+            TTS 引擎
+          </span>
+        </h3>
+        <div className="form-row">
+          <div style={{display: "flex", gap: 16, marginBottom: 8}}>
+            <label style={{display: "flex", alignItems: "center", gap: 4, cursor: "pointer"}}>
+              <input type="radio" name="tts_engine"
+                     checked={(draft.tts_engine || "cosyvoice") === "cosyvoice"}
+                     onChange={function () { update("tts_engine", "cosyvoice"); save({ tts_engine: "cosyvoice" }); }} />
+              CosyVoice（百炼付费）
+            </label>
+            <label style={{display: "flex", alignItems: "center", gap: 4, cursor: "pointer"}}>
+              <input type="radio" name="tts_engine"
+                     checked={draft.tts_engine === "edge"}
+                     onChange={function () { update("tts_engine", "edge"); save({ tts_engine: "edge" }); }} />
+              Edge-TTS（免费）
+            </label>
+          </div>
+          {draft.tts_engine === "edge" ? (
+            <div>
+              <div className="label">Edge-TTS 默认音色</div>
+              <select className="input select" value={draft.tts_voice_edge || "zh-CN-YunxiNeural"}
+                      onChange={function (e) {
+                        update("tts_voice_edge", e.target.value);
+                        save({ tts_voice_edge: e.target.value });
+                      }}>
+                {(settings.edge_voices || [
+                  {id: "zh-CN-YunxiNeural", label: "云希（男-阳光）"},
+                  {id: "zh-CN-YunjianNeural", label: "云健（男-沉稳）"},
+                  {id: "zh-CN-YunxiaNeural", label: "云夏（男-少年）"},
+                  {id: "zh-CN-YunyangNeural", label: "云扬（男-新闻）"},
+                  {id: "zh-CN-XiaoxiaoNeural", label: "晓晓（女-温柔）"},
+                  {id: "zh-CN-XiaoyiNeural", label: "晓伊（女-活泼）"},
+                  {id: "zh-CN-XiaochenNeural", label: "晓辰（女-知性）"},
+                  {id: "zh-CN-XiaohanNeural", label: "晓涵（女-沉静）"},
+                  {id: "zh-CN-XiaomoNeural", label: "晓墨（女-柔美）"},
+                  {id: "zh-CN-XiaoqiuNeural", label: "晓秋（女-优雅）"},
+                  {id: "zh-CN-XiaoruiNeural", label: "晓睿（女-甜美）"},
+                  {id: "zh-CN-XiaoshuangNeural", label: "晓双（女-童声）"},
+                ]).map(function (v) {
+                  return <option key={v.id} value={v.id}>{v.label}</option>;
+                })}
+              </select>
+            </div>
+          ) : (
+            <div className="text-xs text-dim">
+              CosyVoice 音色在创建任务时选择，使用百炼 API Key 计费。
+            </div>
+          )}
         </div>
       </div>
 
@@ -3450,36 +4275,145 @@ function SettingsTab({ settings, onSaved, voices }) {
         </div>
       </div>
 
-      {/* ── 存储与清理 ──────────────────────────────────────── */}
+      {/* ── 存储与清理 ────────────────────────────────────────
+          Layout deliberately mirrors plugins/seedance-video so users
+          flipping between the two plugins encounter the same affordances
+          (input + Browse + Open, an output subdir / filename template,
+          and per-folder usage cards). All folder paths go through
+          /storage/open-folder + /storage/list-dir + /storage/mkdir on
+          the backend — no host bridge or native dialog dependency. */}
       <div className="setting-section oa-settings-section">
         <h3 className="oa-settings-section__title">
           <span className="oa-icon"><Ico name="layers"/></span>
           {t("settings.section.storage")}
         </h3>
-        {storage && (
-          <div className="flex items-center justify-between"
-               style={{padding: "8px 0", borderBottom: "1px solid var(--border)"}}>
-            <div style={{minWidth: 0}}>
-              <div className="text-sm">数据目录</div>
-              <div className="text-xs text-dim truncate" title={storage.dir}>
-                <code className="inline">{storage.dir || "—"}</code>
-              </div>
+
+        {/* ── 数据目录 ── input + Browse + Open. Empty input = use the
+            built-in default (~/.openakita/.../avatar-studio). Backend's
+            「打开」 endpoint resolves the default automatically when the
+            value is blank, so the button always works. */}
+        <div className="form-row">
+          <label className="label">{t("settings.storage.dir")}</label>
+          <div className="folder-row">
+            <ValidatedInput
+              placeholder={t("settings.storage.dir.placeholder")}
+              value={draft.custom_data_dir || ""}
+              error={settings.data_dir_status &&
+                     (draft.custom_data_dir || "") === (settings.custom_data_dir || "")
+                       ? settings.data_dir_status : ""}
+              onChange={function (e) { update("custom_data_dir", e.target.value); }}
+              onBlur={function (e) { save({ custom_data_dir: (e.target.value || "").trim() }); }}
+            />
+            <button className="btn btn-sm"
+                    onClick={function () { openFolderPicker("custom_data_dir", "settings.storage.dir.pickTitle"); }}>
+              {t("settings.btn.browse")}
+            </button>
+            <button className="btn btn-sm"
+                    onClick={function () { openFolderByKey("data_dir"); }}>
+              {t("settings.btn.open")}
+            </button>
+          </div>
+          {/* Subdir + naming sit *under* the data dir like seedance — the
+              naming template applies to the final mp4/mp3 inside outputs/
+              so it belongs to the same logical group as the output root. */}
+          <div className="grid-2" style={{marginTop: 6}}>
+            <div>
+              <label className="label">{t("settings.storage.subdir")}</label>
+              <select className="input select"
+                      value={draft.output_subdir_mode || "task"}
+                      onChange={function (e) {
+                        update("output_subdir_mode", e.target.value);
+                        save({ output_subdir_mode: e.target.value });
+                      }}>
+                <option value="task">{t("settings.storage.subdir.task")}</option>
+                <option value="date">{t("settings.storage.subdir.date")}</option>
+                <option value="mode">{t("settings.storage.subdir.mode")}</option>
+                <option value="date_mode">{t("settings.storage.subdir.dateMode")}</option>
+                <option value="flat">{t("settings.storage.subdir.flat")}</option>
+              </select>
             </div>
-            <div className="text-sm" style={{whiteSpace: "nowrap"}}>
-              {formatBytes(storage.bytes_used || 0)}
+            <div>
+              <label className="label">{t("settings.storage.naming")}</label>
+              <select className="input select"
+                      value={draft.output_naming_rule || "{filename}"}
+                      onChange={function (e) {
+                        update("output_naming_rule", e.target.value);
+                        save({ output_naming_rule: e.target.value });
+                      }}>
+                <option value="{filename}">{t("settings.storage.naming.filename")}</option>
+                <option value="{task_id}">{t("settings.storage.naming.task")}</option>
+                <option value="{date}_{mode}_{short_id}">{t("settings.storage.naming.dateMode")}</option>
+                <option value="{date}_{time}_{short_id}">{t("settings.storage.naming.dateTime")}</option>
+                <option value="{mode}_{short_id}">{t("settings.storage.naming.modeShort")}</option>
+              </select>
             </div>
           </div>
+          <div className="text-xs text-muted" style={{marginTop: 6, lineHeight: 1.5}}>
+            {t("settings.storage.dir.hint")}
+            <br/>
+            {t("settings.storage.naming.hint")}
+          </div>
+          {settings.data_dir_pending_reload && !settings.data_dir_status && (
+            <div className="text-xs"
+                 style={{marginTop: 4, color: "#b45309"}}>
+              ⚠ {t("settings.storage.dir.pending")}
+            </div>
+          )}
+        </div>
+
+        {/* ── Per-folder usage cards (grid-2 → two rows of two on narrow
+            widths, single row of four when the parent is wide enough).
+            Mirrors seedance-video's grid-3 stats block; the click target
+            opens the actual folder via the backend. */}
+        {stats && (
+          <div className="grid-2" style={{marginTop: 12, gap: 10}}>
+            {[
+              { key: "data_dir", labelKey: "settings.stats.dataDir" },
+              { key: "outputs", labelKey: "settings.stats.outputs" },
+              { key: "uploads", labelKey: "settings.stats.uploads" },
+              { key: "tasks", labelKey: "settings.stats.tasks" },
+            ].map(function (entry) {
+              const s = stats[entry.key];
+              if (!s) return null;
+              return (
+                <div key={entry.key}
+                     className="card"
+                     style={{padding: 10, cursor: "pointer"}}
+                     title={s.path}
+                     onClick={function () { openFolderByKey(entry.key); }}>
+                  <div className="text-xs text-dim">{t(entry.labelKey)}</div>
+                  <div style={{fontSize: 18, fontWeight: 600, color: "var(--primary)", margin: "4px 0"}}>
+                    {s.size_mb} MB
+                  </div>
+                  <div className="text-xs text-dim">
+                    {t("settings.stats.fileCount", { n: s.file_count })}
+                    {s.truncated && " +"}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         )}
-        <div className="form-row" style={{marginTop: 10}}>
-          <div className="label">保留天数</div>
+
+        {/* ── Cleanup row at the bottom — keeps with the other storage
+            controls instead of jumping back into the API/Defaults block. */}
+        <div className="form-row" style={{marginTop: 14}}>
+          <label className="label">{t("settings.storage.retention")}</label>
           <div className="flex items-center gap-2">
             <input type="number" className="input" style={{width: 110}} min="1"
                    value={draft.retention_days != null ? draft.retention_days : 30}
-                   onChange={function (e) { update("retention_days", Number(e.target.value)); }} />
+                   onChange={function (e) { update("retention_days", Number(e.target.value)); }}
+                   onBlur={function () { save({ retention_days: Number(draft.retention_days || 30) }); }} />
             <span className="text-xs text-muted flex-1">
               {t("settings.storage.cleanup", { n: draft.retention_days != null ? draft.retention_days : 30 })}
             </span>
-            <button className="btn btn-sm" onClick={cleanup}>{t("settings.storage.cleanup.btn")}</button>
+            <button className="btn btn-sm"
+                    onClick={async function () {
+                      await cleanup();
+                      refreshStats();
+                    }}>
+              {t("settings.storage.cleanup.btn")}
+            </button>
           </div>
         </div>
       </div>
@@ -3530,6 +4464,14 @@ function SettingsTab({ settings, onSaved, voices }) {
       <button className="btn btn-primary btn-block" onClick={saveAll} style={{marginTop: 14}}>
         <Ico name="check"/> {t("settings.save")}
       </button>
+
+      <FolderPickerModal
+        open={!!folderPicker}
+        title={folderPicker && folderPicker.title}
+        initialPath={folderPicker && folderPicker.initialPath}
+        onCancel={function () { setFolderPicker(null); }}
+        onSelect={handleFolderPickerSelect}
+      />
     </div>
   );
 }
@@ -3712,10 +4654,10 @@ function App() {
              style={{margin: "12px 20px 0", flexShrink: 0}}>
           <span className="oa-icon oa-config-banner__icon"><Ico name="warn"/></span>
           <div className="oa-config-banner__text">
-            <strong>阿里云 OSS 未配置</strong>
+            <strong>{settings.oss_status_message ? "阿里云 OSS 配置无效" : "阿里云 OSS 未配置"}</strong>
             <div style={{fontSize: 12, color: "var(--text-muted)", marginTop: 2}}>
               DashScope 无法 fetch 本地 URL，所有任务都需要先把素材推到你自己的 OSS bucket。
-              到「设置 → 阿里云 OSS」填入 4 个字段（endpoint / bucket / key / secret）。
+              到「设置 → 阿里云 OSS」检查 4 个字段（endpoint / bucket / key / secret）。
             </div>
           </div>
           <button className="oa-config-banner__action" type="button"
@@ -3735,6 +4677,50 @@ function App() {
         {activeTab === 4 && <PromptGuideTab/>}
         {activeTab === 5 && <SettingsTab settings={settings} voices={voices}
                                           onSaved={function () { refreshSettings(); }} />}
+      </div>
+      <ConfirmHost/>
+    </div>
+  );
+}
+
+/* ─── ConfirmHost ─────────────────────────────────────────────────────
+   Renders any pending oaConfirm() request as a modal. Mounted once at
+   the bottom of <App/> so every callsite shares the same overlay and
+   we never show two stacked confirms (each new oaConfirm replaces the
+   one in flight — matches what the native confirm() does serially). */
+function ConfirmHost() {
+  const [pending, setPending] = useState(null);
+  useEffect(function () {
+    _registerConfirmSubscriber(function (req) { setPending(req); });
+    return function () { _registerConfirmSubscriber(null); };
+  }, []);
+  if (!pending) return null;
+  const close = function (ok) {
+    pending.resolve(ok);
+    setPending(null);
+  };
+  return (
+    <div className="modal-mask" onClick={function () { close(false); }}>
+      <div className="modal-card" onClick={function (e) { e.stopPropagation(); }}
+           style={{maxWidth: 420}}>
+        <div className={"modal-icon " + (pending.danger ? "warn" : "")}>
+          <Ico name={pending.danger ? "warn" : "info"}/>
+        </div>
+        <div className="modal-title">{pending.title}</div>
+        {pending.message && (
+          <div className="modal-desc" style={{whiteSpace: "pre-wrap"}}>
+            {pending.message}
+          </div>
+        )}
+        <div className="modal-actions">
+          <button className="btn" onClick={function () { close(false); }}>
+            {pending.cancelText}
+          </button>
+          <button className={"btn " + (pending.danger ? "btn-danger" : "btn-primary")}
+                  onClick={function () { close(true); }}>
+            {pending.okText}
+          </button>
+        </div>
       </div>
     </div>
   );
