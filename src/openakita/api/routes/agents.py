@@ -119,6 +119,7 @@ class ProfileCreateRequest(BaseModel):
     identity_mode: Literal["shared", "custom"] = "shared"
     memory_mode: Literal["shared", "isolated"] = "shared"
     memory_inherit_global: bool = True
+    cli_env: dict[str, str] = Field(default_factory=dict, max_length=100)
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -140,6 +141,7 @@ class ProfileUpdateRequest(BaseModel):
     identity_mode: Literal["shared", "custom"] | None = None
     memory_mode: Literal["shared", "isolated"] | None = None
     memory_inherit_global: bool | None = None
+    cli_env: dict[str, str] | None = Field(None, max_length=100)
 
 
 class ProfileVisibilityRequest(BaseModel):

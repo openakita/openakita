@@ -1525,6 +1525,13 @@
     }
   },
   "agentManager": {
+    "cliEnvTitle": "Environment",
+    "cliEnvHelper": "Only variables listed here are passed to this external CLI.",
+    "cliEnvAdd": "Add variable",
+    "cliEnvEmpty": "No variables defined.",
+    "cliEnvKey": "KEY",
+    "cliEnvValue": "value or ${EXISTING_VAR}",
+    "cliEnvRemove": "Remove",
     "title": "Agent Manager",
     "create": "Create Agent",
     "edit": "Edit",

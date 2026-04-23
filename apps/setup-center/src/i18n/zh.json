@@ -1525,6 +1525,13 @@
     }
   },
   "agentManager": {
+    "cliEnvTitle": "环境变量",
+    "cliEnvHelper": "只有这里列出的变量会被传递给该外部 CLI。",
+    "cliEnvAdd": "添加变量",
+    "cliEnvEmpty": "尚未定义任何变量。",
+    "cliEnvKey": "KEY",
+    "cliEnvValue": "值 或 ${已有变量}",
+    "cliEnvRemove": "删除",
     "title": "Agent 管理",
     "create": "创建 Agent",
     "edit": "编辑",

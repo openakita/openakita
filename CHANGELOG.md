@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] - 2026-04-21
 
+### Added — Per-agent external CLI environment variables
+
+- `AgentProfile.cli_env: dict[str, str]` lets each external-CLI agent own a
+  private set of environment variables passed to its subprocess. Values support
+  `${VAR}` references that resolve from the OpenAkita server process env at
+  spawn time. Editable in the Setup Center's external-CLI edit drawer under a
+  new **Environment** section.
+
+### Changed — External-CLI subprocess env is now allow-listed
+
+- Previously every `os.environ` variable was inherited, including OpenAkita's
+  own LLM provider secrets (`ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`,
+  `OPENAI_API_KEY`, …) which leaked into every external CLI and broke CLIs
+  that use their own credentials.
+- External-CLI subprocesses now receive only POSIX essentials (`HOME`, `PATH`,
+  `LANG`, `LC_*`, `TERM`, `TMPDIR`, `XDG_*`, `SSH_AUTH_SOCK`, `GPG_AGENT_INFO`,
+  …) plus whatever the agent's `cli_env` explicitly sets.
+- **Migration:** if a Claude Code / Codex / Goose agent was relying on an
+  inherited `ANTHROPIC_API_KEY` or similar, add it to that agent's Environment
+  section in Setup Center. OpenAkita's own LLM access is unaffected.
+
 ### Fixed — 插件加载系统三件套
 
 - **多插件 `task_manager.py` / `providers.py` 同名子模块在 `sys.modules`

@@ -166,6 +166,11 @@ class AgentProfile:
     cli_provider_id: CliProviderId | None = None
     cli_permission_mode: CliPermissionMode = CliPermissionMode.WRITE
 
+    # Environment variables passed to the external CLI subprocess.
+    # Values may reference process env via ${VAR} (resolved at spawn time).
+    # Only populated for type == EXTERNAL_CLI.
+    cli_env: dict[str, str] = field(default_factory=dict)
+
     # Metadata
     created_by: str = "system"
     created_at: str = ""
@@ -450,6 +455,7 @@ class ProfileStore:
             "identity_mode",
             "memory_mode",
             "memory_inherit_global",
+            "cli_env",
         }
     )
 

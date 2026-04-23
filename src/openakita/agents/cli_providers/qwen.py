@@ -121,7 +121,7 @@ class QwenAdapter:
         return argv
 
     def build_env(self, request: CliRunRequest) -> dict[str, str]:
-        return build_cli_env()
+        return build_cli_env(request.profile)
 
     async def run(self, request, argv, env, *, on_spawn):
         acc = _TurnAccumulator()

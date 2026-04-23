@@ -147,10 +147,13 @@ class CodexAdapter:
         return argv
 
     def build_env(self, request: CliRunRequest) -> dict[str, str]:
-        env = build_cli_env()
+        env = build_cli_env(request.profile)
         # CODEX_HOME is populated in run() with an absolute per-turn tempdir.
         # For build_env introspection (tests) we allocate a stub path so callers
         # can assert CODEX_HOME is set; run() overwrites before spawn.
+        # Note: if a user sets CODEX_HOME in profile.cli_env it surfaces here
+        # via build_cli_env's overlay, but run() still overrides it with a
+        # per-turn tempdir to keep MCP config isolated between runs.
         env["CODEX_HOME"] = env.get("CODEX_HOME") or str(
             Path(tempfile.gettempdir()) / "codex-home-stub"
         )

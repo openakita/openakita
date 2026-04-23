@@ -148,7 +148,7 @@ class GooseAdapter:
         return argv
 
     def build_env(self, request: CliRunRequest) -> dict[str, str]:
-        return build_cli_env()
+        return build_cli_env(request.profile)
 
     async def run(
         self,

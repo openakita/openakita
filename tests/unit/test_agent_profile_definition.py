@@ -68,6 +68,38 @@ def test_from_dict_accepts_legacy_mode_strings():
     assert p.plugins_mode == FilterMode.EXCLUSIVE
 
 
+def test_agent_profile_roundtrip_with_cli_env():
+    p = AgentProfile(
+        id="t",
+        name="T",
+        type=AgentType.EXTERNAL_CLI,
+        cli_provider_id=CliProviderId.CLAUDE_CODE,
+        cli_env={"ANTHROPIC_API_KEY": "sk-abc", "MY_VAR": "hello"},
+    )
+    assert p.cli_env == {"ANTHROPIC_API_KEY": "sk-abc", "MY_VAR": "hello"}
+    revived = AgentProfile.from_dict(p.to_dict())
+    assert revived.cli_env == p.cli_env
+
+
+def test_agent_profile_missing_cli_env_defaults_empty():
+    data = {"id": "t", "name": "T", "type": "external_cli"}
+    p = AgentProfile.from_dict(data)
+    assert p.cli_env == {}
+
+
+def test_derive_ephemeral_from_clones_cli_env():
+    base = AgentProfile(
+        id="base",
+        name="base",
+        type=AgentType.EXTERNAL_CLI,
+        cli_provider_id=CliProviderId.CLAUDE_CODE,
+        cli_env={"FOO": "bar"},
+    )
+    eph = AgentProfile.derive_ephemeral_from(base, id="eph")
+    assert eph.cli_env == {"FOO": "bar"}
+    assert eph.cli_env is not base.cli_env  # deep-copied
+
+
 def test_derive_ephemeral_from_clones_cli_fields():
     base = AgentProfile(
         id="claude-code-pair",

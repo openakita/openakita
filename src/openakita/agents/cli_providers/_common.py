@@ -18,29 +18,94 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import AsyncIterator, Callable
+import re
+from collections.abc import AsyncIterator, Callable, Mapping
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from openakita.tools.errors import ErrorType, ToolError
 from openakita.tools.mcp_catalog import MCPCatalog
 from openakita.utils.path_helper import get_enriched_env
 
+if TYPE_CHECKING:
+    from openakita.agents.profile import AgentProfile
+
 logger = logging.getLogger(__name__)
 
 
-def build_cli_env() -> dict[str, str]:
+# Allow-list of environment variables copied from the OpenAkita server process
+# into external-CLI subprocesses. Excludes LLM provider secrets, API keys, and
+# OpenAkita-specific config so child CLIs use their own credentials, not ours.
+_CLI_ENV_ALLOW_EXACT = frozenset({
+    # Identity / session essentials
+    "HOME", "USER", "LOGNAME", "SHELL", "PATH", "PWD",
+    # Temp dirs
+    "TMPDIR", "TMP", "TEMP",
+    # Locale / terminal
+    "LANG", "TERM", "TERMINFO", "COLORTERM",
+    "TERM_PROGRAM", "TERM_PROGRAM_VERSION",
+    "NO_COLOR", "FORCE_COLOR", "CLICOLOR", "CLICOLOR_FORCE",
+    "TZ",
+    # SSH / GPG agent forwarding — preserves git-over-ssh and commit signing.
+    "SSH_AUTH_SOCK", "SSH_AGENT_PID",
+    "GPG_AGENT_INFO", "GNUPGHOME",
+    # Windows (no-op on Linux/macOS when unset)
+    "SYSTEMROOT", "WINDIR", "COMSPEC",
+})
+_CLI_ENV_ALLOW_PREFIXES = ("LC_", "XDG_")
+
+_CLI_ENV_VAR_RE = re.compile(r"\$\{(\w+)\}")
+_FALLBACK_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+
+def _copy_safe_base_env() -> dict[str, str]:
+    """Copy the allow-listed env vars from os.environ into a fresh dict."""
+    base: dict[str, str] = {}
+    for key, value in os.environ.items():
+        if key in _CLI_ENV_ALLOW_EXACT or key.startswith(_CLI_ENV_ALLOW_PREFIXES):
+            base[key] = value
+    # Ensure PATH is always present so get_enriched_env can merge into it.
+    base.setdefault("PATH", _FALLBACK_PATH)
+    return base
+
+
+def _resolve_cli_env_value(
+    value: str, environ: Mapping[str, str] | None = None
+) -> str:
+    """Replace ``${VAR}`` patterns in *value* with environ lookups.
+
+    Missing references resolve to empty string (matches mcp_catalog's
+    ``_resolve_env_vars`` precedent). Single-pass — no recursive expansion.
+    """
+    env = environ if environ is not None else os.environ
+    return _CLI_ENV_VAR_RE.sub(lambda m: env.get(m.group(1), ""), value)
+
+
+def build_cli_env(profile: "AgentProfile | None" = None) -> dict[str, str]:
     """Build a subprocess env for CLI adapters.
 
-    Starts from os.environ, then merges the user's login-shell PATH so
-    child CLIs (claude, codex, goose, …) can find their own dependencies
-    (node, python, etc.) even when the openakita server was started by
-    systemd with a minimum PATH.
+    Starts from a minimal allow-list (HOME, USER, SHELL, PATH, LANG, LC_*,
+    TERM, TMPDIR, XDG_*, SSH_AUTH_SOCK, ...). Deliberately excludes OpenAkita's
+    LLM provider secrets (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...) so external
+    CLIs don't pick them up by accident.
+
+    Merges the login-shell PATH so child CLIs can still find node, python,
+    etc. when the server was launched by systemd with a minimum PATH.
+
+    Overlays *profile.cli_env* last, resolving ``${VAR}`` references against
+    os.environ. Profile values win over the base env.
     """
-    enriched = get_enriched_env(dict(os.environ))
-    # get_enriched_env returns its input unchanged when no enrichment is
-    # available, never None in this code path — but keep a defensive
-    # fallback to satisfy the type checker.
-    return enriched if enriched is not None else dict(os.environ)
+    base = _copy_safe_base_env()
+    enriched = get_enriched_env(base)
+    env = enriched if enriched is not None else base
+
+    if profile is not None and profile.cli_env:
+        for key, raw in profile.cli_env.items():
+            if not key:
+                continue
+            env[key] = _resolve_cli_env_value(raw)
+
+    return env
 
 
 def binary_not_found_error(

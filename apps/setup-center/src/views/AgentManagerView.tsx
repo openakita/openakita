@@ -13,6 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { EnvDictEditor } from "@/components/EnvDictEditor";
 
 type AgentProfile = {
   id: string;
@@ -35,6 +36,7 @@ type AgentProfile = {
   description_i18n?: Record<string, string>;
   cli_provider_id?: string | null;
   cli_permission_mode?: "plan" | "write";
+  cli_env?: Record<string, string>;
 };
 
 type SkillItem = {
@@ -68,6 +70,7 @@ const EMPTY_PROFILE: AgentProfile = {
   identity_mode: "shared",
   memory_mode: "shared",
   memory_inherit_global: true,
+  cli_env: {},
 };
 
 type CategoryInfo = {
@@ -600,6 +603,7 @@ export function AgentManagerView({
         identity_mode: editingProfile.identity_mode || "shared",
         memory_mode: editingProfile.memory_mode || "shared",
         memory_inherit_global: editingProfile.memory_inherit_global ?? true,
+        cli_env: editingProfile.cli_env || {},
       };
 
       const url = isCreating
@@ -1409,6 +1413,17 @@ export function AgentManagerView({
                 {editingProfile.custom_prompt.length} / 5000
               </p>
             </div>
+
+            {/* External CLI Environment */}
+            {!isCreating && editingProfile.type === "external_cli" && (
+              <EnvDictEditor
+                value={editingProfile.cli_env || {}}
+                onChange={(next) =>
+                  setEditingProfile((p) => ({ ...p, cli_env: next }))
+                }
+                helperText={t("agentManager.cliEnvHelper")}
+              />
+            )}
 
             {/* Isolation Config */}
             {!isCreating && (
