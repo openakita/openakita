@@ -341,6 +341,31 @@
     }
     .inline-warn__text { flex: 1; }
     .inline-warn__text small { display: block; color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+
+    /* ── In-plugin folder picker modal ── */
+    .folder-picker { width: min(640px, 100%); max-height: 80vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+    .folder-picker__head { padding: 16px 20px 12px; border-bottom: 1px solid var(--border); }
+    .folder-picker__title { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text); }
+    .folder-picker__crumbs { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); flex-wrap: wrap; min-height: 22px; }
+    .folder-picker__crumb { padding: 2px 8px; border-radius: 4px; cursor: pointer; transition: background .12s; user-select: none; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .folder-picker__crumb:hover { background: var(--bg-hover); color: var(--text); }
+    .folder-picker__crumb-sep { color: var(--text-muted); opacity: .5; }
+    .folder-picker__body { display: flex; flex: 1; min-height: 280px; max-height: 50vh; overflow: hidden; }
+    .folder-picker__sidebar { width: 140px; border-right: 1px solid var(--border); padding: 8px 0; overflow-y: auto; background: var(--bg-hover); flex-shrink: 0; }
+    .folder-picker__shortcut { display: flex; align-items: center; gap: 8px; padding: 7px 14px; font-size: 12px; color: var(--text); cursor: pointer; transition: background .12s; }
+    .folder-picker__shortcut:hover { background: var(--bg-card); }
+    .folder-picker__shortcut.active { background: var(--bg-card); color: var(--primary); font-weight: 500; }
+    .folder-picker__list { flex: 1; overflow-y: auto; padding: 4px 0; }
+    .folder-picker__item { display: flex; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px; color: var(--text); cursor: pointer; transition: background .1s; user-select: none; }
+    .folder-picker__item:hover { background: var(--bg-hover); }
+    .folder-picker__item.selected { background: rgba(99, 102, 241, .12); color: var(--primary); }
+    .folder-picker__item-icon { width: 16px; height: 16px; flex-shrink: 0; opacity: .8; }
+    .folder-picker__item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .folder-picker__empty { padding: 32px 16px; text-align: center; font-size: 12px; color: var(--text-muted); }
+    .folder-picker__error { padding: 16px; background: rgba(239, 68, 68, .08); border-bottom: 1px solid rgba(239, 68, 68, .25); color: var(--danger); font-size: 12px; }
+    .folder-picker__foot { display: flex; align-items: center; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--border); background: var(--bg-card); }
+    .folder-picker__current { flex: 1; font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .folder-picker__newinput { flex: 1; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; background: var(--bg-card); color: var(--text); }
   </style>
 </head>
 <body>
@@ -870,6 +895,20 @@ const I18N_DICT = {
     "settings.folder.pickFailed": "选择文件夹失败，请重试",
     "settings.folder.pickUnavailable": "文件夹选择器没响应，请重启应用后重试，或直接在左侧输入框粘贴路径再点【打开】",
     "settings.folder.savedTo": "存储位置已切换到 {path}",
+    "picker.title": "选择文件夹",
+    "picker.shortcut.start": "起始位置",
+    "picker.crumb.root": "起始位置",
+    "picker.empty": "（此目录下无子文件夹）",
+    "picker.loading": "加载中…",
+    "picker.btn.cancel": "取消",
+    "picker.btn.choose": "选择此文件夹",
+    "picker.btn.newFolder": "新建文件夹",
+    "picker.btn.create": "创建",
+    "picker.btn.confirmCreate": "确认",
+    "picker.newFolder.placeholder": "输入文件夹名称",
+    "picker.error.load": "无法读取目录: {msg}",
+    "picker.error.create": "创建文件夹失败: {msg}",
+    "picker.created": "已创建 {name}",
     "toast.optimizeOk": "提示词优化完成",
     "toast.optimizeFail": "提示词优化失败: {msg}",
     "toast.optimizeNoChange": "提示词无需优化或 LLM 返回了相同内容",
@@ -1196,6 +1235,20 @@ const I18N_DICT = {
     "settings.folder.pickFailed": "Could not pick a folder, please retry",
     "settings.folder.pickUnavailable": "Folder picker not responding — restart the app or paste the path into the box on the left and click Open.",
     "settings.folder.savedTo": "Storage path set to {path}",
+    "picker.title": "Select a folder",
+    "picker.shortcut.start": "Starting points",
+    "picker.crumb.root": "Start",
+    "picker.empty": "(no subfolders here)",
+    "picker.loading": "Loading…",
+    "picker.btn.cancel": "Cancel",
+    "picker.btn.choose": "Choose this folder",
+    "picker.btn.newFolder": "New folder",
+    "picker.btn.create": "Create",
+    "picker.btn.confirmCreate": "Confirm",
+    "picker.newFolder.placeholder": "Folder name",
+    "picker.error.load": "Cannot read folder: {msg}",
+    "picker.error.create": "Failed to create folder: {msg}",
+    "picker.created": "Created {name}",
     "toast.optimizeOk": "Prompt optimized",
     "toast.optimizeFail": "Optimization failed: {msg}",
     "toast.optimizeNoChange": "Prompt unchanged — LLM returned identical text",
@@ -1327,6 +1380,220 @@ function TaskStartedModal({ open, onClose, onGoToTasks, title, desc }) {
           <button className="btn btn-primary" onClick={() => { onClose(); onGoToTasks && onGoToTasks(); }}>
             {t("modal.taskStarted.goTasks")}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── In-plugin folder picker ──────────────────────────────────────────
+// Tauri's native folder dialog has been unreliable across capability/
+// version combinations and the host bridge silently swallows failures.
+// To guarantee that "Select" always works, we render our own folder
+// browser modal backed by /storage/list-dir + /storage/mkdir. No bridge,
+// no Tauri dialog plugin — pure plugin backend + React.
+function FolderPickerModal({ open, title, initialPath, onCancel, onSelect }) {
+  const t = useT();
+  const [path, setPath] = useState("");
+  const [items, setItems] = useState([]);
+  const [parent, setParent] = useState(null);
+  const [isAnchor, setIsAnchor] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [newFolderMode, setNewFolderMode] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const newFolderInputRef = useRef(null);
+
+  // Load anchors initially; if the user passed an initialPath try to
+  // navigate straight there. Failing that (path doesn't exist), fall
+  // back to anchors so the modal is never empty.
+  const load = useCallback(async (p) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const qs = p ? `?path=${encodeURIComponent(p)}` : "";
+      const r = await pluginApi("GET", `/storage/list-dir${qs}`);
+      if (r.ok && r.body?.ok) {
+        setPath(r.body.path || "");
+        setParent(r.body.parent || null);
+        setItems(r.body.items || []);
+        setIsAnchor(!!r.body.is_anchor);
+      } else {
+        setError(r.body?.detail || `HTTP ${r.status || "?"}`);
+        // Fall back to anchors so the user can still navigate.
+        if (p) {
+          const r2 = await pluginApi("GET", `/storage/list-dir`);
+          if (r2.ok && r2.body?.ok) {
+            setPath("");
+            setParent(null);
+            setItems(r2.body.items || []);
+            setIsAnchor(true);
+          }
+        }
+      }
+    } catch (e) {
+      setError(String(e && e.message || e));
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    setNewFolderMode(false);
+    setNewFolderName("");
+    load(initialPath || "");
+  }, [open, initialPath, load]);
+
+  useEffect(() => {
+    if (newFolderMode && newFolderInputRef.current) {
+      newFolderInputRef.current.focus();
+    }
+  }, [newFolderMode]);
+
+  const handleNavigate = (p) => {
+    setNewFolderMode(false);
+    load(p);
+  };
+
+  const handleCreate = async () => {
+    const name = (newFolderName || "").trim();
+    if (!name || !path) return;
+    try {
+      const r = await pluginApi("POST", "/storage/mkdir", { parent: path, name });
+      if (r.ok && r.body?.ok) {
+        showToast(_tr("picker.created", { name }));
+        setNewFolderMode(false);
+        setNewFolderName("");
+        await load(path);
+      } else {
+        showToast(_tr("picker.error.create", { msg: r.body?.detail || "" }), "error");
+      }
+    } catch (e) {
+      showToast(_tr("picker.error.create", { msg: String(e && e.message || e) }), "error");
+    }
+  };
+
+  // Build breadcrumb segments from `path`. Handles both Windows
+  // ("C:\Users\Foo") and Unix ("/home/foo") layouts. Each segment is
+  // clickable and navigates to the cumulative path.
+  const crumbs = (() => {
+    if (!path) return [];
+    const norm = path.replace(/\\/g, "/");
+    const parts = norm.split("/").filter(Boolean);
+    const out = [];
+    if (norm.startsWith("/")) {
+      out.push({ name: "/", path: "/" });
+      let acc = "";
+      for (const seg of parts) {
+        acc += "/" + seg;
+        out.push({ name: seg, path: acc });
+      }
+    } else if (parts[0] && /^[A-Za-z]:$/.test(parts[0])) {
+      out.push({ name: parts[0], path: parts[0] + "/" });
+      let acc = parts[0];
+      for (let i = 1; i < parts.length; i++) {
+        acc += "/" + parts[i];
+        out.push({ name: parts[i], path: acc });
+      }
+    } else {
+      out.push({ name: path, path });
+    }
+    return out;
+  })();
+
+  if (!open) return null;
+  return (
+    <div className="modal-mask" onClick={onCancel}>
+      <div className="modal-card folder-picker" onClick={e => e.stopPropagation()}>
+        <div className="folder-picker__head">
+          <div className="folder-picker__title">{title || t("picker.title")}</div>
+          <div className="folder-picker__crumbs">
+            <span
+              className="folder-picker__crumb"
+              onClick={() => handleNavigate("")}
+              title={t("picker.crumb.root")}
+            ><Ico name="folderOpen"/></span>
+            {crumbs.map((c, i) => (
+              <React.Fragment key={i}>
+                <span className="folder-picker__crumb-sep">/</span>
+                <span
+                  className="folder-picker__crumb"
+                  onClick={() => handleNavigate(c.path)}
+                  title={c.path}
+                >{c.name}</span>
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+
+        {error && (
+          <div className="folder-picker__error">{_tr("picker.error.load", { msg: error })}</div>
+        )}
+
+        <div className="folder-picker__body">
+          <div className="folder-picker__sidebar">
+            <div className="folder-picker__shortcut" onClick={() => handleNavigate("")}>
+              <Ico name="folder"/>{t("picker.shortcut.start")}
+            </div>
+          </div>
+          <div className="folder-picker__list">
+            {loading && <div className="folder-picker__empty">{t("picker.loading")}</div>}
+            {!loading && !isAnchor && parent != null && (
+              <div className="folder-picker__item" onClick={() => handleNavigate(parent)}>
+                <span className="folder-picker__item-icon">↰</span>
+                <span className="folder-picker__item-name">..</span>
+              </div>
+            )}
+            {!loading && items.length === 0 && (
+              <div className="folder-picker__empty">{t("picker.empty")}</div>
+            )}
+            {!loading && items.map((it) => (
+              <div
+                key={it.path}
+                className="folder-picker__item"
+                onClick={() => handleNavigate(it.path)}
+                title={it.path}
+              >
+                <span className="folder-picker__item-icon"><Ico name="folder"/></span>
+                <span className="folder-picker__item-name">{it.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="folder-picker__foot">
+          {newFolderMode ? (
+            <>
+              <input
+                ref={newFolderInputRef}
+                className="folder-picker__newinput"
+                value={newFolderName}
+                onChange={e => setNewFolderName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter") handleCreate();
+                  if (e.key === "Escape") { setNewFolderMode(false); setNewFolderName(""); }
+                }}
+                placeholder={t("picker.newFolder.placeholder")}
+              />
+              <button className="btn btn-sm" onClick={() => { setNewFolderMode(false); setNewFolderName(""); }}>{t("picker.btn.cancel")}</button>
+              <button className="btn btn-sm btn-primary" disabled={!newFolderName.trim()} onClick={handleCreate}>{t("picker.btn.confirmCreate")}</button>
+            </>
+          ) : (
+            <>
+              <span className="folder-picker__current" title={path}>{path || ""}</span>
+              <button
+                className="btn btn-sm"
+                disabled={!path || isAnchor}
+                onClick={() => setNewFolderMode(true)}
+              >{t("picker.btn.newFolder")}</button>
+              <button className="btn btn-sm" onClick={onCancel}>{t("picker.btn.cancel")}</button>
+              <button
+                className="btn btn-sm btn-primary"
+                disabled={!path || isAnchor}
+                onClick={() => onSelect(path)}
+              >{t("picker.btn.choose")}</button>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -3206,34 +3473,27 @@ function SettingsTab({ onKeyChange, onFfmpegChanged, permsStatus, onPermsRefresh
     }
   };
 
-  // "Select" opens the OS-native folder picker via the host bridge.
-  // The bridge call can fail silently in three ways:
-  //   1) bridge not connected (plain browser dev) → resolves null sync
-  //   2) Tauri dialog plugin missing capability → resolves null after host catches
-  //   3) host swallows the message entirely → never resolves (60s SDK timeout)
-  // We race a 5s "no response" detector so the user sees a useful hint
-  // instead of staring at a dead button. A null after >100ms is treated
-  // as "user cancelled" and stays silent.
-  const pickFolderForKey = async (configKey, titleKey) => {
-    const t0 = Date.now();
-    let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; }, 5000);
-    try {
-      const p = await pickFolder(_tr(titleKey));
-      clearTimeout(timer);
-      if (p) {
-        setConfig({...config, [configKey]: p});
-        save({[configKey]: p});
-        showToast(_tr("settings.folder.savedTo", { path: p }));
-        return;
-      }
-      const elapsed = Date.now() - t0;
-      if (timedOut || elapsed < 50) {
-        showToast(_tr("settings.folder.pickUnavailable"), "warning");
-      }
-    } catch (e) {
-      clearTimeout(timer);
-      showToast(_tr("settings.folder.pickFailed"), "error");
+  // "Select" opens the in-plugin folder picker modal. The native Tauri
+  // dialog has been unreliable across capability/version combos, so we
+  // serve our own browser backed by /storage/list-dir + /storage/mkdir.
+  // This needs ZERO host or Tauri cooperation and works in plain web
+  // mode too.
+  const [folderPicker, setFolderPicker] = useState(null); // {key, title, initialPath} | null
+  const openFolderPicker = (configKey, titleKey) => {
+    setFolderPicker({
+      key: configKey,
+      title: _tr(titleKey),
+      initialPath: (config[configKey] || "").trim(),
+    });
+  };
+  const handleFolderPickerSelect = (path) => {
+    if (!folderPicker) return;
+    const k = folderPicker.key;
+    setFolderPicker(null);
+    if (path) {
+      setConfig({...config, [k]: path});
+      save({[k]: path});
+      showToast(_tr("settings.folder.savedTo", { path }));
     }
   };
 
@@ -3315,7 +3575,7 @@ function SettingsTab({ onKeyChange, onFfmpegChanged, permsStatus, onPermsRefresh
             <input className="input" value={config.output_dir || ""} placeholder={t("settings.outputDir.placeholder")}
               onChange={e => setConfig({...config, output_dir: e.target.value})}
               onBlur={e => save({output_dir: e.target.value})} />
-            <button className="btn btn-sm" onClick={() => pickFolderForKey("output_dir", "settings.pickOutput")}>{t("settings.btn.browse")}</button>
+            <button className="btn btn-sm" onClick={() => openFolderPicker("output_dir", "settings.pickOutput")}>{t("settings.btn.browse")}</button>
             <button className="btn btn-sm" onClick={() => openFolderByKey("output_dir")}>{t("settings.btn.open")}</button>
           </div>
           <div className="grid-2" style={{marginTop:6}}>
@@ -3351,7 +3611,7 @@ function SettingsTab({ onKeyChange, onFfmpegChanged, permsStatus, onPermsRefresh
             <input className="input" value={config.assets_dir || ""} placeholder={t("settings.assetsDir.placeholder")}
               onChange={e => setConfig({...config, assets_dir: e.target.value})}
               onBlur={e => save({assets_dir: e.target.value})} />
-            <button className="btn btn-sm" onClick={() => pickFolderForKey("assets_dir", "settings.pickAssets")}>{t("settings.btn.browse")}</button>
+            <button className="btn btn-sm" onClick={() => openFolderPicker("assets_dir", "settings.pickAssets")}>{t("settings.btn.browse")}</button>
             <button className="btn btn-sm" onClick={() => openFolderByKey("assets_dir")}>{t("settings.btn.open")}</button>
           </div>
         </div>
@@ -3379,6 +3639,14 @@ function SettingsTab({ onKeyChange, onFfmpegChanged, permsStatus, onPermsRefresh
           <p className="text-xs text-dim" style={{marginTop:4}}>{t("settings.callback.help")}</p>
         </div>
       </div>
+
+      <FolderPickerModal
+        open={!!folderPicker}
+        title={folderPicker?.title}
+        initialPath={folderPicker?.initialPath}
+        onCancel={() => setFolderPicker(null)}
+        onSelect={handleFolderPickerSelect}
+      />
     </div>
   );
 }

@@ -847,6 +847,112 @@ class Plugin(PluginBase):
                 ) from exc
             return {"ok": True, "path": str(target)}
 
+        # --- In-plugin folder picker (works regardless of Tauri/bridge) ---
+        # Backs the FolderPickerModal in the Settings page, so users can
+        # navigate the local filesystem without depending on the host's
+        # native dialog (which has been unreliable across Tauri versions
+        # and capability config).
+
+        @router.get("/storage/list-dir")
+        async def list_dir(path: str = "") -> dict:
+            import sys
+            raw = (path or "").strip()
+            # Empty path → return anchor list (Home, common subfolders,
+            # and on Windows every available drive letter). The UI can
+            # render this as a "starting point" picker.
+            if not raw:
+                anchors: list[dict] = []
+                home = Path.home()
+                anchors.append({
+                    "name": "Home", "path": str(home), "is_dir": True, "kind": "home",
+                })
+                for sub in ("Desktop", "Documents", "Downloads", "Pictures", "Videos", "Movies"):
+                    p = home / sub
+                    if p.is_dir():
+                        anchors.append({
+                            "name": sub, "path": str(p), "is_dir": True, "kind": "shortcut",
+                        })
+                if sys.platform == "win32":
+                    import string
+                    for letter in string.ascii_uppercase:
+                        drv = Path(f"{letter}:/")
+                        try:
+                            if drv.exists():
+                                anchors.append({
+                                    "name": f"{letter}:",
+                                    "path": str(drv),
+                                    "is_dir": True,
+                                    "kind": "drive",
+                                })
+                        except OSError:
+                            continue
+                else:
+                    anchors.append({
+                        "name": "/", "path": "/", "is_dir": True, "kind": "drive",
+                    })
+                return {
+                    "ok": True, "path": "", "parent": None,
+                    "items": anchors, "is_anchor": True,
+                }
+
+            try:
+                target = Path(raw).expanduser().resolve(strict=False)
+            except (OSError, RuntimeError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if not target.is_dir():
+                raise HTTPException(status_code=400, detail="Not a directory")
+
+            items: list[dict] = []
+            try:
+                for entry in target.iterdir():
+                    name = entry.name
+                    # Skip hidden entries (Unix dotfiles, Windows hidden via
+                    # name-prefix heuristic). Permission errors on individual
+                    # entries are swallowed so one bad child does not blank
+                    # the whole listing.
+                    if name.startswith("."):
+                        continue
+                    try:
+                        if entry.is_dir():
+                            items.append({"name": name, "path": str(entry), "is_dir": True})
+                    except (PermissionError, OSError):
+                        continue
+            except PermissionError as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+            items.sort(key=lambda it: it["name"].lower())
+            parent_path = str(target.parent) if target.parent != target else None
+            return {
+                "ok": True, "path": str(target), "parent": parent_path,
+                "items": items, "is_anchor": False,
+            }
+
+        @router.post("/storage/mkdir")
+        async def make_dir(body: dict) -> dict:
+            parent = (body.get("parent") or "").strip()
+            name = (body.get("name") or "").strip()
+            if not parent or not name:
+                raise HTTPException(status_code=400, detail="Missing parent or name")
+            # Reject anything that could escape the parent dir.
+            if "/" in name or "\\" in name or name in (".", ".."):
+                raise HTTPException(status_code=400, detail="Invalid folder name")
+            try:
+                parent_path = Path(parent).expanduser().resolve(strict=False)
+            except (OSError, RuntimeError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if not parent_path.is_dir():
+                raise HTTPException(status_code=400, detail="Parent is not a directory")
+            new_path = parent_path / name
+            try:
+                new_path.mkdir(parents=False, exist_ok=False)
+            except FileExistsError as exc:
+                raise HTTPException(status_code=409, detail="Folder already exists") from exc
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            return {"ok": True, "path": str(new_path)}
+
         # --- Long video / storyboard ---
 
         @router.get("/long-video/ffmpeg-check")
