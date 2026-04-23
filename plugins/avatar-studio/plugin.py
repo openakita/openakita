@@ -46,21 +46,25 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from avatar_comfy_client import AvatarComfyClient
 from avatar_dashscope_client import (
     DASHSCOPE_BASE_URL_BJ,
     AvatarDashScopeClient,
 )
+from avatar_model_registry import REGISTRY as MODEL_REGISTRY
 from avatar_models import (
     DEFAULT_COST_THRESHOLD_CNY,
     MODES_BY_ID,
     build_catalog,
     estimate_cost,
 )
+from avatar_tts_edge import EDGE_VOICES
 from avatar_pipeline import (
     AvatarPipelineContext,
     run_pipeline,
 )
 from avatar_studio_inline.oss_uploader import (
+    OssConfig,
     OssNotConfigured,
     OssUploader,
     OssUploadError,
@@ -108,6 +112,65 @@ def _read_audio_duration(path: Path) -> float | None:
         return None
 
 
+def _sniff_extension(blob: bytes, *, kind: str) -> str | None:
+    """Pick a file extension from the magic bytes of ``blob``.
+
+    Used by ``POST /upload`` when the client-supplied filename has no
+    suffix — uploading bytes to OSS as ``application/octet-stream``
+    causes DashScope's data-inspection step to reject the URL with a
+    400 ``InvalidParameter.DataInspection``, so guessing from content
+    is the only way to keep round-trips working for users who paste /
+    drag from clipboard (which strips the original extension on macOS
+    Safari and on iOS share sheets).
+
+    Returns the bare extension (no leading dot) or ``None`` when the
+    blob does not match a format we know DashScope accepts.
+    """
+    if not blob:
+        return None
+    head = blob[:16]
+    if head.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if head.startswith(b"GIF87a") or head.startswith(b"GIF89a"):
+        return "gif"
+    if head.startswith(b"BM"):
+        return "bmp"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "webp"
+    # ISO BMFF container (mp4 / mov / m4a / heic share this header).
+    # We only return useful extensions for the kind being uploaded so we
+    # never claim "mp4" for an audio upload.
+    if head[4:8] == b"ftyp":
+        brand = head[8:12]
+        if kind == "video":
+            if brand in (b"qt  ",):
+                return "mov"
+            return "mp4"
+        if kind == "audio" and brand in (b"M4A ", b"mp42", b"isom"):
+            return "m4a"
+        # Image branch: heic/heif are NOT supported by DashScope, so we
+        # deliberately return None and let the caller surface the
+        # 「请重新上传 jpg/png」 hint instead of silently uploading
+        # something the cloud will reject anyway.
+        return None
+    if kind == "audio":
+        if head.startswith(b"ID3") or (
+            len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0
+        ):
+            return "mp3"
+        if head.startswith(b"RIFF") and head[8:12] == b"WAVE":
+            return "wav"
+        if head.startswith(b"OggS"):
+            return "ogg"
+        if head.startswith(b"fLaC"):
+            return "flac"
+    if kind == "video" and head.startswith(b"\x1aE\xdf\xa3"):
+        return "webm"
+    return None
+
+
 def _safe_rmtree_path(path: Path) -> None:
     """Remove ``path`` recursively, swallowing FileNotFound and PermErrors.
 
@@ -134,6 +197,8 @@ class CreateTaskBody(BaseModel):
     model_config = _strict_model()
 
     mode: str
+    backend: str = "dashscope"
+    workflow_id: str | None = None
     prompt: str = ""
     text: str = ""
     voice_id: str = ""
@@ -238,6 +303,45 @@ class SettingsBody(BaseModel):
     oss_access_key_id: str | None = None
     oss_access_key_secret: str | None = None
     oss_path_prefix: str | None = None  # default "avatar-studio"
+    # Optional override for the on-disk data directory. Empty / missing
+    # means "use api.get_data_dir() (managed by host)". When set, must be
+    # an absolute, writable path; the new location only takes effect after
+    # the plugin is reloaded — we cannot move an open SQLite handle live.
+    custom_data_dir: str | None = None
+    # How to organise the FINAL output files (mp4 / mp3) under
+    # ``<data_dir>/outputs/``. Subdir is computed at finalize time, so
+    # changes apply to every NEW task without a plugin reload. Existing
+    # tasks keep whatever path was recorded when they finished.
+    #   "date"      → outputs/2026-04-22/...
+    #   "mode"      → outputs/photo_speak/...
+    #   "date_mode" → outputs/2026-04-22/photo_speak/...
+    #   "task"      → outputs/{task_id}/...   (default — current behavior)
+    #   "flat"      → outputs/...
+    output_subdir_mode: str | None = None
+    # Filename template (extension is appended automatically). Available
+    # placeholders: {task_id} {short_id} {date} {time} {datetime} {mode}.
+    # Default ``{filename}`` keeps the CDN-supplied basename so existing
+    # users see no change.
+    output_naming_rule: str | None = None
+    # ── RunningHub ──
+    rh_api_key: str | None = None
+    rh_instance_type: str | None = None  # "standard" | "plus"
+    rh_wf_photo_speak: str | None = None
+    rh_wf_video_relip: str | None = None
+    rh_wf_video_reface: str | None = None
+    rh_wf_avatar_compose: str | None = None
+    rh_wf_pose_drive: str | None = None
+    # ── Local ComfyUI ──
+    comfyui_url: str | None = None
+    comfyui_api_key: str | None = None
+    comfyui_wf_photo_speak: str | None = None
+    comfyui_wf_video_relip: str | None = None
+    comfyui_wf_video_reface: str | None = None
+    comfyui_wf_avatar_compose: str | None = None
+    comfyui_wf_pose_drive: str | None = None
+    # ── TTS engine ──
+    tts_engine: str | None = None  # "cosyvoice" | "edge"
+    tts_voice_edge: str | None = None
 
 
 class CleanupBody(BaseModel):
@@ -257,6 +361,17 @@ class TestConnectionBody(BaseModel):
     model_config = _strict_model()
 
     api_key: str | None = None
+
+
+class TestBackendBody(BaseModel):
+    """Body for ``POST /test-backend`` — probe RunningHub or local ComfyUI."""
+
+    model_config = _strict_model()
+
+    backend: str = "runninghub"
+    rh_api_key: str | None = None
+    comfyui_url: str | None = None
+    comfyui_api_key: str | None = None
 
 
 class AiComposePromptBody(BaseModel):
@@ -394,11 +509,16 @@ class Plugin(PluginBase):
 
     def on_load(self, api: PluginAPI) -> None:
         self._api = api
-        self._data_dir = Path(api.get_data_dir() or Path.cwd() / ".avatar-studio")
+        # Honour custom_data_dir from settings, fall back to the host-
+        # managed dir. Resolved exactly once at load time — the path is
+        # baked into the SQLite handle, OSS uploader, upload-preview
+        # router, etc., so any later change requires a plugin reload.
+        self._data_dir = self._resolve_data_dir()
         self._data_dir.mkdir(parents=True, exist_ok=True)
 
         self._tm = AvatarTaskManager(self._data_dir / "avatar_studio.db")
         self._client = AvatarDashScopeClient(read_settings=self._read_settings)
+        self._comfy_client = AvatarComfyClient(read_settings=self._read_settings)
         # Single ``OssUploader`` instance — it lazy-reads settings on every
         # call so a key rotation in Settings takes effect without reload.
         self._oss = OssUploader(read_settings=self._read_settings)
@@ -430,7 +550,7 @@ class Plugin(PluginBase):
         api.register_tools(self._tool_definitions(), handler=self._handle_tool)
 
         api.spawn_task(self._async_init(), name=f"{PLUGIN_ID}:init")
-        api.log("avatar-studio loaded (4 modes, 16 routes, 9 tools)")
+        api.log("avatar-studio loaded (5 modes, 3 backends, 9 tools)")
 
     async def _async_init(self) -> None:
         await self._tm.init()
@@ -529,8 +649,41 @@ class Plugin(PluginBase):
         except VendorError as e:
             # Reuse the same hint logic the pipeline uses so the message
             # the user sees on the card matches what they'd get on a real
-            # task failure with the same input.
-            msg = f"[{e.kind}] {str(e)[:280]}"
+            # task failure with the same input. We also prepend a
+            # human-readable hint for the most common opaque DashScope
+            # codes so the user does not need to grep documentation to
+            # know what to do next.
+            raw = str(e)
+            hint = ""
+            low = raw.lower()
+            if "datainspection" in low.replace(".", "").replace("_", ""):
+                hint = (
+                    "图片未通过 DashScope 数据审查 — 通常是因为 ①扩展名/"
+                    "Content-Type 不在白名单（仅支持 jpg/png/bmp/webp，"
+                    "不支持 heic/avif/tiff）②文件过大 / 分辨率过高 "
+                    "③签名 URL 不可达。请重新上传一张标准 jpg/png 单人正面照。"
+                )
+            elif "humanoid" in low or ("human" in low and "detect" in low):
+                hint = (
+                    "图中未检测到清晰的人脸，请使用单人正面、五官清晰、无遮挡"
+                    "的照片，建议人脸占画面 1/3 以上。"
+                )
+            elif (
+                "asynchronous" in low
+                or "accessdenied" in low.replace(" ", "")
+                or ("403" in raw and "user" in low and ("api" in low or "model" in low))
+            ):
+                hint = (
+                    "DashScope 返回 403 / AccessDenied。常见原因：\n"
+                    "① API Key 不是「中国内地（北京）」地域生成的 — wan2.2-s2v "
+                    "仅支持北京区 Key（不需要额外开通，实名后直接可用）；\n"
+                    "② 使用的是 RAM 子账号，未挂载 AliyunBailianFullAccess 策略；\n"
+                    "③ 业务空间未勾选 wan2.2-s2v / s2v-detect。\n"
+                    "请到百炼控制台核查：https://bailian.console.aliyun.com"
+                )
+            msg = f"[{e.kind}] {raw[:240]}"
+            if hint:
+                msg = f"{hint}\n{msg}"
             await self._tm.update_figure_detect(fig_id, status="fail", message=msg)
         except Exception as e:  # noqa: BLE001 - never bubble out of detect
             logger.exception("figure-detect %s crashed", fig_id)
@@ -541,6 +694,73 @@ class Plugin(PluginBase):
             self._figure_detect_tasks.pop(fig_id, None)
 
     # ── settings ──────────────────────────────────────────────────────
+
+    def _validate_custom_data_dir(self, raw: str) -> tuple[Path | None, str]:
+        """Validate a user-supplied data directory.
+
+        Returns ``(path, "")`` on success, ``(None, error_message)`` on
+        failure. ``error_message`` is shown verbatim in the UI (zh-CN),
+        so it should be actionable, not just a Python repr.
+
+        Empty / whitespace input returns ``(None, "")`` — caller treats
+        that as "user cleared the override, fall back to host default".
+        """
+        s = (raw or "").strip()
+        if not s:
+            return None, ""
+        try:
+            p = Path(s).expanduser()
+        except Exception as e:  # noqa: BLE001 - guard against weird input
+            return None, f"路径解析失败：{e}"
+        if not p.is_absolute():
+            return None, "请填写绝对路径（例如 D:\\my-data\\avatar 或 /home/me/avatar）"
+        # We tolerate "doesn't exist yet" — we'll create it. But the
+        # *parent* must be a real directory, otherwise we'd happily
+        # create something the user didn't intend.
+        if not p.exists() and not p.parent.exists():
+            return None, f"父目录不存在：{p.parent}"
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            return None, f"无法创建目录：{e}"
+        # Probe writability with an actual file — Windows ACLs lie about
+        # ``os.access(..., W_OK)`` for inherited permissions.
+        probe = p / ".avatar-studio-write-probe"
+        try:
+            probe.write_bytes(b"")
+            probe.unlink(missing_ok=True)
+        except OSError as e:
+            return None, f"目录不可写：{e}"
+        return p.resolve(), ""
+
+    def _resolve_data_dir(self, cfg: dict[str, Any] | None = None) -> Path:
+        """Pick the on-disk root for this plugin.
+
+        Order of precedence:
+          1. ``custom_data_dir`` from settings (if non-empty *and* valid).
+          2. ``api.get_data_dir()`` (host-managed default).
+          3. ``cwd / .avatar-studio`` (last-ditch fallback so unit tests
+             without a host can still construct the plugin).
+
+        If the user set a custom path that fails validation we *log a
+        warning* and silently fall back — refusing to load the plugin
+        would lock the user out of the Settings tab where they'd fix it.
+        """
+        if cfg is None:
+            cfg = self._load_settings()
+        custom = str(cfg.get("custom_data_dir") or "").strip()
+        if custom:
+            path, err = self._validate_custom_data_dir(custom)
+            if path is not None:
+                return path
+            if hasattr(self, "_api") and self._api is not None:
+                self._api.log(
+                    f"avatar-studio: ignoring invalid custom_data_dir "
+                    f"{custom!r}: {err}",
+                    level="warning",
+                )
+        host = self._api.get_data_dir() if getattr(self, "_api", None) else None
+        return Path(host) if host else Path.cwd() / ".avatar-studio"
 
     def _load_settings(self) -> dict[str, Any]:
         cfg = self._api.get_config() or {}
@@ -561,6 +781,9 @@ class Plugin(PluginBase):
             "oss_access_key_id": "",
             "oss_access_key_secret": "",
             "oss_path_prefix": "avatar-studio",
+            "custom_data_dir": "",
+            "output_subdir_mode": "task",
+            "output_naming_rule": "{filename}",
         }
         for k in list(merged):
             if k in cfg and cfg[k] not in (None, ""):
@@ -841,6 +1064,14 @@ class Plugin(PluginBase):
 
     async def _run_one_pipeline(self, ctx: AvatarPipelineContext) -> None:
         try:
+            cfg = self._load_settings()
+            backend = ctx.params.get("backend", "dashscope")
+            tts_engine = cfg.get("tts_engine", "cosyvoice")
+            workflow_id = ctx.params.get("workflow_id") or ""
+            if not workflow_id and backend == "runninghub":
+                workflow_id = cfg.get(f"rh_wf_{ctx.mode}") or ""
+            elif not workflow_id and backend == "comfyui_local":
+                workflow_id = cfg.get(f"comfyui_wf_{ctx.mode}") or ""
             await run_pipeline(
                 ctx,
                 tm=self._tm,
@@ -848,11 +1079,9 @@ class Plugin(PluginBase):
                 emit=self._emit,
                 plugin_id=PLUGIN_ID,
                 base_data_dir=self._data_dir,
-                # Pass the duration helper so step 4 stores the *real*
-                # cosyvoice-v2 audio length (the form's
-                # ``audio_duration_sec`` is only a UI-side estimate
-                # used for the cost gate; s2v needs the actual length).
                 get_audio_duration=_read_audio_duration,
+                output_subdir_mode=str(cfg.get("output_subdir_mode") or "task"),
+                output_naming_rule=str(cfg.get("output_naming_rule") or "{filename}"),
             )
         except Exception:
             logger.exception("avatar-studio: pipeline crashed for task %s", ctx.task_id)
@@ -1176,6 +1405,51 @@ class Plugin(PluginBase):
 
         # System ──────────────────────────────────────────────────────
 
+        def _enriched_settings() -> dict[str, Any]:
+            # Single source of truth for the Settings response shape so
+            # GET and PUT can't drift apart — earlier the PUT route was
+            # returning the bare on-disk dict without ``oss_configured``
+            # / ``oss_status_message``, which made the banner stay on
+            # 「未配置」 until the user reloaded the page.
+            cfg = self._load_settings()
+            cfg["has_api_key"] = bool(cfg.get("api_key"))
+            cfg["oss_configured"] = self._oss.is_configured()
+            cfg["oss_secret_set"] = bool(str(cfg.get("oss_access_key_secret") or "").strip())
+            cfg["oss_status_message"] = ""
+            if not cfg["oss_configured"]:
+                any_filled = any(str(cfg.get(k) or "").strip() for k in (
+                    "oss_endpoint", "oss_bucket",
+                    "oss_access_key_id", "oss_access_key_secret",
+                ))
+                if any_filled:
+                    try:
+                        OssConfig.from_settings(cfg)
+                    except OssNotConfigured as e:
+                        cfg["oss_status_message"] = str(e)
+            # Surface the *currently in-use* data dir + a flag telling
+            # the UI whether the persisted ``custom_data_dir`` differs
+            # from what was bound at on_load (which means a reload is
+            # needed for the change to take effect).
+            cfg["data_dir_active"] = str(self._data_dir)
+            cfg["data_dir_status"] = ""
+            requested = str(cfg.get("custom_data_dir") or "").strip()
+            if requested:
+                resolved, err = self._validate_custom_data_dir(requested)
+                if resolved is None:
+                    cfg["data_dir_status"] = err
+                    cfg["data_dir_pending_reload"] = False
+                else:
+                    cfg["data_dir_pending_reload"] = (
+                        str(resolved) != str(self._data_dir)
+                    )
+            else:
+                cfg["data_dir_pending_reload"] = False
+            # Backend configuration status for UI
+            cfg["rh_configured"] = bool(str(cfg.get("rh_api_key") or "").strip())
+            cfg["comfyui_configured"] = bool(str(cfg.get("comfyui_url") or "").strip())
+            cfg["tts_engine"] = cfg.get("tts_engine") or "cosyvoice"
+            return cfg
+
         @router.get("/settings")
         async def get_settings() -> dict[str, Any]:
             # Echo the api_key back as-is. The Settings tab needs to be able
@@ -1185,16 +1459,7 @@ class Plugin(PluginBase):
             # already has the host-issued plugin token, so masking the key
             # here didn't add real defense-in-depth — it only broke the
             # 'click 保存 then field empties' UX without protecting anything.
-            cfg = self._load_settings()
-            cfg["has_api_key"] = bool(cfg.get("api_key"))
-            # Single source of truth for the UI's OSS banner: derived,
-            # never persisted, so editing one field at a time can't push
-            # us into a half-true state. ``oss_secret_set`` echoes back a
-            # bool (not the secret) so the form can render a 「已保存」
-            # badge without leaking the value.
-            cfg["oss_configured"] = self._oss.is_configured()
-            cfg["oss_secret_set"] = bool(str(cfg.get("oss_access_key_secret") or "").strip())
-            return {"ok": True, "config": cfg}
+            return {"ok": True, "config": _enriched_settings()}
 
         @router.put("/settings")
         async def put_settings(body: SettingsBody) -> dict[str, Any]:
@@ -1202,7 +1467,7 @@ class Plugin(PluginBase):
             self._api.set_config(updates)
             if "api_key" in updates:
                 self._client.update_api_key(str(updates["api_key"]))
-            return {"ok": True, "config": self._load_settings()}
+            return {"ok": True, "config": _enriched_settings()}
 
         @router.get("/healthz")
         async def healthz() -> dict[str, Any]:
@@ -1318,6 +1583,203 @@ class Plugin(PluginBase):
                 _safe_rmtree_path(self._data_dir / "tasks" / tid)
             return {"ok": True, "removed": removed}
 
+        # ── Storage management — mirrors plugins/seedance-video so the
+        #     UI can use the SAME 「输入 + Browse + Open」 affordance and
+        #     the same in-plugin folder picker (no host bridge / native
+        #     dialog dependency). Four well-known *keys* map to the
+        #     directories this plugin writes to:
+        #       data_dir → effective root (custom_data_dir or default)
+        #       outputs  → finalized mp4/mp3 deliverables
+        #       uploads  → user-imported assets pre-OSS push
+        #       tasks    → per-task scratch (intermediate downloads)
+
+        def _storage_dirs() -> dict[str, Path]:
+            base = self._data_dir
+            return {
+                "data_dir": base,
+                "outputs": base / "outputs",
+                "uploads": base / "uploads",
+                "tasks": base / "tasks",
+            }
+
+        @router.get("/storage/stats")
+        async def storage_stats() -> dict[str, Any]:
+            # Per-folder rollup. Walk is bounded — avatar-studio task
+            # dirs hold a handful of files each, so 50k is comfortably
+            # past 「I made hundreds of clips」 territory without risking
+            # a UI stall on a pathological FS.
+            MAX_FILES = 50000
+            stats: dict[str, dict[str, Any]] = {}
+            truncated_any = False
+            for key, d in _storage_dirs().items():
+                total_bytes = 0
+                file_count = 0
+                truncated = False
+                if d.is_dir():
+                    try:
+                        for p in d.rglob("*"):
+                            try:
+                                if p.is_file():
+                                    total_bytes += p.stat().st_size
+                                    file_count += 1
+                                    if file_count >= MAX_FILES:
+                                        truncated = True
+                                        break
+                            except OSError:
+                                continue
+                    except OSError:
+                        pass
+                truncated_any = truncated_any or truncated
+                stats[key] = {
+                    "path": str(d),
+                    "size_bytes": total_bytes,
+                    "size_mb": round(total_bytes / 1048576, 1),
+                    "file_count": file_count,
+                    "truncated": truncated,
+                }
+            return {"ok": True, "stats": stats, "truncated": truncated_any}
+
+        @router.post("/storage/open-folder")
+        async def open_folder(body: dict) -> dict[str, Any]:
+            # Resolve target path:
+            #   1) explicit `path` (after ~ expansion), OR
+            #   2) `key` ∈ {data_dir, outputs, uploads, tasks}
+            #      → built-in default (mirrors /storage/stats so 「打开」
+            #      works even before the user customizes anything).
+            raw_path = (body.get("path") or "").strip()
+            key = (body.get("key") or "").strip()
+            if not raw_path and not key:
+                raise HTTPException(status_code=400, detail="Missing path or key")
+
+            if raw_path:
+                target = Path(raw_path).expanduser()
+            else:
+                defaults = _storage_dirs()
+                if key not in defaults:
+                    raise HTTPException(status_code=400, detail=f"Unknown key: {key}")
+                target = defaults[key]
+
+            try:
+                target.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Cannot create folder: {exc}",
+                ) from exc
+
+            import subprocess
+            import sys
+            try:
+                if sys.platform == "win32":
+                    subprocess.Popen(["explorer", str(target)])
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", str(target)])
+                else:
+                    subprocess.Popen(["xdg-open", str(target)])
+            except (OSError, FileNotFoundError) as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Cannot open folder: {exc}",
+                ) from exc
+            return {"ok": True, "path": str(target)}
+
+        # In-plugin folder picker — backs FolderPickerModal in the UI.
+        # Avoids the unreliable native Tauri dialog and works in plain
+        # web mode too. List contract matches seedance-video for parity.
+        @router.get("/storage/list-dir")
+        async def list_dir(path: str = "") -> dict[str, Any]:
+            import sys
+            raw = (path or "").strip()
+            # Empty path → return anchor list (Home, common subfolders,
+            # plus drives on Windows / "/" elsewhere).
+            if not raw:
+                anchors: list[dict[str, Any]] = []
+                home = Path.home()
+                anchors.append({
+                    "name": "Home", "path": str(home), "is_dir": True, "kind": "home",
+                })
+                for sub in ("Desktop", "Documents", "Downloads", "Pictures", "Videos", "Movies"):
+                    p = home / sub
+                    if p.is_dir():
+                        anchors.append({
+                            "name": sub, "path": str(p), "is_dir": True, "kind": "shortcut",
+                        })
+                if sys.platform == "win32":
+                    import string
+                    for letter in string.ascii_uppercase:
+                        drv = Path(f"{letter}:/")
+                        try:
+                            if drv.exists():
+                                anchors.append({
+                                    "name": f"{letter}:",
+                                    "path": str(drv),
+                                    "is_dir": True,
+                                    "kind": "drive",
+                                })
+                        except OSError:
+                            continue
+                else:
+                    anchors.append({
+                        "name": "/", "path": "/", "is_dir": True, "kind": "drive",
+                    })
+                return {
+                    "ok": True, "path": "", "parent": None,
+                    "items": anchors, "is_anchor": True,
+                }
+
+            try:
+                target = Path(raw).expanduser().resolve(strict=False)
+            except (OSError, RuntimeError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if not target.is_dir():
+                raise HTTPException(status_code=400, detail="Not a directory")
+
+            items: list[dict[str, Any]] = []
+            try:
+                for entry in target.iterdir():
+                    name = entry.name
+                    if name.startswith("."):
+                        continue
+                    try:
+                        if entry.is_dir():
+                            items.append({"name": name, "path": str(entry), "is_dir": True})
+                    except (PermissionError, OSError):
+                        continue
+            except PermissionError as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+            items.sort(key=lambda it: it["name"].lower())
+            parent_path = str(target.parent) if target.parent != target else None
+            return {
+                "ok": True, "path": str(target), "parent": parent_path,
+                "items": items, "is_anchor": False,
+            }
+
+        @router.post("/storage/mkdir")
+        async def make_dir(body: dict) -> dict[str, Any]:
+            parent = (body.get("parent") or "").strip()
+            name = (body.get("name") or "").strip()
+            if not parent or not name:
+                raise HTTPException(status_code=400, detail="Missing parent or name")
+            if "/" in name or "\\" in name or name in (".", ".."):
+                raise HTTPException(status_code=400, detail="Invalid folder name")
+            try:
+                parent_path = Path(parent).expanduser().resolve(strict=False)
+            except (OSError, RuntimeError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if not parent_path.is_dir():
+                raise HTTPException(status_code=400, detail="Parent is not a directory")
+            new_path = parent_path / name
+            try:
+                new_path.mkdir(parents=False, exist_ok=False)
+            except FileExistsError as exc:
+                raise HTTPException(status_code=409, detail="Folder already exists") from exc
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            return {"ok": True, "path": str(new_path)}
+
         @router.post("/ai/compose-prompt")
         async def ai_compose_prompt(body: AiComposePromptBody) -> dict[str, Any]:
             # Optional helper — uses qwen-vl-max to draft a "merge" prompt
@@ -1349,7 +1811,33 @@ class Plugin(PluginBase):
         @router.get("/catalog")
         async def catalog() -> dict[str, Any]:
             cat = build_catalog()
-            return {"ok": True, "catalog": cat.__dict__}
+            result = cat.__dict__.copy()
+            result["edge_voices"] = EDGE_VOICES
+            result["model_registry"] = [e.to_dict() for e in MODEL_REGISTRY]
+            return {"ok": True, "catalog": result}
+
+        @router.get("/workflows/recommended")
+        async def workflows_recommended() -> dict[str, Any]:
+            import json as _json
+            wf_path = Path(__file__).parent / "workflows" / "recommended.json"
+            try:
+                data = _json.loads(wf_path.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+            return {"ok": True, "recommended": data}
+
+        @router.post("/test-backend")
+        async def test_backend(body: TestBackendBody) -> dict[str, Any]:
+            override = {
+                "backend": body.backend,
+                "rh_api_key": body.rh_api_key or "",
+                "comfyui_url": body.comfyui_url or "",
+                "comfyui_api_key": body.comfyui_api_key or "",
+            }
+            merged = {**self._load_settings(), **{k: v for k, v in override.items() if v}}
+            tmp_client = AvatarComfyClient(lambda: merged)
+            result = await tmp_client.probe_backend()
+            return result
 
         @router.get("/prompt-guide")
         async def prompt_guide(locale: str = "zh") -> dict[str, Any]:
@@ -1383,7 +1871,7 @@ class Plugin(PluginBase):
             # local artefact so the UI can warn the user inline rather
             # than fail the upload entirely; the task-creation route
             # then refuses with a clear "configure OSS first" message.
-            ext = Path(file.filename or "file").suffix.lower().lstrip(".") or "bin"
+            ext = Path(file.filename or "file").suffix.lower().lstrip(".") or ""
             subdir = {
                 "image": "images",
                 "video": "videos",
@@ -1391,8 +1879,17 @@ class Plugin(PluginBase):
             }.get(kind, "other")
             uploads_dir = self._data_dir / "uploads" / subdir
             uploads_dir.mkdir(parents=True, exist_ok=True)
-            fname = f"{uuid.uuid4().hex[:12]}.{ext}"
             content = await file.read()
+            # If the original name has no extension (or the browser
+            # didn't preserve it — Safari likes to do that on iOS
+            # uploads), sniff the first ~12 bytes to recover the real
+            # type. DashScope's data-inspection step rejects anything
+            # served as ``application/octet-stream``, so guessing wrong
+            # = guaranteed 400; using the magic-byte fallback turns
+            # 100% of those failures into successes.
+            if not ext or ext == "bin":
+                ext = _sniff_extension(content, kind=kind) or ext or "bin"
+            fname = f"{uuid.uuid4().hex[:12]}.{ext}"
             local_path = uploads_dir / fname
             local_path.write_bytes(content)
             rel = f"{subdir}/{fname}"
@@ -1412,9 +1909,23 @@ class Plugin(PluginBase):
                 except (OssNotConfigured, OssUploadError) as e:
                     oss_error = str(e)
                     logger.warning("avatar-studio: OSS upload failed: %s", e)
+                except Exception as e:  # noqa: BLE001
+                    # Defensive catch — anything unexpected (e.g. a
+                    # raw oss2.exceptions.* leak from a future version
+                    # of the SDK) becomes a friendly oss_error rather
+                    # than bubbling into a 500 that the frontend can
+                    # only render as 「Unexpected token 'I'」 because
+                    # FastAPI replies with text/plain.
+                    oss_error = f"OSS 上传失败（{type(e).__name__}）：{e}"
+                    logger.exception("avatar-studio: unexpected OSS error")
 
             return {
                 "ok": True,
+                # Echo the original (browser-supplied) filename so the
+                # upload zone in 形象库 / 创建 can show it instead of
+                # the placeholder "file" label. We only ever use this
+                # for display; the on-disk name is the uuid.
+                "filename": file.filename or fname,
                 "path": rel,
                 "preview_url": preview_url,
                 # ``url`` is the OSS signed URL when configured; falls
