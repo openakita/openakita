@@ -234,3 +234,59 @@ def test_update_external_cli_profile_rejects_clearing_provider_id(client):
     profile = store.get("clear-provider")
     assert profile is not None
     assert profile.cli_provider_id == CliProviderId.CLAUDE_CODE
+
+
+def test_profiles_list_includes_supports_primary_chat(client):
+    c, _store = client
+    c.post(
+        "/api/agents/profiles",
+        json={
+            "id": "claude-custom",
+            "name": "Claude Custom",
+            "type": "external_cli",
+            "cli_provider_id": "claude_code",
+        },
+    )
+    c.post(
+        "/api/agents/profiles",
+        json={
+            "id": "native-custom",
+            "name": "Native Custom",
+            "type": "custom",
+        },
+    )
+
+    response = c.get("/api/agents/profiles?include_hidden=true")
+
+    assert response.status_code == 200
+    profiles = {profile["id"]: profile for profile in response.json()["profiles"]}
+    assert profiles["claude-custom"]["supports_primary_chat"] is False
+    assert profiles["native-custom"]["supports_primary_chat"] is True
+
+
+def test_profile_mutation_responses_include_supports_primary_chat(client):
+    c, _store = client
+    create_response = c.post(
+        "/api/agents/profiles",
+        json={
+            "id": "codex-custom",
+            "name": "Codex Custom",
+            "type": "external_cli",
+            "cli_provider_id": "codex",
+        },
+    )
+    update_response = c.put(
+        "/api/agents/profiles/codex-custom",
+        json={"cli_permission_mode": "plan"},
+    )
+    visibility_response = c.patch(
+        "/api/agents/profiles/codex-custom/visibility",
+        json={"hidden": True},
+    )
+
+    assert create_response.status_code == 200
+    assert update_response.status_code == 200
+    assert visibility_response.status_code == 200
+    assert create_response.json()["profile"]["supports_primary_chat"] is False
+    assert update_response.json()["profile"]["supports_primary_chat"] is False
+    assert visibility_response.json()["profile"]["supports_primary_chat"] is False

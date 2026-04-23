@@ -12,6 +12,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -21,9 +22,14 @@ from openakita.core.engine_bridge import engine_stream, is_dual_loop, to_engine
 from ..schemas import ChatAnswerRequest, ChatControlRequest, ChatRequest
 from .conversation_lifecycle import get_lifecycle_manager
 
+if TYPE_CHECKING:
+    from openakita.agents.profile import AgentProfile
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_PRIMARY_CHAT_UNSUPPORTED_CODE = "primary_chat_profile_unsupported"
 
 
 @router.get("/api/commands")
@@ -182,14 +188,66 @@ def _resolve_profile(agent_profile_id: str | None):
     return AgentProfile(id="default", name="Default Agent")
 
 
+def _find_profile_by_id(agent_profile_id: str | None) -> AgentProfile | None:
+    """Resolve an AgentProfile by exact id without default fallback."""
+    if not agent_profile_id:
+        return None
+
+    from openakita.agents.presets import SYSTEM_PRESETS
+    from openakita.agents.profile import get_profile_store
+
+    for profile in SYSTEM_PRESETS:
+        if profile.id == agent_profile_id:
+            return profile
+
+    try:
+        return get_profile_store().get(agent_profile_id)
+    except Exception:
+        return None
+
+
+def _validate_primary_chat_profile(
+    agent_profile_id: str | None,
+) -> tuple[AgentProfile | None, JSONResponse | None]:
+    if not agent_profile_id:
+        return None, None
+
+    profile = _find_profile_by_id(agent_profile_id)
+    if profile is None:
+        return None, JSONResponse(
+            status_code=400,
+            content={
+                "error": "unknown_agent_profile_id",
+                "agent_profile_id": agent_profile_id,
+                "message": f"Unknown agent_profile_id: {agent_profile_id}",
+            },
+        )
+
+    supports_primary_chat = getattr(profile, "supports_primary_chat", None)
+    if not callable(supports_primary_chat) or not supports_primary_chat():
+        return None, JSONResponse(
+            status_code=400,
+            content={
+                "error": _PRIMARY_CHAT_UNSUPPORTED_CODE,
+                "agent_profile_id": agent_profile_id,
+                "message": (
+                    "This profile may be used through delegation, "
+                    "not as the primary /api/chat agent."
+                ),
+            },
+        )
+
+    return profile, None
+
+
 async def _get_agent_for_session(
-    request: Request, conversation_id: str, agent_profile_id: str | None = None
+    request: Request, conversation_id: str, profile: AgentProfile | None = None
 ):
     """Get a per-session Agent from pool, or fallback to global agent."""
     pool = getattr(request.app.state, "agent_pool", None)
     if pool is not None and conversation_id:
-        profile = _resolve_profile(agent_profile_id)
-        return await to_engine(pool.get_or_create(conversation_id, profile))
+        resolved_profile = profile or _resolve_profile(None)
+        return await to_engine(pool.get_or_create(conversation_id, resolved_profile))
     return getattr(request.app.state, "agent", None)
 
 
@@ -388,6 +446,7 @@ async def _stream_chat(
     _agent_done = asyncio.Event()
     _agent_queue: asyncio.Queue = asyncio.Queue()
     _save_done = False
+    session = None
 
     try:
         actual_agent = _resolve_agent(agent)
@@ -410,7 +469,6 @@ async def _stream_chat(
         import uuid as _uuid
 
         conversation_id = chat_request.conversation_id or f"api_{_uuid.uuid4().hex[:12]}"
-        session = None
         session_messages_history: list[dict] = []
         _msg_added = True
 
@@ -497,7 +555,7 @@ async def _stream_chat(
                                     timeout=DISCONNECT_GRACE_SECONDS,
                                 )
                                 logger.info("[Chat API] Agent task completed within grace period")
-                            except (asyncio.TimeoutError, TimeoutError):
+                            except TimeoutError:
                                 logger.warning(
                                     "[Chat API] Grace period timeout (%ds), cancelling task",
                                     DISCONNECT_GRACE_SECONDS,
@@ -523,7 +581,7 @@ async def _stream_chat(
         while True:
             try:
                 event = await asyncio.wait_for(_agent_queue.get(), timeout=SSE_KEEPALIVE_INTERVAL)
-            except (asyncio.TimeoutError, TimeoutError):
+            except TimeoutError:
                 if not _client_disconnected and not await _check_disconnected():
                     yield _sse("heartbeat", {"ts": time.time()})
                 continue
@@ -940,26 +998,11 @@ async def chat(request: Request, body: ChatRequest):
                 },
             )
 
-    if body.agent_profile_id:
-        from openakita.agents.presets import SYSTEM_PRESETS
-        from openakita.agents.profile import get_profile_store
-        _known = any(p.id == body.agent_profile_id for p in SYSTEM_PRESETS)
-        if not _known:
-            try:
-                _known = get_profile_store().get(body.agent_profile_id) is not None
-            except Exception:
-                _known = False
-        if not _known:
-            if client_id:
-                await lifecycle.finish(conversation_id, generation=busy_gen)
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "error": "unknown_agent_profile_id",
-                    "agent_profile_id": body.agent_profile_id,
-                    "message": f"Unknown agent_profile_id: {body.agent_profile_id}",
-                },
-            )
+    profile, validation_error = _validate_primary_chat_profile(body.agent_profile_id)
+    if validation_error is not None:
+        if client_id:
+            await lifecycle.finish(conversation_id, generation=busy_gen)
+        return validation_error
 
     if body.endpoint:
         try:
@@ -986,7 +1029,7 @@ async def chat(request: Request, body: ChatRequest):
             )
 
     try:
-        agent = await _get_agent_for_session(request, conversation_id, body.agent_profile_id)
+        agent = await _get_agent_for_session(request, conversation_id, profile)
         session_manager = getattr(request.app.state, "session_manager", None)
     except Exception:
         if client_id:

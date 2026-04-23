@@ -480,13 +480,13 @@ async def list_agent_profiles(include_hidden: bool = False):
             p = preset
         if not include_hidden and p.hidden:
             continue
-        profiles.append(p.to_dict())
+        profiles.append(p.to_api_dict())
 
     for p in store.list_all(include_hidden=True):
         if p.id not in seen_ids:
             if not include_hidden and p.hidden:
                 continue
-            profiles.append(p.to_dict())
+            profiles.append(p.to_api_dict())
 
     return {"profiles": profiles, "multi_agent_enabled": True}
 
@@ -562,7 +562,7 @@ async def create_agent_profile(body: ProfileCreateRequest):
 
     store.save(profile)
     logger.info(f"[Agents API] Created profile: {body.id}")
-    return {"status": "ok", "profile": profile.to_dict()}
+    return {"status": "ok", "profile": profile.to_api_dict()}
 
 
 @router.put("/api/agents/profiles/{profile_id}")
@@ -610,7 +610,7 @@ async def update_agent_profile(profile_id: str, body: ProfileUpdateRequest, requ
 
     _invalidate_profile_agents(request, profile_id)
     logger.info(f"[Agents API] Updated profile: {profile_id}")
-    return {"status": "ok", "profile": updated.to_dict()}
+    return {"status": "ok", "profile": updated.to_api_dict()}
 
 
 @router.delete("/api/agents/profiles/{profile_id}")
@@ -661,7 +661,7 @@ async def reset_agent_profile(profile_id: str, request: Request):
     _invalidate_profile_agents(request, profile_id)
     logger.info(f"[Agents API] Reset profile to defaults: {profile_id}")
     result = store.get(profile_id)
-    return {"status": "ok", "profile": result.to_dict() if result else {}}
+    return {"status": "ok", "profile": result.to_api_dict() if result else {}}
 
 
 @router.patch("/api/agents/profiles/{profile_id}/visibility")
@@ -676,7 +676,7 @@ async def update_profile_visibility(profile_id: str, body: ProfileVisibilityRequ
         raise HTTPException(status_code=404, detail=f"Profile '{profile_id}' not found")
 
     logger.info(f"[Agents API] Visibility updated: {profile_id} hidden={body.hidden}")
-    return {"status": "ok", "profile": updated.to_dict()}
+    return {"status": "ok", "profile": updated.to_api_dict()}
 
 
 # ─── Profile identity & memory isolation routes ─────────────────────────

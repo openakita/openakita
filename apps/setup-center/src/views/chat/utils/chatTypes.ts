@@ -134,14 +134,4 @@ export type StreamContext = {
   pollingTimer: ReturnType<typeof setInterval> | null;
 };
 
-/** Agent profile for agent selector */
-export type AgentProfile = {
-  id: string;
-  name: string;
-  description: string;
-  icon: string;
-  color: string;
-  name_i18n?: Record<string, string>;
-  description_i18n?: Record<string, string>;
-  preferred_endpoint?: string | null;
-};
+export type { ChatAgentProfile as AgentProfile } from "./chatAgentProfiles";

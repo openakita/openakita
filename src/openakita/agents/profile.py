@@ -50,6 +50,19 @@ class AgentType(StrEnum):
     EXTERNAL_CLI = "external_cli"
 
 
+class ProfileSurface(StrEnum):
+    PRIMARY_CHAT = "primary_chat"
+
+
+_PRIMARY_CHAT_ALLOWED_TYPES = frozenset(
+    {
+        AgentType.SYSTEM,
+        AgentType.CUSTOM,
+        AgentType.DYNAMIC,
+    }
+)
+
+
 class SkillsMode(StrEnum):
     INCLUSIVE = "inclusive"  # Only skills in the skills list
     EXCLUSIVE = "exclusive"  # Exclude skills in the skills list
@@ -227,6 +240,15 @@ class AgentProfile:
     def is_system(self) -> bool:
         return self.type == AgentType.SYSTEM
 
+    def supports_surface(self, surface: ProfileSurface) -> bool:
+        if surface == ProfileSurface.PRIMARY_CHAT:
+            return self.type in _PRIMARY_CHAT_ALLOWED_TYPES
+        return False
+
+    def supports_primary_chat(self) -> bool:
+        """Return whether this profile may be used as the primary /api/chat agent."""
+        return self.supports_surface(ProfileSurface.PRIMARY_CHAT)
+
     def get_display_name(self, lang: str = "zh") -> str:
         """Return display name for the given language, falling back to *name* if not found."""
         return self.name_i18n.get(lang, self.name)
@@ -289,6 +311,11 @@ class AgentProfile:
         d["namespace"] = self.namespace
         d["definition_id"] = self.definition_id
         return d
+
+    def to_api_dict(self) -> dict[str, Any]:
+        payload = self.to_dict()
+        payload["supports_primary_chat"] = self.supports_primary_chat()
+        return payload
 
     @classmethod
     def derive_ephemeral_from(

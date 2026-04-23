@@ -7,7 +7,18 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from openakita.agents.cli_detector import CliProviderId
+from openakita.agents.profile import AgentProfile, AgentType, ProfileStore
 from openakita.api.server import create_app
+from openakita.core.agent import Agent
+
+
+def _parse_sse_events(text: str) -> list[dict]:
+    return [
+        json.loads(line.removeprefix("data: "))
+        for line in text.splitlines()
+        if line.startswith("data: ")
+    ]
 
 
 @pytest.fixture
@@ -29,6 +40,13 @@ def mock_agent():
     agent.chat_with_session_stream = fake_stream
     agent.chat_with_session = AsyncMock(return_value="Hello from mock agent")
     return agent
+
+
+@pytest.fixture
+def profile_store(tmp_path, monkeypatch):
+    store = ProfileStore(tmp_path / "agents")
+    monkeypatch.setattr("openakita.agents.profile.get_profile_store", lambda: store)
+    return store
 
 
 @pytest.fixture
@@ -74,7 +92,75 @@ class TestChatEndpoint:
             "/api/chat",
             json={"message": "", "conversation_id": "test-conv-1"},
         )
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "empty_message"
+
+    async def test_chat_rejects_external_cli_primary_profile(
+        self,
+        client,
+        profile_store,
+        monkeypatch,
+    ):
+        from openakita.api.routes import chat as chat_routes
+
+        profile_store.save(
+            AgentProfile(
+                id="claude-code-pair",
+                name="Claude Code Pair",
+                type=AgentType.EXTERNAL_CLI,
+                cli_provider_id=CliProviderId.CLAUDE_CODE,
+            )
+        )
+        monkeypatch.setattr(
+            chat_routes,
+            "_get_agent_for_session",
+            AsyncMock(side_effect=AssertionError("agent construction should not run")),
+        )
+
+        resp = await client.post(
+            "/api/chat",
+            json={
+                "message": "Hello",
+                "conversation_id": "conv-external-cli",
+                "agent_profile_id": "claude-code-pair",
+            },
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["error"] == "primary_chat_profile_unsupported"
+        assert resp.json()["agent_profile_id"] == "claude-code-pair"
+
+    async def test_chat_initialize_failure_does_not_raise_unboundlocal(
+        self,
+        client,
+        monkeypatch,
+    ):
+        from openakita.api.routes import chat as chat_routes
+
+        class _FailingAgent(Agent):
+            def __init__(self):
+                self.brain = MagicMock()
+                self._initialized = False
+
+            async def initialize(self, *args, **kwargs):
+                raise RuntimeError("boom during initialize")
+
+        monkeypatch.setattr(
+            chat_routes,
+            "_get_agent_for_session",
+            AsyncMock(return_value=_FailingAgent()),
+        )
+
+        resp = await client.post(
+            "/api/chat",
+            json={"message": "Hello", "conversation_id": "conv-init-fail"},
+        )
+
         assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        assert any(event["type"] == "error" for event in events)
+        assert not any("UnboundLocalError" in event.get("message", "") for event in events)
+        assert events[-1]["type"] == "done"
 
 
 class TestChatControlEndpoints:

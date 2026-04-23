@@ -55,6 +55,12 @@ import type {
   SubAgentEntry, SubAgentTask, StreamContext, AgentProfile, SubAgentLiveEntry,
 } from "./chat/utils/chatTypes";
 import {
+  DEFAULT_CHAT_AGENT_PROFILE_ID,
+  getChatSelectableProfiles,
+  normalizeChatAgentProfiles,
+  normalizePrimaryChatProfileId,
+} from "./chat/utils/chatAgentProfiles";
+import {
   STORAGE_KEY_CONVS, STORAGE_KEY_ACTIVE, STORAGE_KEY_MSGS_PREFIX,
   IDLE_THRESHOLD_MS, IDLE_TOKEN_THRESHOLD, PASTE_CHAR_THRESHOLD, UNDO_MAX_STEPS,
   exportConversation, appendAuthToken, stripLegacySummary,
@@ -231,7 +237,11 @@ export function ChatView({
   const modeMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [agentProfiles, setAgentProfiles] = useState<AgentProfile[]>([]);
-  const [selectedAgent, setSelectedAgent] = useState("default");
+  const [selectedChatProfileId, setSelectedChatProfileId] = useState(DEFAULT_CHAT_AGENT_PROFILE_ID);
+  const chatSelectableProfiles = useMemo(
+    () => getChatSelectableProfiles(agentProfiles),
+    [agentProfiles],
+  );
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const agentMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -603,9 +613,11 @@ export function ChatView({
 
     convSwitchScrollRef.current = true;
     const conv = conversations.find((c) => c.id === activeConvId);
-    const agentId = conv?.agentProfileId || "default";
-    isConvSwitchRef.current = true;
-    setSelectedAgent(agentId);
+    const agentId = conv?.agentProfileId || DEFAULT_CHAT_AGENT_PROFILE_ID;
+    if (agentId !== selectedChatProfileId) {
+      isConvSwitchRef.current = true;
+    }
+    setSelectedChatProfileId(agentId);
     setSelectedEndpoint(conv?.endpointId || "auto");
     // eslint-disable-next-line react-hooks/exhaustive-deps -- conversations 故意排除：
     // 此 effect 语义是"切换对话时加载消息"，不应因 messageCount/title 等元数据变更而重新 hydrate，
@@ -671,7 +683,7 @@ export function ChatView({
       try {
         const res = await safeFetch(`${apiBaseUrl}/api/agents/profiles`);
         const data = await res.json();
-        setAgentProfiles(data.profiles || []);
+        setAgentProfiles(normalizeChatAgentProfiles(data.profiles || []));
       } catch (e) {
         logger.warn("Chat", "Failed to fetch agent profiles", { error: String(e) });
       }
@@ -691,15 +703,15 @@ export function ChatView({
     fetchOrgs();
   }, [apiBaseUrl, serviceRunning, visible]);
 
-  // Sync selectedAgent → current conversation's agentProfileId
-  // Only react to selectedAgent changes (not activeConvId) to avoid overwriting
+  // Sync selectedChatProfileId → current conversation's agentProfileId
+  // Only react to selectedChatProfileId changes (not activeConvId) to avoid overwriting
   // a newly-switched conversation with the previous conversation's agent.
-  // isConvSwitchRef prevents write-back when selectedAgent was set by a conversation switch.
-  const prevSelectedAgentRef = useRef(selectedAgent);
+  // isConvSwitchRef prevents write-back when selectedChatProfileId was set by a conversation switch.
+  const prevSelectedChatProfileIdRef = useRef(selectedChatProfileId);
   const isConvSwitchRef = useRef(false);
   useEffect(() => {
-    if (selectedAgent === prevSelectedAgentRef.current) return;
-    prevSelectedAgentRef.current = selectedAgent;
+    if (selectedChatProfileId === prevSelectedChatProfileIdRef.current) return;
+    prevSelectedChatProfileIdRef.current = selectedChatProfileId;
     if (isConvSwitchRef.current) {
       isConvSwitchRef.current = false;
       return;
@@ -708,10 +720,20 @@ export function ChatView({
     if (!convId) return;
     setConversations((prev) => {
       const current = prev.find((c) => c.id === convId);
-      if (current?.agentProfileId === selectedAgent) return prev;
-      return prev.map((c) => c.id === convId ? { ...c, agentProfileId: selectedAgent } : c);
+      if (current?.agentProfileId === selectedChatProfileId) return prev;
+      return prev.map((c) => c.id === convId ? { ...c, agentProfileId: selectedChatProfileId } : c);
     });
-  }, [selectedAgent]);
+  }, [selectedChatProfileId]);
+
+  useEffect(() => {
+    if (orgMode) return;
+    const normalized = normalizePrimaryChatProfileId(selectedChatProfileId, agentProfiles);
+    if (normalized === selectedChatProfileId) return;
+    setSelectedChatProfileId(normalized);
+    const convId = activeConvIdRef.current;
+    if (!convId) return;
+    setConversations((prev) => prev.map((c) => c.id === convId ? { ...c, agentProfileId: normalized } : c));
+  }, [agentProfiles, selectedChatProfileId, orgMode]);
 
   // Sync selectedEndpoint → current conversation's endpointId
   const prevSelectedEndpointRef = useRef(selectedEndpoint);
@@ -1407,9 +1429,9 @@ export function ChatView({
       lastMessage: "",
       timestamp: Date.now(),
       messageCount: 0,
-      agentProfileId: selectedAgent,
+      agentProfileId: selectedChatProfileId,
     }, ...prev]);
-  }, [activeConvId, messages, selectedAgent]);
+  }, [activeConvId, messages, selectedChatProfileId]);
 
   // ── 删除对话（实际执行） ──
   const doDeleteConversation = useCallback(async (convId: string) => {
@@ -1779,7 +1801,7 @@ export function ChatView({
         timestamp: Date.now(),
         messageCount: 1,
         status: "running",
-        agentProfileId: selectedAgent,
+        agentProfileId: selectedChatProfileId,
         endpointId: selectedEndpoint !== "auto" ? selectedEndpoint : undefined,
       }, ...prev]);
     } else {
@@ -1961,7 +1983,7 @@ export function ChatView({
         endpoint: selectedEndpoint === "auto" ? null : selectedEndpoint,
         thinking_mode: thinkingMode !== "auto" ? thinkingMode : null,
         thinking_depth: thinkingMode !== "off" ? thinkingDepth : null,
-        agent_profile_id: selectedAgent,
+        agent_profile_id: selectedChatProfileId,
         client_id: getClientId(),
       };
 
@@ -2333,7 +2355,7 @@ export function ChatView({
                 if (toolName === "create_agent" && !(event.is_error || (event.result || "").startsWith("❌"))) {
                   safeFetch(`${apiBase}/api/agents/profiles`)
                     .then((r) => r.json())
-                    .then((data) => { if (data?.profiles) setAgentProfiles(data.profiles); })
+                    .then((data) => { setAgentProfiles(normalizeChatAgentProfiles(data?.profiles || [])); })
                     .catch(() => {});
                 }
                 let matched = false;
@@ -2788,7 +2810,7 @@ export function ChatView({
         return updated;
       });
     }
-  }, [pendingAttachments, isCurrentConvStreaming, activeConvId, chatMode, selectedEndpoint, apiBase, slashCommands, thinkingMode, thinkingDepth, t, setInputValue]);
+  }, [pendingAttachments, isCurrentConvStreaming, activeConvId, chatMode, selectedEndpoint, selectedChatProfileId, apiBase, slashCommands, thinkingMode, thinkingDepth, t, setInputValue]);
 
   // ── 处理用户回答 (ask_user) ──
   const handleAskAnswer = useCallback((msgId: string, answer: string) => {
@@ -3258,14 +3280,14 @@ export function ChatView({
 
     if (atAgentOpen) {
       const q = atAgentFilter;
-      const agents = agentProfiles.filter((a) => a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q));
+      const agents = chatSelectableProfiles.filter((a) => a.name.toLowerCase().includes(q) || a.id.toLowerCase().includes(q));
       if (e.key === "ArrowDown") { e.preventDefault(); setAtAgentIdx((i) => Math.min(i + 1, agents.length - 1)); return; }
       if (e.key === "ArrowUp") { e.preventDefault(); setAtAgentIdx((i) => Math.max(0, i - 1)); return; }
       if (e.key === "Enter" || e.key === "Tab") {
         e.preventDefault();
         const agent = agents[atAgentIdx];
         if (agent) {
-          setSelectedAgent(agent.id);
+          setSelectedChatProfileId(agent.id);
           const ta = e.target as HTMLTextAreaElement;
           const val = ta.value;
           const cursor = ta.selectionStart ?? val.length;
@@ -3343,7 +3365,7 @@ export function ChatView({
         sendMessage();
       }
     }
-  }, [atAgentOpen, atAgentFilter, atAgentIdx, agentProfiles, slashOpen, slashFilter, slashCommands, slashSelectedIdx, sendMessage, isCurrentConvStreaming, handleInsertMessage, handleQueueMessage, messageQueue, activeConvId, setInputValue, shortcutsOpen, handleCancelTask]);
+  }, [atAgentOpen, atAgentFilter, atAgentIdx, chatSelectableProfiles, slashOpen, slashFilter, slashCommands, slashSelectedIdx, sendMessage, isCurrentConvStreaming, handleInsertMessage, handleQueueMessage, messageQueue, activeConvId, setInputValue, shortcutsOpen, handleCancelTask]);
 
   // ── 输入变化处理（非受控模式：仅更新 ref，不触发全局重渲染） ──
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -3368,7 +3390,7 @@ export function ChatView({
     const cursor = e.target.selectionStart ?? val.length;
     const beforeCursor = val.slice(0, cursor);
     const atMatch = beforeCursor.match(/@(\w*)$/);
-    if (atMatch && agentProfiles.length > 0) {
+    if (atMatch && chatSelectableProfiles.length > 0) {
       setAtAgentOpen(true);
       setAtAgentFilter(atMatch[1].toLowerCase());
       setAtAgentIdx(0);
@@ -3383,7 +3405,7 @@ export function ChatView({
     } else {
       setSlashOpen(false);
     }
-  }, [orgMode, orgList, agentProfiles.length, pushUndoSnapshot]);
+  }, [orgMode, orgList, chatSelectableProfiles.length, pushUndoSnapshot]);
 
   // ── Filtered + grouped conversations for Cursor-style sidebar ──
   const filteredConversations = useMemo(() => {
@@ -4023,7 +4045,7 @@ export function ChatView({
 
           {/* @Agent 联想面板 */}
           {atAgentOpen && (() => {
-            const agents = agentProfiles.filter((a) =>
+            const agents = chatSelectableProfiles.filter((a) =>
               a.name.toLowerCase().includes(atAgentFilter) || a.id.toLowerCase().includes(atAgentFilter),
             );
             if (agents.length === 0) return null;
@@ -4039,7 +4061,7 @@ export function ChatView({
                   <div
                     key={a.id}
                     onClick={() => {
-                      setSelectedAgent(a.id);
+                      setSelectedChatProfileId(a.id);
                       const ta = inputRef.current;
                       if (ta) {
                         const val = ta.value;
@@ -4147,7 +4169,7 @@ export function ChatView({
                 <span className="chatModelPickerLabel">
                   {selectedEndpoint === "auto"
                     ? (() => {
-                        const ap = agentProfiles.find(p => p.id === selectedAgent) || null;
+                        const ap = agentProfiles.find(p => p.id === selectedChatProfileId) || null;
                         const pe = ap?.preferred_endpoint;
                         if (pe) {
                           const ep = endpoints.find(e => e.name === pe);
@@ -4193,7 +4215,7 @@ export function ChatView({
                   >
                     <span style={{ fontSize: 13 }}>
                       {(() => {
-                        const ap = agentProfiles.find(p => p.id === selectedAgent);
+                        const ap = agentProfiles.find(p => p.id === selectedChatProfileId);
                         return ap ? `${ap.icon} ${ap.name}` : t("chat.agentDefault");
                       })()}
                     </span>
@@ -4201,21 +4223,21 @@ export function ChatView({
                   </button>
                   {agentMenuOpen && (
                     <div className="chatModelMenu" style={{ minWidth: 220 }}>
-                      {!agentProfiles.some(p => p.id === "default") && (
+                      {!chatSelectableProfiles.some(p => p.id === DEFAULT_CHAT_AGENT_PROFILE_ID) && (
                         <div
                           key="__default__"
-                          className={`chatModelMenuItem ${selectedAgent === "default" ? "chatModelMenuItemActive" : ""}`}
-                          onClick={() => { setSelectedAgent("default"); setAgentMenuOpen(false); }}
+                          className={`chatModelMenuItem ${selectedChatProfileId === DEFAULT_CHAT_AGENT_PROFILE_ID ? "chatModelMenuItemActive" : ""}`}
+                          onClick={() => { setSelectedChatProfileId(DEFAULT_CHAT_AGENT_PROFILE_ID); setAgentMenuOpen(false); }}
                         >
                           <IconTarget size={14} style={{ marginRight: 6 }} />
                           <span style={{ fontWeight: 600 }}>{t("chat.agentDefault")}</span>
                         </div>
                       )}
-                      {agentProfiles.map((ap) => (
+                      {chatSelectableProfiles.map((ap) => (
                         <div
                           key={ap.id}
-                          className={`chatModelMenuItem ${selectedAgent === ap.id ? "chatModelMenuItemActive" : ""}`}
-                          onClick={() => { setSelectedAgent(ap.id); setAgentMenuOpen(false); }}
+                          className={`chatModelMenuItem ${selectedChatProfileId === ap.id ? "chatModelMenuItemActive" : ""}`}
+                          onClick={() => { setSelectedChatProfileId(ap.id); setAgentMenuOpen(false); }}
                         >
                           <span style={{ marginRight: 6 }}>{ap.icon}</span>
                           <span style={{ fontWeight: 600 }}>{ap.name}</span>
