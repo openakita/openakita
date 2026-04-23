@@ -1,18 +1,18 @@
 {
   "_doc": "OpenAkita LLM 端点配置文件 - 复制为 llm_endpoints.json 后使用",
   "_doc_fields": {
-    "name":         "端点名称（唯一标识）",
-    "provider":     "供应商标识：anthropic / openai / dashscope / dashscope-intl / kimi-cn / kimi-int / minimax-cn / minimax-int / deepseek / openrouter / siliconflow / siliconflow-intl / volcengine / zhipu-cn / zhipu-int 等",
-    "api_type":     "API 协议类型：anthropic 或 openai（OpenAI 兼容格式）",
-    "base_url":     "API 基地址",
-    "api_key_env":  "API Key 对应的环境变量名（在 .env 中配置实际值）",
-    "model":        "模型名称",
-    "priority":     "优先级（数字越小优先级越高，1=最高）",
-    "max_tokens":   "最大输出 token 数",
-    "timeout":      "请求超时时间（秒）",
+    "name": "端点名称（唯一标识）",
+    "provider": "供应商标识：anthropic / openai / dashscope / dashscope-intl / kimi-cn / kimi-int / minimax-cn / minimax-int / deepseek / openrouter / siliconflow / siliconflow-intl / volcengine / zhipu-cn / zhipu-int 等",
+    "api_type": "API 协议类型：anthropic 或 openai（OpenAI 兼容格式）",
+    "base_url": "API 基地址",
+    "api_key_env": "API Key 对应的环境变量名（在 .env 中配置实际值）",
+    "model": "模型名称",
+    "priority": "优先级（数字越小优先级越高，1=最高）",
+    "max_tokens": "最大输出 token 数",
+    "timeout": "请求超时时间（秒）",
     "capabilities": "模型能力：text(文本) / vision(图像) / video(视频) / tools(工具调用) / thinking(深度推理) / audio(音频) / pdf(PDF文档)",
     "extra_params": "额外参数（传递给 API 的特殊参数）",
-    "note":         "备注说明"
+    "note": "备注说明"
   },
   "_doc_examples": [
     {
