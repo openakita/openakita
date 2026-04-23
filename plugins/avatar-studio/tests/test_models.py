@@ -65,6 +65,8 @@ def test_price_table_frozen_keys() -> None:
     assert PRICE_TABLE["wan2.2-animate-move"]["wan-std_per_sec"] == 0.40
     assert PRICE_TABLE["wan2.2-animate-move"]["wan-pro_per_sec"] == 0.60
     assert PRICE_TABLE["wan2.5-i2i-preview"]["per_image"] == 0.20
+    assert PRICE_TABLE["wan2.7-image"]["per_image"] == 0.20
+    assert PRICE_TABLE["wan2.7-image-pro"]["per_image"] == 0.50
     assert PRICE_TABLE["cosyvoice-v2"]["per_10k_chars"] == 0.20
 
 

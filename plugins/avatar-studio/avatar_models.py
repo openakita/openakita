@@ -196,6 +196,8 @@ PRICE_TABLE: dict[str, dict[str, float]] = {
     "wan2.2-animate-mix": {"wan-std_per_sec": 0.60, "wan-pro_per_sec": 1.20},
     "wan2.2-animate-move": {"wan-std_per_sec": 0.40, "wan-pro_per_sec": 0.60},
     "wan2.5-i2i-preview": {"per_image": 0.20},
+    "wan2.7-image": {"per_image": 0.20},
+    "wan2.7-image-pro": {"per_image": 0.50},
     "qwen-vl-max": {"per_1k_input_token": 0.02, "per_1k_output_token": 0.06},
     "cosyvoice-v2": {"per_10k_chars": 0.20},
 }

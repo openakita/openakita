@@ -103,6 +103,7 @@ PATH_S2V_SUBMIT = "/api/v1/services/aigc/image2video/video-synthesis"
 PATH_VIDEORETALK_SUBMIT = "/api/v1/services/aigc/video-generation/video-retalk"
 PATH_ANIMATE_MIX_SUBMIT = "/api/v1/services/aigc/image2video/video-synthesis"
 PATH_I2I_SUBMIT = "/api/v1/services/aigc/image2image/image-synthesis"
+PATH_WAN27_IMAGE = "/api/v1/services/aigc/multimodal-generation/generation"
 PATH_QWEN_VL = "/api/v1/services/aigc/multimodal-generation/generation"
 PATH_TASK_QUERY = "/api/v1/tasks/{id}"
 PATH_TASK_CANCEL = "/api/v1/tasks/{id}/cancel"
@@ -114,6 +115,8 @@ MODEL_VIDEORETALK = "videoretalk"
 MODEL_ANIMATE_MIX = "wan2.2-animate-mix"
 MODEL_ANIMATE_MOVE = "wan2.2-animate-move"
 MODEL_I2I = "wan2.5-i2i-preview"
+MODEL_WAN27_IMAGE = "wan2.7-image"
+MODEL_WAN27_IMAGE_PRO = "wan2.7-image-pro"
 MODEL_QWEN_VL = "qwen-vl-max"
 MODEL_COSYVOICE_V2 = "cosyvoice-v2"
 
@@ -669,6 +672,35 @@ class AvatarDashScopeClient(BaseVendorClient):
             "parameters": params,
         }
         return await self._submit_async(PATH_I2I_SUBMIT, body)
+
+    async def submit_image_edit_wan27(
+        self,
+        *,
+        prompt: str,
+        ref_images_url: list[str],
+        size: str | None = None,
+        model: str = MODEL_WAN27_IMAGE,
+    ) -> str:
+        """Submit a wan2.7-image edit via the multimodal-generation endpoint."""
+        if not 1 <= len(ref_images_url) <= 9:
+            raise VendorError(
+                f"wan2.7-image accepts 1..9 reference images, got {len(ref_images_url)}",
+                status=422,
+                retryable=False,
+                kind=ERROR_KIND_CLIENT,
+            )
+        content: list[dict[str, str]] = [{"text": prompt}]
+        for url in ref_images_url:
+            content.append({"image": url})
+        params: dict[str, Any] = {"n": 1}
+        if size:
+            params["size"] = size
+        body = {
+            "model": model,
+            "input": {"messages": [{"role": "user", "content": content}]},
+            "parameters": params,
+        }
+        return await self._submit_async(PATH_WAN27_IMAGE, body)
 
     async def query_task(self, task_id: str) -> dict[str, Any]:
         """Single-shot DashScope task query (no polling here — pipeline loops)."""
