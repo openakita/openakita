@@ -10,10 +10,12 @@ Escalation: `terminate_and_wait()` walks SIGINT → SIGTERM → SIGKILL with
 bounded grace. Worst case 6s. Constants are module-level so tests can
 monkey-patch them to zero.
 """
+
 from __future__ import annotations
 
 import asyncio
 import signal
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -41,6 +43,7 @@ class ExitReason(StrEnum):
 @dataclass(frozen=True)
 class CliRunRequest:
     """Per-turn invocation bundle. Immutable so adapters can't stash it."""
+
     message: str
     resume_id: str | None
     profile: Any
@@ -50,11 +53,13 @@ class CliRunRequest:
     system_prompt_extra: str
     images: tuple[Path, ...] = ()
     mcp_servers: tuple[str, ...] = ()
+    on_progress: Callable[..., Awaitable[None]] | None = None
 
 
 @dataclass(frozen=True)
 class ProviderRunResult:
     """Per-turn outcome bundle. Everything the agent or UI needs, nothing more."""
+
     final_text: str
     tools_used: list[str]
     artifacts: list[str]
@@ -118,5 +123,5 @@ class SubprocessRunner:
             try:
                 await asyncio.wait_for(proc.wait(), timeout=grace)
                 return
-            except TimeoutError:   # NOT asyncio.TimeoutError — ruff UP041 prefers bare TimeoutError
+            except TimeoutError:  # NOT asyncio.TimeoutError — ruff UP041 prefers bare TimeoutError
                 continue
