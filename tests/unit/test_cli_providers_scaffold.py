@@ -15,17 +15,25 @@ def test_providers_registry_is_dict():
 
 def test_provider_adapter_protocol_is_runtime_checkable():
     class _MinAdapter:
-        def build_argv(self, request): return []
-        def build_env(self, request): return {}
-        async def run(self, request, argv, env, *, on_spawn): return None
-        async def cleanup(self): pass
+        def build_argv(self, request):
+            return []
+
+        def build_env(self, request):
+            return {}
+
+        async def run(self, request, argv, env, *, on_spawn):
+            return None
+
+        async def cleanup(self):
+            pass
 
     assert isinstance(_MinAdapter(), ProviderAdapter)
 
 
 def test_protocol_rejects_missing_methods():
     class _BadAdapter:
-        def build_argv(self, request): return []
+        def build_argv(self, request):
+            return []
 
     assert not isinstance(_BadAdapter(), ProviderAdapter)
 
@@ -61,9 +69,7 @@ async def test_stream_cli_subprocess_handles_large_lines(tmp_path):
     """
     cancelled = asyncio.Event()
     payload_size = 200 * 1024
-    script = (
-        f"python3 -c \"import sys; sys.stdout.write('x' * {payload_size} + chr(10))\""
-    )
+    script = f"python3 -c \"import sys; sys.stdout.write('x' * {payload_size} + chr(10))\""
 
     lines = []
     async for line in stream_cli_subprocess(
@@ -83,17 +89,33 @@ async def test_stream_cli_subprocess_handles_large_lines(tmp_path):
 async def test_stream_cli_subprocess_honors_cancellation(tmp_path):
     cancelled = asyncio.Event()
     lines = []
+    tracked = {"proc": None}
 
     async def consume():
         async for line in stream_cli_subprocess(
             ["sh", "-c", "for i in $(seq 1 100); do echo $i; sleep 0.05; done"],
-            env={}, cwd=tmp_path, cancelled=cancelled, on_spawn=lambda _: None,
+            env={},
+            cwd=tmp_path,
+            cancelled=cancelled,
+            on_spawn=lambda proc: tracked.update(proc=proc),
         ):
             lines.append(line)
             if len(lines) == 2:
                 cancelled.set()
 
-    await consume()
+    try:
+        await consume()
+    finally:
+        proc = tracked["proc"]
+        if proc is not None and proc.returncode is None:
+            proc.terminate()
+            await asyncio.wait_for(proc.wait(), timeout=2)
+        if proc is not None:
+            transport = getattr(proc, "_transport", None)
+            if transport is not None:
+                transport.close()
+            await asyncio.sleep(0.01)
+
     assert len(lines) < 50
 
 

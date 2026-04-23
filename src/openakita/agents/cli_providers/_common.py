@@ -12,6 +12,7 @@ adapter has to reach into the other.
 Streaming-only. Does NOT replace the blocking _run_cmd helpers in
 tools/handlers/opencli.py — those are one-shot Popen.communicate calls.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -37,22 +38,42 @@ logger = logging.getLogger(__name__)
 # Allow-list of environment variables copied from the OpenAkita server process
 # into external-CLI subprocesses. Excludes LLM provider secrets, API keys, and
 # OpenAkita-specific config so child CLIs use their own credentials, not ours.
-_CLI_ENV_ALLOW_EXACT = frozenset({
-    # Identity / session essentials
-    "HOME", "USER", "LOGNAME", "SHELL", "PATH", "PWD",
-    # Temp dirs
-    "TMPDIR", "TMP", "TEMP",
-    # Locale / terminal
-    "LANG", "TERM", "TERMINFO", "COLORTERM",
-    "TERM_PROGRAM", "TERM_PROGRAM_VERSION",
-    "NO_COLOR", "FORCE_COLOR", "CLICOLOR", "CLICOLOR_FORCE",
-    "TZ",
-    # SSH / GPG agent forwarding — preserves git-over-ssh and commit signing.
-    "SSH_AUTH_SOCK", "SSH_AGENT_PID",
-    "GPG_AGENT_INFO", "GNUPGHOME",
-    # Windows (no-op on Linux/macOS when unset)
-    "SYSTEMROOT", "WINDIR", "COMSPEC",
-})
+_CLI_ENV_ALLOW_EXACT = frozenset(
+    {
+        # Identity / session essentials
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "SHELL",
+        "PATH",
+        "PWD",
+        # Temp dirs
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        # Locale / terminal
+        "LANG",
+        "TERM",
+        "TERMINFO",
+        "COLORTERM",
+        "TERM_PROGRAM",
+        "TERM_PROGRAM_VERSION",
+        "NO_COLOR",
+        "FORCE_COLOR",
+        "CLICOLOR",
+        "CLICOLOR_FORCE",
+        "TZ",
+        # SSH / GPG agent forwarding — preserves git-over-ssh and commit signing.
+        "SSH_AUTH_SOCK",
+        "SSH_AGENT_PID",
+        "GPG_AGENT_INFO",
+        "GNUPGHOME",
+        # Windows (no-op on Linux/macOS when unset)
+        "SYSTEMROOT",
+        "WINDIR",
+        "COMSPEC",
+    }
+)
 _CLI_ENV_ALLOW_PREFIXES = ("LC_", "XDG_")
 
 _CLI_ENV_VAR_RE = re.compile(r"\$\{(\w+)\}")
@@ -63,6 +84,8 @@ _FALLBACK_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # result (file read, grep, plan echo). 64 MiB is generous for any realistic
 # CLI event while still capping a runaway child process.
 _CLI_STDOUT_BUFFER_LIMIT = 64 * 1024 * 1024
+_CLI_STDERR_BUFFER_LIMIT = 256 * 1024
+_CLI_STDERR_CHUNK_SIZE = 8192
 
 
 def _copy_safe_base_env() -> dict[str, str]:
@@ -76,9 +99,7 @@ def _copy_safe_base_env() -> dict[str, str]:
     return base
 
 
-def _resolve_cli_env_value(
-    value: str, environ: Mapping[str, str] | None = None
-) -> str:
+def _resolve_cli_env_value(value: str, environ: Mapping[str, str] | None = None) -> str:
     """Replace ``${VAR}`` patterns in *value* with environ lookups.
 
     Missing references resolve to empty string (matches mcp_catalog's
@@ -88,7 +109,7 @@ def _resolve_cli_env_value(
     return _CLI_ENV_VAR_RE.sub(lambda m: env.get(m.group(1), ""), value)
 
 
-def build_cli_env(profile: "AgentProfile | None" = None) -> dict[str, str]:
+def build_cli_env(profile: AgentProfile | None = None) -> dict[str, str]:
     """Build a subprocess env for CLI adapters.
 
     Starts from a minimal allow-list (HOME, USER, SHELL, PATH, LANG, LC_*,
@@ -136,7 +157,7 @@ def binary_not_found_error(
             f"(checked={shell_checked}). "
             f"Install hint: {install_hint}. "
             f"If installed via nvm/volta, ensure the openakita server can see "
-            f"your user PATH — either add Environment=\"PATH=...\" to the "
+            f'your user PATH — either add Environment="PATH=..." to the '
             f"systemd unit, or rely on the login-shell PATH fallback (requires "
             f"$SHELL to run .bashrc/.zshrc non-interactively)."
         ),
@@ -150,6 +171,7 @@ async def stream_cli_subprocess(
     cancelled: asyncio.Event,
     *,
     on_spawn: Callable[[asyncio.subprocess.Process], None],
+    on_stderr: Callable[[bytes], None] | None = None,
 ) -> AsyncIterator[bytes]:
     proc = await asyncio.create_subprocess_exec(
         *argv,
@@ -161,34 +183,103 @@ async def stream_cli_subprocess(
     )
     on_spawn(proc)
     assert proc.stdout is not None
-    while True:
-        if cancelled.is_set():
+    stderr_task: asyncio.Task | None = None
+
+    async def _cancel_and_await(task: asyncio.Task | None) -> None:
+        if task is None:
             return
+        if not task.done():
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+
+    async def _drain_stderr() -> None:
+        if proc.stderr is None:
+            return
+        kept = 0
+        while True:
+            try:
+                chunk = await proc.stderr.read(_CLI_STDERR_CHUNK_SIZE)
+            except Exception:
+                logger.debug("stream_cli_subprocess: stderr drain failed", exc_info=True)
+                return
+            if not chunk:
+                return
+            if on_stderr is None:
+                continue
+            remaining = _CLI_STDERR_BUFFER_LIMIT - kept
+            if remaining <= 0:
+                continue
+            trimmed = chunk[:remaining]
+            kept += len(trimmed)
+            try:
+                on_stderr(trimmed)
+            except Exception:
+                logger.debug("stream_cli_subprocess: on_stderr callback failed", exc_info=True)
+
+    async def _read_stdout_line() -> bytes | None:
         read_task = asyncio.create_task(proc.stdout.readline())
         cancel_task = asyncio.create_task(cancelled.wait())
-        done, _pending = await asyncio.wait(
-            {read_task, cancel_task},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        if cancel_task in done and read_task not in done:
-            read_task.cancel()
-            return
-        cancel_task.cancel()
         try:
-            line = await read_task
-        except ValueError as exc:
-            logger.error(
-                "stream_cli_subprocess: stdout line exceeded %d-byte buffer; "
-                "terminating stream. Detail: %s",
-                _CLI_STDOUT_BUFFER_LIMIT,
-                exc,
+            done, _pending = await asyncio.wait(
+                {read_task, cancel_task},
+                return_when=asyncio.FIRST_COMPLETED,
             )
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
+            if cancel_task in done and read_task not in done:
+                await _cancel_and_await(read_task)
+                return None
+            await _cancel_and_await(cancel_task)
+            return await read_task
+        finally:
+            await _cancel_and_await(read_task)
+            await _cancel_and_await(cancel_task)
+
+    async def _await_stderr_drain() -> None:
+        if stderr_task is None or stderr_task.done():
             return
-        if not line:
-            return
-        yield line
+        cancel_task = asyncio.create_task(cancelled.wait())
+        process_exit_task = asyncio.create_task(proc.wait())
+        try:
+            done, _pending = await asyncio.wait(
+                {stderr_task, cancel_task, process_exit_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if stderr_task in done:
+                await stderr_task
+                return
+            if cancel_task in done:
+                await _cancel_and_await(stderr_task)
+                return
+            await process_exit_task
+        finally:
+            await _cancel_and_await(cancel_task)
+            await _cancel_and_await(process_exit_task)
+
+    stderr_task = asyncio.create_task(_drain_stderr())
+    try:
+        while True:
+            if cancelled.is_set():
+                return
+            try:
+                line = await _read_stdout_line()
+            except ValueError as exc:
+                logger.error(
+                    "stream_cli_subprocess: stdout line exceeded %d-byte buffer; "
+                    "terminating stream. Detail: %s",
+                    _CLI_STDOUT_BUFFER_LIMIT,
+                    exc,
+                )
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+                return
+            if line is None:
+                return
+            if not line:
+                await _await_stderr_drain()
+                return
+            yield line
+    finally:
+        await _cancel_and_await(stderr_task)
 
 
 def write_mcp_config(
@@ -252,13 +343,13 @@ def write_mcp_config(
             args = spec.get("args") or []
             env = spec.get("env") or {}
             if cmd:
-                lines.append(f'command = {json.dumps(cmd)}')
+                lines.append(f"command = {json.dumps(cmd)}")
             if args:
                 lines.append(f"args = {json.dumps(list(args))}")
             if env:
-                lines.append("env = { " + ", ".join(
-                    f'{k} = {json.dumps(v)}' for k, v in env.items()
-                ) + " }")
+                lines.append(
+                    "env = { " + ", ".join(f"{k} = {json.dumps(v)}" for k, v in env.items()) + " }"
+                )
             lines.append("")
         path.write_text("\n".join(lines))
         return path
