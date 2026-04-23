@@ -1,0 +1,51 @@
+{
+  "id": "subtitle-craft",
+  "name": "Subtitle Craft",
+  "version": "1.0.0",
+  "description": "AI subtitle workshop — auto subtitle (Paraformer-v2 word-level) + multilingual translation (Qwen-MT) + style repair + ffmpeg/Playwright burn",
+  "display_name_zh": "字幕工坊",
+  "display_name_en": "Subtitle Craft",
+  "description_i18n": {
+    "zh": "AI 字幕全生命周期 — 自动生成（Paraformer-v2 词级时间戳）/ 多语翻译（Qwen-MT）/ 修复优化 / 样式烧制（ffmpeg + 可选 Playwright HTML）",
+    "en": "AI subtitle full lifecycle — auto subtitle (Paraformer-v2 word-level), multilingual translation (Qwen-MT), repair, and style burn (ffmpeg + optional Playwright HTML overlay)"
+  },
+  "type": "python",
+  "entry": "plugin.py",
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["subtitle", "asr", "translation", "ai", "dashscope", "ffmpeg"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.7.0,<0.8.0"
+  },
+  "provides": {
+    "tools": [
+      "subtitle_craft_create",
+      "subtitle_craft_status",
+      "subtitle_craft_list",
+      "subtitle_craft_cancel"
+    ],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "字幕工坊",
+    "title_i18n": {
+      "zh": "字幕工坊",
+      "en": "Subtitle Craft"
+    },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme", "clipboard"]
+  }
+}

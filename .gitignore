@@ -136,6 +136,10 @@ plugins/*
 !plugins/clip-sense/ui/
 !plugins/clip-sense/ui/dist/
 !plugins/clip-sense/ui/dist/**
+!plugins/subtitle-craft/
+!plugins/subtitle-craft/ui/
+!plugins/subtitle-craft/ui/dist/
+!plugins/subtitle-craft/ui/dist/**
 
 # Archived plugins (not auto-loaded; not for GitHub)
 # 整个目录及其所有内容都不进入 git
@@ -357,3 +361,7 @@ docs/test-cases.md
 
 # Prompt 调试参考（本地开发用）
 docs/prompts/
+
+# 后期类插件路线图（本地规划草稿，不入库）
+docs/post-production-plugins-roadmap.md
+docs/subtitle-craft-plan.md

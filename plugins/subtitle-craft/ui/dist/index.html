@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Subtitle Craft</title>
+  <!--
+    Phase 0 placeholder UI. Phase 5 will replace this entire file with the
+    full ~2500-line React + Babel + 4-Tab × 4-mode workshop UI per
+    docs/subtitle-craft-plan.md §13. The shared _assets/* (bootstrap, i18n,
+    icons, styles, markdown-mini) are vendored verbatim from clip-sense and
+    will be customised by Phase 5 (i18n keys, icons, theme variables).
+  -->
+  <script src="_assets/bootstrap.js"></script>
+  <link rel="stylesheet" href="_assets/styles.css">
+  <script src="_assets/icons.js"></script>
+  <script src="_assets/markdown-mini.js"></script>
+  <script src="_assets/i18n.js"></script>
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react@18/umd/react.production.min.js" />
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" />
+  <link rel="preload" as="script" href="https://unpkg.com/@babel/standalone/babel.min.js" />
+  <style>
+    :root {
+      --bg: #f8fafc; --bg-card: #ffffff; --text: #1e293b; --text-muted: #64748b;
+      --primary: #6366f1; --border: #e2e8f0; --radius: 8px;
+    }
+    [data-theme="dark"] {
+      --bg: #0f172a; --bg-card: #1e293b; --text: #f1f5f9; --text-muted: #94a3b8; --border: #334155;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); }
+    .placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 24px; text-align: center; }
+    .placeholder h1 { font-size: 28px; margin-bottom: 12px; }
+    .placeholder p { color: var(--text-muted); max-width: 560px; line-height: 1.6; }
+    .badge { display: inline-block; padding: 4px 10px; background: var(--primary); color: white; border-radius: 999px; font-size: 12px; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="text/babel">
+    function App() {
+      return (
+        <div className="placeholder">
+          <h1>字幕工坊 · Subtitle Craft</h1>
+          <p>Phase 0 骨架就绪。完整 4 Tab × 4 mode 工作台将在 Phase 5 实现，对齐 tongyi-image 体验规范。</p>
+          <span className="badge">v1.0.0 · skeleton</span>
+        </div>
+      );
+    }
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
