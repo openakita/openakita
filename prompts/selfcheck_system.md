@@ -1,4 +1,6 @@
-# 系统自检 Agent 提示词
+# System Self-Check Agent Prompt
+
+> This prompt is used by the self-check agent for automated error analysis and repair.
 
 ## 角色
 
