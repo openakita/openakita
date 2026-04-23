@@ -1,6 +1,8 @@
-# Identity 文件参考来源
+# Identity File Credits
 
-本目录下的身份文件在设计时参考了以下开源项目和公开文档，并根据 OpenAkita 的特点进行了定制和重写。
+The identity files in this directory were designed with reference to the following
+open-source projects and public documentation, and have been customized and
+rewritten specifically for OpenAkita.
 
 ## SOUL.md
 
@@ -23,5 +25,7 @@
 
 ---
 
-> 以上内容仅作为设计灵感和结构参考，实际文件内容已根据 OpenAkita 的功能、价值观和使用场景全面重写。
-> 如有任何版权疑问，请通过项目 Issues 联系我们。
+> The above are used solely as design inspiration and structural references.
+> All actual file contents have been fully rewritten for OpenAkita's features,
+> values, and use cases. For any copyright concerns, please contact us via
+> project Issues.
