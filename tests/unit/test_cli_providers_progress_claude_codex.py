@@ -23,7 +23,7 @@ def _request(progress):
 
 
 @pytest.mark.asyncio
-async def test_claude_provider_emits_text_and_tool_progress(monkeypatch):
+async def test_claude_provider_emits_thinking_text_and_tool_progress(monkeypatch):
     from openakita.agents.cli_providers.claude_code import PROVIDER
 
     events = []
@@ -35,8 +35,12 @@ async def test_claude_provider_emits_text_and_tool_progress(monkeypatch):
     async def fake_stream(argv, env, cwd, cancelled, *, on_spawn, on_stderr=None):
         assert on_stderr is not None
         stderr_callbacks.append(on_stderr)
-        yield b'{"type":"assistant","message":{"content":[{"type":"text","text":"Working"}]}}\n'
-        yield b'{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit"}]}}\n'
+        yield (
+            b'{"type":"assistant","message":{"content":['
+            b'{"type":"thinking","thinking":"Reviewing files..."},'
+            b'{"type":"text","text":"Working"},'
+            b'{"type":"tool_use","name":"Edit"}]}}\n'
+        )
         yield b'{"type":"result","usage":{"input_tokens":1,"output_tokens":2}}\n'
 
     monkeypatch.setattr(
@@ -56,10 +60,48 @@ async def test_claude_provider_emits_text_and_tool_progress(monkeypatch):
     )
 
     assert result.final_text == "Working"
+    assert ("assistant_thinking", {"text": "Reviewing files..."}) in events
     assert ("assistant_text", {"text": "Working"}) in events
     assert ("tool_use", {"tool_name": "Edit"}) in events
     assert len(stderr_callbacks) == 1
     assert callable(stderr_callbacks[0])
+
+
+@pytest.mark.asyncio
+async def test_claude_provider_ignores_redacted_thinking(monkeypatch):
+    from openakita.agents.cli_providers.claude_code import PROVIDER
+
+    events = []
+
+    async def progress(kind, **payload):
+        events.append((kind, payload))
+
+    async def fake_stream(argv, env, cwd, cancelled, *, on_spawn, on_stderr=None):
+        yield (
+            b'{"type":"assistant","message":{"content":['
+            b'{"type":"redacted_thinking","data":"secret"},'
+            b'{"type":"text","text":"Visible"}]}}\n'
+        )
+        yield b'{"type":"result","usage":{"input_tokens":1,"output_tokens":2}}\n'
+
+    monkeypatch.setattr(
+        "openakita.agents.cli_providers.claude_code.stream_cli_subprocess",
+        fake_stream,
+    )
+    monkeypatch.setattr(
+        "openakita.agents.cli_providers.claude_code._git_diff_names",
+        lambda cwd: set(),
+    )
+
+    result = await PROVIDER.run(
+        _request(progress),
+        ["claude"],
+        {},
+        on_spawn=lambda proc: None,
+    )
+
+    assert result.final_text == "Visible"
+    assert all(kind != "assistant_thinking" for kind, _payload in events)
 
 
 @pytest.mark.asyncio

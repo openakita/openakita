@@ -27,6 +27,7 @@ async def test_external_cli_progress_updates_agent_state():
 
     async def run(req, argv, env, *, on_spawn):
         captured["request"] = req
+        await req.on_progress("assistant_thinking", text="reviewing")
         await req.on_progress("assistant_text", text="working")
         await req.on_progress("tool_use", tool_name="Edit")
         await req.on_progress("assistant_text", text="done")
@@ -57,6 +58,12 @@ async def test_external_cli_progress_updates_agent_state():
     assert task.status == TaskStatus.COMPLETED
     assert task.iteration == 1
     assert task.tools_executed == ["Edit"]
+    snapshot = agent.get_live_progress_snapshot()
+    assert [entry["kind"] for entry in snapshot] == ["thinking", "text", "tool", "text"]
+    assert snapshot[0]["text"] == "reviewing"
+    assert snapshot[1]["text"] == "working"
+    assert snapshot[2]["tool_name"] == "Edit"
+    assert snapshot[3]["text"] == "done"
     assert result["text"] == "done"
     assert callable(captured["request"].on_progress)
 
@@ -178,3 +185,4 @@ async def test_external_cli_late_progress_after_terminal_task_does_not_resurrect
 
     assert task.status == terminal_status
     assert task.tools_executed == []
+    assert agent.get_live_progress_snapshot() == []

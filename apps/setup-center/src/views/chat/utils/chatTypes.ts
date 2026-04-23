@@ -96,6 +96,11 @@ export type SubAgentEntry = {
   startTime: number;
 };
 
+export type SubAgentLiveEntry =
+  | { kind: "thinking"; text: string; ts_ms: number }
+  | { kind: "text"; text: string; ts_ms: number }
+  | { kind: "tool"; tool_name: string; ts_ms: number };
+
 /** Sub-agent task progress card data */
 export type SubAgentTask = {
   agent_id: string;
@@ -113,6 +118,7 @@ export type SubAgentTask = {
   tokens_used?: number;
   current_tool_summary?: string;
   queue_count?: number;
+  live_entries?: SubAgentLiveEntry[];
 };
 
 /** Per-session streaming context (supports concurrent streams across conversations) */

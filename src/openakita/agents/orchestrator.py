@@ -77,6 +77,7 @@ _VALID_TRANSITIONS: dict[SubAgentStatus, frozenset[SubAgentStatus]] = {
 
 MAX_DELEGATION_DEPTH = 5
 CHECK_INTERVAL = 3.0  # how often to poll progress (matches frontend polling)
+SUB_AGENT_LIVE_PROGRESS_MAX_ENTRIES = 30
 
 # Defaults — overridden at runtime by settings when available
 _DEFAULT_IDLE_TIMEOUT = 1200.0
@@ -637,12 +638,8 @@ class AgentOrchestrator:
 
         gw = self._gateway if pass_gateway else None
 
-        task = asyncio.create_task(
-            self._call_agent(agent, session, message, gateway=gw, is_sub_agent=(depth > 0))
-        )
-
         start = time.monotonic()
-        last_fingerprint: tuple[int, str, int] = (-1, "", 0)
+        last_fingerprint: tuple[int, str, int, int] = (-1, "", 0, 0)
         last_progress_time = start
 
         state_key = pre_state_key or f"{session.id}:{agent_profile_id}:{uuid.uuid4().hex[:8]}"
@@ -664,9 +661,23 @@ class AgentOrchestrator:
             "elapsed_s": 0,
             "last_progress_s": 0,
             "started_at": time.time(),
+            "live_entries": list(existing_state.get("live_entries", [])),
             "name": existing_state.get("name") or profile.get_display_name(),
             "icon": existing_state.get("icon") or profile.icon or "🤖",
         }
+
+        async def _on_live_progress(op: str, entry: dict[str, Any]) -> None:
+            await self._handle_sub_agent_live_progress(state_key, op, entry)
+
+        if hasattr(agent, "set_live_progress_callback"):
+            try:
+                agent.set_live_progress_callback(_on_live_progress)
+            except Exception:
+                logger.debug("failed to attach live progress callback", exc_info=True)
+
+        task = asyncio.create_task(
+            self._call_agent(agent, session, message, gateway=gw, is_sub_agent=(depth > 0))
+        )
 
         try:
             while not task.done():
@@ -829,6 +840,101 @@ class AgentOrchestrator:
         except RuntimeError:
             self._sub_agent_states.pop(key, None)
 
+    @staticmethod
+    def _clone_live_entry(entry: dict | None) -> dict | None:
+        if not isinstance(entry, dict):
+            return None
+        kind = str(entry.get("kind", "") or "")
+        ts_ms = int(entry.get("ts_ms", 0) or 0)
+        if kind in ("thinking", "text"):
+            return {
+                "kind": kind,
+                "text": str(entry.get("text", "") or ""),
+                "ts_ms": ts_ms,
+            }
+        if kind == "tool":
+            return {
+                "kind": kind,
+                "tool_name": str(entry.get("tool_name", "") or ""),
+                "ts_ms": ts_ms,
+            }
+        return None
+
+    def _serialize_sub_state(
+        self,
+        state_entry: dict,
+        *,
+        status: str | None = None,
+        include_live_entries: bool,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "session_id": state_entry.get("session_id", ""),
+            "chat_id": state_entry.get("chat_id", ""),
+            "agent_id": state_entry.get("agent_id", ""),
+            "profile_id": state_entry.get("profile_id", ""),
+            "agent_type": state_entry.get("agent_type"),
+            "cli_provider_id": state_entry.get("cli_provider_id"),
+            "name": state_entry.get("name", ""),
+            "icon": state_entry.get("icon", ""),
+            "status": status or state_entry.get("status", ""),
+            "iteration": state_entry.get("iteration", 0),
+            "tools_executed": list(state_entry.get("tools_executed", [])),
+            "tools_total": state_entry.get("tools_total", 0),
+            "elapsed_s": state_entry.get("elapsed_s", 0),
+            "last_progress_s": state_entry.get("last_progress_s", 0),
+            "started_at": state_entry.get("started_at", 0),
+            "current_tool_summary": state_entry.get("current_tool_summary", ""),
+            "tokens_used": state_entry.get("tokens_used", 0),
+        }
+        if include_live_entries:
+            payload["live_entries"] = [
+                cloned
+                for cloned in (
+                    self._clone_live_entry(entry)
+                    for entry in state_entry.get("live_entries", []) or []
+                )
+                if cloned is not None
+            ]
+        return payload
+
+    async def _handle_sub_agent_live_progress(
+        self,
+        key: str,
+        op: str,
+        entry: dict[str, Any],
+    ) -> None:
+        state_entry = self._sub_agent_states.get(key)
+        cloned = self._clone_live_entry(entry)
+        if state_entry is None or cloned is None:
+            return
+
+        live_entries = list(state_entry.get("live_entries", []) or [])
+        if op == "replace_last" and live_entries:
+            live_entries[-1] = cloned
+        else:
+            live_entries.append(cloned)
+        if len(live_entries) > SUB_AGENT_LIVE_PROGRESS_MAX_ENTRIES:
+            del live_entries[: len(live_entries) - SUB_AGENT_LIVE_PROGRESS_MAX_ENTRIES]
+        state_entry["live_entries"] = live_entries
+
+        payload = {
+            "session_id": state_entry.get("session_id", ""),
+            "chat_id": state_entry.get("chat_id", ""),
+            "agent_id": state_entry.get("agent_id", ""),
+            "profile_id": state_entry.get("profile_id", ""),
+            "name": state_entry.get("name", ""),
+            "icon": state_entry.get("icon", ""),
+            "status": state_entry.get("status", ""),
+            "op": "replace_last" if op == "replace_last" else "append",
+            "entry": cloned,
+        }
+        try:
+            from openakita.api.routes.websocket import broadcast_event
+
+            await broadcast_event("agents:sub_stream", payload)
+        except Exception:
+            logger.debug("failed to broadcast sub-agent stream update", exc_info=True)
+
     def _broadcast_sub_state_change(
         self,
         key: str,
@@ -847,25 +953,11 @@ class AgentOrchestrator:
             if not state_entry:
                 return
 
-            payload: dict[str, Any] = {
-                "session_id": state_entry.get("session_id", ""),
-                "chat_id": state_entry.get("chat_id", ""),
-                "agent_id": state_entry.get("agent_id", ""),
-                "profile_id": state_entry.get("profile_id", ""),
-                "agent_type": state_entry.get("agent_type"),
-                "cli_provider_id": state_entry.get("cli_provider_id"),
-                "name": state_entry.get("name", ""),
-                "icon": state_entry.get("icon", ""),
-                "status": status,
-                "iteration": state_entry.get("iteration", 0),
-                "tools_executed": state_entry.get("tools_executed", []),
-                "tools_total": state_entry.get("tools_total", 0),
-                "elapsed_s": state_entry.get("elapsed_s", 0),
-                "last_progress_s": state_entry.get("last_progress_s", 0),
-                "started_at": state_entry.get("started_at", 0),
-                "current_tool_summary": state_entry.get("current_tool_summary", ""),
-                "tokens_used": state_entry.get("tokens_used", 0),
-            }
+            payload = self._serialize_sub_state(
+                state_entry,
+                status=status,
+                include_live_entries=False,
+            )
 
             asyncio.ensure_future(broadcast_event("agents:sub_state", payload))
         except Exception:
@@ -920,7 +1012,7 @@ class AgentOrchestrator:
                 else:
                     entry.setdefault("name", profile_id)
                     entry.setdefault("icon", "🤖")
-                result.append(entry)
+                result.append(self._serialize_sub_state(entry, include_live_entries=True))
         return result
 
     @staticmethod
@@ -949,8 +1041,8 @@ class AgentOrchestrator:
         agent: Any,
         session_id: str,
         session: Any = None,
-    ) -> tuple[int, str, int]:
-        """Return (iteration, status, tools_count) as a composite progress signal.
+    ) -> tuple[int, str, int, int]:
+        """Return (iteration, status, tools_count, progress_seq) as a composite progress signal.
 
         Any change in this tuple means the agent is making progress.
         Task key now equals the session_id passed to chat_with_session,
@@ -958,14 +1050,15 @@ class AgentOrchestrator:
         """
         state = getattr(agent, "agent_state", None)
         if state is None:
-            return (-1, "", 0)
+            return (-1, "", 0, 0)
         task = state.get_task_for_session(session_id)
         if task is None:
             task = state.current_task
         if task is None:
-            return (-1, "", 0)
+            return (-1, "", 0, 0)
         status_str = task.status.value if hasattr(task.status, "value") else str(task.status)
-        return (task.iteration, status_str, len(task.tools_executed))
+        progress_seq = int(getattr(agent, "_progress_seq", 0) or 0)
+        return (task.iteration, status_str, len(task.tools_executed), progress_seq)
 
     @staticmethod
     async def _call_agent(
@@ -1282,6 +1375,7 @@ class AgentOrchestrator:
             "tools_executed": [],
             "tools_total": 0,
             "elapsed_s": 0,
+            "live_entries": [],
             "from_agent": from_agent,
             "reason": reason or "",
         }

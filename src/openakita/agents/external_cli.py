@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -33,8 +34,12 @@ from openakita.agents.cli_runner import (
 )
 from openakita.agents.profile import AgentProfile
 from openakita.core.agent_state import AgentState, TaskStatus
+from openakita.core.tool_executor import smart_truncate
 
 logger = logging.getLogger(__name__)
+
+LIVE_PROGRESS_MAX_ENTRIES = 30
+LIVE_PROGRESS_PREVIEW_CHARS = 240
 
 
 class _NullBrain:
@@ -55,6 +60,70 @@ class _NullBrain:
 
 
 _NULL_BRAIN = _NullBrain()
+
+
+def _truncate_live_progress(content: str, *, label: str) -> str:
+    text = str(content or "")
+    preview, _ = smart_truncate(
+        text,
+        LIVE_PROGRESS_PREVIEW_CHARS,
+        label=label,
+        save_full=False,
+    )
+    return preview
+
+
+class _LiveProgressBuffer:
+    """Bounded transcript buffer for live external-CLI progress."""
+
+    def __init__(self) -> None:
+        self._entries: list[dict[str, Any]] = []
+
+    def reset(self) -> None:
+        self._entries.clear()
+
+    def snapshot(self) -> list[dict[str, Any]]:
+        return [dict(entry) for entry in self._entries]
+
+    def _append_entry(self, entry: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        self._entries.append(entry)
+        if len(self._entries) > LIVE_PROGRESS_MAX_ENTRIES:
+            del self._entries[: len(self._entries) - LIVE_PROGRESS_MAX_ENTRIES]
+        return "append", dict(entry)
+
+    def append_text(self, kind: str, text: str) -> tuple[str, dict[str, Any]] | None:
+        preview = _truncate_live_progress(text, label=f"sub_agent_live_{kind}").strip()
+        if not preview:
+            return None
+        ts_ms = int(time.time() * 1000)
+        if self._entries and self._entries[-1].get("kind") == kind:
+            combined = f"{self._entries[-1].get('text', '')}{preview}"
+            combined = _truncate_live_progress(combined, label=f"sub_agent_live_{kind}")
+            self._entries[-1] = {
+                "kind": kind,
+                "text": combined,
+                "ts_ms": ts_ms,
+            }
+            return "replace_last", dict(self._entries[-1])
+        return self._append_entry(
+            {
+                "kind": kind,
+                "text": preview,
+                "ts_ms": ts_ms,
+            }
+        )
+
+    def append_tool(self, tool_name: str) -> tuple[str, dict[str, Any]] | None:
+        preview = _truncate_live_progress(tool_name, label="sub_agent_live_tool").strip()
+        if not preview:
+            return None
+        return self._append_entry(
+            {
+                "kind": "tool",
+                "tool_name": preview,
+                "ts_ms": int(time.time() * 1000),
+            }
+        )
 
 
 @dataclass
@@ -90,6 +159,9 @@ class ExternalCliAgent:
         self._cancelled = asyncio.Event()
         self.agent_state = AgentState()
         self._turn = 0
+        self._progress_seq = 0
+        self._live_progress = _LiveProgressBuffer()
+        self._live_progress_callback: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None
         self.last_session_id: str | None = None
         # Tolerated but ignored — set by AgentFactory
         self._preferred_endpoint: str | None = None
@@ -163,7 +235,31 @@ class ExternalCliAgent:
             # cleanup is a safety hook; don't let a stale temp file crash shutdown
             logger.debug("adapter cleanup failed", exc_info=True)
 
+    def set_live_progress_callback(
+        self,
+        callback: Callable[[str, dict[str, Any]], Awaitable[None]] | None,
+    ) -> None:
+        self._live_progress_callback = callback
+
+    def clear_live_progress_callback(self) -> None:
+        self._live_progress_callback = None
+
+    def get_live_progress_snapshot(self) -> list[dict[str, Any]]:
+        return self._live_progress.snapshot()
+
     # ---- Internals ------------------------------------------------------
+
+    async def _emit_live_progress(
+        self,
+        update: tuple[str, dict[str, Any]] | None,
+    ) -> None:
+        if update is None or self._live_progress_callback is None:
+            return
+        op, entry = update
+        try:
+            await self._live_progress_callback(op, dict(entry))
+        except Exception:
+            logger.debug("live progress callback failed", exc_info=True)
 
     async def _handle_progress(
         self,
@@ -177,7 +273,9 @@ class ExternalCliAgent:
             return
         if self._cancelled.is_set() or task.cancelled or task.is_terminal:
             return
+        update: tuple[str, dict[str, Any]] | None = None
         if kind == "tool_use" and tool_name:
+            self._progress_seq += 1
             if task.status != TaskStatus.ACTING:
                 try:
                     task.transition(TaskStatus.ACTING)
@@ -188,8 +286,11 @@ class ExternalCliAgent:
                     )
                     return
             task.record_tool_execution([tool_name])
+            update = self._live_progress.append_tool(tool_name)
+            await self._emit_live_progress(update)
             return
-        if kind == "assistant_text" and text:
+        if kind in ("assistant_text", "assistant_thinking") and text:
+            self._progress_seq += 1
             if task.status != TaskStatus.REASONING:
                 try:
                     task.transition(TaskStatus.REASONING)
@@ -198,6 +299,9 @@ class ExternalCliAgent:
                         "ignoring external CLI assistant progress for task status %s",
                         task.status.value,
                     )
+            live_kind = "thinking" if kind == "assistant_thinking" else "text"
+            update = self._live_progress.append_text(live_kind, text)
+            await self._emit_live_progress(update)
             return
 
     async def _run_one_turn(
@@ -209,6 +313,8 @@ class ExternalCliAgent:
         cwd_override: Path | None = None,
     ) -> _TurnOutcome:
         self._cancelled.clear()
+        self._progress_seq = 0
+        self._live_progress.reset()
         start = time.monotonic()
         session_id = getattr(session, "id", "") or getattr(session, "session_id", "")
         conversation_id = getattr(session, "conversation_id", "") if session is not None else ""
@@ -321,6 +427,8 @@ class ExternalCliAgent:
             task.cancel("external CLI turn cancelled")
             await self.cancel()
             raise
+        finally:
+            self.clear_live_progress_callback()
 
         return _TurnOutcome(
             text=text,

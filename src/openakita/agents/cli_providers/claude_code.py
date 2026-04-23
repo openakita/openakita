@@ -56,7 +56,7 @@ def _resolve_binary() -> str | None:
 
 @dataclass(frozen=True)
 class _StreamEvent:
-    kind: str                          # "init" | "assistant_text" | "tool_use" | "result" | "error"
+    kind: str                          # "init" | "assistant_text" | "assistant_thinking" | "tool_use" | "result" | "error"
     session_id: str | None = None
     text: str = ""
     tool_name: str | None = None
@@ -65,7 +65,7 @@ class _StreamEvent:
     error_message: str | None = None
 
 
-def _parse_stream_line(line: bytes) -> _StreamEvent | None:
+def _parse_stream_line(line: bytes) -> list[_StreamEvent]:
     """Parse one JSONL line from `claude --output-format stream-json`.
 
     Returns None for blank lines and non-JSON garbage -- the caller logs-and-drops.
@@ -73,48 +73,56 @@ def _parse_stream_line(line: bytes) -> _StreamEvent | None:
     Claude Code stream additions.
     """
     if not line or not line.strip():
-        return None
+        return []
     try:
         obj = json.loads(line)
     except (json.JSONDecodeError, UnicodeDecodeError):
-        return None
+        return []
     if not isinstance(obj, dict):
-        return None
+        return []
 
     etype = obj.get("type")
     if etype == "system" and obj.get("subtype") == "init":
-        return _StreamEvent(kind="init", session_id=obj.get("session_id"))
+        return [_StreamEvent(kind="init", session_id=obj.get("session_id"))]
 
     if etype == "assistant":
         content = (obj.get("message") or {}).get("content") or []
-        texts: list[str] = []
+        if isinstance(content, str):
+            return [_StreamEvent(kind="assistant_text", text=content)] if content else []
+        events: list[_StreamEvent] = []
         for block in content:
             if not isinstance(block, dict):
                 continue
             btype = block.get("type")
             if btype == "text":
-                texts.append(str(block.get("text", "")))
+                text = str(block.get("text", ""))
+                if text:
+                    events.append(_StreamEvent(kind="assistant_text", text=text))
+            elif btype == "thinking":
+                thinking = str(block.get("thinking", ""))
+                if thinking:
+                    events.append(_StreamEvent(kind="assistant_thinking", text=thinking))
             elif btype == "tool_use":
-                return _StreamEvent(kind="tool_use", tool_name=str(block.get("name", "")))
-        if texts:
-            return _StreamEvent(kind="assistant_text", text="".join(texts))
-        return None
+                tool_name = str(block.get("name", ""))
+                if tool_name:
+                    events.append(_StreamEvent(kind="tool_use", tool_name=tool_name))
+        return events
 
     if etype == "result":
         is_error = bool(obj.get("is_error", False))
         if is_error:
-            return _StreamEvent(
+            return [_StreamEvent(
                 kind="error",
                 error_message=str(obj.get("result") or obj.get("error") or "unknown error"),
-            )
+            )]
         usage = obj.get("usage") or {}
-        return _StreamEvent(
+        return [_StreamEvent(
             kind="result",
             input_tokens=int(usage.get("input_tokens", 0) or 0),
             output_tokens=int(usage.get("output_tokens", 0) or 0),
-        )
+        )]
 
-    return None
+    return []
 
 
 @dataclass
@@ -132,6 +140,8 @@ class _TurnAccumulator:
             self.session_id = ev.session_id
         elif ev.kind == "assistant_text":
             self.text_parts.append(ev.text)
+        elif ev.kind == "assistant_thinking":
+            return
         elif ev.kind == "tool_use" and ev.tool_name:
             self.tools_used.append(ev.tool_name)
         elif ev.kind == "result":
@@ -249,6 +259,9 @@ class ClaudeCodeAdapter:
                 if ev.kind == "assistant_text" and ev.text:
                     await cb("assistant_text", text=ev.text)
                     return
+                if ev.kind == "assistant_thinking" and ev.text:
+                    await cb("assistant_thinking", text=ev.text)
+                    return
                 if ev.kind == "tool_use" and ev.tool_name:
                     await cb("tool_use", tool_name=ev.tool_name)
             except asyncio.CancelledError:
@@ -266,8 +279,7 @@ class ClaudeCodeAdapter:
                 on_spawn=track,
                 on_stderr=stderr_buffer.append,
             ):
-                ev = _parse_stream_line(line)
-                if ev is not None:
+                for ev in _parse_stream_line(line):
                     acc.apply(ev)
                     await emit_progress(ev)
         except asyncio.CancelledError:

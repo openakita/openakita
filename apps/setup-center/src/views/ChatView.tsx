@@ -52,14 +52,14 @@ import {
 // ─── Chat module imports ───
 import type {
   MdModules, QueuedMessage, StreamEvent,
-  SubAgentEntry, SubAgentTask, StreamContext, AgentProfile,
+  SubAgentEntry, SubAgentTask, StreamContext, AgentProfile, SubAgentLiveEntry,
 } from "./chat/utils/chatTypes";
 import {
   STORAGE_KEY_CONVS, STORAGE_KEY_ACTIVE, STORAGE_KEY_MSGS_PREFIX,
   IDLE_THRESHOLD_MS, IDLE_TOKEN_THRESHOLD, PASTE_CHAR_THRESHOLD, UNDO_MAX_STEPS,
   exportConversation, appendAuthToken, stripLegacySummary,
   sanitizeStoredMessages, loadMessagesFromStorage, saveMessagesToStorage,
-  buildChainFromSummary, formatAskUserAnswer, patchMessagesWithBackend,
+  appendSubAgentLiveEntry, buildChainFromSummary, formatAskUserAnswer, mergeSubAgentTaskPatch, patchMessagesWithBackend,
   classifyError, basename, formatToolDescription, generateGroupSummary,
   ERROR_META, SVG_PATHS, getNextSpinnerTip,
 } from "./chat/utils/chatHelpers";
@@ -975,18 +975,58 @@ export function ChatView({
 
       const patch = d as unknown as SubAgentTask;
       const ctx = streamContexts.current.get(convId);
-      if (!ctx) return;
-
-      const idx = ctx.subAgentTasks.findIndex((t) => t.agent_id === patch.agent_id);
-      if (idx >= 0) {
-        ctx.subAgentTasks = ctx.subAgentTasks.map((t, i) =>
-          i === idx ? { ...t, ...patch } : t,
-        );
-      } else if (patch.status === "starting" || patch.status === "running") {
-        ctx.subAgentTasks = [...ctx.subAgentTasks, patch];
+      if (ctx) {
+        ctx.subAgentTasks = mergeSubAgentTaskPatch(ctx.subAgentTasks, patch);
+        if (activeConvIdRef.current === convId) {
+          setDisplaySubAgentTasks([...ctx.subAgentTasks]);
+        }
+        return;
       }
+
       if (activeConvIdRef.current === convId) {
-        setDisplaySubAgentTasks([...ctx.subAgentTasks]);
+        setDisplaySubAgentTasks((prev) => mergeSubAgentTaskPatch(prev, patch));
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    return onWsEvent((event, raw) => {
+      if (event !== "agents:sub_stream") return;
+      const d = raw as Record<string, unknown> | null;
+      if (!d || !d.agent_id || !d.entry) return;
+
+      const convId = activeConvIdRef.current;
+      if (!convId) return;
+      const chatId = (d.chat_id || d.session_id || "") as string;
+      if (chatId && chatId !== convId) return;
+
+      const agentId = String(d.agent_id);
+      const op = d.op === "replace_last" ? "replace_last" : "append";
+      const entry = d.entry as SubAgentLiveEntry;
+      const updateTaskList = (tasks: SubAgentTask[]) => {
+        const idx = tasks.findIndex((task) => task.agent_id === agentId);
+        if (idx < 0) return tasks;
+        return tasks.map((task, i) => (
+          i === idx
+            ? {
+                ...task,
+                live_entries: appendSubAgentLiveEntry(task.live_entries, op, entry),
+              }
+            : task
+        ));
+      };
+
+      const ctx = streamContexts.current.get(convId);
+      if (ctx) {
+        ctx.subAgentTasks = updateTaskList(ctx.subAgentTasks);
+        if (activeConvIdRef.current === convId) {
+          setDisplaySubAgentTasks([...ctx.subAgentTasks]);
+        }
+        return;
+      }
+
+      if (activeConvIdRef.current === convId) {
+        setDisplaySubAgentTasks((prev) => updateTaskList(prev));
       }
     });
   }, []);

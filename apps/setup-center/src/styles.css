@@ -4310,6 +4310,13 @@ button.btnApplyRestart:hover {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
 }
+.sacLiveTranscript.chainNarrFlow {
+  margin-top: 8px;
+  padding-top: 8px;
+  padding-left: 0;
+  max-height: 160px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
 
 /* Light theme overrides for sub-agent cards */
 :root[data-theme="light"] .sacCard,
@@ -4863,4 +4870,3 @@ body > div[id*="sm-" i] {
   0%, 100% { transform: scale(0.8); opacity: 0.4; }
   50% { transform: scale(1.2); opacity: 1; }
 }
-

@@ -140,7 +140,7 @@ function ToolResultBlock({ result }: { result: string }) {
 
 // ── ChainEntryLine ──
 
-function ChainEntryLine({ entry, onSkipStep }: { entry: ChainEntry; onSkipStep?: () => void }) {
+export function ChainEntryLine({ entry, onSkipStep }: { entry: ChainEntry; onSkipStep?: () => void }) {
   const { t } = useTranslation();
   switch (entry.kind) {
     case "thinking":

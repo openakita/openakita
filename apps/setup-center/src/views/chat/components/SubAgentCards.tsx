@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import type { SubAgentTask } from "../utils/chatTypes";
-import { SVG_PATHS } from "../utils/chatHelpers";
+import { SVG_PATHS, subAgentLiveEntryToChainEntry } from "../utils/chatHelpers";
+import { ChainEntryLine } from "./ThinkingChain";
 
 export function RenderIcon({ icon, size = 14 }: { icon: string; size?: number }) {
   if (icon.startsWith("svg:")) {
@@ -22,6 +23,7 @@ const FADE_DELAY_MS = 30_000;
 export function SubAgentCards({ tasks }: { tasks: SubAgentTask[] }) {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const liveTranscriptRef = useRef<HTMLDivElement>(null);
   const [page, setPage] = useState(0);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [fadedIds, setFadedIds] = useState<Set<string>>(new Set());
@@ -61,6 +63,9 @@ export function SubAgentCards({ tasks }: { tasks: SubAgentTask[] }) {
   const totalPages = Math.max(1, Math.ceil(visibleTasks.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages - 1);
   const visible = visibleTasks.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+  const expandedTask = visible.find((task) => task.agent_id === expandedId) ?? null;
+  const expandedLiveEntries = expandedTask?.live_entries ?? [];
+  const expandedLiveLastTs = expandedLiveEntries[expandedLiveEntries.length - 1]?.ts_ms ?? 0;
 
   const toggleExpand = useCallback((id: string) => {
     setExpandedId((prev) => (prev === id ? null : id));
@@ -105,6 +110,12 @@ export function SubAgentCards({ tasks }: { tasks: SubAgentTask[] }) {
     if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
     return String(n);
   };
+
+  useEffect(() => {
+    const el = liveTranscriptRef.current;
+    if (!el || !expandedId || expandedLiveEntries.length === 0) return;
+    el.scrollTop = el.scrollHeight;
+  }, [expandedId, expandedLiveEntries.length, expandedLiveLastTs]);
 
   return (
     <div className="sacContainer">
@@ -189,6 +200,26 @@ export function SubAgentCards({ tasks }: { tasks: SubAgentTask[] }) {
                   </div>
                 )}
               </div>
+              {isExpanded && (
+                <div
+                  className="sacLiveTranscript chainNarrFlow"
+                  ref={expandedId === task.agent_id ? liveTranscriptRef : undefined}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {(task.live_entries ?? []).length === 0 ? (
+                    <div className="sacToolItem sacToolWaiting">
+                      {t("chat.subAgentWaitingForLiveOutput", "Waiting for live output…")}
+                    </div>
+                  ) : (
+                    (task.live_entries ?? []).map((entry, idx) => (
+                      <ChainEntryLine
+                        key={`${entry.kind}-${entry.ts_ms}-${idx}`}
+                        entry={subAgentLiveEntryToChainEntry(entry, idx)}
+                      />
+                    ))
+                  )}
+                </div>
+              )}
             </div>
           );
         })}

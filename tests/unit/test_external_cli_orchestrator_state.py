@@ -103,6 +103,57 @@ async def test_sub_state_broadcast_includes_cli_metadata(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_handle_sub_agent_live_progress_updates_state_and_broadcasts_stream(monkeypatch):
+    sent = []
+
+    async def fake_broadcast(event, payload):
+        sent.append((event, payload))
+
+    monkeypatch.setattr(
+        "openakita.api.routes.websocket.broadcast_event",
+        fake_broadcast,
+    )
+
+    orch = AgentOrchestrator()
+    orch._sub_agent_states["sid:claude:1"] = {
+        "session_id": "sid",
+        "chat_id": "sid",
+        "agent_id": "claude-code-pair",
+        "profile_id": "claude-code-pair",
+        "name": "Claude Code Pair",
+        "icon": "C",
+        "status": "running",
+        "live_entries": [],
+    }
+
+    await orch._handle_sub_agent_live_progress(
+        "sid:claude:1",
+        "append",
+        {"kind": "thinking", "text": "reviewing", "ts_ms": 123},
+    )
+
+    assert orch._sub_agent_states["sid:claude:1"]["live_entries"] == [
+        {"kind": "thinking", "text": "reviewing", "ts_ms": 123}
+    ]
+    assert sent == [
+        (
+            "agents:sub_stream",
+            {
+                "session_id": "sid",
+                "chat_id": "sid",
+                "agent_id": "claude-code-pair",
+                "profile_id": "claude-code-pair",
+                "name": "Claude Code Pair",
+                "icon": "C",
+                "status": "running",
+                "op": "append",
+                "entry": {"kind": "thinking", "text": "reviewing", "ts_ms": 123},
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_progress_timeout_marks_external_cli_error_as_error_state(monkeypatch):
     profile = AgentProfile(
         id="claude-code-pair",

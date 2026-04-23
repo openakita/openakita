@@ -10,6 +10,8 @@ import type {
   ChainEntry,
   ChainToolCall,
   ChainSummaryItem,
+  SubAgentTask,
+  SubAgentLiveEntry,
 } from "./chatTypes";
 import { IS_TAURI } from "../../../platform";
 import { getAccessToken } from "../../../platform/auth";
@@ -26,6 +28,7 @@ export const IDLE_THRESHOLD_MS = 75 * 60 * 1000; // 75 minutes
 export const IDLE_TOKEN_THRESHOLD = 50_000;
 export const PASTE_CHAR_THRESHOLD = 800;
 export const UNDO_MAX_STEPS = 50;
+export const MAX_SUB_AGENT_LIVE_ENTRIES = 30;
 
 // ── 加载状态轮播提示 ──
 
@@ -233,6 +236,68 @@ export function buildChainFromSummary(summary: ChainSummaryItem[]): ChainGroup[]
       })),
     };
   });
+}
+
+function _sameSubAgentLiveEntry(a: SubAgentLiveEntry, b: SubAgentLiveEntry): boolean {
+  if (a.kind !== b.kind || a.ts_ms !== b.ts_ms) return false;
+  if (a.kind === "tool" && b.kind === "tool") {
+    return a.tool_name === b.tool_name;
+  }
+  if ((a.kind === "thinking" || a.kind === "text") && a.kind === b.kind) {
+    return a.text === b.text;
+  }
+  return false;
+}
+
+export function appendSubAgentLiveEntry(
+  entries: SubAgentLiveEntry[] | undefined,
+  op: "append" | "replace_last",
+  entry: SubAgentLiveEntry,
+): SubAgentLiveEntry[] {
+  const next = entries ? [...entries] : [];
+  if (op === "replace_last" && next.length > 0) {
+    next[next.length - 1] = entry;
+  } else if (!(next.length > 0 && _sameSubAgentLiveEntry(next[next.length - 1], entry))) {
+    next.push(entry);
+  }
+  if (next.length > MAX_SUB_AGENT_LIVE_ENTRIES) {
+    next.splice(0, next.length - MAX_SUB_AGENT_LIVE_ENTRIES);
+  }
+  return next;
+}
+
+export function mergeSubAgentTaskPatch(
+  tasks: SubAgentTask[],
+  patch: SubAgentTask,
+): SubAgentTask[] {
+  const idx = tasks.findIndex((task) => task.agent_id === patch.agent_id);
+  if (idx >= 0) {
+    return tasks.map((task, i) => (i === idx ? { ...task, ...patch } : task));
+  }
+  if (patch.status === "starting" || patch.status === "running") {
+    return [...tasks, patch];
+  }
+  return tasks;
+}
+
+export function subAgentLiveEntryToChainEntry(
+  entry: SubAgentLiveEntry,
+  idx: number,
+): ChainEntry {
+  if (entry.kind === "thinking") {
+    return { kind: "thinking", content: entry.text };
+  }
+  if (entry.kind === "text") {
+    return { kind: "text", content: entry.text };
+  }
+  return {
+    kind: "tool_start",
+    toolId: `sub-agent-live-${entry.ts_ms}-${idx}`,
+    tool: entry.tool_name,
+    args: {},
+    description: entry.tool_name,
+    status: "running",
+  };
 }
 
 export function basename(path: string): string {
