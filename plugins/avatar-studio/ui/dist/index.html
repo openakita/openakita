@@ -864,7 +864,7 @@ const I18N_DICT = {
     "settings.api.region.hint": "国内「阿里云百炼」用户保持「北京」即可。仅在使用 alibabacloud.com 国际站账号或将服务部署在境外时才需要切到「新加坡」。两套接入点账号体系隔离，国内 key 在新加坡端会直接 401。",
     "settings.api.advanced": "高级（服务地域 / 模型可用性）",
     "settings.api.probe.title": "模型可用性检测",
-    "settings.api.probe.desc": "用当前 API Key 探测每个模型的访问权限。100% 不会创建真实任务、不会扣费——后台只发送故意残缺的请求，DashScope 返回 400 = 可用 / 401-403 = 未授权 / 404 = 该地域未开通，cosyvoice-v2 通过 /v1/models 列表确认。",
+    "settings.api.probe.desc": "用当前 API Key 探测每个模型的访问权限。100% 不会创建真实任务、不会扣费——后台只发送故意残缺的请求，DashScope 返回 400 = 可用 / 401-403 = 未授权 / 404 = 该地域未开通。cosyvoice-v2 仅支持 WebSocket，无法预探测，鉴权通过即推断为可用（≈），请用「试听」做端到端验证。",
     "settings.api.probe.btn": "开始检测",
     "settings.api.probe.btn.busy": "检测中…",
     "settings.api.probe.never": "尚未检测",
@@ -1104,7 +1104,7 @@ const I18N_DICT = {
     "settings.api.region.hint": "Mainland Aliyun Bailian users should keep \"Beijing\". Switch to \"Singapore\" only if your account is on alibabacloud.com (international site) or your deployment is outside mainland China — the two endpoints have separate account systems and a Bailian key will 401 against the Singapore endpoint.",
     "settings.api.advanced": "Advanced (region / model availability)",
     "settings.api.probe.title": "Model availability check",
-    "settings.api.probe.desc": "Probe every model your current key needs. We never create a real task or incur charges — the backend sends a deliberately empty request and reads HTTP status: 400 → available, 401/403 → not authorised, 404 → not available in this region. cosyvoice-v2 is checked via /v1/models.",
+    "settings.api.probe.desc": "Probe every model your current key needs. We never create a real task or incur charges — the backend sends a deliberately empty request and reads HTTP status: 400 → available, 401/403 → not authorised, 404 → not available in this region. cosyvoice-v2 is WebSocket-only and cannot be HTTP-probed; if your key passes auth we mark it available (≈) and ask you to verify with 试听.",
     "settings.api.probe.btn": "Run check",
     "settings.api.probe.btn.busy": "Probing…",
     "settings.api.probe.never": "Not checked yet",
@@ -3031,6 +3031,18 @@ function ModelProbePanel({ hasApiKey }) {
     denied:    { cls: "tag-red",   label: t("settings.api.probe.status.denied"),    icon: "✗" },
     unknown:   { cls: "tag-gray",  label: t("settings.api.probe.status.unknown"),   icon: "?" },
   };
+  // ``inferred=true`` means the backend could not run a real probe (the
+  // model is WebSocket-only, e.g. cosyvoice-v2) but the credentials
+  // passed auth so we *strongly suspect* it works. Render this with an
+  // amber chip + ≈ glyph instead of the normal solid green so the user
+  // knows to verify with 试听 rather than assume green = guaranteed.
+  function chipMeta(d) {
+    const base = STATUS_META[d.status] || STATUS_META.unknown;
+    if (d.inferred && d.status === "available") {
+      return { cls: "tag-amber", label: base.label + "（推断）", icon: "≈" };
+    }
+    return base;
+  }
 
   return (
     <div>
@@ -3076,7 +3088,7 @@ function ModelProbePanel({ hasApiKey }) {
                 <div className="probe-mode">{m.label_zh || m.id}</div>
                 <div className="probe-deps">
                   {(m.deps || []).map(function (d) {
-                    const dm = STATUS_META[d.status] || STATUS_META.unknown;
+                    const dm = chipMeta(d);
                     return (
                       <span key={d.model} className={"probe-chip " + dm.cls}
                             title={(d.message || "") + (d.http ? " (HTTP " + d.http + ")" : "")}>
@@ -3091,9 +3103,22 @@ function ModelProbePanel({ hasApiKey }) {
               </div>
             );
           })}
-          {/* If anything is denied we also surface the marketplace link
-              once at the bottom — clicking 「未授权」 chips would be
-              nicer but the marketplace search is global, not per-model. */}
+          {/* WebSocket-only models (cosyvoice-v2) cannot be probed via
+              HTTP, so we render an inline note to set expectations: the
+              ≈ chip means "credentials work, but only a real synth call
+              can confirm". The 试听 button on the Voices tab does
+              exactly that. */}
+          {(data.models || []).some(function (m) { return m.inferred; }) && (
+            <div style={{
+              marginTop: 8, fontSize: 12, color: "#92400e",
+              background: "rgba(245,158,11,.10)",
+              border: "1px solid rgba(245,158,11,.35)",
+              borderRadius: 6, padding: "6px 10px", lineHeight: 1.55,
+            }}>
+              ≈ 标记的模型走 WebSocket，无法预探测；点击「音色库」中的
+              <b> 试听 </b>可做端到端验证。
+            </div>
+          )}
           {(data.modes || []).some(function (m) { return m.status === "denied"; }) && (
             <div style={{marginTop: 8, fontSize: 12}}>
               <a href="https://bailian.console.aliyun.com/?tab=model#/model-market"

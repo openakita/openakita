@@ -379,6 +379,27 @@ class AvatarDashScopeClient(BaseVendorClient):
             # which DashScope updates when an account gets activated for
             # speech models.
             if path == "__compat_models__":
+                # cosyvoice-v2 is a *WebSocket-only* model — DashScope's
+                # OpenAI-compatible ``/v1/models`` catalogue has historically
+                # NOT listed it (verified 2026-Q1), so the previous strategy
+                # of "look it up in the list" produced a permanent 「未知」
+                # badge even for fully-working accounts. This was the #1
+                # source of "我开通了为什么还是未知?" support tickets.
+                #
+                # New strategy (审计方案 A):
+                #   1. Run the cheap GET /v1/models probe, but use it ONLY to
+                #      confirm that the *credentials* are accepted — we don't
+                #      care whether cosyvoice is listed.
+                #   2. If the key passes auth → mark cosyvoice-v2 as
+                #      ``available`` with a clear message that this is a
+                #      WebSocket model and only a real synth call can give
+                #      a 100% verdict (the UI renders this as 「✓ 已推断
+                #      可用，建议试听验证」 alongside a one-click "play
+                #      sample" button).
+                #   3. If the key fails auth → propagate ``denied`` so the
+                #      Settings tab does not lie.
+                #   4. Network errors stay ``unknown`` so transient blips
+                #      don't downgrade a working setup.
                 try:
                     r = await client.get(
                         f"{base_url}/compatible-mode/v1/models",
@@ -389,25 +410,23 @@ class AvatarDashScopeClient(BaseVendorClient):
                             "message": f"网络错误: {e!s}"}
                 if r.status_code in (401, 403):
                     return {"model": model_id, "status": "denied", "http": r.status_code,
-                            "message": "未授权访问 compatible-mode/models"}
+                            "message": "API Key 鉴权失败，cosyvoice-v2 无法使用"}
                 if r.status_code != 200:
                     return {"model": model_id, "status": "unknown", "http": r.status_code,
-                            "message": f"HTTP {r.status_code}"}
-                try:
-                    body = r.json()
-                except ValueError:
-                    body = {}
-                ids = []
-                for item in (body.get("data") or []):
-                    if isinstance(item, dict) and item.get("id"):
-                        ids.append(str(item["id"]))
-                hit = any(model_id in i for i in ids)
+                            "message": f"compatible-mode/models 返回 HTTP {r.status_code}"}
+                # Credentials accepted — cosyvoice-v2 needs no separate
+                # 「开通」 step on Bailian, so an authenticated key is a
+                # strong-enough signal to call it 「可用」 in the panel.
+                # We surface the "needs WebSocket / try the sample button"
+                # caveat in ``message`` so the UI can render an info hint
+                # rather than a green-then-broken experience.
                 return {
                     "model": model_id,
-                    "status": "available" if hit else "unknown",
+                    "status": "available",
                     "http": 200,
-                    "message": "在 /v1/models 列表中找到" if hit
-                               else "未在 /v1/models 列表中找到（可能仍可用——DashScope 不会列出所有 WebSocket 模型）",
+                    "message": "凭证已通过鉴权（cosyvoice-v2 走 WebSocket，"
+                               "无法预探测；点击「试听」可做端到端验证）",
+                    "inferred": True,
                 }
 
             url = f"{base_url}{path}"
