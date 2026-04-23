@@ -215,6 +215,86 @@ async def test_codex_provider_emits_text_and_tool_progress(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_codex_provider_emits_current_dialect_progress(monkeypatch):
+    from openakita.agents.cli_providers.codex import PROVIDER
+
+    events = []
+
+    async def progress(kind, **payload):
+        events.append((kind, payload))
+
+    async def fake_stream(argv, env, cwd, cancelled, *, on_spawn, on_stderr=None):
+        yield (
+            b'{"type":"event_msg","payload":{"type":"reasoning",'
+            b'"summary":[{"text":"Reviewing files..."}]}}\n'
+        )
+        yield (
+            b'{"type":"response_item","payload":{"type":"function_call",'
+            b'"call_id":"call_1","name":"exec_command","arguments":"{}"}}\n'
+        )
+        yield (
+            b'{"type":"event_msg","payload":{"type":"exec_command_end",'
+            b'"call_id":"call_1","status":"completed","exit_code":0}}\n'
+        )
+        yield (
+            b'{"type":"event_msg","payload":{"type":"agent_message",'
+            b'"message":"Done","phase":"final"}}\n'
+        )
+        yield (
+            b'{"type":"event_msg","payload":{"type":"token_count",'
+            b'"info":{"last_token_usage":{"input_tokens":3,"output_tokens":4}}}}\n'
+        )
+        yield b'{"type":"event_msg","payload":{"type":"task_complete"}}\n'
+
+    monkeypatch.setattr(
+        "openakita.agents.cli_providers.codex.stream_cli_subprocess",
+        fake_stream,
+    )
+
+    result = await PROVIDER.run(
+        _request(progress),
+        ["codex"],
+        {},
+        on_spawn=lambda proc: None,
+    )
+
+    assert result.final_text == "Done"
+    assert result.tools_used == ["exec_command"]
+    assert result.input_tokens == 3
+    assert result.output_tokens == 4
+    assert ("assistant_thinking", {"text": "Reviewing files..."}) in events
+    assert ("assistant_text", {"text": "Done"}) in events
+    assert events.count(("tool_use", {"tool_name": "exec_command"})) == 1
+
+
+@pytest.mark.asyncio
+async def test_codex_provider_maps_turn_aborted_to_error(monkeypatch):
+    from openakita.agents.cli_providers.codex import PROVIDER
+
+    async def progress(kind, **payload):
+        pass
+
+    async def fake_stream(argv, env, cwd, cancelled, *, on_spawn, on_stderr=None):
+        yield b'{"type":"event_msg","payload":{"type":"turn_aborted","reason":"interrupted"}}\n'
+
+    monkeypatch.setattr(
+        "openakita.agents.cli_providers.codex.stream_cli_subprocess",
+        fake_stream,
+    )
+
+    result = await PROVIDER.run(
+        _request(progress),
+        ["codex"],
+        {},
+        on_spawn=lambda proc: None,
+    )
+
+    assert result.exit_reason == ExitReason.ERROR
+    assert result.errored is True
+    assert result.error_message == "interrupted"
+
+
+@pytest.mark.asyncio
 async def test_codex_provider_ignores_progress_callback_runtime_error(monkeypatch):
     from openakita.agents.cli_providers.codex import PROVIDER
 

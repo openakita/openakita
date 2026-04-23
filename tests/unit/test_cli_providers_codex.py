@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -27,9 +28,9 @@ def _make_profile(**overrides) -> AgentProfile:
 
 
 def _make_request(profile, *, cwd=Path("/tmp"), resume_id=None,
-                  system_prompt_extra="", mcp_servers=()):
+                  system_prompt_extra="", mcp_servers=(), message="Refactor module X"):
     return CliRunRequest(
-        message="Refactor module X",
+        message=message,
         resume_id=resume_id,
         profile=profile,
         cwd=cwd,
@@ -55,6 +56,7 @@ def test_build_argv_base_flags():
     assert argv[0] == "/usr/bin/codex"
     assert "exec" in argv
     assert "--json" in argv
+    assert argv[argv.index("--cd") + 1] == "/tmp"
     assert argv[argv.index("--sandbox") + 1] == "read-only"
     # Message is the trailing positional
     assert argv[-1] == "Refactor module X"
@@ -70,7 +72,65 @@ def test_build_argv_write_mode_adds_skip_checks():
 
     assert "--skip-git-repo-check" in argv
     assert "--full-auto" in argv
+    assert "--cd" in argv
+    assert "--add-dir" not in argv
     assert "--dangerously-bypass-approvals-and-sandbox" not in argv
+
+
+def test_build_argv_write_mode_adds_explicit_temp_target_root(tmp_path):
+    from openakita.agents.cli_providers import codex
+
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    profile = _make_profile(cli_permission_mode=CliPermissionMode.WRITE)
+    with patch.object(codex, "_resolve_binary", return_value="/usr/bin/codex"):
+        argv = PROVIDERS[CliProviderId.CODEX].build_argv(
+            _make_request(profile, cwd=cwd, message="Create /tmp/codex-test.py")
+        )
+
+    assert argv[argv.index("--add-dir") + 1] == tempfile.gettempdir()
+
+
+def test_build_argv_write_mode_adds_explicit_project_root(tmp_path):
+    from openakita.agents.cli_providers import codex
+
+    cwd = tmp_path / "main"
+    cwd.mkdir()
+    other_project = tmp_path / "other"
+    target_dir = other_project / "src" / "pkg"
+    target_dir.mkdir(parents=True)
+    (other_project / "pyproject.toml").write_text("[project]\nname='other'\n")
+
+    profile = _make_profile(cli_permission_mode=CliPermissionMode.WRITE)
+    with patch.object(codex, "_resolve_binary", return_value="/usr/bin/codex"):
+        argv = PROVIDERS[CliProviderId.CODEX].build_argv(
+            _make_request(
+                profile,
+                cwd=cwd,
+                message=f"Update {target_dir / 'module.py'}",
+            )
+        )
+
+    assert argv[argv.index("--cd") + 1] == str(cwd)
+    assert argv[argv.index("--add-dir") + 1] == str(other_project)
+
+
+def test_build_argv_write_mode_ignores_unscoped_absolute_paths(tmp_path):
+    from openakita.agents.cli_providers import codex
+
+    cwd = tmp_path / "main"
+    cwd.mkdir()
+    profile = _make_profile(cli_permission_mode=CliPermissionMode.WRITE)
+    with patch.object(codex, "_resolve_binary", return_value="/usr/bin/codex"):
+        argv = PROVIDERS[CliProviderId.CODEX].build_argv(
+            _make_request(
+                profile,
+                cwd=cwd,
+                message="Do not edit /etc/passwd",
+            )
+        )
+
+    assert "--add-dir" not in argv
 
 
 def test_build_argv_resume_uses_session_id():
@@ -85,6 +145,7 @@ def test_build_argv_resume_uses_session_id():
     assert "--session" not in argv
     assert "--json" in argv
     assert "--sandbox" not in argv
+    assert "--cd" not in argv
     assert argv[-2] == "codex-session-abc"
     assert argv[-1] == "Refactor module X"
 

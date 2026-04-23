@@ -15,6 +15,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,6 +41,17 @@ logger = logging.getLogger(__name__)
 
 SESSION_ROOT: Path = Path.home() / ".codex" / "sessions"
 CLI_PROVIDER_ID: CliProviderId = CliProviderId.CODEX
+_ABS_PATH_RE = re.compile(r"(?<![\w:])(/[^\s`'\"<>|]+)")
+_QUOTED_ABS_PATH_RE = re.compile(r"[`'\"](/[^`'\"]+)[`'\"]")
+_PROJECT_MARKERS = (
+    ".git",
+    "AGENTS.md",
+    "pyproject.toml",
+    "package.json",
+    "pnpm-workspace.yaml",
+    "Cargo.toml",
+    "go.mod",
+)
 
 
 def _resolve_binary() -> str | None:
@@ -87,18 +100,114 @@ def _mcp_config_overrides(server_ids: tuple[str, ...]) -> list[str]:
     return overrides
 
 
+def _explicit_absolute_paths(text: str) -> list[Path]:
+    candidates: list[str] = []
+    candidates.extend(match.group(1) for match in _QUOTED_ABS_PATH_RE.finditer(text))
+    candidates.extend(match.group(1) for match in _ABS_PATH_RE.finditer(text))
+
+    paths: list[Path] = []
+    seen: set[str] = set()
+    for raw in candidates:
+        cleaned = raw.rstrip(".,:;)])}")
+        if not cleaned or cleaned.startswith("//"):
+            continue
+        path = Path(cleaned).expanduser()
+        if not path.is_absolute():
+            continue
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        paths.append(path)
+    return paths
+
+
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _nearest_project_root(path: Path) -> Path | None:
+    start = path if path.exists() and path.is_dir() else path.parent
+    for current in (start, *start.parents):
+        if current == current.parent:
+            break
+        if any((current / marker).exists() for marker in _PROJECT_MARKERS):
+            return current
+    return None
+
+
+def _extra_writable_roots(request: CliRunRequest) -> list[Path]:
+    cwd = request.cwd.resolve()
+    tmp_root = Path(tempfile.gettempdir()).resolve()
+    roots: list[Path] = []
+    seen = {str(cwd)}
+    text = f"{request.system_prompt_extra}\n{request.message}"
+
+    for path in _explicit_absolute_paths(text):
+        target = path if path.exists() and path.is_dir() else path.parent
+        try:
+            resolved_target = target.resolve(strict=False)
+        except OSError:
+            continue
+        if _is_relative_to(resolved_target, cwd):
+            continue
+
+        project_root = _nearest_project_root(resolved_target)
+        if project_root is not None:
+            root = project_root.resolve()
+        elif _is_relative_to(resolved_target, tmp_root):
+            root = tmp_root
+        else:
+            continue
+
+        key = str(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        roots.append(root)
+    return roots
+
+
 @dataclass(frozen=True)
 class _StreamEvent:
-    kind: str                         # "init" | "assistant_text" | "tool_use" | "result" | "error"
+    kind: str                         # "init" | "assistant_text" | "assistant_thinking" | "tool_use" | "result" | "error"
     session_id: str | None = None
     text: str = ""
     tool_name: str | None = None
+    call_id: str | None = None
     input_tokens: int = 0
     output_tokens: int = 0
     error_message: str | None = None
 
 
-def _parse_stream_line(line: bytes) -> _StreamEvent | None:
+def _string_parts(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value] if value else []
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                if item:
+                    parts.append(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+            for key in ("text", "message", "content", "summary"):
+                parts.extend(_string_parts(item.get(key)))
+        return parts
+    if isinstance(value, dict):
+        parts: list[str] = []
+        for key in ("text", "message", "content", "summary"):
+            parts.extend(_string_parts(value.get(key)))
+        return parts
+    return []
+
+
+def _payload_from_line(line: bytes) -> dict | None:
     if not line or not line.strip():
         return None
     try:
@@ -108,29 +217,119 @@ def _parse_stream_line(line: bytes) -> _StreamEvent | None:
     if not isinstance(obj, dict):
         return None
 
+    payload = obj.get("payload")
+    if isinstance(payload, dict):
+        return payload
+    return obj
+
+
+def _parse_message_content(obj: dict) -> list[_StreamEvent]:
+    if obj.get("role") not in (None, "assistant"):
+        return []
+    return [
+        _StreamEvent(kind="assistant_text", text=text)
+        for text in _string_parts(obj.get("content") or obj.get("message"))
+        if text
+    ]
+
+
+def _parse_usage(obj: dict) -> _StreamEvent:
+    usage = obj.get("usage") or {}
+    if not usage and isinstance(obj.get("info"), dict):
+        info = obj["info"]
+        usage = info.get("last_token_usage") or info.get("total_token_usage") or {}
+    return _StreamEvent(
+        kind="result",
+        input_tokens=int(usage.get("input_tokens", 0) or 0),
+        output_tokens=int(usage.get("output_tokens", 0) or 0),
+    )
+
+
+def _parse_stream_line(line: bytes) -> list[_StreamEvent]:
+    obj = _payload_from_line(line)
+    if obj is None:
+        return []
+
     etype = obj.get("type") or obj.get("event")
     if etype in ("session_start", "init"):
-        return _StreamEvent(kind="init", session_id=obj.get("session_id") or obj.get("id"))
+        return [_StreamEvent(kind="init", session_id=obj.get("session_id") or obj.get("id"))]
+    if etype == "task_started":
+        return [_StreamEvent(kind="init", session_id=obj.get("turn_id"))]
+
     if etype in ("assistant_delta", "message_delta"):
-        return _StreamEvent(
+        return [_StreamEvent(
             kind="assistant_text",
             text=str(obj.get("text", "") or obj.get("delta", "")),
-        )
+        )]
+    if etype == "agent_message":
+        return [
+            _StreamEvent(kind="assistant_text", text=text)
+            for text in _string_parts(obj.get("message"))
+            if text
+        ]
+    if etype == "message":
+        return _parse_message_content(obj)
+    if etype == "reasoning":
+        return [
+            _StreamEvent(kind="assistant_thinking", text=text)
+            for text in _string_parts(obj.get("summary") or obj.get("content"))
+            if text
+        ]
+
     if etype in ("tool_call", "tool_use"):
-        return _StreamEvent(kind="tool_use", tool_name=str(obj.get("name", "")))
+        return [_StreamEvent(
+            kind="tool_use",
+            tool_name=str(obj.get("name", "")),
+            call_id=obj.get("call_id"),
+        )]
+    if etype in ("function_call", "custom_tool_call"):
+        return [_StreamEvent(
+            kind="tool_use",
+            tool_name=str(obj.get("name", "") or etype),
+            call_id=obj.get("call_id"),
+        )]
+    if etype == "exec_command_end":
+        return [_StreamEvent(
+            kind="tool_use",
+            tool_name="exec_command",
+            call_id=obj.get("call_id"),
+        )]
+    if etype == "patch_apply_end":
+        return [_StreamEvent(
+            kind="tool_use",
+            tool_name="apply_patch",
+            call_id=obj.get("call_id"),
+        )]
+    if etype == "view_image_tool_call":
+        return [_StreamEvent(
+            kind="tool_use",
+            tool_name="view_image",
+            call_id=obj.get("call_id"),
+        )]
+
     if etype in ("turn_end", "result"):
         if obj.get("error") or obj.get("is_error"):
-            return _StreamEvent(
+            return [_StreamEvent(
                 kind="error",
                 error_message=str(obj.get("error") or obj.get("result") or "unknown"),
-            )
-        usage = obj.get("usage") or {}
-        return _StreamEvent(
-            kind="result",
-            input_tokens=int(usage.get("input_tokens", 0) or 0),
-            output_tokens=int(usage.get("output_tokens", 0) or 0),
-        )
-    return None
+            )]
+        return [_parse_usage(obj)]
+    if etype == "token_count":
+        return [_parse_usage(obj)]
+    if etype == "task_complete":
+        events = [
+            _StreamEvent(kind="assistant_text", text=text)
+            for text in _string_parts(obj.get("last_agent_message"))
+            if text
+        ]
+        events.append(_StreamEvent(kind="result"))
+        return events
+    if etype == "turn_aborted":
+        return [_StreamEvent(
+            kind="error",
+            error_message=str(obj.get("reason") or "turn aborted"),
+        )]
+    return []
 
 
 @dataclass
@@ -138,24 +337,41 @@ class _TurnAccumulator:
     session_id: str | None = None
     text_parts: list[str] = field(default_factory=list)
     tools_used: list[str] = field(default_factory=list)
+    tool_call_ids: set[str] = field(default_factory=set)
     input_tokens: int = 0
     output_tokens: int = 0
     errored: bool = False
     error_message: str | None = None
 
-    def apply(self, ev: _StreamEvent) -> None:
+    def apply(self, ev: _StreamEvent) -> bool:
         if ev.kind == "init":
             self.session_id = ev.session_id
+            return True
         elif ev.kind == "assistant_text":
+            if ev.text and self.text_parts and self.text_parts[-1] == ev.text:
+                return False
             self.text_parts.append(ev.text)
+            return True
+        elif ev.kind == "assistant_thinking":
+            return True
         elif ev.kind == "tool_use" and ev.tool_name:
+            if ev.call_id:
+                if ev.call_id in self.tool_call_ids:
+                    return False
+                self.tool_call_ids.add(ev.call_id)
             self.tools_used.append(ev.tool_name)
+            return True
         elif ev.kind == "result":
-            self.input_tokens = ev.input_tokens
-            self.output_tokens = ev.output_tokens
+            if ev.input_tokens:
+                self.input_tokens = ev.input_tokens
+            if ev.output_tokens:
+                self.output_tokens = ev.output_tokens
+            return True
         elif ev.kind == "error":
             self.errored = True
             self.error_message = ev.error_message
+            return True
+        return False
 
 
 class CodexAdapter:
@@ -170,10 +386,15 @@ class CodexAdapter:
                 install_hint="npm install -g @openai/codex",
             )
         options = ["--json", *_mcp_config_overrides(request.mcp_servers)]
+        if not request.resume_id:
+            options += ["--cd", str(request.cwd)]
         if request.profile.cli_permission_mode == CliPermissionMode.PLAN and not request.resume_id:
             options += ["--sandbox", "read-only"]
         if request.profile.cli_permission_mode == CliPermissionMode.WRITE:
             options += ["--full-auto", "--skip-git-repo-check"]
+            if not request.resume_id:
+                for root in _extra_writable_roots(request):
+                    options += ["--add-dir", str(root)]
 
         argv = [binary, "exec"]
         if request.resume_id:
@@ -211,6 +432,9 @@ class CodexAdapter:
                 if ev.kind == "assistant_text" and ev.text:
                     await cb("assistant_text", text=ev.text)
                     return
+                if ev.kind == "assistant_thinking" and ev.text:
+                    await cb("assistant_thinking", text=ev.text)
+                    return
                 if ev.kind == "tool_use" and ev.tool_name:
                     await cb("tool_use", tool_name=ev.tool_name)
             except asyncio.CancelledError:
@@ -230,10 +454,9 @@ class CodexAdapter:
                 on_spawn=track,
                 on_stderr=stderr_buffer.append,
             ):
-                ev = _parse_stream_line(line)
-                if ev is not None:
-                    acc.apply(ev)
-                    await emit_progress(ev)
+                for ev in _parse_stream_line(line):
+                    if acc.apply(ev):
+                        await emit_progress(ev)
         except asyncio.CancelledError:
             if progress_cancelled:
                 raise
