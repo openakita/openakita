@@ -9,20 +9,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from openakita.agents.cli_providers import PROVIDERS
 from openakita.agents.cli_detector import CliProviderId
+from openakita.agents.cli_providers import PROVIDERS
 from openakita.agents.cli_runner import CliRunRequest, ExitReason, ProviderRunResult
 from openakita.agents.profile import AgentProfile, AgentType, CliPermissionMode
 
 
 def _make_profile(**overrides) -> AgentProfile:
-    base = dict(
-        id="codex-writer",
-        name="Codex Writer",
-        type=AgentType.EXTERNAL_CLI,
-        cli_provider_id=CliProviderId.CODEX,
-        cli_permission_mode=CliPermissionMode.PLAN,
-    )
+    base = {
+        "id": "codex-writer",
+        "name": "Codex Writer",
+        "type": AgentType.EXTERNAL_CLI,
+        "cli_provider_id": CliProviderId.CODEX,
+        "cli_permission_mode": CliPermissionMode.PLAN,
+    }
     base.update(overrides)
     return AgentProfile(**base)
 
@@ -137,7 +137,7 @@ def test_write_mcp_config_returns_none_for_empty():
 def test_session_root_is_codex_sessions():
     from openakita.agents.cli_providers import codex
 
-    assert codex.SESSION_ROOT == Path.home() / ".codex" / "sessions"
+    assert Path.home() / ".codex" / "sessions" == codex.SESSION_ROOT
 
 
 @pytest.mark.asyncio
@@ -196,7 +196,7 @@ async def test_codex_home_tempdir_is_cleaned_up(tmp_path):
     # then yield the one canned line.
     from openakita.agents.cli_providers import _common as common_mod
 
-    async def fake_stream(argv, env, cwd, cancelled, *, on_spawn):
+    async def fake_stream(argv, env, cwd, cancelled, *, on_spawn, on_stderr=None):
         captured_home["home"] = env.get("CODEX_HOME", "")
         on_spawn(type("P", (), {"stderr": None, "returncode": 0,
                                 "wait": lambda self: asyncio.sleep(0)})())
