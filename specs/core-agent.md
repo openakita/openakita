@@ -2,7 +2,8 @@
 
 ## Overview
 
-OpenAkita 的核心模块，负责协调所有其他模块，提供统一的对外接口。
+The core module of OpenAkita, responsible for coordinating all other modules
+and providing a unified external interface.
 
 ## Jobs to Be Done
 
