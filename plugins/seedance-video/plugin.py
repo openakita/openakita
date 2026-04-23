@@ -796,20 +796,56 @@ class Plugin(PluginBase):
 
         @router.post("/storage/open-folder")
         async def open_folder(body: dict) -> dict:
-            path = body.get("path", "")
-            if not path:
-                raise HTTPException(status_code=400, detail="Missing path")
+            # Resolve target path:
+            #   1) explicit `path` (after ~ expansion), OR
+            #   2) `key` ∈ {output_dir, assets_dir, cache_dir, uploads}
+            #      → user config value, else built-in default (mirrors
+            #      /storage/stats so "Open" works even before the user
+            #      customizes anything).
+            raw_path = (body.get("path") or "").strip()
+            key = (body.get("key") or "").strip()
+
+            if not raw_path and not key:
+                raise HTTPException(status_code=400, detail="Missing path or key")
+
+            if raw_path:
+                target = Path(raw_path).expanduser()
+            else:
+                defaults = {
+                    "output_dir": Path.home() / "seedance-output",
+                    "assets_dir": Path.home() / "seedance-assets",
+                    "cache_dir": self._api.get_data_dir() / "cache",
+                    "uploads": self._api.get_data_dir() / "uploads",
+                }
+                if key not in defaults:
+                    raise HTTPException(status_code=400, detail=f"Unknown key: {key}")
+                config = await self._tm.get_all_config()
+                cfg_val = (config.get(key) or "").strip()
+                target = (Path(cfg_val).expanduser() if cfg_val else defaults[key])
+
+            try:
+                target.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Cannot create folder: {exc}",
+                ) from exc
+
             import subprocess
             import sys
-            p = Path(path)
-            p.mkdir(parents=True, exist_ok=True)
-            if sys.platform == "win32":
-                subprocess.Popen(["explorer", str(p)])
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", str(p)])
-            else:
-                subprocess.Popen(["xdg-open", str(p)])
-            return {"ok": True}
+            try:
+                if sys.platform == "win32":
+                    subprocess.Popen(["explorer", str(target)])
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", str(target)])
+                else:
+                    subprocess.Popen(["xdg-open", str(target)])
+            except (OSError, FileNotFoundError) as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Cannot open folder: {exc}",
+                ) from exc
+            return {"ok": True, "path": str(target)}
 
         # --- Long video / storyboard ---
 

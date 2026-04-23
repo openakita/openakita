@@ -788,9 +788,10 @@ const I18N_DICT = {
     "settings.system.btn.openHome": "查看官方文档",
     "settings.system.btn.copyCmd": "复制命令",
     "settings.system.btn.copied": "已复制",
-    "settings.system.btn.cancel": "中止安装",
+    "settings.system.btn.cancel": "取消",
     "settings.system.btn.uninstall": "卸载",
     "settings.system.btn.uninstallVia": "卸载 ({strategy})",
+    "settings.system.btn.uninstallConfirmBtn": "确认卸载",
     "settings.system.installing": "安装中... ({elapsed})",
     "settings.system.uninstalling": "卸载中... ({elapsed})",
     "settings.system.installEstimate": "预计耗时约 {sec} 秒",
@@ -842,7 +843,7 @@ const I18N_DICT = {
     "settings.optimize.storyboard": "分镜脚本",
     "settings.label.outputDir": "视频输出目录",
     "settings.outputDir.placeholder": "默认: ~/seedance-output/",
-    "settings.btn.browse": "浏览",
+    "settings.btn.browse": "选择",
     "settings.btn.open": "打开",
     "settings.label.subdir": "子目录结构",
     "settings.subdir.date": "按日期",
@@ -864,6 +865,11 @@ const I18N_DICT = {
     "settings.toast.saveFailed": "保存失败: {msg}",
     "settings.pickOutput": "选择视频输出目录",
     "settings.pickAssets": "选择素材文件夹",
+    "settings.folder.opened": "已在文件管理器中打开 {path}",
+    "settings.folder.openFailed": "打开文件夹失败: {msg}",
+    "settings.folder.pickFailed": "选择文件夹失败，请重试",
+    "settings.folder.pickUnavailable": "文件夹选择器没响应，请重启应用后重试，或直接在左侧输入框粘贴路径再点【打开】",
+    "settings.folder.savedTo": "存储位置已切换到 {path}",
     "toast.optimizeOk": "提示词优化完成",
     "toast.optimizeFail": "提示词优化失败: {msg}",
     "toast.optimizeNoChange": "提示词无需优化或 LLM 返回了相同内容",
@@ -1108,9 +1114,10 @@ const I18N_DICT = {
     "settings.system.btn.openHome": "Open homepage",
     "settings.system.btn.copyCmd": "Copy command",
     "settings.system.btn.copied": "Copied",
-    "settings.system.btn.cancel": "Cancel install",
+    "settings.system.btn.cancel": "Cancel",
     "settings.system.btn.uninstall": "Uninstall",
     "settings.system.btn.uninstallVia": "Uninstall ({strategy})",
+    "settings.system.btn.uninstallConfirmBtn": "Confirm uninstall",
     "settings.system.installing": "Installing... ({elapsed})",
     "settings.system.uninstalling": "Uninstalling... ({elapsed})",
     "settings.system.installEstimate": "Estimated ~{sec}s",
@@ -1162,7 +1169,7 @@ const I18N_DICT = {
     "settings.optimize.storyboard": "Storyboard",
     "settings.label.outputDir": "Video output folder",
     "settings.outputDir.placeholder": "Default: ~/seedance-output/",
-    "settings.btn.browse": "Browse",
+    "settings.btn.browse": "Select",
     "settings.btn.open": "Open",
     "settings.label.subdir": "Sub-folder layout",
     "settings.subdir.date": "By date",
@@ -1184,6 +1191,11 @@ const I18N_DICT = {
     "settings.toast.saveFailed": "Save failed: {msg}",
     "settings.pickOutput": "Pick video output folder",
     "settings.pickAssets": "Pick assets folder",
+    "settings.folder.opened": "Opened {path} in file manager",
+    "settings.folder.openFailed": "Failed to open folder: {msg}",
+    "settings.folder.pickFailed": "Could not pick a folder, please retry",
+    "settings.folder.pickUnavailable": "Folder picker not responding — restart the app or paste the path into the box on the left and click Open.",
+    "settings.folder.savedTo": "Storage path set to {path}",
     "toast.optimizeOk": "Prompt optimized",
     "toast.optimizeFail": "Optimization failed: {msg}",
     "toast.optimizeNoChange": "Prompt unchanged — LLM returned identical text",
@@ -2803,6 +2815,15 @@ function FfmpegInstaller({ onInstalled, onUninstalled }) {
   const [busyOp, setBusyOp] = useState("");   // "" | "install" | "uninstall"
   const [status, setStatus] = useState(null); // live status (busy, log_tail, elapsed_sec, op_kind, ...)
   const [copied, setCopied] = useState(false);
+  // Inline uninstall confirm: window.confirm() is silently blocked because
+  // the host iframe sandbox does NOT include allow-modals (see
+  // apps/setup-center/src/views/PluginAppHost.tsx). We render our own
+  // confirmation callout instead so the click actually has an effect.
+  const [confirmingUninstall, setConfirmingUninstall] = useState(false);
+  // Re-check needs an explicit spinner since the underlying GET is so fast
+  // (<100ms typically) that without a min-duration throttle the user sees
+  // no visual feedback at all.
+  const [rechecking, setRechecking] = useState(false);
   const pollRef = useRef(null);
   const logRef = useRef(null);
   const opNotifiedRef = useRef(false);
@@ -2908,7 +2929,7 @@ function FfmpegInstaller({ onInstalled, onUninstalled }) {
   };
 
   const startUninstall = async (methodIndex) => {
-    if (!window.confirm(_tr("settings.system.uninstallConfirm"))) return;
+    setConfirmingUninstall(false);
     setStatus({ busy: true, log_tail: [], elapsed_sec: 0, op_kind: "uninstall" });
     setBusyOp("uninstall");
     try {
@@ -2922,6 +2943,22 @@ function FfmpegInstaller({ onInstalled, onUninstalled }) {
     } catch (e) {
       setBusyOp("");
       showToast(_tr("settings.system.uninstallFailed", { msg: e.message || "network error" }), "error");
+    }
+  };
+
+  const handleRecheck = async () => {
+    if (rechecking || busyOp) return;
+    setRechecking(true);
+    const t0 = Date.now();
+    try {
+      await refresh();
+    } finally {
+      const elapsed = Date.now() - t0;
+      const minDelay = 400;
+      if (elapsed < minDelay) {
+        await new Promise(r => setTimeout(r, minDelay - elapsed));
+      }
+      setRechecking(false);
     }
   };
 
@@ -3016,21 +3053,29 @@ function FfmpegInstaller({ onInstalled, onUninstalled }) {
 
       <div className="sysdep-card__actions">
         {!busy && !found && primary && (
-          <button className="btn btn-sm btn-primary" onClick={() => startInstall(primaryIdx)}>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => startInstall(primaryIdx)}
+            title={primary.command_hint || primary.strategy}>
             <Ico name="package"/>{" "}
-            {t("settings.system.btn.installVia", { strategy: primary.strategy })}
+            {t("settings.system.btn.install")}
           </button>
         )}
-        {!busy && found && uninstallPrimary && (
-          <button className="btn btn-sm btn-danger" onClick={() => startUninstall(uninstallPrimaryIdx)}
-                  style={{borderColor:"var(--danger)", color:"var(--danger)"}}>
+        {!busy && found && uninstallPrimary && !confirmingUninstall && (
+          <button
+            className="btn btn-sm btn-danger"
+            onClick={() => setConfirmingUninstall(true)}
+            title={uninstallPrimary.command_hint || uninstallPrimary.strategy}
+            style={{borderColor:"var(--danger)", color:"var(--danger)"}}>
             <Ico name="trash"/>{" "}
-            {t("settings.system.btn.uninstallVia", { strategy: uninstallPrimary.strategy })}
+            {t("settings.system.btn.uninstall")}
           </button>
         )}
         {!busy && (
-          <button className="btn btn-sm" onClick={refresh}>
-            <Ico name="refresh"/> {t("settings.system.btn.recheck")}
+          <button className="btn btn-sm" onClick={handleRecheck} disabled={rechecking}>
+            {rechecking
+              ? <><span className="sysdep-spinner"/>{" "}{t("settings.system.detecting")}</>
+              : <><Ico name="refresh"/> {t("settings.system.btn.recheck")}</>}
           </button>
         )}
         {snap?.homepage && (
@@ -3039,6 +3084,28 @@ function FfmpegInstaller({ onInstalled, onUninstalled }) {
           </a>
         )}
       </div>
+
+      {!busy && found && confirmingUninstall && uninstallPrimary && (
+        <div className="sysdep-card__sudo-hint"
+             style={{borderColor:"var(--danger)", background:"rgba(239,68,68,.08)"}}>
+          <div style={{whiteSpace:"pre-wrap", color:"var(--text)", fontSize:12, lineHeight:1.6}}>
+            {t("settings.system.uninstallConfirm")}
+          </div>
+          <div className="sysdep-card__sudo-cmd" style={{marginTop:10}}>
+            <code>{uninstallPrimary.command_hint || uninstallPrimary.strategy}</code>
+          </div>
+          <div style={{display:"flex", gap:6, marginTop:10, justifyContent:"flex-end"}}>
+            <button className="btn btn-sm" onClick={() => setConfirmingUninstall(false)}>
+              {t("settings.system.btn.cancel")}
+            </button>
+            <button className="btn btn-sm btn-danger"
+                    style={{background:"var(--danger)", color:"#fff", borderColor:"var(--danger)"}}
+                    onClick={() => startUninstall(uninstallPrimaryIdx)}>
+              <Ico name="trash"/>{" "}{t("settings.system.btn.uninstallConfirmBtn")}
+            </button>
+          </div>
+        </div>
+      )}
 
       {!found && !busy && !primary && manualMethod && !blockingSudoMethod && (
         <div className="sysdep-card__sudo-hint" style={{borderLeft: "3px solid var(--primary)"}}>
@@ -3123,6 +3190,53 @@ function SettingsTab({ onKeyChange, onFfmpegChanged, permsStatus, onPermsRefresh
 
   const statKeyMap = {output_dir:"settings.stats.outputDir", assets_dir:"settings.stats.assetsDir", cache_dir:"settings.stats.cacheDir"};
 
+  // ── Folder helpers ────────────────────────────────────────────────
+  // "Open" goes through the plugin backend (mkdir -p + spawn explorer/
+  // open/xdg-open). This works even when the user has NOT customized
+  // the folder yet — the backend resolves `key` to the same default
+  // that /storage/stats uses, so "默认: ~/seedance-output/" is openable.
+  const openFolderByKey = async (key) => {
+    try {
+      const r = await pluginApi("POST", "/storage/open-folder", { key });
+      if (!r.body?.ok) {
+        showToast(_tr("settings.folder.openFailed", { msg: r.body?.detail || "" }), "error");
+      }
+    } catch (e) {
+      showToast(_tr("settings.folder.openFailed", { msg: e.message || String(e) }), "error");
+    }
+  };
+
+  // "Select" opens the OS-native folder picker via the host bridge.
+  // The bridge call can fail silently in three ways:
+  //   1) bridge not connected (plain browser dev) → resolves null sync
+  //   2) Tauri dialog plugin missing capability → resolves null after host catches
+  //   3) host swallows the message entirely → never resolves (60s SDK timeout)
+  // We race a 5s "no response" detector so the user sees a useful hint
+  // instead of staring at a dead button. A null after >100ms is treated
+  // as "user cancelled" and stays silent.
+  const pickFolderForKey = async (configKey, titleKey) => {
+    const t0 = Date.now();
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; }, 5000);
+    try {
+      const p = await pickFolder(_tr(titleKey));
+      clearTimeout(timer);
+      if (p) {
+        setConfig({...config, [configKey]: p});
+        save({[configKey]: p});
+        showToast(_tr("settings.folder.savedTo", { path: p }));
+        return;
+      }
+      const elapsed = Date.now() - t0;
+      if (timedOut || elapsed < 50) {
+        showToast(_tr("settings.folder.pickUnavailable"), "warning");
+      }
+    } catch (e) {
+      clearTimeout(timer);
+      showToast(_tr("settings.folder.pickFailed"), "error");
+    }
+  };
+
   return (
     <div style={{maxWidth:640}}>
       <div className="setting-section oa-settings-section">
@@ -3201,8 +3315,8 @@ function SettingsTab({ onKeyChange, onFfmpegChanged, permsStatus, onPermsRefresh
             <input className="input" value={config.output_dir || ""} placeholder={t("settings.outputDir.placeholder")}
               onChange={e => setConfig({...config, output_dir: e.target.value})}
               onBlur={e => save({output_dir: e.target.value})} />
-            <button className="btn btn-sm" onClick={async () => { var p = await pickFolder(_tr("settings.pickOutput")); if (p) { setConfig({...config, output_dir: p}); save({output_dir: p}); } }}>{t("settings.btn.browse")}</button>
-            <button className="btn btn-sm" onClick={() => showInFolder(config.output_dir || "")}>{t("settings.btn.open")}</button>
+            <button className="btn btn-sm" onClick={() => pickFolderForKey("output_dir", "settings.pickOutput")}>{t("settings.btn.browse")}</button>
+            <button className="btn btn-sm" onClick={() => openFolderByKey("output_dir")}>{t("settings.btn.open")}</button>
           </div>
           <div className="grid-2" style={{marginTop:6}}>
             <div>
@@ -3237,8 +3351,8 @@ function SettingsTab({ onKeyChange, onFfmpegChanged, permsStatus, onPermsRefresh
             <input className="input" value={config.assets_dir || ""} placeholder={t("settings.assetsDir.placeholder")}
               onChange={e => setConfig({...config, assets_dir: e.target.value})}
               onBlur={e => save({assets_dir: e.target.value})} />
-            <button className="btn btn-sm" onClick={async () => { var p = await pickFolder(_tr("settings.pickAssets")); if (p) { setConfig({...config, assets_dir: p}); save({assets_dir: p}); } }}>{t("settings.btn.browse")}</button>
-            <button className="btn btn-sm" onClick={() => showInFolder(config.assets_dir || "")}>{t("settings.btn.open")}</button>
+            <button className="btn btn-sm" onClick={() => pickFolderForKey("assets_dir", "settings.pickAssets")}>{t("settings.btn.browse")}</button>
+            <button className="btn btn-sm" onClick={() => openFolderByKey("assets_dir")}>{t("settings.btn.open")}</button>
           </div>
         </div>
 

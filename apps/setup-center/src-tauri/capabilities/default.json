@@ -36,6 +36,7 @@
     "clipboard-manager:allow-read-text",
     "dialog:default",
     "dialog:allow-save",
+    "dialog:allow-open",
     "fs:default",
     "fs:allow-read-text-file",
     "fs:allow-write-text-file",
