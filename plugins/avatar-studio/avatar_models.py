@@ -119,6 +119,81 @@ MODES: tuple[ModeSpec, ...] = (
 MODES_BY_ID: dict[str, ModeSpec] = {m.id: m for m in MODES}
 
 
+# ─── Audio duration constraints ──────────────────────────────────────────
+#
+# DashScope models have hard caps on the input audio length. Hitting them
+# late (i.e. inside the pipeline) burns user money on TTS + face-detect
+# before failing at the s2v step with the misleading
+# ``video synth failed: The input audio is longer than 20s``.
+#
+# We surface these limits in three places to give layered feedback:
+# 1. ``MODE_DEFS`` (UI) — static hint under the audio uploader/TTS panel.
+# 2. ``/cost-preview`` (backend) — refuses oversized audio with 422.
+# 3. Pipeline guard before ``_step_video_synth`` — last-line defence for
+#    third-party callers / hot-reload corner cases.
+#
+# Sources (October 2025 docs):
+# - wan2.2-s2v: audio < 20s, < 15MB, wav/mp3
+#     https://help.aliyun.com/zh/model-studio/wan-s2v-api
+# - videoretalk: 2s ≤ audio,video ≤ 120s
+#     https://help.aliyun.com/zh/model-studio/videoretalk-api
+# - wan2.2-animate-* (move / mix): no audio input — driven by video only.
+
+AUDIO_LIMIT_HINT_KEY: dict[str, str] = {
+    # mode → "<min>-<max>" seconds, used by the UI for the inline hint
+    "photo_speak": "0.5-19.5",
+    "video_relip": "2-120",
+    "avatar_compose": "0.5-19.5",
+}
+
+
+@dataclass(frozen=True)
+class AudioLimit:
+    min_sec: float
+    max_sec: float
+    model_label: str  # shown in error message for clarity
+
+    def violates(self, dur: float) -> str | None:
+        """Return a Chinese error message if ``dur`` is out of range, else None."""
+        if dur is None or dur <= 0:
+            return None
+        if dur < self.min_sec:
+            return (
+                f"{self.model_label} 模型要求音频时长 ≥ {self.min_sec:g} 秒，"
+                f"当前 {dur:.1f} 秒，请加长台词或上传更长的音频。"
+            )
+        if dur > self.max_sec:
+            return (
+                f"{self.model_label} 模型限制音频时长 ≤ {self.max_sec:g} 秒，"
+                f"当前 {dur:.1f} 秒，请缩短台词或截取更短的音频片段。"
+            )
+        return None
+
+
+# Conservative caps: DashScope says <20s for s2v, so we treat 19.5s as the
+# practical ceiling (round-trip latency + sample-rate quantisation can push
+# a 19.9s upload over the line). Min 0.5s avoids false-positives for very
+# short sentences.
+AUDIO_LIMITS: dict[str, AudioLimit] = {
+    "photo_speak": AudioLimit(0.5, 19.5, "wan2.2-s2v"),
+    "avatar_compose": AudioLimit(0.5, 19.5, "wan2.2-s2v"),
+    "video_relip": AudioLimit(2.0, 120.0, "videoretalk"),
+}
+
+
+def check_audio_duration(mode: str, duration_sec: float | None) -> str | None:
+    """Validate ``duration_sec`` against the per-mode cap.
+
+    Returns a user-facing Chinese error message (suitable for HTTP 422 /
+    inline UI banner) or ``None`` if the duration is acceptable / not
+    applicable for this mode.
+    """
+    limit = AUDIO_LIMITS.get(mode)
+    if limit is None or duration_sec is None:
+        return None
+    return limit.violates(float(duration_sec))
+
+
 # ─── Voice catalog (12 cosyvoice-v2 system voices) ─────────────────────────
 
 

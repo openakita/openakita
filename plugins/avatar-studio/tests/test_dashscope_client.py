@@ -87,12 +87,20 @@ def _make_client(api_key: str = "sk-test", *, base_url: str | None = None) -> Av
 # ── auth + hot-reload ───────────────────────────────────────────────────
 
 
-def test_auth_headers_includes_bearer_and_async_flag() -> None:
+def test_auth_headers_includes_bearer_but_not_async() -> None:
     c = _make_client("sk-abc")
     h = c.auth_headers()
     assert h["Authorization"] == "Bearer sk-abc"
-    assert h["X-DashScope-Async"] == "enable"
     assert h["Content-Type"] == "application/json"
+    assert "X-DashScope-Async" not in h, (
+        "X-DashScope-Async must NOT be in auth_headers; "
+        "sync endpoints like face_detect reject it with 403"
+    )
+
+
+def test_async_header_only_in_submit_async() -> None:
+    c = _make_client("sk-abc")
+    assert c._ASYNC_HEADER == {"X-DashScope-Async": "enable"}
 
 
 def test_settings_refreshed_each_call_pixelle_a10() -> None:
@@ -194,10 +202,16 @@ async def test_submit_videoretalk_routes_correctly() -> None:
     c = _make_client()
     tid = await c.submit_videoretalk(video_url="https://x/v.mp4", audio_url="https://x/a.mp3")
     assert tid == "vr-1"
+    # Regression guard: must hit the same image2video/video-synthesis
+    # endpoint as s2v / animate-mix — model differentiates, not path.
     assert captured[0].url.path == PATH_VIDEORETALK_SUBMIT
+    assert captured[0].url.path == "/api/v1/services/aigc/image2video/video-synthesis"
     body = json.loads(captured[0].content.decode())
     assert body["model"] == MODEL_VIDEORETALK
     assert body["input"] == {"video_url": "https://x/v.mp4", "audio_url": "https://x/a.mp3"}
+    # ``video_extension=true`` lets DashScope handle audio>video by
+    # looping the source video, which is what the UI expects.
+    assert body["parameters"]["video_extension"] is True
 
 
 @pytest.mark.asyncio
@@ -259,7 +273,15 @@ async def test_submit_image_edit_routes_to_i2i_endpoint() -> None:
     body = json.loads(captured[0].content.decode())
     assert body["model"] == MODEL_I2I
     assert body["parameters"]["size"] == "1024*1024"
+    assert body["parameters"]["n"] == 1
     assert body["input"]["prompt"] == "merge them"
+    # Regression guard: wan2.5-i2i-preview's official body field is
+    # ``images`` (not ``ref_images_url`` — that's wan2.7-image-edit's
+    # multimodal-generation schema). Sending the wrong key produced
+    # the upstream error
+    # ``image compose failed: images field is required``.
+    assert body["input"]["images"] == ["https://x/1.png", "https://x/2.png"]
+    assert "ref_images_url" not in body["input"]
 
 
 # ── face_detect ─────────────────────────────────────────────────────────
@@ -433,6 +455,20 @@ def test_classify_promotes_quota() -> None:
 def test_classify_promotes_dependency_for_humanoid_failure() -> None:
     body = {"message": "humanoid not detected in input image"}
     assert _classify_dashscope_body(body, ERROR_KIND_SERVER) == "dependency"
+
+
+def test_classify_promotes_dependency_for_data_inspection() -> None:
+    # DashScope's content/format moderation. Documented as a 「dependency」
+    # in our taxonomy because the user has to fix the input (re-encode,
+    # change file type, swap photo) — retrying with the same URL never
+    # works, so the UI must NOT classify it as a transient server fault.
+    for code in (
+        "InvalidParameter.DataInspection",
+        "DataInspectionFailed",
+        "Data_Inspection.Reject",
+    ):
+        body = {"code": code, "message": "media format unsupported"}
+        assert _classify_dashscope_body(body, ERROR_KIND_SERVER) == "dependency"
 
 
 def test_classify_falls_back_when_unrecognised() -> None:

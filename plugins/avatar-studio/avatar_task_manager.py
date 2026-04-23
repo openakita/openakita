@@ -440,6 +440,17 @@ class AvatarTaskManager:
         await self._conn.commit()
         return cur.rowcount > 0
 
+    async def update_custom_voice_label(self, voice_id: str, label: str) -> bool:
+        """Rename a cloned voice. System voices are intentionally
+        immutable (their labels live in code), so the WHERE clause
+        guards is_system=0 to keep DELETE/UPDATE symmetric."""
+        cur = await self._conn.execute(
+            "UPDATE voices SET label = ? WHERE id = ? AND is_system = 0",
+            (label, voice_id),
+        )
+        await self._conn.commit()
+        return cur.rowcount > 0
+
     # ── Figures ───────────────────────────────────────────────────────
 
     async def list_figures(self) -> list[dict[str, Any]]:
