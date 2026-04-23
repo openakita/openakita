@@ -1,29 +1,38 @@
 /**
  * Shared constants, types, and utility functions for OrgEditorView and its sub-panels.
  * Extracted to eliminate duplication and ensure single-source-of-truth for labels/colors.
+ *
+ * Label maps now store i18n key paths — callers must resolve via t(key).
  */
 
-// ── Time helpers (always show local timezone) ──
+import i18n from "../i18n";
+
+// ── Time helpers (locale-aware) ──
+
+function currentLocale(): string {
+  const lang = i18n.language;
+  return lang === "zh" ? "zh-CN" : "en-US";
+}
 
 export function fmtTime(v: string | number | undefined | null): string {
   if (!v) return "";
   const d = new Date(typeof v === "number" ? v : v);
   if (isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return d.toLocaleTimeString(currentLocale(), { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 export function fmtDateTime(v: string | number | undefined | null): string {
   if (!v) return "";
   const d = new Date(typeof v === "number" ? v : v);
   if (isNaN(d.getTime())) return "";
-  return d.toLocaleString("zh-CN", { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return d.toLocaleString(currentLocale(), { hour12: false, month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 export function fmtShortDate(v: string | number | undefined | null): string {
   if (!v) return "";
   const d = new Date(typeof v === "number" ? v : v);
   if (isNaN(d.getTime())) return "";
-  return d.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return d.toLocaleString(currentLocale(), { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 export function stripMd(s: string): string {
@@ -43,196 +52,197 @@ export function stripMd(s: string): string {
 }
 
 // ── Label & color maps ──
+// Values are i18n key paths — resolve via t(TASK_STATUS_LABELS[key]) in components.
 
 export const TASK_STATUS_LABELS: Record<string, string> = {
-  todo: "待办",
-  in_progress: "进行中",
-  delivered: "已交付",
-  rejected: "已打回",
-  accepted: "已验收",
-  cancelled: "已取消",
-  blocked: "已阻塞",
+  todo: "org.taskStatus.todo",
+  in_progress: "org.taskStatus.inProgress",
+  delivered: "org.taskStatus.delivered",
+  rejected: "org.taskStatus.rejected",
+  accepted: "org.taskStatus.accepted",
+  cancelled: "org.taskStatus.cancelled",
+  blocked: "org.taskStatus.blocked",
 };
 
 export const EVENT_TYPE_LABELS: Record<string, string> = {
-  node_status_change: "节点状态变更",
-  llm_usage: "模型调用统计",
-  task_completed: "任务完成",
-  task_assigned: "任务分配",
-  task_delivered: "任务交付",
-  task_accepted: "任务验收",
-  task_rejected: "任务驳回",
-  task_failed: "任务失败",
-  node_activated: "节点激活",
-  node_deactivated: "节点停用",
-  node_dismissed: "节点解散",
-  node_frozen: "节点冻结",
-  node_unfrozen: "节点解冻",
-  org_started: "组织启动",
-  org_stopped: "组织停止",
-  org_paused: "组织暂停",
-  org_resumed: "组织恢复",
-  org_reset: "组织重置",
-  schedule_assigned: "定时任务分配",
-  schedule_completed: "定时任务完成",
-  schedule_triggered: "定时任务触发",
-  schedule_requested: "定时任务请求",
-  broadcast: "广播消息",
-  auto_clone_created: "自动创建副本",
-  clones_reclaimed: "副本回收",
-  auto_kickoff: "自动启动",
-  scaling_requested: "扩容请求",
-  scaling_approved: "扩容批准",
-  scaling_rejected: "扩容拒绝",
-  tools_granted: "工具授权",
-  tools_requested: "工具请求",
-  tools_revoked: "工具撤销",
-  user_command: "用户指令",
-  watchdog_recovery: "看门狗恢复",
-  heartbeat_triggered: "心跳触发",
-  heartbeat_decision: "心跳决策",
-  standup_started: "站会开始",
-  standup_completed: "站会结束",
-  meeting_completed: "会议结束",
-  conflict_detected: "冲突检测",
-  policy_proposed: "策略提议",
-  approval_resolved: "审批完成",
-  tool_call_start: "工具调用",
-  tool_call_end: "工具调用完成",
-  plan_created: "计划创建",
-  plan_completed: "计划完成",
-  plan_cancelled: "计划取消",
-  plan_step_updated: "计划步骤更新",
-  iteration_start: "迭代开始",
-  agent_handoff: "Agent 切换",
-  ask_user: "询问用户",
-  done: "完成",
-  error: "错误",
+  node_status_change: "org.eventType.nodeStatusChange",
+  llm_usage: "org.eventType.llmUsage",
+  task_completed: "org.eventType.taskCompleted",
+  task_assigned: "org.eventType.taskAssigned",
+  task_delivered: "org.eventType.taskDelivered",
+  task_accepted: "org.eventType.taskAccepted",
+  task_rejected: "org.eventType.taskRejected",
+  task_failed: "org.eventType.taskFailed",
+  node_activated: "org.eventType.nodeActivated",
+  node_deactivated: "org.eventType.nodeDeactivated",
+  node_dismissed: "org.eventType.nodeDismissed",
+  node_frozen: "org.eventType.nodeFrozen",
+  node_unfrozen: "org.eventType.nodeUnfrozen",
+  org_started: "org.eventType.orgStarted",
+  org_stopped: "org.eventType.orgStopped",
+  org_paused: "org.eventType.orgPaused",
+  org_resumed: "org.eventType.orgResumed",
+  org_reset: "org.eventType.orgReset",
+  schedule_assigned: "org.eventType.scheduleAssigned",
+  schedule_completed: "org.eventType.scheduleCompleted",
+  schedule_triggered: "org.eventType.scheduleTriggered",
+  schedule_requested: "org.eventType.scheduleRequested",
+  broadcast: "org.eventType.broadcast",
+  auto_clone_created: "org.eventType.autoCloneCreated",
+  clones_reclaimed: "org.eventType.clonesReclaimed",
+  auto_kickoff: "org.eventType.autoKickoff",
+  scaling_requested: "org.eventType.scalingRequested",
+  scaling_approved: "org.eventType.scalingApproved",
+  scaling_rejected: "org.eventType.scalingRejected",
+  tools_granted: "org.eventType.toolsGranted",
+  tools_requested: "org.eventType.toolsRequested",
+  tools_revoked: "org.eventType.toolsRevoked",
+  user_command: "org.eventType.userCommand",
+  watchdog_recovery: "org.eventType.watchdogRecovery",
+  heartbeat_triggered: "org.eventType.heartbeatTriggered",
+  heartbeat_decision: "org.eventType.heartbeatDecision",
+  standup_started: "org.eventType.standupStarted",
+  standup_completed: "org.eventType.standupCompleted",
+  meeting_completed: "org.eventType.meetingCompleted",
+  conflict_detected: "org.eventType.conflictDetected",
+  policy_proposed: "org.eventType.policyProposed",
+  approval_resolved: "org.eventType.approvalResolved",
+  tool_call_start: "org.eventType.toolCallStart",
+  tool_call_end: "org.eventType.toolCallEnd",
+  plan_created: "org.eventType.planCreated",
+  plan_completed: "org.eventType.planCompleted",
+  plan_cancelled: "org.eventType.planCancelled",
+  plan_step_updated: "org.eventType.planStepUpdated",
+  iteration_start: "org.eventType.iterationStart",
+  agent_handoff: "org.eventType.agentHandoff",
+  ask_user: "org.eventType.askUser",
+  done: "org.eventType.done",
+  error: "org.eventType.error",
 };
 
 export const MSG_TYPE_LABELS: Record<string, string> = {
-  task_assign: "任务分配",
-  task_result: "任务结果",
-  task_delivered: "任务交付",
-  task_accepted: "任务验收",
-  task_rejected: "任务驳回",
-  report: "工作汇报",
-  question: "提问",
-  answer: "回答",
-  escalate: "上报",
-  escalation: "上报",
-  broadcast: "广播",
-  dept_broadcast: "部门广播",
-  feedback: "反馈",
-  handshake: "握手",
-  deliverable: "交付物",
+  task_assign: "org.msgType.taskAssign",
+  task_result: "org.msgType.taskResult",
+  task_delivered: "org.msgType.taskDelivered",
+  task_accepted: "org.msgType.taskAccepted",
+  task_rejected: "org.msgType.taskRejected",
+  report: "org.msgType.report",
+  question: "org.msgType.question",
+  answer: "org.msgType.answer",
+  escalate: "org.msgType.escalate",
+  escalation: "org.msgType.escalation",
+  broadcast: "org.msgType.broadcast",
+  dept_broadcast: "org.msgType.deptBroadcast",
+  feedback: "org.msgType.feedback",
+  handshake: "org.msgType.handshake",
+  deliverable: "org.msgType.deliverable",
 };
 
 export const DATA_KEY_LABELS: Record<string, string> = {
-  from: "来源",
-  to: "目标",
-  reason: "原因",
-  node_id: "节点",
-  calls: "调用次数",
-  tokens_in: "输入 token",
-  tokens_out: "输出 token",
-  model: "模型",
-  result_preview: "结果预览",
-  deliverable_preview: "交付物预览",
-  error: "错误",
-  content: "内容",
-  task: "任务",
-  title: "标题",
-  role: "角色",
-  name: "名称",
-  tools: "工具",
-  source: "来源",
-  target: "目标",
-  scope: "范围",
-  prompt: "提示词",
-  schedule_id: "定时任务 ID",
-  chain_id: "链路 ID",
-  clone_id: "副本 ID",
-  approval_id: "审批 ID",
-  request_id: "请求 ID",
-  new_node_id: "新节点 ID",
-  superior: "上级",
-  participants: "参与者",
-  pending_count: "待处理数",
-  node_count: "节点数",
-  rounds: "轮次",
-  cycle: "周期",
-  decision: "决策",
-  stuck_secs: "阻塞时长(秒)",
-  threshold: "阈值",
-  dismissed: "已解散",
-  type: "类型",
-  topic: "议题",
-  filename: "文件名",
-  core_business_len: "核心业务数",
-  tool: "工具",
-  args: "参数",
-  result: "结果",
-  duration_ms: "耗时(ms)",
-  status: "状态",
-  question: "问题",
-  message: "消息",
+  from: "org.dataKey.from",
+  to: "org.dataKey.to",
+  reason: "org.dataKey.reason",
+  node_id: "org.dataKey.nodeId",
+  calls: "org.dataKey.calls",
+  tokens_in: "org.dataKey.tokensIn",
+  tokens_out: "org.dataKey.tokensOut",
+  model: "org.dataKey.model",
+  result_preview: "org.dataKey.resultPreview",
+  deliverable_preview: "org.dataKey.deliverablePreview",
+  error: "org.dataKey.error",
+  content: "org.dataKey.content",
+  task: "org.dataKey.task",
+  title: "org.dataKey.title",
+  role: "org.dataKey.role",
+  name: "org.dataKey.name",
+  tools: "org.dataKey.tools",
+  source: "org.dataKey.source",
+  target: "org.dataKey.target",
+  scope: "org.dataKey.scope",
+  prompt: "org.dataKey.prompt",
+  schedule_id: "org.dataKey.scheduleId",
+  chain_id: "org.dataKey.chainId",
+  clone_id: "org.dataKey.cloneId",
+  approval_id: "org.dataKey.approvalId",
+  request_id: "org.dataKey.requestId",
+  new_node_id: "org.dataKey.newNodeId",
+  superior: "org.dataKey.superior",
+  participants: "org.dataKey.participants",
+  pending_count: "org.dataKey.pendingCount",
+  node_count: "org.dataKey.nodeCount",
+  rounds: "org.dataKey.rounds",
+  cycle: "org.dataKey.cycle",
+  decision: "org.dataKey.decision",
+  stuck_secs: "org.dataKey.stuckSecs",
+  threshold: "org.dataKey.threshold",
+  dismissed: "org.dataKey.dismissed",
+  type: "org.dataKey.type",
+  topic: "org.dataKey.topic",
+  filename: "org.dataKey.filename",
+  core_business_len: "org.dataKey.coreBusinessLen",
+  tool: "org.dataKey.tool",
+  args: "org.dataKey.args",
+  result: "org.dataKey.result",
+  duration_ms: "org.dataKey.durationMs",
+  status: "org.dataKey.status",
+  question: "org.dataKey.question",
+  message: "org.dataKey.message",
 };
 
 export const DATA_VALUE_LABELS: Record<string, string> = {
-  idle: "空闲",
-  busy: "执行中",
-  waiting: "等待中",
-  error: "异常",
-  offline: "离线",
-  frozen: "已冻结",
-  task_started: "任务开始",
-  task_completed: "任务完成",
-  task_failed: "任务失败",
-  task_assigned: "任务分配",
-  task_delivered: "任务交付",
-  task_accepted: "任务验收",
-  task_rejected: "任务驳回",
-  org_stopped: "组织停止",
-  org_reset: "组织重置",
-  org_paused: "组织暂停",
-  org_resumed: "组织恢复",
-  restart_cleanup: "重启清理",
-  watchdog_recovery: "看门狗恢复",
-  health_check_recovery: "健康检查恢复",
-  org_quota_pause: "配额暂停",
-  quota_exhausted: "配额耗尽",
-  auto_recover_before_activate: "激活前自动恢复",
-  unfreeze: "解冻",
-  stuck_busy: "持续繁忙",
-  error_not_recovering: "错误未恢复",
-  idle_no_progress: "空闲无进展",
-  root_busy: "根节点繁忙",
-  root_has_task: "根节点有任务",
-  skip: "跳过",
-  activate: "激活",
-  do_nothing: "无操作",
-  pending: "待处理",
-  approved: "已批准",
-  rejected: "已拒绝",
-  completed: "已完成",
-  in_progress: "进行中",
-  delivered: "已交付",
-  accepted: "已验收",
-  blocked: "已阻塞",
-  healthy: "健康",
-  warning: "警告",
-  critical: "严重",
-  attention: "关注",
+  idle: "org.dataValue.idle",
+  busy: "org.dataValue.busy",
+  waiting: "org.dataValue.waiting",
+  error: "org.dataValue.error",
+  offline: "org.dataValue.offline",
+  frozen: "org.dataValue.frozen",
+  task_started: "org.dataValue.taskStarted",
+  task_completed: "org.dataValue.taskCompleted",
+  task_failed: "org.dataValue.taskFailed",
+  task_assigned: "org.dataValue.taskAssigned",
+  task_delivered: "org.dataValue.taskDelivered",
+  task_accepted: "org.dataValue.taskAccepted",
+  task_rejected: "org.dataValue.taskRejected",
+  org_stopped: "org.dataValue.orgStopped",
+  org_reset: "org.dataValue.orgReset",
+  org_paused: "org.dataValue.orgPaused",
+  org_resumed: "org.dataValue.orgResumed",
+  restart_cleanup: "org.dataValue.restartCleanup",
+  watchdog_recovery: "org.dataValue.watchdogRecovery",
+  health_check_recovery: "org.dataValue.healthCheckRecovery",
+  org_quota_pause: "org.dataValue.orgQuotaPause",
+  quota_exhausted: "org.dataValue.quotaExhausted",
+  auto_recover_before_activate: "org.dataValue.autoRecoverBeforeActivate",
+  unfreeze: "org.dataValue.unfreeze",
+  stuck_busy: "org.dataValue.stuckBusy",
+  error_not_recovering: "org.dataValue.errorNotRecovering",
+  idle_no_progress: "org.dataValue.idleNoProgress",
+  root_busy: "org.dataValue.rootBusy",
+  root_has_task: "org.dataValue.rootHasTask",
+  skip: "org.dataValue.skip",
+  activate: "org.dataValue.activate",
+  do_nothing: "org.dataValue.doNothing",
+  pending: "org.dataValue.pending",
+  approved: "org.dataValue.approved",
+  rejected: "org.dataValue.rejected",
+  completed: "org.dataValue.completed",
+  in_progress: "org.dataValue.inProgress",
+  delivered: "org.dataValue.delivered",
+  accepted: "org.dataValue.accepted",
+  blocked: "org.dataValue.blocked",
+  healthy: "org.dataValue.healthy",
+  warning: "org.dataValue.warning",
+  critical: "org.dataValue.critical",
+  attention: "org.dataValue.attention",
 };
 
 export const STATUS_LABELS: Record<string, string> = {
-  idle: "空闲",
-  busy: "执行中",
-  waiting: "等待中",
-  error: "异常",
-  offline: "离线",
-  frozen: "已冻结",
+  idle: "org.status.idle",
+  busy: "org.status.busy",
+  waiting: "org.status.waiting",
+  error: "org.status.error",
+  offline: "org.status.offline",
+  frozen: "org.status.frozen",
 };
 
 export const STATUS_COLORS: Record<string, string> = {
@@ -250,11 +260,11 @@ export const STATUS_COLORS: Record<string, string> = {
 };
 
 export const ORG_STATUS_LABELS: Record<string, string> = {
-  dormant: "休眠",
-  active: "运行中",
-  running: "运行中",
-  paused: "已暂停",
-  archived: "已归档",
+  dormant: "org.orgStatus.dormant",
+  active: "org.orgStatus.active",
+  running: "org.orgStatus.running",
+  paused: "org.orgStatus.paused",
+  archived: "org.orgStatus.archived",
 };
 
 export const EDGE_COLORS: Record<string, string> = {
@@ -262,6 +272,20 @@ export const EDGE_COLORS: Record<string, string> = {
   collaborate: "var(--ok)",
   escalate: "var(--danger)",
   consult: "#a78bfa",
+};
+
+const DEPT_KEY_MAP: Record<string, string> = {
+  "管理层": "org.dept.management",
+  "技术部": "org.dept.techDept",
+  "产品部": "org.dept.productDept",
+  "市场部": "org.dept.marketDept",
+  "行政支持": "org.dept.adminSupport",
+  "工程": "org.dept.engineering",
+  "前端组": "org.dept.frontendTeam",
+  "后端组": "org.dept.backendTeam",
+  "编辑部": "org.dept.editorialDept",
+  "创作组": "org.dept.creativeTeam",
+  "运营组": "org.dept.opsTeam",
 };
 
 export const DEPT_COLORS: Record<string, string> = {
@@ -282,6 +306,15 @@ export function getDeptColor(dept: string): string {
   return DEPT_COLORS[dept] || "#6b7280";
 }
 
+/**
+ * Translate a department name from backend (Chinese key) to localised label.
+ * Falls back to the raw string when no mapping exists.
+ */
+export function translateDept(dept: string, t: (k: string) => string): string {
+  const key = DEPT_KEY_MAP[dept];
+  return key ? t(key) : dept;
+}
+
 /** Unified blackboard entry type colors — single source of truth. */
 export const BB_TYPE_COLORS: Record<string, string> = {
   fact: "#3b82f6",
@@ -292,14 +325,14 @@ export const BB_TYPE_COLORS: Record<string, string> = {
   resource: "#0891b2",
 };
 
-/** Unified blackboard entry type labels — single source of truth. */
+/** Unified blackboard entry type labels (i18n keys). */
 export const BB_TYPE_LABELS: Record<string, string> = {
-  fact: "事实",
-  decision: "决策",
-  lesson: "经验",
-  progress: "进展",
-  todo: "待办",
-  resource: "产出",
+  fact: "org.bbType.fact",
+  decision: "org.bbType.decision",
+  lesson: "org.bbType.lesson",
+  progress: "org.bbType.progress",
+  todo: "org.bbType.todo",
+  resource: "org.bbType.resource",
 };
 
 export function translateDataValue(
@@ -310,7 +343,8 @@ export function translateDataValue(
   if ((key === "node_id" || key === "new_node_id") && nodeNameMap?.has(s)) {
     return nodeNameMap.get(s)!;
   }
-  return DATA_VALUE_LABELS[s] || s;
+  const i18nKey = DATA_VALUE_LABELS[s];
+  return i18nKey ? i18n.t(i18nKey) : s;
 }
 
 // ── Types ──

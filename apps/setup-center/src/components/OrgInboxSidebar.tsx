@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { safeFetch } from "../providers";
 import { IconX } from "../icons";
 
@@ -43,23 +44,23 @@ const PRIORITY_COLORS: Record<string, string> = {
   info: "#6b7280",
 };
 
-const PRIORITY_LABELS: Record<string, string> = {
-  alert: "紧急",
-  approval: "待审批",
-  action: "待处理",
-  warning: "警告",
-  notice: "通知",
-  info: "消息",
+const PRIORITY_LABEL_KEYS: Record<string, string> = {
+  alert: "org.inbox.urgent",
+  approval: "org.inbox.pendingApproval",
+  action: "org.inbox.pendingAction",
+  warning: "org.inbox.warning",
+  notice: "org.inbox.notice",
+  info: "org.inbox.message",
 };
 
-const CATEGORY_LABELS: Record<string, string> = {
-  general: "通用",
-  task_complete: "任务完成",
-  approval: "审批",
-  progress: "进度",
-  warning: "警告",
-  scaling: "扩编",
-  anomaly: "异常",
+const CATEGORY_LABEL_KEYS: Record<string, string> = {
+  general: "org.inbox.catGeneral",
+  task_complete: "org.inbox.catTaskComplete",
+  approval: "org.inbox.catApproval",
+  progress: "org.inbox.catProgress",
+  warning: "org.inbox.catWarning",
+  scaling: "org.inbox.catScaling",
+  anomaly: "org.inbox.catError",
 };
 
 export function OrgInboxSidebar({
@@ -75,6 +76,7 @@ export function OrgInboxSidebar({
   onClose: () => void;
   embedded?: boolean;
 }) {
+  const { t } = useTranslation();
   const [messages, setMessages] = useState<InboxMsg[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [pendingApprovals, setPendingApprovals] = useState(0);
@@ -176,7 +178,7 @@ export function OrgInboxSidebar({
         gap: 8,
       }}>
         <span style={{ fontWeight: 600, fontSize: 15, flex: 1 }}>
-          组织消息
+          {t("org.inbox.title")}
           {unreadCount > 0 && (
             <span style={{
               marginLeft: 6,
@@ -186,7 +188,7 @@ export function OrgInboxSidebar({
               padding: "1px 7px",
               fontSize: 11,
               fontWeight: 500,
-            }}>{unreadCount} 未读</span>
+            }}>{t("org.inbox.unread", { count: unreadCount })}</span>
           )}
           {pendingApprovals > 0 && (
             <span style={{
@@ -197,7 +199,7 @@ export function OrgInboxSidebar({
               padding: "1px 7px",
               fontSize: 11,
               fontWeight: 500,
-            }}>{pendingApprovals} 待审</span>
+            }}>{t("org.inbox.pendingReview", { count: pendingApprovals })}</span>
           )}
         </span>
         <button
@@ -212,8 +214,8 @@ export function OrgInboxSidebar({
             minWidth: 44,
             padding: "6px 8px",
           }}
-          title="全部已读"
-        >全部已读</button>
+          title={t("org.inbox.markAllRead")}
+        >{t("org.inbox.markAllRead")}</button>
         <button
           onClick={onClose}
           style={{
@@ -254,7 +256,7 @@ export function OrgInboxSidebar({
               minHeight: 36,
             }}
           >
-            {f === "all" ? "全部" : f === "unread" ? "未读" : "待审批"}
+            {f === "all" ? t("org.inbox.filterAll") : f === "unread" ? t("org.inbox.filterUnread") : t("org.inbox.filterPending")}
           </button>
         ))}
       </div>
@@ -263,12 +265,12 @@ export function OrgInboxSidebar({
       <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
         {loading && messages.length === 0 && (
           <div style={{ textAlign: "center", padding: 20, color: "#9ca3af", fontSize: 13 }}>
-            加载中...
+            {t("org.inbox.loading")}
           </div>
         )}
         {!loading && messages.length === 0 && (
           <div style={{ textAlign: "center", padding: 20, color: "#9ca3af", fontSize: 13 }}>
-            暂无消息
+            {t("org.inbox.empty")}
           </div>
         )}
         {messages.map(msg => {
@@ -306,7 +308,7 @@ export function OrgInboxSidebar({
                   fontSize: 11,
                   color: prColor,
                   fontWeight: 500,
-                }}>{PRIORITY_LABELS[msg.priority] || msg.priority}</span>
+                }}>{PRIORITY_LABEL_KEYS[msg.priority] ? t(PRIORITY_LABEL_KEYS[msg.priority]) : msg.priority}</span>
                 {msg.category !== "general" && (
                   <span style={{
                     fontSize: 10,
@@ -314,7 +316,7 @@ export function OrgInboxSidebar({
                     background: "#f3f4f6",
                     borderRadius: 4,
                     padding: "1px 5px",
-                  }}>{CATEGORY_LABELS[msg.category] || msg.category}</span>
+                  }}>{CATEGORY_LABEL_KEYS[msg.category] ? t(CATEGORY_LABEL_KEYS[msg.category]) : msg.category}</span>
                 )}
                 <span style={{ flex: 1 }} />
                 <span style={{ fontSize: 10, color: "#9ca3af" }}>
@@ -336,7 +338,7 @@ export function OrgInboxSidebar({
                     fontSize: 11,
                     color: msg.acted_result === "approve" ? "#22c55e" : "#ef4444",
                   }}>
-                    [{msg.acted_result === "approve" ? "已批准" : "已拒绝"}]
+                    [{msg.acted_result === "approve" ? t("org.inbox.approved") : t("org.inbox.rejected")}]
                   </span>
                 )}
               </div>
@@ -355,13 +357,13 @@ export function OrgInboxSidebar({
 
                   {msg.source_node && (
                     <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 4 }}>
-                      来源: {msg.source_node}
+                      {t("org.inbox.source", { name: msg.source_node })}
                     </div>
                   )}
 
                   {msg.approval_id && (
                     <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>
-                      审批编号: {msg.approval_id}
+                      {t("org.inbox.approvalId", { id: msg.approval_id })}
                     </div>
                   )}
 
@@ -379,7 +381,7 @@ export function OrgInboxSidebar({
                           cursor: "pointer",
                           minHeight: 36,
                         }}
-                      >批准</button>
+                      >{t("org.inbox.approve")}</button>
                       <button
                         onClick={(e) => { e.stopPropagation(); handleResolve(msg.id, "reject"); }}
                         style={{
@@ -392,7 +394,7 @@ export function OrgInboxSidebar({
                           cursor: "pointer",
                           minHeight: 36,
                         }}
-                      >拒绝</button>
+                      >{t("org.inbox.reject")}</button>
                     </div>
                   )}
                 </div>
