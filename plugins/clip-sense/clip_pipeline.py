@@ -319,7 +319,27 @@ async def _step_execute(
         elif ctx.mode == "talking_polish":
             remove_list: list[dict[str, Any]] = []
             if ctx.segments:
+                # Map UI / API toggle names to analyze_filler "type" values.
+                # Accept both snake_case (Pydantic alias) and camelCase
+                # (raw frontend payload via extra="allow") for resilience.
+                p = ctx.params
+                allow_filler = p.get("remove_filler",
+                                     p.get("removeFiller", True))
+                allow_stutter = p.get("remove_stutter",
+                                      p.get("removeStutter", True))
+                allow_repetition = p.get("remove_repetition",
+                                         p.get("removeRepetition", True))
+                allowed_types: set[str] = set()
+                if allow_filler:
+                    allowed_types.add("filler")
+                if allow_stutter:
+                    allowed_types.add("stutter")
+                if allow_repetition:
+                    allowed_types.add("repetition")
                 for seg in ctx.segments:
+                    seg_type = (seg.get("type") or "filler").lower()
+                    if seg_type not in allowed_types:
+                        continue
                     remove_list.append({
                         "start": seg.get("start_sec", 0),
                         "end": seg.get("end_sec", 0),

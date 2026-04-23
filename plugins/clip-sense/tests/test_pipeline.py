@@ -167,6 +167,39 @@ class TestTalkingPolishPipeline:
         run(run_pipeline(ctx, tm, asr, ffmpeg, emit))
         tm.update_task.assert_any_call("test001", status="succeeded", pipeline_step="done")
 
+    def test_remove_flags_filter_segments(self, tmp_path: Path):
+        """remove_filler/stutter/repetition toggles must actually filter
+        the analyze_filler output before passing to remove_segments.
+        Regression guard: prior to the fix the toggles were silently dropped
+        by the Pydantic model and unused by the pipeline."""
+        ctx = _make_ctx(tmp_path, mode="talking_polish")
+        ctx.source_url = "http://example.com/video.mp4"
+        ctx.params = {
+            "remove_filler": False,
+            "remove_stutter": True,
+            "remove_repetition": False,
+        }
+        tm = _make_mock_tm()
+        ffmpeg = _make_mock_ffmpeg()
+        asr = _make_mock_asr()
+        asr.analyze_filler = AsyncMock(return_value=[
+            {"start_sec": 1, "end_sec": 2, "type": "filler", "content": "um"},
+            {"start_sec": 5, "end_sec": 6, "type": "stutter", "content": "I-I"},
+            {"start_sec": 9, "end_sec": 10, "type": "repetition", "content": "the the"},
+        ])
+        # detect_silence returns nothing so remove_segments only sees
+        # filler-analysis segments (filtered by toggle).
+        ffmpeg.detect_silence = AsyncMock(return_value=[])
+        emit = MagicMock()
+
+        run(run_pipeline(ctx, tm, asr, ffmpeg, emit))
+
+        # Exactly one segment (the stutter) must be passed to remove_segments.
+        assert ffmpeg.remove_segments.await_count == 1
+        passed = ffmpeg.remove_segments.await_args.args[1]
+        assert len(passed) == 1
+        assert passed[0]["start"] == 5 and passed[0]["end"] == 6
+
 
 class TestPipelineErrors:
     def test_ffmpeg_not_available(self, tmp_path: Path):

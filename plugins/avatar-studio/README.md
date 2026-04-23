@@ -1,32 +1,47 @@
 # Avatar Studio (`avatar-studio`)
 
-> 基于阿里云 DashScope 的数字人工作室。一线插件、零 SDK contrib 依赖、零 host UI 资源挂载。
+> 多后端数字人工作室（DashScope / RunningHub / 本地 ComfyUI）。一线插件、零 SDK contrib 依赖、零 host UI 资源挂载。
 > 与 [`tongyi-image`](../tongyi-image/) / [`seedance-video`](../seedance-video/) 并列同构。
 
 | | |
 |---|---|
-| **版本** | 1.0.0 |
+| **版本** | 1.1.0 |
 | **SDK 范围** | `>=0.7.0,<0.8.0` |
 | **入口** | `plugin.py` (`PluginBase`) + `ui/dist/index.html` |
-| **形态** | 4 生成模式 + 5 个 Tab + 9 工具 + 16 路由 |
+| **形态** | 5 生成模式 + 3 后端 + 双 TTS 引擎 + 5 个 Tab + 9 工具 |
 
 ---
 
 ## 1 · 概览
 
-avatar-studio 把 DashScope 的「万相 + s2v + cosyvoice + qwen-vl」四条产品线
-组合成一个开箱即用的数字人工作流：填一个 API Key，就能让一张照片说话、把
-原视频换嘴、把视频换成另一个人，或者把多张参考图融合成一个新的角色。
+avatar-studio 支持三种后端（阿里云 DashScope / RunningHub / 本地 ComfyUI）和
+双 TTS 引擎（CosyVoice / Edge-TTS），提供 5 种数字人生成模式。
 
 | Mode | 中文名 | 输入 | DashScope 链路 | 典型时长 |
 |---|---|---|---|---|
 | `photo_speak` | 照片说话 | 1 张人像 + 文本/音频 | `wan2.2-s2v-detect` → `wan2.2-s2v` | 60–180 s |
 | `video_relip` | 视频换嘴 | 1 段视频 + 文本/音频 | `videoretalk` | 60–180 s |
 | `video_reface` | 视频换人 | 1 张人像 + 1 段视频 | `wan2.2-animate-mix` (`wan-std` / `wan-pro`) | 120–360 s |
-| `avatar_compose` | 数字人合成 | 1–3 张参考图 + 融合 prompt + 音频 | `wan2.5-i2i-preview` → `wan2.2-s2v-detect` → `wan2.2-s2v` | 180–360 s |
+| `avatar_compose` | 数字人合成 | 1–3 张参考图 + 融合 prompt + 音频 | `wan2.7-image` → `wan2.2-s2v-detect` → `wan2.2-s2v` | 180–360 s |
+| `pose_drive` | 图生动作 | 1 张人像 + 1 段动作视频 | `wan2.2-animate-move` (`wan-std` / `wan-pro`) | 120–300 s |
+
+### Backends
+
+| Backend | 配置方式 | 计费 |
+|---|---|---|
+| **阿里云 DashScope** | API Key + OSS bucket | 按 DashScope 模型定价 |
+| **RunningHub** | API Key + per-mode workflow_id 预设 | 按 RH 实际用量 |
+| **本地 ComfyUI** | URL + per-mode workflow 预设 | 本地推理免费 |
+
+### TTS Engines
+
+| Engine | 计费 | 音色数 |
+|---|---|---|
+| **CosyVoice** (cosyvoice-v2) | 0.20 CNY / 万字 | 12 系统 + 自定义克隆 |
+| **Edge-TTS** (Microsoft) | 免费 | 12 中文音色 |
 
 > **没有「场景预设」、「滤镜」、「美颜」**：avatar-studio 是**调度层**，所有视觉
-> 风格交回 DashScope 模型本身决定。该让 LLM/扩散模型做的事，就别让 UI 假装能做。
+> 风格交回模型/workflow 本身决定。
 
 ---
 
@@ -34,11 +49,11 @@ avatar-studio 把 DashScope 的「万相 + s2v + cosyvoice + qwen-vl」四条产
 
 | Tab | 内容 | 关键交互 |
 |---|---|---|
-| **Create** | 顶部 4-mode 切换 + 左输入 / 右预览的分栏 | 表单按 mode 动态渲染；`useDraft(mode)` 自动把草稿存到 `localStorage` |
+| **Create** | 顶部 5-mode 切换 + 后端选择 + 左输入 / 右预览的分栏 | 表单按 mode 和 backend 动态渲染；非 DashScope 后端显示 workflow 选择器 |
 | **Tasks** | 自写表格 + 详情抽屉 | 详情抽屉内含 `<CostBreakdown>`（done 任务才显示）和 `<ErrorPanel>`（failed 才显示） |
 | **Voices** | 12 个 cosyvoice-v2 系统音色 + 自定义克隆音色 | 试听、命名、克隆 |
 | **Figures** | 自定义人像形象库 | 上传图、自动 `wan2.2-s2v-detect` 预检、命名保存；`photo_speak` / `video_reface` / `avatar_compose` 可直接复用 |
-| **Settings** | API Key / 默认偏好 / 存储 / 高级 / 关于 | API Key 缺失只 warn 不抛；UI 顶部红/绿灯指示 |
+| **Settings** | 三平级后端配置 (阿里云/RH/ComfyUI) + TTS 引擎 + 默认偏好 / 存储 / 高级 / 关于 | API Key 缺失只 warn 不抛；每个后端有独立测试连接按钮 |
 
 > Voices 和 Figures 各占一个 Tab，是有意为之。**音色 ≠ 形象**，混在同一个
 > 「voice library」里既不便检索也不便复用 —— 早期 v4 计划吃过这个亏。

@@ -34,7 +34,6 @@
       "clip_sense_create",
       "clip_sense_status",
       "clip_sense_list",
-      "clip_sense_transcribe",
       "clip_sense_cancel"
     ],
     "routes": true

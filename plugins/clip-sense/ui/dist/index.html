@@ -118,6 +118,123 @@
     .error-panel__hints { list-style: disc; padding-left: 20px; font-size: 13px; color: var(--text-muted); }
     .library-card { display: flex; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-card); margin-bottom: 8px; }
     @media (max-width: 860px) { .split-layout { flex-direction: column; } .split-left { width: 100%; min-width: unset; } }
+
+    /* ── Settings page extras (mirror seedance-video) ─────────────── */
+    .folder-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .folder-row .input { flex: 1; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .deps-help {
+      font-size: 12px; color: var(--text-muted); line-height: 1.7;
+      background: var(--bg); border: 1px solid var(--border);
+      border-left: 3px solid var(--primary);
+      border-radius: 6px; padding: 10px 12px; margin-bottom: 10px;
+      white-space: pre-wrap;
+    }
+    .deps-help strong { color: var(--text); font-weight: 600; }
+    .deps-help ul { margin: 6px 0 0 18px; padding: 0; }
+    .deps-help li { margin: 2px 0; }
+    /* ── In-plugin system-dep installer ──────────────────────────── */
+    .sysdep-card {
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px; margin-top: 8px; background: var(--bg-card);
+    }
+    .sysdep-card__head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .sysdep-card__title {
+      font-size: 13px; font-weight: 600; color: var(--text); flex: 1;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .sysdep-card__badge {
+      font-size: 11px; padding: 2px 8px; border-radius: 999px;
+      display: inline-flex; align-items: center; gap: 4px;
+      background: var(--bg); border: 1px solid var(--border);
+    }
+    .sysdep-card__badge--ok { color: var(--success); background: rgba(34,197,94,.10); border-color: rgba(34,197,94,.35); }
+    .sysdep-card__badge--missing { color: var(--danger); background: rgba(239,68,68,.10); border-color: rgba(239,68,68,.35); }
+    .sysdep-card__badge--busy { color: var(--warning); background: rgba(245,158,11,.10); border-color: rgba(245,158,11,.35); }
+    .sysdep-card__path {
+      font-size: 11px; color: var(--text-dim); margin-top: 4px;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      word-break: break-all;
+    }
+    .sysdep-card__actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+    .sysdep-card__sudo-hint {
+      margin-top: 10px; padding: 8px 10px; border-radius: 6px;
+      background: rgba(245,158,11,.10); border: 1px solid rgba(245,158,11,.35);
+      font-size: 12px; color: var(--text);
+    }
+    .sysdep-card__sudo-cmd {
+      display: flex; align-items: center; gap: 6px; margin-top: 6px;
+      padding: 6px 8px; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+    .sysdep-card__sudo-cmd code { flex: 1; word-break: break-all; }
+    .sysdep-log {
+      margin-top: 10px; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--bg); overflow: hidden;
+    }
+    .sysdep-log__head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 10px; border-bottom: 1px solid var(--border);
+      font-size: 11px; color: var(--text-muted); font-weight: 500;
+    }
+    .sysdep-log__body {
+      max-height: 180px; overflow-y: auto; padding: 8px 10px;
+      margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 11px; line-height: 1.5; color: var(--text);
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .sysdep-log__body--empty { color: var(--text-dim); font-style: italic; }
+    .sysdep-spinner {
+      display: inline-block; width: 12px; height: 12px;
+      border: 2px solid var(--border); border-top-color: var(--primary);
+      border-radius: 50%; animation: sysdep-spin .8s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes sysdep-spin { to { transform: rotate(360deg); } }
+    /* ── Permissions table ───────────────────────────────────────── */
+    .perms-table { width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 12px; }
+    .perms-table th, .perms-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+    .perms-table th { font-weight: 600; color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    .perms-table tr:last-child td { border-bottom: 0; }
+    .perms-table code {
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 11px; padding: 1px 5px; border-radius: 3px;
+      background: var(--bg); border: 1px solid var(--border);
+    }
+    .perms-tag {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: 999px; font-size: 11px;
+      font-weight: 500; border: 1px solid transparent;
+    }
+    .perms-tag--ok { color: var(--success); background: rgba(34,197,94,.10); border-color: rgba(34,197,94,.35); }
+    .perms-tag--missing { color: var(--danger); background: rgba(239,68,68,.10); border-color: rgba(239,68,68,.35); }
+    /* ── In-plugin folder picker modal ──────────────────────────── */
+    .folder-picker { width: min(820px, 96vw); max-width: min(820px, 96vw); max-height: 82vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+    .folder-picker__head { padding: 16px 20px 12px; border-bottom: 1px solid var(--border); }
+    .folder-picker__title { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text); }
+    .folder-picker__crumbs { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); flex-wrap: wrap; min-height: 22px; }
+    .folder-picker__crumb { padding: 2px 8px; border-radius: 4px; cursor: pointer; transition: background .12s; user-select: none; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .folder-picker__crumb:hover { background: var(--bg-hover); color: var(--text); }
+    .folder-picker__crumb-sep { color: var(--text-muted); opacity: .5; }
+    .folder-picker__body { display: flex; flex: 1; min-height: 360px; max-height: 60vh; overflow: hidden; }
+    .folder-picker__sidebar { width: 160px; border-right: 1px solid var(--border); padding: 8px 0; overflow-y: auto; background: var(--bg-hover); flex-shrink: 0; }
+    .folder-picker__shortcut { display: flex; align-items: center; gap: 8px; padding: 7px 14px; font-size: 12px; color: var(--text); cursor: pointer; transition: background .12s; }
+    .folder-picker__shortcut:hover { background: var(--bg-card); }
+    .folder-picker__list { flex: 1; overflow-y: auto; padding: 4px 0; }
+    .folder-picker__item { display: flex; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px; color: var(--text); cursor: pointer; transition: background .1s; user-select: none; }
+    .folder-picker__item:hover { background: var(--bg-hover); }
+    .folder-picker__item-icon { width: 16px; height: 16px; flex-shrink: 0; opacity: .8; }
+    .folder-picker__item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .folder-picker__empty { padding: 32px 16px; text-align: center; font-size: 12px; color: var(--text-muted); }
+    .folder-picker__error { padding: 16px; background: rgba(239, 68, 68, .08); border-bottom: 1px solid rgba(239, 68, 68, .25); color: var(--danger); font-size: 12px; }
+    .folder-picker__foot { display: flex; align-items: center; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--border); background: var(--bg-card); }
+    .folder-picker__current { flex: 1; font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .folder-picker__newinput { flex: 1; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; background: var(--bg-card); color: var(--text); }
+    /* tiny ico wrapper used by Ico() helper (matches seedance) */
+    .ico { display: inline-flex; align-items: center; justify-content: center; width: 1em; height: 1em; vertical-align: -0.125em; flex-shrink: 0; }
+    .ico svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   </style>
 </head>
 <body>
@@ -385,6 +502,15 @@ const I18N_DICT = {
     "tasks.detail.outputDuration": "输出时长",
     "tasks.detail.createdAt": "创建时间",
     "tasks.detail.step": "当前步骤",
+    "tasks.detail.transcript": "完整字幕预览",
+    "tasks.detail.transcriptLoading": "正在加载转写文本…",
+    "tasks.detail.transcriptEmpty": "该任务暂无转写文本",
+    "tasks.detail.transcriptError": "转写文本加载失败",
+    "tasks.detail.transcriptShow": "查看字幕",
+    "tasks.detail.transcriptHide": "收起字幕",
+    "tasks.detail.transcriptCopy": "复制全文",
+    "tasks.detail.transcriptDownloadSrt": "下载 SRT",
+    "tasks.detail.transcriptCopied": "已复制到剪贴板",
     "tasks.empty.noSelection.title": "未选择任务",
     "tasks.empty.noSelection.hint": "从左侧列表选择一个任务查看详情",
     "library.title": "素材库",
@@ -392,6 +518,12 @@ const I18N_DICT = {
     "library.uploadBtn": "上传新视频",
     "library.transcribed": "已转写",
     "library.pending": "待转写",
+    "settings.section.api": "API 配置",
+    "settings.section.permissions": "插件权限",
+    "settings.section.system": "系统组件",
+    "settings.section.defaults": "默认参数",
+    "settings.section.folder": "文件夹设置",
+    "settings.section.storage": "存储用量",
     "settings.api.title": "API 配置",
     "settings.api.callout": "必填项",
     "settings.api.key.show": "显示",
@@ -399,18 +531,85 @@ const I18N_DICT = {
     "settings.api.key.save": "保存",
     "settings.api.key.helpPrefix": "获取地址: ",
     "settings.api.key.helpLink": "阿里云百炼控制台",
-    "settings.ffmpeg.title": "FFmpeg",
-    "settings.ffmpeg.status": "FFmpeg 状态",
-    "settings.ffmpeg.ok": "可用",
-    "settings.ffmpeg.notFound": "未检测到",
-    "settings.ffmpeg.path": "FFmpeg 路径",
-    "settings.ffmpeg.detect": "检测",
+    "settings.api.key.label": "DashScope API Key",
+    "settings.system.intro.strong": "FFmpeg 是 ClipSense 的硬性依赖：4 种剪辑模式都需要它来探测时长、抽取音频、剪切拼接和烧字幕。",
+    "settings.system.intro.body": "FFmpeg 是系统级组件（共享 PATH 安装），并非本插件私有——任何已经装好 ffmpeg 的机器都会自动检测到，无需重复安装；同样，安装/卸载也会影响其他用到 ffmpeg 的插件和程序。",
+    "settings.system.platform.win": "Windows: 「一键安装」会调用 winget 自动安装 Gyan.FFmpeg，无需管理员权限。",
+    "settings.system.platform.mac": "macOS: 「一键安装」会调用 Homebrew 自动安装 ffmpeg。",
+    "settings.system.platform.linux": "Linux: apt / dnf 需要 root 权限。如果 OpenAkita 以普通用户身份运行，请按提示在终端执行 sudo apt-get install ffmpeg。",
+    "settings.system.detecting": "正在检测...",
+    "settings.system.status.found": "已安装 v{ver}",
+    "settings.system.status.foundNoVer": "已安装",
+    "settings.system.status.missing": "未安装",
+    "settings.system.location": "路径：{path}",
+    "settings.system.btn.install": "一键安装",
+    "settings.system.btn.recheck": "重新检测",
+    "settings.system.btn.openHome": "查看官方文档",
+    "settings.system.btn.copyCmd": "复制命令",
+    "settings.system.btn.copied": "已复制",
+    "settings.system.btn.cancel": "取消",
+    "settings.system.btn.uninstall": "卸载",
+    "settings.system.btn.uninstallConfirmBtn": "确认卸载",
+    "settings.system.installing": "安装中... ({elapsed})",
+    "settings.system.uninstalling": "卸载中... ({elapsed})",
+    "settings.system.installed": "FFmpeg 安装成功",
+    "settings.system.installFailed": "安装失败：{msg}",
+    "settings.system.uninstalled": "FFmpeg 已卸载",
+    "settings.system.uninstallFailed": "卸载失败：{msg}",
+    "settings.system.uninstallConfirm": "确定要卸载 FFmpeg 吗？\n\n注意：FFmpeg 是系统级组件（装在 Windows 用户 PATH / macOS Homebrew / Linux /usr/bin），不是 ClipSense 插件私有的——卸载会影响 OpenAkita 上所有依赖 FFmpeg 的插件（如字幕生成、视频翻译、配音等），以及你系统上其他用到 ffmpeg 的程序。\n\n本插件 4 种剪辑模式都将无法运行。",
+    "settings.system.requiresSudo": "Linux 需要 root 权限。请在终端手动执行：",
+    "settings.system.noMethod": "当前系统暂无自动安装方案，请前往官方文档手动下载。",
+    "settings.system.logTitle": "安装日志",
+    "settings.system.logTitleUninstall": "卸载日志",
+    "settings.system.logEmpty": "暂无输出",
+    "settings.system.manualPath": "或手动指定 FFmpeg 路径",
+    "settings.system.manualPath.placeholder": "默认: ffmpeg（在 PATH 中）",
+    "settings.system.manualPath.save": "保存路径",
+    "settings.perms.intro.strong": "本插件需要以下高级权限才能完整工作。",
+    "settings.perms.intro.body": "首次安装时未自动授予；点击下方按钮一键授权（等价于在「设置中心 → 插件管理 → 权限」勾选保存）。",
+    "settings.perms.allOk": "所有所需权限已授予。",
+    "settings.perms.btn.grantAll": "一键授予所有权限",
+    "settings.perms.granting": "授予中...",
+    "settings.perms.granted": "权限已授予，插件已重新加载",
+    "settings.perms.grantFailed": "授权失败：{msg}",
+    "settings.perms.col.permission": "权限",
+    "settings.perms.col.feature": "用途",
+    "settings.perms.col.status": "状态",
+    "settings.perms.status.ok": "已授予",
+    "settings.perms.status.missing": "未授予",
     "settings.defaults.title": "默认参数",
     "settings.defaults.subtitle": "默认嵌入字幕",
     "settings.defaults.format": "默认输出格式",
+    "settings.label.outputDir": "视频输出目录",
+    "settings.outputDir.placeholder": "默认: ~/clip-sense-output/",
+    "settings.label.uploadsDir": "上传视频缓存目录",
+    "settings.uploadsDir.placeholder": "默认: <插件数据目录>/uploads/",
+    "settings.btn.browse": "选择",
+    "settings.btn.open": "打开",
+    "settings.pickOutput": "选择视频输出目录",
+    "settings.pickUploads": "选择上传缓存目录",
+    "settings.folder.openFailed": "打开文件夹失败：{msg}",
+    "settings.folder.savedTo": "已保存到 {path}",
+    "settings.stats.outputDir": "输出目录",
+    "settings.stats.uploadsDir": "上传缓存",
+    "settings.stats.tasksDir": "任务工作目录",
+    "settings.stats.fileCount": "{n} 个文件",
     "settings.storage.title": "存储",
     "settings.storage.files": "文件数",
     "settings.storage.size": "总大小",
+    "picker.title": "选择文件夹",
+    "picker.crumb.root": "返回起点",
+    "picker.shortcut.start": "起点",
+    "picker.loading": "加载中...",
+    "picker.empty": "目录为空",
+    "picker.created": "已新建文件夹「{name}」",
+    "picker.error.load": "加载失败：{msg}",
+    "picker.error.create": "新建失败：{msg}",
+    "picker.btn.cancel": "取消",
+    "picker.btn.choose": "选用此处",
+    "picker.btn.newFolder": "新建文件夹",
+    "picker.btn.confirmCreate": "新建",
+    "picker.newFolder.placeholder": "输入新文件夹名称",
     "toast.taskCreated": "任务已创建",
     "toast.createFail": "创建失败",
     "toast.needKey": "请先在设置中配置 API Key",
@@ -512,6 +711,15 @@ const I18N_DICT = {
     "tasks.detail.outputDuration": "Output",
     "tasks.detail.createdAt": "Created at",
     "tasks.detail.step": "Current step",
+    "tasks.detail.transcript": "Full transcript",
+    "tasks.detail.transcriptLoading": "Loading transcript…",
+    "tasks.detail.transcriptEmpty": "No transcript available for this task",
+    "tasks.detail.transcriptError": "Failed to load transcript",
+    "tasks.detail.transcriptShow": "Show transcript",
+    "tasks.detail.transcriptHide": "Hide transcript",
+    "tasks.detail.transcriptCopy": "Copy text",
+    "tasks.detail.transcriptDownloadSrt": "Download SRT",
+    "tasks.detail.transcriptCopied": "Copied to clipboard",
     "tasks.empty.noSelection.title": "No task selected",
     "tasks.empty.noSelection.hint": "Pick a task on the left to view its details.",
     "library.title": "Library",
@@ -519,6 +727,12 @@ const I18N_DICT = {
     "library.uploadBtn": "Upload Video",
     "library.transcribed": "Transcribed",
     "library.pending": "Pending",
+    "settings.section.api": "API configuration",
+    "settings.section.permissions": "Plugin permissions",
+    "settings.section.system": "System components",
+    "settings.section.defaults": "Default parameters",
+    "settings.section.folder": "Folders",
+    "settings.section.storage": "Storage usage",
     "settings.api.title": "API configuration",
     "settings.api.callout": "Required",
     "settings.api.key.show": "Show",
@@ -526,18 +740,85 @@ const I18N_DICT = {
     "settings.api.key.save": "Save",
     "settings.api.key.helpPrefix": "Get a key at: ",
     "settings.api.key.helpLink": "Alibaba Cloud Bailian Console",
-    "settings.ffmpeg.title": "FFmpeg",
-    "settings.ffmpeg.status": "FFmpeg status",
-    "settings.ffmpeg.ok": "Available",
-    "settings.ffmpeg.notFound": "Not found",
-    "settings.ffmpeg.path": "FFmpeg path",
-    "settings.ffmpeg.detect": "Detect",
+    "settings.api.key.label": "DashScope API Key",
+    "settings.system.intro.strong": "FFmpeg is a hard dependency for ClipSense — every editing mode needs it for probing, audio extraction, segment cut/concat, and subtitle burn-in.",
+    "settings.system.intro.body": "FFmpeg is a system-level component (installed on the shared PATH) and is NOT private to this plugin. Any machine that already has ffmpeg will be auto-detected with no need to reinstall; conversely, install/uninstall here affects every other plugin and program on your system that uses ffmpeg.",
+    "settings.system.platform.win": "Windows: \"Install\" runs winget to install Gyan.FFmpeg, no admin rights required.",
+    "settings.system.platform.mac": "macOS: \"Install\" runs Homebrew to install ffmpeg.",
+    "settings.system.platform.linux": "Linux: apt / dnf needs root. If OpenAkita runs as a non-root user, copy the suggested command and run it in a terminal.",
+    "settings.system.detecting": "Detecting...",
+    "settings.system.status.found": "Installed v{ver}",
+    "settings.system.status.foundNoVer": "Installed",
+    "settings.system.status.missing": "Not installed",
+    "settings.system.location": "Path: {path}",
+    "settings.system.btn.install": "Install",
+    "settings.system.btn.recheck": "Recheck",
+    "settings.system.btn.openHome": "Official docs",
+    "settings.system.btn.copyCmd": "Copy command",
+    "settings.system.btn.copied": "Copied",
+    "settings.system.btn.cancel": "Cancel",
+    "settings.system.btn.uninstall": "Uninstall",
+    "settings.system.btn.uninstallConfirmBtn": "Confirm uninstall",
+    "settings.system.installing": "Installing... ({elapsed})",
+    "settings.system.uninstalling": "Uninstalling... ({elapsed})",
+    "settings.system.installed": "FFmpeg installed",
+    "settings.system.installFailed": "Install failed: {msg}",
+    "settings.system.uninstalled": "FFmpeg uninstalled",
+    "settings.system.uninstallFailed": "Uninstall failed: {msg}",
+    "settings.system.uninstallConfirm": "Uninstall FFmpeg?\n\nFFmpeg is a system-level component (Windows user PATH / macOS Homebrew / Linux /usr/bin), not private to ClipSense — uninstalling will break every other OpenAkita plugin that depends on FFmpeg (subtitle, dubbing, translation…) plus any other program on your system that uses it.\n\nAll 4 ClipSense editing modes will stop working.",
+    "settings.system.requiresSudo": "Linux needs root. Run this in a terminal:",
+    "settings.system.noMethod": "No automated install method on this system. Please follow the official docs to install manually.",
+    "settings.system.logTitle": "Install log",
+    "settings.system.logTitleUninstall": "Uninstall log",
+    "settings.system.logEmpty": "No output yet",
+    "settings.system.manualPath": "Or specify the FFmpeg path manually",
+    "settings.system.manualPath.placeholder": "Default: ffmpeg (on PATH)",
+    "settings.system.manualPath.save": "Save path",
+    "settings.perms.intro.strong": "ClipSense needs the following advanced permissions to work end-to-end.",
+    "settings.perms.intro.body": "Not auto-granted on first install — click below to grant them all (equivalent to ticking the boxes in Setup Center → Plugin Manager → Permissions).",
+    "settings.perms.allOk": "All required permissions granted.",
+    "settings.perms.btn.grantAll": "Grant all permissions",
+    "settings.perms.granting": "Granting...",
+    "settings.perms.granted": "Permissions granted, plugin reloaded",
+    "settings.perms.grantFailed": "Grant failed: {msg}",
+    "settings.perms.col.permission": "Permission",
+    "settings.perms.col.feature": "Feature",
+    "settings.perms.col.status": "Status",
+    "settings.perms.status.ok": "Granted",
+    "settings.perms.status.missing": "Missing",
     "settings.defaults.title": "Default parameters",
     "settings.defaults.subtitle": "Default burn subtitles",
     "settings.defaults.format": "Default output format",
+    "settings.label.outputDir": "Video output folder",
+    "settings.outputDir.placeholder": "Default: ~/clip-sense-output/",
+    "settings.label.uploadsDir": "Upload cache folder",
+    "settings.uploadsDir.placeholder": "Default: <plugin data dir>/uploads/",
+    "settings.btn.browse": "Browse",
+    "settings.btn.open": "Open",
+    "settings.pickOutput": "Pick output folder",
+    "settings.pickUploads": "Pick upload cache folder",
+    "settings.folder.openFailed": "Open folder failed: {msg}",
+    "settings.folder.savedTo": "Saved to {path}",
+    "settings.stats.outputDir": "Output dir",
+    "settings.stats.uploadsDir": "Upload cache",
+    "settings.stats.tasksDir": "Task workdir",
+    "settings.stats.fileCount": "{n} files",
     "settings.storage.title": "Storage",
     "settings.storage.files": "Files",
     "settings.storage.size": "Total size",
+    "picker.title": "Pick a folder",
+    "picker.crumb.root": "Back to start",
+    "picker.shortcut.start": "Start",
+    "picker.loading": "Loading...",
+    "picker.empty": "Empty",
+    "picker.created": "Created \"{name}\"",
+    "picker.error.load": "Load failed: {msg}",
+    "picker.error.create": "Create failed: {msg}",
+    "picker.btn.cancel": "Cancel",
+    "picker.btn.choose": "Choose this",
+    "picker.btn.newFolder": "New folder",
+    "picker.btn.confirmCreate": "Create",
+    "picker.newFolder.placeholder": "New folder name",
     "toast.taskCreated": "Task created",
     "toast.createFail": "Create failed",
     "toast.needKey": "Please configure API Key in Settings first",
@@ -601,6 +882,36 @@ function modeList(t) {
 function OAIcon({ name, style }) {
   const svg = (window.OpenAkitaIcons && window.OpenAkitaIcons[name]) ? window.OpenAkitaIcons[name]() : "";
   return <span className="oa-icon" style={style} dangerouslySetInnerHTML={{ __html: svg }} />;
+}
+// Seedance-style alias used by the new Settings panels (FfmpegInstaller /
+// PermissionsPanel / FolderPickerModal). Wraps the SVG in a tiny <span>
+// with the .ico class so it inherits sizing from font-size and its parent.
+function Ico({ name, style: s }) {
+  const svg = (window.OpenAkitaIcons && window.OpenAkitaIcons[name]) ? window.OpenAkitaIcons[name]() : "";
+  return <span className="ico" style={s} dangerouslySetInnerHTML={{ __html: svg }} />;
+}
+
+// Tiny clipboard helper — falls back to a hidden textarea + execCommand
+// for the iframe / non-secure-context cases where navigator.clipboard is
+// unavailable. Never throws (best-effort copy).
+function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (_) {}
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = String(text == null ? "" : text);
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    return true;
+  } catch (_) { return false; }
 }
 
 // ── Status helpers ──
@@ -974,8 +1285,9 @@ function CreateTab({ apiReady, ffmpegReady, goToTasks }) {
             <div className="form-row">
               <div className="grid-2" style={{gap:8}}>
                 {[
-                  { key: "removeFiller", label: "去废话" },
-                  { key: "removeStutter", label: "去口误" },
+                  { key: "remove_filler", label: "去废话" },
+                  { key: "remove_stutter", label: "去口误" },
+                  { key: "remove_repetition", label: "去重复" },
                 ].map(sw => (
                   <div key={sw.key} className="flex items-center gap-2">
                     <div className={`switch ${params[sw.key] !== false ? "on" : ""}`}
@@ -1084,6 +1396,100 @@ function CreateTab({ apiReady, ffmpegReady, goToTasks }) {
   );
 }
 
+// ─── Transcript Card ───
+// Shown inside the Tasks-tab detail panel when the user clicks the
+// "查看字幕" button. Reads from GET /tasks/{id}/transcript and renders the
+// per-sentence timeline plus the joined full text. SRT download reuses the
+// existing GET /tasks/{id}/subtitle endpoint when the pipeline produced one.
+function _fmtTs(sec) {
+  const s = Number(sec) || 0;
+  const m = Math.floor(s / 60);
+  const r = s - m * 60;
+  return m + ":" + (r < 10 ? "0" : "") + r.toFixed(1);
+}
+
+function TranscriptCard({ t, taskId, hasSubtitleFile, loading, error, data, onReload }) {
+  const sentences = (data && Array.isArray(data.sentences)) ? data.sentences : null;
+  const fullText = (data && data.full_text) || (sentences ? sentences.map(s => s.text || "").join(" ") : "");
+
+  const copyAll = useCallback(async () => {
+    if (!fullText) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(fullText);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = fullText; document.body.appendChild(ta);
+        ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
+      }
+      showToast(t("tasks.detail.transcriptCopied"));
+    } catch {}
+  }, [fullText, t]);
+
+  const subtitleUrl = _detectApiBase()
+    + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/clip-sense")
+    + "/tasks/" + taskId + "/subtitle";
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between" style={{marginBottom: 12}}>
+        <span className="card-title" style={{marginBottom: 0, display:"inline-flex", alignItems:"center", gap:6}}>
+          <OAIcon name="mic" />
+          {t("tasks.detail.transcript")}
+        </span>
+        <div className="flex gap-2">
+          {hasSubtitleFile && (
+            <button className="btn btn-sm" onClick={() => window.open(subtitleUrl)}>
+              <span style={{display:"inline-flex", alignItems:"center", gap:4}}>
+                <OAIcon name="download" />
+                {t("tasks.detail.transcriptDownloadSrt")}
+              </span>
+            </button>
+          )}
+          {fullText && (
+            <button className="btn btn-sm" onClick={copyAll}>{t("tasks.detail.transcriptCopy")}</button>
+          )}
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="empty-state" style={{padding: "16px"}}>
+          <div className="spinner" style={{marginBottom: 8}} />
+          <span className="text-sm text-muted">{t("tasks.detail.transcriptLoading")}</span>
+        </div>
+      ) : error ? (
+        <div className="empty-state" style={{padding: "16px", color: "var(--danger, #dc2626)"}}>
+          <div className="text-sm" style={{marginBottom: 8}}>{t("tasks.detail.transcriptError")}: {error}</div>
+          <button className="btn btn-sm" onClick={onReload}>↻</button>
+        </div>
+      ) : !data || (!sentences || sentences.length === 0) && !fullText ? (
+        <div className="empty-state" style={{padding: "16px"}}>
+          <span className="text-sm text-muted">{t("tasks.detail.transcriptEmpty")}</span>
+        </div>
+      ) : (
+        <div className="transcript-body" style={{maxHeight: 360, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, padding: 10, background: "var(--bg-elevated, #fafbfc)"}}>
+          {sentences && sentences.length > 0 ? (
+            sentences.map((s, i) => {
+              const start = s.start_sec != null ? s.start_sec : (s.start != null ? s.start : 0);
+              const end = s.end_sec != null ? s.end_sec : (s.end != null ? s.end : 0);
+              return (
+                <div key={i} className="transcript-line" style={{display: "flex", gap: 10, padding: "4px 0", borderBottom: i < sentences.length - 1 ? "1px dashed var(--border)" : "none"}}>
+                  <span className="text-xs text-dim" style={{flex: "0 0 auto", fontFamily: "ui-monospace, monospace", paddingTop: 2}}>
+                    {_fmtTs(start)}–{_fmtTs(end)}
+                  </span>
+                  <span className="text-sm" style={{flex: 1, lineHeight: 1.55, whiteSpace: "pre-wrap"}}>{s.text || ""}</span>
+                </div>
+              );
+            })
+          ) : (
+            <pre style={{margin: 0, whiteSpace: "pre-wrap", fontFamily: "inherit", fontSize: 13, lineHeight: 1.6}}>{fullText}</pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Tasks Tab ───
 function TasksTab({ refreshSignal = 0 }) {
   const t = useT();
@@ -1094,6 +1500,48 @@ function TasksTab({ refreshSignal = 0 }) {
   const [modeFilter, setModeFilter] = useState("");
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(true);
+  // ── transcript preview state (lazy, per-selected-task) ──
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const [transcriptData, setTranscriptData] = useState(null);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
+  const [transcriptError, setTranscriptError] = useState(null);
+
+  // Reset transcript view whenever the user picks a different task so
+  // we don't show stale text (or stale "loading" / error) from another task.
+  useEffect(() => {
+    setTranscriptOpen(false);
+    setTranscriptData(null);
+    setTranscriptLoading(false);
+    setTranscriptError(null);
+  }, [selected?.id]);
+
+  const loadTranscript = useCallback(async (taskId) => {
+    setTranscriptLoading(true);
+    setTranscriptError(null);
+    try {
+      const r = await pluginApi("GET", "/tasks/" + taskId + "/transcript");
+      if (r.ok && r.body) {
+        setTranscriptData(r.body);
+      } else if (r.status === 404) {
+        setTranscriptData({ sentences: [], full_text: "" });
+      } else {
+        setTranscriptError((r.body && r.body.detail) || "HTTP " + r.status);
+      }
+    } catch (e) {
+      setTranscriptError(String(e && e.message || e));
+    } finally {
+      setTranscriptLoading(false);
+    }
+  }, []);
+
+  const toggleTranscript = useCallback(() => {
+    if (!selected) return;
+    const next = !transcriptOpen;
+    setTranscriptOpen(next);
+    if (next && !transcriptData && !transcriptLoading) {
+      loadTranscript(selected.id);
+    }
+  }, [selected, transcriptOpen, transcriptData, transcriptLoading, loadTranscript]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1222,6 +1670,14 @@ function TasksTab({ refreshSignal = 0 }) {
                   {(selected.status === "running" || selected.status === "pending") && (
                     <button className="btn btn-sm" onClick={() => handleCancel(selected.id)}>{t("tasks.detail.cancel")}</button>
                   )}
+                  {selected.transcript_id && (
+                    <button className="btn btn-sm" onClick={toggleTranscript}>
+                      <span style={{display:"inline-flex", alignItems:"center", gap:4}}>
+                        <OAIcon name="mic" />
+                        {transcriptOpen ? t("tasks.detail.transcriptHide") : t("tasks.detail.transcriptShow")}
+                      </span>
+                    </button>
+                  )}
                   {selected.status === "succeeded" && (
                     <button className="btn btn-sm btn-primary"
                             onClick={() => downloadOutput(selected.id, (selected.source_video_path || "output").split(/[/\\]/).pop())}>
@@ -1264,6 +1720,17 @@ function TasksTab({ refreshSignal = 0 }) {
                 {selected.output_duration_sec && <div><span className="text-xs text-dim">{t("tasks.detail.outputDuration")}</span><div className="text-sm">{(selected.output_duration_sec / 60).toFixed(1)} min</div></div>}
               </div>
             </div>
+
+            {transcriptOpen && selected.transcript_id && (
+              <TranscriptCard
+                t={t}
+                taskId={selected.id}
+                hasSubtitleFile={!!selected.subtitle_path}
+                loading={transcriptLoading}
+                error={transcriptError}
+                data={transcriptData}
+                onReload={() => loadTranscript(selected.id)} />
+            )}
           </div>
         ) : (
           <div className="oa-preview-empty">
@@ -1346,20 +1813,638 @@ function LibraryTab() {
   );
 }
 
+// ─── In-plugin folder picker (mirror seedance-video) ───
+// Native Tauri folder dialogs have been unreliable across capability/version
+// combos, so we serve our own browser-style picker backed by
+// /storage/list-dir + /storage/mkdir. This requires zero host or Tauri
+// cooperation and works in plain web mode too.
+function FolderPickerModal({ open, title, initialPath, onCancel, onSelect }) {
+  const t = useT();
+  const [path, setPath] = useState("");
+  const [items, setItems] = useState([]);
+  const [parent, setParent] = useState(null);
+  const [isAnchor, setIsAnchor] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [newFolderMode, setNewFolderMode] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const newFolderInputRef = useRef(null);
+
+  const load = useCallback(async (p) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const qs = p ? `?path=${encodeURIComponent(p)}` : "";
+      const r = await pluginApi("GET", `/storage/list-dir${qs}`);
+      if (r.ok && r.body && r.body.ok) {
+        setPath(r.body.path || "");
+        setParent(r.body.parent || null);
+        setItems(r.body.items || []);
+        setIsAnchor(!!r.body.is_anchor);
+      } else {
+        setError((r.body && r.body.detail) || `HTTP ${r.status || "?"}`);
+        if (p) {
+          const r2 = await pluginApi("GET", `/storage/list-dir`);
+          if (r2.ok && r2.body && r2.body.ok) {
+            setPath("");
+            setParent(null);
+            setItems(r2.body.items || []);
+            setIsAnchor(true);
+          }
+        }
+      }
+    } catch (e) {
+      setError(String(e && e.message || e));
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    setNewFolderMode(false);
+    setNewFolderName("");
+    load(initialPath || "");
+  }, [open, initialPath, load]);
+
+  useEffect(() => {
+    if (newFolderMode && newFolderInputRef.current) {
+      newFolderInputRef.current.focus();
+    }
+  }, [newFolderMode]);
+
+  const handleNavigate = (p) => {
+    setNewFolderMode(false);
+    load(p);
+  };
+
+  const handleCreate = async () => {
+    const name = (newFolderName || "").trim();
+    if (!name || !path) return;
+    try {
+      const r = await pluginApi("POST", "/storage/mkdir", { parent: path, name });
+      if (r.ok && r.body && r.body.ok) {
+        showToast(_tr("picker.created", { name }));
+        setNewFolderMode(false);
+        setNewFolderName("");
+        await load(path);
+      } else {
+        showToast(_tr("picker.error.create", { msg: (r.body && r.body.detail) || "" }), "error");
+      }
+    } catch (e) {
+      showToast(_tr("picker.error.create", { msg: String(e && e.message || e) }), "error");
+    }
+  };
+
+  // Build breadcrumb segments (Windows + Unix). Each is clickable.
+  const crumbs = (() => {
+    if (!path) return [];
+    const norm = path.replace(/\\/g, "/");
+    const parts = norm.split("/").filter(Boolean);
+    const out = [];
+    if (norm.startsWith("/")) {
+      out.push({ name: "/", path: "/" });
+      let acc = "";
+      for (const seg of parts) {
+        acc += "/" + seg;
+        out.push({ name: seg, path: acc });
+      }
+    } else if (parts[0] && /^[A-Za-z]:$/.test(parts[0])) {
+      out.push({ name: parts[0], path: parts[0] + "/" });
+      let acc = parts[0];
+      for (let i = 1; i < parts.length; i++) {
+        acc += "/" + parts[i];
+        out.push({ name: parts[i], path: acc });
+      }
+    } else {
+      out.push({ name: path, path });
+    }
+    return out;
+  })();
+
+  if (!open) return null;
+  return (
+    <div className="modal-mask" onClick={onCancel}>
+      <div className="modal-card folder-picker" onClick={e => e.stopPropagation()}>
+        <div className="folder-picker__head">
+          <div className="folder-picker__title">{title || t("picker.title")}</div>
+          <div className="folder-picker__crumbs">
+            <span className="folder-picker__crumb" onClick={() => handleNavigate("")}
+                  title={t("picker.crumb.root")}><Ico name="folderOpen"/></span>
+            {crumbs.map((c, i) => (
+              <React.Fragment key={i}>
+                <span className="folder-picker__crumb-sep">/</span>
+                <span className="folder-picker__crumb" onClick={() => handleNavigate(c.path)}
+                      title={c.path}>{c.name}</span>
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+
+        {error && (
+          <div className="folder-picker__error">{_tr("picker.error.load", { msg: error })}</div>
+        )}
+
+        <div className="folder-picker__body">
+          <div className="folder-picker__sidebar">
+            <div className="folder-picker__shortcut" onClick={() => handleNavigate("")}>
+              <Ico name="folder"/>{t("picker.shortcut.start")}
+            </div>
+          </div>
+          <div className="folder-picker__list">
+            {loading && <div className="folder-picker__empty">{t("picker.loading")}</div>}
+            {!loading && !isAnchor && parent != null && (
+              <div className="folder-picker__item" onClick={() => handleNavigate(parent)}>
+                <span className="folder-picker__item-icon">↰</span>
+                <span className="folder-picker__item-name">..</span>
+              </div>
+            )}
+            {!loading && items.length === 0 && (
+              <div className="folder-picker__empty">{t("picker.empty")}</div>
+            )}
+            {!loading && items.map((it) => (
+              <div key={it.path} className="folder-picker__item"
+                   onClick={() => handleNavigate(it.path)} title={it.path}>
+                <span className="folder-picker__item-icon"><Ico name="folder"/></span>
+                <span className="folder-picker__item-name">{it.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="folder-picker__foot">
+          {newFolderMode ? (
+            <>
+              <input ref={newFolderInputRef} className="folder-picker__newinput"
+                     value={newFolderName} onChange={e => setNewFolderName(e.target.value)}
+                     onKeyDown={e => {
+                       if (e.key === "Enter") handleCreate();
+                       if (e.key === "Escape") { setNewFolderMode(false); setNewFolderName(""); }
+                     }}
+                     placeholder={t("picker.newFolder.placeholder")} />
+              <button className="btn btn-sm" onClick={() => { setNewFolderMode(false); setNewFolderName(""); }}>{t("picker.btn.cancel")}</button>
+              <button className="btn btn-sm btn-primary" disabled={!newFolderName.trim()} onClick={handleCreate}>{t("picker.btn.confirmCreate")}</button>
+            </>
+          ) : (
+            <>
+              <span className="folder-picker__current" title={path}>{path || ""}</span>
+              <button className="btn btn-sm" disabled={!path || isAnchor}
+                      onClick={() => setNewFolderMode(true)}>{t("picker.btn.newFolder")}</button>
+              <button className="btn btn-sm" onClick={onCancel}>{t("picker.btn.cancel")}</button>
+              <button className="btn btn-sm btn-primary" disabled={!path || isAnchor}
+                      onClick={() => onSelect(path)}>{t("picker.btn.choose")}</button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Permissions panel (mirror seedance-video) ───
+// Drives the in-app "Grant" banner so first-time users are not silently
+// broken by an un-granted manifest permission.
+function PermissionsPanel({ status, onChanged }) {
+  const t = useT();
+  const [granting, setGranting] = useState(false);
+
+  if (!status) {
+    return (
+      <div className="sysdep-card">
+        <div className="sysdep-card__head">
+          <span className="sysdep-spinner"/>
+          <span className="sysdep-card__title">{t("settings.system.detecting")}</span>
+        </div>
+      </div>
+    );
+  }
+
+  const missing = status.missing || [];
+  const checks = status.checks || [];
+  const allOk = missing.length === 0;
+
+  const grantAll = async () => {
+    if (!missing.length) return;
+    setGranting(true);
+    try {
+      const r = await pluginApi("POST", "/_admin/permissions/grant", {
+        permissions: missing,
+        reload: true,
+      });
+      const body = r.body || {};
+      if (body.ok) {
+        showToast(_tr("settings.perms.granted"));
+        if (onChanged) await onChanged();
+      } else {
+        showToast(_tr("settings.perms.grantFailed", { msg: body.error || "unknown" }), "error");
+      }
+    } catch (e) {
+      showToast(_tr("settings.perms.grantFailed", { msg: e.message || "network error" }), "error");
+    }
+    setGranting(false);
+  };
+
+  return (
+    <div className="sysdep-card">
+      <div className="sysdep-card__head">
+        <div className="sysdep-card__title">
+          <Ico name="key"/> {t("settings.section.permissions")}
+          {allOk
+            ? <span className="sysdep-card__badge sysdep-card__badge--ok">
+                <Ico name="check"/> {t("settings.perms.allOk")}
+              </span>
+            : <span className="sysdep-card__badge sysdep-card__badge--missing">
+                <Ico name="warn"/> {missing.length}
+              </span>}
+        </div>
+      </div>
+      {!allOk && (
+        <div className="deps-help" style={{marginTop:10, marginBottom:0}}>
+          <strong>{t("settings.perms.intro.strong")}</strong>
+          <div style={{marginTop:4}}>{t("settings.perms.intro.body")}</div>
+        </div>
+      )}
+      <table className="perms-table">
+        <thead>
+          <tr>
+            <th>{t("settings.perms.col.permission")}</th>
+            <th>{t("settings.perms.col.feature")}</th>
+            <th style={{width:90}}>{t("settings.perms.col.status")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {checks.map(c => (
+            <tr key={c.permission}>
+              <td><code>{c.permission}</code></td>
+              <td>{c.feature}</td>
+              <td>
+                {c.granted
+                  ? <span className="perms-tag perms-tag--ok"><Ico name="check"/> {t("settings.perms.status.ok")}</span>
+                  : <span className="perms-tag perms-tag--missing"><Ico name="warn"/> {t("settings.perms.status.missing")}</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {!allOk && (
+        <div className="sysdep-card__actions">
+          <button className="btn btn-sm btn-primary" onClick={grantAll} disabled={granting}>
+            {granting
+              ? <><span className="sysdep-spinner"/> {t("settings.perms.granting")}</>
+              : <><Ico name="check"/> {t("settings.perms.btn.grantAll")}</>}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── FFmpeg installer card (mirror seedance-video) ───
+// Fire-and-poll one-click install/uninstall via winget/brew/apt with a
+// tail-50 log panel. Replaces the dumb path-input field clip-sense had
+// in v1.0.0 — we keep that as a fallback inside SettingsTab.
+function FfmpegInstaller({ onInstalled, onUninstalled }) {
+  const t = useT();
+  const [snap, setSnap] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busyOp, setBusyOp] = useState("");
+  const [status, setStatus] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [confirmingUninstall, setConfirmingUninstall] = useState(false);
+  const [rechecking, setRechecking] = useState(false);
+  const pollRef = useRef(null);
+  const logRef = useRef(null);
+  const opNotifiedRef = useRef(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const r = await pluginApi("GET", "/system/components");
+      const item = ((r.body && r.body.items) || []).find(x => x.id === "ffmpeg");
+      if (item) {
+        setSnap(item);
+        if (item.busy) {
+          setBusyOp((item.last_install && item.last_install.op_kind) || "install");
+        }
+      }
+    } catch (e) {
+      setSnap({ id: "ffmpeg", found: false, methods: [], uninstall_methods: [], is_root: false });
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [status && status.log_tail && status.log_tail.length]);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }, []);
+
+  useEffect(() => {
+    if (!busyOp) { stopPolling(); return; }
+    opNotifiedRef.current = false;
+    const tick = async () => {
+      try {
+        const r = await pluginApi("GET", "/system/ffmpeg/status");
+        const st = r.body || {};
+        setStatus(st);
+        if (!st.busy) {
+          stopPolling();
+          const finishedOp = busyOp;
+          setBusyOp("");
+          await refresh();
+          if (opNotifiedRef.current) return;
+          opNotifiedRef.current = true;
+          if (finishedOp === "uninstall") {
+            if (!st.found) {
+              showToast(_tr("settings.system.uninstalled"));
+              if (onUninstalled) onUninstalled();
+            } else {
+              const msg = st.error || _tr("settings.system.status.found", { ver: st.version || "?" });
+              showToast(_tr("settings.system.uninstallFailed", { msg }), "error");
+            }
+          } else {
+            if (st.found) {
+              showToast(_tr("settings.system.installed"));
+              if (onInstalled) onInstalled(true);
+            } else {
+              const msg = st.error || _tr("settings.system.status.missing");
+              showToast(_tr("settings.system.installFailed", { msg }), "error");
+            }
+          }
+        }
+      } catch (e) {}
+    };
+    tick();
+    pollRef.current = setInterval(tick, 3000);
+    return stopPolling;
+  }, [busyOp, refresh, stopPolling, onInstalled, onUninstalled]);
+
+  useEffect(() => () => stopPolling(), [stopPolling]);
+
+  const formatElapsed = (sec) => {
+    const s = Math.max(0, Math.round(sec || 0));
+    const mm = String(Math.floor(s / 60)).padStart(2, "0");
+    const ss = String(s % 60).padStart(2, "0");
+    return mm + ":" + ss;
+  };
+
+  const startInstall = async (methodIndex) => {
+    setStatus({ busy: true, log_tail: [], elapsed_sec: 0, op_kind: "install" });
+    setBusyOp("install");
+    try {
+      const r = await pluginApi("POST", "/system/ffmpeg/install", { method_index: methodIndex });
+      const body = r.body || {};
+      if (body.ok === false) {
+        setBusyOp("");
+        showToast(_tr("settings.system.installFailed", { msg: body.error || "unknown" }), "error");
+      }
+    } catch (e) {
+      setBusyOp("");
+      showToast(_tr("settings.system.installFailed", { msg: e.message || "network error" }), "error");
+    }
+  };
+
+  const startUninstall = async (methodIndex) => {
+    setConfirmingUninstall(false);
+    setStatus({ busy: true, log_tail: [], elapsed_sec: 0, op_kind: "uninstall" });
+    setBusyOp("uninstall");
+    try {
+      const r = await pluginApi("POST", "/system/ffmpeg/uninstall", { method_index: methodIndex });
+      const body = r.body || {};
+      if (body.ok === false) {
+        setBusyOp("");
+        showToast(_tr("settings.system.uninstallFailed", { msg: body.error || "unknown" }), "error");
+      }
+    } catch (e) {
+      setBusyOp("");
+      showToast(_tr("settings.system.uninstallFailed", { msg: e.message || "network error" }), "error");
+    }
+  };
+
+  const handleRecheck = async () => {
+    if (rechecking || busyOp) return;
+    setRechecking(true);
+    const t0 = Date.now();
+    try { await refresh(); }
+    finally {
+      const elapsed = Date.now() - t0;
+      const minDelay = 400;
+      if (elapsed < minDelay) await new Promise(r => setTimeout(r, minDelay - elapsed));
+      setRechecking(false);
+    }
+  };
+
+  const copyCmd = (cmd) => {
+    if (!cmd) return;
+    copyToClipboard(cmd);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  if (loading) {
+    return (
+      <div className="sysdep-card">
+        <div className="sysdep-card__head">
+          <span className="sysdep-spinner"/>
+          <span className="sysdep-card__title">{t("settings.system.detecting")}</span>
+        </div>
+      </div>
+    );
+  }
+
+  const found = !!(snap && snap.found);
+  const methods = (snap && snap.methods) || [];
+  const uninstallMethods = (snap && snap.uninstall_methods) || [];
+  const isRoot = !!(snap && snap.is_root);
+  const installing = busyOp === "install";
+  const uninstalling = busyOp === "uninstall";
+  const busy = !!busyOp;
+  const liveStatus = busy ? status : ((snap && snap.last_install) || null);
+  const logLines = (liveStatus && liveStatus.log_tail) || [];
+  const lastOpKind = (liveStatus && liveStatus.op_kind) || "install";
+
+  const primaryIdx = (() => {
+    for (let i = 0; i < methods.length; i++) {
+      const m = methods[i];
+      if (m.strategy === "manual") continue;
+      if (m.requires_sudo && !isRoot) continue;
+      return i;
+    }
+    return methods.findIndex(m => m.strategy !== "manual");
+  })();
+  const primary = primaryIdx >= 0 ? methods[primaryIdx] : null;
+  const manualMethod = methods.find(m => m.strategy === "manual");
+  const blockingSudoMethod = (!found && primary == null)
+    ? methods.find(m => m.requires_sudo && !isRoot)
+    : null;
+
+  const uninstallPrimaryIdx = (() => {
+    for (let i = 0; i < uninstallMethods.length; i++) {
+      const m = uninstallMethods[i];
+      if (m.strategy === "manual") continue;
+      if (m.requires_sudo && !isRoot) continue;
+      return i;
+    }
+    return -1;
+  })();
+  const uninstallPrimary = uninstallPrimaryIdx >= 0 ? uninstallMethods[uninstallPrimaryIdx] : null;
+
+  return (
+    <div className="sysdep-card">
+      <div className="sysdep-card__head">
+        <div className="sysdep-card__title">
+          <Ico name="package"/> FFmpeg
+          {uninstalling
+            ? <span className="sysdep-card__badge sysdep-card__badge--busy">
+                <span className="sysdep-spinner"/>
+                {t("settings.system.uninstalling", { elapsed: formatElapsed(liveStatus && liveStatus.elapsed_sec) })}
+              </span>
+            : installing
+              ? <span className="sysdep-card__badge sysdep-card__badge--busy">
+                  <span className="sysdep-spinner"/>
+                  {t("settings.system.installing", { elapsed: formatElapsed(liveStatus && liveStatus.elapsed_sec) })}
+                </span>
+              : found
+                ? <span className="sysdep-card__badge sysdep-card__badge--ok">
+                    <Ico name="check"/>
+                    {snap.version
+                      ? t("settings.system.status.found", { ver: snap.version })
+                      : t("settings.system.status.foundNoVer")}
+                  </span>
+                : <span className="sysdep-card__badge sysdep-card__badge--missing">
+                    <Ico name="warn"/> {t("settings.system.status.missing")}
+                  </span>}
+        </div>
+      </div>
+      {found && snap.location && (
+        <div className="sysdep-card__path">{t("settings.system.location", { path: snap.location })}</div>
+      )}
+
+      <div className="sysdep-card__actions">
+        {!busy && !found && primary && (
+          <button className="btn btn-sm btn-primary"
+                  onClick={() => startInstall(primaryIdx)}
+                  title={primary.command_hint || primary.strategy}>
+            <Ico name="package"/>{" "}
+            {t("settings.system.btn.install")}
+          </button>
+        )}
+        {!busy && found && uninstallPrimary && !confirmingUninstall && (
+          <button className="btn btn-sm btn-danger"
+                  onClick={() => setConfirmingUninstall(true)}
+                  title={uninstallPrimary.command_hint || uninstallPrimary.strategy}
+                  style={{borderColor:"var(--danger)", color:"var(--danger)"}}>
+            <Ico name="trash"/>{" "}
+            {t("settings.system.btn.uninstall")}
+          </button>
+        )}
+        {!busy && (
+          <button className="btn btn-sm" onClick={handleRecheck} disabled={rechecking}>
+            {rechecking
+              ? <><span className="sysdep-spinner"/>{" "}{t("settings.system.detecting")}</>
+              : <><Ico name="refresh"/> {t("settings.system.btn.recheck")}</>}
+          </button>
+        )}
+        {snap && snap.homepage && (
+          <a className="btn btn-sm" href={snap.homepage} target="_blank" rel="noopener noreferrer">
+            <Ico name="link"/> {t("settings.system.btn.openHome")}
+          </a>
+        )}
+      </div>
+
+      {!busy && found && confirmingUninstall && uninstallPrimary && (
+        <div className="sysdep-card__sudo-hint"
+             style={{borderColor:"var(--danger)", background:"rgba(239,68,68,.08)"}}>
+          <div style={{whiteSpace:"pre-wrap", color:"var(--text)", fontSize:12, lineHeight:1.6}}>
+            {t("settings.system.uninstallConfirm")}
+          </div>
+          <div className="sysdep-card__sudo-cmd" style={{marginTop:10}}>
+            <code>{uninstallPrimary.command_hint || uninstallPrimary.strategy}</code>
+          </div>
+          <div style={{display:"flex", gap:6, marginTop:10, justifyContent:"flex-end"}}>
+            <button className="btn btn-sm" onClick={() => setConfirmingUninstall(false)}>
+              {t("settings.system.btn.cancel")}
+            </button>
+            <button className="btn btn-sm btn-danger"
+                    style={{background:"var(--danger)", color:"#fff", borderColor:"var(--danger)"}}
+                    onClick={() => startUninstall(uninstallPrimaryIdx)}>
+              <Ico name="trash"/>{" "}{t("settings.system.btn.uninstallConfirmBtn")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!found && !busy && !primary && manualMethod && !blockingSudoMethod && (
+        <div className="sysdep-card__sudo-hint" style={{borderLeft: "3px solid var(--primary)"}}>
+          {t("settings.system.noMethod")}
+        </div>
+      )}
+
+      {!found && !busy && blockingSudoMethod && blockingSudoMethod.command_hint && (
+        <div className="sysdep-card__sudo-hint">
+          <div>{t("settings.system.requiresSudo")}</div>
+          <div className="sysdep-card__sudo-cmd">
+            <code>sudo {blockingSudoMethod.command_hint}</code>
+            <button className="btn btn-sm" onClick={() => copyCmd("sudo " + blockingSudoMethod.command_hint)}>
+              {copied ? t("settings.system.btn.copied") : t("settings.system.btn.copyCmd")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {(busy || logLines.length > 0) && (
+        <div className="sysdep-log">
+          <div className="sysdep-log__head">
+            <span>{lastOpKind === "uninstall"
+              ? t("settings.system.logTitleUninstall")
+              : t("settings.system.logTitle")}</span>
+            {busy && liveStatus && liveStatus.elapsed_sec != null && (
+              <span>{formatElapsed(liveStatus.elapsed_sec)}</span>
+            )}
+          </div>
+          {logLines.length === 0
+            ? <pre className="sysdep-log__body sysdep-log__body--empty">{t("settings.system.logEmpty")}</pre>
+            : <pre className="sysdep-log__body" ref={logRef}>{logLines.join("\n")}</pre>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Settings Tab ───
 function SettingsTab({ onApiKeyChange, onFfmpegChange }) {
   const t = useT();
   const [config, setConfig] = useState({});
-  const [ffmpeg, setFfmpeg] = useState({});
   const [storage, setStorage] = useState(null);
+  const [permsStatus, setPermsStatus] = useState(null);
   const [keyVisible, setKeyVisible] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [folderPicker, setFolderPicker] = useState(null);
+
+  const refreshStorage = useCallback(() => {
+    pluginApi("GET", "/storage/stats")
+      .then(r => { if (r.ok && r.body) setStorage(r.body); })
+      .catch(() => {});
+  }, []);
+
+  const refreshPerms = useCallback(async () => {
+    try {
+      const r = await pluginApi("GET", "/permissions/check");
+      if (r.body && r.body.ok) setPermsStatus(r.body);
+    } catch (e) {
+      // Permission probe failure is non-fatal; assume granted to avoid
+      // a permanent banner when the endpoint itself is unreachable.
+      setPermsStatus({ ok: true, all_granted: true, missing: [], checks: [] });
+    }
+  }, []);
 
   useEffect(() => {
     pluginApi("GET", "/settings").then(r => { if (r.ok && r.body) setConfig(r.body); }).catch(() => {});
-    pluginApi("GET", "/ffmpeg/status").then(r => { if (r.ok && r.body) setFfmpeg(r.body); }).catch(() => {});
-    pluginApi("GET", "/storage/stats").then(r => { if (r.ok && r.body) setStorage(r.body); }).catch(() => {});
-  }, []);
+    refreshStorage();
+    refreshPerms();
+  }, [refreshStorage, refreshPerms]);
 
   const save = async (updates) => {
     setSaving(true);
@@ -1376,17 +2461,57 @@ function SettingsTab({ onApiKeyChange, onFfmpegChange }) {
 
   const updateField = (key, value) => setConfig(prev => ({ ...prev, [key]: value }));
 
+  // Folder picker plumbing — clones seedance's "Browse" + "Open" pair so
+  // every Folders row gets a working in-plugin file dialog (no Tauri /
+  // host cooperation required) PLUS an OS-level "open in Explorer / Finder"
+  // button that mkdir's the target on demand.
+  const openFolderByKey = async (key) => {
+    try {
+      const r = await pluginApi("POST", "/storage/open-folder", { key });
+      if (!r.body || !r.body.ok) {
+        showToast(_tr("settings.folder.openFailed", { msg: (r.body && r.body.detail) || "" }), "error");
+      }
+    } catch (e) {
+      showToast(_tr("settings.folder.openFailed", { msg: e.message || String(e) }), "error");
+    }
+  };
+  const openFolderPicker = (configKey, titleKey) => {
+    setFolderPicker({
+      key: configKey,
+      title: _tr(titleKey),
+      initialPath: (config[configKey] || "").trim(),
+    });
+  };
+  const handleFolderPickerSelect = (path) => {
+    if (!folderPicker) return;
+    const k = folderPicker.key;
+    setFolderPicker(null);
+    if (path) {
+      setConfig({ ...config, [k]: path });
+      save({ [k]: path });
+      showToast(_tr("settings.folder.savedTo", { path }));
+      // refresh stats so the size cards reflect the new dir contents
+      setTimeout(refreshStorage, 200);
+    }
+  };
+
+  // Stat card label map (mirrors the seedance UX where each managed
+  // folder shows its own size + file-count card under the Folders panel).
+  const statKeyMap = {
+    output_dir:  "settings.stats.outputDir",
+    uploads_dir: "settings.stats.uploadsDir",
+    tasks_dir:   "settings.stats.tasksDir",
+  };
+  const stats = (storage && storage.stats) || null;
+
   return (
     <div style={{maxWidth: 640}}>
+      {/* ── 1. API 配置 ── */}
       <div className="setting-section oa-settings-section">
-        <h3 className="oa-settings-section__title">
-          <span className="oa-icon"
-                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.key() : ""}} />
-          {t("settings.api.title")}
-        </h3>
+        <h3 className="oa-settings-section__title"><Ico name="key"/> {t("settings.section.api")}</h3>
         <div className={"form-row" + (config.dashscope_api_key ? "" : " oa-config-field-callout")}
              data-callout={config.dashscope_api_key ? undefined : t("settings.api.callout")}>
-          <div className="label">DashScope API Key</div>
+          <div className="label">{t("settings.api.key.label")}</div>
           <div className="flex gap-2">
             <input className="input flex-1" type={keyVisible ? "text" : "password"}
                    value={config.dashscope_api_key || ""}
@@ -1407,49 +2532,67 @@ function SettingsTab({ onApiKeyChange, onFfmpegChange }) {
         </div>
       </div>
 
+      {/* ── 2. 插件权限 ── */}
       <div className="setting-section oa-settings-section">
-        <h3 className="oa-settings-section__title">
-          <span className="oa-icon"
-                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.settings() : ""}} />
-          {t("settings.ffmpeg.title")}
-        </h3>
-        <div className="flex items-center justify-between" style={{padding:"8px 0", borderBottom:"1px solid var(--border)"}}>
-          <span className="text-sm">{t("settings.ffmpeg.status")}</span>
-          {ffmpeg.available
-            ? <span className="tag tag-green">{t("settings.ffmpeg.ok")} v{ffmpeg.version || ""}</span>
-            : <span className="tag tag-red">{t("settings.ffmpeg.notFound")}</span>}
+        <h3 className="oa-settings-section__title"><Ico name="key"/> {t("settings.section.permissions")}</h3>
+        <PermissionsPanel status={permsStatus} onChanged={refreshPerms} />
+      </div>
+
+      {/* ── 3. 系统组件（FFmpeg 一键安装） ── */}
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"><Ico name="package"/> {t("settings.section.system")}</h3>
+        <div className="deps-help">
+          <strong>{t("settings.system.intro.strong")}</strong>
+          <div style={{marginTop:4}}>{t("settings.system.intro.body")}</div>
+          <ul>
+            <li>{t("settings.system.platform.win")}</li>
+            <li>{t("settings.system.platform.mac")}</li>
+            <li>{t("settings.system.platform.linux")}</li>
+          </ul>
         </div>
-        <div className="form-row" style={{marginTop: 12}}>
-          <div className="label">{t("settings.ffmpeg.path")}</div>
+        <FfmpegInstaller
+          onInstalled={async () => {
+            const r = await pluginApi("GET", "/ffmpeg/status");
+            if (r.ok && r.body) onFfmpegChange && onFfmpegChange(!!r.body.available);
+          }}
+          onUninstalled={async () => {
+            const r = await pluginApi("GET", "/ffmpeg/status");
+            if (r.ok && r.body) onFfmpegChange && onFfmpegChange(!!r.body.available);
+          }}
+        />
+
+        {/* Manual override — kept for the "ffmpeg lives in a non-PATH
+            location" power user. Hidden behind a thin row so it does
+            not compete with the one-click installer above. */}
+        <div className="form-row" style={{marginTop: 14}}>
+          <div className="label">{t("settings.system.manualPath")}</div>
           <div className="flex gap-2">
             <input className="input flex-1"
                    value={config.ffmpeg_path || ""}
                    onChange={e => updateField("ffmpeg_path", e.target.value)}
-                   placeholder="ffmpeg" />
+                   placeholder={t("settings.system.manualPath.placeholder")} />
             <button className="btn btn-sm" onClick={async () => {
               await save({ ffmpeg_path: config.ffmpeg_path || "" });
               const r = await pluginApi("GET", "/ffmpeg/status");
-              if (r.ok && r.body) { setFfmpeg(r.body); onFfmpegChange(r.body.available); }
-            }}>{t("settings.ffmpeg.detect")}</button>
+              if (r.ok && r.body) onFfmpegChange && onFfmpegChange(!!r.body.available);
+            }}>{t("settings.system.manualPath.save")}</button>
           </div>
         </div>
       </div>
 
+      {/* ── 4. 默认参数 ── */}
       <div className="setting-section oa-settings-section">
-        <h3 className="oa-settings-section__title">
-          <span className="oa-icon"
-                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.settings() : ""}} />
-          {t("settings.defaults.title")}
-        </h3>
+        <h3 className="oa-settings-section__title"><Ico name="settings"/> {t("settings.section.defaults")}</h3>
         <div className="grid-2">
           <div className="form-row">
             <div className="label">{t("settings.defaults.subtitle")}</div>
             <div className="flex items-center gap-2">
-              <div className={`switch ${config.default_subtitle === "true" ? "on" : ""}`}
-                   onClick={() => { const v = config.default_subtitle === "true" ? "false" : "true"; updateField("default_subtitle", v); save({ default_subtitle: v }); }}
-                   style={{width:36,height:20,borderRadius:10,background:config.default_subtitle==="true"?"var(--primary)":"var(--border)",cursor:"pointer",position:"relative",transition:".2s"}}>
-                <div style={{position:"absolute",top:2,left:config.default_subtitle==="true"?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:".2s"}} />
-              </div>
+              <div className={"switch " + (config.default_subtitle === "true" ? "on" : "")}
+                   onClick={() => {
+                     const v = config.default_subtitle === "true" ? "false" : "true";
+                     updateField("default_subtitle", v);
+                     save({ default_subtitle: v });
+                   }} />
             </div>
           </div>
           <div className="form-row">
@@ -1463,23 +2606,52 @@ function SettingsTab({ onApiKeyChange, onFfmpegChange }) {
         </div>
       </div>
 
-      {storage && (
-        <div className="setting-section oa-settings-section">
-          <h3 className="oa-settings-section__title">
-            <span className="oa-icon"
-                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.folder() : ""}} />
-            {t("settings.storage.title")}
-          </h3>
-          <div className="flex items-center justify-between" style={{padding:"8px 0", borderBottom:"1px solid var(--border)"}}>
-            <span className="text-sm">{t("settings.storage.files")}</span>
-            <span className="text-sm text-muted">{storage.total_files || 0}</span>
-          </div>
-          <div className="flex items-center justify-between" style={{padding:"8px 0"}}>
-            <span className="text-sm">{t("settings.storage.size")}</span>
-            <span className="text-sm text-muted">{((storage.total_bytes || 0) / 1048576).toFixed(1)} MB</span>
+      {/* ── 5. 文件夹设置（视频输出 / 上传缓存 + 选择 / 打开） ── */}
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"><Ico name="folder"/> {t("settings.section.folder")}</h3>
+
+        <div className="form-row">
+          <div className="label">{t("settings.label.outputDir")}</div>
+          <div className="folder-row">
+            <input className="input" value={config.output_dir || ""} placeholder={t("settings.outputDir.placeholder")}
+                   onChange={e => setConfig({...config, output_dir: e.target.value})}
+                   onBlur={e => save({ output_dir: e.target.value })} />
+            <button className="btn btn-sm" onClick={() => openFolderPicker("output_dir", "settings.pickOutput")}>{t("settings.btn.browse")}</button>
+            <button className="btn btn-sm" onClick={() => openFolderByKey("output_dir")}>{t("settings.btn.open")}</button>
           </div>
         </div>
-      )}
+
+        <div className="form-row">
+          <div className="label">{t("settings.label.uploadsDir")}</div>
+          <div className="folder-row">
+            <input className="input" value={config.uploads_dir || ""} placeholder={t("settings.uploadsDir.placeholder")}
+                   onChange={e => setConfig({...config, uploads_dir: e.target.value})}
+                   onBlur={e => save({ uploads_dir: e.target.value })} />
+            <button className="btn btn-sm" onClick={() => openFolderPicker("uploads_dir", "settings.pickUploads")}>{t("settings.btn.browse")}</button>
+            <button className="btn btn-sm" onClick={() => openFolderByKey("uploads_dir")}>{t("settings.btn.open")}</button>
+          </div>
+        </div>
+
+        {stats && (
+          <div className="grid-3" style={{marginTop:12}}>
+            {Object.entries(stats).map(([k, s]) => (
+              <div key={k} className="card" style={{padding:10,textAlign:"center"}}>
+                <div className="text-xs text-dim">{statKeyMap[k] ? t(statKeyMap[k]) : k}</div>
+                <div style={{fontSize:18,fontWeight:600,color:"var(--primary)",margin:"4px 0"}}>{s.size_mb} MB</div>
+                <div className="text-xs text-dim">{t("settings.stats.fileCount", { n: s.file_count })}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <FolderPickerModal
+        open={!!folderPicker}
+        title={folderPicker && folderPicker.title}
+        initialPath={folderPicker && folderPicker.initialPath}
+        onCancel={() => setFolderPicker(null)}
+        onSelect={handleFolderPickerSelect}
+      />
     </div>
   );
 }

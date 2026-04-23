@@ -238,6 +238,40 @@
         '<path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'
       );
     },
+    // Required by the new Settings layout (mirrors seedance-video).
+    // Using stroke-only 24x24 paths so they inherit currentColor and
+    // align visually with every other icon in the kit.
+    package: function () {
+      return svg(
+        '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>' +
+        '<polyline points="3.27 6.96 12 12.01 20.73 6.96"/>' +
+        '<line x1="12" y1="22.08" x2="12" y2="12"/>'
+      );
+    },
+    trash: function () {
+      return svg(
+        '<polyline points="3 6 5 6 21 6"/>' +
+        '<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>' +
+        '<path d="M10 11v6"/>' +
+        '<path d="M14 11v6"/>' +
+        '<path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/>'
+      );
+    },
+    link: function () {
+      return svg(
+        '<path d="M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5"/>' +
+        '<path d="M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5"/>'
+      );
+    },
+    folderOpen: function () {
+      return svg(
+        '<path d="M6 14l1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.93a2 2 0 0 1 1.66.9l.82 1.2a2 2 0 0 0 1.66.9H18a2 2 0 0 1 2 2v2"/>'
+      );
+    },
+    // Alias warning -> warn so seedance-style <Ico name="warn"/> just works.
+    warn: function () {
+      return I.warning();
+    },
   };
 
   window.OpenAkitaIcons = I;

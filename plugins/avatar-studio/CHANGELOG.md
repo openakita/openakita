@@ -102,6 +102,56 @@
 
 ---
 
+## 1.1.0 — 2026-04-23
+
+Dual-backend expansion: 3 peer-level backend sections + 5th mode + TTS dual engine.
+
+### Added
+
+#### New Mode
+- **`pose_drive`** (图生动作): `wan2.2-animate-move` (wan-std 0.40/s, wan-pro
+  0.60/s) — transfer motion/expression from a reference video to a portrait photo.
+
+#### Dual Backend Architecture
+- **RunningHub** backend: API key + instance type + per-mode workflow_id presets
+  in Settings → direct selection in CreateTab.
+- **Local ComfyUI** backend: URL + optional API key + per-mode workflow presets.
+- `avatar_comfy_client.py`: ComfyKit wrapper with lazy construction, config-hash
+  invalidation, and `submit_workflow` / `probe_backend` methods.
+- `avatar_model_registry.py`: 5 modes × N candidate models per backend, with
+  `models_for()` and `default_model()` helpers.
+- `workflows/recommended.json`: curated RunningHub workflow_id suggestions.
+
+#### Dual TTS Engine
+- **Edge-TTS** (free Microsoft TTS): 12 Chinese voices, Semaphore(3) concurrency
+  limiting, retry logic for WebSocket errors.
+- `avatar_tts_edge.py`: `synth_voice()` returns same shape as cosyvoice path.
+- Settings: radio toggle between CosyVoice (paid) and Edge-TTS (free), with
+  dynamic voice picker per engine.
+
+#### wan2.7-Image Upgrade
+- `avatar_compose` mode now defaults to `wan2.7-image` (0.20 CNY/image) with
+  `wan2.7-image-pro` (0.50 CNY/image) as an alternative.
+- `submit_image_edit_wan27()` method in dashscope client using multimodal
+  generation endpoint.
+
+### Changed
+
+- **SettingsTab** restructured into 3 peer-level backend sections (阿里云
+  DashScope / RunningHub / 本地 ComfyUI) + TTS engine section.
+- OSS configuration merged into the 阿里云 DashScope section as a Collapsible.
+- **CreateTab** now has `BackendSelector` (below ModeChips, above ModelInfoCard),
+  a workflow_id picker for non-DashScope backends, and submission validation
+  per backend.
+- `ModelInfoCard` adapts display per backend (DashScope pricing vs RH usage vs
+  local free).
+- `VoicePicker` dynamically switches voice list based on `tts_engine` setting.
+- `plugin.py`: 17 new settings fields, `POST /test-backend`, `GET /workflows/recommended`,
+  `CreateTaskBody` extended with `backend` + `workflow_id`.
+- `requirements.txt`: added `comfykit>=0.1.12` and `edge-tts>=7.0`.
+
+---
+
 ## [Unreleased] — Phase 0 (skeleton)
 
 ### Added
