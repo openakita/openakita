@@ -172,4 +172,60 @@ can manually re-upload the SRT into clip-sense's `burn_subtitle` mode."
 // Burn an existing SRT into video using ffmpeg ASS (recommended)
 { "mode": "burn", "source_path": "/x.mp4", "srt_path": "/x.srt",
   "burn_engine": "ass", "burn_mode": "hard", "subtitle_style": "youtube" }
+
+// AI Hook Picker (v1.1) — Qwen-Plus selects an opening hook
+{ "mode": "hook_picker", "srt_path": "/x.srt",
+  "instruction": "find the strongest opening line",
+  "target_duration_sec": 12, "hook_model": "qwen-plus" }
 ```
+
+## 11. AI Hook Picker (mode `hook_picker`, added in v1.1)
+
+A 5th processing mode that runs an existing SRT through Qwen-Plus to
+pick the strongest opening "hook" dialogue for short-form video.  The
+algorithm is ported 1:1 from CutClaw's
+`Screenwriter_scene_short.py` and lives in the dedicated
+`subtitle_hook_picker.py` module — the prompt (`SELECT_HOOK_DIALOGUE_PROMPT`),
+the fuzzy-match threshold (0.55) and the 3-window-with-2-retries loop
+are red lines: do NOT change them without re-validating against
+CutClaw output.
+
+### Inputs (extends `CreateTaskBody`)
+
+| field | type | default | meaning |
+|---|---|---|---|
+| `srt_path` | str | "" | Required when `from_task_id` is empty |
+| `from_task_id` | str | "" | Reuse another task's `output_srt_path` |
+| `instruction` | str | "" | Free-form direction for the AI |
+| `main_character` | str | "" | Constrain selection to this speaker |
+| `target_duration_sec` | float | 12.0 | Hook length target (6–30) |
+| `prompt_window_mode` | str | `"tail_then_head"` | or `"random_window"` |
+| `random_window_attempts` | int | 3 | 1–5; cost scales linearly |
+| `hook_model` | str | `"qwen-plus"` | Or `qwen-plus-2025-09-11` / `qwen-max` |
+
+### Outputs
+
+- `task_dir/hook.srt` — single-cue SRT for the chosen window.
+- `task_dir/hook.json` — `{ hook: {...}, telemetry: {...} }` payload
+  (lines, timed_lines, source_start/_end, duration_seconds,
+  selected_window, selected_attempt, reason).
+- `GET /tasks/{task_id}` enriches succeeded hook tasks with `hook` +
+  `hook_telemetry` so the UI right-pane `HookResultPanel` renders
+  without an extra fetch.
+- `GET /library/hooks` aggregates every succeeded hook task
+  (`{items: [...], total: N}`).
+
+### Skipped pipeline steps
+
+`hook_picker` declares `skip_steps = ("prepare_assets",
+"identify_characters", "translate_or_repair", "burn_or_finalize")`.
+ASR is NOT skipped; instead `_step_asr_or_load` short-circuits to
+`_load_srt_input` (the SRT must contain ≥5 cues — fewer raises
+`PipelineError(kind="format")`).
+
+### Cost guard
+
+Server-side `estimate_cost` bills `qwen-plus` (¥0.005/round) ×
+`(2 + random_window_attempts)` rounds; a typical run costs < ¥0.01.
+The UI surfaces this estimate in the right-pane `oa-preview-card`
+before the user clicks Start.

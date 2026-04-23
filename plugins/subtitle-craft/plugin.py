@@ -1,6 +1,6 @@
 """Subtitle Craft — AI subtitle full-lifecycle plugin (Phase 4 entry).
 
-Backend FastAPI entry point providing 21 REST routes + 4 tools per
+Backend FastAPI entry point providing 26 REST routes + 4 tools per
 ``docs/subtitle-craft-plan.md`` §8.1/§8.2 (post-patch v2). Wires together:
 
 - ``SubtitleTaskManager`` (4-table SQLite, §8.3)
@@ -54,6 +54,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 from subtitle_asr_client import SubtitleAsrClient
 from subtitle_craft_inline.storage_stats import collect_storage_stats
+from subtitle_craft_inline.system_deps import SystemDepsManager
 from subtitle_craft_inline.upload_preview import (
     add_upload_preview_route,
     build_preview_url,
@@ -118,6 +119,23 @@ class CreateTaskBody(BaseModel):
     context_hint: str = ""
     cost_approved: bool = False
 
+    # --- hook_picker (v1.1) ----------------------------------------------
+    # Free-form project intent for the LLM (≤200 chars typical).
+    instruction: str = ""
+    # Preferred speaker name; "" means "any character".
+    main_character: str = ""
+    # Hook duration target (seconds). Acceptance band is [max(6, t-5), t+5].
+    target_duration_sec: float = 12.0
+    # Window strategy: "tail_then_head" (default) or "random_window".
+    prompt_window_mode: str = "tail_then_head"
+    # Number of additional random fallbacks if tail+head both fail (1-5).
+    random_window_attempts: int = 3
+    # Qwen model id; one of HOOK_PICKER_MODELS_BY_ID.
+    hook_model: str = "qwen-plus"
+    # Re-use SRT from a previously-completed transcribe task (auto_subtitle
+    # cache hit). Empty → require ``srt_path`` instead.
+    from_task_id: str = ""
+
 
 class CostPreviewBody(BaseModel):
     """Request body for ``POST /cost-preview`` (independent of /tasks)."""
@@ -130,6 +148,9 @@ class CostPreviewBody(BaseModel):
     translation_model: str = "qwen-mt-flash"
     character_identify_enabled: bool = False
     speaker_count: int = 0
+    # --- hook_picker (v1.1) ---
+    hook_model: str = "qwen-plus"
+    random_window_attempts: int = 3
 
 
 class ConfigUpdateBody(BaseModel):
@@ -138,6 +159,22 @@ class ConfigUpdateBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     updates: dict[str, str]
+
+
+class SystemInstallBody(BaseModel):
+    """Request body for ``POST /system/{dep_id}/install``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    method_index: int = 0
+
+
+class SystemUninstallBody(BaseModel):
+    """Request body for ``POST /system/{dep_id}/uninstall``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    method_index: int = 0
 
 
 class CustomStyleBody(BaseModel):
@@ -171,7 +208,7 @@ class Plugin(PluginBase):
 
     Lifecycle:
 
-    1. ``on_load`` — synchronous init: build router, register 21 routes +
+    1. ``on_load`` — synchronous init: build router, register 26 routes +
        4 tools, spawn ``_async_init`` for I/O bound startup. Never blocks.
     2. ``_async_init`` — async startup: open SQLite, load settings, build
        ``SubtitleAsrClient`` (if API key set), start polling loop.
@@ -193,6 +230,11 @@ class Plugin(PluginBase):
         self._poll_task: asyncio.Task[None] | None = None
         self._running_pipelines: dict[str, SubtitlePipelineContext] = {}
         self._ffmpeg_path: str = ""
+        # Self-contained FFmpeg detector / installer. Replaces the hand-
+        # rolled `ffmpeg_path` text input in Settings; the UI now drives
+        # detect / install / uninstall through /system/* routes so end
+        # users never have to type a path or know what `winget` is.
+        self._sysdeps = SystemDepsManager()
 
         router = APIRouter()
         self._make_url = add_upload_preview_route(router, base_dir=self._uploads_dir)
@@ -243,6 +285,14 @@ class Plugin(PluginBase):
             await _PlaywrightSingleton.close()
         except Exception as exc:  # noqa: BLE001
             logger.warning("%s Playwright singleton close: %s", PLUGIN_ID, exc)
+
+        # 5. Drain the SystemDepsManager so any in-flight install/uninstall
+        #    subprocess is reaped instead of being left as a zombie when
+        #    the plugin is hot-reloaded.
+        try:
+            await self._sysdeps.aclose()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("%s system deps close: %s", PLUGIN_ID, exc)
 
         logger.info("%s plugin unloaded", PLUGIN_ID)
 
@@ -300,7 +350,9 @@ class Plugin(PluginBase):
         return f"Unknown tool: {tool_name}"
 
     # ------------------------------------------------------------------
-    # Route registration — 21 routes per §8.2 (no /handoff/*)
+    # Route registration — 26 routes (21 from §8.2 + 4 system-deps from
+    # the v1.0.1 Settings redesign + 1 /library/hooks for hook_picker
+    # mode v1.1; still no /handoff/* per §6 v1.0 cap)
     # ------------------------------------------------------------------
 
     def _register_routes(self, router: APIRouter) -> None:
@@ -325,6 +377,21 @@ class Plugin(PluginBase):
             task = await self._tm.get_task(task_id)
             if not task:
                 raise HTTPException(404, "Task not found")
+            # hook_picker (v1.1): enrich with hook + telemetry payloads so
+            # the right-pane HookResultPanel can render without a second
+            # fetch.  Reads task_dir/hook.json — written by _do_hook_pick
+            # at the end of a successful pipeline run.  Best-effort: if the
+            # file is missing or malformed we just leave the fields out.
+            if task.get("mode") == "hook_picker" and task.get("status") == "succeeded":
+                hook_json = self._tasks_dir / task_id / "hook.json"
+                if hook_json.exists():
+                    try:
+                        data = json.loads(hook_json.read_text(encoding="utf-8"))
+                        if isinstance(data, dict):
+                            task["hook"] = data.get("hook")
+                            task["hook_telemetry"] = data.get("telemetry")
+                    except (json.JSONDecodeError, OSError) as exc:
+                        logger.debug("hook.json unreadable for %s: %s", task_id, exc)
             return task
 
         # 4. DELETE /tasks/{task_id} ---------------------------------------
@@ -499,6 +566,41 @@ class Plugin(PluginBase):
             await self._tm.set_config("custom_styles_json", json.dumps(new, ensure_ascii=False))
             return {"status": "deleted"}
 
+        # 15b. GET /library/hooks (hook_picker mode v1.1) -----------------
+        # List successful hook_picker tasks for the LibraryTab "Hooks"
+        # sub-tab.  We re-hydrate the hook payload from each task's
+        # hook.json on disk so the UI can show the selected lines without
+        # an extra round-trip per row.
+        @router.get("/library/hooks")
+        async def list_hooks() -> dict[str, Any]:
+            page = await self._tm.list_tasks(status="succeeded", mode="hook_picker", limit=200)
+            items: list[dict[str, Any]] = []
+            for t in page.get("tasks", []):
+                task_id = t.get("id") or t.get("task_id")
+                if not task_id:
+                    continue
+                hook_json = self._tasks_dir / task_id / "hook.json"
+                hook_payload: dict[str, Any] | None = None
+                telemetry: dict[str, Any] | None = None
+                if hook_json.exists():
+                    try:
+                        data = json.loads(hook_json.read_text(encoding="utf-8"))
+                        hook_payload = data.get("hook")
+                        telemetry = data.get("telemetry")
+                    except (json.JSONDecodeError, OSError) as exc:
+                        logger.debug("hook.json unreadable for %s: %s", task_id, exc)
+                items.append(
+                    {
+                        "task_id": task_id,
+                        "created_at": t.get("created_at"),
+                        "params": t.get("params") or {},
+                        "output_srt_path": t.get("output_srt_path"),
+                        "hook": hook_payload,
+                        "telemetry": telemetry,
+                    }
+                )
+            return {"items": items, "total": len(items)}
+
         # 16. POST /cost-preview -------------------------------------------
         @router.post("/cost-preview")
         async def cost_preview_route(body: CostPreviewBody) -> dict[str, Any]:
@@ -509,6 +611,8 @@ class Plugin(PluginBase):
                 translation_model=body.translation_model,
                 character_identify=body.character_identify_enabled,
                 speaker_count=body.speaker_count,
+                hook_model=body.hook_model,
+                random_window_attempts=body.random_window_attempts,
             )
             return {"total_cny": preview.total_cny, "items": preview.items}
 
@@ -574,6 +678,56 @@ class Plugin(PluginBase):
         async def healthz() -> dict[str, Any]:
             return await self._compute_health()
 
+        # 22. GET /system/components ---------------------------------------
+        # Snapshot of every system dep this plugin manages (currently only
+        # ffmpeg). Drives the `Settings > 系统组件` panel — same shape as
+        # seedance-video so the FfmpegInstaller component can be lifted
+        # verbatim. Includes detection state, available install methods,
+        # last install/uninstall log tail, and platform metadata.
+        @router.get("/system/components")
+        async def system_components() -> dict[str, Any]:
+            return {"ok": True, "items": self._sysdeps.list_components()}
+
+        # 23. POST /system/{dep_id}/install --------------------------------
+        # Fire-and-poll: returns immediately after spawning the install
+        # subprocess; the UI then polls /system/{dep_id}/status to stream
+        # the log tail. method_index selects which strategy from the
+        # platform-specific recipe list (winget / brew / apt / manual).
+        @router.post("/system/{dep_id}/install")
+        async def system_install(dep_id: str, body: SystemInstallBody) -> dict[str, Any]:
+            try:
+                result = await self._sysdeps.start_install(dep_id, method_index=body.method_index)
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            if not result.get("ok") and result.get("error") == "requires_sudo":
+                raise HTTPException(status_code=422, detail=result)
+            return result
+
+        # 24. POST /system/{dep_id}/uninstall ------------------------------
+        # Symmetric to install — same fire-and-poll contract. Used by the
+        # Settings UI when the user clicks `卸载 (winget)` / `Uninstall`
+        # on the FfmpegInstaller card.
+        @router.post("/system/{dep_id}/uninstall")
+        async def system_uninstall(dep_id: str, body: SystemUninstallBody) -> dict[str, Any]:
+            try:
+                result = await self._sysdeps.start_uninstall(dep_id, method_index=body.method_index)
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            if not result.get("ok") and result.get("error") == "requires_sudo":
+                raise HTTPException(status_code=422, detail=result)
+            return result
+
+        # 25. GET /system/{dep_id}/status ----------------------------------
+        # Polled by the FfmpegInstaller every ~3s during an install /
+        # uninstall to refresh the log tail and elapsed time. Cheap
+        # enough that we do NOT need an SSE stream for it.
+        @router.get("/system/{dep_id}/status")
+        async def system_status(dep_id: str) -> dict[str, Any]:
+            try:
+                return self._sysdeps.status(dep_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     # ------------------------------------------------------------------
     # /healthz — 4-field contract (Phase 4 DoD + §8.4)
     # ------------------------------------------------------------------
@@ -592,6 +746,19 @@ class Plugin(PluginBase):
         }
 
     def _detect_ffmpeg(self) -> bool:
+        # Route through SystemDepsManager so /healthz and the new
+        # `Settings > 系统组件` panel agree on detection state — both
+        # benefit from the manager's Windows registry-PATH refresh
+        # (winget installs do not propagate PATH to running processes).
+        # Falls back to the legacy explicit-path / shutil.which probe if
+        # the manager raises for any reason (defensive — should not
+        # happen since `ffmpeg` is always registered at construction).
+        try:
+            snap = self._sysdeps.detect("ffmpeg")
+            if bool(snap.get("found")):
+                return True
+        except Exception:  # noqa: BLE001 — defensive, fall through
+            pass
         if self._ffmpeg_path and Path(self._ffmpeg_path).exists():
             return True
         return shutil.which("ffmpeg") is not None
@@ -645,9 +812,25 @@ class Plugin(PluginBase):
         if mode_def is None:
             raise HTTPException(400, f"Unknown mode: {body.mode}")
 
+        # hook_picker (v1.1) supports two SRT sources:
+        # 1. Direct upload (``srt_path`` set), OR
+        # 2. Cross-task hand-off via ``from_task_id`` — auto-pick the
+        #    output_srt_path of an already-completed transcribe task.
+        if body.mode == "hook_picker" and not body.srt_path and body.from_task_id:
+            origin = await self._tm.get_task(body.from_task_id)
+            if origin is None:
+                raise HTTPException(404, f"from_task_id not found: {body.from_task_id}")
+            origin_srt = origin.get("output_srt_path")
+            if not origin_srt or not Path(origin_srt).exists():
+                raise HTTPException(
+                    400,
+                    f"Task {body.from_task_id} has no usable output SRT yet",
+                )
+            body.srt_path = origin_srt
+
         # Source kind heuristics: pick from explicit body.source_kind or
-        # infer from extension. ``translate``/``repair`` need an SRT;
-        # ``auto_subtitle``/``burn`` need a video/audio.
+        # infer from extension. ``translate``/``repair``/``hook_picker`` need
+        # an SRT; ``auto_subtitle``/``burn`` need a video/audio.
         source_kind = body.source_kind or _infer_source_kind(body)
         source_path_str = body.source_path or body.srt_path
         if not source_path_str and body.mode != "burn":
@@ -666,6 +849,12 @@ class Plugin(PluginBase):
                 raise HTTPException(400, "burn requires source_path (video)")
             if not body.srt_path:
                 raise HTTPException(400, "burn requires srt_path")
+        if body.mode == "hook_picker" and not body.srt_path:
+            raise HTTPException(
+                400,
+                "hook_picker requires srt_path (or from_task_id pointing to a "
+                "completed transcribe task)",
+            )
 
         params = body.model_dump(exclude={"mode", "source_path", "source_url", "source_kind"})
 

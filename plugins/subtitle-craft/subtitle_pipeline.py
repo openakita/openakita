@@ -117,6 +117,14 @@ class SubtitlePipelineContext:
     # --- step 7 outputs ---
     output_video_path: Path | None = None
 
+    # --- hook_picker outputs (mode v1.1) ---
+    # Set by ``_do_hook_pick`` after a successful selection.  ``hook`` is
+    # the user-facing payload (lines/timed_lines/source_start/...);
+    # ``hook_telemetry`` is the per-attempt rejection log surfaced into
+    # ``metadata.json`` for debugging.
+    hook: dict[str, Any] | None = None
+    hook_telemetry: dict[str, Any] = field(default_factory=dict)
+
     # --- accounting ---
     cost_items: list[dict[str, Any]] = field(default_factory=list)
 
@@ -443,6 +451,15 @@ async def _step_asr_or_load(
     """
     if ctx.mode == "auto_subtitle":
         await _asr_paraformer(ctx, tm, asr)
+    elif ctx.mode == "hook_picker":
+        # hook_picker reuses _load_srt_input (same SRT validation), then
+        # enforces a ≥5-cue minimum so the selector has enough material.
+        await _load_srt_input(ctx, tm)
+        if not ctx.cues or len(ctx.cues) < 5:
+            raise PipelineError(
+                "Subtitle file too short for hook selection (≥5 cues required)",
+                kind="format",
+            )
     else:
         await _load_srt_input(ctx, tm)
 
@@ -720,6 +737,12 @@ async def _step_render_output(
     *,
     ffmpeg_path: str | None,
 ) -> None:
+    # hook_picker fan-out: bypass cue rendering entirely; we emit
+    # hook.srt + hook.json instead.
+    if ctx.mode == "hook_picker":
+        await _do_hook_pick(ctx, tm, asr)
+        return
+
     from subtitle_renderer import (
         SRTCue,
         cues_to_srt,
@@ -785,6 +808,99 @@ async def _step_render_output(
         ctx.task_id,
         output_srt_path=str(srt_path),
         output_vtt_path=str(vtt_path),
+    )
+
+
+async def _do_hook_pick(
+    ctx: SubtitlePipelineContext,
+    tm: Any,
+    asr: Any,
+) -> None:
+    """hook_picker render branch — call selector, persist hook.srt + hook.json.
+
+    Wires the LLM transport (``asr.call_qwen_plus``) into the
+    ``select_hook_dialogue`` algorithm via a thin lambda so the algorithm
+    stays decoupled from the vendor client (red line: subtitle_hook_picker
+    does NOT import subtitle_asr_client).
+
+    Raises:
+        PipelineError(kind="auth"): no API key configured.
+        PipelineError(kind="unknown"): selector exhausted all windows;
+            ``ctx.hook_telemetry`` carries the per-attempt rejection log
+            for the UI ErrorPanel and metadata.json.
+    """
+    if asr is None:
+        raise PipelineError(
+            "DashScope API Key not configured. Go to Settings → API Key.",
+            kind="auth",
+        )
+
+    from subtitle_hook_picker import HookSelectionError, select_hook_dialogue
+
+    async def _llm_caller(
+        messages: list[dict[str, str]],
+        model: str,
+        kwargs: dict[str, Any],
+    ) -> str | None:
+        return await asr.call_qwen_plus(
+            messages,
+            model=model,
+            temperature=float(kwargs.get("temperature", 0.3)),
+            max_tokens=int(kwargs.get("max_tokens", 2000)),
+            response_format_json=bool(kwargs.get("response_format_json", True)),
+        )
+
+    # Convert pipeline cue dicts (start/end as float seconds) into the
+    # hook-picker subtitle shape (start_sec/end_sec).
+    subtitles = [
+        {
+            "text": c.get("text", ""),
+            "start_sec": float(c.get("start", 0.0)),
+            "end_sec": float(c.get("end", 0.0)),
+            "speaker": c.get("speaker_id") or "",
+        }
+        for c in (ctx.cues or [])
+    ]
+
+    params = ctx.params or {}
+    try:
+        hook = await select_hook_dialogue(
+            subtitles=subtitles,
+            instruction=str(params.get("instruction", "") or ""),
+            main_character=(params.get("main_character") or None),
+            target_duration_sec=float(params.get("target_duration_sec") or 12.0),
+            prompt_window_mode=str(params.get("prompt_window_mode") or "tail_then_head"),
+            random_window_attempts=int(params.get("random_window_attempts") or 3),
+            model=str(params.get("hook_model") or "qwen-plus"),
+            llm_caller=_llm_caller,
+        )
+    except HookSelectionError as exc:
+        ctx.hook_telemetry = exc.telemetry
+        raise PipelineError(str(exc), kind="unknown") from exc
+
+    ctx.hook_telemetry = hook.pop("_telemetry", {})
+    ctx.hook = hook
+
+    # Persist hook.json (full payload) + hook.srt (clip-relative timing).
+    hook_json = ctx.task_dir / "hook.json"
+    hook_srt = ctx.task_dir / "hook.srt"
+    hook_json.write_text(
+        json.dumps(
+            {"hook": hook, "telemetry": ctx.hook_telemetry},
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    blocks: list[str] = []
+    for i, line in enumerate(hook.get("timed_lines", []), start=1):
+        blocks.append(f"{i}\n{line['start']} --> {line['end']}\n{line['text']}\n")
+    hook_srt.write_text("\n".join(blocks), encoding="utf-8")
+    ctx.output_srt_path = hook_srt
+
+    await tm.update_task(
+        ctx.task_id,
+        output_srt_path=str(hook_srt),
     )
 
 
@@ -895,6 +1011,10 @@ async def _write_metadata(ctx: SubtitlePipelineContext, tm: Any) -> None:
         "repair_stats": ctx.repair_stats or None,
         "completed_at": datetime.now(tz=UTC).isoformat(),
     }
+    if ctx.hook is not None:
+        metadata["hook"] = ctx.hook
+    if ctx.hook_telemetry:
+        metadata["hook_telemetry"] = ctx.hook_telemetry
     meta_path = ctx.task_dir / "metadata.json"
     meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
 

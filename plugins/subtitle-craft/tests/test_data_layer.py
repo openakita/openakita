@@ -94,12 +94,21 @@ def test_map_vendor_kind_always_returns_canonical_9():
 # ── Modes / styles / translation models ───────────────────────────────────────
 
 
-def test_modes_exact_4():
-    assert {m.id for m in MODES} == {"auto_subtitle", "translate", "repair", "burn"}
+def test_modes_exact_5():
+    """v1.1: 5 modes (added hook_picker)."""
+    assert {m.id for m in MODES} == {
+        "auto_subtitle",
+        "translate",
+        "repair",
+        "burn",
+        "hook_picker",
+    }
     assert MODES_BY_ID["repair"].requires_api_key is False
     assert MODES_BY_ID["burn"].requires_api_key is False
     assert MODES_BY_ID["auto_subtitle"].requires_api_key is True
     assert MODES_BY_ID["translate"].requires_api_key is True
+    assert MODES_BY_ID["hook_picker"].requires_api_key is True
+    assert MODES_BY_ID["hook_picker"].requires_ffmpeg is False
 
 
 def test_subtitle_styles_at_least_5_presets():

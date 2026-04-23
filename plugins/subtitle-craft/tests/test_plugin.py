@@ -1,10 +1,10 @@
-"""Phase 4 plugin entry tests — 21 routes, 4 tools, healthz, no-handoff guards.
+"""Phase 4 plugin entry tests — 25 routes, 4 tools, healthz, no-handoff guards.
 
 These tests cover the Phase 4 DoD checklist from
 ``docs/subtitle-craft-plan.md`` §11 + Gate 4:
 
 - ``provides.tools`` is exactly 4 (no ``*_handoff_*``).
-- 21 routes are wired and answer per their contract.
+- 25 routes are wired and answer per their contract (21 business + 4 system/*).
 - ``/healthz`` returns the 4-field shape and never echoes the API key.
 - ``on_unload`` invokes ``_PlaywrightSingleton.close()`` (mocked).
 - All Pydantic request bodies declare ``ConfigDict(extra="forbid")``
@@ -138,11 +138,15 @@ def test_no_handoff_word_outside_docstring_in_plugin_source():
             )
 
 
-def test_provides_tools_exactly_four():
-    """``plugin.json`` must declare exactly 4 tools, none with 'handoff' prefix."""
+def test_provides_tools_no_handoff():
+    """``plugin.json`` declares 5 tools in v1.1 (4 v1.0 task tools + the new
+    ``subtitle.hook_pick``); none may carry a ``handoff`` prefix per the
+    v1.0 red-line that survives into v1.1 (cross-plugin dispatch is
+    reserved for v2.0)."""
     data = json.loads((PLUGIN_DIR / "plugin.json").read_text(encoding="utf-8"))
     tools = data["provides"]["tools"]
-    assert len(tools) == 4
+    assert len(tools) == 5, f"v1.1 must declare exactly 5 tools, got {tools}"
+    assert "subtitle.hook_pick" in tools
     assert all("handoff" not in t for t in tools)
 
 
@@ -158,6 +162,8 @@ def test_pydantic_bodies_use_extra_forbid():
         plugin_module.CostPreviewBody,
         plugin_module.ConfigUpdateBody,
         plugin_module.CustomStyleBody,
+        plugin_module.SystemInstallBody,
+        plugin_module.SystemUninstallBody,
     ]
     for cls in body_classes:
         cfg = getattr(cls, "model_config", None)
@@ -173,6 +179,40 @@ def test_create_task_body_rejects_unknown_field():
 
     with pytest.raises(ValidationError):
         CreateTaskBody.model_validate({"mode": "burn", "bogus_extra_field": 1})
+
+
+def test_create_task_body_has_hook_picker_fields():
+    """v1.1: hook_picker mode adds 7 new fields to CreateTaskBody."""
+    from plugin import CreateTaskBody
+
+    fields = set(CreateTaskBody.model_fields.keys())
+    expected_hook_fields = {
+        "instruction",
+        "main_character",
+        "target_duration_sec",
+        "prompt_window_mode",
+        "random_window_attempts",
+        "hook_model",
+        "from_task_id",
+    }
+    missing = expected_hook_fields - fields
+    assert not missing, f"hook_picker fields missing from CreateTaskBody: {missing}"
+
+    # Default values match plan §3.2.
+    body = CreateTaskBody.model_validate({"mode": "hook_picker"})
+    assert body.target_duration_sec == 12.0
+    assert body.prompt_window_mode == "tail_then_head"
+    assert body.random_window_attempts == 3
+    assert body.hook_model == "qwen-plus"
+
+
+def test_cost_preview_body_has_hook_picker_fields():
+    """v1.1: CostPreviewBody adds hook_model + random_window_attempts."""
+    from plugin import CostPreviewBody
+
+    body = CostPreviewBody.model_validate({"mode": "hook_picker"})
+    assert body.hook_model == "qwen-plus"
+    assert body.random_window_attempts == 3
 
 
 # ---------------------------------------------------------------------------
@@ -196,17 +236,24 @@ _EXPECTED_ROUTES: set[tuple[str, str]] = {
     ("GET", "/library/styles"),
     ("POST", "/library/styles"),
     ("DELETE", "/library/styles/{style_id}"),
+    # hook_picker mode v1.1
+    ("GET", "/library/hooks"),
     ("POST", "/cost-preview"),
     ("GET", "/settings"),
     ("PUT", "/settings"),
     ("GET", "/storage/stats"),
     ("GET", "/modes"),
     ("GET", "/healthz"),
+    # System dependency manager routes (FFmpeg installer / health)
+    ("GET", "/system/components"),
+    ("POST", "/system/{dep_id}/install"),
+    ("POST", "/system/{dep_id}/uninstall"),
+    ("GET", "/system/{dep_id}/status"),
 }
 
 
 @pytest.mark.asyncio
-async def test_21_routes_registered(loaded_plugin):
+async def test_26_routes_registered(loaded_plugin):
     _, api, _ = loaded_plugin
     routes_seen: set[tuple[str, str]] = set()
     for r in api._router.routes:
@@ -292,13 +339,20 @@ async def test_settings_get_masks_api_key(loaded_plugin):
 
 
 @pytest.mark.asyncio
-async def test_modes_returns_four_modes_and_nine_error_kinds(loaded_plugin):
+async def test_modes_returns_five_modes_and_nine_error_kinds(loaded_plugin):
     _, _, client = loaded_plugin
     resp = client.get("/modes")
     assert resp.status_code == 200
     body = resp.json()
     mode_ids = {m["id"] for m in body["modes"]}
-    assert mode_ids == {"auto_subtitle", "translate", "repair", "burn"}
+    # v1.1: hook_picker added
+    assert mode_ids == {
+        "auto_subtitle",
+        "translate",
+        "repair",
+        "burn",
+        "hook_picker",
+    }
     assert set(body["error_kinds"]) == {
         "network",
         "timeout",

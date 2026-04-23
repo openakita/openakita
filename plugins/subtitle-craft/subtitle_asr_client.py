@@ -47,6 +47,12 @@ QWEN_OPENAI_PATH = "/compatible-mode/v1/chat/completions"
 PARAFORMER_MODEL = "paraformer-v2"
 QWEN_MT_DEFAULT_MODEL = "qwen-mt-flash"
 QWEN_VL_DEFAULT_MODEL = "qwen-vl-max"
+QWEN_PLUS_DEFAULT_MODEL = "qwen-plus"
+# Models that reliably honor OpenAI-compatible JSON mode on DashScope (v1.1).
+# Lesser models (qwen-mt, qwen-vl) silently ignore response_format.
+QWEN_PLUS_JSON_MODE_WHITELIST: frozenset[str] = frozenset(
+    {"qwen-plus", "qwen-plus-2025-09-11", "qwen-max"}
+)
 
 _TERMINAL_STATES = frozenset({"SUCCEEDED", "FAILED", "CANCELED", "UNKNOWN"})
 
@@ -565,6 +571,61 @@ class SubtitleAsrClient(BaseVendorClient):
             if k in speaker_samples and isinstance(v, str) and v.strip():
                 cleaned[k] = v.strip()[:24]
         return cleaned
+
+    # -- 4. Generic Qwen chat-completion (hook_picker mode v1.1) ---------
+
+    async def call_qwen_plus(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        model: str = QWEN_PLUS_DEFAULT_MODEL,
+        temperature: float = 0.3,
+        max_tokens: int = 2000,
+        timeout: float = 120.0,
+        response_format_json: bool = True,
+    ) -> str | None:
+        """Generic Qwen chat-completion call (used by ``hook_picker``).
+
+        Reuses ``BaseVendorClient.request`` so we keep the inherited retry /
+        cancel / moderation contract — **no new openai SDK dependency**
+        (red line #1).  Returns the raw assistant content string, or
+        ``None`` if the response carried no choices.
+
+        Args:
+            messages: OpenAI-style ``[{role, content}, ...]`` chat history.
+            model: Qwen model id; only models in
+                ``QWEN_PLUS_JSON_MODE_WHITELIST`` enable strict JSON mode.
+            temperature: Sampling temperature (CutClaw uses ``0.3``).
+            max_tokens: Max output tokens; hook prompts return ~150 tokens
+                so 2000 is generous.
+            timeout: Per-attempt HTTP timeout (the Qwen-Plus 99th-percentile
+                latency is ~6s; default is 120s for safety).
+            response_format_json: Enable OpenAI-compatible JSON mode for
+                whitelisted models.  Has no effect on others.
+
+        Raises:
+            AsrError: One of the 9 canonical kinds (mapped from
+                ``VendorError``) so the pipeline can write directly to
+                ``tasks.error_kind`` without remapping.
+        """
+        body: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if response_format_json and model in QWEN_PLUS_JSON_MODE_WHITELIST:
+            body["response_format"] = {"type": "json_object"}
+        try:
+            payload = await self.request("POST", QWEN_OPENAI_PATH, json_body=body, timeout=timeout)
+        except VendorError as exc:
+            raise _from_vendor_error(exc, f"Qwen-Plus {model} call failed") from exc
+
+        choices = payload.get("choices") or []
+        if not choices:
+            return None
+        content = ((choices[0].get("message") or {}).get("content")) or None
+        return content
 
 
 # ---------------------------------------------------------------------------
