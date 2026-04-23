@@ -140,6 +140,10 @@ plugins/*
 !plugins/subtitle-craft/ui/
 !plugins/subtitle-craft/ui/dist/
 !plugins/subtitle-craft/ui/dist/**
+!plugins/media-post/
+!plugins/media-post/ui/
+!plugins/media-post/ui/dist/
+!plugins/media-post/ui/dist/**
 
 # Archived plugins (not auto-loaded; not for GitHub)
 # 整个目录及其所有内容都不进入 git
@@ -365,6 +369,8 @@ docs/prompts/
 # 后期类插件路线图（本地规划草稿，不入库）
 docs/post-production-plugins-roadmap.md
 docs/subtitle-craft-plan.md
+docs/hook-picker-plan.md
+docs/media-post-plan.md
 
 # subtitle-craft 本地验证脚本（含 API 调用 + 临时音视频，不入库；
 # 验证结论统一记入 plugins/subtitle-craft/VALIDATION.md 后提交）
