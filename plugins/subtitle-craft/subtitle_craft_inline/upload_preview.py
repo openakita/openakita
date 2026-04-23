@@ -27,12 +27,8 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
-DEFAULT_IMAGE_EXTENSIONS = frozenset(
-    {"png", "jpg", "jpeg", "webp", "gif", "bmp", "svg", "avif"}
-)
-DEFAULT_AV_EXTENSIONS = frozenset(
-    {"mp4", "webm", "mov", "mkv", "wav", "mp3", "m4a", "ogg", "flac"}
-)
+DEFAULT_IMAGE_EXTENSIONS = frozenset({"png", "jpg", "jpeg", "webp", "gif", "bmp", "svg", "avif"})
+DEFAULT_AV_EXTENSIONS = frozenset({"mp4", "webm", "mov", "mkv", "wav", "mp3", "m4a", "ogg", "flac"})
 DEFAULT_PREVIEW_EXTENSIONS = DEFAULT_IMAGE_EXTENSIONS | DEFAULT_AV_EXTENSIONS
 
 __all__ = [

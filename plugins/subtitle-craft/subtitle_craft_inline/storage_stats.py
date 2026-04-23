@@ -25,7 +25,7 @@ class StorageStats:
     total_files: int = 0
     total_bytes: int = 0
     by_extension: dict[str, dict[str, int]] = field(default_factory=dict)
-    truncated: bool = False    # ``True`` if we hit ``max_files``
+    truncated: bool = False  # ``True`` if we hit ``max_files``
     sampled_paths: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -62,7 +62,7 @@ def _walk_sync(
                 size = p.stat().st_size
             except (OSError, PermissionError):
                 continue
-            ext = (p.suffix.lower().lstrip(".") or "(none)")
+            ext = p.suffix.lower().lstrip(".") or "(none)"
             bucket = s.by_extension.setdefault(ext, {"count": 0, "bytes": 0})
             bucket["count"] += 1
             bucket["bytes"] += size
@@ -84,13 +84,11 @@ async def collect_storage_stats(
     skip_hidden: bool = True,
 ) -> StorageStats:
     """Walk one or more directories and collect storage stats off the loop."""
-    roots_list = (
-        [Path(roots)] if isinstance(roots, (str, Path))
-        else [Path(r) for r in roots]
-    )
+    roots_list = [Path(roots)] if isinstance(roots, (str, Path)) else [Path(r) for r in roots]
 
     return await asyncio.to_thread(
-        _walk_sync, roots_list,
+        _walk_sync,
+        roots_list,
         max_files=max(1, int(max_files)),
         sample_paths=max(0, int(sample_paths)),
         skip_hidden=bool(skip_hidden),

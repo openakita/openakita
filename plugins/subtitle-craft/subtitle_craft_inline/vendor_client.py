@@ -274,7 +274,7 @@ class BaseVendorClient:
         return await self.request("POST", path, json_body=json_body, **kw)
 
     def _backoff(self, attempt: int) -> float:
-        base = min(self.retry_backoff * (2 ** attempt), self.retry_max_backoff)
+        base = min(self.retry_backoff * (2**attempt), self.retry_max_backoff)
         return random.uniform(0.0, base)
 
     @staticmethod

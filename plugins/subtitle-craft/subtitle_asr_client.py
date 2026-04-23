@@ -212,14 +212,10 @@ class SubtitleAsrClient(BaseVendorClient):
         if not task_id:
             return False
         try:
-            await self.request(
-                "DELETE", PARAFORMER_TASK_PATH_TPL.format(task_id=task_id)
-            )
+            await self.request("DELETE", PARAFORMER_TASK_PATH_TPL.format(task_id=task_id))
             return True
         except VendorError as exc:
-            logger.info(
-                "Paraformer cancel returned non-2xx for %s: %s", task_id, exc
-            )
+            logger.info("Paraformer cancel returned non-2xx for %s: %s", task_id, exc)
             return False
 
     def update_api_key(self, key: str) -> None:
@@ -285,9 +281,7 @@ class SubtitleAsrClient(BaseVendorClient):
                 kind="unknown",
             )
 
-        final_payload = await self._poll_paraformer_task(
-            task_id, cancel_check=cancel_check
-        )
+        final_payload = await self._poll_paraformer_task(task_id, cancel_check=cancel_check)
 
         # P0-4: every results[i].subtask_status must be SUCCEEDED.
         results = (final_payload.get("output") or {}).get("results") or []
@@ -303,8 +297,7 @@ class SubtitleAsrClient(BaseVendorClient):
                 code = r.get("code") or ""
                 msg = r.get("message") or ""
                 raise AsrError(
-                    f"Paraformer subtask[{idx}] not SUCCEEDED: "
-                    f"{sub_status} code={code} msg={msg}",
+                    f"Paraformer subtask[{idx}] not SUCCEEDED: {sub_status} code={code} msg={msg}",
                     kind="format" if code else "unknown",
                     body=r,
                 )
@@ -327,9 +320,7 @@ class SubtitleAsrClient(BaseVendorClient):
             try:
                 payload = await self.request("GET", transcription_url)
             except VendorError as exc:
-                raise _from_vendor_error(
-                    exc, "Paraformer transcript download failed"
-                ) from exc
+                raise _from_vendor_error(exc, "Paraformer transcript download failed") from exc
             if not isinstance(payload, dict):
                 raise AsrError(
                     "Paraformer transcript JSON is not an object",
@@ -362,8 +353,10 @@ class SubtitleAsrClient(BaseVendorClient):
         flat.sort(key=lambda s: s.start_ms)
 
         full_text = " ".join(s.text for s in flat).strip()
-        primary_language = next(iter(languages)) if languages else (
-            (language_hints or [""])[0] if language_hints else ""
+        primary_language = (
+            next(iter(languages))
+            if languages
+            else ((language_hints or [""])[0] if language_hints else "")
         )
 
         return AsrResult(
@@ -419,8 +412,7 @@ class SubtitleAsrClient(BaseVendorClient):
                 err_msg = ((payload.get("output") or {}).get("message")) or ""
                 kind = "format" if err_code else "unknown"
                 raise AsrError(
-                    f"Paraformer task {task_id} ended {status} "
-                    f"code={err_code} msg={err_msg}",
+                    f"Paraformer task {task_id} ended {status} code={err_code} msg={err_msg}",
                     kind=kind,
                     body=payload,
                 )
@@ -481,9 +473,7 @@ class SubtitleAsrClient(BaseVendorClient):
             out.append("\n".join(p for p in translated_pieces if p))
         return out
 
-    async def _translate_one(
-        self, text: str, *, src: str, tgt: str, model: str
-    ) -> str:
+    async def _translate_one(self, text: str, *, src: str, tgt: str, model: str) -> str:
         body = {
             "model": model,
             "messages": [{"role": "user", "content": text}],
@@ -493,9 +483,7 @@ class SubtitleAsrClient(BaseVendorClient):
             },
         }
         try:
-            payload = await self.request(
-                "POST", QWEN_OPENAI_PATH, json_body=body, timeout=60.0
-            )
+            payload = await self.request("POST", QWEN_OPENAI_PATH, json_body=body, timeout=60.0)
         except VendorError as exc:
             # Surface as AsrError so caller can decide single-piece fallback.
             raise _from_vendor_error(exc, f"Qwen-MT {model} call failed") from exc
@@ -554,9 +542,7 @@ class SubtitleAsrClient(BaseVendorClient):
             "temperature": 0.3,
         }
         try:
-            payload = await self.request(
-                "POST", QWEN_OPENAI_PATH, json_body=body, timeout=60.0
-            )
+            payload = await self.request("POST", QWEN_OPENAI_PATH, json_body=body, timeout=60.0)
         except VendorError as exc:
             logger.warning("identify_characters: vendor failed (%s); returning {}", exc)
             return {}
