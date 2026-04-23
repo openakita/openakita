@@ -168,7 +168,7 @@ class AgentMailbox:
     async def receive(self, timeout: float = 300.0) -> dict | None:
         try:
             return await asyncio.wait_for(self._queue.get(), timeout=timeout)
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             return None
 
     async def drain_all(self) -> list[dict]:
@@ -484,7 +484,7 @@ class AgentOrchestrator:
 
             return result
 
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             health.failed += 1
             health.last_error = "timeout_idle"
             self._fallback.record_failure(agent_profile_id)
@@ -509,6 +509,7 @@ class AgentOrchestrator:
                 default=(
                     f"⏱️ Agent `{agent_profile_id}` terminated — no progress after {elapsed_s:.0f}s"
                 ),
+                reason=f"idle timeout after {elapsed_s:.0f}s",
             )
 
         except asyncio.CancelledError:
@@ -563,6 +564,7 @@ class AgentOrchestrator:
                 agent_profile_id,
                 depth,
                 default=f"❌ Agent `{agent_profile_id}` failed: {e}",
+                reason=str(e),
             )
 
     # ------------------------------------------------------------------
@@ -1001,9 +1003,25 @@ class AgentOrchestrator:
                     gateway=gateway,
                     mode=_mode,
                 )
+                result_text = result
+                result_tools_used: list[str] = []
+                result_artifacts: list[dict] = []
+                if isinstance(result, dict):
+                    result_text = result.get("text") or result.get("data") or ""
+                    result_tools_used = [
+                        str(t) for t in (result.get("tools_used") or []) if t is not None
+                    ]
+                    for artifact in result.get("artifacts") or []:
+                        if isinstance(artifact, dict):
+                            result_artifacts.append(artifact)
+                        elif artifact:
+                            result_artifacts.append({"path": str(artifact)})
+                    if result.get("exit_reason"):
+                        exit_reason = str(result["exit_reason"])
+
                 # Persist sub-agent work record into parent session
                 try:
-                    _persist_sub_agent_record(agent, session, message, result, _start)
+                    _persist_sub_agent_record(agent, session, message, result_text, _start)
                 except Exception as e:
                     logger.warning(f"[Orchestrator] Failed to persist sub-agent record: {e}")
 
@@ -1028,10 +1046,12 @@ class AgentOrchestrator:
                             tools_used = list(dict.fromkeys(_task.tools_executed))
                 except Exception:
                     pass
+                if not tools_used and result_tools_used:
+                    tools_used = list(dict.fromkeys(result_tools_used))
 
                 # Forward artifact delivery receipts from sub-agent so the parent
                 # SSE stream can emit artifact events to the frontend.
-                artifacts: list[dict] = []
+                artifacts: list[dict] = list(result_artifacts)
                 try:
                     receipts = (
                         getattr(re_engine, "_last_delivery_receipts", None) if re_engine else None
@@ -1058,7 +1078,7 @@ class AgentOrchestrator:
 
                 # 子 Agent 输出守卫：数值/统计任务但 trace 中未真实跑代码时，
                 # 在结论尾部追加 ⚠️ 数据未经代码执行验证，避免 P0 幻觉。
-                _guarded_text = result or ""
+                _guarded_text = str(result_text or "")
                 if is_sub_agent:
                     try:
                         from openakita.core.agent_output_guard import (
@@ -1144,16 +1164,23 @@ class AgentOrchestrator:
         depth: int,
         *,
         default: str,
+        reason: str = "",
     ) -> str:
         """
         If the FallbackResolver says we should degrade, dispatch to the
         fallback profile; otherwise return *default*.
+
+        `reason` is the human-readable error/cause that triggered this
+        fallback attempt. It is included in the log so operators can
+        diagnose fallback chains without reading every exception line.
         """
         if self._fallback.should_use_fallback(agent_profile_id):
             effective_id = self._fallback.get_effective_profile(agent_profile_id)
             if effective_id != agent_profile_id:
+                reason_suffix = f" (reason: {reason[:300]})" if reason else ""
                 logger.info(
-                    f"[Orchestrator] Falling back from {agent_profile_id} to {effective_id}"
+                    f"[Orchestrator] Falling back from {agent_profile_id} to "
+                    f"{effective_id} after 3+ consecutive failures{reason_suffix}"
                 )
                 return await self._dispatch(
                     session,

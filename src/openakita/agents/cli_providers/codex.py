@@ -23,14 +23,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from openakita.agents.cli_detector import CliProviderId
-from openakita.agents.cli_providers._common import stream_cli_subprocess, write_mcp_config
+from openakita.agents.cli_providers._common import (
+    binary_not_found_error,
+    build_cli_env,
+    stream_cli_subprocess,
+    write_mcp_config,
+)
 from openakita.agents.cli_runner import (
     CliRunRequest,
     ExitReason,
     ProviderRunResult,
 )
 from openakita.agents.profile import CliPermissionMode
-from openakita.tools.errors import ErrorType, ToolError, classify_cli_error
+from openakita.tools.errors import classify_cli_error
 from openakita.utils.path_helper import which_command
 
 logger = logging.getLogger(__name__)
@@ -128,10 +133,10 @@ class CodexAdapter:
     def build_argv(self, request: CliRunRequest) -> list[str]:
         binary = _resolve_binary()
         if binary is None:
-            raise ToolError(
-                error_type=ErrorType.DEPENDENCY,
+            raise binary_not_found_error(
                 tool_name="codex",
-                message="codex binary not found on PATH",
+                binary="codex",
+                install_hint="npm install -g @openai/codex",
             )
         argv = [binary, "exec", "--json"]
         if request.profile.cli_permission_mode == CliPermissionMode.WRITE:
@@ -142,7 +147,7 @@ class CodexAdapter:
         return argv
 
     def build_env(self, request: CliRunRequest) -> dict[str, str]:
-        env = dict(os.environ)
+        env = build_cli_env()
         # CODEX_HOME is populated in run() with an absolute per-turn tempdir.
         # For build_env introspection (tests) we allocate a stub path so callers
         # can assert CODEX_HOME is set; run() overwrites before spawn.

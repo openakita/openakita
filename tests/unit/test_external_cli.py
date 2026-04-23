@@ -15,6 +15,7 @@ from openakita.agents.external_cli import (
     ExternalCliAgent,
     _NullBrain,
 )
+from openakita.agents.orchestrator import AgentOrchestrator
 from openakita.agents.profile import (
     AgentProfile,
     AgentType,
@@ -152,3 +153,36 @@ async def test_shutdown_runs_adapter_cleanup(cli_profile, stub_adapter):
                              limiter=ExternalCliLimiter(1))
     await agent.shutdown()
     stub_adapter.cleanup.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_accepts_structured_external_cli_result(cli_profile):
+    class StructuredCliAgent:
+        def __init__(self) -> None:
+            self._agent_profile = cli_profile
+            self.agent_state = MagicMock()
+            self.agent_state.get_task_for_session.return_value = None
+            self.agent_state.current_task = None
+
+        async def chat_with_session(self, **kwargs):
+            return {
+                "text": "implemented fix",
+                "tools_used": ["Edit"],
+                "artifacts": ["src/openakita/example.py"],
+                "elapsed_s": 0.2,
+                "exit_reason": "completed",
+            }
+
+    session = MagicMock()
+    session.id = "session-1"
+    session.context.get_messages.return_value = []
+
+    result = await AgentOrchestrator._call_agent(
+        StructuredCliAgent(),
+        session,
+        "repair delegation",
+    )
+
+    assert "implemented fix" in result
+    assert "Tool calls: 1 (Edit)" in result
+    assert "src/openakita/example.py" in result

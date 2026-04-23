@@ -20,13 +20,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from openakita.agents.cli_detector import CliProviderId
-from openakita.agents.cli_providers._common import stream_cli_subprocess
+from openakita.agents.cli_providers._common import (
+    binary_not_found_error,
+    build_cli_env,
+    stream_cli_subprocess,
+)
 from openakita.agents.cli_runner import (
     CliRunRequest,
     ExitReason,
     ProviderRunResult,
 )
-from openakita.tools.errors import ErrorType, ToolError, classify_cli_error
+from openakita.tools.errors import classify_cli_error
 from openakita.utils.path_helper import which_command
 
 logger = logging.getLogger(__name__)
@@ -132,10 +136,10 @@ class GooseAdapter:
     def build_argv(self, request: CliRunRequest) -> list[str]:
         binary = _resolve_binary()
         if binary is None:
-            raise ToolError(
-                error_type=ErrorType.DEPENDENCY,
+            raise binary_not_found_error(
                 tool_name="goose",
-                message="goose binary not found on PATH",
+                binary="goose",
+                install_hint="curl -fsSL https://github.com/block/goose/releases/latest/download/goose-installer.sh | bash",
             )
         argv = [binary, "session", "exec", "--stream"]
         if request.resume_id:
@@ -144,7 +148,7 @@ class GooseAdapter:
         return argv
 
     def build_env(self, request: CliRunRequest) -> dict[str, str]:
-        return dict(os.environ)
+        return build_cli_env()
 
     async def run(
         self,

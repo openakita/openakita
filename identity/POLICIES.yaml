@@ -75,5 +75,8 @@ security:
       allow_in_sandbox: false
       allowed_domains: []
   user_allowlist:
-    commands: []
+    commands:
+    - pattern: export PATH="/home/devops/.local/bin:$PATH"*
+      added_at: '2026-04-23T01:42:03.474681+00:00'
+      needs_sandbox: false
     tools: []

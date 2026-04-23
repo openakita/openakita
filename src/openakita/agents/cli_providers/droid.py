@@ -15,14 +15,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from openakita.agents.cli_detector import CliProviderId
-from openakita.agents.cli_providers._common import stream_cli_subprocess
+from openakita.agents.cli_providers._common import (
+    binary_not_found_error,
+    build_cli_env,
+    stream_cli_subprocess,
+)
 from openakita.agents.cli_runner import (
     CliRunRequest,
     ExitReason,
     ProviderRunResult,
 )
 from openakita.agents.profile import CliPermissionMode
-from openakita.tools.errors import ErrorType, ToolError, classify_cli_error
+from openakita.tools.errors import classify_cli_error
 from openakita.utils.path_helper import which_command
 
 logger = logging.getLogger(__name__)
@@ -102,10 +106,10 @@ class DroidAdapter:
     def build_argv(self, request: CliRunRequest) -> list[str]:
         binary = _resolve_binary()
         if binary is None:
-            raise ToolError(
-                error_type=ErrorType.DEPENDENCY,
+            raise binary_not_found_error(
                 tool_name="droid",
-                message="droid binary not found on PATH",
+                binary="droid",
+                install_hint="see https://docs.factory.ai/cli/getting-started/overview",
             )
         argv = [binary, "run", "--output", "jsonl"]
         if request.profile.cli_permission_mode == CliPermissionMode.WRITE:
@@ -116,7 +120,7 @@ class DroidAdapter:
         return argv
 
     def build_env(self, request: CliRunRequest) -> dict[str, str]:
-        return dict(os.environ)
+        return build_cli_env()
 
     async def run(self, request, argv, env, *, on_spawn):
         acc = _TurnAccumulator()

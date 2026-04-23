@@ -17,12 +17,58 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
+from openakita.tools.errors import ErrorType, ToolError
 from openakita.tools.mcp_catalog import MCPCatalog
+from openakita.utils.path_helper import get_enriched_env
 
 logger = logging.getLogger(__name__)
+
+
+def build_cli_env() -> dict[str, str]:
+    """Build a subprocess env for CLI adapters.
+
+    Starts from os.environ, then merges the user's login-shell PATH so
+    child CLIs (claude, codex, goose, …) can find their own dependencies
+    (node, python, etc.) even when the openakita server was started by
+    systemd with a minimum PATH.
+    """
+    enriched = get_enriched_env(dict(os.environ))
+    # get_enriched_env returns its input unchanged when no enrichment is
+    # available, never None in this code path — but keep a defensive
+    # fallback to satisfy the type checker.
+    return enriched if enriched is not None else dict(os.environ)
+
+
+def binary_not_found_error(
+    tool_name: str,
+    binary: str,
+    install_hint: str,
+) -> ToolError:
+    """Build a DEPENDENCY ToolError with an actionable install hint.
+
+    The message names searched locations so operators can debug systemd/
+    Docker PATH issues without reading source.
+    """
+    server_path = os.environ.get("PATH", "")
+    shell_checked = "yes" if server_path else "no"
+    return ToolError(
+        error_type=ErrorType.DEPENDENCY,
+        tool_name=tool_name,
+        message=(
+            f"{binary} binary not found on PATH. "
+            f"Checked server PATH ({server_path!r}) and login-shell PATH "
+            f"(checked={shell_checked}). "
+            f"Install hint: {install_hint}. "
+            f"If installed via nvm/volta, ensure the openakita server can see "
+            f"your user PATH — either add Environment=\"PATH=...\" to the "
+            f"systemd unit, or rely on the login-shell PATH fallback (requires "
+            f"$SHELL to run .bashrc/.zshrc non-interactively)."
+        ),
+    )
 
 
 async def stream_cli_subprocess(
