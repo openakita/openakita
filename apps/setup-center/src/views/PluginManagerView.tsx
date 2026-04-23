@@ -422,6 +422,20 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
       const resp = await safeFetch(url, { method, signal: longOpSignal() });
 
       if (action === "reload") {
+        // Backend now does: unload -> resync from install_source (if known)
+        // -> re-import. The response tells us which path was taken so we
+        // can give an accurate toast — otherwise users see "Plugin reloaded"
+        // and reasonably assume their source-code edits flowed through,
+        // even when (e.g.) install_source was unknown and the resync was
+        // skipped, which was the original "reload button does nothing" UX.
+        let resyncBody: any = null;
+        try {
+          resyncBody = await resp.json();
+        } catch { /* ignore */ }
+        const data = resyncBody?.data ?? resyncBody;
+        const resynced = Boolean(data?.resynced);
+        const resyncMode: string = data?.resync_mode ?? "";
+
         // Reload may change loaded/failed/error fields and (with dev mode)
         // pick up source-code edits. Easiest correct UI is to refetch the
         // whole list — small payload, avoids subtle local-state drift.
@@ -435,7 +449,22 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
             new CustomEvent("openakita:plugin-reloaded", { detail: { pluginId: id } }),
           );
         } catch { /* ignore */ }
-        showToast(ACTION_LABELS[action]?.ok ?? "OK");
+
+        let toastMsg: string;
+        if (resynced && resyncMode === "symlink") {
+          toastMsg = t("plugins.toastReloadedResyncSymlink");
+        } else if (resynced && resyncMode === "copy") {
+          toastMsg = t("plugins.toastReloadedResyncCopy");
+        } else if (!resynced) {
+          // Reload succeeded but we could not auto-resync — most likely
+          // an old install with no recorded source. Tell the user what to
+          // do once instead of letting them keep clicking a button that
+          // (for them) still doesn't pick up edits.
+          toastMsg = t("plugins.toastReloadedNoSource");
+        } else {
+          toastMsg = ACTION_LABELS[action]?.ok ?? "OK";
+        }
+        showToast(toastMsg);
         notifyAppsChanged();
         return;
       }
