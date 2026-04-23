@@ -116,8 +116,11 @@
     /* OA Kit helpers (minimal subset; rest comes from styles.css) */
     .oa-section-label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text); margin: 0 0 12px; }
     .oa-section-label::before { content: ""; display: inline-block; width: 3px; height: 16px; border-radius: 2px; background: var(--primary); }
-    .oa-hero-title { font-size: 18px; font-weight: 600; margin-bottom: 4px; color: var(--text); }
-    .oa-hero-title__sub { font-size: 12px; color: var(--text-muted); margin-bottom: 16px; }
+    /* .oa-hero-title comes verbatim from _assets/styles.css §7 (gradient
+     * icon chip + text + sub) — do NOT override here, otherwise the App
+     * header collapses to a plain text label and stops matching tongyi-image.
+     * For per-tab section headings use the .oa-section-label small-bar style
+     * (or .setting-section h3 inside SettingsTab). */
     .oa-pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 500; background: var(--bg-hover); color: var(--text-muted); }
     .oa-pill.green { background: rgba(34,197,94,.15); color: #16a34a; }
     .oa-pill.red { background: rgba(239,68,68,.15); color: #dc2626; }
@@ -316,6 +319,10 @@ const I18N_DICT = {
     "mediaPost.tabs.tasks.sub": "实时进度 / 历史任务 / 详情查看",
     "mediaPost.tabs.library.sub": "封面 / 多尺寸 / SEO 文案 / 章节卡 — 沉淀的素材",
     "mediaPost.tabs.settings.sub": "API Key / VLM 参数 / 章节卡 / 成本控制 / 协同",
+    // Global API-key banner (shown above the tab content when key missing)
+    "mediaPost.banner.noKey.title": "尚未配置 DashScope API Key",
+    "mediaPost.banner.noKey.desc": "所有创建任务都会失败。请前往设置页填入阿里云百炼 DashScope API Key。",
+    "mediaPost.banner.noKey.cta": "前往配置 →",
     // Modes
     "mediaPost.modes.cover_pick.title": "智能选封面",
     "mediaPost.modes.cover_pick.desc": "VLM 6 维评分排序 top 8",
@@ -494,6 +501,9 @@ const I18N_DICT = {
     "mediaPost.tabs.tasks.sub": "Live progress / history / detail panels",
     "mediaPost.tabs.library.sub": "Covers / aspects / SEO copy / chapter cards",
     "mediaPost.tabs.settings.sub": "API Key / VLM / Chapters / Cost / Cross-plugin",
+    "mediaPost.banner.noKey.title": "DashScope API Key not configured",
+    "mediaPost.banner.noKey.desc": "All create tasks will fail. Open Settings and paste your Aliyun Bailian DashScope API key.",
+    "mediaPost.banner.noKey.cta": "Open Settings →",
     "mediaPost.modes.cover_pick.title": "Smart Cover Pick",
     "mediaPost.modes.cover_pick.desc": "Qwen-VL 6-axis aesthetic scoring",
     "mediaPost.modes.multi_aspect.title": "Smart Recompose",
@@ -1007,11 +1017,8 @@ function CreateTab({ t, settings, onTaskCreated, gotoSettings }) {
 
   return (
     <div>
-      <div className="oa-hero-title">{t("mediaPost.tabs.create")}</div>
-      <div className="oa-hero-title__sub">{t("mediaPost.tabs.create.sub")}</div>
       <div className="split-layout">
         <div className="split-left">
-          <ApiKeyBanner missing={apiMissingForMode} t={t} onGo={gotoSettings} />
           <div className="form-row">
             <div className="oa-section-label">{t("mediaPost.tabs.create")}</div>
             <div className="grid-2" style={{gap: 8}}>
@@ -1311,7 +1318,9 @@ function TasksTab({ t, refreshTrigger }) {
       <div>
         <div className="flex items-center justify-between" style={{marginBottom:12}}>
           <div>
-            <div className="oa-hero-title">{t(`mediaPost.modes.${tk.mode}.title`)}</div>
+            <div style={{fontSize:15, fontWeight:600, color:"var(--text)", marginBottom:2}}>
+              {t(`mediaPost.modes.${tk.mode}.title`)}
+            </div>
             <div className="text-xs text-dim">ID: <code>{tk.id}</code> · {fmtDate(tk.created_at)}</div>
           </div>
           <div className="flex gap-2">
@@ -1338,8 +1347,6 @@ function TasksTab({ t, refreshTrigger }) {
 
   return (
     <div>
-      <div className="oa-hero-title">{t("mediaPost.tabs.tasks")}</div>
-      <div className="oa-hero-title__sub">{t("mediaPost.tabs.tasks.sub")}</div>
       <div className="split-layout">
         <div className="split-left">
           <div className="oa-section-label">
@@ -1379,9 +1386,7 @@ function TasksTab({ t, refreshTrigger }) {
 function LibraryTab({ t }) {
   const [sub, setSub] = useState("covers");
   return (
-    <div>
-      <div className="oa-hero-title">{t("mediaPost.tabs.library")}</div>
-      <div className="oa-hero-title__sub">{t("mediaPost.tabs.library.sub")}</div>
+    <div style={{maxWidth: 960, margin: "0 auto"}}>
       <div className="tabs" style={{padding:0, marginBottom:12, background:"transparent"}}>
         {["covers","aspects","seo","chapters"].map(s => (
           <div key={s} className={`tab ${sub === s ? "active" : ""}`} onClick={() => setSub(s)}>
@@ -1407,10 +1412,7 @@ function SettingsTab({ t, settings, onSaved }) {
   const apiOk = !!draft.dashscope_api_key;
 
   return (
-    <div>
-      <div className="oa-hero-title">{t("mediaPost.tabs.settings")}</div>
-      <div className="oa-hero-title__sub">{t("mediaPost.tabs.settings.sub")}</div>
-
+    <div style={{maxWidth: 720, margin: "0 auto"}}>
       <div className="oa-settings-section">
         <div className="oa-settings-section__title">{t("mediaPost.settings.api.title")}</div>
         <div className="form-row">
@@ -1512,26 +1514,30 @@ function App() {
     setRefreshTrigger(x => x + 1);
     if (gotoTasks) setTab("tasks");
   }
-  function toggleTheme() {
-    const cur = document.documentElement.getAttribute("data-theme");
-    document.documentElement.setAttribute("data-theme", cur === "dark" ? "light" : "dark");
-  }
-  function toggleLocale() {
-    const next = locale === "zh" ? "en" : "zh";
-    if (window.OpenAkitaI18n && window.OpenAkitaI18n.setLocale) window.OpenAkitaI18n.setLocale(next);
-  }
+
+  // Theme + locale are owned by the host shell (OpenAkita main window).
+  // The bridge listens for `bridge:theme-change` (see <script> at top of file)
+  // and OpenAkitaI18n re-emits onChange when host locale flips. We deliberately
+  // do NOT render plugin-local toggles for either — that would create a second
+  // source of truth that drifts from every other plugin. Mirrors tongyi-image
+  // (see plugins/tongyi-image/ui/dist/index.html L848-L863, where the
+  // `.header-right` slot is documented as intentionally empty).
+
+  const apiMissing = !settings || !settings.dashscope_api_key;
 
   return (
     <div className="app">
       <div className="header">
-        <h1><span style={{fontSize:18}}>🎬</span> {t("app.title")}</h1>
-        <div className="header-right">
-          <span className={`oa-pill ${settings && settings.dashscope_api_key ? "green" : "gray"}`}>
-            {settings && settings.dashscope_api_key ? t("mediaPost.settings.api.ok") : t("mediaPost.settings.api.missing")}
+        <h1 className="oa-hero-title">
+          <span className="oa-hero-title__icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons && window.OpenAkitaIcons.film ? window.OpenAkitaIcons.film() : ""}} />
+          <span className="oa-hero-title__text">
+            {t("app.title")}
+            <span className="oa-hero-title__sub">{t("app.subtitle")}</span>
           </span>
-          <button className="btn btn-sm" onClick={toggleTheme}>🌓</button>
-          <button className="btn btn-sm" onClick={toggleLocale}>{locale === "zh" ? "EN" : "中"}</button>
-        </div>
+        </h1>
+        {/* header-right intentionally empty — see comment above. */}
+        <div className="header-right" />
       </div>
       <div className="tabs">
         {["create","tasks","library","settings"].map(k => (
@@ -1540,6 +1546,23 @@ function App() {
           </div>
         ))}
       </div>
+      {apiMissing && tab !== "settings" && (
+        <div className="oa-config-banner" role="alert"
+             style={{margin:"12px 20px 0", flexShrink:0}}>
+          <span className="oa-icon oa-config-banner__icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons && window.OpenAkitaIcons.warning ? window.OpenAkitaIcons.warning() : ""}} />
+          <div className="oa-config-banner__text">
+            <strong>{t("mediaPost.banner.noKey.title")}</strong>
+            <div style={{fontSize:12, color:"var(--text-muted)", marginTop:2}}>
+              {t("mediaPost.banner.noKey.desc")}
+            </div>
+          </div>
+          <button className="oa-config-banner__action" type="button"
+                  onClick={() => setTab("settings")}>
+            {t("mediaPost.banner.noKey.cta")}
+          </button>
+        </div>
+      )}
       <div className="content">
         {tab === "create" && <CreateTab t={t} settings={settings} onTaskCreated={onTaskCreated} gotoSettings={() => setTab("settings")} />}
         {tab === "tasks" && <TasksTab t={t} refreshTrigger={refreshTrigger} />}
