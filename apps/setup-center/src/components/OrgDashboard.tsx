@@ -1,12 +1,14 @@
 /**
- * Organization Operations Dashboard — 酷炫数据大屏风格
- * 渐变边框 + 发光效果 + 动画数字 + 粒子网格背景
+ * Organization Operations Dashboard — data-screen style
+ * Gradient borders + glow effects + animated numbers + particle grid background
  */
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { safeFetch } from "../providers";
 import { OrgAvatar } from "./OrgAvatars";
 import { useMdModules } from "../views/chat/hooks/useMdModules";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "./ui/tooltip";
+import { translateDept } from "../views/orgEditorConstants";
 
 /* ─── Inline SVG mini-icons (replace emoji) ─── */
 const SvgNodes = () => (
@@ -77,25 +79,25 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  idle: "空闲", busy: "忙碌", error: "异常", frozen: "冻结", waiting: "等待",
+  idle: "org.status.idle", busy: "org.status.busy", error: "org.status.error", frozen: "org.status.frozen", waiting: "org.status.waiting",
 };
 
 const HEALTH_MAP: Record<string, [string, string, string]> = {
-  healthy: ["运行良好", "#22c55e", "#22c55e30"],
-  attention: ["需关注", "#3b82f6", "#3b82f630"],
-  warning: ["有隐患", "#f59e0b", "#f59e0b30"],
-  critical: ["异常", "#ef4444", "#ef444430"],
+  healthy: ["org.dashboard.healthGood", "#22c55e", "#22c55e30"],
+  attention: ["org.dashboard.healthAttention", "#3b82f6", "#3b82f630"],
+  warning: ["org.dashboard.healthWarning", "#f59e0b", "#f59e0b30"],
+  critical: ["org.dashboard.healthCritical", "#ef4444", "#ef444430"],
 };
 
-const DB_TYPE_META: Record<string, { icon: string; label: string; tip: string; cls: string }> = {
-  task_delegated:  { icon: "↗", label: "分配", tip: "分配任务给下级节点",     cls: "db-ev-delegated" },
-  task_delivered:  { icon: "↙", label: "交付", tip: "向上级交付任务成果",     cls: "db-ev-delivered" },
-  task_accepted:   { icon: "✓", label: "通过", tip: "上级验收通过",           cls: "db-ev-accepted" },
-  task_rejected:   { icon: "✗", label: "打回", tip: "上级打回，需要重新处理", cls: "db-ev-rejected" },
-  task_timeout:    { icon: "⏱", label: "超时", tip: "任务执行超时",           cls: "db-ev-timeout" },
-  task_completed:  { icon: "✓", label: "完成", tip: "节点执行完成",           cls: "db-ev-completed" },
-  node_activated:  { icon: "▶", label: "执行", tip: "节点开始执行任务",       cls: "db-ev-activated" },
-  _default:        { icon: "•", label: "事件", tip: "",                       cls: "" },
+const DB_TYPE_META: Record<string, { icon: string; label: string; cls: string }> = {
+  task_delegated:  { icon: "↗", label: "org.dashboard.feedAssign",   cls: "db-ev-delegated" },
+  task_delivered:  { icon: "↙", label: "org.dashboard.feedDeliver",  cls: "db-ev-delivered" },
+  task_accepted:   { icon: "✓", label: "org.dashboard.feedAccept",   cls: "db-ev-accepted" },
+  task_rejected:   { icon: "✗", label: "org.dashboard.feedReject",   cls: "db-ev-rejected" },
+  task_timeout:    { icon: "⏱", label: "org.dashboard.feedTimeout",  cls: "db-ev-timeout" },
+  task_completed:  { icon: "✓", label: "org.dashboard.feedComplete", cls: "db-ev-completed" },
+  node_activated:  { icon: "▶", label: "org.dashboard.feedExecute",  cls: "db-ev-activated" },
+  _default:        { icon: "•", label: "",                           cls: "" },
 };
 
 function stripMd(s: string): string {
@@ -114,25 +116,25 @@ function stripMd(s: string): string {
     .trim();
 }
 
-function fmtDuration(s: number | null | undefined): string {
+function fmtDuration(s: number | null | undefined, t: (k: string, o?: Record<string, unknown>) => string): string {
   if (!s || s <= 0) return "--";
-  if (s >= 86400) return `${Math.floor(s / 86400)}天 ${Math.floor((s % 86400) / 3600)}时`;
-  if (s >= 3600) return `${Math.floor(s / 3600)}时 ${Math.floor((s % 3600) / 60)}分`;
-  return `${Math.floor(s / 60)}分`;
+  if (s >= 86400) return t("org.dashboard.durationDays", { d: Math.floor(s / 86400), h: Math.floor((s % 86400) / 3600) });
+  if (s >= 3600) return t("org.dashboard.durationHours", { h: Math.floor(s / 3600), m: Math.floor((s % 3600) / 60) });
+  return t("org.dashboard.durationMinutes", { m: Math.floor(s / 60) });
 }
 
 function fmtTime(v: string | number | undefined | null): string {
   if (!v) return "";
   const d = new Date(typeof v === "number" ? v : v);
   if (isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-function fmtIdle(s: number | null | undefined): string {
+function fmtIdle(s: number | null | undefined, t: (k: string, o?: Record<string, unknown>) => string): string {
   if (s == null) return "--";
-  if (s < 60) return "刚刚活动";
-  if (s < 3600) return `${Math.floor(s / 60)}分钟前`;
-  return `${Math.floor(s / 3600)}小时前`;
+  if (s < 60) return t("org.dashboard.justNow");
+  if (s < 3600) return t("org.dashboard.minutesAgo", { m: Math.floor(s / 60) });
+  return t("org.dashboard.hoursAgo", { h: Math.floor(s / 3600) });
 }
 
 function AnimatedNumber({ value, color }: { value: number; color: string }) {
@@ -161,6 +163,7 @@ function AnimatedNumber({ value, color }: { value: number; color: string }) {
 }
 
 export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDashboardProps) {
+  const { t } = useTranslation();
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
@@ -186,12 +189,12 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", background: "var(--bg-app)", color: "var(--muted)" }}>
         <div style={{ textAlign: "center" }}>
           <div className="db-spinner" />
-          <div style={{ marginTop: 12, fontSize: 13 }}>正在连接组织...</div>
+          <div style={{ marginTop: 12, fontSize: 13 }}>{t("org.dashboard.loading")}</div>
         </div>
       </div>
     );
   }
-  if (!stats) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", background: "var(--bg-app)", color: "var(--muted)" }}>无法加载</div>;
+  if (!stats) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", background: "var(--bg-app)", color: "var(--muted)" }}>{t("org.dashboard.loadError")}</div>;
 
   const hl = HEALTH_MAP[stats.health] || HEALTH_MAP.healthy;
   const nodeStats = stats.node_stats || {};
@@ -207,7 +210,7 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
     return n?.role_title || id;
   };
   const healthPct = stats.node_count > 0 ? Math.round(((stats.node_count - (nodeStats.error || 0)) / stats.node_count) * 100) : 100;
-  const now = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const now = new Date().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
   const FeedTip = ({ text }: { text: string }) => (
     <div className="db-tip-content">
@@ -230,8 +233,8 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
       {/* ── Header ────────────────────────────────────── */}
       <div className="db-header">
         <div className="db-header-left">
-          <div className="db-title-glow">{orgName || stats.name || "组织"}</div>
-          <div className="db-subtitle">实时运营监控中心</div>
+          <div className="db-title-glow">{orgName || stats.name || t("org.dashboard.title")}</div>
+          <div className="db-subtitle">{t("org.dashboard.subtitle")}</div>
         </div>
         <div className="db-header-center">
           <div className="db-health-ring" data-pct={healthPct} style={{ "--ring-color": hl[1] } as any}>
@@ -246,9 +249,9 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
           <div>
             <div className="db-health-label" style={{ color: hl[1] }}>
               <span className="db-pulse-dot" style={{ background: hl[1] }} />
-              {hl[0]}
+              {t(hl[0])}
             </div>
-            <div className="db-uptime">运行 {fmtDuration(stats.uptime_s)}</div>
+            <div className="db-uptime">{t("org.dashboard.runningFor", { duration: fmtDuration(stats.uptime_s, t) })}</div>
           </div>
         </div>
         <div className="db-header-right">
@@ -259,12 +262,12 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
       {/* ── KPI Row ───────────────────────────────────── */}
       <div className="db-kpi-row">
         {[
-          { label: "节点总数", value: stats.node_count, icon: <SvgNodes />, gradient: "linear-gradient(135deg, #3b82f6, #6366f1)" },
-          { label: "活跃节点", value: busyCount, sub: `/ ${stats.node_count}`, icon: <SvgZap />, gradient: "linear-gradient(135deg, #22c55e, #10b981)" },
-          { label: "已完成任务", value: stats.total_tasks_completed ?? 0, icon: <SvgCheck />, gradient: "linear-gradient(135deg, #8b5cf6, #a855f7)" },
-          { label: "消息总量", value: stats.total_messages_exchanged ?? 0, icon: <SvgMsg />, gradient: "linear-gradient(135deg, #f59e0b, #f97316)" },
-          { label: "待处理", value: stats.pending_messages ?? 0, icon: <SvgInbox />, gradient: stats.pending_messages > 0 ? "linear-gradient(135deg, #ef4444, #f97316)" : "linear-gradient(135deg, #475569, #64748b)" },
-          { label: "待审批", value: stats.pending_approvals ?? 0, icon: <SvgShield />, gradient: stats.pending_approvals > 0 ? "linear-gradient(135deg, #f97316, #eab308)" : "linear-gradient(135deg, #475569, #64748b)" },
+          { label: t("org.dashboard.totalNodes"), value: stats.node_count, icon: <SvgNodes />, gradient: "linear-gradient(135deg, #3b82f6, #6366f1)" },
+          { label: t("org.dashboard.activeNodes"), value: busyCount, sub: `/ ${stats.node_count}`, icon: <SvgZap />, gradient: "linear-gradient(135deg, #22c55e, #10b981)" },
+          { label: t("org.dashboard.completedTasks"), value: stats.total_tasks_completed ?? 0, icon: <SvgCheck />, gradient: "linear-gradient(135deg, #8b5cf6, #a855f7)" },
+          { label: t("org.dashboard.totalMessages"), value: stats.total_messages_exchanged ?? 0, icon: <SvgMsg />, gradient: "linear-gradient(135deg, #f59e0b, #f97316)" },
+          { label: t("org.dashboard.pending"), value: stats.pending_messages ?? 0, icon: <SvgInbox />, gradient: stats.pending_messages > 0 ? "linear-gradient(135deg, #ef4444, #f97316)" : "linear-gradient(135deg, #475569, #64748b)" },
+          { label: t("org.dashboard.pendingApprovals"), value: stats.pending_approvals ?? 0, icon: <SvgShield />, gradient: stats.pending_approvals > 0 ? "linear-gradient(135deg, #f97316, #eab308)" : "linear-gradient(135deg, #475569, #64748b)" },
         ].map(kpi => (
           <div key={kpi.label} className="db-kpi-card">
             <div className="db-kpi-icon" style={{ background: kpi.gradient }}>{kpi.icon}</div>
@@ -280,14 +283,14 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
 
       {/* ── Middle Row ────────────────────────────────── */}
       <div className="db-middle-row">
-        <GlassCard title="节点状态分布" className="db-col-1">
+        <GlassCard title={t("org.dashboard.nodeDistribution")} className="db-col-1">
           {(["idle", "busy", "error", "frozen", "waiting"] as const).map(st => {
             const count = nodeStats[st] || 0;
             const pct = stats.node_count > 0 ? (count / stats.node_count) * 100 : 0;
             return (
               <div key={st} className="db-bar-row">
                 <span className="db-bar-dot" style={{ background: STATUS_COLORS[st] }} />
-                <span className="db-bar-label">{STATUS_LABELS[st]}</span>
+                <span className="db-bar-label">{t(STATUS_LABELS[st])}</span>
                 <div className="db-bar-track">
                   <div className="db-bar-fill" style={{ width: `${pct}%`, background: STATUS_COLORS[st], boxShadow: `0 0 8px ${STATUS_COLORS[st]}60` }} />
                 </div>
@@ -297,23 +300,23 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
           })}
         </GlassCard>
 
-        <GlassCard title="部门工作量" className="db-col-1">
+        <GlassCard title={t("org.dashboard.deptWorkload")} className="db-col-1">
           {Object.entries(deptWorkload).length === 0 ? (
-            <div style={{ color: "var(--muted)", fontSize: 12 }}>暂无数据</div>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>{t("org.dashboard.noData")}</div>
           ) : (
             Object.entries(deptWorkload).sort((a, b) => b[1].total - a[1].total).map(([dept, wl]) => {
               const pct = stats.node_count > 0 ? Math.round((wl.total / stats.node_count) * 100) : 0;
               const busyPct = wl.total > 0 ? Math.round((wl.busy / wl.total) * 100) : 0;
               return (
                 <div key={dept} className="db-bar-row">
-                  <span className="db-bar-label" style={{ width: 56 }}>{dept}</span>
+                  <span className="db-bar-label" style={{ width: 56 }}>{translateDept(dept, t)}</span>
                   <div className="db-bar-track">
                     <div className="db-bar-fill db-bar-fill-dept" style={{ width: `${pct}%` }}>
                       {busyPct > 0 && <div className="db-bar-busy" style={{ width: `${busyPct}%` }} />}
                     </div>
                   </div>
                   <span className="db-bar-count">{pct}%</span>
-                  {wl.busy > 0 && <span className="db-busy-badge">{wl.busy} 忙</span>}
+                  {wl.busy > 0 && <span className="db-busy-badge">{t("org.dashboard.busyCount", { count: wl.busy })}</span>}
                 </div>
               );
             })
@@ -323,33 +326,33 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
 
       {/* ── Data Row: Tasks + Alerts + Blackboard ──── */}
       <div className="db-data-row">
-        <GlassCard title="实时任务流" icon={<SvgList />} className="db-col-2">
+        <GlassCard title={t("org.dashboard.taskFeed")} icon={<SvgList />} className="db-col-2">
           <div className="db-scroll-area">
             {recentTasks.length === 0 ? (
-              <div className="db-empty">暂无任务</div>
-            ) : recentTasks.map((t, i) => {
-              const meta = DB_TYPE_META[t.type] || DB_TYPE_META._default;
-              const fromName = nodeName(t.from);
-              const toName = nodeName(t.to);
+              <div className="db-empty">{t("org.dashboard.noTasks")}</div>
+            ) : recentTasks.map((ev, i) => {
+              const meta = DB_TYPE_META[ev.type] || DB_TYPE_META._default;
+              const fromName = nodeName(ev.from);
+              const toName = nodeName(ev.to);
               return (
                 <div key={i} className="db-task-item">
-                  <span className="db-task-time">{fmtTime(t.t)}</span>
-                  <span className={`db-task-badge ${meta.cls}`} title={meta.tip}>
+                  <span className="db-task-time">{fmtTime(ev.t)}</span>
+                  <span className={`db-task-badge ${meta.cls}`}>
                     <span className="db-task-badge-icon">{meta.icon}</span>
-                    {meta.label}
+                    {t(meta.label)}
                   </span>
                   <span className="db-task-who">{fromName}</span>
                   {toName && <>
                     <span className="db-task-arrow">→</span>
                     <span className="db-task-who">{toName}</span>
                   </>}
-                  {t.task && (
+                  {ev.task && (
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <span className="db-task-desc">{stripMd(t.task)}</span>
+                        <span className="db-task-desc">{stripMd(ev.task)}</span>
                       </TooltipTrigger>
                       <TooltipContent side="top" align="start" className={tipCls}>
-                        <FeedTip text={t.task} />
+                        <FeedTip text={ev.task} />
                       </TooltipContent>
                     </Tooltip>
                   )}
@@ -359,10 +362,10 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
           </div>
         </GlassCard>
 
-        <GlassCard title={`异常告警${anomalies.length > 0 ? ` (${anomalies.length})` : ""}`} icon={<SvgAlert />} className="db-col-1" accent={anomalies.length > 0 ? "#ef4444" : undefined}>
+        <GlassCard title={`${t("org.dashboard.alerts")}${anomalies.length > 0 ? ` (${anomalies.length})` : ""}`} icon={<SvgAlert />} className="db-col-1" accent={anomalies.length > 0 ? "#ef4444" : undefined}>
           <div className="db-scroll-area">
             {anomalies.length === 0 ? (
-              <div className="db-all-good"><SvgCheck /> 一切正常</div>
+              <div className="db-all-good"><SvgCheck /> {t("org.dashboard.allClear")}</div>
             ) : anomalies.map((a, i) => (
               <div key={i} className="db-alert-item">
                 <span className="db-alert-icon" style={{ color: a.type === "error" ? "#ef4444" : a.type === "stuck" ? "#f59e0b" : "#3b82f6" }}>
@@ -382,14 +385,14 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
           </div>
         </GlassCard>
 
-        <GlassCard title="黑板记录" icon={<SvgClipboard />} className="db-col-1">
+        <GlassCard title={t("org.dashboard.blackboardRecords")} icon={<SvgClipboard />} className="db-col-1">
           <div className="db-scroll-area">
             {recentBB.length === 0 ? (
-              <div className="db-empty">暂无记录</div>
+              <div className="db-empty">{t("org.dashboard.noRecords")}</div>
             ) : recentBB.map((b, i) => (
               <div key={i} className="db-bb-item">
                 <span className={`db-bb-badge db-bb-${b.memory_type}`}>
-                  {b.memory_type === "decision" ? "决策" : b.memory_type === "progress" ? "进度" : b.memory_type === "fact" ? "事实" : b.memory_type}
+                  {b.memory_type === "decision" ? t("org.dashboard.decision") : b.memory_type === "progress" ? t("org.dashboard.progressType") : b.memory_type === "fact" ? t("org.dashboard.fact") : b.memory_type}
                 </span>
                 <span className="db-bb-source">{nodeName(b.source_node)}</span>
                 <Tooltip>
@@ -407,7 +410,7 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
       </div>
 
       {/* ── Node Grid ─────────────────────────────────── */}
-      <GlassCard title="节点矩阵" icon={<SvgGrid />}>
+      <GlassCard title={t("org.dashboard.nodeMatrix")} icon={<SvgGrid />}>
         <div className="db-node-grid">
           {perNode.filter((n: any) => !n.is_clone).map((n: any) => {
             const color = STATUS_COLORS[n.status] || "#64748b";
@@ -426,12 +429,12 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
                 </div>
                 <div className="db-node-bottom">
                   <span className="db-node-status-text" style={{ color }}>
-                    {STATUS_LABELS[n.status] || n.status}
+                    {STATUS_LABELS[n.status] ? t(STATUS_LABELS[n.status]) : n.status}
                   </span>
                   {n.current_task ? (
                     <span className="db-node-task">{n.current_task}</span>
                   ) : (
-                    <span className="db-node-idle">{fmtIdle(n.idle_seconds)}</span>
+                    <span className="db-node-idle">{fmtIdle(n.idle_seconds, t)}</span>
                   )}
                 </div>
               </div>

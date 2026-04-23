@@ -3,6 +3,7 @@
  * Manages its own data fetching (events, schedules, thinking, tasks).
  */
 import { useState, useEffect, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { safeFetch } from "../providers";
 import type { Node } from "@xyflow/react";
 import {
@@ -35,21 +36,22 @@ function NodeTasksTabContent({
   loading: boolean;
   nodes: Node[];
 }) {
+  const { t } = useTranslation();
   const nodeMap = new Map(nodes.map((n) => [n.id, (n.data as any)?.role_title || n.id]));
   const getNodeLabel = (id: string | null) => (id ? nodeMap.get(id) || id : "-");
 
   if (loading) {
-    return <div style={{ fontSize: 12, color: "var(--muted)", padding: 12 }}>加载中...</div>;
+    return <div style={{ fontSize: 12, color: "var(--muted)", padding: 12 }}>{t("org.monitor.loading")}</div>;
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, fontSize: 12 }}>
       {nodeActivePlan && (
         <div className="card" style={{ padding: 10 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "#b45309" }}>当前任务</div>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "#b45309" }}>{t("org.monitor.currentTask")}</div>
           <div style={{ fontWeight: 500, marginBottom: 6 }}>{nodeActivePlan.title}</div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <span style={{ fontSize: 10, color: "var(--muted)" }}>进度</span>
+            <span style={{ fontSize: 10, color: "var(--muted)" }}>{t("org.monitor.progress")}</span>
             <div style={{ flex: 1, height: 4, borderRadius: 2, background: "var(--line)", overflow: "hidden" }}>
               <div style={{ height: "100%", borderRadius: 2, background: "var(--accent)", width: `${nodeActivePlan.progress_pct ?? 0}%` }} />
             </div>
@@ -64,7 +66,7 @@ function NodeTasksTabContent({
                 return (
                   <div key={s.id || i} style={{ display: "flex", gap: 6, alignItems: "flex-start", marginBottom: 4 }}>
                     <span style={{ color, fontWeight: 600, flexShrink: 0 }}>{icon}</span>
-                    <span style={{ color: "var(--text)" }}>{s.description || s.title || `步骤 ${i + 1}`}</span>
+                    <span style={{ color: "var(--text)" }}>{s.description || s.title || t("org.monitor.step", { n: i + 1 })}</span>
                   </div>
                 );
               })}
@@ -74,22 +76,22 @@ function NodeTasksTabContent({
       )}
 
       <div className="card" style={{ padding: 10 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>分配给我的任务</div>
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{t("org.monitor.assignedToMe")}</div>
         {(nodeTasks?.assigned?.length ?? 0) === 0 ? (
-          <div style={{ fontSize: 11, color: "var(--muted)" }}>暂无</div>
+          <div style={{ fontSize: 11, color: "var(--muted)" }}>{t("org.monitor.none")}</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {(nodeTasks?.assigned || []).map((t: any) => (
-              <div key={t.id} style={{ padding: 8, borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg-subtle, var(--bg-card))" }}>
-                <div style={{ fontWeight: 500, marginBottom: 4 }}>{t.title}</div>
+            {(nodeTasks?.assigned || []).map((task: any) => (
+              <div key={task.id} style={{ padding: 8, borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg-subtle, var(--bg-card))" }}>
+                <div style={{ fontWeight: 500, marginBottom: 4 }}>{task.title}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10 }}>
                   <span style={{ padding: "1px 5px", borderRadius: 3, background: "var(--bg-app)", color: "var(--muted)" }}>
-                    {TASK_STATUS_LABELS[t.status] || t.status}
+                    {t(TASK_STATUS_LABELS[task.status] || task.status)}
                   </span>
-                  <span style={{ color: "var(--muted)" }}>{(t.progress_pct ?? 0)}%</span>
+                  <span style={{ color: "var(--muted)" }}>{(task.progress_pct ?? 0)}%</span>
                 </div>
                 <div style={{ marginTop: 4, height: 3, borderRadius: 2, background: "var(--line)", overflow: "hidden" }}>
-                  <div style={{ height: "100%", borderRadius: 2, background: "var(--accent)", width: `${Math.min(100, t.progress_pct ?? 0)}%` }} />
+                  <div style={{ height: "100%", borderRadius: 2, background: "var(--accent)", width: `${Math.min(100, task.progress_pct ?? 0)}%` }} />
                 </div>
               </div>
             ))}
@@ -98,23 +100,23 @@ function NodeTasksTabContent({
       </div>
 
       <div className="card" style={{ padding: 10 }}>
-        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>我委派的任务</div>
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{t("org.monitor.delegatedByMe")}</div>
         {(nodeTasks?.delegated?.length ?? 0) === 0 ? (
-          <div style={{ fontSize: 11, color: "var(--muted)" }}>暂无</div>
+          <div style={{ fontSize: 11, color: "var(--muted)" }}>{t("org.monitor.none")}</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {(nodeTasks?.delegated || []).map((t: any) => (
-              <div key={t.id} style={{ padding: 8, borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg-subtle, var(--bg-card))" }}>
-                <div style={{ fontWeight: 500, marginBottom: 4 }}>{t.title}</div>
+            {(nodeTasks?.delegated || []).map((task: any) => (
+              <div key={task.id} style={{ padding: 8, borderRadius: 6, border: "1px solid var(--line)", background: "var(--bg-subtle, var(--bg-card))" }}>
+                <div style={{ fontWeight: 500, marginBottom: 4 }}>{task.title}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10 }}>
                   <span style={{ padding: "1px 5px", borderRadius: 3, background: "var(--bg-app)", color: "var(--muted)" }}>
-                    {TASK_STATUS_LABELS[t.status] || t.status}
+                    {t(TASK_STATUS_LABELS[task.status] || task.status)}
                   </span>
-                  <span style={{ color: "var(--muted)" }}>{(t.progress_pct ?? 0)}%</span>
-                  <span style={{ color: "var(--muted)", marginLeft: "auto" }}>执行人: {getNodeLabel(t.assignee_node_id)}</span>
+                  <span style={{ color: "var(--muted)" }}>{(task.progress_pct ?? 0)}%</span>
+                  <span style={{ color: "var(--muted)", marginLeft: "auto" }}>{t("org.monitor.executor", { name: getNodeLabel(task.assignee_node_id) })}</span>
                 </div>
                 <div style={{ marginTop: 4, height: 3, borderRadius: 2, background: "var(--line)", overflow: "hidden" }}>
-                  <div style={{ height: "100%", borderRadius: 2, background: "var(--accent)", width: `${Math.min(100, t.progress_pct ?? 0)}%` }} />
+                  <div style={{ height: "100%", borderRadius: 2, background: "var(--accent)", width: `${Math.min(100, task.progress_pct ?? 0)}%` }} />
                 </div>
               </div>
             ))}
@@ -134,6 +136,7 @@ const MSG_TYPE_COLORS: Record<string, string> = {
 };
 
 export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: OrgMonitorPanelProps) {
+  const { t } = useTranslation();
   const mdModules = useMdModules();
   const [nodeEvents, setNodeEvents] = useState<any[]>([]);
   const [nodeSchedules, setNodeSchedules] = useState<any[]>([]);
@@ -231,7 +234,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
       }}
     >
       <div style={{ padding: "12px 12px 8px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontWeight: 600, fontSize: 13 }}>运行监控</div>
+        <div style={{ fontWeight: 600, fontSize: 13 }}>{t("org.monitor.title")}</div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <span style={{
             fontSize: 10, padding: "1px 6px", borderRadius: 4,
@@ -239,10 +242,10 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
             color: STATUS_COLORS[selectedNode.status] || "var(--muted)",
             fontWeight: 500,
           }}>
-            {STATUS_LABELS[selectedNode.status] || selectedNode.status}
+            {t(STATUS_LABELS[selectedNode.status] || selectedNode.status)}
           </span>
-          {selectedNode.is_clone && <span style={{ fontSize: 9, color: "#0369a1" }}>副本</span>}
-          {selectedNode.ephemeral && <span style={{ fontSize: 9, color: "#b45309" }}>临时</span>}
+          {selectedNode.is_clone && <span style={{ fontSize: 9, color: "#0369a1" }}>{t("org.monitor.clone")}</span>}
+          {selectedNode.ephemeral && <span style={{ fontSize: 9, color: "#b45309" }}>{t("org.monitor.ephemeral")}</span>}
         </div>
       </div>
       <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -258,7 +261,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
         {/* Schedules */}
         {nodeSchedules.length > 0 && (
           <div className="card" style={{ padding: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>定时任务</div>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{t("org.monitor.scheduledTasks")}</div>
             {nodeSchedules.map((s: any) => (
               <div key={s.id} style={{ padding: "4px 0", borderBottom: "1px solid var(--line)", fontSize: 11 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -268,11 +271,11 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                     background: s.enabled ? "#dcfce7" : "#f3f4f6",
                     color: s.enabled ? "#166534" : "#9ca3af",
                   }}>
-                    {s.enabled ? "启用" : "禁用"}
+                    {s.enabled ? t("org.monitor.enabled") : t("org.monitor.disabled")}
                   </span>
                 </div>
                 {s.last_run_at && (
-                  <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>上次: {fmtDateTime(s.last_run_at)}</div>
+                  <div style={{ fontSize: 10, color: "#9ca3af", marginTop: 2 }}>{t("org.monitor.lastRun", { time: fmtDateTime(s.last_run_at) })}</div>
                 )}
                 {s.last_result_summary && (
                   <div style={{ fontSize: 10, color: "#6b7280", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -287,19 +290,19 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
         {/* Recent events */}
         <div className="card" style={{ padding: 10 }}>
           <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-            最近活动
+            {t("org.monitor.recentActivity")}
             {nodeEvents.length > 0 && (
               <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400, marginLeft: 4 }}>({nodeEvents.length})</span>
             )}
           </div>
           {nodeEvents.length === 0 ? (
-            <div style={{ fontSize: 11, color: "var(--muted)" }}>暂无活动记录</div>
+            <div style={{ fontSize: 11, color: "var(--muted)" }}>{t("org.monitor.noActivity")}</div>
           ) : (
             <div style={{ maxHeight: 300, overflowY: "auto" }}>
               {nodeEvents.slice(0, 15).map((evt: any, i: number) => {
                 const dataEntries = Object.entries(evt.data || {});
                 const isEvtExpanded = expandedIdx === `evt-${i}`;
-                const fullText = dataEntries.map(([k, v]) => `**${DATA_KEY_LABELS[k] || k}**: ${translateDataValue(k, v, nodeNameMap)}`).join("\n\n");
+                const fullText = dataEntries.map(([k, v]) => `**${t(DATA_KEY_LABELS[k] || k)}**: ${translateDataValue(k, v, nodeNameMap)}`).join("\n\n");
                 return (
                   <div key={evt.event_id || i}
                     onClick={() => setExpandedIdx(isEvtExpanded ? null : `evt-${i}`)}
@@ -316,7 +319,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                           : evt.event_type?.includes("complete") ? "var(--ok)" : "var(--primary)",
                       }} />
                       <span style={{ fontWeight: 500 }}>
-                        {EVENT_TYPE_LABELS[evt.event_type] || evt.event_type?.replace(/_/g, " ")}
+                        {t(EVENT_TYPE_LABELS[evt.event_type] || evt.event_type?.replace(/_/g, " "))}
                       </span>
                       <span style={{ color: "var(--muted)", fontSize: 10, marginLeft: "auto" }}>
                         {fmtTime(evt.timestamp)}
@@ -334,7 +337,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                       </div>
                     )}
                     {!isEvtExpanded && fullText.length > 80 && (
-                      <div style={{ fontSize: 9, color: "var(--primary)", marginTop: 2, marginLeft: 12 }}>点击展开全文</div>
+                      <div style={{ fontSize: 9, color: "var(--primary)", marginTop: 2, marginLeft: 12 }}>{t("org.monitor.expandFull")}</div>
                     )}
                   </div>
                 );
@@ -346,13 +349,13 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
         {/* Thought chain */}
         <div className="card" style={{ padding: 10 }}>
           <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-            思维链
+            {t("org.monitor.thinkingChain")}
             {nodeThinking.length > 0 && (
               <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400, marginLeft: 4 }}>({nodeThinking.length})</span>
             )}
           </div>
           {nodeThinking.length === 0 ? (
-            <div style={{ fontSize: 11, color: "var(--muted)" }}>暂无思维链记录</div>
+            <div style={{ fontSize: 11, color: "var(--muted)" }}>{t("org.monitor.noThinkingChain")}</div>
           ) : (
             <div style={{ maxHeight: 400, overflowY: "auto" }}>
               {nodeThinking.slice(0, 30).map((item: any, i: number) => {
@@ -386,7 +389,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                             background: `${MSG_TYPE_COLORS[item.msg_type] || "#6b7280"}18`,
                             color: MSG_TYPE_COLORS[item.msg_type] || "#6b7280",
                           }}>
-                            {MSG_TYPE_LABELS[item.msg_type] || item.msg_type.replace(/_/g, " ")}
+                            {t(MSG_TYPE_LABELS[item.msg_type] || item.msg_type.replace(/_/g, " "))}
                           </span>
                         )}
                         <span style={{ color: "var(--muted)", fontSize: 10, marginLeft: "auto" }}>{tsLocal}</span>
@@ -411,7 +414,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                         )}
                       </div>
                       {!isExpanded && (item.content || "").length > 150 && (
-                        <div style={{ fontSize: 9, color: "var(--primary)", marginTop: 2 }}>点击展开全文</div>
+                        <div style={{ fontSize: 9, color: "var(--primary)", marginTop: 2 }}>{t("org.monitor.expandFull")}</div>
                       )}
                     </div>
                   );
@@ -436,7 +439,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                           background: isError ? "var(--danger)" : isComplete ? "var(--ok)" : isToolCall ? "#7c3aed" : "var(--primary)",
                         }} />
                         <span style={{ fontWeight: 500, fontSize: 10, color: isToolCall ? "#7c3aed" : undefined }}>
-                          {isToolCall ? "[T] " : ""}{EVENT_TYPE_LABELS[evtType] || evtType.replace(/_/g, " ")}
+                          {isToolCall ? "[T] " : ""}{t(EVENT_TYPE_LABELS[evtType] || evtType.replace(/_/g, " "))}
                         </span>
                         <span style={{ color: "var(--muted)", fontSize: 10, marginLeft: "auto" }}>{tsLocal}</span>
                       </div>
@@ -444,7 +447,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                         const entries = Object.entries(item.data).slice(0, isExpanded ? 20 : 3);
                         const mdText = entries.map(([k, v]) => {
                           const tv = translateDataValue(k, v, nodeNameMap);
-                          return `**${DATA_KEY_LABELS[k] || k}**: ${isExpanded ? tv : tv.slice(0, 120)}`;
+                          return `**${t(DATA_KEY_LABELS[k] || k)}**: ${isExpanded ? tv : tv.slice(0, 120)}`;
                         }).join("\n\n");
                         return (
                           <div className="bb-entry-content" style={{ fontSize: 10, marginTop: 2, marginLeft: 12 }}>
@@ -456,7 +459,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                       })()}
                       {!isExpanded && item.data && Object.keys(item.data).length > 3 && (
                         <div style={{ fontSize: 9, color: "var(--primary)", marginTop: 2, marginLeft: 12 }}>
-                          点击查看全部 {Object.keys(item.data).length} 个字段
+                          {t("org.monitor.showAllFields", { count: Object.keys(item.data).length })}
                         </div>
                       )}
                     </div>

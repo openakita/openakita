@@ -3,6 +3,7 @@
  * Manages its own data fetching, scope filtering, and WebSocket refresh.
  */
 import { useState, useEffect, useCallback, useImperativeHandle, forwardRef } from "react";
+import { useTranslation } from "react-i18next";
 import { safeFetch } from "../providers";
 import { onWsEvent } from "../platform";
 import type { Node } from "@xyflow/react";
@@ -24,6 +25,7 @@ export interface OrgBlackboardPanelHandle {
 
 export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackboardPanelProps>(
   function OrgBlackboardPanel({ orgId, apiBaseUrl, nodes, fullWidth, onClose }, ref) {
+    const { t } = useTranslation();
     const mdModules = useMdModules();
     const [entries, setEntries] = useState<any[]>([]);
     const [scope, setScope] = useState<"all" | "org" | "department" | "node">("all");
@@ -76,10 +78,10 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
     };
 
     const SCOPES = [
-      { key: "all" as const, label: "全部" },
-      { key: "org" as const, label: "组织级" },
-      { key: "department" as const, label: "部门级" },
-      { key: "node" as const, label: "节点级" },
+      { key: "all" as const, label: t("org.blackboard.all") },
+      { key: "org" as const, label: t("org.blackboard.orgLevel") },
+      { key: "department" as const, label: t("org.blackboard.deptLevel") },
+      { key: "node" as const, label: t("org.blackboard.nodeLevel") },
     ];
 
     return (
@@ -93,7 +95,7 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
         }}
       >
         <div style={{ padding: "12px 14px 8px", borderBottom: "1px solid var(--line)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ fontWeight: 600, fontSize: 13 }}>组织黑板</div>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>{t("org.blackboard.title")}</div>
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <div style={{ display: "flex", gap: 2 }}>
               {SCOPES.map((s) => (
@@ -119,13 +121,13 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
               onClick={() => fetchData(scope)}
               disabled={loading}
             >
-              {loading ? "..." : "刷新"}
+              {loading ? "..." : t("org.blackboard.refresh")}
             </button>
             {onClose && (
               <button
                 onClick={onClose}
                 style={{ background: "none", border: "none", cursor: "pointer", color: "var(--muted)", padding: 2, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", marginLeft: 2 }}
-                title="关闭黑板"
+                title={t("org.blackboard.close")}
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
@@ -139,14 +141,14 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
               fontSize: 12, color: "var(--muted)", padding: "32px 16px",
               textAlign: "center", border: "1px dashed var(--line)", borderRadius: 8,
             }}>
-              {loading ? "加载中..." : scope === "node"
-                ? "节点级黑板用于存储各 Agent 的私有记录，当前暂无节点级数据。"
-                : "暂无黑板记录"}
+              {loading ? t("org.blackboard.loading") : scope === "node"
+                ? t("org.blackboard.nodeHint")
+                : t("org.blackboard.empty")}
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {entries.map((entry: any) => {
-                const scopeLabel = entry.scope === "org" ? "组织" : entry.scope === "department" ? entry.scope_owner : resolveNodeName(entry.source_node) || "节点";
+                const scopeLabel = entry.scope === "org" ? t("org.blackboard.org") : entry.scope === "department" ? entry.scope_owner : resolveNodeName(entry.source_node) || t("org.blackboard.node");
                 return (
                   <div
                     key={entry.id}
@@ -164,7 +166,7 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
                           color: BB_TYPE_COLORS[entry.memory_type] || "var(--muted)",
                           fontWeight: 600,
                         }}>
-                          {BB_TYPE_LABELS[entry.memory_type] || entry.memory_type}
+                          {BB_TYPE_LABELS[entry.memory_type] ? t(BB_TYPE_LABELS[entry.memory_type]) : entry.memory_type}
                         </span>
                         <span style={{ fontSize: 11, color: "var(--muted)" }}>{scopeLabel}</span>
                       </div>
@@ -173,7 +175,7 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
                         <button
                           className="btnSmall"
                           style={{ fontSize: 11, padding: "0 4px", color: "var(--muted)" }}
-                          title="删除此条"
+                          title={t("org.blackboard.deleteEntry")}
                           onClick={() => handleDelete(entry.id)}
                         >
                           ×
@@ -202,17 +204,17 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
                     )}
                     {Array.isArray(entry.tags) && entry.tags.length > 0 && (
                       <div style={{ marginTop: 4, display: "flex", gap: 3, flexWrap: "wrap" }}>
-                        {entry.tags.map((t: string) => (
-                          <span key={t} style={{
+                        {entry.tags.map((tag: string) => (
+                          <span key={tag} style={{
                             fontSize: 11, padding: "0 5px", borderRadius: 3,
                             background: "var(--hover-bg, rgba(100,100,100,0.1))", color: "var(--muted)",
-                          }}>#{t}</span>
+                          }}>#{tag}</span>
                         ))}
                       </div>
                     )}
                     {entry.source_node && (
                       <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 3 }}>
-                        来自 {resolveNodeName(entry.source_node)}
+                        {t("org.blackboard.from", { name: resolveNodeName(entry.source_node) })}
                       </div>
                     )}
                   </div>

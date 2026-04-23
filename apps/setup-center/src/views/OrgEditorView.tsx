@@ -8,6 +8,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import i18n from "../i18n";
 import { useMdModules } from "./chat/hooks/useMdModules";
 import {
   ReactFlow,
@@ -99,12 +100,10 @@ function humanizeTask(text: string, nodes: { id: string; data: any }[]): string 
     return nd?.data?.role_title || id;
   };
   let s = text
-    // "来自 editor-in-chief" → "来自 主编"
-    .replace(/来自\s+([a-zA-Z][a-zA-Z0-9_-]*)/g, (_, id) => `来自 ${nameOf(id)}`)
-    // "to_node=editor-in-chief" or "to_node 可省略" — don't touch the latter
+    .replace(/来自\s+([a-zA-Z][a-zA-Z0-9_-]*)/g, (_, id) => i18n.t("org.editor.fromNode", { name: nameOf(id) }))
     .replace(/to_node\s*=\s*([a-zA-Z][a-zA-Z0-9_-]*)/g, (_, id) => `to_node=${nameOf(id)}`);
-  // Strip verbose task_chain_id values (long ISO timestamps)
-  s = s.replace(/\[任务链:\s*[^\]]*\]/g, "");
+  const _tcPfx = i18n.t("org.editor.taskChain").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  s = s.replace(new RegExp(_tcPfx + "[^\\]]*\\]", "g"), "");
   s = s.replace(/,?\s*task_chain_id=[^\s,)}\]]+/g, "");
   return s.trim();
 }
@@ -113,6 +112,7 @@ function humanizeTask(text: string, nodes: { id: string; data: any }[]): string 
 
 function OrgCanvasControls() {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
+  const { t } = useTranslation();
 
   return (
     <Panel position="top-right" style={{ marginTop: 12, marginRight: 12 }}>
@@ -124,7 +124,7 @@ function OrgCanvasControls() {
                 <ZoomIn className="size-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="left">放大</TooltipContent>
+            <TooltipContent side="left">{t("org.editor.zoomIn")}</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -132,7 +132,7 @@ function OrgCanvasControls() {
                 <ZoomOut className="size-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="left">缩小</TooltipContent>
+            <TooltipContent side="left">{t("org.editor.zoomOut")}</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -140,7 +140,7 @@ function OrgCanvasControls() {
                 <Maximize className="size-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent side="left">适应视图</TooltipContent>
+            <TooltipContent side="left">{t("org.editor.fitView")}</TooltipContent>
           </Tooltip>
         </div>
       </TooltipProvider>
@@ -316,6 +316,7 @@ function OrgConnectionLine({ fromX, fromY, toX, toY }: ConnectionLineComponentPr
 // ── Custom Node Component ──
 
 function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boolean }) {
+  const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
   const nodeRef = useRef<HTMLDivElement>(null);
   const deptColor = getDeptColor(data.department);
@@ -374,8 +375,8 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
         position={Position.Top}
         className="org-handle"
         isConnectable
-        title="目标连接点：点击或拖拽到这里完成连线"
-        aria-label="目标连接点"
+        title={t("org.editor.targetHandle")}
+        aria-label={t("org.editor.targetHandleLabel")}
       />
 
       {/* Department color strip */}
@@ -399,10 +400,10 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
           statusColor={statusColor}
           statusGlow={isBusy}
           statusTitle={
-            !isLive && data.status === "idle" ? "未激活"
+            !isLive && data.status === "idle" ? t("org.editor.notActivated")
             : data.status === "idle" && idleSecs != null && idleSecs > 60
-              ? `空闲 ${idleSecs >= 3600 ? `${Math.floor(idleSecs / 3600)}h${Math.floor((idleSecs % 3600) / 60)}m` : `${Math.floor(idleSecs / 60)}m`}`
-            : STATUS_LABELS[data.status] || data.status
+              ? `${t("org.editor.idleLabel")} ${idleSecs >= 3600 ? `${Math.floor(idleSecs / 3600)}h${Math.floor((idleSecs % 3600) / 60)}m` : `${Math.floor(idleSecs / 60)}m`}`
+            : STATUS_LABELS[data.status] ? t(STATUS_LABELS[data.status]) : data.status
           }
           style={isBusy ? { border: `2px solid ${statusColor}` } : isError ? { border: "2px solid var(--danger)" } : undefined}
         />
@@ -428,7 +429,7 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
                 color: isEphemeral ? "#b45309" : "#0369a1",
                 fontWeight: 500,
               }}>
-                {isEphemeral ? "临时" : "副本"}
+                {isEphemeral ? t("org.editor.ephemeral") : t("org.editor.clone")}
               </span>
             )}
           </div>
@@ -468,7 +469,7 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
               background: "var(--bg-subtle, #f3f4f6)", color: "var(--muted)",
               fontWeight: 500,
             }}>
-              未激活
+              {t("org.editor.notActivated")}
             </span>
           ) : data.status !== "idle" ? (
             <span style={{
@@ -476,7 +477,7 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
               background: `${statusColor}15`, color: statusColor,
               fontWeight: 500,
             }}>
-              {STATUS_LABELS[data.status] || data.status}
+              {i18n.t(STATUS_LABELS[data.status]) || data.status}
             </span>
           ) : (
             <span style={{
@@ -485,10 +486,10 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
               fontWeight: 500,
             }}
               title={idleSecs != null && idleSecs > 60
-                ? `空闲 ${idleSecs >= 3600 ? `${Math.floor(idleSecs / 3600)}h${Math.floor((idleSecs % 3600) / 60)}m` : `${Math.floor(idleSecs / 60)}m`}`
-                : "在线空闲"}
+                ? `${t("org.editor.idleLabel")} ${idleSecs >= 3600 ? `${Math.floor(idleSecs / 3600)}h${Math.floor((idleSecs % 3600) / 60)}m` : `${Math.floor(idleSecs / 60)}m`}`
+                : t("org.editor.onlineIdle")}
             >
-              空闲
+              {t("org.editor.nodeIdle")}
             </span>
           )}
           {pendingMsgs > 0 && (
@@ -524,7 +525,7 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
         {isAnomaly && (
           <div style={{ fontSize: 9, color: "#f59e0b", marginTop: 3, display: "flex", alignItems: "center", gap: 3 }}>
             <IconAlertCircle size={10} color="#f59e0b" />
-            <span>{typeof isAnomaly === "string" ? isAnomaly : "需要关注"}</span>
+            <span>{typeof isAnomaly === "string" ? isAnomaly : t("org.editor.needsAttention")}</span>
           </div>
         )}
 
@@ -532,7 +533,7 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
         {isFrozen && (
           <div style={{ fontSize: 10, color: "#93c5fd", marginTop: 4, display: "flex", alignItems: "center", gap: 3 }}>
             <IconSnowflake size={11} color="#93c5fd" />
-            <span>{data.frozen_reason || "已冻结"}</span>
+            <span>{data.frozen_reason || t("org.editor.frozen")}</span>
           </div>
         )}
         </div>{/* close title area */}
@@ -562,36 +563,36 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
             }}>
               <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 11 }}>{data.role_title}</div>
               <div style={{ color: "#6b7280", lineHeight: 1.6 }}>
-                <div>部门: {data.department || "—"} · 层级 L{data.level ?? "?"}</div>
-                <div>状态: <span style={{ color: statusColor, fontWeight: 500 }}>{!isLive && data.status === "idle" ? "未激活" : isLive && data.status === "idle" ? "空闲" : STATUS_LABELS[data.status] || data.status}</span></div>
-                {idleSecs != null && <div>空闲: {idleSecs >= 3600 ? `${Math.floor(idleSecs / 3600)}h${Math.floor((idleSecs % 3600) / 60)}m` : idleSecs >= 60 ? `${Math.floor(idleSecs / 60)}m` : `${idleSecs}s`}</div>}
-                {pendingMsgs != null && pendingMsgs > 0 && <div>待处理: {pendingMsgs} 条消息</div>}
+                <div>{t("org.editor.department")}: {data.department || "—"} · {t("org.editor.levelField")} L{data.level ?? "?"}</div>
+                <div>{t("org.editor.statusLabel")}: <span style={{ color: statusColor, fontWeight: 500 }}>{!isLive && data.status === "idle" ? t("org.editor.notActivated") : isLive && data.status === "idle" ? t("org.editor.nodeIdle") : STATUS_LABELS[data.status] ? t(STATUS_LABELS[data.status]) : data.status}</span></div>
+                {idleSecs != null && <div>{t("org.editor.idleLabel")}: {idleSecs >= 3600 ? `${Math.floor(idleSecs / 3600)}h${Math.floor((idleSecs % 3600) / 60)}m` : idleSecs >= 60 ? `${Math.floor(idleSecs / 60)}m` : `${idleSecs}s`}</div>}
+                {pendingMsgs != null && pendingMsgs > 0 && <div>{t("org.editor.pendingLabel")}: {t("org.editor.messagesLabel", { count: pendingMsgs })}</div>}
                 {((pp && pp.total != null && pp.total > 0) || (ds && (ds.total ?? 0) > 0)) && <Sep />}
                 {pp && pp.total != null && pp.total > 0 && (
                   <div>
-                    计划进度: {pp.completed ?? 0}/{pp.total}
+                    {t("org.editor.planProgress")}: {pp.completed ?? 0}/{pp.total}
                     <div style={{ marginTop: 2, height: 4, borderRadius: 2, background: "var(--line)", overflow: "hidden" }}>
                       <div style={{ height: "100%", width: `${Math.min(100, ((pp.completed ?? 0) / pp.total) * 100)}%`, background: "var(--primary)", borderRadius: 2 }} />
                     </div>
                   </div>
                 )}
                 {ds && (ds.total ?? 0) > 0 && (
-                  <div>委派: 进行中 {ds.in_progress ?? 0} · 已完成 {ds.completed ?? 0} / {ds.total}</div>
+                  <div>{t("org.editor.delegatedTasks")}: {ds.in_progress ?? 0} / {ds.completed ?? 0} / {ds.total}</div>
                 )}
                 {(runningSince != null || extTools.length > 0 || recentTs != null || watchdog) && <Sep />}
                 {runningSince != null && (
-                  <div>运行中: {typeof runningSince === "number" ? fmtTime(runningSince) : fmtShortDate(runningSince)}</div>
+                  <div>{t("org.editor.running")}: {typeof runningSince === "number" ? fmtTime(runningSince) : fmtShortDate(runningSince)}</div>
                 )}
-                {extTools.length > 0 && <div>外部工具: {extTools.slice(0, 3).join(", ")}{extTools.length > 3 ? ` +${extTools.length - 3}` : ""}</div>}
-                {recentTs != null && <div>最近活动: {fmtShortDate(recentTs)}</div>}
-                {watchdog && <div>看门狗: {watchdog}</div>}
+                {extTools.length > 0 && <div>{t("org.editor.externalTools")}: {extTools.slice(0, 3).join(", ")}{extTools.length > 3 ? ` +${extTools.length - 3}` : ""}</div>}
+                {recentTs != null && <div>{t("org.editor.recentActivity")}: {fmtShortDate(recentTs)}</div>}
+                {watchdog && <div>{t("org.editor.watchdog")}: {watchdog}</div>}
                 {(data.current_task || isAnomaly) && <Sep />}
                 {data.current_task && (
                   <div style={{ marginTop: 2, color: "#b45309", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 200, overflow: "auto", lineHeight: 1.5 }}>
                     {data.current_task}
                   </div>
                 )}
-                {isAnomaly && <div style={{ marginTop: 2, color: "#f59e0b", fontWeight: 500 }}>{typeof isAnomaly === "string" ? isAnomaly : "异常"}</div>}
+                {isAnomaly && <div style={{ marginTop: 2, color: "#f59e0b", fontWeight: 500 }}>{typeof isAnomaly === "string" ? isAnomaly : t("org.editor.errorLabel")}</div>}
               </div>
             </div>
           );
@@ -604,8 +605,8 @@ function OrgNodeComponent({ data, selected }: { data: OrgNodeData; selected: boo
         position={Position.Bottom}
         className="org-handle"
         isConnectable
-        title="源连接点：从这里点击或拖拽开始连线"
-        aria-label="源连接点"
+        title={t("org.editor.sourceHandle")}
+        aria-label={t("org.editor.sourceHandleLabel")}
       />
     </div>
   );
@@ -933,9 +934,9 @@ export function OrgEditorView({
       } else if (ev === "org:task_cancelled") {
         bbPanelRef.current?.refresh();
       } else if (ev === "org:quota_exhausted") {
-        showToast(`配额耗尽：${(d as any).message || "LLM 调用次数已用完"}`, "error");
+        showToast(t("org.editor.quotaExhausted"), "error");
       } else if (ev === "org:watchdog_recovery") {
-        showToast(`看门狗恢复：节点 ${(d as any).node_id} 已自动恢复`, "error");
+        showToast(t("org.editor.watchdogRecovery", { name: (d as any).node_id }), "error");
       } else if (ev === "org:broadcast") {
         triggerEdgeAnimation((d as any).from_node, (d as any).from_node, "#a78bfa");
       } else if (ev === "org:meeting_started" || ev === "org:meeting_completed") {
@@ -955,13 +956,13 @@ export function OrgEditorView({
       const mode = (currentOrg as any).operation_mode || "command";
       showToast(
         mode === "autonomous"
-          ? "组织已启动（自主模式）——顶层负责人将根据核心业务自动运营"
-          : "组织已启动（命令模式）——可通过聊天或命令面板下达任务",
+          ? t("org.editor.orgStartedAutonomous")
+          : t("org.editor.orgStartedCommand"),
         "ok",
       );
     } catch (e: any) {
       console.error("Failed to start org:", e);
-      showToast(`启动失败：${e?.message || e}`, "error");
+      showToast(t("org.editor.startFailed", { error: e?.message || e }), "error");
     }
   }, [currentOrg, apiBaseUrl, showToast]);
 
@@ -989,7 +990,7 @@ export function OrgEditorView({
       setLayoutLocked(false);
     } catch (e: any) {
       console.error("Failed to stop org:", e);
-      showToast(`停止失败：${e?.message || e}`, "error");
+      showToast(t("org.editor.stopFailed", { error: e?.message || e }), "error");
     } finally {
       // 800ms 内拒绝二次触发；正常 stop 链路远小于此阈值。
       setTimeout(() => { stoppingRef.current = false; }, 800);
@@ -1007,7 +1008,7 @@ export function OrgEditorView({
 
       if (IS_TAURI) {
         const savePath = await saveFileDialog({
-          title: "导出组织配置",
+          title: t("org.editor.exportConfig"),
           defaultPath: defaultName,
           filters: [{ name: "JSON", extensions: ["json"] }],
         });
@@ -1015,7 +1016,7 @@ export function OrgEditorView({
         const res = await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/export`, { method: "POST" });
         const data = await res.json();
         await writeTextFile(savePath, JSON.stringify(data, null, 2));
-        showToast(`组织已导出到: ${savePath}`);
+        showToast(t("org.editor.exportedTo", { path: savePath }));
       } else {
         const res = await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/export`, { method: "POST" });
         const data = await res.json();
@@ -1026,7 +1027,7 @@ export function OrgEditorView({
         a.download = defaultName;
         a.click();
         URL.revokeObjectURL(url);
-        showToast(`组织「${currentOrg.name}」已导出为 ${defaultName}`);
+        showToast(t("org.editor.exportedAs", { name: currentOrg.name, file: defaultName }));
       }
     } catch (e) { showToast(String(e), "error"); }
   }, [currentOrg, apiBaseUrl, showToast]);
@@ -1042,7 +1043,7 @@ export function OrgEditorView({
         body: formData,
       });
       const data = await res.json();
-      showToast(data.message || `组织「${data.organization?.name || ""}」导入成功`);
+      showToast(data.message || t("org.editor.importSuccess", { name: data.organization?.name || "" }));
       fetchOrgList();
       if (data.organization?.id) {
         setSelectedOrgId(data.organization.id);
@@ -1061,7 +1062,7 @@ export function OrgEditorView({
       setLayoutLocked(false);
       bbPanelRef.current?.refresh();
       setOrgStats(null);
-      showToast("组织已重置");
+      showToast(t("org.editor.orgReset"));
     } catch (e) { console.error("Failed to reset org:", e); }
     setConfirmReset(false);
   }, [currentOrg, apiBaseUrl]);
@@ -1088,7 +1089,7 @@ export function OrgEditorView({
     return {
       name: currentOrg.name,
       description: currentOrg.description,
-      user_persona: currentOrg.user_persona || { title: "负责人", display_name: "", description: "" },
+      user_persona: currentOrg.user_persona || { title: t("org.editor.defaultPersonaTitle"), display_name: "", description: "" },
       operation_mode: (currentOrg as any).operation_mode || "command",
       core_business: currentOrg.core_business || "",
       workspace_dir: (currentOrg as any).workspace_dir || "",
@@ -1115,7 +1116,7 @@ export function OrgEditorView({
         headers: { "Content-Type": "application/json" },
         body: snapshot,
       });
-      if (!resp.ok) throw new Error(`保存失败 (${resp.status})`);
+      if (!resp.ok) throw new Error(t("org.editor.saveFailed2", { status: resp.status }));
       lastSavedRef.current = snapshot;
       setSaveStatus("saved");
       fetchOrgList();
@@ -1123,7 +1124,7 @@ export function OrgEditorView({
     } catch (e: any) {
       console.error("Failed to save org:", e);
       setSaveStatus("error");
-      showToast(e.message || "自动保存失败", "error");
+      showToast(e.message || t("org.editor.autoSaveFailed"), "error");
       return false;
     }
   }, [currentOrg, buildSavePayload, apiBaseUrl, fetchOrgList, showToast]);
@@ -1160,7 +1161,7 @@ export function OrgEditorView({
     if (orgCreateBusyRef.current) return;
     orgCreateBusyRef.current = true;
     setCreatingOrg(true);
-    const defaultName = "新组织";
+    const defaultName = t("org.editor.newOrg");
     try {
       const res = await safeFetch(`${apiBaseUrl}/api/orgs`, {
         method: "POST",
@@ -1177,11 +1178,11 @@ export function OrgEditorView({
         newId = pool[0]?.id ?? "";
       }
       if (newId) setSelectedOrgId(newId);
-      showToast(newId ? `已创建「${defaultName}」` : "已创建组织，但未在列表中定位到条目，请刷新或检查后端日志", newId ? "ok" : "error");
+      showToast(newId ? t("org.editor.createdOrg") : t("org.editor.createdButNotFound"), newId ? "ok" : "error");
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to create org:", e);
-      showToast(msg.includes("401") || msg.includes("Authentication") ? "创建失败：需要登录或访问令牌（远程访问请检查 Web 访问密码）" : `创建组织失败：${msg}`, "error");
+      showToast(msg.includes("401") || msg.includes("Authentication") ? t("org.editor.createNeedAuth") : t("org.editor.createFailed", { error: msg }), "error");
     } finally {
       orgCreateBusyRef.current = false;
       setCreatingOrg(false);
@@ -1207,11 +1208,11 @@ export function OrgEditorView({
       }
       if (newId) setSelectedOrgId(newId);
       setShowTemplates(false);
-      showToast(newId ? `已从模板创建组织${data?.name ? `「${data.name}」` : ""}` : "已从模板创建，但未定位到新组织", newId ? "ok" : "error");
+      showToast(newId ? t("org.editor.createdFromTemplate") : t("org.editor.createdButNotFound"), newId ? "ok" : "error");
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("Failed to create from template:", e);
-      showToast(`从模板创建失败：${msg}`, "error");
+      showToast(t("org.editor.createFromTemplateFailed", { error: msg }), "error");
     } finally {
       orgCreateBusyRef.current = false;
       setCreatingOrg(false);
@@ -1501,9 +1502,9 @@ export function OrgEditorView({
         if (n.id !== nodeId) return n;
         return { ...n, data: { ...n.data, status: "idle", frozen_by: null, frozen_reason: null, frozen_at: null } };
       }));
-      showToast("节点已解除冻结");
+      showToast(t("org.editor.nodeUnfrozen"));
     } catch (e) {
-      showToast(`解除冻结失败: ${e}`, "error");
+      showToast(t("org.editor.unfreezeFailed", { error: String(e) }), "error");
     }
   }, [selectedOrgId, apiBaseUrl, setNodes, showToast]);
 
@@ -1529,7 +1530,7 @@ export function OrgEditorView({
       ...structuredClone(clipboardNode),
       id: newId,
       position: { x: (clipboardNode.position?.x ?? 200) + offset, y: (clipboardNode.position?.y ?? 200) + offset },
-      data: { ...clipboardNode.data, id: newId, role_title: `${clipboardNode.data?.role_title || "节点"} (副本)`, _liveMode: liveMode },
+      data: { ...clipboardNode.data, id: newId, role_title: `${clipboardNode.data?.role_title || t("org.editor.newNode")} (${t("org.editor.clone")})`, _liveMode: liveMode },
       selected: false,
     };
     setNodes((prev) => [...prev, pasted]);
@@ -1545,7 +1546,7 @@ export function OrgEditorView({
       ? { x: contextMenu.flowX!, y: contextMenu.flowY! }
       : getNextNodePosition(nodes);
     const newNode: OrgNodeData = {
-      id: newId, role_title: "新节点", role_goal: "", role_backstory: "",
+      id: newId, role_title: t("org.editor.newNode"), role_goal: "", role_backstory: "",
       agent_source: "local", agent_profile_id: null, position: pos, level: 0,
       department: "", custom_prompt: "", identity_dir: null, mcp_servers: [], skills: [],
       skills_mode: "all", preferred_endpoint: null, max_concurrent_tasks: 1, timeout_s: 0,
@@ -1570,7 +1571,7 @@ export function OrgEditorView({
             <button
               className="org-tb-btn"
               onClick={() => setShowLeftPanel(!showLeftPanel)}
-              title="组织列表"
+              title={t("org.editor.orgList")}
             >
               <IconMenu size={14} />
             </button>
@@ -1589,9 +1590,9 @@ export function OrgEditorView({
                 <span
                   className="org-topbar-name"
                   onClick={() => setEditingName(true)}
-                  title="点击重命名"
+                  title={t("org.editor.clickToRename")}
                 >
-                  {currentOrg.name || "未命名组织"}
+                  {currentOrg.name || t("org.editor.unnamedOrg")}
                 </span>
               )
             )}
@@ -1607,16 +1608,16 @@ export function OrgEditorView({
                   background: STATUS_COLORS[currentOrg.status] || "var(--muted)",
                   animation: liveMode ? "orgDotPulse 1.5s ease-in-out infinite" : undefined,
                 }} />
-                <span className="org-status-label">{ORG_STATUS_LABELS[currentOrg.status] || currentOrg.status}</span>
+                <span className="org-status-label">{ORG_STATUS_LABELS[currentOrg.status] ? t(ORG_STATUS_LABELS[currentOrg.status]) : currentOrg.status}</span>
                 {liveMode && orgStats && !isMobile && (
                   <>
                     <span className="org-status-sep" />
                     <Tooltip><TooltipTrigger asChild>
                       <span className="org-status-stat"><IconClipboard size={11} /> {orgStats.total_tasks_completed ?? 0}</span>
-                    </TooltipTrigger><TooltipContent>已完成任务数</TooltipContent></Tooltip>
+                    </TooltipTrigger><TooltipContent>{t("org.editor.completedTasks")}</TooltipContent></Tooltip>
                     <Tooltip><TooltipTrigger asChild>
                       <span className="org-status-stat"><IconMessageCircle size={11} /> {orgStats.total_messages_exchanged ?? 0}</span>
-                    </TooltipTrigger><TooltipContent>消息交换总数</TooltipContent></Tooltip>
+                    </TooltipTrigger><TooltipContent>{t("org.editor.messageExchanges")}</TooltipContent></Tooltip>
                     {orgStats.pending_messages > 0 && (
                       <Tooltip><TooltipTrigger asChild>
                         <span
@@ -1624,7 +1625,7 @@ export function OrgEditorView({
                           style={{ color: "#f59e0b", cursor: "pointer" }}
                           onClick={() => { setSelectedNodeId(null); setSelectedEdgeId(null); setShowRightPanel(true); setPropsTab("overview"); }}
                         >▪ {orgStats.pending_messages}</span>
-                      </TooltipTrigger><TooltipContent>节点间待处理内部消息 — 点击查看节点负荷</TooltipContent></Tooltip>
+                      </TooltipTrigger><TooltipContent>{t("org.editor.pendingMessages")}</TooltipContent></Tooltip>
                     )}
                     {orgStats.anomalies?.length > 0 && (
                       <Tooltip><TooltipTrigger asChild>
@@ -1633,7 +1634,7 @@ export function OrgEditorView({
                           style={{ color: "#ef4444", fontWeight: 600, cursor: "pointer" }}
                           onClick={() => { setSelectedNodeId(null); setSelectedEdgeId(null); setShowRightPanel(true); setPropsTab("overview"); }}
                         >! {orgStats.anomalies.length}</span>
-                      </TooltipTrigger><TooltipContent>点击查看异常详情</TooltipContent></Tooltip>
+                      </TooltipTrigger><TooltipContent>{t("org.editor.viewErrors")}</TooltipContent></Tooltip>
                     )}
                   </>
                 )}
@@ -1650,29 +1651,29 @@ export function OrgEditorView({
               variant="outline"
               className="org-topbar-tabs flex-shrink-0"
             >
-              <ToggleGroupItem value="canvas" className="text-xs h-7 px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">编排</ToggleGroupItem>
-              <ToggleGroupItem value="projects" className="text-xs h-7 px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">项目</ToggleGroupItem>
-              <ToggleGroupItem value="dashboard" className="text-xs h-7 px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">看板</ToggleGroupItem>
+              <ToggleGroupItem value="canvas" className="text-xs h-7 px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">{t("org.editor.tabOrchestration")}</ToggleGroupItem>
+              <ToggleGroupItem value="projects" className="text-xs h-7 px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">{t("org.editor.tabProjects")}</ToggleGroupItem>
+              <ToggleGroupItem value="dashboard" className="text-xs h-7 px-3 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">{t("org.editor.tabKanban")}</ToggleGroupItem>
             </ToggleGroup>
           </div>
 
           {/* ── Right: Actions ── */}
           <div className="org-topbar-right">
             {currentOrg.status === "archived" ? (
-              <span style={{ fontSize: 11, color: "var(--muted)" }}>已归档</span>
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>{t("org.editor.archived")}</span>
             ) : currentOrg.status === "dormant" ? (
-              <button className="org-tb-btn org-tb-btn--ok" onClick={handleStartOrg} title="启动组织">
-                <IconPlay size={13} /> {!isMobile && "启动"}
+              <button className="org-tb-btn org-tb-btn--ok" onClick={handleStartOrg} title={t("org.editor.startOrg")}>
+                <IconPlay size={13} /> {!isMobile && t("org.editor.start")}
               </button>
             ) : (<>
-              <button className="org-tb-btn org-tb-btn--danger" onClick={handleStopOrg} title="停止组织">
-                <IconStop size={13} /> {!isMobile && "停止"}
+              <button className="org-tb-btn org-tb-btn--danger" onClick={handleStopOrg} title={t("org.editor.stopOrg")}>
+                <IconStop size={13} /> {!isMobile && t("org.editor.stop")}
               </button>
             </>)}
             <button
               className={`org-tb-btn${(showRightPanel && !selectedNode && !selectedEdge) ? " org-tb-btn--active" : ""}`}
               onClick={() => { setShowRightPanel(!showRightPanel); setSelectedNodeId(null); setSelectedEdgeId(null); }}
-              title="组织设置"
+              title={t("org.editor.orgSettings")}
             >
               <IconGear size={13} />
             </button>
@@ -1704,26 +1705,26 @@ export function OrgEditorView({
             boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
           }}>
             <div style={{ padding: "12px 12px 8px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontWeight: 600, fontSize: 14 }}>{t("orgEditor.title", "组织编排")}</span>
+              <span style={{ fontWeight: 600, fontSize: 14 }}>{t("orgEditor.title")}</span>
               <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
                 <TooltipProvider delayDuration={300}>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="link" size="sm" onClick={() => setShowTemplates(!showTemplates)} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">模板</Button>
+                      <Button variant="link" size="sm" onClick={() => setShowTemplates(!showTemplates)} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">{t("org.editor.template")}</Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">从模板创建组织</TooltipContent>
+                    <TooltipContent side="bottom">{t("org.editor.createFromTemplate")}</TooltipContent>
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="link" size="sm" onClick={() => void handleCreateOrg()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">新建</Button>
+                      <Button variant="link" size="sm" onClick={() => void handleCreateOrg()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">{t("org.editor.create")}</Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">新建空白组织</TooltipContent>
+                    <TooltipContent side="bottom">{t("org.editor.createBlank")}</TooltipContent>
                   </Tooltip>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <Button variant="link" size="sm" onClick={() => orgImportRef.current?.click()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">导入</Button>
+                      <Button variant="link" size="sm" onClick={() => orgImportRef.current?.click()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">{t("org.editor.import")}</Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">从文件导入组织</TooltipContent>
+                    <TooltipContent side="bottom">{t("org.editor.importFromFile")}</TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
               </div>
@@ -1731,7 +1732,7 @@ export function OrgEditorView({
             {showTemplates && (
               <div style={{ padding: "0 8px 8px" }}>
                 <div className="card" style={{ padding: 8, fontSize: 12 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 6 }}>从模板创建</div>
+                  <div style={{ fontWeight: 600, marginBottom: 6 }}>{t("org.editor.createFromTemplateLong")}</div>
                   {templates.map((tpl) => (
                     <div key={tpl.id} onClick={() => handleCreateFromTemplate(tpl.id)}
                       style={{ padding: "6px 8px", borderRadius: "var(--radius-sm)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}
@@ -1740,7 +1741,7 @@ export function OrgEditorView({
                       <span><IconBuilding size={14} /></span>
                       <div>
                         <div style={{ fontWeight: 500 }}>{tpl.name}</div>
-                        <div style={{ fontSize: 10, color: "var(--muted)" }}>{tpl.node_count} 节点</div>
+                        <div style={{ fontSize: 10, color: "var(--muted)" }}>{t("org.editor.nodeCount", { count: tpl.node_count })}</div>
                       </div>
                     </div>
                   ))}
@@ -1750,7 +1751,7 @@ export function OrgEditorView({
             <div style={{ flex: 1, overflowY: "auto", padding: "0 8px 8px" }}>
               {orgList.length === 0 && (
                 <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 12, padding: 20 }}>
-                  暂无组织，点击上方创建
+                  {t("org.editor.emptyOrgHint")}
                 </div>
               )}
               {orgList.map((org) => (
@@ -1763,17 +1764,17 @@ export function OrgEditorView({
                     <IconBuilding size={16} />
                     <div style={{ overflow: "hidden" }}>
                       <div style={{ fontWeight: 500, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{org.name}</div>
-                      <div style={{ fontSize: 10, color: "var(--muted)" }}>{org.node_count} 节点 · {ORG_STATUS_LABELS[org.status] || org.status}</div>
+                      <div style={{ fontSize: 10, color: "var(--muted)" }}>{t("org.editor.nodeCount", { count: org.node_count })} · {ORG_STATUS_LABELS[org.status] ? t(ORG_STATUS_LABELS[org.status]) : org.status}</div>
                     </div>
                   </div>
-                  <button className="btnSmall" onClick={(e) => { e.stopPropagation(); setConfirmDeleteOrgId(org.id); }} style={{ opacity: 0.5, fontSize: 10 }} title="删除组织">
+                  <button className="btnSmall" onClick={(e) => { e.stopPropagation(); setConfirmDeleteOrgId(org.id); }} style={{ opacity: 0.5, fontSize: 10 }} title={t("org.editor.deleteOrg")}>
                     <IconTrash size={10} />
                   </button>
                   {confirmDeleteOrgId === org.id && (
                     <div style={{ position: "absolute", right: 0, top: "100%", zIndex: 10, background: "var(--card-bg, #fff)", border: "1px solid var(--line)", borderRadius: 8, padding: "8px 10px", boxShadow: "0 4px 12px rgba(0,0,0,0.12)", display: "flex", gap: 6, alignItems: "center", fontSize: 11 }} onClick={(e) => e.stopPropagation()}>
-                      <span>确认删除?</span>
-                      <button className="btnSmall" onClick={() => handleDeleteOrg(org.id)} style={{ color: "var(--danger)", fontSize: 11 }}>删除</button>
-                      <button className="btnSmall" onClick={() => setConfirmDeleteOrgId(null)} style={{ fontSize: 11 }}>取消</button>
+                      <span>{t("org.editor.confirmDelete")}</span>
+                      <button className="btnSmall" onClick={() => handleDeleteOrg(org.id)} style={{ color: "var(--danger)", fontSize: 11 }}>{t("org.editor.deleteBtn")}</button>
+                      <button className="btnSmall" onClick={() => setConfirmDeleteOrgId(null)} style={{ fontSize: 11 }}>{t("org.editor.cancelBtn")}</button>
                     </div>
                   )}
                 </div>
@@ -1795,14 +1796,14 @@ export function OrgEditorView({
             }}>
               <img
                 src={agentOrgImg}
-                alt={t("orgEditor.title", "组织编排")}
+                alt={t("orgEditor.title")}
                 style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }}
               />
             </div>
             <div style={{ padding: "16px 20px", borderTop: "1px solid var(--line)", flexShrink: 0 }}>
-              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{t("orgEditor.welcomeTitle", "欢迎使用组织编排")}</h3>
+              <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>{t("orgEditor.welcomeTitle")}</h3>
               <p style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.8 }}>
-                {t("orgEditor.welcomeDesc", "组织编排可以让多个 AI Agent 协同工作——你可以设计组织架构、定义节点角色、配置协作关系，然后一键启动，让整个 AI 团队自动运转。")}
+                {t("orgEditor.welcomeDesc")}
               </p>
             </div>
           </div>
@@ -1838,32 +1839,32 @@ export function OrgEditorView({
         }}
       >
         <div style={{ padding: "12px 12px 8px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontWeight: 600, fontSize: 14 }}>{t("orgEditor.title", "组织编排")}</span>
+          <span style={{ fontWeight: 600, fontSize: 14 }}>{t("orgEditor.title")}</span>
           <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
             <TooltipProvider delayDuration={300}>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button variant="link" size="sm" onClick={() => setShowTemplates(!showTemplates)} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">
-                    模板
+                    {t("org.editor.template")}
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">从模板创建组织</TooltipContent>
+                <TooltipContent side="bottom">{t("org.editor.createFromTemplate")}</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button variant="link" size="sm" onClick={() => void handleCreateOrg()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">
-                    新建
+                    {t("org.editor.create")}
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">新建空白组织</TooltipContent>
+                <TooltipContent side="bottom">{t("org.editor.createBlank")}</TooltipContent>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button variant="link" size="sm" onClick={() => orgImportRef.current?.click()} disabled={creatingOrg} className="h-7 px-2 text-xs text-primary cursor-pointer">
-                    导入
+                    {t("org.editor.import")}
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">从文件导入组织</TooltipContent>
+                <TooltipContent side="bottom">{t("org.editor.importFromFile")}</TooltipContent>
               </Tooltip>
             </TooltipProvider>
             <input
@@ -1873,7 +1874,7 @@ export function OrgEditorView({
               style={{ display: "none" }}
               onChange={handleImportOrg}
             />
-            <button className="btnSmall" onClick={() => setShowLeftPanel(false)} title="关闭" style={{ minWidth: 28, minHeight: 28, opacity: 0.5 }}>
+            <button className="btnSmall" onClick={() => setShowLeftPanel(false)} title={t("org.editor.close")} style={{ minWidth: 28, minHeight: 28, opacity: 0.5 }}>
               <IconX size={14} />
             </button>
           </div>
@@ -1883,7 +1884,7 @@ export function OrgEditorView({
         {showTemplates && (
           <div style={{ padding: "0 8px 8px" }}>
             <div className="card" style={{ padding: 8, fontSize: 12 }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>从模板创建</div>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>{t("org.editor.createFromTemplateLong")}</div>
               {templates.map((tpl) => (
                 <div
                   key={tpl.id}
@@ -1902,7 +1903,7 @@ export function OrgEditorView({
                   <span><IconBuilding size={14} /></span>
                   <div>
                     <div style={{ fontWeight: 500 }}>{tpl.name}</div>
-                    <div style={{ fontSize: 10, color: "var(--muted)" }}>{tpl.node_count} 节点</div>
+                    <div style={{ fontSize: 10, color: "var(--muted)" }}>{t("org.editor.nodeCount", { count: tpl.node_count })}</div>
                   </div>
                 </div>
               ))}
@@ -1914,7 +1915,7 @@ export function OrgEditorView({
         <div style={{ flex: 1, overflowY: "auto", padding: "0 8px" }}>
           {orgList.length === 0 && (
             <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 12, padding: 20 }}>
-              暂无组织，点击上方创建
+              {t("org.editor.emptyOrgHint")}
             </div>
           )}
           {orgList.map((org) => (
@@ -1940,7 +1941,7 @@ export function OrgEditorView({
                     {org.name}
                   </div>
                   <div style={{ fontSize: 10, color: "var(--muted)" }}>
-                    {org.node_count} 节点 · {ORG_STATUS_LABELS[org.status] || org.status}
+                    {t("org.editor.nodeCount", { count: org.node_count })} · {ORG_STATUS_LABELS[org.status] ? t(ORG_STATUS_LABELS[org.status]) : org.status}
                   </div>
                 </div>
               </div>
@@ -1951,7 +1952,7 @@ export function OrgEditorView({
                   setConfirmDeleteOrgId(org.id);
                 }}
                 style={{ opacity: 0.5, fontSize: 10 }}
-                title="删除组织"
+                title={t("org.editor.deleteOrg")}
               >
                 <IconTrash size={10} />
               </button>
@@ -1965,9 +1966,9 @@ export function OrgEditorView({
                   }}
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <span>确认删除?</span>
-                  <button className="btnSmall" onClick={() => handleDeleteOrg(org.id)} style={{ color: "var(--danger)", fontSize: 11 }}>删除</button>
-                  <button className="btnSmall" onClick={() => setConfirmDeleteOrgId(null)} style={{ fontSize: 11 }}>取消</button>
+                  <span>{t("org.editor.confirmDelete")}</span>
+                  <button className="btnSmall" onClick={() => handleDeleteOrg(org.id)} style={{ color: "var(--danger)", fontSize: 11 }}>{t("org.editor.deleteBtn")}</button>
+                  <button className="btnSmall" onClick={() => setConfirmDeleteOrgId(null)} style={{ fontSize: 11 }}>{t("org.editor.cancelBtn")}</button>
                 </div>
               )}
             </div>
@@ -1984,24 +1985,24 @@ export function OrgEditorView({
           <div className="org-modal-overlay" onClick={() => setShowNewNodeForm(false)}>
             <div className="org-modal" onClick={e => e.stopPropagation()} style={{ width: 360 }}>
               <div className="org-modal-header">
-                <span>添加节点</span>
+                <span>{t("org.editor.addNodeTitle")}</span>
                 <button className="org-modal-close" onClick={() => setShowNewNodeForm(false)}><IconX size={14} /></button>
               </div>
               <div className="org-modal-body">
-                <label className="org-modal-label">岗位名称 *</label>
+                <label className="org-modal-label">{t("org.editor.roleName")}</label>
                 <input
                   className="input"
-                  placeholder="例如：产品经理"
+                  placeholder={t("org.editor.roleNamePlaceholder")}
                   value={newNodeTitle}
                   onChange={(e) => setNewNodeTitle(e.target.value)}
                   style={{ width: "100%", fontSize: 13, marginBottom: 12 }}
                   autoFocus
                   onKeyDown={(e) => e.key === "Enter" && handleAddNode()}
                 />
-                <label className="org-modal-label">部门（可选）</label>
+                <label className="org-modal-label">{t("org.editor.deptOptional")}</label>
                 <input
                   className="input"
-                  placeholder="例如：技术部"
+                  placeholder={t("org.editor.deptPlaceholder")}
                   value={newNodeDept}
                   onChange={(e) => setNewNodeDept(e.target.value)}
                   style={{ width: "100%", fontSize: 13 }}
@@ -2009,8 +2010,8 @@ export function OrgEditorView({
                 />
               </div>
               <div className="org-modal-footer">
-                <button className="org-modal-btn" onClick={() => setShowNewNodeForm(false)}>取消</button>
-                <button className="org-modal-btn org-modal-btn--primary" onClick={handleAddNode}>添加</button>
+                <button className="org-modal-btn" onClick={() => setShowNewNodeForm(false)}>{t("org.editor.cancel")}</button>
+                <button className="org-modal-btn org-modal-btn--primary" onClick={handleAddNode}>{t("org.editor.add")}</button>
               </div>
             </div>
           </div>,
@@ -2048,7 +2049,7 @@ export function OrgEditorView({
                 />
               ) : (
                 <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--muted)", height: "100%" }}>
-                  请先选择一个组织
+                  {t("org.editor.selectOrgFirst")}
                 </div>
               )}
             </div>
@@ -2104,31 +2105,31 @@ export function OrgEditorView({
               {/* Canvas-specific toolbar */}
               <Panel position="top-left">
                 <div className="org-canvas-toolbar">
-                  <button className="org-cvs-btn" onClick={() => setShowNewNodeForm(true)} title="添加节点">
-                    <IconPlus size={13} /> 节点
+                  <button className="org-cvs-btn" onClick={() => setShowNewNodeForm(true)} title={t("org.editor.addNode")}>
+                    <IconPlus size={13} /> {t("org.editor.addNode")}
                   </button>
-                  <button className="org-cvs-btn" title="自动布局" onClick={() => { setNodes(computeTreeLayout(nodes, edges)); }}>
-                    <IconSitemap size={13} /> 布局
+                  <button className="org-cvs-btn" title={t("org.editor.autoLayout")} onClick={() => { setNodes(computeTreeLayout(nodes, edges)); }}>
+                    <IconSitemap size={13} /> {t("org.editor.autoLayout")}
                   </button>
                   <button
                     className={`org-cvs-btn${!layoutLocked ? " org-cvs-btn--active" : ""}`}
                     onClick={() => setLayoutLocked((v) => !v)}
-                    title={layoutLocked ? "解锁拖拽" : "锁定布局，防止误拖拽"}
+                    title={layoutLocked ? t("org.editor.unlockDrag") : t("org.editor.lockLayout")}
                   >
-                    <IconSitemap size={13} /> {layoutLocked ? "拖拽关" : "拖拽开"}
+                    <IconSitemap size={13} /> {layoutLocked ? t("org.editor.unlockDrag") : t("org.editor.lockLayout")}
                   </button>
                   {selectedNodeId && (
-                    <button className="org-cvs-btn org-cvs-btn--danger" onClick={handleDeleteNode} title="删除选中节点">
+                    <button className="org-cvs-btn org-cvs-btn--danger" onClick={handleDeleteNode} title={t("org.editor.deleteSelected")}>
                       <IconTrash size={13} />
                     </button>
                   )}
                 </div>
                 <div className="org-edge-legend">
                   {([
-                    { type: "hierarchy", label: "上下级", dash: false },
-                    { type: "collaborate", label: "协作", dash: true },
-                    { type: "escalate", label: "上报", dash: false },
-                    { type: "consult", label: "咨询", dash: false },
+                    { type: "hierarchy", label: t("org.editor.hierarchyLegend"), dash: false },
+                    { type: "collaborate", label: t("org.editor.collaborateLegend"), dash: true },
+                    { type: "escalate", label: t("org.editor.escalateLegend"), dash: false },
+                    { type: "consult", label: t("org.editor.consultLegend"), dash: false },
                   ] as const).map((e) => (
                     <span key={e.type} className="org-edge-legend-item">
                       <span
@@ -2143,13 +2144,13 @@ export function OrgEditorView({
                   ))}
                 </div>
                 <div className="org-connect-hint">
-                  连线方式：拖拽或点击节点上下圆点
+                  {t("org.editor.edgeHint")}
                 </div>
               </Panel>
               {saveStatus !== "idle" && (
                 <Panel position="bottom-center">
                   <div className={`org-save-indicator org-save-indicator--${saveStatus}`}>
-                    {saveStatus === "saving" ? "保存中..." : saveStatus === "saved" ? <><IconCheck size={12} /> 已自动保存~</> : <span onClick={() => doSaveRef.current()} style={{ cursor: "pointer" }}>保存失败 · 重试</span>}
+                    {saveStatus === "saving" ? t("org.editor.saving") : saveStatus === "saved" ? <><IconCheck size={12} /> {t("org.editor.autoSaved")}</> : <span onClick={() => doSaveRef.current()} style={{ cursor: "pointer" }}>{t("org.editor.saveFailed")}</span>}
                   </div>
                 </Panel>
               )}
@@ -2165,40 +2166,40 @@ export function OrgEditorView({
                 {contextMenu.type === "node" && contextMenu.id && (<>
                   {liveMode && selectedOrgId && (
                     <button onClick={() => { setSelectedNodeId(contextMenu.id!); setSelectedEdgeId(null); setShowRightPanel(true); setShowNodeChat(true); setContextMenu(null); }}>
-                      <span className="org-ctx-icon"><IconMessageCircle size={14} /></span>与该节点对话
+                      <span className="org-ctx-icon"><IconMessageCircle size={14} /></span>{t("org.editor.chatWithNode")}
                     </button>
                   )}
                   {liveMode && selectedOrgId && (nodes.find(n => n.id === contextMenu.id)?.data as any)?.status === "frozen" && (
                     <button onClick={() => ctxUnfreezeNode(contextMenu.id!)}>
-                      <span className="org-ctx-icon"><IconUnlock size={14} /></span>解除冻结
+                      <span className="org-ctx-icon"><IconUnlock size={14} /></span>{t("org.editor.unfreezeNode")}
                     </button>
                   )}
                   <button onClick={() => ctxCopyNode(contextMenu.id!)}>
-                    <span className="org-ctx-icon"><IconClipboard size={14} /></span>复制节点
+                    <span className="org-ctx-icon"><IconClipboard size={14} /></span>{t("org.editor.copyNode")}
                   </button>
                   <button onClick={() => ctxDeleteNode(contextMenu.id!)}>
-                    <span className="org-ctx-icon" style={{ color: "#e74c3c" }}><IconTrash size={14} /></span>删除节点
+                    <span className="org-ctx-icon" style={{ color: "#e74c3c" }}><IconTrash size={14} /></span>{t("org.editor.deleteNode")}
                   </button>
                 </>)}
                 {contextMenu.type === "edge" && contextMenu.id && (<>
                   <button onClick={() => ctxReverseEdge(contextMenu.id!)}>
-                    <span className="org-ctx-icon"><IconRefresh size={14} /></span>反转方向
+                    <span className="org-ctx-icon"><IconRefresh size={14} /></span>{t("org.editor.reverseEdge")}
                   </button>
                   <button onClick={() => ctxDeleteEdge(contextMenu.id!)}>
-                    <span className="org-ctx-icon" style={{ color: "#e74c3c" }}><IconTrash size={14} /></span>删除连线
+                    <span className="org-ctx-icon" style={{ color: "#e74c3c" }}><IconTrash size={14} /></span>{t("org.editor.deleteEdge")}
                   </button>
                 </>)}
                 {contextMenu.type === "pane" && (<>
                   <button onClick={() => ctxAddNodeAt()}>
-                    <span className="org-ctx-icon"><IconPlus size={14} /></span>添加节点
+                    <span className="org-ctx-icon"><IconPlus size={14} /></span>{t("org.editor.addNodeMenu")}
                   </button>
                   {clipboardNode && (
                     <button onClick={() => ctxPasteNode()}>
-                      <span className="org-ctx-icon"><IconPin size={14} /></span>粘贴节点
+                      <span className="org-ctx-icon"><IconPin size={14} /></span>{t("org.editor.pasteNode")}
                     </button>
                   )}
                   <button onClick={() => { setNodes(computeTreeLayout(nodes, edges)); setContextMenu(null); }}>
-                    <span className="org-ctx-icon"><IconShuffle size={14} /></span>自动布局
+                    <span className="org-ctx-icon"><IconShuffle size={14} /></span>{t("org.editor.autoLayoutMenu")}
                   </button>
                   <button
                     onClick={() => {
@@ -2209,7 +2210,7 @@ export function OrgEditorView({
                     <span className="org-ctx-icon" style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
                       <Maximize className="size-3.5" strokeWidth={2} />
                     </span>
-                    适应视图
+                    {t("org.editor.fitViewMenu")}
                   </button>
                 </>)}
               </div>,
@@ -2226,13 +2227,13 @@ export function OrgEditorView({
                 return (nd?.data as any)?.role_title || id?.slice(0, 6) || "";
               };
               const typeMeta: Record<string, { icon: string; label: string; tip: string; cls: string }> = {
-                task_delegated:  { icon: "↗", label: "分配", tip: "分配任务给下级节点",       cls: "feed-delegated" },
-                task_delivered:  { icon: "↙", label: "交付", tip: "向上级交付任务成果",       cls: "feed-delivered" },
-                task_accepted:   { icon: "✓", label: "通过", tip: "上级验收通过",             cls: "feed-accepted" },
-                task_rejected:   { icon: "✗", label: "打回", tip: "上级打回，需要重新处理",   cls: "feed-rejected" },
-                task_timeout:    { icon: "⏱", label: "超时", tip: "任务执行超时",             cls: "feed-timeout" },
-                task_completed:  { icon: "✓", label: "完成", tip: "节点执行完成",             cls: "feed-completed" },
-                node_activated:  { icon: "▶", label: "执行", tip: "节点开始执行任务",         cls: "feed-activated" },
+                task_delegated:  { icon: "↗", label: t("org.dashboard.feedAssign"),   tip: t("org.dashboard.feedAssignTip"),   cls: "feed-delegated" },
+                task_delivered:  { icon: "↙", label: t("org.dashboard.feedDeliver"),  tip: t("org.dashboard.feedDeliverTip"),  cls: "feed-delivered" },
+                task_accepted:   { icon: "✓", label: t("org.dashboard.feedAccept"),   tip: t("org.dashboard.feedAcceptTip"),   cls: "feed-accepted" },
+                task_rejected:   { icon: "✗", label: t("org.dashboard.feedReject"),   tip: t("org.dashboard.feedRejectTip"),   cls: "feed-rejected" },
+                task_timeout:    { icon: "⏱", label: t("org.dashboard.feedTimeout"),  tip: t("org.dashboard.feedTimeoutTip"),  cls: "feed-timeout" },
+                task_completed:  { icon: "✓", label: t("org.dashboard.feedComplete"), tip: t("org.dashboard.feedCompleteTip"), cls: "feed-completed" },
+                node_activated:  { icon: "▶", label: t("org.dashboard.feedExecute"),  tip: t("org.dashboard.feedExecuteTip"),  cls: "feed-activated" },
               };
               const defaultMeta = { icon: "•", label: "", tip: "", cls: "" };
 
@@ -2241,7 +2242,7 @@ export function OrgEditorView({
                 if (n.status !== "busy" && !n.current_task_title) continue;
                 const pp = n.plan_progress || {};
                 const pct = pp.total > 0 ? Math.round((pp.completed / pp.total) * 100) : -1;
-                const rawTask = n.current_task_title || (n.current_task ? String(n.current_task) : "执行中…");
+                const rawTask = n.current_task_title || (n.current_task ? String(n.current_task) : t("org.editor.executing"));
                 const taskDesc = humanizeTask(rawTask, nodes);
                 busyLines.push({ key: n.id, node: n.role_title || nodeLabel(n.id), text: taskDesc, pct });
               }
@@ -2322,7 +2323,7 @@ export function OrgEditorView({
                     <div key={`an-${i}`} className="org-feed-item feed-warn">
                       <span className="org-feed-badge feed-warn">
                         <span className="org-feed-badge-icon">!</span>
-                        异常
+                        {t("org.editor.errorBadge")}
                       </span>
                       <span className="org-feed-who">{a.role_title || nodeLabel(a.node_id)}</span>
                       <Tooltip>
@@ -2347,7 +2348,7 @@ export function OrgEditorView({
               <button
                 onClick={() => setShowBlackboardPanel(v => !v)}
                 className={`org-bb-fab${showBlackboardPanel ? " org-bb-fab--active" : ""}`}
-                title="组织黑板"
+                title={t("org.editor.orgBlackboard")}
               >
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -2355,17 +2356,17 @@ export function OrgEditorView({
                   <line x1="8" y1="12" x2="14" y2="12" />
                   <line x1="8" y1="16" x2="12" y2="16" />
                 </svg>
-                <span className="org-bb-fab-label">黑板</span>
+                <span className="org-bb-fab-label">{t("org.editor.blackboard")}</span>
               </button>
               <button
                 onClick={() => setActiveDrawer("chat")}
                 className="org-chat-fab"
-                title="打开组织指挥台"
+                title={t("org.editor.openCommandCenter")}
               >
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                 </svg>
-                <span className="org-chat-fab-label">指挥台</span>
+                <span className="org-chat-fab-label">{t("org.editor.commandCenter")}</span>
               </button>
             </div>
           )}
@@ -2384,7 +2385,7 @@ export function OrgEditorView({
                   nodeId={null}
                   apiBaseUrl={apiBaseUrl}
                   showHeader
-                  title={`${currentOrg?.name || "组织"} · 指挥台`}
+                  title={t("org.editor.orgCommandCenter", { name: currentOrg?.name || t("org.editor.orgDefault") })}
                   onClose={() => setActiveDrawer(null)}
                   nodeNames={nodeNameMap}
                 />
@@ -3007,7 +3008,7 @@ export function OrgEditorView({
             display: "flex", justifyContent: "space-between", alignItems: "center",
           }}>
             <div style={{ fontWeight: 600, fontSize: 13 }}>
-              对话 · {selectedNode.role_title}
+              {t("org.editor.chatTitle", { name: selectedNode.role_title })}
             </div>
           </div>
           <div style={{ flex: 1, minHeight: 0 }}>
@@ -3056,7 +3057,7 @@ export function OrgEditorView({
             <div>
               <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{selectedNode.role_title}</div>
               <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                {selectedNode.department || "未分配部门"}
+                {selectedNode.department || t("org.editor.unassignedDept")}
               </div>
             </div>
             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
@@ -3072,7 +3073,7 @@ export function OrgEditorView({
                     color: "#fff", border: "none", borderRadius: 8,
                     boxShadow: showNodeChat ? "inset 0 1px 3px rgba(0,0,0,0.3)" : undefined,
                   }}
-                  title={showNodeChat ? "收起对话面板" : "展开对话面板"}
+                  title={showNodeChat ? t("org.editor.collapseChat") : t("org.editor.expandChat")}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
@@ -3097,13 +3098,13 @@ export function OrgEditorView({
               className="grid w-full grid-cols-3"
             >
               <ToggleGroupItem value="overview" className="h-8 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
-                概览
+                {t("org.editor.tabOverview")}
               </ToggleGroupItem>
               <ToggleGroupItem value="identity" className="h-8 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
-                身份
+                {t("org.editor.tabIdentity")}
               </ToggleGroupItem>
               <ToggleGroupItem value="capabilities" className="h-8 text-xs data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary">
-                能力
+                {t("org.editor.tabCapabilities")}
               </ToggleGroupItem>
             </ToggleGroup>
           </div>
@@ -3120,7 +3121,7 @@ export function OrgEditorView({
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
               </svg>
-              <span>运行中，配置已锁定</span>
+              <span>{t("org.editor.runningLocked")}</span>
             </div>
           )}
 
@@ -3143,25 +3144,25 @@ export function OrgEditorView({
                   }} />
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 600 }}>
-                      {orgStats.health === "healthy" ? "运行正常" : orgStats.health === "critical" ? "存在异常" : orgStats.health === "warning" ? "需要关注" : "有待观察"}
+                      {orgStats.health === "healthy" ? t("org.dashboard.healthGood") : orgStats.health === "critical" ? t("org.dashboard.healthCritical") : orgStats.health === "warning" ? t("org.dashboard.healthWarning") : t("org.dashboard.healthAttention")}
                     </div>
                     <div style={{ fontSize: 10, color: "#9ca3af" }}>
-                      {orgStats.anomalies?.length > 0 ? `${orgStats.anomalies.length} 个告警` : "所有节点状态良好"}
+                      {orgStats.anomalies?.length > 0 ? t("org.editor.alertsTitle", { count: orgStats.anomalies.length }) : t("org.dashboard.allClear")}
                     </div>
                   </div>
                 </div>
 
                 {/* KPI grid */}
                 <div className="card" style={{ padding: 12 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>运行指标</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>{t("org.editor.kpiTitle")}</div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
                     {[
-                      { label: "运行时长", value: orgStats.uptime_s ? (orgStats.uptime_s >= 3600 ? `${Math.floor(orgStats.uptime_s / 3600)}h${Math.floor((orgStats.uptime_s % 3600) / 60)}m` : `${Math.round(orgStats.uptime_s / 60)}m`) : "-", color: "var(--primary)" },
-                      { label: "完成任务", value: orgStats.total_tasks_completed ?? 0, color: "#22c55e" },
-                      { label: "消息交换", value: orgStats.total_messages_exchanged ?? 0, color: "#3b82f6" },
-                      { label: "待处理", value: orgStats.pending_messages ?? 0, color: orgStats.pending_messages > 5 ? "#f59e0b" : "#6b7280" },
-                      { label: "未读消息", value: orgStats.unread_inbox ?? 0, color: orgStats.unread_inbox > 0 ? "#dc2626" : "#6b7280" },
-                      { label: "待审批", value: orgStats.pending_approvals ?? 0, color: orgStats.pending_approvals > 0 ? "#7c3aed" : "#6b7280" },
+                      { label: t("org.editor.uptime"), value: orgStats.uptime_s ? (orgStats.uptime_s >= 3600 ? `${Math.floor(orgStats.uptime_s / 3600)}h${Math.floor((orgStats.uptime_s % 3600) / 60)}m` : `${Math.round(orgStats.uptime_s / 60)}m`) : "-", color: "var(--primary)" },
+                      { label: t("org.editor.tasksCompleted"), value: orgStats.total_tasks_completed ?? 0, color: "#22c55e" },
+                      { label: t("org.editor.messagesExchanged"), value: orgStats.total_messages_exchanged ?? 0, color: "#3b82f6" },
+                      { label: t("org.editor.pendingCount"), value: orgStats.pending_messages ?? 0, color: orgStats.pending_messages > 5 ? "#f59e0b" : "#6b7280" },
+                      { label: t("org.editor.unreadMessages"), value: orgStats.unread_inbox ?? 0, color: orgStats.unread_inbox > 0 ? "#dc2626" : "#6b7280" },
+                      { label: t("org.editor.pendingApprovals"), value: orgStats.pending_approvals ?? 0, color: orgStats.pending_approvals > 0 ? "#7c3aed" : "#6b7280" },
                     ].map((item) => (
                       <div key={item.label} style={{
                         padding: 6, background: "var(--bg-secondary)",
@@ -3178,7 +3179,7 @@ export function OrgEditorView({
                 {orgStats.anomalies?.length > 0 && (
                   <div className="card" style={{ padding: 12 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "#f59e0b" }}>
-                      告警 ({orgStats.anomalies.length})
+                      {t("org.editor.alertsSection", { count: orgStats.anomalies.length })}
                     </div>
                     <div style={{ maxHeight: 150, overflowY: "auto" }}>
                       {orgStats.anomalies.map((a: any, i: number) => (
@@ -3192,7 +3193,7 @@ export function OrgEditorView({
                             color: a.type === "error" ? "#dc2626" : a.type === "stuck" ? "#b45309" : "#2563eb",
                             fontWeight: 500,
                           }}>
-                            {a.type === "error" ? "错误" : a.type === "stuck" ? "卡住" : "积压"}
+                            {a.type === "error" ? t("org.editor.alertError") : a.type === "stuck" ? t("org.editor.alertStuck") : t("org.editor.alertBacklog")}
                           </span>
                           <div>
                             <span style={{ fontWeight: 500 }}>{a.role_title}</span>
@@ -3206,7 +3207,7 @@ export function OrgEditorView({
 
                 {/* Node load table */}
                 <div className="card" style={{ padding: 12 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>节点负荷</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>{t("org.editor.nodeLoadTitle")}</div>
                   <div style={{ maxHeight: 200, overflowY: "auto" }}>
                     {(orgStats.per_node || []).map((nd: any) => {
                       const st = nd.status || "idle";
@@ -3256,7 +3257,7 @@ export function OrgEditorView({
                 {/* Recent blackboard changes */}
                 {orgStats.recent_blackboard?.length > 0 && (
                   <div className="card" style={{ padding: 12 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>黑板最新动态</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>{t("org.editor.recentBlackboard")}</div>
                     <div style={{ maxHeight: 160, overflowY: "auto" }}>
                       {orgStats.recent_blackboard.map((bb: any, i: number) => {
                         const tc = BB_TYPE_COLORS[bb.memory_type] || "#6b7280";
@@ -3338,7 +3339,7 @@ export function OrgEditorView({
 
             {propsTab === "overview" && (
               <fieldset disabled={!!liveMode} style={{ border: "none", margin: 0, padding: 0, minWidth: 0, opacity: liveMode ? 0.5 : 1, display: "flex", flexDirection: "column", gap: 10 }}>
-                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>头像</label>
+                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>{t("org.editor.avatarLabel")}</label>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                   {AVATAR_PRESETS.map((av) => {
                     const isSel = selectedNode.avatar === av.id;
@@ -3361,7 +3362,7 @@ export function OrgEditorView({
                   })}
                   {/* Upload custom avatar */}
                   <label
-                    title={liveMode ? "运行中不可修改" : "上传自定义头像"}
+                    title={liveMode ? t("org.editor.runningLocked") : t("org.editor.uploadAvatar")}
                     style={{
                       width: 36, height: 36, borderRadius: 8,
                       border: "2px dashed var(--muted, #9ca3af)",
@@ -3384,7 +3385,7 @@ export function OrgEditorView({
                         const file = e.target.files?.[0];
                         if (!file) return;
                         if (file.size > 2 * 1024 * 1024) {
-                          alert("图片不能超过 2MB");
+                          alert(t("org.editor.imageTooLarge"));
                           return;
                         }
                         const form = new FormData();
@@ -3399,10 +3400,10 @@ export function OrgEditorView({
                             updateNodeData("avatar", data.url);
                           } else {
                             const err = await res.text();
-                            alert(`上传失败: ${err}`);
+                            alert(t("org.editor.uploadFailed", { error: String(err) }));
                           }
                         } catch (err) {
-                          alert(`上传失败: ${err}`);
+                          alert(t("org.editor.uploadFailed", { error: String(err) }));
                         }
                         e.target.value = "";
                       }}
@@ -3413,26 +3414,26 @@ export function OrgEditorView({
                 {selectedNode.avatar && (selectedNode.avatar.startsWith("/") || selectedNode.avatar.startsWith("http")) && (
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <OrgAvatar avatarId={selectedNode.avatar} size={48} />
-                    <span style={{ fontSize: 11, color: "var(--muted)" }}>自定义头像</span>
+                    <span style={{ fontSize: 11, color: "var(--muted)" }}>{t("org.editor.customAvatar")}</span>
                     <button
                       className="btn btn-sm"
                       style={{ fontSize: 11, padding: "2px 6px" }}
                       onClick={() => updateNodeData("avatar", null)}
                     >
-                      移除
+                      {t("org.editor.remove")}
                     </button>
                   </div>
                 )}
-                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>岗位名称</label>
+                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>{t("org.editor.roleTitleLabel")}</label>
                 <input
                   className="input"
                   value={selectedNode.role_title}
                   onChange={(e) => updateNodeData("role_title", e.target.value)}
-                  placeholder="如：技术总监、前端工程师、QA 负责人"
+                  placeholder={t("org.editor.roleNameFieldPlaceholder")}
                   style={{ fontSize: 13 }}
                 />
-                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>Agent 来源
-                  <span style={{ fontWeight: 400, marginLeft: 6 }}>— 决定节点的专业能力</span>
+                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>{t("org.editor.agentSourceLabel")}
+                  <span style={{ fontWeight: 400, marginLeft: 6 }}>— {t("org.editor.agentSourceHint")}</span>
                 </label>
                 <div style={{ display: "flex", gap: 6 }}>
                   <select
@@ -3441,13 +3442,13 @@ export function OrgEditorView({
                     onChange={(e) => updateNodeData("agent_source", e.target.value === "local" ? "local" : `ref:${selectedNode.agent_profile_id || ""}`)}
                     style={{ fontSize: 13, flex: 1 }}
                   >
-                    <option value="local">本地专属</option>
-                    <option value="ref">引用已有 Agent</option>
+                    <option value="local">{t("org.editor.agentSourceLocal")}</option>
+                    <option value="ref">{t("org.editor.agentSourceRef")}</option>
                   </select>
                 </div>
                 {selectedNode.agent_source.startsWith("ref:") && (
                   <>
-                    <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", marginTop: -4 }}>选择 Agent</label>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", marginTop: -4 }}>{t("org.editor.selectAgentLabel")}</label>
                     <div style={{ position: "relative" }}>
                       <div
                         className="input"
@@ -3460,7 +3461,7 @@ export function OrgEditorView({
                         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                           {(() => {
                             const ap = agentProfiles.find(p => p.id === selectedNode.agent_profile_id);
-                            if (!ap) return "点击选择...";
+                            if (!ap) return t("org.editor.selectAgentPlaceholder");
                             return (
                               <>
                                 {ap.icon ? <span style={{ fontSize: 16, flexShrink: 0 }}>{ap.icon}</span> : <IconBot size={16} style={{ flexShrink: 0 }} />}
@@ -3485,7 +3486,7 @@ export function OrgEditorView({
                               className="input"
                               value={agentProfileSearch}
                               onChange={(e) => setAgentProfileSearch(e.target.value)}
-                              placeholder="搜索 Agent..."
+                              placeholder={t("org.editor.searchAgent")}
                               autoFocus
                               style={{ fontSize: 12, width: "100%" }}
                               onClick={(e) => e.stopPropagation()}
@@ -3494,7 +3495,7 @@ export function OrgEditorView({
                           <div style={{ overflowY: "auto", flex: 1 }}>
                             {agentProfiles.length === 0 ? (
                               <div style={{ padding: 12, color: "var(--muted)", textAlign: "center", fontSize: 11 }}>
-                                暂无可用 Agent，请先在 Agent 管理页创建
+                                {t("org.editor.noAgentsAvailable")}
                               </div>
                             ) : (
                               agentProfiles
@@ -3536,37 +3537,37 @@ export function OrgEditorView({
                   </>
                 )}
                 <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>
-                  岗位目标
-                  <span style={{ fontWeight: 400, marginLeft: 6 }}>— 这个岗位要达成什么</span>
+                  {t("org.editor.roleGoalLabel")}
+                  <span style={{ fontWeight: 400, marginLeft: 6 }}>— {t("org.editor.roleGoalHint")}</span>
                 </label>
                 <textarea
                   className="input"
                   value={selectedNode.role_goal}
                   onChange={(e) => updateNodeData("role_goal", e.target.value)}
                   rows={2}
-                  placeholder="如：负责整体技术架构设计，把控代码质量，推进技术选型和落地"
+                  placeholder={t("org.editor.roleGoalPlaceholder")}
                   style={{ fontSize: 13, resize: "vertical" }}
                 />
                 <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>
-                  角色背景
-                  <span style={{ fontWeight: 400, marginLeft: 6 }}>— 专业经验和能力特长</span>
+                  {t("org.editor.roleBackstoryLabel")}
+                  <span style={{ fontWeight: 400, marginLeft: 6 }}>— {t("org.editor.roleBackstoryHint")}</span>
                 </label>
                 <textarea
                   className="input"
                   value={selectedNode.role_backstory}
                   onChange={(e) => updateNodeData("role_backstory", e.target.value)}
                   rows={3}
-                  placeholder="如：10年全栈开发经验，精通 Python/TypeScript，熟悉微服务架构，曾主导多个大型项目的技术选型"
+                  placeholder={t("org.editor.roleBackstoryPlaceholder")}
                   style={{ fontSize: 13, resize: "vertical" }}
                 />
-                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>部门</label>
+                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>{t("org.editor.departmentLabel")}</label>
                 <input
                   className="input"
                   value={selectedNode.department}
                   onChange={(e) => updateNodeData("department", e.target.value)}
                   style={{ fontSize: 13 }}
                 />
-                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>层级</label>
+                <label style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>{t("org.editor.levelLabel")}</label>
                 <input
                   className="input"
                   type="number"
@@ -3586,20 +3587,20 @@ export function OrgEditorView({
                   background: "var(--card-bg, #fff)",
                 }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", marginBottom: 6 }}>
-                    提示词构成说明
+                    {t("org.editor.promptStructureTitle")}
                   </div>
                   <div style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.7 }}>
-                    <div>系统会自动将以下信息拼装为完整的组织 Agent 提示词：</div>
+                    <div>{t("org.editor.promptStructureIntro")}</div>
                     <div style={{ marginTop: 4, paddingLeft: 8 }}>
-                      <div>1. <b>精简身份声明</b> — 角色定位 + 协作原则（自动生成）</div>
-                      <div>2. <b>角色描述</b> — 来自 ROLE.md / 自定义提示词 / 岗位信息</div>
-                      <div>3. <b>组织上下文</b> — 核心业务、架构、上下级关系、权限、黑板</div>
-                      <div>4. <b>运行环境</b> — 时间、OS、Shell 等（自动注入）</div>
-                      <div>5. <b>工具清单</b> — org_* 工具 + 节点配置的外部工具</div>
-                      <div>6. <b>行为准则 &amp; 策略红线</b> — 协作规则、交付流程</div>
+                      <div>1. <b>{t("org.editor.promptPart1Title")}</b> — {t("org.editor.promptPart1Desc")}</div>
+                      <div>2. <b>{t("org.editor.promptPart2Title")}</b> — {t("org.editor.promptPart2Desc")}</div>
+                      <div>3. <b>{t("org.editor.promptPart3Title")}</b> — {t("org.editor.promptPart3Desc")}</div>
+                      <div>4. <b>{t("org.editor.promptPart4Title")}</b> — {t("org.editor.promptPart4Desc")}</div>
+                      <div>5. <b>{t("org.editor.promptPart5Title")}</b> — {t("org.editor.promptPart5Desc")}</div>
+                      <div>6. <b>{t("org.editor.promptPart6Title")}</b> — {t("org.editor.promptPart6Desc")}</div>
                     </div>
                     <div style={{ marginTop: 6 }}>
-                      角色描述优先级：ROLE.md 文件 &gt; 自定义提示词 &gt; AgentProfile &gt; 自动生成
+                      {t("org.editor.promptPriority")}
                     </div>
                   </div>
                 </div>
@@ -3611,18 +3612,18 @@ export function OrgEditorView({
                 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                     <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>
-                      自定义提示词
+                      {t("org.editor.customPromptTitle")}
                     </div>
                     <button
                       className="btnSmall"
                       style={{ fontSize: 10, padding: "2px 8px" }}
                       onClick={() => {
-                        if (selectedNode.custom_prompt && !confirm("将覆盖当前自定义提示词，确认？")) return;
-                        const tpl = `你是一位经验丰富的${selectedNode.role_title || "专业人员"}。\n\n## 核心职责\n- ${selectedNode.role_goal || "待定义"}\n\n## 工作风格\n- 沟通简洁高效，结论先行\n- 重要决策写入组织黑板\n- 主动向上级汇报进展\n\n## 专业背景\n${selectedNode.role_backstory || "请在此描述角色的专业背景、经验和能力特长"}`;
+                        if (selectedNode.custom_prompt && !confirm(t("org.editor.confirmOverwritePrompt"))) return;
+                        const tpl = `You are an experienced ${selectedNode.role_title || "professional"}.\n\n## Core Responsibilities\n- ${selectedNode.role_goal || "To be defined"}\n\n## Work Style\n- Communicate concisely, lead with conclusions\n- Record important decisions on the org blackboard\n- Proactively report progress to superiors\n\n## Professional Background\n${selectedNode.role_backstory || "Describe the role's professional background, experience, and expertise here"}`;
                         updateNodeData("custom_prompt", tpl);
                       }}
                     >
-                      填充模板
+                      {t("org.editor.fillTemplate")}
                     </button>
                   </div>
                   <textarea
@@ -3630,13 +3631,13 @@ export function OrgEditorView({
                     value={selectedNode.custom_prompt}
                     onChange={(e) => updateNodeData("custom_prompt", e.target.value)}
                     rows={10}
-                    placeholder={"可选。不填写时系统将根据岗位名称、目标、背景自动生成角色描述。\n\n填写后将替代自动生成的内容，可更精细地控制角色行为。\n\n示例：\n你是一位资深前端工程师，擅长 React/Vue...\n\n## 核心职责\n- 负责前端架构设计和代码审查\n- 协调前端团队的开发进度"}
+                    placeholder={t("org.editor.customPromptPlaceholder")}
                     style={{ fontSize: 12, resize: "vertical", fontFamily: "monospace", lineHeight: 1.5, minHeight: 120 }}
                   />
                   <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 4 }}>
                     {selectedNode.custom_prompt
-                      ? `已配置自定义提示词（${selectedNode.custom_prompt.length} 字符）`
-                      : `未配置。系统将自动生成："你是${selectedNode.role_title || "..."}。目标：${selectedNode.role_goal ? selectedNode.role_goal.slice(0, 20) + "..." : "..."}"`}
+                      ? t("org.editor.hasCustomPrompt", { count: selectedNode.custom_prompt.length })
+                      : t("org.editor.noCustomPrompt")}
                   </div>
                 </div>
 
@@ -3647,7 +3648,7 @@ export function OrgEditorView({
                 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                     <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)" }}>
-                      提示词预览
+                      {t("org.editor.promptPreviewTitle")}
                     </div>
                     <div style={{ display: "flex", gap: 4 }}>
                       {fullPromptPreview !== null && (
@@ -3656,7 +3657,7 @@ export function OrgEditorView({
                           style={{ fontSize: 10, padding: "2px 8px" }}
                           onClick={() => setFullPromptPreview(null)}
                         >
-                          简略
+                          {t("org.editor.previewBrief")}
                         </button>
                       )}
                       <button
@@ -3672,15 +3673,15 @@ export function OrgEditorView({
                               const data = await resp.json();
                               setFullPromptPreview(data.full_prompt);
                             } else {
-                              setFullPromptPreview("(获取失败，请先保存组织配置)");
+                              setFullPromptPreview(t("org.editor.previewFetchFailed"));
                             }
                           } catch {
-                            setFullPromptPreview("(获取失败)");
+                            setFullPromptPreview(t("org.editor.previewFetchError"));
                           }
                           setPromptPreviewLoading(false);
                         }}
                       >
-                        {promptPreviewLoading ? "..." : "完整预览"}
+                        {promptPreviewLoading ? "..." : t("org.editor.previewFull")}
                       </button>
                     </div>
                   </div>
@@ -3694,16 +3695,16 @@ export function OrgEditorView({
                       ? fullPromptPreview
                       : selectedNode.custom_prompt
                         ? selectedNode.custom_prompt
-                        : `你是${selectedNode.role_title || "(未设置岗位名称)"}。${selectedNode.role_goal ? `目标：${selectedNode.role_goal}。` : ""}${selectedNode.role_backstory ? `背景：${selectedNode.role_backstory}。` : ""}`}
+                        : `You are ${selectedNode.role_title || "(unnamed role)"}. ${selectedNode.role_goal ? `Goal: ${selectedNode.role_goal}. ` : ""}${selectedNode.role_backstory ? `Background: ${selectedNode.role_backstory}.` : ""}`}
                   </div>
                   {fullPromptPreview === null && (
                     <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 6 }}>
-                      以上为角色描述部分。点击「完整预览」查看含组织架构、关系、权限等的完整提示词。
+                      {t("org.editor.previewRoleDescHint")}
                     </div>
                   )}
                   {fullPromptPreview !== null && (
                     <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 6 }}>
-                      以上为组织上下文提示词（{fullPromptPreview.length} 字符）。实际运行时还会追加运行环境、工具清单、行为准则等（约 1500-2500 字符）。
+                      {t("org.editor.previewFullHint", { chars: fullPromptPreview.length })}
                     </div>
                   )}
                 </div>
@@ -3714,16 +3715,15 @@ export function OrgEditorView({
                   background: "var(--card-bg, #fff)",
                 }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", marginBottom: 4 }}>
-                    高级：身份文件
+                    {t("org.editor.identityFilesTitle")}
                   </div>
                   <div style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.6 }}>
-                    如需更精细的角色控制，可在组织目录下创建节点专属身份文件：
+                    {t("org.editor.identityFilesDesc")}
                     <div style={{ fontFamily: "monospace", fontSize: 10, marginTop: 4, paddingLeft: 8 }}>
-                      <div>nodes/{selectedNode.id}/identity/ROLE.md — 角色定义（最高优先级）</div>
+                      <div>nodes/{selectedNode.id}/identity/ROLE.md — {t("org.editor.identityFileRole")}</div>
                     </div>
                     <div style={{ fontSize: 10, color: "var(--warning, #b8860b)", marginTop: 6 }}>
-                      注意：组织模式下使用精简协作身份，不注入 SOUL.md / AGENT.md
-                      的完整内容（其「单打独斗」哲学与组织协作冲突）。ROLE.md 正常生效。
+                      {t("org.editor.identityFilesWarning")}
                     </div>
                   </div>
                 </div>
@@ -3736,9 +3736,9 @@ export function OrgEditorView({
                 <Card className="gap-0 overflow-hidden py-0">
                   <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
                     <div className="min-w-0">
-                      <CardTitle className="text-sm">执行工具</CardTitle>
+                      <CardTitle className="text-sm">{t("org.editor.executionTools")}</CardTitle>
                       <CardDescription className="mt-1 text-[11px]">
-                        未选择时只能使用组织协作工具
+                        {t("org.editor.executionToolsDesc")}
                       </CardDescription>
                     </div>
                     <Button
@@ -3760,19 +3760,19 @@ export function OrgEditorView({
                         else if (title.includes("devops")) preset = ["filesystem", "memory"];
                         updateNodeData("external_tools", preset);
                       }}
-                      title="根据岗位角色自动推荐工具"
+                      title={t("org.editor.autoRecommend")}
                     >
-                      自动推荐
+                      {t("org.editor.autoRecommendBtn")}
                     </Button>
                   </div>
                   <CardContent className="grid grid-cols-2 gap-2 px-3 py-3">
                     {[
-                      { key: "research", label: "搜索" },
-                      { key: "planning", label: "计划" },
-                      { key: "filesystem", label: "文件/命令" },
-                      { key: "memory", label: "记忆" },
-                      { key: "browser", label: "浏览器" },
-                      { key: "communication", label: "通信" },
+                      { key: "research", label: t("org.editor.toolSearch") },
+                      { key: "planning", label: t("org.editor.toolPlan") },
+                      { key: "filesystem", label: t("org.editor.toolFile") },
+                      { key: "memory", label: t("org.editor.toolMemory") },
+                      { key: "browser", label: t("org.editor.toolBrowser") },
+                      { key: "communication", label: t("org.editor.toolComm") },
                     ].map((cat) => {
                       const checked = (selectedNode.external_tools || []).includes(cat.key);
                       return (
@@ -3821,11 +3821,9 @@ export function OrgEditorView({
                             className="mt-[2px]"
                           />
                           <div className="flex flex-col gap-1">
-                            <span className="font-medium">基础文件工具</span>
+                            <span className="font-medium">{t("org.editor.basicFileTools")}</span>
                             <span className="text-[11px] leading-4 text-muted-foreground">
-                              即便未勾选"文件/命令"也允许使用 write_file / read_file /
-                              edit_file / list_directory，专门用于把交付物落盘成附件。
-                              文件路径限定在组织 workspace 目录内。默认开启。
+                              {t("org.editor.basicFileToolsDesc")}
                             </span>
                           </div>
                         </label>
@@ -3837,15 +3835,15 @@ export function OrgEditorView({
                 {/* ── Section 2: MCP 服务器 ── */}
                 <Card className="gap-0 overflow-hidden py-0">
                   <CardHeader className="px-4 py-3" style={{ borderBottom: "1px solid var(--line)" }}>
-                    <CardTitle className="text-sm">MCP 服务器</CardTitle>
+                    <CardTitle className="text-sm">{t("org.editor.mcpServersTitle")}</CardTitle>
                     <CardDescription className="text-[11px]">
-                      节点可调用的外部服务接口
+                      {t("org.editor.mcpServersDesc")}
                     </CardDescription>
                   </CardHeader>
                   {availableMcpServers.length > 3 && (
                     <CardContent className="px-3 pt-3 pb-0">
                       <ShadInput
-                        placeholder="搜索服务器..."
+                        placeholder={t("org.editor.mcpServers")}
                         value={mcpSearch}
                         onChange={(e) => setMcpSearch(e.target.value)}
                         className="h-8 text-xs"
@@ -3884,7 +3882,7 @@ export function OrgEditorView({
                               background: srv.status === "connected" ? "#dcfce7" : "#f3f4f6",
                               color: srv.status === "connected" ? "#166534" : "#9ca3af",
                             }}>
-                              {srv.status === "connected" ? "在线" : "离线"}
+                              {srv.status === "connected" ? t("org.editor.mcpOnline") : t("org.editor.mcpOffline")}
                             </Badge>
                           </label>
                         );
@@ -3892,28 +3890,28 @@ export function OrgEditorView({
                     </CardContent>
                   ) : (
                     <CardContent className="px-4 py-3 text-[11px] text-muted-foreground">
-                      暂无可用服务器
+                      {t("org.editor.noMcpServers")}
                     </CardContent>
                   )}
                   {selectedNode.mcp_servers.length > 0 && (
                     <div className="border-t px-4 py-2 text-[10px] text-muted-foreground">
-                      已选 {selectedNode.mcp_servers.length} 个
+                      {t("org.editor.selectedCount", { count: selectedNode.mcp_servers.length })}
                     </div>
                   )}
                 </Card>
 
-                {/* ── Section 3: 技能 ── */}
+                {/* ── Section 3: Skills ── */}
                 <Card className="gap-0 overflow-hidden py-0">
                   <CardHeader className="px-4 py-3" style={{ borderBottom: "1px solid var(--line)" }}>
-                    <CardTitle className="text-sm">技能</CardTitle>
+                    <CardTitle className="text-sm">{t("org.editor.skillsTitle")}</CardTitle>
                     <CardDescription className="text-[11px]">
-                      已安装的专业技能包
+                      {t("org.editor.skillsDesc")}
                     </CardDescription>
                   </CardHeader>
                   {availableSkills.length > 3 && (
                     <CardContent className="px-3 pt-3 pb-0">
                       <ShadInput
-                        placeholder="搜索技能..."
+                        placeholder={t("org.editor.skills")}
                         value={skillSearch}
                         onChange={(e) => setSkillSearch(e.target.value)}
                         className="h-8 text-xs"
@@ -4019,7 +4017,7 @@ export function OrgEditorView({
                                     }
                                   }}
                                 >
-                                  {allChecked ? "全不选" : "全选"}
+                                  {allChecked ? t("org.editor.deselectAll") : t("org.editor.selectAll")}
                                 </button>
                               </div>
                               <div className="flex flex-col gap-1.5">
@@ -4032,12 +4030,12 @@ export function OrgEditorView({
                     </CardContent>
                   ) : (
                     <CardContent className="px-4 py-3 text-[11px] text-muted-foreground">
-                      暂无可用技能
+                      {t("org.editor.noSkills")}
                     </CardContent>
                   )}
                   {selectedNode.skills.length > 0 && (
                     <div className="border-t px-4 py-2 text-[10px] text-muted-foreground">
-                      已选 {selectedNode.skills.length} 个
+                      {t("org.editor.selectedCount", { count: selectedNode.skills.length })}
                     </div>
                   )}
                 </Card>
@@ -4049,7 +4047,7 @@ export function OrgEditorView({
                     padding: "6px 10px", borderRadius: 6, border: "1px solid #fde68a",
                     lineHeight: 1.5,
                   }}>
-                    已选择 MCP 服务器但未启用"搜索"等工具类目中的 MCP 调用能力。
+                    {t("org.editor.mcpNotEnabled")}
                     <Button
                       variant="outline"
                       size="sm"
@@ -4059,7 +4057,7 @@ export function OrgEditorView({
                         if (!cur.includes("mcp")) updateNodeData("external_tools", [...cur, "mcp"]);
                       }}
                     >
-                      一键启用
+                      {t("org.editor.enableNow")}
                     </Button>
                   </div>
                 )}
@@ -4071,11 +4069,11 @@ export function OrgEditorView({
                 {/* Performance section */}
                 <Card className="gap-0 py-0">
                   <CardHeader className="px-4 py-3">
-                    <CardTitle className="text-sm">性能限制</CardTitle>
+                    <CardTitle className="text-sm">{t("org.editor.performanceLimits")}</CardTitle>
                   </CardHeader>
                   <CardContent className="grid grid-cols-2 gap-3 px-4 pb-4">
                     <div>
-                      <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">并行任务数</ShadLabel>
+                      <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">{t("org.editor.concurrentTasks")}</ShadLabel>
                       <ShadInput
                         type="number"
                         min={1}
@@ -4085,7 +4083,7 @@ export function OrgEditorView({
                       />
                     </div>
                     <div>
-                      <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">超时 (秒)</ShadLabel>
+                      <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">{t("org.editor.timeoutSeconds")}</ShadLabel>
                       <ShadInput
                         type="number"
                         min={30}
@@ -4101,13 +4099,13 @@ export function OrgEditorView({
                 <Card className="gap-0 py-0">
                   <div className="flex items-start justify-between gap-3 px-4 py-3">
                     <div className="min-w-0">
-                      <CardTitle className="text-sm">自动分身</CardTitle>
+                      <CardTitle className="text-sm">{t("org.editor.autoClone")}</CardTitle>
                       <CardDescription className="mt-1 text-[11px] leading-5">
-                        任务堆积超过阈值时自动创建分身处理。
+                        {t("org.editor.autoCloneDesc")}
                       </CardDescription>
                     </div>
                     <div className="flex shrink-0 items-center gap-2 pt-0.5">
-                      <ShadLabel className="cursor-pointer text-[11px] text-muted-foreground" htmlFor="auto-clone-enabled">启用</ShadLabel>
+                      <ShadLabel className="cursor-pointer text-[11px] text-muted-foreground" htmlFor="auto-clone-enabled">{t("org.editor.enable")}</ShadLabel>
                       <Switch
                         id="auto-clone-enabled"
                         checked={selectedNode.auto_clone_enabled || false}
@@ -4119,7 +4117,7 @@ export function OrgEditorView({
                   {selectedNode.auto_clone_enabled && (
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                       <div>
-                        <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">触发阈值（待处理数）</ShadLabel>
+                        <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">{t("org.editor.cloneThreshold")}</ShadLabel>
                         <ShadInput
                           type="number"
                           min={2}
@@ -4129,7 +4127,7 @@ export function OrgEditorView({
                         />
                       </div>
                       <div>
-                        <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">最大分身数</ShadLabel>
+                        <ShadLabel className="mb-1.5 block text-[11px] text-muted-foreground">{t("org.editor.maxClones")}</ShadLabel>
                         <ShadInput
                           type="number"
                           min={1}
@@ -4142,7 +4140,7 @@ export function OrgEditorView({
                     </div>
                   )}
                   <div className="text-[11px] leading-5 text-muted-foreground">
-                    任务堆积超过阈值时自动创建分身处理。分身共享岗位记忆，同一任务链由同一分身完成。空闲分身在心跳时自动回收。
+                    {t("org.editor.autoCloneDetailDesc")}
                   </div>
                   </CardContent>
                 </Card>
@@ -4150,17 +4148,17 @@ export function OrgEditorView({
                 {/* Permissions section */}
                 <Card className="gap-0 overflow-hidden py-0">
                   <CardHeader className="px-4 py-3" style={{ borderBottom: "1px solid var(--line)" }}>
-                    <CardTitle className="text-sm">权限控制</CardTitle>
+                    <CardTitle className="text-sm">{t("org.editor.permissionsTitle")}</CardTitle>
                     <CardDescription className="text-[11px]">
-                      控制节点在组织内的行为权限
+                      {t("org.editor.permissionsDesc")}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="grid grid-cols-2 gap-2 px-3 py-3">
                     {([
-                      { key: "can_delegate", label: "委派任务" },
-                      { key: "can_escalate", label: "上报问题" },
-                      { key: "can_request_scaling", label: "申请扩编" },
-                      { key: "ephemeral", label: "临时节点" },
+                      { key: "can_delegate", label: t("org.editor.canDelegate") },
+                      { key: "can_escalate", label: t("org.editor.canEscalate") },
+                      { key: "can_request_scaling", label: t("org.editor.canRequestScaling") },
+                      { key: "ephemeral", label: t("org.editor.isEphemeral") },
                     ] as const).map(({ key, label }) => {
                       const checked = !!selectedNode[key];
                       return (
@@ -4186,16 +4184,16 @@ export function OrgEditorView({
                 {/* LLM endpoint */}
                 <Card className="gap-0 py-0">
                   <CardHeader className="px-4 py-3">
-                    <CardTitle className="text-sm">LLM 端点偏好</CardTitle>
+                    <CardTitle className="text-sm">{t("org.editor.llmEndpointTitle")}</CardTitle>
                     <CardDescription className="text-[11px]">
-                      留空时使用默认端点
+                      {t("org.editor.llmEndpointDesc")}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="px-4 pb-4">
                     <ShadInput
                       value={selectedNode.preferred_endpoint || ""}
                       onChange={(e) => updateNodeData("preferred_endpoint", e.target.value || null)}
-                      placeholder="留空使用默认端点"
+                      placeholder={t("org.editor.llmEndpointPlaceholder")}
                       className="h-8 text-xs"
                     />
                   </CardContent>
@@ -4226,7 +4224,7 @@ export function OrgEditorView({
         >
           {/* Header */}
           <div className="flex items-center justify-between">
-            <span className="text-sm font-semibold">连线属性</span>
+            <span className="text-sm font-semibold">{t("org.editor.edgeProperties")}</span>
             <Button variant="ghost" size="icon-xs" onClick={() => setSelectedEdgeId(null)}>
               <XIcon className="size-3.5" />
             </Button>
@@ -4234,13 +4232,13 @@ export function OrgEditorView({
 
           {/* Source / Target */}
           <div className="rounded-md border border-border bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
-            <div>起点: <strong className="text-foreground">{(() => { const n = nodes.find(n => n.id === selectedEdge.source); return (n?.data as any)?.role_title || selectedEdge.source; })()}</strong></div>
-            <div>终点: <strong className="text-foreground">{(() => { const n = nodes.find(n => n.id === selectedEdge.target); return (n?.data as any)?.role_title || selectedEdge.target; })()}</strong></div>
+            <div>{t("org.editor.edgeSource")}: <strong className="text-foreground">{(() => { const n = nodes.find(n => n.id === selectedEdge.source); return (n?.data as any)?.role_title || selectedEdge.source; })()}</strong></div>
+            <div>{t("org.editor.edgeTarget")}: <strong className="text-foreground">{(() => { const n = nodes.find(n => n.id === selectedEdge.target); return (n?.data as any)?.role_title || selectedEdge.target; })()}</strong></div>
           </div>
 
           {/* Edge type */}
           <div className="space-y-2">
-            <ShadLabel className="text-xs">连线类型</ShadLabel>
+            <ShadLabel className="text-xs">{t("org.editor.edgeTypeLabel")}</ShadLabel>
             <ToggleGroup
               type="single"
               value={selectedEdge.edge_type || "hierarchy"}
@@ -4248,20 +4246,20 @@ export function OrgEditorView({
               className="flex flex-wrap gap-1.5"
             >
               {([
-                { key: "hierarchy", label: "上下级", color: EDGE_COLORS.hierarchy },
-                { key: "collaborate", label: "协作", color: EDGE_COLORS.collaborate },
-                { key: "escalate", label: "上报", color: EDGE_COLORS.escalate },
-                { key: "consult", label: "咨询", color: EDGE_COLORS.consult || "var(--muted)" },
-              ] as const).map((t) => (
+                { key: "hierarchy", label: t("org.editor.edgeTypeHierarchy"), color: EDGE_COLORS.hierarchy },
+                { key: "collaborate", label: t("org.editor.edgeTypeCollaborate"), color: EDGE_COLORS.collaborate },
+                { key: "escalate", label: t("org.editor.edgeTypeEscalate"), color: EDGE_COLORS.escalate },
+                { key: "consult", label: t("org.editor.edgeTypeConsult"), color: EDGE_COLORS.consult || "var(--muted)" },
+              ] as const).map((et) => (
                 <ToggleGroupItem
-                  key={t.key}
-                  value={t.key}
+                  key={et.key}
+                  value={et.key}
                   size="sm"
                   className="h-7 gap-1.5 px-2.5 text-xs data-[state=on]:font-semibold"
-                  style={selectedEdge.edge_type === t.key ? { color: t.color, borderColor: t.color } : undefined}
+                  style={selectedEdge.edge_type === et.key ? { color: et.color, borderColor: et.color } : undefined}
                 >
-                  <span className="inline-block h-0.5 w-2.5 rounded-full" style={{ background: t.color }} />
-                  {t.label}
+                  <span className="inline-block h-0.5 w-2.5 rounded-full" style={{ background: et.color }} />
+                  {et.label}
                 </ToggleGroupItem>
               ))}
             </ToggleGroup>
@@ -4269,11 +4267,11 @@ export function OrgEditorView({
 
           {/* Label */}
           <div className="space-y-2">
-            <ShadLabel className="text-xs" htmlFor="edge-label">标签</ShadLabel>
+            <ShadLabel className="text-xs" htmlFor="edge-label">{t("org.editor.edgeLabelField")}</ShadLabel>
             <ShadInput
               id="edge-label"
               className="h-8 text-xs"
-              placeholder="可选，如「技术指导」「审批」"
+              placeholder={t("org.editor.edgeLabelPlaceholder")}
               value={selectedEdge.label || ""}
               onChange={(e) => updateEdgeData("label", e.target.value)}
             />
@@ -4282,8 +4280,8 @@ export function OrgEditorView({
           {/* Bidirectional */}
           <div className="flex items-center justify-between rounded-md border border-border px-3 py-2.5">
             <div className="space-y-0.5">
-              <ShadLabel className="text-xs cursor-pointer" htmlFor="edge-bidir">双向通信</ShadLabel>
-              <p className="text-[11px] text-muted-foreground leading-tight">关闭后只能从起点向终点发消息</p>
+              <ShadLabel className="text-xs cursor-pointer" htmlFor="edge-bidir">{t("org.editor.bidirectional")}</ShadLabel>
+              <p className="text-[11px] text-muted-foreground leading-tight">{t("org.editor.bidirectionalHint")}</p>
             </div>
             <Switch
               id="edge-bidir"
@@ -4295,7 +4293,7 @@ export function OrgEditorView({
           {/* Priority */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <ShadLabel className="text-xs">优先级</ShadLabel>
+              <ShadLabel className="text-xs">{t("org.editor.priority")}</ShadLabel>
               <Badge variant="secondary" className="h-5 text-[10px] tabular-nums">{selectedEdge.priority ?? 0}</Badge>
             </div>
             <Slider
@@ -4307,7 +4305,7 @@ export function OrgEditorView({
 
           {/* Bandwidth limit */}
           <div className="space-y-2">
-            <ShadLabel className="text-xs" htmlFor="edge-bw">通信频率上限 (次/小时)</ShadLabel>
+            <ShadLabel className="text-xs" htmlFor="edge-bw">{t("org.editor.bandwidthLimit")}</ShadLabel>
             <ShadInput
               id="edge-bw"
               type="number" min={1} max={999}
@@ -4325,7 +4323,7 @@ export function OrgEditorView({
               className="w-full gap-1.5 text-xs"
               onClick={handleDeleteEdge}
             >
-              <IconTrash size={12} /> 删除连线
+              <IconTrash size={12} /> {t("org.editor.deleteEdgeBtn")}
             </Button>
           </div>
         </div>
@@ -4375,11 +4373,11 @@ export function OrgEditorView({
             animation: "org-panel-in 0.3s cubic-bezier(0.4,0,0.2,1) 0.05s both",
           }}
         >
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>组织设置</div>
+          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>{t("org.editor.orgSettingsTitle")}</div>
 
           {/* ── 运行模式 ── */}
           <div className="card" style={{ padding: 10, marginBottom: 10 }}>
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>运行模式</div>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>{t("org.editor.runMode")}</div>
             <div style={{ display: "flex", gap: 4 }}>
               <button
                 className="btnSmall"
@@ -4392,7 +4390,7 @@ export function OrgEditorView({
                 }}
                 onClick={() => setCurrentOrg({ ...currentOrg, operation_mode: "command" } as any)}
               >
-                命令模式
+                {t("org.editor.commandMode")}
               </button>
               <button
                 className="btnSmall"
@@ -4405,24 +4403,24 @@ export function OrgEditorView({
                 }}
                 onClick={() => setCurrentOrg({ ...currentOrg, operation_mode: "autonomous" } as any)}
               >
-                自主模式
+                {t("org.editor.autonomousMode")}
               </button>
             </div>
             <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4, lineHeight: 1.5 }}>
               {((currentOrg as any).operation_mode || "command") === "command"
-                ? "通过聊天或命令面板下达任务，按需执行"
-                : "组织根据核心业务自动运转，顶层负责人持续运营"}
+                ? t("org.editor.commandModeDesc")
+                : t("org.editor.autonomousModeDesc")}
             </div>
           </div>
 
           {/* ── 工作目录 ── */}
           <div className="card" style={{ padding: 10, marginBottom: 10 }}>
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>工作目录</div>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>{t("org.editor.workDir")}</div>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <input
                 className="input"
                 style={{ flex: 1, fontSize: 12 }}
-                placeholder="默认：组织数据目录/workspace"
+                placeholder={t("org.editor.workDirDefault")}
                 value={(currentOrg as any).workspace_dir || ""}
                 onChange={(e) => setCurrentOrg({ ...currentOrg, workspace_dir: e.target.value } as any)}
               />
@@ -4431,23 +4429,23 @@ export function OrgEditorView({
                   className="btnSmall"
                   style={{ fontSize: 12, padding: "5px 10px", whiteSpace: "nowrap" }}
                   onClick={async () => {
-                    const selected = await openFileDialog({ directory: true, title: "选择工作目录" });
+                    const selected = await openFileDialog({ directory: true, title: t("org.editor.workDir") });
                     if (selected) setCurrentOrg({ ...currentOrg, workspace_dir: selected } as any);
                   }}
                 >
-                  浏览
+                  {t("org.editor.browse")}
                 </button>
               )}
             </div>
             <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4, lineHeight: 1.5 }}>
-              {t("orgEditor.outputPathHint", "组织编排产出的文件将保存在此目录。留空则使用默认路径。")}
+              {t("orgEditor.outputPathHint")}
             </div>
           </div>
 
           {/* ── 交付兜底 ── */}
           <div className="card" style={{ padding: 10, marginBottom: 10 }}>
             <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
-              {t("orgEditor.autoPersistTitle", "交付兜底")}
+              {t("org.editor.deliveryFallback")}
             </div>
             <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }}>
               <input
@@ -4463,16 +4461,10 @@ export function OrgEditorView({
               />
               <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 <span style={{ fontSize: 12 }}>
-                  {t("orgEditor.autoPersistLabel", "自动把长文回复落盘为附件")}
+                  {t("org.editor.autoPersistLabel")}
                 </span>
                 <span style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.5 }}>
-                  {t(
-                    "orgEditor.autoPersistHint",
-                    "用户原始指令明确要求文件/附件、但节点本轮没产出任何文件且只回了 ≥200 字长文时，"
-                    + "系统会把该长文自动保存为 .md 附件到工作目录的 deliverables/ 下，"
-                    + "并给上级合成一条「任务交付」消息。关闭后只走 LLM 自己的工具调用，"
-                    + "不做兜底。"
-                  )}
+                  {t("org.editor.autoPersistHint")}
                 </span>
               </div>
             </label>
@@ -4486,9 +4478,9 @@ export function OrgEditorView({
               onClick={() => setBizCollapsed(!bizCollapsed)}
             >
               <div style={{ fontWeight: 600, fontSize: 13 }}>
-                核心业务
+                {t("org.editor.coreBusiness")}
                 {bizCollapsed && (currentOrg.core_business || "").trim() && (
-                  <span style={{ fontWeight: 400, fontSize: 11, color: "var(--ok)", marginLeft: 6 }}>已配置</span>
+                  <span style={{ fontWeight: 400, fontSize: 11, color: "var(--ok)", marginLeft: 6 }}>{t("org.editor.configured")}</span>
                 )}
               </div>
               <span style={{ fontSize: 11, color: "var(--muted)" }}>{bizCollapsed ? "▸" : "▾"}</span>
@@ -4496,22 +4488,22 @@ export function OrgEditorView({
             {!bizCollapsed && (
               <div style={{ marginTop: 6 }}>
                 <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6, lineHeight: 1.5 }}>
-                  填写后组织启动即自主运转——顶层负责人自动接收任务书并开始工作，心跳变为定期复盘。
+                  {t("org.editor.coreBusinessHint")}
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: 8 }}>
                   {[
-                    { label: "创业公司", tpl: "## 业务定位\n我们是一家___公司，核心产品/服务是___。\n\n## 当前阶段目标\n- 完成产品 MVP 并上线\n- 获取首批 100 个种子用户\n- 验证产品-市场匹配度\n\n## 工作策略\n- 产品优先：先打磨核心功能，再扩展\n- 精益运营：小规模验证后再投入推广资源\n- 数据驱动：关注用户留存率和活跃度\n\n## 主动运营要求\n负责人需持续推进：产品开发进度跟踪、市场调研执行、用户反馈收集与分析、团队任务协调。每个复盘周期应有可交付成果。" },
-                    { label: "内容运营", tpl: "## 业务定位\n面向___领域的内容创作与分发平台/账号。\n\n## 当前阶段目标\n- 建立稳定的内容生产流程（每周___篇）\n- 核心平台粉丝/订阅达到___\n- 形成可复制的爆款内容方法论\n\n## 工作策略\n- 选题驱动：每周策划会确定选题方向\n- 数据复盘：分析每篇内容的阅读/互动数据\n- 持续迭代：根据数据调整内容策略\n\n## 主动运营要求\n负责人需持续推进：选题策划与分配、内容质量把控、发布排期管理、数据复盘与策略调整。确保内容产出不中断。" },
-                    { label: "软件项目", tpl: "## 项目定位\n为___开发的___系统/应用。\n\n## 当前阶段目标\n- 完成___模块的开发与测试\n- 交付可演示的版本给___\n- 技术文档同步更新\n\n## 工作策略\n- 迭代开发：按优先级排列功能，每轮迭代2周\n- 质量保障：代码审查 + 自动化测试覆盖\n- 文档先行：关键架构决策必须文档化\n\n## 主动运营要求\n负责人需持续推进：任务拆解与分配、代码审查、进度跟踪、阻塞问题排除、与需求方沟通确认。" },
-                    { label: "研究课题", tpl: "## 课题方向\n研究___领域的___问题。\n\n## 当前阶段目标\n- 完成文献调研，形成研究综述\n- 确定研究方案和实验设计\n- 产出阶段性研究报告\n\n## 工作策略\n- 文献先行：系统梳理相关领域进展\n- 实验验证：设计对照实验验证假设\n- 定期交流：团队内部周会分享进展\n\n## 主动运营要求\n负责人需持续推进：文献调研分配、研究方案讨论、实验进度追踪、成果整理与汇报。" },
-                    { label: "电商运营", tpl: "## 业务定位\n面向___的___品类电商。\n\n## 当前阶段目标\n- 完成店铺搭建和首批___个 SKU 上架\n- 月销售额达到___\n- 建立稳定的供应链和客服流程\n\n## 工作策略\n- 选品驱动：通过市场分析确定主推品类\n- 流量获取：___平台引流 + 内容营销\n- 复购优先：客户满意度和复购率是核心指标\n\n## 主动运营要求\n负责人需持续推进：选品调研、供应链管理、营销活动策划执行、客户反馈处理、数据分析与策略调整。确保日常运营不中断。" },
+                    { label: t("org.editor.templateStartup"), tpl: "## 业务定位\n我们是一家___公司，核心产品/服务是___。\n\n## 当前阶段目标\n- 完成产品 MVP 并上线\n- 获取首批 100 个种子用户\n- 验证产品-市场匹配度\n\n## 工作策略\n- 产品优先：先打磨核心功能，再扩展\n- 精益运营：小规模验证后再投入推广资源\n- 数据驱动：关注用户留存率和活跃度\n\n## 主动运营要求\n负责人需持续推进：产品开发进度跟踪、市场调研执行、用户反馈收集与分析、团队任务协调。每个复盘周期应有可交付成果。" },
+                    { label: t("org.editor.templateContentOps"), tpl: "## 业务定位\n面向___领域的内容创作与分发平台/账号。\n\n## 当前阶段目标\n- 建立稳定的内容生产流程（每周___篇）\n- 核心平台粉丝/订阅达到___\n- 形成可复制的爆款内容方法论\n\n## 工作策略\n- 选题驱动：每周策划会确定选题方向\n- 数据复盘：分析每篇内容的阅读/互动数据\n- 持续迭代：根据数据调整内容策略\n\n## 主动运营要求\n负责人需持续推进：选题策划与分配、内容质量把控、发布排期管理、数据复盘与策略调整。确保内容产出不中断。" },
+                    { label: t("org.editor.templateSoftware"), tpl: "## 项目定位\n为___开发的___系统/应用。\n\n## 当前阶段目标\n- 完成___模块的开发与测试\n- 交付可演示的版本给___\n- 技术文档同步更新\n\n## 工作策略\n- 迭代开发：按优先级排列功能，每轮迭代2周\n- 质量保障：代码审查 + 自动化测试覆盖\n- 文档先行：关键架构决策必须文档化\n\n## 主动运营要求\n负责人需持续推进：任务拆解与分配、代码审查、进度跟踪、阻塞问题排除、与需求方沟通确认。" },
+                    { label: t("org.editor.templateResearch"), tpl: "## 课题方向\n研究___领域的___问题。\n\n## 当前阶段目标\n- 完成文献调研，形成研究综述\n- 确定研究方案和实验设计\n- 产出阶段性研究报告\n\n## 工作策略\n- 文献先行：系统梳理相关领域进展\n- 实验验证：设计对照实验验证假设\n- 定期交流：团队内部周会分享进展\n\n## 主动运营要求\n负责人需持续推进：文献调研分配、研究方案讨论、实验进度追踪、成果整理与汇报。" },
+                    { label: t("org.editor.templateEcommerce"), tpl: "## 业务定位\n面向___的___品类电商。\n\n## 当前阶段目标\n- 完成店铺搭建和首批___个 SKU 上架\n- 月销售额达到___\n- 建立稳定的供应链和客服流程\n\n## 工作策略\n- 选品驱动：通过市场分析确定主推品类\n- 流量获取：___平台引流 + 内容营销\n- 复购优先：客户满意度和复购率是核心指标\n\n## 主动运营要求\n负责人需持续推进：选品调研、供应链管理、营销活动策划执行、客户反馈处理、数据分析与策略调整。确保日常运营不中断。" },
                   ].map((tpl) => (
                     <button
                       key={tpl.label}
                       className="btnSmall"
                       style={{ fontSize: 11, padding: "3px 8px" }}
                       onClick={() => {
-                        if ((currentOrg.core_business || "").trim() && !confirm("将覆盖当前内容，确认？")) return;
+                        if ((currentOrg.core_business || "").trim() && !confirm(t("org.editor.confirmOverwriteCoreBusiness"))) return;
                         setCurrentOrg({ ...currentOrg, core_business: tpl.tpl });
                       }}
                     >
@@ -4522,13 +4514,13 @@ export function OrgEditorView({
                 <textarea
                   className="input"
                   style={{ width: "100%", fontSize: 12, minHeight: 120, resize: "vertical", lineHeight: 1.6, fontFamily: "inherit" }}
-                  placeholder={"填写或选择模板后编辑。\n\n组织启动后，顶层节点将根据此内容自动制定策略、分配任务、持续推进。"}
+                  placeholder={t("org.editor.coreBusinessPlaceholder")}
                   value={currentOrg.core_business || ""}
                   onChange={(e) => setCurrentOrg({ ...currentOrg, core_business: e.target.value })}
                 />
                 {(currentOrg.core_business || "").trim() && (
                   <div style={{ fontSize: 11, color: "var(--ok)", marginTop: 4 }}>
-                    启动组织后，顶层负责人将自动接收任务书并开始自主运营
+                    {t("org.editor.coreBusinessSuccess")}
                   </div>
                 )}
               </div>
@@ -4543,7 +4535,7 @@ export function OrgEditorView({
               onClick={() => setPersonaCollapsed(!personaCollapsed)}
             >
               <div style={{ fontWeight: 600, fontSize: 13 }}>
-                用户身份
+                {t("org.editor.userPersona")}
                 {currentOrg.user_persona?.title && (
                   <span style={{ fontWeight: 400, fontSize: 11, color: "var(--muted)", marginLeft: 6 }}>
                     {currentOrg.user_persona.display_name || currentOrg.user_persona.title}
@@ -4555,16 +4547,16 @@ export function OrgEditorView({
             {!personaCollapsed && (
               <div style={{ marginTop: 6 }}>
                 <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6, lineHeight: 1.5 }}>
-                  你在本组织中的角色。节点会以此身份认知你。
+                  {t("org.editor.userPersonaHint")}
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginBottom: 8 }}>
                   {[
-                    { title: "董事长", desc: "组织最高决策者" },
-                    { title: "产品负责人", desc: "项目需求方与最终验收人" },
-                    { title: "出品人", desc: "内容方向决策者" },
-                    { title: "投资人", desc: "外部投资方" },
-                    { title: "甲方", desc: "项目委托方" },
-                    { title: "课题负责人", desc: "研究课题主持人" },
+                    { title: t("org.editor.presetChairman"), desc: t("org.editor.personaDescPlaceholder") },
+                    { title: t("org.editor.presetProductLead"), desc: "" },
+                    { title: t("org.editor.presetProducer"), desc: "" },
+                    { title: t("org.editor.presetInvestor"), desc: "" },
+                    { title: t("org.editor.presetClient"), desc: "" },
+                    { title: t("org.editor.presetResearchLead"), desc: "" },
                   ].map((preset) => (
                     <button
                       key={preset.title}
@@ -4586,11 +4578,11 @@ export function OrgEditorView({
                 <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                   <div style={{ display: "flex", gap: 6 }}>
                     <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>头衔</label>
+                      <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>{t("org.editor.personaTitleField")}</label>
                       <input
                         className="input"
                         style={{ width: "100%", fontSize: 12 }}
-                        placeholder="董事长"
+                        placeholder={t("org.editor.personaTitlePlaceholder")}
                         value={currentOrg.user_persona?.title || ""}
                         onChange={(e) => setCurrentOrg({
                           ...currentOrg,
@@ -4599,29 +4591,29 @@ export function OrgEditorView({
                       />
                     </div>
                     <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>显示名</label>
+                      <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>{t("org.editor.personaDisplayName")}</label>
                       <input
                         className="input"
                         style={{ width: "100%", fontSize: 12 }}
-                        placeholder="留空用头衔"
+                        placeholder={t("org.editor.personaDisplayNameHint")}
                         value={currentOrg.user_persona?.display_name || ""}
                         onChange={(e) => setCurrentOrg({
                           ...currentOrg,
-                          user_persona: { ...currentOrg.user_persona, title: currentOrg.user_persona?.title || "负责人", display_name: e.target.value, description: currentOrg.user_persona?.description || "" },
+                          user_persona: { ...currentOrg.user_persona, title: currentOrg.user_persona?.title || t("org.editor.defaultPersonaTitle"), display_name: e.target.value, description: currentOrg.user_persona?.description || "" },
                         })}
                       />
                     </div>
                   </div>
                   <div>
-                    <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>简介</label>
+                    <label style={{ fontSize: 11, color: "var(--muted)", display: "block", marginBottom: 2 }}>{t("org.editor.personaDescription")}</label>
                     <input
                       className="input"
                       style={{ width: "100%", fontSize: 12 }}
-                      placeholder="例如：组织最高决策者"
+                      placeholder={t("org.editor.personaDescPlaceholder")}
                       value={currentOrg.user_persona?.description || ""}
                       onChange={(e) => setCurrentOrg({
                         ...currentOrg,
-                        user_persona: { ...currentOrg.user_persona, title: currentOrg.user_persona?.title || "负责人", display_name: currentOrg.user_persona?.display_name || "", description: e.target.value },
+                        user_persona: { ...currentOrg.user_persona, title: currentOrg.user_persona?.title || t("org.editor.defaultPersonaTitle"), display_name: currentOrg.user_persona?.display_name || "", description: e.target.value },
                       })}
                     />
                   </div>
@@ -4632,21 +4624,21 @@ export function OrgEditorView({
 
           {/* ── Quick actions ── */}
           <div className="card" style={{ padding: 10, marginBottom: 10 }}>
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>操作</div>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>{t("org.editor.quickActions")}</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-              <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={() => setConfirmReset(true)}>重置组织</button>
-              <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={handleExportOrg}>导出配置</button>
+              <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={() => setConfirmReset(true)}>{t("org.editor.resetOrg")}</button>
+              <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={handleExportOrg}>{t("org.editor.exportConfig")}</button>
               <label className="btnSmall" style={{ fontSize: 11, padding: "4px 8px", cursor: "pointer" }}>
-                导入配置
+                {t("org.editor.importConfig")}
                 <input type="file" accept=".json" style={{ display: "none" }} onChange={handleImportOrg} />
               </label>
               {liveMode && (<>
                 <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={async () => {
                   try { await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/heartbeat/trigger`, { method: "POST" }); } catch {}
-                }}>触发心跳</button>
+                }}>{t("org.editor.triggerHeartbeat")}</button>
                 <button className="btnSmall" style={{ fontSize: 11, padding: "4px 8px" }} onClick={async () => {
                   try { await safeFetch(`${apiBaseUrl}/api/orgs/${currentOrg.id}/standup/trigger`, { method: "POST" }); } catch {}
-                }}>触发晨会</button>
+                }}>{t("org.editor.triggerStandup")}</button>
               </>)}
             </div>
           </div>
@@ -4670,7 +4662,7 @@ export function OrgEditorView({
         </div>
       )}
       <ConfirmDialog
-        dialog={confirmReset ? { message: "确认重置该组织吗？将清空所有运行数据（黑板、消息、事件日志），恢复为初始状态。此操作不可撤销。", onConfirm: handleResetOrg } : null}
+        dialog={confirmReset ? { message: t("org.editor.confirmResetOrg"), onConfirm: handleResetOrg } : null}
         onClose={() => setConfirmReset(false)}
       />
     </div>
