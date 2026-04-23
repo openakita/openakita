@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -158,20 +157,47 @@ class OpenCodeAdapter:
         on_spawn: Callable[[asyncio.subprocess.Process], None],
     ) -> ProviderRunResult:
         acc = _TurnAccumulator()
+        stderr_buffer: list[bytes] = []
         proc_ref: dict[str, asyncio.subprocess.Process] = {}
+        progress_cancelled = False
 
         def track(proc: asyncio.subprocess.Process) -> None:
             proc_ref["p"] = proc
             on_spawn(proc)
 
+        async def emit_progress(ev: _StreamEvent) -> None:
+            nonlocal progress_cancelled
+            cb = request.on_progress
+            if cb is None:
+                return
+            try:
+                if ev.kind == "assistant_text" and ev.text:
+                    await cb("assistant_text", text=ev.text)
+                    return
+                if ev.kind == "tool_use" and ev.tool_name:
+                    await cb("tool_use", tool_name=ev.tool_name)
+            except asyncio.CancelledError:
+                progress_cancelled = True
+                raise
+            except Exception:
+                logger.debug("progress callback failed", exc_info=True)
+
         try:
             async for line in stream_cli_subprocess(
-                argv, env, request.cwd, request.cancelled, on_spawn=track,
+                argv,
+                env,
+                request.cwd,
+                request.cancelled,
+                on_spawn=track,
+                on_stderr=stderr_buffer.append,
             ):
                 ev = _parse_stream_line(line)
                 if ev is not None:
                     acc.apply(ev)
+                    await emit_progress(ev)
         except asyncio.CancelledError:
+            if progress_cancelled:
+                raise
             return _cancelled_result(acc)
 
         if request.cancelled.is_set():
@@ -179,17 +205,12 @@ class OpenCodeAdapter:
 
         proc = proc_ref.get("p")
         exit_code = 0
-        stderr_text = ""
         if proc is not None:
             try:
                 exit_code = await asyncio.wait_for(proc.wait(), timeout=2.0)
             except TimeoutError:
                 exit_code = -1
-            if proc.stderr is not None:
-                try:
-                    stderr_text = (await proc.stderr.read()).decode("utf-8", "replace")
-                except Exception:
-                    logger.debug("stderr read failed", exc_info=True)
+        stderr_text = b"".join(stderr_buffer).decode("utf-8", "replace")
 
         if acc.errored or exit_code != 0:
             err_type = classify_cli_error(
