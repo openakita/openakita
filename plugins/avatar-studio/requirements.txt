@@ -38,3 +38,15 @@ oss2>=2.18.0
 # this we fall back to a 5-second placeholder which makes the cost
 # preview wildly inaccurate for anything longer than a one-liner.
 mutagen>=1.47.0
+
+# ComfyKit — Python SDK for ComfyUI (local) and RunningHub (cloud).
+# Used by avatar_comfy_client.py when the user selects a non-DashScope
+# backend. Import is lazy — the plugin works fine without it as long as
+# only the DashScope backend is used.
+comfykit>=0.1.12
+
+# Edge-TTS — free Microsoft TTS engine via the Edge browser service.
+# Used by avatar_tts_edge.py as an alternative to the paid
+# cosyvoice-v2 DashScope TTS. Import is lazy — when not installed,
+# selecting the Edge-TTS engine will show a friendly error.
+edge-tts>=7.0
