@@ -61,7 +61,9 @@ MODES: list[SubtitleMode] = [
         description_en="Qwen-MT multilingual translation, preserving original cue timing",
         requires_api_key=True,
         requires_ffmpeg=False,
-        skip_steps=frozenset({"prepare_assets", "asr_or_load"}),
+        # step 4 (asr_or_load) loads the user-supplied SRT for non-auto modes;
+        # only audio prep (step 3) and burn (step 7) are skipped.
+        skip_steps=frozenset({"prepare_assets"}),
     ),
     SubtitleMode(
         id="repair",
@@ -72,7 +74,8 @@ MODES: list[SubtitleMode] = [
         description_en="Timeline repair, short-cue extension, overlap trim, smart line wrap (no API)",
         requires_api_key=False,
         requires_ffmpeg=False,
-        skip_steps=frozenset({"prepare_assets", "asr_or_load"}),
+        # step 4 still runs to load the user-supplied SRT into ctx.cues.
+        skip_steps=frozenset({"prepare_assets"}),
     ),
     SubtitleMode(
         id="burn",
@@ -84,7 +87,8 @@ MODES: list[SubtitleMode] = [
         requires_api_key=False,
         requires_ffmpeg=True,
         requires_playwright=False,
-        skip_steps=frozenset({"asr_or_load", "translate_or_repair"}),
+        # step 4 loads the SRT to burn; step 5 (translate/repair) is the no-op.
+        skip_steps=frozenset({"translate_or_repair"}),
     ),
 ]
 
