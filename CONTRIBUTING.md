@@ -23,7 +23,7 @@ This project and everyone participating in it is governed by our [Code of Conduc
 
 - Python 3.11 or higher
 - Git
-- An Anthropic API key (for testing)
+- An API key from any supported LLM provider (e.g. Anthropic, OpenAI, DashScope)
 
 ### Fork and Clone
 
