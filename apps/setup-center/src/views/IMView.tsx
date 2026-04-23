@@ -121,10 +121,10 @@ const WEWORK_TYPES = new Set(["wework", "wework_ws"]);
 const ONEBOT_TYPES = new Set(["onebot", "onebot_reverse"]);
 
 const CLI_SKILL_HINTS: Record<string, { name: string; cmd: string }> = {
-  feishu: { name: "飞书 CLI (lark-cli)", cmd: "npm install -g @larksuite/cli && npx skills add larksuite/cli -y -g" },
-  dingtalk: { name: "钉钉 CLI (dws)", cmd: "npm install -g dingtalk-workspace-cli && npx skills add DingTalk-Real-AI/dingtalk-workspace-cli -y -g" },
-  wework: { name: "企微 CLI (wecom-cli)", cmd: "npm install -g @wecom/cli && npx skills add WeComTeam/wecom-cli -y -g" },
-  wework_ws: { name: "企微 CLI (wecom-cli)", cmd: "npm install -g @wecom/cli && npx skills add WeComTeam/wecom-cli -y -g" },
+  feishu: { name: "Feishu CLI (lark-cli)", cmd: "npm install -g @larksuite/cli && npx skills add larksuite/cli -y -g" },
+  dingtalk: { name: "DingTalk CLI (dws)", cmd: "npm install -g dingtalk-workspace-cli && npx skills add DingTalk-Real-AI/dingtalk-workspace-cli -y -g" },
+  wework: { name: "WeCom CLI (wecom-cli)", cmd: "npm install -g @wecom/cli && npx skills add WeComTeam/wecom-cli -y -g" },
+  wework_ws: { name: "WeCom CLI (wecom-cli)", cmd: "npm install -g @wecom/cli && npx skills add WeComTeam/wecom-cli -y -g" },
 };
 
 const CREDENTIAL_FIELDS: Record<string, { key: string; label: string; secret?: boolean; placeholder?: string }[]> = {
@@ -239,8 +239,8 @@ export function IMView({
     return (
       <div className="mx-auto flex w-full max-w-6xl flex-col items-center justify-center h-full text-muted-foreground">
         <IconIM size={48} />
-        <div className="mt-3 font-semibold">{t("im.title", "消息与群聊")}</div>
-        <div className="mt-1 text-xs opacity-50">后端服务未启动，请启动后再进行使用</div>
+        <div className="mt-3 font-semibold">{t("im.title", "Messages & Groups")}</div>
+        <div className="mt-1 text-xs opacity-50">Backend service is not running. Start it before using this feature.</div>
       </div>
     );
   }
@@ -254,10 +254,10 @@ export function IMView({
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <IconIM className="text-primary" size={28} />
-            {t("im.title", "消息与群聊")}
+            {t("im.title", "Messages & Groups")}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {t("im.description", "管理各个 IM 平台的机器人、会话与消息记录")}
+            {t("im.description", "Manage bots, sessions, and message history for each IM platform")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -590,7 +590,7 @@ function MessagesTab({ serviceRunning, apiBase }: { serviceRunning: boolean; api
       ? (s.chatName || s.chatId || s.sessionId.slice(0, 12))
       : (s.displayName || s.userId || s.chatId || s.sessionId.slice(0, 12));
     setConfirmDialog({
-      message: `确定要删除会话「${name}」吗？\n会话及其所有消息记录将被永久删除，不可恢复。`,
+      message: `Delete the session "${name}"?\nThe session and all its messages will be permanently removed and cannot be recovered.`,
       onConfirm: () => deleteSession(s.sessionId),
     });
   }, [deleteSession]);
@@ -1842,7 +1842,7 @@ export function BotConfigTab({ apiBase, onRequestRestart, venvDir, apiBaseUrl }:
                         updateCredential("pairing_code", val);
                       }}
                       inputMode="numeric"
-                      placeholder={t("config.imPairingCodeHint", { defaultValue: "输入或点击随机生成" })}
+                      placeholder={t("config.imPairingCodeHint", { defaultValue: "Enter a code or click to generate one" })}
                       className="flex-1 font-mono tracking-wider placeholder:text-foreground/40"
                     />
                     <Button
@@ -2819,7 +2819,7 @@ function BotCreationWizard({
 // ─── Helper Components ──────────────────────────────────────────────────
 
 function MediaContent({ content }: { content: string }) {
-  const mediaPattern = /\[(图片|语音转文字|语音|文件|image|voice|file)[:\uff1a]\s*([^\]]*)\]/gi;
+  const mediaPattern = /\[(image|voice-transcribed|voice|file)[:\uff1a]\s*([^\]]*)\]/gi;
   const parts: React.ReactNode[] = [];
   let lastIndex = 0;
   let match;
@@ -2830,8 +2830,8 @@ function MediaContent({ content }: { content: string }) {
     }
     const type = match[1].toLowerCase();
     const ref = match[2];
-    const isImage = type.includes("图片") || type === "image";
-    const isVoice = type.includes("语音") || type === "voice";
+    const isImage = type === "image";
+    const isVoice = type.includes("voice");
 
     parts.push(
       <span key={match.index} className="imMediaCard">

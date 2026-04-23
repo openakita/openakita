@@ -6,16 +6,16 @@ import { IS_TAURI } from "../../../platform";
 import { IconShield, IconAlertCircle } from "../../../icons";
 
 const RISK_LABELS: Record<string, string> = {
-  critical: "极高风险",
-  high: "高风险",
-  medium: "中风险",
-  low: "低风险",
+  critical: "Critical risk",
+  high: "High risk",
+  medium: "Medium risk",
+  low: "Low risk",
 };
 
 function humanizeArgs(tool: string, args: Record<string, unknown>): string {
-  if (tool === "run_shell" && args.command) return `即将执行命令：${args.command}`;
-  if ((tool === "write_file" || tool === "edit_file") && args.path) return `即将修改文件：${args.path}`;
-  if (tool === "delete_file" && args.path) return `即将删除文件：${args.path}`;
+  if (tool === "run_shell" && args.command) return `About to run command: ${args.command}`;
+  if ((tool === "write_file" || tool === "edit_file") && args.path) return `About to modify file: ${args.path}`;
+  if (tool === "delete_file" && args.path) return `About to delete file: ${args.path}`;
   return JSON.stringify(args, null, 2);
 }
 
@@ -83,7 +83,7 @@ export function SecurityConfirmModal({
       onClose({ decision, tool: data.tool, command: String(data.args.command ?? "") });
     } catch (err) {
       console.error("[SecurityConfirm] decision failed:", err);
-      setPostError("网络请求失败，请重试");
+      setPostError("Network request failed, please retry");
     }
   }, [apiBase, data.toolId, onClose, timerRef]);
 
@@ -120,10 +120,10 @@ export function SecurityConfirmModal({
           <IconShield size={24} style={{ color: riskColor }} />
           <div>
             <div style={{ fontWeight: 700, fontSize: 16 }}>
-              {t("chat.securityConfirmTitle", "安全确认")}
+              {t("chat.securityConfirmTitle", "Security Confirmation")}
             </div>
             <div style={{ fontSize: 12, opacity: 0.6 }}>
-              {t("chat.securityRiskLevel", "风险等级")}:{" "}
+              {t("chat.securityRiskLevel", "Risk Level")}:{" "}
               <span style={{ color: riskColor, fontWeight: 700 }}>
                 {RISK_LABELS[data.riskLevel] || data.riskLevel}
               </span>
@@ -143,7 +143,7 @@ export function SecurityConfirmModal({
 
         <div style={{ fontSize: 13, marginBottom: 12 }}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>
-            {t("chat.securityTool", "工具")}: <code>{data.tool}</code>
+            {t("chat.securityTool", "Tool")}: <code>{data.tool}</code>
           </div>
           <pre style={{
             margin: 0, fontSize: 11, maxHeight: 120, overflow: "auto",
@@ -177,7 +177,7 @@ export function SecurityConfirmModal({
               color: "var(--text)",
             }}
           >
-            {t("chat.securityDeny", "拒绝")} ({data.countdown}s)
+            {t("chat.securityDeny", "Deny")} ({data.countdown}s)
           </button>
 
           {/* Right: allow actions */}
@@ -191,14 +191,14 @@ export function SecurityConfirmModal({
                   border: "1px solid #3b82f644",
                 }}
               >
-                {t("chat.securitySandbox", "沙箱运行")}
+                {t("chat.securitySandbox", "Run in Sandbox")}
               </button>
             )}
             <button
               onClick={() => handleDecision("allow_once")}
               style={{ ...btnBase, background: riskColor, color: "#fff" }}
             >
-              {t("chat.securityAllowOnce", "允许一次")}
+              {t("chat.securityAllowOnce", "Allow Once")}
             </button>
             {/* More options toggle */}
             <div style={{ position: "relative" }}>
@@ -209,7 +209,7 @@ export function SecurityConfirmModal({
                   padding: "8px 10px", fontSize: 16, lineHeight: 1,
                   border: "1px solid var(--line)",
                 }}
-                title={t("chat.securityMoreOptions", "更多选项")}
+                title={t("chat.securityMoreOptions", "More Options")}
               >
                 ▾
               </button>
@@ -230,7 +230,7 @@ export function SecurityConfirmModal({
                     onMouseEnter={(e) => { e.currentTarget.style.background = "var(--panel2)"; }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
                   >
-                    {t("chat.securityAllowSession", "本次会话允许")}
+                    {t("chat.securityAllowSession", "Allow for This Session")}
                   </button>
                   {!isHigh && (
                     <button
@@ -243,7 +243,7 @@ export function SecurityConfirmModal({
                       onMouseEnter={(e) => { e.currentTarget.style.background = "var(--panel2)"; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
                     >
-                      {t("chat.securityAllowAlways", "始终允许")}
+                      {t("chat.securityAllowAlways", "Always Allow")}
                     </button>
                   )}
                 </div>

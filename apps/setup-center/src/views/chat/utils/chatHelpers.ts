@@ -30,14 +30,14 @@ export const UNDO_MAX_STEPS = 50;
 // ── 加载状态轮播提示 ──
 
 const _spinnerTips = [
-  "Tip: 按 Ctrl+/ 查看所有快捷键",
-  "Tip: 输入 / 可以使用斜杠命令",
-  "Tip: 拖拽文件到输入框可以上传附件",
-  "Tip: Ctrl+F 搜索聊天记录",
-  "Tip: 输入 @agent名 快速切换 Agent",
-  "Tip: 使用 /clear 清空当前会话上下文",
-  "Tip: 使用 /memory 管理 AI 记忆",
-  "Tip: 长按 Shift+Enter 可以换行输入",
+  "Tip: press Ctrl+/ to see all shortcuts",
+  "Tip: type / to use slash commands",
+  "Tip: drag files into the input box to upload attachments",
+  "Tip: press Ctrl+F to search chat history",
+  "Tip: type @agent-name to quickly switch agents",
+  "Tip: use /clear to reset the current conversation context",
+  "Tip: use /memory to manage AI memory",
+  "Tip: hold Shift+Enter to insert a newline",
 ];
 let _tipShowCounts: number[] = new Array(_spinnerTips.length).fill(0);
 
@@ -54,12 +54,12 @@ export function getNextSpinnerTip(): string {
 // ── Error Card 元数据 ──
 
 export const ERROR_META: Record<string, { icon: string; color: string; hint: string }> = {
-  auth: { icon: "key", color: "#ef4444", hint: "请检查 API Key 配置" },
-  quota: { icon: "chart", color: "#f59e0b", hint: "请稍后重试或升级配额" },
-  timeout: { icon: "clock", color: "#f59e0b", hint: "可尝试简化问题后重试" },
-  content_filter: { icon: "shield", color: "#8b5cf6", hint: "请换个方式重新提问" },
-  network: { icon: "globe", color: "#f59e0b", hint: "请检查网络连接" },
-  server: { icon: "warn", color: "#ef4444", hint: "服务暂时不可用，请稍后重试" },
+  auth: { icon: "key", color: "#ef4444", hint: "please check your API key configuration" },
+  quota: { icon: "chart", color: "#f59e0b", hint: "please retry later or upgrade your quota" },
+  timeout: { icon: "clock", color: "#f59e0b", hint: "try simplifying your question and retry" },
+  content_filter: { icon: "shield", color: "#8b5cf6", hint: "please rephrase your question and try again" },
+  network: { icon: "globe", color: "#f59e0b", hint: "please check your network connection" },
+  server: { icon: "warn", color: "#ef4444", hint: "service is temporarily unavailable, please retry later" },
   unknown: { icon: "error", color: "#ef4444", hint: "" },
 };
 
@@ -96,13 +96,13 @@ export function exportConversation(msgs: ChatMessage[], title: string, format: "
     mimeType = "application/json";
     ext = "json";
   } else {
-    const lines: string[] = [`# ${title}`, "", `> 导出时间: ${new Date().toLocaleString()}`, ""];
+    const lines: string[] = [`# ${title}`, "", `> Exported at: ${new Date().toLocaleString()}`, ""];
     for (const msg of msgs) {
-      const role = msg.role === "user" ? "[User] 用户" : msg.role === "assistant" ? "[AI] 助手" : "[Sys] 系统";
+      const role = msg.role === "user" ? "[User]" : msg.role === "assistant" ? "[AI] Assistant" : "[Sys] System";
       lines.push(`## ${role}`, "");
       if (msg.content) lines.push(msg.content, "");
       if (msg.toolCalls?.length) {
-        lines.push("**工具调用:**", "");
+        lines.push("**Tool calls:**", "");
         for (const tc of msg.toolCalls) {
           lines.push(`- \`${tc.tool}\`: ${JSON.stringify(tc.args).slice(0, 200)}`);
         }
@@ -137,12 +137,12 @@ export function appendAuthToken(url: string): string {
 
 export function stripLegacySummary(content: string): string {
   if (!content) return content;
-  const markers = ["\n\n[子Agent工作总结]", "\n\n[执行摘要]"];
+  const markers = ["\n\n[Sub-agent work summary]", "\n\n[Execution summary]"];
   for (const m of markers) {
     const idx = content.indexOf(m);
     if (idx !== -1) content = content.substring(0, idx);
   }
-  if (content.startsWith("[执行摘要]") || content.startsWith("[子Agent工作总结]")) return "";
+  if (content.startsWith("[Execution summary]") || content.startsWith("[Sub-agent work summary]")) return "";
   return content;
 }
 
@@ -373,11 +373,11 @@ export function classifyError(msg: string): ChatErrorInfo["category"] {
   if (el.includes("data_inspection") || el.includes("inappropriate content")) return "content_filter";
   if (el.includes("all endpoints failed") || el.includes("allendpointsfailederror")) {
     if (["api key", "auth", "unauthorized", "401", "forbidden", "403"].some((k) => el.includes(k))) return "auth";
-    if (["quota", "rate limit", "429", "余额", "insufficient"].some((k) => el.includes(k))) return "quota";
+    if (["quota", "rate limit", "429", "balance", "insufficient"].some((k) => el.includes(k))) return "quota";
     return "server";
   }
   if (["api key", "auth", "unauthorized", "401", "forbidden", "403"].some((k) => el.includes(k))) return "auth";
-  if (["quota", "rate limit", "429", "余额", "insufficient"].some((k) => el.includes(k))) return "quota";
+  if (["quota", "rate limit", "429", "balance", "insufficient"].some((k) => el.includes(k))) return "quota";
   if (["timeout", "timed out", "deadline"].some((k) => el.includes(k))) return "timeout";
   if (["connect", "dns", "resolve", "network", "unreachable"].some((k) => el.includes(k))) return "network";
   if (["500", "502", "503", "504", "internal server"].some((k) => el.includes(k))) return "server";

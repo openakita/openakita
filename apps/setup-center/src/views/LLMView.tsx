@@ -181,8 +181,8 @@ export function LLMView(props: LLMViewProps) {
   async function openApplyUrl(url: string) {
     try { await openExternalUrl(url); } catch {
       const ok = await copyToClipboard(url);
-      if (ok) notifySuccess("链接已复制到剪贴板：" + url);
-      else notifyError("无法打开链接，请手动访问：" + url);
+      if (ok) notifySuccess("Link copied to clipboard: " + url);
+      else notifyError("Could not open link, please visit manually: " + url);
     }
   }
 
@@ -514,15 +514,15 @@ export function LLMView(props: LLMViewProps) {
     const compilerSelectedProvider = providers.find((p) => p.slug === compilerProviderSlug) || null;
     const isCompilerLocal = isLocalProvider(compilerSelectedProvider);
     if (!compilerApiKeyValue.trim() && !isCompilerLocal) {
-      notifyError("请先填写编译端点的 API Key 值");
+      notifyError("Please enter the API key for the compile endpoint first");
       return;
     }
     if (!compilerBaseUrl.trim()) {
-      notifyError("请先填写编译端点的 Base URL");
+      notifyError("Please enter the base URL for the compile endpoint first");
       return;
     }
     setCompilerModels([]);
-    const _busyId = notifyLoading("拉取编译端点模型列表...");
+    const _busyId = notifyLoading("Fetching compile endpoint model list...");
     try {
       const effectiveCompilerKey = compilerApiKeyValue.trim() || (isCompilerLocal ? localProviderPlaceholderKey(compilerSelectedProvider) : "");
       const parsed = await fetchModelListUnified({
@@ -551,15 +551,15 @@ export function LLMView(props: LLMViewProps) {
     const sttSelectedProvider = providers.find((p) => p.slug === sttProviderSlug) || null;
     const isSttLocal = isLocalProvider(sttSelectedProvider);
     if (!sttApiKeyValue.trim() && !isSttLocal) {
-      notifyError("请先填写 STT 端点的 API Key 值");
+      notifyError("Please enter the API key for the STT endpoint first");
       return;
     }
     if (!sttBaseUrl.trim()) {
-      notifyError("请先填写 STT 端点的 Base URL");
+      notifyError("Please enter the base URL for the STT endpoint first");
       return;
     }
     setSttModels([]);
-    const _busyId = notifyLoading("拉取 STT 端点模型列表...");
+    const _busyId = notifyLoading("Fetching STT endpoint model list...");
     try {
       const effectiveKey = sttApiKeyValue.trim() || (isSttLocal ? localProviderPlaceholderKey(sttSelectedProvider) : "");
       const parsed = await fetchModelListUnified({
@@ -586,29 +586,29 @@ export function LLMView(props: LLMViewProps) {
 
   async function doSaveCompilerEndpoint(): Promise<boolean> {
     if (!currentWorkspaceId && dataMode !== "remote") {
-      notifyError("请先创建/选择一个当前工作区");
+      notifyError("Create or select a workspace first");
       return false;
     }
     if (!compilerModel.trim()) {
-      notifyError("请填写编译模型名称");
+      notifyError("Enter the compile model name");
       return false;
     }
     if (!compilerBaseUrl.trim()) {
-      notifyError("请填写编译端点的 Base URL");
+      notifyError("Enter the base URL for the compile endpoint");
       return false;
     }
     if (!/^https?:\/\//i.test(compilerBaseUrl.trim())) {
-      notifyError("编译端点 Base URL 必须以 http:// 或 https:// 开头");
+      notifyError("Compile endpoint base URL must start with http:// or https://");
       return false;
     }
     const compilerSelectedProvider = providers.find((p) => p.slug === compilerProviderSlug) || null;
     const isCompilerLocal = isLocalProvider(compilerSelectedProvider);
     const effectiveCompApiKeyValue = compilerApiKeyValue.trim() || (isCompilerLocal ? localProviderPlaceholderKey(compilerSelectedProvider) : "");
     if (!isCompilerLocal && !effectiveCompApiKeyValue) {
-      notifyError("请填写编译端点的 API Key 值");
+      notifyError("Enter the API key for the compile endpoint");
       return false;
     }
-    const _busyId = notifyLoading("写入编译端点...");
+    const _busyId = notifyLoading("Writing compile endpoint...");
     try {
       const epName = (compilerEndpointName.trim() || `compiler-${compilerProviderSlug || "provider"}-${compilerModel.trim()}`).slice(0, 64);
 
@@ -636,7 +636,7 @@ export function LLMView(props: LLMViewProps) {
         });
         const data = await res.json();
         if (data.status === "error" || data.status === "conflict") {
-          notifyError(data.error || "保存失败");
+          notifyError(data.error || "Save failed");
           return false;
         }
         if (effectiveCompApiKeyValue && data.endpoint?.api_key_env) {
@@ -650,7 +650,7 @@ export function LLMView(props: LLMViewProps) {
       setCompilerApiKeyValue("");
       setCompilerEndpointName("");
       setCompilerBaseUrl("");
-      notifySuccess(`编译端点 ${epName} 已保存`);
+      notifySuccess(`Compile endpoint ${epName} saved`);
       await loadSavedEndpoints();
       return true;
     } catch (e) {
@@ -663,7 +663,7 @@ export function LLMView(props: LLMViewProps) {
 
   async function doDeleteCompilerEndpoint(epName: string) {
     if (!currentWorkspaceId && dataMode !== "remote") return;
-    const _busyId = notifyLoading("删除编译端点...");
+    const _busyId = notifyLoading("Deleting compile endpoint...");
     try {
       if (shouldUseHttpApi()) {
         await safeFetch(
@@ -674,7 +674,7 @@ export function LLMView(props: LLMViewProps) {
         await deleteEndpointLocal(epName, "compiler_endpoints");
       }
       setSavedCompilerEndpoints((prev) => prev.filter((e) => e.name !== epName));
-      notifySuccess(`编译端点 ${epName} 已删除`);
+      notifySuccess(`Compile endpoint ${epName} deleted`);
       loadSavedEndpoints().catch(() => {});
     } catch (e) {
       notifyError(String(e));
@@ -685,29 +685,29 @@ export function LLMView(props: LLMViewProps) {
 
   async function doSaveSttEndpoint(): Promise<boolean> {
     if (!currentWorkspaceId && dataMode !== "remote") {
-      notifyError("请先创建/选择一个当前工作区");
+      notifyError("Create or select a workspace first");
       return false;
     }
     if (!sttModel.trim()) {
-      notifyError("请填写 STT 模型名称");
+      notifyError("Enter the STT model name");
       return false;
     }
     if (!sttBaseUrl.trim()) {
-      notifyError("请填写 STT 端点的 Base URL");
+      notifyError("Enter the base URL for the STT endpoint");
       return false;
     }
     if (!/^https?:\/\//i.test(sttBaseUrl.trim())) {
-      notifyError("STT 端点 Base URL 必须以 http:// 或 https:// 开头");
+      notifyError("STT endpoint base URL must start with http:// or https://");
       return false;
     }
     const sttSelectedProvider = providers.find((p) => p.slug === sttProviderSlug) || null;
     const isSttLocal = isLocalProvider(sttSelectedProvider);
     const effectiveSttApiKeyValue = sttApiKeyValue.trim() || (isSttLocal ? localProviderPlaceholderKey(sttSelectedProvider) : "");
     if (!isSttLocal && !effectiveSttApiKeyValue) {
-      notifyError("请填写 STT 端点的 API Key 值");
+      notifyError("Enter the API key for the STT endpoint");
       return false;
     }
-    const _busyId = notifyLoading("保存 STT 端点...");
+    const _busyId = notifyLoading("Saving STT endpoint...");
     try {
       const epName = (sttEndpointName.trim() || `stt-${sttProviderSlug || "provider"}-${sttModel.trim()}`).slice(0, 64);
 
@@ -735,7 +735,7 @@ export function LLMView(props: LLMViewProps) {
         });
         const data = await res.json();
         if (data.status === "error" || data.status === "conflict") {
-          notifyError(data.error || "保存失败");
+          notifyError(data.error || "Save failed");
           return false;
         }
         if (effectiveSttApiKeyValue && data.endpoint?.api_key_env) {
@@ -750,7 +750,7 @@ export function LLMView(props: LLMViewProps) {
       setSttEndpointName("");
       setSttBaseUrl("");
       setSttModels([]);
-      notifySuccess(`STT 端点 ${epName} 已保存`);
+      notifySuccess(`STT endpoint ${epName} saved`);
       await loadSavedEndpoints();
       return true;
     } catch (e) {
@@ -763,7 +763,7 @@ export function LLMView(props: LLMViewProps) {
 
   async function doDeleteSttEndpoint(epName: string) {
     if (!currentWorkspaceId && dataMode !== "remote") return;
-    const _busyId = notifyLoading("删除 STT 端点...");
+    const _busyId = notifyLoading("Deleting STT endpoint...");
     try {
       if (shouldUseHttpApi()) {
         await safeFetch(
@@ -774,7 +774,7 @@ export function LLMView(props: LLMViewProps) {
         await deleteEndpointLocal(epName, "stt_endpoints");
       }
       setSavedSttEndpoints((prev) => prev.filter((e) => e.name !== epName));
-      notifySuccess(`STT 端点 ${epName} 已删除`);
+      notifySuccess(`STT endpoint ${epName} deleted`);
       loadSavedEndpoints().catch(() => {});
     } catch (e) {
       notifyError(String(e));
@@ -785,7 +785,7 @@ export function LLMView(props: LLMViewProps) {
 
   async function doReorderByNames(orderedNames: string[]) {
     if (!currentWorkspaceId && dataMode !== "remote") return;
-    const _busyId = notifyLoading("保存排序...");
+    const _busyId = notifyLoading("Saving order...");
     try {
       const { endpoints, settings } = await readEndpointsJson();
       const map = new Map<string, any>();
@@ -813,7 +813,7 @@ export function LLMView(props: LLMViewProps) {
         }
       }
       await writeEndpointsJson(nextEndpoints, settings);
-      notifySuccess("已保存端点顺序（priority 已更新）");
+      notifySuccess("Endpoint order saved (priority updated)");
       await loadSavedEndpoints();
     } catch (e) {
       notifyError(String(e));
@@ -878,11 +878,11 @@ export function LLMView(props: LLMViewProps) {
     const isEditLocal = isLocalProvider(editProvider);
     const key = editDraft.apiKeyValue.trim() || envGet(envDraft, editDraft.apiKeyEnv) || (isEditLocal ? localProviderPlaceholderKey(editProvider) : "");
     if (!isEditLocal && !key) {
-      notifyError("请先填写 API Key 值（或确保对应环境变量已有值）");
+      notifyError("Enter the API key value first (or ensure the corresponding environment variable has a value)");
       return;
     }
     if (!editDraft.baseUrl.trim()) {
-      notifyError("请先填写 Base URL");
+      notifyError("Enter the base URL first");
       return;
     }
     const _busyId = notifyLoading(t("llm.fetchingModels"));
@@ -910,27 +910,27 @@ export function LLMView(props: LLMViewProps) {
 
   async function doSaveEditedEndpoint() {
     if (!currentWorkspaceId && dataMode !== "remote") {
-      notifyError("请先创建/选择一个当前工作区");
+      notifyError("Create or select a workspace first");
       return;
     }
     if (!editDraft || !editingOriginalName) return;
     if (!editDraft.name.trim()) {
-      notifyError("端点名称不能为空");
+      notifyError("Endpoint name cannot be empty");
       return;
     }
     if (!editDraft.modelId.trim()) {
-      notifyError("模型不能为空");
+      notifyError("Model cannot be empty");
       return;
     }
     if (!editDraft.baseUrl.trim()) {
-      notifyError("请填写 Base URL");
+      notifyError("Enter the base URL");
       return;
     }
     if (!/^https?:\/\//i.test(editDraft.baseUrl.trim())) {
-      notifyError("Base URL 必须以 http:// 或 https:// 开头");
+      notifyError("Base URL must start with http:// or https://");
       return;
     }
-    const _busyId = notifyLoading("保存修改...");
+    const _busyId = notifyLoading("Saving changes...");
     try {
       const newName = editDraft.name.trim().slice(0, 64);
       const nameChanged = newName !== editingOriginalName;
@@ -978,7 +978,7 @@ export function LLMView(props: LLMViewProps) {
         });
         const data = await res.json();
         if (data.status === "conflict" || data.status === "error") {
-          notifyError(data.error || "保存失败");
+          notifyError(data.error || "Save failed");
           return;
         }
         if (keyToSave && data.endpoint?.api_key_env) {
@@ -991,7 +991,7 @@ export function LLMView(props: LLMViewProps) {
         await saveEndpointLocal(endpoint, editDraft.apiKeyValue.trim() || null, "endpoints");
       }
 
-      notifySuccess("端点已更新");
+      notifySuccess("Endpoint updated");
       setEditModalOpen(false);
       await loadSavedEndpoints();
     } catch (e) {
@@ -1003,25 +1003,25 @@ export function LLMView(props: LLMViewProps) {
 
   async function doSaveEndpoint(): Promise<boolean> {
     if (!currentWorkspaceId && dataMode !== "remote") {
-      notifyError("请先创建/选择一个当前工作区");
+      notifyError("Create or select a workspace first");
       return false;
     }
     if (!selectedModelId) {
-      notifyError("请先选择模型");
+      notifyError("Select a model first");
       return false;
     }
     if (!baseUrl.trim()) {
-      notifyError("请填写 Base URL");
+      notifyError("Enter the base URL");
       return false;
     }
     if (!/^https?:\/\//i.test(baseUrl.trim())) {
-      notifyError("Base URL 必须以 http:// 或 https:// 开头");
+      notifyError("Base URL must start with http:// or https://");
       return false;
     }
     const isLocal = isLocalProvider(selectedProvider);
     const effectiveApiKeyValue = apiKeyValue.trim() || (isLocal ? localProviderPlaceholderKey(selectedProvider) : "");
     if (!isLocal && !effectiveApiKeyValue) {
-      notifyError("请填写 API Key 值（会写入工作区 .env）");
+      notifyError("Enter the API key value (it will be written to the workspace .env)");
       return false;
     }
     const _busyId = notifyLoading(isEditingEndpoint ? t("llm.updatingEndpoint") : t("llm.savingEndpoint"));
@@ -1063,7 +1063,7 @@ export function LLMView(props: LLMViewProps) {
           return false;
         }
         if (data.status === "error") {
-          notifyError(data.error || "保存失败");
+          notifyError(data.error || "Save failed");
           return false;
         }
         if (effectiveApiKeyValue && data.endpoint?.api_key_env) {
@@ -1075,8 +1075,8 @@ export function LLMView(props: LLMViewProps) {
 
       notifySuccess(
         isEditingEndpoint
-          ? "端点已更新（同时已写入 API Key 到 .env）。"
-          : "端点已保存（同时已写入 API Key 到 .env）。你可以继续添加备份端点。",
+          ? "Endpoint updated (API key written to .env)."
+          : "Endpoint saved (API key written to .env). You can continue to add backup endpoints.",
       );
       if (isEditingEndpoint) resetEndpointEditor();
       await loadSavedEndpoints();
@@ -1091,7 +1091,7 @@ export function LLMView(props: LLMViewProps) {
 
   async function doDeleteEndpoint(name: string) {
     if (!currentWorkspaceId && dataMode !== "remote") return;
-    const _busyId = notifyLoading("删除端点...");
+    const _busyId = notifyLoading("Deleting endpoint...");
     try {
       if (shouldUseHttpApi()) {
         await safeFetch(
@@ -1102,7 +1102,7 @@ export function LLMView(props: LLMViewProps) {
         await deleteEndpointLocal(name, "endpoints");
       }
       setSavedEndpoints((prev) => prev.filter((e) => e.name !== name));
-      notifySuccess(`已删除端点：${name}`);
+      notifySuccess(`Endpoint deleted: ${name}`);
       loadSavedEndpoints().catch(() => {});
     } catch (e) {
       notifyError(String(e));
@@ -1409,7 +1409,7 @@ export function LLMView(props: LLMViewProps) {
             <details className="group rounded-lg border border-border">
               <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium text-muted-foreground select-none list-none [&::-webkit-details-marker]:hidden hover:text-foreground transition-colors">
                 <ChevronRight className="size-4 shrink-0 transition-transform group-open:rotate-90" />
-                {t("llm.advancedParams") || t("llm.advanced") || "高级参数"}
+                {t("llm.advancedParams") || t("llm.advanced") || "Advanced parameters"}
               </summary>
               <div className="border-t border-border px-4 py-3 space-y-3">
                 <div className="grid grid-cols-2 gap-3">
@@ -1481,7 +1481,7 @@ export function LLMView(props: LLMViewProps) {
                   if (!baseUrl.trim()) missing.push("Base URL");
                   if (!_isLocal && !apiKeyValue.trim()) missing.push("API Key");
                   if (!selectedModelId.trim()) missing.push(t("status.model"));
-                  if (!currentWorkspaceId && dataMode !== "remote") missing.push(t("workspace.title") || "工作区");
+                  if (!currentWorkspaceId && dataMode !== "remote") missing.push(t("workspace.title") || "workspace");
                   const btnDisabled = missing.length > 0 || !!busy;
                   return (
                     <Button onClick={async () => { const ok = await doSaveEndpoint(); if (ok) { setAddEpDialogOpen(false); setConnTestResult(null); } }} disabled={btnDisabled}>
@@ -1497,10 +1497,10 @@ export function LLMView(props: LLMViewProps) {
               if (!baseUrl.trim()) missing.push("Base URL");
               if (!_isLocal && !apiKeyValue.trim()) missing.push("API Key");
               if (!selectedModelId.trim()) missing.push(t("status.model"));
-              if (!currentWorkspaceId && dataMode !== "remote") missing.push(t("workspace.title") || "工作区");
+              if (!currentWorkspaceId && dataMode !== "remote") missing.push(t("workspace.title") || "workspace");
               const show = missing.length > 0 && !busy;
               return (
-                <div className={cn("text-[10px] text-muted-foreground text-right w-full", !show && "invisible")}>{t("common.missingFields") || "缺少"}: {missing.join(", ") || "—"}</div>
+                <div className={cn("text-[10px] text-muted-foreground text-right w-full", !show && "invisible")}>{t("common.missingFields") || "Missing"}: {missing.join(", ") || "—"}</div>
               );
             })()}
           </DialogFooter>
@@ -1526,12 +1526,12 @@ export function LLMView(props: LLMViewProps) {
             {["custom", "ollama", "lmstudio"].includes(editDraft.providerSlug) ? (
             <div className="space-y-1.5">
               <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
-              <Input value={editDraft.baseUrl || ""} onChange={(e) => setEditDraft({ ...editDraft, baseUrl: e.target.value })} placeholder="请输入" />
+              <Input value={editDraft.baseUrl || ""} onChange={(e) => setEditDraft({ ...editDraft, baseUrl: e.target.value })} placeholder="Enter value" />
             </div>
             ) : editBaseUrlExpanded ? (
             <div className="space-y-1.5">
               <Label>{t("llm.baseUrl")} <span className="text-[11px] font-normal text-muted-foreground/70">{t("llm.baseUrlHint")}</span></Label>
-              <Input value={editDraft.baseUrl || ""} onChange={(e) => setEditDraft({ ...editDraft, baseUrl: e.target.value })} placeholder="请输入" />
+              <Input value={editDraft.baseUrl || ""} onChange={(e) => setEditDraft({ ...editDraft, baseUrl: e.target.value })} placeholder="Enter value" />
             </div>
             ) : null}
 
@@ -1599,7 +1599,7 @@ export function LLMView(props: LLMViewProps) {
             <details className="group rounded-lg border border-border">
               <summary className="cursor-pointer flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium text-muted-foreground select-none list-none [&::-webkit-details-marker]:hidden hover:text-foreground transition-colors">
                 <ChevronRight className="size-4 shrink-0 transition-transform group-open:rotate-90" />
-                {t("llm.advancedParams") || t("llm.advanced") || "高级参数"}
+                {t("llm.advancedParams") || t("llm.advanced") || "Advanced parameters"}
               </summary>
               <div className="border-t border-border px-4 py-3 space-y-3">
                 <div className="grid grid-cols-2 gap-3">
@@ -1653,9 +1653,9 @@ export function LLMView(props: LLMViewProps) {
               <div className="border-t border-border px-4 py-3 space-y-2.5">
                 {(editDraft.pricingTiers || []).length > 0 && (
                   <div className="grid grid-cols-[1fr_1fr_1fr_28px] gap-1.5 text-[11px] text-muted-foreground">
-                    <span>最大输入 tokens</span>
-                    <span>输入价格/M</span>
-                    <span>输出价格/M</span>
+                    <span>Max input tokens</span>
+                    <span>Input price / M</span>
+                    <span>Output price / M</span>
                     <span />
                   </div>
                 )}
@@ -1686,7 +1686,7 @@ export function LLMView(props: LLMViewProps) {
                   const tiers = [...(editDraft.pricingTiers || []), { max_input: 0, input_price: 0, output_price: 0 }];
                   setEditDraft({ ...editDraft, pricingTiers: tiers });
                 }}>
-                  + 添加档位
+                  + Add tier
                 </Button>
               </div>
             </details>
@@ -1849,7 +1849,7 @@ export function LLMView(props: LLMViewProps) {
                   const cMissing: string[] = [];
                   if (!compilerModel.trim()) cMissing.push(t("status.model"));
                   if (!_isCompLocal && !compilerApiKeyValue.trim()) cMissing.push("API Key");
-                  if (!currentWorkspaceId && dataMode !== "remote") cMissing.push(t("workspace.title") || "工作区");
+                  if (!currentWorkspaceId && dataMode !== "remote") cMissing.push(t("workspace.title") || "workspace");
                   const cBtnDisabled = cMissing.length > 0 || !!busy;
                   return (
                     <Button onClick={async () => { const ok = await doSaveCompilerEndpoint(); if (ok) { setAddCompDialogOpen(false); setConnTestResult(null); } }} disabled={cBtnDisabled}>
@@ -1864,10 +1864,10 @@ export function LLMView(props: LLMViewProps) {
               const cMissing: string[] = [];
               if (!compilerModel.trim()) cMissing.push(t("status.model"));
               if (!_isCompLocal && !compilerApiKeyValue.trim()) cMissing.push("API Key");
-              if (!currentWorkspaceId && dataMode !== "remote") cMissing.push(t("workspace.title") || "工作区");
+              if (!currentWorkspaceId && dataMode !== "remote") cMissing.push(t("workspace.title") || "workspace");
               const cShow = cMissing.length > 0 && !busy;
               return (
-                <div className={cn("text-[10px] text-muted-foreground text-right w-full", !cShow && "invisible")}>{t("common.missingFields") || "缺少"}: {cMissing.join(", ") || "—"}</div>
+                <div className={cn("text-[10px] text-muted-foreground text-right w-full", !cShow && "invisible")}>{t("common.missingFields") || "Missing"}: {cMissing.join(", ") || "—"}</div>
               );
             })()}
           </DialogFooter>
@@ -2002,7 +2002,7 @@ export function LLMView(props: LLMViewProps) {
                   const sMissing: string[] = [];
                   if (!sttModel.trim()) sMissing.push(t("status.model"));
                   if (!_isSttLocal && !sttApiKeyValue.trim()) sMissing.push("API Key");
-                  if (!currentWorkspaceId && dataMode !== "remote") sMissing.push(t("workspace.title") || "工作区");
+                  if (!currentWorkspaceId && dataMode !== "remote") sMissing.push(t("workspace.title") || "workspace");
                   const sBtnDisabled = sMissing.length > 0 || !!busy;
                   return (
                     <Button onClick={async () => { const ok = await doSaveSttEndpoint(); if (ok) { setAddSttDialogOpen(false); setConnTestResult(null); } }} disabled={sBtnDisabled}>
@@ -2017,10 +2017,10 @@ export function LLMView(props: LLMViewProps) {
               const sMissing: string[] = [];
               if (!sttModel.trim()) sMissing.push(t("status.model"));
               if (!_isSttLocal && !sttApiKeyValue.trim()) sMissing.push("API Key");
-              if (!currentWorkspaceId && dataMode !== "remote") sMissing.push(t("workspace.title") || "工作区");
+              if (!currentWorkspaceId && dataMode !== "remote") sMissing.push(t("workspace.title") || "workspace");
               const sShow = sMissing.length > 0 && !busy;
               return (
-                <div className={cn("text-[10px] text-muted-foreground text-right w-full", !sShow && "invisible")}>{t("common.missingFields") || "缺少"}: {sMissing.join(", ") || "—"}</div>
+                <div className={cn("text-[10px] text-muted-foreground text-right w-full", !sShow && "invisible")}>{t("common.missingFields") || "Missing"}: {sMissing.join(", ") || "—"}</div>
               );
             })()}
           </DialogFooter>
