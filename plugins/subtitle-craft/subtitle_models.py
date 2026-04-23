@@ -90,6 +90,27 @@ MODES: list[SubtitleMode] = [
         # step 4 loads the SRT to burn; step 5 (translate/repair) is the no-op.
         skip_steps=frozenset({"translate_or_repair"}),
     ),
+    SubtitleMode(
+        id="hook_picker",
+        label_zh="选开场 Hook",
+        label_en="Pick Opening Hook",
+        icon="sparkles",
+        description_zh="字幕 → Qwen-Plus 选 1 段最强开场对白 (默认 12s)",
+        description_en="SRT → Qwen-Plus picks one strongest opening hook (default 12s)",
+        requires_api_key=True,
+        requires_ffmpeg=False,
+        requires_playwright=False,
+        # step 4 loads the SRT into ctx.cues (reused via _load_srt_input);
+        # the hook-pick logic itself runs inside step 6 (_step_render_output).
+        skip_steps=frozenset(
+            {
+                "prepare_assets",
+                "identify_characters",
+                "translate_or_repair",
+                "burn_or_finalize",
+            }
+        ),
+    ),
 ]
 
 MODES_BY_ID: dict[str, SubtitleMode] = {m.id: m for m in MODES}
@@ -281,6 +302,56 @@ TRANSLATION_MODELS_BY_ID: dict[str, TranslationModel] = {m.id: m for m in TRANSL
 
 
 # ---------------------------------------------------------------------------
+# Hook-picker LLMs (Qwen-Plus / Qwen-Max family, used by hook_picker mode v1.1)
+#
+# Pricing fields are *separate from* PRICE_TABLE because hook_picker bills
+# input AND output tokens at different rates (unlike Qwen-MT which is input
+# only). The estimator multiplies by typical prompt/response sizes.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class HookPickerModel:
+    """One Qwen-Plus / Qwen-Max model variant available for ``hook_picker``."""
+
+    id: str
+    label_zh: str
+    label_en: str
+    input_price_per_k_token: float
+    output_price_per_k_token: float
+    description_zh: str = ""
+
+
+HOOK_PICKER_MODELS: list[HookPickerModel] = [
+    HookPickerModel(
+        id="qwen-plus",
+        label_zh="Qwen-Plus（推荐）",
+        label_en="Qwen-Plus (default)",
+        input_price_per_k_token=0.0008,
+        output_price_per_k_token=0.002,
+        description_zh="性价比首选，单次成功约 ¥0.005",
+    ),
+    HookPickerModel(
+        id="qwen-plus-2025-09-11",
+        label_zh="Qwen-Plus 9 月稳定版",
+        label_en="Qwen-Plus 2025-09-11 snapshot",
+        input_price_per_k_token=0.0008,
+        output_price_per_k_token=0.002,
+        description_zh="同价位的固定快照，便于复现",
+    ),
+    HookPickerModel(
+        id="qwen-max",
+        label_zh="Qwen-Max（更稳更贵）",
+        label_en="Qwen-Max (premium)",
+        input_price_per_k_token=0.02,
+        output_price_per_k_token=0.06,
+        description_zh="JSON 稳定性最高，单次约 ¥0.13",
+    ),
+]
+HOOK_PICKER_MODELS_BY_ID: dict[str, HookPickerModel] = {m.id: m for m in HOOK_PICKER_MODELS}
+
+
+# ---------------------------------------------------------------------------
 # Language code → Qwen-MT-required English name (P1-5)
 # Qwen-MT requires English language *names* like "Chinese" / "English",
 # not ISO 639 codes.
@@ -340,6 +411,11 @@ PRICE_TABLE: list[PriceEntry] = [
     PriceEntry(api="qwen-mt-plus", unit="千 input token", price_cny=0.005),
     PriceEntry(api="qwen-mt-lite", unit="千 input token", price_cny=0.0003),
     PriceEntry(api="qwen-vl-max", unit="千 input token", price_cny=0.02),
+    # hook_picker (v1.1) — input/output billed separately by Qwen-Plus / Max.
+    PriceEntry(api="qwen-plus", unit="千 input token", price_cny=0.0008),
+    PriceEntry(api="qwen-plus", unit="千 output token", price_cny=0.002),
+    PriceEntry(api="qwen-max", unit="千 input token", price_cny=0.02),
+    PriceEntry(api="qwen-max", unit="千 output token", price_cny=0.06),
 ]
 
 
@@ -373,6 +449,8 @@ def estimate_cost(
     translation_model: str = "qwen-mt-flash",
     character_identify: bool = False,
     speaker_count: int = 0,
+    hook_model: str = "qwen-plus",
+    random_window_attempts: int = 3,
 ) -> CostPreview:
     """Estimate API cost for a task.
 
@@ -382,6 +460,8 @@ def estimate_cost(
       ``speaker_count * 0.005`` when ``character_identify=True``.
     - ``translate``: ``(char_count * 0.7) / 1000 * price_per_k_token``.
     - ``repair`` / ``burn``: 0.
+    - ``hook_picker`` (v1.1): single-success base + worst-case window
+      fallback (tail+head + ``random_window_attempts`` randoms × 2 retries).
 
     Unknown ``mode_id`` returns an empty preview rather than raising so the UI
     can render gracefully while the user picks a mode.
@@ -435,6 +515,35 @@ def estimate_cost(
                 "description": "本地处理（ffmpeg / 算法）",
                 "quantity": "—",
                 "cost_cny": 0.0,
+            }
+        )
+
+    elif mode.id == "hook_picker":
+        # v1.1: Qwen-Plus / Qwen-Max chat-completion. Typical prompt is
+        # ~5500 input tokens (24KB subtitle window + 1KB instructions);
+        # response is ~200 tokens (lines + reason JSON).
+        hp = HOOK_PICKER_MODELS_BY_ID.get(hook_model) or HOOK_PICKER_MODELS[0]
+        in_cost = (5500 / 1000.0) * hp.input_price_per_k_token
+        out_cost = (200 / 1000.0) * hp.output_price_per_k_token
+        base = round(in_cost + out_cost, 4)
+        items.append(
+            {
+                "api": hp.id,
+                "description": "AI 选段（单次成功）",
+                "quantity": "~5.7K input + 200 output tokens",
+                "cost_cny": base,
+            }
+        )
+        attempts = max(1, int(random_window_attempts))
+        # Worst case: each window costs `base` × 2 retries; tail + head + N randoms.
+        worst_total = base * 2 * (1 + 1 + attempts)
+        worst_extra = round(max(0.0, worst_total - base), 4)
+        items.append(
+            {
+                "api": hp.id,
+                "description": (f"最差兜底（tail + head + {attempts} × random，每窗 ×2 重试）"),
+                "quantity": "上限",
+                "cost_cny": worst_extra,
             }
         )
 
@@ -539,10 +648,12 @@ ERROR_HINTS: dict[str, dict[str, Any]] = {
         "hints_zh": [
             "确认是有效 mp4/mkv/mp3/wav/srt",
             "SRT 编码请用 UTF-8",
+            "hook_picker 至少需要 5 条字幕条目才能选段",
         ],
         "hints_en": [
             "Verify file format",
             "SRT must be UTF-8",
+            "hook_picker needs at least 5 subtitle cues",
         ],
     },
     "duration": {
@@ -565,10 +676,14 @@ ERROR_HINTS: dict[str, dict[str, Any]] = {
         "hints_zh": [
             "请将 task_id 反馈给开发者",
             "截图 metadata.json 一并提供",
+            "hook_picker：AI 多次返回非 JSON 或选段超时长，可切换 model 至 qwen-max",
+            "hook_picker：AI 选段无法回找原 SRT（可能编造），可调宽 target_duration_sec",
         ],
         "hints_en": [
             "Report task_id to developer",
             "Screenshot metadata.json",
+            "hook_picker: LLM repeatedly returned non-JSON / out-of-range; try qwen-max",
+            "hook_picker: AI quote not in SRT (likely hallucination); widen target_duration_sec",
         ],
     },
 }

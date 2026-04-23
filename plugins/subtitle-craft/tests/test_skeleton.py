@@ -102,19 +102,22 @@ def test_plugin_skeleton_import():
 
 
 def test_plugin_json_shape():
+    """v1.1 declares 5 tools — the four v1.0 task tools plus the new
+    ``subtitle.hook_pick``.  The ``handoff`` red line still applies."""
     data = json.loads((PLUGIN_DIR / "plugin.json").read_text(encoding="utf-8"))
     assert data["id"] == "subtitle-craft"
     assert data["entry"] == "plugin.py"
     tools = data["provides"]["tools"]
-    assert len(tools) == 4, f"v1.0 must declare exactly 4 tools, got {tools}"
+    assert len(tools) == 5, f"v1.1 must declare exactly 5 tools, got {tools}"
     assert set(tools) == {
         "subtitle_craft_create",
         "subtitle_craft_status",
         "subtitle_craft_list",
         "subtitle_craft_cancel",
+        "subtitle.hook_pick",
     }
     for t in tools:
-        assert "handoff" not in t, f"v1.0 must not declare any handoff tool: {t}"
+        assert "handoff" not in t, f"v1.1 still forbids handoff tools: {t}"
 
 
 # ── Red-line grep guards (Phase 0 / Gate 0) ───────────────────────────────────

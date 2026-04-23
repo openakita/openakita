@@ -67,11 +67,58 @@ def test_all_four_tabs_present():
         assert key in text, f"missing i18n tab key: {key}"
 
 
-def test_all_four_modes_present():
+def test_all_five_modes_present():
+    """v1.1: hook_picker is the 5th mode; UI must list it alongside the four
+    v1.0 modes both as a literal and as an i18n key."""
     text = _read()
-    for mode in ("auto_subtitle", "translate", "repair", "burn"):
+    for mode in ("auto_subtitle", "translate", "repair", "burn", "hook_picker"):
         assert f'"{mode}"' in text, f"mode literal missing: {mode}"
         assert f"modes.{mode}" in text, f"mode i18n key missing: modes.{mode}"
+
+
+def test_hook_picker_ui_components_present():
+    """Phase 4 UI surfaces for hook_picker mode (v1.1)."""
+    text = _read()
+    # 1. mode tile NEW badge + gold chip variant
+    assert "oa-mode-tile__new-badge" in text
+    assert 'data-mode="hook_picker"' in text or "data-mode={m}" in text
+    # 2. HookResultPanel + HooksList components live in this single bundle
+    assert "function HookResultPanel" in text
+    assert "function HooksList" in text
+    # 3. Library 4th sub-tab "hooks" + its i18n keys
+    assert '"hooks"' in text
+    assert "library.tabs.hooks" in text
+    assert "library.intro.hooks" in text
+    # 4. Source picker + advanced options i18n
+    for key in (
+        "hook.source.label",
+        "hook.source.upload",
+        "hook.source.from_task",
+        "hook.instruction.label",
+        "hook.duration.label",
+        "hook.advanced",
+        "hook.window.label",
+        "hook.model.label",
+        "hook.result.title",
+        "hook.result.copy_timecode",
+    ):
+        assert key in text, f"hook_picker i18n key missing: {key}"
+    # 5. /library/hooks endpoint is wired in the UI
+    assert "/library/hooks" in text
+
+
+def test_hook_picker_ui_does_not_leak_backend_symbols():
+    """Pure-frontend file must not import / reference backend symbols."""
+    text = _read()
+    # Backend functions live in subtitle_hook_picker.py — they must NOT
+    # appear in the UI bundle (would imply broken layering).
+    for sym in (
+        "select_hook_dialogue",
+        "HookSelectionError",
+        "_match_dialogue_lines_to_subtitles",
+        "subtitle_hook_picker",
+    ):
+        assert sym not in text, f"backend symbol leaked into UI: {sym}"
 
 
 def test_tongyi_image_eight_item_alignment():
@@ -107,8 +154,16 @@ def test_char_identify_gated_by_diarization():
 
 def test_healthz_renders_all_four_fields():
     text = _read()
+    # FFmpeg health used to be a plain `ffmpeg_ok` HealthRow tag;
+    # since the 系统组件 redesign it is surfaced by the FfmpegInstaller
+    # component (which talks to /system/components — the same source the
+    # /healthz field is computed from server-side). The UI must therefore
+    # mention either `ffmpeg_ok` (legacy renderer) OR the FfmpegInstaller
+    # entry point, never neither.
+    assert ("ffmpeg_ok" in text) or ("FfmpegInstaller" in text), (
+        "FFmpeg health surface missing — expected ffmpeg_ok HealthRow or FfmpegInstaller component"
+    )
     for f in (
-        "ffmpeg_ok",
         "playwright_ok",
         "playwright_browser_ready",
         "dashscope_api_key_present",

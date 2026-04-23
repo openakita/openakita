@@ -21,4 +21,9 @@ Modules:
   extraction from noisy LLM output (used by Qwen-MT / Qwen-VL fallback).
 - :mod:`subtitle_craft_inline.parallel_executor` — bounded-concurrency
   executor reserved for v1.1+ fan-out (translation chunks, batch repair).
+- :mod:`subtitle_craft_inline.system_deps`       — ``SystemDepsManager`` for
+  detecting + auto-installing system binaries (FFmpeg) on Windows / macOS /
+  Linux. Forked verbatim from ``plugins/seedance-video/seedance_inline``;
+  the module is dep-agnostic (parameterised by ``dep_id``) so it sits
+  comfortably in any plugin that needs to gate on a system binary.
 """
