@@ -166,6 +166,111 @@
     .modal-desc { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 18px; }
     .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
     @media (max-width: 860px) { .split-layout { flex-direction: column; } .split-left { width: 100%; min-width: unset; } }
+    /* ── system component callout body (settings) — vendored from
+     * seedance-video so the FFmpeg installer card matches its visual
+     * contract; do not localise. */
+    .deps-help {
+      font-size: 12px; color: var(--text-muted); line-height: 1.7;
+      background: var(--bg); border: 1px solid var(--border);
+      border-left: 3px solid var(--primary);
+      border-radius: 6px; padding: 10px 12px; margin-bottom: 10px;
+    }
+    .deps-help strong { color: var(--text); font-weight: 600; }
+    .deps-help ul { margin: 6px 0 0 18px; padding: 0; }
+    .deps-help li { margin: 2px 0; }
+    .sysdep-card {
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px; margin-top: 8px; background: var(--bg-card);
+    }
+    .sysdep-card__head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .sysdep-card__title {
+      font-size: 13px; font-weight: 600; color: var(--text); flex: 1;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .sysdep-card__badge {
+      font-size: 11px; padding: 2px 8px; border-radius: 999px;
+      display: inline-flex; align-items: center; gap: 4px;
+      background: var(--bg); border: 1px solid var(--border);
+    }
+    .sysdep-card__badge--ok      { color: var(--success); background: rgba(34,197,94,.10); border-color: rgba(34,197,94,.35); }
+    .sysdep-card__badge--missing { color: var(--danger);  background: rgba(239,68,68,.10); border-color: rgba(239,68,68,.35); }
+    .sysdep-card__badge--busy    { color: var(--warning); background: rgba(245,158,11,.10); border-color: rgba(245,158,11,.35); }
+    .sysdep-card__path {
+      font-size: 11px; color: var(--text-dim); margin-top: 4px;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      word-break: break-all;
+    }
+    .sysdep-card__actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+    .sysdep-card__sudo-hint {
+      margin-top: 10px; padding: 8px 10px; border-radius: 6px;
+      background: rgba(245,158,11,.10); border: 1px solid rgba(245,158,11,.35);
+      font-size: 12px; color: var(--text);
+    }
+    .sysdep-card__sudo-cmd {
+      display: flex; align-items: center; gap: 6px; margin-top: 6px;
+      padding: 6px 8px; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+    .sysdep-card__sudo-cmd code { flex: 1; word-break: break-all; }
+    .sysdep-log {
+      margin-top: 10px; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--bg); overflow: hidden;
+    }
+    .sysdep-log__head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 10px; border-bottom: 1px solid var(--border);
+      font-size: 11px; color: var(--text-muted); font-weight: 500;
+    }
+    .sysdep-log__body {
+      max-height: 180px; overflow-y: auto; padding: 8px 10px;
+      margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 11px; line-height: 1.5; color: var(--text);
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .sysdep-log__body--empty { color: var(--text-dim); font-style: italic; }
+    .sysdep-spinner {
+      display: inline-block; width: 12px; height: 12px;
+      border: 2px solid var(--border); border-top-color: var(--primary);
+      border-radius: 50%; animation: sysdep-spin .8s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes sysdep-spin { to { transform: rotate(360deg); } }
+    /* ── inline tiny SVG wrapper for section titles + icon buttons ── */
+    .mp-ico { display: inline-flex; width: 16px; height: 16px; vertical-align: -3px; flex: none; color: currentColor; }
+    .mp-ico > svg { width: 100%; height: 100%; }
+    .mp-ico--lg { width: 20px; height: 20px; }
+    .oa-settings-section__title { display: flex; align-items: center; gap: 8px; }
+    /* ── info tooltip (per-field "what does this do?" popover) ── */
+    .mp-info-tip { position: relative; display: inline-flex; align-items: center; margin-left: 4px; }
+    .mp-info-tip__btn {
+      width: 16px; height: 16px; border: 1px solid var(--border);
+      border-radius: 50%; background: var(--bg-hover); color: var(--text-muted);
+      font-size: 11px; line-height: 14px; text-align: center; cursor: help;
+      padding: 0; user-select: none;
+    }
+    .mp-info-tip__btn:hover { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .mp-info-tip__bubble {
+      position: absolute; top: calc(100% + 6px); left: 0; min-width: 220px; max-width: 320px;
+      padding: 8px 10px; background: var(--bg-card); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      box-shadow: 0 6px 20px rgba(0,0,0,.12);
+      font-size: 11.5px; line-height: 1.55; z-index: 50;
+      white-space: normal; word-break: break-word;
+    }
+    .mp-info-tip__bubble::before {
+      content: ""; position: absolute; top: -5px; left: 10px;
+      width: 9px; height: 9px; background: var(--bg-card);
+      border-left: 1px solid var(--border); border-top: 1px solid var(--border);
+      transform: rotate(45deg);
+    }
+    .mp-info-tip__bubble code {
+      font-size: 11px; padding: 0 4px; border-radius: 3px;
+      background: var(--bg); border: 1px solid var(--border);
+    }
+    /* The label needs to host both text and the (?) trigger inline. */
+    .label.with-tip { display: inline-flex; align-items: center; gap: 4px; }
   </style>
 </head>
 <body>
@@ -458,7 +563,7 @@ const I18N_DICT = {
     "mediaPost.errors.unknown.h1": "请将 task_id 反馈给开发者",
     "mediaPost.errors.unknown.h2": "截图 metadata.json 一并提供",
     // Settings
-    "mediaPost.settings.api.title": "🔑 API Key",
+    "mediaPost.settings.api.title": "API Key",
     "mediaPost.settings.api.label": "DashScope API Key",
     "mediaPost.settings.api.helper": "前往阿里云百炼控制台 → API Key 管理获取；本地仅保存，不上传",
     "mediaPost.settings.api.placeholder": "sk-...",
@@ -471,11 +576,14 @@ const I18N_DICT = {
     "mediaPost.settings.api.missing": "未配置",
     "mediaPost.settings.api.toast.saved": "API Key 已保存",
     "mediaPost.settings.api.toast.cleared": "API Key 已清除",
-    "mediaPost.settings.vlm.title": "⚙️ VLM 参数",
+    "mediaPost.settings.vlm.title": "VLM 参数",
     "mediaPost.settings.vlm.fps": "采样帧率（multi_aspect）",
+    "mediaPost.settings.vlm.fps.tip": "multi_aspect 模式下，按多少帧/秒抽取关键帧送入视觉模型分析。值越高画面越精细但耗时与费用越高。常用 1.0~3.0；短视频 (<60s) 推荐 2.0；超长视频可降至 1.0。",
     "mediaPost.settings.vlm.batch": "VLM 批大小（固定 8）",
+    "mediaPost.settings.vlm.batch.tip": "每次请求 Qwen-VL 时打包的图片数量。后端固定为 8（DashScope 上限同时也是性价比最高的批大小），UI 仅做展示，无法修改。",
     "mediaPost.settings.vlm.concurrency": "并发批数",
-    "mediaPost.settings.chapter.title": "🎨 章节卡",
+    "mediaPost.settings.vlm.concurrency.tip": "同一任务内允许并发执行的 VLM 批次数。增大可缩短整体耗时，但会按倍数推高瞬时 QPS、显存与费用，触发 quota 报警时调小。建议 1~4，企业账号可至 8。",
+    "mediaPost.settings.chapter.title": "章节卡",
     "mediaPost.settings.chapter.template": "默认模板",
     "mediaPost.settings.chapter.template.helper": "新建「章节卡」任务时使用的默认 HTML 模板；可在 Create 页临时切换",
     "mediaPost.settings.chapter.templates_dir": "自定义模板目录",
@@ -489,10 +597,10 @@ const I18N_DICT = {
     "mediaPost.settings.chapter.playwright.cmd2": "2. 安装 Chromium：",
     "mediaPost.settings.chapter.playwright.copy": "复制",
     "mediaPost.settings.chapter.playwright.error": "上次错误：",
-    "mediaPost.settings.cost.title": "🚀 成本控制",
+    "mediaPost.settings.cost.title": "成本控制",
     "mediaPost.settings.cost.warn": "单任务确认阈值 ¥",
     "mediaPost.settings.cost.duration": "multi_aspect 时长上限（分钟）",
-    "mediaPost.settings.storage.title": "💾 数据存储",
+    "mediaPost.settings.storage.title": "数据存储",
     "mediaPost.settings.storage.dataDir": "插件数据目录（由宿主分配，只读）",
     "mediaPost.settings.storage.openFolder": "打开文件夹",
     "mediaPost.settings.storage.copyPath": "复制路径",
@@ -502,7 +610,36 @@ const I18N_DICT = {
     "mediaPost.settings.storage.refresh": "刷新统计",
     "mediaPost.settings.storage.totals": "合计：{files} 个文件 · {mb} MB",
     "mediaPost.settings.storage.note": "本插件不暴露自定义存放路径：所有上传与产物均归属于宿主指定的数据目录，便于统一备份与清理。",
-    "mediaPost.settings.handoff.title": "🔗 跨插件协同（v2.0 启用）",
+    "mediaPost.settings.system.title": "系统组件",
+    "mediaPost.settings.system.intro.strong": "本插件依赖以下系统组件，缺失会自动降级或失败。",
+    "mediaPost.settings.system.intro.body": "通过下方一键安装即可，安装日志直接在卡片内显示，无需打开终端。",
+    "mediaPost.settings.system.intro.item1": "FFmpeg：用于关键帧抽取、动态裁剪、章节卡 drawtext 兜底渲染。",
+    "mediaPost.settings.system.intro.item2": "Playwright（可选）：用于 A 路 HTML 章节卡渲染。未安装时自动降级为 ffmpeg drawtext。",
+    "mediaPost.settings.system.detecting": "正在检测…",
+    "mediaPost.settings.system.found": "已安装 v{ver}",
+    "mediaPost.settings.system.foundNoVer": "已安装",
+    "mediaPost.settings.system.missing": "未安装",
+    "mediaPost.settings.system.installing": "安装中… {elapsed}",
+    "mediaPost.settings.system.uninstalling": "卸载中… {elapsed}",
+    "mediaPost.settings.system.installed": "FFmpeg 已成功安装",
+    "mediaPost.settings.system.uninstalled": "FFmpeg 已成功卸载",
+    "mediaPost.settings.system.installFailed": "安装失败：{msg}",
+    "mediaPost.settings.system.uninstallFailed": "卸载失败：{msg}",
+    "mediaPost.settings.system.location": "可执行文件：{path}",
+    "mediaPost.settings.system.requiresSudo": "当前安装方式需要管理员权限，请在终端中执行：",
+    "mediaPost.settings.system.noMethod": "未识别到自动安装方式，请按操作系统手册手动安装 FFmpeg。",
+    "mediaPost.settings.system.uninstallConfirm": "确定要卸载 FFmpeg 吗？卸载后本插件以及其它依赖 FFmpeg 的功能将无法工作，需重新安装才能恢复。",
+    "mediaPost.settings.system.logTitle": "安装日志",
+    "mediaPost.settings.system.logTitleUninstall": "卸载日志",
+    "mediaPost.settings.system.logEmpty": "尚无日志输出…",
+    "mediaPost.settings.system.btn.install": "一键安装",
+    "mediaPost.settings.system.btn.uninstall": "卸载",
+    "mediaPost.settings.system.btn.uninstallConfirm": "确认卸载",
+    "mediaPost.settings.system.btn.recheck": "重新检测",
+    "mediaPost.settings.system.btn.openHome": "打开主页",
+    "mediaPost.settings.system.btn.copyCmd": "复制命令",
+    "mediaPost.settings.system.btn.copied": "已复制",
+    "mediaPost.settings.handoff.title": "跨插件协同（v2.0 启用）",
     "mediaPost.settings.handoff.disabled": "等待 v2.0 — 将与 clip-sense / subtitle-craft / avatar-studio 互通素材",
     "mediaPost.settings.save": "保存设置",
     "mediaPost.settings.saved": "已保存",
@@ -675,7 +812,7 @@ const I18N_DICT = {
     "mediaPost.errors.unknown.label": "Unknown Error",
     "mediaPost.errors.unknown.h1": "Report task_id to developer",
     "mediaPost.errors.unknown.h2": "Screenshot metadata.json",
-    "mediaPost.settings.api.title": "🔑 API Key",
+    "mediaPost.settings.api.title": "API Key",
     "mediaPost.settings.api.label": "DashScope API Key",
     "mediaPost.settings.api.helper": "Get one from Aliyun Bailian console → API Key. Stored locally only.",
     "mediaPost.settings.api.placeholder": "sk-...",
@@ -688,11 +825,14 @@ const I18N_DICT = {
     "mediaPost.settings.api.missing": "Not configured",
     "mediaPost.settings.api.toast.saved": "API Key saved",
     "mediaPost.settings.api.toast.cleared": "API Key cleared",
-    "mediaPost.settings.vlm.title": "⚙️ VLM Parameters",
+    "mediaPost.settings.vlm.title": "VLM Parameters",
     "mediaPost.settings.vlm.fps": "Sample fps (multi_aspect)",
+    "mediaPost.settings.vlm.fps.tip": "Frames-per-second sampled and sent to the vision model in multi_aspect mode. Higher = sharper crop choices but more cost and latency. Typical 1.0–3.0; short clips (<60s) prefer 2.0; long-form may drop to 1.0.",
     "mediaPost.settings.vlm.batch": "VLM batch size (locked to 8)",
+    "mediaPost.settings.vlm.batch.tip": "Number of frames packed into a single Qwen-VL request. Locked at 8 (DashScope's sweet spot — both the API limit and best price-per-frame). Display only; not editable from the UI.",
     "mediaPost.settings.vlm.concurrency": "Concurrent batches",
-    "mediaPost.settings.chapter.title": "🎨 Chapter cards",
+    "mediaPost.settings.vlm.concurrency.tip": "How many VLM batches the plugin runs in parallel for a single task. Higher = shorter wall-clock but multiplies QPS, GPU pressure and cost. Lower if you hit quota errors. 1–4 is safe for most users; enterprise accounts can go up to 8.",
+    "mediaPost.settings.chapter.title": "Chapter cards",
     "mediaPost.settings.chapter.template": "Default template",
     "mediaPost.settings.chapter.template.helper": "HTML template the Chapter Cards mode picks by default; you can override per task on Create",
     "mediaPost.settings.chapter.templates_dir": "Custom templates dir",
@@ -706,9 +846,9 @@ const I18N_DICT = {
     "mediaPost.settings.chapter.playwright.cmd2": "2. Install Chromium:",
     "mediaPost.settings.chapter.playwright.copy": "Copy",
     "mediaPost.settings.chapter.playwright.error": "Last error: ",
-    "mediaPost.settings.cost.title": "🚀 Cost control",
+    "mediaPost.settings.cost.title": "Cost control",
     "mediaPost.settings.cost.warn": "Per-task confirm threshold ¥",
-    "mediaPost.settings.storage.title": "💾 Storage",
+    "mediaPost.settings.storage.title": "Storage",
     "mediaPost.settings.storage.dataDir": "Plugin data directory (host-allocated, read-only)",
     "mediaPost.settings.storage.openFolder": "Open folder",
     "mediaPost.settings.storage.copyPath": "Copy path",
@@ -718,8 +858,37 @@ const I18N_DICT = {
     "mediaPost.settings.storage.refresh": "Refresh",
     "mediaPost.settings.storage.totals": "Total: {files} files · {mb} MB",
     "mediaPost.settings.storage.note": "This plugin doesn't expose custom paths — every upload and artifact lives under the host-managed data dir, which keeps backups and cleanup centralized.",
+    "mediaPost.settings.system.title": "System components",
+    "mediaPost.settings.system.intro.strong": "This plugin depends on the following system components — missing ones will auto-fallback or fail.",
+    "mediaPost.settings.system.intro.body": "Use the in-plugin installer below — install logs render right inside the card, no terminal needed.",
+    "mediaPost.settings.system.intro.item1": "FFmpeg: keyframe extraction, dynamic crop, drawtext fallback for chapter cards.",
+    "mediaPost.settings.system.intro.item2": "Playwright (optional): A-path HTML chapter card render. Without it the plugin auto-falls back to ffmpeg drawtext.",
+    "mediaPost.settings.system.detecting": "Detecting…",
+    "mediaPost.settings.system.found": "Installed v{ver}",
+    "mediaPost.settings.system.foundNoVer": "Installed",
+    "mediaPost.settings.system.missing": "Not installed",
+    "mediaPost.settings.system.installing": "Installing… {elapsed}",
+    "mediaPost.settings.system.uninstalling": "Uninstalling… {elapsed}",
+    "mediaPost.settings.system.installed": "FFmpeg installed successfully",
+    "mediaPost.settings.system.uninstalled": "FFmpeg uninstalled",
+    "mediaPost.settings.system.installFailed": "Install failed: {msg}",
+    "mediaPost.settings.system.uninstallFailed": "Uninstall failed: {msg}",
+    "mediaPost.settings.system.location": "Executable: {path}",
+    "mediaPost.settings.system.requiresSudo": "This install method needs admin rights — run the following in a terminal:",
+    "mediaPost.settings.system.noMethod": "No automatic install method on this OS — please install FFmpeg manually.",
+    "mediaPost.settings.system.uninstallConfirm": "Uninstall FFmpeg? This plugin and any other FFmpeg-dependent feature will stop working until reinstalled.",
+    "mediaPost.settings.system.logTitle": "Install log",
+    "mediaPost.settings.system.logTitleUninstall": "Uninstall log",
+    "mediaPost.settings.system.logEmpty": "No log output yet…",
+    "mediaPost.settings.system.btn.install": "Install",
+    "mediaPost.settings.system.btn.uninstall": "Uninstall",
+    "mediaPost.settings.system.btn.uninstallConfirm": "Confirm uninstall",
+    "mediaPost.settings.system.btn.recheck": "Re-check",
+    "mediaPost.settings.system.btn.openHome": "Homepage",
+    "mediaPost.settings.system.btn.copyCmd": "Copy",
+    "mediaPost.settings.system.btn.copied": "Copied",
     "mediaPost.settings.cost.duration": "multi_aspect duration cap (min)",
-    "mediaPost.settings.handoff.title": "🔗 Cross-plugin handoff (v2.0)",
+    "mediaPost.settings.handoff.title": "Cross-plugin handoff (v2.0)",
     "mediaPost.settings.handoff.disabled": "Pending v2.0 — clip-sense / subtitle-craft / avatar-studio handoff",
     "mediaPost.settings.save": "Save settings",
     "mediaPost.settings.saved": "Saved",
@@ -820,7 +989,8 @@ function ApiKeyBanner({ missing, t, onGo }) {
   if (!missing) return null;
   return (
     <div className="oa-config-banner">
-      <span className="oa-config-banner__icon">⚠️</span>
+      <span className="oa-config-banner__icon"
+            dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons?.warning?.() || ""}} />
       <div className="oa-config-banner__text">
         <strong>{t("mediaPost.common.api.missing.title")}</strong>
         <div className="text-xs text-muted">{t("mediaPost.common.api.missing.desc")}</div>
@@ -1146,13 +1316,15 @@ function CreateTab({ t, settings, onTaskCreated, gotoSettings }) {
           <CostBanner preview={preview} t={t} />
           {preview && preview.cost_kind === "warn" && (
             <div className="oa-config-banner">
-              <span className="oa-config-banner__icon">💰</span>
+              <span className="oa-config-banner__icon"
+                    dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons?.warning?.() || ""}} />
               <div className="oa-config-banner__text">{t("mediaPost.cost.warn_10")}</div>
             </div>
           )}
           {preview && preview.cost_kind === "danger" && (
             <div className="oa-config-banner danger">
-              <span className="oa-config-banner__icon">🛑</span>
+              <span className="oa-config-banner__icon"
+                    dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons?.warning?.() || ""}} />
               <div className="oa-config-banner__text">{t("mediaPost.cost.warn_30")}</div>
             </div>
           )}
@@ -1182,7 +1354,8 @@ function CreateTab({ t, settings, onTaskCreated, gotoSettings }) {
           {startedTask && (
             <div className="modal-mask" onClick={() => setStartedTask(null)}>
               <div className="modal-card" onClick={e => e.stopPropagation()}>
-                <div className="modal-icon">✓</div>
+                <div className="modal-icon"
+                     dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons?.check?.() || ""}} />
                 <div className="modal-title">{t("mediaPost.common.taskStarted")}</div>
                 <div className="modal-desc">
                   ID: <code>{startedTask.id}</code><br/>
@@ -1205,9 +1378,19 @@ function CreateTab({ t, settings, onTaskCreated, gotoSettings }) {
 
 // ─── Tasks tab — list + 4 detail panels ─────────────────────────────────
 function TaskCard({ task, selected, onClick, t }) {
+  // Per-mode SVG glyph (kit fallback chain): cover_pick→image, multi_aspect→video,
+  // seo_pack→listTask, chapter_cards→book. Keeps thumbnails on the no-emoji rule.
+  const iconName = ({
+    cover_pick:    "image",
+    multi_aspect:  "video",
+    seo_pack:      "listTask",
+    chapter_cards: "book",
+  })[task.mode] || "film";
+  const iconHtml = window.OpenAkitaIcons?.[iconName]?.() || "";
   return (
     <div className={`task-card ${selected ? "selected" : ""}`} onClick={onClick}>
-      <div className="task-thumb">{ {cover_pick:"📷",multi_aspect:"📐",seo_pack:"#️⃣",chapter_cards:"📑"}[task.mode] || "•"}</div>
+      <div className="task-thumb"
+           dangerouslySetInnerHTML={{__html: iconHtml}} />
       <div className="task-info">
         <h4>{task.id} · {t(`mediaPost.modes.${task.mode}.title`)}</h4>
         <div className="task-meta">
@@ -1300,7 +1483,8 @@ function SeoTabbedPanel({ taskId, t }) {
           <div key={it.platform} className={`tab ${cur.platform === it.platform ? "active" : ""}`}
                onClick={() => setActive(it.platform)}>
             {t(`mediaPost.forms.platforms.${it.platform}`) || it.platform}
-            {payload._error ? " ⚠" : ""}
+            {payload._error ? <span style={{marginLeft:4, color:"var(--danger)"}}
+              dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons?.warning?.() || ""}} /> : null}
           </div>
         ))}
       </div>
@@ -1529,10 +1713,347 @@ function LibraryTab({ t }) {
   );
 }
 
-// ─── Settings tab — 5 sections ──────────────────────────────────────────
+// ─── Settings tab helpers ───────────────────────────────────────────────
 // Chapter card template IDs MUST mirror mediapost_chapter_renderer.builtin_template_ids().
 // Mismatch = "validation failed: template_id 'dark' not in [...]" at task creation.
 const MP_TEMPLATE_IDS = ["modern", "minimal", "retro", "youtube_style", "custom"];
+
+// Tiny SVG section-icon wrapper. Pulls names from window.OpenAkitaIcons
+// (kit) so we never sprinkle emoji into UI titles. Falls back to an
+// empty span if the named icon isn't in the kit yet.
+function MpIco({ name, lg }) {
+  const html = (window.OpenAkitaIcons && window.OpenAkitaIcons[name])
+    ? window.OpenAkitaIcons[name]() : "";
+  return <span className={"mp-ico" + (lg ? " mp-ico--lg" : "")}
+               dangerouslySetInnerHTML={{__html: html}} />;
+}
+
+// Inline help bubble. We deliberately use a click-to-toggle design —
+// pure :hover tooltips disappear too easily on touch screens and inside
+// the iframe sandbox, which makes them unusable for the long explanations
+// the user is asking for ("VLM 这个是干嘛的、什么意思").
+function MpInfo({ children }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const off = () => setOpen(false);
+    document.addEventListener("click", off);
+    return () => document.removeEventListener("click", off);
+  }, [open]);
+  return (
+    <span className="mp-info-tip">
+      <button type="button" className="mp-info-tip__btn"
+              aria-label="info"
+              onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}>?</button>
+      {open && (
+        <span className="mp-info-tip__bubble" onClick={(e) => e.stopPropagation()}>
+          {children}
+        </span>
+      )}
+    </span>
+  );
+}
+
+// FfmpegInstaller — verbatim port of seedance-video's component. Talks to
+// the in-plugin /system/components + /system/{dep_id}/{install,uninstall,status}
+// routes wired in plugin.py. Same fire-and-poll cadence (3s tick) so a
+// running install survives the user re-opening the Settings tab.
+function FfmpegInstaller({ t, onInstalled }) {
+  const [snap, setSnap] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busyOp, setBusyOp] = useState("");
+  const [status, setStatus] = useState(null);
+  const [copied, setCopied] = useState(false);
+  const [confirmingUninstall, setConfirmingUninstall] = useState(false);
+  const [rechecking, setRechecking] = useState(false);
+  const pollRef = useRef(null);
+  const logRef = useRef(null);
+  const opNotifiedRef = useRef(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const r = await pluginApi("GET", "/system/components");
+      const item = (r.body?.items || []).find(x => x.id === "ffmpeg");
+      if (item) {
+        setSnap(item);
+        if (item.busy) setBusyOp(item.last_install?.op_kind || "install");
+      }
+    } catch (e) {
+      setSnap({ id: "ffmpeg", found: false, methods: [], uninstall_methods: [], is_root: false });
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [status?.log_tail?.length]);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }, []);
+
+  useEffect(() => {
+    if (!busyOp) { stopPolling(); return; }
+    opNotifiedRef.current = false;
+    const tick = async () => {
+      try {
+        const r = await pluginApi("GET", "/system/ffmpeg/status");
+        const st = r.body || {};
+        setStatus(st);
+        if (!st.busy) {
+          stopPolling();
+          const finishedOp = busyOp;
+          setBusyOp("");
+          await refresh();
+          if (opNotifiedRef.current) return;
+          opNotifiedRef.current = true;
+          if (finishedOp === "uninstall") {
+            if (!st.found) { showToast(t("mediaPost.settings.system.uninstalled")); }
+            else { showToast(t("mediaPost.settings.system.uninstallFailed", { msg: st.error || "?" }), "error"); }
+          } else {
+            if (st.found) {
+              showToast(t("mediaPost.settings.system.installed"));
+              if (onInstalled) onInstalled(true);
+            } else {
+              showToast(t("mediaPost.settings.system.installFailed", { msg: st.error || "?" }), "error");
+            }
+          }
+        }
+      } catch (e) { /* network blip — try again next tick */ }
+    };
+    tick();
+    pollRef.current = setInterval(tick, 3000);
+    return stopPolling;
+  }, [busyOp, refresh, stopPolling, onInstalled, t]);
+
+  useEffect(() => () => stopPolling(), [stopPolling]);
+
+  const formatElapsed = (sec) => {
+    const s = Math.max(0, Math.round(sec || 0));
+    return String(Math.floor(s/60)).padStart(2,"0") + ":" + String(s%60).padStart(2,"0");
+  };
+
+  const startInstall = async (methodIndex) => {
+    setStatus({ busy: true, log_tail: [], elapsed_sec: 0, op_kind: "install" });
+    setBusyOp("install");
+    try {
+      const r = await pluginApi("POST", "/system/ffmpeg/install", { method_index: methodIndex });
+      const body = r.body || {};
+      if (body.ok === false) {
+        setBusyOp("");
+        showToast(t("mediaPost.settings.system.installFailed", { msg: body.error || "unknown" }), "error");
+      }
+    } catch (e) {
+      setBusyOp("");
+      showToast(t("mediaPost.settings.system.installFailed", { msg: e.message || "network error" }), "error");
+    }
+  };
+
+  const startUninstall = async (methodIndex) => {
+    setConfirmingUninstall(false);
+    setStatus({ busy: true, log_tail: [], elapsed_sec: 0, op_kind: "uninstall" });
+    setBusyOp("uninstall");
+    try {
+      const r = await pluginApi("POST", "/system/ffmpeg/uninstall", { method_index: methodIndex });
+      const body = r.body || {};
+      if (body.ok === false) {
+        setBusyOp("");
+        showToast(t("mediaPost.settings.system.uninstallFailed", { msg: body.error || "unknown" }), "error");
+      }
+    } catch (e) {
+      setBusyOp("");
+      showToast(t("mediaPost.settings.system.uninstallFailed", { msg: e.message || "network error" }), "error");
+    }
+  };
+
+  const handleRecheck = async () => {
+    if (rechecking || busyOp) return;
+    setRechecking(true);
+    const t0 = Date.now();
+    try { await refresh(); }
+    finally {
+      const elapsed = Date.now() - t0;
+      if (elapsed < 400) await new Promise(r => setTimeout(r, 400 - elapsed));
+      setRechecking(false);
+    }
+  };
+
+  const copyCmd = (cmd) => {
+    if (!cmd) return;
+    if (window.OpenAkita?.clipboard) window.OpenAkita.clipboard(cmd);
+    else if (navigator.clipboard) navigator.clipboard.writeText(cmd);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  if (loading) {
+    return (
+      <div className="sysdep-card">
+        <div className="sysdep-card__head">
+          <span className="sysdep-spinner"/>
+          <span className="sysdep-card__title">{t("mediaPost.settings.system.detecting")}</span>
+        </div>
+      </div>
+    );
+  }
+
+  const found = !!snap?.found;
+  const methods = snap?.methods || [];
+  const uninstallMethods = snap?.uninstall_methods || [];
+  const isRoot = !!snap?.is_root;
+  const installing = busyOp === "install";
+  const uninstalling = busyOp === "uninstall";
+  const busy = !!busyOp;
+  const liveStatus = busy ? status : (snap?.last_install || null);
+  const logLines = liveStatus?.log_tail || [];
+  const lastOpKind = liveStatus?.op_kind || "install";
+
+  const primaryIdx = (() => {
+    for (let i = 0; i < methods.length; i++) {
+      const m = methods[i];
+      if (m.strategy === "manual") continue;
+      if (m.requires_sudo && !isRoot) continue;
+      return i;
+    }
+    return methods.findIndex(m => m.strategy !== "manual");
+  })();
+  const primary = primaryIdx >= 0 ? methods[primaryIdx] : null;
+  const manualMethod = methods.find(m => m.strategy === "manual");
+  const blockingSudoMethod = (!found && primary == null)
+    ? methods.find(m => m.requires_sudo && !isRoot) : null;
+
+  const uninstallPrimaryIdx = (() => {
+    for (let i = 0; i < uninstallMethods.length; i++) {
+      const m = uninstallMethods[i];
+      if (m.strategy === "manual") continue;
+      if (m.requires_sudo && !isRoot) continue;
+      return i;
+    }
+    return -1;
+  })();
+  const uninstallPrimary = uninstallPrimaryIdx >= 0 ? uninstallMethods[uninstallPrimaryIdx] : null;
+
+  return (
+    <div className="sysdep-card">
+      <div className="sysdep-card__head">
+        <div className="sysdep-card__title">
+          <MpIco name="settings"/> FFmpeg
+          {uninstalling
+            ? <span className="sysdep-card__badge sysdep-card__badge--busy">
+                <span className="sysdep-spinner"/>
+                {t("mediaPost.settings.system.uninstalling", { elapsed: formatElapsed(liveStatus?.elapsed_sec) })}
+              </span>
+            : installing
+              ? <span className="sysdep-card__badge sysdep-card__badge--busy">
+                  <span className="sysdep-spinner"/>
+                  {t("mediaPost.settings.system.installing", { elapsed: formatElapsed(liveStatus?.elapsed_sec) })}
+                </span>
+              : found
+                ? <span className="sysdep-card__badge sysdep-card__badge--ok">
+                    <MpIco name="check"/>
+                    {snap.version
+                      ? t("mediaPost.settings.system.found", { ver: snap.version })
+                      : t("mediaPost.settings.system.foundNoVer")}
+                  </span>
+                : <span className="sysdep-card__badge sysdep-card__badge--missing">
+                    <MpIco name="warning"/> {t("mediaPost.settings.system.missing")}
+                  </span>}
+        </div>
+      </div>
+      {found && snap.location && (
+        <div className="sysdep-card__path">{t("mediaPost.settings.system.location", { path: snap.location })}</div>
+      )}
+
+      <div className="sysdep-card__actions">
+        {!busy && !found && primary && (
+          <button className="btn btn-sm btn-primary"
+                  onClick={() => startInstall(primaryIdx)}
+                  title={primary.command_hint || primary.strategy}>
+            <MpIco name="download"/> {t("mediaPost.settings.system.btn.install")}
+          </button>
+        )}
+        {!busy && found && uninstallPrimary && !confirmingUninstall && (
+          <button className="btn btn-sm"
+                  onClick={() => setConfirmingUninstall(true)}
+                  title={uninstallPrimary.command_hint || uninstallPrimary.strategy}
+                  style={{borderColor:"var(--danger)", color:"var(--danger)"}}>
+            {t("mediaPost.settings.system.btn.uninstall")}
+          </button>
+        )}
+        {!busy && (
+          <button className="btn btn-sm" onClick={handleRecheck} disabled={rechecking}>
+            {rechecking
+              ? <><span className="sysdep-spinner"/>{" "}{t("mediaPost.settings.system.detecting")}</>
+              : <><MpIco name="refresh"/> {t("mediaPost.settings.system.btn.recheck")}</>}
+          </button>
+        )}
+        {snap?.homepage && (
+          <a className="btn btn-sm" href={snap.homepage} target="_blank" rel="noopener noreferrer">
+            {t("mediaPost.settings.system.btn.openHome")}
+          </a>
+        )}
+      </div>
+
+      {!busy && found && confirmingUninstall && uninstallPrimary && (
+        <div className="sysdep-card__sudo-hint"
+             style={{borderColor:"var(--danger)", background:"rgba(239,68,68,.08)"}}>
+          <div style={{whiteSpace:"pre-wrap", color:"var(--text)", fontSize:12, lineHeight:1.6}}>
+            {t("mediaPost.settings.system.uninstallConfirm")}
+          </div>
+          <div className="sysdep-card__sudo-cmd" style={{marginTop:10}}>
+            <code>{uninstallPrimary.command_hint || uninstallPrimary.strategy}</code>
+          </div>
+          <div style={{display:"flex", gap:6, marginTop:10, justifyContent:"flex-end"}}>
+            <button className="btn btn-sm" onClick={() => setConfirmingUninstall(false)}>
+              {t("mediaPost.common.cancel")}
+            </button>
+            <button className="btn btn-sm"
+                    style={{background:"var(--danger)", color:"#fff", borderColor:"var(--danger)"}}
+                    onClick={() => startUninstall(uninstallPrimaryIdx)}>
+              {t("mediaPost.settings.system.btn.uninstallConfirm")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!found && !busy && !primary && manualMethod && !blockingSudoMethod && (
+        <div className="sysdep-card__sudo-hint" style={{borderLeft:"3px solid var(--primary)"}}>
+          {t("mediaPost.settings.system.noMethod")}
+        </div>
+      )}
+
+      {!found && !busy && blockingSudoMethod && blockingSudoMethod.command_hint && (
+        <div className="sysdep-card__sudo-hint">
+          <div>{t("mediaPost.settings.system.requiresSudo")}</div>
+          <div className="sysdep-card__sudo-cmd">
+            <code>sudo {blockingSudoMethod.command_hint}</code>
+            <button className="btn btn-sm" onClick={() => copyCmd("sudo " + blockingSudoMethod.command_hint)}>
+              {copied ? t("mediaPost.settings.system.btn.copied") : t("mediaPost.settings.system.btn.copyCmd")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {(busy || logLines.length > 0) && (
+        <div className="sysdep-log">
+          <div className="sysdep-log__head">
+            <span>{lastOpKind === "uninstall"
+              ? t("mediaPost.settings.system.logTitleUninstall")
+              : t("mediaPost.settings.system.logTitle")}</span>
+            {busy && liveStatus?.elapsed_sec != null && (
+              <span>{formatElapsed(liveStatus.elapsed_sec)}</span>
+            )}
+          </div>
+          {logLines.length === 0
+            ? <pre className="sysdep-log__body sysdep-log__body--empty">{t("mediaPost.settings.system.logEmpty")}</pre>
+            : <pre className="sysdep-log__body" ref={logRef}>{logLines.join("\n")}</pre>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function SettingsTab({ t, settings, onSaved }) {
   const [draft, setDraft] = useState(settings || {});
@@ -1637,7 +2158,7 @@ function SettingsTab({ t, settings, onSaved }) {
     <div style={{maxWidth: 640}}>
       {/* ── API Key (Seedance-style field-level callout) ──────────────── */}
       <div className="setting-section oa-settings-section">
-        <h3 className="oa-settings-section__title">{t("mediaPost.settings.api.title")}</h3>
+        <h3 className="oa-settings-section__title"><MpIco name="key"/>{t("mediaPost.settings.api.title")}</h3>
         <div className={"form-row" + (apiOk ? "" : " oa-config-field-callout")}
              data-callout={apiOk ? undefined : t("mediaPost.settings.api.required")}>
           <label className="label">{t("mediaPost.settings.api.label")}</label>
@@ -1665,20 +2186,38 @@ function SettingsTab({ t, settings, onSaved }) {
 
       {/* ── VLM parameters ─────────────────────────────────────────────── */}
       <div className="oa-settings-section">
-        <h3 className="oa-settings-section__title">{t("mediaPost.settings.vlm.title")}</h3>
+        <h3 className="oa-settings-section__title"><MpIco name="settings"/>{t("mediaPost.settings.vlm.title")}</h3>
         <div className="grid-2">
           <div className="form-row">
-            <div className="label">{t("mediaPost.settings.vlm.fps")}</div>
+            <div className="label with-tip">
+              {t("mediaPost.settings.vlm.fps")}
+              <MpInfo>
+                <strong>{t("mediaPost.settings.vlm.fps")}</strong>
+                <div style={{marginTop:4}}>{t("mediaPost.settings.vlm.fps.tip")}</div>
+              </MpInfo>
+            </div>
             <input className="input" type="number" step="0.5" min="0.5" max="10"
                    value={draft.recompose_fps || "2.0"}
                    onChange={e => set("recompose_fps", e.target.value)} />
           </div>
           <div className="form-row">
-            <div className="label">{t("mediaPost.settings.vlm.batch")}</div>
+            <div className="label with-tip">
+              {t("mediaPost.settings.vlm.batch")}
+              <MpInfo>
+                <strong>{t("mediaPost.settings.vlm.batch")}</strong>
+                <div style={{marginTop:4}}>{t("mediaPost.settings.vlm.batch.tip")}</div>
+              </MpInfo>
+            </div>
             <input className="input" disabled value={draft.vlm_batch_size || "8"} />
           </div>
           <div className="form-row">
-            <div className="label">{t("mediaPost.settings.vlm.concurrency")}</div>
+            <div className="label with-tip">
+              {t("mediaPost.settings.vlm.concurrency")}
+              <MpInfo>
+                <strong>{t("mediaPost.settings.vlm.concurrency")}</strong>
+                <div style={{marginTop:4}}>{t("mediaPost.settings.vlm.concurrency.tip")}</div>
+              </MpInfo>
+            </div>
             <input className="input" type="number" min="1" max="8" value={draft.vlm_concurrency || "4"}
                    onChange={e => set("vlm_concurrency", e.target.value)} />
           </div>
@@ -1687,7 +2226,7 @@ function SettingsTab({ t, settings, onSaved }) {
 
       {/* ── Chapter cards (template + live Playwright probe) ──────────── */}
       <div className="oa-settings-section">
-        <h3 className="oa-settings-section__title">{t("mediaPost.settings.chapter.title")}</h3>
+        <h3 className="oa-settings-section__title"><MpIco name="palette"/>{t("mediaPost.settings.chapter.title")}</h3>
         <div className="form-row">
           <div className="label">{t("mediaPost.settings.chapter.template")}</div>
           <select className="input select" value={tplId}
@@ -1749,7 +2288,7 @@ function SettingsTab({ t, settings, onSaved }) {
 
       {/* ── Cost control ───────────────────────────────────────────────── */}
       <div className="oa-settings-section">
-        <h3 className="oa-settings-section__title">{t("mediaPost.settings.cost.title")}</h3>
+        <h3 className="oa-settings-section__title"><MpIco name="sparkles"/>{t("mediaPost.settings.cost.title")}</h3>
         <div className="grid-2">
           <div className="form-row">
             <div className="label">{t("mediaPost.settings.cost.warn")}</div>
@@ -1764,9 +2303,23 @@ function SettingsTab({ t, settings, onSaved }) {
         </div>
       </div>
 
+      {/* ── System dependencies (in-plugin FFmpeg installer) ──────────── */}
+      <div className="oa-settings-section">
+        <h3 className="oa-settings-section__title"><MpIco name="download"/>{t("mediaPost.settings.system.title")}</h3>
+        <div className="deps-help">
+          <strong>{t("mediaPost.settings.system.intro.strong")}</strong>
+          <div style={{marginTop:4}}>{t("mediaPost.settings.system.intro.body")}</div>
+          <ul>
+            <li>{t("mediaPost.settings.system.intro.item1")}</li>
+            <li>{t("mediaPost.settings.system.intro.item2")}</li>
+          </ul>
+        </div>
+        <FfmpegInstaller t={t} onInstalled={() => { /* nothing else needs reload */ }} />
+      </div>
+
       {/* ── Storage (read-only — host owns the path) ──────────────────── */}
       <div className="oa-settings-section">
-        <h3 className="oa-settings-section__title">{t("mediaPost.settings.storage.title")}</h3>
+        <h3 className="oa-settings-section__title"><MpIco name="folder"/>{t("mediaPost.settings.storage.title")}</h3>
         <div className="form-row">
           <label className="label">{t("mediaPost.settings.storage.dataDir")}</label>
           <div className="flex gap-2 items-center">
@@ -1823,7 +2376,7 @@ function SettingsTab({ t, settings, onSaved }) {
 
       {/* ── Handoff (disabled, v2.0) ──────────────────────────────────── */}
       <div className="oa-settings-section">
-        <h3 className="oa-settings-section__title disabled">{t("mediaPost.settings.handoff.title")}</h3>
+        <h3 className="oa-settings-section__title disabled"><MpIco name="globe"/>{t("mediaPost.settings.handoff.title")}</h3>
         <div className="text-sm text-muted">{t("mediaPost.settings.handoff.disabled")}</div>
         <span className="oa-pill gray" style={{marginTop:8}}>v2.0 only</span>
       </div>
@@ -1924,7 +2477,8 @@ class PluginErrorBoundary extends React.Component {
     return (
       <div style={{padding: 24}}>
         <div className="oa-config-banner danger">
-          <span className="oa-config-banner__icon">⚠️</span>
+          <span className="oa-config-banner__icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons?.warning?.() || ""}} />
           <div className="oa-config-banner__text">
             <strong>UI render error</strong>
             <div className="text-xs">{String(this.state.error.message || this.state.error)}</div>

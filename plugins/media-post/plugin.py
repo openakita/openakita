@@ -38,6 +38,7 @@ from mediapost_chapter_renderer import (
     probe_playwright_runtime,
 )
 from mediapost_inline.storage_stats import collect_storage_stats
+from mediapost_inline.system_deps import SystemDepsManager
 from mediapost_inline.upload_preview import (
     add_upload_preview_route,
     build_preview_url,
@@ -110,6 +111,20 @@ class CostEstimateBody(BaseModel):
     chapter_count: int = 0
 
 
+class SystemInstallBody(BaseModel):
+    """Body for POST /system/{dep_id}/install — picks an install recipe."""
+
+    model_config = ConfigDict(extra="forbid")
+    method_index: int = 0
+
+
+class SystemUninstallBody(BaseModel):
+    """Body for POST /system/{dep_id}/uninstall — picks an uninstall recipe."""
+
+    model_config = ConfigDict(extra="forbid")
+    method_index: int = 0
+
+
 # ---------------------------------------------------------------------------
 # Plugin
 # ---------------------------------------------------------------------------
@@ -128,6 +143,10 @@ class Plugin(PluginBase):
         self._vlm_client: MediaPostVlmClient | None = None
         self._running: dict[str, MediaPostContext] = {}
         self._task_handles: dict[str, asyncio.Task[None]] = {}
+        # In-plugin FFmpeg installer (vendored from seedance_inline.system_deps).
+        # Detection is shutil-only at __init__ time; install/uninstall happen
+        # via /system/{dep_id}/{install,uninstall} fire-and-poll routes.
+        self._sysdeps = SystemDepsManager()
 
         router = APIRouter()
         self._register_routes(router)
@@ -495,6 +514,47 @@ class Plugin(PluginBase):
                 "hint_install": "pip install playwright",
                 "hint_browsers": "python -m playwright install chromium",
             }
+
+        # Routes #22c–22f: in-plugin FFmpeg installer (mirrors seedance-video).
+        # ``GET /system/components`` is the snapshot the Settings UI polls when
+        # it opens; the install/uninstall routes are fire-and-poll, with status
+        # exposed by ``GET /system/{dep_id}/status``. Same shape as Seedance
+        # so the FfmpegInstaller React component can be ported verbatim.
+
+        @router.get("/system/components")
+        async def system_components() -> dict[str, Any]:
+            return {"ok": True, "items": self._sysdeps.list_components()}
+
+        @router.post("/system/{dep_id}/install")
+        async def system_install(dep_id: str, body: SystemInstallBody) -> dict[str, Any]:
+            try:
+                result = await self._sysdeps.start_install(
+                    dep_id, method_index=body.method_index,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            if not result.get("ok") and result.get("error") == "requires_sudo":
+                raise HTTPException(status_code=422, detail=result)
+            return result
+
+        @router.post("/system/{dep_id}/uninstall")
+        async def system_uninstall(dep_id: str, body: SystemUninstallBody) -> dict[str, Any]:
+            try:
+                result = await self._sysdeps.start_uninstall(
+                    dep_id, method_index=body.method_index,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            if not result.get("ok") and result.get("error") == "requires_sudo":
+                raise HTTPException(status_code=422, detail=result)
+            return result
+
+        @router.get("/system/{dep_id}/status")
+        async def system_status(dep_id: str) -> dict[str, Any]:
+            try:
+                return self._sysdeps.status(dep_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
 
         # Route #22: GET /errors — public 9-key error catalog (UI ErrorPanel).
         @router.get("/errors")
