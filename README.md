@@ -266,7 +266,7 @@ Dark/light theme · Onboarding wizard · Auto-update · Bilingual (EN/CN) · Sta
 
 <p align="center">
   <a href="https://b23.tv/pWki3Vw">
-    <img src="docs/assets/mobile_app_demo_cover.png" alt="▶ Watch Mobile App Demo" width="720" />
+    <img src="docs/assets/en/mobile_app_demo_cover.png" alt="▶ Watch Mobile App Demo" width="720" />
   </a>
   <br/>
   <sub>▶ Click to watch the Mobile App demo on Bilibili</sub>
