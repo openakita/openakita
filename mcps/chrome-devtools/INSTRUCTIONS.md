@@ -52,3 +52,4 @@ google-chrome --remote-debugging-port=9222
 - 需要 Node.js v20.19+ 和 npm
 - 首次使用会自动下载 chrome-devtools-mcp 包
 - autoConnect 模式下，每次连接会弹窗征求用户许可
+

@@ -76,3 +76,4 @@ def write_config_schema(path: str, schema: dict[str, Any]) -> None:
     """Write a config schema dict to a JSON file."""
     with open(path, "w", encoding="utf-8") as f:
         json.dump(schema, f, indent=2, ensure_ascii=False)
+

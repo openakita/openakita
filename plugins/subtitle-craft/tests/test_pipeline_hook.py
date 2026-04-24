@@ -301,3 +301,4 @@ def test_hook_picker_skips_translate_and_burn_steps(tmp_path: Path, mode: str) -
     # but it does run setup / estimate / asr_or_load / render_output
     assert "asr_or_load" in step_names
     assert "render_output" in step_names
+

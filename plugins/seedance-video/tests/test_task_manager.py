@@ -485,3 +485,4 @@ async def test_close_is_idempotent(tmp_path):
     await manager.close()
     # Calling twice must not raise.
     await manager.close()
+

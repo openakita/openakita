@@ -322,3 +322,4 @@ def model_to_dict(m: ImageModel) -> dict:
         "sizes": m.sizes,
         "note": m.note,
     }
+

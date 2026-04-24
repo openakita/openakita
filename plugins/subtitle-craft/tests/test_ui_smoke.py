@@ -186,3 +186,4 @@ def test_self_contained_no_host_sdk_reference():
     text = _read()
     # Must not depend on the removed host-mounted /api/plugins/_sdk/* path.
     assert "/_sdk/" not in text
+

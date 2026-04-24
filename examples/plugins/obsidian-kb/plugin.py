@@ -654,3 +654,4 @@ class Plugin(PluginBase):
     def on_unload(self) -> None:
         self._index.invalidate()
         self._api = None
+

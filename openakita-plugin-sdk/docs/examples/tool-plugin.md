@@ -115,3 +115,4 @@ def test_plugin_loads():
 - `handler` 接收所有工具调用，通过 `tool_name` 分发 / `handler` receives all calls, dispatch by `tool_name`
 - 只需 `tools.register` 权限，安装即可用 / Only needs `tools.register`, works immediately
 - 使用 `tool_definition()` 辅助函数简化定义 / Use `tool_definition()` helper to simplify definitions
+

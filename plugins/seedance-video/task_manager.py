@@ -364,3 +364,4 @@ class TaskManager:
             (asset_id,),
         )
         return rows[0][0] if rows else 0
+

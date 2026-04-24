@@ -432,3 +432,4 @@ For example, the Seedance plugin registers `/tasks`, accessible at `GET /api/plu
 - [plugin-ui.md](plugin-ui.md) — UI 插件开发 / UI plugin development
 - [getting-started.md](getting-started.md) — 插件默认目录和开发入门 / Default dirs and getting started
 - [hooks.md](hooks.md) — 生命周期钩子 / Lifecycle hooks
+

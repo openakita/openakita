@@ -48,3 +48,4 @@ class SearchBackend(Protocol):
 
     @property
     def backend_type(self) -> str: ...
+

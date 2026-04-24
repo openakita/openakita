@@ -212,3 +212,4 @@ def test_unload():
 - 使用 `config_schema.json` 让用户通过 UI 配置连接参数 / Use `config_schema.json` for UI-configurable settings
 - 建议在 `requires.pip` 中声明依赖 / Declare dependencies in `requires.pip`
 - 测试时可使用内存存储替代真实数据库 / Use in-memory storage for testing without real database
+

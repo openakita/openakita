@@ -56,3 +56,4 @@ class ToolHandler:
 
     async def __call__(self, tool_name: str, arguments: dict[str, Any]) -> str:
         return await self.handle(tool_name, arguments)
+

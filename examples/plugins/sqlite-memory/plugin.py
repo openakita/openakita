@@ -144,3 +144,4 @@ class Plugin(PluginBase):
     def on_unload(self) -> None:
         if hasattr(self, "_backend"):
             self._backend.close()
+

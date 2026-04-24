@@ -108,3 +108,4 @@ def test_plugin_loads():
 - 工厂函数接收凭证和配置参数 / Factory receives credentials and config parameters
 - 需要 `channel.register` 权限（Advanced 级）/ Requires `channel.register` (Advanced tier)
 - 可选使用 `ChannelPluginMixin` 简化注册 / Optionally use `ChannelPluginMixin` for simpler registration
+

@@ -629,3 +629,4 @@ async def test_poll_loop_uses_three_stage_backoff_intervals(loaded_plugin):
     assert re.search(r"interval\s*=\s*3\.0", src)
     assert re.search(r"interval\s*=\s*10\.0", src)
     assert re.search(r"interval\s*=\s*30\.0", src)
+

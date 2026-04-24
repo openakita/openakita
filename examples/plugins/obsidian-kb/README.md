@@ -81,3 +81,4 @@ Also provides:
 - **YAML parsing**: uses `yaml.safe_load` for accurate frontmatter parsing
 - **Glob exclusion**: `fnmatch`-based pattern matching
 - **URI protocol**: interacts with Obsidian desktop via `obsidian://`
+

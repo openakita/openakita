@@ -5,3 +5,4 @@
     "command": "python",
     "args": ["-m", "openakita.mcp_servers.web_search"]
 }
+

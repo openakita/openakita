@@ -83,3 +83,4 @@ class Plugin(PluginBase):
             "payload": _serialize_outgoing(**kwargs),
         }
         self._append_line(rec)
+

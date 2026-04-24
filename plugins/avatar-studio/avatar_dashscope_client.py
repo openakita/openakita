@@ -1149,3 +1149,4 @@ class AvatarDashScopeClient(BaseVendorClient):
     @staticmethod
     def _coerce_dict(v: Any) -> dict[str, Any]:
         return v if isinstance(v, dict) else {}
+

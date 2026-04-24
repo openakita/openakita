@@ -720,3 +720,4 @@ def _split_command(command: str) -> list[str]:
         tokens.append("".join(current))
 
     return tokens
+

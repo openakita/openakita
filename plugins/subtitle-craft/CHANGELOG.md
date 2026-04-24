@@ -223,3 +223,4 @@ tests scaffolded.
 - No batch upload (planned for v1.1).
 
 [1.0.0]: https://github.com/your-org/openakita/releases/tag/subtitle-craft-v1.0.0
+

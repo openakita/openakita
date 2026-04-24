@@ -582,3 +582,4 @@ class AvatarTaskManager:
         ) as cur:
             rows = await cur.fetchall()
         return [(r["id"], r["dashscope_id"], r["dashscope_endpoint"] or "") for r in rows]
+

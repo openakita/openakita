@@ -707,3 +707,4 @@ class Plugin(PluginBase):
 
     def on_unload(self) -> None:
         self._api = None
+
