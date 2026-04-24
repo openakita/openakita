@@ -309,3 +309,4 @@ openakita config show
 3. **Rotate API keys** regularly
 4. **Enable logging** in production
 5. **Set resource limits** to prevent runaway processes
+

@@ -147,3 +147,4 @@ irm https://get.openakita.com/install.ps1 | iex
 - [技能管理](/features/skills) — 扩展 Agent 能力
 - [多 Agent 入门](/multi-agent/overview) — 让多个 Agent 协同工作
 - [身份配置](/features/identity) — 自定义你的 Agent 性格
+

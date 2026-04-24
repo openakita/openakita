@@ -286,3 +286,4 @@ LOG_LEVEL=DEBUG openakita
 # Run skill in isolation
 openakita skills test my_skill
 ```
+

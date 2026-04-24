@@ -232,3 +232,4 @@ workflows/
 - 不做"自动从 RH 广场抓推荐 workflow_id"功能
 - 不删除 OSS 模块（DashScope 后端依然需要）
 - 不做 wan2.7-Image 升级到生产环境（先标"实验"，等官方稳定）
+

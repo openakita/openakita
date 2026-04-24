@@ -134,3 +134,4 @@ URL: https://api.example.com/mcp
 - [工具与技能配置](/web/#/config/tools) — 查看所有可用工具（含 MCP）
 - [聊天对话](/features/chat) — 在对话中使用 MCP 工具
 - [高级设置](/advanced/advanced) — MCP 超时与重试参数调优
+

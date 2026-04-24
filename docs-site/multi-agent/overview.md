@@ -77,3 +77,4 @@
 - [Agent Store / Skill Store](/multi-agent/store) — 从社区获取 Agent 和技能
 - [配置向导 · Agent 配置](/web/#/config/agent) — 开启多 Agent 及相关设置
 - [协作动态面板](/web/#/dashboard) — 查看 Agent 实时协作状态
+
