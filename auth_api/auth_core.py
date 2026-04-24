@@ -83,3 +83,4 @@ def create_token_pair(user_id: str, username: str) -> dict:
         "refresh_token": refresh_token,
         "token_type": "bearer"
     }
+

@@ -396,3 +396,4 @@ export default {
     return error("Not found", 404);
   },
 };
+

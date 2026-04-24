@@ -85,3 +85,4 @@ class SkillGenerator:
 - [ ] 可以安装 GitHub 上的技能
 - [ ] 可以自动生成技能代码
 - [ ] 生成的技能会自动测试
+
