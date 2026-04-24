@@ -3592,14 +3592,21 @@ class Agent:
                 if _tool_summary and isinstance(_tool_summary, str) and content:
                     content = content.rstrip() + "\n\n" + _tool_summary
             if role in ("user", "assistant") and content:
-                if ts and isinstance(content, str):
-                    try:
-                        t = datetime.fromisoformat(ts)
-                        time_prefix = f"[{t.strftime('%H:%M')}] "
-                        if not _RE_TIME_PREFIX.match(content):
-                            content = time_prefix + content
-                    except Exception:
-                        pass
+                if isinstance(content, str) and not _RE_TIME_PREFIX.match(content):
+                    # 给每条历史消息补 [HH:MM] 时间戳。
+                    # ts 可能缺失（旧消息 / 外部注入），此时用 message["created_at"]
+                    # / 兜底"now"，确保每条历史都有可读时间锚点。
+                    fallback_ts = msg.get("created_at") or msg.get("ts") or ""
+                    raw_ts = ts or fallback_ts
+                    t_obj = None
+                    if raw_ts:
+                        try:
+                            t_obj = datetime.fromisoformat(str(raw_ts))
+                        except Exception:
+                            t_obj = None
+                    if t_obj is None:
+                        t_obj = datetime.now()
+                    content = f"[{t_obj.strftime('%H:%M')}] " + content
                 if messages and messages[-1]["role"] == role:
                     messages[-1]["content"] += "\n" + content
                 else:

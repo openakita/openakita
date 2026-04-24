@@ -1372,6 +1372,7 @@ class ReasoningEngine:
                     base_force_retries=base_force_retries,
                     conversation_id=conversation_id,
                     supervisor_intervened=_supervisor_intervened,
+                    mode=mode,
                 )
 
                 if isinstance(result, str):
@@ -1976,6 +1977,35 @@ class ReasoningEngine:
                     cleaned_text = strip_thinking_tags(decision.text_content)
                     _, cleaned_text = parse_intent_tag(cleaned_text)
                     if cleaned_text and cleaned_text.strip():
+                        # Plan-mode 守卫：plan 仍有未完成步骤时不结束本轮，
+                        # 强制走 ForceToolCall 推进剩余步骤。
+                        if mode == "plan" and self._has_active_todo_pending(conversation_id):
+                            logger.info(
+                                "[PlanGuard] stop_reason=end_turn ignored — "
+                                "plan_mode active with pending steps; continuing loop"
+                            )
+                            working_messages.append(
+                                {
+                                    "role": "assistant",
+                                    "content": [{"type": "text", "text": decision.text_content}],
+                                    **(
+                                        {"reasoning_content": decision.thinking_content}
+                                        if decision.thinking_content
+                                        else {}
+                                    ),
+                                }
+                            )
+                            working_messages.append(
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        "[系统] Plan 模式仍有未完成步骤，请立即继续执行下一个 "
+                                        "pending 步骤的工具调用，不要在此处提前结束本轮。"
+                                    ),
+                                }
+                            )
+                            react_trace.append(_iter_trace)
+                            continue
                         logger.info(
                             f"[LoopGuard] stop_reason=end_turn after {consecutive_tool_rounds} rounds"
                         )
@@ -2918,6 +2948,7 @@ class ReasoningEngine:
                         base_force_retries=base_force_retries,
                         conversation_id=conversation_id,
                         supervisor_intervened=_supervisor_intervened,
+                        mode=_effective_mode,
                     )
 
                     if isinstance(result, str):
@@ -3814,6 +3845,39 @@ class ReasoningEngine:
                         cleaned_text = strip_thinking_tags(decision.text_content)
                         _, cleaned_text = parse_intent_tag(cleaned_text)
                         if cleaned_text and cleaned_text.strip():
+                            # Plan-mode 守卫：plan 仍有未完成步骤时不结束本轮，
+                            # 强制走 ForceToolCall 推进剩余步骤。
+                            if (
+                                _effective_mode == "plan"
+                                and self._has_active_todo_pending(conversation_id)
+                            ):
+                                logger.info(
+                                    "[ReAct-Stream][PlanGuard] stop_reason=end_turn ignored — "
+                                    "plan_mode active with pending steps; continuing loop"
+                                )
+                                working_messages.append(
+                                    {
+                                        "role": "assistant",
+                                        "content": [
+                                            {"type": "text", "text": decision.text_content}
+                                        ],
+                                        **(
+                                            {"reasoning_content": decision.thinking_content}
+                                            if decision.thinking_content
+                                            else {}
+                                        ),
+                                    }
+                                )
+                                working_messages.append(
+                                    {
+                                        "role": "user",
+                                        "content": (
+                                            "[系统] Plan 模式仍有未完成步骤，请立即继续执行下一个 "
+                                            "pending 步骤的工具调用，不要在此处提前结束本轮。"
+                                        ),
+                                    }
+                                )
+                                continue
                             logger.info(
                                 f"[ReAct-Stream][LoopGuard] stop_reason=end_turn after {consecutive_tool_rounds} rounds"
                             )
@@ -4975,6 +5039,7 @@ class ReasoningEngine:
         base_force_retries: int,
         conversation_id: str | None,
         supervisor_intervened: bool = False,
+        mode: str = "agent",
     ) -> str | tuple:
         """
         处理纯文本响应（无工具调用）。
@@ -4984,6 +5049,50 @@ class ReasoningEngine:
             tuple: (working_messages, no_tool_call_count, verify_incomplete_count,
                     no_confirmation_text_count, max_no_tool_retries) - 需要继续循环
         """
+        # ============================================================
+        # Plan-mode 守卫：当处于 plan_mode 且 plan 仍有未完成步骤时，
+        # 若 LLM 返回的是「描述计划 + 询问确认」式纯文本，拦截不走 final，
+        # 改为塞一条 user reminder 让 LLM 继续推进 plan。
+        # ============================================================
+        if (
+            mode == "plan"
+            and self._has_active_todo_pending(conversation_id)
+            and decision.text_content
+        ):
+            _stripped_for_plan = strip_thinking_tags(decision.text_content) or ""
+            _, _stripped_for_plan = parse_intent_tag(_stripped_for_plan)
+            _stripped_for_plan = (_stripped_for_plan or "").strip()
+            if _stripped_for_plan and self._looks_like_plan_proposal(_stripped_for_plan):
+                logger.info(
+                    "[PlanGuard] _handle_final_answer intercepted — "
+                    "plan_mode active with pending steps, response looks like "
+                    "plan-proposal/confirmation; redirecting to ForceToolCall"
+                )
+                working_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": decision.text_content}],
+                        "reasoning_content": decision.thinking_content or None,
+                    }
+                )
+                working_messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "[系统] Plan 模式仍有未完成步骤。不要再次描述或询问是否继续，"
+                            "请直接调用工具推进当前 pending 步骤；若全部完成请显式调用 "
+                            "exit_plan_mode 结束 plan。"
+                        ),
+                    }
+                )
+                return (
+                    working_messages,
+                    no_tool_call_count,
+                    verify_incomplete_count,
+                    no_confirmation_text_count,
+                    max_no_tool_retries,
+                )
+
         if tools_executed_in_task:
             cleaned_text = strip_thinking_tags(decision.text_content)
             _, cleaned_text = parse_intent_tag(cleaned_text)
@@ -6020,6 +6129,56 @@ class ReasoningEngine:
         todo_reminder 驱动，ForceToolCall 仅尊重配置值。
         """
         return max(0, int(base_retries))
+
+    @staticmethod
+    def _looks_like_plan_proposal(text: str) -> bool:
+        """检测「描述计划 + 询问确认」式纯文本响应。
+
+        plan 模式下，LLM 经常返回类似「我打算先做 A，再做 B …… 你确认吗？」的
+        提案文本。如果同时已有 active plan + pending step，应该拦截这类输出，
+        逼 LLM 直接进入工具调用推进 plan，而不是反复请用户确认。
+        """
+        if not text:
+            return False
+        snippet = text.strip()
+        if not snippet:
+            return False
+        action_claim_re = _get_action_claim_re()
+        # 包含 action-claim 说明已经在汇报实际动作（非 proposal），放行。
+        if action_claim_re.search(snippet):
+            return False
+        # 询问句号/确认关键词
+        ask_markers = (
+            "?",
+            "？",
+            "确认",
+            "确定",
+            "是否继续",
+            "是否同意",
+            "可以吗",
+            "对吗",
+            "需要我",
+            "要不要",
+            "请确认",
+        )
+        # 计划意图关键词
+        plan_markers = (
+            "计划",
+            "打算",
+            "建议",
+            "准备",
+            "我会",
+            "接下来",
+            "下一步",
+            "拟定",
+            "方案",
+            "步骤",
+            "Step ",
+            "step ",
+        )
+        has_ask = any(mk in snippet for mk in ask_markers)
+        has_plan = any(mk in snippet for mk in plan_markers)
+        return has_ask and has_plan
 
     @staticmethod
     def _has_active_todo_pending(conversation_id: str | None) -> bool:
