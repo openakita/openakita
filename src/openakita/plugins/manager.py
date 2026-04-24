@@ -1069,6 +1069,7 @@ class PluginManager:
                     "review_status": lp.manifest.review_status,
                     "granted_permissions": granted,
                     "pending_permissions": pending,
+                    "health": self._error_tracker.health_snapshot(lp.manifest.id),
                 }
             )
         return result
@@ -1169,6 +1170,22 @@ class PluginManager:
 
     def list_failed(self) -> dict[str, str]:
         return dict(self._failed)
+
+    def list_failed_with_health(self) -> dict[str, dict]:
+        """Return failed plugins with their health snapshots.
+
+        Backward-compat companion to :meth:`list_failed`: existing callers
+        keep using the simple ``dict[str, str]`` signature, while the
+        management UI can opt-in to richer info (auto-disabled flag,
+        recent timeout/exception counts, last_success_at).
+        """
+        out: dict[str, dict] = {}
+        for plugin_id, error in self._failed.items():
+            out[plugin_id] = {
+                "error": error,
+                "health": self._error_tracker.health_snapshot(plugin_id),
+            }
+        return out
 
     def forget_failure(self, plugin_id: str) -> bool:
         """Drop ``plugin_id`` from the in-memory failure registry.

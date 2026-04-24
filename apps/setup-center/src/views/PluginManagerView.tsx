@@ -13,6 +13,17 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { cn } from "../lib/utils";
 
+// Mirrors PluginErrorTracker.health_snapshot() in src/openakita/plugins/sandbox.py.
+// Optional on PluginInfo because /api/plugins responses pre-dating commit
+// "feat(plugins): weighted error tracking..." won't include it.
+export interface HealthSnapshot {
+  weighted_errors: number;
+  timeout_count: number;
+  exception_count: number;
+  last_success_at: number | null;
+  is_disabled: boolean;
+}
+
 interface PluginInfo {
   id: string;
   name: string;
@@ -33,6 +44,7 @@ interface PluginInfo {
   has_icon?: boolean;
   pending_permissions?: string[];
   granted_permissions?: string[];
+  health?: HealthSnapshot;
   // i18n: optional per-language overrides surfaced by the backend.
   // Falls back to `name` / `description` when missing or empty.
   display_name_i18n?: Record<string, string>;

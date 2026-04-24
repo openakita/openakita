@@ -126,9 +126,9 @@ class HookRegistry:
 
             try:
                 if asyncio.iscoroutinefunction(callback):
-                    return await asyncio.wait_for(callback(**kwargs), timeout=timeout)
+                    result = await asyncio.wait_for(callback(**kwargs), timeout=timeout)
                 else:
-                    return await asyncio.wait_for(
+                    result = await asyncio.wait_for(
                         asyncio.to_thread(callback, **kwargs),
                         timeout=timeout,
                     )
@@ -139,7 +139,9 @@ class HookRegistry:
                     plugin_id,
                     timeout,
                 )
-                self._error_tracker.record_error(plugin_id, f"hook:{hook_name}", "timeout")
+                self._error_tracker.record_error(
+                    plugin_id, f"hook:{hook_name}", "timeout", kind="timeout"
+                )
                 return _SKIP
             except BaseException as e:
                 logger.error(
@@ -151,6 +153,10 @@ class HookRegistry:
                 )
                 self._error_tracker.record_error(plugin_id, f"hook:{hook_name}", str(e))
                 return _SKIP
+            else:
+                if plugin_id and plugin_id != "unknown":
+                    self._error_tracker.record_success(plugin_id)
+                return result
 
         raw = await asyncio.gather(*(_run_one(cb) for cb in callbacks))
         return [r for r in raw if r is not _SKIP]
@@ -179,6 +185,8 @@ class HookRegistry:
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                         future = pool.submit(asyncio.run, callback(**kwargs))
                         result = future.result(timeout=timeout)
+                    if plugin_id and plugin_id != "unknown":
+                        self._error_tracker.record_success(plugin_id)
                     if result is not None:
                         results.append(result)
                 except concurrent.futures.TimeoutError:
@@ -187,7 +195,9 @@ class HookRegistry:
                         hook_name,
                         plugin_id,
                     )
-                    self._error_tracker.record_error(plugin_id, f"hook:{hook_name}", "timeout")
+                    self._error_tracker.record_error(
+                        plugin_id, f"hook:{hook_name}", "timeout", kind="timeout"
+                    )
                 except BaseException as e:
                     logger.error(
                         "Hook '%s' sync-dispatch from plugin '%s' raised %s: %s",
@@ -200,6 +210,8 @@ class HookRegistry:
             else:
                 try:
                     result = callback(**kwargs)
+                    if plugin_id and plugin_id != "unknown":
+                        self._error_tracker.record_success(plugin_id)
                     if result is not None:
                         results.append(result)
                 except BaseException as e:
