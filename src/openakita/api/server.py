@@ -55,6 +55,7 @@ from .routes import (
     wechat_onboard,
     wecom_onboard,
     workspace_io,
+    workspaces,
 )
 
 try:
@@ -366,6 +367,7 @@ def create_app(
     app.include_router(token_stats.router, tags=["统计"])
     app.include_router(upload.router, tags=["文件"])
     app.include_router(workspace_io.router, tags=["工作区"])
+    app.include_router(workspaces.router, tags=["工作区管理"])
     app.include_router(ws_routes.router, tags=["WebSocket"])
     app.include_router(hub.router, tags=["Hub"])
     app.include_router(identity.router, tags=["身份"])

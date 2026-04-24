@@ -619,8 +619,23 @@ function MainApp() {
       const cur = await invoke<string | null>("get_current_workspace_id");
       setCurrentWorkspaceId(cur);
     } else {
-      setInfo({ os: "web", arch: "", homeDir: "", openakitaRootDir: "" });
-      if (!currentWorkspaceId) setCurrentWorkspaceId("default");
+      // Web/Capacitor: fetch workspace list from HTTP API
+      try {
+        const base = httpApiBase();
+        const wsRes = await safeFetch(`${base}/api/workspaces`);
+        const wsData = await wsRes.json();
+        const wsList: WorkspaceSummary[] = (wsData.workspaces || []).map((w: any) => ({
+          id: w.id, name: w.name, path: w.path, isCurrent: w.isCurrent,
+        }));
+        setWorkspaces(wsList);
+        setCurrentWorkspaceId(wsData.current_workspace_id || wsList.find((w: WorkspaceSummary) => w.isCurrent)?.id || "default");
+        const infoPath = wsList.find((w: WorkspaceSummary) => w.isCurrent)?.path || "";
+        setInfo({ os: "web", arch: "", homeDir: "", openakitaRootDir: infoPath });
+      } catch {
+        // Backend not reachable yet (auth pending, first load) — use safe defaults
+        setInfo({ os: "web", arch: "", homeDir: "", openakitaRootDir: "" });
+        if (!currentWorkspaceId) setCurrentWorkspaceId("default");
+      }
     }
   }
 
@@ -1183,7 +1198,46 @@ function MainApp() {
           // ── Tauri: manage process lifecycle via IPC ──
           await refreshAll();
 
-          if (!wasRunning || !IS_TAURI || !venvDir) {
+          // ── Web/Capacitor: the API call already triggered a backend restart ──
+          if (IS_WEB || IS_CAPACITOR) {
+            if (!wasRunning) {
+              // Service wasn't running — just refresh state (unlikely on Web, but defensive)
+              await refreshAll();
+              notifySuccess(t("topbar.switchWorkspaceDone", { id: opts.targetId }));
+              return;
+            }
+            const hint = t("topbar.switchWorkspaceRestarting");
+            setRestartOverlay({ phase: "restarting", hint });
+            const base = httpApiBase();
+            await waitForServiceDown(base, 15000);
+            setRestartOverlay({ phase: "waiting", hint });
+            const ready = await waitForServiceReady(base);
+            if (ready) {
+              setRestartOverlay({
+                phase: "done",
+                doneMessage: t("topbar.switchWorkspaceRestartSuccess", { id: opts.targetId }),
+              });
+              setServiceStatus((prev) =>
+                prev ? { ...prev, running: true } : { running: true, pid: null, pidFile: "" },
+              );
+              await refreshAll();
+              try { await refreshStatus(undefined, undefined, true); } catch { /* ignore */ }
+              autoCheckEndpoints(base);
+              setTimeout(() => setRestartOverlay(null), 1500);
+            } else {
+              setRestartOverlay({ phase: "fail" });
+              setTimeout(() => {
+                setRestartOverlay(null);
+                notifyError(t("topbar.switchWorkspaceRestartFail", { id: opts.targetId }));
+              }, 2500);
+            }
+            return;
+          }
+
+          // ── Tauri: manage process lifecycle via IPC ──
+          await refreshAll();
+
+          if (!wasRunning || !venvDir) {
             notifySuccess(t("topbar.switchWorkspaceDone", { id: opts.targetId }));
             return;
           }
@@ -1240,19 +1294,35 @@ function MainApp() {
   }
 
   async function doSetCurrentWorkspace(id: string) {
-    if (IS_WEB) {
-      notifyError("工作区切换暂不支持 Web 模式，请在桌面端操作");
-      return;
-    }
     const target = workspaces.find((w) => w.id === id);
     const displayName = target?.name || id;
-    confirmWorkspaceChange({
-      targetId: id,
-      displayName,
-      title: t("topbar.switchWorkspaceConfirmTitle"),
-      message: t("topbar.switchWorkspaceConfirmMsg", { name: displayName }),
-      performSwitch: () => invoke("set_current_workspace", { id }),
-    });
+
+    if (IS_WEB || IS_CAPACITOR) {
+      // Web/Capacitor: switch via HTTP API (triggers backend restart)
+      confirmWorkspaceChange({
+        targetId: id,
+        displayName,
+        title: t("topbar.switchWorkspaceConfirmTitle"),
+        message: t("topbar.switchWorkspaceConfirmMsg", { name: displayName }),
+        performSwitch: async () => {
+          const base = httpApiBase();
+          await safeFetch(`${base}/api/workspaces/switch`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id }),
+          });
+        },
+      });
+    } else {
+      // Tauri: switch via IPC (existing logic)
+      confirmWorkspaceChange({
+        targetId: id,
+        displayName,
+        title: t("topbar.switchWorkspaceConfirmTitle"),
+        message: t("topbar.switchWorkspaceConfirmMsg", { name: displayName }),
+        performSwitch: () => invoke("set_current_workspace", { id }),
+      });
+    }
   }
 
   async function doDetectPython() {
@@ -5095,20 +5165,44 @@ function MainApp() {
           wsQuickName={wsQuickName}
           setWsQuickName={setWsQuickName}
           onCreateWorkspace={async (id, name) => {
-            if (IS_WEB) {
-              notifyError("工作区管理暂不支持 Web 模式，请在桌面端操作");
-              return;
+            if (IS_WEB || IS_CAPACITOR) {
+              // Web/Capacitor: create workspace via HTTP, then switch
+              confirmWorkspaceChange({
+                targetId: id,
+                displayName: name,
+                title: t("topbar.createWorkspaceConfirmTitle"),
+                message: t("topbar.createWorkspaceConfirmMsg", { name }),
+                performSwitch: async () => {
+                  const base = httpApiBase();
+                  const res = await safeFetch(`${base}/api/workspaces`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ id, name, set_current: true }),
+                  });
+                  const data = await res.json();
+                  if (data.status === "error") throw new Error(data.message);
+                  setCurrentWorkspaceId(id);
+                  // Trigger restart to apply the new workspace
+                  await safeFetch(`${base}/api/workspaces/switch`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ id }),
+                  });
+                },
+              });
+            } else {
+              // Tauri: create via IPC (existing logic)
+              confirmWorkspaceChange({
+                targetId: id,
+                displayName: name,
+                title: t("topbar.createWorkspaceConfirmTitle"),
+                message: t("topbar.createWorkspaceConfirmMsg", { name }),
+                performSwitch: async () => {
+                  await invoke("create_workspace", { id, name, setCurrent: true });
+                  setCurrentWorkspaceId(id);
+                },
+              });
             }
-            confirmWorkspaceChange({
-              targetId: id,
-              displayName: name,
-              title: t("topbar.createWorkspaceConfirmTitle"),
-              message: t("topbar.createWorkspaceConfirmMsg", { name }),
-              performSwitch: async () => {
-                await invoke("create_workspace", { id, name, setCurrent: true });
-                setCurrentWorkspaceId(id);
-              },
-            });
           }}
           serviceRunning={serviceStatus?.running ?? false}
           endpointCount={endpointSummary.length}
