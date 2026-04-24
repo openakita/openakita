@@ -6,7 +6,7 @@
 - 轮询扫码状态 (get_qrcode_status)
 - 扫码确认后返回 Bearer token + base_url
 
-iLink Bot API 扫码流程（对齐 @tencent-weixin/openclaw-weixin v2.1.6）：
+iLink Bot API 扫码流程（对齐 @tencent-weixin/openclaw-weixin v2.1.8）：
   1. GET get_bot_qrcode?bot_type=3 → 获取 qrcode / qrcode_img_content
   2. GET get_qrcode_status?qrcode=... → 轮询状态 (wait → scaned → confirmed)
   3. confirmed 时返回 bot_token / ilink_bot_id / baseurl
@@ -91,6 +91,7 @@ class WeChatOnboard:
             url,
             params={"bot_type": DEFAULT_ILINK_BOT_TYPE},
             headers=_onboard_common_headers(),
+            timeout=120.0,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -99,7 +100,17 @@ class WeChatOnboard:
         qrcode_img = data.get("qrcode_img_content", "")
 
         if not qrcode or not qrcode_img:
-            raise WeChatOnboardError(f"get_bot_qrcode 返回数据不完整: {data}")
+            logger.error(
+                "get_bot_qrcode response incomplete: HTTP %s, qrcode=%s, qrcode_img_content=%s, keys=%s",
+                resp.status_code,
+                bool(qrcode),
+                bool(qrcode_img),
+                list(data.keys()),
+            )
+            raise WeChatOnboardError(
+                f"get_bot_qrcode 返回数据不完整 (HTTP {resp.status_code}): "
+                f"qrcode={'✓' if qrcode else '✗'}, qrcode_img_content={'✓' if qrcode_img else '✗'}"
+            )
 
         return {
             "qrcode": qrcode,
