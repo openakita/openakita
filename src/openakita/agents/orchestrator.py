@@ -40,7 +40,15 @@ class SubAgentStatus(enum.StrEnum):
 
     @classmethod
     def terminal_states(cls) -> frozenset[SubAgentStatus]:
-        return frozenset({cls.COMPLETED, cls.CANCELLED, cls.TIMEOUT, cls.ERROR})
+        return frozenset(
+            {
+                cls.COMPLETED,
+                cls.CANCELLED,
+                cls.TIMEOUT,
+                cls.ERROR,
+                cls.INTERRUPTED,
+            }
+        )
 
     @property
     def is_terminal(self) -> bool:
@@ -75,7 +83,14 @@ _VALID_TRANSITIONS: dict[SubAgentStatus, frozenset[SubAgentStatus]] = {
     ),
 }
 
+MAX_CONCURRENT_AGENTS = 5
 MAX_DELEGATION_DEPTH = 5
+DELEGATION_RESULT_RETENTION_SECONDS = 600
+RESULT_PREVIEW_MAX_LEN = 1000
+NOTIFICATION_PREVIEW_MAX_LEN = 1200
+MAX_HANDOFF_EVENTS = 100
+DLG_ID_PREFIX = "dlg_"
+BATCH_ID_PREFIX = "batch_"
 CHECK_INTERVAL = 3.0  # how often to poll progress (matches frontend polling)
 SUB_AGENT_LIVE_PROGRESS_MAX_ENTRIES = 30
 
@@ -158,6 +173,92 @@ class DelegationResult:
         return "\n".join(parts)
 
 
+class ExecutionMode(enum.StrEnum):
+    ASYNC = "async"
+    BLOCKING = "blocking"
+
+
+class DelegationTargetType(enum.StrEnum):
+    DELEGATION = "delegation"
+    BATCH = "batch"
+
+
+@dataclass(frozen=True)
+class DelegationTarget:
+    type: DelegationTargetType
+    id: str
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "DelegationTarget":
+        raw_type = str(data.get("type", "") or "").strip()
+        target_id = str(data.get("id", "") or "").strip()
+        if not target_id:
+            raise ValueError("target.id is required")
+        try:
+            target_type = DelegationTargetType(raw_type)
+        except ValueError as exc:
+            raise ValueError("target.type must be 'delegation' or 'batch'") from exc
+        return cls(type=target_type, id=target_id)
+
+
+@dataclass
+class DelegationTerminalPayload:
+    status: SubAgentStatus
+    result: str | None = None
+    error: str | None = None
+    cancel_reason: str | None = None
+    completed_at: float = field(default_factory=time.time)
+
+
+@dataclass
+class DelegationRecord:
+    delegation_id: str
+    queue_task_id: str
+    state_key: str
+    session_id: str
+    chat_id: str
+    from_agent: str
+    to_agent: str
+    status: SubAgentStatus
+    batch_id: str | None = None
+    created_at: float = field(default_factory=time.time)
+    updated_at: float = field(default_factory=time.time)
+    expires_at: float = field(
+        default_factory=lambda: time.time() + DELEGATION_RESULT_RETENTION_SECONDS
+    )
+    terminal: DelegationTerminalPayload | None = None
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status.is_terminal
+
+    def mark_running(self) -> None:
+        if self.is_terminal:
+            return
+        self.status = SubAgentStatus.RUNNING
+        self.updated_at = time.time()
+
+    def mark_terminal(self, terminal: DelegationTerminalPayload) -> bool:
+        if self.is_terminal:
+            return False
+        self.status = terminal.status
+        self.terminal = terminal
+        self.updated_at = terminal.completed_at
+        self.expires_at = terminal.completed_at + DELEGATION_RESULT_RETENTION_SECONDS
+        return True
+
+
+@dataclass
+class BatchRecord:
+    batch_id: str
+    delegation_ids: list[str]
+    session_id: str
+    created_at: float = field(default_factory=time.time)
+    expires_at: float = field(
+        default_factory=lambda: time.time() + DELEGATION_RESULT_RETENTION_SECONDS
+    )
+
+
 class AgentMailbox:
     """Per-agent async message queue."""
 
@@ -205,7 +306,7 @@ class AgentOrchestrator:
     - Track agent health metrics
     """
 
-    _DEFAULT_MAX_CONCURRENT_AGENTS = 5
+    _DEFAULT_MAX_CONCURRENT_AGENTS = MAX_CONCURRENT_AGENTS
 
     def __init__(self) -> None:
         self._mailboxes: dict[str, AgentMailbox] = {}

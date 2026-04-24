@@ -31,8 +31,16 @@ from openakita.agents.orchestrator import (
     AgentHealth,
     AgentMailbox,
     AgentOrchestrator,
+    BatchRecord,
+    DelegationRecord,
     DelegationRequest,
+    DelegationTarget,
+    DelegationTargetType,
+    DelegationTerminalPayload,
+    ExecutionMode,
+    MAX_CONCURRENT_AGENTS,
     MAX_DELEGATION_DEPTH,
+    SubAgentStatus,
 )
 from openakita.sessions.session import Session, SessionConfig, SessionContext
 
@@ -490,6 +498,95 @@ class TestDelegationRequest:
         assert req.to_agent == "helper"
         assert req.depth == 2
         assert req.parent_request_id is None
+
+
+# ================================================================
+# Async Delegation Data Model Tests
+# ================================================================
+
+class TestAsyncDelegationDataModel:
+    def test_named_concurrency_cap_replaces_magic_value(self):
+        assert MAX_CONCURRENT_AGENTS == 5
+
+    def test_execution_mode_is_explicit_enum(self):
+        assert ExecutionMode.ASYNC.value == "async"
+        assert ExecutionMode.BLOCKING.value == "blocking"
+
+    def test_interrupted_is_terminal_for_process_local_restart(self):
+        assert SubAgentStatus.INTERRUPTED.is_terminal is True
+
+    def test_delegation_target_requires_known_type_and_id(self):
+        target = DelegationTarget.from_dict({"type": "delegation", "id": "dlg_123"})
+        assert target.type == DelegationTargetType.DELEGATION
+        assert target.id == "dlg_123"
+
+        with pytest.raises(ValueError, match="target.id is required"):
+            DelegationTarget.from_dict({"type": "delegation", "id": ""})
+
+        with pytest.raises(ValueError, match="target.type must be"):
+            DelegationTarget.from_dict({"type": "unknown", "id": "dlg_123"})
+
+    def test_terminal_payload_is_single_source_of_truth(self):
+        record = DelegationRecord(
+            delegation_id="dlg_abc",
+            queue_task_id="qt_abc",
+            state_key="sess:helper:abc",
+            session_id="sess",
+            chat_id="chat",
+            from_agent="default",
+            to_agent="helper",
+            status=SubAgentStatus.STARTING,
+        )
+
+        record.mark_terminal(
+            DelegationTerminalPayload(
+                status=SubAgentStatus.COMPLETED,
+                result="finished",
+            )
+        )
+
+        assert record.status == SubAgentStatus.COMPLETED
+        assert record.is_terminal is True
+        assert record.terminal is not None
+        assert record.terminal.result == "finished"
+        assert record.terminal.error is None
+        assert record.expires_at > record.updated_at
+
+    def test_terminal_mark_is_idempotent(self):
+        record = DelegationRecord(
+            delegation_id="dlg_abc",
+            queue_task_id="qt_abc",
+            state_key="sess:helper:abc",
+            session_id="sess",
+            chat_id="chat",
+            from_agent="default",
+            to_agent="helper",
+            status=SubAgentStatus.STARTING,
+        )
+        first = DelegationTerminalPayload(
+            status=SubAgentStatus.CANCELLED,
+            cancel_reason="user stop",
+        )
+        second = DelegationTerminalPayload(
+            status=SubAgentStatus.CANCELLED,
+            cancel_reason="cancelled",
+        )
+
+        assert record.mark_terminal(first) is True
+        assert record.mark_terminal(second) is False
+        assert record.terminal is first
+        assert record.terminal.cancel_reason == "user stop"
+
+    def test_batch_record_tracks_delegation_membership(self):
+        batch = BatchRecord(
+            batch_id="batch_abc",
+            delegation_ids=["dlg_a", "dlg_b"],
+            session_id="sess",
+        )
+
+        assert batch.batch_id == "batch_abc"
+        assert batch.delegation_ids == ["dlg_a", "dlg_b"]
+        assert batch.expires_at > batch.created_at
 
 
 # ================================================================
