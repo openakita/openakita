@@ -1871,3 +1871,169 @@ class TestAsyncDelegationLaunch:
             assert len(batch_status["delegations"]) == 2
         finally:
             await orch.task_queue.stop()
+
+
+# ================================================================
+# Async Delegation Completion Tests
+# ================================================================
+
+class TestAsyncDelegationCompletion:
+    @pytest.mark.asyncio
+    async def test_completed_delegation_updates_record_state_and_notification(self):
+        orch = AgentOrchestrator()
+        session = _make_session(session_id="complete-sess")
+        dirty = MagicMock()
+        orch._gateway = MagicMock()
+        orch._gateway.session_manager = MagicMock()
+        orch._gateway.session_manager.mark_dirty = dirty
+        orch._ensure_deps = MagicMock()
+        orch._dispatch = AsyncMock(return_value="final result")
+
+        try:
+            launch = await orch.start_delegation(
+                session=session,
+                from_agent="default",
+                to_agent="helper",
+                message="[Task Instruction]\ndo work",
+                reason="test",
+            )
+            record = orch._delegations[launch["delegation_id"]]
+            assert await orch.task_queue.wait_for(
+                record.queue_task_id,
+                timeout=1.0,
+                consume=False,
+            ) == "final result"
+
+            status = orch.get_delegation_status(
+                {"type": "delegation", "id": launch["delegation_id"]}
+            )
+            assert status["status"] == "completed"
+            assert status["terminal"]["result"] == "final result"
+            assert dirty.called is True
+
+            notifications = [
+                message for message in session.context.messages
+                if message.get("message_type") == "sub_agent_notification"
+            ]
+            assert len(notifications) == 1
+            assert notifications[0]["role"] == "assistant"
+            assert notifications[0]["delegation_id"] == launch["delegation_id"]
+            assert notifications[0]["status"] == "completed"
+        finally:
+            await orch.task_queue.stop()
+
+    @pytest.mark.asyncio
+    async def test_cancel_reason_is_not_overwritten_by_task_cancelled_error(self):
+        orch = AgentOrchestrator()
+        session = _make_session(session_id="cancel-reason-sess")
+        started = asyncio.Event()
+
+        async def fake_dispatch(*args, **kwargs):
+            started.set()
+            await asyncio.sleep(10)
+            return "never"
+
+        orch._ensure_deps = MagicMock()
+        orch._dispatch = AsyncMock(side_effect=fake_dispatch)
+
+        try:
+            launch = await orch.start_delegation(
+                session=session,
+                from_agent="default",
+                to_agent="helper",
+                message="[Task Instruction]\ndo work",
+                reason="test",
+            )
+            await asyncio.wait_for(started.wait(), timeout=1.0)
+            await orch.cancel_delegation_target(
+                {"type": "delegation", "id": launch["delegation_id"]},
+                reason="operator stop",
+            )
+
+            record = orch._delegations[launch["delegation_id"]]
+            with pytest.raises(asyncio.CancelledError):
+                await orch.task_queue.wait_for(
+                    record.queue_task_id,
+                    timeout=1.0,
+                    consume=False,
+                )
+
+            status = orch.get_delegation_status(
+                {"type": "delegation", "id": launch["delegation_id"]}
+            )
+            assert status["status"] == "cancelled"
+            assert status["terminal"]["cancel_reason"] == "operator stop"
+        finally:
+            await orch.task_queue.stop()
+
+    @pytest.mark.asyncio
+    async def test_wait_for_batch_uses_one_deadline_and_partitions_failures(self):
+        orch = AgentOrchestrator()
+        session = _make_session(session_id="wait-sess")
+        release_second = asyncio.Event()
+
+        async def fake_dispatch(_session, message, *args, **kwargs):
+            if "first" in message:
+                return "first done"
+            if "boom" in message:
+                raise RuntimeError("sub failure")
+            await release_second.wait()
+            return "second done"
+
+        orch._ensure_deps = MagicMock()
+        orch._dispatch = AsyncMock(side_effect=fake_dispatch)
+
+        try:
+            launch = await orch.start_delegation_batch(
+                session=session,
+                from_agent="default",
+                tasks=[
+                    {"agent_id": "helper-a", "message": "[Task Instruction]\nfirst"},
+                    {"agent_id": "helper-b", "message": "[Task Instruction]\nboom"},
+                    {"agent_id": "helper-c", "message": "[Task Instruction]\nsecond"},
+                ],
+            )
+            result = await orch.wait_for_delegation_target(
+                {"type": "batch", "id": launch["batch_id"]},
+                timeout_seconds=0.05,
+            )
+
+            assert result["status"] == "timeout"
+            assert len(result["completed"]) == 1
+            assert len(result["failed"]) == 1
+            assert len(result["running"]) == 1
+            release_second.set()
+        finally:
+            await orch.task_queue.stop()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_expired_delegations_releases_queue_results(self):
+        orch = AgentOrchestrator()
+        session = _make_session(session_id="cleanup-sess")
+        orch._ensure_deps = MagicMock()
+        orch._dispatch = AsyncMock(return_value="done")
+
+        try:
+            launch = await orch.start_delegation(
+                session=session,
+                from_agent="default",
+                to_agent="helper",
+                message="[Task Instruction]\ndo work",
+                reason="test",
+            )
+            delegation_id = launch["delegation_id"]
+            record = orch._delegations[delegation_id]
+            assert await orch.task_queue.wait_for(
+                record.queue_task_id,
+                timeout=1.0,
+                consume=False,
+            ) == "done"
+
+            record.expires_at = time.time() - 1
+            removed = await orch.cleanup_expired_delegations()
+
+            assert delegation_id in removed
+            assert delegation_id not in orch._delegations
+            assert orch.task_queue.has_task(record.queue_task_id) is False
+        finally:
+            await orch.task_queue.stop()

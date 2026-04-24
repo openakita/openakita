@@ -1584,6 +1584,74 @@ class AgentOrchestrator:
 
         return {"status": "async_batch_launched", "batch_id": batch_id, "delegations": list(delegations)}
 
+    def _mark_record_terminal(
+        self,
+        record: DelegationRecord,
+        *,
+        status: SubAgentStatus,
+        result: str | None = None,
+        error: str | None = None,
+        cancel_reason: str | None = None,
+    ) -> bool:
+        terminal = DelegationTerminalPayload(
+            status=status,
+            result=result,
+            error=error,
+            cancel_reason=cancel_reason,
+        )
+        changed = record.mark_terminal(terminal)
+        if not changed:
+            return False
+
+        state = self._sub_agent_states.get(record.state_key)
+        if state is not None:
+            state["delegation_id"] = record.delegation_id
+            state["batch_id"] = record.batch_id
+            if result is not None:
+                state["result_preview"] = str(result)[:RESULT_PREVIEW_MAX_LEN]
+            if error is not None:
+                state["error"] = str(error)[:RESULT_PREVIEW_MAX_LEN]
+
+        self._update_sub_state(record.state_key, status.value, time.time() - record.created_at)
+        return True
+
+    def _mark_session_dirty(self) -> None:
+        session_manager = getattr(self._gateway, "session_manager", None) if self._gateway else None
+        if session_manager and hasattr(session_manager, "mark_dirty"):
+            session_manager.mark_dirty()
+
+    def _append_sub_agent_notification(
+        self,
+        session: Any,
+        record: DelegationRecord,
+        *,
+        status: SubAgentStatus,
+        result: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        content = (
+            f"Sub-agent `{record.to_agent}` finished with status `{status.value}` "
+            f"(delegation_id={record.delegation_id})."
+        )
+        if result:
+            content += f"\n\n{str(result)[:NOTIFICATION_PREVIEW_MAX_LEN]}"
+        if error:
+            content += f"\n\nError: {str(error)[:NOTIFICATION_PREVIEW_MAX_LEN]}"
+
+        if not hasattr(session, "add_message"):
+            return
+        added = session.add_message(
+            "assistant",
+            content,
+            message_type="sub_agent_notification",
+            delegation_id=record.delegation_id,
+            batch_id=record.batch_id,
+            agent_id=record.to_agent,
+            status=status.value,
+        )
+        if added:
+            self._mark_session_dirty()
+
     async def _run_queued_delegation(self, task: QueuedTask) -> str:
         delegation_id = self._queue_to_delegation.get(task.task_id)
         if not delegation_id:
@@ -1592,18 +1660,67 @@ class AgentOrchestrator:
         record = self._delegations[delegation_id]
         record.mark_running()
         payload = task.payload
+        session = payload["session"]
+        isolated = payload.get("isolated_browser")
+
         try:
-            return await self._dispatch(
-                payload["session"],
+            result = await self._dispatch(
+                session,
                 payload["message"],
                 payload["to_agent"],
                 int(payload.get("depth", 0)) + 1,
                 from_agent=payload["from_agent"],
-                isolated_browser=payload.get("isolated_browser"),
+                isolated_browser=isolated,
                 pre_state_key=payload["state_key"],
             )
+            state_status = str(self._sub_agent_states.get(record.state_key, {}).get("status", ""))
+            terminal_status = (
+                SubAgentStatus(state_status)
+                if state_status in SubAgentStatus._value2member_map_
+                and SubAgentStatus(state_status).is_terminal
+                else SubAgentStatus.COMPLETED
+            )
+            changed = self._mark_record_terminal(
+                record,
+                status=terminal_status,
+                result=str(result),
+            )
+            if changed:
+                self._append_sub_agent_notification(
+                    session,
+                    record,
+                    status=terminal_status,
+                    result=str(result),
+                )
+            return str(result)
+        except asyncio.CancelledError:
+            changed = self._mark_record_terminal(
+                record,
+                status=SubAgentStatus.CANCELLED,
+                cancel_reason=record.terminal.cancel_reason if record.terminal else "cancelled",
+            )
+            if changed:
+                self._append_sub_agent_notification(
+                    session,
+                    record,
+                    status=SubAgentStatus.CANCELLED,
+                )
+            raise
+        except Exception as exc:
+            changed = self._mark_record_terminal(
+                record,
+                status=SubAgentStatus.ERROR,
+                error=str(exc),
+            )
+            if changed:
+                self._append_sub_agent_notification(
+                    session,
+                    record,
+                    status=SubAgentStatus.ERROR,
+                    error=str(exc),
+                )
+            raise
         finally:
-            isolated = payload.get("isolated_browser")
             if isolated is not None and hasattr(isolated, "stop"):
                 await isolated.stop()
 
@@ -1646,6 +1763,19 @@ class AgentOrchestrator:
             }
         return payload
 
+    def _records_for_target(self, target: dict[str, Any] | DelegationTarget) -> list[DelegationRecord]:
+        parsed = target if isinstance(target, DelegationTarget) else DelegationTarget.from_dict(target)
+        if parsed.type == DelegationTargetType.DELEGATION:
+            record = self._delegations.get(parsed.id)
+            if record is None:
+                raise KeyError(f"Unknown delegation: {parsed.id}")
+            return [record]
+
+        batch = self._batches.get(parsed.id)
+        if batch is None:
+            raise KeyError(f"Unknown batch: {parsed.id}")
+        return [self._delegations[delegation_id] for delegation_id in batch.delegation_ids if delegation_id in self._delegations]
+
     def get_delegation_status(self, target: dict[str, Any] | DelegationTarget) -> dict[str, Any]:
         parsed = target if isinstance(target, DelegationTarget) else DelegationTarget.from_dict(target)
         if parsed.type == DelegationTargetType.DELEGATION:
@@ -1669,6 +1799,117 @@ class AgentOrchestrator:
                 if delegation_id in self._delegations
             ],
         }
+
+    async def wait_for_delegation_target(
+        self,
+        target: dict[str, Any] | DelegationTarget,
+        *,
+        timeout_seconds: float,
+    ) -> dict[str, Any]:
+        records = self._records_for_target(target)
+        pending_records = [record for record in records if not record.is_terminal]
+        wait_tasks = {
+            asyncio.create_task(
+                self._task_queue.wait_for(
+                    record.queue_task_id,
+                    timeout=timeout_seconds,
+                    consume=False,
+                )
+            ): record
+            for record in pending_records
+        }
+
+        if wait_tasks:
+            done, pending = await asyncio.wait(
+                wait_tasks,
+                timeout=timeout_seconds,
+                return_when=asyncio.ALL_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            for task in done:
+                record = wait_tasks[task]
+                try:
+                    task.result()
+                except asyncio.CancelledError:
+                    self._mark_record_terminal(
+                        record,
+                        status=SubAgentStatus.CANCELLED,
+                        cancel_reason="cancelled",
+                    )
+                except Exception as exc:
+                    self._mark_record_terminal(
+                        record,
+                        status=SubAgentStatus.ERROR,
+                        error=str(exc),
+                    )
+
+        by_status: dict[str, list[dict[str, Any]]] = {
+            "completed": [],
+            "failed": [],
+            "cancelled": [],
+            "running": [],
+        }
+        for record in records:
+            serialized = self._serialize_delegation_record(record)
+            if record.status == SubAgentStatus.COMPLETED:
+                by_status["completed"].append(serialized)
+            elif record.status == SubAgentStatus.ERROR:
+                by_status["failed"].append(serialized)
+            elif record.status == SubAgentStatus.CANCELLED:
+                by_status["cancelled"].append(serialized)
+            elif not record.is_terminal:
+                by_status["running"].append(serialized)
+
+        return {
+            "status": "completed" if not by_status["running"] else "timeout",
+            **by_status,
+        }
+
+    async def cancel_delegation_target(
+        self,
+        target: dict[str, Any] | DelegationTarget,
+        *,
+        reason: str,
+    ) -> dict[str, Any]:
+        records = self._records_for_target(target)
+        cancelled: list[dict[str, Any]] = []
+
+        for record in records:
+            if record.is_terminal:
+                continue
+            changed = self._mark_record_terminal(
+                record,
+                status=SubAgentStatus.CANCELLED,
+                cancel_reason=reason,
+            )
+            await self._task_queue.cancel(record.queue_task_id)
+            if changed:
+                cancelled.append(self._serialize_delegation_record(record))
+
+        self._mark_session_dirty()
+        return {"status": "cancelled", "cancelled": cancelled}
+
+    async def cleanup_expired_delegations(self, *, now: float | None = None) -> list[str]:
+        cutoff = time.time() if now is None else now
+        removed: list[str] = []
+
+        for delegation_id, record in list(self._delegations.items()):
+            if not record.is_terminal or record.expires_at > cutoff:
+                continue
+            await self._task_queue.forget(record.queue_task_id)
+            self._queue_to_delegation.pop(record.queue_task_id, None)
+            self._delegations.pop(delegation_id, None)
+            removed.append(delegation_id)
+
+        for batch_id, batch in list(self._batches.items()):
+            if batch.expires_at > cutoff:
+                continue
+            if any(delegation_id in self._delegations for delegation_id in batch.delegation_ids):
+                continue
+            self._batches.pop(batch_id, None)
+
+        return removed
 
     # ------------------------------------------------------------------
     # Delegation (called by agent tools)
