@@ -1,0 +1,80 @@
+{
+  "platform": "wechat_channels",
+  "version": "1.0.0",
+  "notes": "WeChat Channels (视频号) creator. This UI is a micro-frontend: the file input and the caption editor live inside nested custom elements whose shadow roots change class names every few weeks — we lean on role=button + has-text() selectors and let the GenericJsonAdapter pierce shadow DOM transparently (see MultiPost-Extension issue #166 for the anti-pattern to avoid).",
+  "shadow_roots": true,
+  "actions": {
+    "precheck": {
+      "url": "https://channels.weixin.qq.com/platform/post/create",
+      "timeout_ms": 30000,
+      "steps": [
+        {
+          "kind": "wait",
+          "selector": "div:has-text('发表视频'), div:has-text('上传视频')",
+          "timeout_ms": 25000
+        },
+        {
+          "kind": "assert_url",
+          "pattern": "channels\\.weixin\\.qq\\.com",
+          "on_fail": "cookie_expired"
+        }
+      ]
+    },
+    "fill_form": {
+      "url": "https://channels.weixin.qq.com/platform/post/create",
+      "timeout_ms": 90000,
+      "steps": [
+        {
+          "kind": "upload",
+          "selector": "input[type=file][accept*='video']",
+          "field": "asset_storage_path",
+          "pierce_shadow": true,
+          "timeout_ms": 30000
+        },
+        {
+          "kind": "wait",
+          "selector": "div[contenteditable=true][data-placeholder*='描述']",
+          "pierce_shadow": true,
+          "timeout_ms": 60000
+        },
+        {
+          "kind": "type",
+          "selector": "div[contenteditable=true][data-placeholder*='描述']",
+          "pierce_shadow": true,
+          "text": "{{title}}\n{{description}}\n{{tags}}",
+          "clear": true
+        }
+      ]
+    },
+    "submit": {
+      "timeout_ms": 90000,
+      "capture_url_on_success": true,
+      "steps": [
+        {
+          "kind": "click",
+          "selector": "button:has-text('发表')",
+          "pierce_shadow": true,
+          "timeout_ms": 15000
+        },
+        {
+          "kind": "wait",
+          "selector": "div:has-text('发表成功'), div:has-text('已发布')",
+          "pierce_shadow": true,
+          "timeout_ms": 90000
+        }
+      ]
+    },
+    "probe": {
+      "url": "https://channels.weixin.qq.com/platform/post/create",
+      "timeout_ms": 15000,
+      "steps": [
+        {
+          "kind": "wait",
+          "selector": "div:has-text('发表视频'), div:has-text('上传视频')",
+          "pierce_shadow": true,
+          "timeout_ms": 12000
+        }
+      ]
+    }
+  }
+}

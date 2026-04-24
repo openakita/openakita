@@ -1,0 +1,112 @@
+{
+  "platform": "youtube",
+  "version": "1.0.0",
+  "notes": "YouTube Studio upload. youtu.be/upload opens a modal; we click the button that seeds the hidden file input. Title/description are contenteditable divs inside the ytcp-* custom elements.",
+  "shadow_roots": true,
+  "actions": {
+    "precheck": {
+      "url": "https://studio.youtube.com/channel/UC/videos/upload",
+      "timeout_ms": 30000,
+      "steps": [
+        {
+          "kind": "wait",
+          "selector": "ytcp-uploads-dialog, input[type=file]",
+          "pierce_shadow": true,
+          "timeout_ms": 25000
+        },
+        {
+          "kind": "assert_url",
+          "pattern": "studio\\.youtube\\.com",
+          "on_fail": "cookie_expired"
+        }
+      ]
+    },
+    "fill_form": {
+      "url": "https://studio.youtube.com/channel/UC/videos/upload",
+      "timeout_ms": 120000,
+      "steps": [
+        {
+          "kind": "upload",
+          "selector": "input[type=file][name='Filedata']",
+          "field": "asset_storage_path",
+          "pierce_shadow": true,
+          "timeout_ms": 30000
+        },
+        {
+          "kind": "wait",
+          "selector": "ytcp-social-suggestions-textbox[id='title-textarea'] #textbox",
+          "pierce_shadow": true,
+          "timeout_ms": 90000
+        },
+        {
+          "kind": "type",
+          "selector": "ytcp-social-suggestions-textbox[id='title-textarea'] #textbox",
+          "pierce_shadow": true,
+          "text": "{{title}}",
+          "clear": true
+        },
+        {
+          "kind": "type",
+          "selector": "ytcp-social-suggestions-textbox[id='description-textarea'] #textbox",
+          "pierce_shadow": true,
+          "text": "{{description}}\n{{tags}}",
+          "clear": true
+        }
+      ]
+    },
+    "submit": {
+      "timeout_ms": 120000,
+      "capture_url_on_success": true,
+      "steps": [
+        {
+          "kind": "click",
+          "selector": "ytcp-button[id='next-button']",
+          "pierce_shadow": true,
+          "timeout_ms": 15000
+        },
+        {
+          "kind": "click",
+          "selector": "ytcp-button[id='next-button']",
+          "pierce_shadow": true,
+          "timeout_ms": 15000
+        },
+        {
+          "kind": "click",
+          "selector": "ytcp-button[id='next-button']",
+          "pierce_shadow": true,
+          "timeout_ms": 15000
+        },
+        {
+          "kind": "click",
+          "selector": "tp-yt-paper-radio-button[name='PUBLIC']",
+          "pierce_shadow": true,
+          "timeout_ms": 15000
+        },
+        {
+          "kind": "click",
+          "selector": "ytcp-button[id='done-button']",
+          "pierce_shadow": true,
+          "timeout_ms": 15000
+        },
+        {
+          "kind": "wait",
+          "selector": "ytcp-video-share-dialog, span:has-text('Video published')",
+          "pierce_shadow": true,
+          "timeout_ms": 90000
+        }
+      ]
+    },
+    "probe": {
+      "url": "https://studio.youtube.com/channel/UC/videos/upload",
+      "timeout_ms": 15000,
+      "steps": [
+        {
+          "kind": "wait",
+          "selector": "ytcp-uploads-dialog, input[type=file]",
+          "pierce_shadow": true,
+          "timeout_ms": 12000
+        }
+      ]
+    }
+  }
+}

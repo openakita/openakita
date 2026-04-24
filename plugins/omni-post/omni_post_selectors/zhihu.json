@@ -1,0 +1,74 @@
+{
+  "platform": "zhihu",
+  "version": "1.0.0",
+  "notes": "Zhihu article editor (/write). Text-first platform: no file input; the 'cover_asset_id' (if supplied) is set via the cover-picker dialog which we sidestep in S2 — cover upload is a S3 enhancement.",
+  "actions": {
+    "precheck": {
+      "url": "https://zhuanlan.zhihu.com/write",
+      "timeout_ms": 30000,
+      "steps": [
+        {
+          "kind": "wait",
+          "selector": "textarea[placeholder*='标题']",
+          "timeout_ms": 25000
+        },
+        {
+          "kind": "assert_url",
+          "pattern": "zhuanlan\\.zhihu\\.com",
+          "on_fail": "cookie_expired"
+        }
+      ]
+    },
+    "fill_form": {
+      "url": "https://zhuanlan.zhihu.com/write",
+      "timeout_ms": 30000,
+      "steps": [
+        {
+          "kind": "type",
+          "selector": "textarea[placeholder*='标题']",
+          "text": "{{title}}",
+          "clear": true
+        },
+        {
+          "kind": "type",
+          "selector": "div.Editable-content[contenteditable=true], div[role='textbox'][contenteditable=true]",
+          "text": "{{description}}\n\n{{tags}}",
+          "clear": true
+        }
+      ]
+    },
+    "submit": {
+      "timeout_ms": 45000,
+      "capture_url_on_success": true,
+      "steps": [
+        {
+          "kind": "click",
+          "selector": "button:has-text('发布')",
+          "timeout_ms": 15000
+        },
+        {
+          "kind": "click",
+          "selector": "button:has-text('发布文章'), button:has-text('确定发布')",
+          "optional": true,
+          "timeout_ms": 15000
+        },
+        {
+          "kind": "wait",
+          "selector": "a:has-text('查看文章'), div:has-text('发布成功')",
+          "timeout_ms": 45000
+        }
+      ]
+    },
+    "probe": {
+      "url": "https://zhuanlan.zhihu.com/write",
+      "timeout_ms": 15000,
+      "steps": [
+        {
+          "kind": "wait",
+          "selector": "textarea[placeholder*='标题']",
+          "timeout_ms": 12000
+        }
+      ]
+    }
+  }
+}

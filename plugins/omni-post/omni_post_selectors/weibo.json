@@ -1,0 +1,75 @@
+{
+  "platform": "weibo",
+  "version": "1.0.0",
+  "notes": "Weibo web UI. The compose box is a single textarea; optional image uploader is a file input that only appears after the image picker button is clicked.",
+  "actions": {
+    "precheck": {
+      "url": "https://weibo.com",
+      "timeout_ms": 30000,
+      "steps": [
+        {
+          "kind": "wait",
+          "selector": "textarea[class*='Form_input'], textarea[placeholder*='有什么新鲜事']",
+          "timeout_ms": 25000
+        },
+        {
+          "kind": "assert_url",
+          "pattern": "weibo\\.com",
+          "on_fail": "cookie_expired"
+        }
+      ]
+    },
+    "fill_form": {
+      "url": "https://weibo.com",
+      "timeout_ms": 30000,
+      "steps": [
+        {
+          "kind": "type",
+          "selector": "textarea[class*='Form_input'], textarea[placeholder*='有什么新鲜事']",
+          "text": "{{title}}\n{{description}}\n{{tags}}",
+          "clear": true
+        },
+        {
+          "kind": "click",
+          "selector": "div[title='图片'], button[title='图片']",
+          "optional": true,
+          "timeout_ms": 5000
+        },
+        {
+          "kind": "upload",
+          "selector": "input[type=file][accept*='image']",
+          "field": "cover_storage_path",
+          "optional": true,
+          "timeout_ms": 15000
+        }
+      ]
+    },
+    "submit": {
+      "timeout_ms": 30000,
+      "capture_url_on_success": true,
+      "steps": [
+        {
+          "kind": "click",
+          "selector": "button:has-text('发送'), button:has-text('发布')",
+          "timeout_ms": 15000
+        },
+        {
+          "kind": "wait",
+          "selector": "div:has-text('发送成功'), div:has-text('发布成功')",
+          "timeout_ms": 30000
+        }
+      ]
+    },
+    "probe": {
+      "url": "https://weibo.com",
+      "timeout_ms": 15000,
+      "steps": [
+        {
+          "kind": "wait",
+          "selector": "textarea[class*='Form_input'], textarea[placeholder*='有什么新鲜事']",
+          "timeout_ms": 12000
+        }
+      ]
+    }
+  }
+}

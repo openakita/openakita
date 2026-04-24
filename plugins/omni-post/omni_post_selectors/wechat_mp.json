@@ -1,0 +1,79 @@
+{
+  "platform": "wechat_mp",
+  "version": "1.0.0",
+  "notes": "WeChat Official Accounts (mp.weixin.qq.com). Articles live inside the 'new-material' iframe; every editor command is dispatched to that frame rather than the top-level document. The GenericJsonAdapter handles this via the 'frame' field on steps.",
+  "iframes": true,
+  "actions": {
+    "precheck": {
+      "url": "https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit_v2&action=edit&type=77",
+      "timeout_ms": 30000,
+      "steps": [
+        {
+          "kind": "wait",
+          "frame": "iframe[id='ueditor_0']",
+          "selector": "body.ProseMirror, div.rich_media_content",
+          "timeout_ms": 25000
+        },
+        {
+          "kind": "assert_url",
+          "pattern": "mp\\.weixin\\.qq\\.com",
+          "on_fail": "cookie_expired"
+        }
+      ]
+    },
+    "fill_form": {
+      "url": "https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit_v2&action=edit&type=77",
+      "timeout_ms": 60000,
+      "steps": [
+        {
+          "kind": "type",
+          "selector": "input[id='title'], input[placeholder*='标题']",
+          "text": "{{title}}",
+          "clear": true
+        },
+        {
+          "kind": "type",
+          "selector": "input[id='author']",
+          "text": "{{author}}",
+          "clear": true,
+          "optional": true
+        },
+        {
+          "kind": "type",
+          "frame": "iframe[id='ueditor_0']",
+          "selector": "body.ProseMirror",
+          "text": "{{description}}\n\n{{tags}}",
+          "clear": true
+        }
+      ]
+    },
+    "submit": {
+      "timeout_ms": 60000,
+      "capture_url_on_success": true,
+      "steps": [
+        {
+          "kind": "click",
+          "selector": "button:has-text('保存'), button:has-text('保存为草稿')",
+          "timeout_ms": 15000
+        },
+        {
+          "kind": "wait",
+          "selector": "div:has-text('保存成功')",
+          "timeout_ms": 30000
+        }
+      ]
+    },
+    "probe": {
+      "url": "https://mp.weixin.qq.com/cgi-bin/appmsg?t=media/appmsg_edit_v2&action=edit&type=77",
+      "timeout_ms": 15000,
+      "steps": [
+        {
+          "kind": "wait",
+          "frame": "iframe[id='ueditor_0']",
+          "selector": "body.ProseMirror",
+          "timeout_ms": 12000
+        }
+      ]
+    }
+  }
+}

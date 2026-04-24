@@ -1,0 +1,73 @@
+{
+  "platform": "tiktok",
+  "version": "1.0.0",
+  "notes": "TikTok Creator upload (/tiktokstudio/upload). Caption editor is a contenteditable span; the cover selector and schedule toggle live in a second column we do not touch from fill_form.",
+  "actions": {
+    "precheck": {
+      "url": "https://www.tiktok.com/tiktokstudio/upload?from=upload",
+      "timeout_ms": 30000,
+      "steps": [
+        {
+          "kind": "wait",
+          "selector": "input[type=file]",
+          "timeout_ms": 25000
+        },
+        {
+          "kind": "assert_url",
+          "pattern": "tiktok\\.com",
+          "on_fail": "cookie_expired"
+        }
+      ]
+    },
+    "fill_form": {
+      "url": "https://www.tiktok.com/tiktokstudio/upload?from=upload",
+      "timeout_ms": 90000,
+      "steps": [
+        {
+          "kind": "upload",
+          "selector": "input[type=file]",
+          "field": "asset_storage_path",
+          "timeout_ms": 30000
+        },
+        {
+          "kind": "wait",
+          "selector": "div[contenteditable=true][data-text='true']",
+          "timeout_ms": 60000
+        },
+        {
+          "kind": "type",
+          "selector": "div[contenteditable=true][data-text='true']",
+          "text": "{{title}}\n{{description}}\n{{tags}}",
+          "clear": true
+        }
+      ]
+    },
+    "submit": {
+      "timeout_ms": 90000,
+      "capture_url_on_success": true,
+      "steps": [
+        {
+          "kind": "click",
+          "selector": "button:has-text('Post'), button[data-e2e='post_video_button']",
+          "timeout_ms": 15000
+        },
+        {
+          "kind": "wait",
+          "selector": "div:has-text('Your video is being uploaded'), div:has-text('posted')",
+          "timeout_ms": 90000
+        }
+      ]
+    },
+    "probe": {
+      "url": "https://www.tiktok.com/tiktokstudio/upload?from=upload",
+      "timeout_ms": 15000,
+      "steps": [
+        {
+          "kind": "wait",
+          "selector": "input[type=file]",
+          "timeout_ms": 12000
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "platform": "kuaishou",
+  "version": "1.0.0",
+  "notes": "Kuaishou creator (cp.kuaishou.com). Upload via the hidden file input; caption is a contenteditable div.",
+  "actions": {
+    "precheck": {
+      "url": "https://cp.kuaishou.com/article/publish/video",
+      "timeout_ms": 30000,
+      "steps": [
+        {
+          "kind": "wait",
+          "selector": "input[type=file]",
+          "timeout_ms": 25000
+        },
+        {
+          "kind": "assert_url",
+          "pattern": "cp\\.kuaishou\\.com",
+          "on_fail": "cookie_expired"
+        }
+      ]
+    },
+    "fill_form": {
+      "url": "https://cp.kuaishou.com/article/publish/video",
+      "timeout_ms": 60000,
+      "steps": [
+        {
+          "kind": "upload",
+          "selector": "input[type=file]",
+          "field": "asset_storage_path",
+          "timeout_ms": 30000
+        },
+        {
+          "kind": "wait",
+          "selector": "div[contenteditable=true], textarea[placeholder*='描述']",
+          "timeout_ms": 60000
+        },
+        {
+          "kind": "type",
+          "selector": "div[contenteditable=true], textarea[placeholder*='描述']",
+          "text": "{{title}}\n{{description}}\n{{tags}}",
+          "clear": true
+        }
+      ]
+    },
+    "submit": {
+      "timeout_ms": 60000,
+      "capture_url_on_success": true,
+      "steps": [
+        {
+          "kind": "click",
+          "selector": "button:has-text('发布')",
+          "timeout_ms": 15000
+        },
+        {
+          "kind": "wait",
+          "selector": "div:has-text('发布成功'), div:has-text('发布完成')",
+          "timeout_ms": 60000
+        }
+      ]
+    },
+    "probe": {
+      "url": "https://cp.kuaishou.com/article/publish/video",
+      "timeout_ms": 15000,
+      "steps": [
+        {
+          "kind": "wait",
+          "selector": "input[type=file]",
+          "timeout_ms": 12000
+        }
+      ]
+    }
+  }
+}
