@@ -716,3 +716,4 @@ def get_controller() -> DesktopController:
     if _controller is None:
         _controller = DesktopController()
     return _controller
+

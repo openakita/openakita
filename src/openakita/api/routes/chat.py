@@ -1244,3 +1244,4 @@ async def dismiss_plan_approval(request: Request):
     if isinstance(pending_map, dict):
         pending_map.pop(conversation_id, None)
     return {"ok": True}
+

@@ -241,3 +241,4 @@ class NeedAnalyzer:
             suggestions.append(suggestion)
 
         return suggestions
+

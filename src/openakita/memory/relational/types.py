@@ -152,3 +152,4 @@ class RetrievalResult:
     score: float = 0.0
     path: list[str] = field(default_factory=list)
     dimensions_matched: list[Dimension] = field(default_factory=list)
+

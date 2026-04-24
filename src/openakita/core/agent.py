@@ -7061,3 +7061,4 @@ class Agent:
     def get_memory_stats(self) -> dict:
         """获取记忆统计"""
         return self.memory_manager.get_stats()
+

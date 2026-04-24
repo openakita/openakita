@@ -982,3 +982,4 @@ class SkillLoader:
         """获取技能的处理器名称"""
         skill = self._loaded_skills.get(name)
         return skill.metadata.handler if skill else None
+

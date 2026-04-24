@@ -164,3 +164,4 @@ class ZhipuInternationalRegistry(ProviderRegistry):
             )
             for model_id in preset
         ]
+

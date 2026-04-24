@@ -234,3 +234,4 @@ async def think(
     """
     adapter = LLMAdapter()
     return await adapter.think(prompt, context, system, tools, **kwargs)
+

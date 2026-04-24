@@ -637,3 +637,4 @@ but with full schema you'll fill arguments more reliably.
 def create_tool_catalog(tools: list[dict]) -> ToolCatalog:
     """便捷函数：创建工具目录"""
     return ToolCatalog(tools)
+

@@ -48,3 +48,4 @@ class StructuredOutputHandler:
 def create_handler(agent: "Agent"):
     handler = StructuredOutputHandler(agent)
     return handler.handle
+

@@ -80,3 +80,4 @@ BROWSER_TESTS = [
 
 def get_tests() -> list[TestCase]:
     return BROWSER_TESTS
+

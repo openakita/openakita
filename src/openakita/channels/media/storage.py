@@ -263,3 +263,4 @@ class MediaStorage:
                 json.dump(self._index, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"Failed to save media index: {e}")
+

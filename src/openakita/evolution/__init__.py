@@ -17,3 +17,4 @@ __all__ = [
     "LogEntry",
     "ErrorPattern",
 ]
+

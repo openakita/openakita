@@ -27,3 +27,4 @@ STRUCTURED_OUTPUT_TOOLS: list[dict] = [
         },
     },
 ]
+

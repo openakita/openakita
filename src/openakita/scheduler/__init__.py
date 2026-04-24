@@ -49,3 +49,4 @@ def get_active_scheduler() -> TaskScheduler | None:
 
 def get_active_executor() -> TaskExecutor | None:
     return _active_executor
+

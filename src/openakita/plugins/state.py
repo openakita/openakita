@@ -170,3 +170,4 @@ class PluginState:
             )
             state.dev_mode = "off"
         return state
+

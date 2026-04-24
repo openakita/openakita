@@ -510,3 +510,4 @@ def compile_user(content: str) -> str:
 
 def compile_persona(content: str) -> str:
     return _compile_with_rules(content, _COMPILE_PROMPTS["persona_custom"])
+

@@ -34,3 +34,4 @@ CODE_QUALITY_TOOLS = [
         },
     },
 ]
+

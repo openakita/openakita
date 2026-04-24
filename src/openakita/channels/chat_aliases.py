@@ -73,3 +73,4 @@ class ChatAliasStore:
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         atomic_json_write(self._path, self._data)
+

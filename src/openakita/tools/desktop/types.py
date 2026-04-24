@@ -295,3 +295,4 @@ class DesktopState:
     mouse_position: tuple[int, int] = (0, 0)
     screen_size: tuple[int, int] = (0, 0)
     timestamp: datetime = field(default_factory=datetime.now)
+

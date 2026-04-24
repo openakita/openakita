@@ -166,3 +166,4 @@ class SessionLogHandler(logging.Handler):
         except Exception:
             # 日志处理器不应该抛出异常
             self.handleError(record)
+
