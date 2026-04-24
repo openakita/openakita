@@ -101,3 +101,4 @@ mcporter config add tencent-survey "https://wj.qq.com/api/v2/mcp" \
 | `ERROR:empty_token` | 授权异常，Token 为空 |
 | `ERROR:save_token_failed` | Token 写入配置失败 |
 | `AUTH_TIMEOUT` | 用户未在时限内完成授权 |
+

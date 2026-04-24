@@ -373,3 +373,4 @@ async def handle_generate(request):
 app = web.Application()
 app.router.add_post('/generate', handle_generate)
 ```
+

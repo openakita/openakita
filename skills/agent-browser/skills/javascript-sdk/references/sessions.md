@@ -372,3 +372,4 @@ app.post('/api/browser/end', (req, res) => {
 4. **Don't over-parallelize** - Session requests go to the same worker sequentially
 5. **Monitor costs** - Long-running sessions incur ongoing charges
 6. **Store session IDs securely** - Don't expose session IDs to untrusted clients
+

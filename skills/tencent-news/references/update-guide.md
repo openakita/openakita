@@ -41,3 +41,4 @@ tencent-news-cli version
 - **更新后仍显示旧版本** → 确认终端已重新打开，或运行 `source ~/.zshrc`（macOS/Linux）刷新环境
 - **下载失败** → 检查网络连接，确认 CDN 地址 `mat1.gtimg.com` 可达
 - **Windows 更新失败** → 检查是否被 SmartScreen、杀软或文件占用拦截
+

@@ -7,3 +7,4 @@ i18n:
   zh:
     name: "MCP 服务器构建器"
     description: "构建高质量 MCP 服务器，让 LLM 通过工具与外部服务交互，支持 Python (FastMCP) 和 TypeScript (MCP SDK)。"
+

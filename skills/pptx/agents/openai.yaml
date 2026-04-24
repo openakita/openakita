@@ -6,3 +6,4 @@ i18n:
   zh:
     name: PPT 演示文稿
     description: 创建和处理 PowerPoint 演示文稿（.pptx），包括幻灯片设计、内容编辑和模板应用。
+

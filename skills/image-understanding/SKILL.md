@@ -159,3 +159,4 @@ python scripts/image_understanding.py -i photo.jpg
 ---
 
 运行 `python scripts/image_understanding.py --help` 查看完整帮助
+

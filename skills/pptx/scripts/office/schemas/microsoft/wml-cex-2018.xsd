@@ -18,3 +18,4 @@
    </xsd:complexType>
    <xsd:element name="commentsExtensible" type="CT_CommentsExtensible"/>
  </xsd:schema>
+

@@ -207,3 +207,4 @@ npx skills add inference-sh/skills@inference-sh
 - [Remotion Documentation](https://www.remotion.dev/docs) - Official Remotion docs
 - [Running Apps](https://inference.sh/docs/apps/running) - How to run apps via CLI
 - [Streaming Results](https://inference.sh/docs/api/sdk/streaming) - Real-time progress updates
+

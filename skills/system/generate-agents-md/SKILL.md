@@ -108,3 +108,4 @@ allowed-tools: ["read_file", "write_file", "run_shell", "list_directory"]
 用户说："更新一下 AGENTS.md"
 
 → 先读取现有 AGENTS.md，结合项目当前状态更新过时的内容。
+

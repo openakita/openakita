@@ -32,3 +32,4 @@ export BAIDU_API_KEY="your_key"
 ```bash
 python3 scripts/picture_book.py generate "小兔子找妈妈的故事"
 ```
+

@@ -47,3 +47,4 @@ category: Desktop
 
 - `desktop-click`: 点击滚动区域
 - `desktop-hotkey`: 快捷键操作
+

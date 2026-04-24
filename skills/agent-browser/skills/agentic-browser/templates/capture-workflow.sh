@@ -147,3 +147,4 @@ echo ""
 echo "Capture complete!"
 echo "Files created:"
 ls -la "$OUTPUT_DIR"/*.txt "$OUTPUT_DIR"/*.json 2>/dev/null || true
+

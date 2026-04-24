@@ -45,3 +45,4 @@ python3 scripts/bdpan.py ls /apps/
 python3 scripts/bdpan.py search "报告"
 python3 scripts/bdpan.py info
 ```
+

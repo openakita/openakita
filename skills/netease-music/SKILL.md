@@ -55,3 +55,4 @@ python3 scripts/music_quick.py playlist --id 123456
 python3 scripts/music_quick.py recommend
 python3 scripts/music_quick.py play --id 789
 ```
+

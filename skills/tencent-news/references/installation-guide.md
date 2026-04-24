@@ -30,3 +30,4 @@ irm https://mat1.gtimg.com/qqcdn/qqnews/cli/hub/tencent-news/setup.ps1 | iex
 - **Windows SmartScreen 拦截** → 在系统提示中选择「更多信息」后允许运行
 - **下载失败** → 检查网络连接，确认 CDN 地址 `mat1.gtimg.com` 可达
 - **`unsupported os` 或 `unsupported architecture`** → 当前平台不在支持范围内
+

@@ -249,3 +249,4 @@ If a ref seems to interact with the wrong element:
 1. Re-snapshot to get fresh refs
 2. Check if the page structure changed
 3. Verify with screenshot that the right element is targeted
+

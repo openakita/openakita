@@ -42,3 +42,4 @@ python3 scripts/qq_bot.py guilds
 python3 scripts/qq_bot.py channels --guild-id 123456
 python3 scripts/qq_bot.py send --channel-id 789 --content "Hello"
 ```
+

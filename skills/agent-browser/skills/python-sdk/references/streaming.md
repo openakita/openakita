@@ -252,3 +252,4 @@ for update in client.run(config, stream=True):
 print(f"Duration: {processor.duration:.2f}s")
 print(f"Logs: {len(processor.logs)}")
 ```
+

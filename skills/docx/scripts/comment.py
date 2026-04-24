@@ -316,3 +316,4 @@ if __name__ == "__main__":
         print(REPLY_MARKER_TEMPLATE.format(pid=args.parent, cid=cid))
     else:
         print(COMMENT_MARKER_TEMPLATE.format(cid=cid))
+

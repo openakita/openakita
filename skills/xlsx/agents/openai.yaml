@@ -7,3 +7,4 @@ i18n:
   zh:
     name: "Excel 电子表格"
     description: "读取、写入、编辑和创建 Excel 电子表格文件，支持公式、图表、格式化和数据清洗。"
+

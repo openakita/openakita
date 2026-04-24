@@ -31,3 +31,4 @@ category: Skills Management
 
 - `list-skills`: 列出所有技能
 - `run-shell`: 执行按技能指令编写的代码
+

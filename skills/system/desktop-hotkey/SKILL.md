@@ -48,3 +48,4 @@ category: Desktop
 
 - `desktop-type`: 输入文本
 - `desktop-click`: 点击元素
+

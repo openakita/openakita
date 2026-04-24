@@ -32,3 +32,4 @@ PPT 大纲生成（百度千帆 AppBuilder），需设置 APPBUILDER_TOKEN。
 ```bash
 python3 scripts/ppt_gen.py generate "Q2季度销售报告"
 ```
+

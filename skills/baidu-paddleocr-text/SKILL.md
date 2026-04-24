@@ -28,3 +28,4 @@ python3 scripts/baidu_ocr_text.py general /path/to/image.jpg
 python3 scripts/baidu_ocr_text.py accurate /path/to/image.jpg
 python3 scripts/baidu_ocr_text.py handwriting /path/to/note.jpg
 ```
+

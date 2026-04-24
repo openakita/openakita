@@ -27,3 +27,4 @@ for xml_file in xml_files:
 if input_file.endswith(".docx"):
     suggested_rsid = "".join(random.choices("0123456789ABCDEF", k=8))
     print(f"Suggested RSID for edit session: {suggested_rsid}")
+

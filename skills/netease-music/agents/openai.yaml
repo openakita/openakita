@@ -6,3 +6,4 @@ i18n:
   zh:
     name: "网易云音乐"
     description: "通过 ncm-cli 搜索歌曲、播放音乐、管理歌单和获取个性化推荐。"
+

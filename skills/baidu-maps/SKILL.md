@@ -33,3 +33,4 @@ python3 scripts/baidu_maps.py geocode "北京市海淀区"
 python3 scripts/baidu_maps.py poi "火锅" --region 成都
 python3 scripts/baidu_maps.py route --origin 39.9,116.4 --dest 40.0,116.5
 ```
+

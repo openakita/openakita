@@ -157,3 +157,4 @@ def condense_xml(xml_file):
 
 if __name__ == "__main__":
     main()
+

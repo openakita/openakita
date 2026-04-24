@@ -6,3 +6,4 @@ i18n:
   zh:
     name: 执行命令
     description: 执行 Shell 命令，用于系统操作、创建目录、运行脚本和安装软件包。
+

@@ -129,3 +129,4 @@ Browse all apps: `infsh app list`
 - [Agents Overview](https://inference.sh/docs/concepts/agents) - Building AI agents
 - [Agent SDK](https://inference.sh/docs/api/agent/overview) - Programmatic agent control
 - [Building a Research Agent](https://inference.sh/blog/guides/research-agent) - LLM + search integration guide
+

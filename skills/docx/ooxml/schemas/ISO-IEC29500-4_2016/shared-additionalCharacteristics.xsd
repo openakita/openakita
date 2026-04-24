@@ -26,3 +26,4 @@
   </xsd:simpleType>
   <xsd:element name="additionalCharacteristics" type="CT_AdditionalCharacteristics"/>
 </xsd:schema>
+

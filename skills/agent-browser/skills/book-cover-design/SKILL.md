@@ -215,3 +215,4 @@ npx skills add inference-sh/skills@image-upscaling
 ```
 
 Browse all apps: `infsh app list`
+

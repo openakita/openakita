@@ -28,3 +28,4 @@ python3 scripts/xiaodu_mcp.py devices
 python3 scripts/xiaodu_mcp.py control --device light-001 --action on
 python3 scripts/xiaodu_mcp.py scene --name "回家模式"
 ```
+

@@ -34,3 +34,4 @@ export BAIDU_API_KEY="your_key"
 python3 scripts/video_notes.py analyze "https://example.com/video.mp4"
 python3 scripts/video_notes.py notes "视频内容总结"
 ```
+

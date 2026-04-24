@@ -6,3 +6,4 @@ i18n:
   zh:
     name: 提交技能仓库
     description: 将 GitHub 仓库提交到 OpenAkita Skill Store 索引。
+

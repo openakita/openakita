@@ -7,3 +7,4 @@ i18n:
   zh:
     name: "MCP 安装器"
     description: "安装、配置和添加 MCP 服务器到 OpenAkita 系统，支持 npm/pip/uvx 包、远程 HTTP/SSE 服务和自定义本地服务器。"
+

@@ -124,3 +124,4 @@ npx skills add inference-sh/skills@background-removal
 - [CLI Setup](https://inference.sh/docs/extend/cli-setup) - Installing the CLI
 - [Workflows vs Agents](https://inference.sh/blog/concepts/workflows-vs-agents) - When to use each
 - [Why Agent Runtimes Matter](https://inference.sh/blog/agent-runtime/why-runtimes-matter) - Runtime benefits
+

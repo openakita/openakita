@@ -28,3 +28,4 @@ python3 scripts/ecommerce.py compare "iPhone 16 Pro"
 python3 scripts/ecommerce.py review "戴森吹风机"
 python3 scripts/ecommerce.py recommend "降噪耳机"
 ```
+

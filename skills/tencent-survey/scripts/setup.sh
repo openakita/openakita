@@ -635,3 +635,4 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         echo "  bash ./setup.sh wj_wait_auth              # 第二步：等待授权完成"
     fi
 fi
+

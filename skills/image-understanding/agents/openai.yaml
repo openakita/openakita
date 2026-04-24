@@ -7,3 +7,4 @@ i18n:
   zh:
     name: "图片理解 (通义千问)"
     description: "使用 Dashscope 通义千问视觉模型分析图片，支持描述、OCR 文字提取、物体识别和图片问答。"
+

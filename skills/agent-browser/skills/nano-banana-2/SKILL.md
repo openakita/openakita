@@ -163,3 +163,4 @@ Browse all image apps: `infsh app list --category image`
 - [Running Apps](https://inference.sh/docs/apps/running) - How to run apps via CLI
 - [Streaming Results](https://inference.sh/docs/api/sdk/streaming) - Real-time progress updates
 - [File Handling](https://inference.sh/docs/api/sdk/files) - Working with images
+

@@ -285,3 +285,4 @@
   <xsd:element name="inline" type="CT_Inline"/>
   <xsd:element name="anchor" type="CT_Anchor"/>
 </xsd:schema>
+

@@ -6,3 +6,4 @@ i18n:
   zh:
     name: 列出标签页
     description: 列出所有打开的浏览器标签页，包括序号、URL 和标题。
+

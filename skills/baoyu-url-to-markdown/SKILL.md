@@ -118,3 +118,4 @@ url-to-markdown/<domain>/<slug>.md
 ## Extension Support
 
 Custom configurations via EXTEND.md. See **Preferences** section for paths and supported options.
+

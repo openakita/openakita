@@ -404,3 +404,4 @@ mcporter call tencent-survey.create_survey --args '{"scene": 8, "text": "投票\
 | `destructiveHint` | false | 非破坏性操作 |
 | `idempotentHint` | false | **非幂等**，每次调用都创建新问卷 |
 | `openWorldHint` | false | 内部调用 |
+

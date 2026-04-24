@@ -7,3 +7,4 @@ i18n:
   zh:
     name: "代码审查"
     description: "审查代码变更，支持本地修改（暂存区或工作区）和远程 Pull Request，关注正确性和质量。"
+

@@ -437,3 +437,4 @@ transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
 for t in transcript_list:
     print(f"{t.language} ({t.language_code}) - {'manual' if not t.is_generated else 'auto'}")
 ```
+

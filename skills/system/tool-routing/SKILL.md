@@ -72,3 +72,4 @@ priority: high
 - **搜索类任务不要用 browser_task** — 直接用 browser_navigate 拼 URL 参数更可靠
 - **有 opencli adapter 时总是优先使用** — 比让 LLM 猜测页面操作可靠得多
 - **有 cli-anything CLI 时优先使用** — 比 GUI 自动化可靠 100 倍
+

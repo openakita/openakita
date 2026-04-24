@@ -375,3 +375,4 @@ img.save('final_image.png')
 - 自定义风格预设模板
 - 品牌相关的 prompt 片段（Logo 描述、品牌色等）
 - 额外的 API 端点或自部署模型地址
+

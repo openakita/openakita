@@ -615,3 +615,4 @@ The skill automatically adapts to the available model's capabilities:
 - For large context models: send full content in one request
 - For smaller context models: chunk, summarize each, then synthesize
 - For multi-modal models: include image descriptions when available
+

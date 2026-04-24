@@ -250,3 +250,4 @@ Browse all apps: `infsh app list`
 
 - [Content Pipeline Example](https://inference.sh/docs/examples/content-pipeline) - Official pipeline guide
 - [Building Workflows](https://inference.sh/blog/guides/ai-workflows) - Workflow best practices
+

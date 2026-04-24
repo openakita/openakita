@@ -204,3 +204,4 @@ npx skills add inference-sh/skills@text-to-speech
 ```
 
 Browse all apps: `infsh app list`
+

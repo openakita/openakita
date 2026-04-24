@@ -7,3 +7,4 @@ i18n:
   zh:
     name: 加载技能
     description: 从 skills/ 目录加载新创建的技能，使其立即可用。
+

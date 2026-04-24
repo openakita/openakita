@@ -181,3 +181,4 @@ npx skills add inference-sh/skills@llm-models
 - [Running Apps](https://inference.sh/docs/apps/running) - How to run apps via CLI
 - [App Code](https://inference.sh/docs/extend/app-code) - Understanding app execution
 - [Sandboxed Code Execution](https://inference.sh/blog/tools/sandboxed-execution) - Safe code execution for agents
+

@@ -221,3 +221,4 @@ mcporter call tencent-survey.get_survey --args '{"survey_id": 292192}'
 | `destructiveHint` | false | 非破坏性操作 |
 | `idempotentHint` | true | 幂等操作，多次调用结果一致 |
 | `openWorldHint` | false | 内部调用 |
+

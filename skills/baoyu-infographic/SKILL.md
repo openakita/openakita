@@ -248,3 +248,4 @@ Report: topic, layout, style, aspect, language, output path, files created.
 ## Extension Support
 
 Custom configurations via EXTEND.md. See **Step 1.1** for paths and supported options.
+

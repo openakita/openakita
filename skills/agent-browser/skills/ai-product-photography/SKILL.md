@@ -264,3 +264,4 @@ npx skills add inference-sh/skills@inference-sh
 ```
 
 Browse all image apps: `infsh app list --category image`
+

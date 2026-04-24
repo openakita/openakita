@@ -215,3 +215,4 @@ npx skills add inference-sh/skills@prompt-engineering
 ```
 
 Browse all apps: `infsh app list`
+

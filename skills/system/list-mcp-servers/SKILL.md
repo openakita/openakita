@@ -26,3 +26,4 @@ category: MCP
 
 - `call-mcp-tool`: 调用 MCP 工具
 - `get-mcp-instructions`: 获取使用说明
+

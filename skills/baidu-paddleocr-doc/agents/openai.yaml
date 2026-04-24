@@ -6,3 +6,4 @@ i18n:
   zh:
     name: "PaddleOCR 文档解析"
     description: "基于 PaddleOCR-VL-1.5 的 SOTA 文档解析，超高精度识别和解析文档内容。"
+

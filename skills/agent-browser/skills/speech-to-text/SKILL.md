@@ -127,3 +127,4 @@ Browse all audio apps: `infsh app list --category audio`
 - [Running Apps](https://inference.sh/docs/apps/running) - How to run apps via CLI
 - [Audio Transcription Example](https://inference.sh/docs/examples/audio-transcription) - Complete transcription guide
 - [Apps Overview](https://inference.sh/docs/apps/overview) - Understanding the app ecosystem
+

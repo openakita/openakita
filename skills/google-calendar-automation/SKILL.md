@@ -178,3 +178,4 @@ Automate Google Calendar workflows including event creation, scheduling, availab
 | Remove attendee | `GOOGLECALENDAR_REMOVE_ATTENDEE` | `event_id`, `attendee_email` |
 | Get current time | `GOOGLECALENDAR_GET_CURRENT_DATE_TIME` | `timezone` |
 | Get calendar | `GOOGLECALENDAR_GET_CALENDAR` | `calendar_id` |
+

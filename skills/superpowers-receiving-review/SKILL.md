@@ -211,3 +211,4 @@ When replying to inline review comments on GitHub, reply in the comment thread (
 Verify. Question. Then implement.
 
 No performative agreement. Technical rigor always.
+

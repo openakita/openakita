@@ -372,3 +372,4 @@ def _create_line_tracking_parser():
     orig_set_content_handler = parser.setContentHandler
     parser.setContentHandler = set_content_handler  # type: ignore
     return parser
+

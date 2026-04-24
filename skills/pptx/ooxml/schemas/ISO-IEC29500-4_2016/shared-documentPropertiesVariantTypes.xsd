@@ -193,3 +193,4 @@
   <xsd:element name="vstream" type="CT_Vstream"/>
   <xsd:element name="clsid" type="s:ST_Guid"/>
 </xsd:schema>
+

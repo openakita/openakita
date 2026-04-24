@@ -27,3 +27,4 @@ category: MCP
 
 - `list-mcp-servers`: 列出服务器
 - `call-mcp-tool`: 调用工具
+

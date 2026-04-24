@@ -6,3 +6,4 @@ i18n:
   zh:
     name: 桌面 UI 检查
     description: 检查窗口 UI 元素树结构，用于调试 UI 自动化问题和理解界面布局。
+

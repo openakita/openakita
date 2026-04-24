@@ -231,3 +231,4 @@ Schema: [references/config/preferences-schema.md](references/config/preferences-
 **Visual Elements**: [references/visual-elements.md](references/visual-elements.md)
 **Workflow**: [confirm-options.md](references/workflow/confirm-options.md) | [prompt-template.md](references/workflow/prompt-template.md) | [reference-images.md](references/workflow/reference-images.md)
 **Config**: [preferences-schema.md](references/config/preferences-schema.md) | [first-time-setup.md](references/config/first-time-setup.md) | [watermark-guide.md](references/config/watermark-guide.md)
+

@@ -197,3 +197,4 @@ def _consolidate_text(run):
                 prev.removeAttribute("xml:space")
 
             run.removeChild(curr)
+

@@ -58,3 +58,4 @@ infsh app list                    # All apps
 infsh app list --category image   # By category
 infsh app list --search "flux"    # Search
 ```
+

@@ -1018,3 +1018,4 @@ def save_inventory(inventory: InventoryData, output_path: Path) -> None:
 
 if __name__ == "__main__":
     main()
+

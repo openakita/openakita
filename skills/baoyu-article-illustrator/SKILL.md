@@ -153,3 +153,4 @@ illustrations/{topic-slug}/
 | [references/styles.md](references/styles.md) | Style gallery |
 | [references/prompt-construction.md](references/prompt-construction.md) | Prompt templates |
 | [references/config/first-time-setup.md](references/config/first-time-setup.md) | First-time setup |
+

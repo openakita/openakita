@@ -65,3 +65,4 @@ python3 scripts/ima_kb.py search --kb-id xxx "关键词"
 python3 scripts/ima_kb.py browse --kb-id xxx
 python3 scripts/ima_kb.py import-url --kb-id xxx --url "https://example.com"
 ```
+

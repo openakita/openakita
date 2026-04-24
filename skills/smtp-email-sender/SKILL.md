@@ -184,3 +184,4 @@ python scripts/test_smtp.py
 2. 网络连接是否正常
 3. 邮箱账号密码是否正确
 4. 防火墙是否阻止 SMTP 端口
+

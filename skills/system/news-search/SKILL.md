@@ -36,3 +36,4 @@ category: Web Search
 ## Related Skills
 
 - `web-search`: 搜索网页
+

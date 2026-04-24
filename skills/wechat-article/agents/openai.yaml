@@ -7,3 +7,4 @@ i18n:
   zh:
     name: "微信公众号文章"
     description: "创建和排版微信公众号文章，支持 Markdown 转公众号 HTML、样式模板和图片处理。"
+

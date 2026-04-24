@@ -301,3 +301,4 @@ asyncio.run(session_workflow())
 3. **Clean up when done** - Close sessions explicitly if you know you're finished
 4. **Don't over-parallelize** - Session requests go to the same worker sequentially
 5. **Monitor costs** - Long-running sessions incur ongoing charges
+

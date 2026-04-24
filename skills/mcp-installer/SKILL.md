@@ -312,3 +312,4 @@ add_mcp_server(
 - **断开**: `disconnect_mcp_server("name")`
 - **删除**: `remove_mcp_server("name")`（仅 `data/mcp/servers/` 中的配置）
 - **重新加载全部**: `reload_mcp_servers`
+

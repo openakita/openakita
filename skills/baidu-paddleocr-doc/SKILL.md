@@ -34,3 +34,4 @@ export BAIDU_API_KEY="your_key"
 python3 scripts/baidu_ocr_doc.py doc /path/to/document.jpg
 python3 scripts/baidu_ocr_doc.py table /path/to/table.png
 ```
+

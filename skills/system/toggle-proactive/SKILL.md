@@ -51,3 +51,4 @@ category: Persona
 用户: "少发点消息"
 → update_persona_trait(dimension="proactiveness", preference="low")
 ```
+

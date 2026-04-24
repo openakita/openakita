@@ -291,3 +291,4 @@ npx skills add inference-sh/skills@seo-content-brief
 ```
 
 Browse all apps: `infsh app list`
+

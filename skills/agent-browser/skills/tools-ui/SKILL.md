@@ -168,3 +168,4 @@ npx skills add inference-sh/skills@widgets-ui
 - [Tool Approval Gates](https://inference.sh/blog/tools/approval-gates) - Implementing approvals
 
 Component docs: [ui.inference.sh/blocks/tools](https://ui.inference.sh/blocks/tools)
+

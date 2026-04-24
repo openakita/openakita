@@ -74,3 +74,4 @@ opencli_doctor()
 - `browser_navigate` — 简单导航
 - `web_fetch` — 轻量 URL 内容获取
 - `web_search` — 搜索引擎查询
+

@@ -146,3 +146,4 @@ Browse all apps: `infsh app list`
 - [Adding Tools to Agents](https://inference.sh/docs/agents/adding-tools) - Equip agents with search
 - [Building a Research Agent](https://inference.sh/blog/guides/research-agent) - LLM + search integration guide
 - [Tool Integration Tax](https://inference.sh/blog/tools/integration-tax) - Why pre-built tools matter
+
