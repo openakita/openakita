@@ -1,13 +1,13 @@
 {
   "id": "media-post",
-  "name": "Media Post",
+  "name": "Launch Kit",
   "version": "0.1.0",
-  "description": "Post-edit publishing kit — VLM cover picker (Qwen-VL-max 6-axis aesthetics), smart-recompose horizontal->vertical with EMA-smoothed subject tracking, 5-platform SEO pack (Qwen-Plus), and chapter cards (Playwright + ffmpeg drawtext fallback)",
-  "display_name_zh": "媒体发布套件",
-  "display_name_en": "Media Post",
+  "description": "Pre-publish launch kit — VLM cover picker (Qwen-VL-max 6-axis aesthetics), smart-recompose horizontal->vertical with EMA-smoothed subject tracking, 5-platform SEO pack (Qwen-Plus), and chapter cards (Playwright + ffmpeg drawtext fallback)",
+  "display_name_zh": "发布物料工坊",
+  "display_name_en": "Launch Kit",
   "description_i18n": {
-    "zh": "视频成片到发布物料一站式 — VLM 智能选封面（Qwen-VL-max 6 维美学评分）/ 横竖屏智能重构图（EMA 平滑 + 主体跟踪）/ 5 平台 SEO 包（Qwen-Plus）/ 章节卡渲染（Playwright 主路径 + ffmpeg drawtext 降级）",
-    "en": "One-stop publishing kit from edited video to platform-ready assets — smart cover picking (Qwen-VL-max 6-axis scoring), horizontal-to-vertical smart recompose (EMA-smoothed subject tracking), 5-platform SEO pack (Qwen-Plus), chapter cards (Playwright primary + ffmpeg drawtext fallback)"
+    "zh": "视频成片到发布前物料一站式 — VLM 智能选封面（Qwen-VL-max 6 维美学评分）/ 横竖屏智能重构图（EMA 平滑 + 主体跟踪）/ 5 平台 SEO 包（Qwen-Plus）/ 章节卡渲染（Playwright 主路径 + ffmpeg drawtext 降级）",
+    "en": "Pre-publish launch kit from edited video to platform-ready assets — smart cover picking (Qwen-VL-max 6-axis scoring), horizontal-to-vertical smart recompose (EMA-smoothed subject tracking), 5-platform SEO pack (Qwen-Plus), chapter cards (Playwright primary + ffmpeg drawtext fallback)"
   },
   "type": "python",
   "entry": "plugin.py",
@@ -40,10 +40,10 @@
   },
   "ui": {
     "entry": "ui/dist/index.html",
-    "title": "媒体发布套件",
+    "title": "发布物料工坊",
     "title_i18n": {
-      "zh": "媒体发布套件",
-      "en": "Media Post"
+      "zh": "发布物料工坊",
+      "en": "Launch Kit"
     },
     "sidebar_group": "apps",
     "permissions": ["upload", "download", "notifications", "theme", "clipboard"]

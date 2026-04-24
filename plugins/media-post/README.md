@@ -1,4 +1,6 @@
-# Media Post 媒体发布套件
+# Launch Kit 发布物料工坊
+
+> Plugin id 保持 `media-post` 不变；仅中/英文展示名由"媒体发布套件 / Media Post"更名为"发布物料工坊 / Launch Kit"（强调：这是**发布前**的物料整理工具，不是发布动作本身）。
 
 OpenAkita first-class plugin that turns an edited video into platform-ready
 publishing assets — covers, vertical recompose, SEO copy, chapter cards.

@@ -69,11 +69,11 @@ def test_plugin_json_identity_locked() -> None:
     assert manifest["version"] == "0.1.0"
     assert manifest["type"] == "python"
     assert manifest["entry"] == "plugin.py"
-    assert manifest["display_name_zh"] == "媒体发布套件"
+    assert manifest["display_name_zh"] == "发布物料工坊"
     assert manifest["requires"]["sdk"] == ">=0.7.0,<0.8.0"
     assert manifest["requires"]["plugin_api"] == "~2"
     assert manifest["ui"]["entry"] == "ui/dist/index.html"
-    assert manifest["ui"]["title_i18n"]["zh"] == "媒体发布套件"
+    assert manifest["ui"]["title_i18n"]["zh"] == "发布物料工坊"
 
 
 def test_plugin_json_provides_four_tools() -> None:
