@@ -605,6 +605,9 @@ class OpenAIProvider(LLMProvider):
                         elif delta.get("name") and not tool_calls[call_id]["name"]:
                             tool_calls[call_id]["name"] = delta["name"]
                         current_tool_id = call_id
+                        extra = delta.get("extra_content")
+                        if extra and "extra_content" not in tool_calls[call_id]:
+                            tool_calls[call_id]["extra_content"] = extra
                     target_id = call_id or current_tool_id
                     if target_id and target_id in tool_calls:
                         tool_calls[target_id]["arguments"] += delta.get("arguments") or ""
@@ -637,6 +640,7 @@ class OpenAIProvider(LLMProvider):
                     id=call_id,
                     name=tc["name"],
                     input=args,
+                    provider_extra=tc.get("extra_content"),
                 )
             )
 
@@ -1394,15 +1398,19 @@ class OpenAIProvider(LLMProvider):
             tool_calls = delta["tool_calls"]
             if tool_calls:
                 tc = tool_calls[0]
+                d = {
+                    "type": "tool_use",
+                    "id": tc.get("id"),
+                    "name": tc.get("function", {}).get("name"),
+                    "arguments": tc.get("function", {}).get("arguments"),
+                }
+                extra = tc.get("extra_content")
+                if extra:
+                    d["extra_content"] = extra
                 events.append(
                     {
                         "type": "content_block_delta",
-                        "delta": {
-                            "type": "tool_use",
-                            "id": tc.get("id"),
-                            "name": tc.get("function", {}).get("name"),
-                            "arguments": tc.get("function", {}).get("arguments"),
-                        },
+                        "delta": d,
                     }
                 )
 

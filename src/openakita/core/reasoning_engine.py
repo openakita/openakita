@@ -4838,21 +4838,15 @@ class ReasoningEngine:
                 text_content += display_text
                 assistant_content.append({"type": "text", "text": raw_text})
             elif block.type == "tool_use":
-                tool_calls.append(
-                    {
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input,
-                    }
-                )
-                assistant_content.append(
-                    {
-                        "type": "tool_use",
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input,
-                    }
-                )
+                tc_dict: dict = {
+                    "id": block.id,
+                    "name": block.name,
+                    "input": block.input,
+                }
+                if getattr(block, "provider_extra", None):
+                    tc_dict["provider_extra"] = block.provider_extra
+                tool_calls.append(tc_dict)
+                assistant_content.append({"type": "tool_use", **tc_dict})
 
         # 防御层：如果 provider 层未能从 thinking 内容中提取嵌入的工具调用，
         # 在此做最后一次检查（MiniMax-M2.5 已知会将 <minimax:tool_call> 嵌入 thinking 块）
@@ -4864,21 +4858,15 @@ class ReasoningEngine:
                     _, embedded_tool_calls = parse_text_tool_calls(thinking_content)
                     if embedded_tool_calls:
                         for tc in embedded_tool_calls:
-                            tool_calls.append(
-                                {
-                                    "id": tc.id,
-                                    "name": tc.name,
-                                    "input": tc.input,
-                                }
-                            )
-                            assistant_content.append(
-                                {
-                                    "type": "tool_use",
-                                    "id": tc.id,
-                                    "name": tc.name,
-                                    "input": tc.input,
-                                }
-                            )
+                            tc_dict = {
+                                "id": tc.id,
+                                "name": tc.name,
+                                "input": tc.input,
+                            }
+                            if getattr(tc, "provider_extra", None):
+                                tc_dict["provider_extra"] = tc.provider_extra
+                            tool_calls.append(tc_dict)
+                            assistant_content.append({"type": "tool_use", **tc_dict})
                         logger.warning(
                             f"[_parse_decision] Recovered {len(embedded_tool_calls)} tool calls "
                             f"from thinking content (provider-level extraction missed)"
@@ -4898,21 +4886,15 @@ class ReasoningEngine:
                     if embedded_tool_calls:
                         text_content = _clean
                         for tc in embedded_tool_calls:
-                            tool_calls.append(
-                                {
-                                    "id": tc.id,
-                                    "name": tc.name,
-                                    "input": tc.input,
-                                }
-                            )
-                            assistant_content.append(
-                                {
-                                    "type": "tool_use",
-                                    "id": tc.id,
-                                    "name": tc.name,
-                                    "input": tc.input,
-                                }
-                            )
+                            tc_dict = {
+                                "id": tc.id,
+                                "name": tc.name,
+                                "input": tc.input,
+                            }
+                            if getattr(tc, "provider_extra", None):
+                                tc_dict["provider_extra"] = tc.provider_extra
+                            tool_calls.append(tc_dict)
+                            assistant_content.append({"type": "tool_use", **tc_dict})
                         logger.warning(
                             f"[_parse_decision] Recovered {len(embedded_tool_calls)} tool calls "
                             f"from text content: {[tc.name for tc in embedded_tool_calls]}"
