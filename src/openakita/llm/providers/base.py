@@ -128,10 +128,12 @@ class LLMProvider(ABC):
             self._error_category = ""
             if self._is_extended_cooldown:
                 self._is_extended_cooldown = False
-                # 渐进退避冷静期结束后重置连续计数，给端点重新证明自己的机会
-                self._consecutive_cooldowns = 0
+                # 不重置 _consecutive_cooldowns：只有 record_success() 才重置。
+                # 这样持续失败的端点在冷却到期后如果再次失败，会直接进入
+                # 上一次的退避阶级（而非从 0 重新开始），避免 5s→10s→reset 循环。
                 logger.info(
-                    f"[LLM] endpoint={self.name} progressive cooldown expired, reset to healthy"
+                    f"[LLM] endpoint={self.name} progressive cooldown expired, "
+                    f"reset to healthy (consecutive_cooldowns={self._consecutive_cooldowns} preserved)"
                 )
 
         return self._healthy
@@ -175,14 +177,14 @@ class LLMProvider(ABC):
                 - "structural": 结构性/格式错误 (10s)
                 - "transient": 超时/连接错误 (5s)
                 - "": 默认 (30s)
-            is_local: 是否为本地端点（Ollama 等），本地端点 transient
-                错误不参与渐进升级（超时是资源不足，非远程故障）
+            is_local: 是否为本地端点（Ollama 等），影响 transient 错误的退避策略
 
         渐进式冷静期退避：
             连续非结构性错误进入冷静期（中间没有成功请求），冷静期从
-            COOLDOWN_ESCALATION_STEPS 按次数递增，上限 5 分钟。
+            COOLDOWN_ESCALATION_STEPS 按次数递增，上限 60 秒。
             - 结构性错误不计入连续次数（重试不会改变结果）
-            - 本地端点 transient 错误不触发渐进升级（超时是正常行为）
+            - 本地端点 Timeout 不触发渐进升级（超时是推理资源不足）
+            - 本地端点 ConnectError 正常参与渐进升级（服务未启动，持续重试无意义）
         """
         was_already_unhealthy = not self._healthy
         self._healthy = False
@@ -192,9 +194,10 @@ class LLMProvider(ABC):
         # 累计连续冷静期次数
         # - 只在从健康 → 不健康时递增（同一轮重试中多次 mark_unhealthy 不重复计数）
         # - 结构性错误不累计：每次重试结果相同
-        # - 本地端点 transient 错误不累计：超时是资源不足，惩罚无意义
+        # - 本地端点 Timeout 不累计：超时是推理资源不足，惩罚无意义
+        #   但 ConnectError（服务未启动）应参与渐进退避，否则 5s 冷却循环浪费资源
         skip_escalation = self._error_category == "structural" or (
-            is_local and self._error_category == "transient"
+            is_local and self._error_category == "transient" and self._is_timeout_error(error)
         )
         if not skip_escalation and not was_already_unhealthy:
             self._consecutive_cooldowns += 1
@@ -219,8 +222,9 @@ class LLMProvider(ABC):
         elif self._error_category == "structural":
             cooldown = COOLDOWN_STRUCTURAL
         elif self._error_category == "transient":
-            if is_local:
-                # 本地端点超时固定短冷静期，不升级
+            _local_timeout = is_local and self._is_timeout_error(error)
+            if _local_timeout:
+                # 本地端点超时固定短冷静期，不升级（服务在跑但慢）
                 cooldown = COOLDOWN_TRANSIENT
             elif self._consecutive_cooldowns >= 2:
                 # 远程端点连续失败 → 渐进退避
@@ -320,6 +324,12 @@ class LLMProvider(ABC):
             if self._is_extended_cooldown:
                 self._is_extended_cooldown = False
             self._cooldown_until = new_until
+
+    @staticmethod
+    def _is_timeout_error(error: str) -> bool:
+        """判断是否为超时错误（区别于连接拒绝等其他 transient 错误）"""
+        err = error.lower()
+        return any(kw in err for kw in ["timeout", "timed out"])
 
     @staticmethod
     def _classify_error(error: str) -> str:
