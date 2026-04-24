@@ -1238,6 +1238,58 @@ class ReasoningEngine:
             if task_monitor:
                 task_monitor.end_iteration(decision.text_content or "")
 
+                # Idle loop nudge: if agent has had consecutive 0-tool-call iterations,
+                # inject a strategic pivot message to force action.
+                idle_nudge = task_monitor.get_idle_loop_nudge()
+                if idle_nudge:
+                    working_messages.append({
+                        "role": "user",
+                        "content": idle_nudge.message,  # Use .message, not the object
+                    })
+                    logger.warning(
+                        f"[ReAct] Idle loop nudge injected: level={idle_nudge.level}, "
+                        f"task={task_monitor.metrics.task_id}"
+                    )
+
+                    if idle_nudge.should_terminate:
+                        logger.error(
+                            f"[ReAct] Idle loop terminate triggered after "
+                            f"{task_monitor.consecutive_zero_tool_iterations} iterations"
+                        )
+                        break  # Exit the reasoning loop
+
+                    if idle_nudge.should_switch_model:
+                        new_model = task_monitor.fallback_model
+                        if not new_model:
+                            logger.warning(
+                                "[ReAct] Idle loop model switch requested but no fallback_model configured"
+                            )
+                        else:
+                            logger.warning("[ReAct] Idle loop triggering model switch")
+                            self._switch_llm_endpoint(new_model, reason="idle loop model switch")
+                            task_monitor.switch_model(
+                                new_model,
+                                "Idle loop model switch",
+                                reset_context=True,
+                            )
+                            # Reset messages to original user messages plus switch notice
+                            working_messages = list(state.original_user_messages)
+                            working_messages.append({
+                                "role": "user",
+                                "content": (
+                                    "[System notice] Model switch occurred: previous tool_use/tool_result "
+                                    "history cleared. Please restart handling the user request."
+                                ),
+                            })
+                            state.reset_for_model_switch()
+                            try:
+                                llm_client = getattr(self._brain, "_llm_client", None)
+                                current = llm_client.get_current_model() if llm_client else None
+                                if current and current.model:
+                                    current_model = current.model
+                            except Exception:
+                                pass
+
             # -- 收集 ReAct trace 数据 --
             # token 信息从 raw_response.usage 提取（Decision 本身不携带 token）
             _raw = decision.raw_response
@@ -2727,6 +2779,57 @@ class ReasoningEngine:
 
                 if task_monitor:
                     task_monitor.end_iteration(decision.text_content or "")
+
+                    # Idle loop nudge: inject strategic pivot message if agent is stuck
+                    idle_nudge = task_monitor.get_idle_loop_nudge()
+                    if idle_nudge:
+                        working_messages.append({
+                            "role": "user",
+                            "content": idle_nudge.message,  # Use .message, not the object
+                        })
+                        logger.warning(
+                            f"[ReAct-Stream] Idle loop nudge injected: level={idle_nudge.level}, "
+                            f"task={task_monitor.metrics.task_id}"
+                        )
+
+                        if idle_nudge.should_terminate:
+                            logger.error(
+                                f"[ReAct-Stream] Idle loop terminate triggered after "
+                                f"{task_monitor.consecutive_zero_tool_iterations} iterations"
+                            )
+                            break  # Exit the reasoning loop
+
+                        if idle_nudge.should_switch_model:
+                            new_model = task_monitor.fallback_model
+                            if not new_model:
+                                logger.warning(
+                                    "[ReAct-Stream] Idle loop model switch requested but no fallback_model configured"
+                                )
+                            else:
+                                logger.warning("[ReAct-Stream] Idle loop triggering model switch")
+                                self._switch_llm_endpoint(new_model, reason="idle loop model switch")
+                                task_monitor.switch_model(
+                                    new_model,
+                                    "Idle loop model switch",
+                                    reset_context=True,
+                                )
+                                # Reset messages to original user messages plus switch notice
+                                working_messages = list(state.original_user_messages)
+                                working_messages.append({
+                                    "role": "user",
+                                    "content": (
+                                        "[System notice] Model switch occurred: previous tool_use/tool_result "
+                                        "history cleared. Please restart handling the user request."
+                                    ),
+                                })
+                                state.reset_for_model_switch()
+                                try:
+                                    llm_client = getattr(self._brain, "_llm_client", None)
+                                    current = llm_client.get_current_model() if llm_client else None
+                                    if current and current.model:
+                                        current_model = current.model
+                                except Exception:
+                                    pass
 
                 # -- 收集 ReAct trace + Budget 记录 token --
                 # 流式模式: usage 来自 StreamAccumulator (_stream_usage dict)
