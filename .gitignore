@@ -144,6 +144,10 @@ plugins/*
 !plugins/media-post/ui/
 !plugins/media-post/ui/dist/
 !plugins/media-post/ui/dist/**
+!plugins/footage-gate/
+!plugins/footage-gate/ui/
+!plugins/footage-gate/ui/dist/
+!plugins/footage-gate/ui/dist/**
 
 # Archived plugins (not auto-loaded; not for GitHub)
 # 整个目录及其所有内容都不进入 git

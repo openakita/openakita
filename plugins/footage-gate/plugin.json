@@ -1,0 +1,51 @@
+{
+  "id": "footage-gate",
+  "name": "Footage Gate",
+  "version": "1.0.0",
+  "description": "Final-cut quality gate — source review, silence cut, auto color grade, and cut-boundary QC with optional auto-remux.",
+  "display_name_zh": "成片质量门",
+  "display_name_en": "Footage Gate",
+  "description_i18n": {
+    "zh": "成片质量门 — 四模式后期质检：源素材审核（C6）/ 静默剪除（D2）/ 自动调色（C1，含 HDR→SDR 兜底）/ 剪辑边界 QC（C2，可选自动重渲）。100% 本地 FFmpeg，无 LLM/API 依赖。",
+    "en": "Final-cut quality gate — four post-production modes: source media review (C6), silence cutter (D2), auto color grade (C1, with HDR→SDR fallback), cut-boundary QC (C2, optional auto-remux). 100% local FFmpeg, no LLM/API dependency."
+  },
+  "type": "python",
+  "entry": "plugin.py",
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["video", "post-production", "ffmpeg", "color-grade", "qc"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.7.0,<0.8.0"
+  },
+  "provides": {
+    "tools": [
+      "footage_gate_create",
+      "footage_gate_status",
+      "footage_gate_list",
+      "footage_gate_cancel",
+      "footage_gate_settings_get"
+    ],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "成片质量门",
+    "title_i18n": {
+      "zh": "成片质量门",
+      "en": "Footage Gate"
+    },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme", "clipboard"]
+  }
+}
