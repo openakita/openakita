@@ -181,3 +181,4 @@ pip install openakita -i https://pypi.tuna.tsinghua.edu.cn/simple
 - [CLI 命令参考](/advanced/cli) — 全部命令行选项
 - [配置向导详解](/advanced/wizard) — 配置项完整说明
 - [生产部署](/network/production) — 服务器部署与反向代理配置
+

@@ -98,3 +98,4 @@
 - [技能管理](/features/skills) — 查看和管理已加载的技能
 - [记忆管理](/features/memory) — 记忆系统状态与配置
 - [Token 统计](/features/token-stats) — LLM 使用量统计
+

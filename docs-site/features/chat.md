@@ -90,3 +90,4 @@ OpenAkita 支持多会话管理，每个会话独立保存上下文。
 - [LLM 端点配置](/features/llm-config) — 配置 AI 模型和接口
 - [消息通道（IM）](/features/im-channels) — 通过 IM 软件与 Agent 对话
 - [CLI 命令参考](/advanced/cli) — 完整的命令行用法
+

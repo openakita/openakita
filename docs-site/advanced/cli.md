@@ -136,3 +136,4 @@ openakita serve
 - [配置向导详解](/advanced/wizard) — 完整配置字段说明
 - [高级设置](/advanced/advanced) — 网络与系统配置
 - [生产部署](/network/production) — 服务器部署指南
+

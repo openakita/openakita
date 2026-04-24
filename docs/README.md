@@ -66,3 +66,4 @@ Found an error or want to improve the documentation?
 3. Submit a pull request
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for details.
+

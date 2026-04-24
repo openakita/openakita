@@ -103,3 +103,4 @@ OpenAkita 支持三种搜索后端，用于在对话时检索相关记忆：
 - [身份配置](/features/identity) — MEMORY.md 与身份系统的关系
 - [LLM 端点配置](/features/llm-config) — Embedding 模型依赖 LLM 端点
 - [灵魂与意志配置](/web/#/config/agent) — 搜索后端与记忆参数配置
+

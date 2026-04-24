@@ -119,3 +119,4 @@ openakita serve
 9. **[身份配置](/features/identity)** — 自定义 Agent 人格
 
 按需配置，无需全部阅读。遇到问题可随时在 [GitHub Issues](https://github.com/openakita/openakita/issues) 反馈。
+

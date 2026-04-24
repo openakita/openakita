@@ -106,3 +106,4 @@ OpenAkita 支持两种任务类型：
 - [消息通道（IM）](/features/im-channels) — 配置任务结果的通知通道
 - [身份配置](/features/identity) — 自定义 AI 执行任务时的行为风格
 - [灵魂与意志配置](/web/#/config/agent) — 时区与高级调度配置
+

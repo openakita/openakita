@@ -632,3 +632,4 @@ Agent 回复 ← Adapter (发送) ← OutgoingMessage ← Gateway (路由)
 - **ChannelAdapter**: 基类定义在 `src/openakita/channels/base.py`，各平台实现在 `src/openakita/channels/adapters/`
 - **MessageGateway**: 统一消息路由、会话管理、媒体预处理，定义在 `src/openakita/channels/gateway.py`
 - **deliver_artifacts**: Agent 工具，用于主动发送文件/图片/语音，定义在 `src/openakita/tools/handlers/im_channel.py`
+

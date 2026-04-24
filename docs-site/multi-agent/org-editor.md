@@ -88,3 +88,4 @@
 - [Agent 管理](/multi-agent/agent-manager) — Agent 的详细配置与管理
 - [Agent Store](/web/#/agent-store) — 从社区获取预设 Agent
 - [协作动态](/web/#/dashboard) — 查看实时协作状态
+
