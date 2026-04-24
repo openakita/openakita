@@ -65,6 +65,8 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
   const captchaInstanceRef = useRef<any>(null);
   const handleSubmitRef = useRef<() => void>(() => {});
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // 同步去重：防止 captcha 校验回调与按钮 onClick 双路径并发触发提交。
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     if (open) {
@@ -200,9 +202,15 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
   }, [addImages]);
 
   const handleSubmit = useCallback(async () => {
+    if (submittingRef.current) return;
     if (!title.trim() || !description.trim()) return;
     if (captchaCfg && !captchaTokenRef.current) return;
 
+    // 一次性消费 captcha token：先取出再立即清空，避免任一路径再次进入时复用同一 token。
+    const token = captchaTokenRef.current || "none";
+    captchaTokenRef.current = "";
+
+    submittingRef.current = true;
     setSubmitting(true);
     setSubmitResult(null);
 
@@ -210,7 +218,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
       const form = new FormData();
       form.append("title", title.trim());
       form.append("description", description.trim());
-      form.append("captcha_verify_param", captchaTokenRef.current || "none");
+      form.append("captcha_verify_param", token);
       for (const img of imageFiles) {
         form.append("images", img);
       }
@@ -258,7 +266,7 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
     } catch (err: any) {
       setSubmitResult({ ok: false, msg: err?.message || t("feedback.uploadFailedNetwork") });
     } finally {
-      captchaTokenRef.current = "";
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }, [captchaCfg, mode, title, description, steps, uploadLogs, uploadDebug, contactEmail, contactWechat, imageFiles, apiBase, t]);
