@@ -26,6 +26,8 @@ from rich.table import Table
 
 from .config import settings
 from .core.agent import Agent
+from .core.health_config import HealthConfig
+from .core.health_monitor import HealthMonitor
 from .logging import setup_logging
 from .python_compat import patch_simplejson_jsondecodeerror
 
@@ -79,6 +81,7 @@ _orchestrator = None  # AgentOrchestrator (multi-Agent mode)
 _desktop_pool = None  # AgentInstancePool — Desktop Chat per-session isolation
 _message_gateway = None
 _session_manager = None
+_health_monitor: HealthMonitor | None = None
 
 
 def get_agent() -> Agent:
@@ -110,6 +113,32 @@ async def _init_orchestrator():
         ensure_presets_on_mode_enable(settings.data_dir / "agents")
     except Exception as e:
         logger.warning(f"[Main] Failed to deploy presets on orchestrator init: {e}")
+
+
+async def _start_health_monitor():
+    """Start the HealthMonitor for failure recovery.
+
+    Runs a periodic loop that checks for stale tasks, stale delegations,
+    and orphaned processes. Uses the global orchestrator if available.
+    """
+    global _health_monitor
+    if _health_monitor is not None:
+        return
+    config = HealthConfig()
+    _health_monitor = HealthMonitor(config=config)
+    await _health_monitor.start(orchestrator=_orchestrator)
+    logger.info("[Main] HealthMonitor started")
+
+
+async def _stop_health_monitor():
+    """Stop the HealthMonitor."""
+    global _health_monitor
+    if _health_monitor:
+        try:
+            await _health_monitor.stop()
+        except Exception as e:
+            logger.warning(f"HealthMonitor shutdown error: {e}")
+        _health_monitor = None
 
 
 # ==================== IM channel dependency auto-install ====================
@@ -660,6 +689,8 @@ async def init_core_services(agent_or_master):
 
     await _init_orchestrator()
 
+    await _start_health_monitor()
+
     _setup_session_backfill(agent_or_master)
 
 
@@ -1053,7 +1084,7 @@ async def stop_im_channels(*, graceful: bool = True, drain_timeout: float = 30.0
         graceful: if True, drain in-flight tasks before stopping; if False, stop immediately
         drain_timeout: drain wait timeout in seconds
     """
-    global _message_gateway, _session_manager, _orchestrator, _desktop_pool
+    global _message_gateway, _session_manager, _orchestrator, _desktop_pool, _health_monitor
 
     # Gateway drain MUST happen first — agents and orchestrator must stay alive
     # so in-flight IM responses can finish sending before we tear down the pool.
@@ -1070,6 +1101,9 @@ async def stop_im_channels(*, graceful: bool = True, drain_timeout: float = 30.0
         except Exception as e:
             logger.warning(f"Desktop pool shutdown error: {e}")
         _desktop_pool = None
+
+    # Stop health monitor before orchestrator (health monitor uses orchestrator)
+    await _stop_health_monitor()
 
     if _orchestrator:
         try:
@@ -1904,12 +1938,13 @@ def prompt_debug(
 
 def _reset_globals():
     """Reset global component references to clear old instances on restart."""
-    global _agent, _orchestrator, _message_gateway, _session_manager, _desktop_pool
+    global _agent, _orchestrator, _message_gateway, _session_manager, _desktop_pool, _health_monitor
     _agent = None
     _orchestrator = None
     _desktop_pool = None
     _message_gateway = None
     _session_manager = None
+    _health_monitor = None
 
 
 @app.command()
