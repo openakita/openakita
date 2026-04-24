@@ -2311,3 +2311,4 @@ class Plugin(PluginBase):
         # silent-drop violations. We don't add a custom handler here
         # because ``APIRouter`` does not expose ``exception_handler`` —
         # only the top-level ``FastAPI`` app does.
+

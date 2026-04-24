@@ -241,3 +241,4 @@ def test_hint_for_falls_back_to_unknown() -> None:
     assert hint_for("auth")["title_en"] == ERROR_HINTS["auth"]["title_en"]
     assert hint_for("nonexistent")["title_en"] == ERROR_HINTS["unknown"]["title_en"]
     assert hint_for(None)["title_en"] == ERROR_HINTS["unknown"]["title_en"]
+

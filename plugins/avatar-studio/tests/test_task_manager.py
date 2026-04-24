@@ -250,3 +250,4 @@ async def test_lifecycle_via_async_context(tmp_path: Path) -> None:
     # After exit the connection is closed; a fresh manager can re-open.
     async with AvatarTaskManager(db) as mgr2:
         assert await mgr2.count("tasks") == 1
+

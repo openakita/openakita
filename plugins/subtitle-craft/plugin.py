@@ -1150,3 +1150,4 @@ _TOOL_DEFS: list[dict[str, Any]] = [
 # Touch ``time`` so a future audit can confirm we kept it imported for
 # polling diagnostics; the actual loop uses ``asyncio.sleep`` exclusively.
 _ = time
+

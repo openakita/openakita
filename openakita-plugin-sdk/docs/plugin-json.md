@@ -336,3 +336,4 @@ Unknown fields are preserved (`extra: "allow"` mode). You can add custom metadat
 - [hooks.md](hooks.md) — 钩子与 `provides.hooks` 的关系 / Hooks and `provides.hooks`
 - [plugin-ui.md](plugin-ui.md) — `ui` 字段详解 / UI section details
 - [examples/mcp-plugin.md](examples/mcp-plugin.md) — MCP 插件的 mcp_config.json 格式 / MCP config format
+

@@ -1117,3 +1117,4 @@ def _len_text(v: Any) -> int | None:
     if not isinstance(v, str) or not v:
         return None
     return len(v)
+

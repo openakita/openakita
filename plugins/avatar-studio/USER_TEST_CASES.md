@@ -628,3 +628,4 @@ avatar-studio 注册了 9 个 tool，可在主对话直接调用：
 **截图**: 附图
 **插件日志**: D:\OpenAkita\data\plugin_data\avatar-studio\logs\avatar-studio.log 末尾 50 行
 ```
+

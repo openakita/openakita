@@ -94,3 +94,4 @@ A Python plugin can declare a SKILL.md path in `provides.skill`; the host loads 
 
 - [../plugin-json.md](../plugin-json.md) — 清单文件规范 / Manifest reference
 - [../getting-started.md](../getting-started.md) — 不同 type 的要求 / Requirements by type
+

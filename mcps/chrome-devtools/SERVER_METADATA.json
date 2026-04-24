@@ -6,3 +6,4 @@
     "args": ["-y", "chrome-devtools-mcp@latest", "--autoConnect"],
     "env": {}
 }
+

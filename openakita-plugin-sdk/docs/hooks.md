@@ -336,3 +336,4 @@ print(sig["permission"])     # "hooks.message"
 - [api-reference.md](api-reference.md) — `register_hook` 方法说明 / method reference
 - [permissions.md](permissions.md) — `hooks.basic`, `hooks.message`, `hooks.retrieve`, `hooks.all` 权限 / permissions
 - [rest-api.md](rest-api.md) — `on_config_change` 由 REST API 配置更新触发 / triggered by REST API config updates
+

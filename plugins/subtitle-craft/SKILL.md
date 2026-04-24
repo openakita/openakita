@@ -229,3 +229,4 @@ Server-side `estimate_cost` bills `qwen-plus` (¥0.005/round) ×
 `(2 + random_window_attempts)` rounds; a typical run costs < ¥0.01.
 The UI surfaces this estimate in the right-pane `oa-preview-card`
 before the user clicks Start.
+

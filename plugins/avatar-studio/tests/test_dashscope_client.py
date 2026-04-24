@@ -538,3 +538,4 @@ async def test_submits_serialised_by_semaphore() -> None:
         c.submit_s2v(image_url="c", audio_url="d"),
     )
     assert in_flight["max"] == 1
+

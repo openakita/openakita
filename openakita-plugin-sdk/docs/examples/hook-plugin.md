@@ -188,3 +188,4 @@ def test_unload():
 - 异常被隔离 — 一个钩子崩溃不影响其他钩子 / Exceptions are isolated — one crash doesn't affect others
 - 累计 5 次错误的插件会被自动禁用 / Plugins with 5+ errors are auto-disabled
 - 使用 `api.get_data_dir()` 存储持久化日志 / Use `api.get_data_dir()` for persistent logs
+

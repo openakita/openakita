@@ -228,3 +228,4 @@ def test_plugin_without_vault():
 - `on_retrieve` 钩子可以观察和修改检索结果 / `on_retrieve` hook can observe and modify candidates
 - 配合 `config_schema.json` 提供用户友好的配置界面 / Use `config_schema.json` for user-friendly settings
 - 优雅降级：vault 路径未配置时仍提供工具（返回提示信息）/ Graceful degradation when vault path is not set
+

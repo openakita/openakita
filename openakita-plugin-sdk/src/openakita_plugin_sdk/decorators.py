@@ -170,3 +170,4 @@ def clear_registries() -> None:
     """Clear global decorator registries. Useful between tests."""
     _TOOL_REGISTRY.clear()
     _HOOK_REGISTRY.clear()
+

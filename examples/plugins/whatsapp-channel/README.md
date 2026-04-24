@@ -100,3 +100,4 @@ Uses [Baileys 7.x](https://github.com/WhiskeySockets/Baileys) (Node.js) to conne
 - Streaming output (accumulated batch send)
 - Typing indicators
 - QR code pairing (Web mode)
+

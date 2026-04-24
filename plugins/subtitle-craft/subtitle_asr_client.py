@@ -749,3 +749,4 @@ def _strip_prose_preamble(text: str) -> str:
             continue
         break
     return "\n".join(lines).strip()
+

@@ -258,3 +258,4 @@ def test_plugin_routes():
 - [getting-started.md](getting-started.md) — 第一个测试示例 / First test example
 - [api-reference.md](api-reference.md) — `MockPluginAPI` 模拟的所有方法 / All methods mocked by MockPluginAPI
 - [plugin-ui.md](plugin-ui.md) — UI 插件开发指南 / UI plugin development guide
+

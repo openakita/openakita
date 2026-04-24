@@ -149,3 +149,4 @@ async def test_qwen_plus_hook_pick_smoke() -> None:
         assert text in src_lines, f"timed line not present in source SRT: {text!r}"
 
     assert isinstance(telemetry.get("rejected_attempts", []), list)
+

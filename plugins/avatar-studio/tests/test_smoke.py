@@ -124,3 +124,4 @@ def test_assets_present() -> None:
     expected = {"bootstrap.js", "styles.css", "icons.js", "i18n.js", "markdown-mini.js"}
     actual = {p.name for p in assets.iterdir() if p.is_file()}
     assert expected.issubset(actual), f"missing assets: {expected - actual}"
+

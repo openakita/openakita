@@ -428,3 +428,4 @@ def test_prompt_template_has_required_placeholders() -> None:
         "{subtitles_block}",
     ):
         assert placeholder in SELECT_HOOK_DIALOGUE_PROMPT
+

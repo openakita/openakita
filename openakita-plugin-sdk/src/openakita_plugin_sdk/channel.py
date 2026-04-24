@@ -198,3 +198,4 @@ class ChannelPluginMixin:
         if not self.channel_type:
             raise ValueError("Set channel_type before calling register()")
         api.register_channel(self.channel_type, factory)
+

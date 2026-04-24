@@ -66,3 +66,4 @@ class ToolCall:
     name: str = ""
     arguments: dict[str, Any] = field(default_factory=dict)
     call_id: str = ""
+

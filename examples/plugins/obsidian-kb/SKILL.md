@@ -111,3 +111,4 @@ Common vault structures:
 - Create MOC (Map of Content) notes to organize related topics
 - Keep file names concise but descriptive
 - Use callouts for important information rather than bold/italic
+

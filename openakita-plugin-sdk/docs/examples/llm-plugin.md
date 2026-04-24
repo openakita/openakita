@@ -173,3 +173,4 @@ def test_unload():
 - 注册时传入**类**（不是实例）给 `register_llm_provider()` / Pass a **class** (not instance) to `register_llm_provider()`
 - `llm.register` 是 Advanced 级权限 / `llm.register` is Advanced-level permission
 - 卸载时宿主自动清理注册 / Host automatically cleans up registrations on unload
+

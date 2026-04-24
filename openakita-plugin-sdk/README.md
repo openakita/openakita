@@ -129,3 +129,4 @@ from openakita_plugin_sdk.protocols import MemoryBackendProtocol, RetrievalSourc
 from openakita_plugin_sdk.config import config_schema, config_property
 from openakita_plugin_sdk.types import UnifiedMessage, OutgoingMessage, ToolCall
 ```
+

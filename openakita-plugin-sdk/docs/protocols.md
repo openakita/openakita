@@ -210,3 +210,4 @@ assert isinstance(my_backend, MemoryBackendProtocol)
 - [permissions.md](permissions.md) — `memory.replace`, `retrieval.register`, `search.register` 权限
 - [examples/memory-plugin.md](examples/memory-plugin.md) — 完整的记忆后端插件示例
 - [examples/rag-plugin.md](examples/rag-plugin.md) — 完整的 RAG 插件示例
+

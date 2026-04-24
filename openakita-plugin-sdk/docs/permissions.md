@@ -144,3 +144,4 @@ api.send_message("test", "chat1", "hello")
 - [plugin-json.md](plugin-json.md) — `permissions` 字段格式 / permissions field format
 - [rest-api.md](rest-api.md) — 权限批准/撤销 API / Permission approve/revoke API
 - [getting-started.md](getting-started.md) — 声明权限的最佳实践 / Best practices for declaring permissions
+

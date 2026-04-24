@@ -164,3 +164,4 @@ def model_to_dict(m: SeedanceModel) -> dict:
         "concurrency": m.concurrency,
         "note": m.note,
     }
+
