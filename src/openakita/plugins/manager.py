@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .api import PluginAPI, PluginBase
+from .asset_bus import AssetBus
 from .compat import check_compatibility
 from .hooks import HookRegistry
 from .manifest import ManifestError, PluginManifest, parse_manifest
@@ -27,6 +28,7 @@ UNLOAD_TIMEOUT = 5.0
 _ALLOWED_HOST_REFS = frozenset(
     {
         "api_app",
+        "asset_bus",
         "brain",
         "channel_registry",
         "external_retrieval_sources",
@@ -68,7 +70,19 @@ class PluginManager:
 
         self._plugins_dir = plugins_dir
         self._state_path = state_path or (plugins_dir.parent / "plugin_state.json")
-        self._host_refs = self._filter_host_refs(host_refs or {})
+
+        # Asset Bus: a single shared SQLite registry living next to the
+        # plugin state file (i.e. settings.data_dir / asset_bus.db when the
+        # standard layout is used). The host owns the connection so plugins
+        # never see the DB path. See docs/asset-bus.md.
+        asset_bus_path = self._state_path.parent / "asset_bus.db"
+        self._asset_bus = AssetBus(asset_bus_path)
+
+        # Inject ourselves into host_refs BEFORE filtering so the bus is
+        # available to plugins via host_refs.get("asset_bus").
+        merged_host_refs = dict(host_refs or {})
+        merged_host_refs.setdefault("asset_bus", self._asset_bus)
+        self._host_refs = self._filter_host_refs(merged_host_refs)
 
         self._state = PluginState.load(self._state_path)
         self._error_tracker = PluginErrorTracker()
@@ -92,6 +106,27 @@ class PluginManager:
     @property
     def hook_registry(self) -> HookRegistry:
         return self._hook_registry
+
+    @property
+    def asset_bus(self) -> AssetBus:
+        """Read-only access to the host AssetBus (used by API routes/tests)."""
+        return self._asset_bus
+
+    async def purge_plugin_assets(self, plugin_id: str) -> int:
+        """Remove every asset owned by ``plugin_id`` from the Asset Bus.
+
+        Called by the uninstall HTTP route after the on-disk plugin
+        directory is gone, so the bus does not accumulate orphan rows
+        whose owner no longer exists. Safe to call when the plugin had
+        never published anything (returns 0).
+        """
+        try:
+            return await self._asset_bus.sweep_owner(plugin_id)
+        except Exception as e:
+            logger.warning(
+                "purge_plugin_assets failed for '%s': %s", plugin_id, e
+            )
+            return 0
 
     @property
     def loaded_count(self) -> int:
@@ -176,6 +211,14 @@ class PluginManager:
 
         Each plugin is loaded in its own try/except with a timeout.
         Failures are logged and tracked, never propagated.
+
+        Note: the Asset Bus is opened lazily on first publish/consume —
+        we deliberately do NOT eager-init it here. Eager init would
+        spawn an aiosqlite worker thread for every PluginManager
+        instance (including the dozens of test fixtures that never
+        touch the bus), and the thread leaks if the test loop closes
+        before ``shutdown()`` runs. Lazy init keeps the cost where the
+        usage is.
         """
         plugin_dirs = self._discover_plugins()
         if not plugin_dirs:
@@ -1196,6 +1239,18 @@ class PluginManager:
         no longer exists.
         """
         return self._failed.pop(plugin_id, None) is not None
+
+    async def shutdown(self) -> None:
+        """Release host-owned resources (Asset Bus connection).
+
+        Plugin instances are torn down via :meth:`unload_plugin`; this
+        method only handles host singletons that outlive any single
+        plugin. Safe to call multiple times.
+        """
+        try:
+            await self._asset_bus.close()
+        except Exception as e:
+            logger.warning("AssetBus close error: %s", e)
 
     def get_plugin_logs(self, plugin_id: str, lines: int = 100) -> str:
         loaded = self._loaded.get(plugin_id)

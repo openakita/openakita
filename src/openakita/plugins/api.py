@@ -348,6 +348,108 @@ class PluginAPI:
         self._hook_registry.set_timeout(hook_name, self._plugin_id, timeout)
         self._registered_hooks.append(hook_name)
 
+    # --- Asset Bus (advanced) ---
+
+    async def publish_asset(
+        self,
+        *,
+        asset_kind: str,
+        source_path: str | None = None,
+        preview_url: str | None = None,
+        duration_sec: float | None = None,
+        metadata: dict | None = None,
+        shared_with: list[str] | None = None,
+        ttl_seconds: int | None = None,
+    ) -> str | None:
+        """Publish an asset to the host-level Asset Bus for cross-plugin handoff.
+
+        Requires permission ``assets.publish``. Returns the new ``asset_id``
+        on success or ``None`` if the permission is missing or the bus is
+        not available. Consumers can fetch with :meth:`consume_asset`.
+
+        ``shared_with`` is a list of plugin IDs allowed to read this asset;
+        use ``["*"]`` for "any plugin with assets.consume".
+
+        See ``docs/asset-bus.md`` for the full ACL contract and the
+        important note that ``source_path`` is NOT validated by the bus —
+        consumers must validate paths before opening them.
+        """
+        if not self._check_permission("assets.publish"):
+            return None
+        bus = self._host.get("asset_bus")
+        if bus is None:
+            self.log("asset_bus host_ref missing, publish_asset is a no-op", "warning")
+            return None
+        try:
+            return await bus.publish(
+                plugin_id=self._plugin_id,
+                asset_kind=asset_kind,
+                source_path=source_path,
+                preview_url=preview_url,
+                duration_sec=duration_sec,
+                metadata=metadata,
+                shared_with=shared_with,
+                ttl_seconds=ttl_seconds,
+            )
+        except Exception as e:
+            self.log_error(f"publish_asset failed: {e}", e)
+            return None
+
+    async def consume_asset(self, asset_id: str) -> dict | None:
+        """Fetch an asset by id, gated by ``assets.consume`` and the bus ACL.
+
+        Returns the asset row (as a dict) when the calling plugin is the
+        owner, is listed in ``shared_with``, or the asset is shared with
+        ``"*"``. Returns ``None`` for missing AND for forbidden assets so
+        that consumers cannot enumerate assets they cannot read.
+        """
+        if not self._check_permission("assets.consume"):
+            return None
+        bus = self._host.get("asset_bus")
+        if bus is None:
+            self.log("asset_bus host_ref missing, consume_asset is a no-op", "warning")
+            return None
+        try:
+            return await bus.get(asset_id, requester_plugin_id=self._plugin_id)
+        except Exception as e:
+            self.log_error(f"consume_asset failed: {e}", e)
+            return None
+
+    async def list_my_assets(self) -> list[dict]:
+        """Return the assets owned by this plugin (newest first).
+
+        Requires ``assets.publish`` (the same gate as creating them); not
+        ``assets.consume``, because owners always see their own rows
+        regardless of consumer permission.
+        """
+        if not self._check_permission("assets.publish"):
+            return []
+        bus = self._host.get("asset_bus")
+        if bus is None:
+            return []
+        try:
+            return await bus.list_owned(self._plugin_id)
+        except Exception as e:
+            self.log_error(f"list_my_assets failed: {e}", e)
+            return []
+
+    async def delete_my_asset(self, asset_id: str) -> bool:
+        """Delete an asset only when the calling plugin is its owner.
+
+        Returns True iff a row was actually removed. Returns False on
+        permission denial, missing bus, or non-owner attempts.
+        """
+        if not self._check_permission("assets.publish"):
+            return False
+        bus = self._host.get("asset_bus")
+        if bus is None:
+            return False
+        try:
+            return await bus.delete_owned(asset_id, self._plugin_id)
+        except Exception as e:
+            self.log_error(f"delete_my_asset failed: {e}", e)
+            return False
+
     # --- API routes (advanced) ---
 
     def register_api_routes(self, router) -> None:

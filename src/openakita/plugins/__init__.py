@@ -1,6 +1,7 @@
 """OpenAkita Plugin System — unified extensibility for all core modules."""
 
 from .api import PluginAPI, PluginBase
+from .asset_bus import AssetBus
 from .catalog import PluginCatalog
 from .errors import PluginError, PluginErrorCode
 from .hooks import HookRegistry
@@ -11,6 +12,7 @@ from .sandbox import PluginErrorTracker, safe_call, safe_call_sync
 from .state import PluginState
 
 __all__ = [
+    "AssetBus",
     "HookRegistry",
     "MemoryBackendProtocol",
     "PLUGIN_PROVIDER_MAP",

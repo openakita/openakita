@@ -652,6 +652,18 @@ async def uninstall_plugin(
                 pm.state.remove_plugin(plugin_id)
                 pm.state.save(state_path)
                 pm.forget_failure(plugin_id)
+                # Sweep cross-plugin Asset Bus rows owned by this plugin
+                # so the host-level registry never accumulates orphans
+                # whose owner no longer exists. Best-effort: a failure
+                # here does not roll back the uninstall.
+                try:
+                    swept = await pm.purge_plugin_assets(plugin_id)
+                    if swept:
+                        warnings.append(
+                            f"已清理 {swept} 条跨插件资产记录"
+                        )
+                except Exception as e:
+                    warnings.append(f"asset_bus sweep 失败: {e}")
             else:
                 state = PluginState.load(state_path)
                 state.remove_plugin(plugin_id)

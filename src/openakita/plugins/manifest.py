@@ -53,6 +53,10 @@ ADVANCED_PERMISSIONS = frozenset(
         "vector.access",
         "settings.read",
         "llm.register",
+        # Cross-plugin Asset Bus: publish/consume intermediate artifacts
+        # via the host-managed assets_bus.db. See docs/asset-bus.md.
+        "assets.publish",
+        "assets.consume",
     }
 )
 
