@@ -276,6 +276,11 @@ class UnifiedStore:
         rows = self.db.load_all(scope=scope, scope_owner=scope_owner)
         return [SemanticMemory.from_dict(r) for r in rows]
 
+    def query_paged(self, **kwargs: Any) -> tuple[list[SemanticMemory], int]:
+        """Paginated query delegating to storage.query_paged()."""
+        rows, total = self.db.query_paged(**kwargs)
+        return [SemanticMemory.from_dict(r) for r in rows], total
+
     # ======================================================================
     # Episode Memory
     # ======================================================================
