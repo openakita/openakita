@@ -1771,6 +1771,7 @@ class LLMClient:
                         id=block.get("id", ""),
                         name=block.get("name", ""),
                         input=block.get("input", {}),
+                        provider_extra=block.get("provider_extra"),
                     )
                 )
             elif btype == "tool_result":

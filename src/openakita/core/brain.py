@@ -423,13 +423,14 @@ class Brain:
             if isinstance(block, TextBlock):
                 text_parts.append(block.text)
             elif isinstance(block, ToolUseBlock):
-                tool_calls.append(
-                    {
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input,
-                    }
-                )
+                d: dict = {
+                    "id": block.id,
+                    "name": block.name,
+                    "input": block.input,
+                }
+                if block.provider_extra:
+                    d["provider_extra"] = block.provider_extra
+                tool_calls.append(d)
         return Response(
             content="\n".join(text_parts),
             tool_calls=tool_calls,
@@ -789,6 +790,7 @@ class Brain:
                                     id=part.get("id", ""),
                                     name=part.get("name", ""),
                                     input=part.get("input", {}),
+                                    provider_extra=part.get("provider_extra"),
                                 )
                             )
 
@@ -1415,14 +1417,15 @@ class Brain:
                     if isinstance(tc.input, dict)
                     else str(tc.input)
                 )
-                blocks.append(
-                    {
-                        "type": "tool_use",
-                        "id": tc.id,
-                        "name": tc.name,
-                        "input": input_str,
-                    }
-                )
+                d: dict = {
+                    "type": "tool_use",
+                    "id": tc.id,
+                    "name": tc.name,
+                    "input": input_str,
+                }
+                if getattr(tc, "provider_extra", None):
+                    d["provider_extra"] = tc.provider_extra
+                blocks.append(d)
             return blocks
 
         # Anthropic Message 格式
@@ -1458,14 +1461,19 @@ class Brain:
                     if isinstance(inp, dict)
                     else str(inp)
                 )
-                blocks.append(
-                    {
-                        "type": "tool_use",
-                        "id": bid,
-                        "name": name,
-                        "input": input_str,
-                    }
+                d2: dict = {
+                    "type": "tool_use",
+                    "id": bid,
+                    "name": name,
+                    "input": input_str,
+                }
+                extra = (
+                    block.get("provider_extra") if isinstance(block, dict)
+                    else getattr(block, "provider_extra", None)
                 )
+                if extra:
+                    d2["provider_extra"] = extra
+                blocks.append(d2)
             else:
                 blocks.append({"type": str(block_type), "raw": str(block)})
 

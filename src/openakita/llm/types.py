@@ -240,12 +240,15 @@ class ToolUseBlock(ContentBlock):
             self.input = normalize_tool_input(self.name, self.input)
 
     def to_dict(self) -> dict:
-        return {
+        d: dict = {
             "type": "tool_use",
             "id": self.id,
             "name": self.name,
             "input": self.input,
         }
+        if self.provider_extra:
+            d["provider_extra"] = self.provider_extra
+        return d
 
 
 @dataclass
