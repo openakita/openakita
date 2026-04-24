@@ -5263,6 +5263,8 @@ function MainApp() {
               serviceRunning={serviceStatus?.running ?? false} apiBaseUrl={apiBaseUrl}
               endpoints={chatEndpoints}
               visible={view === "chat"}
+              multiAgentEnabled={multiAgentEnabled}
+              currentWorkspaceId={currentWorkspaceId}
               onStartService={async () => {
                 const effectiveWsId = currentWorkspaceId || workspaces[0]?.id || null;
                 if (!effectiveWsId) {

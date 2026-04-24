@@ -2,9 +2,7 @@ import { useReducer, useCallback, useRef, useEffect } from "react";
 import type { ChatMessage, ChatConversation, ChainSummaryItem, ChatArtifact } from "../utils/chatTypes";
 import {
   loadMessagesFromStorage,
-  STORAGE_KEY_ACTIVE,
-  STORAGE_KEY_MSGS_PREFIX,
-  STORAGE_KEY_CONVS,
+  getWorkspaceStorageKeys,
 } from "../utils/chatHelpers";
 
 // ── Message Actions ──
@@ -114,12 +112,13 @@ function conversationReducer(state: ChatConversation[], action: ConversationActi
 
 // ── Hooks ──
 
-export function useMessageReducer() {
+export function useMessageReducer(workspaceId?: string | null) {
   const [messages, dispatch] = useReducer(messageReducer, [], () => {
     try {
-      const convId = localStorage.getItem(STORAGE_KEY_ACTIVE);
+      const { ACTIVE, MSGS_PREFIX } = getWorkspaceStorageKeys(workspaceId);
+      const convId = localStorage.getItem(ACTIVE);
       if (!convId) return [];
-      return loadMessagesFromStorage(STORAGE_KEY_MSGS_PREFIX + convId);
+      return loadMessagesFromStorage(MSGS_PREFIX + convId);
     } catch { return []; }
   });
 
@@ -129,10 +128,11 @@ export function useMessageReducer() {
   return { messages, dispatch, messagesRef };
 }
 
-export function useConversationReducer() {
+export function useConversationReducer(workspaceId?: string | null) {
   const [conversations, dispatch] = useReducer(conversationReducer, [], () => {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY_CONVS);
+      const { CONVS } = getWorkspaceStorageKeys(workspaceId);
+      const raw = localStorage.getItem(CONVS);
       return raw ? JSON.parse(raw) : [];
     } catch { return []; }
   });
