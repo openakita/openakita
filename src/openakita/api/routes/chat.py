@@ -160,15 +160,18 @@ def _resolve_agent(agent: object):
 
 
 def _resolve_profile(agent_profile_id: str | None):
-    """Resolve an AgentProfile by id, falling back to 'default'."""
+    """Resolve an AgentProfile by id.
+
+    解析顺序（关键修复 a4284107）：
+    1. 先尝试用户磁盘 profile —— 用户对系统预设 id 的覆写应优先生效，
+       否则用户在 UI 上修改的 prompt / endpoint 永远被同 id 的 SYSTEM_PRESET 覆盖。
+    2. 找不到再 fallback 到内置 SYSTEM_PRESETS。
+    3. 最后兜底 default 预设 / 空 AgentProfile。
+    """
     from openakita.agents.presets import SYSTEM_PRESETS
     from openakita.agents.profile import AgentProfile, get_profile_store
 
     pid = agent_profile_id or "default"
-
-    for p in SYSTEM_PRESETS:
-        if p.id == pid:
-            return p
 
     try:
         store = get_profile_store()
@@ -177,6 +180,10 @@ def _resolve_profile(agent_profile_id: str | None):
             return profile
     except Exception:
         pass
+
+    for p in SYSTEM_PRESETS:
+        if p.id == pid:
+            return p
 
     for p in SYSTEM_PRESETS:
         if p.id == "default":
