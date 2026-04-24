@@ -4,10 +4,12 @@
 从环境变量或配置中获取代理设置，以及 IPv4 强制配置。
 """
 
+import ipaddress
 import logging
 import os
 import socket
 import time
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -246,6 +248,115 @@ def get_proxy_config() -> str | None:
     return proxy
 
 
+# ---------------------------------------------------------------------------
+# Proxy bypass — 判断目标地址是否应跳过代理（直连）
+# ---------------------------------------------------------------------------
+
+
+def _is_private_host(hostname: str) -> bool:
+    """判断 hostname 是否为私有 / 内网地址。
+
+    覆盖：loopback、RFC 1918 私有、link-local、IPv6 ULA、.local 域名。
+    """
+    if not hostname:
+        return False
+
+    lower = hostname.lower()
+    if lower in ("localhost", "localhost.localdomain"):
+        return True
+    if lower.endswith(".local"):
+        return True
+
+    try:
+        addr = ipaddress.ip_address(lower)
+        return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved
+    except ValueError:
+        return False
+
+
+def _get_no_proxy_value() -> str:
+    """获取 NO_PROXY 配置值（环境变量 + 配置文件合并）。"""
+    parts: list[str] = []
+    for env_var in ("OPENAKITA_NO_PROXY", "NO_PROXY", "no_proxy"):
+        val = (os.environ.get(env_var) or "").strip()
+        if val:
+            parts.append(val)
+            break
+
+    try:
+        from ...config import settings
+
+        cfg_val = (getattr(settings, "no_proxy", "") or "").strip()
+        if cfg_val:
+            parts.append(cfg_val)
+    except Exception:
+        pass
+
+    return ",".join(parts)
+
+
+def _matches_no_proxy(hostname: str, no_proxy: str) -> bool:
+    """检查 hostname 是否匹配 NO_PROXY 列表中的任一模式。
+
+    支持：精确匹配、域名后缀(.example.com)、CIDR(10.0.0.0/8)、通配符(*)。
+    """
+    if not no_proxy:
+        return False
+    lower = hostname.lower()
+    for pattern in no_proxy.split(","):
+        pattern = pattern.strip()
+        if not pattern:
+            continue
+        if pattern == "*":
+            return True
+        if "/" in pattern:
+            try:
+                network = ipaddress.ip_network(pattern, strict=False)
+                if ipaddress.ip_address(lower) in network:
+                    return True
+            except ValueError:
+                pass
+            continue
+        p_lower = pattern.lower()
+        if p_lower.startswith("."):
+            if lower.endswith(p_lower) or lower == p_lower[1:]:
+                return True
+            continue
+        if lower == p_lower:
+            return True
+        try:
+            if ipaddress.ip_address(lower) == ipaddress.ip_address(p_lower):
+                return True
+        except ValueError:
+            pass
+    return False
+
+
+def should_bypass_proxy(target_url: str) -> bool:
+    """判断目标 URL 是否应跳过代理。
+
+    依据三层规则（任一命中即跳过）：
+    1. 目标地址是私有 / 内网地址（自动）
+    2. 匹配 NO_PROXY / OPENAKITA_NO_PROXY 环境变量
+    3. 匹配配置文件 no_proxy
+
+    Args:
+        target_url: 完整目标 URL，如 "http://172.14.0.88/v1"
+    """
+    try:
+        host = urlsplit(target_url).hostname
+    except Exception:
+        return False
+    if not host:
+        return False
+    if _is_private_host(host):
+        return True
+    no_proxy = _get_no_proxy_value()
+    if no_proxy and _matches_no_proxy(host, no_proxy):
+        return True
+    return False
+
+
 def is_ipv4_only() -> bool:
     """检查是否强制使用 IPv4
 
@@ -302,7 +413,12 @@ def get_httpx_proxy_mounts() -> dict | None:
     return None
 
 
-def get_httpx_client_kwargs(*, timeout: float = 30.0, is_local: bool = False) -> dict:
+def get_httpx_client_kwargs(
+    *,
+    timeout: float = 30.0,
+    is_local: bool = False,
+    target_url: str = "",
+) -> dict:
     """获取 httpx.AsyncClient 通用 kwargs
 
     统一处理代理、trust_env、超时、transport 等配置。
@@ -311,14 +427,16 @@ def get_httpx_client_kwargs(*, timeout: float = 30.0, is_local: bool = False) ->
 
     Args:
         timeout: 请求超时（秒）
-        is_local: 是否为本地端点（本地端点不使用代理）
+        is_local: 是否为本地端点（向后兼容；推荐改用 target_url 自动判断）
+        target_url: 目标 URL — 命中私有地址 / NO_PROXY / .local 时自动跳过代理
     """
     kwargs: dict = {
         "timeout": timeout,
         "trust_env": False,
     }
 
-    if not is_local:
+    skip_proxy = is_local or (bool(target_url) and should_bypass_proxy(target_url))
+    if not skip_proxy:
         proxy = get_proxy_config()
         if proxy:
             kwargs["proxy"] = proxy
@@ -380,8 +498,14 @@ def format_proxy_hint() -> str:
     proxy, source = detected
     reachable = _check_proxy_reachable(proxy)
     status = "可达" if reachable else "不可达"
+    if reachable:
+        no_proxy_hint = (
+            "如果目标是内网地址，请在设置中心「网络」→「代理例外」中添加该地址，"
+            "或设置 NO_PROXY 环境变量。"
+        )
+    else:
+        no_proxy_hint = "如果您未使用代理，请清除对应环境变量或设置 DISABLE_PROXY=1。"
     return (
         f"\n[代理诊断] 检测到代理 {_redact_proxy_url(proxy)} (来源: {source}), "
-        f"状态: {status}。"
-        f"{'如果您未使用代理，请清除对应环境变量或设置 DISABLE_PROXY=1' if not reachable else ''}"
+        f"状态: {status}。{no_proxy_hint}"
     )

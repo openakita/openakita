@@ -181,6 +181,10 @@ class Settings(BaseSettings):
     http_proxy: str = Field(default="", description="HTTP 代理地址 (如 http://127.0.0.1:7890)")
     https_proxy: str = Field(default="", description="HTTPS 代理地址 (如 http://127.0.0.1:7890)")
     all_proxy: str = Field(default="", description="全局代理地址（优先级高于 http/https proxy）")
+    no_proxy: str = Field(
+        default="",
+        description="不走代理的地址（逗号分隔，支持 IP / CIDR / 域名后缀，如 192.168.0.0/16,.internal）",
+    )
 
     # === IPv4 强制模式 ===
     # 某些 VPN（如 LetsTAP）不支持 IPv6，启用此选项强制使用 IPv4
