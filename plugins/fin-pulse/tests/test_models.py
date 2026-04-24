@@ -55,7 +55,9 @@ def test_error_kinds_are_the_canonical_nine() -> None:
 
 
 def test_source_registry_has_eight_prime_finance_plus_rss_and_newsnow() -> None:
-    # Eight prime finance sources + generic RSS aggregator + optional NewsNow = 10.
+    # Eight prime finance sources + generic RSS aggregator + NewsNow = 10.
+    # NewsNow is enabled by default too now that the plugin pins the
+    # public aggregator URL and throttles it via ``newsnow.min_interval_s``.
     assert len(SOURCE_IDS) == 10
     expected_enabled_by_default = {
         "wallstreetcn",
@@ -67,10 +69,10 @@ def test_source_registry_has_eight_prime_finance_plus_rss_and_newsnow() -> None:
         "fed_fomc",
         "sec_edgar",
         "rss_generic",
+        "newsnow",
     }
     for source_id in expected_enabled_by_default:
         assert SOURCE_DEFS[source_id]["default_enabled"] is True, source_id
-    assert SOURCE_DEFS["newsnow"]["default_enabled"] is False
 
 
 def test_score_thresholds_monotonic() -> None:

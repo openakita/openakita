@@ -67,7 +67,13 @@ def test_default_config_seeded(tm_path: Path) -> None:
                 "source.wallstreetcn.enabled",
             ):
                 assert key in cfg, key
-            assert cfg["newsnow.mode"] == "off"
+            # NewsNow now ships enabled by default — the plugin pins the
+            # public upstream URL and throttles it via
+            # newsnow.min_interval_s so the open-source maintainer isn't
+            # hammered.
+            assert cfg["newsnow.mode"] == "public"
+            assert cfg["newsnow.api_url"] == "https://newsnow.busiyi.world/api/s"
+            assert cfg["newsnow.min_interval_s"] == "300"
             assert cfg["dedupe.use_llm"] == "false"
             # All defaults were persisted so double-init is idempotent.
             assert cfg == DEFAULT_CONFIG | cfg  # defaults are a subset

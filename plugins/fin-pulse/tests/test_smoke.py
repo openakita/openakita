@@ -229,6 +229,36 @@ def test_ui_tabs_are_hydrated() -> None:
     for tpl in ("morning", "noon", "evening", "radar"):
         assert f'settings.schedules.tpl.{tpl}' in html, f"schedule tpl i18n missing: {tpl}"
 
+    # P2 — in-page schedule row actions: run / toggle / delete talk to
+    # our own /schedules/{id}/... routes, not the host SchedulerView.
+    assert '/schedules/" + s.id + "/trigger' in html, (
+        "expected per-row trigger call"
+    )
+    assert '/schedules/" + s.id + "/toggle' in html, (
+        "expected per-row toggle call"
+    )
+    assert '"DELETE", "/schedules/" + s.id' in html, (
+        "expected per-row delete call"
+    )
+    # P2 — the redirect-to-host button and read-only banner must have
+    # been removed now that the in-page dialog is authoritative.
+    assert 'settings.schedules.open_host' not in html, (
+        "open_host redirect affordance should be gone"
+    )
+    assert 'settings.schedules.read_only' not in html, (
+        "read-only preview banner should be gone"
+    )
+    # P2 — IM-channels card exposes an explicit refresh button and no
+    # longer carries the stale hint about "main program → SchedulerView".
+    assert 'settings.channels.refresh' in html
+    assert 'settings.channels.desc' not in html
+    # P2 — NewsNow defaults to the public aggregator: the pre-filled
+    # upstream URL and the 300-second rate-limit floor ship embedded in
+    # the HTML bundle.
+    assert 'https://newsnow.busiyi.world/api/s' in html
+    assert 'NEWSNOW_PUBLIC_MIN_INTERVAL_S' in html
+    assert 'newsnow.min_interval_s' in html
+
     # P1 — global "no IM channel" banner must only live inside the
     # Settings IM-channels card, not at the App shell level.
     assert "showChannelBanner" not in html, (

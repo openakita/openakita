@@ -87,15 +87,23 @@ Open the plugin UI → **Settings** tab, in order:
    host gateway (Feishu / WeCom / DingTalk / Telegram / OneBot / Email).
    If the list is empty, the top banner (`oa-config-banner`) will
    link you back here.
-2. **NewsNow (optional)** — the 3-stage wizard:
-   - Step 1: Mode → `off` / `public` / `self_host`.
-   - Step 2: API URL → `https://.../api/s` (public) or
-     `http://127.0.0.1:4444/api/s` (self-host).
+2. **NewsNow (enabled by default)** — ships pre-wired to the
+   community-run public aggregator:
+   - Step 1: Mode → `public` (default) / `self_host` / `off`.
+   - Step 2: API URL → already filled with
+     `https://newsnow.busiyi.world/api/s` in public mode (display-only,
+     no edit needed); self-host mode lets you point at
+     `http://127.0.0.1:4444/api/s`.
    - Step 3: Probe → clicks `POST /ingest/source/newsnow` and shows
-     a green pill on success.
-   The public service is author-funded — keep polling reasonable.
-3. **Schedules** — cron-driven daily_brief (`morning` / `noon` /
-   `evening`) or hot_radar triggers. See §6 for cron examples.
+     either a green pill on success or a cooldown countdown when the
+     300-second floor hasn't yet elapsed.
+   `newsnow.min_interval_s` is a hard floor enforced in
+   `finpulse_pipeline.ingest()` — public mode can't go below 300s so
+   the volunteer-run upstream never gets hammered.
+3. **Schedules** — 4 template buttons (Morning / Noon / Evening brief +
+   Hot Radar) open an in-page dialog that writes straight into the host
+   Agent Scheduler. The row list below supports **Run now / Pause / Resume
+   / Delete** without leaving the plugin — see §6 for the REST surface.
 4. **AI Brain** — fin-pulse reuses the host LLM factory; configure
    provider / model / temperature in OpenAkita → Settings → Models.
 
@@ -122,11 +130,15 @@ Open the plugin UI → **Settings** tab, in order:
 - **Settings tab** — 5 sections (Sources / IM channels / Schedules /
   NewsNow wizard / LLM note). The IM-channels card is the **only**
   place that shows the "no IM channel" warning banner — it no longer
-  leaks onto every tab. Schedules are created via 4 **template
-  buttons** (Morning / Noon / Evening / Radar) + a structured dialog;
-  the list below the buttons is **read-only** — manage rows from the
-  host Scheduler panel via the **"Open host Scheduler panel →"**
-  link.
+  leaks onto every tab. A dedicated **Refresh** button next to the
+  title re-pulls `GET /scheduler/channels` without a full tab reload,
+  which is handy after you've added a new bot in the host. Schedules
+  are created via 4 **template buttons** (Morning / Noon / Evening /
+  Radar) that open a host-style dialog (task name / type / trigger /
+  execution time / reminder preview / IM channel / enable toggle) and
+  write directly into the host Agent Scheduler. The list below the
+  buttons surfaces **Run now / Pause ↔ Resume / Delete** per row —
+  the plugin never redirects you to the host SchedulerView panel.
 
 ---
 
@@ -160,7 +172,9 @@ Open the plugin UI → **Settings** tab, in order:
 | `GET` | `/scheduler/channels` | — | Proxies the host `GET /api/scheduler/channels` so the plugin IM dropdown matches `SchedulerView` (rich `{channel_id, chat_id, chat_name, ...}` entries). |
 | `GET` | `/available-channels` | — | Fallback adapter probe used when `/scheduler/channels` returns nothing. |
 | `GET` | `/schedules` | — | Returns tasks whose name starts with `fin-pulse ` (new canonical space-delimited form) or `fin-pulse:` (legacy — still accepted). |
-| `POST` | `/schedules` | `{mode, cron, channel, chat_id, ...}` | `mode=daily_brief|hot_radar`; created name is `fin-pulse {suffix}`. |
+| `POST` | `/schedules` | `{mode, cron, channel, chat_id, name?, enabled?, ...}` | `mode=daily_brief|hot_radar`; auto-names `fin-pulse {suffix}` unless `name` is provided (must itself start with `fin-pulse `). `enabled` defaults to `true`. |
+| `POST` | `/schedules/{id}/toggle` | — | Flip enabled/disabled. Ownership-checked — refuses foreign tasks. |
+| `POST` | `/schedules/{id}/trigger` | — | Fire an ad-hoc run via the host `trigger_task`. Non-blocking. |
 | `DELETE` | `/schedules/{id}` | — | Refuses any task whose name isn't a fin-pulse-owned prefix. |
 
 ### Agent tools (same envelope as REST, dispatched via Brain)
@@ -193,9 +207,12 @@ so a misbehaving Brain cannot ask for `limit=99999` and hit the DB.
 `POST /schedules` creates a task directly on the host's
 `TaskScheduler` (not a plugin-private job-runner). That means:
 
-- Rows show up in the main OpenAkita **Scheduler** panel — this is
-  where users should go to pause, resume, delete, or manually trigger
-  fin-pulse tasks.
+- Rows also show up in the main OpenAkita **Scheduler** panel, but you
+  don't have to leave fin-pulse to manage them — the Settings tab now
+  exposes the same verbs inline: **Run now** (`POST
+  /schedules/{id}/trigger`), **Pause ↔ Resume** (`POST
+  /schedules/{id}/toggle`) and **Delete** (`DELETE /schedules/{id}`),
+  each gated by an ownership check so foreign tasks are untouchable.
 - Task names use the canonical `fin-pulse <suffix>` form (space
   separator) so they stay legal in host UIs that reject `:`. The
   legacy `fin-pulse:<suffix>` form is still recognised by the
@@ -219,9 +236,12 @@ Follow this end-to-end to validate a fresh install:
    `items_count`.
 5. `POST /digest/run` (morning) → Digests tab shows the new card;
    click **Preview** → iframe renders the HTML blob.
-6. Settings → Schedules → **Create** → daily_brief at `0 9 * * *`
-   to Feishu → 9:00 arrives → Feishu receives the brief (splitter
-   handles long text automatically).
+6. Settings → Schedules → click the **每日早报** template → tweak
+   cron to `0 9 * * *`, pick a Feishu channel, toggle **启用** on →
+   **新建任务**. 9:00 arrives → Feishu receives the brief (splitter
+   handles long text automatically). Back on the list: **运行** fires
+   an ad-hoc copy now, **暂停/恢复** flips enabled, **删除** removes
+   the row — all without leaving the plugin.
 7. Radar tab → type `+美联储\n!广告` → **Dry run** → hits list
    populates → **Save rules**.
 8. In OpenAkita main chat, ask *"今天美股有什么大事"* → Brain
