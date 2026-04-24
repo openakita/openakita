@@ -3684,7 +3684,7 @@ class Agent:
                             f"[Session:{session_id}] PDF text extraction empty, path provided"
                         )
 
-        # 三级音频决策：LLM原生audio > 在线STT > 本地Whisper
+        # 二级音频决策：LLM原生audio > 在线STT
         audio_blocks = []
         if pending_audio:
             llm_client = getattr(self.brain, "_llm_client", None)
@@ -3727,7 +3727,7 @@ class Agent:
                         local_path = aud.get("local_path", "")
                         existing_transcription = aud.get("transcription")
                         if existing_transcription:
-                            continue  # 已有 Whisper 结果，不重复调用
+                            continue  # 已有转写结果，不重复调用
                         if local_path and Path(local_path).exists():
                             try:
                                 stt_result = await stt_client.transcribe(local_path)
@@ -3744,8 +3744,7 @@ class Agent:
                                     )
                             except Exception as e:
                                 logger.warning(f"[Session:{session_id}] Online STT failed: {e}")
-                # Tier 3: 本地 Whisper（已由 Gateway 处理，transcription 已在 input_text 中）
-                # 不需要额外操作
+                # Gateway 已处理的转写结果已包含在 input_text 中
 
         if _has_history and compiled_message and isinstance(compiled_message, str):
             compiled_message = f"[最新消息]\n{compiled_message}"

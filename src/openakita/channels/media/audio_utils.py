@@ -2,10 +2,10 @@
 音频格式工具 —— 处理 QQ/微信 SILK v3 等非标准音频格式。
 
 QQ/微信的语音文件扩展名通常是 .amr，但实际编码是腾讯私有的 SILK v3，
-标准 ffmpeg 无法解码。本模块在调用 Whisper 之前自动检测并转换。
+标准 ffmpeg 无法解码。本模块在调用在线 STT / LLM 音频输入前自动检测并转换。
 
 转换链路:
-  SILK (.amr/.silk/.slk) → pilk.decode → raw PCM → wave 模块 → .wav → Whisper
+  SILK (.amr/.silk/.slk) → pilk.decode → raw PCM → wave 模块 → .wav → STT/LLM
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ _SILK_MAGIC_QQ = b"\x02#!SILK"
 
 # SILK 默认采样率（QQ 语音一般是 24000 Hz）
 _SILK_SAMPLE_RATE = 24000
-# Whisper 要求 16000 Hz 单声道 16-bit PCM
+# STT 服务通常要求 16000 Hz 单声道 16-bit PCM
 _TARGET_SAMPLE_RATE = 16000
 
 
@@ -130,9 +130,9 @@ def _ffmpeg_to_wav(src_path: str, wav_path: str) -> bool:
         return False
 
 
-def ensure_whisper_compatible(audio_path: str) -> str:
+def ensure_stt_compatible(audio_path: str) -> str:
     """
-    确保音频文件可被 Whisper (ffmpeg) 处理。
+    确保音频文件可被在线 STT / LLM 音频输入处理。
 
     - SILK 格式 → pilk 转换为 WAV
     - opus/ogg/amr/webm/wma/aac → ffmpeg 转换为 WAV
@@ -142,7 +142,7 @@ def ensure_whisper_compatible(audio_path: str) -> str:
         audio_path: 原始音频文件路径
 
     Returns:
-        可被 Whisper 处理的音频文件路径（可能是转换后的 WAV）
+        兼容格式的音频文件路径（可能是转换后的 WAV）
     """
     # 1. SILK 格式特殊处理（pilk 转换）
     if is_silk_file(audio_path):
@@ -184,59 +184,6 @@ def ensure_whisper_compatible(audio_path: str) -> str:
     return audio_path
 
 
-def load_wav_as_numpy(wav_path: str, target_sr: int = 16000):
-    """直接加载 WAV 为 Whisper 兼容的 float32 numpy 数组，无需 ffmpeg。
-
-    Whisper.transcribe() 接受 numpy 数组时跳过内部 load_audio()（即跳过 ffmpeg）。
-
-    Args:
-        wav_path: WAV 文件路径
-        target_sr: 目标采样率（Whisper 默认 16000Hz）
-
-    Returns:
-        numpy float32 数组（单声道, [-1, 1]），如果加载失败返回 None
-    """
-    import wave
-
-    try:
-        import numpy as np
-    except ImportError:
-        logger.warning("numpy not available, cannot load WAV directly")
-        return None
-
-    try:
-        with wave.open(wav_path, "rb") as wf:
-            sr = wf.getframerate()
-            n_channels = wf.getnchannels()
-            sample_width = wf.getsampwidth()
-            frames = wf.readframes(wf.getnframes())
-
-        if sample_width != 2:
-            logger.debug(f"WAV sample_width={sample_width}, expected 2 (16-bit)")
-            return None
-
-        audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
-
-        if n_channels > 1:
-            audio = audio.reshape(-1, n_channels).mean(axis=1)
-
-        if sr != target_sr:
-            n_samples = int(len(audio) * target_sr / sr)
-            audio = np.interp(
-                np.linspace(0, len(audio), n_samples, endpoint=False),
-                np.arange(len(audio)),
-                audio,
-            ).astype(np.float32)
-
-        logger.debug(
-            f"WAV loaded as numpy: {Path(wav_path).name}, sr={sr}→{target_sr}, samples={len(audio)}"
-        )
-        return audio
-    except Exception as e:
-        logger.warning(f"Failed to load WAV as numpy: {e}")
-        return None
-
-
 def ensure_llm_compatible(audio_path: str, target_format: str = "wav") -> str:
     """
     确保音频文件可被 LLM 原生音频输入处理。
@@ -247,7 +194,7 @@ def ensure_llm_compatible(audio_path: str, target_format: str = "wav") -> str:
     - DashScope: wav, mp3
 
     处理:
-    - SILK → WAV（与 Whisper 兼容逻辑相同）
+    - SILK → WAV（与 STT 兼容逻辑相同）
     - OGG/Opus → WAV（通过 ffmpeg）
     - AMR → WAV（通过 ffmpeg）
     - 其他标准格式原样返回
@@ -267,7 +214,7 @@ def ensure_llm_compatible(audio_path: str, target_format: str = "wav") -> str:
 
     # SILK 格式特殊处理
     if is_silk_file(audio_path):
-        return ensure_whisper_compatible(audio_path)
+        return ensure_stt_compatible(audio_path)
 
     # 已经是目标格式，直接返回
     llm_native_formats = {".wav", ".mp3", ".flac", ".m4a"}
