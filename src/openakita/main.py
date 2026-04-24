@@ -1095,15 +1095,16 @@ async def stop_im_channels(*, graceful: bool = True, drain_timeout: float = 30.0
             await _message_gateway.stop()
         logger.info("MessageGateway stopped")
 
+    # Stop health monitor FIRST — its loop could fire during pool teardown,
+    # causing concurrent orchestrator access.
+    await _stop_health_monitor()
+
     if _desktop_pool:
         try:
             await _desktop_pool.stop()
         except Exception as e:
             logger.warning(f"Desktop pool shutdown error: {e}")
         _desktop_pool = None
-
-    # Stop health monitor before orchestrator (health monitor uses orchestrator)
-    await _stop_health_monitor()
 
     if _orchestrator:
         try:
