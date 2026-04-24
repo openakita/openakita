@@ -1,7 +1,7 @@
 # tests/core/test_health_monitor.py
 import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from openakita.core.health_monitor import HealthMonitor, HealthReport
 from openakita.core.health_config import HealthConfig
 
@@ -43,14 +43,15 @@ async def test_health_monitor_single_check():
 @pytest.mark.asyncio
 async def test_health_monitor_finds_stale_tasks():
     import time
+    from unittest.mock import patch
 
     config = HealthConfig(stale_task_age=1)  # 1 second for test
     monitor = HealthMonitor(config=config)
 
-    # Simulate a stale task
-    monitor._active_tasks = {
-        "sess_1": {"task_id": "t1", "start_time": time.time() - 10}
-    }
+    # Use public API with mocked time to register a task that appears stale
+    fake_registration_time = time.time() - 10  # 10 seconds in the past
+    with patch("openakita.core.health_monitor.time.time", return_value=fake_registration_time):
+        monitor.register_task("sess_1", "t1")
 
     mock_orchestrator = MagicMock()
     mock_orchestrator.cleanup_expired_delegations = AsyncMock(return_value=[])

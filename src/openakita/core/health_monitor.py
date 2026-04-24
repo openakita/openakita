@@ -47,6 +47,11 @@ class HealthMonitor:
 
     def register_task(self, session_id: str, task_id: str) -> None:
         """Register a task for staleness tracking."""
+        if session_id in self._active_tasks:
+            logger.debug(
+                f"[HealthMonitor] Re-registering task for session={session_id}, "
+                f"replacing task_id={self._active_tasks[session_id]['task_id']}"
+            )
         self._active_tasks[session_id] = {
             "task_id": task_id,
             "start_time": time.time(),
