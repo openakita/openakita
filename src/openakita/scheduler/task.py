@@ -454,9 +454,18 @@ class ScheduledTask:
             self.metadata["last_error"] = error
 
         if self.fail_count >= 5:
-            self.status = TaskStatus.FAILED
-            self.enabled = False
-            logger.warning(f"Task {self.id} disabled after {self.fail_count} consecutive failures")
+            if self.deletable:
+                self.status = TaskStatus.FAILED
+                self.enabled = False
+                logger.warning(
+                    f"Task {self.id} disabled after {self.fail_count} consecutive failures"
+                )
+            else:
+                self.status = TaskStatus.SCHEDULED
+                logger.warning(
+                    f"System task {self.id} kept enabled despite {self.fail_count} "
+                    f"consecutive failures (deletable=False)"
+                )
         else:
             self.status = TaskStatus.SCHEDULED
 
