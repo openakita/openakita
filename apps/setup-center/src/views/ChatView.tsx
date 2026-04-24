@@ -4,6 +4,8 @@
 import { useEffect, useMemo, useRef, useState, useCallback, memo } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import { setLanguage } from "../i18n";
+import { AgentIcon } from "../components/AgentIcon";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
@@ -2585,7 +2587,7 @@ export function ChatView({
               }
               case "ui_preference":
                 if (event.theme) setThemePref(event.theme as Theme);
-                if (event.language) i18n.changeLanguage(event.language);
+                if (event.language) setLanguage(event.language as "auto" | "zh" | "en");
                 break;
               case "artifact":
                 logger.debug("Chat", "Artifact SSE received", { name: event.name, file_url: event.file_url, artifact_type: event.artifact_type });
