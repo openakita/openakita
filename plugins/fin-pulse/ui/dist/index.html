@@ -83,8 +83,16 @@
     .stack-layout > .card.grow { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
     .stack-layout > .card.grow > .card-body { flex: 1; overflow: auto; }
     .stack-layout > .card--compact { flex: 0 0 auto; }
-    /* ── Hero title (oa-hero-title) — big gradient brand mark ── */
-    .oa-hero-title { display: inline-flex; align-items: center; gap: 12px; font-size: 18px; font-weight: 600; }
+    /* ── Hero title (oa-hero-title) — big gradient brand mark ──
+       Matches the avatar-studio hard contract: always explicit --text
+       colour, weight 700, size 20px so the Chinese headline stays
+       legible on the blush background (previous 18/600 inherited to
+       a weak pink rendering on the macaron theme). */
+    .oa-hero-title {
+      display: inline-flex; align-items: center; gap: 12px;
+      font-size: 20px; font-weight: 700; color: var(--text);
+      letter-spacing: -0.01em; margin: 0;
+    }
     .oa-hero-title__icon {
       width: 40px; height: 40px; border-radius: 10px; flex-shrink: 0;
       /* Container bg is a neutral dark so any 1px SVG seam blends in;
@@ -95,8 +103,8 @@
       position: relative; overflow: hidden;
     }
     .oa-hero-title__icon svg { width: 100%; height: 100%; display: block; }
-    .oa-hero-title__text { display: inline-flex; flex-direction: column; line-height: 1.15; }
-    .oa-hero-title__sub { font-size: 11px; font-weight: 400; color: var(--text-muted); margin-top: 3px; letter-spacing: .2px; }
+    .oa-hero-title__text { display: inline-flex; flex-direction: column; line-height: 1.15; color: var(--text); }
+    .oa-hero-title__sub { font-size: 12px; font-weight: 500; color: var(--text-muted); margin-top: 4px; letter-spacing: .3px; }
     /* ── Section title with leading accent bar ── */
     .oa-section-title {
       display: flex; align-items: center; gap: 10px;
@@ -692,14 +700,26 @@ function onEvent(type, fn) {
 }
 
 /* ── Plugin API wrapper ──
-   Host Bridge (plugin-bridge-host.ts) wraps responses as
-   `{ok, status, body: <plugin JSON>}`, so we must unwrap `body` and
-   carry the transport-level `ok` when the JSON body doesn't have it.
-   Outside the iframe (dev direct-URL mode) the fetch returns the
-   plugin JSON at the root already. */
+   The host bridge (plugin-bridge-host.ts::handleApiRequest) does NOT
+   auto-prefix `/api/plugins/<id>/`; it fetches `${apiBase}${path}`
+   verbatim. Other plugins (ecommerce-image etc.) prepend the plugin
+   base themselves. We do the same so relative plugin paths like
+   "/ingest" reach "/api/plugins/fin-pulse/ingest".
+   Host Bridge wraps responses as `{ok, status, body: <plugin JSON>}`,
+   so we unwrap `body` and carry the transport-level `ok` when the
+   JSON body doesn't have it. Outside the iframe (dev direct-URL
+   mode) the fetch returns the plugin JSON at the root already. */
+const API_BASE_PATH = "/api/plugins/fin-pulse";
+function _finPulsePath(path) {
+  if (typeof path !== "string") return path;
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  if (path.startsWith("/api/")) return path;
+  return API_BASE_PATH + (path.startsWith("/") ? path : "/" + path);
+}
 async function api(method, path, body) {
+  const fullPath = _finPulsePath(path);
   if (window.OpenAkita && typeof window.OpenAkita.api === "function") {
-    const res = await window.OpenAkita.api(method, path, body);
+    const res = await window.OpenAkita.api(method, fullPath, body);
     if (res && typeof res === "object" && "body" in res && "status" in res) {
       const inner = res.body || {};
       if (inner && typeof inner === "object") {
@@ -712,8 +732,7 @@ async function api(method, path, body) {
     }
     return res || { ok: false, error: "no-response" };
   }
-  const url = "/api/plugins/fin-pulse" + path;
-  const resp = await fetch(url, {
+  const resp = await fetch(fullPath, {
     method: method,
     headers: body ? { "Content-Type": "application/json" } : {},
     body: body ? JSON.stringify(body) : undefined,
