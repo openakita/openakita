@@ -4280,6 +4280,8 @@ general Q&A yourself.
 
         # Store early voice transcripts for display in streaming response
         self._voice_transcripts_for_display = _early_transcripts if _early_transcripts else []
+        if _early_transcripts:
+            logger.info(f"[Session:{session_id}] Stored {len(_early_transcripts)} voice transcripts for display")
 
         return messages, session_type, task_monitor, conversation_id, im_tokens
 
@@ -4851,8 +4853,10 @@ general Q&A yourself.
 
             # Display voice transcription to user before agent starts working
             _voice_transcripts = getattr(self, "_voice_transcripts_for_display", [])
+            logger.info(f"[Session:{session_id}] Voice transcripts for display: {len(_voice_transcripts)} items")
             if _voice_transcripts:
                 _transcript_text = " ".join(_voice_transcripts)
+                logger.info(f"[Session:{session_id}] Yielding voice_transcription event: {len(_transcript_text)} chars")
                 yield {
                     "type": "voice_transcription",
                     "content": _transcript_text,
