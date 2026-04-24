@@ -359,11 +359,17 @@ async def install_skill(request: Request):
     # 统一刷新入口 —— 重扫磁盘 + 重新应用 allowlist + 重建 catalog + 通知 Pool
     await _propagate(request, "install")
 
-    # 自动翻译（可选，不阻塞成功返回）
+    # 自动翻译（可选，不阻塞成功返回）—— 后台执行，避免拖慢安装路径
     try:
-        await _auto_translate_new_skills(request, url)
+        async def _bg_translate(req=request, src_url=url):
+            try:
+                await _auto_translate_new_skills(req, src_url)
+            except Exception as bg_err:  # pragma: no cover - 仅日志
+                logger.debug("Background auto-translate skipped: %s", bg_err)
+
+        asyncio.create_task(_bg_translate())
     except Exception as e:
-        logger.debug("Auto-translate skipped: %s", e)
+        logger.debug("Auto-translate scheduling skipped: %s", e)
 
     result: dict = {"status": "ok", "url": url}
     if install_warning:
