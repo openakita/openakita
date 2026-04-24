@@ -55,6 +55,29 @@ _RETRYABLE_KINDS = {
     ErrorKind.RATE_LIMITED_BY_PLATFORM.value,
 }
 
+
+def _resolve_engine(task: dict[str, Any], deps: "PipelineDeps") -> str:
+    """Pick between Playwright and MultiPost for this task.
+
+    Precedence:
+    1. ``task.engine`` — whatever the publish / schedule request saved.
+    2. ``settings.engine`` — user's global default.
+    3. ``auto`` — prefer MP iff the extension is probed OK, else PW.
+
+    Always returns one of ``"pw"`` or ``"mp"`` (never ``"auto"``) so
+    the caller has a concrete branch to take.
+    """
+
+    requested = (task.get("engine") or deps.settings.get("engine") or "auto").lower()
+    if requested == "pw":
+        return "pw"
+    if requested == "mp":
+        return "mp"
+    mp = getattr(deps, "mp_engine", None)
+    if mp is not None and getattr(mp, "is_available", None) is not None and mp.is_available():
+        return "mp"
+    return "pw"
+
 _PLATFORM_BREAKING_KINDS = {
     ErrorKind.PLATFORM_BREAKING_CHANGE.value,
     ErrorKind.DEPENDENCY.value,
@@ -79,6 +102,9 @@ class PipelineDeps:
     # Directory for publish_receipt JSON files. Optional so tests can
     # construct minimal deps; production always wires it in plugin.py.
     receipts_dir: Path | None = None
+    # MultiPost compat engine for ``engine=mp``; None in tests that
+    # only exercise the Playwright path.
+    mp_engine: Any | None = None
 
 
 async def run_publish_task(deps: PipelineDeps, task_id: str) -> dict[str, Any]:
@@ -156,17 +182,26 @@ async def run_publish_task(deps: PipelineDeps, task_id: str) -> dict[str, Any]:
             "id": task_id,
             "platform": task["platform"],
             "payload": task.get("payload") or _safe_json(task.get("payload_json")),
+            "client_trace_id": task.get("client_trace_id"),
         }
+        effective_engine = _resolve_engine(task, deps)
         try:
-            outcome = await deps.engine.run_task(
-                adapter=adapter,
-                task=engine_payload,
-                account=account,
-                cookies_plaintext=cookies_plaintext,
-                asset_path=(asset_info or {}).get("storage_path", ""),
-                cover_path=None,
-                settings={**deps.settings, "auto_submit": auto_submit},
-            )
+            if effective_engine == "mp" and deps.mp_engine is not None:
+                outcome = await deps.mp_engine.dispatch(
+                    task=engine_payload,
+                    asset_info=asset_info,
+                    settings={**deps.settings, "auto_submit": auto_submit},
+                )
+            else:
+                outcome = await deps.engine.run_task(
+                    adapter=adapter,
+                    task=engine_payload,
+                    account=account,
+                    cookies_plaintext=cookies_plaintext,
+                    asset_path=(asset_info or {}).get("storage_path", ""),
+                    cover_path=None,
+                    settings={**deps.settings, "auto_submit": auto_submit},
+                )
         except OmniPostError as e:
             await _terminal_failure(deps, task, e.kind, str(e))
             return await deps.task_manager.get_task(task_id) or task

@@ -55,6 +55,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from omni_post_adapters import load_selector_bundle
 from omni_post_assets import UploadPipeline
 from omni_post_cookies import CookieEncryptError, CookiePool
+from omni_post_engine_mp import MultiPostCompatEngine
 from omni_post_engine_pw import PlaywrightEngine
 from omni_post_models import (
     DEFAULT_SETTINGS,
@@ -103,6 +104,7 @@ class OmniPostPlugin(PluginBase):
         self._cookie_pool: CookiePool | None = None
         self._upload: UploadPipeline | None = None
         self._engine: PlaywrightEngine | None = None
+        self._mp_engine: MultiPostCompatEngine | None = None
         self._settings: dict[str, Any] = dict(DEFAULT_SETTINGS)
         self._selectors_dir: Path | None = None
         self._screenshot_dir: Path | None = None
@@ -148,6 +150,14 @@ class OmniPostPlugin(PluginBase):
             selectors_dir=self._selectors_dir,
             screenshot_dir=self._screenshot_dir,
             settings=self._settings,
+        )
+        self._mp_engine = MultiPostCompatEngine(
+            settings=self._settings,
+            broadcaster=(
+                (lambda topic, data: api.broadcast_ui_event(topic, data))
+                if api is not None
+                else None
+            ),
         )
 
         self._scheduler = ScheduleTicker(
@@ -585,6 +595,51 @@ class OmniPostPlugin(PluginBase):
             breakdown = await check_account_quota(self._deps(), account_id)
             return {"account_id": account_id, **breakdown}
 
+        # MultiPost Compat bridge ─────────────────────────────────
+        # The browser extension lives client-side, so these routes are
+        # the only way the UI can hand a verdict back to the pipeline.
+
+        @router.get("/mp/status")
+        async def mp_status() -> dict:
+            if self._mp_engine is None:
+                raise HTTPException(503, "not initialized")
+            return self._mp_engine.snapshot_status()
+
+        @router.post("/mp/status")
+        async def mp_update_status(body: _MpStatusBody) -> dict:
+            if self._mp_engine is None:
+                raise HTTPException(503, "not initialized")
+            snap = self._mp_engine.record_status(
+                installed=body.installed,
+                version=body.version,
+                trusted_domain_ok=body.trusted_domain_ok,
+                checked_at=body.checked_at or _now_iso(),
+            )
+            if self._api is not None:
+                self._api.broadcast_ui_event("mp_extension_status", snap)
+            return snap
+
+        @router.get("/mp/pending")
+        async def mp_pending() -> dict:
+            if self._mp_engine is None:
+                raise HTTPException(503, "not initialized")
+            items = self._mp_engine.list_pending_dispatches()
+            return {"items": items, "count": len(items)}
+
+        @router.post("/mp/ack")
+        async def mp_ack(body: _MpAckBody) -> dict:
+            if self._mp_engine is None:
+                raise HTTPException(503, "not initialized")
+            ok = await self._mp_engine.ack(
+                task_id=body.task_id,
+                success=body.success,
+                published_url=body.published_url,
+                error_kind=body.error_kind,
+                error_message=body.error_message or "",
+                metrics=body.metrics or {},
+            )
+            return {"ok": ok}
+
         # Asset Bus pull ────────────────────────────────────────────
 
         @router.post("/asset-bus/pull")
@@ -951,6 +1006,7 @@ class OmniPostPlugin(PluginBase):
             settings=self._settings,
             api=self._api,
             receipts_dir=self._receipts_dir,
+            mp_engine=self._mp_engine,
         )
 
     def _spawn(self, coro, name: str | None = None) -> None:
@@ -1067,6 +1123,35 @@ class _TemplateUpdateBody(BaseModel):
     name: str | None = None
     body: dict[str, Any] | None = None
     tags: list[str] | None = None
+
+
+class _MpStatusBody(BaseModel):
+    """Reported by the UI after a MultiPost extension probe."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    installed: bool
+    version: str | None = None
+    trusted_domain_ok: bool = False
+    checked_at: str | None = None
+
+
+class _MpAckBody(BaseModel):
+    """Extension -> pipeline verdict for one dispatched task.
+
+    ``success`` drives which branch of the pipeline fires next:
+    terminal success, retry, or terminal failure (when error_kind is
+    not retryable).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str
+    success: bool
+    published_url: str | None = None
+    error_kind: str | None = None
+    error_message: str | None = None
+    metrics: dict[str, Any] | None = None
 
 
 # ── Tool definitions (LLM-callable) ───────────────────────────────

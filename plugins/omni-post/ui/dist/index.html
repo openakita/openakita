@@ -753,6 +753,25 @@ const I18N_DICT = {
     "omniPost.library.templates.body.placeholder": "支持占位符 {{topic}}、{{brand}}，可粘贴 JSON 做平台差异化覆盖。",
     "omniPost.settings.coming.title": "设置 (S4)",
     "omniPost.settings.coming.desc": "S4 将交付：引擎切换（auto/pw/mp）、MultiPost 扩展探测与安装引导、并发 / 冷却 / 重试策略、代理、通知渠道、数据导出、危险区（清空素材/重置数据库）。",
+    "omniPost.mp.title": "MultiPost 扩展",
+    "omniPost.mp.subtitle": "使用浏览器扩展发布可以复用日常登录态；本地 Playwright 引擎则 0 依赖、可无头运行。",
+    "omniPost.mp.probe": "立即探测",
+    "omniPost.mp.status.detecting": "探测中…",
+    "omniPost.mp.status.installed": "已安装 v{version}",
+    "omniPost.mp.status.missing": "未检测到扩展",
+    "omniPost.mp.status.outdated": "扩展过旧：v{version}（需 ≥ v{min}）",
+    "omniPost.mp.status.trust.ok": "信任域已配置",
+    "omniPost.mp.status.trust.fail": "信任域未配置（需要 {domain}）",
+    "omniPost.mp.install.title": "安装 / 更新 MultiPost-Extension",
+    "omniPost.mp.install.desc": "推荐从 Chrome 商店或 Edge 商店安装 v{min}+ 版本；安装后点击「立即探测」重新识别。",
+    "omniPost.mp.install.cws": "Chrome 应用商店",
+    "omniPost.mp.install.github": "GitHub 仓库",
+    "omniPost.mp.trust.title": "配置信任域",
+    "omniPost.mp.trust.desc": "扩展需要允许 OpenAkita 宿主域名（{domain}）才能接收发布指令。",
+    "omniPost.engine.label": "引擎",
+    "omniPost.engine.desc.auto": "自动：探测到 MultiPost 则走扩展，否则走 Playwright。",
+    "omniPost.engine.desc.pw": "Playwright：0 依赖，适合无头服务端。",
+    "omniPost.engine.desc.mp": "MultiPost：需浏览器 + 扩展，复用日常登录态。",
     "omniPost.engine.pw": "Playwright",
     "omniPost.engine.mp": "MultiPost",
     "omniPost.engine.auto": "自动",
@@ -918,6 +937,25 @@ const I18N_DICT = {
     "omniPost.library.templates.body.placeholder": "Placeholders like {{topic}} / {{brand}} are allowed; paste JSON for per-platform overrides.",
     "omniPost.settings.coming.title": "Settings (S4)",
     "omniPost.settings.coming.desc": "S4 delivers: engine switch (auto / pw / mp), MultiPost extension detection + install wizard, concurrency / cooldown / retry policy, proxy, IM channels, data export, danger zone (clear assets / reset DB).",
+    "omniPost.mp.title": "MultiPost Extension",
+    "omniPost.mp.subtitle": "Using the browser extension reuses your everyday logins; the local Playwright engine has zero dependencies and runs headless.",
+    "omniPost.mp.probe": "Probe now",
+    "omniPost.mp.status.detecting": "Probing…",
+    "omniPost.mp.status.installed": "Installed v{version}",
+    "omniPost.mp.status.missing": "Extension not detected",
+    "omniPost.mp.status.outdated": "Extension outdated: v{version} (need ≥ v{min})",
+    "omniPost.mp.status.trust.ok": "Trusted domain configured",
+    "omniPost.mp.status.trust.fail": "Trusted domain missing (need {domain})",
+    "omniPost.mp.install.title": "Install / Update MultiPost-Extension",
+    "omniPost.mp.install.desc": "Install v{min}+ from the Chrome Web Store or Edge Add-ons; then click \"Probe now\" to re-detect.",
+    "omniPost.mp.install.cws": "Chrome Web Store",
+    "omniPost.mp.install.github": "GitHub repo",
+    "omniPost.mp.trust.title": "Configure trusted domain",
+    "omniPost.mp.trust.desc": "The extension must allow the OpenAkita host domain ({domain}) to accept publish requests.",
+    "omniPost.engine.label": "Engine",
+    "omniPost.engine.desc.auto": "Auto: use the extension when detected, otherwise fall back to Playwright.",
+    "omniPost.engine.desc.pw": "Playwright: zero-dep, headless-friendly.",
+    "omniPost.engine.desc.mp": "MultiPost: needs a browser + extension, reuses everyday logins.",
     "omniPost.engine.pw": "Playwright",
     "omniPost.engine.mp": "MultiPost",
     "omniPost.engine.auto": "Auto",
@@ -2539,6 +2577,173 @@ function TemplateAddModal({ onClose, onSaved }) {
   );
 }
 
+/* ─── MultiPost install / probe guide (S4) ─────────────────────────── */
+const MP_STORE_URL = "https://chromewebstore.google.com/detail/multipost/dhohkaclnjgcikfoaacfgijgjgceofih";
+const MP_GITHUB_URL = "https://github.com/leaperone/MultiPost-Extension";
+
+function MultiPostGuide() {
+  const t = useT();
+  const [probing, setProbing] = useState(false);
+  const [status, setStatus] = useState(null);
+  const [minVersion, setMinVersion] = useState("1.3.8");
+  const [trustedDomain, setTrustedDomain] = useState("");
+
+  const loadSnapshot = useCallback(function () {
+    pluginApi("GET", "/mp/status").then(function (r) {
+      if (!r) return;
+      if (r.min_version) setMinVersion(r.min_version);
+      if (r.trusted_domain) setTrustedDomain(r.trusted_domain);
+      setStatus({
+        installed: !!r.installed,
+        version: r.version || "",
+        version_ok: !!r.version_ok,
+        trusted_domain_ok: !!r.trusted_domain_ok,
+        updated_at: r.updated_at || null,
+      });
+    }).catch(function () {});
+  }, []);
+
+  useEffect(loadSnapshot, [loadSnapshot]);
+
+  const runProbe = useCallback(function () {
+    if (probing) return;
+    setProbing(true);
+    const reqId = "mp-probe-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+    const host = (typeof window !== "undefined" && window.location && window.location.hostname) || "";
+    const currentDomain = trustedDomain || host;
+    let settled = false;
+
+    function handler(e) {
+      const d = e && e.data;
+      if (!d || typeof d !== "object") return;
+      if (d.action !== "MULTIPOST_EXTENSION_SERVICE_STATUS_RESPONSE" && d.type !== "MULTIPOST_EXTENSION_SERVICE_STATUS_RESPONSE") return;
+      if (d.request_id && d.request_id !== reqId) return;
+      if (settled) return;
+      settled = true;
+      window.removeEventListener("message", handler);
+      const version = (d.version || (d.data && d.data.version) || "").toString();
+      const parts = version.split(".").map(function (x) { return parseInt(x, 10) || 0; });
+      const minParts = (minVersion || "0.0.0").split(".").map(function (x) { return parseInt(x, 10) || 0; });
+      let versionOk = true;
+      for (let i = 0; i < 3; i++) {
+        const a = parts[i] || 0, b = minParts[i] || 0;
+        if (a > b) break;
+        if (a < b) { versionOk = false; break; }
+      }
+      const trustedOk = d.trusted === true || d.trusted_domain_ok === true || (d.data && d.data.trusted === true);
+      reportStatus({ installed: true, version, trusted_domain_ok: !!trustedOk });
+      setStatus({ installed: true, version, version_ok: versionOk, trusted_domain_ok: !!trustedOk });
+      setProbing(false);
+    }
+    window.addEventListener("message", handler);
+
+    try {
+      const targets = [window.top, window.parent, window];
+      const seen = new Set();
+      targets.forEach(function (w) {
+        if (!w || seen.has(w)) return;
+        seen.add(w);
+        try {
+          w.postMessage({
+            action: "MULTIPOST_EXTENSION_CHECK_SERVICE_STATUS",
+            type: "MULTIPOST_EXTENSION_CHECK_SERVICE_STATUS",
+            request_id: reqId,
+            origin: currentDomain,
+          }, "*");
+        } catch (err) {}
+      });
+    } catch (err) {}
+
+    setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener("message", handler);
+      reportStatus({ installed: false, version: "", trusted_domain_ok: false });
+      setStatus({ installed: false, version: "", version_ok: false, trusted_domain_ok: false });
+      setProbing(false);
+    }, 3000);
+  }, [probing, minVersion, trustedDomain]);
+
+  function reportStatus(payload) {
+    pluginApi("POST", "/mp/status", payload).catch(function () {});
+  }
+
+  const displayDomain = trustedDomain || (typeof window !== "undefined" && window.location ? window.location.hostname : "");
+  const notInstalled = status && status.installed === false;
+  const outdated = status && status.installed && !status.version_ok;
+  const trustFailed = status && status.installed && status.version_ok && !status.trusted_domain_ok;
+
+  return (
+    <div className="card" style={{ padding: 16, marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <Ico name="cog" />
+        <h3 style={{ margin: 0 }}>{t("omniPost.mp.title")}</h3>
+        <span style={{ flex: 1 }} />
+        <button className="btn btn-sm" disabled={probing} onClick={runProbe}>
+          {probing ? t("omniPost.mp.status.detecting") : t("omniPost.mp.probe")}
+        </button>
+      </div>
+      <p className="cal-sub" style={{ marginTop: 0, marginBottom: 10 }}>{t("omniPost.mp.subtitle")}</p>
+
+      {status && (
+        <div className="lib-card" style={{ marginBottom: 10 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            {status.installed ? (
+              <span className="badge badge-done">{t("omniPost.mp.status.installed").replace("{version}", status.version || "?")}</span>
+            ) : (
+              <span className="badge badge-failed">{t("omniPost.mp.status.missing")}</span>
+            )}
+            {outdated && (
+              <span className="badge badge-cancelled">
+                {t("omniPost.mp.status.outdated").replace("{version}", status.version || "?").replace("{min}", minVersion)}
+              </span>
+            )}
+            {status.installed && status.version_ok && (
+              status.trusted_domain_ok
+                ? <span className="badge badge-done">{t("omniPost.mp.status.trust.ok")}</span>
+                : <span className="badge badge-cancelled">{t("omniPost.mp.status.trust.fail").replace("{domain}", displayDomain)}</span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {(notInstalled || outdated) && (
+        <div className="lib-card" style={{ marginBottom: 10 }}>
+          <h4 style={{ margin: "0 0 6px 0" }}>{t("omniPost.mp.install.title")}</h4>
+          <p className="cal-sub" style={{ margin: 0 }}>{t("omniPost.mp.install.desc").replace("{min}", minVersion)}</p>
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <a className="btn btn-sm btn-primary" href={MP_STORE_URL} target="_blank" rel="noreferrer noopener">
+              {t("omniPost.mp.install.cws")}
+            </a>
+            <a className="btn btn-sm" href={MP_GITHUB_URL} target="_blank" rel="noreferrer noopener">
+              {t("omniPost.mp.install.github")}
+            </a>
+          </div>
+        </div>
+      )}
+
+      {trustFailed && (
+        <div className="lib-card">
+          <h4 style={{ margin: "0 0 6px 0" }}>{t("omniPost.mp.trust.title")}</h4>
+          <p className="cal-sub" style={{ margin: 0 }}>{t("omniPost.mp.trust.desc").replace("{domain}", displayDomain)}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─── Settings tab (S4 scaffold) ───────────────────────────────────── */
+function SettingsTab() {
+  const t = useT();
+  return (
+    <div style={{ padding: 16 }}>
+      <h2 style={{ marginTop: 0 }}>{t("omniPost.settings.coming.title")}</h2>
+      <p className="cal-sub">{t("omniPost.settings.coming.desc")}</p>
+      <MultiPostGuide />
+    </div>
+  );
+}
+
 /* ─── Stubs for tabs that land in later sprints ────────────────────── */
 function StubTab({ titleKey, descKey }) {
   const t = useT();
@@ -2561,7 +2766,7 @@ function App() {
     case "accounts": pane = <AccountsTab />; break;
     case "calendar": pane = <CalendarTab />; break;
     case "library":  pane = <LibraryTab />;  break;
-    case "settings": pane = <StubTab titleKey="omniPost.settings.coming.title" descKey="omniPost.settings.coming.desc" />; break;
+    case "settings": pane = <SettingsTab />; break;
     default: pane = <PublishTab />;
   }
   return (
