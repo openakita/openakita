@@ -384,18 +384,16 @@ export function Sidebar({
               <IconGlobe size={11} />
               openakita.ai
             </span>
-            {serviceRunning && (
-              <span
-                onClick={onBugReport}
-                title={t("feedback.trigger")}
-                style={{ cursor: "pointer", opacity: 1, color: "var(--accent, #5B8DEF)", display: "inline-flex", alignItems: "center", gap: 2 }}
-                onMouseEnter={(e) => { const s = e.currentTarget.querySelector<HTMLElement>(".feedbackText"); if (s) s.style.textDecoration = "underline"; }}
-                onMouseLeave={(e) => { const s = e.currentTarget.querySelector<HTMLElement>(".feedbackText"); if (s) s.style.textDecoration = "none"; }}
-              >
-                <IconBug size={12} />
-                <span className="feedbackText" style={{ fontSize: 11 }}>{t("feedback.trigger")}</span>
-              </span>
-            )}
+            <span
+              onClick={onBugReport}
+              title={t("feedback.trigger")}
+              style={{ cursor: "pointer", opacity: 1, color: "var(--accent, #5B8DEF)", display: "inline-flex", alignItems: "center", gap: 2 }}
+              onMouseEnter={(e) => { const s = e.currentTarget.querySelector<HTMLElement>(".feedbackText"); if (s) s.style.textDecoration = "underline"; }}
+              onMouseLeave={(e) => { const s = e.currentTarget.querySelector<HTMLElement>(".feedbackText"); if (s) s.style.textDecoration = "none"; }}
+            >
+              <IconBug size={12} />
+              <span className="feedbackText" style={{ fontSize: 11 }}>{t("feedback.trigger")}</span>
+            </span>
             <span
               onClick={() => onViewChange("docs")}
               style={{ color: "var(--accent, #5B8DEF)", textDecoration: "none", opacity: 1, display: "inline-flex", alignItems: "center", gap: 3, cursor: "pointer" }}
@@ -441,15 +439,13 @@ export function Sidebar({
             >
               <IconGlobe size={14} />
             </span>
-            {serviceRunning && (
-              <span
-                onClick={onBugReport}
-                title={t("feedback.trigger")}
-                style={{ color: "var(--accent, #5B8DEF)", opacity: 0.5, display: "flex", cursor: "pointer" }}
-              >
-                <IconBug size={14} />
-              </span>
-            )}
+            <span
+              onClick={onBugReport}
+              title={t("feedback.trigger")}
+              style={{ color: "var(--accent, #5B8DEF)", opacity: 0.5, display: "flex", cursor: "pointer" }}
+            >
+              <IconBug size={14} />
+            </span>
           </div>
           <div style={{ display: "flex", justifyContent: "center", gap: 8 }}>
             <span
