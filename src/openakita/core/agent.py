@@ -4024,6 +4024,9 @@ general Q&A yourself.
         task_monitor.start(self.brain.model)
         self._current_task_monitor = task_monitor
 
+        # Increment generation ID on task start (for cancel race-condition protection)
+        self._current_generation += 1
+
         # session_type 检测
         # desktop 聊天面板与 CLI 同属本地交互，应启用 ForceToolCall 验收
         # 仅真正的 IM 通道（telegram/wechat/feishu 等）使用 im 模式
@@ -5892,6 +5895,19 @@ general Q&A yourself.
 
         # Match found - consume it
         return self._pending_cancels.pop(session_id)
+
+    def _cleanup_stale_cancels(self, max_age: float = 60.0) -> int:
+        """Remove cancel requests older than max_age seconds."""
+        stale_sessions = [
+            sid for sid, req in self._pending_cancels.items()
+            if req.is_stale(max_age=max_age)
+        ]
+
+        for sid in stale_sessions:
+            del self._pending_cancels[sid]
+            logger.debug(f"[Agent] Cleaned up stale cancel for session={sid}")
+
+        return len(stale_sessions)
 
     def is_stop_command(self, message: str) -> bool:
         """

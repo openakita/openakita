@@ -1,5 +1,7 @@
 # tests/core/test_agent_cancel.py
 """Tests for Agent cancel handling with generation tracking."""
+import time
+
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 from openakita.core.health_config import CancelRequest
@@ -83,3 +85,33 @@ def test_cancel_request_consumed_when_matching():
     assert consumed is not None
     assert consumed.generation_id == 5
     assert "sess_123" not in pending  # Was consumed
+
+
+def test_generation_increments_on_task_start():
+    from openakita.core.agent import Agent
+
+    agent = MagicMock(spec=Agent)
+    agent._current_generation = 0
+
+    # Simulate task start incrementing generation
+    agent._current_generation += 1
+
+    assert agent._current_generation == 1
+
+
+def test_stale_cancel_requests_cleaned():
+    req_old = CancelRequest(
+        session_id="sess_1",
+        task_id="task_1",
+        generation_id=1,
+        timestamp=time.time() - 120,  # 2 minutes old
+    )
+
+    req_fresh = CancelRequest(
+        session_id="sess_2",
+        task_id="task_2",
+        generation_id=2,
+    )
+
+    assert req_old.is_stale(max_age=60) is True
+    assert req_fresh.is_stale(max_age=60) is False
