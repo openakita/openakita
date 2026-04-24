@@ -318,19 +318,23 @@ async def toggle_task(request: Request, task_id: str):
 
 @router.post("/api/scheduler/tasks/{task_id}/trigger")
 async def trigger_task(request: Request, task_id: str):
-    """Trigger a task to run immediately."""
+    """Trigger a task to run in the background (non-blocking).
+
+    立即返回 execution_id，避免 LLM 调用 / 大模型推理阻塞 HTTP 请求超时。
+    """
     scheduler = _get_scheduler(request)
     if scheduler is None:
         return JSONResponse(status_code=503, content={"error": "Agent not initialized"})
 
-    from openakita.core.engine_bridge import to_engine
-
-    execution = await to_engine(scheduler.trigger_now(task_id))
-    if execution is None:
+    execution_id = scheduler.trigger_in_background(task_id)
+    if execution_id is None:
         return JSONResponse(status_code=404, content={"error": "Task not found or trigger failed"})
 
     _notify_scheduler_change("trigger")
-    return {"status": "ok", "execution": execution.to_dict()}
+    return JSONResponse(
+        status_code=202,
+        content={"status": "accepted", "execution_id": execution_id},
+    )
 
 
 @router.get("/api/scheduler/executions")
