@@ -19,7 +19,8 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Loader2, RefreshCw, Trash2, Pencil, Check, X, Search, Brain, Ban, List, Network, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from "@/components/ui/table";
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
-import { useMdModules, type MdModules } from "../hooks/useMdModules";
+import { useMdModules } from "./chat/hooks/useMdModules";
+import type { MdModules } from "./chat/utils/chatTypes";
 
 const MemoryGraph3D = lazy(() =>
   import("../components/MemoryGraph3D").then((m) => ({ default: m.MemoryGraph3D }))
@@ -142,7 +143,7 @@ function MemoryContent({ content, mdMods }: { content: string; mdMods: MdModules
       >
         {mdMods ? (
           <div className="feedbackMdContent memory-tip-content">
-            <mdMods.ReactMarkdown remarkPlugins={[mdMods.remarkGfm]}>{content}</mdMods.ReactMarkdown>
+            <mdMods.ReactMarkdown remarkPlugins={mdMods.remarkPlugins}>{content}</mdMods.ReactMarkdown>
           </div>
         ) : (
           <div className="memory-tip-content" style={{ whiteSpace: "pre-wrap" }}>{content}</div>
