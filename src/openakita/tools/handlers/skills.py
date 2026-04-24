@@ -14,6 +14,7 @@
 - uninstall_skill: 卸载外部技能 (F14)
 """
 
+import asyncio
 import logging
 import re
 from pathlib import Path
@@ -490,6 +491,32 @@ class SkillsHandler:
                 # 都在 propagate_skill_change 里完成，工具处理器层不要再手工调用任何子步骤。
                 self.agent.propagate_skill_change(SkillEvent.LOAD, rescan=False)
                 logger.info(f"Skill loaded: {skill_name}")
+
+                # 触发后台自动翻译（不阻塞返回）。安装路径已经做过同样处理，
+                # _load_skill 是另一条入口（用户用工具加载本地新建技能），
+                # 这里补齐让 i18n.yaml 写入一致。
+                try:
+                    brain = getattr(self.agent, "brain", None)
+                    if brain is not None:
+                        from openakita.skills.i18n import auto_translate_skill
+
+                        meta = loaded.metadata
+                        kw = list(getattr(meta, "keywords", []) or [])
+                        coro = auto_translate_skill(
+                            skill_dir=skill_dir,
+                            name=meta.name,
+                            description=meta.description or "",
+                            brain=brain,
+                            when_to_use=getattr(meta, "when_to_use", "") or "",
+                            keywords=kw,
+                            argument_hint=getattr(meta, "argument_hint", "") or "",
+                        )
+                        try:
+                            asyncio.get_running_loop().create_task(coro)
+                        except RuntimeError:
+                            coro.close()
+                except Exception as te:  # pragma: no cover - 仅日志
+                    logger.debug(f"auto_translate_skill scheduling skipped: {te}")
 
                 return f"""✅ 技能加载成功！
 

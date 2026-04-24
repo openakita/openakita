@@ -230,19 +230,25 @@ class SkillParser:
         Returns:
             ParsedSkill 对象
         """
-        # 解析 frontmatter
+        # 解析 frontmatter（缺失时降级而非硬失败：从目录名派生 name，正文整体作为 body）
         match = self.FRONTMATTER_PATTERN.match(content)
-        if not match:
-            raise ValueError(f"Invalid SKILL.md format: missing YAML frontmatter in {path}")
-
-        yaml_content = match.group(1)
-        body = match.group(2).strip()
-
-        # 解析 YAML
-        try:
-            data = yaml.safe_load(yaml_content) or {}
-        except yaml.YAMLError as e:
-            raise ValueError(f"Invalid YAML frontmatter in {path}: {e}")
+        if match:
+            yaml_content = match.group(1)
+            body = match.group(2).strip()
+            try:
+                data = yaml.safe_load(yaml_content) or {}
+            except yaml.YAMLError as e:
+                logger.warning(
+                    f"Invalid YAML frontmatter in {path}: {e}; falling back to filename-derived metadata"
+                )
+                data = {}
+                body = content.strip()
+        else:
+            logger.warning(
+                f"SKILL.md missing YAML frontmatter in {path}; falling back to filename-derived metadata"
+            )
+            data = {}
+            body = content.strip()
 
         # 构建元数据（body 用于 description 自动提取回退）
         metadata = self._build_metadata(data, path, body=body)
@@ -270,21 +276,34 @@ class SkillParser:
             assets_dir=assets_dir if assets_dir.exists() else None,
         )
 
+    @staticmethod
+    def _derive_name_from_path(path: Path) -> str:
+        """从 SKILL.md 所在目录派生 snake_case 名称作为降级值。"""
+        raw = path.parent.name or "unnamed_skill"
+        normalized = re.sub(r"[^A-Za-z0-9]+", "_", raw).strip("_").lower()
+        return normalized or "unnamed_skill"
+
     def _build_metadata(self, data: dict, path: Path, body: str = "") -> SkillMetadata:
-        """从 YAML 数据构建元数据"""
-        # 必需字段
+        """从 YAML 数据构建元数据（缺字段时降级派生，不再硬失败）"""
         name = data.get("name")
         description = data.get("description", "")
 
         if not name:
-            raise ValueError(f"Missing required 'name' field in {path}")
+            derived = self._derive_name_from_path(path)
+            logger.warning(
+                f"SKILL.md missing 'name' field in {path}; derived name from directory: '{derived}'"
+            )
+            name = derived
 
         if not description and body:
             first_para = body.split("\n\n")[0].replace("\n", " ").strip()
             description = first_para[:100] + ("..." if len(first_para) > 100 else "")
 
         if not description:
-            raise ValueError(f"Missing required 'description' field in {path}")
+            logger.warning(
+                f"SKILL.md missing 'description' field in {path}; using empty description"
+            )
+            description = ""
 
         # 处理 allowed-tools (连字符转下划线)
         allowed_tools = data.get("allowed-tools", "")
