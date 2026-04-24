@@ -524,3 +524,4 @@ export function FeedbackModal({ open, onClose, apiBase, initialMode = "bug" }: F
     </Dialog>
   );
 }
+

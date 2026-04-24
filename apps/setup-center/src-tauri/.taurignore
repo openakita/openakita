@@ -2,3 +2,4 @@ resources/
 *.pyc
 __pycache__/
 *.log
+

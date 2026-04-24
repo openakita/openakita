@@ -27,3 +27,4 @@ export function useAppConfig(): AppConfigContextType {
   if (!ctx) throw new Error("useAppConfig must be used within AppConfigContext.Provider");
   return ctx;
 }
+

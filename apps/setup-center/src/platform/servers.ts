@@ -113,3 +113,4 @@ function normalizeUrl(url: string): string {
   if (!/^https?:\/\//i.test(u)) u = `http://${u}`;
   return u.replace(/\/+$/, "");
 }
+

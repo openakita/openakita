@@ -39,3 +39,4 @@ export function usePerfMode() {
 
   return { mode, toggle, set } as const;
 }
+

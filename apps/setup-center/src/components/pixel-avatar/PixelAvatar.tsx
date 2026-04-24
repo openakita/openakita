@@ -53,3 +53,4 @@ export const PixelAvatar = memo(function PixelAvatar({
     />
   );
 });
+

@@ -36,3 +36,4 @@ export const BODY_DIMS: Record<string, { w: number; h: number }> = {
 export const ACCESSORY_LIST = [
   'none', 'glasses', 'headphones', 'hardhat', 'beret', 'crown', 'tie', 'mask',
 ] as const;
+

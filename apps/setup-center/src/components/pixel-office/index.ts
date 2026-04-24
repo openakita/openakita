@@ -14,3 +14,4 @@ export { getTheme, listThemes, THEME_PRESETS } from './SceneTheme';
 export type { SceneTheme, FurnitureStyle } from './SceneTheme';
 export { STATUS_TO_AREA, STATUS_ANIMATION, ACTIVITY_PRIORITY } from './StatusMapping';
 export type { NodeStatus, AreaType, AreaDef, ActivityType } from './StatusMapping';
+

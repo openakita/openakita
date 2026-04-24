@@ -53,3 +53,4 @@ export const ACTIVITY_PRIORITY: Record<ActivityType, number> = {
   status_change: 20,
   heartbeat: 10,
 };
+

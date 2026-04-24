@@ -433,3 +433,4 @@ export class CharacterComposer {
     return SPRITE_SIZE;
   }
 }
+

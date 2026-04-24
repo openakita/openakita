@@ -198,3 +198,4 @@ export function FeishuQRModal({ venvDir, apiBaseUrl, domain = "feishu", onClose,
     </ModalOverlay>
   );
 }
+

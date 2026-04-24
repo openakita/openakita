@@ -169,3 +169,4 @@ export class TilesetManager {
     return this.canvas;
   }
 }
+

@@ -188,3 +188,4 @@ export function PluginOnboardModal({
     </Dialog>
   );
 }
+
