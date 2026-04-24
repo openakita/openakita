@@ -269,7 +269,35 @@ class PluginAPI:
 
     # --- Hook registration ---
 
-    def register_hook(self, hook_name: str, callback: Callable) -> None:
+    def register_hook(
+        self,
+        hook_name: str,
+        callback: Callable,
+        *,
+        match: Callable[..., bool] | None = None,
+    ) -> None:
+        """Register a lifecycle hook callback.
+
+        Args:
+            hook_name: One of the 15 supported hook names. Permission tier is
+                inferred from the name (basic/message/retrieve, otherwise
+                requires ``hooks.all``).
+            callback: Sync or async ``f(**kwargs) -> Any``. Each hook event
+                passes specific kwargs documented in the plugin guide.
+            match: Optional predicate ``f(**kwargs) -> bool``. When provided,
+                the dispatcher invokes the predicate first and skips the
+                callback when it returns False. Predicates are evaluated
+                cheaply (no timeout, no thread off-load); raising counts as
+                no-match and is recorded as a low-weight error.
+
+        Example::
+
+            api.register_hook(
+                "on_message_received",
+                self._on_msg,
+                match=lambda **kw: kw.get("channel") == "wecom",
+            )
+        """
         if not callable(callback):
             self.log(f"register_hook: callback is not callable: {callback!r}", "error")
             return
@@ -306,7 +334,16 @@ class PluginAPI:
             self.log("No hook_registry available", "warning")
             return
 
-        self._hook_registry.register(hook_name, callback, plugin_id=self._plugin_id)
+        if match is not None and not callable(match):
+            self.log(
+                f"register_hook: match is not callable, ignoring: {match!r}",
+                "warning",
+            )
+            match = None
+
+        self._hook_registry.register(
+            hook_name, callback, plugin_id=self._plugin_id, match=match
+        )
         timeout = self._manifest.hook_timeout
         self._hook_registry.set_timeout(hook_name, self._plugin_id, timeout)
         self._registered_hooks.append(hook_name)

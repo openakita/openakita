@@ -47,6 +47,7 @@ def _wrap_callback(fn: Callable, plugin_id: str) -> Callable:
 
     _wrapper.__plugin_id__ = plugin_id  # type: ignore[attr-defined]
     _wrapper.__hook_timeout__ = DEFAULT_HOOK_TIMEOUT  # type: ignore[attr-defined]
+    _wrapper.__hook_match__ = None  # type: ignore[attr-defined]
     return _wrapper
 
 
@@ -67,14 +68,25 @@ class HookRegistry:
         callback: Callable,
         *,
         plugin_id: str = "",
+        match: Callable[..., bool] | None = None,
     ) -> None:
+        """Register a hook callback.
+
+        ``match``: optional predicate ``f(**kwargs) -> bool``. When provided,
+        the dispatcher evaluates it with the same kwargs that would be passed
+        to the callback and skips invocation when the predicate returns False.
+        Predicates that raise are treated as no-match and recorded as a
+        low-weight error so chronic offenders surface in the health snapshot.
+        """
         if hook_name not in HOOK_NAMES:
             raise ValueError(f"Unknown hook '{hook_name}', must be one of {sorted(HOOK_NAMES)}")
         try:
             callback.__plugin_id__ = plugin_id  # type: ignore[attr-defined]
             callback.__hook_timeout__ = DEFAULT_HOOK_TIMEOUT  # type: ignore[attr-defined]
+            callback.__hook_match__ = match  # type: ignore[attr-defined]
         except AttributeError:
             wrapper = _wrap_callback(callback, plugin_id)
+            wrapper.__hook_match__ = match  # type: ignore[attr-defined]
             self._hooks[hook_name].append(wrapper)
             logger.debug(
                 "Hook '%s' registered (wrapped) callback from plugin '%s'",
@@ -123,6 +135,24 @@ class HookRegistry:
 
             if self._error_tracker.is_disabled(plugin_id):
                 return _SKIP
+
+            match_fn = getattr(callback, "__hook_match__", None)
+            if match_fn is not None:
+                try:
+                    if not match_fn(**kwargs):
+                        return _SKIP
+                except Exception as e:
+                    logger.warning(
+                        "Hook '%s' match predicate from plugin '%s' raised %s: %s, treating as no-match",
+                        hook_name,
+                        plugin_id,
+                        type(e).__name__,
+                        e,
+                    )
+                    self._error_tracker.record_error(
+                        plugin_id, f"hook:{hook_name}:match", str(e)
+                    )
+                    return _SKIP
 
             try:
                 if asyncio.iscoroutinefunction(callback):
@@ -177,6 +207,23 @@ class HookRegistry:
             plugin_id = getattr(callback, "__plugin_id__", "unknown")
             if self._error_tracker.is_disabled(plugin_id):
                 continue
+            match_fn = getattr(callback, "__hook_match__", None)
+            if match_fn is not None:
+                try:
+                    if not match_fn(**kwargs):
+                        continue
+                except Exception as e:
+                    logger.warning(
+                        "Hook '%s' match predicate from plugin '%s' raised %s: %s, treating as no-match",
+                        hook_name,
+                        plugin_id,
+                        type(e).__name__,
+                        e,
+                    )
+                    self._error_tracker.record_error(
+                        plugin_id, f"hook:{hook_name}:match", str(e)
+                    )
+                    continue
             timeout = getattr(callback, "__hook_timeout__", DEFAULT_HOOK_TIMEOUT)
             if asyncio.iscoroutinefunction(callback):
                 import concurrent.futures
