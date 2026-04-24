@@ -1509,3 +1509,4 @@ async def list_extensions():
             },
         ],
     }
+

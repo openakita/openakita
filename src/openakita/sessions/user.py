@@ -388,3 +388,4 @@ class UserManager:
 
         except Exception as e:
             logger.error(f"Failed to save users: {e}")
+

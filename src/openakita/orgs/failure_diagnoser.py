@@ -491,3 +491,4 @@ def format_human_summary(diagnosis: dict[str, Any]) -> str:
         for sline in suggestion.splitlines():
             lines.append(f"> {sline}" if sline else ">")
     return "\n".join(lines)
+

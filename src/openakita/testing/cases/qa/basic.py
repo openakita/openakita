@@ -150,3 +150,4 @@ QA_BASIC_TESTS = [
 # 导出
 def get_tests() -> list[TestCase]:
     return QA_BASIC_TESTS
+

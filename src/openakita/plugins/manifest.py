@@ -409,3 +409,4 @@ def validate_plugin(plugin_dir: Path) -> list[str]:
             issues.append(f"Unknown permissions: {unknown}")
 
     return issues
+

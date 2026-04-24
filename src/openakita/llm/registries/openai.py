@@ -73,3 +73,4 @@ class OpenAIRegistry(ProviderRegistry):
             )
             for model_id in preset
         ]
+

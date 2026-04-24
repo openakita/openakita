@@ -72,3 +72,4 @@ async def parse_sse_stream(response) -> AsyncIterator[dict]:
                 yield json.loads(full_data)
             except json.JSONDecodeError:
                 logger.warning("SSE final chunk parse error: %s", full_data[:300])
+

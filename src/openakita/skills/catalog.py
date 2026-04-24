@@ -634,3 +634,4 @@ def generate_skill_catalog(registry: SkillRegistry) -> str:
     """便捷函数：生成技能清单"""
     catalog = SkillCatalog(registry)
     return catalog.generate_catalog()
+

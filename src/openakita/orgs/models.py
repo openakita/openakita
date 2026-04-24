@@ -939,3 +939,4 @@ class OrgProject:
         proj = cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
         proj.tasks = [ProjectTask.from_dict(t) for t in raw_tasks]
         return proj
+

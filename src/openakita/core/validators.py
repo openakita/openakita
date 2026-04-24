@@ -500,3 +500,4 @@ class ValidatorRegistry:
 def create_default_registry() -> ValidatorRegistry:
     """创建默认验证器注册表"""
     return ValidatorRegistry()
+

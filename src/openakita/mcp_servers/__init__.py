@@ -8,3 +8,4 @@ OpenAkita MCP 服务器模块
 from .web_search import mcp as web_search_mcp
 
 __all__ = ["web_search_mcp"]
+
