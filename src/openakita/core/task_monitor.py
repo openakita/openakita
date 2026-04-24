@@ -38,6 +38,20 @@ class TaskPhase(Enum):
 
 
 @dataclass
+class IdleNudge:
+    """Structured idle loop intervention.
+
+    Provides escalating interventions when an agent gets stuck in
+    consecutive iterations without using tools.
+    """
+
+    level: str
+    message: str
+    should_switch_model: bool = False
+    should_terminate: bool = False
+
+
+@dataclass
 class ToolCallRecord:
     """Tool call record"""
 
@@ -175,6 +189,13 @@ class TaskMonitor:
         self._timeout_retry_count = 0
         self._last_progress_time: float = 0.0
 
+        # 3. Idle loop detection: count consecutive iterations with 0 tool calls.
+        # After N consecutive zero-tool-call iterations, the agent is likely stuck in a
+        # "thinking without acting" loop. The threshold defaults to 3.
+        self._consecutive_zero_tool_iterations: int = 0
+        self._idle_loop_threshold: int = 3
+        self._idle_warned: bool = False
+
     def start(self, model: str) -> None:
         """Start the task."""
         self.metrics.start_time = time.time()
@@ -212,6 +233,25 @@ class TaskMonitor:
         """End the current iteration."""
         if self._current_iteration:
             self._touch_progress()
+            # Track consecutive zero-tool-call iterations (idle loop detection)
+            tool_count = len(self._current_iteration.tool_calls)
+            if tool_count == 0:
+                self._consecutive_zero_tool_iterations += 1
+                if (
+                    self._consecutive_zero_tool_iterations >= self._idle_loop_threshold
+                    and not self._idle_warned
+                ):
+                    self._idle_warned = True
+                    logger.warning(
+                        f"[TaskMonitor] Idle loop detected: {self._consecutive_zero_tool_iterations} "
+                        f"consecutive iterations with 0 tool calls (task: {self.metrics.task_id}). "
+                        f"Agent may be stuck in 'thinking without acting'."
+                    )
+            else:
+                # Reset counter when tools are actually used — partial progress still counts
+                self._consecutive_zero_tool_iterations = 0
+                self._idle_warned = False
+
             self._current_iteration.llm_response_preview = llm_response_preview
             self._current_iteration.duration_ms = int(
                 (time.time() - self.metrics.start_time) * 1000
@@ -374,6 +414,79 @@ class TaskMonitor:
     def last_error(self) -> str | None:
         """Most recent error message."""
         return self._last_error
+
+    @property
+    def consecutive_zero_tool_iterations(self) -> int:
+        """Number of consecutive iterations with 0 tool calls (idle loop indicator)."""
+        return self._consecutive_zero_tool_iterations
+
+    @property
+    def is_idle_loop_detected(self) -> bool:
+        """Whether the agent appears stuck in consecutive iterations with no tool usage."""
+        return self._consecutive_zero_tool_iterations >= self._idle_loop_threshold
+
+    def get_idle_loop_nudge(self) -> IdleNudge | None:
+        """Return escalating nudge based on consecutive idle iterations.
+
+        Escalation levels (from EscalationThresholds):
+        - 3 iterations: soft nudge
+        - 5 iterations: force tool directive
+        - 7 iterations: trigger model switch
+        - 10 iterations: terminate task
+        """
+        from .health_config import EscalationThresholds
+
+        n = self._consecutive_zero_tool_iterations
+        thresholds = EscalationThresholds()
+        level = thresholds.level_for_count(n)
+
+        if level is None:
+            return None
+
+        if level == "terminate":
+            return IdleNudge(
+                level="terminate",
+                message=(
+                    f"CRITICAL: {n} consecutive iterations with no tools. "
+                    "Task is being terminated to prevent infinite loop."
+                ),
+                should_terminate=True,
+            )
+
+        if level == "model_switch":
+            return IdleNudge(
+                level="model_switch",
+                message=(
+                    f"SEVERE: {n} consecutive iterations with no tools. "
+                    "Switching to a different model. You MUST execute a tool immediately."
+                ),
+                should_switch_model=True,
+            )
+
+        if level == "force_tool":
+            return IdleNudge(
+                level="force_tool",
+                message=(
+                    f"WARNING: {n} consecutive iterations with no tools. "
+                    "You MUST use a tool NOW. Use run_shell to write a script, "
+                    "or use read_file to gather info. Stop planning. Execute."
+                ),
+            )
+
+        # soft_nudge (default at threshold)
+        return IdleNudge(
+            level="soft_nudge",
+            message=(
+                f"You have completed {n} consecutive iterations without using any tools. "
+                "You are stuck in a thinking-without-acting loop. IMMEDIATELY use a tool "
+                "(write_file, run_shell, or read_file) to make real progress."
+            ),
+        )
+
+    @property
+    def idle_loop_count(self) -> int:
+        """Alias for consecutive_zero_tool_iterations (for external code)."""
+        return self._consecutive_zero_tool_iterations
 
     def _handle_timeout(self) -> None:
         """
