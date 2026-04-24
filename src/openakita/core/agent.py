@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from ..prompt.builder import PromptProfile
     from ..sessions import Session
 
+from ..api.schemas import AttachmentType
 from ..config import settings
 
 # 记忆系统
@@ -3445,7 +3446,8 @@ general Q&A yourself.
         try:
             self._has_pending_image_attachments = bool(attachments) and any(
                 (
-                    (getattr(a, "type", "") or "") == "image"
+                    (att_type := (getattr(a, "type", "") or "")) == AttachmentType.IMAGE.value
+                    or att_type == AttachmentType.IMAGE
                     or (getattr(a, "mime_type", "") or "").startswith("image/")
                     or (getattr(a, "url", "") or "").startswith("data:image/")
                 )
@@ -3817,7 +3819,8 @@ general Q&A yourself.
                 att_mime = getattr(att, "mime_type", None) or att_type
 
                 is_image = (
-                    att_type == "image"
+                    att_type == AttachmentType.IMAGE.value
+                    or att_type == AttachmentType.IMAGE
                     or (att_mime or "").startswith("image/")
                     or (att_url or "").startswith("data:image/")
                 )
