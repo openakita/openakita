@@ -663,6 +663,21 @@ class LLMClient:
                     f"[LLM-Stream] endpoint={provider.name} model={provider.model} "
                     f"action=stream_request"
                 )
+                # 发射一次端点元信息：vision 降级时让上层（reasoning_engine）能
+                # 转换为 endpoint_notice 给前端显示系统气泡。
+                try:
+                    if (
+                        not provider.config.has_capability("vision")
+                        and self._has_images(request.messages)
+                    ):
+                        yield {
+                            "type": "endpoint_meta",
+                            "endpoint_name": provider.name,
+                            "vision_degraded": True,
+                        }
+                        yielded = True
+                except Exception:
+                    pass
                 async for event in provider.chat_stream(request):
                     if cancel_event and cancel_event.is_set():
                         raise UserCancelledError(
@@ -1406,6 +1421,17 @@ class LLMClient:
                 # 标记 failover 信息供上层（reasoning_engine）发送通知
                 if i > 0 and providers:
                     response._failover_from = providers[0].name  # type: ignore[attr-defined]
+                # Vision 降级标记：消息含图片但所选端点不支持 vision，
+                # 此时图片已在 converter 中被替换为占位文本，给上层一个
+                # endpoint_notice 钩子，让前端能渲染系统气泡告知用户。
+                try:
+                    if (
+                        not provider.config.has_capability("vision")
+                        and self._has_images(request.messages)
+                    ):
+                        response._vision_degraded = True  # type: ignore[attr-defined]
+                except Exception:
+                    pass
 
                 # ── 自愈: thinking 模式静默失败（HTTP 200 但内容为空） ──
                 # 部分 API 代理/中转接受 thinking 参数但在响应中剥离推理内容，

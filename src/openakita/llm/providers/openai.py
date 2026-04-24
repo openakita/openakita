@@ -769,11 +769,13 @@ class OpenAIProvider(LLMProvider):
             if is_always_thinking:
                 thinking_enabled = True
 
+        _vision_available = self.config.has_capability("vision")
         messages = convert_messages_to_openai(
             request.messages,
             request.system,
             provider=self.config.provider,
             enable_thinking=thinking_enabled,
+            vision_available=_vision_available,
         )
 
         body = {
