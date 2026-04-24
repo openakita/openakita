@@ -53,11 +53,11 @@ class CancelRequest:
     session_id: str
     task_id: str
     generation_id: int
-    timestamp: float = None
+    timestamp: float | None = None
 
     def __post_init__(self):
         if self.timestamp is None:
-            object.__setattr__(self, "timestamp", _time.time())
+            self.timestamp = _time.time()
 
     def matches(
         self,

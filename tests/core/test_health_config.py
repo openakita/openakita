@@ -58,6 +58,7 @@ def test_cancel_request_matches():
     assert req.matches(session_id="sess_123", task_id="task_456", generation_id=7)
     assert not req.matches(session_id="sess_123", task_id="task_456", generation_id=8)
     assert not req.matches(session_id="sess_999", task_id="task_456", generation_id=7)
+    assert not req.matches(session_id="sess_123", task_id="task_999", generation_id=7)
 
 
 def test_cancel_request_is_stale():
