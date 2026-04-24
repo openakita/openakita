@@ -358,6 +358,8 @@ class TaskMonitor:
         # so every subsequent error would immediately trigger another switch, causing an infinite loop.
         self._retry_count = 0
         self._last_error = None
+        # Reset idle loop counter so the new model starts fresh without inherited warnings.
+        self._consecutive_zero_tool_iterations = 0
 
     def record_error(self, error: str) -> bool:
         """

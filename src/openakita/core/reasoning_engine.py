@@ -1242,6 +1242,15 @@ class ReasoningEngine:
                 # inject a strategic pivot message to force action.
                 idle_nudge = task_monitor.get_idle_loop_nudge()
                 if idle_nudge:
+                    if idle_nudge.should_terminate:
+                        # Log and break immediately, don't inject message
+                        logger.error(
+                            f"[ReAct] Idle loop terminate triggered after "
+                            f"{task_monitor.consecutive_zero_tool_iterations} iterations"
+                        )
+                        break  # Exit the reasoning loop
+
+                    # Only inject message if NOT terminating
                     working_messages.append({
                         "role": "user",
                         "content": idle_nudge.message,  # Use .message, not the object
@@ -1250,13 +1259,6 @@ class ReasoningEngine:
                         f"[ReAct] Idle loop nudge injected: level={idle_nudge.level}, "
                         f"task={task_monitor.metrics.task_id}"
                     )
-
-                    if idle_nudge.should_terminate:
-                        logger.error(
-                            f"[ReAct] Idle loop terminate triggered after "
-                            f"{task_monitor.consecutive_zero_tool_iterations} iterations"
-                        )
-                        break  # Exit the reasoning loop
 
                     if idle_nudge.should_switch_model:
                         new_model = task_monitor.fallback_model
@@ -2783,6 +2785,15 @@ class ReasoningEngine:
                     # Idle loop nudge: inject strategic pivot message if agent is stuck
                     idle_nudge = task_monitor.get_idle_loop_nudge()
                     if idle_nudge:
+                        if idle_nudge.should_terminate:
+                            # Log and break immediately, don't inject message
+                            logger.error(
+                                f"[ReAct-Stream] Idle loop terminate triggered after "
+                                f"{task_monitor.consecutive_zero_tool_iterations} iterations"
+                            )
+                            break  # Exit the reasoning loop
+
+                        # Only inject message if NOT terminating
                         working_messages.append({
                             "role": "user",
                             "content": idle_nudge.message,  # Use .message, not the object
@@ -2791,13 +2802,6 @@ class ReasoningEngine:
                             f"[ReAct-Stream] Idle loop nudge injected: level={idle_nudge.level}, "
                             f"task={task_monitor.metrics.task_id}"
                         )
-
-                        if idle_nudge.should_terminate:
-                            logger.error(
-                                f"[ReAct-Stream] Idle loop terminate triggered after "
-                                f"{task_monitor.consecutive_zero_tool_iterations} iterations"
-                            )
-                            break  # Exit the reasoning loop
 
                         if idle_nudge.should_switch_model:
                             new_model = task_monitor.fallback_model
