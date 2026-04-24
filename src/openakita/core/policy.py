@@ -536,6 +536,8 @@ class PolicyEngine:
     def __init__(self, config: SecurityConfig | None = None) -> None:
         self._config = config or self._make_default_config()
         self._audit_log: list[dict[str, Any]] = []
+        self._ui_confirm_events: dict[str, asyncio.Event] = {}
+        self._ui_confirm_decisions: dict[str, str] = {}
         self._consecutive_denials = 0
         self._total_denials = 0
         self._readonly_mode = False
@@ -1583,6 +1585,12 @@ class PolicyEngine:
                 scope=scope,
                 needs_sandbox=needs_sandbox,
             )
+        # Also wake up IM card-based waiting path
+        if confirm_id in self._ui_confirm_events and confirm_id not in self._ui_confirm_decisions:
+            self._ui_confirm_decisions[confirm_id] = decision
+            ev = self._ui_confirm_events.get(confirm_id)
+            if ev:
+                ev.set()
         return True
 
     # ----- Audit ------------------------------------------------------------
@@ -1637,6 +1645,45 @@ class PolicyEngine:
 
     def get_audit_log(self) -> list[dict[str, Any]]:
         return list(self._audit_log)
+
+    def prepare_ui_confirm(self, confirm_id: str) -> None:
+        """为交互式安全确认（卡片 / InlineKeyboard）注册等待事件。"""
+        if not confirm_id:
+            return
+        self._ui_confirm_events[confirm_id] = asyncio.Event()
+        self._ui_confirm_decisions.pop(confirm_id, None)
+
+    def cleanup_ui_confirm(self, confirm_id: str) -> None:
+        """清理安全确认等待状态（在流程结束或回退到纯文本路径时调用）。"""
+        if not confirm_id:
+            return
+        self._ui_confirm_events.pop(confirm_id, None)
+        self._ui_confirm_decisions.pop(confirm_id, None)
+
+    def resolve_ui_confirm(self, confirm_id: str, decision: str) -> None:
+        """用户通过按钮等方式确认后调用，唤醒 wait_for_ui_resolution。"""
+        if not confirm_id:
+            return
+        if confirm_id in self._ui_confirm_decisions:
+            return
+        self._ui_confirm_decisions[confirm_id] = decision
+        ev = self._ui_confirm_events.get(confirm_id)
+        if ev is not None:
+            ev.set()
+
+    async def wait_for_ui_resolution(self, confirm_id: str, timeout: float) -> str:
+        """等待 resolve_ui_confirm；超时视为 deny。"""
+        if not confirm_id:
+            return "deny"
+        ev = self._ui_confirm_events.get(confirm_id)
+        if ev is None:
+            return self._ui_confirm_decisions.get(confirm_id, "deny")
+        try:
+            await asyncio.wait_for(ev.wait(), timeout=timeout)
+        except TimeoutError:
+            if confirm_id not in self._ui_confirm_decisions:
+                self.resolve_ui_confirm(confirm_id, "deny")
+        return self._ui_confirm_decisions.get(confirm_id, "deny")
 
 
 # ---------------------------------------------------------------------------
