@@ -123,6 +123,20 @@ export function useAttachments({
 
     const FILE_MAX_SIZE = 50 * 1024 * 1024;
 
+    // 把 "data:<mime>;base64,<b64>" 解析为 Blob。失败返回 null。
+    const dataUrlToBlob = (dataUrl: string, mimeType: string): Blob | null => {
+      try {
+        const commaIdx = dataUrl.indexOf(",");
+        const b64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return new Blob([bytes], { type: mimeType });
+      } catch {
+        return null;
+      }
+    };
+
     const handleDroppedPaths = (paths: string[]) => {
       logger.info("Chat.Upload", "drag.drop", { count: paths.length });
       for (const filePath of paths) {
@@ -148,13 +162,54 @@ export function useAttachments({
                 return;
               }
             }
-            setPendingAttachments((prev) => [...prev, {
-              type: isImage ? "image" : isVideo ? "video" : "file",
+
+            // 图片 / 视频：保留 dataUrl，后端 multimodal 路径会直接消费（不会拼进文本 prompt）
+            if (isImage || isVideo) {
+              setPendingAttachments((prev) => [...prev, {
+                type: isImage ? "image" : "video",
+                name,
+                previewUrl: isImage ? dataUrl : undefined,
+                url: dataUrl,
+                size: estimatedSize,
+                mimeType,
+              }]);
+              return;
+            }
+
+            // 文档 / 其他文件：必须上传到后端拿短 URL，否则 base64 dataUrl 会被
+            // 拼进 LLM prompt 文本 → token 爆炸 + 被中间环节截断（→ "..."）
+            // → 模型反复说"找不到文件 / 内容被截断"。与 handleFileSelect 路径保持一致。
+            const blob = dataUrlToBlob(dataUrl, mimeType);
+            if (!blob) {
+              notifyError(`文件解码失败: ${name}`);
+              logger.error("Chat.Upload", "DragDrop dataUrl decode failed", { name });
+              return;
+            }
+            const uploadId = genId();
+            const isPdf = ext === "pdf" || mimeType === "application/pdf";
+            const att: ChatAttachment = {
+              type: isPdf ? "document" : "file",
               name,
-              previewUrl: isImage ? dataUrl : undefined,
-              url: dataUrl,
+              size: estimatedSize,
               mimeType,
-            }]);
+              _uploadId: uploadId,
+            };
+            setPendingAttachments((prev) => [...prev, att]);
+            uploadFile(blob, name)
+              .then((serverUrl) => {
+                if (cancelled) return;
+                setPendingAttachments((prev) => prev.map((a) =>
+                  a._uploadId === uploadId
+                    ? { ...a, url: `${apiBaseRef.current}${serverUrl}` }
+                    : a,
+                ));
+              })
+              .catch((err) => {
+                notifyError(`文件上传失败: ${name}`);
+                logger.error("Chat.Upload", "DragDrop uploadFile failed", { name, error: String(err) });
+                setPendingAttachments((prev) => prev.filter((a) =>
+                  a._uploadId !== uploadId || a.url));
+              });
           })
           .catch((err) => {
             notifyError(`文件读取失败: ${name}`);
