@@ -29,7 +29,10 @@ router = APIRouter()
 @router.get("/api/commands")
 async def list_commands():
     """Return available slash commands for the Desktop UI."""
-    from ...commands.registry import CommandScope, get_commands
+    try:
+        from ...commands.registry import CommandScope, get_commands
+    except ImportError:
+        return []
 
     return [
         {
@@ -412,7 +415,6 @@ async def _stream_chat(
         conversation_id = chat_request.conversation_id or f"api_{_uuid.uuid4().hex[:12]}"
         session = None
         session_messages_history: list[dict] = []
-        _msg_added = True
 
         if session_manager and conversation_id:
             try:
@@ -426,25 +428,14 @@ async def _stream_chat(
                     if chat_request.agent_profile_id:
                         _apply_agent_profile(session, chat_request.agent_profile_id)
 
-                    # 先添加用户消息，再获取完整历史（含当前消息）
-                    # 这与 IM 路径一致：gateway 先 add_message，再传 session_messages
                     if chat_request.message:
-                        _msg_added = session.add_message("user", chat_request.message)
+                        session.add_message("user", chat_request.message)
                     session_messages_history = (
                         list(session.context.messages) if hasattr(session, "context") else []
                     )
                     session_manager.mark_dirty()
             except Exception as e:
                 logger.warning(f"[Chat API] Session management error: {e}")
-
-        # ── Dedup short-circuit: skip LLM if message is identical duplicate ──
-        if session and not _msg_added and chat_request.message:
-            logger.info(
-                "[Chat API] Dedup: identical message within time window, skipping LLM"
-            )
-
-            yield _sse("done")
-            return
 
         # ── Background agent task: decoupled from SSE lifecycle ──
         async def _agent_runner():
