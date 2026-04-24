@@ -67,6 +67,23 @@ def _friendly_error_hint(failed_providers: list | None = None, last_error: str =
             if cat:
                 categories.add(cat)
 
+    # last_error 字符串中的关键字也参与分类（chat_stream 路径下 provider 上
+    # 可能没来得及打 _error_category 标记，但错误消息里仍保留 data_inspection 关键字）
+    err_l = (last_error or "").lower()
+    if (
+        "data_inspection" in err_l
+        or "datainspectionfailed" in err_l
+        or "inappropriate content" in err_l
+        or "content_filter" in err_l
+    ):
+        categories.add(FailoverReason.CONTENT_SAFETY)
+
+    if FailoverReason.CONTENT_SAFETY in categories:
+        hints.append(
+            "🛡️ 云端模型的内容安全审核未通过。可能是对话历史、系统提示词或本次输入"
+            "包含被平台判定为敏感的内容。建议：①使用 /clear 清空对话后重新开始；"
+            "②换一种表述；③切换到对内容审核更宽松的模型端点。"
+        )
     if FailoverReason.QUOTA in categories:
         hints.append("💳 检测到 API 配额耗尽，请前往对应平台充值或升级套餐，充值后会自动恢复。")
     if FailoverReason.AUTH in categories:
@@ -660,6 +677,34 @@ class LLMClient:
                     )
                     raise
 
+                # ── Content safety 早期熔断（必须在 status code 分支之前）──
+                # DashScope DataInspectionFailed 等内容审核错误是输入触发的确定性失败，
+                # 换端点重试也会失败。直接抛 is_structural=True 让 reasoning_engine
+                # 走方案 D（剥离 tool_results 重试）或优雅终止。
+                err_lower = str(e).lower()
+                if (
+                    "data_inspection" in err_lower
+                    or "datainspectionfailed" in err_lower
+                    or "inappropriate content" in err_lower
+                    or "content_filter" in err_lower
+                ):
+                    from .error_types import FailoverReason as _FR
+
+                    logger.error(
+                        f"[LLM-Stream] endpoint={provider.name} content-safety error "
+                        f"(skip cooldown, skip failover): {str(e)[:200]}"
+                    )
+                    provider._content_error = True
+                    try:
+                        provider._error_category = _FR.CONTENT_SAFETY
+                    except Exception:
+                        pass
+                    hint = _friendly_error_hint(eligible, last_error=str(e))
+                    raise AllEndpointsFailedError(
+                        f"Stream: content safety check failed. {hint} Last error: {e}",
+                        is_structural=True,
+                    ) from e
+
                 sc = e.status_code
 
                 # 413 auto-recovery: reduce max_tokens and retry same provider
@@ -731,9 +776,19 @@ class LLMClient:
                     exc_info=True,
                 )
 
-        hint = _friendly_error_hint(eligible)
+        hint = _friendly_error_hint(eligible, last_error=str(last_error or ""))
+        # 当所有端点都因结构性/内容安全错误失败时，标记 is_structural=True，
+        # 让 reasoning_engine._handle_llm_error 能走方案 B/C/D 而不是普通重试。
+        last_err_lower = str(last_error or "").lower()
+        is_structural = (
+            "data_inspection" in last_err_lower
+            or "datainspectionfailed" in last_err_lower
+            or "inappropriate content" in last_err_lower
+            or "content_filter" in last_err_lower
+        )
         raise AllEndpointsFailedError(
-            f"Stream: all {len(eligible)} endpoints failed. {hint} Last error: {last_error}"
+            f"Stream: all {len(eligible)} endpoints failed. {hint} Last error: {last_error}",
+            is_structural=is_structural,
         )
 
     # ==================== 公共降级策略 ====================

@@ -21,4 +21,5 @@ class FailoverReason(StrEnum):
     AUTH = "auth"
     STRUCTURAL = "structural"
     TRANSIENT = "transient"
+    CONTENT_SAFETY = "content_safety"
     UNKNOWN = "unknown"

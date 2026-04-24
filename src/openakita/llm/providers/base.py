@@ -325,7 +325,9 @@ class LLMProvider(ABC):
     def _classify_error(error: str) -> str:
         """根据错误信息自动分类。
 
-        分类优先级: quota > auth > structural > transient > unknown
+        分类优先级: content_safety > quota > auth > structural > transient > unknown
+        content_safety 必须最优先检测，否则 "data_inspection_failed" 中的
+        "(400)" 或其他子串会被错误分到 STRUCTURAL，导致换端点重试浪费配额。
         quota 必须在 auth 之前检测，因为 403 配额耗尽也包含 "403" 关键字。
 
         返回 ``FailoverReason`` 枚举成员 (StrEnum, 与字符串互兼容)。
@@ -333,6 +335,17 @@ class LLMProvider(ABC):
         from ..error_types import FailoverReason
 
         err_lower = error.lower()
+
+        if any(
+            kw in err_lower
+            for kw in [
+                "data_inspection",
+                "datainspectionfailed",
+                "inappropriate content",
+                "content_filter",
+            ]
+        ):
+            return FailoverReason.CONTENT_SAFETY
 
         if any(
             kw in err_lower

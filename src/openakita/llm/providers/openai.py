@@ -68,6 +68,22 @@ def _humanize_upstream_error(status: int, body: str) -> str:
     if _is_stream_only_error(body or ""):
         return body or f"API error ({status})"
     body_l = (body or "").lower()
+
+    # 内容安全审核（DashScope DataInspectionFailed / OpenAI moderation /
+    # 国内云模型绿网拦截等）。返回字符串中必须保留 data_inspection_failed
+    # 关键字，下游 errors.classify_error / reasoning_engine 方案 D /
+    # 前端 chatHelpers.classifyError 共同依赖此关键字判定 content_filter。
+    if (
+        "data_inspection" in body_l
+        or "datainspectionfailed" in body_l
+        or "inappropriate content" in body_l
+        or "content_filter" in body_l
+    ):
+        return (
+            f"云端模型的内容安全审核未通过 (HTTP {status}, data_inspection_failed)。"
+            "请尝试换一种表述、清空对话上下文，或切换到对内容审核更宽松的模型端点。"
+        )
+
     if (
         "invalidparameter" in body_l
         and (
