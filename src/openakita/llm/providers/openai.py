@@ -41,7 +41,12 @@ from ..types import (
     normalize_base_url,
 )
 from .base import LLMProvider
-from .proxy_utils import build_httpx_timeout, get_httpx_transport, get_proxy_config
+from .proxy_utils import (
+    build_httpx_timeout,
+    get_httpx_transport,
+    get_proxy_config,
+    should_bypass_proxy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -237,7 +242,7 @@ class OpenAIProvider(LLMProvider):
                 "event_hooks": {"request": [_ensure_auth_on_redirect]},
             }
 
-            if proxy and not is_local:
+            if proxy and not should_bypass_proxy(self.base_url):
                 client_kwargs["proxy"] = proxy
                 logger.debug(f"[OpenAI] Using proxy: {proxy}")
 

@@ -200,8 +200,7 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
 
     from openakita.llm.providers.proxy_utils import get_httpx_client_kwargs
 
-    _is_local = any(h in base_url.lower() for h in ("localhost", "127.0.0.1", "[::1]"))
-    client_kw = get_httpx_client_kwargs(timeout=30, is_local=_is_local)
+    client_kw = get_httpx_client_kwargs(timeout=30, target_url=base_url)
     client_kw["follow_redirects"] = True
     client_kw["event_hooks"] = {"request": [_ensure_auth]}
 
@@ -377,8 +376,7 @@ async def _list_models_anthropic(
 
     from openakita.llm.providers.proxy_utils import get_httpx_client_kwargs
 
-    _is_local = any(h in base_url.lower() for h in ("localhost", "127.0.0.1", "[::1]"))
-    client_kw = get_httpx_client_kwargs(timeout=30, is_local=_is_local)
+    client_kw = get_httpx_client_kwargs(timeout=30, target_url=base_url)
 
     async with httpx.AsyncClient(**client_kw) as client:
         try:

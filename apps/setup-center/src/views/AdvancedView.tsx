@@ -453,14 +453,21 @@ export function AdvancedView(props: AdvancedViewProps) {
         )}
 
         <Section title={t("config.toolsNetwork")} className="mt-2">
-          <div className="grid3">
-            {FT({ k: "HTTP_PROXY", label: "HTTP_PROXY", placeholder: "http://127.0.0.1:7890" })}
-            {FT({ k: "HTTPS_PROXY", label: "HTTPS_PROXY", placeholder: "http://127.0.0.1:7890" })}
-            {FT({ k: "ALL_PROXY", label: "ALL_PROXY", placeholder: "socks5://..." })}
+          <div className="grid2">
+            {FT({ k: "ALL_PROXY", label: t("config.proxyAddr"), placeholder: "http://127.0.0.1:7890", help: t("config.proxyAddrHelp") })}
+            {FT({ k: "NO_PROXY", label: t("config.proxyExcept"), placeholder: "192.168.0.0/16, 10.0.0.0/8, .corp", help: t("config.proxyExceptHelp") })}
           </div>
           <div className="grid2 mt-2">
             {FB({ k: "FORCE_IPV4", label: t("config.toolsForceIPv4"), help: t("config.toolsForceIPv4Help") })}
           </div>
+          <details className="mt-2">
+            <summary className="text-xs text-muted-foreground cursor-pointer select-none">{t("config.proxyAdvanced")}</summary>
+            <div className="grid2 mt-2">
+              {FT({ k: "HTTP_PROXY", label: "HTTP_PROXY", placeholder: "http://127.0.0.1:7890" })}
+              {FT({ k: "HTTPS_PROXY", label: "HTTPS_PROXY", placeholder: "http://127.0.0.1:7890" })}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground/60">{t("config.proxyAdvancedHint")}</p>
+          </details>
         </Section>
       </div>
 
