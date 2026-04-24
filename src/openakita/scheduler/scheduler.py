@@ -95,7 +95,11 @@ class TaskScheduler:
         self._load_executions()
 
     async def start(self) -> None:
-        """启动调度器"""
+        """启动调度器（幂等：重复 start 立即返回，避免新建第二条 _scheduler_loop 与 _semaphore）。"""
+        if self._running:
+            logger.debug("TaskScheduler.start() called while already running — no-op")
+            return
+
         self._running = True
         self._semaphore = asyncio.Semaphore(self.max_concurrent)
 
@@ -373,6 +377,41 @@ class TaskScheduler:
                 return await self._execute_task(task)
         finally:
             self._running_tasks.discard(task_id)
+
+    def trigger_in_background(self, task_id: str) -> str | None:
+        """
+        在后台触发任务（不等待执行完成），用于 API 路由避免请求超时。
+
+        立即返回 execution_id（或 None 表示任务不存在 / 已在运行 / 已禁用）；
+        实际执行通过 asyncio.create_task 异步进行。
+
+        Returns:
+            execution_id（提前生成，与最终 TaskExecution.id 对齐）或 None
+        """
+        task = self._tasks.get(task_id)
+        if not task:
+            return None
+        if not task.enabled:
+            logger.warning(f"trigger_in_background: task {task_id} is disabled, skipping")
+            return None
+        if task_id in self._running_tasks:
+            logger.warning(
+                f"trigger_in_background: task {task_id} is already running, skipping"
+            )
+            return None
+
+        import uuid
+
+        execution_id = str(uuid.uuid4())
+
+        async def _runner() -> None:
+            try:
+                await self.trigger_now(task_id)
+            except Exception as e:
+                logger.error(f"trigger_in_background runner error for {task_id}: {e}")
+
+        asyncio.create_task(_runner())
+        return execution_id
 
     # ==================== 调度循环 ====================
 
