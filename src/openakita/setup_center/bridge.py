@@ -81,6 +81,25 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
         is_qianfan = slug == "qianfan" or "qianfan.baidubce.com" in b
         return is_qianfan and "coding" in b
 
+    def _is_xfyun_coding_plan_provider() -> bool:
+        slug = (provider_slug or "").strip().lower()
+        b = (base_url or "").strip().lower()
+        is_xfyun = slug == "xfyun" or "xf-yun.com" in b
+        return is_xfyun and "maas-coding-api" in b
+
+    def _xfyun_coding_plan_fallback_models() -> list[dict]:
+        ids = [
+            "astron-code-latest",
+        ]
+        return [
+            {
+                "id": mid,
+                "name": mid,
+                "capabilities": infer_capabilities(mid, provider_slug="xfyun"),
+            }
+            for mid in ids
+        ]
+
     def _minimax_fallback_models() -> list[dict]:
         # MiniMax Anthropic/OpenAI 兼容文档仅列出固定模型，且未提供 /models 列表接口。
         ids = [
@@ -181,6 +200,8 @@ async def _list_models_openai(api_key: str, base_url: str, provider_slug: str | 
         return _dashscope_coding_plan_fallback_models()
     if _is_qianfan_coding_plan_provider():
         return _qianfan_coding_plan_fallback_models()
+    if _is_xfyun_coding_plan_provider():
+        return _xfyun_coding_plan_fallback_models()
     if _is_longcat_provider():
         return _longcat_fallback_models()
 
@@ -270,6 +291,25 @@ async def _list_models_anthropic(
         b = (base_url or "").strip().lower()
         is_qianfan = slug == "qianfan" or "qianfan.baidubce.com" in b
         return is_qianfan and "coding" in b
+
+    def _is_xfyun_coding_plan_provider() -> bool:
+        slug = (provider_slug or "").strip().lower()
+        b = (base_url or "").strip().lower()
+        is_xfyun = slug == "xfyun" or "xf-yun.com" in b
+        return is_xfyun and "maas-coding-api" in b
+
+    def _xfyun_coding_plan_fallback_models() -> list[dict]:
+        ids = [
+            "astron-code-latest",
+        ]
+        return [
+            {
+                "id": mid,
+                "name": mid,
+                "capabilities": infer_capabilities(mid, provider_slug="xfyun"),
+            }
+            for mid in ids
+        ]
 
     def _minimax_fallback_models() -> list[dict]:
         ids = [
@@ -364,6 +404,8 @@ async def _list_models_anthropic(
         return _dashscope_coding_plan_fallback_models()
     if _is_qianfan_coding_plan_provider():
         return _qianfan_coding_plan_fallback_models()
+    if _is_xfyun_coding_plan_provider():
+        return _xfyun_coding_plan_fallback_models()
     if _is_longcat_provider():
         return _longcat_fallback_models()
 
