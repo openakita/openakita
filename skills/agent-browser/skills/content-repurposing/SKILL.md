@@ -248,3 +248,4 @@ npx skills add inference-sh/skills@twitter-automation
 ```
 
 Browse all apps: `infsh app list`
+

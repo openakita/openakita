@@ -6,3 +6,4 @@ i18n:
   zh:
     name: 检查 Agent 包
     description: 预览 .akita-agent 包文件内容，显示清单、配置、技能和验证状态。
+

@@ -37,3 +37,4 @@ metadata:
 python3 scripts/miaoda.py create "一个待办事项应用"
 python3 scripts/miaoda.py chat "添加用户登录功能"
 ```
+

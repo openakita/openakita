@@ -26,3 +26,4 @@ category: Skills Management
 
 - `get-skill-info`: 获取技能详情
 - `install-skill`: 安装新技能
+

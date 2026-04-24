@@ -175,3 +175,4 @@ if __name__ == "__main__":
             print("错误: 请使用 -q 指定问题")
     else:
         print(f"未知模式: {mode}")
+

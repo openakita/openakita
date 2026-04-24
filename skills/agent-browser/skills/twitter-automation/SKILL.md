@@ -152,3 +152,4 @@ Browse all apps: `infsh app list`
 - [X.com Integration](https://inference.sh/docs/integrations/x) - Setting up Twitter/X integration
 - [X.com Integration Example](https://inference.sh/docs/examples/x-integration) - Complete Twitter workflow
 - [Apps Overview](https://inference.sh/docs/apps/overview) - Understanding the app ecosystem
+

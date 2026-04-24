@@ -6,3 +6,4 @@ i18n:
   zh:
     name: "PaddleOCR 文字识别"
     description: "集成 PP-OCRv5 轻量化 OCR 模型，支持自然场景及复杂文档的文字检测与识别。"
+

@@ -6,3 +6,4 @@ i18n:
   zh:
     name: 文生图
     description: 根据提示词生成图片并保存为本地 PNG 文件，需要配置 DASHSCOPE_API_KEY。
+

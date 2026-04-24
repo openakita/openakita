@@ -202,3 +202,4 @@ SCRAPE_SESSION=$(...)  # Handle scraping
 SESSION=$(...)
 # login -> navigate -> extract -> close
 ```
+

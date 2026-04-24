@@ -6,3 +6,4 @@ i18n:
   zh:
     name: "小度智能控制"
     description: "通过小度 MCP 协议控制智能设备，实现场景联动与家庭 IoT 任务执行。"
+

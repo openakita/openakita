@@ -252,3 +252,4 @@ mcporter call tencent-survey.list_answers --args '{"survey_id": 292192, "per_pag
 | `destructiveHint` | false | 非破坏性操作 |
 | `idempotentHint` | true | 幂等操作，多次调用结果一致 |
 | `openWorldHint` | false | 内部调用 |
+

@@ -57,3 +57,4 @@ category: Memory
 
 - `search-memory`: 搜索相关记忆
 - `get-memory-stats`: 查看记忆统计
+

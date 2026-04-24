@@ -35,3 +35,4 @@ if __name__ == "__main__":
     input_image_path = sys.argv[3]
     output_image_path = sys.argv[4]
     create_validation_image(page_number, fields_json_path, input_image_path, output_image_path)
+

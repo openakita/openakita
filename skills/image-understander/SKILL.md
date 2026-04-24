@@ -86,3 +86,4 @@ python scripts/main.py \
 - 需要 OpenAI API Key（支持 GPT-4 Vision）
 - 支持的图片格式：PNG、JPG、GIF、BMP
 - 图片大小建议小于 20MB
+

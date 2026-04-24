@@ -152,3 +152,4 @@ mcporter call tencent-survey.update_question --args '{"survey_id": 716128, "ques
 | `destructiveHint` | false | 非破坏性操作（更新而非删除） |
 | `idempotentHint` | false | **非幂等**，每次调用都覆盖题目内容 |
 | `openWorldHint` | false | 内部调用 |
+

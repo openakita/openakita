@@ -7,3 +7,4 @@ i18n:
   zh:
     name: "Web 应用测试"
     description: "使用 Playwright 交互式测试本地 Web 应用，支持页面导航、元素操作和截图。"
+

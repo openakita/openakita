@@ -205,3 +205,4 @@ def run_skill_query(args: argparse.Namespace, query: str) -> None:
         print(json.dumps({"error": str(e)}, ensure_ascii=False), file=sys.stderr)
         sys.exit(1)
     print_response(result, stream=stream)
+

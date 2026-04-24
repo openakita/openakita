@@ -46,3 +46,4 @@ category: Desktop
 
 - `desktop-click`: 点击找到的元素
 - `desktop-inspect`: 查看元素树结构
+

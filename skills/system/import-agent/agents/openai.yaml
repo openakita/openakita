@@ -6,3 +6,4 @@ i18n:
   zh:
     name: 导入 Agent
     description: 从 .akita-agent 包文件导入 Agent，安装其配置和技能到本地系统。
+

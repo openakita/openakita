@@ -36,3 +36,4 @@ tencent-news-cli apikey-clear
 - **`API Key 无效`** → 重新前往获取页面生成新 Key
 - **`operation not permitted`** → 确认在有写入权限的终端中执行命令
 - **找不到 `tencent-news-cli` 命令** → 重新打开终端，或参考 [安装指南](installation-guide.md) 重新安装
+

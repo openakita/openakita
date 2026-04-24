@@ -6,3 +6,4 @@ i18n:
   zh:
     name: 切换人格
     description: 切换 Agent 人格预设角色，支持默认助手、商务助理、技术专家等多种预设。
+

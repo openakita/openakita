@@ -157,3 +157,4 @@ infsh app list --search "flux"
 - **Docs**: [inference.sh/docs](https://inference.sh/docs)
 - **Blog**: [inference.sh/blog](https://inference.sh/blog)
 - **CLI Install**: `curl -fsSL https://cli.inference.sh | sh`
+

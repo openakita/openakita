@@ -7,3 +7,4 @@ i18n:
   zh:
     name: "B站/YouTube 字幕提取"
     description: "从 Bilibili（B站）和 YouTube 视频中提取字幕和转录文本，支持大会员内容、多语言字幕、内容摘要和视频问答。"
+

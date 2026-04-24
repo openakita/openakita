@@ -25,3 +25,4 @@ category: IM Channel
 
 - `get-voice-file`: 获取语音文件
 - `deliver-artifacts`: 发送文件给用户
+

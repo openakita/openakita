@@ -62,3 +62,4 @@ python3 scripts/flyai_quick.py ai-search --query "五一去哪里玩"
 python3 scripts/flyai_quick.py flight --from 北京 --to 上海 --date 2026-05-01
 python3 scripts/flyai_quick.py hotel --city 三亚 --checkin 2026-05-01
 ```
+

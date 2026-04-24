@@ -136,3 +136,4 @@ google-chrome --remote-debugging-port=9222
 - `browser_screenshot` - 单独截图
 - `browser_navigate` - 单独导航
 - `deliver_artifacts` - 发送结果给用户
+

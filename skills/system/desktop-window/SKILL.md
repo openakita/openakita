@@ -56,3 +56,4 @@ category: Desktop
 
 - `desktop-screenshot`: 截取窗口
 - `desktop-inspect`: 检查窗口结构
+

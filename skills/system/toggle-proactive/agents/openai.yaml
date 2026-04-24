@@ -6,3 +6,4 @@ i18n:
   zh:
     name: 活人感模式
     description: 开关活人感模式，开启后 Agent 会主动发送问候、任务提醒和关键回顾。
+

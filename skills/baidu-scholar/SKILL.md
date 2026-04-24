@@ -33,3 +33,4 @@ export BAIDU_API_KEY="your_key"
 python3 scripts/baidu_scholar.py search "transformer attention mechanism"
 python3 scripts/baidu_scholar.py cite "attention is all you need"
 ```
+

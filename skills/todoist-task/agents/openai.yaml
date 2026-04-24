@@ -7,3 +7,4 @@ i18n:
   zh:
     name: "Todoist 任务管理"
     description: "通过 Todoist REST API 管理任务、项目、标签和过滤器，支持完整的 CRUD 操作和批量处理。"
+

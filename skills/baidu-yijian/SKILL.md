@@ -27,3 +27,4 @@ metadata:
 python3 scripts/yijian.py detect --image /path/to/product.jpg
 python3 scripts/yijian.py report "产线质检分析"
 ```
+

@@ -170,3 +170,4 @@ npx skills add inference-sh/skills@tools-ui
 - [Agents That Generate UI](https://inference.sh/blog/ux/generative-ui) - Building generative UIs
 
 Component docs: [ui.inference.sh/blocks/widgets](https://ui.inference.sh/blocks/widgets)
+

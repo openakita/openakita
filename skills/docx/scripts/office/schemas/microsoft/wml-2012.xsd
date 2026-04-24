@@ -65,3 +65,4 @@
    <xsd:element name="webExtensionCreated" type="w12:CT_OnOff"/>
    <xsd:attribute name="restartNumberingAfterBreak" type="s:ST_OnOff"/>
  </xsd:schema>
+

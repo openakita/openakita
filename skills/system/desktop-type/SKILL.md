@@ -48,3 +48,4 @@ category: Desktop
 
 - `desktop-click`: 先点击获取焦点
 - `desktop-hotkey`: 快捷键操作
+

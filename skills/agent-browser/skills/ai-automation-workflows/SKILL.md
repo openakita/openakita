@@ -402,3 +402,4 @@ npx skills add inference-sh/skills@inference-sh
 ```
 
 Browse all apps: `infsh app list`
+

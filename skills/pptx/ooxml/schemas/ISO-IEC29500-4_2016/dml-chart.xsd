@@ -1497,3 +1497,4 @@
   <xsd:element name="userShapes" type="cdr:CT_Drawing"/>
   <xsd:element name="chart" type="CT_RelId"/>
 </xsd:schema>
+

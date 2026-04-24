@@ -125,3 +125,4 @@ Browse all apps: `infsh app list`
 - [Running Apps](https://inference.sh/docs/apps/running) - How to run apps via CLI
 - [Content Pipeline Example](https://inference.sh/docs/examples/content-pipeline) - Building media workflows
 - [Apps Overview](https://inference.sh/docs/apps/overview) - Understanding the app ecosystem
+

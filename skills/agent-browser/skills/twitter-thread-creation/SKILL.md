@@ -259,3 +259,4 @@ npx skills add inference-sh/skills@social-media-carousel
 ```
 
 Browse all apps: `infsh app list`
+

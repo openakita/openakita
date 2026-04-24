@@ -62,3 +62,4 @@ category: File System
 - `glob`: 按文件名模式查找文件
 - `read-file`: 读取搜索到的文件
 - `edit-file`: 编辑搜索到的匹配
+

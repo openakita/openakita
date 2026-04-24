@@ -47,3 +47,4 @@ def get_os_name():
     else:
         # 其他系统
         return f'{system}-{platform.release()}'
+

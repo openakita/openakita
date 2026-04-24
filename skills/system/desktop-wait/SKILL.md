@@ -51,3 +51,4 @@ category: Desktop
 
 - `desktop-click`: 等待后点击
 - `desktop-find-element`: 查找元素
+

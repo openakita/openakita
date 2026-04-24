@@ -68,3 +68,4 @@ send_sticker(query="加油")
 # 限定分类
 send_sticker(query="笑", category="猫")
 ```
+

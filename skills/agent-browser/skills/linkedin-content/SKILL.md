@@ -229,3 +229,4 @@ npx skills add inference-sh/skills@twitter-thread-creation
 ```
 
 Browse all apps: `infsh app list`
+

@@ -27,3 +27,4 @@ metadata:
 python3 scripts/marketing.py copywrite "新品咖啡上市推广"
 python3 scripts/marketing.py plan "618大促营销方案"
 ```
+

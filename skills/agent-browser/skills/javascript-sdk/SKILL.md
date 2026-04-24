@@ -533,3 +533,4 @@ npx skills add inference-sh/skills@ai-image-generation
 - [Authentication](https://inference.sh/docs/api/authentication) - API key setup
 - [Streaming](https://inference.sh/docs/api/sdk/streaming) - Real-time updates
 - [File Uploads](https://inference.sh/docs/api/sdk/files) - File handling
+

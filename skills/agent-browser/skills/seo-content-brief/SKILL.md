@@ -277,3 +277,4 @@ npx skills add inference-sh/skills@web-search
 ```
 
 Browse all apps: `infsh app list`
+

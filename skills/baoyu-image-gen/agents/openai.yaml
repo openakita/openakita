@@ -7,3 +7,4 @@ i18n:
     name: AI 图像生成
     description: 多服务商 AI 图像生成（DALL-E、Imagen、通义万象、Replicate），支持多种比例、质量预设、批量生成和 Prompt
       优化。
+

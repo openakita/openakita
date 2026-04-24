@@ -88,3 +88,4 @@ Browse all image apps: `infsh app list --category image`
 - [Running Apps](https://inference.sh/docs/apps/running) - How to run apps via CLI
 - [Image Generation Example](https://inference.sh/docs/examples/image-generation) - Complete image workflow guide
 - [Apps Overview](https://inference.sh/docs/apps/overview) - Understanding the app ecosystem
+

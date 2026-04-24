@@ -50,3 +50,4 @@ category: Browser
 ```python
 browser_task(task="打开百度搜索福建福州并截图")
 ```
+

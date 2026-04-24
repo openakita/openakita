@@ -26,3 +26,4 @@ category: IM Channel
 
 - `get-image-file`: 获取图片文件
 - `deliver-artifacts`: 发送文件给用户
+

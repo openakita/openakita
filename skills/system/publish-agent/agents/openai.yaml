@@ -6,3 +6,4 @@ i18n:
   zh:
     name: 发布 Agent
     description: 将本地 Agent 发布到 OpenAkita 平台 Agent 商店。
+

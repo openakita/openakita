@@ -51,3 +51,4 @@ category: Persona
 - 预设只是起点，用户的实际偏好会通过对话不断叠加调整
 - 切换后 Agent 应立即按新角色风格回复
 - 可以配合 `update_persona_trait` 微调具体维度
+

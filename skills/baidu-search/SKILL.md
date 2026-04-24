@@ -40,3 +40,4 @@ clawhub install baidu-search --no-input
 python3 scripts/baidu_search.py web "Python 异步编程"
 python3 scripts/baidu_search.py image "风景壁纸"
 ```
+

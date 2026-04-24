@@ -6,3 +6,4 @@ i18n:
   zh:
     name: 取消定时任务
     description: 永久删除指定的定时任务。
+

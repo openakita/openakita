@@ -308,3 +308,4 @@ Browse all apps: `infsh app list`
 
 - [Adding Tools to Agents](https://inference.sh/docs/agents/adding-tools) - Agent tool integration
 - [Building a Research Agent](https://inference.sh/blog/guides/research-agent) - Full guide
+

@@ -395,3 +395,4 @@ const client = inference({
     : { apiKey: process.env.NEXT_PUBLIC_INFERENCE_API_KEY })
 });
 ```
+

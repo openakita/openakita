@@ -48,3 +48,4 @@ category: Desktop
 
 - `desktop-find-element`: 查找特定元素
 - `desktop-window`: 窗口管理
+

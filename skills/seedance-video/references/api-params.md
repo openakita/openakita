@@ -127,3 +127,4 @@ When video ratio differs from uploaded image ratio, the system center-crops:
 - If image is "too tall" (W/H < target): crop height, keep full width
 - If image is "too wide" (W/H > target): crop width, keep full height
 - Recommendation: match image ratio to target video ratio for best results
+

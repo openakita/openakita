@@ -47,3 +47,4 @@ python3 scripts/news_cli_setup.py install
 python3 scripts/news_cli_setup.py configure
 python3 scripts/news_cli_setup.py status
 ```
+

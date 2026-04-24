@@ -29,3 +29,4 @@ export BAIDU_API_KEY="your_key"
 ```bash
 python3 scripts/baidu_baike.py search "量子计算"
 ```
+

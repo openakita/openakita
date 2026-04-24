@@ -18,3 +18,4 @@ Task tool (superpowers:code-reviewer):
 ```
 
 **Code reviewer returns:** Strengths, Issues (Critical/Important/Minor), Assessment
+

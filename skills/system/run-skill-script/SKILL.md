@@ -28,3 +28,4 @@ category: Skills Management
 
 - `get-skill-info`: 查看可用脚本
 - `list-skills`: 列出所有技能
+

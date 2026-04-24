@@ -267,3 +267,4 @@ class GIFBuilder:
     def clear(self):
         """Clear all frames (useful for creating multiple GIFs)."""
         self.frames = []
+

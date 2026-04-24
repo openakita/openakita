@@ -148,3 +148,4 @@ Browse all video apps: `infsh app list --category video`
 - [Running Apps](https://inference.sh/docs/apps/running) - How to run apps via CLI
 - [Content Pipeline Example](https://inference.sh/docs/examples/content-pipeline) - Building media workflows
 - [Streaming Results](https://inference.sh/docs/api/sdk/streaming) - Real-time progress updates
+

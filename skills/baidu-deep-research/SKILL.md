@@ -33,3 +33,4 @@ export BAIDU_API_KEY="your_key"
 python3 scripts/deep_research.py research "人工智能在医疗领域的应用"
 python3 scripts/deep_research.py report "大模型技术趋势分析"
 ```
+

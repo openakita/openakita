@@ -42,3 +42,4 @@ category: Memory
 
 - `add-memory`: 添加新记忆
 - `get-memory-stats`: 查看记忆统计
+

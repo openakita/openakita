@@ -33,3 +33,4 @@ category: Skills Management
 
 - `list-skills`: 查看已安装技能
 - `find-skills`: 搜索可用技能
+

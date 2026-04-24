@@ -6,3 +6,4 @@ i18n:
   zh:
     name: MCP 服务器列表
     description: 列出所有已配置的 MCP 服务器及其连接状态。
+

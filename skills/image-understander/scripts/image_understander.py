@@ -300,3 +300,4 @@ class ImageUnderstander:
             "result": result_text,
             "raw_format": True
         }
+

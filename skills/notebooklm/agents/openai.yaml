@@ -7,3 +7,4 @@ i18n:
     name: NotebookLM 研究
     description: 基于 NotebookLM 进行深度文档研究，生成引用溯源的答案和信息图风格演示，支持 Markdown、HTML/reveal.js
       和 Mermaid 图表多格式输出。
+

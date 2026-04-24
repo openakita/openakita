@@ -137,3 +137,4 @@ npx skills add inference-sh/skills@markdown-ui
 - [Real-Time Streaming](https://inference.sh/blog/observability/streaming) - Streaming responses
 
 Component docs: [ui.inference.sh/blocks/chat](https://ui.inference.sh/blocks/chat)
+

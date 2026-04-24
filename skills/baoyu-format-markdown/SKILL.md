@@ -296,3 +296,4 @@ Use `npm install` to install dependencies.
 ## Extension Support
 
 Custom configurations via EXTEND.md. See **Preferences** section for paths and supported options.
+

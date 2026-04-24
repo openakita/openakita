@@ -117,3 +117,4 @@ npx skills add inference-sh/skills@tools-ui
 - [Agent UX Patterns](https://inference.sh/blog/ux/agent-ux-patterns) - Best practices
 
 Component docs: [ui.inference.sh/blocks/agent](https://ui.inference.sh/blocks/agent)
+

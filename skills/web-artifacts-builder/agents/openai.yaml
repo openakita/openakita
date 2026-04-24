@@ -7,3 +7,4 @@ i18n:
   zh:
     name: "Web 构件构建器"
     description: "使用 React、Tailwind CSS 和 shadcn/ui 创建复杂的交互式 HTML 构件，支持状态管理和路由。"
+

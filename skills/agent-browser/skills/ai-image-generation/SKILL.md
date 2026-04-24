@@ -137,3 +137,4 @@ Browse all apps: `infsh app list`
 - [Running Apps](https://inference.sh/docs/apps/running) - How to run apps via CLI
 - [Image Generation Example](https://inference.sh/docs/examples/image-generation) - Complete image generation guide
 - [Apps Overview](https://inference.sh/docs/apps/overview) - Understanding the app ecosystem
+

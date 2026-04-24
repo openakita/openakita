@@ -21,3 +21,4 @@
   </xsd:complexType>
   <xsd:element name="pic" type="CT_Picture"/>
 </xsd:schema>
+

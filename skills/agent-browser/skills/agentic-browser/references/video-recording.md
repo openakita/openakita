@@ -284,3 +284,4 @@ fi
 3. **File size** - Complex pages with animations produce larger files
 4. **No audio** - Browser audio is not captured
 5. **Returned on close** - Video only available after session ends
+

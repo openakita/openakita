@@ -41,3 +41,4 @@ load_skill(skill_name="my-new-skill")
 - 技能目录必须包含有效的 `SKILL.md` 文件
 - 如果技能已存在，请使用 `reload_skill` 重新加载
 - 加载成功后，技能会出现在 `list_skills` 列表中
+

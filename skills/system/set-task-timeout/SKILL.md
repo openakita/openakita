@@ -42,3 +42,4 @@ category: System
 
 - `create-todo`: 创建任务计划
 - `enable-thinking`: 启用深度思考
+

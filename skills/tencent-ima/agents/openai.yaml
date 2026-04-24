@@ -7,3 +7,4 @@ i18n:
   zh:
     name: "腾讯 IMA 智能工作台"
     description: "通过 IMA OpenAPI 管理笔记和知识库，支持笔记增删改查、文件上传、网页收藏、知识搜索。"
+

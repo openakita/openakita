@@ -270,3 +270,4 @@ Common errors:
 - `'text' required for fill action` - Missing required field
 - `'target_ref' required for drag action` - Missing drag target
 - `Timeout 5000ms exceeded` - Element not found or not clickable
+

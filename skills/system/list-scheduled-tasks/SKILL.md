@@ -42,3 +42,4 @@ category: Scheduled Tasks
 - `schedule-task`: 创建新任务
 - `cancel-scheduled-task`: 取消任务
 - `update-scheduled-task`: 更新任务设置
+

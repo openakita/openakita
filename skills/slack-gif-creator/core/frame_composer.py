@@ -174,3 +174,4 @@ def draw_star(
     draw.polygon(points, fill=fill_color, outline=outline_color, width=outline_width)
 
     return frame
+

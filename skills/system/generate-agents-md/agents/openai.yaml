@@ -6,3 +6,4 @@ i18n:
   zh:
     name: 生成 AGENTS.md
     description: 为当前项目生成或更新 AGENTS.md 项目规范文件。
+

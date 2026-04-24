@@ -271,3 +271,4 @@ npx skills add inference-sh/skills@inference-sh
 ```
 
 Browse audio apps: `infsh app list --category audio`
+

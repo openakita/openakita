@@ -57,3 +57,4 @@
     <xsd:attribute name="linkTarget" use="optional" type="xsd:string"/>
   </xsd:complexType>
 </xsd:schema>
+

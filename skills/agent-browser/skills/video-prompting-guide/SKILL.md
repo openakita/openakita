@@ -241,3 +241,4 @@ Browse all video apps: `infsh app list --category video`
 
 - [Running Apps](https://inference.sh/docs/apps/running) - How to run apps via CLI
 - [Video Generation Guide](https://inference.sh/blog/guides/video-generation) - Comprehensive video guide
+

@@ -558,3 +558,4 @@
    </xsd:complexType>
    <xsd:element name="checkbox" type="CT_SdtCheckbox"/>
  </xsd:schema>
+

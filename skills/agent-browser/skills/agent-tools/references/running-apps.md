@@ -146,3 +146,4 @@ Example output:
 - [Running Apps](https://inference.sh/docs/apps/running) - Complete running apps guide
 - [Streaming Results](https://inference.sh/docs/api/sdk/streaming) - Real-time progress updates
 - [Setup Parameters](https://inference.sh/docs/apps/setup-parameters) - Configuring app inputs
+

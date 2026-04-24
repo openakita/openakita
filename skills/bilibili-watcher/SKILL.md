@@ -482,3 +482,4 @@ The output shows both manual and auto-generated subtitle tracks with their langu
 | Subtitle formats | SRT, JSON | SRT, VTT, JSON3 |
 | Playlist support | Yes (multi-page) | Yes |
 | Rate limiting | Moderate | Moderate |
+

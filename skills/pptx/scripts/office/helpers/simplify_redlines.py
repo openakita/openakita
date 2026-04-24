@@ -195,3 +195,4 @@ def infer_author(modified_dir: Path, original_docx: Path, default: str = "Claude
         f"Multiple authors added new changes: {new_changes}. "
         "Cannot infer which author to validate."
     )
+

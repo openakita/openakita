@@ -70,3 +70,4 @@ python3 scripts/didi_mcp.py route --from "望京" --to "国贸"
 python3 scripts/didi_mcp.py poi --keyword "加油站" --location "116.4,39.9"
 python3 scripts/didi_mcp.py price --from "望京" --to "国贸"
 ```
+

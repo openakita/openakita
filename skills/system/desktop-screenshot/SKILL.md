@@ -60,3 +60,4 @@ category: Desktop
 - `browser-screenshot`: 截取浏览器页面
 - `deliver-artifacts`: 发送截图给用户
 - `desktop-click`: 点击桌面元素
+

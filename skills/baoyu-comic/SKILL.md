@@ -304,3 +304,4 @@ Schema: [references/config/preferences-schema.md](references/config/preferences-
 - **Step 7.1 character sheet MUST be generated before pages** - ensures consistency
 - **Step 7.2 EVERY page MUST reference characters** - use `--ref` or embed descriptions
 - Watermark/language configured once in EXTEND.md
+

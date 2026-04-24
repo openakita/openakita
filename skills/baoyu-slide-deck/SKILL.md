@@ -696,3 +696,4 @@ See `references/modification-guide.md` for complete details.
 ## Extension Support
 
 Custom configurations via EXTEND.md. See **Step 1.1** for paths and supported options.
+

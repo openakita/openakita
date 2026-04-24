@@ -84,3 +84,4 @@ CLI-Anything 社区已支持 9+ 软件：
 
 - `desktop_click` / `desktop_type` — 无 CLI 时的降级 GUI 方案
 - `run_shell` — 直接执行命令行
+

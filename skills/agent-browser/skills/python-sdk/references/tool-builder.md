@@ -379,3 +379,4 @@ response = agent.send_message(
     on_tool_call=handle_tool
 )
 ```
+

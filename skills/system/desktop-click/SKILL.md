@@ -63,3 +63,4 @@ category: Desktop
 - `browser-click`: 点击浏览器网页元素
 - `desktop-type`: 输入文本
 - `desktop-find-element`: 先查找元素
+

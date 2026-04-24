@@ -30,3 +30,4 @@ category: Scheduled Tasks
 
 - `list-scheduled-tasks`: 获取任务 ID
 - `cancel-scheduled-task`: 永久删除任务
+

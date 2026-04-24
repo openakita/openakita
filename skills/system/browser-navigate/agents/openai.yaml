@@ -6,3 +6,4 @@ i18n:
   zh:
     name: 浏览器导航
     description: 导航浏览器到指定 URL，打开网页或开始网页自动化操作。
+
