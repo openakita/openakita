@@ -2712,10 +2712,14 @@ general Q&A yourself.
             return message
 
         transcript_section = "\n".join(
-            f"[Voice transcript]: {t}" for t in transcripts
+            f"[Voice message transcription (auto-completed)]: {t}" for t in transcripts
         )
 
-        return f"{transcript_section}\n\n{message}"
+        return (
+            f"{transcript_section}\n"
+            "(Voice already transcribed - respond directly, do NOT call get_voice_file)\n\n"
+            f"{message}"
+        )
 
     @staticmethod
     def _extract_outbound_attachments(
@@ -3558,6 +3562,62 @@ general Q&A yourself.
             except Exception as e:
                 logger.debug(f"[TraitMiner] Mining failed (non-critical): {e}")
 
+        # 6.5. Early voice transcription (before IntentAnalyzer)
+        # Transcribe pending audio so IntentAnalyzer sees the actual content
+        _early_transcripts: list[str] = []
+        _pending_audio = session.get_metadata("pending_audio") if session else None
+        if _pending_audio:
+            from ..channels.media.handler import MediaHandler
+
+            _handler = MediaHandler()
+            for aud in _pending_audio:
+                if aud.get("transcription"):
+                    # Already transcribed
+                    _early_transcripts.append(aud["transcription"])
+                else:
+                    local_path = aud.get("local_path", "")
+                    if local_path and Path(local_path).exists():
+                        try:
+                            from ..channels.media.handler import MediaFile
+
+                            media = MediaFile(
+                                filename=Path(local_path).name,
+                                local_path=local_path,
+                                mime_type=aud.get("mime_type", "audio/webm"),
+                            )
+                            transcript = await _handler.transcribe_audio(media)
+                            if transcript:
+                                aud["transcription"] = transcript
+                                _early_transcripts.append(transcript)
+                                logger.info(f"[Agent] Voice transcribed: {len(transcript)} chars")
+                        except Exception as e:
+                            logger.warning(f"[Agent] Early voice transcription failed: {e}")
+
+        # Also check desktop_attachments for voice
+        _desktop_atts = attachments or []
+        for att in _desktop_atts:
+            att_type = getattr(att, "type", None) or ""
+            if att_type in (AttachmentType.VOICE.value, AttachmentType.VOICE, "voice"):
+                att_url = getattr(att, "url", None) or ""
+                if att_url:
+                    try:
+                        from ..channels.media.handler import MediaHandler
+
+                        transcript = await process_voice_attachment(att_url, MediaHandler())
+                        if transcript:
+                            _early_transcripts.append(transcript)
+                            logger.info(f"[Agent] Desktop voice transcribed: {len(transcript)} chars")
+                    except Exception as e:
+                        logger.warning(f"[Agent] Desktop voice transcription failed: {e}")
+
+        # Prepend transcripts to message for IntentAnalyzer
+        _message_for_intent = message
+        if _early_transcripts:
+            _transcript_text = " ".join(_early_transcripts)
+            _message_for_intent = f"[Voice message]: {_transcript_text}"
+            if message.strip():
+                _message_for_intent += f"\n{message}"
+
         # 7. IntentAnalyzer (unified intent analysis — all messages go through LLM)
         #    Sub-agents skip IntentAnalyzer: they receive structured task instructions
         #    from the parent, always TASK intent, always need tools.
@@ -3590,7 +3650,7 @@ general Q&A yourself.
             try:
                 intent_result = await asyncio.wait_for(
                     self._intent_analyzer.analyze(
-                        message, session_context=None, has_history=_has_history
+                        _message_for_intent, session_context=None, has_history=_has_history
                     ),
                     timeout=30,
                 )
@@ -4168,12 +4228,25 @@ general Q&A yourself.
             pending_files,
             attachments,
         )
-        # If there are voice transcripts, prepend them to the user message
+        # If there are voice transcripts, prepend them to the user message in messages list
         if voice_transcripts:
-            compiled_message = self._build_user_message_with_attachments(
-                compiled_message,
-                voice_transcripts,
-            )
+            transcript_prefix = self._build_user_message_with_attachments("", voice_transcripts)
+            # Update the last message (user message) in the messages list
+            if messages and messages[-1].get("role") == "user":
+                last_msg = messages[-1]
+                content = last_msg.get("content")
+                if isinstance(content, str):
+                    # Simple text message - prepend transcript
+                    last_msg["content"] = transcript_prefix + content
+                elif isinstance(content, list):
+                    # Multimodal message - prepend transcript to first text block
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            part["text"] = transcript_prefix + part.get("text", "")
+                            break
+                    else:
+                        # No text block found, insert one at the beginning
+                        content.insert(0, {"type": "text", "text": transcript_prefix})
             logger.info(
                 f"[Session:{session_id}] Voice transcripts added to message: "
                 f"{len(voice_transcripts)} transcript(s)"

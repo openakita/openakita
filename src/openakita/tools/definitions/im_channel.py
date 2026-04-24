@@ -87,18 +87,17 @@ Examples:
     {
         "name": "get_voice_file",
         "category": "IM Channel",
-        "description": "Get local file path of voice message sent by user. When user sends voice message, system auto-downloads it. When you need to: (1) Process user's voice message, (2) Transcribe voice to text.",
+        "description": "Get local file path of voice message sent by user. ONLY use when you need the raw audio file for programmatic operations (forward, convert format, analyze audio). Do NOT use for transcription — voice messages are automatically transcribed and the text is already included in your message.",
         "detail": """Get the local file path of a voice message sent by the user.
 
-**Workflow**:
-1. The user sends a voice message
-2. The system automatically downloads it locally
-3. Use this tool to get the file path
-4. Process it with a speech-recognition script
+**Important**: Voice messages are automatically transcribed by the system. The transcription text appears in your message as `[Voice message transcription (auto-completed)]: ...`. You do NOT need this tool to read what the user said.
 
-**Use cases**:
-- Processing a user's voice message
-- Voice-to-text transcription""",
+**Do not** call this tool just to get the transcription — it's already in your context.
+
+**Use only when you need the raw audio file for**:
+- Forwarding the voice file elsewhere
+- Converting audio format
+- Audio analysis (pitch, noise detection, etc.)""",
         "input_schema": {"type": "object", "properties": {}},
     },
     {

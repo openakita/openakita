@@ -152,9 +152,10 @@ def test_build_user_message_with_attachments_single_transcript():
         transcripts=["User said hello"],
     )
 
-    assert "[Voice transcript]: User said hello" in result
+    assert "[Voice message transcription (auto-completed)]: User said hello" in result
     assert "Please help" in result
-    assert result.startswith("[Voice transcript]:")
+    assert "do NOT call get_voice_file" in result
+    assert result.startswith("[Voice message transcription")
 
 
 def test_build_user_message_with_attachments_multiple_transcripts():
@@ -168,8 +169,9 @@ def test_build_user_message_with_attachments_multiple_transcripts():
         transcripts=["First message", "Second message"],
     )
 
-    assert "[Voice transcript]: First message" in result
-    assert "[Voice transcript]: Second message" in result
+    assert "[Voice message transcription (auto-completed)]: First message" in result
+    assert "[Voice message transcription (auto-completed)]: Second message" in result
     assert "Help me" in result
+    assert "do NOT call get_voice_file" in result
     # Message should come after transcripts
     assert result.index("First message") < result.index("Help me")
