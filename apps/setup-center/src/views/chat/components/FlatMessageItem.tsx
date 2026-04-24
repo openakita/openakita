@@ -68,7 +68,7 @@ export const FlatMessageItem = memo(function FlatMessageItem({
                 {msg.content}
               </mdModules.ReactMarkdown>
             ) : (
-              <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{msg.content}</pre>
+              <div style={{ whiteSpace: "pre-wrap" }}>{msg.content}</div>
             )}
           </div>
         </div>
@@ -108,7 +108,7 @@ export const FlatMessageItem = memo(function FlatMessageItem({
                   {stripLegacySummary(msg.content)}
                 </mdModules.ReactMarkdown>
               ) : (
-                <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{stripLegacySummary(msg.content)}</pre>
+                <div style={{ whiteSpace: "pre-wrap" }}>{stripLegacySummary(msg.content)}</div>
               )}
             </div>
           )}

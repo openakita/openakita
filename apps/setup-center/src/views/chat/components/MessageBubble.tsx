@@ -85,7 +85,7 @@ export const MessageBubble = memo(function MessageBubble({
                 {isUser ? msg.content : stripLegacySummary(msg.content)}
               </mdModules.ReactMarkdown>
             ) : (
-              <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{isUser ? msg.content : stripLegacySummary(msg.content)}</pre>
+              <div style={{ whiteSpace: "pre-wrap" }}>{isUser ? msg.content : stripLegacySummary(msg.content)}</div>
             )}
           </div>
         )}

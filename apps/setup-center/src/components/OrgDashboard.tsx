@@ -219,7 +219,7 @@ export function OrgDashboard({ orgId, apiBaseUrl, orgName, onNodeClick }: OrgDas
           {text ?? ""}
         </mdModules.ReactMarkdown>
       ) : (
-        <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{text ?? ""}</pre>
+        <div style={{ whiteSpace: "pre-wrap" }}>{text ?? ""}</div>
       )}
     </div>
   );

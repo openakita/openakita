@@ -333,7 +333,7 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                       }}>
                         {mdModules ? (
                           <mdModules.ReactMarkdown remarkPlugins={mdModules.remarkPlugins} rehypePlugins={mdModules.rehypePlugins}>{fullText}</mdModules.ReactMarkdown>
-                        ) : <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{fullText}</pre>}
+                        ) : <div style={{ whiteSpace: "pre-wrap" }}>{fullText}</div>}
                       </div>
                     )}
                     {!isEvtExpanded && fullText.length > 80 && (
@@ -408,9 +408,9 @@ export function OrgMonitorPanel({ orgId, nodeId, apiBaseUrl, nodes, visible }: O
                                 : (item.content || "")}
                           </mdModules.ReactMarkdown>
                         ) : (
-                          <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>
+                          <div style={{ whiteSpace: "pre-wrap" }}>
                             {isExpanded ? (item.content || "") : (item.content || "").length > 150 ? (item.content || "").slice(0, 150) + "…" : (item.content || "")}
-                          </pre>
+                          </div>
                         )}
                       </div>
                       {!isExpanded && (item.content || "").length > 150 && (

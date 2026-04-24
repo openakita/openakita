@@ -188,7 +188,7 @@ export const OrgBlackboardPanel = forwardRef<OrgBlackboardPanelHandle, OrgBlackb
                           {entry.content ?? ""}
                         </mdModules.ReactMarkdown>
                       ) : (
-                        <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{entry.content ?? ""}</pre>
+                        <div style={{ whiteSpace: "pre-wrap" }}>{entry.content ?? ""}</div>
                       )}
                     </div>
                     {Array.isArray(entry.attachments) && entry.attachments.length > 0 && (

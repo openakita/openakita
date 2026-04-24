@@ -2256,7 +2256,7 @@ export function OrgEditorView({
                       {text ?? ""}
                     </mdModules.ReactMarkdown>
                   ) : (
-                    <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{text ?? ""}</pre>
+                    <div style={{ whiteSpace: "pre-wrap" }}>{text ?? ""}</div>
                   )}
                 </div>
               );
@@ -3283,7 +3283,7 @@ export function OrgEditorView({
                                   {bb.content ?? ""}
                                 </mdModules.ReactMarkdown>
                               ) : (
-                                <pre style={{ whiteSpace: "pre-wrap", margin: 0, fontFamily: "inherit" }}>{bb.content ?? ""}</pre>
+                                <div style={{ whiteSpace: "pre-wrap" }}>{bb.content ?? ""}</div>
                               )}
                             </div>
                             {Array.isArray(bb.attachments) && bb.attachments.length > 0 && (
