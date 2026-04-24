@@ -207,15 +207,36 @@ async def resolve_attachment_to_local(url: str) -> str | None:
 
     Handles:
     - file:// URLs -> return path directly
+    - /api/uploads/... paths -> map to local uploads directory
     - http(s):// URLs -> download to temp file
     - data: URIs -> decode to temp file
+    - Plain paths -> check if file exists
     """
+    import os
+
     parsed = urlparse(url)
 
     if parsed.scheme == "file":
         local_path = parsed.path
         if Path(local_path).exists():
             return local_path
+        return None
+
+    # Handle /api/uploads/... paths (map to local uploads directory)
+    if url.startswith("/api/uploads/"):
+        filename = url[len("/api/uploads/") :]
+        root = os.environ.get("OPENAKITA_ROOT", "").strip()
+        base = Path(root) if root else Path.home() / ".openakita"
+        local_path = base / "uploads" / filename
+        if local_path.exists():
+            return str(local_path)
+        return None
+
+    # Handle plain paths (no scheme)
+    if not parsed.scheme and url and not url.startswith("data:"):
+        path = Path(url)
+        if path.exists():
+            return str(path)
         return None
 
     if parsed.scheme in ("http", "https"):
@@ -2628,6 +2649,10 @@ general Q&A yourself.
                 )
 
         if desktop_attachments:
+            # Store desktop attachments in session metadata for tool access
+            if session:
+                session.set_metadata("desktop_attachments", desktop_attachments)
+
             for att in desktop_attachments:
                 # Support both dict-style and object-style access
                 if isinstance(att, dict):
