@@ -4295,7 +4295,9 @@ class MessageGateway:
         tool_name: str,
         reason: str,
         risk_level: str = "HIGH",
-    ) -> None:
+        *,
+        confirm_id: str = "",
+    ) -> bool:
         """Send a security confirmation request to the IM channel.
 
         Uses platform-native interactive elements when available
@@ -4303,14 +4305,14 @@ class MessageGateway:
         """
         adapter = self._adapters.get(session.channel)
         if adapter is None:
-            return
+            return False
 
         text = (
             f"⚠️ **安全确认**\n\n"
             f"工具: `{tool_name}`\n"
             f"风险等级: **{risk_level}**\n"
             f"原因: {reason}\n\n"
-            f"请回复: **允许** / **拒绝**"
+            f"请回复 **允许** / **拒绝** / **会话允许** / **沙箱**"
         )
 
         if hasattr(adapter, "build_simple_card") and hasattr(adapter, "send_card"):
@@ -4318,15 +4320,17 @@ class MessageGateway:
                 title=f"⚠️ 安全确认 — {risk_level}",
                 content=(f"**工具**: {tool_name}\n**原因**: {reason}"),
                 buttons=[
-                    {"text": "✅ 允许", "value": "security_allow"},
-                    {"text": "❌ 拒绝", "value": "security_deny"},
+                    {"text": "✅ 允许", "value": {"action": "security_allow", "confirm_id": confirm_id}},
+                    {"text": "❌ 拒绝", "value": {"action": "security_deny", "confirm_id": confirm_id}},
+                    {"text": "本次会话允许", "value": {"action": "security_allow_session", "confirm_id": confirm_id}},
+                    {"text": "沙箱执行", "value": {"action": "security_sandbox", "confirm_id": confirm_id}},
                 ],
             )
             try:
                 chat_id = session.chat_id
                 reply_to = session.thread_id
                 await adapter.send_card(chat_id, card, reply_to=reply_to)
-                return
+                return True
             except Exception as e:
                 logger.warning(f"[Security] Card send failed, falling back to text: {e}")
 
@@ -4334,6 +4338,7 @@ class MessageGateway:
             await self.send_to_session(session, text, role="system")
         except Exception as e:
             logger.warning(f"[Security] Failed to send confirmation: {e}")
+        return False
 
     async def _handle_im_security_confirm(
         self,
@@ -4347,22 +4352,52 @@ class MessageGateway:
         Send a confirmation card/text to the user, then wait for their reply
         via the interrupt queue.
         """
+        from ..core.policy import get_policy_engine
+
         tool_name = event.get("tool", "")
         reason = event.get("reason", "")
         risk = event.get("risk_level", "HIGH")
-        confirm_id = event.get("id", "")
+        confirm_id = (event.get("id") or "") or ""
+        timeout = float(session.get_metadata("security_timeout") or 120)
+        pe = get_policy_engine()
 
-        await self.send_security_confirm(session, tool_name, reason, risk_level=risk)
+        im_adapter = self._adapters.get(session.channel)
+        interactive_attempt = bool(
+            im_adapter
+            and hasattr(im_adapter, "build_simple_card")
+            and hasattr(im_adapter, "send_card")
+        )
+        if interactive_attempt and confirm_id:
+            pe.prepare_ui_confirm(confirm_id)
 
-        # Wait for user reply via interrupt queue (set by adapter callbacks or
-        # plain-text keyword matching in _handle_message)
+        try:
+            sent_interactive = await self.send_security_confirm(
+                session,
+                tool_name,
+                reason,
+                risk_level=risk,
+                confirm_id=confirm_id,
+            )
+        except Exception:
+            if interactive_attempt and confirm_id:
+                pe.cleanup_ui_confirm(confirm_id)
+            raise
+
+        if sent_interactive and confirm_id:
+            await pe.wait_for_ui_resolution(confirm_id, timeout)
+            pe.cleanup_ui_confirm(confirm_id)
+            return
+
+        if interactive_attempt and confirm_id:
+            pe.cleanup_ui_confirm(confirm_id)
+
         try:
             reply_msg = await asyncio.wait_for(
                 self._wait_for_interrupt(session.session_key),
-                timeout=float(session.get_metadata("security_timeout") or 120),
+                timeout=timeout,
             )
             text = reply_msg.message.text.strip().lower() if reply_msg else ""
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             text = ""
 
         decision = "deny"
@@ -4372,15 +4407,14 @@ class MessageGateway:
             decision = "allow_always"
         elif text in ("会话允许", "allow_session", "session"):
             decision = "allow_session"
-        elif text in ("沙箱", "sandbox"):
+        elif text in ("沙盒", "sandbox"):
             decision = "sandbox"
 
-        try:
-            from ..core.policy import get_policy_engine
-
-            get_policy_engine().resolve_ui_confirm(confirm_id, decision)
-        except Exception as exc:
-            logger.warning(f"[Security] IM confirm resolve failed: {exc}")
+        if confirm_id:
+            try:
+                pe.resolve_ui_confirm(confirm_id, decision)
+            except Exception as exc:
+                logger.warning(f"[Security] IM confirm resolve failed: {exc}")
 
     async def _wait_for_interrupt(self, session_key: str) -> "InterruptMessage | None":
         """Block until an interrupt message arrives for the session."""
