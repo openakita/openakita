@@ -1,159 +1,596 @@
-# fin-pulse · 用户测试用例（V1.0）
+# fin-pulse · 财经脉动 — 小白上手测试手册（V1.0）
 
-> 3 modes × 3 cases = 9 + 1 smoke sweep. Run them in order after a
-> fresh install to sign off the V1.0 milestone. Every case lists the
-> trigger, the expected REST call, the UI observable, and the pass
-> criteria.
-
-Legend: **Trigger** – what the tester clicks / types. **Call** – the
-HTTP request that should hit the plugin router. **Expect** – the
-tangible outcome in the UI, SQLite row, or IM channel.
-
----
-
-## A. `daily_brief` mode
-
-### A1 · Generate a morning brief and preview it
-
-- Trigger: Settings tab ready → switch to **Digests** tab →
-  click the **早报 Morning** button.
-- Call: `POST /digest/run` body
-  `{"session": "morning", "since_hours": 12, "top_k": 20, "lang": "zh"}`.
-- Expect:
-  - A new `.card` appears in the Digests grid with session label
-    `早报` and generated_at within the last 10s.
-  - Clicking the card opens a modal with an iframe whose `src`
-    ends in `/digests/{id}/html`; the iframe renders a formatted
-    brief with header + per-article score bands.
-  - SQLite: `SELECT * FROM digests ORDER BY generated_at DESC
-    LIMIT 1` shows non-empty `markdown_blob` + `html_blob`.
-
-### A2 · `top_k` is respected
-
-- Trigger: POST to `/digest/run` directly via curl or the Ask
-  tab with `{"session": "noon", "top_k": 3}`.
-- Expect:
-  - Response `digest.stats.total_selected == 3`.
-  - The rendered markdown contains exactly 3 numbered items.
-
-### A3 · Agent tool round-trip
-
-- Trigger: In the OpenAkita main chat window, type *"fin-pulse 帮
-  我生成今晚的财经晚报"*.
-- Call: host Brain → `fin_pulse_create`
-  `{mode: "daily_brief", session: "evening", ...}`.
-- Expect:
-  - Tool reply envelope has `ok=true`, `task_id` starts with
-    `fp-`, and `digest.digest_id` is present.
-  - The UI Digests tab shows the new card after a soft refresh.
+> 这份文档既是**新手教程**，也是**逐项验收脚本**。
+> 每条用例都遵循同一个节奏：
+>
+> 1. **是什么** — 一句话告诉你这一步验证什么能力
+> 2. **在哪做** — 精确到插件的哪个页签、哪个按钮
+> 3. **填什么** — 具体的素材来源和一字不差的输入值
+> 4. **看什么** — 成功时页面上/IM 里应该出现的东西
+> 5. **不对劲** — 常见错误和排查动作
+>
+> 按顺序跑完全部 10 个场景，大约 25 分钟。每个场景都是独立的，也可以单独做。
 
 ---
 
-## B. `hot_radar` mode
+## 目录
 
-### B1 · Rule evaluation is preview-only
-
-- Trigger: Radar tab → paste
-  `+美联储\n+降息\n!传闻` → **Dry run**.
-- Call: `POST /radar/evaluate`.
-- Expect:
-  - Hits list populates on the right; **no** task row is written
-    (`SELECT count(*) FROM tasks WHERE mode = 'hot_radar'`
-    unchanged).
-  - The `radar.hits.count` caption shows the hit total + the
-    selected since_hours window.
-
-### B2 · Save rules persists across refresh
-
-- Trigger: **Save rules** button after B1 → F5 the plugin.
-- Call: `PUT /config` with `{updates: {radar_rules: "+美联储\n+降息\n!传闻"}}`.
-- Expect:
-  - On reload, the textarea preloads the exact same content.
-  - `GET /config` returns the same `radar_rules` value (the key
-    is not secretive, so **not** redacted).
-
-### B3 · Scheduled radar fires per-target cooldown
-
-- Pre-req: two IM adapters configured (e.g. `feishu`, `wework`).
-- Trigger: Settings → Schedules → **Create schedule** with
-  `mode=hot_radar`, `cron="*/2 * * * *"`, `channel=feishu`,
-  `chat_id=oc_aaa`; repeat with `chat_id=oc_bbb`.
-- Wait 2–3 minutes.
-- Expect:
-  - Both Feishu groups receive the same hit list **separately** —
-    the broadcast uses a per-`chat_id` cooldown_key, so one group
-    receiving a message does not block another.
-  - On the next 2-minute tick, the same hits do **not** resend
-    (cooldown catches them) unless `rules_text` has changed.
+- [0. 开始之前（必读 5 分钟准备）](#0-开始之前必读-5-分钟准备)
+- [1. 设置页：检查 8 个数据源和 IM 通道](#1-设置页检查-8-个数据源和-im-通道)
+- [2. 今日资讯：抓取你的第一批新闻](#2-今日资讯抓取你的第一批新闻)
+- [3. 早午晚报：生成第一份早报](#3-早午晚报生成第一份早报)
+- [4. 发送到 IM：让飞书/企微收到早报](#4-发送到-im让飞书企微收到早报)
+- [5. 定时任务：每天早上 8 点自动出报](#5-定时任务每天早上-8-点自动出报)
+- [6. 雷达预警：第一条关键词规则](#6-雷达预警第一条关键词规则)
+- [7. 雷达进阶：AI 优化 / 示例填写 / 历史](#7-雷达进阶ai-优化--示例填写--历史)
+- [8. Agent 对话：让大模型帮你查新闻](#8-agent-对话让大模型帮你查新闻)
+- [9. NewsNow 热榜增强（可选）](#9-newsnow-热榜增强可选)
+- [10. 回归冒烟：一键跑完全部自动化测试](#10-回归冒烟一键跑完全部自动化测试)
+- [附录 A：素材来源速查](#附录-a素材来源速查)
+- [附录 B：常见错误与修复](#附录-b常见错误与修复)
 
 ---
 
-## C. `ask_news` mode
+## 0. 开始之前（必读 5 分钟准备）
 
-### C1 · Keyword search respects `days` clamp
+### 0.1 需要先在 OpenAkita 主程序做的 3 件事
 
-- Trigger: Ask tab → copy the `fin_pulse_search_news` JSON sample
-  → modify to `{"q": "美联储", "days": 99999, "limit": 99999}` →
-  paste into the OpenAkita main chat as a tool call.
-- Expect:
-  - Response clamps `days` to 90, `limit` to 200, and the `window`
-    field reflects that (`window.days=90`).
-  - `ok=true`, `total` reflects the actual hit count in the
-    articles index.
+这 3 件事如果没做，财经脉动能打开，但大部分用例会失败或提示"尚未配置"。
 
-### C2 · `fin_pulse_status` on a canceled task
+| # | 在哪做 | 做什么 | 填什么 |
+|---|--------|--------|--------|
+| ① | **OpenAkita → 设置 → 模型** | 至少配置 1 个大模型端点 | 例：DashScope `qwen-plus`、OpenAI `gpt-4o-mini`，保证"测试连接"通过 |
+| ② | **OpenAkita → 设置 → 通道 (IM 通道)** | 至少注册 1 个 IM 适配器 | 推荐飞书（Feishu）自建机器人，或企微群机器人。最低要能拿到一个 `chat_id`（飞书群 `oc_xxx`、企微群 Webhook id 等） |
+| ③ | **OpenAkita → 插件管理** | 启用 `fin-pulse` | 点"启用"，确认权限里有：`channel.send`、`brain.access`、`config.read/write`、`routes.register`、`tools.register`、`data.own`、`hooks.basic` |
 
-- Pre-req: create any task then cancel it via the UI.
-- Trigger: call `fin_pulse_status` with the canceled `task_id`.
-- Expect:
-  - `ok=true`, `task.status == "canceled"`; the envelope includes
-    the original `params` so the Brain can suggest a retry.
+> 为什么需要大模型？—— 财经脉动的"AI 评分、摘要、生成早报、AI 优化雷达规则"都走的是 OpenAkita 主程序里配好的大模型端点，插件**不单独保存 API Key**。
 
-### C3 · Settings redaction is enforced end-to-end
+> 为什么需要 IM？—— 早午晚报 / 雷达预警最终都是发到聊天群。你可以先不配，用例 T3/T4 就跳过，其他用例不受影响。
 
-- Trigger: Call `fin_pulse_settings_get` after setting
-  `brain_api_key=sk-test-123` via `fin_pulse_settings_set`.
-- Expect:
-  - Response carries `config.brain_api_key == "***"` — **not**
-    the real value. Non-secret keys (e.g. `ai_interests`) come
-    back unredacted.
-  - The plugin `/config` REST endpoint behaves identically.
+### 0.2 打开财经脉动
+
+- 在 OpenAkita 左侧边栏找到**蓝青色 SVG 图标 + "财经脉动"** 字样的插件图标，点击进入。
+- 首屏顶部是 Logo + 「财经脉动 · 早午晚报 · 热点雷达 · Agent 对话」副标题。
+- 顶部 5 个页签：**今日资讯 / 早午晚报 / 雷达预警 / Agent 对话 / 设置**。
+
+### 0.3 如果出现橙色横幅「尚未配置 IM 推送通道」
+
+这不是报错，是**提示**：说明你还没做 0.1 的第②件事。点击横幅右侧的 **「前往设置」** 按钮会跳到设置页；配完一个通道横幅就消失。
 
 ---
 
-## D. Smoke sweep
+## 1. 设置页：检查 8 个数据源和 IM 通道
 
-### D1 · UI hard contracts pass on a fresh clone
+### 是什么
 
-```powershell
-cd D:/OpenAkita/plugins/fin-pulse
-python -m pytest tests/test_smoke.py -v
+快速确认：插件认识 8 个内置数据源的 id，且 0.1 配好的 IM 通道在插件里能被识别。
+
+### 操作步骤
+
+1. 切到 **设置** 页签。
+2. 找到最上方的 **「数据源状态」** 卡片。你会看到 8 个蓝色胶囊：
+   `华尔街见闻 / 财联社电报 / 证券时报 / 中国人民银行 / 国家统计局 / 美联储 FOMC / 美国财政部 / SEC EDGAR`。
+   （第 9 个 `NewsNow 热榜` 属于可选增强，默认灰色。）
+3. 下一张卡片 **「IM 推送通道」**：
+   - 如果 0.1 做过，这里会列出你的通道胶囊（例如 `feishu`、`wework`）；
+   - 每个胶囊旁边有一个 **「发送测试」** 小按钮，**先不要点**，留到用例 4。
+
+### 预期看到
+
+- 8 个数据源胶囊全部显示**蓝底**（表示至少还没记录过 `last_error`）。
+- 至少 1 个 IM 通道胶囊 + 对应的"发送测试"按钮。
+
+### 不对劲
+
+- **数据源某个胶囊显示红底并带 tooltip**：把鼠标悬停读 tooltip 内容。一般是网络访问受限（如美联储、SEC 在国内需要代理），暂不影响用例 2 抓取其他源。
+- **IM 通道列表空**：回到 0.1 第②步，OpenAkita 主程序 → 设置 → 通道。
+
+---
+
+## 2. 今日资讯：抓取你的第一批新闻
+
+### 是什么
+
+验证：插件能从 8 个数据源并发拉取最近 24 小时的财经新闻，并在页面上按时间/AI 评分排序展示。
+
+### 素材从哪里来
+
+**不需要你准备任何素材**。插件内置的 8 个 `finpulse_fetchers/*.py` 会直接从官方站点拉取 JSON/HTML，自动清洗、去重、打分。
+
+### 操作步骤
+
+1. 切到 **今日资讯** 页签。页面采用上下布局：
+   - 上方：**筛选栏** —— 数据源下拉、时间范围（近 6 小时 / 近 24 小时 / 近 3 天）、最低 AI 评分、排序（按时间 / 按 AI 评分）、「重置」按钮、「抓取全部数据源」按钮。
+   - 下方：**新闻列表卡片** —— 标题默认显示「刷新 · N」。
+2. 点击蓝色大按钮 **「抓取全部数据源」**。按钮变为"抓取中…"灰色禁用状态。
+3. 等待 10–30 秒。完成后会弹出 toast：`已抓取 N 条新闻（M 条入库）`。
+4. 点击一下右上角 **「刷新」** 按钮，或切一下时间范围胶囊，触发列表重绘。
+
+### 预期看到
+
+- 下方新闻列表至少 20–80 条新闻卡片，每条包含：
+  - 标题（蓝色可点击）
+  - 来源徽标（如 `华尔街见闻`）
+  - 发布时间（如「12 分钟前」）
+  - AI 评分（0–10 分，彩色条带）
+  - 右侧「复制」小按钮
+- 切「按 AI 评分」排序：最高分（一般 7+）的新闻浮到顶部。
+- 点任一新闻标题，会在新标签页打开原文。
+
+### 配置值示例（筛选）
+
+| 字段 | 推荐新手填 | 说明 |
+|------|-----------|------|
+| 数据源 | `全部` | 第一次尝试先不过滤 |
+| 时间范围 | `近 24 小时` | 白天跑够用 |
+| 最低 AI 评分 | `0` | 0 表示不过滤 |
+| 排序 | `按 AI 评分` | 看最重要的优先 |
+
+### 不对劲
+
+- **点了抓取但没新闻**：
+  1. F12 开 DevTools → Network，看 `/ingest` 返回体里 `summary.per_source`，哪个源报错一目了然。
+  2. 国内直连美联储/SEC/美财政部通常受限——把数据源下拉切成「华尔街见闻」或「财联社电报」再刷新，这两个一般 100% 可用。
+- **每条新闻 AI 评分都是 0**：说明大模型端点没配好（0.1 第①件事），回去测试连接。
+
+---
+
+## 3. 早午晚报：生成第一份早报
+
+### 是什么
+
+验证：在已有新闻的基础上，生成一份「早报/午报/晚报」，产物同时有 Markdown 和 HTML 两种形式。
+
+### 前置条件
+
+- 用例 2 已经成功跑完（数据库里有新闻）。
+- 大模型端点可用。
+
+### 素材从哪里来
+
+**无需手动准备**。插件会从 `articles` 表里挑最近 N 小时、AI 评分 Top-K 的新闻自动生成。
+
+### 操作步骤
+
+1. 切到 **早午晚报** 页签。顶部标题 **早午晚报** 前面有一条蓝色竖线，右侧有 3 个胶囊按钮：**早报 / 午报 / 晚报**，每个按钮左边都有自己的 SVG 图标。
+2. 点击 **「早报」** 按钮（它会变成深蓝选中态，带 `is-active` 底色）。
+3. 按钮上显示"生成中…"，旁边出现进度菊花。耗时 10–60 秒，取决于大模型速度。
+4. 完成后按钮恢复正常，下方卡片区出现一张新卡片：
+   - 标题：`早报 · 2026-04-24 09:10:23`
+   - 统计行：`入选 20 条 · 平均分 6.8 · 最高 9`
+
+### 预期看到
+
+- 点击卡片任意处 → 弹出模态框，iframe 内加载 `{host}/api/plugins/fin-pulse/digests/{id}/html`。
+- iframe 里是一份完整排版：顶部大标题 + 日期 + 20 条带编号的摘要，每条都带彩色评分条。
+- 模态框右下有「复制 Markdown」「重新推送」两个按钮，先别点。
+
+### 配置值示例（API 直调，高阶玩家可选）
+
+如果想直接 curl 测，请求体：
+
+```json
+POST /api/plugins/fin-pulse/digest/run
+{
+  "session": "morning",
+  "since_hours": 12,
+  "top_k": 20,
+  "lang": "zh"
+}
 ```
 
-Expect 6 passes in ~1s. Any failure means the `ui/dist/index.html`
-has regressed against the avatar-studio contract (missing
-`TAB_IDS`, missing `oa-config-banner`, or forbidden
-`ReactDOM.render` call, etc.).
+返回的 `digest.digest_id` 就是卡片背后的 id；`stats.total_selected` 一定等于 `top_k`。
 
-### D2 · Full suite is green
+### 不对劲
 
-```powershell
-python -m pytest tests/ -q
-```
-
-Expect **213 passed, 4 skipped** (or higher as new cases land).
-Four intentional skips live in `test_fetchers_impl.py` / `test_dedupe.py`
-for cases that need a live network or `feedparser` package.
+- **生成卡片但内容只有标题没正文**：大模型超时/报错。打开 OpenAkita 主程序日志（`data/logs/*.log`）搜 `digest_run`，一般能看到具体错误。
+- **点击卡片 iframe 是白屏 / 404**：重装插件或检查 `data/plugins/fin-pulse/*.db` 的 `digests.html_blob` 是否为空。
 
 ---
 
-## E. Known environment gotchas
+## 4. 发送到 IM：让飞书/企微收到早报
 
-- On Windows with Python 3.9, `tests/test_schedule.py` stubs
-  `openakita.plugins.api` so `StrEnum` imports survive — no action
-  needed, just don't be surprised by the stub inside that file.
-- NewsNow **public** service is rate-limited; if B3 does not fire,
-  check `/ingest/source/newsnow` status first.
-- Feishu bots reject messages > 30 KB — the
-  `finpulse_notification/splitter.py` chunks by line boundary at
-  25 KB per chunk to stay safely below.
+### 是什么
+
+验证：插件能把生成的早报通过 OpenAkita 的 IM 网关发送到飞书/企微群，长消息自动按行切分。
+
+### 前置条件
+
+- 0.1 第②步已经配好至少 1 个 IM 通道。
+- 用例 3 至少成功生成过一份早报。
+
+### 素材从哪里来
+
+**你需要一个 IM 目标 id**：
+
+| 通道 | 目标 id 长什么样 | 哪里拿 |
+|------|-----------------|--------|
+| feishu（飞书） | `oc_xxxxxxxxxxxxxxxxxxxx` | 飞书开发者后台 → 机器人 → 添加到群 → 看该群 open_chat_id，或直接发一条消息抓回调里的 `chat_id` |
+| wework（企微） | Webhook 地址里的 `key` 参数值 | 群设置 → 群机器人 → 添加 → 复制 Webhook |
+| dingtalk（钉钉） | Webhook access_token | 群设置 → 智能群助手 → 添加机器人 → 自定义 → 安全设置 |
+| email | 收件邮箱 | 自填（需 OpenAkita 配好 SMTP） |
+
+先用"自己测试用"的群聊，避免骚扰别人。
+
+### 操作步骤（4A：一键测试通道连通性）
+
+1. **设置** 页 → **IM 推送通道** 卡片。
+2. 点你的通道胶囊旁边的 **「发送测试」** 按钮。
+3. 弹出 `chat_id for feishu` 的原生对话框，粘贴上面拿到的 `chat_id`。
+4. 点确定。几秒后：
+   - 页面右下角 toast：`sent`。
+   - 飞书/企微群里收到一条：`[fin-pulse] channel test — 2026-04-24T09:12:18.123Z`。
+
+### 操作步骤（4B：把早报推到 IM）
+
+1. 切到 **早午晚报** 页签。
+2. 点任意一张早报卡片 → 模态框里点右下角 **「重新推送」** 按钮。
+3. 弹框填 `channel`（例如 `feishu`）和 `chat_id`。
+4. 确定。
+5. 几秒后群里收到整篇早报；如果 Markdown 超过 25KB，会自动拆成 2–3 条连续消息（由 `finpulse_notification/splitter.py` 做行边界切分，不会把某一条新闻从中间截断）。
+
+### 预期看到
+
+- **4A** 群内收到一条以 `[fin-pulse]` 开头的测试文本。
+- **4B** 群内收到一段（或多段）Markdown 格式的财经早报，标题、要点编号、来源都对得上插件里那张卡片。
+
+### 不对劲
+
+- **页面 toast 提示 `failed: permission_denied` / `channel.send not granted`**：插件权限没给齐，在插件管理页面勾上 `channel.send`。
+- **群里没收到任何消息，但 toast 是 `sent`**：OpenAkita 主程序通道配置的凭证不对（例如 webhook 的 secret 签名错），回到主程序的通道设置重跑自检。
+
+---
+
+## 5. 定时任务：每天早上 8 点自动出报
+
+### 是什么
+
+验证：可以在插件里创建一个"每天定时执行"的计划，到点自动生成早报并推到 IM，不需要人守着。
+
+### 素材从哪里来
+
+仍然是用例 4 里拿到的 `chat_id`。
+
+### 操作步骤
+
+1. **设置** 页 → **定时任务** 卡片 → 右上角 **「新建」** 按钮。
+2. 按照弹出的 4 连问对话框依次输入：
+
+| 步骤 | 提示 | 小白推荐填 | 含义 |
+|------|------|-----------|------|
+| ① | `mode (daily_brief / hot_radar)` | `daily_brief` | 早午晚报 |
+| ② | `channel` | `feishu` | 你在 0.1 配好的通道 |
+| ③ | `chat_id` | 你的 `oc_xxx` | 用例 4 拿到的目标 |
+| ④ | `cron (minute hour day month weekday)` | `0 8 * * *` | 每天 8:00 |
+| ⑤ | `session (morning/noon/evening)` | `morning` | 早报 |
+
+3. 点确定后 toast 提示 `scheduled fin-pulse:xxxxxx`。
+4. 卡片列表里多出一行，能看到 cron 表达式 + 右侧「删除」按钮。
+
+### 常用 cron 模板（复制即用）
+
+| 目的 | cron 值 | 备注 |
+|------|---------|------|
+| 每天 8:00 早报 | `0 8 * * *` | session=morning |
+| 每天 12:30 午报 | `30 12 * * *` | session=noon |
+| 每天 19:00 晚报 | `0 19 * * *` | session=evening |
+| 工作日每 15 分钟雷达 | `*/15 * * * 1-5` | mode=hot_radar |
+| 每小时整点雷达 | `0 * * * *` | mode=hot_radar |
+
+### 预期看到
+
+- 到了 `0 8 * * *`（也可以把时间改成"当前时间 + 2 分钟"快速验证），群里会收到一份新鲜早报。
+- 同时 **早午晚报** 页签里也会多出一张同一时间戳的卡片。
+
+### 不对劲
+
+- **到点没触发**：OpenAkita 主程序必须开着。桌面/服务器休眠时 APScheduler 不会补跑。
+- **cron 语法错误**：前端没有严格校验，错误的表达式会在主程序日志里抛 `CronTrigger` 异常。推荐用 [crontab.guru](https://crontab.guru) 先验证表达式。
+
+---
+
+## 6. 雷达预警：第一条关键词规则
+
+### 是什么
+
+验证：写一条"当新闻里同时出现 A 和 B，但不包含 C 时才报警"的规则，点"试运行"就能看命中列表；**试运行不会写任务、不会发 IM**，只是预览。
+
+### 素材从哪里来
+
+规则 DSL 很简单，每一行一个关键词：
+
+| 前缀 | 含义 | 例子 |
+|------|------|------|
+| `+` | **必须**包含（AND） | `+美联储` |
+| `!` | 必须**不**包含（排除） | `!传闻` |
+| `@alias` | 别名（命名这组规则） | `@FOMC` |
+| 空行 | **分组** —— 空行以上是一组 OR 的关系 | 见下 |
+| `[GLOBAL_FILTER]` | 全局排除段，对所有分组生效 | 见下 |
+
+### 操作步骤
+
+1. 切到 **雷达预警** 页签。顶部标题 **关键词规则** 前有白色竖线，下方是小白友好的说明文字（灰色）：
+
+> 每行一个关键词；`+` 必须、`!` 排除、`@alias` 别名、空行分组、`[GLOBAL_FILTER]` 全局排除。
+
+2. 规则编辑器下方的三个按钮：
+   - **「示例填写」** —— 点击会把一份标准模板追加/填入（见下）。
+   - **「AI 优化」** —— 用自然语言让大模型帮你生成规则（用例 7）。
+   - **「历史」** —— 调出你以前保存过的规则（用例 7）。
+3. 点 **「示例填写」**。编辑框会被填为：
+
+```
++美联储
++降息
+!传闻
+
++特朗普
++关税
+
+[GLOBAL_FILTER]
+!小道消息
+!论坛
+```
+
+4. 编辑框下方的下拉选 **「近 24 小时」**（默认就是）。
+5. 点深蓝色按钮 **「试运行」**（按钮带一个靶心 SVG 图标）。
+
+### 预期看到
+
+- 右侧 **「命中预览」** 卡片标题会变成：`命中预览 — 共 N 条命中（24 小时内）`。
+- 下方列表给出命中的新闻，每条注明命中了哪组规则（例如 `@FOMC`）。
+- **关键证据**：此刻 SQLite 里 `SELECT count(*) FROM tasks WHERE mode='hot_radar'` 保持不变（因为"试运行"不写库，也不发 IM）。
+
+### 不对劲
+
+- **命中 0 条**：要么是时间窗太短（把"近 24 小时"改成"近 3 天"），要么是新闻里确实没有同时满足 `+美联储 +降息` 的条目。试着把 `+降息` 删掉再跑。
+
+---
+
+## 7. 雷达进阶：AI 优化 / 示例填写 / 历史
+
+### 是什么
+
+三个互相独立的小能力，让雷达规则更顺手：
+- **示例填写**：一键把模板拍进编辑器。
+- **AI 优化**：你只说人话（例如"我想监控美股科技股回购"），大模型帮你写规则。
+- **保存 + 历史**：规则写好后命个名存起来，下次一键调用。
+
+### 7A · 示例填写
+
+用例 6 已覆盖，略。
+
+### 7B · AI 优化
+
+#### 操作步骤
+
+1. 清空编辑器（或保留，AI 生成的会**替换**当前内容）。
+2. 点 **「AI 优化」** 按钮（带闪光 SVG 图标）。
+3. 弹出对话框，标题 `AI 优化雷达规则`，提示文字告诉你："用一句话描述你想监控什么，AI 会自动翻译成规则 DSL。"
+4. 在文本框里输入任意自然语言描述，例如：
+
+> 我想关注美股"苹果、英伟达、微软"任一家的回购、分红、裁员；排除股吧和论坛讨论。
+
+5. 点右下角 **「AI 生成」** 按钮（蓝色，闪光图标）。按钮变 `生成中…`。
+6. 等 3–10 秒。对话框关闭，编辑器被填为类似：
+
+```
+@apple
++苹果
++回购
+
++苹果
++分红
+
++苹果
++裁员
+
+@nvidia
++英伟达
++回购
+
+...
+
+[GLOBAL_FILTER]
+!股吧
+!论坛
+```
+
+7. 此时可以直接点 **「试运行」** 看命中。
+
+#### 不对劲
+
+- **提示 `AI unavailable, fallback used`**：大模型端点不可用，插件走了本地降级（基于你输入里的名词拆分出关键词）。结果可用但不够精细，回去检查 0.1 第①步。
+- **描述过短（<2 个字）或过长（>2000 字）**：会被拒绝。把描述改到"一句完整的中文/英文话"。
+
+### 7C · 保存规则 + 历史
+
+#### 保存
+
+1. 编辑器里已有你想保留的规则（用例 6/7B 的内容都行）。
+2. 点 **「保存」** 按钮。弹出命名框，标题 `保存规则`，提示 `取一个便于识别的名字，例如：美联储降息监控`。
+3. 输入一个名字（例 `美联储降息监控`），回车或点 `确认保存`。
+4. toast：`已保存：美联储降息监控`。
+
+#### 调出历史
+
+1. 点 **「历史」** 按钮。下拉弹出列表，最新保存的在最上面：
+   - 每行显示：名字 + 保存时间（如 `09:24`）+ 右侧"删除"小按钮。
+2. 点任意一行（**非**删除按钮区域），规则内容会被**替换**进编辑器，同时下拉关闭，toast 提示 `已加载：美联储降息监控`。
+3. 点某行右侧 **删除**（小垃圾桶图标），弹确认框，确认后从库中移除。
+
+#### 上限与存储位置
+
+- 历史库目前**最多 20 条**，保存第 21 条时最老的自动淘汰。
+- 存储在插件配置的 `radar_rules_library` 键里，同时被 `/config` 接口脱敏过滤（虽然本身不敏感）。
+
+### 预期看到（综合）
+
+- AI 生成后编辑器不是空的，至少有 3 行以 `+` 开头的关键词。
+- 保存后再点历史，看到刚刚的名字；点名字能正确把编辑器还原。
+- 删除后历史列表里相应条目消失，toast `已删除`。
+
+---
+
+## 8. Agent 对话：让大模型帮你查新闻
+
+### 是什么
+
+验证：无需打开财经脉动 UI，直接在 OpenAkita 主聊天窗和 AI 对话，AI 会自动调用插件提供的 7 个工具（`fin_pulse_*`）。
+
+### 前置条件
+
+- 大模型端点可用。
+- 用例 2 已有新闻数据（否则搜索会返回空）。
+
+### 素材从哪里来
+
+7 条 **现成中文提问模板** 直接写在插件里，可以从 **Agent 对话** 页签一键复制：
+
+| 工具 | 自然语言提问模板（复制即用） |
+|------|------------------------------|
+| `fin_pulse_create` | 帮我用 fin-pulse 生成今早的财经早报（session=morning, top_k=20, lang=zh） |
+| `fin_pulse_status` | 查询 fin-pulse 任务 fp-xxxx 当前状态 |
+| `fin_pulse_list` | 列出最近 10 条 fin-pulse 成功的早午晚报任务 |
+| `fin_pulse_cancel` | 取消 fin-pulse 任务 fp-xxxx |
+| `fin_pulse_settings_get` | 读取 fin-pulse 当前配置 |
+| `fin_pulse_settings_set` | 将 fin-pulse 的雷达规则设置为「+美联储 +降息」 |
+| `fin_pulse_search_news` | 找今天和美联储相关、AI 评分 ≥ 6 的财经新闻 |
+
+### 操作步骤
+
+1. 切到 **Agent 对话** 页签。
+2. 滚动到 `fin_pulse_search_news` 卡片，点右上角 **「复制提问」**。
+3. 回到 OpenAkita 主聊天窗口，`Ctrl+V` 粘贴，回车。
+4. AI 会思考 1–3 秒，然后调用 `fin_pulse_search_news`。
+5. AI 最终回复里会引用具体新闻标题和评分（而不是它自己瞎编）。
+
+### 预期看到
+
+- 主聊天窗里 AI 的消息下方有一条灰色小字：`工具调用：fin_pulse_search_news(q="美联储", days=1, min_score=6, limit=20)`。
+- AI 的回复至少列出 1–5 条具体新闻（带来源和 AI 评分），否则说"最近一天没有符合条件的新闻"。
+
+### 进阶自检
+
+- 问："**帮我把 fin-pulse 的雷达规则改成只关注英伟达业绩**"——AI 会调 `fin_pulse_settings_set`，然后回插件看"雷达预警"页签，编辑器内容已被改写。
+- 问："**fin-pulse 的 API Key 是什么**"——AI 调 `fin_pulse_settings_get` 后会回答看到的是 `***`（脱敏生效），不会泄漏。
+
+### 不对劲
+
+- **AI 不调工具直接编答案**：主程序 → 设置 → Brain / Agent 策略 → 开启"允许主动调用工具"或类似开关。
+- **调用报 `limit clamped`**：这是正常的保护。`days` 最大 90，`limit` 最大 200，超过会被自动夹到上限。
+
+---
+
+## 9. NewsNow 热榜增强（可选）
+
+### 是什么
+
+`NewsNow` 是第三方开源的全网热榜聚合（微博、知乎、抖音、36Kr 等 60+ 源）。财经脉动把它作为**可选第 9 数据源**。不配也完全不影响前面 8 个源。
+
+### 选哪种模式
+
+| 模式 | 适合谁 | 成本 | 速率限制 |
+|------|-------|------|---------|
+| `off` | 不想用 | 无 | — |
+| `public` | 自己玩/demo | 免费 | **严格限速**，作者自费维护（v0.0.39），不要无脑轮询 |
+| `self_host` | 生产环境 | 一台能拉 Docker 的机器 | 自己说了算 |
+
+### 9A · 公共服务
+
+1. **设置** 页 → **NewsNow 热榜聚合** 卡片 → Step 1 选择胶囊 **「公共服务」**。
+2. 下面会弹出一条橙色警示横幅，**认真读完**（关于速率限制）。
+3. Step 2 填 API URL（默认填你信任的公共部署地址，需要你自己找一个；公开示例：`https://newsnow.example.com/api/s`）。
+4. Step 3 点 **「测试连接」** 按钮（闪光图标）。
+5. 成功：蓝色文字 `连接成功：N 条热榜`；失败：红色文字 `连接失败：<err>`。
+
+### 9B · 自建（推荐）
+
+1. 找一台能跑 Docker 的机器，执行：
+
+```bash
+docker run -d --name newsnow -p 4444:4444 ourongxing/newsnow:latest
+```
+
+2. 访问 `http://127.0.0.1:4444/` 看看 Web UI 是否正常。
+3. 回到财经脉动 → **设置** → NewsNow → Step 1 选 **「自建」**。
+4. Step 2 填 `http://127.0.0.1:4444/api/s`（同机），或 `http://<内网 IP>:4444/api/s`。
+5. Step 3 **「测试连接」** → `连接成功：N 条热榜`。
+
+### 预期看到
+
+- 测试连接成功后，**今日资讯** 页签的"数据源"下拉里多出 `NewsNow 热榜`；抓取时也会把热榜条目带回来（来源徽标显示 `newsnow`）。
+
+### 不对劲
+
+- **公共服务 429 Too Many Requests**：换到自建，或者把定时任务的触发频率降低。
+- **自建 ConnectionRefused**：Docker 容器没起来（`docker ps` 看一下），或者 4444 端口被占。
+
+---
+
+## 10. 回归冒烟：一键跑完全部自动化测试
+
+### 是什么
+
+开发者/运维回归用。在命令行跑一次全量单元测试 + UI 硬契约校验。
+
+### 操作步骤（Windows PowerShell）
+
+```powershell
+cd D:\OpenAkita\plugins\fin-pulse
+python -m pytest tests\ -q
+```
+
+### 预期看到
+
+```
+237 passed, 4 skipped in 3.xxs
+```
+
+- **237 passed**：本版本期望数量（后续版本可能更多，只允许上涨）。
+- **4 skipped**：3 条是 live-network fetcher（美联储/SEC/美财政部真实网请求），1 条是 optional feedparser 依赖；都是**有意**跳过，不算失败。
+- **任何 failure**：优先看 `test_smoke.py`（UI 硬契约）— 一旦失败通常说明 `ui/dist/index.html` 动过核心结构，检查是否误删了 `TAB_IDS` / `oa-config-banner` / `oa-hero-title` / `oa-section-title` / `stack-layout` 等必须出现的 token。
+
+### 仅跑 UI 硬契约
+
+```powershell
+python -m pytest tests\test_smoke.py -v
+```
+
+预期 **6 passed** 在 ~1 秒内。
+
+---
+
+## 附录 A：素材来源速查
+
+| 场景 | 你需要准备 | 从哪里拿 |
+|------|-----------|----------|
+| 用例 1–3 | 什么都不用准备 | 插件全自动 |
+| 用例 4/5 | 1 个 IM `chat_id` | 飞书机器人 → 加入目标群 → 拿 `open_chat_id` |
+| 用例 6 | 若干关键词 | 直接想 2–3 个你关心的财经主题词 |
+| 用例 7B | 一句自然语言描述 | 自己用中文写"我想监控 XX" |
+| 用例 8 | 大模型端点 | OpenAkita 主程序 → 模型管理 |
+| 用例 9 | 1 台能跑 Docker 的机器（自建）或公开 NewsNow URL | `docker run ourongxing/newsnow` |
+
+---
+
+## 附录 B：常见错误与修复
+
+| 现象 | 根因 | 修复 |
+|------|------|------|
+| 顶部橙色横幅「尚未配置 IM 推送通道」 | 主程序没配 IM | 到 OpenAkita 主程序 → 设置 → 通道，加一个 |
+| 今日资讯抓取后列表为空 | 所有数据源都失败 | F12 → Network → `/ingest` 响应体 `summary.per_source` 看哪个源红了；多半是网络受限，先用华尔街见闻/财联社测通 |
+| 点早报按钮一直"生成中…" | 大模型端点超时 | 主程序日志搜 `digest_run`；切换到响应更快的模型 |
+| 发送测试 toast 显示 sent 但群里没消息 | 通道凭证错误 | 主程序 → 通道 → 跑自检（`发送一条测试消息` 按钮） |
+| 雷达"试运行"命中 0 条 | 时间窗太短 或 `+` 条件过严 | 改"近 3 天"；删掉 1–2 个 `+` 规则再试 |
+| AI 优化返回很短且带 `fallback used` | 大模型不可用，走降级 | 回主程序测试模型连接；或直接用"示例填写"+ 手改 |
+| Agent 对话 AI 不主动调工具 | 主程序 Agent 策略未开工具调用 | 主程序设置 → Agent → 勾选"允许调用工具"等相关开关 |
+| 定时任务到点没触发 | 主程序已关闭/休眠 | 确保 OpenAkita 进程常驻；服务器环境建议装成 systemd/服务 |
+| NewsNow 公共服务 429 | 触发了限速 | 换自建，或把调用频率降到 5 分钟以上 |
+| `pytest` 失败 `ImportError: feedparser` | 可选依赖未装 | `pip install feedparser`（非必须，不装那条 test 会被 skip） |
+
+---
+
+## 验收签收
+
+手动按顺序跑完用例 1–8 + 自动化跑用例 10 没有失败，即视为 **fin-pulse V1.0 通过小白验收**。用例 9（NewsNow）按需。
