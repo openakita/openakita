@@ -2351,6 +2351,8 @@ class ReasoningEngine:
 
             # --- Thinking 静默失败降级通知节流 (#415 #416 #403) ---
             _thinking_notice_emitted = False
+            # --- Vision 降级通知节流（一次会话只发一次） ---
+            _vision_notice_emitted = False
 
             # --- 恢复的 Todo：补发 SSE 事件让前端重建 FloatingPlanBar ---
             if conversation_id:
@@ -2586,6 +2588,17 @@ class ReasoningEngine:
                         elif _evt_type == "thinking_delta":
                             yield stream_event
                             _streamed_thinking = True
+                        elif _evt_type == "endpoint_meta":
+                            # 由 LLMClient 注入的端点元信息（vision_degraded 等）
+                            # 转换成前端协议一致的 endpoint_notice。
+                            if stream_event.get("vision_degraded") and not _vision_notice_emitted:
+                                _vision_notice_emitted = True
+                                yield {
+                                    "type": "endpoint_notice",
+                                    "notice_type": "degraded",
+                                    "endpoint": stream_event.get("endpoint_name", ""),
+                                    "reason_code": "vision_degraded",
+                                }
                         elif _evt_type == "decision":
                             decision = stream_event["decision"]
                             _stream_usage = stream_event.get("usage")
@@ -4610,6 +4623,13 @@ class ReasoningEngine:
                         reason=cancel_reason,
                         source="llm_stream",
                     )
+
+                # 端点元信息（如 vision_degraded）由 LLMClient 直接 yield
+                # 在流开始之前，不走 StreamAccumulator，原样向上转发。
+                if isinstance(raw_event, dict) and raw_event.get("type") == "endpoint_meta":
+                    yield raw_event
+                    last_yield_time = _time.monotonic()
+                    continue
 
                 for high_event in acc.feed(raw_event):
                     yield high_event

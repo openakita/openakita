@@ -2630,6 +2630,34 @@ export function ChatView({
                   }];
                 });
                 continue; // skip normal update below
+              case "endpoint_notice": {
+                // 渲染为系统气泡：thinking_degraded / vision_degraded
+                const reasonCode: string =
+                  (event as any).reason_code || (event as any).notice_type || "";
+                const endpointName: string = (event as any).endpoint || "";
+                let noticeText = "";
+                if (reasonCode === "thinking_degraded") {
+                  noticeText = endpointName
+                    ? `当前模型「${endpointName}」未返回思考过程，已自动降级为非思考模式继续回答。`
+                    : "当前模型未返回思考过程，已自动降级为非思考模式继续回答。";
+                } else if (reasonCode === "vision_degraded") {
+                  noticeText = endpointName
+                    ? `当前选中的模型「${endpointName}」不支持视觉，本轮的图片已被隐藏，仅根据文字内容回答。`
+                    : "当前选中的模型不支持视觉，本轮的图片已被隐藏，仅根据文字内容回答。";
+                } else {
+                  noticeText = "端点能力降级提示";
+                }
+                updateMessages((prev) => [
+                  ...prev,
+                  {
+                    id: genId(),
+                    role: "system" as const,
+                    content: noticeText,
+                    timestamp: Date.now(),
+                  },
+                ]);
+                continue;
+              }
               case "error":
                 currentError = {
                   message: event.message,

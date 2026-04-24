@@ -51,6 +51,8 @@ def convert_messages_to_openai(
     system: str = "",
     provider: str = "openai",
     enable_thinking: bool = False,
+    *,
+    vision_available: bool = True,
 ) -> list[dict]:
     """
     将内部消息格式转换为 OpenAI 格式
@@ -65,10 +67,11 @@ def convert_messages_to_openai(
         system: 系统提示
         provider: 服务商标识（用于多媒体处理，如 moonshot 支持视频）
         enable_thinking: 是否启用思考模式
+        vision_available: 当前选中端点是否具备 vision 能力。False 时图片块
+            会被替换为 "[图片：因当前模型不支持视觉，已隐藏 N 张图片]" 占位文本。
     """
     result = []
 
-    # 添加 system 消息
     if system:
         result.append(
             {
@@ -82,6 +85,7 @@ def convert_messages_to_openai(
             msg,
             provider=provider,
             enable_thinking=enable_thinking,
+            vision_available=vision_available,
         )
         if converted:
             if isinstance(converted, list):
@@ -96,6 +100,8 @@ def _convert_single_message_to_openai(
     msg: Message,
     provider: str = "openai",
     enable_thinking: bool = False,
+    *,
+    vision_available: bool = True,
 ) -> dict | list[dict] | None:
     """转换单条消息"""
     if isinstance(msg.content, str):
@@ -219,7 +225,9 @@ def _convert_single_message_to_openai(
             result.append(assistant_msg)
         else:
             # user 消息，转换内容块（传递 provider 以正确处理视频）
-            openai_content = convert_content_blocks_to_openai(other_blocks, provider=provider)
+            openai_content = convert_content_blocks_to_openai(
+                other_blocks, provider=provider, vision_available=vision_available
+            )
             result.append(
                 {
                     "role": msg.role,
@@ -381,6 +389,8 @@ def convert_messages_to_responses(
     system: str = "",
     provider: str = "openai",
     enable_thinking: bool = False,
+    *,
+    vision_available: bool = True,
 ) -> tuple[list[dict], str]:
     """将内部消息转换为 Responses API 的 input items + instructions。
 
@@ -388,6 +398,9 @@ def convert_messages_to_responses(
     - system prompt 不嵌入 messages，改由 instructions 独立传递
     - tool_result 使用 function_call_output item 而非 role:"tool" 消息
     - tool_call 使用 function_call item 而非 assistant.tool_calls
+
+    Args:
+        vision_available: 当前选中端点是否具备 vision 能力，False 时图片块降级。
 
     Returns:
         (input_items, instructions): input 数组和 instructions 字符串
@@ -399,6 +412,7 @@ def convert_messages_to_responses(
             msg,
             provider=provider,
             enable_thinking=enable_thinking,
+            vision_available=vision_available,
         )
         if converted:
             if isinstance(converted, list):
@@ -413,6 +427,8 @@ def _convert_single_message_to_responses(
     msg: Message,
     provider: str = "openai",
     enable_thinking: bool = False,
+    *,
+    vision_available: bool = True,
 ) -> dict | list[dict] | None:
     """将单条内部消息转换为 Responses API input item(s)。"""
     from .tools import convert_tool_result_to_responses
@@ -457,7 +473,9 @@ def _convert_single_message_to_responses(
                 )
         else:
             # user 消息
-            openai_content = convert_content_blocks_to_openai(other_blocks, provider=provider)
+            openai_content = convert_content_blocks_to_openai(
+                other_blocks, provider=provider, vision_available=vision_available
+            )
             result.append({"role": msg.role, "content": openai_content})
 
     return result if result else None
