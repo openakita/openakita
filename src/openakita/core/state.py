@@ -98,3 +98,4 @@ def get_app_store() -> StateStore[AppState]:
     if _app_store is None:
         _app_store = StateStore(AppState())
     return _app_store
+

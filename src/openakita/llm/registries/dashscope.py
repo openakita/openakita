@@ -118,3 +118,4 @@ class DashScopeInternationalRegistry(_DashScopeBase):
         supports_model_list=True,
         supports_capability_api=False,
     )
+

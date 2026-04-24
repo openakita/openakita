@@ -872,3 +872,4 @@ class RuntimeSupervisor:
                 (e.level for e in self._events), default=InterventionLevel.NONE
             ).name,
         }
+

@@ -648,3 +648,4 @@ class OrgMessenger:
                 f.write(json.dumps(msg.to_dict(), ensure_ascii=False) + "\n")
         except Exception as e:
             logger.warning(f"[Messenger] Failed to log message: {e}")
+

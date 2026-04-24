@@ -2424,3 +2424,4 @@ async def global_inbox_act(request: Request, msg_id: str):
         if msg:
             return msg.to_dict()
     raise HTTPException(404, "Message not found or not an approval")
+

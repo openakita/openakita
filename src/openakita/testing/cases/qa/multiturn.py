@@ -129,3 +129,4 @@ MULTITURN_TESTS = [
 
 def get_tests() -> list[TestCase]:
     return MULTITURN_TESTS
+

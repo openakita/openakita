@@ -1893,3 +1893,4 @@ class QQBotAdapter(ChannelAdapter):
             filename=path.name,
             mime_type=mime_type,
         )
+

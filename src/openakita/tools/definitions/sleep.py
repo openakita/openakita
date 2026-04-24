@@ -27,3 +27,4 @@ SLEEP_TOOLS: list[dict] = [
         },
     },
 ]
+

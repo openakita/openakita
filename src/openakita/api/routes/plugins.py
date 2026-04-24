@@ -1292,3 +1292,4 @@ async def list_plugin_tasks(plugin_id: str, request: Request) -> dict[str, Any]:
             "tasks": tasks,
         },
     }
+

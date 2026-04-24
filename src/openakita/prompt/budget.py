@@ -396,3 +396,4 @@ def apply_budget_to_sections(
         )
 
     return results
+

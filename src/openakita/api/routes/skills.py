@@ -634,3 +634,4 @@ try:
     register_on_change(_on_skills_changed_api)
 except Exception:
     pass
+

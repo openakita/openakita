@@ -104,3 +104,4 @@ DOC_SEARCH_TESTS = [
 
 def get_tests() -> list[TestCase]:
     return DOC_SEARCH_TESTS
+

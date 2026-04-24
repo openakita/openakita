@@ -137,3 +137,4 @@ SHELL_TESTS = [
 
 def get_tests() -> list[TestCase]:
     return SHELL_TESTS
+

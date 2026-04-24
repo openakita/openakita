@@ -750,3 +750,4 @@ def get_retrospect_storage() -> RetrospectStorage:
     if _retrospect_storage is None:
         _retrospect_storage = RetrospectStorage()
     return _retrospect_storage
+

@@ -482,3 +482,4 @@ async def refresh_md(request: Request):
 
     lifecycle.refresh_memory_md(lifecycle.identity_dir)
     return {"ok": True}
+
