@@ -47,3 +47,4 @@ class TestReportManagement:
         report = checker.get_pending_report()
         # May be None or a string
         assert report is None or isinstance(report, str)
+

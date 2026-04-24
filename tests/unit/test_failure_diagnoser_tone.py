@@ -77,3 +77,4 @@ class TestVerifyIncompleteTemplateContent:
         s = _DIAGNOSIS_TEMPLATES["verify_incomplete"]["suggestion"]
         assert "write_file" in s
         assert "org_submit_deliverable" in s
+

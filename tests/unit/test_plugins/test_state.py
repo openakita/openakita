@@ -203,3 +203,4 @@ class TestSaveLoad:
         state.ensure_entry("p1")
         state.save(path)
         assert path.exists()
+

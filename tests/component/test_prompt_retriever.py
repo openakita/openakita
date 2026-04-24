@@ -26,3 +26,4 @@ class TestRetrieveMemorySimple:
         mem_file.write_text("x" * 5000, encoding="utf-8")
         result = retrieve_memory_simple(mem_file, max_chars=100)
         assert len(result) <= 200  # Allow some margin for truncation markers
+

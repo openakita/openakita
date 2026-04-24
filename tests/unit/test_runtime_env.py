@@ -122,3 +122,4 @@ class TestVerifyPythonExecutable:
         if sys.platform != "win32":
             fake.chmod(0o755)
         assert verify_python_executable(str(fake)) is False
+

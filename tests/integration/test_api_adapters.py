@@ -202,3 +202,4 @@ class TestNewsAPI(APITestBase):
 # 运行所有测试
 if __name__ == '__main__':
     pytest.main(['-v', 'tests/integration/test_api_adapters.py'])
+

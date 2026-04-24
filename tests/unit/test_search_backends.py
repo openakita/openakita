@@ -107,3 +107,4 @@ class TestSearchBackendProtocol:
     def test_fts5_is_search_backend(self, tmp_storage):
         backend = FTS5Backend(tmp_storage)
         assert isinstance(backend, SearchBackend)
+

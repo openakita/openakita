@@ -305,3 +305,4 @@ class TestTokenRefresh:
             },
         )
         assert resp.status_code == 200
+

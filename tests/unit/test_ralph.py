@@ -68,3 +68,4 @@ class TestStopHook:
         t = Task(id="t", description="d")
         hook = StopHook(task=t)
         assert isinstance(hook.intercept(), bool)
+

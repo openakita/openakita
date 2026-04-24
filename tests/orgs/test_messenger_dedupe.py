@@ -97,3 +97,4 @@ class TestMessengerSendDedupe:
         assert ok2 is True
         mb = messenger.get_mailbox("node_cto")
         assert mb is not None and mb.pending_count == 2
+

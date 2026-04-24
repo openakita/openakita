@@ -346,3 +346,4 @@ class TestScoringHelpers:
 
     def test_format_empty(self, engine):
         assert engine._format_within_budget([], 100) == ""
+

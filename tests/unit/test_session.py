@@ -80,3 +80,4 @@ class TestSessionTimestamps:
     def test_last_active_set(self):
         s = Session(id="s1", channel="cli", chat_id="c1", user_id="u1")
         assert s.last_active is not None
+

@@ -476,3 +476,4 @@ class TestPostTaskHookSafety:
         for status in (NodeStatus.FROZEN, NodeStatus.OFFLINE, NodeStatus.BUSY):
             parent.status = status
             assert parent.status in (NodeStatus.FROZEN, NodeStatus.OFFLINE, NodeStatus.BUSY)
+

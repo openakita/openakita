@@ -267,3 +267,4 @@ class TestUnifiedStoreAttachments:
         results = store.get_session_attachments("s1")
         assert len(results) == 1
         assert results[0].filename == "a.txt"
+

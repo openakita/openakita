@@ -478,3 +478,4 @@ class TestGracefulShutdownSave:
         assert len(data) == 1
         msgs = data[0]["context"]["messages"]
         assert any(m["content"] == "important message" for m in msgs)
+

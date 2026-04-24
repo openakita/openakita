@@ -195,3 +195,4 @@ class TestStatsAndClear:
         registry.clear()
         assert registry.stats == {}
         assert registry.get_hooks("on_init") == []
+

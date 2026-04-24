@@ -150,3 +150,4 @@ class TestCompressIfNeeded:
         msgs = [{"role": "user", "content": "test"}]
         result = await ctx_manager.compress_if_needed(msgs, max_tokens=100000)
         assert isinstance(result, list)
+

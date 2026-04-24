@@ -345,3 +345,4 @@ class TestEdgeCases:
         )
         api.register_tools([{"name": "t1"}], lambda: None)
         assert "t1" in api._registered_tools
+

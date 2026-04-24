@@ -190,3 +190,4 @@ class TestRuntimeState:
         assert org.id in org_manager._cache
         org_manager.invalidate_cache(org.id)
         assert org.id not in org_manager._cache
+

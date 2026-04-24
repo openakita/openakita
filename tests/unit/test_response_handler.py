@@ -68,3 +68,4 @@ class TestResponseHandlerStaticMethods:
     def test_get_last_user_request_empty(self):
         result = ResponseHandler.get_last_user_request([])
         assert isinstance(result, str)
+

@@ -113,3 +113,4 @@ class TestRecordToolCallBackwardCompat:
         # Falls through to the original normal-failure path.
         assert intervention is not None
         assert intervention.level == InterventionLevel.STRATEGY_SWITCH
+

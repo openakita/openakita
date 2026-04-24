@@ -121,3 +121,4 @@ class TestHandleImReply:
         result = await notifier.handle_im_reply(persisted_org.id, "#A1 批准")
         assert result["matched"] is True
         assert "error" in result
+

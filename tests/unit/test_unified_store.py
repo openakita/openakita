@@ -161,3 +161,4 @@ class TestStats:
         stats = store.get_stats()
         assert "memory_count" in stats
         assert "search_backend" in stats
+

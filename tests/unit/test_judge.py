@@ -158,3 +158,4 @@ class TestJudgeResult:
         assert r.reason == ""
         assert r.score == 0
         assert r.details is None
+

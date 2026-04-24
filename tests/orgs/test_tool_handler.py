@@ -288,3 +288,4 @@ class TestPolicyProposal:
             persisted_org.id, "node_cto",
         )
         assert "提交审批" in result or "制度" in result
+

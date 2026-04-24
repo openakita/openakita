@@ -152,3 +152,4 @@ class TestMockBrain:
         )
         call = mock_brain.llm_client.call_log[-1]
         assert "You are helpful." in call["system"]
+

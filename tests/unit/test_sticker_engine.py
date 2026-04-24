@@ -46,3 +46,4 @@ class TestStickerMoodMapping:
         await sticker_engine.initialize()
         result = await sticker_engine.get_random_by_mood("happy")
         assert result is None or isinstance(result, dict)
+

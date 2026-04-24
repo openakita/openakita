@@ -395,3 +395,4 @@ class TestPartialRegistrationCleanup:
         assert mgr.get_loaded("bad-syntax") is None
         assert str(d) not in sys.path
         assert "openakita_plugin_bad_syntax" not in sys.modules
+

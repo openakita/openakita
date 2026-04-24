@@ -169,3 +169,4 @@ class TestRefreshUserMd:
         asyncio.get_event_loop().run_until_complete(lifecycle.refresh_user_md(identity_dir))
         user_md = identity_dir / "USER.md"
         # Should not create file with no data
+

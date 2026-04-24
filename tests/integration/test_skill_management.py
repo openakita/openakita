@@ -230,3 +230,4 @@ class TestSkillEdgeCases:
             json={"skill_name": "test-skill", "config": {"key": "value"}},
         )
         assert resp.status_code in (200, 500)
+

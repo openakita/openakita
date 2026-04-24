@@ -135,3 +135,4 @@ class TestAgentState:
         state = AgentState()
         task = state.get_task_for_session("unknown")
         assert task is None
+

@@ -138,3 +138,4 @@ class TestExpiryCleanup:
         })
         storage.cleanup_expired()
         assert storage.get_memory("fresh") is not None
+

@@ -49,3 +49,4 @@ class TestAudioUtils:
     def test_is_silk_file_nonexistent(self, tmp_path):
         result = is_silk_file(str(tmp_path / "missing.silk"))
         assert result is False
+

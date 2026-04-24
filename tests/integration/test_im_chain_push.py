@@ -158,3 +158,4 @@ class TestChainCommand:
     async def test_chain_invalid_arg(self, handler, session):
         result = await handler.handle_command("ignored", "/chain maybe", session)
         assert "无效" in result
+

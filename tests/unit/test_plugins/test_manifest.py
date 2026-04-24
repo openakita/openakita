@@ -210,3 +210,4 @@ class TestTimeouts:
         _write_manifest(tmp_path, data)
         m = parse_manifest(tmp_path)
         assert m.hook_timeout == 15.0
+

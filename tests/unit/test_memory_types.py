@@ -221,3 +221,4 @@ class TestScratchpad:
         assert s2.content == "正在重构记忆系统"
         assert s2.active_projects == ["memory-redesign"]
         assert s2.open_questions == ["性能如何?"]
+

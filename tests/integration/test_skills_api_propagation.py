@@ -319,3 +319,4 @@ class TestGetSkillsCacheInvalidation:
         skills_route._skills_cache = {"skills": [{"stale": True}]}
         notify_skills_changed("install")
         assert skills_route._skills_cache is None
+

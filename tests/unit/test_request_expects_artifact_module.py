@@ -58,3 +58,4 @@ class TestRequestExpectsArtifactModuleLevel:
         assert request_expects_artifact(None) is False
         assert request_expects_artifact("") is False
         assert request_expects_artifact("   ") is False
+

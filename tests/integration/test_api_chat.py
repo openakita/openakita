@@ -117,3 +117,4 @@ class TestShutdownEndpoint:
         data = resp.json()
         assert data["status"] == "shutting_down"
         assert app.state.shutdown_event.is_set()
+

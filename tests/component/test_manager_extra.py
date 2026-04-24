@@ -161,3 +161,4 @@ class TestEndSession:
 
     def test_end_session_empty(self, manager):
         manager.end_session("empty session")
+

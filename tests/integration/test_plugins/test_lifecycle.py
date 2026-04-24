@@ -506,3 +506,4 @@ async def test_gateway_late_wiring(tmp_path):
     assert loaded is not None
     assert loaded.api._host.get("gateway") is not None, \
         "Mutating host_refs dict must propagate to existing PluginAPI instances"
+

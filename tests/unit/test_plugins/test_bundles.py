@@ -208,3 +208,4 @@ class TestSkillsRecursive:
         result = mapper.detect(tmp_path)
         assert result is not None
         assert any("sub2" in str(p) for p in result.skills)
+

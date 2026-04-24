@@ -124,3 +124,4 @@ class TestJudgeIntegration:
     async def test_judge_fails_correctly(self, judge):
         result = await judge.evaluate("Java is great", "contains:Python")
         assert result.passed is False
+
