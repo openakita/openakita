@@ -33,9 +33,7 @@ class TestReviewSourceMedia:
     """Patch the per-kind probes so we can exercise the orchestration logic."""
 
     @pytest.fixture
-    def patch_probes(
-        self, monkeypatch: pytest.MonkeyPatch
-    ):
+    def patch_probes(self, monkeypatch: pytest.MonkeyPatch):
         def _install(
             video: dict[str, Any] | None = None,
             audio: dict[str, Any] | None = None,
@@ -61,9 +59,7 @@ class TestReviewSourceMedia:
         out = review_source_media([tmp_path / "ghost.mp4"])
         assert out["files"] == []
 
-    def test_video_entry_includes_usable_for(
-        self, tmp_path: Path, patch_probes
-    ) -> None:
+    def test_video_entry_includes_usable_for(self, tmp_path: Path, patch_probes) -> None:
         f = tmp_path / "clip.mp4"
         f.write_bytes(b"x")
         patch_probes(
@@ -83,9 +79,7 @@ class TestReviewSourceMedia:
         assert entry["usable_for"]
         assert "hero footage" in entry["usable_for"]
 
-    def test_audio_entry_includes_usable_for(
-        self, tmp_path: Path, patch_probes
-    ) -> None:
+    def test_audio_entry_includes_usable_for(self, tmp_path: Path, patch_probes) -> None:
         f = tmp_path / "song.mp3"
         f.write_bytes(b"x")
         patch_probes(
@@ -121,9 +115,7 @@ class TestReviewSourceMedia:
         assert entry["usable_for"], "image entries MUST always have usable_for"
         assert "hero still" in entry["usable_for"]
 
-    def test_low_res_image_still_has_usable_for(
-        self, tmp_path: Path, patch_probes
-    ) -> None:
+    def test_low_res_image_still_has_usable_for(self, tmp_path: Path, patch_probes) -> None:
         f = tmp_path / "tiny.jpg"
         f.write_bytes(b"x")
         patch_probes(
@@ -142,9 +134,7 @@ class TestReviewSourceMedia:
             "reference image",
         ]
 
-    def test_transcribe_callback_invoked_for_video(
-        self, tmp_path: Path, patch_probes
-    ) -> None:
+    def test_transcribe_callback_invoked_for_video(self, tmp_path: Path, patch_probes) -> None:
         f = tmp_path / "talk.mp4"
         f.write_bytes(b"x")
         patch_probes(
@@ -169,9 +159,7 @@ class TestReviewSourceMedia:
         assert entry["transcript_summary"] == "hello world"
         assert "source dialogue" in entry["usable_for"]
 
-    def test_transcribe_callback_skipped_for_image(
-        self, tmp_path: Path, patch_probes
-    ) -> None:
+    def test_transcribe_callback_skipped_for_image(self, tmp_path: Path, patch_probes) -> None:
         f = tmp_path / "photo.jpg"
         f.write_bytes(b"x")
         patch_probes(
@@ -186,9 +174,7 @@ class TestReviewSourceMedia:
 
         review_source_media([f], transcribe=_transcribe)
 
-    def test_transcribe_failure_is_swallowed(
-        self, tmp_path: Path, patch_probes
-    ) -> None:
+    def test_transcribe_failure_is_swallowed(self, tmp_path: Path, patch_probes) -> None:
         f = tmp_path / "talk.mp4"
         f.write_bytes(b"x")
         patch_probes(
@@ -210,9 +196,7 @@ class TestReviewSourceMedia:
         assert out["files"][0]["usable_for"]
         assert "transcript_summary" not in out["files"][0]
 
-    def test_planning_implications_populated(
-        self, tmp_path: Path, patch_probes
-    ) -> None:
+    def test_planning_implications_populated(self, tmp_path: Path, patch_probes) -> None:
         f = tmp_path / "clip.mp4"
         f.write_bytes(b"x")
         patch_probes(
@@ -226,12 +210,8 @@ class TestReviewSourceMedia:
             }
         )
         out = review_source_media([f])
-        assert any(
-            "Source video available" in line for line in out["planning_implications"]
-        )
-        assert any(
-            "Quality risk" in line for line in out["planning_implications"]
-        )
+        assert any("Source video available" in line for line in out["planning_implications"])
+        assert any("Quality risk" in line for line in out["planning_implications"])
 
 
 class TestNoToolRegistryUsage:
@@ -240,9 +220,7 @@ class TestNoToolRegistryUsage:
     def test_no_tool_registry_import(self) -> None:
         import ast
 
-        source_path = Path(__file__).resolve().parents[1].joinpath(
-            "footage_gate_review.py"
-        )
+        source_path = Path(__file__).resolve().parents[1].joinpath("footage_gate_review.py")
         tree = ast.parse(source_path.read_text(encoding="utf-8"))
         banned_names = {"tool_registry", "ToolDescriptor"}
         for node in ast.walk(tree):

@@ -42,15 +42,9 @@ from footage_gate_models import RISK_THRESHOLDS
 logger = logging.getLogger(__name__)
 
 
-_VIDEO_EXTENSIONS = frozenset(
-    {".mp4", ".mov", ".webm", ".avi", ".mkv", ".m4v"}
-)
-_AUDIO_EXTENSIONS = frozenset(
-    {".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a", ".opus"}
-)
-_IMAGE_EXTENSIONS = frozenset(
-    {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
-)
+_VIDEO_EXTENSIONS = frozenset({".mp4", ".mov", ".webm", ".avi", ".mkv", ".m4v"})
+_AUDIO_EXTENSIONS = frozenset({".mp3", ".wav", ".aac", ".flac", ".ogg", ".m4a", ".opus"})
+_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"})
 
 
 # ── Type detection ───────────────────────────────────────────────────────
@@ -71,9 +65,7 @@ def detect_media_type(path: Path) -> str | None:
 # ── Per-kind probes ──────────────────────────────────────────────────────
 
 
-def _probe_video(
-    path: Path, *, ffprobe_path: str | None = None
-) -> dict[str, Any]:
+def _probe_video(path: Path, *, ffprobe_path: str | None = None) -> dict[str, Any]:
     result: dict[str, Any] = {
         "technical_probe": {},
         "quality_risks": [],
@@ -111,22 +103,16 @@ def _probe_video(
     min_w = int(RISK_THRESHOLDS["video_min_width"])
     min_h = int(RISK_THRESHOLDS["video_min_height"])
     if width and (width < min_w or height < min_h):
-        risks.append(
-            f"Low resolution ({width}x{height}) — may appear pixelated in final output"
-        )
+        risks.append(f"Low resolution ({width}x{height}) — may appear pixelated in final output")
     if 0 < duration_sec < float(RISK_THRESHOLDS["video_min_duration_sec"]):
-        risks.append(
-            f"Very short clip ({duration_sec:.1f}s) — limited usability"
-        )
+        risks.append(f"Very short clip ({duration_sec:.1f}s) — limited usability")
     if astream and channels == 1:
         risks.append("Mono audio — consider if stereo output is expected")
 
     return result
 
 
-def _probe_audio(
-    path: Path, *, ffprobe_path: str | None = None
-) -> dict[str, Any]:
+def _probe_audio(path: Path, *, ffprobe_path: str | None = None) -> dict[str, Any]:
     result: dict[str, Any] = {"technical_probe": {}, "quality_risks": []}
     try:
         probe = ffprobe_json(path, ffprobe_path=ffprobe_path)
@@ -150,9 +136,7 @@ def _probe_audio(
 
     risks: list[str] = result["quality_risks"]
     if 0 < duration_sec < float(RISK_THRESHOLDS["audio_min_duration_sec"]):
-        risks.append(
-            f"Very short audio ({duration_sec:.2f}s) — limited usability"
-        )
+        risks.append(f"Very short audio ({duration_sec:.2f}s) — limited usability")
     if channels == 0:
         risks.append("No audio stream detected")
     return result
@@ -192,9 +176,7 @@ def _probe_image(path: Path) -> dict[str, Any]:
     min_w = int(RISK_THRESHOLDS["image_min_width"])
     min_h = int(RISK_THRESHOLDS["image_min_height"])
     if width and (width < min_w or height < min_h):
-        result["quality_risks"].append(
-            f"Low resolution ({width}x{height}) — may need upscaling"
-        )
+        result["quality_risks"].append(f"Low resolution ({width}x{height}) — may need upscaling")
     if file_size and file_size < int(RISK_THRESHOLDS["image_min_filesize_kb"]) * 1024:
         result["quality_risks"].append(
             f"Tiny file ({file_size} bytes) — likely corrupt or thumbnail-only"
@@ -312,8 +294,7 @@ def review_source_media(
             res = probe.get("resolution", "unknown") or "unknown"
             has_audio = bool(probe.get("audio_codec"))
             entry["content_summary"] = (
-                f"Video file: {dur:.1f}s at {res}, "
-                f"{'with' if has_audio else 'without'} audio"
+                f"Video file: {dur:.1f}s at {res}, {'with' if has_audio else 'without'} audio"
             )
             entry["usable_for"] = _infer_video_usability(probe, transcript)
         elif media_type == "audio":
@@ -334,9 +315,7 @@ def review_source_media(
 
     if not reviewed_files:
         summary = "No user-supplied media files could be reviewed."
-        implications.append(
-            "No source media available — production is fully generated."
-        )
+        implications.append("No source media available — production is fully generated.")
     else:
         summary = "; ".join(summaries)
 
@@ -348,9 +327,7 @@ def review_source_media(
             "Source video available — consider source-led or hybrid production approach"
         )
     if has_audio and not has_video:
-        implications.append(
-            "Audio-only source — production needs visual assets to accompany audio"
-        )
+        implications.append("Audio-only source — production needs visual assets to accompany audio")
     if has_images and not has_video:
         implications.append(
             "Image-only source — motion must come from animation or video generation"

@@ -66,22 +66,16 @@ class TestDeriveAdjustments:
 
 class TestBuildGradeFilter:
     def test_identity_returns_subtle_baseline(self) -> None:
-        out = build_grade_filter(
-            {"contrast": 1.0, "gamma": 1.0, "saturation": 1.0}
-        )
+        out = build_grade_filter({"contrast": 1.0, "gamma": 1.0, "saturation": 1.0})
         assert out == PRESETS["subtle"]
 
     def test_includes_contrast_when_nonidentity(self) -> None:
-        out = build_grade_filter(
-            {"contrast": 1.05, "gamma": 1.0, "saturation": 1.0}
-        )
+        out = build_grade_filter({"contrast": 1.05, "gamma": 1.0, "saturation": 1.0})
         assert out.startswith("eq=")
         assert "contrast=1.050" in out
 
     def test_includes_all_axes_when_set(self) -> None:
-        out = build_grade_filter(
-            {"contrast": 1.05, "gamma": 1.05, "saturation": 0.95}
-        )
+        out = build_grade_filter({"contrast": 1.05, "gamma": 1.05, "saturation": 0.95})
         assert "contrast=" in out
         assert "gamma=" in out
         assert "saturation=" in out
@@ -89,9 +83,7 @@ class TestBuildGradeFilter:
 
 class TestPrepareFilterChain:
     def test_sdr_passthrough(self) -> None:
-        assert prepare_filter_chain("eq=contrast=1.0", hdr_source=False) == (
-            "eq=contrast=1.0"
-        )
+        assert prepare_filter_chain("eq=contrast=1.0", hdr_source=False) == ("eq=contrast=1.0")
 
     def test_hdr_prepends_tonemap_chain(self) -> None:
         result = prepare_filter_chain("eq=contrast=1.0", hdr_source=True)

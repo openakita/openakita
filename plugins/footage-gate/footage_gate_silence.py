@@ -99,11 +99,7 @@ def compute_non_silent_intervals(
     rms_arr = np.sqrt((frames.astype(np.float32) ** 2).mean(axis=1))
     db_arr = 20.0 * np.log10(np.maximum(rms_arr, eps))
 
-    thr = (
-        float(threshold_db)
-        if ref == "absolute"
-        else float(np.max(db_arr)) + float(threshold_db)
-    )
+    thr = float(threshold_db) if ref == "absolute" else float(np.max(db_arr)) + float(threshold_db)
 
     mask = db_arr >= thr
     if not np.any(mask):
@@ -171,9 +167,7 @@ def _merge_and_pad(
 # into a single emit-step.
 
 
-def has_audio_track(
-    path: Path | str, *, ffprobe_path: str | None = None
-) -> bool:
+def has_audio_track(path: Path | str, *, ffprobe_path: str | None = None) -> bool:
     """Return True iff the source has at least one audio stream."""
     try:
         probe = ffprobe_json(path, ffprobe_path=ffprobe_path)

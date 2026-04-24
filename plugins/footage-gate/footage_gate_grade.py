@@ -47,8 +47,7 @@ logger = logging.getLogger(__name__)
 PRESETS: dict[str, str] = {
     "subtle": "eq=contrast=1.03:saturation=0.98",
     "neutral_punch": (
-        "eq=contrast=1.06:brightness=0.0:saturation=1.0,"
-        "curves=master='0/0 0.25/0.23 0.75/0.77 1/1'"
+        "eq=contrast=1.06:brightness=0.0:saturation=1.0,curves=master='0/0 0.25/0.23 0.75/0.77 1/1'"
     ),
     "warm_cinematic": (
         "eq=contrast=1.12:brightness=-0.02:saturation=0.88,"
@@ -65,9 +64,7 @@ PRESETS: dict[str, str] = {
 def get_preset(name: str) -> str:
     """Return the ffmpeg filter string for a preset name."""
     if name not in PRESETS:
-        raise KeyError(
-            f"unknown preset '{name}'. Available: {', '.join(sorted(PRESETS))}"
-        )
+        raise KeyError(f"unknown preset '{name}'. Available: {', '.join(sorted(PRESETS))}")
     return PRESETS[name]
 
 
@@ -93,9 +90,7 @@ def _sample_frame_stats(
     """
     fps = max(0.5, min(n_samples / max(duration, 0.1), 10.0))
 
-    with tempfile.NamedTemporaryFile(
-        mode="w+", suffix=".txt", delete=False
-    ) as tf:
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False) as tf:
         metadata_path = tf.name
 
     try:
@@ -165,9 +160,7 @@ def _sample_frame_stats(
             if y_maxs and y_mins
             else 0.7
         )
-        sat_mean = (
-            ((sum(sat_avgs) / len(sat_avgs)) / max_val) if sat_avgs else 0.25
-        )
+        sat_mean = ((sum(sat_avgs) / len(sat_avgs)) / max_val) if sat_avgs else 0.25
 
         return {
             "y_mean": y_mean,

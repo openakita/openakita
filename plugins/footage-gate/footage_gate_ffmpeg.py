@@ -58,9 +58,7 @@ class FFmpegError(RuntimeError):
         self.stderr = stderr or ""
         # Trim stderr in the message — full text is on the attribute for tests.
         tail = self.stderr.splitlines()[-3:] if self.stderr else []
-        super().__init__(
-            f"ffmpeg exit {returncode}: {' / '.join(tail) or '(no stderr)'}"
-        )
+        super().__init__(f"ffmpeg exit {returncode}: {' / '.join(tail) or '(no stderr)'}")
 
 
 class FFmpegTimeoutError(FFmpegError):

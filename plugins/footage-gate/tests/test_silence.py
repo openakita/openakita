@@ -92,9 +92,7 @@ class TestComputeNonSilentIntervals:
         t = np.linspace(0, 2.0, sr * 2, dtype=np.float32)
         audio = (np.sin(2 * np.pi * 440 * t) * 0.5).astype(np.float32)
         patch_pcm(audio)
-        intervals = compute_non_silent_intervals(
-            Path("dummy.wav"), sr=sr, ref="max"
-        )
+        intervals = compute_non_silent_intervals(Path("dummy.wav"), sr=sr, ref="max")
         assert len(intervals) >= 1
         # Whole 2-second tone ≈ a single interval covering most of the span.
         total = sum(e - s for s, e in intervals)
@@ -103,17 +101,13 @@ class TestComputeNonSilentIntervals:
     def test_short_clip_fast_path(self, patch_pcm) -> None:
         sr = 16000
         # Less than frame_length (2048) — exercise short-clip branch.
-        audio = (np.random.default_rng(42).standard_normal(1000) * 0.3).astype(
-            np.float32
-        )
+        audio = (np.random.default_rng(42).standard_normal(1000) * 0.3).astype(np.float32)
         patch_pcm(audio)
         intervals = compute_non_silent_intervals(Path("dummy.wav"), sr=sr)
         assert len(intervals) == 1
         assert intervals[0] == (0.0, pytest.approx(1000 / sr, abs=1e-6))
 
-    def test_extraction_failure_returns_empty(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_extraction_failure_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import footage_gate_silence as mod
         from footage_gate_ffmpeg import FFmpegError
 
@@ -128,9 +122,13 @@ class TestNoUpstreamDeps:
     """Hard guard: silence module must not import aubio/madmom/librosa."""
 
     def test_no_audio_dep_imports(self) -> None:
-        text = Path(__file__).resolve().parents[1].joinpath(
-            "footage_gate_silence.py"
-        ).read_text(encoding="utf-8")
+        text = (
+            Path(__file__)
+            .resolve()
+            .parents[1]
+            .joinpath("footage_gate_silence.py")
+            .read_text(encoding="utf-8")
+        )
         # Tokens may appear inside docstrings — strip those before searching.
         # We accept the docstring mention; only flag actual import statements.
         for banned in ("import aubio", "import madmom", "import librosa"):

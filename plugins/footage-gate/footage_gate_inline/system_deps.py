@@ -954,11 +954,7 @@ def probe_ffmpeg_capabilities(ffmpeg_path: str) -> dict[str, Any]:
     if not out["hdr_tonemap"]:
         out["missing"].append("filter_missing:hdr_tonemap")
 
-    out["ok"] = (
-        out["version_satisfied"]
-        and all(out["filters"].values())
-        and out["hdr_tonemap"]
-    )
+    out["ok"] = out["version_satisfied"] and all(out["filters"].values()) and out["hdr_tonemap"]
     return out
 
 
