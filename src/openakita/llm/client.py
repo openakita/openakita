@@ -17,6 +17,7 @@ import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from enum import Enum
 from pathlib import Path
 
 from ..core.errors import UserCancelledError
@@ -49,6 +50,51 @@ from .types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ==================== Error classification for retry decisions ====================
+
+
+class ErrorCategory(Enum):
+    """LLM API error categories for retry decisions."""
+
+    TOKEN_LIMIT = "token_limit"  # 413, 402 - reduce max_tokens and retry
+    RATE_LIMIT = "rate_limit"  # 429 - wait and retry
+    SERVER_ERROR = "server_error"  # 5xx - retry with backoff
+    AUTH_ERROR = "auth_error"  # 401, 403 - fail, no retry
+    CLIENT_ERROR = "client_error"  # 4xx other - fail, no retry
+
+
+def classify_error_for_retry(status_code: int) -> ErrorCategory:
+    """Classify HTTP status code for retry decision.
+
+    Args:
+        status_code: HTTP status code from the API response.
+
+    Returns:
+        ErrorCategory indicating how to handle the error.
+    """
+    if status_code in (413, 402):
+        return ErrorCategory.TOKEN_LIMIT
+    if status_code == 429:
+        return ErrorCategory.RATE_LIMIT
+    if 500 <= status_code < 600:
+        return ErrorCategory.SERVER_ERROR
+    if status_code in (401, 403):
+        return ErrorCategory.AUTH_ERROR
+    return ErrorCategory.CLIENT_ERROR
+
+
+def should_reduce_max_tokens(status_code: int) -> bool:
+    """Check if error warrants max_tokens reduction.
+
+    Args:
+        status_code: HTTP status code from the API response.
+
+    Returns:
+        True if max_tokens should be reduced and request retried.
+    """
+    return classify_error_for_retry(status_code) == ErrorCategory.TOKEN_LIMIT
 
 
 def _friendly_error_hint(failed_providers: list | None = None, last_error: str = "") -> str:
