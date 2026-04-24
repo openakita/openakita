@@ -894,7 +894,8 @@ class MessageGateway:
         self._pre_process_hooks: list[Callable[[UnifiedMessage], Awaitable[UnifiedMessage]]] = []
         self._post_process_hooks: list[Callable[[UnifiedMessage, str], Awaitable[str]]] = []
 
-        self._plugin_hooks = None  # set by start_im_channels() in main.py
+        # 插件 hook 注册表（由 main.py 在构造 gateway 之后注入）
+        self._plugin_hooks = None
 
         # Whisper 语音识别模型（延迟加载或启动时预加载）
         self._whisper_language = whisper_language.lower().strip()
@@ -3892,12 +3893,12 @@ class MessageGateway:
                         else:
                             await self.emit_progress_event(session, content)
                 elif etype == "tool_call_start":
-                    tool_name = event.get("name", "unknown")
+                    tool_name = event.get("tool") or event.get("name", "unknown")
                     if chain_push:
                         await self.emit_progress_event(session, f"🔧 正在调用工具: {tool_name}")
                 elif etype == "tool_call_end":
-                    tool_name = event.get("name", "unknown")
-                    tool_ok = event.get("success", True)
+                    tool_name = event.get("tool") or event.get("name", "unknown")
+                    tool_ok = not bool(event.get("is_error", False))
                     if chain_push:
                         status = "✅" if tool_ok else "❌"
                         await self.emit_progress_event(
