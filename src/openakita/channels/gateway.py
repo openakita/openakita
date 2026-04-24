@@ -4407,7 +4407,8 @@ class MessageGateway:
             decision = "allow_always"
         elif text in ("会话允许", "allow_session", "session"):
             decision = "allow_session"
-        elif text in ("沙盒", "sandbox"):
+        # 兼容两种字形：交互卡片按钮文案是"沙箱执行"，历史上也出现过"沙盒"。
+        elif text in ("沙箱", "沙箱执行", "沙盒", "沙盒执行", "sandbox"):
             decision = "sandbox"
 
         if confirm_id:
