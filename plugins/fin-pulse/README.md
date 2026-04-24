@@ -23,17 +23,28 @@ augmentation. All fetchers share `BaseFetcher` + `NormalizedItem` and
 dedupe on a canonical URL hash; cross-source re-sightings are tracked via
 `raw.also_seen_from`.
 
-| Source id | Description |
-|-----------|-------------|
-| `wallstreetcn`    | 华尔街见闻 7x24 / latest |
-| `cls_telegraph`   | 财联社电报 |
-| `stcn`            | 证券时报 |
-| `pboc`            | 中国人民银行货币政策 |
-| `stats_gov`       | 国家统计局 |
-| `fed_fomc`        | 美联储 FOMC 日历 + 新闻 |
-| `us_treasury`     | 美国财政部 press releases |
-| `sec_edgar`       | SEC EDGAR latest filings |
-| `newsnow` *(opt)* | NewsNow 公共服务或自建 |
+| Source id | Description | Transport |
+|-----------|-------------|-----------|
+| `wallstreetcn`    | 华尔街见闻 7x24 / latest   | **NewsNow 优先，直连回退** |
+| `cls`             | 财联社电报                  | **NewsNow 优先，直连回退** |
+| `eastmoney`       | 东方财富快讯                | **NewsNow 优先，直连回退** |
+| `xueqiu`          | 雪球热帖 / 话题             | **NewsNow 优先，直连回退** |
+| `pbc_omo`         | 中国人民银行货币政策         | Direct (RSS) |
+| `nbs`             | 国家统计局                  | Direct (RSS) |
+| `fed_fomc`        | 美联储 FOMC 日历 + 新闻    | Direct (RSS) |
+| `sec_edgar`       | SEC EDGAR latest filings    | Direct (RSS) |
+| `newsnow` *(opt)* | NewsNow 公共服务或自建 (非-CN 频道) | NewsNow only |
+
+The 4 CN hot-list sources all default to calling the community-run NewsNow
+aggregator (same contract as [TrendRadar](https://github.com/sansan0/TrendRadar))
+first — `?id=wallstreetcn-hot` / `cls-hot` / `eastmoney` / `xueqiu-hotstock`.
+When the aggregator is unreachable, returns an empty envelope, or the 300-second
+public cooldown is in effect, each fetcher silently falls back to its legacy
+direct scraper. Which path actually served the rows is surfaced to the Today tab
+drawer as a `NewsNow / 直连 / 冷却 / 无结果` badge so you always know where the
+data came from. Set `source.<id>.fallback_direct = "false"` to opt out of the
+fallback for a specific source (advanced; primarily useful on hosts with weird
+egress rules where the direct origin is blocked but NewsNow is not).
 
 ---
 
@@ -100,6 +111,14 @@ Open the plugin UI → **Settings** tab, in order:
    `newsnow.min_interval_s` is a hard floor enforced in
    `finpulse_pipeline.ingest()` — public mode can't go below 300s so
    the volunteer-run upstream never gets hammered.
+
+   **Auto-promote:** any run that includes one of the 4 CN hot-list
+   sources (`wallstreetcn` / `cls` / `eastmoney` / `xueqiu`) will lift
+   `newsnow.mode` to `public` **in memory for that run only** when the
+   persisted value is `off`. This gives the hybrid fetchers their
+   preferred transport without forcing users to touch the wizard. The
+   persisted preference is never overwritten — come back and set `off`
+   whenever you want the run-once behaviour back.
 3. **Schedules** — 4 template buttons (Morning / Noon / Evening brief +
    Hot Radar) open an in-page dialog that writes straight into the host
    Agent Scheduler. The row list below supports **Run now / Pause / Resume
@@ -112,7 +131,26 @@ Open the plugin UI → **Settings** tab, in order:
 ## 5. Daily usage
 
 - **Today tab** — live article feed with source / window / min-score
-  filters, copy-to-clipboard on each item, one-click `POST /ingest`.
+  filters, copy-to-clipboard on each item, and a **split ingest button**:
+  click the primary half to run every enabled source, click the caret to
+  run only the currently filtered source via `POST /ingest/source/{id}`.
+  While ingest is running the button swaps to a rotating spinner and an
+  indeterminate shimmer bar appears under the filter strip — no more
+  "green toast with empty list". After the call resolves, an **inline
+  result drawer** pops up right under the filters listing one pill per
+  source:
+
+  - colour-coded green / amber / red (rows added ↔ no-new ↔ error);
+  - a `NewsNow / 直连 / 冷却 / 无结果` badge showing which transport
+    actually served the rows (handy for diagnosing upstream drift);
+  - an expandable `错误详情` row for failed sources that prints
+    `error_kind` and the raw error message.
+
+  A **smart toast** fires in parallel: green `新增 X · 更新 Y` when
+  something landed, amber `X 源成功 · Y 源失败 · Z 源无结果` otherwise.
+  The 8-second background poll is gone — the list auto-refreshes only
+  after each ingest and when filters change, which both shaved CPU and
+  surfaced the real bugs the poll used to hide.
   The source dropdown is hydrated from `GET /sources` (matches
   `finpulse_models.SOURCE_DEFS`), with a static fallback for the first
   paint.
@@ -155,8 +193,8 @@ Open the plugin UI → **Settings** tab, in order:
 | `GET` | `/tasks` | `?mode&status&offset&limit` | Clamped `limit<=200` |
 | `GET` | `/tasks/{id}` | — | 404 when absent |
 | `POST` | `/tasks/{id}/cancel` | — | Idempotent |
-| `POST` | `/ingest` | `{sources?, since_hours?}` | Creates an `ingest` task |
-| `POST` | `/ingest/source/{source_id}` | — | Single-source probe |
+| `POST` | `/ingest` | `{sources?, since_hours?}` | Creates an `ingest` task. Returns `{ok, task_id, summary}` where `summary.by_source[id] = {fetched, inserted, updated, duration_ms, via, error?, error_kind?}` and `summary.totals` carries `{fetched, inserted, updated, failed_sources, sources_total, sources_ok}`. `via` is one of `"newsnow"` / `"direct"` / `"none"` and is what the Today-tab drawer renders as a transport pill. |
+| `POST` | `/ingest/source/{source_id}` | — | Single-source probe. Same summary shape as `/ingest` (one entry under `by_source`). Wraps failures in an HTTP 500 + `error_kind` so the Today drawer can pin the red pill to the row. |
 | `GET` | `/sources` | — | Serialises `finpulse_models.SOURCE_DEFS` for the Today-tab dropdown (id, display_zh, display_en, kind, default_enabled). |
 | `GET` | `/articles` | `?q&source_id&since&min_score&sort&offset&limit` | |
 | `GET` | `/articles/{id}` | — | Full raw_json |

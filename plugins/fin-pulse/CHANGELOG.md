@@ -4,6 +4,79 @@ All notable changes to fin-pulse will be documented here. The format is
 loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and the project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased] — hybrid fetch rework
+
+### Changed — ingest path
+
+- **Hybrid NewsNow-first fetchers for CN hot lists.** The 4 high-churn
+  Chinese sources (`wallstreetcn` / `cls` / `eastmoney` / `xueqiu`) now
+  try the community-run NewsNow aggregator first (TrendRadar pattern)
+  and only fall back to their direct scraper when the aggregator is
+  unreachable, returns an empty envelope, or the 300-second public
+  cooldown is in effect. Each fetcher records `_last_via` so the pipe-
+  line and UI can surface the actual transport as
+  `NewsNow / 直连 / 冷却 / 无结果`.
+- New `finpulse_fetchers/newsnow_base.py` encapsulates the NewsNow
+  envelope parser so the 4 CN fetchers share one surface (matches
+  `TrendRadar DataFetcher.crawl_websites` expectations — `status` ∈
+  `{"success", "cache"}`, title/URL strip, title dedupe, `mobileUrl`
+  fallback).
+- `POST /ingest` response now exposes `summary.by_source[id].via` and
+  adds `summary.totals.sources_total` / `sources_ok` so the UI can
+  render honest counts.
+- `finpulse_pipeline.ingest()` auto-promotes `newsnow.mode` to `public`
+  **in memory** (never persisted) when any of the 4 CN sources runs so
+  hybrid fetchers always have a preferred transport out of the box.
+- `finpulse_pipeline.ingest()` no longer strands `no_sources_enabled`
+  runs at `status=running`; it now flips the task row to
+  `status=skipped` with a consistent `{ok: false, reason, totals}`
+  payload.
+- `POST /ingest/source/{id}` now wraps the pipeline call in the same
+  try/except as `/ingest`, mapping exceptions through
+  `finpulse_errors.map_exception` and writing `error_kind` +
+  `error_hints` onto the task row so the UI can pin a red pill.
+
+### Changed — Today tab UX
+
+- **Honest ingest feedback.** The misleading "green success + empty
+  list" toast is gone. `onIngest` now reads `summary.totals` +
+  `summary.by_source` and emits a smart toast: green `新增 X · 更新 Y`
+  when rows land, amber `X 源成功 · Y 失败 · Z 源无结果` otherwise.
+- **Inline result drawer.** Dismissible card under the filter bar
+  rendered after every ingest. Shows one pill per source with colour
+  coding (green / amber / red), a `NewsNow / 直连 / 冷却 / 无结果`
+  transport badge, item counts, and an expandable error row
+  (`error_kind` + message) for failed sources.
+- **Split ingest button.** Primary half still fires every enabled
+  source; the caret exposes a dropdown to trigger `POST /ingest/source/{id}`
+  for the currently filtered source only — handy for probing a single
+  scraper without waiting on the whole batch.
+- **Better progress UX.** Button swaps to a rotating spinner while
+  busy; an indeterminate shimmer bar appears under the filter strip;
+  `aria-busy="true"` is set.
+- The 8-second `setInterval(load, 8000)` background poll is gone. The
+  list refreshes right after each ingest resolves and whenever filters
+  change — which both shaved CPU and surfaced the silent bugs the poll
+  was hiding.
+
+### Tests
+
+- New `tests/test_fetchers_newsnow.py` covering the NewsNow envelope
+  parser, `status="forbidden"` raising, `cache` acceptance, blank
+  title/URL drop, and ms-timestamp coercion.
+- New `tests/test_fetchers_hybrid.py` exercising the four hybrid paths
+  (NewsNow OK / NewsNow empty → direct / NewsNow raises → direct /
+  both empty → `via=none`) across all 4 CN fetchers.
+- New `tests/test_pipeline_hybrid.py` pins `summary.by_source[id].via`,
+  the `no_sources_enabled → status=skipped` transition, and the
+  in-memory-only `newsnow.mode` auto-promote.
+- `tests/test_smoke.py` now asserts the new i18n strings
+  (`today.ingest.done.{green,amber}`, `today.drawer.title`,
+  `today.drawer.via.{newsnow,direct,cooldown}`, etc.), the presence of
+  the `IngestDrawer` component, the `ingest-split` / `fp-spin` /
+  `fp-progress` markup, the `/ingest/source/{id}` wiring, and the
+  absence of the dropped `setInterval(load`.
+
 ## [1.0.0] — 2026-04-24
 
 First tagged release. Feature-complete against the
