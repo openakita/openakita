@@ -1995,3 +1995,4 @@ export function SkillManager({
     </div>
   );
 }
+

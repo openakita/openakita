@@ -60,3 +60,4 @@ export function PixelOfficeEventLog({ entries }: { entries: EventLogEntry[] }) {
     </div>
   );
 }
+

@@ -297,3 +297,4 @@ export class PluginBridgeHost {
     }
   }
 }
+

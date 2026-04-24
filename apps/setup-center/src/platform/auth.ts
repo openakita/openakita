@@ -327,3 +327,4 @@ export async function checkAuth(apiBase = ""): Promise<boolean> {
   }
   return false;
 }
+

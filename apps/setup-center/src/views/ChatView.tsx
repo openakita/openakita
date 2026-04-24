@@ -4602,3 +4602,4 @@ export function ChatView({
     </div>
   );
 }
+

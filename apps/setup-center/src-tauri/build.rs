@@ -62,3 +62,4 @@ fn ensure_placeholder_windows_icon() {
     let _ = std::fs::write(icon_path, bytes);
 }
 
+

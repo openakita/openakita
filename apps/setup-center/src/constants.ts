@@ -24,3 +24,4 @@ export const PIP_INDEX_PRESETS: { id: "official" | "tuna" | "aliyun" | "custom";
   { id: "official", label: "官方 PyPI", url: "https://pypi.org/simple/" },
   { id: "custom", label: "自定义…", url: "" },
 ];
+

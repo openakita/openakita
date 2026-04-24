@@ -31,3 +31,4 @@ export function Section({ title, subtitle, children, toggle, className }: {
     </details>
   );
 }
+

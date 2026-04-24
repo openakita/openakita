@@ -350,3 +350,4 @@ const tierBadgeStyle: React.CSSProperties = {
   padding: "2px 10px", borderRadius: 999,
   border: "1px solid", marginTop: 4,
 };
+

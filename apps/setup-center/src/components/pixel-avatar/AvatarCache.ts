@@ -28,3 +28,4 @@ export const AvatarCache = {
     return cache.size;
   },
 };
+

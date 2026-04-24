@@ -125,3 +125,4 @@ export function timeAgo(ts: number): string {
   const day = Math.floor(hr / 24);
   return `${day}d`;
 }
+

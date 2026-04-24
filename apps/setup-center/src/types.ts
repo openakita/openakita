@@ -384,3 +384,4 @@ export const PERSONA_PRESETS = [
   { id: "family", name: "家人", desc: "亲切关怀、唠叨温暖", style: "适合家庭场景，长辈式温暖关怀" },
   { id: "jarvis", name: "贾维斯", desc: "冷静睿智、英式幽默", style: "适合科技极客，像钢铁侠的 AI 管家" },
 ] as const;
+

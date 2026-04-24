@@ -69,3 +69,4 @@ export const PetView: React.FC = () => {
 };
 
 export default PetView;
+

@@ -1491,3 +1491,4 @@ export default function PluginManagerView({ visible, httpApiBase }: Props) {
     </div>
   );
 }
+
