@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Query
 
 from openakita.plugins.api import PluginAPI, PluginBase
 
@@ -77,9 +77,11 @@ class Plugin(PluginBase):
             self._data_dir = Path(host_data_dir) / "fin_pulse"
             self._data_dir.mkdir(parents=True, exist_ok=True)
 
-        # Step 2 — task manager (Phase 1b). Imported lazily so the
-        # scaffold commit stays loadable even before the module lands.
+        # Step 2 — task manager + pipeline (Phase 1b / 2a). Imported lazily
+        # so a missing module in a half-applied branch still yields a
+        # degraded-but-loadable plugin.
         self._tm: Any | None = None
+        self._pipeline: Any | None = None
         self._init_task: asyncio.Task | None = None
         if self._data_dir is not None:
             try:
@@ -93,6 +95,18 @@ class Plugin(PluginBase):
                     "debug",
                 )
                 self._tm = None
+            if self._tm is not None:
+                try:
+                    from finpulse_pipeline import FinpulsePipeline  # type: ignore
+
+                    self._pipeline = FinpulsePipeline(self._tm, api)
+                except ImportError:
+                    api.log(
+                        "finpulse_pipeline not yet available — ingest "
+                        "routes will return 503 until Phase 2a lands.",
+                        "debug",
+                    )
+                    self._pipeline = None
 
         # Step 3 — FastAPI router (21 routes eventually; the skeleton
         # registers the read-only /health, /modes and /config endpoints
@@ -327,6 +341,128 @@ class Plugin(PluginBase):
                 return {"ok": True, "config": _redact_secrets(cfg)}
             except Exception as exc:  # noqa: BLE001
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        @router.put("/config")
+        async def put_config(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+            if self._tm is None:
+                raise HTTPException(status_code=503, detail="task_manager_unavailable")
+            updates = payload.get("updates")
+            if not isinstance(updates, dict):
+                raise HTTPException(status_code=400, detail="updates must be an object")
+            flat: dict[str, str] = {}
+            for k, v in updates.items():
+                if not isinstance(k, str):
+                    continue
+                flat[k] = v if isinstance(v, str) else str(v)
+            await self._tm.set_configs(flat)
+            return {"ok": True, "applied": sorted(flat.keys())}
+
+        @router.get("/tasks")
+        async def list_tasks(
+            mode: str | None = Query(None),
+            status: str | None = Query(None),
+            offset: int = Query(0, ge=0),
+            limit: int = Query(50, ge=1, le=200),
+        ) -> dict[str, Any]:
+            if self._tm is None:
+                raise HTTPException(status_code=503, detail="task_manager_unavailable")
+            items, total = await self._tm.list_tasks(
+                mode=mode, status=status, offset=offset, limit=limit
+            )
+            return {"ok": True, "items": items, "total": total}
+
+        @router.get("/tasks/{task_id}")
+        async def get_task(task_id: str) -> dict[str, Any]:
+            if self._tm is None:
+                raise HTTPException(status_code=503, detail="task_manager_unavailable")
+            row = await self._tm.get_task(task_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="not_found")
+            return {"ok": True, "task": row}
+
+        @router.post("/tasks/{task_id}/cancel")
+        async def cancel_task(task_id: str) -> dict[str, Any]:
+            if self._tm is None:
+                raise HTTPException(status_code=503, detail="task_manager_unavailable")
+            await self._tm.update_task_safe(task_id, status="canceled")
+            return {"ok": True, "task_id": task_id, "status": "canceled"}
+
+        @router.post("/ingest")
+        async def ingest_all(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+            if self._tm is None or self._pipeline is None:
+                raise HTTPException(status_code=503, detail="pipeline_unavailable")
+            sources = payload.get("sources") if isinstance(payload, dict) else None
+            since_hours = payload.get("since_hours") if isinstance(payload, dict) else 24
+            task = await self._tm.create_task(
+                mode="ingest",
+                params={"sources": sources, "since_hours": since_hours},
+                status="running",
+            )
+            try:
+                summary = await self._pipeline.ingest(
+                    sources=sources,
+                    since_hours=int(since_hours) if since_hours is not None else 24,
+                    task_id=task["id"],
+                )
+                return {"ok": True, "task_id": task["id"], "summary": summary}
+            except Exception as exc:  # noqa: BLE001
+                from finpulse_errors import map_exception  # lazy — may be absent
+
+                kind, msg, hints = map_exception(exc)
+                await self._tm.update_task_safe(
+                    task["id"],
+                    status="failed",
+                    error_kind=kind,
+                    error_message=msg,
+                    error_hints=hints,
+                )
+                raise HTTPException(status_code=500, detail=msg) from exc
+
+        @router.post("/ingest/source/{source_id}")
+        async def ingest_source(source_id: str) -> dict[str, Any]:
+            if self._tm is None or self._pipeline is None:
+                raise HTTPException(status_code=503, detail="pipeline_unavailable")
+            task = await self._tm.create_task(
+                mode="ingest",
+                params={"sources": [source_id], "since_hours": 24},
+                status="running",
+            )
+            summary = await self._pipeline.ingest(
+                sources=[source_id], since_hours=24, task_id=task["id"]
+            )
+            return {"ok": True, "task_id": task["id"], "summary": summary}
+
+        @router.get("/articles")
+        async def list_articles(
+            q: str | None = Query(None),
+            source_id: str | None = Query(None),
+            since: str | None = Query(None),
+            min_score: float | None = Query(None),
+            sort: str = Query("time"),
+            offset: int = Query(0, ge=0),
+            limit: int = Query(50, ge=1, le=200),
+        ) -> dict[str, Any]:
+            if self._tm is None:
+                raise HTTPException(status_code=503, detail="task_manager_unavailable")
+            items, total = await self._tm.list_articles(
+                source_id=source_id,
+                since=since,
+                q=q,
+                min_score=min_score,
+                sort=sort,
+                offset=offset,
+                limit=limit,
+            )
+            return {"ok": True, "items": items, "total": total}
+
+        @router.get("/articles/{article_id}")
+        async def get_article(article_id: str) -> dict[str, Any]:
+            if self._tm is None:
+                raise HTTPException(status_code=503, detail="task_manager_unavailable")
+            row = await self._tm.get_article(article_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="not_found")
+            return {"ok": True, "article": row}
 
 
 # ── Utilities ────────────────────────────────────────────────────────
