@@ -108,9 +108,12 @@ def run_ffmpeg(
     bin_path = _resolve_binary("ffmpeg", ffmpeg_path)
     cmd: tuple[str, ...] = (bin_path, *_FFMPEG_HARDEN, *args)
     try:
+        # NOTE: ``capture_output=True`` is mutually exclusive with explicit
+        # stdout/stderr kwargs in ``subprocess.run``. Use the explicit kwargs
+        # so we can route stdout to ``DEVNULL`` (when piping to a file via
+        # ``-``) without capturing it twice.
         proc = subprocess.run(
             cmd,
-            capture_output=bool(capture_stdout),
             stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             timeout=timeout_sec,
