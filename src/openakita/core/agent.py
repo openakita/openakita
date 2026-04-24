@@ -428,7 +428,8 @@ class Agent:
         )
 
         # 初始化基础工具
-        self.shell_tool = ShellTool()
+        # 显式传入 settings.project_root，确保 Windows 自启动场景不会落到 System32。
+        self.shell_tool = ShellTool(default_cwd=str(settings.project_root))
         self.file_tool = FileTool()
         self.web_tool = WebTool()
 

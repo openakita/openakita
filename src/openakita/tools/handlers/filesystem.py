@@ -297,7 +297,9 @@ class FilesystemHandler:
                 timeout_s = int(timeout_s)
             except (ValueError, TypeError):
                 timeout_s = 60
-            timeout_s = max(10, min(timeout_s, 600))
+            # Cap shell timeout at 300s（v1.26.x 调整）。10 分钟以上的命令通常是
+            # LLM 误用（应改为后台进程或拆步），强制 cap 避免 reasoning 长时间阻塞。
+            timeout_s = max(10, min(timeout_s, 300))
             block_timeout_ms = timeout_s * 1000
 
         session_id = params.get("session_id", 1)

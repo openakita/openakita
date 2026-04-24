@@ -565,6 +565,15 @@ class ResponseHandler:
 - 助手已实际尝试且遇不可绕过的 API/平台限制，并已向用户解释 → **COMPLETED**
 - 若仍有其他可行路径（换命令、换文件路径等）→ **INCOMPLETE**
 
+**E. 多路径同因失败（关键去抖规则）**
+- 如果助手已经在**两个或两个以上不同路径 / 命令 / 文件**上尝试同一件事，
+  并且**根本失败原因相同**（例如：同一权限错误 / 同一路径不存在 / 同一依赖缺失），
+  这是上游限制而非"换条路就能成"，必须判 **COMPLETED**（带说明），不要再继续 INCOMPLETE
+  让模型陷入"再换一个路径试试"的死循环。
+- 例：依次执行 `pip install foo`、`python -m pip install foo`、`pipx install foo` 三次都
+  报同样的 PermissionError → 这是**环境**问题，已超出 LLM 可解决范围，应判 COMPLETED 并
+  把诊断结果交还用户。
+
 ## 回答要求
 STATUS: COMPLETED 或 INCOMPLETE
 EVIDENCE: 完成的证据
