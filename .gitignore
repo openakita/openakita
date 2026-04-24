@@ -113,41 +113,11 @@ identity/runtime/persona.custom.md
 # 用户通过技能市场安装的技能存放在 ~/.openakita/workspaces/default/skills/，
 # 不在仓库目录内，无需 ignore。
 
-# Plugins (keep structure)
-# Only the two first-class plugins live in plugins/. Everything else has been
-# moved to plugins-archive/ in 0.7.0 (SDK refocus cleanup).
+# Plugins — 整个目录不入库（2026-04 起策略调整）
+# 只保留 .gitkeep 维持目录结构。所有插件源码、ui/dist、tests
+# 都不再随主仓库分发；用户/开发者自行从对应插件仓库 / 安装包获取。
 plugins/*
 !plugins/.gitkeep
-!plugins/tongyi-image/
-!plugins/tongyi-image/ui/
-!plugins/tongyi-image/ui/dist/
-!plugins/tongyi-image/ui/dist/**
-!plugins/seedance-video/
-!plugins/seedance-video/ui/
-!plugins/seedance-video/ui/dist/
-!plugins/seedance-video/ui/dist/**
-!plugins/avatar-studio/
-!plugins/avatar-studio/ui/
-!plugins/avatar-studio/ui/dist/
-!plugins/avatar-studio/ui/dist/**
-!plugins/ecommerce-image/
-!plugins/ecommerce-image/**
-!plugins/clip-sense/
-!plugins/clip-sense/ui/
-!plugins/clip-sense/ui/dist/
-!plugins/clip-sense/ui/dist/**
-!plugins/subtitle-craft/
-!plugins/subtitle-craft/ui/
-!plugins/subtitle-craft/ui/dist/
-!plugins/subtitle-craft/ui/dist/**
-!plugins/media-post/
-!plugins/media-post/ui/
-!plugins/media-post/ui/dist/
-!plugins/media-post/ui/dist/**
-!plugins/footage-gate/
-!plugins/footage-gate/ui/
-!plugins/footage-gate/ui/dist/
-!plugins/footage-gate/ui/dist/**
 
 # Archived plugins (not auto-loaded; not for GitHub)
 # 整个目录及其所有内容都不进入 git
