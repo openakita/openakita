@@ -103,6 +103,12 @@ class FileTool:
         file_path = self._resolve_path(path)
         logger.debug(f"Reading file: {file_path}")
 
+        # Windows 下用 open() 打开目录会抛 PermissionError [WinError 5]，导致
+        # 错误分类为 PERMISSION 触发反复重试。提前显式检测目录并抛 IsADirectoryError，
+        # 让 classify_error 能正确建议 LLM 改用 list_directory。
+        if file_path.is_dir():
+            raise IsADirectoryError(f"路径是目录而非文件，无法读取文件内容: {file_path}")
+
         # 检查是否为二进制文件
         suffix = file_path.suffix.lower()
         if suffix in self.BINARY_EXTENSIONS:

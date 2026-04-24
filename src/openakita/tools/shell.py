@@ -187,7 +187,27 @@ class ShellTool:
         timeout: int = 60,
         shell: bool = True,
     ):
-        self.default_cwd = default_cwd or os.getcwd()
+        # default_cwd 优先级：调用方指定 > settings.project_root > os.getcwd()。
+        # os.getcwd() 在 Windows 守护进程 / 自启动场景下经常落到 C:\Windows\System32，
+        # 导致 shell 命令找不到用户工程文件。
+        if default_cwd:
+            cwd_str = default_cwd
+        else:
+            try:
+                from ..config import settings as _settings
+
+                cwd_str = str(_settings.project_root)
+            except Exception:
+                cwd_str = os.getcwd()
+
+        if not os.path.isdir(cwd_str):
+            logger.warning(
+                f"[ShellTool] default_cwd does not exist or is not a directory: {cwd_str!r}, "
+                f"falling back to os.getcwd()"
+            )
+            cwd_str = os.getcwd()
+
+        self.default_cwd = cwd_str
         self.timeout = timeout
         self.shell = shell
         self._is_windows = sys.platform == "win32"
@@ -555,20 +575,42 @@ class ShellTool:
         return result.success
 
     async def pip_install(self, package: str) -> CommandResult:
-        """使用 pip 安装包（PyInstaller 兼容：使用 runtime_env 获取正确的 Python 解释器）"""
+        """使用 pip 安装包（PyInstaller 兼容：使用 runtime_env 获取正确的 Python 解释器）。
+
+        Windows 下若 site-packages 目录无写权限（系统 Python / 受保护安装目录），
+        自动追加 --user 重试，避免 LLM 看到 PermissionError 后陷入"反复加 sudo / 改路径"
+        的死循环。
+        """
         from openakita.runtime_env import IS_FROZEN, get_python_executable
 
         py = get_python_executable()
         if py:
-            return await self.run(f'"{py}" -m pip install {package}')
-        if IS_FROZEN:
-            return CommandResult(
-                returncode=-1,
-                stdout="",
-                stderr="未找到可用的 Python 解释器，无法执行 pip install。"
-                "请前往「设置中心 → Python 环境」使用「一键修复」。",
+            base_cmd = f'"{py}" -m pip install {package}'
+        else:
+            if IS_FROZEN:
+                return CommandResult(
+                    returncode=-1,
+                    stdout="",
+                    stderr="未找到可用的 Python 解释器，无法执行 pip install。"
+                    "请前往「设置中心 → Python 环境」使用「一键修复」。",
+                )
+            base_cmd = f"pip install {package}"
+
+        result = await self.run(base_cmd)
+        if (
+            self._is_windows
+            and not result.success
+            and any(
+                kw in (result.stderr or "").lower()
+                for kw in ("permission denied", "winerror 5", "access is denied", "errno 13")
             )
-        return await self.run(f"pip install {package}")
+        ):
+            logger.info(
+                f"[ShellTool.pip_install] PermissionError on Windows, retrying with --user: {package}"
+            )
+            return await self.run(f"{base_cmd} --user")
+
+        return result
 
     async def npm_install(self, package: str, global_: bool = False) -> CommandResult:
         """使用 npm 安装包"""
