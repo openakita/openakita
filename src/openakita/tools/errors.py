@@ -140,6 +140,18 @@ def classify_error(
             retry_suggestion="请确认文件路径是否正确",
         )
 
+    # IsADirectoryError 必须在 PermissionError 之前判断：Windows 下用 open() 读取
+    # 目录会抛 PermissionError [WinError 5]，导致 LLM 误认为是权限问题反复重试。
+    # 单独分类为 VALIDATION 并提示改用 list_directory。
+    if isinstance(error, IsADirectoryError):
+        return ToolError(
+            error_type=ErrorType.VALIDATION,
+            tool_name=tool_name,
+            message=f"目标路径是目录而非文件：{error_msg}",
+            retry_suggestion="如需查看目录内容，请改用 list_directory 工具",
+            alternative_tools=["list_directory"],
+        )
+
     if isinstance(error, PermissionError):
         return ToolError(
             error_type=ErrorType.PERMISSION,
