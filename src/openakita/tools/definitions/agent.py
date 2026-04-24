@@ -75,7 +75,7 @@ AGENT_TOOLS = [
                 "run_in_background": {
                     "type": "boolean",
                     "description": "Whether to run in the background. Background sub-agents do not block the main agent; results can be checked later.",
-                    "default": False,
+                    "default": True,
                 },
                 "fork": {
                     "type": "boolean",
@@ -234,6 +234,11 @@ AGENT_TOOLS = [
                     },
                     "description": "List of tasks to execute in parallel (2-5 items)",
                 },
+                "run_in_background": {
+                    "type": "boolean",
+                    "description": "Whether to run in the background. Background sub-agents do not block the main agent; results can be checked later.",
+                    "default": True,
+                },
             },
             "required": ["tasks"],
         },
@@ -354,6 +359,80 @@ AGENT_TOOLS = [
                 "expected": "Agent created: ephemeral_sql_expert_xxx (ephemeral)",
             },
         ],
+    },
+    {
+        "name": "check_delegation_status",
+        "category": "Agent",
+        "description": (
+            "Check the status of a background delegation or batch. "
+            "Use to poll whether a previously launched async delegation has completed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string", "enum": ["delegation", "batch"]},
+                        "id": {"type": "string"},
+                    },
+                    "required": ["type", "id"],
+                },
+            },
+            "required": ["target"],
+        },
+    },
+    {
+        "name": "wait_for_delegations",
+        "category": "Agent",
+        "description": (
+            "Wait for one or more background delegations to complete. "
+            "Blocks until all specified delegations finish or the timeout is reached."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string", "enum": ["delegation", "batch"]},
+                        "id": {"type": "string"},
+                    },
+                    "required": ["type", "id"],
+                },
+                "timeout_seconds": {
+                    "type": "number",
+                    "description": "Maximum time to wait in seconds (optional).",
+                },
+            },
+            "required": ["target"],
+        },
+    },
+    {
+        "name": "cancel_delegation",
+        "category": "Agent",
+        "description": (
+            "Cancel a running background delegation or batch. "
+            "Use when a delegation is no longer needed or should be stopped."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string", "enum": ["delegation", "batch"]},
+                        "id": {"type": "string"},
+                    },
+                    "required": ["type", "id"],
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Reason for cancellation (optional, for logging).",
+                },
+            },
+            "required": ["target"],
+        },
     },
     {
         "name": "task_stop",

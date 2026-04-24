@@ -1046,8 +1046,8 @@ class TestAgentToolHandler:
         handler.agent._is_sub_agent_call = True
         for tool in ["delegate_to_agent", "delegate_parallel", "spawn_agent", "create_agent"]:
             result = await handler.handle(tool, {})
-            assert "子 Agent" in result
-            assert "不允许" in result
+            assert "sub-agent" in result
+            assert "cannot use" in result
 
     @pytest.mark.asyncio
     async def test_delegate_missing_agent_id(self, handler):
@@ -1139,6 +1139,24 @@ class TestAgentToolHandler:
         result = await handler.handle("nonexistent_tool", {})
         assert "Unknown agent tool" in result
 
+    def test_agent_tool_definitions_default_delegation_to_background(self):
+        from openakita.tools.definitions.agent import AGENT_TOOLS
+
+        by_name = {tool["name"]: tool for tool in AGENT_TOOLS}
+        delegate_props = by_name["delegate_to_agent"]["input_schema"]["properties"]
+        parallel_props = by_name["delegate_parallel"]["input_schema"]["properties"]
+
+        assert delegate_props["run_in_background"]["default"] is True
+        assert parallel_props["run_in_background"]["default"] is True
+
+    def test_agent_control_tools_are_registered(self):
+        from openakita.tools.definitions.agent import AGENT_TOOLS
+
+        names = {tool["name"] for tool in AGENT_TOOLS}
+        assert "check_delegation_status" in names
+        assert "wait_for_delegations" in names
+        assert "cancel_delegation" in names
+
     @pytest.mark.asyncio
     async def test_create_agent_success(self, handler, tmp_path):
         mock_store = ProfileStore(tmp_path / "agents")
@@ -1217,6 +1235,95 @@ class TestAgentToolHandler:
             assert "web_search" in eph.skills
             assert "web_scrape" in eph.skills
             assert "Focus on performance" in eph.custom_prompt
+
+    @pytest.mark.asyncio
+    async def test_delegate_defaults_to_async_launch(self, handler):
+        orchestrator = MagicMock()
+        orchestrator.start_delegation = AsyncMock(
+            return_value={"status": "async_launched", "delegation_id": "dlg_123"}
+        )
+        orchestrator.delegate = AsyncMock(return_value="blocking result")
+
+        with patch.object(handler, "_get_orchestrator", return_value=orchestrator):
+            result = await handler.handle(
+                "delegate_to_agent",
+                {"agent_id": "helper", "message": "do task"},
+            )
+
+        assert "async_launched" in result
+        assert "dlg_123" in result
+        orchestrator.start_delegation.assert_awaited_once()
+        orchestrator.delegate.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_delegate_blocking_mode_still_uses_delegate(self, handler):
+        orchestrator = MagicMock()
+        orchestrator.start_delegation = AsyncMock()
+        orchestrator.delegate = AsyncMock(return_value="blocking result")
+
+        with patch.object(handler, "_get_orchestrator", return_value=orchestrator):
+            result = await handler.handle(
+                "delegate_to_agent",
+                {"agent_id": "helper", "message": "do task", "run_in_background": False},
+            )
+
+        assert result == "blocking result"
+        orchestrator.delegate.assert_awaited_once()
+        orchestrator.start_delegation.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_delegate_parallel_defaults_to_async_batch_launch(self, handler):
+        orchestrator = MagicMock()
+        orchestrator._profile_store = None
+        orchestrator.start_delegation_batch = AsyncMock(
+            return_value={
+                "status": "async_batch_launched",
+                "batch_id": "batch_123",
+                "delegations": [{"delegation_id": "dlg_a", "agent_id": "helper-a"}],
+            }
+        )
+        # Disable browser manager to skip isolated context creation
+        handler.agent.browser_manager = None
+
+        with patch.object(handler, "_get_orchestrator", return_value=orchestrator):
+            result = await handler.handle(
+                "delegate_parallel",
+                {
+                    "tasks": [
+                        {"agent_id": "helper-a", "message": "A"},
+                        {"agent_id": "helper-b", "message": "B"},
+                    ],
+                },
+            )
+
+        assert "async_batch_launched" in result
+        assert "batch_123" in result
+        orchestrator.start_delegation_batch.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_control_tools_call_orchestrator_target_methods(self, handler):
+        orchestrator = MagicMock()
+        orchestrator.get_delegation_status = MagicMock(return_value={"status": "running"})
+        orchestrator.wait_for_delegation_target = AsyncMock(return_value={"status": "completed"})
+        orchestrator.cancel_delegation_target = AsyncMock(return_value={"status": "cancelled"})
+
+        with patch.object(handler, "_get_orchestrator", return_value=orchestrator):
+            status = await handler.handle(
+                "check_delegation_status",
+                {"target": {"type": "delegation", "id": "dlg_123"}},
+            )
+            waited = await handler.handle(
+                "wait_for_delegations",
+                {"target": {"type": "batch", "id": "batch_123"}, "timeout_seconds": 1},
+            )
+            cancelled = await handler.handle(
+                "cancel_delegation",
+                {"target": {"type": "delegation", "id": "dlg_123"}, "reason": "stop"},
+            )
+
+        assert "running" in status
+        assert "completed" in waited
+        assert "cancelled" in cancelled
 
 
 # ================================================================
@@ -1600,13 +1707,18 @@ class TestEdgeCasesAndBugs:
 
         handler = AgentToolHandler(agent)
 
+        # Disable browser manager to skip isolated context creation
+        agent.browser_manager = None
+
         with patch.object(handler, '_get_orchestrator', return_value=mock_orch), \
              patch.object(handler, '_get_profile_store', return_value=store):
+            # Use run_in_background=False to test blocking path with duplicate clone behavior
             result = await handler.handle("delegate_parallel", {
                 "tasks": [
                     {"agent_id": "browser-agent", "message": "Research topic A"},
                     {"agent_id": "browser-agent", "message": "Research topic B"},
                 ],
+                "run_in_background": False,
             })
             assert "Agent: browser-agent" in result
             assert mock_orch.delegate.await_count == 2
@@ -1658,7 +1770,7 @@ class TestEdgeCasesAndBugs:
         """The fingerprint should handle agents with no state gracefully."""
         agent = MagicMock(spec=[])  # no agent_state attribute
         fp = AgentOrchestrator._get_progress_fingerprint(agent, "s1")
-        assert fp == (-1, "", 0)
+        assert fp == (-1, "", 0, 0)
 
     @pytest.mark.asyncio
     async def test_tools_executed_with_no_state(self):

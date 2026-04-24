@@ -6,12 +6,16 @@ Always registered (multi-agent mode is always on).
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json
 import logging
 import re
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+
+from ...agents.orchestrator import ExecutionMode, MAX_CONCURRENT_AGENTS
 
 if TYPE_CHECKING:
     from ...core.agent import Agent
@@ -36,6 +40,9 @@ class AgentToolHandler:
         "create_agent",
         "task_stop",
         "send_agent_message",
+        "check_delegation_status",
+        "wait_for_delegations",
+        "cancel_delegation",
     ]
 
     def __init__(self, agent: Agent):
@@ -57,7 +64,56 @@ class AgentToolHandler:
             return await self._spawn(params)
         elif tool_name == "create_agent":
             return await self._create(params)
+        elif tool_name == "check_delegation_status":
+            return await self._check_delegation_status(params)
+        elif tool_name == "wait_for_delegations":
+            return await self._wait_for_delegations(params)
+        elif tool_name == "cancel_delegation":
+            return await self._cancel_delegation(params)
         return f"❌ Unknown agent tool: {tool_name}"
+
+    # ------------------------------------------------------------------
+    # Shared helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _execution_mode(params: dict[str, Any]) -> ExecutionMode:
+        if params.get("run_in_background") is False:
+            return ExecutionMode.BLOCKING
+        return ExecutionMode.ASYNC
+
+    def _active_session_and_agent(self) -> tuple[Any | None, str]:
+        session = getattr(self.agent, "_current_session", None)
+        if session is None:
+            return None, ""
+        current_agent = (
+            getattr(getattr(session, "context", None), "agent_profile_id", "default")
+            or "default"
+        )
+        return session, current_agent
+
+    @staticmethod
+    def _build_isolated_message(message: str, context: str = "", reason: str = "") -> str:
+        parts: list[str] = []
+        if context:
+            parts.append(f"[Task Context]\n{context}")
+        parts.append(f"[Task Instruction]\n{message}")
+        if reason:
+            parts.append(f"[Delegation Reason] {reason}")
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _json_tool_response(payload: dict[str, Any]) -> str:
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    async def _cleanup_isolated_contexts(contexts: list[Any]) -> None:
+        for ctx in contexts:
+            try:
+                if ctx is not None and hasattr(ctx, "stop"):
+                    await ctx.stop()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # delegate_to_agent
@@ -78,34 +134,36 @@ class AgentToolHandler:
         if orchestrator is None:
             return "❌ Orchestrator not available — multi-agent mode may not be fully initialised"
 
-        session = getattr(self.agent, "_current_session", None)
+        session, current_agent = self._active_session_and_agent()
         if session is None:
             return "❌ No active session — delegation requires a session context"
-
-        current_agent = (
-            getattr(getattr(session, "context", None), "agent_profile_id", "default") or "default"
-        )
 
         logger.info(
             f"[AgentToolHandler] Delegation: {current_agent} -> {agent_id} | reason={reason}"
         )
 
-        isolated_message = ""
-        if context:
-            isolated_message += f"[Task Context]\n{context}\n\n"
-        isolated_message += f"[Task Instruction]\n{message}"
-        if reason:
-            isolated_message += f"\n[Delegation Reason] {reason}"
+        isolated_message = self._build_isolated_message(message, context, reason)
+        mode = self._execution_mode(params)
 
         try:
-            result = await orchestrator.delegate(
-                session=session,
-                from_agent=current_agent,
-                to_agent=agent_id,
-                message=isolated_message,
-                reason=reason,
-            )
-            return str(result)
+            if mode == ExecutionMode.ASYNC:
+                launch = await orchestrator.start_delegation(
+                    session=session,
+                    from_agent=current_agent,
+                    to_agent=agent_id,
+                    message=isolated_message,
+                    reason=reason,
+                )
+                return self._json_tool_response(launch)
+            else:
+                result = await orchestrator.delegate(
+                    session=session,
+                    from_agent=current_agent,
+                    to_agent=agent_id,
+                    message=isolated_message,
+                    reason=reason,
+                )
+                return str(result)
         except Exception as e:
             logger.error(f"[AgentToolHandler] Delegation failed: {e}", exc_info=True)
             return f"❌ Delegation to {agent_id} failed: {e}"
@@ -115,7 +173,6 @@ class AgentToolHandler:
     # ------------------------------------------------------------------
 
     async def _delegate_parallel(self, params: dict[str, Any]) -> str:
-        import asyncio
         import json as _json
         from collections import Counter
 
@@ -147,20 +204,16 @@ class AgentToolHandler:
             return (
                 "❌ delegate_parallel requires at least 2 tasks (use delegate_to_agent for single)"
             )
-        if len(tasks_param) > 5:
-            return "❌ Maximum 5 parallel delegations allowed"
+        if len(tasks_param) > MAX_CONCURRENT_AGENTS:
+            return f"❌ Maximum {MAX_CONCURRENT_AGENTS} parallel delegations allowed"
 
         orchestrator = self._get_orchestrator()
         if orchestrator is None:
             return "❌ Orchestrator not available"
 
-        session = getattr(self.agent, "_current_session", None)
+        session, current_agent = self._active_session_and_agent()
         if session is None:
             return "❌ No active session"
-
-        current_agent = (
-            getattr(getattr(session, "context", None), "agent_profile_id", "default") or "default"
-        )
 
         # Detect duplicate agent_ids — auto-spawn ephemeral clones
         # to avoid two coroutines sharing the same Agent instance.
@@ -229,7 +282,43 @@ class AgentToolHandler:
             )
 
         parent_browser = getattr(self.agent, "browser_manager", None)
+        mode = self._execution_mode(params)
 
+        # Async branch: launch tasks via start_delegation_batch and return immediately
+        if mode == ExecutionMode.ASYNC:
+            created_isolated: list[Any] = []
+            try:
+                if parent_browser and parent_browser.is_ready:
+                    created_isolated = await asyncio.gather(
+                        *[parent_browser.create_isolated_context() for _ in resolved_tasks]
+                    )
+
+                launch_tasks = [
+                    {
+                        "agent_id": task["agent_id"],
+                        "display_id": task["display_id"],
+                        "message": self._build_isolated_message(
+                            task["message"],
+                            task.get("context", ""),
+                            task.get("reason", ""),
+                        ),
+                        "reason": task.get("reason", ""),
+                        "isolated_browser": created_isolated[i] if created_isolated else None,
+                    }
+                    for i, task in enumerate(resolved_tasks)
+                ]
+                launch = await orchestrator.start_delegation_batch(
+                    session=session,
+                    from_agent=current_agent,
+                    tasks=launch_tasks,
+                )
+                return self._json_tool_response(launch)
+            except Exception:
+                await self._cleanup_isolated_contexts(created_isolated)
+                self._cleanup_ephemeral_ids(ephemeral_ids, store)
+                raise
+
+        # Blocking branch: existing parallel gather logic
         async def _run_one(task: dict) -> tuple[str, str]:
             aid = task["agent_id"]
             display = task["display_id"]
@@ -643,6 +732,20 @@ class AgentToolHandler:
         if not target_id:
             return "task_stop requires a 'target_id' parameter."
 
+        # Route dlg_ and batch_ prefixed IDs to cancel_delegation_target
+        if target_id.startswith("dlg_") or target_id.startswith("batch_"):
+            orchestrator = self._get_orchestrator()
+            if orchestrator is not None:
+                try:
+                    target_type = "delegation" if target_id.startswith("dlg_") else "batch"
+                    result = await orchestrator.cancel_delegation_target(
+                        {"type": target_type, "id": target_id},
+                        reason=reason,
+                    )
+                    return self._json_tool_response(result)
+                except KeyError:
+                    pass  # Fall through to old pool/background fallback
+
         # Try to cancel via agent pool
         pool = getattr(self.agent, "_agent_pool", None)
         if pool:
@@ -704,6 +807,76 @@ class AgentToolHandler:
 
         logger.info(f"[SendMessage] Delivered to: {delivered}")
         return f"Message delivered to: {', '.join(delivered)}"
+
+    # ─── check_delegation_status ───
+    async def _check_delegation_status(self, params: dict[str, Any]) -> str:
+        """Check the status of a background delegation or batch."""
+        target = params.get("target")
+        if not target:
+            return "❌ target is required"
+
+        orchestrator = self._get_orchestrator()
+        if orchestrator is None:
+            return "❌ Orchestrator not available"
+
+        try:
+            result = orchestrator.get_delegation_status(target)
+            return self._json_tool_response(result)
+        except KeyError as e:
+            return f"❌ {e}"
+        except Exception as e:
+            logger.error(f"[AgentToolHandler] check_delegation_status failed: {e}", exc_info=True)
+            return f"❌ Failed to check status: {e}"
+
+    # ─── wait_for_delegations ───
+    async def _wait_for_delegations(self, params: dict[str, Any]) -> str:
+        """Wait for one or more background delegations to complete."""
+        target = params.get("target")
+        if not target:
+            return "❌ target is required"
+
+        timeout_seconds = float(params.get("timeout_seconds", 300))
+
+        orchestrator = self._get_orchestrator()
+        if orchestrator is None:
+            return "❌ Orchestrator not available"
+
+        try:
+            result = await orchestrator.wait_for_delegation_target(
+                target,
+                timeout_seconds=timeout_seconds,
+            )
+            return self._json_tool_response(result)
+        except KeyError as e:
+            return f"❌ {e}"
+        except Exception as e:
+            logger.error(f"[AgentToolHandler] wait_for_delegations failed: {e}", exc_info=True)
+            return f"❌ Failed to wait: {e}"
+
+    # ─── cancel_delegation ───
+    async def _cancel_delegation(self, params: dict[str, Any]) -> str:
+        """Cancel a running background delegation or batch."""
+        target = params.get("target")
+        if not target:
+            return "❌ target is required"
+
+        reason = (params.get("reason") or "cancelled by user").strip()
+
+        orchestrator = self._get_orchestrator()
+        if orchestrator is None:
+            return "❌ Orchestrator not available"
+
+        try:
+            result = await orchestrator.cancel_delegation_target(
+                target,
+                reason=reason,
+            )
+            return self._json_tool_response(result)
+        except KeyError as e:
+            return f"❌ {e}"
+        except Exception as e:
+            logger.error(f"[AgentToolHandler] cancel_delegation failed: {e}", exc_info=True)
+            return f"❌ Failed to cancel: {e}"
 
 
 def create_handler(agent: Agent):
