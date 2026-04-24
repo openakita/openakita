@@ -124,6 +124,7 @@ export function LLMView(props: LLMViewProps) {
 
   // Edit modal
   const [editingOriginalName, setEditingOriginalName] = useState<string | null>(null);
+  const [editEndpointType, setEditEndpointType] = useState<"endpoints" | "compiler_endpoints" | "stt_endpoints">("endpoints");
   const [editModalOpen, setEditModalOpen] = useState(false);
   const isEditingEndpoint = editModalOpen && editingOriginalName !== null;
   const [editDraft, setEditDraft] = useState<{
@@ -709,6 +710,7 @@ export function LLMView(props: LLMViewProps) {
     } else if (dataMode === "remote") {
       await ensureEnvLoaded("__remote__");
     }
+    setEditEndpointType("endpoints");
     setEditingOriginalName(name);
     setEditDraft({
       name: ep.name,
@@ -736,8 +738,69 @@ export function LLMView(props: LLMViewProps) {
     setConnTestResult(null);
   }
 
+  async function doStartEditCompilerEndpoint(name: string) {
+    const ep = savedCompilerEndpoints.find((e) => e.name === name);
+    if (!ep) return;
+    if (currentWorkspaceId) {
+      await ensureEnvLoaded(currentWorkspaceId);
+    } else if (dataMode === "remote") {
+      await ensureEnvLoaded("__remote__");
+    }
+    setEditEndpointType("compiler_endpoints");
+    setEditingOriginalName(name);
+    setEditDraft({
+      name: ep.name,
+      priority: 1,
+      providerSlug: ep.provider || "",
+      apiType: (ep.api_type as any) || "openai",
+      baseUrl: ep.base_url || "",
+      apiKeyEnv: ep.api_key_env || "",
+      apiKeyValue: envDraft[ep.api_key_env || ""] || "",
+      modelId: ep.model || "",
+      caps: ["text"],
+      maxTokens: typeof ep.max_tokens === "number" ? ep.max_tokens : 2048,
+      contextWindow: typeof ep.context_window === "number" ? ep.context_window : 200000,
+      timeout: typeof ep.timeout === "number" ? ep.timeout : 30,
+      rpmLimit: 0,
+      pricingTiers: [],
+    });
+    setEditModalOpen(true);
+    setConnTestResult(null);
+  }
+
+  async function doStartEditSttEndpoint(name: string) {
+    const ep = savedSttEndpoints.find((e) => e.name === name);
+    if (!ep) return;
+    if (currentWorkspaceId) {
+      await ensureEnvLoaded(currentWorkspaceId);
+    } else if (dataMode === "remote") {
+      await ensureEnvLoaded("__remote__");
+    }
+    setEditEndpointType("stt_endpoints");
+    setEditingOriginalName(name);
+    setEditDraft({
+      name: ep.name,
+      priority: 1,
+      providerSlug: ep.provider || "",
+      apiType: (ep.api_type as any) || "openai",
+      baseUrl: ep.base_url || "",
+      apiKeyEnv: ep.api_key_env || "",
+      apiKeyValue: envDraft[ep.api_key_env || ""] || "",
+      modelId: ep.model || "",
+      caps: ["text"],
+      maxTokens: 0,
+      contextWindow: 0,
+      timeout: typeof ep.timeout === "number" ? ep.timeout : 60,
+      rpmLimit: 0,
+      pricingTiers: [],
+    });
+    setEditModalOpen(true);
+    setConnTestResult(null);
+  }
+
   function resetEndpointEditor() {
     setEditingOriginalName(null);
+    setEditEndpointType("endpoints");
     setEditDraft(null);
     setEditModalOpen(false);
     setEditModels([]);
@@ -804,13 +867,11 @@ export function LLMView(props: LLMViewProps) {
       return;
     }
     const _busyId = notifyLoading("保存修改...");
+    const epType = editEndpointType;
     try {
       const newName = editDraft.name.trim().slice(0, 64);
       const nameChanged = newName !== editingOriginalName;
 
-      const validTiers = (editDraft.pricingTiers || []).filter(
-        (tier) => tier.input_price > 0 || tier.output_price > 0
-      );
       const endpoint: Record<string, unknown> = {
         name: nameChanged ? newName : editingOriginalName,
         provider: editDraft.providerSlug || "custom",
@@ -818,24 +879,39 @@ export function LLMView(props: LLMViewProps) {
         base_url: editDraft.baseUrl.trim(),
         api_key_env: editDraft.apiKeyEnv || undefined,
         model: editDraft.modelId.trim(),
-        priority: normalizePriority(editDraft.priority, 1),
-        max_tokens: editDraft.maxTokens ?? 0,
-        context_window: editDraft.contextWindow ?? 200000,
-        timeout: editDraft.timeout ?? 180,
-        rpm_limit: editDraft.rpmLimit ?? 0,
-        capabilities: editDraft.caps?.length ? editDraft.caps : ["text"],
+        capabilities: ["text"],
       };
-      if ((editDraft.caps || []).includes("thinking") && editDraft.providerSlug === "dashscope") {
-        endpoint.extra_params = { enable_thinking: true };
-      }
-      if (validTiers.length > 0) {
-        endpoint.pricing_tiers = validTiers;
+
+      if (epType === "endpoints") {
+        const validTiers = (editDraft.pricingTiers || []).filter(
+          (tier) => tier.input_price > 0 || tier.output_price > 0
+        );
+        endpoint.priority = normalizePriority(editDraft.priority, 1);
+        endpoint.max_tokens = editDraft.maxTokens ?? 0;
+        endpoint.context_window = editDraft.contextWindow ?? 200000;
+        endpoint.timeout = editDraft.timeout ?? 180;
+        endpoint.rpm_limit = editDraft.rpmLimit ?? 0;
+        endpoint.capabilities = editDraft.caps?.length ? editDraft.caps : ["text"];
+        if ((editDraft.caps || []).includes("thinking") && editDraft.providerSlug === "dashscope") {
+          endpoint.extra_params = { enable_thinking: true };
+        }
+        if (validTiers.length > 0) {
+          endpoint.pricing_tiers = validTiers;
+        }
+      } else if (epType === "compiler_endpoints") {
+        endpoint.max_tokens = editDraft.maxTokens ?? 2048;
+        endpoint.context_window = editDraft.contextWindow ?? 200000;
+        endpoint.timeout = editDraft.timeout ?? 30;
+      } else {
+        endpoint.max_tokens = 0;
+        endpoint.context_window = 0;
+        endpoint.timeout = editDraft.timeout ?? 60;
       }
       if (editDraft.streamOnly) endpoint.stream_only = true;
 
       if (nameChanged) {
         await safeFetch(
-          `${httpApiBase()}/api/config/endpoint/${encodeURIComponent(editingOriginalName)}?endpoint_type=endpoints`,
+          `${httpApiBase()}/api/config/endpoint/${encodeURIComponent(editingOriginalName)}?endpoint_type=${epType}`,
           { method: "DELETE" },
         );
       }
@@ -850,7 +926,7 @@ export function LLMView(props: LLMViewProps) {
         body: JSON.stringify({
           endpoint,
           api_key: keyToSave,
-          endpoint_type: "endpoints",
+          endpoint_type: epType,
         }),
       });
       const data = await res.json();
@@ -1094,7 +1170,7 @@ export function LLMView(props: LLMViewProps) {
               <TableRow className="hover:bg-transparent">
                 <TableHead>{t("status.endpoint")}</TableHead>
                 <TableHead>{t("status.model")}</TableHead>
-                <TableHead className="w-[80px]"></TableHead>
+                <TableHead className="w-[110px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1108,6 +1184,7 @@ export function LLMView(props: LLMViewProps) {
                   <TableCell>
                     <div className="flex gap-1 justify-end">
                       <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doToggleEndpointEnabled(e.name, "compiler_endpoints")} disabled={!!busy} title={e.enabled === false ? t("llm.enable") : t("llm.disable")}>{e.enabled !== false ? <IconPower size={14} /> : <IconCircle size={14} />}</Button>
+                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doStartEditCompilerEndpoint(e.name)} disabled={!!busy} title={t("llm.edit")}><IconEdit size={14} /></Button>
                       <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteCompilerEndpoint(e.name))} disabled={!!busy} title={t("common.delete")}><IconTrash size={14} /></Button>
                     </div>
                   </TableCell>
@@ -1140,7 +1217,7 @@ export function LLMView(props: LLMViewProps) {
               <TableRow className="hover:bg-transparent">
                 <TableHead>{t("status.endpoint")}</TableHead>
                 <TableHead>{t("status.model")}</TableHead>
-                <TableHead className="w-[80px]"></TableHead>
+                <TableHead className="w-[110px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1154,6 +1231,7 @@ export function LLMView(props: LLMViewProps) {
                   <TableCell>
                     <div className="flex gap-1 justify-end">
                       <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doToggleEndpointEnabled(e.name, "stt_endpoints")} disabled={!!busy} title={e.enabled === false ? t("llm.enable") : t("llm.disable")}>{e.enabled !== false ? <IconPower size={14} /> : <IconCircle size={14} />}</Button>
+                      <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground" onClick={() => doStartEditSttEndpoint(e.name)} disabled={!!busy} title={t("llm.edit")}><IconEdit size={14} /></Button>
                       <Button variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => askConfirm(`${t("common.confirmDeleteMsg")} "${e.name}"?`, () => doDeleteSttEndpoint(e.name))} disabled={!!busy} title={t("common.delete")}><IconTrash size={14} /></Button>
                     </div>
                   </TableCell>
@@ -1376,7 +1454,7 @@ export function LLMView(props: LLMViewProps) {
       <Dialog open={editModalOpen && !!editDraft} onOpenChange={(open) => { if (!open) setEditModalOpen(false); }}>
         <DialogContent className="sm:max-w-[480px] max-h-[85vh] flex flex-col gap-0 p-0 overflow-hidden" onOpenAutoFocus={(e) => e.preventDefault()} onCloseAnimationEnd={() => { resetEndpointEditor(); setConnTestResult(null); }}>
           <DialogHeader className="px-6 pt-5 pb-3 shrink-0">
-            <DialogTitle>{t("llm.editEndpoint")}: {editDraft?.name}</DialogTitle>
+            <DialogTitle>{editEndpointType === "compiler_endpoints" ? t("llm.editCompiler") : editEndpointType === "stt_endpoints" ? t("llm.editStt") : t("llm.editEndpoint")}: {editDraft?.name}</DialogTitle>
             <DialogDescription className="sr-only">{t("llm.editEndpoint")}</DialogDescription>
           </DialogHeader>
 
@@ -1427,6 +1505,7 @@ export function LLMView(props: LLMViewProps) {
               />
             </div>
 
+            {editEndpointType === "endpoints" && <>
             {/* Capabilities */}
             <div className="space-y-1.5">
               <Label>{t("llm.capabilities")}</Label>
@@ -1559,6 +1638,15 @@ export function LLMView(props: LLMViewProps) {
                 </Button>
               </div>
             </details>
+            </>}
+
+            {/* Endpoint name (for compiler/STT) */}
+            {editEndpointType !== "endpoints" && (
+            <div className="space-y-1.5">
+              <Label>{t("llm.endpointName")}</Label>
+              <Input value={editDraft.name} onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })} />
+            </div>
+            )}
           </div>}
 
           {connTestResult && (
