@@ -1461,10 +1461,81 @@ def _ensure_target_available(target: Path, url: str) -> None:
     raise ValueError(f"技能目录名称冲突: {target}")
 
 
+# 通用 CLI 命令前缀清洗：用户经常直接复制类似
+#   "openakita install-skill owner/repo"
+#   "npx skills add owner/repo"
+#   "uv pip install owner/repo"
+#   "Run: openakita skill add owner/repo"
+# 这样的指令到对话框 / API 里。从中抽出真正的 URL/owner/repo 信号，
+# 避免 install_skill 因为前面的命令串而拒绝。
+_CMD_VERB = r"(?:add|install|i|get|use|run)"
+_CMD_TOOL = (
+    r"(?:openakita(?:\s+(?:skills?|install[- ]skill))?"
+    r"|npx\s+skills?"
+    r"|skills?"
+    r"|pnpm\s+(?:add|install)"
+    r"|npm\s+(?:i|install|add)"
+    r"|yarn\s+add"
+    r"|uv(?:\s+pip)?"
+    r"|pipx?"
+    r"|cargo)"
+)
 _CMD_PREFIXES = re.compile(
-    r"^(?:npx\s+skills?\s+(?:add|install)|openakita\s+(?:install[- ]skill|skill\s+install))\s+",
+    rf"^(?:Run\s*:\s*)?(?:{_CMD_TOOL}\s+){_CMD_VERB}?\s+",
     re.IGNORECASE,
 )
+
+# 用于从混杂文本里提取首个有效 skill 信号（URL / owner/repo / 本地路径）
+_SKILL_URL_RE = re.compile(
+    r"(github:[A-Za-z0-9_./-]+"
+    r"|https?://\S+"
+    r"|git@[A-Za-z0-9_.-]+:[A-Za-z0-9_./-]+\.git"
+    r"|[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+)"
+)
+
+
+def _extract_skill_signal(raw: str) -> str:
+    """从用户输入里提取真正的 skill 安装信号。
+
+    支持三种粘贴方式：
+      1. 纯 URL / owner/repo / 本地路径（直接 strip）。
+      2. 单行 CLI：``openakita install-skill owner/repo`` —— 先用
+         ``_CMD_PREFIXES`` 剥离命令前缀；剥离后还可能留 ``--flag value``，
+         再尝试用 ``_SKILL_URL_RE`` 抽出第一个 URL/owner-repo 片段。
+      3. 多行文本：按行扫描，取第一行能命中 URL/owner-repo 的内容。
+    """
+    text = (raw or "").strip()
+    if not text:
+        return ""
+
+    # Single line first: cheapest and most common.
+    if "\n" not in text:
+        cleaned = _CMD_PREFIXES.sub("", text).strip()
+        if not cleaned:
+            return ""
+        # If the cleaned form has flags / extra args, keep only the first URL-like token.
+        if cleaned.split() and len(cleaned.split()) > 1:
+            m = _SKILL_URL_RE.search(cleaned)
+            if m:
+                return m.group(1).strip()
+        return cleaned
+
+    # Multi-line: scan lines, pick the first that yields a URL-like token.
+    for line in text.splitlines():
+        line = line.strip().strip("`").strip()
+        if not line or line.startswith("#"):
+            continue
+        candidate = _CMD_PREFIXES.sub("", line).strip()
+        if not candidate:
+            continue
+        m = _SKILL_URL_RE.search(candidate)
+        if m:
+            return m.group(1).strip()
+        if candidate.startswith(("./", "../", "/", "~", ".\\", "..\\")) or (
+            len(candidate) >= 2 and candidate[1] == ":"
+        ):
+            return candidate
+    return ""
 
 
 def install_skill(
@@ -1478,7 +1549,7 @@ def install_skill(
         category: 可选大类。命中且通过校验时，安装到 ``skills/<category>/<skill_id>/``；
             否则维持旧行为安装到 ``skills/<skill_id>/``（顶层平铺）。
     """
-    url = _CMD_PREFIXES.sub("", url.strip()).strip()
+    url = _extract_skill_signal(url)
     if not url:
         raise ValueError("请输入有效的技能地址，如 owner/repo 或 Git URL")
 
