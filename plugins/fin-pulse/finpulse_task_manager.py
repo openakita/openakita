@@ -453,7 +453,18 @@ class FinpulseTaskManager:
             existing_id = rows[0][0]
             existing_pub = rows[0][1]
             existing_raw = json.loads(rows[0][2] or "{}")
+            # Fetch the stored source_id so we can track cross-source
+            # re-sightings without clobbering the original provenance.
+            prior_rows = await self._db.execute_fetchall(
+                "SELECT source_id FROM articles WHERE id = ?", (existing_id,)
+            )
+            prior_source = prior_rows[0][0] if prior_rows else source_id
+            also_seen: list[str] = list(existing_raw.get("also_seen_from", []))
+            if source_id != prior_source and source_id not in also_seen:
+                also_seen.append(source_id)
             merged = {**existing_raw, **(raw or {})}
+            if also_seen:
+                merged["also_seen_from"] = also_seen
             newer_pub = (
                 published_at
                 if published_at and (not existing_pub or published_at > existing_pub)
