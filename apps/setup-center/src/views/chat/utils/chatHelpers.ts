@@ -15,10 +15,33 @@ import { IS_TAURI } from "../../../platform";
 import { getAccessToken } from "../../../platform/auth";
 
 // ── 持久化 Key 常量 ──
+// Legacy (pre-workspace-isolation) global keys — kept as defaults for hooks that
+// don't yet thread workspaceId through, and as the source for one-time migration
+// in ChatView's workspace-change effect.
 
 export const STORAGE_KEY_CONVS = "chat_conversations";
 export const STORAGE_KEY_ACTIVE = "chat_activeConvId";
 export const STORAGE_KEY_MSGS_PREFIX = "chat_msgs_";
+
+/** Workspace-scoped storage keys. Pass `null` to get the legacy global keys. */
+export function getWorkspaceStorageKeys(workspaceId: string | null | undefined): {
+  CONVS: string;
+  ACTIVE: string;
+  MSGS_PREFIX: string;
+} {
+  if (!workspaceId) {
+    return {
+      CONVS: STORAGE_KEY_CONVS,
+      ACTIVE: STORAGE_KEY_ACTIVE,
+      MSGS_PREFIX: STORAGE_KEY_MSGS_PREFIX,
+    };
+  }
+  return {
+    CONVS: `chat_conversations_${workspaceId}`,
+    ACTIVE: `chat_activeConvId_${workspaceId}`,
+    MSGS_PREFIX: `chat_msgs_${workspaceId}_`,
+  };
+}
 
 // ── 行为阈值常量 ──
 
