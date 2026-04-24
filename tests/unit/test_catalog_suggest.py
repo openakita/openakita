@@ -58,3 +58,4 @@ class TestNotFoundSuggestion:
         msg = catalog.get_tool_info_formatted("read_file")
         assert "Tool: read_file" in msg
         assert "Tool not found" not in msg
+

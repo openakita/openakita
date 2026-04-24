@@ -142,3 +142,4 @@ class TestDataclasses:
         m = TaskMetrics(task_id="t", description="d")
         summary = m.to_summary()
         assert isinstance(summary, str)
+

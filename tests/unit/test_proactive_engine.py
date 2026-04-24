@@ -69,3 +69,4 @@ class TestProactiveEngine:
 
     def test_process_user_response(self, engine):
         engine.process_user_response("谢谢提醒", delay_minutes=1.0)
+

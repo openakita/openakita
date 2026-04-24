@@ -92,3 +92,4 @@ class TestMessageTypes:
         assert mc.voices == []
         assert mc.files == []
         assert mc.videos == []
+

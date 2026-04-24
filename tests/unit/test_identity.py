@@ -63,3 +63,4 @@ class TestIdentityUpdate:
         # update_memory returns bool
         result = identity.update_memory("preferences", "用户喜欢咖啡")
         assert isinstance(result, bool)
+

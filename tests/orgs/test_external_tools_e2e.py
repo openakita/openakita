@@ -675,3 +675,4 @@ class TestRealLLMExternalTools:
             timeout=90.0,
         )
         assert "result" in result
+

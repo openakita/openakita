@@ -391,3 +391,4 @@ class TestIgnoreDirs:
     def test_common_dirs_present(self):
         for d in [".git", "node_modules", "__pycache__", ".venv"]:
             assert d in DEFAULT_IGNORE_DIRS
+

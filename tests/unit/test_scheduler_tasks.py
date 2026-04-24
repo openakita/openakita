@@ -143,3 +143,4 @@ class TestTriggers:
     def test_trigger_from_config(self):
         trigger = Trigger.from_config("once", {"run_at": (datetime.now() + timedelta(hours=1)).isoformat()})
         assert isinstance(trigger, OnceTrigger)
+

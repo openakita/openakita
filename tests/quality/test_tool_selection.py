@@ -95,3 +95,4 @@ class TestToolCallFormat:
         resp = await brain.messages_create_async(messages=[{"role": "user", "content": "read"}])
         tool_blocks = [b for b in resp.content if isinstance(b, ToolUseBlock)]
         assert isinstance(tool_blocks[0].input, dict)
+

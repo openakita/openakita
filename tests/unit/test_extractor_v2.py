@@ -295,3 +295,4 @@ class TestHelperMethods:
         result = extractor._append_to_section(content, "近期进展", "- first item")
         assert "## 近期进展" in result
         assert "- first item" in result
+

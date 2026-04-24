@@ -114,3 +114,4 @@ class TestConstants:
         assert CLEAN_THRESHOLD > 0
         assert FREQUENCY_MULTIPLIER > 1.0
         assert MAX_FREQUENCY_FACTOR > 1.0
+

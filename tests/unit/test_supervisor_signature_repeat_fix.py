@@ -153,3 +153,4 @@ class TestUnproductiveAdminPruned:
         out = sup._check_unproductive_loop(iteration=5)
         assert out is not None
         assert out.level == InterventionLevel.STRATEGY_SWITCH
+

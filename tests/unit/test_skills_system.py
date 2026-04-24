@@ -102,3 +102,4 @@ class TestSkillParser:
         )
         result = parse_skill_directory(skill_dir)
         assert result.metadata.name == "dir-skill"
+

@@ -49,3 +49,4 @@ class TestRunShellParamHint:
         # Defensive: should not raise on weird input
         msg = FilesystemHandler._format_run_shell_missing_command(None)  # type: ignore[arg-type]
         assert "❌ run_shell 缺少必要参数" in msg
+

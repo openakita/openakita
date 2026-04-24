@@ -105,3 +105,4 @@ class TestMemoryManagerInjection:
         memory_manager.add_memory(Memory(content="User birthday is March 15"))
         ctx = memory_manager.get_injection_context(task_description="greeting")
         assert isinstance(ctx, str)
+

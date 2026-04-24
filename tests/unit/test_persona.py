@@ -58,3 +58,4 @@ class TestPersonaPrompt:
         pm.load_preset("default")
         # After loading, persona should be considered active
         assert isinstance(pm.is_persona_active(), bool)
+

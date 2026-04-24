@@ -127,3 +127,4 @@ class TestTokenUsage:
             end_time=now,
         )
         assert isinstance(result, list)
+

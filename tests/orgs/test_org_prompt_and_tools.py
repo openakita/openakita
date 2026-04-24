@@ -347,3 +347,4 @@ class TestPromptPreviewStructure:
 
         resolved_after = identity.resolve(node, persisted_org)
         assert resolved_after.level >= 1
+

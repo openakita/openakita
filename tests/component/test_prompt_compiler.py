@@ -89,3 +89,4 @@ class TestBuildSystemPrompt:
             budget_config=budget,
         )
         assert isinstance(prompt, str)
+

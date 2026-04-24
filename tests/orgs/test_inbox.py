@@ -161,3 +161,4 @@ class TestSubscription:
             assert msg.title == "新消息"
         finally:
             inbox.unsubscribe(persisted_org.id, q)
+

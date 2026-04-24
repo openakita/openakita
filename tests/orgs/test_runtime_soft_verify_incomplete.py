@@ -151,3 +151,4 @@ class TestSoftVerifyContract:
             f"helper={helper_result} 与 summarize 降级={downgraded} 不一致，"
             f"会导致 runtime 分支判定与诊断卡片根因不匹配"
         )
+

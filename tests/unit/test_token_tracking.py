@@ -59,3 +59,4 @@ class TestContextVars:
         reset_tracking_context(t2)
         assert get_tracking_context().session_id == "outer"
         reset_tracking_context(t1)
+

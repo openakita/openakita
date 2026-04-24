@@ -96,3 +96,4 @@ class TestGetPendingRequests:
         )
         reqs = scaler.get_pending_requests(persisted_org.id)
         assert len(reqs) == 2
+

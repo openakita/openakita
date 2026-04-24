@@ -74,3 +74,4 @@ class TestSessionLogBuffer:
     def test_set_current_session(self, buffer):
         buffer.set_current_session("my-session")
         assert buffer.get_current_session() == "my-session"
+

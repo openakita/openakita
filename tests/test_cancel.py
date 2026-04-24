@@ -796,3 +796,4 @@ class TestGatewayInterruptRouting:
         assert hasattr(Agent, "classify_interrupt")
         assert hasattr(Agent, "is_stop_command")
         assert hasattr(Agent, "is_skip_command")
+

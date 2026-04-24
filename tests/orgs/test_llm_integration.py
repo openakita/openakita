@@ -173,3 +173,4 @@ class TestLLMFreezeNode:
         result = await runtime.send_command(org.id, "node_dev", "你好")
         assert "error" in result
         assert "冻结" in result["error"]
+

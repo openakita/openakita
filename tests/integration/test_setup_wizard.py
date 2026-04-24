@@ -211,3 +211,4 @@ class TestLocaleDefaults:
         }
         assert wizard._defaults["MODEL_DOWNLOAD_SOURCE"] == "huggingface"
         assert wizard._defaults["SCHEDULER_TIMEZONE"] == "UTC"
+

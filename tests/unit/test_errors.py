@@ -88,3 +88,4 @@ class TestErrorTypes:
             ErrorType.RATE_LIMIT, ErrorType.DEPENDENCY,
         ]
         assert len(types) == 8
+

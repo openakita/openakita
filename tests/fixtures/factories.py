@@ -149,3 +149,4 @@ def build_conversation(turns: list[tuple[str, str]]) -> list[dict]:
     Example: build_conversation([("user", "Hi"), ("assistant", "Hello!")])
     """
     return [{"role": role, "content": content} for role, content in turns]
+

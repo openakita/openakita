@@ -119,3 +119,4 @@ class TestDiagnosisCardDowngrade:
         # max_iterations / loop_terminated paths must be unaffected by the new branch.
         diag = summarize(self._make_trace_with_accept(), exit_reason="max_iterations")
         assert diag["root_cause"] == "max_iterations"
+

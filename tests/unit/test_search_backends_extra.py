@@ -164,3 +164,4 @@ class TestFactoryFallbacks:
     def test_api_no_key_fallback(self, tmp_storage):
         backend = create_search_backend("api_embedding", storage=tmp_storage, api_key="")
         assert isinstance(backend, FTS5Backend)
+

@@ -204,3 +204,4 @@ class TestValidateConfig:
         config_file.write_text("not json", encoding="utf-8")
         errors = validate_config(config_file)
         assert any("Invalid JSON" in e for e in errors)
+

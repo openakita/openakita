@@ -183,3 +183,4 @@ class TestTriggerStandup:
         assert len(started) >= 1
         completed = es.query(event_type="standup_completed")
         assert len(completed) >= 1
+

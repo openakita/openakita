@@ -172,3 +172,4 @@ class TestPluginErrorTracker:
     def test_get_errors_unknown_plugin(self):
         tracker = PluginErrorTracker()
         assert tracker.get_errors("unknown") == []
+

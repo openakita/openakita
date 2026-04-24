@@ -82,3 +82,4 @@ class TestEnsureBuiltinTemplates:
         ensure_builtin_templates(tpl_dir)
         data = json.loads(custom.read_text(encoding="utf-8"))
         assert data.get("custom") is True
+

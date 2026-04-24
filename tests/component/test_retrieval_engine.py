@@ -95,3 +95,4 @@ class TestRetrievalEngine:
         ]
         ranked = engine._rerank(candidates, "test")
         assert ranked[0].memory_id == "b"
+

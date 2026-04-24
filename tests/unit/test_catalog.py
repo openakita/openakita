@@ -130,3 +130,4 @@ class TestCatalogGeneration:
         catalog = ToolCatalog(_sample_tools())
         schemas = catalog.get_direct_tool_schemas()
         assert isinstance(schemas, list)
+

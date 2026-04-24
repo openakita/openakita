@@ -38,3 +38,4 @@ class TestSessionManagerCreate:
     def test_create_if_missing_false(self, session_mgr):
         session = session_mgr.get_session("cli", "nonexistent", "u1", create_if_missing=False)
         assert session is None
+

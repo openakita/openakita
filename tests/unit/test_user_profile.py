@@ -74,3 +74,4 @@ class TestUserProfileManager:
     def test_get_available_keys(self, pm):
         keys = pm.get_available_keys()
         assert isinstance(keys, list)
+

@@ -136,3 +136,4 @@ class TestProviderLists:
     def test_unknown_provider_returns_empty(self):
         models = get_models_by_provider("nonexistent-provider")
         assert models == []
+

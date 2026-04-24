@@ -290,3 +290,4 @@ class TestAutoPersistOrgSetting:
         legacy = {"id": "o2", "name": "n", "nodes": [], "edges": []}
         restored = Organization.from_dict(legacy)
         assert restored.auto_persist_final_answer is True
+

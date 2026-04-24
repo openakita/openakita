@@ -372,3 +372,4 @@ class MemoryInteractionTester:
 if __name__ == "__main__":
     tester = MemoryInteractionTester()
     tester.run_all()
+

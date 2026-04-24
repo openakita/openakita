@@ -1100,3 +1100,4 @@ if __name__ == "__main__":
         asyncio.run(run_telegram_interactive_test())
     else:
         asyncio.run(run_all_tests())
+

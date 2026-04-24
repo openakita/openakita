@@ -84,3 +84,4 @@ class TestGetStats:
         assert "search_available" in stats
         assert stats["search_backend"] == "fts5"
         assert stats["search_available"] is True
+

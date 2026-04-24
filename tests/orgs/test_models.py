@@ -404,3 +404,4 @@ class TestCoreBusiness:
         restored = Organization.from_dict(d)
         assert restored.core_business == biz
         assert restored.user_persona.title == "产品经理"
+

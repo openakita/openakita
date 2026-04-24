@@ -317,3 +317,4 @@ class TestToolCarryingViaAPI:
         updated = resp.json()["tool_summary"]["external_tools_expanded"]
         assert "read_file" in updated
         assert "write_file" in updated
+

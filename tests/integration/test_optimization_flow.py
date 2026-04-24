@@ -644,3 +644,4 @@ class TestIdentityRouteNoTooling:
     def test_runtime_files_no_tooling(self):
         from openakita.api.routes.identity import _RUNTIME_FILES
         assert "runtime/agent.tooling.md" not in _RUNTIME_FILES
+

@@ -81,3 +81,4 @@ class TestActiveTodoPrompt:
         clear_session_todo_state(sid)
         prompt = get_active_todo_prompt(sid)
         assert isinstance(prompt, str)
+

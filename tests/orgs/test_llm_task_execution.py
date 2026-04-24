@@ -270,3 +270,4 @@ class TestCompletedTaskCount:
         refreshed = runtime.get_org(org.id)
         assert refreshed.total_tasks_completed > initial, \
             f"Tasks completed should increment. Initial={initial}, Now={refreshed.total_tasks_completed}"
+
