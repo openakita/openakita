@@ -57,7 +57,11 @@ export const ERROR_META: Record<string, { icon: string; color: string; hint: str
   auth: { icon: "key", color: "#ef4444", hint: "请检查 API Key 配置" },
   quota: { icon: "chart", color: "#f59e0b", hint: "请稍后重试或升级配额" },
   timeout: { icon: "clock", color: "#f59e0b", hint: "可尝试简化问题后重试" },
-  content_filter: { icon: "shield", color: "#8b5cf6", hint: "请换个方式重新提问" },
+  content_filter: {
+    icon: "shield",
+    color: "#8b5cf6",
+    hint: "云端模型的内容安全审核未通过。可尝试：① 输入 /clear 清空当前对话后重新开始；② 换一种表述；③ 切换到对内容审核更宽松的模型端点。",
+  },
   network: { icon: "globe", color: "#f59e0b", hint: "请检查网络连接" },
   server: { icon: "warn", color: "#ef4444", hint: "服务暂时不可用，请稍后重试" },
   unknown: { icon: "error", color: "#ef4444", hint: "" },

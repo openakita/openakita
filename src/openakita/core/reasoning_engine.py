@@ -5749,7 +5749,9 @@ class ReasoningEngine:
                 # 方案 D: 内容安全审核 — 工具结果触发平台内容过滤
                 _content_safety_patterns = [
                     "data_inspection",
+                    "datainspectionfailed",
                     "inappropriate content",
+                    "content_filter",
                 ]
                 is_content_safety = any(p in error_lower for p in _content_safety_patterns)
                 if is_content_safety:
@@ -5768,6 +5770,16 @@ class ReasoningEngine:
                         if llm_client:
                             llm_client.reset_all_cooldowns(include_structural=True)
                         return "retry"
+
+                    # 没有可剥离的 tool_results，说明触发源是 system prompt
+                    # 或用户直接输入。继续重试只会再次触发同样的审核失败，
+                    # 立即放弃并让上层把"内容审核未通过"信息透传给前端。
+                    logger.error(
+                        "[ReAct] Content safety error but no tool_results to strip. "
+                        "Likely triggered by system prompt or user input. "
+                        "Aborting without further retry."
+                    )
+                    return None
 
             logger.error(
                 f"[ReAct] Structural API error, cannot recover "
