@@ -98,6 +98,7 @@ from .context_manager import ContextManager
 from .context_utils import get_max_context_tokens as _shared_get_max_context_tokens
 from .context_utils import get_raw_context_window as _shared_get_raw_context_window
 from .errors import UserCancelledError
+from .health_config import CancelRequest
 from .identity import Identity
 from .prompt_assembler import PromptAssembler
 from .ralph import RalphLoop, Task, TaskResult
@@ -669,7 +670,9 @@ class Agent:
         # ==================== Phase 2: 新增子模块 ====================
         # 结构化状态管理
         self.agent_state = AgentState()
-        self._pending_cancels: dict[str, str] = {}  # session_id → reason
+        self._pending_cancels: dict[str, CancelRequest] = {}  # session_id → CancelRequest
+        self._current_generation: int = 0  # Incremented on task start
+        self._current_task_id: str = ""  # Current task identifier
 
         # 工具执行引擎（委托自 _execute_tool / _execute_tool_calls_batch）
         self.tool_executor = ToolExecutor(
@@ -5817,7 +5820,16 @@ general Q&A yourself.
                 logger.warning(
                     f"[StopTask] No task found for session {session_id}, storing as pending cancel"
                 )
-                self._pending_cancels[session_id] = reason
+                req = CancelRequest(
+                    session_id=session_id,
+                    task_id=self._current_task_id or "",
+                    generation_id=self._current_generation,
+                )
+                self._pending_cancels[session_id] = req
+                logger.info(
+                    f"[Agent] Cancel stored: session={session_id}, task={req.task_id}, "
+                    f"generation={self._current_generation}, reason={reason}"
+                )
         elif has_state:
             has_task = self.agent_state.current_task is not None
             task_status = self.agent_state.current_task.status.value if has_task else "N/A"
@@ -5853,11 +5865,33 @@ general Q&A yourself.
         """
         return bool(session_id and session_id in self._pending_cancels)
 
-    def _consume_pending_cancel(self, session_id: str | None = None) -> str | None:
-        """消费并返回挂起的取消原因，如果没有则返回 None。"""
-        if session_id:
-            return self._pending_cancels.pop(session_id, None)
-        return None
+    def _consume_pending_cancel(self, session_id: str | None = None) -> CancelRequest | None:
+        """Consume a pending cancel only if it matches current generation.
+
+        Returns the CancelRequest if matched and consumed, None otherwise.
+        This prevents race conditions where a cancel meant for an old task
+        could cancel a new task on the same session.
+        """
+        if not session_id:
+            return None
+
+        req = self._pending_cancels.get(session_id)
+        if req is None:
+            return None
+
+        if not req.matches(
+            session_id=session_id,
+            task_id=self._current_task_id or "",
+            generation_id=self._current_generation,
+        ):
+            logger.info(
+                f"[Agent] Pending cancel ignored: generation mismatch "
+                f"(pending={req.generation_id}, current={self._current_generation})"
+            )
+            return None
+
+        # Match found - consume it
+        return self._pending_cancels.pop(session_id)
 
     def is_stop_command(self, message: str) -> bool:
         """
