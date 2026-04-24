@@ -1,0 +1,1364 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>选题研析室 / Idea Research</title>
+  <link rel="stylesheet" href="./_assets/styles.css" />
+  <script src="./_assets/i18n.js"></script>
+  <script src="./_assets/icons.js"></script>
+  <script src="./_assets/markdown-mini.js"></script>
+  <script src="./_assets/bootstrap.js"></script>
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
+</head>
+<body>
+  <div id="root">
+    <main class="placeholder" style="text-align:center;padding:80px 24px">
+      <p style="color:#64748b">Loading workbench…</p>
+    </main>
+  </div>
+
+  <script type="text/babel" data-presets="env,react">
+/* eslint-disable */
+const { useState, useEffect, useReducer, useMemo, useCallback, useRef, useDeferredValue } = React;
+
+const PLUGIN_API = window.OpenAkita.idea_research;
+const I18N = window.OpenAkita.i18n;
+const ICONS = window.OpenAkita.icons;
+const MARKDOWN = window.OpenAkita.markdownMini;
+
+// ---------------------------------------------------------------------------
+// Constants — 4 modes / 12 personas / 6 platforms / 5 cookies platforms
+// ---------------------------------------------------------------------------
+
+const MODES = [
+  { id: "radar_pull",       icon: "radar"     },
+  { id: "breakdown_url",    icon: "breakdown" },
+  { id: "compare_accounts", icon: "compare"   },
+  { id: "script_remix",     icon: "script"    },
+];
+
+const PLATFORMS = [
+  { id: "bilibili", label_zh: "B站",     label_en: "Bilibili" },
+  { id: "youtube",  label_zh: "YouTube", label_en: "YouTube"  },
+  { id: "douyin",   label_zh: "抖音",    label_en: "Douyin",   crawler: true },
+  { id: "xhs",      label_zh: "小红书",  label_en: "Xiaohongshu", crawler: true },
+  { id: "ks",       label_zh: "快手",    label_en: "Kuaishou", crawler: true },
+  { id: "weibo",    label_zh: "微博",    label_en: "Weibo",    crawler: true },
+];
+
+const COOKIES_PLATFORMS = [
+  { id: "douyin",   label_zh: "抖音"   },
+  { id: "xhs",      label_zh: "小红书" },
+  { id: "ks",       label_zh: "快手"   },
+  { id: "bilibili", label_zh: "B 站登录态" },
+  { id: "weibo",    label_zh: "微博"   },
+];
+
+const PERSONAS = [
+  "小红书运营专家", "抖音爆款编导", "B站知识博主", "YouTube SEO 专家",
+  "视频号情感博主", "知识付费课程主理人", "电商带货主播", "母婴亲子博主",
+  "美妆护肤测评师", "数码科技博主", "美食探店博主", "财经投资评论员",
+];
+
+const TIME_WINDOWS = [
+  { id: "24h", label_zh: "24 小时" },
+  { id: "7d",  label_zh: "7 天"    },
+  { id: "30d", label_zh: "30 天"   },
+];
+
+const REFRESH_INTERVALS = [
+  { id: 0,    label: "关闭" },
+  { id: 30,   label: "30 分钟" },
+  { id: 60,   label: "1 小时" },
+  { id: 180,  label: "3 小时" },
+  { id: 360,  label: "6 小时" },
+];
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const t = (key, vars) => I18N.t(PLUGIN_API.state.locale, key, vars);
+
+function formatRelative(ts) {
+  if (!ts) return "—";
+  const now = Date.now() / 1000;
+  const diff = Math.max(0, now - Number(ts));
+  if (diff < 60)        return Math.round(diff) + "s ago";
+  if (diff < 3600)      return Math.round(diff / 60) + "m ago";
+  if (diff < 86400)     return Math.round(diff / 3600) + "h ago";
+  if (diff < 86400 * 7) return Math.round(diff / 86400) + "d ago";
+  return new Date(Number(ts) * 1000).toISOString().slice(0, 10);
+}
+
+function formatAbs(ts) {
+  if (!ts) return "—";
+  return new Date(Number(ts) * 1000).toLocaleString();
+}
+
+function formatCount(n) {
+  if (n == null) return "—";
+  const num = Number(n);
+  if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + "M";
+  if (num >= 10_000)    return (num / 10_000).toFixed(1) + "w";
+  if (num >= 1_000)     return (num / 1_000).toFixed(1) + "k";
+  return String(num);
+}
+
+function safeJSON(s, fallback) {
+  if (s == null) return fallback;
+  if (typeof s !== "string") return s;
+  try { return JSON.parse(s); } catch (_) { return fallback; }
+}
+
+function clone(o) { return JSON.parse(JSON.stringify(o)); }
+
+function debounceWith(ref, ms, fn) {
+  if (ref.current) clearTimeout(ref.current);
+  ref.current = setTimeout(fn, ms);
+}
+
+function useDraft(key, initial) {
+  const [val, setVal] = useState(() => {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return initial;
+      return Object.assign({}, initial, JSON.parse(raw));
+    } catch (_) { return initial; }
+  });
+  useEffect(() => {
+    try { window.localStorage.setItem(key, JSON.stringify(val)); } catch (_) {}
+  }, [key, val]);
+  return [val, setVal];
+}
+
+function Icon({ name, w, h }) {
+  const html = ICONS.get(name);
+  if (!html) return null;
+  const props = { dangerouslySetInnerHTML: { __html: html } };
+  return <span aria-hidden="true" style={{ display: "inline-flex", alignItems: "center" }} {...props} />;
+}
+
+function platformLabel(id) {
+  const p = PLATFORMS.find(x => x.id === id);
+  if (!p) return id;
+  return PLUGIN_API.state.locale === "en" ? p.label_en : p.label_zh;
+}
+
+function modeLabel(id) {
+  const labels = {
+    radar_pull: { zh: "雷达拉榜", en: "Radar pull" },
+    breakdown_url: { zh: "单条拆解", en: "Breakdown URL" },
+    compare_accounts: { zh: "对标分析", en: "Compare accounts" },
+    script_remix: { zh: "选题改写脚本", en: "Script remix" },
+  };
+  const bag = labels[id] || {};
+  return PLUGIN_API.state.locale === "en" ? (bag.en || id) : (bag.zh || id);
+}
+
+// ---------------------------------------------------------------------------
+// Toast bus (lightweight global)
+// ---------------------------------------------------------------------------
+
+const ToastCtx = React.createContext({ push: () => {}, items: [] });
+
+function ToastProvider({ children }) {
+  const [items, setItems] = useState([]);
+  const push = useCallback((tone, text) => {
+    const id = Math.random().toString(36).slice(2, 9);
+    setItems(prev => prev.concat([{ id, tone, text }]));
+    setTimeout(() => setItems(prev => prev.filter(x => x.id !== id)), 4500);
+  }, []);
+  return (
+    <ToastCtx.Provider value={{ push, items }}>
+      {children}
+      <div className="ir-toast-wrap">
+        {items.map(it => (
+          <div key={it.id} className="ir-toast" data-tone={it.tone}>{it.text}</div>
+        ))}
+      </div>
+    </ToastCtx.Provider>
+  );
+}
+const useToast = () => React.useContext(ToastCtx).push;
+
+// ---------------------------------------------------------------------------
+// TabRouter — URL hash <-> ('workbench' | 'tasks' | 'settings')
+// ---------------------------------------------------------------------------
+
+function parseHash() {
+  const h = (window.location.hash || "#workbench").replace(/^#/, "");
+  const [name, qs] = h.split("?");
+  const tab = ["workbench", "tasks", "settings"].includes(name) ? name : "workbench";
+  const params = {};
+  (qs || "").split("&").filter(Boolean).forEach(kv => {
+    const [k, v] = kv.split("=");
+    if (k) params[decodeURIComponent(k)] = decodeURIComponent(v || "");
+  });
+  return { tab, params };
+}
+
+function buildHash(tab, params) {
+  const q = Object.entries(params || {})
+    .filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => encodeURIComponent(k) + "=" + encodeURIComponent(v))
+    .join("&");
+  return "#" + tab + (q ? "?" + q : "");
+}
+
+function useHashRoute() {
+  const [route, setRoute] = useState(parseHash);
+  useEffect(() => {
+    const handler = () => setRoute(parseHash());
+    window.addEventListener("hashchange", handler);
+    return () => window.removeEventListener("hashchange", handler);
+  }, []);
+  const navigate = useCallback((tab, params) => {
+    window.location.hash = buildHash(tab, params || {});
+  }, []);
+  return [route, navigate];
+}
+
+// ---------------------------------------------------------------------------
+// API + SSE wiring
+// ---------------------------------------------------------------------------
+
+function useSSE(handler) {
+  useEffect(() => {
+    const dispose = PLUGIN_API.subscribe((type, data) => handler(type, data));
+    return dispose;
+  }, [handler]);
+}
+
+// ---------------------------------------------------------------------------
+// Header + Tabs
+// ---------------------------------------------------------------------------
+
+function AppHeader({ activeTab, onNavigate, locale, theme, onLocale, onTheme, hookCount }) {
+  return (
+    <header className="ir-header">
+      <div className="ir-header__brand">
+        <Icon name="radar" />
+        <span>{t("app_title")}</span>
+        <small style={{ color: "var(--ir-muted)", fontWeight: 400, marginLeft: 6 }}>{t("app_subtitle")}</small>
+      </div>
+      <nav className="ir-tabs" aria-label="primary tabs">
+        {["workbench", "tasks", "settings"].map(id => (
+          <button
+            key={id}
+            className="ir-tab"
+            aria-current={activeTab === id ? "true" : "false"}
+            onClick={() => onNavigate(id, {})}
+          >
+            {t("tab_" + id)}
+          </button>
+        ))}
+      </nav>
+      <div className="ir-header__spacer" />
+      <span className="ir-header__meta">{t("mdrm_status_learned", { n: hookCount || 0 })}</span>
+      <button className="ir-btn ir-btn--xs" onClick={() => onTheme(theme === "dark" ? "light" : "dark")}>{theme === "dark" ? "🌙" : "☀️"}</button>
+      <button className="ir-btn ir-btn--xs" onClick={() => onLocale(locale === "zh" ? "en" : "zh")}>{locale.toUpperCase()}</button>
+    </header>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MdrmStatusBar + MdrmHitBadge
+// ---------------------------------------------------------------------------
+
+function MdrmStatusBar({ stats, onClear, onReindex }) {
+  const caps = (stats && stats.caps) || {};
+  const allOff = caps.brain === false && caps.vector === false && caps.memory === false;
+  return (
+    <div className="ir-mdrm-bar" data-allow={!allOff}>
+      <span>{t("mdrm_status_learned", { n: (stats && stats.hook_count) || 0 })}</span>
+      <span className="ir-mdrm-bar__chip" data-state={caps.brain ? "ok" : "warn"}>
+        <Icon name="cog" w={12} h={12} /> {t("mdrm_caps_brain")}
+      </span>
+      <span className="ir-mdrm-bar__chip" data-state={caps.vector ? "ok" : "warn"}>
+        <Icon name="cloud" w={12} h={12} /> {t("mdrm_caps_vector")}
+      </span>
+      <span className="ir-mdrm-bar__chip" data-state={caps.memory ? "ok" : "warn"}>
+        <Icon name="memory" w={12} h={12} /> {t("mdrm_caps_memory")}
+      </span>
+      {allOff && <span className="ir-mdrm-bar__chip" data-state="error">{t("mdrm_disabled_warn")}</span>}
+      <button className="ir-mdrm-bar__btn" onClick={onReindex}>{t("mdrm_reindex")}</button>
+      <button className="ir-mdrm-bar__btn" onClick={onClear}>{t("mdrm_clear")}</button>
+    </div>
+  );
+}
+
+function MdrmHitBadge({ hits }) {
+  if (!hits || !hits.length) return null;
+  return <span className="ir-pill" data-tone="mdrm" title={hits.slice(0, 3).join("\n")}>📚 {t("mdrm_hit_badge")} ×{hits.length}</span>;
+}
+
+// ---------------------------------------------------------------------------
+// Left panel — 5 collapsible sections + draft + change tracking
+// ---------------------------------------------------------------------------
+
+const LEFT_DRAFT_KEY = "idea_research_workbench_form_v1";
+const LEFT_DRAFT_DEFAULT = {
+  platforms: ["bilibili"],
+  keywords: [],
+  time_window: "24h",
+  accounts: "",
+  persona: "小红书运营专家",
+  url: "",
+  engine_b: false,
+  limit: 20,
+  filters: [],
+  mdrm_weighting: true,
+  open: { sub: true, accounts: false, persona: false, url: true, advanced: false },
+};
+
+function CollapsibleSection({ id, title, open, onToggle, children }) {
+  return (
+    <section className="ir-section" data-open={open ? "true" : "false"} data-section={id}>
+      <button type="button" className="ir-section__head" onClick={onToggle} aria-expanded={open}>
+        <span>{title}</span>
+        <span className="ir-caret"><Icon name="chevronDown" w={14} h={14} /></span>
+      </button>
+      <div className="ir-section__body">{children}</div>
+    </section>
+  );
+}
+
+function ChipInput({ values, onChange, placeholder, max }) {
+  const [draft, setDraft] = useState("");
+  const add = () => {
+    const tag = draft.trim();
+    if (!tag) return;
+    if ((values || []).includes(tag)) { setDraft(""); return; }
+    if (max && values.length >= max) return;
+    onChange((values || []).concat([tag]));
+    setDraft("");
+  };
+  return (
+    <div>
+      <div className="ir-chip-group" style={{ marginBottom: 6 }}>
+        {(values || []).map(v => (
+          <span key={v} className="ir-chip" data-active="true">
+            {v}
+            <button className="ir-chip__remove" onClick={() => onChange(values.filter(x => x !== v))}>×</button>
+          </span>
+        ))}
+      </div>
+      <input
+        className="ir-input"
+        value={draft}
+        placeholder={placeholder}
+        onChange={e => setDraft(e.target.value)}
+        onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
+        onBlur={add}
+      />
+    </div>
+  );
+}
+
+function PlatformPicker({ values, onChange, allowCrawler }) {
+  return (
+    <div className="ir-chip-group">
+      {PLATFORMS.map(p => {
+        const active = values.includes(p.id);
+        const disabled = p.crawler && !allowCrawler;
+        return (
+          <button
+            key={p.id}
+            className="ir-chip"
+            data-active={active ? "true" : "false"}
+            disabled={disabled}
+            title={disabled ? t("lp_engine_b_warn") : ""}
+            onClick={() => onChange(active ? values.filter(x => x !== p.id) : values.concat([p.id]))}
+          >
+            {platformLabel(p.id)}{p.crawler ? " ·B" : ""}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function ToggleSwitch({ value, onChange, label }) {
+  return (
+    <label className="ir-toggle" data-on={value ? "true" : "false"} onClick={() => onChange(!value)}>
+      <span className="ir-toggle__track">
+        <span className="ir-toggle__thumb" />
+      </span>
+      <span style={{ fontSize: 13 }}>{label}</span>
+    </label>
+  );
+}
+
+function LeftPanel({ draft, setDraft, onCreateRadar, onCreateBreakdown, onCreateCompare, settings, onSnapshot }) {
+  const setOpen = (k) => setDraft(d => Object.assign({}, d, { open: Object.assign({}, d.open, { [k]: !d.open[k] }) }));
+  const update = (patch) => setDraft(d => Object.assign({}, d, patch));
+  const o = draft.open;
+
+  return (
+    <aside className="ir-left">
+      <CollapsibleSection id="sub" title={t("lp_section_subscription")} open={o.sub} onToggle={() => setOpen("sub")}>
+        <div className="ir-field">
+          <label className="ir-field__label">{t("lp_platforms")}</label>
+          <PlatformPicker values={draft.platforms} onChange={pl => update({ platforms: pl })} allowCrawler={draft.engine_b} />
+        </div>
+        <div className="ir-field">
+          <label className="ir-field__label">{t("lp_keywords")}</label>
+          <ChipInput values={draft.keywords} onChange={kw => update({ keywords: kw })} placeholder={t("lp_keywords_placeholder")} max={10} />
+        </div>
+        <div className="ir-field">
+          <label className="ir-field__label">{t("lp_window")}</label>
+          <select className="ir-select" value={draft.time_window} onChange={e => update({ time_window: e.target.value })}>
+            {TIME_WINDOWS.map(tw => <option key={tw.id} value={tw.id}>{tw.label_zh}</option>)}
+          </select>
+        </div>
+      </CollapsibleSection>
+
+      <CollapsibleSection id="accounts" title={t("lp_section_accounts")} open={o.accounts} onToggle={() => setOpen("accounts")}>
+        <div className="ir-field">
+          <textarea
+            className="ir-textarea"
+            value={draft.accounts}
+            placeholder={t("lp_accounts_textarea")}
+            onChange={e => update({ accounts: e.target.value })}
+          />
+        </div>
+        <button className="ir-btn ir-btn--primary" onClick={onCreateCompare}>{t("lp_accounts_analyze")}</button>
+      </CollapsibleSection>
+
+      <CollapsibleSection id="persona" title={t("lp_section_persona")} open={o.persona} onToggle={() => setOpen("persona")}>
+        <div className="ir-field">
+          <label className="ir-field__label">{t("lp_persona_pick")}</label>
+          <select className="ir-select" value={draft.persona} onChange={e => update({ persona: e.target.value })}>
+            {PERSONAS.map(p => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </div>
+      </CollapsibleSection>
+
+      <CollapsibleSection id="url" title={t("lp_section_url")} open={o.url} onToggle={() => setOpen("url")}>
+        <div className="ir-field">
+          <input
+            className="ir-input"
+            value={draft.url}
+            placeholder={t("lp_url_input")}
+            onChange={e => update({ url: e.target.value })}
+            onKeyDown={e => { if (e.key === "Enter" && draft.url.trim()) { e.preventDefault(); onCreateBreakdown(); } }}
+          />
+        </div>
+        <button className="ir-btn ir-btn--primary" disabled={!draft.url.trim()} onClick={onCreateBreakdown}>
+          <Icon name="play" w={14} h={14} /> {t("btn_create")}
+        </button>
+      </CollapsibleSection>
+
+      <CollapsibleSection id="advanced" title={t("lp_section_advanced")} open={o.advanced} onToggle={() => setOpen("advanced")}>
+        <ToggleSwitch value={draft.engine_b} onChange={v => update({ engine_b: v, platforms: v ? draft.platforms : draft.platforms.filter(p => !PLATFORMS.find(x => x.id === p)?.crawler) })}
+          label={t("lp_engine_b")} />
+        {draft.engine_b && (settings?.engine_b_enabled === false) && (
+          <small style={{ color: "var(--ir-warn)" }}>{t("lp_engine_b_warn")}</small>
+        )}
+        <div className="ir-field">
+          <label className="ir-field__label">{t("lp_limit")}</label>
+          <select className="ir-select" value={draft.limit} onChange={e => update({ limit: Number(e.target.value) })}>
+            {[5, 10, 20, 50].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+        <div className="ir-field">
+          <label className="ir-field__label">{t("lp_filter")}</label>
+          <ChipInput values={draft.filters} onChange={f => update({ filters: f })} placeholder={t("lp_keywords_placeholder")} />
+        </div>
+        <ToggleSwitch value={draft.mdrm_weighting} onChange={v => update({ mdrm_weighting: v })} label={t("lp_mdrm_weighting")} />
+        <button className="ir-btn" onClick={onSnapshot}>{t("lp_snapshot")}</button>
+        <button className="ir-btn ir-btn--primary" onClick={onCreateRadar}><Icon name="refresh" w={14} h={14} /> {t("lp_refresh_now")}</button>
+      </CollapsibleSection>
+    </aside>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Right panel — virtual scroll + recommendation cards + in-place drawer
+// ---------------------------------------------------------------------------
+
+const PAGE_SIZE = 30;
+
+function useVirtualSlice(items) {
+  const [count, setCount] = useState(PAGE_SIZE);
+  const sentinel = useRef(null);
+  useEffect(() => {
+    if (!sentinel.current) return;
+    const obs = new IntersectionObserver(entries => {
+      if (entries.some(e => e.isIntersecting)) setCount(c => Math.min(c + PAGE_SIZE, items.length));
+    });
+    obs.observe(sentinel.current);
+    return () => obs.disconnect();
+  }, [items.length]);
+  return { slice: items.slice(0, count), sentinel, hasMore: count < items.length };
+}
+
+function StreamStatus({ items, fetchedAt, loading, onRefresh, engines }) {
+  if (loading) {
+    return (
+      <div className="ir-stream__status">
+        <span className="ir-spinner" /> {t("rp_status_loading")}
+      </div>
+    );
+  }
+  return (
+    <div className="ir-stream__status">
+      {t("rp_status", { ago: formatRelative(fetchedAt), n: items.length, engines })}
+      <button className="ir-btn ir-btn--xs" onClick={onRefresh}><Icon name="refresh" w={12} h={12} /> {t("lp_refresh_now")}</button>
+    </div>
+  );
+}
+
+function RecommendationCard({ item, expanded, onExpand, onCollapse, onHandoff, onSave, onRemix }) {
+  return (
+    <div className="ir-rec-card">
+      <img className="ir-rec-card__cover" src={item.cover_url || ""} alt="" loading="lazy" onError={e => { e.currentTarget.style.background = "var(--ir-bg)"; e.currentTarget.removeAttribute("src"); }} />
+      <div className="ir-rec-card__main">
+        <div className="ir-rec-card__title">{item.title || "(no title)"}</div>
+        <div className="ir-rec-card__meta">
+          <span className="ir-pill">{platformLabel(item.platform)}</span>
+          {item.author && <span className="ir-pill">{item.author}</span>}
+          <span className="ir-pill">👍 {formatCount(item.like_count)}</span>
+          <span className="ir-pill">💬 {formatCount(item.comment_count)}</span>
+          <span className="ir-pill">👁 {formatCount(item.view_count)}</span>
+          {item.hook_type && <span className="ir-pill" data-tone="hook">🪝 {item.hook_type}</span>}
+          <MdrmHitBadge hits={item.mdrm_hits} />
+        </div>
+        <div className="ir-rec-card__actions">
+          {expanded
+            ? <button className="ir-btn ir-btn--xs" onClick={onCollapse}>{t("rp_btn_close")}</button>
+            : <button className="ir-btn ir-btn--xs ir-btn--primary" onClick={onExpand}><Icon name="eye" w={12} h={12} /> {t("rp_btn_expand")}</button>}
+          <button className="ir-btn ir-btn--xs" onClick={onHandoff}><Icon name="handoff" w={12} h={12} /> {t("rp_btn_handoff")}</button>
+          <button className="ir-btn ir-btn--xs" onClick={onSave}><Icon name="save" w={12} h={12} /> {t("rp_btn_save")}</button>
+          <button className="ir-btn ir-btn--xs" onClick={onRemix}><Icon name="script" w={12} h={12} /> {t("rp_btn_remix")}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TranscriptViewer({ data }) {
+  if (!data) return <p className="ir-empty">{t("bd_no_transcript")}</p>;
+  if (typeof data === "string") return <pre className="ir-transcript">{data}</pre>;
+  const segs = data.segments || [];
+  if (!segs.length) return <p className="ir-empty">{t("bd_no_transcript")}</p>;
+  return (
+    <div className="ir-transcript">
+      {segs.map((s, i) => (
+        <div className="ir-transcript__seg" key={i}>
+          <span className="ir-transcript__time">{Math.round(s.start || 0)}s</span>
+          <span>{s.text}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FramesTimeline({ frames }) {
+  if (!frames || !frames.length) return <p className="ir-empty">{t("bd_no_frames")}</p>;
+  return (
+    <div className="ir-frames-timeline">
+      {frames.map((f, i) => (
+        <figure key={i}>
+          <img src={f.image_url || f.image_path} alt="" loading="lazy" />
+          <figcaption>{Math.round(f.timestamp || 0)}s · {f.vlm_description || ""}</figcaption>
+        </figure>
+      ))}
+    </div>
+  );
+}
+
+function KeywordsCloud({ keywords }) {
+  const list = (keywords || []).slice(0, 30);
+  if (!list.length) return <p className="ir-empty">{t("empty_default")}</p>;
+  const max = Math.max.apply(null, list.map(k => k.weight || k.freq || 1));
+  return (
+    <div className="ir-keywords-cloud">
+      {list.map((k, i) => {
+        const score = (k.weight || k.freq || 1) / (max || 1);
+        return <span key={i} className="ir-pill" style={{ fontSize: 11 + score * 7 }}>{k.word}</span>;
+      })}
+    </div>
+  );
+}
+
+function CommentsSummary({ summary }) {
+  if (!summary) return <p className="ir-empty">{t("bd_no_comments")}</p>;
+  return (
+    <div className="ir-comments">
+      {summary.top_emotions && (
+        <>
+          <h4>Top emotions</h4>
+          <ul>{summary.top_emotions.map((e, i) => <li key={i}>{e}</li>)}</ul>
+        </>
+      )}
+      {summary.common_questions && (
+        <>
+          <h4>Common questions</h4>
+          <ul>{summary.common_questions.map((e, i) => <li key={i}>{e}</li>)}</ul>
+        </>
+      )}
+      {summary.controversies && (
+        <>
+          <h4>Controversies</h4>
+          <ul>{summary.controversies.map((e, i) => <li key={i}>{e}</li>)}</ul>
+        </>
+      )}
+    </div>
+  );
+}
+
+function MdrmWriteStatus({ writes }) {
+  if (!writes) return null;
+  return (
+    <div className="ir-pill" data-tone={writes.vector === "ok" || writes.memory === "ok" ? "mdrm" : "hook"}>
+      MDRM: vector {writes.vector || "skipped"} · memory {writes.memory || "skipped"}
+    </div>
+  );
+}
+
+function BreakdownDetail({ task, loading }) {
+  if (loading) return <p className="ir-empty"><span className="ir-spinner" /> {t("bd_pending")}</p>;
+  if (!task) return null;
+  const out = safeJSON(task.output_json, task.output_json) || {};
+  const transcript = out.transcript;
+  const frames = out.frames;
+  const structure = out.structure;
+  const comments = out.comments_summary;
+  const persona = out.persona_takeaways;
+  const writes = out.mdrm_writes || safeJSON(task.mdrm_writes_json, null);
+  return (
+    <div className="ir-drawer__grid">
+      {writes && <MdrmWriteStatus writes={writes} />}
+      <details open>
+        <summary><strong>{t("bd_section_transcript")}</strong></summary>
+        <TranscriptViewer data={transcript} />
+      </details>
+      <details>
+        <summary><strong>{t("bd_section_frames")}</strong></summary>
+        <FramesTimeline frames={frames} />
+      </details>
+      <details>
+        <summary><strong>{t("bd_section_keywords")}</strong></summary>
+        <KeywordsCloud keywords={structure && structure.keywords} />
+      </details>
+      <details>
+        <summary><strong>{t("bd_section_comments")}</strong></summary>
+        <CommentsSummary summary={comments} />
+      </details>
+      <details>
+        <summary><strong>{t("bd_section_takeaways")}</strong></summary>
+        {persona && persona.length
+          ? <ul>{persona.map((p, i) => <li key={i}>{p}</li>)}</ul>
+          : <p className="ir-empty">{t("empty_default")}</p>}
+      </details>
+    </div>
+  );
+}
+
+function InPlaceDrawer({ item, breakdownTask, breakdownLoading, onClose }) {
+  return (
+    <div className="ir-drawer">
+      <div className="ir-drawer__head">
+        <Icon name="breakdown" />
+        <h3>{item.title || "(no title)"}</h3>
+        <button className="ir-btn ir-btn--xs ir-drawer__close" onClick={onClose}>{t("btn_close")}</button>
+      </div>
+      <BreakdownDetail task={breakdownTask} loading={breakdownLoading} />
+    </div>
+  );
+}
+
+function FloatingChangeBar({ count, onApply, onDismiss }) {
+  if (!count) return null;
+  return (
+    <div className="ir-floating-bar">
+      <Icon name="alert" w={14} h={14} />
+      <span><strong className="ir-floating-bar__count">{count}</strong> {t("changes_pending", { n: count })}</span>
+      <button className="ir-btn ir-btn--xs ir-btn--primary" onClick={onApply}>{t("btn_apply")}</button>
+      <button className="ir-btn ir-btn--xs" onClick={onDismiss}>{t("btn_dismiss")}</button>
+    </div>
+  );
+}
+
+function RightPanel({
+  items, fetchedAt, loading, engines, onRefresh,
+  expandedId, onExpand, onCollapse, breakdownTask, breakdownLoading,
+  onHandoff, onSave, onRemix, pendingChanges, onApply, onDismiss,
+}) {
+  const { slice, sentinel, hasMore } = useVirtualSlice(items);
+  const enginesLabel = engines.join("+") || "A";
+  return (
+    <main className="ir-right">
+      <div className="ir-stream">
+        <StreamStatus items={items} fetchedAt={fetchedAt} loading={loading} onRefresh={onRefresh} engines={enginesLabel} />
+        {slice.length === 0 && !loading && <div className="ir-empty">{t("rp_empty")}</div>}
+        {slice.map(item => (
+          <div key={item.id} className="ir-stream__row" data-expanded={expandedId === item.id ? "true" : "false"}>
+            <RecommendationCard
+              item={item}
+              expanded={expandedId === item.id}
+              onExpand={() => onExpand(item)}
+              onCollapse={onCollapse}
+              onHandoff={() => onHandoff(item)}
+              onSave={() => onSave(item)}
+              onRemix={() => onRemix(item)}
+            />
+            {expandedId === item.id && (
+              <InPlaceDrawer item={item} breakdownTask={breakdownTask} breakdownLoading={breakdownLoading} onClose={onCollapse} />
+            )}
+          </div>
+        ))}
+        <div ref={sentinel} className="ir-scroll-cap">{hasMore ? t("tip_loading") : items.length ? "—" : ""}</div>
+      </div>
+      <FloatingChangeBar count={pendingChanges} onApply={onApply} onDismiss={onDismiss} />
+    </main>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Workbench tab — orchestrates left + right + state
+// ---------------------------------------------------------------------------
+
+function diffCount(a, b) {
+  let n = 0;
+  ["platforms", "keywords", "time_window", "limit", "engine_b", "filters", "mdrm_weighting", "persona"].forEach(k => {
+    const va = JSON.stringify(a[k] || ""); const vb = JSON.stringify(b[k] || "");
+    if (va !== vb) n += 1;
+  });
+  return n;
+}
+
+function WorkbenchTab({ mdrmStats, settings, onTaskCreated, onMdrmRefresh, onSnapshot }) {
+  const [draft, setDraft] = useDraft(LEFT_DRAFT_KEY, LEFT_DRAFT_DEFAULT);
+  const [appliedDraft, setAppliedDraft] = useState(draft);
+  const [items, setItems] = useState([]);
+  const [fetchedAt, setFetchedAt] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
+  const [breakdownTask, setBreakdownTask] = useState(null);
+  const [breakdownLoading, setBreakdownLoading] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  const debounceRef = useRef(null);
+  const toast = useToast();
+  const deferred = useDeferredValue(draft);
+
+  const fetchRecommendations = useCallback((d) => {
+    setLoading(true);
+    PLUGIN_API.api("GET", "/recommendations", {
+      query: {
+        limit: d.limit,
+        platforms: d.platforms.join(","),
+        sort: "score",
+        mdrm_weighting: d.mdrm_weighting ? "true" : "false",
+      },
+    })
+      .then(r => {
+        let list = r.items || [];
+        if ((d.filters || []).length) {
+          const fset = new Set(d.filters.map(s => s.toLowerCase()));
+          list = list.filter(it => !Array.from(fset).some(f => (it.title || "").toLowerCase().includes(f)));
+        }
+        setItems(list);
+        setFetchedAt(Math.floor(Date.now() / 1000));
+      })
+      .catch(err => toast("error", err.message))
+      .finally(() => setLoading(false));
+  }, [toast]);
+
+  useEffect(() => { fetchRecommendations(appliedDraft); /* on tab mount */ }, []); // eslint-disable-line
+
+  useEffect(() => {
+    debounceWith(debounceRef, 300, () => {
+      if (diffCount(deferred, appliedDraft) === 0) return;
+      // Auto-apply when ≤2 changes; otherwise let the floating bar handle.
+      if (diffCount(deferred, appliedDraft) <= 2 && !dismissed) {
+        setAppliedDraft(deferred);
+        fetchRecommendations(deferred);
+      }
+    });
+    return () => debounceRef.current && clearTimeout(debounceRef.current);
+  }, [deferred, appliedDraft, dismissed, fetchRecommendations]);
+
+  const pending = diffCount(draft, appliedDraft);
+  const onApply = () => {
+    setAppliedDraft(draft);
+    setDismissed(false);
+    fetchRecommendations(draft);
+  };
+
+  const createTask = (mode, input, persona) => {
+    return PLUGIN_API.api("POST", "/tasks", { body: { mode, input, persona: persona || draft.persona } })
+      .then(resp => {
+        toast("success", `${modeLabel(mode)} → ${resp.task_id.slice(0, 8)}`);
+        onTaskCreated && onTaskCreated(resp.task_id, mode);
+        return resp;
+      })
+      .catch(err => { toast("error", err.message); throw err; });
+  };
+
+  const onCreateRadar = () => createTask("radar_pull", {
+    platforms: draft.platforms, keywords: draft.keywords,
+    time_window: draft.time_window, limit: draft.limit,
+    engine: draft.engine_b ? "auto" : "a",
+    mdrm_weighting: draft.mdrm_weighting,
+  }).then(() => fetchRecommendations(draft));
+
+  const onCreateBreakdown = () => createTask("breakdown_url", {
+    url: draft.url.trim(), persona: draft.persona, write_to_mdrm: draft.mdrm_weighting,
+  }).then(() => onMdrmRefresh && onMdrmRefresh());
+
+  const onCreateCompare = () => {
+    const urls = (draft.accounts || "").split("\n").map(s => s.trim()).filter(Boolean);
+    if (!urls.length) { toast("warn", t("lp_accounts_textarea")); return; }
+    return createTask("compare_accounts", { account_urls: urls });
+  };
+
+  const onExpand = (item) => {
+    setExpandedId(item.id);
+    setBreakdownLoading(true);
+    setBreakdownTask(null);
+    createTask("breakdown_url", { url: item.external_url, persona: draft.persona, write_to_mdrm: draft.mdrm_weighting })
+      .then(resp => {
+        const tid = resp.task_id;
+        const poll = () => {
+          PLUGIN_API.api("GET", "/tasks/" + tid).then(row => {
+            if (["done", "failed", "canceled"].includes(row.status)) {
+              setBreakdownTask(row);
+              setBreakdownLoading(false);
+              if (row.status === "done") onMdrmRefresh && onMdrmRefresh();
+              return;
+            }
+            setBreakdownTask(row);
+            setTimeout(poll, 2000);
+          }).catch(() => { setBreakdownLoading(false); });
+        };
+        setTimeout(poll, 1500);
+      })
+      .catch(() => setBreakdownLoading(false));
+  };
+
+  const onSave = (item) => PLUGIN_API.api("POST", "/items/" + encodeURIComponent(item.id) + "/save").then(() => toast("success", t("rp_btn_save")));
+
+  const onHandoff = (item) => toast("success", t("rp_btn_handoff") + " · " + item.id.slice(0, 8));
+
+  const onRemix = (item) => createTask("script_remix", {
+    trend_item_id: item.id, my_persona: draft.persona, my_brand_keywords: draft.keywords,
+    target_platform: item.platform || "douyin", num_variants: 3,
+    use_mdrm_hints: draft.mdrm_weighting,
+  });
+
+  const engines = useMemo(() => {
+    const list = ["A"];
+    if (draft.engine_b) list.push("B");
+    return list;
+  }, [draft.engine_b]);
+
+  return (
+    <div className="ir-workbench">
+      <LeftPanel
+        draft={draft} setDraft={setDraft}
+        onCreateRadar={onCreateRadar}
+        onCreateBreakdown={onCreateBreakdown}
+        onCreateCompare={onCreateCompare}
+        settings={settings}
+        onSnapshot={() => onSnapshot(draft)}
+      />
+      <RightPanel
+        items={items} fetchedAt={fetchedAt} loading={loading} engines={engines} onRefresh={() => fetchRecommendations(draft)}
+        expandedId={expandedId} onExpand={onExpand} onCollapse={() => { setExpandedId(null); setBreakdownTask(null); }}
+        breakdownTask={breakdownTask} breakdownLoading={breakdownLoading}
+        onHandoff={onHandoff} onSave={onSave} onRemix={onRemix}
+        pendingChanges={pending} onApply={onApply} onDismiss={() => setDismissed(true)}
+      />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tasks tab — table + detail drawer
+// ---------------------------------------------------------------------------
+
+const STATUS_OPTIONS = ["", "pending", "running", "done", "failed", "canceled"];
+
+function ErrorPanel({ task }) {
+  if (!task || !task.error_kind) return null;
+  return (
+    <div className="ir-error-panel">
+      <strong>{task.error_kind}</strong>
+      <small>{t("hint_zh_label")}: {task.error_hint_zh || "—"}</small>
+      <small>EN: {task.error_hint_en || "—"}</small>
+      <pre className="ir-mono">{task.error_message || ""}</pre>
+    </div>
+  );
+}
+
+function CostBreakdown({ task }) {
+  const cost = task && (task.cost_cny || task.cost);
+  if (!cost && cost !== 0) return null;
+  const inp = safeJSON(task.input_json, task.input_json) || {};
+  const breakdown = inp.cost_breakdown || {};
+  return (
+    <div className="ir-cost">
+      {breakdown.input_tokens != null && <div className="ir-cost__row"><span>{t("cost_input")}</span><span>{breakdown.input_tokens}</span></div>}
+      {breakdown.output_tokens != null && <div className="ir-cost__row"><span>{t("cost_output")}</span><span>{breakdown.output_tokens}</span></div>}
+      {breakdown.frames != null && <div className="ir-cost__row"><span>{t("cost_per_image")}</span><span>{breakdown.frames}</span></div>}
+      {breakdown.audio_minutes != null && <div className="ir-cost__row"><span>{t("cost_per_minute")}</span><span>{breakdown.audio_minutes}</span></div>}
+      <div className="ir-cost__row ir-cost__total"><span>{t("cost_total")}</span><span>¥ {Number(cost).toFixed(3)}</span></div>
+    </div>
+  );
+}
+
+function TaskDetailDrawer({ task, breakdown, onClose, onRetry, onCancel, onDelete, onExport }) {
+  if (!task) return null;
+  const inp = safeJSON(task.input_json, task.input_json);
+  const out = safeJSON(task.output_json, task.output_json);
+  const writes = safeJSON(task.mdrm_writes_json, null);
+  return (
+    <aside className="ir-task-detail">
+      <header className="ir-drawer__head">
+        <Icon name={MODES.find(m => m.id === task.mode)?.icon || "list"} />
+        <h3>{modeLabel(task.mode)} · {task.id.slice(0, 8)}</h3>
+        <button className="ir-btn ir-btn--xs ir-drawer__close" onClick={onClose}>{t("btn_close")}</button>
+      </header>
+      <div className="ir-segment">
+        {task.status === "running" && <button className="ir-btn ir-btn--xs" onClick={() => onCancel(task.id)}><Icon name="cancel" w={12} h={12} /> {t("tasks_btn_cancel")}</button>}
+        <button className="ir-btn ir-btn--xs" onClick={() => onRetry(task.id)}><Icon name="refresh" w={12} h={12} /> {t("tasks_btn_retry")}</button>
+        <button className="ir-btn ir-btn--xs ir-btn--danger" onClick={() => onDelete(task.id)}><Icon name="trash" w={12} h={12} /> {t("tasks_btn_delete")}</button>
+        <button className="ir-btn ir-btn--xs" onClick={() => onExport(task.id)}><Icon name="download" w={12} h={12} /> {t("tasks_btn_export")}</button>
+      </div>
+      <CostBreakdown task={task} />
+      <ErrorPanel task={task} />
+      {writes && <MdrmWriteStatus writes={writes} />}
+      <details open>
+        <summary><strong>{t("td_inputs")}</strong></summary>
+        <pre className="ir-mono">{JSON.stringify(inp, null, 2)}</pre>
+      </details>
+      <details open={task.mode === "breakdown_url"}>
+        <summary><strong>{t("td_outputs")}</strong></summary>
+        {breakdown
+          ? <BreakdownDetail task={{ output_json: breakdown, mdrm_writes_json: writes }} />
+          : <pre className="ir-mono">{JSON.stringify(out, null, 2)}</pre>}
+      </details>
+    </aside>
+  );
+}
+
+function TasksTab({ taskBus }) {
+  const [tasks, setTasks] = useState([]);
+  const [filterMode, setFilterMode] = useState("");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [active, setActive] = useState(null);
+  const [breakdown, setBreakdown] = useState(null);
+  const toast = useToast();
+  const [route, navigate] = useHashRoute();
+
+  const refresh = useCallback(() => {
+    return PLUGIN_API.api("GET", "/tasks", { query: { mode: filterMode, status: filterStatus, limit: 100 } })
+      .then(r => setTasks(r.tasks || []))
+      .catch(err => toast("error", err.message));
+  }, [filterMode, filterStatus, toast]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    const sel = route.params && route.params.id;
+    if (!sel) { setActive(null); setBreakdown(null); return; }
+    PLUGIN_API.api("GET", "/tasks/" + sel)
+      .then(row => {
+        setActive(row);
+        if (row.mode === "breakdown_url") {
+          PLUGIN_API.api("GET", "/tasks/" + sel + "/breakdown").then(setBreakdown).catch(() => setBreakdown(null));
+        } else { setBreakdown(null); }
+      })
+      .catch(() => { setActive(null); setBreakdown(null); });
+  }, [route.params && route.params.id]);
+
+  useEffect(() => {
+    if (!taskBus) return undefined;
+    const off = taskBus.subscribe(refresh);
+    return off;
+  }, [taskBus, refresh]);
+
+  const onRetry = (tid) => PLUGIN_API.api("POST", "/tasks/" + tid + "/retry").then(() => { toast("success", t("tasks_btn_retry")); refresh(); });
+  const onCancel = (tid) => PLUGIN_API.api("POST", "/tasks/" + tid + "/cancel").then(() => { toast("success", t("tasks_btn_cancel")); refresh(); });
+  const onDelete = (tid) => PLUGIN_API.api("DELETE", "/tasks/" + tid).then(() => { toast("success", t("tasks_btn_delete")); navigate("tasks", {}); refresh(); });
+  const onExport = (tid) => {
+    PLUGIN_API.api("GET", "/tasks/" + tid).then(row => {
+      const blob = new Blob([JSON.stringify(row, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = "task-" + tid + ".json"; a.click();
+      URL.revokeObjectURL(url);
+    });
+  };
+
+  return (
+    <section className="ir-tasks">
+      <header className="ir-tasks__header">
+        <h2 style={{ margin: 0 }}>{t("tab_tasks")}</h2>
+        <div className="ir-tasks__filters">
+          <select className="ir-select" value={filterMode} onChange={e => setFilterMode(e.target.value)}>
+            <option value="">{t("tasks_filter_mode")}</option>
+            {MODES.map(m => <option key={m.id} value={m.id}>{modeLabel(m.id)}</option>)}
+          </select>
+          <select className="ir-select" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+            <option value="">{t("tasks_filter_status")}</option>
+            {STATUS_OPTIONS.filter(Boolean).map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <button className="ir-btn" onClick={refresh}><Icon name="refresh" w={14} h={14} /> {t("lp_refresh_now")}</button>
+        </div>
+      </header>
+      {tasks.length === 0
+        ? <div className="ir-empty">{t("tasks_empty")}</div>
+        : (
+        <table className="ir-tasks__table">
+          <thead>
+            <tr>
+              <th style={{ width: 40 }}>{t("tasks_col_mode")}</th>
+              <th style={{ width: 90 }}>{t("tasks_col_id")}</th>
+              <th>{t("tasks_col_title")}</th>
+              <th style={{ width: 100 }}>{t("tasks_col_status")}</th>
+              <th style={{ width: 140 }}>{t("tasks_col_created")}</th>
+              <th style={{ width: 120 }}>{t("tasks_col_actions")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tasks.map(row => {
+              const inp = safeJSON(row.input_json, row.input_json) || {};
+              const summary = inp.url || (inp.platforms || []).join(",") || (inp.account_urls || []).slice(0, 2).join(", ") || row.mode;
+              const isActive = active && active.id === row.id;
+              return (
+                <tr key={row.id} className={isActive ? "is-selected" : ""} onClick={() => navigate("tasks", { id: row.id })}>
+                  <td><Icon name={MODES.find(m => m.id === row.mode)?.icon || "list"} w={16} h={16} /></td>
+                  <td className="ir-mono">{row.id.slice(0, 8)}</td>
+                  <td title={summary}>{(summary || "").slice(0, 60)}</td>
+                  <td><span className="ir-status" data-state={row.status}>{row.status}</span></td>
+                  <td title={formatAbs(row.created_at)}>{formatRelative(row.created_at)}</td>
+                  <td onClick={e => e.stopPropagation()}>
+                    {row.status === "running" && <button className="ir-btn ir-btn--xs" onClick={() => onCancel(row.id)}>{t("tasks_btn_cancel")}</button>}
+                    <button className="ir-btn ir-btn--xs" onClick={() => onRetry(row.id)}>{t("tasks_btn_retry")}</button>
+                    <button className="ir-btn ir-btn--xs ir-btn--danger" onClick={() => onDelete(row.id)}>{t("tasks_btn_delete")}</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+      <TaskDetailDrawer task={active} breakdown={breakdown} onClose={() => navigate("tasks", {})} onRetry={onRetry} onCancel={onCancel} onDelete={onDelete} onExport={onExport} />
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Settings tab — 5 sections + cookies vault + MDRM card
+// ---------------------------------------------------------------------------
+
+function CookieCard({ platform, status, onSave, onTest, onClear }) {
+  const [text, setText] = useState("");
+  const [risk, setRisk] = useState(true);
+  const toast = useToast();
+  return (
+    <div className="ir-cookie">
+      <div className="ir-cookie__title"><Icon name="cookie" w={14} h={14} /> {platform.label_zh}</div>
+      <div className="ir-cookie__status" data-ok={status?.ok}>
+        {status ? (
+          <>
+            {status.ok ? "✓ " : "✗ "}
+            {status.expires_at ? "exp " + formatRelative(status.expires_at) : (status.updated_at ? formatRelative(status.updated_at) : "—")}
+          </>
+        ) : "未配置"}
+      </div>
+      <textarea className="ir-textarea" placeholder={t("st_cookies_placeholder")} value={text} onChange={e => setText(e.target.value)} />
+      <ToggleSwitch value={risk} onChange={setRisk} label={t("st_engine_b_risk")} />
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <button className="ir-btn ir-btn--xs ir-btn--primary" disabled={!text.trim() || !risk}
+          onClick={() => onSave(platform.id, text, risk).then(() => { setText(""); toast("success", t("st_cookies_btn_save")); })}>
+          {t("st_cookies_btn_save")}
+        </button>
+        <button className="ir-btn ir-btn--xs" onClick={() => onTest(platform.id)}>{t("st_cookies_btn_test")}</button>
+        <button className="ir-btn ir-btn--xs ir-btn--danger" onClick={() => onClear(platform.id)}>{t("st_cookies_btn_clear")}</button>
+      </div>
+    </div>
+  );
+}
+
+function CookiesManager({ status, onSave, onTest, onClear }) {
+  const byPlatform = (status || []).reduce((acc, s) => { acc[s.platform] = s; return acc; }, {});
+  return (
+    <div className="ir-cookies-grid">
+      {COOKIES_PLATFORMS.map(p => (
+        <CookieCard key={p.id} platform={p} status={byPlatform[p.id]} onSave={onSave} onTest={onTest} onClear={onClear} />
+      ))}
+    </div>
+  );
+}
+
+function MdrmCard({ stats, onClear, onReindex }) {
+  const caps = (stats && stats.caps) || {};
+  const missing = (stats && stats.missing_perms) || [];
+  return (
+    <div className="ir-card ir-mdrm-card">
+      <h3><Icon name="memory" w={16} h={16} /> MDRM</h3>
+      <div className="ir-perm-row"><Icon name="cog" w={14} h={14} /> Brain: <span data-state={caps.brain ? "ok" : "missing"}>{caps.brain ? t("mdrm_perm_granted") : t("mdrm_perm_missing")}</span></div>
+      <div className="ir-perm-row"><Icon name="cloud" w={14} h={14} /> Vector: <span data-state={caps.vector ? "ok" : "missing"}>{caps.vector ? t("mdrm_perm_granted") : t("mdrm_perm_missing")}</span></div>
+      <div className="ir-perm-row"><Icon name="memory" w={14} h={14} /> Memory: <span data-state={caps.memory ? "ok" : "missing"}>{caps.memory ? t("mdrm_perm_granted") : t("mdrm_perm_missing")}</span></div>
+      <div>{t("mdrm_status_learned", { n: (stats && stats.hook_count) || 0 })}</div>
+      {missing.length > 0 && <small style={{ color: "var(--ir-warn)" }}>Missing perms: {missing.join(", ")}</small>}
+      <div style={{ display: "flex", gap: 6 }}>
+        <button className="ir-btn ir-btn--xs ir-btn--danger" onClick={onClear}>{t("mdrm_clear")}</button>
+        <button className="ir-btn ir-btn--xs" onClick={onReindex}>{t("mdrm_reindex")}</button>
+      </div>
+    </div>
+  );
+}
+
+function SettingsTab({ mdrmStats, onMdrmRefresh }) {
+  const [settings, setSettings] = useState({});
+  const [sources, setSources] = useState({ engine_a: { enabled: true }, engine_b: { enabled: false, cookies_status: [] } });
+  const [storage, setStorage] = useState({ data_dir: "—", size_mb: 0 });
+  const toast = useToast();
+
+  const refresh = useCallback(() => {
+    Promise.all([
+      PLUGIN_API.api("GET", "/settings"),
+      PLUGIN_API.api("GET", "/sources"),
+      PLUGIN_API.api("GET", "/healthz"),
+    ]).then(([cfg, src, hz]) => {
+      setSettings(cfg || {});
+      setSources(src || sources);
+      setStorage({ data_dir: hz.db || "—", size_mb: hz.size_mb || 0 });
+    }).catch(err => toast("error", err.message));
+  }, [toast]); // eslint-disable-line
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const setSetting = (key, value) => {
+    PLUGIN_API.api("PUT", "/settings", { body: { updates: { [key]: value } } })
+      .then(updated => setSettings(updated))
+      .catch(err => toast("error", err.message));
+  };
+
+  const onSaveCookies = (platform, jsonText, risk) => {
+    return PLUGIN_API.api("POST", "/sources/cookies/" + platform, {
+      body: { json_text: jsonText, risk_acknowledged: risk },
+    }).then(() => refresh()).catch(err => { toast("error", err.message); throw err; });
+  };
+
+  const onTestCookies = (platform) => {
+    return PLUGIN_API.api("POST", "/sources/cookies/" + platform + "/test")
+      .then(r => toast(r.ok ? "success" : "warn", `${platform}: ${r.message || (r.ok ? "ok" : "fail")}`))
+      .catch(err => toast("error", err.message));
+  };
+
+  const onClearCookies = (platform) => {
+    PLUGIN_API.api("POST", "/sources/cookies/" + platform, {
+      body: { cookies_dict: {}, risk_acknowledged: true },
+    }).then(refresh).catch(err => toast("error", err.message));
+  };
+
+  const onMdrmClear = () => {
+    if (!window.confirm(t("mdrm_clear") + "?")) return;
+    PLUGIN_API.api("POST", "/mdrm/clear", { body: { confirm: true } })
+      .then(() => { toast("success", t("mdrm_clear")); onMdrmRefresh && onMdrmRefresh(); })
+      .catch(err => toast("error", err.message));
+  };
+  const onMdrmReindex = () => {
+    PLUGIN_API.api("POST", "/mdrm/reindex", { body: { from_days_ago: 30 } })
+      .then(r => { toast("success", `reindex ${r.reindexed || 0}`); onMdrmRefresh && onMdrmRefresh(); })
+      .catch(err => toast("error", err.message));
+  };
+  const onCleanup = () => {
+    PLUGIN_API.api("POST", "/cleanup", { body: { older_than_days: 30 } })
+      .then(r => toast("success", `deleted ${r.deleted}, freed ${r.freed_mb}MB`))
+      .catch(err => toast("error", err.message));
+  };
+
+  return (
+    <section className="ir-settings">
+      <div className="ir-card">
+        <h3><Icon name="cog" /> {t("st_section_keys")}</h3>
+        <div className="ir-card__grid">
+          <div className="ir-field">
+            <label className="ir-field__label">{t("st_key_dashscope")}</label>
+            <input className="ir-input" type="password" defaultValue={settings.dashscope_api_key || ""} onBlur={e => setSetting("dashscope_api_key", e.target.value)} />
+            <small style={{ color: "var(--ir-muted)" }}>{t("st_key_dashscope_hint")}</small>
+          </div>
+          <div className="ir-field">
+            <label className="ir-field__label">{t("st_key_youtube")}</label>
+            <input className="ir-input" type="password" defaultValue={settings.youtube_api_key || ""} onBlur={e => setSetting("youtube_api_key", e.target.value)} />
+          </div>
+          <div className="ir-field">
+            <label className="ir-field__label">{t("st_key_rsshub")}</label>
+            <input className="ir-input" defaultValue={settings.rsshub_base || "https://rsshub.app"} onBlur={e => setSetting("rsshub_base", e.target.value)} />
+          </div>
+        </div>
+      </div>
+
+      <div className="ir-card">
+        <h3><Icon name="cookie" /> {t("st_section_sources")}</h3>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <span>{t("st_engine_a")}: <span className="ir-pill">{sources.engine_a?.enabled ? "on" : "off"}</span></span>
+          <ToggleSwitch value={!!settings.engine_b_enabled} onChange={v => setSetting("engine_b_enabled", v)} label={t("st_engine_b")} />
+        </div>
+        {sources.engine_b?.warnings?.length > 0 && (
+          <div className="ir-error-panel">
+            {sources.engine_b.warnings.map((w, i) => <small key={i}>{w}</small>)}
+          </div>
+        )}
+        <CookiesManager status={sources.engine_b?.cookies_status} onSave={onSaveCookies} onTest={onTestCookies} onClear={onClearCookies} />
+      </div>
+
+      <div className="ir-card">
+        <h3><Icon name="radar" /> {t("st_section_radar")}</h3>
+        <div className="ir-field">
+          <label className="ir-field__label">{t("st_radar_interval")}</label>
+          <select className="ir-select" value={Number(settings.refresh_interval_min || 60)} onChange={e => setSetting("refresh_interval_min", Number(e.target.value))}>
+            {REFRESH_INTERVALS.map(it => <option key={it.id} value={it.id}>{it.label}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div className="ir-card">
+        <h3><Icon name="box" /> {t("st_section_storage")}</h3>
+        <div className="ir-card__grid">
+          <div>
+            <div>{t("st_storage_path")}: <code className="ir-mono">{storage.data_dir}</code></div>
+            <div>{t("st_storage_size")}: <strong>{storage.size_mb || 0} MB</strong></div>
+            <button className="ir-btn ir-btn--xs ir-btn--danger" style={{ marginTop: 8 }} onClick={onCleanup}>{t("st_storage_clean")}</button>
+          </div>
+          <MdrmCard stats={mdrmStats} onClear={onMdrmClear} onReindex={onMdrmReindex} />
+        </div>
+      </div>
+
+      <div className="ir-card">
+        <h3><Icon name="info" /> {t("st_section_about")}</h3>
+        <p>{t("st_about_version", { v: PLUGIN_API.version })}</p>
+        <p style={{ color: "var(--ir-muted)", fontSize: 12 }}>OpenAkita 第 9 个一线插件 · 首个接入 MDRM 记忆图谱</p>
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot compare modal
+// ---------------------------------------------------------------------------
+
+function SnapshotCompareModal({ snapshots, onClose, onLoad }) {
+  if (!snapshots || !snapshots.length) return null;
+  return (
+    <div className="ir-modal-back" onClick={onClose}>
+      <div className="ir-modal" onClick={e => e.stopPropagation()}>
+        <h3>📸 Snapshots</h3>
+        {snapshots.map((s, i) => (
+          <div key={i} style={{ borderTop: "1px solid var(--ir-card-border)", paddingTop: 8 }}>
+            <pre className="ir-mono" style={{ maxHeight: 220, overflow: "auto" }}>{JSON.stringify(s, null, 2)}</pre>
+            <button className="ir-btn ir-btn--xs" onClick={() => onLoad(s)}>{t("btn_apply")}</button>
+          </div>
+        ))}
+        <button className="ir-btn" onClick={onClose}>{t("btn_close")}</button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// App root
+// ---------------------------------------------------------------------------
+
+function App() {
+  const [route, navigate] = useHashRoute();
+  const [theme, setTheme] = useState(PLUGIN_API.state.theme);
+  const [locale, setLocale] = useState(PLUGIN_API.state.locale);
+  const [mdrmStats, setMdrmStats] = useState({ caps: {}, hook_count: 0 });
+  const [settings, setSettings] = useState({});
+  const [snapshots, setSnapshots] = useState(() => {
+    try { return JSON.parse(window.localStorage.getItem("idea_research_snapshots_v1") || "[]"); } catch (_) { return []; }
+  });
+  const [showSnap, setShowSnap] = useState(false);
+  const subscribers = useRef(new Set());
+  const taskBus = useMemo(() => ({
+    subscribe(fn) {
+      subscribers.current.add(fn);
+      return () => subscribers.current.delete(fn);
+    },
+    publish() { subscribers.current.forEach(fn => { try { fn(); } catch (_) {} }); },
+  }), []);
+  const toast = useToast();
+
+  const refreshMdrm = useCallback(() => {
+    PLUGIN_API.api("GET", "/mdrm/stats").then(setMdrmStats).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    refreshMdrm();
+    PLUGIN_API.api("GET", "/settings").then(setSettings).catch(() => {});
+  }, [refreshMdrm]);
+
+  useSSE(useCallback((type, data) => {
+    if (!type) return;
+    if (type.startsWith("idea.task.")) taskBus.publish();
+    if (type === "idea.task.done") {
+      toast("success", `${modeLabel(data?.mode || "")} ✓`);
+      refreshMdrm();
+    } else if (type === "idea.task.failed") {
+      toast("error", `${data?.error_kind || "error"}: ${data?.hint_zh || data?.message || ""}`);
+    } else if (type === "idea.mdrm.write_done" || type === "idea.mdrm.reindex_progress") {
+      refreshMdrm();
+    }
+  }, [taskBus, toast, refreshMdrm]));
+
+  const onTheme = (next) => { setTheme(next); PLUGIN_API.setTheme(next); };
+  const onLocale = (next) => { setLocale(next); PLUGIN_API.setLocale(next); };
+
+  const onSnapshot = (draft) => {
+    const next = (snapshots || []).slice(-1).concat([clone(draft)]);
+    setSnapshots(next);
+    try { window.localStorage.setItem("idea_research_snapshots_v1", JSON.stringify(next)); } catch (_) {}
+    setShowSnap(true);
+  };
+  const onLoadSnapshot = (snap) => {
+    try { window.localStorage.setItem(LEFT_DRAFT_KEY, JSON.stringify(snap)); } catch (_) {}
+    setShowSnap(false);
+    window.location.reload();
+  };
+
+  return (
+    <div className="ir-app">
+      <AppHeader
+        activeTab={route.tab} onNavigate={navigate}
+        locale={locale} theme={theme}
+        onLocale={onLocale} onTheme={onTheme}
+        hookCount={mdrmStats.hook_count}
+      />
+      <MdrmStatusBar
+        stats={mdrmStats}
+        onClear={() => { if (window.confirm("Clear MDRM?")) PLUGIN_API.api("POST", "/mdrm/clear", { body: { confirm: true } }).then(refreshMdrm).catch(err => toast("error", err.message)); }}
+        onReindex={() => PLUGIN_API.api("POST", "/mdrm/reindex", { body: { from_days_ago: 30 } }).then(refreshMdrm).catch(err => toast("error", err.message))}
+      />
+      <section className="ir-main">
+        {route.tab === "workbench" && (
+          <WorkbenchTab
+            mdrmStats={mdrmStats}
+            settings={settings}
+            onTaskCreated={() => taskBus.publish()}
+            onMdrmRefresh={refreshMdrm}
+            onSnapshot={onSnapshot}
+          />
+        )}
+        {route.tab === "tasks" && <TasksTab taskBus={taskBus} />}
+        {route.tab === "settings" && <SettingsTab mdrmStats={mdrmStats} onMdrmRefresh={refreshMdrm} />}
+      </section>
+      {showSnap && <SnapshotCompareModal snapshots={snapshots} onClose={() => setShowSnap(false)} onLoad={onLoadSnapshot} />}
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<ToastProvider><App /></ToastProvider>);
+  </script>
+</body>
+</html>

@@ -1,0 +1,2085 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tongyi Image Generator</title>
+  <!--
+    Self-contained plugin UI: bootstrap + UI Kit are inlined under _assets/.
+    Plugins MUST NOT depend on host-mounted /api/plugins/_sdk/* (removed in
+    SDK 0.7.0). See plugins-archive/_shared/web-uikit/README.md for the
+    canonical reference copy.
+  -->
+  <script src="_assets/bootstrap.js"></script>
+  <link rel="stylesheet" href="_assets/styles.css">
+  <script src="_assets/icons.js"></script>
+  <script src="_assets/markdown-mini.js"></script>
+  <script src="_assets/i18n.js"></script>
+  <!--
+    Preload CDN deps in parallel (script tags below remain synchronous so
+    React/ReactDOM/Babel still execute in declared order; preload only
+    starts the downloads earlier so they finish faster). The `crossorigin`
+    attribute on the preload links MUST match the script tag — react /
+    react-dom use crossorigin, babel does not.
+  -->
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react@18/umd/react.production.min.js" />
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" />
+  <link rel="preload" as="script" href="https://unpkg.com/@babel/standalone/babel.min.js" />
+  <style>
+    :root {
+      --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
+      --text: #1e293b; --text-muted: #64748b; --text-dim: #94a3b8;
+      --primary: #6366f1; --primary-hover: #4f46e5; --primary-light: rgba(99,102,241,.1);
+      --success: #22c55e; --warning: #f59e0b; --danger: #ef4444;
+      --border: #e2e8f0; --radius: 8px;
+    }
+    [data-theme="dark"] {
+      --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+      --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
+      --border: #334155;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+        --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
+        --border: #334155;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+    .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    .header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--bg-card); }
+    .header h1 { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .header-right { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-muted); }
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--bg-card); padding: 0 16px; }
+    .tab { padding: 10px 18px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--text-muted); transition: all .15s; white-space: nowrap; }
+    .tab:hover { color: var(--text); background: var(--bg-hover); }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
+    .content { flex: 1; overflow: hidden; padding: 20px; position: relative; }
+    .content > div { overflow-y: auto; }
+    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+    .card-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+    .btn { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-size: 13px; cursor: pointer; transition: all .15s; display: inline-flex; align-items: center; gap: 6px; }
+    .btn:hover { background: var(--bg-hover); }
+    .btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .btn-danger { color: var(--danger); border-color: var(--danger); }
+    .input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px; outline: none; }
+    .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(99,102,241,.15); }
+    .textarea { resize: vertical; min-height: 80px; font-family: inherit; }
+    .select { appearance: none; padding-right: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
+    /* Form-field label — upgraded to a "section label" look (small accent
+     * bar + slightly heavier weight) to give each field a clear hierarchy.
+     * Mirrors .oa-section-label from the UI Kit. */
+    .label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text); margin: 0 0 8px; line-height: 1.3; }
+    .label::before { content: ""; display: inline-block; width: 3px; height: 14px; border-radius: 2px; background: var(--primary); flex-shrink: 0; }
+    .form-row { margin-bottom: 14px; }
+    .flex { display: flex; } .gap-2 { gap: 8px; } .gap-3 { gap: 12px; }
+    .items-center { align-items: center; } .justify-between { justify-content: space-between; }
+    .flex-1 { flex: 1; } .flex-wrap { flex-wrap: wrap; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .text-sm { font-size: 13px; } .text-xs { font-size: 11px; }
+    .text-muted { color: var(--text-muted); } .text-dim { color: var(--text-dim); }
+    .text-success { color: var(--success); } .text-warning { color: var(--warning); } .text-danger { color: var(--danger); }
+    .tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+    .tag-blue { background: rgba(99,102,241,.15); color: #818cf8; }
+    .tag-orange { background: rgba(245,158,11,.15); color: #fbbf24; }
+    .tag-green { background: rgba(34,197,94,.15); color: #4ade80; }
+    .tag-red { background: rgba(239,68,68,.15); color: #f87171; }
+    .tag-gray { background: rgba(148,163,184,.15); color: #94a3b8; }
+    .mode-btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-size: 12px; cursor: pointer; transition: all .15s; }
+    .mode-btn:hover { background: var(--bg-hover); color: var(--text); }
+    .mode-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .upload-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 24px; text-align: center; cursor: pointer; transition: .15s; color: var(--text-muted); }
+    .upload-zone:hover { border-color: var(--primary); background: rgba(99,102,241,.04); }
+    .upload-zone.has-image { padding: 8px; border-style: solid; }
+    .upload-preview { max-width: 100%; max-height: 180px; border-radius: 6px; object-fit: contain; }
+    .split-layout { display: flex; gap: 20px; height: 100%; }
+    .split-left { width: 42%; min-width: 380px; overflow-y: auto; flex-shrink: 0; }
+    .split-right { flex: 1; overflow-y: auto; }
+    .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: var(--text-dim); text-align: center; }
+    .image-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+    .image-gallery--single { display: flex; justify-content: center; }
+    .image-gallery--single .image-card { max-width: min(100%, 600px); width: 100%; }
+    .image-gallery--single .image-card img { aspect-ratio: auto; height: auto; object-fit: contain; }
+    .image-card { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; cursor: pointer; transition: .15s; position: relative; }
+    .image-card:hover { border-color: var(--primary); box-shadow: 0 2px 8px rgba(0,0,0,.1); }
+    .image-card img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+    .image-card-actions { position: absolute; bottom: 0; left: 0; right: 0; background: linear-gradient(transparent, rgba(0,0,0,.7)); padding: 8px; display: flex; gap: 4px; justify-content: flex-end; opacity: 0; transition: .2s; }
+    .image-card:hover .image-card-actions { opacity: 1; }
+    .image-card-actions button { background: rgba(255,255,255,.2); border: none; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; backdrop-filter: blur(4px); }
+    .image-card-actions button:hover { background: rgba(255,255,255,.4); }
+    .task-card { display: flex; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); transition: .15s; cursor: pointer; margin-bottom: 8px; }
+    .task-card:hover { background: var(--bg-hover); }
+    .task-card.selected { border-color: var(--primary); background: var(--primary-light); }
+    .task-thumb { width: 64px; height: 64px; border-radius: 6px; background: var(--bg-hover); flex-shrink: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+    .task-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .task-info { flex: 1; min-width: 0; }
+    .task-info h4 { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+    .task-meta { font-size: 11px; color: var(--text-dim); display: flex; gap: 8px; flex-wrap: wrap; }
+    .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; }
+    .spinner-sm { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .keyword-tag { display: inline-block; padding: 3px 10px; margin: 3px; border-radius: 4px; font-size: 12px; background: var(--bg-hover); color: var(--text-muted); cursor: pointer; transition: .15s; border: 1px solid transparent; }
+    .keyword-tag:hover { border-color: var(--primary); color: var(--primary); }
+    .template-card { padding: 12px 14px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; transition: .15s; margin-bottom: 8px; }
+    .template-card:hover { border-color: var(--primary); background: rgba(99,102,241,.04); }
+    .template-card h4 { font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+    .template-card p { font-size: 12px; color: var(--text-dim); }
+    .setting-section { margin-bottom: 24px; }
+    .setting-section h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    .collapsible { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; }
+    .collapsible-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; cursor: pointer; font-size: 13px; font-weight: 500; }
+    .collapsible-header:hover { background: var(--bg-hover); }
+    .collapsible-body { padding: 0 14px 12px; display: none; }
+    .collapsible.open .collapsible-body { display: block; }
+    .collapsible .arrow { transition: transform .2s; font-size: 10px; }
+    .collapsible.open .arrow { transform: rotate(90deg); }
+    .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 1000; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+    .lightbox img { max-width: 90%; max-height: 90%; object-fit: contain; border-radius: 8px; }
+    .style-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
+    .style-option { padding: 8px; border: 1px solid var(--border); border-radius: 6px; text-align: center; cursor: pointer; font-size: 12px; transition: .15s; }
+    .style-option:hover { border-color: var(--primary); }
+    .style-option.active { border-color: var(--primary); background: var(--primary-light); color: var(--primary); }
+    @media (max-width: 860px) { .split-layout { flex-direction: column; } .split-left { width: 100%; min-width: unset; } }
+    /* ── compact overrides ── */
+    .content { padding: 14px 16px; }
+    .card { padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+    .form-row { margin-bottom: 14px; }
+    /* (.label compact-override removed — keep the upgraded label styles
+     *  defined above so all form-field labels get the section-title look) */
+    .header { padding: 10px 18px; }
+    .tab { padding: 9px 16px; }
+    .btn { padding: 7px 14px; }
+    /* ── task started modal ── */
+    .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; z-index: 2000; animation: ak-fade-in .15s ease-out; padding: 20px; }
+    .modal-card { background: var(--bg-card); border-radius: 12px; padding: 22px 24px; max-width: 420px; width: 100%; box-shadow: 0 20px 50px rgba(0,0,0,.25); animation: ak-scale-in .15s ease-out; }
+    .modal-icon { width: 42px; height: 42px; border-radius: 50%; background: rgba(34,197,94,.12); color: var(--success, #22c55e); display: flex; align-items: center; justify-content: center; margin-bottom: 14px; font-size: 22px; font-weight: 700; }
+    .modal-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+    .modal-desc { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 18px; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    @keyframes ak-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes ak-scale-in { from { transform: scale(.94); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+// ── Bridge SDK ──
+const BRIDGE_VER = 1;
+let _ctx = null, _caps = [], _pending = {}, _handlers = {};
+let _bridgeConnected = false;
+const _inIframe = window.parent !== window;
+function uid() { return Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
+function post(msg) { if (_inIframe) window.parent.postMessage({ __akita_bridge: true, version: BRIDGE_VER, ...msg }, "*"); }
+
+function _detectApiBase() {
+  if (_ctx && _ctx.apiBase) return _ctx.apiBase;
+  var loc = window.location;
+  if (loc.port === "5173" || loc.port === "1420") return "http://127.0.0.1:18900";
+  return loc.origin;
+}
+
+function directFetch(method, path, body) {
+  var url = path.startsWith("http") ? path : _detectApiBase() + path;
+  var opts = { method: method, headers: { "Content-Type": "application/json" } };
+  if (body && method !== "GET" && method !== "HEAD") {
+    if (body instanceof FormData) { opts.body = body; delete opts.headers["Content-Type"]; }
+    else { opts.body = JSON.stringify(body); }
+  }
+  return fetch(url, opts).then(function(resp) {
+    return resp.json().then(function(json) { return { ok: resp.ok, status: resp.status, body: json }; });
+  });
+}
+
+function apiCall(method, path, body) {
+  if (!_inIframe || !_bridgeConnected) return directFetch(method, path, body);
+  return new Promise(function(resolve, reject) {
+    var id = uid();
+    _pending[id] = { resolve: resolve, reject: reject };
+    post({ type: "bridge:api-request", requestId: id, payload: { method: method, path: path, body: body } });
+    setTimeout(function() {
+      if (_pending[id]) { delete _pending[id]; directFetch(method, path, body).then(resolve).catch(reject); }
+    }, 5000);
+  });
+}
+
+function pluginApi(method, path, body) {
+  var base = _ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/tongyi-image";
+  return apiCall(method, base + path, body);
+}
+
+// Native download via host bridge. On Tauri the host invokes the native
+// `download_file` Rust command (reqwest -> disk) and resolves with the
+// REAL filesystem path the file was saved to. On web mode the host falls
+// back to <a download>, so the resolved `path` is just the filename — in
+// that case the caller should fall through to the in-page <a download>
+// path so the browser handles the location.
+function bridgeDownload(url, fname) {
+  return new Promise(function(resolve) {
+    if (!_inIframe || !_bridgeConnected) { resolve({ ok: false, error: "no-bridge" }); return; }
+    var id = uid();
+    _pending[id] = { resolve: resolve, reject: function(e) { resolve({ ok: false, error: String(e) }); } };
+    post({ type: "bridge:download", requestId: id, payload: { url: url, filename: fname } });
+    setTimeout(function() {
+      if (_pending[id]) { delete _pending[id]; resolve({ ok: false, error: "timeout" }); }
+    }, 60000);
+  });
+}
+
+// Ask the host to reveal a file in the OS file manager (Explorer / Finder).
+// Best-effort: silently no-ops if the host doesn't support it (e.g. plain web).
+function bridgeShowInFolder(path) {
+  if (!_inIframe || !_bridgeConnected || !path) return;
+  if (_caps.length && _caps.indexOf("show-in-folder") === -1) return;
+  var id = uid();
+  _pending[id] = { resolve: function() {}, reject: function() {} };
+  post({ type: "bridge:show-in-folder", requestId: id, payload: { path: path } });
+  setTimeout(function() { if (_pending[id]) delete _pending[id]; }, 10000);
+}
+
+window.addEventListener("message", function(e) {
+  var d = e.data;
+  if (!d || !d.__akita_bridge) return;
+  if (d.type === "bridge:init" && d.payload) {
+    _ctx = d.payload; _bridgeConnected = true;
+    if (_ctx.theme) document.documentElement.setAttribute("data-theme", _ctx.theme.includes("dark") ? "dark" : "light");
+  }
+  if (d.type === "bridge:handshake-ack" && d.payload) { _caps = d.payload.capabilities || []; _bridgeConnected = true; }
+  var acks = ["bridge:api-response","bridge:clipboard-ack","bridge:download-ack","bridge:show-in-folder-ack","bridge:pick-folder-ack"];
+  if (acks.indexOf(d.type) !== -1 && d.requestId && _pending[d.requestId]) {
+    _pending[d.requestId].resolve(d.payload); delete _pending[d.requestId];
+  }
+  if (d.type === "bridge:theme-change" && d.payload) {
+    document.documentElement.setAttribute("data-theme", (d.payload.theme || "").includes("dark") ? "dark" : "light");
+  }
+  if (d.type === "bridge:event" && d.payload) {
+    var h = _handlers[d.payload.eventType];
+    if (h) h.forEach(function(fn) { fn(d.payload.data); });
+  }
+});
+var _readyInterval = null;
+function _sendReady() { post({ type: "bridge:ready" }); post({ type: "bridge:handshake", payload: { sdkVersion: "1.0.0" } }); }
+_sendReady();
+if (_inIframe) {
+  _readyInterval = setInterval(function() { if (_bridgeConnected) { clearInterval(_readyInterval); return; } _sendReady(); }, 300);
+  setTimeout(function() { if (_readyInterval) clearInterval(_readyInterval); }, 20000);
+}
+function onEvent(type, fn) { (_handlers[type] = _handlers[type] || []).push(fn); }
+
+function uploadFile(file) {
+  var base = _detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/tongyi-image");
+  var fd = new FormData(); fd.append("file", file);
+  return fetch(base + "/upload", { method: "POST", body: fd }).then(function(r) { return r.json(); });
+}
+
+// i18n shim for the bridge layer (which runs BEFORE the babel script
+// registers its dictionary). We look up window.OpenAkitaI18n.t at call
+// time so we always pick up the latest dictionary registered later.
+function _tr(key, vars, fallback) {
+  if (window.OpenAkitaI18n && window.OpenAkitaI18n.t) {
+    var v = window.OpenAkitaI18n.t(key, vars);
+    if (v && v !== key) return v;
+  }
+  if (fallback) {
+    if (vars) {
+      return String(fallback).replace(/\{(\w+)\}/g, function (_, n) {
+        return vars[n] != null ? String(vars[n]) : "{" + n + "}";
+      });
+    }
+    return fallback;
+  }
+  return key;
+}
+
+async function downloadImage(taskId, idx, promptHint) {
+  try {
+    showToast(_tr("toast.downloading", null, "Downloading..."));
+    var base = _detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/tongyi-image");
+    var url = base + "/images/" + taskId + "?idx=" + (idx || 0) + "&download=1";
+    // Default extension; refined below when we actually fetch the blob in
+    // the web fallback path. The Tauri host preserves whatever Content-Type
+    // the server sends, so a .png suffix is a safe default for the native
+    // path too (DashScope wan27 returns PNG).
+    var fname = "tongyi_" + (promptHint || "image").slice(0, 20).replace(/[\\/:*?"<>|\s]/g, "_") + "_" + idx + ".png";
+
+    // Preferred path: ask the host to do a native download. On Tauri this
+    // saves into the user's Downloads directory and returns the absolute
+    // path so we can both (a) tell the user exactly where it landed and
+    // (b) reveal it in the OS file manager. On plain web the host returns
+    // just the filename — we treat that as "no native path" and fall back.
+    if (_inIframe && _bridgeConnected) {
+      var native = await bridgeDownload(url, fname);
+      // A return value with a path that looks absolute (contains a slash
+      // or backslash) means the host actually wrote the file to disk.
+      if (native && native.ok && native.path && /[\\/]/.test(String(native.path))) {
+        showToast(_tr("toast.downloadedTo", { path: native.path }, "Saved to: {path}"));
+        // Reveal the file so the user immediately sees where it went —
+        // this is the whole point of switching off <a download>.
+        bridgeShowInFolder(native.path);
+        return;
+      }
+      // If native failed for a real reason (not just web fallback), tell
+      // the user — then still try the in-page download as a last resort.
+      if (native && !native.ok && native.error && native.error !== "no-bridge") {
+        console.warn("[downloadImage] bridge download failed, falling back:", native.error);
+      }
+    }
+
+    // Fallback: in-page <a download>. Browser decides the save location,
+    // so we explicitly tell the user to look in their default Downloads
+    // folder instead of leaving them guessing.
+    var resp = await fetch(url);
+    if (!resp.ok) throw new Error(_tr("toast.serverReturned", { status: resp.status }, "Server returned {status}"));
+    var blob = await resp.blob();
+    var ext = blob.type === "image/jpeg" ? ".jpg" : blob.type === "image/webp" ? ".webp" : ".png";
+    if (!fname.endsWith(ext)) fname = fname.replace(/\.[a-z]+$/, ext);
+    var objUrl = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = objUrl;
+    a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(objUrl); }, 3000);
+    showToast(_tr("toast.downloadedBrowser", { name: fname }, "Downloaded {name} — check your browser's default Downloads folder."));
+  } catch (e) {
+    showToast(_tr("toast.downloadFailed", { msg: e.message }, "Download failed: {msg}"));
+  }
+}
+
+function showToast(body, type) {
+  type = type || "success";
+  if (_inIframe && _bridgeConnected) { post({ type: "bridge:notification", payload: { title: "", body: body, type: type } }); return; }
+  console.log("[Toast]", type, body);
+}
+</script>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ─── i18n dictionary ────────────────────────────────────────────────────
+// Single source of truth for every user-visible string in this plugin.
+// Adding a new locale is as simple as adding another top-level key here.
+//
+// Conventions:
+//   - Keys use dot-notation grouped by feature area (tabs.*, create.*, ...)
+//   - Use {var} interpolation, NOT string concatenation, so translators can
+//     reorder words naturally (e.g. en often differs from zh in word order).
+//   - Keep keys ASCII; only the values are localized.
+const I18N_DICT = {
+  zh: {
+    // app shell
+    "app.title": "通义生图",
+    "app.subtitle": "DashScope · 文生图 / 图像编辑 / 电商套图",
+    "tabs.create": "创建",
+    "tabs.tasks": "任务列表",
+    "tabs.guide": "提示词指南",
+    "tabs.settings": "设置",
+    // top banner (no API key)
+    "banner.noKey.title": "尚未配置 DashScope API Key",
+    "banner.noKey.desc": "所有创建任务都会失败。请前往设置页填入阿里云百炼 DashScope API Key。",
+    "banner.noKey.cta": "前往配置",
+    // task started modal
+    "modal.taskStarted.title": "任务已开始",
+    "modal.taskStarted.continue": "继续创建",
+    "modal.taskStarted.goTasks": "前往任务列表",
+    "modal.taskStarted.imageDesc": "图像正在云端生成,约需 15~60 秒。可前往任务列表查看进度与历史结果。",
+    "modal.taskStarted.suiteDesc": "已启动 {n} 个套图生成任务,可前往任务列表查看进度。",
+    // generation modes
+    "modes.text2img": "文生图",
+    "modes.img_edit": "图像编辑",
+    "modes.ecommerce": "电商套图",
+    "modes.style_repaint": "风格重绘",
+    "modes.background": "背景生成",
+    "modes.outpaint": "画面扩展",
+    "modes.sketch": "涂鸦作画",
+    // task status
+    "status.pending": "等待中",
+    "status.running": "生成中",
+    "status.succeeded": "已完成",
+    "status.failed": "失败",
+    // create tab — left panel
+    "create.modeLabel": "生成模式",
+    "create.productName.label": "商品名称",
+    "create.productName.placeholder": "例如:蓝牙降噪耳机、精致香水、手工皮包...",
+    "create.productDesc.label": "商品描述 (可选,补充风格/材质等)",
+    "create.productDesc.placeholder": "补充描述:银色金属质感蓝牙耳机,头戴式设计...",
+    "create.productImage.label": "商品图片 (可选,上传后自动用于换背景)",
+    "create.productImage.tip": "推荐上传透明背景(PNG)商品图,效果最佳",
+    "create.scene.label": "选择生成场景",
+    "create.prompt.editLabel": "编辑指令",
+    "create.prompt.sketchLabel": "文字描述",
+    "create.prompt.label": "提示词",
+    "create.aiOptimize": "AI 优化",
+    "create.aiOptimize.title": "使用 LLM 自动优化提示词,提升画面细节与一致性",
+    "create.prompt.text2imgPlaceholder": "描述你想生成的图像...",
+    "create.prompt.editPlaceholder": "描述编辑内容...",
+    "create.prompt.targetPlaceholder": "描述目标图像...",
+    "create.negPrompt.label": "反向提示词 (可选)",
+    "create.negPrompt.placeholder": "不希望出现的内容...",
+    "create.bg.label": "背景描述",
+    "create.bg.placeholder": "描述目标背景场景...",
+    "create.image.styleRepaint": "人物照片",
+    "create.image.background": "主体图片 (透明背景)",
+    "create.image.outpaint": "原始图片",
+    "create.image.sketch": "草图",
+    "create.image.imgEdit": "参考图片",
+    "create.image.optional": "参考图片 (可选)",
+    "create.model.label": "模型",
+    "create.size.label": "尺寸",
+    "create.size.default": "默认",
+    "create.count.label": "数量",
+    "create.count.unit": "{n} 张",
+    "create.style.label": "预置风格",
+    "create.sketch.styleLabel": "画风",
+    "create.outpaint.ratio": "目标比例",
+    "create.thinking.label": "深度思考模式",
+    "create.thinking.hint": "适合复杂构图",
+    "create.btn.start": "开始生成",
+    "create.btn.generating": "生成中...",
+    "create.btn.ecommerceSuite": "一键生成套图 ({n} 张)",
+    // preview / result
+    "preview.empty.text2img.title": "等待生成图片",
+    "preview.empty.text2img.hint": "选择模式,输入描述,开始创作",
+    "preview.empty.ecommerce.title": "等待生成电商套图",
+    "preview.empty.ecommerce.hint": "输入商品信息,一键生成电商套图",
+    "preview.ec.title": "电商套图结果",
+    "preview.ec.totalCount": "共 {n} 张",
+    "preview.ec.scene.fallback": "场景",
+    "preview.result.title": "生成结果",
+    "preview.result.runningHint": "图像生成中,请稍候...",
+    "preview.result.viewInTasks": "在任务列表中查看",
+    "preview.result.completedNoImages": "任务已完成,图片加载中...",
+    "preview.result.refreshResult": "刷新结果",
+    "preview.result.genFailed": "生成失败",
+    "preview.result.promptLabel": "提示词",
+    "preview.image.download": "下载",
+    // tasks tab
+    "tasks.filter.status": "状态",
+    "tasks.filter.mode": "模式",
+    "tasks.filter.all": "全部",
+    "tasks.filter.allModes": "全部模式",
+    "tasks.empty.title": "暂无任务",
+    "tasks.empty.hint": '在"创建"页发起一次生成后,任务会出现在这里',
+    "tasks.untitled": "无标题",
+    "tasks.totalCount": "共 {n} 个任务",
+    "tasks.detail.title": "任务详情",
+    "tasks.detail.retry": "重试",
+    "tasks.detail.delete": "删除",
+    "tasks.detail.confirmDelete": "确定删除?",
+    "tasks.detail.runningHint": "生成中...",
+    "tasks.detail.completedNoImages": "任务已完成,但未找到图片",
+    "tasks.detail.recheck": "重新获取图片",
+    "tasks.detail.id": "ID",
+    "tasks.detail.mode": "模式",
+    "tasks.detail.model": "模型",
+    "tasks.detail.createdAt": "创建时间",
+    "tasks.detail.prompt": "提示词",
+    "tasks.empty.noSelection.title": "未选择任务",
+    "tasks.empty.noSelection.hint": "从左侧列表选择一个任务查看详情",
+    // guide
+    "guide.intro": "点击下方任意章节标题展开。所有内容默认折叠,方便预览全部主题。",
+    "guide.section.formulas": "提示词公式",
+    "guide.section.templates": "提示词模板",
+    "guide.section.styleKeywords": "风格词典",
+    "guide.section.lightingKeywords": "光线词典",
+    "guide.section.compositionKeywords": "构图词典",
+    "guide.section.negativePresets": "反向提示词预设",
+    "guide.formula.basic": "基础",
+    "guide.formula.advanced": "进阶",
+    // settings
+    "settings.api.title": "API 配置",
+    "settings.api.callout": "必填项",
+    "settings.api.key.show": "显示",
+    "settings.api.key.hide": "隐藏",
+    "settings.api.key.save": "保存",
+    "settings.api.key.helpPrefix": "获取地址: ",
+    "settings.api.key.helpLink": "阿里云百炼控制台",
+    "settings.defaults.title": "默认参数",
+    "settings.defaults.model": "默认模型",
+    "settings.defaults.size": "默认尺寸",
+    "settings.defaults.size4kHint": "(仅 wan2.7 Pro)",
+    "settings.autoDownload.title": "自动下载",
+    "settings.autoDownload.desc": "生成完成后自动下载到本地",
+    "settings.watermark.title": "水印",
+    "settings.watermark.desc": "添加水印",
+    "settings.storage.title": "存储",
+    "settings.storage.images": "生成图片",
+    "settings.storage.uploads": "上传文件",
+    "settings.storage.usage": "{size} MB / {count} 文件",
+    // error boundary
+    "err.title": "插件 UI 渲染出错",
+    "err.retry": "重试渲染",
+    "err.stackLabel": "错误堆栈 (复制给开发者)",
+    // toast
+    "toast.downloading": "正在下载...",
+    "toast.downloadFailed": "下载失败: {msg}",
+    "toast.downloaded": "已下载: {name}",
+    "toast.downloadedTo": "已保存到: {path}（已为你打开所在文件夹）",
+    "toast.downloadedBrowser": "已下载: {name}（请在浏览器默认下载文件夹中查看）",
+    "toast.serverReturned": "服务端返回 {status}",
+    "toast.optimizeOk": "提示词优化完成",
+    "toast.optimizeFail": "优化失败",
+    "toast.optimizeReqFail": "优化请求失败",
+    "toast.needKey": "请先在设置中配置 API Key",
+    "toast.createFail": "创建失败",
+    "toast.requestFail": "请求失败: {msg}",
+    "toast.taskCreated": "任务已创建",
+    "toast.genComplete": "生成完成!",
+    "toast.savedSettings": "设置已保存",
+    "toast.saveFailed": "保存失败",
+    "toast.retryCreated": "重试任务已创建",
+    "toast.recheckQuerying": "正在重新查询...",
+    "toast.recheckFound": "找到 {n} 张图片!",
+    "toast.recheckEmpty": "未找到图片,请稍后重试",
+    "toast.recheckFail": "查询失败",
+  },
+  en: {
+    "app.title": "Tongyi Image",
+    "app.subtitle": "DashScope · Text-to-image / Edit / E-commerce",
+    "tabs.create": "Create",
+    "tabs.tasks": "Tasks",
+    "tabs.guide": "Prompt guide",
+    "tabs.settings": "Settings",
+    "banner.noKey.title": "DashScope API Key not configured",
+    "banner.noKey.desc": "All create tasks will fail. Please open Settings and enter your Alibaba Cloud DashScope API Key.",
+    "banner.noKey.cta": "Go to settings",
+    "modal.taskStarted.title": "Task started",
+    "modal.taskStarted.continue": "Keep creating",
+    "modal.taskStarted.goTasks": "Go to tasks",
+    "modal.taskStarted.imageDesc": "Your image is being generated in the cloud (about 15–60 seconds). Open Tasks to follow progress and history.",
+    "modal.taskStarted.suiteDesc": "Started {n} suite tasks. Open Tasks to follow progress.",
+    "modes.text2img": "Text-to-image",
+    "modes.img_edit": "Image edit",
+    "modes.ecommerce": "E-commerce suite",
+    "modes.style_repaint": "Style repaint",
+    "modes.background": "Background",
+    "modes.outpaint": "Outpaint",
+    "modes.sketch": "Sketch",
+    "status.pending": "Pending",
+    "status.running": "Generating",
+    "status.succeeded": "Done",
+    "status.failed": "Failed",
+    "create.modeLabel": "Generation mode",
+    "create.productName.label": "Product name",
+    "create.productName.placeholder": "e.g. Bluetooth noise-cancelling headphones, luxury perfume, handcrafted leather bag…",
+    "create.productDesc.label": "Product description (optional — add style / material)",
+    "create.productDesc.placeholder": "Add details: silver metallic Bluetooth headphones, over-ear design…",
+    "create.productImage.label": "Product image (optional — used as the foreground for background swap)",
+    "create.productImage.tip": "A transparent-background PNG works best.",
+    "create.scene.label": "Pick scenes",
+    "create.prompt.editLabel": "Edit instruction",
+    "create.prompt.sketchLabel": "Description",
+    "create.prompt.label": "Prompt",
+    "create.aiOptimize": "AI optimize",
+    "create.aiOptimize.title": "Use an LLM to refine the prompt for better detail and consistency.",
+    "create.prompt.text2imgPlaceholder": "Describe the image you want to generate…",
+    "create.prompt.editPlaceholder": "Describe the edits…",
+    "create.prompt.targetPlaceholder": "Describe the target image…",
+    "create.negPrompt.label": "Negative prompt (optional)",
+    "create.negPrompt.placeholder": "Things you don't want…",
+    "create.bg.label": "Background description",
+    "create.bg.placeholder": "Describe the target background scene…",
+    "create.image.styleRepaint": "Portrait",
+    "create.image.background": "Subject image (transparent BG)",
+    "create.image.outpaint": "Original image",
+    "create.image.sketch": "Sketch",
+    "create.image.imgEdit": "Reference image",
+    "create.image.optional": "Reference image (optional)",
+    "create.model.label": "Model",
+    "create.size.label": "Size",
+    "create.size.default": "Default",
+    "create.count.label": "Count",
+    "create.count.unit": "{n}",
+    "create.style.label": "Preset styles",
+    "create.sketch.styleLabel": "Style",
+    "create.outpaint.ratio": "Target ratio",
+    "create.thinking.label": "Deep thinking mode",
+    "create.thinking.hint": "Best for complex compositions",
+    "create.btn.start": "Generate",
+    "create.btn.generating": "Generating…",
+    "create.btn.ecommerceSuite": "Generate suite ({n})",
+    "preview.empty.text2img.title": "Nothing to show yet",
+    "preview.empty.text2img.hint": "Pick a mode, write a prompt, and create.",
+    "preview.empty.ecommerce.title": "Waiting to generate suite",
+    "preview.empty.ecommerce.hint": "Enter product info to generate the e-commerce suite.",
+    "preview.ec.title": "E-commerce suite results",
+    "preview.ec.totalCount": "{n} images",
+    "preview.ec.scene.fallback": "Scene",
+    "preview.result.title": "Result",
+    "preview.result.runningHint": "Generating, please wait…",
+    "preview.result.viewInTasks": "View in Tasks",
+    "preview.result.completedNoImages": "Task complete, loading images…",
+    "preview.result.refreshResult": "Refresh",
+    "preview.result.genFailed": "Generation failed",
+    "preview.result.promptLabel": "Prompt",
+    "preview.image.download": "Download",
+    "tasks.filter.status": "Status",
+    "tasks.filter.mode": "Mode",
+    "tasks.filter.all": "All",
+    "tasks.filter.allModes": "All modes",
+    "tasks.empty.title": "No tasks yet",
+    "tasks.empty.hint": "Once you start a generation in the Create tab, tasks will appear here.",
+    "tasks.untitled": "Untitled",
+    "tasks.totalCount": "{n} tasks",
+    "tasks.detail.title": "Task details",
+    "tasks.detail.retry": "Retry",
+    "tasks.detail.delete": "Delete",
+    "tasks.detail.confirmDelete": "Delete this task?",
+    "tasks.detail.runningHint": "Generating…",
+    "tasks.detail.completedNoImages": "Task complete but no images were found.",
+    "tasks.detail.recheck": "Re-fetch images",
+    "tasks.detail.id": "ID",
+    "tasks.detail.mode": "Mode",
+    "tasks.detail.model": "Model",
+    "tasks.detail.createdAt": "Created at",
+    "tasks.detail.prompt": "Prompt",
+    "tasks.empty.noSelection.title": "No task selected",
+    "tasks.empty.noSelection.hint": "Pick a task on the left to view its details.",
+    "guide.intro": "Click any section heading to expand it. All sections start collapsed so you can scan them quickly.",
+    "guide.section.formulas": "Prompt formulas",
+    "guide.section.templates": "Prompt templates",
+    "guide.section.styleKeywords": "Style keywords",
+    "guide.section.lightingKeywords": "Lighting keywords",
+    "guide.section.compositionKeywords": "Composition keywords",
+    "guide.section.negativePresets": "Negative prompt presets",
+    "guide.formula.basic": "Basic",
+    "guide.formula.advanced": "Advanced",
+    "settings.api.title": "API configuration",
+    "settings.api.callout": "Required",
+    "settings.api.key.show": "Show",
+    "settings.api.key.hide": "Hide",
+    "settings.api.key.save": "Save",
+    "settings.api.key.helpPrefix": "Get a key at: ",
+    "settings.api.key.helpLink": "Alibaba Cloud Bailian Console",
+    "settings.defaults.title": "Default parameters",
+    "settings.defaults.model": "Default model",
+    "settings.defaults.size": "Default size",
+    "settings.defaults.size4kHint": "(wan2.7 Pro only)",
+    "settings.autoDownload.title": "Auto-download",
+    "settings.autoDownload.desc": "Auto-download to local disk after generation",
+    "settings.watermark.title": "Watermark",
+    "settings.watermark.desc": "Add watermark",
+    "settings.storage.title": "Storage",
+    "settings.storage.images": "Generated images",
+    "settings.storage.uploads": "Uploaded files",
+    "settings.storage.usage": "{size} MB / {count} files",
+    "err.title": "Plugin UI render error",
+    "err.retry": "Retry render",
+    "err.stackLabel": "Error stack (share with developers)",
+    "toast.downloading": "Downloading…",
+    "toast.downloadFailed": "Download failed: {msg}",
+    "toast.downloaded": "Downloaded: {name}",
+    "toast.downloadedTo": "Saved to: {path} (folder opened for you)",
+    "toast.downloadedBrowser": "Downloaded {name} — check your browser's default Downloads folder.",
+    "toast.serverReturned": "Server returned {status}",
+    "toast.optimizeOk": "Prompt optimized",
+    "toast.optimizeFail": "Optimize failed",
+    "toast.optimizeReqFail": "Optimize request failed",
+    "toast.needKey": "Please configure API Key in Settings first",
+    "toast.createFail": "Create failed",
+    "toast.requestFail": "Request failed: {msg}",
+    "toast.taskCreated": "Task created",
+    "toast.genComplete": "Generation complete!",
+    "toast.savedSettings": "Settings saved",
+    "toast.saveFailed": "Save failed",
+    "toast.retryCreated": "Retry task created",
+    "toast.recheckQuerying": "Re-querying…",
+    "toast.recheckFound": "Found {n} images!",
+    "toast.recheckEmpty": "No images found yet, please retry later",
+    "toast.recheckFail": "Query failed",
+  },
+};
+
+// Register dictionary with the shared ui-kit i18n helper. The helper is
+// loaded via _assets/i18n.js (self-contained, no host SDK route) and wires
+// itself to the host's `bridge:locale-change` events automatically. If the
+// helper failed to load (e.g. dev preview without backend) we still fall
+// back to a built-in micro-implementation so the UI never crashes.
+const _i18n = (function () {
+  if (window.OpenAkitaI18n && window.OpenAkitaI18n.register) {
+    window.OpenAkitaI18n.register(I18N_DICT);
+    return window.OpenAkitaI18n;
+  }
+  // Defensive fallback: keep the same .t / .onChange / .locale shape.
+  let loc = (navigator && navigator.language) || "zh";
+  const subs = new Set();
+  return {
+    t: function (k, vars) {
+      const base = (loc || "zh").split(/[-_]/)[0];
+      const tpl = (I18N_DICT[loc] && I18N_DICT[loc][k])
+        || (I18N_DICT[base] && I18N_DICT[base][k])
+        || (I18N_DICT.en && I18N_DICT.en[k])
+        || k;
+      return vars
+        ? String(tpl).replace(/\{(\w+)\}/g, (_, n) => vars[n] != null ? String(vars[n]) : "{" + n + "}")
+        : tpl;
+    },
+    locale: () => loc,
+    setLocale: (l) => { loc = l; subs.forEach(fn => { try { fn(l); } catch (_) {} }); },
+    onChange: (fn) => { subs.add(fn); return () => subs.delete(fn); },
+  };
+})();
+
+// React hook: re-renders the calling component whenever the host changes
+// locale, so every t(key) call automatically returns the new language.
+// Returned `t` is stable per-locale (memo not needed because each render
+// cycle gets a fresh closure that captures the latest locale anyway).
+function useT() {
+  const [, setTick] = useState(0);
+  useEffect(() => _i18n.onChange(() => setTick(x => x + 1)), []);
+  return _i18n.t;
+}
+
+// Returns the current normalized locale (e.g. "zh", "en") and re-renders the
+// caller whenever the host changes language. Useful when a component needs to
+// pass the locale to the backend (so the backend can return the matching copy).
+function useLocale() {
+  const [loc, setLoc] = useState(() => _i18n.locale());
+  useEffect(() => _i18n.onChange((l) => setLoc(l)), []);
+  return loc;
+}
+
+// MODES: id + iconKey are static, the human-readable name is computed on
+// demand via t() so it follows the active locale.
+const MODE_DEFS = [
+  { id: "text2img",      iconKey: "palette" },
+  { id: "img_edit",      iconKey: "image" },
+  { id: "ecommerce",     iconKey: "cart" },
+  { id: "style_repaint", iconKey: "palette" },
+  { id: "background",    iconKey: "image" },
+  { id: "outpaint",      iconKey: "arrowRight" },
+  { id: "sketch",        iconKey: "sparkles" },
+];
+function modeName(id, t) { return t("modes." + id); }
+function modeList(t) {
+  return MODE_DEFS.map(m => ({ id: m.id, iconKey: m.iconKey, name: t("modes." + m.id) }));
+}
+
+// Inline SVG icon helper (uses window.OpenAkitaIcons loaded from _assets/icons.js).
+function OAIcon({ name, style }) {
+  const svg = (window.OpenAkitaIcons && window.OpenAkitaIcons[name]) ? window.OpenAkitaIcons[name]() : "";
+  return <span className="oa-icon" style={style} dangerouslySetInnerHTML={{ __html: svg }} />;
+}
+
+// Status: only css class is static; label is locale-dependent.
+const STATUS_CLS = {
+  pending:   "tag-orange",
+  running:   "tag-blue",
+  succeeded: "tag-green",
+  failed:    "tag-red",
+};
+function statusLabel(s, t) {
+  return t("status." + s);
+}
+function statusCls(s) {
+  return STATUS_CLS[s] || "tag-gray";
+}
+
+// ─── Task Started Modal ───
+function TaskStartedModal({ open, onClose, onGoToTasks, title, desc }) {
+  const t = useT();
+  if (!open) return null;
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-icon">
+          <OAIcon name="check" style={{fontSize:24, color:"var(--success)"}} />
+        </div>
+        <div className="modal-title">{title || t("modal.taskStarted.title")}</div>
+        <div className="modal-desc">{desc}</div>
+        <div className="modal-actions">
+          <button className="btn" onClick={onClose}>{t("modal.taskStarted.continue")}</button>
+          <button className="btn btn-primary" onClick={() => { onClose(); onGoToTasks && onGoToTasks(); }}>
+            {t("modal.taskStarted.goTasks")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── App ───
+function App() {
+  const t = useT();
+  const [tab, setTab] = useState("create");
+  const [apiReady, setApiReady] = useState(false);
+  const [tabsMounted, setTabsMounted] = useState({ create: true });
+  // Bumped whenever the user navigates to the tasks tab so that a mounted
+  // TasksTab can re-fetch its list. Without this, switching back from
+  // "create" after starting a job leaves the list stale until the 15s
+  // polling tick or a filter change triggers another load.
+  const [tasksRefreshSignal, setTasksRefreshSignal] = useState(0);
+
+  const goToTab = useCallback((id) => {
+    setTab(id);
+    if (id === "tasks") setTasksRefreshSignal(s => s + 1);
+  }, []);
+
+  useEffect(() => {
+    pluginApi("GET", "/settings").then(r => {
+      if (r.body && r.body.config && r.body.config.dashscope_api_key) setApiReady(true);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setTabsMounted(prev => ({ ...prev, [tab]: true }));
+  }, [tab]);
+
+  // Locale-aware tab list: built inside the component so the labels
+  // re-render when the host changes language.
+  const TABS = [
+    { id: "create",   name: t("tabs.create") },
+    { id: "tasks",    name: t("tabs.tasks") },
+    { id: "guide",    name: t("tabs.guide") },
+    { id: "settings", name: t("tabs.settings") },
+  ];
+
+  return (
+    <div className="app">
+      <div className="header">
+        <h1 className="oa-hero-title">
+          <span className="oa-hero-title__icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.palette() : ""}} />
+          <span className="oa-hero-title__text">
+            {t("app.title")}
+            <span className="oa-hero-title__sub">{t("app.subtitle")}</span>
+          </span>
+        </h1>
+        {/* Right-side header slot intentionally left empty: the
+            oa-config-banner below the tabs already covers the "missing
+            API key" callout, so duplicating it here would be visual noise. */}
+        <div className="header-right" />
+
+      </div>
+      <div className="tabs">
+        {TABS.map(item => (
+          <div key={item.id} className={`tab ${tab === item.id ? "active" : ""}`}
+               onClick={() => goToTab(item.id)}>{item.name}</div>
+        ))}
+      </div>
+      {!apiReady && tab !== "settings" && (
+        <div className="oa-config-banner" role="alert"
+             style={{margin:"12px 20px 0", flexShrink:0}}>
+          <span className="oa-icon oa-config-banner__icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.warning() : ""}} />
+          <div className="oa-config-banner__text">
+            <strong>{t("banner.noKey.title")}</strong>
+            <div style={{fontSize:12, color:"var(--text-muted)", marginTop:2}}>
+              {t("banner.noKey.desc")}
+            </div>
+          </div>
+          <button className="oa-config-banner__action" type="button"
+                  onClick={() => setTab("settings")}>
+            {t("banner.noKey.cta")}
+            <span className="oa-icon"
+                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.arrowRight() : ""}} />
+          </button>
+        </div>
+      )}
+      <div className="content">
+        <div style={{ display: tab === "create" ? "block" : "none", height: "100%" }}>
+          <CreateTab apiReady={apiReady} goToTasks={() => goToTab("tasks")} />
+        </div>
+        <div style={{ display: tab === "tasks" ? "block" : "none", height: "100%" }}>
+          {tabsMounted.tasks && <TasksTab refreshSignal={tasksRefreshSignal} />}
+        </div>
+        <div style={{ display: tab === "guide" ? "block" : "none", height: "100%" }}>
+          {tabsMounted.guide && <GuideTab />}
+        </div>
+        <div style={{ display: tab === "settings" ? "block" : "none", height: "100%" }}>
+          {tabsMounted.settings && <SettingsTab onApiKeyChange={k => setApiReady(!!k)} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Create Tab ───
+function CreateTab({ apiReady, goToTasks }) {
+  const t = useT();
+  const locale = useLocale();
+  const MODES = modeList(t);
+  const [mode, setMode] = useState("text2img");
+  const [prompt, setPrompt] = useState("");
+  const [negPrompt, setNegPrompt] = useState("");
+  const [model, setModel] = useState("");
+  const [models, setModels] = useState([]);
+  const [size, setSize] = useState("");
+  const [n, setN] = useState(1);
+  const [images, setImages] = useState([]);
+  const [imagePreview, setImagePreview] = useState([]);
+  const [creating, setCreating] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
+  const [result, setResult] = useState(null);
+  const [lightbox, setLightbox] = useState(null);
+  const [styleIndex, setStyleIndex] = useState(0);
+  const [stylePresets, setStylePresets] = useState([]);
+  const [sketchStyles, setSketchStyles] = useState([]);
+  const [sketchStyle, setSketchStyle] = useState("<watercolor>");
+  const [refPrompt, setRefPrompt] = useState("");
+  const [outputRatio, setOutputRatio] = useState("1:1");
+  const [thinking, setThinking] = useState(false);
+  const [productName, setProductName] = useState("");
+  const [ecScenes, setEcScenes] = useState([]);
+  const [ecScenePresets, setEcScenePresets] = useState([]);
+  const [ecResults, setEcResults] = useState(null);
+  const [taskStartedOpen, setTaskStartedOpen] = useState(false);
+  const [taskStartedDesc, setTaskStartedDesc] = useState("");
+
+  useEffect(() => {
+    pluginApi("GET", "/models?category=" + mode.replace("text2img", "text2img")).then(r => {
+      if (r.body && r.body.models) setModels(r.body.models);
+    }).catch(() => {});
+    pluginApi("GET", "/style-presets").then(r => {
+      if (r.body) {
+        setStylePresets(r.body.repaint_presets || []);
+        setSketchStyles(r.body.sketch_styles || []);
+        const ecPresets = r.body.ecommerce_scenes || [];
+        setEcScenePresets(ecPresets);
+        setEcScenes(ecPresets.map(s => s.id));
+      }
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const cat = mode === "text2img" ? "text2img" : mode === "img_edit" ? "img_edit" : "";
+    if (cat) {
+      pluginApi("GET", "/models?category=" + cat).then(r => {
+        if (r.body && r.body.models) { setModels(r.body.models); if (r.body.models.length) setModel(r.body.models[0].id); }
+      }).catch(() => {});
+    } else {
+      setModels([]);
+      setModel("");
+    }
+  }, [mode]);
+
+  const handleUpload = useCallback(async (e) => {
+    const files = Array.from(e.target.files || []);
+    for (const file of files) {
+      const result = await uploadFile(file);
+      if (result.ok) {
+        setImages(prev => [...prev, result.base64 || result.path]);
+        setImagePreview(prev => [...prev, result.base64 || ""]);
+      }
+    }
+  }, []);
+
+  const removeImage = useCallback((idx) => {
+    setImages(prev => prev.filter((_, i) => i !== idx));
+    setImagePreview(prev => prev.filter((_, i) => i !== idx));
+  }, []);
+
+  const handleOptimize = async () => {
+    if (!prompt.trim()) return;
+    setOptimizing(true);
+    try {
+      const r = await pluginApi("POST", "/prompt-optimize", { prompt, model, size, level: "professional", locale });
+      if (r.body && r.body.ok && r.body.result) {
+        setPrompt(r.body.result);
+        showToast(t("toast.optimizeOk"));
+      } else {
+        showToast(r.body?.error || t("toast.optimizeFail"), "error");
+      }
+    } catch { showToast(t("toast.optimizeReqFail"), "error"); }
+    setOptimizing(false);
+  };
+
+  const handleCreate = async () => {
+    if (!apiReady) { showToast(t("toast.needKey"), "warning"); return; }
+    setCreating(true);
+    setResult(null);
+    setEcResults(null);
+    try {
+      if (mode === "ecommerce") {
+        const body = {
+          product_name: productName,
+          prompt: prompt || productName,
+          images,
+          scenes: ecScenes,
+          model,
+          size,
+        };
+        const r = await pluginApi("POST", "/tasks/ecommerce-suite", body);
+        if (r.body && r.body.ok) {
+          setEcResults(r.body);
+          setTaskStartedDesc(t("modal.taskStarted.suiteDesc", { n: r.body.total }));
+          setTaskStartedOpen(true);
+          const running = r.body.tasks.filter(tk => tk.status === "running");
+          running.forEach(tk => pollEcTask(tk.id, r.body.group_id));
+        } else {
+          showToast(r.body?.detail || t("toast.createFail"), "error");
+        }
+      } else {
+        const body = { mode, prompt, negative_prompt: negPrompt, model, size, n, images };
+        if (mode === "style_repaint") body.style_index = styleIndex;
+        if (mode === "background") body.ref_prompt = refPrompt;
+        if (mode === "outpaint") body.output_ratio = outputRatio;
+        if (mode === "sketch") body.sketch_style = sketchStyle;
+        if (mode === "img_edit") body.edit_instruction = prompt;
+        if (thinking) body.thinking_mode = true;
+
+        const r = await pluginApi("POST", "/tasks", body);
+        if (r.body && r.body.ok) {
+          setResult(r.body.task);
+          if (r.body.task.status === "running") {
+            setTaskStartedDesc(t("modal.taskStarted.imageDesc"));
+            setTaskStartedOpen(true);
+            pollTask(r.body.task.id);
+          } else if (r.body.task.status === "succeeded") {
+            showToast(t("toast.genComplete"));
+          } else {
+            showToast(t("toast.taskCreated"));
+          }
+        } else {
+          showToast(r.body?.detail || t("toast.createFail"), "error");
+        }
+      }
+    } catch(e) { showToast(t("toast.requestFail", { msg: e.message }), "error"); }
+    setCreating(false);
+  };
+
+  const pollEcTask = async (taskId, groupId) => {
+    let attempts = 0;
+    const poll = async () => {
+      if (attempts > 60) return;
+      attempts++;
+      try {
+        const r = await pluginApi("GET", "/tasks/" + taskId);
+        if (r.body && r.body.ok) {
+          setEcResults(prev => {
+            if (!prev) return prev;
+            const tasks = prev.tasks.map(t => t.id === taskId ? r.body.task : t);
+            return { ...prev, tasks };
+          });
+          if (r.body.task.status === "succeeded" || r.body.task.status === "failed") return;
+        }
+      } catch {}
+      setTimeout(poll, attempts < 10 ? 3000 : 8000);
+    };
+    setTimeout(poll, 3000);
+  };
+
+  const pollTask = async (taskId) => {
+    let attempts = 0;
+    const poll = async () => {
+      if (attempts > 60) return;
+      attempts++;
+      try {
+        const r = await pluginApi("GET", "/tasks/" + taskId);
+        if (r.body && r.body.ok) {
+          setResult(r.body.task);
+          if (r.body.task.status === "succeeded" || r.body.task.status === "failed") return;
+        }
+      } catch {}
+      setTimeout(poll, attempts < 10 ? 3000 : 8000);
+    };
+    setTimeout(poll, 3000);
+  };
+
+  return (
+    <>
+    <div className="split-layout">
+      <div className="split-left">
+        <div className="card">
+          <div className="form-row">
+            <div className="label">{t("create.modeLabel")}</div>
+            <div className="flex gap-2 flex-wrap">
+              {MODES.map(m => (
+                <button key={m.id} className={`mode-btn ${mode === m.id ? "active" : ""}`}
+                        onClick={() => setMode(m.id)}>
+                  <span style={{display:"inline-flex", alignItems:"center", gap:6}}>
+                    <OAIcon name={m.iconKey} /> {m.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {mode === "ecommerce" && (
+            <>
+              <div className="form-row">
+                <div className="label">{t("create.productName.label")}</div>
+                <input className="input" value={productName} onChange={e => setProductName(e.target.value)}
+                       placeholder={t("create.productName.placeholder")} />
+              </div>
+              <div className="form-row">
+                <div className="label">{t("create.productDesc.label")}</div>
+                <textarea className="input textarea" value={prompt} onChange={e => setPrompt(e.target.value)}
+                          placeholder={t("create.productDesc.placeholder")} style={{minHeight:60}} />
+              </div>
+              <div className="form-row">
+                <div className="label">{t("create.productImage.label")}</div>
+                <div className="flex gap-2 flex-wrap">
+                  {imagePreview.map((p, i) => (
+                    <div key={i} className="upload-zone has-image" style={{width:80,height:80,position:"relative"}}>
+                      <img src={p} style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:4}} />
+                      <button onClick={() => removeImage(i)} style={{position:"absolute",top:2,right:2,background:"rgba(0,0,0,.5)",color:"#fff",border:"none",borderRadius:"50%",width:18,height:18,cursor:"pointer",fontSize:11}}>×</button>
+                    </div>
+                  ))}
+                  <label className="upload-zone" style={{width:80,height:80,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>
+                    +<input type="file" accept="image/*" style={{display:"none"}} onChange={handleUpload} />
+                  </label>
+                </div>
+                <div className="text-xs text-dim" style={{marginTop:4}}>{t("create.productImage.tip")}</div>
+              </div>
+              <div className="form-row">
+                <div className="label">{t("create.scene.label")}</div>
+                <div className="style-grid" style={{gridTemplateColumns:"repeat(auto-fill, minmax(120px, 1fr))"}}>
+                  {ecScenePresets.map(s => {
+                    const checked = ecScenes.includes(s.id);
+                    return (
+                      <div key={s.id} className={`style-option ${checked ? "active" : ""}`}
+                           onClick={() => setEcScenes(prev => checked ? prev.filter(x => x !== s.id) : [...prev, s.id])}
+                           style={{textAlign:"left", padding:"8px 10px"}}>
+                        <div style={{fontSize:13,fontWeight:500}}>{s.name}</div>
+                        <div className="text-xs text-dim">{s.desc}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+
+          {(mode === "text2img" || mode === "img_edit" || mode === "sketch") && (
+            <div className="form-row">
+              <div className="oa-section-label oa-section-label--inline">
+                <span>
+                  {mode === "img_edit" ? t("create.prompt.editLabel") : mode === "sketch" ? t("create.prompt.sketchLabel") : t("create.prompt.label")}
+                </span>
+                {mode === "text2img" && (
+                  <button className="oa-ai-btn" type="button" onClick={handleOptimize}
+                          disabled={optimizing || !prompt.trim()}
+                          title={t("create.aiOptimize.title")}>
+                    {optimizing
+                      ? <span className="spinner-sm" style={{width:11, height:11, borderWidth:1.5}} />
+                      : <span className="oa-ai-btn__icon"
+                              dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.sparkles() : ""}} />}
+                    {t("create.aiOptimize")}
+                  </button>
+                )}
+              </div>
+              <textarea className="input textarea" value={prompt} onChange={e => setPrompt(e.target.value)}
+                        placeholder={mode === "text2img" ? t("create.prompt.text2imgPlaceholder") : mode === "img_edit" ? t("create.prompt.editPlaceholder") : t("create.prompt.targetPlaceholder")} />
+            </div>
+          )}
+
+          {mode === "text2img" && (
+            <div className="form-row">
+              <div className="label">{t("create.negPrompt.label")}</div>
+              <input className="input" value={negPrompt} onChange={e => setNegPrompt(e.target.value)}
+                     placeholder={t("create.negPrompt.placeholder")} />
+            </div>
+          )}
+
+          {mode === "background" && (
+            <div className="form-row">
+              <div className="label">{t("create.bg.label")}</div>
+              <textarea className="input textarea" value={refPrompt} onChange={e => setRefPrompt(e.target.value)}
+                        placeholder={t("create.bg.placeholder")} />
+            </div>
+          )}
+
+          {(mode !== "text2img" || images.length > 0) && (mode !== "outpaint" || true) && (
+            <div className="form-row">
+              <div className="label">
+                {mode === "style_repaint" ? t("create.image.styleRepaint") :
+                 mode === "background" ? t("create.image.background") :
+                 mode === "outpaint" ? t("create.image.outpaint") :
+                 mode === "sketch" ? t("create.image.sketch") :
+                 mode === "img_edit" ? t("create.image.imgEdit") : t("create.image.optional")}
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                {imagePreview.map((p, i) => (
+                  <div key={i} className="upload-zone has-image" style={{width: 100, height: 100, position: "relative"}}>
+                    <img src={p} className="upload-preview" style={{width: "100%", height: "100%", objectFit: "cover"}} />
+                    <button onClick={() => removeImage(i)} style={{position:"absolute", top:2, right:2, background:"rgba(0,0,0,.5)", color:"#fff", border:"none", borderRadius:"50%", width:20, height:20, cursor:"pointer", fontSize:12}}>×</button>
+                  </div>
+                ))}
+                <label className="upload-zone" style={{width: 100, height: 100, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24}}>
+                  +
+                  <input type="file" accept="image/*" style={{display:"none"}} onChange={handleUpload} multiple={mode === "img_edit"} />
+                </label>
+              </div>
+            </div>
+          )}
+
+          {models.length > 0 && (
+            <div className="form-row">
+              <div className="label">{t("create.model.label")}</div>
+              <select className="input select" value={model} onChange={e => setModel(e.target.value)}>
+                {models.map(m => <option key={m.id} value={m.id}>{m.name} ({m.model_id})</option>)}
+              </select>
+            </div>
+          )}
+
+          {(mode === "text2img" || mode === "img_edit") && (
+            <div className="grid-2">
+              <div className="form-row">
+                <div className="label">{t("create.size.label")}</div>
+                <select className="input select" value={size} onChange={e => setSize(e.target.value)}>
+                  <option value="">{t("create.size.default")}</option>
+                  <option value="1024*1024">1024×1024 (1:1)</option>
+                  <option value="2048*2048">2048×2048 (1:1)</option>
+                  <option value="1536*2688">1536×2688 (9:16)</option>
+                  <option value="2688*1536">2688×1536 (16:9)</option>
+                  <option value="1728*2368">1728×2368 (3:4)</option>
+                  <option value="2368*1728">2368×1728 (4:3)</option>
+                </select>
+              </div>
+              <div className="form-row">
+                <div className="label">{t("create.count.label")}</div>
+                <select className="input select" value={n} onChange={e => setN(parseInt(e.target.value))}>
+                  {[1,2,3,4].map(v => <option key={v} value={v}>{t("create.count.unit", { n: v })}</option>)}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {mode === "style_repaint" && (
+            <div className="form-row">
+              <div className="label">{t("create.style.label")}</div>
+              <div className="style-grid">
+                {stylePresets.map(s => (
+                  <div key={s.index} className={`style-option ${styleIndex === s.index ? "active" : ""}`}
+                       onClick={() => setStyleIndex(s.index)}>
+                    {s.name}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {mode === "sketch" && (
+            <div className="form-row">
+              <div className="label">{t("create.sketch.styleLabel")}</div>
+              <div className="style-grid">
+                {sketchStyles.map(s => (
+                  <div key={s.id} className={`style-option ${sketchStyle === s.id ? "active" : ""}`}
+                       onClick={() => setSketchStyle(s.id)}>
+                    {s.name}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {mode === "outpaint" && (
+            <div className="form-row">
+              <div className="label">{t("create.outpaint.ratio")}</div>
+              <div className="flex gap-2 flex-wrap">
+                {["1:1","16:9","9:16","4:3","3:4","2:1"].map(r => (
+                  <button key={r} className={`mode-btn ${outputRatio === r ? "active" : ""}`}
+                          onClick={() => setOutputRatio(r)}>{r}</button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {mode === "text2img" && model && models.find(m => m.id === model)?.supports_thinking && (
+            <div className="form-row">
+              <div className="flex items-center gap-2">
+                <div className={`switch ${thinking ? "on" : ""}`} onClick={() => setThinking(!thinking)} style={{width:36,height:20,borderRadius:10,background:thinking?"var(--primary)":"var(--border)",cursor:"pointer",position:"relative",transition:".2s"}}>
+                  <div style={{position:"absolute",top:2,left:thinking?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:".2s"}} />
+                </div>
+                <span className="text-sm">{t("create.thinking.label")}</span>
+                <span className="text-xs text-dim">{t("create.thinking.hint")}</span>
+              </div>
+            </div>
+          )}
+
+          <button className="btn btn-primary" style={{width: "100%", justifyContent: "center", padding: "10px"}}
+                  onClick={handleCreate} disabled={creating || !apiReady || (mode === "ecommerce" && !productName.trim() && !prompt.trim())}>
+            {creating ? <><span className="spinner-sm" /> {t("create.btn.generating")}</> : (
+              <span style={{display:"inline-flex", alignItems:"center", gap:6}}>
+                <span className="oa-icon"
+                      dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? (mode === "ecommerce" ? window.OpenAkitaIcons.cart() : window.OpenAkitaIcons.sparkles()) : ""}} />
+                {mode === "ecommerce" ? t("create.btn.ecommerceSuite", { n: ecScenes.length }) : t("create.btn.start")}
+              </span>
+            )}
+          </button>
+        </div>
+      </div>
+
+      <div className={"split-right oa-preview-area" + ((!ecResults && !result) ? " oa-preview-area--centered" : "")}>
+        {mode === "ecommerce" && ecResults ? (
+          <div style={{width: "100%"}}>
+            <div className="card">
+              <div className="flex items-center justify-between" style={{marginBottom: 12}}>
+                <span className="card-title" style={{marginBottom: 0, display:"inline-flex", alignItems:"center", gap:6}}>
+                  <span className="oa-icon"
+                        dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.cart() : ""}} />
+                  {t("preview.ec.title")}
+                </span>
+                <span className="text-xs text-dim">{t("preview.ec.totalCount", { n: ecResults.total })}</span>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(200px, 1fr))",gap:12}}>
+                {ecResults.tasks.map(tk => {
+                  const scene = ecScenePresets.find(s => s.id === (tk.params?.scene_id || ""));
+                  return (
+                    <div key={tk.id} className="card" style={{padding:10,marginBottom:0}}>
+                      <div className="flex items-center justify-between" style={{marginBottom:6}}>
+                        <span className="text-sm" style={{fontWeight:500}}>{scene?.name || tk.params?.scene_id || t("preview.ec.scene.fallback")}</span>
+                        <span className={`tag ${statusCls(tk.status)}`} style={{fontSize:10}}>
+                          {statusLabel(tk.status, t)}
+                        </span>
+                      </div>
+                      {tk.status === "running" && (
+                        <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:120}}>
+                          <div className="spinner" />
+                        </div>
+                      )}
+                      {tk.status === "succeeded" && tk.image_urls?.length > 0 && (
+                        <div className="image-card" onClick={() => setLightbox(tk.image_urls[0])}>
+                          <img src={tk.image_urls[0]} alt="" style={{width:"100%",aspectRatio:"1",objectFit:"cover"}} />
+                          <div className="image-card-actions">
+                            <button onClick={e => { e.stopPropagation(); downloadImage(tk.id, 0, tk.prompt); }}>{t("preview.image.download")}</button>
+                          </div>
+                        </div>
+                      )}
+                      {tk.status === "failed" && (
+                        <div style={{padding:8,background:"rgba(239,68,68,.08)",borderRadius:4,fontSize:12,color:"var(--danger)"}}>
+                          {tk.error_message || t("preview.result.genFailed")}
+                        </div>
+                      )}
+                      <div className="text-xs text-dim" style={{marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {tk.prompt?.slice(0,60)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ) : result ? (
+          <div style={{width: "100%"}}>
+            <div className="card">
+              <div className="flex items-center justify-between" style={{marginBottom: 12}}>
+                <span className="card-title" style={{marginBottom: 0}}>{t("preview.result.title")}</span>
+                <span className={`tag ${statusCls(result.status)}`}>
+                  {statusLabel(result.status, t)}
+                </span>
+              </div>
+
+              {result.status === "running" && (
+                <div className="empty-state" style={{padding: "40px 20px"}}>
+                  <div className="spinner" style={{width: 32, height: 32, marginBottom: 12}} />
+                  <span className="text-sm text-muted">{t("preview.result.runningHint")}</span>
+                  <button className="btn btn-sm" style={{marginTop: 12, display:"inline-flex", alignItems:"center", gap:6}} onClick={goToTasks}>
+                    <span className="oa-icon"
+                          dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.listTask() : ""}} />
+                    {t("preview.result.viewInTasks")}
+                  </button>
+                </div>
+              )}
+
+              {result.status === "succeeded" && (
+                result.image_urls && result.image_urls.length > 0 ? (
+                  (() => {
+                    const isSingle = result.image_urls.length === 1;
+                    const galleryClass = isSingle ? "image-gallery image-gallery--single" : "image-gallery";
+                    const galleryStyle = isSingle ? undefined : {justifyItems: "center"};
+                    const cardStyle = isSingle ? undefined : {maxWidth: 320, width: "100%"};
+                    return (
+                      <div className={galleryClass} style={galleryStyle}>
+                        {result.image_urls.map((url, i) => (
+                          <div key={i} className="image-card" onClick={() => setLightbox(url)} style={cardStyle}>
+                            <img src={url} alt={`Generated ${i + 1}`} />
+                            <div className="image-card-actions">
+                              <button onClick={e => { e.stopPropagation(); downloadImage(result.id, i, result.prompt); }}>{t("preview.image.download")}</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()
+                ) : (
+                  <div className="empty-state" style={{padding: "30px 20px"}}>
+                    <span className="oa-icon" style={{fontSize: 28, marginBottom: 8, opacity: .5, color:"var(--success)"}}
+                          dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.check() : ""}} />
+                    <span className="text-sm text-muted">{t("preview.result.completedNoImages")}</span>
+                    <button className="btn btn-sm" style={{marginTop: 8, display:"inline-flex", alignItems:"center", gap:6}} onClick={() => {
+                      pluginApi("GET", "/tasks/" + result.id).then(r => {
+                        if (r.body && r.body.ok) setResult(r.body.task);
+                      });
+                    }}>
+                      <span className="oa-icon"
+                            dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.refresh() : ""}} />
+                      {t("preview.result.refreshResult")}
+                    </button>
+                    <button className="btn btn-sm" style={{marginTop: 4, display:"inline-flex", alignItems:"center", gap:6}} onClick={goToTasks}>
+                      <span className="oa-icon"
+                            dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.listTask() : ""}} />
+                      {t("preview.result.viewInTasks")}
+                    </button>
+                  </div>
+                )
+              )}
+
+              {result.status === "failed" && (
+                <div className="empty-state" style={{padding: "40px 20px"}}>
+                  <span className="oa-icon text-danger" style={{fontSize: 32, marginBottom: 8}}
+                        dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.close() : ""}} />
+                  <span className="text-sm text-danger">{result.error_message || t("preview.result.genFailed")}</span>
+                </div>
+              )}
+            </div>
+            {result.prompt && (
+              <div className="card">
+                <div className="text-xs text-dim" style={{marginBottom:4}}>{t("preview.result.promptLabel")}</div>
+                <div className="text-sm">{result.prompt}</div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="oa-preview-empty">
+            <span className="oa-preview-empty__icon"
+                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? (mode === "ecommerce" ? window.OpenAkitaIcons.cart() : window.OpenAkitaIcons.image()) : ""}} />
+            <div className="oa-preview-empty__title">
+              {mode === "ecommerce" ? t("preview.empty.ecommerce.title") : t("preview.empty.text2img.title")}
+            </div>
+            <div className="oa-preview-empty__hint">
+              {mode === "ecommerce" ? t("preview.empty.ecommerce.hint") : t("preview.empty.text2img.hint")}
+            </div>
+          </div>
+        )}
+
+        {lightbox && (
+          <div className="lightbox" onClick={() => setLightbox(null)}>
+            <img src={lightbox} />
+          </div>
+        )}
+      </div>
+    </div>
+    <TaskStartedModal
+      open={taskStartedOpen}
+      onClose={() => setTaskStartedOpen(false)}
+      onGoToTasks={goToTasks}
+      desc={taskStartedDesc}
+    />
+    </>
+  );
+}
+
+// ─── Tasks Tab ───
+function TasksTab({ refreshSignal = 0 }) {
+  const t = useT();
+  const MODES = modeList(t);
+  const [tasks, setTasks] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [filter, setFilter] = useState("");
+  const [modeFilter, setModeFilter] = useState("");
+  const [selected, setSelected] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [lightbox, setLightbox] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      let q = "/tasks?limit=50";
+      if (filter) q += "&status=" + filter;
+      if (modeFilter) q += "&mode=" + modeFilter;
+      const r = await pluginApi("GET", q);
+      if (r && r.body && r.body.ok) {
+        setTasks(Array.isArray(r.body.tasks) ? r.body.tasks : []);
+        setTotal(typeof r.body.total === "number" ? r.body.total : 0);
+      }
+    } catch (e) {
+      console.warn("[tongyi-image] /tasks load failed:", e);
+    }
+    setLoading(false);
+  }, [filter, modeFilter]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Re-load whenever the parent bumps the refresh signal (e.g. user just
+  // navigated to the tasks tab after creating a job). We use a ref so we
+  // always invoke the latest `load` (which closes over current filter
+  // values) without making this effect re-run on every load identity
+  // change — that would cause a redundant fetch alongside the existing
+  // `useEffect(() => load(), [load])` above.
+  const loadRef = useRef(load);
+  useEffect(() => { loadRef.current = load; }, [load]);
+  useEffect(() => {
+    if (refreshSignal > 0) loadRef.current();
+  }, [refreshSignal]);
+
+  useEffect(() => {
+    onEvent("plugin:tongyi-image:task_update", () => load());
+    const iv = setInterval(load, 15000);
+    return () => clearInterval(iv);
+  }, [load]);
+
+  const handleDelete = async (id) => {
+    if (!confirm(t("tasks.detail.confirmDelete"))) return;
+    await pluginApi("DELETE", "/tasks/" + id);
+    if (selected && selected.id === id) setSelected(null);
+    load();
+  };
+
+  const handleRetry = async (id) => {
+    const r = await pluginApi("POST", "/tasks/" + id + "/retry");
+    if (r.body && r.body.ok) { showToast(t("toast.retryCreated")); load(); }
+  };
+
+  const handleRecheck = async (id) => {
+    showToast(t("toast.recheckQuerying"));
+    const r = await pluginApi("POST", "/tasks/" + id + "/recheck");
+    if (r.body && r.body.ok) {
+      const found = r.body.images_found || 0;
+      if (found > 0) {
+        showToast(t("toast.recheckFound", { n: found }));
+        setSelected(r.body.task);
+      } else {
+        showToast(t("toast.recheckEmpty"));
+      }
+      load();
+    } else {
+      showToast(r.body?.error || t("toast.recheckFail"));
+    }
+  };
+
+  return (
+    <div className="split-layout">
+      <div className="split-left oa-list-panel">
+        <div className="oa-list-panel__filters">
+          <div>
+            <div className="oa-section-label">{t("tasks.filter.status")}</div>
+            <div className="oa-filter-group__buttons">
+              {[
+                { v: "",          l: t("tasks.filter.all") },
+                { v: "running",   l: t("status.running") },
+                { v: "succeeded", l: t("status.succeeded") },
+                { v: "failed",    l: t("status.failed") },
+              ].map(f => (
+                <button key={f.v} className={`mode-btn ${filter === f.v ? "active" : ""}`}
+                        onClick={() => setFilter(f.v)}>{f.l}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="oa-section-label">{t("tasks.filter.mode")}</div>
+            <div className="oa-filter-group__buttons">
+              <button className={`btn btn-sm ${modeFilter === "" ? "btn-primary" : ""}`}
+                      onClick={() => setModeFilter("")}>{t("tasks.filter.allModes")}</button>
+              {MODES.map(m => (
+                <button key={m.id} className={`btn btn-sm ${modeFilter === m.id ? "btn-primary" : ""}`}
+                        onClick={() => setModeFilter(m.id)}>
+                  <span style={{display:"inline-flex", alignItems:"center", gap:4}}>
+                    <OAIcon name={m.iconKey} /> {m.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <hr className="oa-list-panel__divider" />
+
+        <div className="oa-list-panel__items">
+          {loading && tasks.length === 0 ? (
+            <div className="empty-state"><div className="spinner" /></div>
+          ) : tasks.length === 0 ? (
+            <div className="oa-preview-empty" style={{minHeight: 160, padding: "24px 16px"}}>
+              <span className="oa-preview-empty__icon"
+                    dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.listTask() : ""}} />
+              <div className="oa-preview-empty__title">{t("tasks.empty.title")}</div>
+              <div className="oa-preview-empty__hint">{t("tasks.empty.hint")}</div>
+            </div>
+          ) : (
+            tasks.map(tk => (
+              <div key={tk.id} className={`task-card ${selected?.id === tk.id ? "selected" : ""}`}
+                   onClick={() => setSelected(tk)}>
+                <div className="task-thumb">
+                  {tk.image_urls && tk.image_urls.length > 0 ? (
+                    <img src={tk.image_urls[0]} alt="" />
+                  ) : tk.status === "running" ? (
+                    <div className="spinner-sm" />
+                  ) : (
+                    <span className="text-dim text-xs">—</span>
+                  )}
+                </div>
+                <div className="task-info">
+                  <h4>{tk.prompt || tk.mode || t("tasks.untitled")}</h4>
+                  <div className="task-meta">
+                    <span className={`tag ${statusCls(tk.status)}`}>
+                      {statusLabel(tk.status, t)}
+                    </span>
+                    <span>{MODES.find(m => m.id === tk.mode)?.name || tk.mode}</span>
+                    <span>{tk.model}</span>
+                    <span>{tk.created_at}</span>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="oa-list-panel__footer">{t("tasks.totalCount", { n: total })}</div>
+      </div>
+
+      <div className={"split-right oa-preview-area" + (!selected ? " oa-preview-area--centered" : "")}>
+        {selected ? (
+          <div style={{width: "100%"}}>
+            <div className="card">
+              <div className="flex items-center justify-between" style={{marginBottom: 12}}>
+                <span className="card-title" style={{marginBottom:0}}>{t("tasks.detail.title")}</span>
+                <div className="flex gap-2">
+                  {selected.status === "failed" && (
+                    <button className="btn btn-sm" onClick={() => handleRetry(selected.id)}>{t("tasks.detail.retry")}</button>
+                  )}
+                  <button className="btn btn-sm btn-danger" onClick={() => handleDelete(selected.id)}>{t("tasks.detail.delete")}</button>
+                </div>
+              </div>
+
+              {selected.status === "succeeded" && (
+                selected.image_urls?.length > 0 ? (
+                  // Mirror the create-preview branch (CreateTab) so a single
+                  // result image renders in its native aspect ratio (capped
+                  // at 600px wide, object-fit: contain) instead of being
+                  // squashed into a 320px square via the multi-image grid's
+                  // aspect-ratio: 1 + object-fit: cover. Multi-image tasks
+                  // keep the grid layout — only the 1-image case differs.
+                  (() => {
+                    const isSingle = selected.image_urls.length === 1;
+                    const galleryClass = isSingle ? "image-gallery image-gallery--single" : "image-gallery";
+                    const galleryStyle = isSingle ? undefined : {justifyItems: "center"};
+                    const cardStyle = isSingle ? undefined : {maxWidth: 320, width: "100%"};
+                    return (
+                      <div className={galleryClass} style={galleryStyle}>
+                        {selected.image_urls.map((url, i) => (
+                          <div key={i} className="image-card" onClick={() => setLightbox(url)} style={cardStyle}>
+                            <img src={url} alt="" />
+                            <div className="image-card-actions">
+                              <button onClick={e => { e.stopPropagation(); downloadImage(selected.id, i, selected.prompt); }}>{t("preview.image.download")}</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()
+                ) : (
+                  <div className="empty-state" style={{padding: "30px 20px"}}>
+                    <span className="oa-icon" style={{fontSize: 28, marginBottom: 8, opacity: .5, color:"var(--success)"}}
+                          dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.check() : ""}} />
+                    <span className="text-sm text-muted">{t("tasks.detail.completedNoImages")}</span>
+                    {selected.api_task_id && (
+                      <button className="btn btn-sm btn-primary" style={{marginTop: 8, display:"inline-flex", alignItems:"center", gap:6}}
+                              onClick={() => handleRecheck(selected.id)}>
+                        <span className="oa-icon"
+                              dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.refresh() : ""}} />
+                        {t("tasks.detail.recheck")}
+                      </button>
+                    )}
+                  </div>
+                )
+              )}
+
+              {selected.status === "running" && (
+                <div className="empty-state" style={{padding: "30px"}}>
+                  <div className="spinner" style={{marginBottom: 8}} />
+                  <span className="text-sm text-muted">{t("tasks.detail.runningHint")}</span>
+                </div>
+              )}
+
+              {selected.status === "failed" && (
+                <div style={{padding: "12px", background: "rgba(239,68,68,.08)", borderRadius: 6, color: "var(--danger)", fontSize: 13}}>
+                  {selected.error_message || t("preview.result.genFailed")}
+                </div>
+              )}
+            </div>
+
+            <div className="card">
+              <div className="grid-2">
+                <div><span className="text-xs text-dim">{t("tasks.detail.id")}</span><div className="text-sm">{selected.id}</div></div>
+                <div><span className="text-xs text-dim">{t("tasks.detail.mode")}</span><div className="text-sm">{MODES.find(m => m.id === selected.mode)?.name || selected.mode}</div></div>
+                <div><span className="text-xs text-dim">{t("tasks.detail.model")}</span><div className="text-sm">{selected.model}</div></div>
+                <div><span className="text-xs text-dim">{t("tasks.detail.createdAt")}</span><div className="text-sm">{selected.created_at}</div></div>
+              </div>
+              {selected.prompt && (
+                <div style={{marginTop: 12}}>
+                  <span className="text-xs text-dim">{t("tasks.detail.prompt")}</span>
+                  <div className="text-sm" style={{marginTop: 4, padding: "8px 10px", background: "var(--bg)", borderRadius: 6}}>{selected.prompt}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="oa-preview-empty">
+            <span className="oa-preview-empty__icon"
+                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.listTask() : ""}} />
+            <div className="oa-preview-empty__title">{t("tasks.empty.noSelection.title")}</div>
+            <div className="oa-preview-empty__hint">{t("tasks.empty.noSelection.hint")}</div>
+          </div>
+        )}
+
+        {lightbox && (
+          <div className="lightbox" onClick={() => setLightbox(null)}>
+            <img src={lightbox} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Guide Tab ───
+// Render a keyword chip whose source can be either a plain string (legacy
+// shape) or a {zh, en} bilingual object. The bilingual case is shown as
+// "中文 / English" so users see both forms regardless of UI locale — this is
+// the "side-by-side short keyword" half of the hybrid i18n strategy.
+function renderKeywordLabel(w) {
+  if (w == null) return "";
+  if (typeof w === "string") return w;
+  const zh = w.zh || "";
+  const en = w.en || "";
+  if (zh && en && zh !== en) return zh + " / " + en;
+  return zh || en;
+}
+
+function GuideTab() {
+  const t = useT();
+  const locale = useLocale();
+  const [guide, setGuide] = useState(null);
+
+  useEffect(() => {
+    setGuide(null);
+    const url = "/prompt-guide?locale=" + encodeURIComponent(locale || "zh");
+    pluginApi("GET", url).then(r => {
+      if (r.body && r.body.ok) setGuide(r.body);
+    }).catch(() => {});
+  }, [locale]);
+
+  if (!guide) return <div className="empty-state"><div className="spinner" /></div>;
+
+  const guideIcon = (name) => (
+    <span className="oa-icon" style={{color:"var(--primary)", marginRight:6, fontSize:15}}
+          dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? (window.OpenAkitaIcons[name] ? window.OpenAkitaIcons[name]() : "") : ""}} />
+  );
+
+  return (
+    <div style={{maxWidth: 800}}>
+      <div className="text-xs text-dim" style={{marginBottom: 10}}>
+        {t("guide.intro")}
+      </div>
+
+      {/* Mode Formulas */}
+      <Collapsible title={<><span>{guideIcon("sparkles")}</span>{t("guide.section.formulas")}</>}>
+        <div className="oa-md-content">
+          {Object.entries(guide.mode_formulas || {}).map(([k, v]) => (
+            <div key={k}>
+              <h3>{modeName(k, t)}</h3>
+              {v.basic && <p><strong>{t("guide.formula.basic")}</strong>: <code>{v.basic}</code></p>}
+              {v.advanced && <p><strong>{t("guide.formula.advanced")}</strong>: <code>{v.advanced}</code></p>}
+              {v.tips && v.tips.length > 0 && (
+                <ul>{v.tips.map((tip, i) => <li key={i}>{tip}</li>)}</ul>
+              )}
+            </div>
+          ))}
+        </div>
+      </Collapsible>
+
+      {/* Templates */}
+      <Collapsible title={<><span>{guideIcon("book")}</span>{t("guide.section.templates")}</>}>
+        <div className="oa-md-content">
+          {(guide.templates || []).map(tpl => (
+            <div key={tpl.id} style={{marginBottom: 14}}>
+              <h4>{tpl.name}{tpl.name_en && tpl.name_en !== tpl.name && (
+                <> <span className="text-xs text-dim" style={{textTransform:"none", letterSpacing:0}}>{tpl.name_en}</span></>
+              )}</h4>
+              <p>{tpl.description}</p>
+              {tpl.example && <blockquote>{tpl.example}</blockquote>}
+            </div>
+          ))}
+        </div>
+      </Collapsible>
+
+      {/* Style Keywords (always bilingual zh+en, shown side-by-side) */}
+      <Collapsible title={<><span>{guideIcon("palette")}</span>{t("guide.section.styleKeywords")}</>}>
+        <div className="oa-md-content">
+          {Object.entries(guide.style_keywords || {}).map(([cat, words]) => (
+            <div key={cat} style={{marginBottom: 10}}>
+              <h4 style={{textTransform: "capitalize"}}>{cat.replace(/_/g, " ")}</h4>
+              <div>{words.map((w, i) => <span key={i} className="keyword-tag">{renderKeywordLabel(w)}</span>)}</div>
+            </div>
+          ))}
+        </div>
+      </Collapsible>
+
+      {/* Lighting Keywords (always bilingual zh+en, shown side-by-side) */}
+      <Collapsible title={<><span>{guideIcon("info")}</span>{t("guide.section.lightingKeywords")}</>}>
+        <div className="oa-md-content">
+          {Object.entries(guide.lighting_keywords || {}).map(([cat, words]) => (
+            <div key={cat} style={{marginBottom: 10}}>
+              <h4 style={{textTransform: "capitalize"}}>{cat.replace(/_/g, " ")}</h4>
+              <div>{words.map((w, i) => <span key={i} className="keyword-tag">{renderKeywordLabel(w)}</span>)}</div>
+            </div>
+          ))}
+        </div>
+      </Collapsible>
+
+      {/* Composition */}
+      <Collapsible title={<><span>{guideIcon("image")}</span>{t("guide.section.compositionKeywords")}</>}>
+        <div className="oa-md-content">
+          {Object.entries(guide.composition_keywords || {}).map(([cat, data]) => (
+            <div key={cat} style={{marginBottom: 10}}>
+              <h4>{data.label}</h4>
+              <div>{data.keywords.map((kw, i) => (
+                <span key={i} className="keyword-tag" title={kw.desc}>{kw.zh} ({kw.en})</span>
+              ))}</div>
+            </div>
+          ))}
+        </div>
+      </Collapsible>
+
+      {/* Negative Presets */}
+      <Collapsible title={<><span>{guideIcon("close")}</span>{t("guide.section.negativePresets")}</>}>
+        <div className="oa-md-content">
+          {Object.entries(guide.negative_presets || {}).map(([k, v]) => (
+            <div key={k} style={{marginBottom: 10}}>
+              <h4>{k}</h4>
+              <pre style={{whiteSpace:"pre-wrap"}}><code>{v}</code></pre>
+            </div>
+          ))}
+        </div>
+      </Collapsible>
+    </div>
+  );
+}
+
+function Collapsible({ title, children, defaultOpen }) {
+  const [open, setOpen] = useState(!!defaultOpen);
+  return (
+    <div className={`collapsible ${open ? "open" : ""}`}>
+      <div className="collapsible-header" onClick={() => setOpen(!open)}>
+        <span style={{display:"inline-flex", alignItems:"center"}}>{title}</span>
+        <span className="arrow oa-icon"
+              dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.chevronRight() : "&#9656;"}} />
+      </div>
+      <div className="collapsible-body">{children}</div>
+    </div>
+  );
+}
+
+// ─── Settings Tab ───
+function SettingsTab({ onApiKeyChange }) {
+  const t = useT();
+  const [config, setConfig] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [stats, setStats] = useState(null);
+  const [keyVisible, setKeyVisible] = useState(false);
+
+  useEffect(() => {
+    pluginApi("GET", "/settings").then(r => {
+      if (r.body && r.body.config) setConfig(r.body.config);
+    }).catch(() => {});
+    pluginApi("GET", "/storage/stats").then(r => {
+      if (r.body && r.body.stats) setStats(r.body.stats);
+    }).catch(() => {});
+  }, []);
+
+  const save = async (updates) => {
+    setSaving(true);
+    try {
+      const r = await pluginApi("PUT", "/settings", { updates });
+      if (r.body && r.body.ok) {
+        setConfig(r.body.config);
+        if (updates.dashscope_api_key !== undefined) onApiKeyChange(updates.dashscope_api_key);
+        showToast(t("toast.savedSettings"));
+      }
+    } catch { showToast(t("toast.saveFailed"), "error"); }
+    setSaving(false);
+  };
+
+  const updateField = (key, value) => {
+    setConfig(prev => ({ ...prev, [key]: value }));
+  };
+
+  return (
+    <div style={{maxWidth: 640}}>
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title">
+          <span className="oa-icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.key() : ""}} />
+          {t("settings.api.title")}
+        </h3>
+        <div className={"form-row" + (config.dashscope_api_key ? "" : " oa-config-field-callout")}
+             data-callout={config.dashscope_api_key ? undefined : t("settings.api.callout")}>
+          <div className="label">DashScope API Key</div>
+          <div className="flex gap-2">
+            <input className="input flex-1" type={keyVisible ? "text" : "password"}
+                   value={config.dashscope_api_key || ""}
+                   onChange={e => updateField("dashscope_api_key", e.target.value)}
+                   placeholder="sk-..." />
+            <button className="btn btn-sm" onClick={() => setKeyVisible(!keyVisible)}>
+              {keyVisible ? t("settings.api.key.hide") : t("settings.api.key.show")}
+            </button>
+            <button className="btn btn-sm btn-primary" onClick={() => save({ dashscope_api_key: config.dashscope_api_key })}
+                    disabled={saving}>{t("settings.api.key.save")}</button>
+          </div>
+          <div className="text-xs text-dim" style={{marginTop: 4}}>
+            {t("settings.api.key.helpPrefix")}<a href="https://bailian.console.aliyun.com/#/api-key" target="_blank" rel="noopener" style={{color: "var(--primary)"}}>{t("settings.api.key.helpLink")}</a>
+          </div>
+        </div>
+      </div>
+
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title">
+          <span className="oa-icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.settings() : ""}} />
+          {t("settings.defaults.title")}
+        </h3>
+        <div className="grid-2">
+          <div className="form-row">
+            <div className="label">{t("settings.defaults.model")}</div>
+            <select className="input select" value={config.default_model || "wan27-pro"}
+                    onChange={e => { updateField("default_model", e.target.value); save({ default_model: e.target.value }); }}>
+              <option value="wan27-pro">万相 2.7 Pro</option>
+              <option value="wan27">万相 2.7</option>
+              <option value="qwen-pro">千问 2.0 Pro</option>
+              <option value="qwen">千问 2.0</option>
+            </select>
+          </div>
+          <div className="form-row">
+            <div className="label">{t("settings.defaults.size")}</div>
+            <select className="input select" value={config.default_size || "2K"}
+                    onChange={e => { updateField("default_size", e.target.value); save({ default_size: e.target.value }); }}>
+              <option value="1K">1K</option>
+              <option value="2K">2K</option>
+              <option value="4K">4K {t("settings.defaults.size4kHint")}</option>
+            </select>
+          </div>
+        </div>
+        <div className="grid-2">
+          <div className="form-row">
+            <div className="label">{t("settings.autoDownload.title")}</div>
+            <div className="flex items-center gap-2">
+              <div className={`switch ${config.auto_download === "true" ? "on" : ""}`}
+                   onClick={() => { const v = config.auto_download === "true" ? "false" : "true"; updateField("auto_download", v); save({ auto_download: v }); }}
+                   style={{width:36,height:20,borderRadius:10,background:config.auto_download==="true"?"var(--primary)":"var(--border)",cursor:"pointer",position:"relative",transition:".2s"}}>
+                <div style={{position:"absolute",top:2,left:config.auto_download==="true"?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:".2s"}} />
+              </div>
+              <span className="text-sm">{t("settings.autoDownload.desc")}</span>
+            </div>
+          </div>
+          <div className="form-row">
+            <div className="label">{t("settings.watermark.title")}</div>
+            <div className="flex items-center gap-2">
+              <div className={`switch ${config.watermark === "true" ? "on" : ""}`}
+                   onClick={() => { const v = config.watermark === "true" ? "false" : "true"; updateField("watermark", v); save({ watermark: v }); }}
+                   style={{width:36,height:20,borderRadius:10,background:config.watermark==="true"?"var(--primary)":"var(--border)",cursor:"pointer",position:"relative",transition:".2s"}}>
+                <div style={{position:"absolute",top:2,left:config.watermark==="true"?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:".2s"}} />
+              </div>
+              <span className="text-sm">{t("settings.watermark.desc")}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {stats && (
+        <div className="setting-section oa-settings-section">
+          <h3 className="oa-settings-section__title">
+            <span className="oa-icon"
+                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.folder() : ""}} />
+            {t("settings.storage.title")}
+          </h3>
+          {Object.entries(stats).map(([k, v]) => (
+            <div key={k} className="flex items-center justify-between" style={{padding: "8px 0", borderBottom: "1px solid var(--border)"}}>
+              <div>
+                <div className="text-sm">{k === "images" ? t("settings.storage.images") : t("settings.storage.uploads")}</div>
+                <div className="text-xs text-dim">{v.path}</div>
+              </div>
+              <div className="text-sm text-muted">{t("settings.storage.usage", { size: v.size_mb, count: v.file_count })}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Error Boundary ───
+// React 18 production build will UNMOUNT the entire root if any component
+// throws and there is no error boundary above it. That is why a single bad
+// render in TasksTab/GuideTab/SettingsTab used to wipe the whole plugin UI
+// (header + tabs + content all gone, only a blank iframe remained).
+//
+// This boundary catches those errors at the App root, keeps the rest of the
+// host shell visible, and shows the actual error message + stack so we can
+// debug instead of staring at a white screen.
+class PluginErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null, info: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    this.setState({ info });
+    console.error("[tongyi-image] render error:", error, info);
+  }
+  reset = () => this.setState({ error: null, info: null });
+  render() {
+    if (!this.state.error) return this.props.children;
+    const err = this.state.error;
+    const stack = (err && err.stack) || String(err);
+    const compStack = (this.state.info && this.state.info.componentStack) || "";
+    // Error boundary is a class component (cannot use hooks), so we read
+    // i18n directly from the shared helper. Re-render on locale change is
+    // not strictly necessary here — the error state is usually short-lived
+    // and the user will refresh — but text is still localized at the time
+    // the error first appears.
+    const tr = (k) => _i18n.t(k);
+    return (
+      <div style={{padding: 24, maxWidth: 820, margin: "0 auto"}}>
+        <div className="oa-config-banner" role="alert" style={{borderColor: "var(--danger, #ef4444)"}}>
+          <span className="oa-icon oa-config-banner__icon" style={{color: "var(--danger, #ef4444)"}}
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.warning() : ""}} />
+          <div className="oa-config-banner__text">
+            <strong>{tr("err.title")}</strong>
+            <div style={{fontSize: 12, color: "var(--text-muted)", marginTop: 4}}>
+              {err && err.message ? err.message : String(err)}
+            </div>
+          </div>
+          <button className="oa-config-banner__action" type="button" onClick={this.reset}>
+            {tr("err.retry")}
+          </button>
+        </div>
+        <details style={{marginTop: 16, fontSize: 12, color: "var(--text-muted)"}} open>
+          <summary style={{cursor: "pointer", marginBottom: 8}}>{tr("err.stackLabel")}</summary>
+          <pre style={{padding: 12, background: "var(--bg-card, var(--bg))", border: "1px solid var(--border)", borderRadius: 6, overflow: "auto", maxHeight: 240, whiteSpace: "pre-wrap", wordBreak: "break-word"}}>
+{stack}
+{compStack ? "\n--- React component stack ---" + compStack : ""}
+          </pre>
+        </details>
+      </div>
+    );
+  }
+}
+
+// ─── Mount ───
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <PluginErrorBoundary>
+    <App />
+  </PluginErrorBoundary>
+);
+// Tell the host we have rendered the first frame so it can dismiss the
+// loading overlay accurately (instead of guessing from iframe.onLoad,
+// which fires before Babel-standalone compiles this script).
+if (window.OpenAkita && typeof window.OpenAkita.ready === "function") {
+  window.OpenAkita.ready();
+}
+</script>
+</body>
+</html>

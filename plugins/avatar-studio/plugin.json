@@ -1,0 +1,56 @@
+{
+  "id": "avatar-studio",
+  "name": "Avatar Studio",
+  "version": "1.0.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "DashScope-powered digital human studio — photo speak / video relip / video reface / avatar compose, with built-in voice & figure libraries.",
+  "display_name_zh": "数字人工作室",
+  "display_name_en": "Avatar Studio",
+  "description_i18n": {
+    "zh": "基于阿里云 DashScope 的数字人工作室 — 照片说话 / 视频换嘴 / 视频换人 / 数字人合成，内置音色库与形象库。",
+    "en": "DashScope-powered digital human studio — photo speak / video relip / video reface / avatar compose, with built-in voice & figure libraries."
+  },
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["digital-human", "tts", "video", "dashscope", "avatar"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~1",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.7.0,<0.8.0"
+  },
+  "provides": {
+    "tools": [
+      "avatar_photo_speak",
+      "avatar_video_relip",
+      "avatar_video_reface",
+      "avatar_compose",
+      "avatar_voice_create",
+      "avatar_voice_delete",
+      "avatar_figure_create",
+      "avatar_figure_delete",
+      "avatar_cost_preview"
+    ],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "icon": "",
+    "title": "数字人工作室",
+    "title_i18n": {
+      "en": "Avatar Studio",
+      "zh": "数字人工作室"
+    },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme", "clipboard"]
+  }
+}

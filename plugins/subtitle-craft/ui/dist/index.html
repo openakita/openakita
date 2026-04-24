@@ -1,0 +1,3893 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Subtitle Craft · 字幕工坊</title>
+  <!--
+    Phase 5 full UI for the subtitle-craft plugin (v1.0.0).
+
+    Aligned with tongyi-image on these 8 contracts (red-line "8-item parity"):
+      1. oa-hero-title in header (icon + title + subtitle)
+      2. oa-config-banner when DashScope key missing (CTA -> Settings tab)
+      3. oa-section-label form labels (accent bar, weight 600)
+      4. Tab-as-iframe-page layout: 4 tabs, each lazy-mounted on first visit
+      5. Bridge SDK identical (api/upload/download/show-in-folder/i18n)
+      6. Theme + locale follow host bridge events
+      7. Right-side preview area (oa-preview-area) — inline split layout,
+         NOT a slide-in panel
+      8. Toast + modal patterns: oa-modal, showToast, lightbox
+
+    No cross-plugin dispatch surface in v1.0 — schema reservation only
+    (assets_bus table + tasks.origin_* columns) and the UI is completely
+    silent about it. v2.0 will add a "send to …" button row without any
+    data migration.
+  -->
+  <script src="_assets/bootstrap.js"></script>
+  <link rel="stylesheet" href="_assets/styles.css">
+  <script src="_assets/icons.js"></script>
+  <script src="_assets/markdown-mini.js"></script>
+  <script src="_assets/i18n.js"></script>
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react@18/umd/react.production.min.js" />
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" />
+  <link rel="preload" as="script" href="https://unpkg.com/@babel/standalone/babel.min.js" />
+  <style>
+    :root {
+      --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
+      --text: #1e293b; --text-muted: #64748b; --text-dim: #94a3b8;
+      --primary: #6366f1; --primary-hover: #4f46e5; --primary-light: rgba(99,102,241,.1);
+      --success: #22c55e; --warning: #f59e0b; --danger: #ef4444;
+      --border: #e2e8f0; --radius: 8px;
+    }
+    [data-theme="dark"] {
+      --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+      --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
+      --border: #334155;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+        --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
+        --border: #334155;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+    .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    .header { display: flex; align-items: center; justify-content: space-between; padding: 10px 18px; border-bottom: 1px solid var(--border); background: var(--bg-card); }
+    .header-right { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-muted); }
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--bg-card); padding: 0 16px; }
+    .tab { padding: 9px 16px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--text-muted); transition: all .15s; white-space: nowrap; }
+    .tab:hover { color: var(--text); background: var(--bg-hover); }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
+    .content { flex: 1; overflow: hidden; padding: 14px 16px; position: relative; }
+    .content > div { overflow-y: auto; }
+    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+    .card-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+    .btn { padding: 7px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-size: 13px; cursor: pointer; transition: all .15s; display: inline-flex; align-items: center; gap: 6px; }
+    .btn:hover { background: var(--bg-hover); }
+    .btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-primary:disabled, .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .btn-danger { color: var(--danger); border-color: var(--danger); }
+    .input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px; outline: none; }
+    .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(99,102,241,.15); }
+    .textarea { resize: vertical; min-height: 80px; font-family: inherit; }
+    .select { appearance: none; padding-right: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
+    .label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text); margin: 0 0 8px; line-height: 1.3; }
+    .label::before { content: ""; display: inline-block; width: 3px; height: 14px; border-radius: 2px; background: var(--primary); flex-shrink: 0; }
+    .form-row { margin-bottom: 14px; }
+    .flex { display: flex; } .gap-2 { gap: 8px; } .gap-3 { gap: 12px; }
+    .items-center { align-items: center; } .justify-between { justify-content: space-between; }
+    .flex-1 { flex: 1; } .flex-wrap { flex-wrap: wrap; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .text-sm { font-size: 13px; } .text-xs { font-size: 11px; }
+    .text-muted { color: var(--text-muted); } .text-dim { color: var(--text-dim); }
+    .text-success { color: var(--success); } .text-warning { color: var(--warning); } .text-danger { color: var(--danger); }
+    .tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+    .tag-blue { background: rgba(99,102,241,.15); color: #818cf8; }
+    .tag-orange { background: rgba(245,158,11,.15); color: #fbbf24; }
+    .tag-green { background: rgba(34,197,94,.15); color: #4ade80; }
+    .tag-red { background: rgba(239,68,68,.15); color: #f87171; }
+    .tag-gray { background: rgba(148,163,184,.15); color: #94a3b8; }
+    .mode-btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-size: 12px; cursor: pointer; transition: all .15s; }
+    .mode-btn:hover { background: var(--bg-hover); color: var(--text); }
+    .mode-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .upload-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 24px; text-align: center; cursor: pointer; transition: .15s; color: var(--text-muted); }
+    .upload-zone:hover { border-color: var(--primary); background: rgba(99,102,241,.04); }
+    .upload-zone.has-file { padding: 12px; border-style: solid; }
+    .split-layout { display: flex; gap: 20px; height: 100%; }
+    .split-left { width: 42%; min-width: 380px; overflow-y: auto; flex-shrink: 0; }
+    .split-right { flex: 1; overflow-y: auto; }
+    .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: var(--text-dim); text-align: center; }
+    .task-card { display: flex; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); transition: .15s; cursor: pointer; margin-bottom: 8px; }
+    .task-card:hover { background: var(--bg-hover); }
+    .task-card.selected { border-color: var(--primary); background: var(--primary-light); }
+    .task-thumb { width: 64px; height: 64px; border-radius: 6px; background: var(--bg-hover); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--text-muted); }
+    .task-info { flex: 1; min-width: 0; }
+    .task-info h4 { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+    .task-meta { font-size: 11px; color: var(--text-dim); display: flex; gap: 8px; flex-wrap: wrap; }
+    .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; }
+    .spinner-sm { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .style-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+    .style-option { padding: 10px; border: 1px solid var(--border); border-radius: 6px; text-align: center; cursor: pointer; font-size: 12px; transition: .15s; }
+    .style-option:hover { border-color: var(--primary); }
+    .style-option.active { border-color: var(--primary); background: var(--primary-light); color: var(--primary); }
+    .progress-bar { height: 6px; background: var(--bg-hover); border-radius: 3px; overflow: hidden; }
+    .progress-bar > div { height: 100%; background: var(--primary); transition: width .3s; }
+    .step-list { display: flex; flex-direction: column; gap: 6px; }
+    .step-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 4px; font-size: 12px; }
+    .step-row.active { background: var(--primary-light); color: var(--primary); font-weight: 500; }
+    .step-row.done { color: var(--success); }
+    .step-row.pending { color: var(--text-dim); }
+    .step-row.error { color: var(--danger); background: rgba(239,68,68,.08); }
+    .srt-preview { font-family: 'SF Mono', Consolas, 'Courier New', monospace; font-size: 12px; line-height: 1.55; white-space: pre-wrap; max-height: 320px; overflow: auto; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
+    .switch-row { display: flex; align-items: center; gap: 10px; }
+    .switch { width: 36px; height: 20px; border-radius: 10px; cursor: pointer; position: relative; transition: .2s; flex-shrink: 0; }
+    .switch.on { background: var(--primary); }
+    .switch.off { background: var(--border); }
+    .switch-knob { position: absolute; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: .2s; }
+    .switch.on .switch-knob { left: 18px; }
+    .switch.off .switch-knob { left: 2px; }
+    .switch-row.disabled { opacity: .45; cursor: not-allowed; }
+    .switch-row.disabled .switch { cursor: not-allowed; }
+    @media (max-width: 860px) { .split-layout { flex-direction: column; } .split-left { width: 100%; min-width: unset; } }
+    /* tongyi-image alignment classes (oa-*).
+       NOTE: oa-hero-title{,__icon,__text,__sub} live in the shared
+       _assets/styles.css — do NOT redeclare them here. The previous
+       local override broke the icon (no svg sizing rule), making the
+       hero render as a tiny purple dot. We let the shared gradient
+       chip (36x36, svg 22x22) win. */
+    .oa-config-banner { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: rgba(245,158,11,.1); border: 1px solid rgba(245,158,11,.4); border-radius: 8px; }
+    .oa-config-banner__icon { color: var(--warning); width: 20px; height: 20px; flex-shrink: 0; }
+    .oa-config-banner__text { flex: 1; font-size: 13px; }
+    .oa-config-banner__action { background: var(--warning); color: #fff; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
+    .oa-settings-section { margin-bottom: 24px; }
+    .oa-settings-section__title { font-size: 14px; font-weight: 600; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+    .oa-icon { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; }
+    .oa-preview-area { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; min-height: 320px; }
+    /* modal */
+    .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; z-index: 2000; padding: 20px; animation: ak-fade-in .15s ease-out; }
+    .modal-card { background: var(--bg-card); border-radius: 12px; padding: 22px 24px; max-width: 460px; width: 100%; box-shadow: 0 20px 50px rgba(0,0,0,.25); animation: ak-scale-in .15s ease-out; }
+    .modal-icon { width: 42px; height: 42px; border-radius: 50%; background: rgba(34,197,94,.12); color: var(--success); display: flex; align-items: center; justify-content: center; margin-bottom: 14px; font-size: 22px; font-weight: 700; }
+    .modal-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+    .modal-desc { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 18px; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    @keyframes ak-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes ak-scale-in { from { transform: scale(.94); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    /* error panel */
+    .error-panel { background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.3); border-radius: 6px; padding: 12px 14px; }
+    .error-panel__kind { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; background: rgba(239,68,68,.18); color: var(--danger); border-radius: 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+    .error-panel__msg { margin: 8px 0 6px; font-size: 13px; color: var(--text); line-height: 1.5; }
+    .error-panel__hint { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+    /* cost preview */
+    .cost-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .cost-table td { padding: 4px 6px; border-bottom: 1px solid var(--border); }
+    .cost-table tr:last-child td { border-bottom: none; font-weight: 600; }
+    .cost-table td.right { text-align: right; }
+    /* ── mode tiles (uniform 2x2 grid, purple accent bar, sync tag) ── */
+    .oa-mode-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .oa-mode-tile {
+      position: relative; padding: 12px 14px 12px 18px;
+      border: 1px solid var(--border); border-radius: 8px;
+      background: var(--bg-card); cursor: pointer; transition: .15s;
+      min-height: 76px; display: flex; flex-direction: column; gap: 4px;
+      overflow: hidden;
+    }
+    .oa-mode-tile::before {
+      content: ""; position: absolute; left: 0; top: 10px; bottom: 10px;
+      width: 3px; border-radius: 2px;
+      background: var(--border); transition: background .15s;
+    }
+    .oa-mode-tile:hover { border-color: var(--primary); background: var(--bg-hover); }
+    .oa-mode-tile:hover::before { background: var(--primary); }
+    .oa-mode-tile.active {
+      border-color: var(--primary);
+      background: linear-gradient(135deg, rgba(99,102,241,.10), rgba(99,102,241,.02));
+    }
+    .oa-mode-tile.active::before { background: var(--primary); }
+    .oa-mode-tile__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .oa-mode-tile__name { font-size: 13px; font-weight: 600; color: var(--text); }
+    .oa-mode-tile__chip {
+      font-size: 10px; padding: 1px 7px; border-radius: 999px;
+      background: rgba(99,102,241,.12); color: var(--primary);
+      border: 1px solid rgba(99,102,241,.25); font-weight: 500;
+      letter-spacing: .04em; flex-shrink: 0;
+    }
+    .oa-mode-tile.active .oa-mode-tile__chip {
+      background: var(--primary); color: #fff; border-color: var(--primary);
+    }
+    /* hook_picker (v1.1) — gold chip + small "NEW" badge in the corner.
+       Reuses the same .oa-mode-tile* dimensions / spacing as the four
+       v1.0 tiles so the 5-tile grid stays visually uniform. */
+    .oa-mode-tile__chip[data-mode="hook_picker"] {
+      background: linear-gradient(135deg, #f59e0b, #f97316);
+      color: #fff; border-color: transparent;
+    }
+    .oa-mode-tile.active .oa-mode-tile__chip[data-mode="hook_picker"] {
+      background: linear-gradient(135deg, #f97316, #ea580c);
+      color: #fff; border-color: transparent;
+    }
+    .oa-mode-tile__new-badge {
+      position: absolute; top: -6px; right: -6px;
+      background: linear-gradient(135deg, #fde047, #f59e0b);
+      color: #78350f; font-size: 9px; font-weight: 700;
+      padding: 2px 6px; border-radius: 999px;
+      letter-spacing: .06em; box-shadow: 0 2px 6px rgba(245,158,11,.4);
+      pointer-events: none;
+    }
+    .oa-mode-tile__desc { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+    /* hook_picker result panel — quoted dialogue + headline.
+       New ``oa-hook-*`` namespace inherits the existing CSS variables so
+       no new design language is introduced. */
+    .oa-hook-headline {
+      font-size: 16px; font-weight: 700;
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 12px; flex-wrap: wrap;
+    }
+    .oa-hook-headline .oa-summary-pill__label {
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+    .oa-hook-quote {
+      padding: 12px 14px;
+      border-left: 3px solid var(--primary);
+      background: rgba(99,102,241,.05);
+      border-radius: 0 6px 6px 0;
+      margin-bottom: 14px;
+    }
+    .oa-hook-quote p {
+      margin: 4px 0; font-style: italic;
+      font-size: 14px; line-height: 1.6;
+      color: var(--text);
+    }
+    /* Subtitle source switch + collapsible advanced options for hook_picker */
+    .oa-collapsible {
+      margin-top: 12px; border-top: 1px dashed var(--border);
+      padding-top: 10px;
+    }
+    .oa-collapsible > summary {
+      cursor: pointer; font-size: 12px; font-weight: 600;
+      color: var(--text-muted); padding: 4px 0;
+      list-style: none;
+    }
+    .oa-collapsible > summary::-webkit-details-marker { display: none; }
+    .oa-collapsible > summary::before {
+      content: "▸ "; color: var(--primary);
+      transition: transform .15s;
+      display: inline-block;
+    }
+    .oa-collapsible[open] > summary::before { content: "▾ "; }
+    /* ── feature cards rendered in the empty preview state ── */
+    .oa-feature-strip {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+      width: 100%; max-width: 360px; margin-top: 18px;
+    }
+    .oa-feature-card {
+      display: flex; gap: 8px; align-items: flex-start;
+      padding: 10px; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--bg-card); text-align: left;
+    }
+    .oa-feature-card__icon {
+      width: 28px; height: 28px; border-radius: 6px; flex-shrink: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: rgba(99,102,241,.12); color: var(--primary);
+    }
+    .oa-feature-card__icon > svg { width: 16px; height: 16px; }
+    .oa-feature-card__title { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+    .oa-feature-card__desc { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
+    /* ── config summary card on the right pane (above the cost table) ── */
+    .oa-config-summary {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 8px; margin-bottom: 14px;
+    }
+    .oa-summary-pill {
+      padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--bg);
+    }
+    .oa-summary-pill__label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+    .oa-summary-pill__value { font-size: 13px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; }
+    /* ── unified preview-template (right pane: same skeleton across all 4 modes) ── */
+    .oa-preview-card {
+      width: 100%;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      box-shadow: 0 1px 2px rgba(0,0,0,.04);
+    }
+    .oa-preview-card__head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; padding-bottom: 12px; margin-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .oa-preview-card__title {
+      display: inline-flex; align-items: center; gap: 10px;
+      font-size: 16px; font-weight: 700; color: var(--text);
+      margin: 0;
+    }
+    .oa-preview-card__title-chip {
+      width: 32px; height: 32px; border-radius: 8px;
+      background: linear-gradient(135deg, var(--primary), #8b5cf6);
+      color: #fff; display: inline-flex; align-items: center; justify-content: center;
+      box-shadow: 0 2px 8px rgba(99,102,241,.25);
+    }
+    .oa-preview-card__title-chip > svg { width: 18px; height: 18px; }
+    .oa-preview-card__refresh {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: 6px;
+      border: 1px solid var(--border); background: var(--bg);
+      color: var(--text); font-size: 12px; cursor: pointer;
+      transition: .15s;
+    }
+    .oa-preview-card__refresh:hover { background: var(--bg-hover); border-color: var(--primary); color: var(--primary); }
+    .oa-preview-card__refresh:disabled { opacity: .6; cursor: not-allowed; }
+    .oa-preview-card__refresh.is-spinning > svg { animation: oa-spin 1s linear infinite; }
+    @keyframes oa-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    /* sub-section label inside the preview card */
+    .oa-preview-section {
+      font-size: 11px; font-weight: 600; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: .06em;
+      margin: 4px 0 8px; display: flex; align-items: center; gap: 6px;
+    }
+    .oa-preview-section::before {
+      content: ""; width: 3px; height: 12px; border-radius: 2px;
+      background: var(--primary);
+    }
+    /* polished cost table (used inside .oa-preview-card) */
+    .cost-table--styled { width: 100%; border-collapse: collapse; }
+    .cost-table--styled th, .cost-table--styled td {
+      padding: 9px 10px; font-size: 12.5px;
+    }
+    .cost-table--styled thead th {
+      font-size: 10px; font-weight: 600; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: .05em;
+      border-bottom: 1px solid var(--border); text-align: left;
+    }
+    .cost-table--styled thead th.right { text-align: right; }
+    .cost-table--styled tbody tr { border-bottom: 1px dashed var(--border); }
+    .cost-table--styled tbody tr:last-child { border-bottom: none; }
+    .cost-table--styled tbody td.right { text-align: right; font-variant-numeric: tabular-nums; }
+    .cost-table--styled .free-row td { color: var(--text-muted); }
+    .cost-table--styled .free-tag {
+      display: inline-block; padding: 1px 6px; margin-left: 6px;
+      font-size: 10px; border-radius: 4px;
+      background: rgba(34,197,94,.15); color: rgb(34,197,94);
+      border: 1px solid rgba(34,197,94,.4);
+    }
+    .cost-table--styled .total-row td {
+      background: rgba(99,102,241,.08);
+      font-weight: 700; font-size: 14px; color: var(--text);
+      border-top: 2px solid var(--primary); padding: 12px 10px;
+    }
+    .cost-table--styled .total-row td.right { color: var(--primary); }
+    .oa-cost-notes {
+      margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
+      font-size: 11.5px; color: var(--text-dim); line-height: 1.7;
+    }
+    .oa-cost-notes div { display: flex; gap: 6px; }
+    .oa-cost-notes div::before { content: "·"; color: var(--primary); }
+    /* ── stat chip (status + filter row) ── */
+    .oa-stat-chip {
+      padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--bg-card); color: var(--text); font-size: 12px;
+      cursor: pointer; transition: .15s;
+      display: inline-flex; align-items: center; gap: 6px;
+      white-space: nowrap;
+    }
+    .oa-stat-chip:hover { background: var(--bg-hover); }
+    .oa-stat-chip.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .oa-stat-chip__count { font-size: 10px; padding: 0 6px; background: rgba(255,255,255,.18); border-radius: 999px; }
+    .oa-stat-chip:not(.active) .oa-stat-chip__count { background: var(--bg-hover); color: var(--text-muted); }
+    /* ── style preset visual swatch ── */
+    .oa-style-card {
+      padding: 10px; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--bg-card); display: flex; flex-direction: column; gap: 6px;
+    }
+    .oa-style-swatch {
+      height: 44px; border-radius: 6px;
+      background: linear-gradient(135deg, #1f2937, #111827);
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; letter-spacing: .04em; color: #fff;
+      text-shadow: 0 1px 2px rgba(0,0,0,.6);
+      font-size: 13px; overflow: hidden;
+    }
+    .oa-style-swatch--cinema   { background: linear-gradient(135deg, #0f172a, #1e293b); }
+    .oa-style-swatch--youtube  { background: #fff; color: #000; text-shadow: none; border: 1px solid var(--border); }
+    .oa-style-swatch--tiktok   { background: linear-gradient(135deg, #ec4899, #8b5cf6); }
+    .oa-style-swatch--tv       { background: linear-gradient(135deg, #f59e0b, #ef4444); }
+    .oa-style-card__name { font-size: 13px; font-weight: 600; }
+    .oa-style-card__meta { font-size: 11px; color: var(--text-muted); }
+    /* ── system deps card (verbatim from seedance-video) ── */
+    .sysdep-card {
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px; margin-top: 8px; background: var(--bg-card);
+    }
+    .sysdep-card__head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .sysdep-card__title {
+      font-size: 13px; font-weight: 600; color: var(--text); flex: 1;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .sysdep-card__badge {
+      font-size: 11px; padding: 2px 8px; border-radius: 999px;
+      display: inline-flex; align-items: center; gap: 4px;
+      background: var(--bg); border: 1px solid var(--border);
+    }
+    .sysdep-card__badge--ok      { color: var(--success); background: rgba(34,197,94,.10); border-color: rgba(34,197,94,.35); }
+    .sysdep-card__badge--missing { color: var(--danger);  background: rgba(239,68,68,.10); border-color: rgba(239,68,68,.35); }
+    .sysdep-card__badge--busy    { color: var(--warning); background: rgba(245,158,11,.10); border-color: rgba(245,158,11,.35); }
+    .sysdep-card__path {
+      font-size: 11px; color: var(--text-dim); margin-top: 4px;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      word-break: break-all;
+    }
+    .sysdep-card__actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+    .sysdep-card__sudo-hint {
+      margin-top: 10px; padding: 8px 10px; border-radius: 6px;
+      background: rgba(245,158,11,.10); border: 1px solid rgba(245,158,11,.35);
+      font-size: 12px; color: var(--text);
+    }
+    .sysdep-card__sudo-cmd {
+      display: flex; align-items: center; gap: 6px; margin-top: 6px;
+      padding: 6px 8px; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+    .sysdep-card__sudo-cmd code { flex: 1; word-break: break-all; }
+    .sysdep-log { margin-top: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); overflow: hidden; }
+    .sysdep-log__head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 10px; border-bottom: 1px solid var(--border);
+      font-size: 11px; color: var(--text-muted); font-weight: 500;
+    }
+    .sysdep-log__body {
+      max-height: 180px; overflow-y: auto; padding: 8px 10px;
+      margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 11px; line-height: 1.5; color: var(--text);
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .sysdep-log__body--empty { color: var(--text-dim); font-style: italic; }
+    .sysdep-spinner {
+      display: inline-block; width: 12px; height: 12px;
+      border: 2px solid var(--border); border-top-color: var(--primary);
+      border-radius: 50%; animation: sysdep-spin .8s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes sysdep-spin { to { transform: rotate(360deg); } }
+    .deps-help {
+      font-size: 12px; color: var(--text-muted); line-height: 1.6;
+      padding: 10px 12px; border-radius: 6px;
+      background: rgba(99,102,241,.05); border: 1px solid rgba(99,102,241,.20);
+    }
+    .deps-help strong { color: var(--text); }
+    .deps-help ul { margin: 6px 0 0 18px; padding: 0; }
+    .deps-help li { margin: 2px 0; }
+    /* "Other dependencies" sub-section inside the System card.
+       Mirrors seedance-video's .setting-section visual rhythm:
+       a labelled head row with a refresh action, then the rows. */
+    .other-deps {
+      margin-top: 16px; padding-top: 14px;
+      border-top: 1px dashed var(--border);
+    }
+    .other-deps__head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; margin-bottom: 8px;
+    }
+    .other-deps .btn.is-rechecking { color: var(--primary); border-color: var(--primary); }
+  </style>
+</head>
+<body>
+<div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;color:var(--text-muted,#64748b);font-size:13px" id="__sc_loading">正在加载插件...</div></div>
+<script>
+/* =================================================================
+ * In-page diagnostics — mirrors the clip-sense fix
+ *   (commit 1cadcacd: "unblock UI rendering blocked by ... Babel
+ *    cross-origin Script error swallow").
+ *
+ * Why every line matters:
+ *  - <script type="text/babel"> + Babel-standalone from unpkg.com is
+ *    cross-origin; ANY syntax/runtime error inside it is reported by
+ *    window.onerror as the opaque "Script error. at :0:0" with no
+ *    stack. Combined with React mount happening only at the end of
+ *    that block, a single typo blanks the whole UI silently.
+ *  - We therefore (a) capture window.onerror into a visible panel,
+ *    (b) start a 10s watchdog that flips the loading text to a
+ *    diagnostic when React never mounts, and (c) below we abandon
+ *    <script type="text/babel"> entirely in favor of a manual
+ *    Babel.transform() + eval() pipeline wrapped in try/catch so the
+ *    real compile / runtime stack is shown in the page itself.
+ * ================================================================= */
+window.onerror = function(msg, src, line, col, err) {
+  var el = document.getElementById("root");
+  if (el) el.innerHTML = '<div style="padding:24px;color:#ef4444;font-size:13px;word-break:break-word"><b>[subtitle-craft error]</b><br/>' + String(msg) + '<br/>at ' + String(src) + ':' + line + ':' + col + (err && err.stack ? '<pre style="margin-top:8px;white-space:pre-wrap;font-size:11px;background:#f1f5f9;padding:12px;border-radius:6px;overflow:auto;max-height:300px">' + err.stack + '</pre>' : '') + '</div>';
+};
+window.__scRendered = false;
+setTimeout(function() {
+  if (window.__scRendered) return;
+  var el = document.getElementById("__sc_loading");
+  if (!el) return;
+  el.style.color = "#ef4444";
+  el.style.flexDirection = "column";
+  el.style.textAlign = "center";
+  el.style.lineHeight = "1.8";
+  el.innerHTML = '<b>插件初始化超时</b><br/>可能原因：<br/>1. CDN 脚本加载失败 (unpkg.com)<br/>2. Babel 编译错误<br/>3. React 渲染失败<br/><br/><span style="font-size:11px;color:#94a3b8">请按 F12 打开开发者工具查看控制台错误</span>';
+}, 10000);
+</script>
+<script>
+/* =================================================================
+ * Bridge SDK — verbatim from tongyi-image (only pluginId fallback
+ * differs). Provides apiCall / pluginApi / uploadFile / showToast /
+ * downloadFile / bridgeShowInFolder / onEvent / theme & locale sync.
+ * ================================================================= */
+const BRIDGE_VER = 1;
+let _ctx = null, _caps = [], _pending = {}, _handlers = {};
+let _bridgeConnected = false;
+const _inIframe = window.parent !== window;
+function uid() { return Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
+function post(msg) { if (_inIframe) window.parent.postMessage({ __akita_bridge: true, version: BRIDGE_VER, ...msg }, "*"); }
+
+function _detectApiBase() {
+  if (_ctx && _ctx.apiBase) return _ctx.apiBase;
+  var loc = window.location;
+  if (loc.port === "5173" || loc.port === "1420") return "http://127.0.0.1:18900";
+  return loc.origin;
+}
+
+function directFetch(method, path, body) {
+  var url = path.startsWith("http") ? path : _detectApiBase() + path;
+  var opts = { method: method, headers: { "Content-Type": "application/json" } };
+  if (body && method !== "GET" && method !== "HEAD") {
+    if (body instanceof FormData) { opts.body = body; delete opts.headers["Content-Type"]; }
+    else { opts.body = JSON.stringify(body); }
+  }
+  return fetch(url, opts).then(function(resp) {
+    return resp.json().then(function(json) { return { ok: resp.ok, status: resp.status, body: json }; })
+      .catch(function() { return { ok: resp.ok, status: resp.status, body: null }; });
+  });
+}
+
+function apiCall(method, path, body) {
+  if (!_inIframe || !_bridgeConnected) return directFetch(method, path, body);
+  return new Promise(function(resolve, reject) {
+    var id = uid();
+    _pending[id] = { resolve: resolve, reject: reject };
+    post({ type: "bridge:api-request", requestId: id, payload: { method: method, path: path, body: body } });
+    setTimeout(function() {
+      if (_pending[id]) { delete _pending[id]; directFetch(method, path, body).then(resolve).catch(reject); }
+    }, 5000);
+  });
+}
+
+function pluginApi(method, path, body) {
+  var base = _ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/subtitle-craft";
+  return apiCall(method, base + path, body);
+}
+
+function bridgeDownload(url, fname) {
+  return new Promise(function(resolve) {
+    if (!_inIframe || !_bridgeConnected) { resolve({ ok: false, error: "no-bridge" }); return; }
+    var id = uid();
+    _pending[id] = { resolve: resolve, reject: function(e) { resolve({ ok: false, error: String(e) }); } };
+    post({ type: "bridge:download", requestId: id, payload: { url: url, filename: fname } });
+    setTimeout(function() {
+      if (_pending[id]) { delete _pending[id]; resolve({ ok: false, error: "timeout" }); }
+    }, 60000);
+  });
+}
+
+function bridgeShowInFolder(path) {
+  if (!_inIframe || !_bridgeConnected || !path) return;
+  if (_caps.length && _caps.indexOf("show-in-folder") === -1) return;
+  var id = uid();
+  _pending[id] = { resolve: function() {}, reject: function() {} };
+  post({ type: "bridge:show-in-folder", requestId: id, payload: { path: path } });
+  setTimeout(function() { if (_pending[id]) delete _pending[id]; }, 10000);
+}
+
+window.addEventListener("message", function(e) {
+  var d = e.data;
+  if (!d || !d.__akita_bridge) return;
+  if (d.type === "bridge:init" && d.payload) {
+    _ctx = d.payload; _bridgeConnected = true;
+    if (_ctx.theme) document.documentElement.setAttribute("data-theme", _ctx.theme.includes("dark") ? "dark" : "light");
+    if (_ctx.locale && window.OpenAkitaI18n && window.OpenAkitaI18n.setLocale) {
+      window.OpenAkitaI18n.setLocale(_ctx.locale.startsWith("zh") ? "zh" : "en");
+    }
+  }
+  if (d.type === "bridge:handshake-ack" && d.payload) { _caps = d.payload.capabilities || []; _bridgeConnected = true; }
+  var acks = ["bridge:api-response","bridge:clipboard-ack","bridge:download-ack","bridge:show-in-folder-ack","bridge:pick-folder-ack"];
+  if (acks.indexOf(d.type) !== -1 && d.requestId && _pending[d.requestId]) {
+    _pending[d.requestId].resolve(d.payload); delete _pending[d.requestId];
+  }
+  if (d.type === "bridge:theme-change" && d.payload) {
+    document.documentElement.setAttribute("data-theme", (d.payload.theme || "").includes("dark") ? "dark" : "light");
+  }
+  if (d.type === "bridge:locale-change" && d.payload && window.OpenAkitaI18n && window.OpenAkitaI18n.setLocale) {
+    window.OpenAkitaI18n.setLocale((d.payload.locale || "").startsWith("zh") ? "zh" : "en");
+  }
+  if (d.type === "bridge:event" && d.payload) {
+    var h = _handlers[d.payload.eventType];
+    if (h) h.forEach(function(fn) { fn(d.payload.data); });
+  }
+});
+var _readyInterval = null;
+function _sendReady() { post({ type: "bridge:ready" }); post({ type: "bridge:handshake", payload: { sdkVersion: "1.0.0" } }); }
+_sendReady();
+if (_inIframe) {
+  _readyInterval = setInterval(function() { if (_bridgeConnected) { clearInterval(_readyInterval); return; } _sendReady(); }, 300);
+  setTimeout(function() { if (_readyInterval) clearInterval(_readyInterval); }, 20000);
+}
+function onEvent(type, fn) { (_handlers[type] = _handlers[type] || []).push(fn); }
+
+function uploadFile(file) {
+  var base = _detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/subtitle-craft");
+  var fd = new FormData(); fd.append("file", file);
+  return fetch(base + "/upload", { method: "POST", body: fd }).then(function(r) { return r.json(); });
+}
+
+function _tr(key, vars, fallback) {
+  if (window.OpenAkitaI18n && window.OpenAkitaI18n.t) {
+    var v = window.OpenAkitaI18n.t(key, vars);
+    if (v && v !== key) return v;
+  }
+  if (fallback) {
+    if (vars) {
+      return String(fallback).replace(/\{(\w+)\}/g, function (_, n) {
+        return vars[n] != null ? String(vars[n]) : "{" + n + "}";
+      });
+    }
+    return fallback;
+  }
+  return key;
+}
+
+async function downloadFile(url, fname) {
+  try {
+    showToast(_tr("toast.downloading", null, "Downloading..."));
+    var fullUrl = url.startsWith("http") ? url : _detectApiBase() + url;
+    if (_inIframe && _bridgeConnected) {
+      var native = await bridgeDownload(fullUrl, fname);
+      if (native && native.ok && native.path && /[\\/]/.test(String(native.path))) {
+        showToast(_tr("toast.downloadedTo", { path: native.path }, "Saved to: {path}"));
+        bridgeShowInFolder(native.path);
+        return;
+      }
+    }
+    var resp = await fetch(fullUrl);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    var blob = await resp.blob();
+    var objUrl = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = objUrl; a.download = fname;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(objUrl); }, 3000);
+    showToast(_tr("toast.downloadedBrowser", { name: fname }, "Downloaded {name}."));
+  } catch (e) {
+    showToast(_tr("toast.downloadFailed", { msg: e.message }, "Download failed: {msg}"));
+  }
+}
+
+function showToast(body, type) {
+  type = type || "success";
+  if (_inIframe && _bridgeConnected) { post({ type: "bridge:notification", payload: { title: "", body: body, type: type } }); return; }
+  console.log("[Toast]", type, body);
+}
+
+function copyToClipboard(text) {
+  if (_inIframe && _bridgeConnected) {
+    var id = uid();
+    _pending[id] = { resolve: function() { showToast(_tr("toast.copied", null, "Copied")); }, reject: function() {} };
+    post({ type: "bridge:clipboard", requestId: id, payload: { text: text } });
+    return;
+  }
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(function() { showToast(_tr("toast.copied", null, "Copied")); });
+  }
+}
+</script>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"
+        onerror="document.getElementById('root').innerHTML='<div style=padding:24px;color:#ef4444>[CDN Error] React failed to load. Check network.</div>'"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"
+        onerror="document.getElementById('root').innerHTML='<div style=padding:24px;color:#ef4444>[CDN Error] ReactDOM failed to load. Check network.</div>'"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"
+        onerror="document.getElementById('root').innerHTML='<div style=padding:24px;color:#ef4444>[CDN Error] Babel failed to load. Check network.</div>'"></script>
+<script>
+console.log("[subtitle-craft] CDN loaded: React=" + typeof React + ", ReactDOM=" + typeof ReactDOM + ", Babel=" + (typeof Babel !== "undefined"));
+</script>
+
+<script type="text/plain" id="sc-jsx-source">
+console.log("[subtitle-craft] Babel script executing...");
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+// Plugin-local SVG icon set — extends the shared OpenAkitaIcons registry
+// (icons.js, byte-identical across plugins) with a small handful of icons
+// the shared kit does not include yet. We add them via in-place patch so
+// `OpenAkitaIcons.subtitles()` etc. work the same as any other icon and
+// the patch is idempotent across hot reloads.
+(function patchIcons() {
+  if (!window.OpenAkitaIcons) return;
+  function svg(inner) {
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + inner + '</svg>';
+  }
+  // Subtitle / closed-caption frame icon — a rounded rectangle with two
+  // caption text bars inside. More representative of a subtitle tool
+  // than the generic "mic" icon (which signals ASR only and misses the
+  // translate / repair / burn modes).
+  if (!window.OpenAkitaIcons.subtitles) {
+    window.OpenAkitaIcons.subtitles = function () {
+      return svg(
+        '<rect x="2.5" y="5" width="19" height="14" rx="2.5" ry="2.5"/>' +
+        '<line x1="6" y1="11" x2="11" y2="11"/>' +
+        '<line x1="13" y1="11" x2="18" y2="11"/>' +
+        '<line x1="6" y1="15" x2="14" y2="15"/>' +
+        '<line x1="16" y1="15" x2="18" y2="15"/>'
+      );
+    };
+  }
+  // Wrench / build — used in the "repair" mode tile
+  if (!window.OpenAkitaIcons.wrench) {
+    window.OpenAkitaIcons.wrench = function () {
+      return svg(
+        '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.5-2.5z"/>'
+      );
+    };
+  }
+  // Translate / language — used in the "translate" mode tile
+  if (!window.OpenAkitaIcons.translate) {
+    window.OpenAkitaIcons.translate = function () {
+      return svg(
+        '<path d="M4 5h7"/>' +
+        '<path d="M9 3v2c0 4.42-2.69 8-6 8"/>' +
+        '<path d="M5 9c0 2.21 3.16 4 7 4 1.34 0 2.6-.21 3.7-.6"/>' +
+        '<path d="M14 21l4-9 4 9"/>' +
+        '<path d="M15.5 17.5h5"/>'
+      );
+    };
+  }
+  // Flame / burn — used in the "burn" mode tile
+  if (!window.OpenAkitaIcons.flame) {
+    window.OpenAkitaIcons.flame = function () {
+      return svg(
+        '<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>'
+      );
+    };
+  }
+  // Package — system component card icon (mirror of seedance's I.package)
+  if (!window.OpenAkitaIcons.package) {
+    window.OpenAkitaIcons.package = function () {
+      return svg(
+        '<line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/>' +
+        '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>' +
+        '<polyline points="3.27,6.96 12,12.01 20.73,6.96"/>' +
+        '<line x1="12" y1="22.08" x2="12" y2="12"/>'
+      );
+    };
+  }
+  // Trash — uninstall button on system component card
+  if (!window.OpenAkitaIcons.trash) {
+    window.OpenAkitaIcons.trash = function () {
+      return svg(
+        '<polyline points="3,6 5,6 21,6"/>' +
+        '<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'
+      );
+    };
+  }
+  // Link — "open homepage" external link
+  if (!window.OpenAkitaIcons.link) {
+    window.OpenAkitaIcons.link = function () {
+      return svg(
+        '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>' +
+        '<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>'
+      );
+    };
+  }
+  // subtitleCraft — dedicated brand mark for the plugin's hero title.
+  // Composition (read-as-a-glyph): a rounded subtitle/CC frame with two
+  // caption rows + a 4-point sparkle escaping the top-right corner +
+  // a tiny diamond accent at mid-right.  The sparkle visually says
+  // "AI / 工坊" (workshop, craft) so the icon reads as "subtitle + AI"
+  // at a single glance — distinct from the plain ``subtitles`` icon
+  // that mode tiles / pills already use elsewhere.  Force-overwrites
+  // (not guarded by `if (!...)`) so the hero always uses our mark even
+  // if the host registry preloads a different ``subtitleCraft`` later.
+  window.OpenAkitaIcons.subtitleCraft = function () {
+    return (
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" ' +
+        'fill="none" stroke="currentColor" stroke-width="1.7" ' +
+        'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        // Subtitle / CC frame (slightly offset left to leave room for the
+        // sparkle in the top-right corner).
+        '<rect x="2.5" y="6.5" width="15" height="12" rx="2.5" ry="2.5"/>' +
+        // Top caption row: two short bars (mimics "subtitle line").
+        '<line x1="5.5" y1="11.2" x2="9" y2="11.2"/>' +
+        '<line x1="10.5" y1="11.2" x2="14.5" y2="11.2"/>' +
+        // Bottom caption row: one long bar + one short cap (visually
+        // signals "second line of dialogue" without re-using the same
+        // pattern as the plain subtitles icon).
+        '<line x1="5.5" y1="14.6" x2="11.5" y2="14.6"/>' +
+        '<line x1="13" y1="14.6" x2="14.5" y2="14.6"/>' +
+        // Sparkle escaping the top-right corner — the "craft / AI" mark.
+        // Filled 4-point star drawn as a diamond path so it stays crisp
+        // at 16-px hero size and inherits currentColor.
+        '<path d="M20 2.5 L21 5 L23.5 6 L21 7 L20 9.5 L19 7 L16.5 6 L19 5 Z" ' +
+          'fill="currentColor" stroke="currentColor" stroke-width="0.6"/>' +
+        // Mini diamond accent — adds depth without dominating the glyph.
+        '<path d="M22 11 L22.7 11.7 L22 12.4 L21.3 11.7 Z" ' +
+          'fill="currentColor" stroke="none"/>' +
+      '</svg>'
+    );
+  };
+})();
+
+// Tiny inline icon helper — wraps OpenAkitaIcons in an `oa-icon` span so
+// every icon usage stays consistent (16x16, currentColor). Falls back to
+// a no-op span if the icon name isn't registered, so a typo never breaks
+// the whole React tree.
+function OAIcon({ name, size }) {
+  const svg = window.OpenAkitaIcons && window.OpenAkitaIcons[name]
+    ? window.OpenAkitaIcons[name]() : "";
+  const style = size ? { width: size, height: size } : undefined;
+  return <span className="oa-icon" style={style}
+               dangerouslySetInnerHTML={{__html: svg}} />;
+}
+
+/* =================================================================
+ * i18n dictionary (zh-CN + en) — single source of truth for every
+ * user-visible string. Keys are dot-notation; values are localized.
+ * Conventions match tongyi-image.
+ * ================================================================= */
+const I18N_DICT = {
+  zh: {
+    // app shell
+    "app.title": "字幕工坊",
+    "app.subtitle": "DashScope · 自动字幕 / 翻译 / 修复 / 烧制",
+    "tabs.create": "创建任务",
+    "tabs.tasks": "任务列表",
+    "tabs.library": "素材库",
+    "tabs.settings": "设置",
+    // banner (no API key)
+    "banner.noKey.title": "尚未配置 DashScope API Key",
+    "banner.noKey.desc": "Paraformer 听写 与 Qwen-MT 翻译均会失败。请前往设置页填入阿里云百炼 DashScope API Key。",
+    "banner.noKey.cta": "前往配置",
+    // modes
+    "modes.auto_subtitle": "自动字幕",
+    "modes.auto_subtitle.desc": "视频/音频 → Paraformer-v2 词级听写 → SRT/VTT,可选烧制",
+    "modes.translate": "字幕翻译",
+    "modes.translate.desc": "现有 SRT → Qwen-MT 多语言翻译,支持双语字幕",
+    "modes.repair": "字幕修复",
+    "modes.repair.desc": "时间轴对齐、断行重排、消除重叠",
+    "modes.burn": "字幕烧制",
+    "modes.burn.desc": "已有 SRT + 视频 → 软字幕(sidecar) 或 硬烧(in-stream)",
+    // status
+    "status.pending": "等待中",
+    "status.running": "进行中",
+    "status.succeeded": "已完成",
+    "status.failed": "失败",
+    "status.canceled": "已取消",
+    // pipeline steps
+    "steps.setup_environment": "1. 准备环境",
+    "steps.estimate_cost": "2. 估算成本",
+    "steps.prepare_assets": "3. 准备素材",
+    "steps.asr_or_load": "4. 听写/加载字幕",
+    "steps.identify_characters": "4.5. 角色识别",
+    "steps.translate_or_repair": "5. 翻译/修复",
+    "steps.render_output": "6. 输出渲染",
+    "steps.burn_or_finalize": "7. 烧制/收尾",
+    // create tab
+    "create.modeLabel": "选择模式",
+    "create.source.label": "源文件",
+    "create.source.video": "视频/音频",
+    "create.source.srt": "SRT 字幕文件",
+    "create.source.dropHint": "拖拽或点击上传文件",
+    "create.source.maxHint": "支持 MP4/MKV/MOV/MP3/WAV/SRT,单文件 ≤ 2GB",
+    "create.lang.source": "源语言",
+    "create.lang.target": "目标语言",
+    "create.lang.auto": "自动识别",
+    "create.lang.zh": "中文 (zh)",
+    "create.lang.en": "英文 (en)",
+    "create.lang.ja": "日文 (ja)",
+    "create.lang.ko": "韩文 (ko)",
+    "create.lang.es": "西班牙文 (es)",
+    "create.lang.fr": "法文 (fr)",
+    "create.lang.de": "德文 (de)",
+    "create.lang.ru": "俄文 (ru)",
+    "create.lang.ar": "阿拉伯文 (ar)",
+    "create.lang.pt": "葡萄牙文 (pt)",
+    "create.diarization.label": "角色分离 (Diarization)",
+    "create.diarization.desc": "区分多说话人 SPEAKER_00 / SPEAKER_01 …",
+    "create.speakerCount.label": "说话人数 (留空自动)",
+    "create.charIdentify.label": "角色识别 (Qwen-VL,需先开启角色分离)",
+    "create.charIdentify.desc": "用 LLM 把 SPEAKER_xx 映射为角色名;失败保留原标签,不阻塞流程",
+    "create.charIdentify.requireDiarization": "需先开启角色分离",
+    "create.disfluency.label": "去除语气词 (嗯/啊/呃)",
+    "create.bilingual.label": "双语字幕",
+    "create.bilingual.desc": "保留原文行,翻译追加在下方",
+    "create.translation.model": "翻译模型",
+    "create.translation.flash": "Qwen-MT Flash · 性价比首选",
+    "create.translation.plus": "Qwen-MT Plus · 高质量",
+    "create.translation.lite": "Qwen-MT Lite · 极速廉价",
+    "create.repair.label": "修复选项",
+    "create.repair.fixOverlap": "消除时间重叠",
+    "create.repair.maxLineLen": "限制单行 ≤ {n} 字符 (重新断行)",
+    "create.repair.minDuration": "最短 cue 持续 ≥ {n} 秒",
+    "create.repair.mergeShort": "合并相邻短 cue (< {n} 秒间隙)",
+    "create.style.label": "字幕样式",
+    "create.style.default": "默认",
+    "create.style.cinema": "影院风",
+    "create.style.youtube": "YouTube 风",
+    "create.style.tiktok": "短视频抖音风",
+    "create.style.tv": "电视台综艺风",
+    "create.burn.engine": "烧制引擎",
+    "create.burn.engine.ass": "ASS · ffmpeg 原生 (推荐)",
+    "create.burn.engine.html": "HTML · Playwright 渲染 (高自定义)",
+    "create.burn.mode": "输出方式",
+    "create.burn.mode.soft": "软字幕 (mp4 sidecar,可关闭)",
+    "create.burn.mode.hard": "硬字幕 (烧入画面,通用)",
+    "create.cost.preview": "成本预估",
+    "create.cost.refresh": "刷新预估",
+    "create.cost.total": "合计",
+    "create.cost.itemAsr": "Paraformer-v2 听写",
+    "create.cost.itemMt": "Qwen-MT 翻译",
+    "create.cost.itemVl": "Qwen-VL 角色识别",
+    "create.cost.itemBurn": "本地烧制 (无 API 费用)",
+    "create.cost.unitMin": "{n} 分钟",
+    "create.cost.unitChar": "{n} 字符",
+    "create.cost.unitFree": "—",
+    "create.cost.col.item": "项目",
+    "create.cost.col.qty": "用量",
+    "create.cost.col.amount": "金额",
+    "create.cost.free": "免费",
+    "create.btn.start": "开始任务",
+    "create.btn.starting": "提交中…",
+    "create.btn.estimate": "需先选择源文件",
+    "create.advanced": "高级选项",
+    "create.modal.continue": "继续创建",
+    "create.preview.title": "预估与进度",
+    "create.preview.empty.title": "选择源文件后,这里会显示费用预估与任务进度",
+    "create.preview.empty.hint": "支持 视频/音频/SRT,最大 2GB",
+    "create.preview.section.config": "配置摘要",
+    "create.preview.section.cost": "费用明细",
+    "create.preview.section.notes": "计费说明",
+    "create.cost.note.asr": "Paraformer-v2 听写: ¥0.0008 / 秒(按音频时长)",
+    "create.cost.note.mt": "Qwen-MT Flash / Plus / Lite: 按 Token 计费(中文 ≈ 0.7 token/字)",
+    "create.cost.note.vl": "Qwen-VL Max 角色识别: 仅在角色分离 + 角色识别同时开启时计费",
+    "create.cost.note.burn": "本地烧制(FFmpeg / Playwright HTML): 不消耗 API,免费",
+    // tasks tab
+    "tasks.filter.status": "状态",
+    "tasks.filter.mode": "模式",
+    "tasks.filter.all": "全部",
+    "tasks.filter.allModes": "全部模式",
+    "tasks.empty.title": "暂无任务",
+    "tasks.empty.hint": "在「创建任务」页发起一次任务后,会出现在这里",
+    "tasks.totalCount": "共 {n} 个任务",
+    "tasks.detail.title": "任务详情",
+    "tasks.detail.cancel": "取消",
+    "tasks.detail.retry": "重试",
+    "tasks.detail.delete": "删除",
+    "tasks.detail.confirmDelete": "确定删除该任务及其产物?",
+    "tasks.detail.runningHint": "处理中…",
+    "tasks.detail.id": "任务 ID",
+    "tasks.detail.mode": "模式",
+    "tasks.detail.created": "创建时间",
+    "tasks.detail.duration": "耗时",
+    "tasks.detail.cost": "实际花费",
+    "tasks.detail.errorPanel": "错误详情",
+    "tasks.detail.outputs": "输出文件",
+    "tasks.detail.downloadSrt": "下载 SRT",
+    "tasks.detail.downloadVtt": "下载 VTT",
+    "tasks.detail.downloadVideo": "下载视频",
+    "tasks.detail.previewSrt": "预览字幕",
+    "tasks.empty.noSelection.title": "未选择任务",
+    "tasks.empty.noSelection.hint": "从左侧列表选择一个任务查看详情",
+    "tasks.detail.idCopy": "复制 ID",
+    // mode chips (small tag shown in mode tile head + task list)
+    "modes.tag.auto_subtitle": "听写",
+    "modes.tag.translate": "翻译",
+    "modes.tag.repair": "修复",
+    "modes.tag.burn": "烧制",
+    // create tab features (rendered as feature cards in the empty preview)
+    "create.feature.asr.title": "Paraformer-v2 词级听写",
+    "create.feature.asr.desc": "中英日韩等 11 种语言,自动断句 + 时间戳",
+    "create.feature.mt.title": "Qwen-MT 多语言翻译",
+    "create.feature.mt.desc": "Flash / Plus / Lite 三档,支持双语字幕",
+    "create.feature.repair.title": "时间轴修复",
+    "create.feature.repair.desc": "重叠剔除、断行重排、短 cue 合并",
+    "create.feature.burn.title": "FFmpeg / HTML 烧制",
+    "create.feature.burn.desc": "本地烧制,无 API 费用,支持 5 套样式预设",
+    // create tab right-pane summary card
+    "create.summary.title": "本次任务一览",
+    "create.summary.mode": "模式",
+    "create.summary.duration": "音频时长",
+    "create.summary.duration.unknown": "未知",
+    "create.summary.style": "字幕样式",
+    "create.summary.engine": "烧制引擎",
+    "create.summary.translate.target": "目标语言",
+    "create.summary.translate.model": "翻译模型",
+    "create.summary.repair.options": "修复选项",
+    // library tab
+    "library.tabs.transcripts": "听写记录",
+    "library.tabs.srts": "字幕成品",
+    "library.tabs.styles": "样式预设",
+    "library.intro.transcripts": "听写记录:每次「自动字幕」任务都会将 Paraformer 的原始词级转录缓存至此,翻译 / 修复 / 烧制时可二次使用,无需重新听写。",
+    "library.intro.srts": "字幕成品:任务完成后产生的 SRT / VTT 文件归档列表,点击即可导出到本机或在「创建任务 > 翻译 / 烧制」中复用。",
+    "library.intro.styles": "样式预设:内置 5 套常用样式(默认 / 影院 / YouTube / 短视频抖音 / 电视台综艺),与「创建任务 > 字幕样式」选项一一对应,选哪一套此处看到的就是它最终的字体 / 颜色;自定义样式同样会出现在创建页的样式列表中。",
+    "library.transcripts.empty": "暂无听写记录。完成一次「自动字幕」任务后,Paraformer 转录会缓存于此供二次使用。",
+    "library.srts.empty": "暂无字幕成品。完成任务后,SRT/VTT 文件会出现在这里。",
+    "library.styles.builtin": "内置样式",
+    "library.styles.custom": "自定义样式",
+    "library.styles.add": "新建样式",
+    "library.styles.editLabel": "样式名称",
+    "library.styles.editFontSize": "字号 (px)",
+    "library.styles.editFontName": "字体",
+    "library.styles.editPrimary": "主色 (ASS 格式)",
+    "library.styles.editOutline": "描边色",
+    "library.styles.save": "保存",
+    "library.styles.delete": "删除样式",
+    "library.styles.deleteConfirm": "确定删除该自定义样式?",
+    // settings
+    "settings.section.api": "DashScope API",
+    "settings.section.system": "系统组件",
+    "settings.section.runtime": "默认参数",
+    "settings.section.storage": "存储统计",
+    "settings.api.title": "DashScope API",
+    "settings.api.key": "API Key",
+    "settings.api.key.show": "显示",
+    "settings.api.key.hide": "隐藏",
+    "settings.api.key.save": "保存",
+    "settings.api.key.helpPrefix": "未注册?前往 ",
+    "settings.api.key.helpLink": "阿里云百炼控制台",
+    "settings.api.key.helpSuffix": " 获取(免费有额度)。",
+    "settings.api.callout": "缺少此项,所有 ASR/翻译任务都会失败",
+    "settings.runtime.title": "运行参数",
+    "settings.runtime.timeout": "Paraformer 单任务超时 (秒)",
+    "settings.runtime.maxParallel": "翻译并发分片数",
+    "settings.runtime.help": "翻译并发越大越省时,但 DashScope 会根据账户等级限速;建议保持 2~4。",
+    "settings.system.intro.strong": "FFmpeg 与 Chromium 浏览器是字幕烧制 / HTML 渲染必需的系统级组件。",
+    "settings.system.intro.body": "自动字幕 / 翻译 / 修复 三个模式不依赖 FFmpeg;只有「字幕烧制」与基于 HTML+Playwright 的高级渲染需要它。FFmpeg 安装在系统 PATH(Windows 用户目录 / macOS Homebrew / Linux /usr/bin),不是本插件私有,会被任何已安装它的机器自动检测到。Chromium 由 Playwright 单独管理,首次安装运行 `python -m playwright install chromium` 即可。",
+    "settings.system.platform.win": "Windows: 「一键安装」会调用 winget 自动安装 Gyan.FFmpeg,无需管理员权限。",
+    "settings.system.platform.mac": "macOS: 「一键安装」会调用 Homebrew 自动安装 ffmpeg。",
+    "settings.system.platform.linux": "Linux: apt / dnf 需要 root 权限。如果 OpenAkita 以普通用户身份运行,请按提示在终端执行 sudo apt-get install ffmpeg。",
+    "settings.system.detecting": "正在检测...",
+    "settings.system.status.found": "已安装 v{ver}",
+    "settings.system.status.foundNoVer": "已安装",
+    "settings.system.status.missing": "未安装",
+    "settings.system.location": "路径:{path}",
+    "settings.system.btn.install": "一键安装",
+    "settings.system.btn.installVia": "一键安装 ({strategy})",
+    "settings.system.btn.recheck": "重新检测",
+    "settings.system.btn.openHome": "查看官方文档",
+    "settings.system.btn.copyCmd": "复制命令",
+    "settings.system.btn.copied": "已复制",
+    "settings.system.btn.cancel": "取消",
+    "settings.system.btn.uninstall": "卸载",
+    "settings.system.btn.uninstallConfirmBtn": "确认卸载",
+    "settings.system.installing": "安装中... ({elapsed})",
+    "settings.system.uninstalling": "卸载中... ({elapsed})",
+    "settings.system.installed": "FFmpeg 安装成功",
+    "settings.system.installFailed": "安装失败:{msg}",
+    "settings.system.uninstalled": "FFmpeg 已卸载",
+    "settings.system.uninstallFailed": "卸载失败:{msg}",
+    "settings.system.uninstallConfirm": "确定要卸载 FFmpeg 吗?\n\n注意:FFmpeg 是系统级组件,不是字幕工坊插件私有的——卸载会影响所有依赖 FFmpeg 的插件(如 seedance-video / clip-sense / 通义生图视频缩略),以及你系统上其他用到 ffmpeg 的程序。\n\n本插件中将不可用:字幕烧制、HTML 字幕渲染。",
+    "settings.system.requiresSudo": "Linux 需要 root 权限。请在终端手动执行:",
+    "settings.system.noMethod": "当前系统暂无自动安装方案,请前往官方文档手动下载。",
+    "settings.system.logTitle": "安装日志",
+    "settings.system.logTitleUninstall": "卸载日志",
+    "settings.system.logEmpty": "暂无输出",
+    "settings.system.healthTitle": "其他依赖",
+    "settings.system.health.playwright": "Playwright 包",
+    "settings.system.health.playwrightBrowser": "Chromium 浏览器",
+    "settings.system.health.apiKey": "DashScope API Key",
+    "settings.system.health.refresh": "重新检测",
+    "settings.system.health.ok": "可用",
+    "settings.system.health.missing": "缺失",
+    "settings.system.health.intro": "Playwright + Chromium 用于 HTML 字幕渲染(高级模式);DashScope API Key 用于 ASR 与翻译。下面 3 项任意缺失,对应功能会自动降级或拒绝执行。",
+    "settings.storage.title": "存储统计",
+    "settings.storage.totalFiles": "文件总数",
+    "settings.storage.totalSize": "总大小",
+    // toasts
+    "toast.savedSettings": "设置已保存",
+    "toast.saveFailed": "保存失败",
+    "toast.taskCreated": "任务已创建",
+    "toast.taskFailed": "任务创建失败:{msg}",
+    "toast.canceled": "已取消任务",
+    "toast.deleted": "已删除任务",
+    "toast.uploadFailed": "上传失败",
+    "toast.copied": "已复制",
+    "toast.downloading": "下载中…",
+    "toast.downloadedTo": "已保存至:{path}",
+    "toast.downloadedBrowser": "已下载 {name}",
+    "toast.downloadFailed": "下载失败:{msg}",
+    // error_kind localized hints (mirror ERROR_HINTS in subtitle_models.py)
+    "errorKind.network": "网络异常",
+    "errorKind.timeout": "操作超时",
+    "errorKind.auth": "认证失败",
+    "errorKind.quota": "配额/余额不足",
+    "errorKind.moderation": "内容审核未通过",
+    "errorKind.dependency": "运行依赖缺失",
+    "errorKind.format": "文件格式错误",
+    "errorKind.duration": "媒体时长超限",
+    "errorKind.unknown": "未知错误",
+    // misc
+    "common.optional": "(可选)",
+    "common.cancel": "取消",
+    "common.confirm": "确认",
+    "common.loading": "加载中…",
+    "common.minutes": "{n} 分钟",
+    "common.seconds": "{n} 秒",
+    "common.copy": "复制",
+    "common.refresh": "刷新",
+    // hook_picker (v1.1) — mode tile + tag
+    "modes.hook_picker": "AI 选 Hook",
+    "modes.hook_picker.desc": "Qwen-Plus 智能挑选短视频开场金句,输出 hook.srt + 时间码",
+    "modes.tag.hook_picker": "AI 选段",
+    // hook_picker — left pane source picker
+    "hook.source.label": "字幕来源",
+    "hook.source.upload": "上传 SRT",
+    "hook.source.upload.desc": "本地选择 .srt / .vtt 文件,直接 AI 选段",
+    "hook.source.from_task": "已有任务",
+    "hook.source.from_task.desc": "从「自动字幕 / 翻译 / 修复」成功的任务中复用",
+    "hook.fromTask.placeholder": "选择已生成 SRT 的任务…",
+    "hook.fromTask.empty": "暂无可复用的任务,先去「自动字幕」生成 SRT 吧。",
+    // hook_picker — instruction & duration
+    "hook.instruction.label": "选段方向 (Instruction)",
+    "hook.instruction.placeholder": "例:挑一段男主角承诺反击的转折点,要有戏剧张力",
+    "hook.instruction.hint": "选填,留空则交由 AI 自由发挥",
+    "hook.mainChar.label": "主角名 (可选)",
+    "hook.mainChar.placeholder": "例:周牧,留空则不限定",
+    "hook.duration.label": "目标时长 ≈ {n}s",
+    "hook.duration.range": "实际命中区间 {min}–{max}s",
+    // hook_picker — advanced options
+    "hook.advanced": "高级选项",
+    "hook.window.label": "窗口策略",
+    "hook.window.tail_then_head": "结尾→开头→随机 (推荐)",
+    "hook.window.random_window": "纯随机窗口",
+    "hook.attempts.label": "随机窗口次数 = {n}",
+    "hook.model.label": "AI 模型",
+    // hook_picker — right preview pills
+    "create.summary.hook.source": "字幕源",
+    "create.summary.hook.source.empty": "未选择",
+    "create.summary.hook.source.pickTask": "未指定任务",
+    "create.summary.hook.duration": "目标时长",
+    "create.summary.hook.window": "窗口策略",
+    "create.summary.hook.model": "AI 模型",
+    "create.preview.hook.empty.title": "AI 选 Hook 等待启动",
+    "create.preview.hook.empty.hint": "上传或挑选已有 SRT 后,Qwen-Plus 会用三轮窗口策略锁定最佳开场金句。",
+    "create.hookFeature.load.title": "加载 SRT",
+    "create.hookFeature.load.desc": "支持新上传或复用已有任务的字幕",
+    "create.hookFeature.ai.title": "AI 选段",
+    "create.hookFeature.ai.desc": "Qwen-Plus 三轮窗口策略,带模糊匹配回退",
+    "create.hookFeature.duration.title": "时长校验",
+    "create.hookFeature.duration.desc": "自动落入目标 ±5s 区间,不达标自动重选",
+    "create.hookFeature.timecode.title": "导出时间码",
+    "create.hookFeature.timecode.desc": "生成 hook.srt + JSON,后续剪辑器一键定位",
+    // hook_picker — task detail right-pane result
+    "hook.result.title": "AI 选中的 Hook",
+    "hook.result.window": "命中窗口",
+    "hook.result.source_range": "原始时间码",
+    "hook.result.duration": "Hook 时长",
+    "hook.result.lines": "对白行数",
+    "hook.result.ai_reason": "AI 选段理由",
+    "hook.result.details": "查看 hook.json + 遥测",
+    "hook.result.copy_timecode": "复制时间码",
+    "hook.result.pending_v2": "插件互联功能将在 v2.0 启用",
+    "hook.result.next.clip_sense": "Clip Sense 切片 (v2.0)",
+    "hook.result.next.post_kit": "Post Kit 配音 (v2.0)",
+    "hook.result.noLines": "(对白行为空,请查看 hook.json 排查)",
+    // library hooks sub-tab
+    "library.tabs.hooks": "AI Hooks",
+    "library.intro.hooks": "AI Hooks:历次「AI 选 Hook」任务命中的开场金句归档,支持复制原始时间码或一键删除任务。",
+    "library.hooks.empty": "暂无 AI Hook 记录",
+    "library.hooks.empty.hint": "运行「AI 选 Hook」模式后,命中结果会缓存于此供二次复用。",
+    "library.hooks.copy": "复制时间码",
+    "library.hooks.deleteConfirm": "确定删除该 Hook 任务?",
+    "library.hooks.noPreview": "对白行为空",
+  },
+  en: {
+    "app.title": "Subtitle Craft",
+    "app.subtitle": "DashScope · Auto-subtitle / Translate / Repair / Burn",
+    "tabs.create": "Create",
+    "tabs.tasks": "Tasks",
+    "tabs.library": "Library",
+    "tabs.settings": "Settings",
+    "banner.noKey.title": "DashScope API Key not configured",
+    "banner.noKey.desc": "Paraformer ASR and Qwen-MT translation will both fail. Please configure your DashScope API key in Settings.",
+    "banner.noKey.cta": "Open Settings",
+    "modes.auto_subtitle": "Auto Subtitle",
+    "modes.auto_subtitle.desc": "Video/audio → Paraformer-v2 word-level ASR → SRT/VTT, optional burn",
+    "modes.translate": "Translate",
+    "modes.translate.desc": "Existing SRT → Qwen-MT multilingual translation, optional bilingual",
+    "modes.repair": "Repair",
+    "modes.repair.desc": "Timeline alignment, line wrapping, overlap removal",
+    "modes.burn": "Burn",
+    "modes.burn.desc": "Existing SRT + video → soft subtitle (sidecar) or hard burn (in-stream)",
+    "status.pending": "Pending",
+    "status.running": "Running",
+    "status.succeeded": "Done",
+    "status.failed": "Failed",
+    "status.canceled": "Canceled",
+    "steps.setup_environment": "1. Setup",
+    "steps.estimate_cost": "2. Cost estimate",
+    "steps.prepare_assets": "3. Prepare assets",
+    "steps.asr_or_load": "4. ASR / Load SRT",
+    "steps.identify_characters": "4.5. Identify characters",
+    "steps.translate_or_repair": "5. Translate / Repair",
+    "steps.render_output": "6. Render output",
+    "steps.burn_or_finalize": "7. Burn / Finalize",
+    "create.modeLabel": "Choose mode",
+    "create.source.label": "Source file",
+    "create.source.video": "Video / audio",
+    "create.source.srt": "SRT subtitle file",
+    "create.source.dropHint": "Drop or click to upload",
+    "create.source.maxHint": "MP4/MKV/MOV/MP3/WAV/SRT, ≤ 2GB",
+    "create.lang.source": "Source language",
+    "create.lang.target": "Target language",
+    "create.lang.auto": "Auto-detect",
+    "create.lang.zh": "Chinese (zh)",
+    "create.lang.en": "English (en)",
+    "create.lang.ja": "Japanese (ja)",
+    "create.lang.ko": "Korean (ko)",
+    "create.lang.es": "Spanish (es)",
+    "create.lang.fr": "French (fr)",
+    "create.lang.de": "German (de)",
+    "create.lang.ru": "Russian (ru)",
+    "create.lang.ar": "Arabic (ar)",
+    "create.lang.pt": "Portuguese (pt)",
+    "create.diarization.label": "Speaker diarization",
+    "create.diarization.desc": "Distinguish speakers as SPEAKER_00 / SPEAKER_01 …",
+    "create.speakerCount.label": "Speaker count (blank = auto)",
+    "create.charIdentify.label": "Character identification (Qwen-VL, requires diarization)",
+    "create.charIdentify.desc": "Map SPEAKER_xx labels to character names via LLM; failure keeps the originals (non-fatal)",
+    "create.charIdentify.requireDiarization": "Enable diarization first",
+    "create.disfluency.label": "Remove disfluencies (uh / um)",
+    "create.bilingual.label": "Bilingual subtitles",
+    "create.bilingual.desc": "Keep the original line and append the translation below",
+    "create.translation.model": "Translation model",
+    "create.translation.flash": "Qwen-MT Flash · best value",
+    "create.translation.plus": "Qwen-MT Plus · best quality",
+    "create.translation.lite": "Qwen-MT Lite · cheapest",
+    "create.repair.label": "Repair options",
+    "create.repair.fixOverlap": "Resolve time overlaps",
+    "create.repair.maxLineLen": "Wrap lines ≤ {n} chars",
+    "create.repair.minDuration": "Min cue duration ≥ {n} s",
+    "create.repair.mergeShort": "Merge adjacent cues (gap < {n} s)",
+    "create.style.label": "Subtitle style",
+    "create.style.default": "Default",
+    "create.style.cinema": "Cinema",
+    "create.style.youtube": "YouTube",
+    "create.style.tiktok": "Short-form / TikTok",
+    "create.style.tv": "TV / variety",
+    "create.burn.engine": "Burn engine",
+    "create.burn.engine.ass": "ASS · ffmpeg native (recommended)",
+    "create.burn.engine.html": "HTML · Playwright (full custom)",
+    "create.burn.mode": "Output mode",
+    "create.burn.mode.soft": "Soft (mp4 sidecar)",
+    "create.burn.mode.hard": "Hard (in-stream)",
+    "create.cost.preview": "Cost estimate",
+    "create.cost.refresh": "Refresh estimate",
+    "create.cost.total": "Total",
+    "create.cost.itemAsr": "Paraformer-v2 ASR",
+    "create.cost.itemMt": "Qwen-MT translation",
+    "create.cost.itemVl": "Qwen-VL identification",
+    "create.cost.itemBurn": "Local burn (no API cost)",
+    "create.cost.unitMin": "{n} min",
+    "create.cost.unitChar": "{n} chars",
+    "create.cost.unitFree": "—",
+    "create.cost.col.item": "Item",
+    "create.cost.col.qty": "Qty",
+    "create.cost.col.amount": "Amount",
+    "create.cost.free": "Free",
+    "create.btn.start": "Start task",
+    "create.btn.starting": "Submitting…",
+    "create.btn.estimate": "Pick a source file first",
+    "create.advanced": "Advanced",
+    "create.modal.continue": "Keep creating",
+    "create.preview.title": "Cost estimate & progress",
+    "create.preview.empty.title": "Pick a source file to see the cost estimate and progress here",
+    "create.preview.empty.hint": "Supports video / audio / SRT, up to 2 GB",
+    "create.preview.section.config": "Configuration",
+    "create.preview.section.cost": "Cost breakdown",
+    "create.preview.section.notes": "Pricing notes",
+    "create.cost.note.asr": "Paraformer-v2 ASR: ¥0.0008 / sec of audio",
+    "create.cost.note.mt": "Qwen-MT Flash / Plus / Lite: per input token (~0.7 token / Chinese char)",
+    "create.cost.note.vl": "Qwen-VL Max character ID: charged only when diarization AND character-ID are both on",
+    "create.cost.note.burn": "Local burn (FFmpeg / Playwright HTML): no API cost",
+    "tasks.filter.status": "Status",
+    "tasks.filter.mode": "Mode",
+    "tasks.filter.all": "All",
+    "tasks.filter.allModes": "All modes",
+    "tasks.empty.title": "No tasks yet",
+    "tasks.empty.hint": "Run a task from the Create tab to see it here",
+    "tasks.totalCount": "{n} tasks",
+    "tasks.detail.title": "Task detail",
+    "tasks.detail.cancel": "Cancel",
+    "tasks.detail.retry": "Retry",
+    "tasks.detail.delete": "Delete",
+    "tasks.detail.confirmDelete": "Delete this task and all its outputs?",
+    "tasks.detail.runningHint": "Running…",
+    "tasks.detail.id": "Task ID",
+    "tasks.detail.mode": "Mode",
+    "tasks.detail.created": "Created",
+    "tasks.detail.duration": "Duration",
+    "tasks.detail.cost": "Cost",
+    "tasks.detail.errorPanel": "Error details",
+    "tasks.detail.outputs": "Outputs",
+    "tasks.detail.downloadSrt": "Download SRT",
+    "tasks.detail.downloadVtt": "Download VTT",
+    "tasks.detail.downloadVideo": "Download video",
+    "tasks.detail.previewSrt": "Preview subtitle",
+    "tasks.empty.noSelection.title": "No task selected",
+    "tasks.empty.noSelection.hint": "Pick a task from the list to see its detail",
+    "tasks.detail.idCopy": "Copy ID",
+    "modes.tag.auto_subtitle": "ASR",
+    "modes.tag.translate": "MT",
+    "modes.tag.repair": "Fix",
+    "modes.tag.burn": "Burn",
+    "create.feature.asr.title": "Word-level ASR",
+    "create.feature.asr.desc": "Paraformer-v2, 11 languages, auto sentence + timestamps",
+    "create.feature.mt.title": "Multi-lingual MT",
+    "create.feature.mt.desc": "Qwen-MT Flash / Plus / Lite, optional bilingual subs",
+    "create.feature.repair.title": "Timeline repair",
+    "create.feature.repair.desc": "Overlap removal, line wrapping, short cue merging",
+    "create.feature.burn.title": "Local burn",
+    "create.feature.burn.desc": "FFmpeg / HTML, no API cost, 5 built-in styles",
+    "create.summary.title": "This task at a glance",
+    "create.summary.mode": "Mode",
+    "create.summary.duration": "Duration",
+    "create.summary.duration.unknown": "Unknown",
+    "create.summary.style": "Style",
+    "create.summary.engine": "Burn engine",
+    "create.summary.translate.target": "Target lang",
+    "create.summary.translate.model": "MT model",
+    "create.summary.repair.options": "Repair opts",
+    "library.tabs.transcripts": "Transcripts",
+    "library.tabs.srts": "SRT outputs",
+    "library.tabs.styles": "Style presets",
+    "library.intro.transcripts": "Transcripts: every Auto-subtitle task caches the raw Paraformer word-level transcript here so Translate / Repair / Burn can re-use it without re-transcribing.",
+    "library.intro.srts": "SRT outputs: archived list of SRT/VTT files produced by completed tasks. Click to download or feed back into Translate / Burn modes.",
+    "library.intro.styles": "Style presets: 5 built-in presets (Default / Cinema / YouTube / TikTok / TV) shown here are exactly the same styles that appear in Create > Subtitle style — pick one there and the look you preview here is what you get. Custom styles created here also show up in the Create page.",
+    "library.transcripts.empty": "No transcripts yet. Once an Auto-subtitle task succeeds, the Paraformer transcript is cached here for re-use.",
+    "library.srts.empty": "No subtitle outputs yet. Completed task SRT/VTT files appear here.",
+    "library.styles.builtin": "Built-in",
+    "library.styles.custom": "Custom",
+    "library.styles.add": "Add style",
+    "library.styles.editLabel": "Style name",
+    "library.styles.editFontSize": "Font size (px)",
+    "library.styles.editFontName": "Font family",
+    "library.styles.editPrimary": "Primary colour (ASS)",
+    "library.styles.editOutline": "Outline colour",
+    "library.styles.save": "Save",
+    "library.styles.delete": "Delete style",
+    "library.styles.deleteConfirm": "Delete this custom style?",
+    "settings.section.api": "DashScope API",
+    "settings.section.system": "System components",
+    "settings.section.runtime": "Default parameters",
+    "settings.section.storage": "Storage",
+    "settings.api.title": "DashScope API",
+    "settings.api.key": "API Key",
+    "settings.api.key.show": "Show",
+    "settings.api.key.hide": "Hide",
+    "settings.api.key.save": "Save",
+    "settings.api.key.helpPrefix": "Need one? Visit the ",
+    "settings.api.key.helpLink": "Aliyun Bailian console",
+    "settings.api.key.helpSuffix": " (free quota available).",
+    "settings.api.callout": "Without this, every ASR / translation task will fail",
+    "settings.runtime.title": "Runtime parameters",
+    "settings.runtime.timeout": "Paraformer single-task timeout (sec)",
+    "settings.runtime.maxParallel": "Translation chunk parallelism",
+    "settings.runtime.help": "Higher parallelism = shorter wall time, but DashScope rate-limits per account tier; 2~4 is the sweet spot.",
+    "settings.system.intro.strong": "FFmpeg and the Chromium browser are system-level components required for subtitle burning and HTML rendering.",
+    "settings.system.intro.body": "Auto-subtitle / Translate / Repair do NOT need FFmpeg — only the Burn mode and the HTML+Playwright high-end renderer do. FFmpeg lives in the system PATH (Windows user dir / macOS Homebrew / Linux /usr/bin), is not plugin-private, and any machine that already has it will be auto-detected. Chromium is managed separately by Playwright; install once with `python -m playwright install chromium`.",
+    "settings.system.platform.win": "Windows: \"One-click install\" calls winget to install Gyan.FFmpeg without admin rights.",
+    "settings.system.platform.mac": "macOS: \"One-click install\" calls Homebrew to install ffmpeg.",
+    "settings.system.platform.linux": "Linux: apt / dnf needs root. If OpenAkita runs as a normal user, follow the prompt and run `sudo apt-get install ffmpeg` in a terminal.",
+    "settings.system.detecting": "Detecting...",
+    "settings.system.status.found": "Installed v{ver}",
+    "settings.system.status.foundNoVer": "Installed",
+    "settings.system.status.missing": "Not installed",
+    "settings.system.location": "Path: {path}",
+    "settings.system.btn.install": "Install",
+    "settings.system.btn.installVia": "Install via {strategy}",
+    "settings.system.btn.recheck": "Re-detect",
+    "settings.system.btn.openHome": "Open docs",
+    "settings.system.btn.copyCmd": "Copy command",
+    "settings.system.btn.copied": "Copied",
+    "settings.system.btn.cancel": "Cancel",
+    "settings.system.btn.uninstall": "Uninstall",
+    "settings.system.btn.uninstallConfirmBtn": "Confirm uninstall",
+    "settings.system.installing": "Installing... ({elapsed})",
+    "settings.system.uninstalling": "Uninstalling... ({elapsed})",
+    "settings.system.installed": "FFmpeg installed",
+    "settings.system.installFailed": "Install failed: {msg}",
+    "settings.system.uninstalled": "FFmpeg uninstalled",
+    "settings.system.uninstallFailed": "Uninstall failed: {msg}",
+    "settings.system.uninstallConfirm": "Uninstall FFmpeg?\n\nNote: FFmpeg is a system-level component, not private to subtitle-craft — uninstalling will affect every plugin that uses it (seedance-video, clip-sense, tongyi-image thumbnails, etc.) and any other ffmpeg-using program on your system.\n\nThis plugin will lose: subtitle burn, HTML subtitle rendering.",
+    "settings.system.requiresSudo": "Linux requires root. Run this in a terminal:",
+    "settings.system.noMethod": "No automatic install recipe for this OS. Please install manually from the docs.",
+    "settings.system.logTitle": "Install log",
+    "settings.system.logTitleUninstall": "Uninstall log",
+    "settings.system.logEmpty": "No output yet",
+    "settings.system.healthTitle": "Other dependencies",
+    "settings.system.health.playwright": "Playwright package",
+    "settings.system.health.playwrightBrowser": "Chromium browser",
+    "settings.system.health.apiKey": "DashScope API Key",
+    "settings.system.health.refresh": "Re-check",
+    "settings.system.health.ok": "OK",
+    "settings.system.health.missing": "Missing",
+    "settings.system.health.intro": "Playwright + Chromium are used by the HTML subtitle renderer (advanced mode); the DashScope API key drives ASR and translation. Any of these missing will gracefully degrade or refuse the matching feature.",
+    "settings.storage.title": "Storage",
+    "settings.storage.totalFiles": "Files",
+    "settings.storage.totalSize": "Total size",
+    "toast.savedSettings": "Settings saved",
+    "toast.saveFailed": "Save failed",
+    "toast.taskCreated": "Task created",
+    "toast.taskFailed": "Task creation failed: {msg}",
+    "toast.canceled": "Task canceled",
+    "toast.deleted": "Task deleted",
+    "toast.uploadFailed": "Upload failed",
+    "toast.copied": "Copied",
+    "toast.downloading": "Downloading…",
+    "toast.downloadedTo": "Saved to: {path}",
+    "toast.downloadedBrowser": "Downloaded {name}",
+    "toast.downloadFailed": "Download failed: {msg}",
+    "errorKind.network": "Network error",
+    "errorKind.timeout": "Timeout",
+    "errorKind.auth": "Auth failed",
+    "errorKind.quota": "Quota / balance exhausted",
+    "errorKind.moderation": "Moderation rejected",
+    "errorKind.dependency": "Runtime dependency missing",
+    "errorKind.format": "File format error",
+    "errorKind.duration": "Media too long",
+    "errorKind.unknown": "Unknown error",
+    "common.optional": "(optional)",
+    "common.cancel": "Cancel",
+    "common.confirm": "Confirm",
+    "common.loading": "Loading…",
+    "common.minutes": "{n} min",
+    "common.seconds": "{n} s",
+    "common.copy": "Copy",
+    "common.refresh": "Refresh",
+    // hook_picker (v1.1) — mode tile + tag
+    "modes.hook_picker": "AI Hook Picker",
+    "modes.hook_picker.desc": "Qwen-Plus selects the strongest opening dialogue, returns hook.srt + timecode",
+    "modes.tag.hook_picker": "AI Hook",
+    // hook_picker — left pane source picker
+    "hook.source.label": "Subtitle source",
+    "hook.source.upload": "Upload SRT",
+    "hook.source.upload.desc": "Pick a local .srt / .vtt file and run AI selection",
+    "hook.source.from_task": "From task",
+    "hook.source.from_task.desc": "Reuse SRT from a finished Auto-subtitle / Translate / Repair task",
+    "hook.fromTask.placeholder": "Pick a task that produced an SRT…",
+    "hook.fromTask.empty": "No reusable tasks yet — run an Auto-subtitle task first.",
+    // hook_picker — instruction & duration
+    "hook.instruction.label": "Instruction",
+    "hook.instruction.placeholder": "e.g. find the moment the protagonist promises revenge with high stakes",
+    "hook.instruction.hint": "Optional — leave blank to let the AI pick freely",
+    "hook.mainChar.label": "Main character (optional)",
+    "hook.mainChar.placeholder": "e.g. Mu Zhou — leave blank for no constraint",
+    "hook.duration.label": "Target duration ≈ {n}s",
+    "hook.duration.range": "Actual hit window {min}–{max}s",
+    // hook_picker — advanced options
+    "hook.advanced": "Advanced options",
+    "hook.window.label": "Window strategy",
+    "hook.window.tail_then_head": "Tail → Head → Random (recommended)",
+    "hook.window.random_window": "Pure random windows",
+    "hook.attempts.label": "Random window attempts = {n}",
+    "hook.model.label": "AI model",
+    // hook_picker — right preview pills
+    "create.summary.hook.source": "SRT source",
+    "create.summary.hook.source.empty": "Not selected",
+    "create.summary.hook.source.pickTask": "No task picked",
+    "create.summary.hook.duration": "Target duration",
+    "create.summary.hook.window": "Window strategy",
+    "create.summary.hook.model": "AI model",
+    "create.preview.hook.empty.title": "AI Hook Picker is ready",
+    "create.preview.hook.empty.hint": "Upload or pick an existing SRT — Qwen-Plus will run a 3-window strategy to find the strongest opener.",
+    "create.hookFeature.load.title": "Load SRT",
+    "create.hookFeature.load.desc": "Upload new file or reuse an existing task's subtitle",
+    "create.hookFeature.ai.title": "AI selection",
+    "create.hookFeature.ai.desc": "Qwen-Plus 3-window strategy with fuzzy-match fallback",
+    "create.hookFeature.duration.title": "Duration check",
+    "create.hookFeature.duration.desc": "Auto-rejects clips outside target ±5s and retries",
+    "create.hookFeature.timecode.title": "Export timecode",
+    "create.hookFeature.timecode.desc": "Outputs hook.srt + JSON for one-click jump in your editor",
+    // hook_picker — task detail right-pane result
+    "hook.result.title": "AI-selected hook",
+    "hook.result.window": "Window",
+    "hook.result.source_range": "Source range",
+    "hook.result.duration": "Hook duration",
+    "hook.result.lines": "Dialogue lines",
+    "hook.result.ai_reason": "AI reason",
+    "hook.result.details": "Show hook.json + telemetry",
+    "hook.result.copy_timecode": "Copy timecode",
+    "hook.result.pending_v2": "Cross-plugin dispatch arrives in v2.0",
+    "hook.result.next.clip_sense": "Clip Sense (v2.0)",
+    "hook.result.next.post_kit": "Post Kit (v2.0)",
+    "hook.result.noLines": "(no dialogue lines — inspect hook.json)",
+    // library hooks sub-tab
+    "library.tabs.hooks": "AI Hooks",
+    "library.intro.hooks": "AI Hooks: archive of every successful AI Hook Picker run — copy the source timecode or delete the task in one click.",
+    "library.hooks.empty": "No AI Hooks yet",
+    "library.hooks.empty.hint": "Run the AI Hook Picker mode and successful results will be cached here for reuse.",
+    "library.hooks.copy": "Copy timecode",
+    "library.hooks.deleteConfirm": "Delete this hook task?",
+    "library.hooks.noPreview": "Dialogue lines empty",
+  },
+};
+
+// Register the dictionary with the shared ui-kit i18n helper
+// (_assets/i18n.js exposes `register` / `t` / `locale` / `onChange` —
+// NOT `registerDict` / `getLocale`, which were the original typos that
+// caused every visible label to render as the raw dot-notation key).
+if (window.OpenAkitaI18n && typeof window.OpenAkitaI18n.register === "function") {
+  window.OpenAkitaI18n.register(I18N_DICT);
+}
+
+function useT() {
+  const [, force] = useState(0);
+  useEffect(() => {
+    if (!window.OpenAkitaI18n || !window.OpenAkitaI18n.onChange) return;
+    return window.OpenAkitaI18n.onChange(() => force(n => n + 1));
+  }, []);
+  return useCallback((key, vars) => _tr(key, vars, key), []);
+}
+
+function useLocale() {
+  const _read = () => {
+    const i = window.OpenAkitaI18n;
+    if (!i) return "zh";
+    if (typeof i.locale === "function") return i.locale() || "zh";
+    if (typeof i.getLocale === "function") return i.getLocale() || "zh";
+    return "zh";
+  };
+  const [loc, setLoc] = useState(_read);
+  useEffect(() => {
+    if (!window.OpenAkitaI18n || !window.OpenAkitaI18n.onChange) return;
+    return window.OpenAkitaI18n.onChange(() => setLoc(_read()));
+  }, []);
+  return loc;
+}
+
+/* =================================================================
+ * Reusable atoms
+ * ================================================================= */
+
+function Switch({ on, onChange, disabled }) {
+  return (
+    <div className={"switch " + (on ? "on" : "off")}
+         onClick={() => !disabled && onChange(!on)}
+         style={disabled ? { opacity: .5, cursor: "not-allowed" } : undefined}>
+      <div className="switch-knob" />
+    </div>
+  );
+}
+
+function StatusBadge({ status }) {
+  const t = useT();
+  const map = {
+    pending: "tag-gray", running: "tag-orange",
+    succeeded: "tag-green", failed: "tag-red", canceled: "tag-gray",
+  };
+  return <span className={"tag " + (map[status] || "tag-gray")}>{t("status." + status)}</span>;
+}
+
+function ErrorPanel({ kind, message, hints }) {
+  const t = useT();
+  const hint = hints || (kind ? t("errorKind." + kind) : "");
+  return (
+    <div className="error-panel">
+      <div className="flex items-center gap-2">
+        <span className="error-panel__kind">{kind || "unknown"}</span>
+        <span className="text-xs text-dim">{hint}</span>
+      </div>
+      <div className="error-panel__msg">{message || ""}</div>
+    </div>
+  );
+}
+
+function CostTable({ preview, t }) {
+  if (!preview || !preview.items || preview.items.length === 0) {
+    return <div className="text-sm text-dim">—</div>;
+  }
+  return (
+    <table className="cost-table cost-table--styled">
+      <thead>
+        <tr>
+          <th>{t("create.cost.col.item")}</th>
+          <th className="right">{t("create.cost.col.qty")}</th>
+          <th className="right">{t("create.cost.col.amount")}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {preview.items.map((it, i) => {
+          const amount = Number(it.cost_cny || 0);
+          const isFree = amount === 0;
+          return (
+            <tr key={i} className={isFree ? "free-row" : ""}>
+              <td>
+                {it.label || it.api}
+                {isFree && <span className="free-tag">{t("create.cost.free")}</span>}
+              </td>
+              <td className="right text-dim">{it.quantity || "—"}</td>
+              <td className="right">¥ {amount.toFixed(4)}</td>
+            </tr>
+          );
+        })}
+        <tr className="total-row">
+          <td>{t("create.cost.total")}</td>
+          <td></td>
+          <td className="right">¥ {Number(preview.total_cny || 0).toFixed(4)}</td>
+        </tr>
+      </tbody>
+    </table>
+  );
+}
+
+function StepList({ currentStep, status, errorStep }) {
+  const t = useT();
+  const STEPS = [
+    "setup_environment",
+    "estimate_cost",
+    "prepare_assets",
+    "asr_or_load",
+    "identify_characters",
+    "translate_or_repair",
+    "render_output",
+    "burn_or_finalize",
+  ];
+  const currentIdx = STEPS.indexOf(currentStep);
+  return (
+    <div className="step-list">
+      {STEPS.map((step, i) => {
+        let cls = "pending";
+        if (status === "succeeded") cls = "done";
+        else if (errorStep === step) cls = "error";
+        else if (currentIdx > i) cls = "done";
+        else if (currentIdx === i) cls = "active";
+        return (
+          <div key={step} className={"step-row " + cls}>
+            <span style={{width: 14, display:"inline-block"}}>
+              {cls === "done" ? "✓" : cls === "active" ? "•" : cls === "error" ? "✗" : "·"}
+            </span>
+            <span>{t("steps." + step)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function fmtDuration(sec) {
+  if (!sec || sec < 0) return "—";
+  const s = Math.floor(sec);
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m + "m " + (r ? r + "s" : "");
+}
+
+function fmtSize(bytes) {
+  if (!bytes) return "0 B";
+  const u = ["B", "KB", "MB", "GB"];
+  let i = 0;
+  let v = bytes;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i += 1; }
+  return v.toFixed(v < 10 ? 2 : 1) + " " + u[i];
+}
+
+function fmtTime(ts) {
+  if (!ts) return "—";
+  try {
+    const d = typeof ts === "number" ? new Date(ts * 1000) : new Date(ts);
+    return d.toLocaleString();
+  } catch (_) { return String(ts); }
+}
+
+/* =================================================================
+ * App shell — header / banner / 4-tab nav / lazy-mount tabs
+ * ================================================================= */
+
+function App() {
+  const t = useT();
+  const [tab, setTab] = useState("create");
+  const [tabsMounted, setTabsMounted] = useState({ create: true });
+  const [tasksRefreshSignal, setTasksRefreshSignal] = useState(0);
+  const [keyPresent, setKeyPresent] = useState(false);
+  const [healthCache, setHealthCache] = useState(null);
+
+  const goToTab = useCallback((id) => {
+    setTab(id);
+    if (id === "tasks") setTasksRefreshSignal(s => s + 1);
+  }, []);
+
+  const refreshKey = useCallback(() => {
+    pluginApi("GET", "/healthz").then(r => {
+      if (r.body) {
+        setKeyPresent(!!r.body.dashscope_api_key_present);
+        setHealthCache(r.body);
+      }
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => { refreshKey(); }, [refreshKey]);
+  useEffect(() => {
+    setTabsMounted(prev => ({ ...prev, [tab]: true }));
+  }, [tab]);
+
+  const TABS = [
+    { id: "create",   name: t("tabs.create") },
+    { id: "tasks",    name: t("tabs.tasks") },
+    { id: "library",  name: t("tabs.library") },
+    { id: "settings", name: t("tabs.settings") },
+  ];
+
+  return (
+    <div className="app">
+      <div className="header">
+        <h1 className="oa-hero-title">
+          <span className="oa-hero-title__icon"
+                dangerouslySetInnerHTML={{__html:
+                  (window.OpenAkitaIcons && window.OpenAkitaIcons.subtitleCraft)
+                    ? window.OpenAkitaIcons.subtitleCraft()
+                    : (window.OpenAkitaIcons && window.OpenAkitaIcons.subtitles
+                        ? window.OpenAkitaIcons.subtitles() : "")}} />
+          <span className="oa-hero-title__text">
+            {t("app.title")}
+            <span className="oa-hero-title__sub">{t("app.subtitle")}</span>
+          </span>
+        </h1>
+        <div className="header-right" />
+      </div>
+      <div className="tabs">
+        {TABS.map(item => (
+          <div key={item.id}
+               className={`tab ${tab === item.id ? "active" : ""}`}
+               onClick={() => goToTab(item.id)}>{item.name}</div>
+        ))}
+      </div>
+      {!keyPresent && tab !== "settings" && (
+        <div className="oa-config-banner" role="alert"
+             style={{margin:"12px 16px 0", flexShrink:0}}>
+          <span className="oa-icon oa-config-banner__icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.warning() : ""}} />
+          <div className="oa-config-banner__text">
+            <strong>{t("banner.noKey.title")}</strong>
+            <div style={{fontSize:12, color:"var(--text-muted)", marginTop:2}}>
+              {t("banner.noKey.desc")}
+            </div>
+          </div>
+          <button className="oa-config-banner__action" type="button"
+                  onClick={() => goToTab("settings")}>
+            {t("banner.noKey.cta")}
+            <span className="oa-icon"
+                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.arrowRight() : ""}} />
+          </button>
+        </div>
+      )}
+      <div className="content">
+        <div style={{ display: tab === "create" ? "block" : "none", height: "100%" }}>
+          <CreateTab apiReady={keyPresent} goToTasks={() => goToTab("tasks")} />
+        </div>
+        <div style={{ display: tab === "tasks" ? "block" : "none", height: "100%" }}>
+          {tabsMounted.tasks && <TasksTab refreshSignal={tasksRefreshSignal} />}
+        </div>
+        <div style={{ display: tab === "library" ? "block" : "none", height: "100%" }}>
+          {tabsMounted.library && <LibraryTab />}
+        </div>
+        <div style={{ display: tab === "settings" ? "block" : "none", height: "100%" }}>
+          {tabsMounted.settings && (
+            <SettingsTab
+              health={healthCache}
+              onApiKeyChange={() => refreshKey()}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* =================================================================
+ * CreateTab — split layout: form on the left, preview/cost on the
+ * right (oa-preview-area). 4 modes share a common form; per-mode
+ * fields are conditionally shown so the user always sees only what
+ * applies. character_identify_enabled is a TOGGLE under
+ * auto_subtitle (NOT a standalone mode) per docs §3.2.
+ * ================================================================= */
+
+const SUBTITLE_STYLE_PRESETS = [
+  { id: "default", labelKey: "create.style.default" },
+  { id: "cinema",  labelKey: "create.style.cinema" },
+  { id: "youtube", labelKey: "create.style.youtube" },
+  { id: "tiktok",  labelKey: "create.style.tiktok" },
+  { id: "tv",      labelKey: "create.style.tv" },
+];
+
+const LANG_OPTIONS = [
+  { id: "",   key: "create.lang.auto" },
+  { id: "zh", key: "create.lang.zh" },
+  { id: "en", key: "create.lang.en" },
+  { id: "ja", key: "create.lang.ja" },
+  { id: "ko", key: "create.lang.ko" },
+  { id: "es", key: "create.lang.es" },
+  { id: "fr", key: "create.lang.fr" },
+  { id: "de", key: "create.lang.de" },
+  { id: "ru", key: "create.lang.ru" },
+  { id: "ar", key: "create.lang.ar" },
+  { id: "pt", key: "create.lang.pt" },
+];
+
+const TARGET_LANG_OPTIONS = LANG_OPTIONS.filter(l => l.id !== "");
+
+function CreateTab({ apiReady, goToTasks }) {
+  const t = useT();
+
+  // Mode selector
+  const [mode, setMode] = useState("auto_subtitle");
+
+  // Source upload state (one for each kind)
+  const [videoFile, setVideoFile] = useState(null); // { path, filename, size_bytes, duration_sec, preview_url }
+  const [srtFile, setSrtFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+
+  // hook_picker mode (v1.1) state — kept here so cost-preview / submit
+  // can read them without prop drilling.  All defaults mirror the plan
+  // §3.2 server-side defaults so a "blank" form still produces a valid
+  // payload (avoids 422 surprises when the user just clicks Start).
+  const [hookSource, setHookSource] = useState("upload");        // "upload" | "from_task"
+  const [fromTaskId, setFromTaskId] = useState("");
+  const [transcribedTasks, setTranscribedTasks] = useState([]);
+  const [instruction, setInstruction] = useState("");
+  const [mainCharacter, setMainCharacter] = useState("");
+  const [targetDur, setTargetDur] = useState(12);
+  const [windowMode, setWindowMode] = useState("tail_then_head");
+  const [randomAttempts, setRandomAttempts] = useState(3);
+  const [hookModel, setHookModel] = useState("qwen-plus");
+
+  // Common params
+  const [sourceLang, setSourceLang] = useState("");
+  const [targetLang, setTargetLang] = useState("zh");
+  const [diarization, setDiarization] = useState(false);
+  const [speakerCount, setSpeakerCount] = useState("");
+  const [charIdentify, setCharIdentify] = useState(false);
+  const [disfluency, setDisfluency] = useState(false);
+  const [bilingual, setBilingual] = useState(false);
+  const [translationModel, setTranslationModel] = useState("qwen-mt-flash");
+  const [repairFix, setRepairFix] = useState(true);
+  const [repairMaxLen, setRepairMaxLen] = useState(40);
+  const [repairMinDur, setRepairMinDur] = useState(0.8);
+  const [repairMergeShort, setRepairMergeShort] = useState(0.3);
+  const [subtitleStyle, setSubtitleStyle] = useState("default");
+  const [burnEngine, setBurnEngine] = useState("ass");
+  const [burnMode, setBurnMode] = useState("hard");
+  const [advanced, setAdvanced] = useState(false);
+  const [costPreview, setCostPreview] = useState(null);
+  const [costRefreshing, setCostRefreshing] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [createdModal, setCreatedModal] = useState(null);
+
+  // Reset character_identify_enabled when diarization flips off
+  useEffect(() => { if (!diarization) setCharIdentify(false); }, [diarization]);
+
+  // Lazy-load the list of SRT-producing tasks the first time the user
+  // picks "from_task" as the hook source.  Filtered to succeeded tasks
+  // with an output_srt_path so the dropdown only shows valid choices.
+  useEffect(() => {
+    if (mode !== "hook_picker" || hookSource !== "from_task") return;
+    pluginApi("GET", "/tasks?status=succeeded&limit=100").then(r => {
+      if (r.ok && r.body) {
+        const items = (r.body.tasks || r.body.items || [])
+          .filter(t => t.output_srt_path && t.mode !== "hook_picker");
+        setTranscribedTasks(items);
+      }
+    }).catch(() => setTranscribedTasks([]));
+  }, [mode, hookSource]);
+
+  const handleUpload = useCallback(async (file, kind) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const r = await uploadFile(file);
+      if (kind === "srt") setSrtFile(r);
+      else setVideoFile(r);
+    } catch (e) {
+      showToast(t("toast.uploadFailed") + ": " + e.message, "error");
+    }
+    setUploading(false);
+  }, [t]);
+
+  const refreshCost = useCallback(async () => {
+    setCostRefreshing(true);
+    try {
+      if (mode === "burn") {
+        setCostPreview({ total_cny: 0, items: [{ label: t("create.cost.itemBurn"), cost_cny: 0 }] });
+        return;
+      }
+      const dur = (videoFile && videoFile.duration_sec) || 0;
+      let charCount = 0;
+      if (mode === "translate" || mode === "repair") {
+        charCount = (srtFile && srtFile.size_bytes) ? Math.floor(srtFile.size_bytes / 2) : 0;
+      }
+      // hook_picker: cost is independent of source duration — server uses a
+      // fixed Qwen-Plus rate × number of window attempts (1 + 1 + N random).
+      // Always show a preview so the user sees the rate before submitting,
+      // even if no source is uploaded yet.
+      if (mode !== "hook_picker" && !dur && !charCount) { setCostPreview(null); return; }
+      try {
+        const r = await pluginApi("POST", "/cost-preview", {
+          mode,
+          duration_sec: dur,
+          char_count: charCount,
+          translation_model: translationModel,
+          character_identify_enabled: charIdentify,
+          speaker_count: parseInt(speakerCount || "0", 10),
+          hook_model: hookModel,
+          random_window_attempts: randomAttempts,
+        });
+        if (r.ok && r.body) setCostPreview(r.body);
+      } catch (_) { /* silent */ }
+    } finally {
+      setTimeout(() => setCostRefreshing(false), 350);
+    }
+  }, [mode, videoFile, srtFile, translationModel, charIdentify, speakerCount, hookModel, randomAttempts, t]);
+
+  useEffect(() => { refreshCost(); }, [refreshCost]);
+
+  const submit = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      const wantsVideo = mode === "auto_subtitle" || mode === "burn";
+      const wantsSrt = mode === "translate" || mode === "repair" || mode === "burn"
+                        || (mode === "hook_picker" && hookSource === "upload");
+      const body = {
+        mode,
+        source_path: wantsVideo ? (videoFile && videoFile.path) || "" : "",
+        srt_path: wantsSrt ? (srtFile && srtFile.path) || "" : "",
+        source_lang: sourceLang,
+        target_lang: targetLang,
+        language_hints: sourceLang ? [sourceLang] : [],
+        diarization_enabled: diarization,
+        speaker_count: parseInt(speakerCount || "0", 10),
+        character_identify_enabled: charIdentify,
+        disfluency_removal_enabled: disfluency,
+        bilingual: bilingual,
+        translation_model: translationModel,
+        repair_options: {
+          fix_overlap: repairFix,
+          merge_short_gaps: repairMergeShort > 0,
+        },
+        subtitle_style: subtitleStyle,
+        burn_engine: burnEngine,
+        burn_mode: burnMode,
+        cost_approved: true,
+      };
+      // burn always needs a video too
+      if (mode === "burn" && videoFile) body.source_path = videoFile.path;
+      // hook_picker (v1.1) — extra fields, all server-side defaulted so
+      // omitting them simply uses the defaults.
+      if (mode === "hook_picker") {
+        body.instruction = instruction;
+        body.main_character = mainCharacter;
+        body.target_duration_sec = targetDur;
+        body.prompt_window_mode = windowMode;
+        body.random_window_attempts = randomAttempts;
+        body.hook_model = hookModel;
+        if (hookSource === "from_task" && fromTaskId) {
+          body.from_task_id = fromTaskId;
+          body.srt_path = "";  // server resolves via from_task_id
+        }
+      }
+      const r = await pluginApi("POST", "/tasks", body);
+      if (r.ok && r.body && r.body.id) {
+        setCreatedModal({ id: r.body.id });
+        showToast(t("toast.taskCreated"));
+      } else {
+        const msg = r.body && (r.body.detail || r.body.message) || ("HTTP " + r.status);
+        showToast(t("toast.taskFailed", { msg }), "error");
+      }
+    } catch (e) {
+      showToast(t("toast.taskFailed", { msg: e.message }), "error");
+    }
+    setSubmitting(false);
+  };
+
+  const needsVideo = mode === "auto_subtitle" || mode === "burn";
+  const needsSrt = mode === "translate" || mode === "repair" || mode === "burn"
+                    || (mode === "hook_picker" && hookSource === "upload");
+  const needsFromTask = mode === "hook_picker" && hookSource === "from_task";
+  const canSubmit = apiReady && !submitting &&
+    (!needsVideo || videoFile) &&
+    (!needsSrt || srtFile) &&
+    (!needsFromTask || !!fromTaskId);
+
+  return (
+    <div className="split-layout">
+      <div className="split-left">
+        {/* Mode selector — uniform tiles with purple accent bar + sync chip */}
+        <div className="card">
+          <div className="oa-section-label" style={{marginBottom: 10}}>{t("create.modeLabel")}</div>
+          <div className="oa-mode-grid">
+            {["auto_subtitle", "translate", "repair", "burn", "hook_picker"].map(m => (
+              <div key={m}
+                   className={"oa-mode-tile" + (mode === m ? " active" : "")}
+                   onClick={() => setMode(m)}
+                   role="button"
+                   tabIndex={0}>
+                {m === "hook_picker" && (
+                  <span className="oa-mode-tile__new-badge">NEW</span>
+                )}
+                <div className="oa-mode-tile__head">
+                  <span className="oa-mode-tile__name">
+                    {m === "hook_picker" && <OAIcon name="sparkles" />} {t("modes." + m)}
+                  </span>
+                  <span className="oa-mode-tile__chip" data-mode={m}>{t("modes.tag." + m)}</span>
+                </div>
+                <div className="oa-mode-tile__desc">{t("modes." + m + ".desc")}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Video / audio upload */}
+        {needsVideo && (
+          <div className="card">
+            <div className="label">{t("create.source.video")}</div>
+            <UploadZone
+              file={videoFile}
+              accept="video/*,audio/*"
+              uploading={uploading}
+              onPick={(f) => handleUpload(f, "video")}
+              onClear={() => setVideoFile(null)}
+            />
+          </div>
+        )}
+
+        {/* SRT upload */}
+        {needsSrt && (
+          <div className="card">
+            <div className="label">{t("create.source.srt")}</div>
+            <UploadZone
+              file={srtFile}
+              accept=".srt,.vtt,text/plain"
+              uploading={uploading}
+              onPick={(f) => handleUpload(f, "srt")}
+              onClear={() => setSrtFile(null)}
+            />
+          </div>
+        )}
+
+        {/* Mode-specific options */}
+        {mode === "auto_subtitle" && (
+          <div className="card">
+            <div className="grid-2">
+              <div className="form-row">
+                <div className="label">{t("create.lang.source")}</div>
+                <select className="input select" value={sourceLang} onChange={e => setSourceLang(e.target.value)}>
+                  {LANG_OPTIONS.map(l => <option key={l.id} value={l.id}>{t(l.key)}</option>)}
+                </select>
+              </div>
+              <div className="form-row">
+                <div className="label">{t("create.speakerCount.label")}</div>
+                <input className="input" type="number" min="0" max="10"
+                       value={speakerCount} onChange={e => setSpeakerCount(e.target.value)}
+                       placeholder="0" />
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="switch-row">
+                <Switch on={diarization} onChange={setDiarization} />
+                <div>
+                  <div className="text-sm" style={{fontWeight: 600}}>{t("create.diarization.label")}</div>
+                  <div className="text-xs text-dim">{t("create.diarization.desc")}</div>
+                </div>
+              </div>
+            </div>
+            <div className="form-row">
+              <div className={"switch-row" + (diarization ? "" : " disabled")}>
+                <Switch on={charIdentify} onChange={setCharIdentify} disabled={!diarization} />
+                <div>
+                  <div className="text-sm" style={{fontWeight: 600}}>{t("create.charIdentify.label")}</div>
+                  <div className="text-xs text-dim">
+                    {diarization ? t("create.charIdentify.desc") : t("create.charIdentify.requireDiarization")}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="switch-row">
+                <Switch on={disfluency} onChange={setDisfluency} />
+                <div className="text-sm">{t("create.disfluency.label")}</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {mode === "translate" && (
+          <div className="card">
+            <div className="grid-2">
+              <div className="form-row">
+                <div className="label">{t("create.lang.source")}</div>
+                <select className="input select" value={sourceLang} onChange={e => setSourceLang(e.target.value)}>
+                  {LANG_OPTIONS.map(l => <option key={l.id} value={l.id}>{t(l.key)}</option>)}
+                </select>
+              </div>
+              <div className="form-row">
+                <div className="label">{t("create.lang.target")}</div>
+                <select className="input select" value={targetLang} onChange={e => setTargetLang(e.target.value)}>
+                  {TARGET_LANG_OPTIONS.map(l => <option key={l.id} value={l.id}>{t(l.key)}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="label">{t("create.translation.model")}</div>
+              <select className="input select" value={translationModel}
+                      onChange={e => setTranslationModel(e.target.value)}>
+                <option value="qwen-mt-flash">{t("create.translation.flash")}</option>
+                <option value="qwen-mt-plus">{t("create.translation.plus")}</option>
+                <option value="qwen-mt-lite">{t("create.translation.lite")}</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <div className="switch-row">
+                <Switch on={bilingual} onChange={setBilingual} />
+                <div>
+                  <div className="text-sm" style={{fontWeight: 600}}>{t("create.bilingual.label")}</div>
+                  <div className="text-xs text-dim">{t("create.bilingual.desc")}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {mode === "repair" && (
+          <div className="card">
+            <div className="label">{t("create.repair.label")}</div>
+            <div className="form-row">
+              <div className="switch-row">
+                <Switch on={repairFix} onChange={setRepairFix} />
+                <div className="text-sm">{t("create.repair.fixOverlap")}</div>
+              </div>
+            </div>
+            <div className="grid-2">
+              <div className="form-row">
+                <div className="label">{t("create.repair.maxLineLen", { n: repairMaxLen })}</div>
+                <input className="input" type="number" min="20" max="80"
+                       value={repairMaxLen} onChange={e => setRepairMaxLen(parseInt(e.target.value || "40", 10))} />
+              </div>
+              <div className="form-row">
+                <div className="label">{t("create.repair.minDuration", { n: repairMinDur })}</div>
+                <input className="input" type="number" min="0" max="5" step="0.1"
+                       value={repairMinDur} onChange={e => setRepairMinDur(parseFloat(e.target.value || "0"))} />
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="label">{t("create.repair.mergeShort", { n: repairMergeShort })}</div>
+              <input className="input" type="number" min="0" max="2" step="0.1"
+                     value={repairMergeShort} onChange={e => setRepairMergeShort(parseFloat(e.target.value || "0"))} />
+            </div>
+          </div>
+        )}
+
+        {(mode === "burn" || mode === "auto_subtitle") && (
+          <div className="card">
+            <div className="label">{t("create.style.label")}</div>
+            <div className="style-grid">
+              {SUBTITLE_STYLE_PRESETS.map(s => (
+                <div key={s.id}
+                     className={"style-option" + (subtitleStyle === s.id ? " active" : "")}
+                     onClick={() => setSubtitleStyle(s.id)}>
+                  {t(s.labelKey)}
+                </div>
+              ))}
+            </div>
+            {mode === "burn" && (
+              <>
+                <div className="form-row" style={{marginTop: 14}}>
+                  <div className="label">{t("create.burn.engine")}</div>
+                  <select className="input select" value={burnEngine}
+                          onChange={e => setBurnEngine(e.target.value)}>
+                    <option value="ass">{t("create.burn.engine.ass")}</option>
+                    <option value="html">{t("create.burn.engine.html")}</option>
+                  </select>
+                </div>
+                <div className="form-row">
+                  <div className="label">{t("create.burn.mode")}</div>
+                  <div className="flex gap-2">
+                    {["soft", "hard"].map(m => (
+                      <button key={m} type="button"
+                              className={"mode-btn" + (burnMode === m ? " active" : "")}
+                              onClick={() => setBurnMode(m)}>
+                        {t("create.burn.mode." + m)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* hook_picker (v1.1) — source picker + instruction + advanced.
+            Full-width card stack, identical visual rhythm as the existing
+            mode-specific blocks (translate / repair / burn). */}
+        {mode === "hook_picker" && (
+          <>
+            <div className="card">
+              <div className="oa-section-label" style={{marginBottom: 10}}>{t("hook.source.label")}</div>
+              <div className="oa-mode-grid" style={{gridTemplateColumns: "1fr 1fr"}}>
+                <div className={"oa-mode-tile" + (hookSource === "upload" ? " active" : "")}
+                     onClick={() => setHookSource("upload")}
+                     role="button" tabIndex={0}>
+                  <div className="oa-mode-tile__head">
+                    <span className="oa-mode-tile__name">
+                      <OAIcon name="upload" /> {t("hook.source.upload")}
+                    </span>
+                  </div>
+                  <div className="oa-mode-tile__desc">{t("hook.source.upload.desc")}</div>
+                </div>
+                <div className={"oa-mode-tile" + (hookSource === "from_task" ? " active" : "")}
+                     onClick={() => setHookSource("from_task")}
+                     role="button" tabIndex={0}>
+                  <div className="oa-mode-tile__head">
+                    <span className="oa-mode-tile__name">
+                      <OAIcon name="link" /> {t("hook.source.from_task")}
+                    </span>
+                  </div>
+                  <div className="oa-mode-tile__desc">{t("hook.source.from_task.desc")}</div>
+                </div>
+              </div>
+              {hookSource === "upload" ? (
+                <div style={{marginTop: 12}}>
+                  <UploadZone
+                    file={srtFile}
+                    accept=".srt,.vtt,text/plain"
+                    uploading={uploading}
+                    onPick={(f) => handleUpload(f, "srt")}
+                    onClear={() => setSrtFile(null)}
+                  />
+                </div>
+              ) : (
+                <div style={{marginTop: 12}}>
+                  <select className="input select" value={fromTaskId}
+                          onChange={e => setFromTaskId(e.target.value)}>
+                    <option value="">{t("hook.fromTask.placeholder")}</option>
+                    {transcribedTasks.map(tk => (
+                      <option key={tk.id} value={tk.id}>
+                        {tk.id.slice(0, 8)} · {t("modes." + tk.mode)} · {fmtTime(tk.created_at)}
+                      </option>
+                    ))}
+                  </select>
+                  {transcribedTasks.length === 0 && (
+                    <div className="text-xs text-dim" style={{marginTop: 6}}>
+                      {t("hook.fromTask.empty")}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="card">
+              <div className="form-row">
+                <div className="label">{t("hook.instruction.label")}</div>
+                <textarea className="input" rows={3} maxLength={200}
+                          placeholder={t("hook.instruction.placeholder")}
+                          value={instruction}
+                          onChange={e => setInstruction(e.target.value)} />
+                <div className="text-xs text-dim" style={{marginTop: 4}}>
+                  {t("hook.instruction.hint")} ({instruction.length}/200)
+                </div>
+              </div>
+              <div className="form-row">
+                <div className="label">{t("hook.mainChar.label")}</div>
+                <input className="input"
+                       placeholder={t("hook.mainChar.placeholder")}
+                       value={mainCharacter}
+                       onChange={e => setMainCharacter(e.target.value)} />
+              </div>
+              <div className="form-row">
+                <div className="label">
+                  {t("hook.duration.label", { n: targetDur })}
+                </div>
+                <input type="range" min={6} max={30} step={1}
+                       value={targetDur}
+                       onChange={e => setTargetDur(parseInt(e.target.value, 10))} />
+                <div className="text-xs text-dim" style={{marginTop: 4}}>
+                  {t("hook.duration.range", {
+                    min: Math.max(6, targetDur - 5),
+                    max: targetDur + 5,
+                  })}
+                </div>
+              </div>
+              <details className="oa-collapsible">
+                <summary>{t("hook.advanced")}</summary>
+                <div className="form-row" style={{marginTop: 10}}>
+                  <div className="label">{t("hook.window.label")}</div>
+                  <select className="input select" value={windowMode}
+                          onChange={e => setWindowMode(e.target.value)}>
+                    <option value="tail_then_head">{t("hook.window.tail_then_head")}</option>
+                    <option value="random_window">{t("hook.window.random_window")}</option>
+                  </select>
+                </div>
+                <div className="form-row">
+                  <div className="label">
+                    {t("hook.attempts.label", { n: randomAttempts })}
+                  </div>
+                  <input type="range" min={1} max={5} step={1}
+                         value={randomAttempts}
+                         onChange={e => setRandomAttempts(parseInt(e.target.value, 10))} />
+                </div>
+                <div className="form-row">
+                  <div className="label">{t("hook.model.label")}</div>
+                  <select className="input select" value={hookModel}
+                          onChange={e => setHookModel(e.target.value)}>
+                    <option value="qwen-plus">Qwen-Plus (¥0.005/次)</option>
+                    <option value="qwen-plus-2025-09-11">Qwen-Plus snapshot</option>
+                    <option value="qwen-max">Qwen-Max (¥0.13/次)</option>
+                  </select>
+                </div>
+              </details>
+            </div>
+          </>
+        )}
+
+        {/* Submit — text centered, full-width primary action */}
+        <div className="flex gap-2" style={{marginTop: 4}}>
+          <button className="btn btn-primary flex-1"
+                  disabled={!canSubmit}
+                  onClick={submit}
+                  style={{justifyContent: "center", padding: "10px 14px", fontSize: 14, fontWeight: 600}}>
+            {submitting ? t("create.btn.starting") : t("create.btn.start")}
+          </button>
+          {!apiReady && <button className="btn" onClick={() => goToTasks()}>{t("create.btn.estimate")}</button>}
+        </div>
+      </div>
+
+      {/* Right preview area — costPreview drives the empty-state.
+          When no source is picked yet, costPreview is null and we
+          render the oa-preview-empty pattern (mirrors tongyi-image)
+          with a strip of feature cards so the area never feels empty.
+          When a source IS picked we add a config summary above the
+          cost table to give the area visual structure beyond plain
+          numbers. */}
+      <div className={"split-right oa-preview-area" + (costPreview ? "" : " oa-preview-area--centered")}>
+        {costPreview ? (
+          <div className="oa-preview-card">
+            {/* Prominent header: gradient icon chip + bold title + refresh */}
+            <div className="oa-preview-card__head">
+              <h3 className="oa-preview-card__title">
+                <span className="oa-preview-card__title-chip"
+                      dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons && window.OpenAkitaIcons.sparkles ? window.OpenAkitaIcons.sparkles() : ""}} />
+                {t("create.preview.title")}
+              </h3>
+              <button className={"oa-preview-card__refresh" + (costRefreshing ? " is-spinning" : "")}
+                      onClick={refreshCost} disabled={costRefreshing}>
+                <OAIcon name="refresh" />
+                {t("create.cost.refresh")}
+              </button>
+            </div>
+
+            {/* Section 1: Configuration summary — purple-bar label + pills.
+                Same layout for every mode; only the pill set varies. */}
+            <div className="oa-preview-section">{t("create.preview.section.config")}</div>
+            <div className="oa-config-summary">
+              <div className="oa-summary-pill">
+                <div className="oa-summary-pill__label">{t("create.summary.mode")}</div>
+                <div className="oa-summary-pill__value">
+                  <OAIcon name={mode === "auto_subtitle" ? "subtitles"
+                                : mode === "translate" ? "translate"
+                                : mode === "repair" ? "wrench"
+                                : mode === "hook_picker" ? "sparkles" : "flame"} />
+                  {t("modes." + mode)}
+                </div>
+              </div>
+              {mode === "hook_picker" && (
+                <>
+                  <div className="oa-summary-pill">
+                    <div className="oa-summary-pill__label">{t("create.summary.hook.source")}</div>
+                    <div className="oa-summary-pill__value">
+                      <OAIcon name={hookSource === "upload" ? "upload" : "link"} />
+                      {hookSource === "upload"
+                        ? (srtFile ? srtFile.filename : t("create.summary.hook.source.empty"))
+                        : (fromTaskId ? fromTaskId.slice(0, 8) : t("create.summary.hook.source.pickTask"))}
+                    </div>
+                  </div>
+                  <div className="oa-summary-pill">
+                    <div className="oa-summary-pill__label">{t("create.summary.hook.duration")}</div>
+                    <div className="oa-summary-pill__value">~{targetDur}s</div>
+                  </div>
+                  <div className="oa-summary-pill">
+                    <div className="oa-summary-pill__label">{t("create.summary.hook.window")}</div>
+                    <div className="oa-summary-pill__value" style={{fontSize: 12}}>
+                      {windowMode === "tail_then_head"
+                        ? t("hook.window.tail_then_head")
+                        : t("hook.window.random_window")}
+                    </div>
+                  </div>
+                  <div className="oa-summary-pill">
+                    <div className="oa-summary-pill__label">{t("create.summary.hook.model")}</div>
+                    <div className="oa-summary-pill__value" style={{fontSize: 12}}>
+                      {hookModel.replace("qwen-", "Qwen-")}
+                    </div>
+                  </div>
+                </>
+              )}
+              {(mode === "auto_subtitle" || mode === "burn") && (
+                <div className="oa-summary-pill">
+                  <div className="oa-summary-pill__label">{t("create.summary.duration")}</div>
+                  <div className="oa-summary-pill__value">
+                    {videoFile && videoFile.duration_sec
+                      ? fmtDuration(videoFile.duration_sec)
+                      : t("create.summary.duration.unknown")}
+                  </div>
+                </div>
+              )}
+              {mode === "translate" && (
+                <>
+                  <div className="oa-summary-pill">
+                    <div className="oa-summary-pill__label">{t("create.summary.translate.target")}</div>
+                    <div className="oa-summary-pill__value">
+                      {(TARGET_LANG_OPTIONS.find(l => l.id === targetLang) || {key:"create.lang.zh"}).key
+                        ? t((TARGET_LANG_OPTIONS.find(l => l.id === targetLang) || {key:"create.lang.zh"}).key)
+                        : targetLang}
+                    </div>
+                  </div>
+                  <div className="oa-summary-pill">
+                    <div className="oa-summary-pill__label">{t("create.summary.translate.model")}</div>
+                    <div className="oa-summary-pill__value">{translationModel.replace("qwen-mt-", "")}</div>
+                  </div>
+                </>
+              )}
+              {(mode === "burn" || mode === "auto_subtitle") && (
+                <div className="oa-summary-pill">
+                  <div className="oa-summary-pill__label">{t("create.summary.style")}</div>
+                  <div className="oa-summary-pill__value">
+                    {t((SUBTITLE_STYLE_PRESETS.find(s => s.id === subtitleStyle) || SUBTITLE_STYLE_PRESETS[0]).labelKey)}
+                  </div>
+                </div>
+              )}
+              {mode === "burn" && (
+                <div className="oa-summary-pill">
+                  <div className="oa-summary-pill__label">{t("create.summary.engine")}</div>
+                  <div className="oa-summary-pill__value">
+                    {burnEngine === "ass" ? t("create.burn.engine.ass") : t("create.burn.engine.html")}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Section 2: Cost breakdown — same styled table for all modes.
+                Free items get a green "免费" tag so users know what's local. */}
+            <div className="oa-preview-section" style={{marginTop: 18}}>{t("create.preview.section.cost")}</div>
+            <CostTable preview={costPreview} t={t} />
+
+            {/* Section 3: Pricing notes — bulleted, dimmed, easy to skim. */}
+            <div className="oa-preview-section" style={{marginTop: 18}}>{t("create.preview.section.notes")}</div>
+            <div className="oa-cost-notes">
+              <div>{t("create.cost.note.asr")}</div>
+              <div>{t("create.cost.note.mt")}</div>
+              <div>{t("create.cost.note.vl")}</div>
+              <div>{t("create.cost.note.burn")}</div>
+            </div>
+          </div>
+        ) : (
+          <div className="oa-preview-empty" style={{maxWidth: 400}}>
+            <span className="oa-preview-empty__icon">
+              <OAIcon name={mode === "hook_picker" ? "sparkles" : "subtitles"} />
+            </span>
+            <div className="oa-preview-empty__title">
+              {mode === "hook_picker"
+                ? t("create.preview.hook.empty.title")
+                : t("create.preview.empty.title")}
+            </div>
+            <div className="oa-preview-empty__hint">
+              {mode === "hook_picker"
+                ? t("create.preview.hook.empty.hint")
+                : t("create.preview.empty.hint")}
+            </div>
+            {mode === "hook_picker" ? (
+              <div className="oa-feature-strip">
+                <div className="oa-feature-card">
+                  <span className="oa-feature-card__icon"><OAIcon name="upload" /></span>
+                  <div>
+                    <div className="oa-feature-card__title">{t("create.hookFeature.load.title")}</div>
+                    <div className="oa-feature-card__desc">{t("create.hookFeature.load.desc")}</div>
+                  </div>
+                </div>
+                <div className="oa-feature-card">
+                  <span className="oa-feature-card__icon"><OAIcon name="sparkles" /></span>
+                  <div>
+                    <div className="oa-feature-card__title">{t("create.hookFeature.ai.title")}</div>
+                    <div className="oa-feature-card__desc">{t("create.hookFeature.ai.desc")}</div>
+                  </div>
+                </div>
+                <div className="oa-feature-card">
+                  <span className="oa-feature-card__icon"><OAIcon name="target" /></span>
+                  <div>
+                    <div className="oa-feature-card__title">{t("create.hookFeature.duration.title")}</div>
+                    <div className="oa-feature-card__desc">{t("create.hookFeature.duration.desc")}</div>
+                  </div>
+                </div>
+                <div className="oa-feature-card">
+                  <span className="oa-feature-card__icon"><OAIcon name="link" /></span>
+                  <div>
+                    <div className="oa-feature-card__title">{t("create.hookFeature.timecode.title")}</div>
+                    <div className="oa-feature-card__desc">{t("create.hookFeature.timecode.desc")}</div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="oa-feature-strip">
+                <div className="oa-feature-card">
+                  <span className="oa-feature-card__icon"><OAIcon name="subtitles" /></span>
+                  <div>
+                    <div className="oa-feature-card__title">{t("create.feature.asr.title")}</div>
+                    <div className="oa-feature-card__desc">{t("create.feature.asr.desc")}</div>
+                  </div>
+                </div>
+                <div className="oa-feature-card">
+                  <span className="oa-feature-card__icon"><OAIcon name="translate" /></span>
+                  <div>
+                    <div className="oa-feature-card__title">{t("create.feature.mt.title")}</div>
+                    <div className="oa-feature-card__desc">{t("create.feature.mt.desc")}</div>
+                  </div>
+                </div>
+                <div className="oa-feature-card">
+                  <span className="oa-feature-card__icon"><OAIcon name="wrench" /></span>
+                  <div>
+                    <div className="oa-feature-card__title">{t("create.feature.repair.title")}</div>
+                    <div className="oa-feature-card__desc">{t("create.feature.repair.desc")}</div>
+                  </div>
+                </div>
+                <div className="oa-feature-card">
+                  <span className="oa-feature-card__icon"><OAIcon name="flame" /></span>
+                  <div>
+                    <div className="oa-feature-card__title">{t("create.feature.burn.title")}</div>
+                    <div className="oa-feature-card__desc">{t("create.feature.burn.desc")}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {createdModal && (
+        <div className="modal-mask" onClick={() => setCreatedModal(null)}>
+          <div className="modal-card" onClick={e => e.stopPropagation()}>
+            <div className="modal-icon">✓</div>
+            <div className="modal-title">{t("toast.taskCreated")}</div>
+            <div className="modal-desc">
+              {t("tasks.detail.id")}: <code>{createdModal.id}</code>
+            </div>
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setCreatedModal(null)}>
+                {t("create.modal.continue")}
+              </button>
+              <button className="btn btn-primary" onClick={() => { setCreatedModal(null); goToTasks(); }}>
+                {t("tabs.tasks")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UploadZone({ file, accept, uploading, onPick, onClear }) {
+  const t = useT();
+  const inputRef = useRef(null);
+
+  const onDrop = useCallback(e => {
+    e.preventDefault();
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) onPick(f);
+  }, [onPick]);
+
+  if (file) {
+    return (
+      <div className="upload-zone has-file">
+        <div className="flex items-center gap-3">
+          <div className="task-thumb">📄</div>
+          <div className="flex-1" style={{minWidth: 0}}>
+            <div className="text-sm" style={{fontWeight: 600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+              {file.filename}
+            </div>
+            <div className="text-xs text-dim">
+              {fmtSize(file.size_bytes)} · {file.duration_sec ? fmtDuration(file.duration_sec) : "—"}
+            </div>
+          </div>
+          <button className="btn btn-sm btn-danger" onClick={onClear}>×</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="upload-zone"
+         onClick={() => inputRef.current && inputRef.current.click()}
+         onDragOver={e => e.preventDefault()}
+         onDrop={onDrop}>
+      {uploading ? (
+        <div className="flex items-center justify-between" style={{justifyContent:"center", gap: 10}}>
+          <span className="spinner-sm" />
+          <span>{t("common.loading")}</span>
+        </div>
+      ) : (
+        <>
+          <div style={{fontSize: 24, marginBottom: 8}}>📁</div>
+          <div className="text-sm">{t("create.source.dropHint")}</div>
+          <div className="text-xs text-dim" style={{marginTop: 4}}>{t("create.source.maxHint")}</div>
+        </>
+      )}
+      <input ref={inputRef} type="file" accept={accept} style={{display: "none"}}
+             onChange={e => { const f = e.target.files && e.target.files[0]; if (f) onPick(f); e.target.value = ""; }} />
+    </div>
+  );
+}
+
+/* =================================================================
+ * TasksTab — split layout: list left, detail right (oa-preview-area).
+ * Live updates via SSE bridge (event "task_update"). 15-second
+ * polling fallback when SSE drops.
+ * ================================================================= */
+
+function TasksTab({ refreshSignal }) {
+  const t = useT();
+  const [tasks, setTasks] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("");
+  const [modeFilter, setModeFilter] = useState("");
+  const [selected, setSelected] = useState(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (statusFilter) params.set("status", statusFilter);
+      if (modeFilter) params.set("mode", modeFilter);
+      params.set("limit", "100");
+      const r = await pluginApi("GET", "/tasks?" + params.toString());
+      if (r.ok && r.body) {
+        const list = r.body.tasks || [];
+        setTasks(list);
+        setTotal(r.body.total || list.length);
+        setSelected(prev => {
+          if (!prev) return prev;
+          const fresh = list.find(x => x.id === prev.id);
+          return fresh || prev;
+        });
+      }
+    } catch (_) { /* silent */ }
+    setLoading(false);
+  }, [statusFilter, modeFilter]);
+
+  useEffect(() => { refresh(); }, [refresh, refreshSignal]);
+
+  // Poll every 15s as a safety net if SSE is unavailable.
+  useEffect(() => {
+    const id = setInterval(refresh, 15000);
+    return () => clearInterval(id);
+  }, [refresh]);
+
+  // SSE bridge events
+  useEffect(() => {
+    const fn = (data) => {
+      if (!data || !data.task_id) return;
+      setTasks(prev => {
+        const idx = prev.findIndex(x => x.id === data.task_id);
+        if (idx < 0) { refresh(); return prev; }
+        const next = prev.slice();
+        next[idx] = { ...next[idx], ...data };
+        return next;
+      });
+      setSelected(prev => prev && prev.id === data.task_id ? { ...prev, ...data } : prev);
+    };
+    onEvent("task_update", fn);
+    // No off() exposed by tongyi-image SDK — accept as design.
+  }, [refresh]);
+
+  // Pre-compute per-status / per-mode counts so the filter chips can
+  // surface them inline (mirrors tongyi-image's "全部 (N)" pattern).
+  // Counts come from the currently fetched window — mirroring how the
+  // tongyi-image plugin treats them as "what's currently visible" rather
+  // than a global aggregate.
+  const STATUSES = ["", "pending", "running", "succeeded", "failed", "canceled"];
+  const MODES = ["", "auto_subtitle", "translate", "repair", "burn", "hook_picker"];
+  const MODE_ICONS = { auto_subtitle: "subtitles", translate: "translate", repair: "wrench", burn: "flame", hook_picker: "sparkles" };
+
+  return (
+    <div className="split-layout">
+      <div className="split-left oa-list-panel">
+        <div className="oa-list-panel__filters">
+          <div>
+            <div className="oa-section-label">{t("tasks.filter.status")}</div>
+            <div className="oa-filter-group__buttons">
+              {STATUSES.map(s => (
+                <button key={s || "all"}
+                        className={"mode-btn" + (statusFilter === s ? " active" : "")}
+                        onClick={() => setStatusFilter(s)}>
+                  {s === "" ? t("tasks.filter.all") : t("status." + s)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="oa-section-label">{t("tasks.filter.mode")}</div>
+            <div className="oa-filter-group__buttons">
+              {MODES.map(m => (
+                <button key={m || "all"}
+                        className={"mode-btn" + (modeFilter === m ? " active" : "")}
+                        onClick={() => setModeFilter(m)}>
+                  <span style={{display:"inline-flex", alignItems:"center", gap:4}}>
+                    {m && MODE_ICONS[m] && <OAIcon name={MODE_ICONS[m]} />}
+                    {m === "" ? t("tasks.filter.allModes") : t("modes." + m)}
+                  </span>
+                </button>
+              ))}
+              <button className="btn btn-sm" onClick={refresh}>{t("common.refresh")}</button>
+            </div>
+          </div>
+        </div>
+
+        <hr className="oa-list-panel__divider" />
+
+        <div className="oa-list-panel__items">
+          {loading && tasks.length === 0 ? (
+            <div className="empty-state"><div className="spinner" /></div>
+          ) : tasks.length === 0 ? (
+            <div className="oa-preview-empty" style={{minHeight: 160, padding: "24px 16px"}}>
+              <span className="oa-preview-empty__icon"><OAIcon name="package" /></span>
+              <div className="oa-preview-empty__title">{t("tasks.empty.title")}</div>
+              <div className="oa-preview-empty__hint">{t("tasks.empty.hint")}</div>
+            </div>
+          ) : (
+            tasks.map(task => (
+              <div key={task.id}
+                   className={"task-card" + (selected && selected.id === task.id ? " selected" : "")}
+                   onClick={() => setSelected(task)}>
+                <div className="task-thumb">
+                  <OAIcon name={MODE_ICONS[task.mode] || "subtitles"} size={26} />
+                </div>
+                <div className="task-info">
+                  <h4>{t("modes." + task.mode)} · {task.id.slice(0, 8)}</h4>
+                  <div className="task-meta">
+                    <StatusBadge status={task.status} />
+                    <span className="tag tag-blue" style={{padding:"1px 6px"}}>
+                      {t("modes.tag." + task.mode)}
+                    </span>
+                    {task.pipeline_step && task.status === "running" && (
+                      <span>{t("steps." + task.pipeline_step)}</span>
+                    )}
+                    <span>{fmtTime(task.created_at)}</span>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="oa-list-panel__footer">
+          {loading ? t("common.loading") : t("tasks.totalCount", { n: total })}
+        </div>
+      </div>
+
+      <div className={"split-right oa-preview-area" + (selected ? "" : " oa-preview-area--centered")}>
+        {selected ? <TaskDetail task={selected} onChange={refresh} /> : (
+          <div className="oa-preview-empty">
+            <span className="oa-preview-empty__icon"><OAIcon name="subtitles" /></span>
+            <div className="oa-preview-empty__title">{t("tasks.empty.noSelection.title")}</div>
+            <div className="oa-preview-empty__hint">{t("tasks.empty.noSelection.hint")}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TaskDetail({ task: initialTask, onChange }) {
+  const t = useT();
+  const [task, setTask] = useState(initialTask);
+  const [previewSrt, setPreviewSrt] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // Refetch on selection or status change so hook_picker enrichment
+  // (server reads task_dir/hook.json) makes it into the panel.
+  useEffect(() => { setTask(initialTask); }, [initialTask.id]);
+
+  useEffect(() => {
+    if (initialTask.status === "succeeded" && initialTask.mode === "hook_picker" && !initialTask.hook) {
+      pluginApi("GET", "/tasks/" + initialTask.id).then(r => {
+        if (r.ok && r.body) setTask(r.body);
+      }).catch(() => {});
+    }
+  }, [initialTask.id, initialTask.status, initialTask.mode]);
+
+  useEffect(() => {
+    setPreviewSrt("");
+    if (task.status === "succeeded" && task.output_srt_path) {
+      pluginApi("GET", "/tasks/" + task.id + "/preview_srt").then(r => {
+        if (r.ok && r.body && r.body.srt) setPreviewSrt(r.body.srt);
+      }).catch(() => {});
+    }
+  }, [task.id, task.status, task.output_srt_path]);
+
+  const cancel = async () => {
+    if (busy) return;
+    setBusy(true);
+    try { await pluginApi("POST", "/tasks/" + task.id + "/cancel"); showToast(t("toast.canceled")); onChange(); }
+    catch (e) { showToast(e.message, "error"); }
+    setBusy(false);
+  };
+  const retry = async () => {
+    setBusy(true);
+    try {
+      const r = await pluginApi("POST", "/tasks/" + task.id + "/retry");
+      if (r.ok) { showToast(t("toast.taskCreated")); onChange(); }
+      else showToast(t("toast.taskFailed", { msg: r.body && (r.body.detail || "") || ("HTTP " + r.status) }), "error");
+    } catch (e) { showToast(t("toast.taskFailed", { msg: e.message }), "error"); }
+    setBusy(false);
+  };
+  const remove = async () => {
+    if (!confirm(t("tasks.detail.confirmDelete"))) return;
+    setBusy(true);
+    try { await pluginApi("DELETE", "/tasks/" + task.id); showToast(t("toast.deleted")); onChange(); }
+    catch (e) { showToast(e.message, "error"); }
+    setBusy(false);
+  };
+
+  const dlSrt = () => downloadFile("/api/plugins/subtitle-craft/tasks/" + task.id + "/download", "subtitle_" + task.id.slice(0,8) + ".srt");
+  const dlVideo = () => downloadFile("/api/plugins/subtitle-craft/tasks/" + task.id + "/download_video", "burned_" + task.id.slice(0,8) + ".mp4");
+
+  const MODE_ICON = { auto_subtitle: "subtitles", translate: "translate", repair: "wrench", burn: "flame", hook_picker: "sparkles" };
+
+  return (
+    <div style={{width: "100%"}}>
+      {/* Header — title, copyable ID, action buttons */}
+      <div className="flex items-center justify-between" style={{marginBottom: 14, gap: 12, flexWrap: "wrap"}}>
+        <div style={{minWidth: 0, flex: 1}}>
+          <div className="card-title" style={{marginBottom: 4, display: "inline-flex", alignItems: "center", gap: 8}}>
+            <span className="oa-feature-card__icon" style={{width: 24, height: 24}}>
+              <OAIcon name={MODE_ICON[task.mode] || "subtitles"} />
+            </span>
+            {t("modes." + task.mode)}
+            <span className="oa-mode-tile__chip" data-mode={task.mode}>{t("modes.tag." + task.mode)}</span>
+          </div>
+          <div className="text-xs text-dim" style={{display: "inline-flex", alignItems: "center", gap: 6}}>
+            <code style={{fontFamily: "ui-monospace, 'SF Mono', Menlo, Consolas, monospace"}}>{task.id}</code>
+            <button className="btn btn-sm" style={{padding: "1px 8px", fontSize: 11}}
+                    onClick={() => copyToClipboard(task.id)}
+                    title={t("tasks.detail.idCopy")}>
+              <OAIcon name="link" /> {t("tasks.detail.idCopy")}
+            </button>
+          </div>
+        </div>
+        <div className="flex gap-2" style={{flexShrink: 0}}>
+          {task.status === "running" && (
+            <button className="btn btn-sm" onClick={cancel} disabled={busy}>{t("tasks.detail.cancel")}</button>
+          )}
+          {(task.status === "failed" || task.status === "canceled") && (
+            <button className="btn btn-sm btn-primary" onClick={retry} disabled={busy}>{t("tasks.detail.retry")}</button>
+          )}
+          <button className="btn btn-sm btn-danger" onClick={remove} disabled={busy}>
+            <OAIcon name="trash" /> {t("tasks.detail.delete")}
+          </button>
+        </div>
+      </div>
+
+      {/* Summary pills — same visual language as the create-tab summary */}
+      <div className="oa-config-summary">
+        <div className="oa-summary-pill">
+          <div className="oa-summary-pill__label">{t("status." + task.status)}</div>
+          <div className="oa-summary-pill__value"><StatusBadge status={task.status} /></div>
+        </div>
+        <div className="oa-summary-pill">
+          <div className="oa-summary-pill__label">{t("tasks.detail.created")}</div>
+          <div className="oa-summary-pill__value" style={{fontSize: 12}}>{fmtTime(task.created_at)}</div>
+        </div>
+        <div className="oa-summary-pill">
+          <div className="oa-summary-pill__label">{t("tasks.detail.duration")}</div>
+          <div className="oa-summary-pill__value" style={{fontSize: 12}}>{
+            task.completed_at && task.created_at
+              ? fmtDuration((new Date(task.completed_at) - new Date(task.created_at)) / 1000)
+              : task.status === "running" ? t("tasks.detail.runningHint") : "—"
+          }</div>
+        </div>
+      </div>
+
+      {task.status === "running" && (
+        <div className="card">
+          <div className="label">{t("steps." + (task.pipeline_step || "setup_environment"))}</div>
+          {typeof task.progress === "number" && (
+            <div className="progress-bar"><div style={{width: Math.max(0, Math.min(100, task.progress * 100)) + "%"}} /></div>
+          )}
+          <div style={{marginTop: 14}}>
+            <StepList currentStep={task.pipeline_step} status={task.status} />
+          </div>
+        </div>
+      )}
+
+      {task.status === "failed" && task.error_kind && (
+        <div className="card">
+          <div className="label">{t("tasks.detail.errorPanel")}</div>
+          <ErrorPanel kind={task.error_kind} message={task.error_message}
+                      hints={t("errorKind." + task.error_kind)} />
+          <div style={{marginTop: 12}}>
+            <StepList currentStep={task.pipeline_step} status={task.status} errorStep={task.pipeline_step} />
+          </div>
+        </div>
+      )}
+
+      {task.status === "succeeded" && task.mode === "hook_picker" && task.hook && (
+        <HookResultPanel task={task} />
+      )}
+
+      {task.status === "succeeded" && (
+        <>
+          <div className="card">
+            <div className="label">{t("tasks.detail.outputs")}</div>
+            <div className="flex gap-2 flex-wrap">
+              {task.output_srt_path && (
+                <button className="btn btn-sm" onClick={dlSrt}>
+                  <OAIcon name="subtitles" /> {t("tasks.detail.downloadSrt")}
+                </button>
+              )}
+              {task.output_video_path && (
+                <button className="btn btn-sm btn-primary" onClick={dlVideo}>
+                  <OAIcon name="flame" /> {t("tasks.detail.downloadVideo")}
+                </button>
+              )}
+            </div>
+          </div>
+          {previewSrt && (
+            <div className="card">
+              <div className="label">{t("tasks.detail.previewSrt")}</div>
+              <div className="srt-preview">{previewSrt.slice(0, 2000)}{previewSrt.length > 2000 ? "\n…" : ""}</div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* =================================================================
+ * HookResultPanel — shown at the top of TaskDetail when a hook_picker
+ * task succeeds.  Renders the AI-selected dialogue as an italic block
+ * quote, exposes the source timecode for one-click copy, and disables
+ * the "next-step" buttons (cross-plugin dispatch is reserved for v2.0).
+ * Same oa-* design vocabulary as the rest of the right pane.
+ * ================================================================= */
+
+function HookResultPanel({ task }) {
+  const t = useT();
+  const hook = task.hook || {};
+  const lines = hook.lines || [];
+  const srcStart = hook.source_start || "—";
+  const srcEnd = hook.source_end || "—";
+  const dur = hook.duration_seconds || 0;
+  return (
+    <div className="card oa-hook-result">
+      <div className="oa-hook-headline">
+        <OAIcon name="sparkles" />
+        {t("hook.result.title")} ({dur.toFixed ? dur.toFixed(1) : dur}s)
+        {hook.selected_window && (
+          <span className="oa-summary-pill__label">
+            {t("hook.result.window")}: {hook.selected_window} #{hook.selected_attempt || 1}
+          </span>
+        )}
+      </div>
+      <div className="oa-hook-quote">
+        {lines.length === 0
+          ? <p>{t("hook.result.noLines")}</p>
+          : lines.map((l, i) => <p key={i}>“{l}”</p>)}
+      </div>
+      <div className="oa-config-summary">
+        <div className="oa-summary-pill">
+          <div className="oa-summary-pill__label">{t("hook.result.source_range")}</div>
+          <div className="oa-summary-pill__value" style={{fontSize: 12}}>
+            {srcStart} → {srcEnd}
+          </div>
+        </div>
+        <div className="oa-summary-pill">
+          <div className="oa-summary-pill__label">{t("hook.result.duration")}</div>
+          <div className="oa-summary-pill__value">
+            {dur.toFixed ? dur.toFixed(1) : dur}s
+          </div>
+        </div>
+        <div className="oa-summary-pill">
+          <div className="oa-summary-pill__label">{t("hook.result.lines")}</div>
+          <div className="oa-summary-pill__value">{lines.length}</div>
+        </div>
+      </div>
+      {hook.reason && (
+        <div className="oa-cost-notes" style={{marginTop: 6}}>
+          <div><strong>{t("hook.result.ai_reason")}:</strong> {hook.reason}</div>
+        </div>
+      )}
+      <details className="oa-collapsible">
+        <summary>{t("hook.result.details")}</summary>
+        <pre style={{
+          fontSize: 11, lineHeight: 1.5, padding: 10, marginTop: 8,
+          background: "var(--bg)", borderRadius: 6, overflow: "auto",
+          maxHeight: 280, color: "var(--text)",
+        }}>
+          {JSON.stringify({ hook, telemetry: task.hook_telemetry || null }, null, 2)}
+        </pre>
+      </details>
+      <div style={{marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap"}}>
+        <button className="btn btn-sm btn-primary"
+                onClick={() => copyToClipboard(srcStart + " --> " + srcEnd)}>
+          <OAIcon name="link" /> {t("hook.result.copy_timecode")}
+        </button>
+        <button className="btn btn-sm" disabled
+                title={t("hook.result.pending_v2")}>
+          {t("hook.result.next.clip_sense")}
+        </button>
+        <button className="btn btn-sm" disabled
+                title={t("hook.result.pending_v2")}>
+          {t("hook.result.next.post_kit")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* =================================================================
+ * HooksList — Library > Hooks sub-tab.  Lists every succeeded
+ * hook_picker task with a 2-line preview + copy/delete shortcuts.
+ * ================================================================= */
+
+function HooksList() {
+  const t = useT();
+  const [items, setItems] = useState(null);
+
+  const refresh = useCallback(() => {
+    pluginApi("GET", "/library/hooks").then(r => {
+      if (r.ok && r.body) setItems(r.body.items || []);
+      else setItems([]);
+    }).catch(() => setItems([]));
+  }, []);
+  useEffect(refresh, [refresh]);
+
+  const remove = async (taskId) => {
+    if (!confirm(t("library.hooks.deleteConfirm"))) return;
+    const r = await pluginApi("DELETE", "/tasks/" + taskId);
+    if (r.ok) refresh();
+    else showToast(t("toast.deleteFailed") || "Delete failed", "error");
+  };
+
+  if (items === null) return <div className="empty-state"><span className="spinner" /></div>;
+  if (items.length === 0) return (
+    <div className="oa-preview-empty" style={{padding: "32px 16px"}}>
+      <span className="oa-preview-empty__icon"><OAIcon name="sparkles" /></span>
+      <div className="oa-preview-empty__title">{t("library.hooks.empty")}</div>
+      <div className="oa-preview-empty__hint">{t("library.hooks.empty.hint")}</div>
+    </div>
+  );
+
+  return (
+    <div className="grid-2" style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12}}>
+      {items.map(it => {
+        const hook = it.hook || {};
+        const previewLines = (hook.lines || []).slice(0, 2);
+        return (
+          <div key={it.task_id} className="card" style={{margin: 0}}>
+            <div className="flex items-center justify-between" style={{marginBottom: 6}}>
+              <div className="oa-feature-card__title" style={{display: "inline-flex", alignItems: "center", gap: 6}}>
+                <OAIcon name="sparkles" />
+                {hook.duration_seconds ? hook.duration_seconds.toFixed(1) + "s" : "—"}
+                {hook.selected_window && (
+                  <span className="oa-mode-tile__chip" data-mode="hook_picker"
+                        style={{marginLeft: 4}}>
+                    {hook.selected_window}
+                  </span>
+                )}
+              </div>
+              <span className="text-xs text-dim">{fmtTime(it.created_at)}</span>
+            </div>
+            <div className="oa-hook-quote" style={{marginTop: 4, marginBottom: 8}}>
+              {previewLines.length === 0
+                ? <p style={{fontStyle: "normal", color: "var(--text-dim)"}}>{t("library.hooks.noPreview")}</p>
+                : previewLines.map((l, i) => <p key={i}>“{l}”</p>)}
+            </div>
+            <div className="text-xs text-dim" style={{marginBottom: 10}}>
+              {hook.source_start || "—"} → {hook.source_end || "—"}
+            </div>
+            <div className="flex gap-2" style={{flexWrap: "wrap"}}>
+              <button className="btn btn-sm"
+                      onClick={() => copyToClipboard((hook.source_start || "") + " --> " + (hook.source_end || ""))}>
+                <OAIcon name="link" /> {t("library.hooks.copy")}
+              </button>
+              <button className="btn btn-sm btn-danger"
+                      onClick={() => remove(it.task_id)}>
+                <OAIcon name="trash" />
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* =================================================================
+ * LibraryTab — four sub-tabs: transcripts, srts, styles, hooks
+ * ================================================================= */
+
+function LibraryTab() {
+  const t = useT();
+  const [sub, setSub] = useState("srts");
+  const introKey = "library.intro." + sub;
+  return (
+    <div>
+      <div className="flex gap-2" style={{marginBottom: 12}}>
+        {["transcripts", "srts", "styles", "hooks"].map(s => (
+          <button key={s} type="button"
+                  className={"mode-btn" + (sub === s ? " active" : "")}
+                  onClick={() => setSub(s)}>
+            {t("library.tabs." + s)}
+          </button>
+        ))}
+      </div>
+      <div className="deps-help" style={{marginBottom: 14}}>
+        {t(introKey)}
+      </div>
+      {sub === "transcripts" && <TranscriptsList />}
+      {sub === "srts" && <SrtsList />}
+      {sub === "styles" && <StylesManager />}
+      {sub === "hooks" && <HooksList />}
+    </div>
+  );
+}
+
+function TranscriptsList() {
+  const t = useT();
+  const [items, setItems] = useState(null);
+  useEffect(() => {
+    pluginApi("GET", "/library/transcripts").then(r => {
+      if (r.ok && r.body) setItems(r.body.transcripts || r.body.items || []);
+      else setItems([]);
+    }).catch(() => setItems([]));
+  }, []);
+  if (items === null) return <div className="empty-state"><span className="spinner" /></div>;
+  if (items.length === 0) return (
+    <div className="oa-preview-empty" style={{padding: "32px 16px"}}>
+      <span className="oa-preview-empty__icon"><OAIcon name="subtitles" /></span>
+      <div className="oa-preview-empty__hint">{t("library.transcripts.empty")}</div>
+    </div>
+  );
+  return (
+    <div>
+      {items.map(it => (
+        <div key={it.id} className="card">
+          <div className="flex items-center justify-between">
+            <div style={{display:"flex", alignItems:"center", gap: 10, minWidth: 0}}>
+              <span className="oa-feature-card__icon" style={{width: 30, height: 30}}>
+                <OAIcon name="subtitles" />
+              </span>
+              <div style={{minWidth: 0}}>
+                <div className="text-sm" style={{fontWeight: 600}}>{it.id.slice(0, 12)}</div>
+                <div className="text-xs text-dim">{fmtTime(it.created_at)} · {it.source_lang || "—"} · {(it.word_count || 0)} words</div>
+              </div>
+            </div>
+            <span className="tag tag-blue">{it.engine || "paraformer-v2"}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SrtsList() {
+  const t = useT();
+  const [items, setItems] = useState(null);
+  useEffect(() => {
+    pluginApi("GET", "/library/srts").then(r => {
+      if (r.ok && r.body) setItems(r.body.srts || []);
+      else setItems([]);
+    }).catch(() => setItems([]));
+  }, []);
+  if (items === null) return <div className="empty-state"><span className="spinner" /></div>;
+  if (items.length === 0) return (
+    <div className="oa-preview-empty" style={{padding: "32px 16px"}}>
+      <span className="oa-preview-empty__icon"><OAIcon name="subtitles" /></span>
+      <div className="oa-preview-empty__hint">{t("library.srts.empty")}</div>
+    </div>
+  );
+  return (
+    <div>
+      {items.map(it => (
+        <div key={it.task_id} className="card">
+          <div className="flex items-center justify-between" style={{gap: 10}}>
+            <div className="flex-1" style={{minWidth: 0, display:"flex", alignItems:"center", gap: 10}}>
+              <span className="oa-feature-card__icon" style={{width: 30, height: 30}}>
+                <OAIcon name={it.mode === "burn" ? "flame"
+                              : it.mode === "translate" ? "translate"
+                              : it.mode === "hook_picker" ? "sparkles" : "subtitles"} />
+              </span>
+              <div style={{minWidth: 0}}>
+                <div className="text-sm" style={{fontWeight: 600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+                  {it.filename}
+                </div>
+                <div className="text-xs text-dim">
+                  {t("modes." + it.mode)} · {fmtSize(it.size_bytes)} · {fmtTime(it.created_at)}
+                  {it.target_lang ? " · → " + it.target_lang : ""}
+                </div>
+              </div>
+            </div>
+            <button className="btn btn-sm"
+                    onClick={() => downloadFile("/api/plugins/subtitle-craft/tasks/" + it.task_id + "/download", it.filename)}>
+              ⬇
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StylesManager() {
+  const t = useT();
+  const [data, setData] = useState({ builtin: [], custom: [] });
+  const [loading, setLoading] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState({ label: "", font_name: "Microsoft YaHei", font_size: 24, primary_colour: "&H00FFFFFF", outline_colour: "&H00000000" });
+
+  const refresh = useCallback(() => {
+    setLoading(true);
+    pluginApi("GET", "/library/styles").then(r => {
+      if (r.ok && r.body) setData(r.body);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+  useEffect(refresh, [refresh]);
+
+  const save = async () => {
+    if (!draft.label) return;
+    const r = await pluginApi("POST", "/library/styles", draft);
+    if (r.ok) { setAdding(false); setDraft({ label: "", font_name: "Microsoft YaHei", font_size: 24, primary_colour: "&H00FFFFFF", outline_colour: "&H00000000" }); refresh(); }
+    else showToast(t("toast.saveFailed"), "error");
+  };
+  const remove = async (id) => {
+    if (!confirm(t("library.styles.deleteConfirm"))) return;
+    const r = await pluginApi("DELETE", "/library/styles/" + id);
+    if (r.ok) refresh();
+  };
+
+  if (loading) return <div className="empty-state"><span className="spinner" /></div>;
+
+  // Map preset id -> swatch modifier so the preview tile shows the rough
+  // look-and-feel of the burnt-in subtitle (mirrors what the user picks
+  // in CreateTab > 字幕样式 — these two surfaces are the SAME preset list).
+  const swatchClass = (id) => "oa-style-swatch oa-style-swatch--" + id;
+
+  return (
+    <div>
+      <div className="card">
+        <div className="card-title">{t("library.styles.builtin")}</div>
+        <div className="style-grid">
+          {(data.builtin || []).map(s => (
+            <div key={s.id} className="oa-style-card">
+              <div className={swatchClass(s.id)}>
+                {s.id === "tiktok" ? "字幕Aa" : s.id === "youtube" ? "字幕 Aa" : "字幕"}
+              </div>
+              <div className="oa-style-card__name">{s.label_zh || s.id}</div>
+              <div className="oa-style-card__meta">{s.font_name} · {s.font_size}px</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="flex items-center justify-between" style={{marginBottom: 12}}>
+          <div className="card-title" style={{marginBottom: 0}}>{t("library.styles.custom")}</div>
+          {!adding && <button className="btn btn-sm btn-primary" onClick={() => setAdding(true)}>+ {t("library.styles.add")}</button>}
+        </div>
+        {adding && (
+          <div className="card" style={{marginBottom: 12}}>
+            <div className="grid-2">
+              <div className="form-row">
+                <div className="label">{t("library.styles.editLabel")}</div>
+                <input className="input" value={draft.label}
+                       onChange={e => setDraft({...draft, label: e.target.value})}
+                       placeholder="My Style" />
+              </div>
+              <div className="form-row">
+                <div className="label">{t("library.styles.editFontName")}</div>
+                <input className="input" value={draft.font_name}
+                       onChange={e => setDraft({...draft, font_name: e.target.value})} />
+              </div>
+              <div className="form-row">
+                <div className="label">{t("library.styles.editFontSize")}</div>
+                <input className="input" type="number" value={draft.font_size}
+                       onChange={e => setDraft({...draft, font_size: parseInt(e.target.value || "24", 10)})} />
+              </div>
+              <div className="form-row">
+                <div className="label">{t("library.styles.editPrimary")}</div>
+                <input className="input" value={draft.primary_colour}
+                       onChange={e => setDraft({...draft, primary_colour: e.target.value})} />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button className="btn btn-primary" onClick={save}>{t("library.styles.save")}</button>
+              <button className="btn" onClick={() => setAdding(false)}>{t("common.cancel")}</button>
+            </div>
+          </div>
+        )}
+        {(data.custom || []).length === 0 ? (
+          <div className="text-xs text-dim">—</div>
+        ) : (
+          <div className="style-grid">
+            {(data.custom || []).map(s => (
+              <div key={s.id} className="oa-style-card">
+                <div className="oa-style-swatch">字幕</div>
+                <div className="flex items-center justify-between">
+                  <div className="oa-style-card__name">{s.label}</div>
+                  <button className="btn btn-sm btn-danger" style={{padding:"2px 6px"}} onClick={() => remove(s.id)}>×</button>
+                </div>
+                <div className="oa-style-card__meta">{s.font_name} · {s.font_size}px</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* =================================================================
+ * FfmpegInstaller — vendored from seedance-video.
+ *
+ * Talks to the in-plugin /system/* routes (see subtitle_craft_inline/
+ * system_deps.py) using a fire-and-poll cycle: POST .../install kicks
+ * off a background subprocess, then we GET .../status every 3s until
+ * busy:false. The component is fully self-contained — no external
+ * state, no SDK widget — so the plugin keeps working when the host
+ * SDK ships without dep-gate.js.
+ * ================================================================= */
+function FfmpegInstaller({ onChanged }) {
+  const t = useT();
+  const [snap, setSnap] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [busyOp, setBusyOp] = useState("");
+  const [status, setStatus] = useState(null);
+  const [copied, setCopied] = useState(false);
+  // window.confirm() is silently blocked because the host iframe sandbox
+  // does NOT include allow-modals — render an inline confirmation card.
+  const [confirmingUninstall, setConfirmingUninstall] = useState(false);
+  const [rechecking, setRechecking] = useState(false);
+  const pollRef = useRef(null);
+  const logRef = useRef(null);
+  const opNotifiedRef = useRef(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const r = await pluginApi("GET", "/system/components");
+      const item = (r.body && r.body.items || []).find(x => x.id === "ffmpeg");
+      if (item) {
+        setSnap(item);
+        if (item.busy) {
+          setBusyOp((item.last_install && item.last_install.op_kind) || "install");
+        }
+      }
+    } catch (e) {
+      setSnap({ id: "ffmpeg", found: false, methods: [], uninstall_methods: [], is_root: false });
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [status && status.log_tail && status.log_tail.length]);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }, []);
+
+  useEffect(() => {
+    if (!busyOp) { stopPolling(); return; }
+    opNotifiedRef.current = false;
+    const tick = async () => {
+      try {
+        const r = await pluginApi("GET", "/system/ffmpeg/status");
+        const st = r.body || {};
+        setStatus(st);
+        if (!st.busy) {
+          stopPolling();
+          const finishedOp = busyOp;
+          setBusyOp("");
+          await refresh();
+          if (onChanged) onChanged();
+          if (opNotifiedRef.current) return;
+          opNotifiedRef.current = true;
+          if (finishedOp === "uninstall") {
+            if (!st.found) showToast(_tr("settings.system.uninstalled"));
+            else showToast(_tr("settings.system.uninstallFailed", { msg: st.error || "?" }), "error");
+          } else {
+            if (st.found) showToast(_tr("settings.system.installed"));
+            else showToast(_tr("settings.system.installFailed", { msg: st.error || "?" }), "error");
+          }
+        }
+      } catch (e) { /* network blip — try again next tick */ }
+    };
+    tick();
+    pollRef.current = setInterval(tick, 3000);
+    return stopPolling;
+  }, [busyOp, refresh, stopPolling, onChanged]);
+
+  useEffect(() => () => stopPolling(), [stopPolling]);
+
+  const formatElapsed = (sec) => {
+    const s = Math.max(0, Math.round(sec || 0));
+    const mm = String(Math.floor(s / 60)).padStart(2, "0");
+    const ss = String(s % 60).padStart(2, "0");
+    return mm + ":" + ss;
+  };
+
+  const startInstall = async (methodIndex) => {
+    setStatus({ busy: true, log_tail: [], elapsed_sec: 0, op_kind: "install" });
+    setBusyOp("install");
+    try {
+      const r = await pluginApi("POST", "/system/ffmpeg/install", { method_index: methodIndex });
+      const body = r.body || {};
+      if (body.ok === false) {
+        setBusyOp("");
+        showToast(_tr("settings.system.installFailed", { msg: body.error || "unknown" }), "error");
+      }
+    } catch (e) {
+      setBusyOp("");
+      showToast(_tr("settings.system.installFailed", { msg: e.message || "network error" }), "error");
+    }
+  };
+
+  const startUninstall = async (methodIndex) => {
+    setConfirmingUninstall(false);
+    setStatus({ busy: true, log_tail: [], elapsed_sec: 0, op_kind: "uninstall" });
+    setBusyOp("uninstall");
+    try {
+      const r = await pluginApi("POST", "/system/ffmpeg/uninstall", { method_index: methodIndex });
+      const body = r.body || {};
+      if (body.ok === false) {
+        setBusyOp("");
+        showToast(_tr("settings.system.uninstallFailed", { msg: body.error || "unknown" }), "error");
+      }
+    } catch (e) {
+      setBusyOp("");
+      showToast(_tr("settings.system.uninstallFailed", { msg: e.message || "network error" }), "error");
+    }
+  };
+
+  const handleRecheck = async () => {
+    if (rechecking || busyOp) return;
+    setRechecking(true);
+    const t0 = Date.now();
+    try { await refresh(); }
+    finally {
+      const elapsed = Date.now() - t0;
+      if (elapsed < 400) await new Promise(r => setTimeout(r, 400 - elapsed));
+      setRechecking(false);
+    }
+  };
+
+  const copyCmd = (cmd) => {
+    if (!cmd) return;
+    copyToClipboard(cmd);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  if (loading) {
+    return (
+      <div className="sysdep-card">
+        <div className="sysdep-card__head">
+          <span className="sysdep-spinner" />
+          <span className="sysdep-card__title">{t("settings.system.detecting")}</span>
+        </div>
+      </div>
+    );
+  }
+
+  const found = !!(snap && snap.found);
+  const methods = (snap && snap.methods) || [];
+  const uninstallMethods = (snap && snap.uninstall_methods) || [];
+  const isRoot = !!(snap && snap.is_root);
+  const installing = busyOp === "install";
+  const uninstalling = busyOp === "uninstall";
+  const busy = !!busyOp;
+  const liveStatus = busy ? status : ((snap && snap.last_install) || null);
+  const logLines = (liveStatus && liveStatus.log_tail) || [];
+  const lastOpKind = (liveStatus && liveStatus.op_kind) || "install";
+
+  const primaryIdx = (() => {
+    for (let i = 0; i < methods.length; i++) {
+      const m = methods[i];
+      if (m.strategy === "manual") continue;
+      if (m.requires_sudo && !isRoot) continue;
+      return i;
+    }
+    return methods.findIndex(m => m.strategy !== "manual");
+  })();
+  const primary = primaryIdx >= 0 ? methods[primaryIdx] : null;
+  const manualMethod = methods.find(m => m.strategy === "manual");
+  const blockingSudoMethod = (!found && primary == null)
+    ? methods.find(m => m.requires_sudo && !isRoot)
+    : null;
+
+  const uninstallPrimaryIdx = (() => {
+    for (let i = 0; i < uninstallMethods.length; i++) {
+      const m = uninstallMethods[i];
+      if (m.strategy === "manual") continue;
+      if (m.requires_sudo && !isRoot) continue;
+      return i;
+    }
+    return -1;
+  })();
+  const uninstallPrimary = uninstallPrimaryIdx >= 0 ? uninstallMethods[uninstallPrimaryIdx] : null;
+
+  return (
+    <div className="sysdep-card">
+      <div className="sysdep-card__head">
+        <div className="sysdep-card__title">
+          <OAIcon name="package" /> FFmpeg
+          {uninstalling
+            ? <span className="sysdep-card__badge sysdep-card__badge--busy">
+                <span className="sysdep-spinner" />
+                {t("settings.system.uninstalling", { elapsed: formatElapsed(liveStatus && liveStatus.elapsed_sec) })}
+              </span>
+            : installing
+              ? <span className="sysdep-card__badge sysdep-card__badge--busy">
+                  <span className="sysdep-spinner" />
+                  {t("settings.system.installing", { elapsed: formatElapsed(liveStatus && liveStatus.elapsed_sec) })}
+                </span>
+              : found
+                ? <span className="sysdep-card__badge sysdep-card__badge--ok">
+                    {snap.version
+                      ? t("settings.system.status.found", { ver: snap.version })
+                      : t("settings.system.status.foundNoVer")}
+                  </span>
+                : <span className="sysdep-card__badge sysdep-card__badge--missing">
+                    {t("settings.system.status.missing")}
+                  </span>}
+        </div>
+      </div>
+      {found && snap.location && (
+        <div className="sysdep-card__path">{t("settings.system.location", { path: snap.location })}</div>
+      )}
+
+      <div className="sysdep-card__actions">
+        {!busy && !found && primary && (
+          <button className="btn btn-sm btn-primary"
+                  onClick={() => startInstall(primaryIdx)}
+                  title={primary.command_hint || primary.strategy}>
+            <OAIcon name="package" /> {t("settings.system.btn.install")}
+          </button>
+        )}
+        {!busy && found && uninstallPrimary && !confirmingUninstall && (
+          <button className="btn btn-sm btn-danger"
+                  onClick={() => setConfirmingUninstall(true)}
+                  title={uninstallPrimary.command_hint || uninstallPrimary.strategy}>
+            <OAIcon name="trash" /> {t("settings.system.btn.uninstall")}
+          </button>
+        )}
+        {!busy && (
+          <button className="btn btn-sm" onClick={handleRecheck} disabled={rechecking}>
+            {rechecking
+              ? <><span className="sysdep-spinner" /> {t("settings.system.detecting")}</>
+              : t("settings.system.btn.recheck")}
+          </button>
+        )}
+        {snap && snap.homepage && (
+          <a className="btn btn-sm" href={snap.homepage} target="_blank" rel="noopener noreferrer">
+            <OAIcon name="link" /> {t("settings.system.btn.openHome")}
+          </a>
+        )}
+      </div>
+
+      {!busy && found && confirmingUninstall && uninstallPrimary && (
+        <div className="sysdep-card__sudo-hint"
+             style={{borderColor:"var(--danger)", background:"rgba(239,68,68,.08)"}}>
+          <div style={{whiteSpace:"pre-wrap", color:"var(--text)", fontSize:12, lineHeight:1.6}}>
+            {t("settings.system.uninstallConfirm")}
+          </div>
+          <div className="sysdep-card__sudo-cmd" style={{marginTop:10}}>
+            <code>{uninstallPrimary.command_hint || uninstallPrimary.strategy}</code>
+          </div>
+          <div style={{display:"flex", gap:6, marginTop:10, justifyContent:"flex-end"}}>
+            <button className="btn btn-sm" onClick={() => setConfirmingUninstall(false)}>
+              {t("settings.system.btn.cancel")}
+            </button>
+            <button className="btn btn-sm btn-danger"
+                    onClick={() => startUninstall(uninstallPrimaryIdx)}>
+              <OAIcon name="trash" /> {t("settings.system.btn.uninstallConfirmBtn")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!found && !busy && !primary && manualMethod && !blockingSudoMethod && (
+        <div className="sysdep-card__sudo-hint" style={{borderLeft:"3px solid var(--primary)"}}>
+          {t("settings.system.noMethod")}
+        </div>
+      )}
+
+      {!found && !busy && blockingSudoMethod && blockingSudoMethod.command_hint && (
+        <div className="sysdep-card__sudo-hint">
+          <div>{t("settings.system.requiresSudo")}</div>
+          <div className="sysdep-card__sudo-cmd">
+            <code>sudo {blockingSudoMethod.command_hint}</code>
+            <button className="btn btn-sm" onClick={() => copyCmd("sudo " + blockingSudoMethod.command_hint)}>
+              {copied ? t("settings.system.btn.copied") : t("settings.system.btn.copyCmd")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {(busy || logLines.length > 0) && (
+        <div className="sysdep-log">
+          <div className="sysdep-log__head">
+            <span>{lastOpKind === "uninstall"
+              ? t("settings.system.logTitleUninstall")
+              : t("settings.system.logTitle")}</span>
+            {busy && liveStatus && liveStatus.elapsed_sec != null && (
+              <span>{formatElapsed(liveStatus.elapsed_sec)}</span>
+            )}
+          </div>
+          {logLines.length === 0
+            ? <pre className="sysdep-log__body sysdep-log__body--empty">{t("settings.system.logEmpty")}</pre>
+            : <pre className="sysdep-log__body" ref={logRef}>{logLines.join("\n")}</pre>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* =================================================================
+ * SettingsTab — DashScope key, system components (FFmpeg + health),
+ * default runtime parameters, storage stats. The old standalone
+ * "FFmpeg path" form-row and "健康检查" section have been merged
+ * into the single 系统组件 section to match seedance-video and to
+ * stop confusing users who didn't realise editing the path required
+ * a service restart.
+ * ================================================================= */
+
+function SettingsTab({ health, onApiKeyChange }) {
+  const t = useT();
+  const [config, setConfig] = useState({});
+  const [keyDraft, setKeyDraft] = useState("");
+  const [keyVisible, setKeyVisible] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [stats, setStats] = useState(null);
+  const [healthLocal, setHealthLocal] = useState(health || null);
+  const [rechecking, setRechecking] = useState(false);
+
+  const refresh = useCallback(() => {
+    setRechecking(true);
+    Promise.all([
+      pluginApi("GET", "/settings").then(r => { if (r.body) setConfig(r.body); }).catch(() => {}),
+      pluginApi("GET", "/storage/stats").then(r => { if (r.body) setStats(r.body); }).catch(() => {}),
+      pluginApi("GET", "/healthz").then(r => { if (r.body) setHealthLocal(r.body); }).catch(() => {}),
+    ]).finally(() => {
+      setTimeout(() => setRechecking(false), 400);
+    });
+  }, []);
+
+  useEffect(refresh, [refresh]);
+
+  const save = async (updates) => {
+    setSaving(true);
+    try {
+      const r = await pluginApi("PUT", "/settings", { updates });
+      if (r.ok) {
+        showToast(t("toast.savedSettings"));
+        if ("dashscope_api_key" in updates) onApiKeyChange();
+        refresh();
+      } else showToast(t("toast.saveFailed"), "error");
+    } catch { showToast(t("toast.saveFailed"), "error"); }
+    setSaving(false);
+  };
+
+  const keyPresent = !!(config && config.dashscope_api_key_present);
+
+  return (
+    <div style={{maxWidth: 720}}>
+      {/* API key */}
+      <div className="oa-settings-section">
+        <h3 className="oa-settings-section__title">
+          <OAIcon name="key" />
+          {t("settings.section.api")}
+        </h3>
+        <div className={"form-row" + (keyPresent ? "" : " oa-config-field-callout")}
+             data-callout={keyPresent ? undefined : t("settings.api.callout")}>
+          <div className="label">{t("settings.api.key")}</div>
+          <div className="flex gap-2">
+            <input className="input flex-1"
+                   type={keyVisible ? "text" : "password"}
+                   value={keyDraft}
+                   onChange={e => setKeyDraft(e.target.value)}
+                   placeholder={keyPresent ? (config.dashscope_api_key_masked || "·····") : "sk-..."} />
+            <button className="btn btn-sm" onClick={() => setKeyVisible(!keyVisible)}>
+              {keyVisible ? t("settings.api.key.hide") : t("settings.api.key.show")}
+            </button>
+            <button className="btn btn-sm btn-primary" disabled={saving || !keyDraft}
+                    onClick={() => { save({ dashscope_api_key: keyDraft }); setKeyDraft(""); }}>
+              {t("settings.api.key.save")}
+            </button>
+          </div>
+          <div className="text-xs text-dim" style={{marginTop: 4}}>
+            {t("settings.api.key.helpPrefix")}
+            <a href="https://bailian.console.aliyun.com/#/api-key" target="_blank" rel="noopener"
+               style={{color: "var(--primary)"}}>
+              {t("settings.api.key.helpLink")}
+            </a>
+            {t("settings.api.key.helpSuffix")}
+          </div>
+        </div>
+      </div>
+
+      {/* System components — FfmpegInstaller + the rest of the health
+          checks rolled into one section. Replaces the old separate
+          "FFmpeg path" form-row + "健康检查" panel which used to give
+          contradictory signals (one was a free-form path; the other
+          was a snapshot that didn't react to the path change). */}
+      <div className="oa-settings-section">
+        <h3 className="oa-settings-section__title">
+          <OAIcon name="package" />
+          {t("settings.section.system")}
+        </h3>
+        <div className="deps-help">
+          <strong>{t("settings.system.intro.strong")}</strong>
+          <div style={{marginTop:4}}>{t("settings.system.intro.body")}</div>
+          <ul>
+            <li>{t("settings.system.platform.win")}</li>
+            <li>{t("settings.system.platform.mac")}</li>
+            <li>{t("settings.system.platform.linux")}</li>
+          </ul>
+        </div>
+        <FfmpegInstaller onChanged={refresh} />
+
+        {/* Other dependencies — Playwright (browser), DashScope key.
+            Kept in the SAME section as FFmpeg so users see their
+            entire system-readiness story in one place. The recheck
+            button shows a spinner while polling all three endpoints
+            (mirrors the FFmpeg sysdep-card pattern). */}
+        <div className="other-deps">
+          <div className="other-deps__head">
+            <div className="oa-section-label" style={{margin: 0}}>{t("settings.system.healthTitle")}</div>
+            <button className={"btn btn-sm" + (rechecking ? " is-rechecking" : "")}
+                    onClick={refresh} disabled={rechecking}>
+              {rechecking
+                ? <><span className="sysdep-spinner" /> {t("settings.system.detecting")}</>
+                : <><OAIcon name="refresh" /> {t("settings.system.health.refresh")}</>}
+            </button>
+          </div>
+          <div className="text-xs text-dim" style={{marginBottom: 8, lineHeight: 1.6}}>
+            {t("settings.system.health.intro")}
+          </div>
+          <div className="grid-2" style={{gap: 8}}>
+            <HealthRow label={t("settings.system.health.playwright")} ok={healthLocal && healthLocal.playwright_ok} t={t} />
+            <HealthRow label={t("settings.system.health.playwrightBrowser")} ok={healthLocal && healthLocal.playwright_browser_ready} t={t} />
+            <HealthRow label={t("settings.system.health.apiKey")} ok={healthLocal && healthLocal.dashscope_api_key_present} t={t} />
+          </div>
+        </div>
+      </div>
+
+      {/* Default runtime parameters (no FFmpeg path here anymore — the
+          installer above already handles that holistically). */}
+      <div className="oa-settings-section">
+        <h3 className="oa-settings-section__title">
+          <OAIcon name="settings" />
+          {t("settings.section.runtime")}
+        </h3>
+        <div className="grid-2">
+          <div className="form-row">
+            <div className="label">{t("settings.runtime.timeout")}</div>
+            <input className="input" type="number" min="60" max="3600"
+                   defaultValue={config.paraformer_timeout || "900"}
+                   onBlur={e => save({ paraformer_timeout: e.target.value })} />
+          </div>
+          <div className="form-row">
+            <div className="label">{t("settings.runtime.maxParallel")}</div>
+            <input className="input" type="number" min="1" max="8"
+                   defaultValue={config.translation_parallel || "2"}
+                   onBlur={e => save({ translation_parallel: e.target.value })} />
+          </div>
+        </div>
+        <div className="text-xs text-dim" style={{marginTop: 4}}>
+          {t("settings.runtime.help")}
+        </div>
+      </div>
+
+      {/* Storage */}
+      {stats && (
+        <div className="oa-settings-section">
+          <h3 className="oa-settings-section__title">
+            <OAIcon name="folder" />
+            {t("settings.section.storage")}
+          </h3>
+          <div className="grid-2" style={{gap: 8}}>
+            <div className="oa-summary-pill">
+              <div className="oa-summary-pill__label">{t("settings.storage.totalFiles")}</div>
+              <div className="oa-summary-pill__value">{stats.total_files || 0}</div>
+            </div>
+            <div className="oa-summary-pill">
+              <div className="oa-summary-pill__label">{t("settings.storage.totalSize")}</div>
+              <div className="oa-summary-pill__value">{fmtSize(stats.total_bytes || 0)}</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HealthRow({ label, ok, t }) {
+  return (
+    <div className="flex items-center justify-between" style={{padding: "6px 10px", border: "1px solid var(--border)", borderRadius: 6}}>
+      <span className="text-sm">{label}</span>
+      <span className={"tag " + (ok ? "tag-green" : "tag-red")}>
+        {ok ? t("settings.system.health.ok") : t("settings.system.health.missing")}
+      </span>
+    </div>
+  );
+}
+
+console.log("[subtitle-craft] Mounting React app...");
+try {
+  window.__scRendered = true;
+  ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  console.log("[subtitle-craft] Mount OK");
+} catch (mountErr) {
+  document.getElementById("root").innerHTML =
+    '<div style="padding:24px;color:#ef4444"><b>[subtitle-craft mount error]</b><pre style="margin-top:8px;white-space:pre-wrap;font-size:11px">' +
+    (mountErr && mountErr.stack ? mountErr.stack : String(mountErr)) + '</pre></div>';
+}
+if (window.OpenAkita && typeof window.OpenAkita.ready === "function") {
+  window.OpenAkita.ready();
+}
+</script>
+
+<script>
+/* =================================================================
+ * Manual compile-and-execute (mirror of clip-sense fix 1cadcacd).
+ *
+ * Reads the JSX source from <script type="text/plain" id="sc-jsx-source">,
+ * runs Babel.transform({ presets: ["react"] }) inside try/catch, then
+ * eval()s the compiled code inside another try/catch. Both failures
+ * surface as in-page panels with full stacks instead of the opaque
+ * cross-origin "Script error." that <script type="text/babel"> swallows.
+ * ================================================================= */
+(function() {
+  console.log("[subtitle-craft] Manual compile+execute starting...");
+  var srcEl = document.getElementById("sc-jsx-source");
+  if (!srcEl) { document.getElementById("root").innerHTML = '<div style="padding:24px;color:#ef4444"><b>Source element not found</b></div>'; return; }
+  if (typeof Babel === "undefined") { document.getElementById("root").innerHTML = '<div style="padding:24px;color:#ef4444"><b>Babel not loaded (CDN issue?)</b></div>'; return; }
+  if (typeof React === "undefined") { document.getElementById("root").innerHTML = '<div style="padding:24px;color:#ef4444"><b>React not loaded (CDN issue?)</b></div>'; return; }
+  var code;
+  try {
+    var result = Babel.transform(srcEl.textContent, { presets: ["react"], filename: "subtitle-craft.jsx" });
+    code = result.code;
+    console.log("[subtitle-craft] Compilation OK (" + code.length + " chars)");
+  } catch (compileErr) {
+    console.error("[subtitle-craft] COMPILE ERROR:", compileErr);
+    document.getElementById("root").innerHTML = '<div style="padding:24px;color:#ef4444;font-size:13px"><b>Babel Compilation Error</b><pre style="margin-top:12px;white-space:pre-wrap;font-size:12px;background:#fef2f2;padding:16px;border:1px solid #fecaca;border-radius:8px;overflow:auto;max-height:500px">' + (compileErr.stack || String(compileErr)) + '</pre></div>';
+    return;
+  }
+  try {
+    (0, eval)(code);
+    console.log("[subtitle-craft] Execution OK");
+  } catch (runErr) {
+    console.error("[subtitle-craft] RUNTIME ERROR:", runErr);
+    document.getElementById("root").innerHTML = '<div style="padding:24px;color:#ef4444;font-size:13px"><b>Runtime Error</b><pre style="margin-top:12px;white-space:pre-wrap;font-size:12px;background:#fef2f2;padding:16px;border:1px solid #fecaca;border-radius:8px;overflow:auto;max-height:500px">' + (runErr.stack || String(runErr)) + '</pre></div>';
+  }
+})();
+</script>
+</body>
+</html>
+

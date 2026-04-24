@@ -1,0 +1,43 @@
+{
+  "_comment": "Curated RunningHub workflow_id recommendations. IDs may change if the original author updates or deletes the workflow. Fork important workflows to your own RH account for stability.",
+  "photo_speak": [
+    {
+      "id": "",
+      "name": "数字人口播 (s2v)",
+      "desc": "基于 wan2.2-s2v 的 RunningHub 实现",
+      "author": "社区"
+    }
+  ],
+  "video_relip": [
+    {
+      "id": "",
+      "name": "视频换嘴 (retalk)",
+      "desc": "基于 videoretalk 的 RunningHub 实现",
+      "author": "社区"
+    }
+  ],
+  "video_reface": [
+    {
+      "id": "",
+      "name": "视频换人 (animate-mix)",
+      "desc": "基于 wan2.2-animate-mix 的 RunningHub 实现",
+      "author": "社区"
+    }
+  ],
+  "avatar_compose": [
+    {
+      "id": "",
+      "name": "数字人合成",
+      "desc": "融合人像 + 场景后生成口播视频",
+      "author": "社区"
+    }
+  ],
+  "pose_drive": [
+    {
+      "id": "",
+      "name": "图生动作 (animate-move)",
+      "desc": "将视频动作迁移到静态人像",
+      "author": "社区"
+    }
+  ]
+}

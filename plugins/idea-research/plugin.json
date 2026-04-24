@@ -1,0 +1,84 @@
+{
+  "id": "idea-research",
+  "name": "Idea Research",
+  "display_name_zh": "选题研析室",
+  "display_name_en": "Idea Research",
+  "version": "1.0.0",
+  "type": "python",
+  "entry": "plugin.py",
+  "description": "选题研析室：双引擎采集（API + Playwright 5 平台）+ 8 步爆款拆解 + MDRM 记忆图谱学习的选题/对标/拆解/脚本一体工作台。",
+  "description_i18n": {
+    "zh": "选题研析室：双引擎采集（公开 API + 浏览器爬虫 5 平台）+ 8 步爆款拆解 pipeline + MDRM 记忆图谱学习，覆盖选题/对标/拆解/脚本改写四种工作模式。",
+    "en": "Idea Research: dual-engine ingest (open API + Playwright across 5 platforms) + 8-step viral breakdown pipeline + MDRM memory-graph learning, covering radar / breakdown / compare / script-remix modes."
+  },
+  "author": "OpenAkita Team",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/openakita/openakita",
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access",
+    "vector.access",
+    "memory.read",
+    "memory.write",
+    "channel.push"
+  ],
+  "requires": {
+    "openakita": ">=1.28.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.7.0,<0.8.0",
+    "python": ">=3.11",
+    "pip": [
+      "httpx>=0.27.0",
+      "pydantic>=2.6.0"
+    ]
+  },
+  "provides": {
+    "tools": [
+      "idea_radar_pull",
+      "idea_breakdown_url",
+      "idea_compare_accounts",
+      "idea_script_remix",
+      "idea_subscribe",
+      "idea_unsubscribe",
+      "idea_list_subscriptions",
+      "idea_export",
+      "idea_cancel"
+    ],
+    "routes": true,
+    "skill": "SKILL.md"
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "选题研析室",
+    "title_i18n": {
+      "zh": "选题研析室",
+      "en": "Idea Research"
+    },
+    "sidebar_group": "apps",
+    "permissions": [
+      "upload",
+      "download",
+      "notifications",
+      "theme",
+      "clipboard"
+    ]
+  },
+  "category": "creative",
+  "tags": [
+    "idea",
+    "research",
+    "trend",
+    "breakdown",
+    "viral",
+    "playwright",
+    "mdrm"
+  ],
+  "icon": "telescope",
+  "load_timeout": 15
+}

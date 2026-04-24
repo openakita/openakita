@@ -77,6 +77,10 @@ pnpm-debug.log*
 dist/
 dist-cli/
 .vite/
+# Plugins ship their built UI as part of the distributable source —
+# exempt plugins/*/ui/dist/ from the global `dist/` rule above.
+!plugins/*/ui/dist/
+!plugins/*/ui/dist/**
 
 # Rust / Tauri
 target/
@@ -112,12 +116,6 @@ identity/runtime/persona.custom.md
 # skills/ 目录全部是内置技能，需要被 git 完整跟踪。
 # 用户通过技能市场安装的技能存放在 ~/.openakita/workspaces/default/skills/，
 # 不在仓库目录内，无需 ignore。
-
-# Plugins — 整个目录不入库（2026-04 起策略调整）
-# 只保留 .gitkeep 维持目录结构。所有插件源码、ui/dist、tests
-# 都不再随主仓库分发；用户/开发者自行从对应插件仓库 / 安装包获取。
-plugins/*
-!plugins/.gitkeep
 
 # Archived plugins (not auto-loaded; not for GitHub)
 # 整个目录及其所有内容都不进入 git

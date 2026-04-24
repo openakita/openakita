@@ -1,0 +1,3836 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Seedance Video Generator</title>
+  <!--
+    Self-contained plugin UI: bootstrap + UI Kit are inlined under _assets/.
+    Plugins MUST NOT depend on host-mounted /api/plugins/_sdk/* (removed in
+    SDK 0.7.0). See plugins-archive/_shared/web-uikit/README.md for the
+    canonical reference copy. The FFmpeg one-click installer that used to
+    come from dep-gate.js is now owned by the plugin itself — see the
+    FfmpegInstaller React component below and seedance_inline/system_deps.py.
+  -->
+  <script src="_assets/bootstrap.js"></script>
+  <link rel="stylesheet" href="_assets/styles.css">
+  <script src="_assets/icons.js"></script>
+  <script src="_assets/i18n.js"></script>
+  <script src="_assets/markdown-mini.js"></script>
+  <!--
+    Preload CDN deps in parallel (script tags below remain synchronous so
+    React/ReactDOM/Babel still execute in declared order; preload only
+    starts the downloads earlier so they finish faster).
+  -->
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react@18/umd/react.production.min.js" />
+  <link rel="preload" as="script" crossorigin href="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" />
+  <link rel="preload" as="script" href="https://unpkg.com/@babel/standalone/babel.min.js" />
+  <style>
+    :root {
+      --bg: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
+      --text: #1e293b; --text-muted: #64748b; --text-dim: #94a3b8;
+      --primary: #3b82f6; --primary-hover: #2563eb;
+      --success: #22c55e; --warning: #f59e0b; --danger: #ef4444;
+      --border: #e2e8f0; --radius: 8px;
+    }
+    [data-theme="dark"] {
+      --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+      --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
+      --border: #334155;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+        --text: #f1f5f9; --text-muted: #94a3b8; --text-dim: #64748b;
+        --border: #334155;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+    .app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    .header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--bg-card); }
+    .header h1 { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .header-right { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--text-muted); }
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); background: var(--bg-card); padding: 0 16px; }
+    .tab { padding: 10px 18px; font-size: 13px; cursor: pointer; border-bottom: 2px solid transparent; color: var(--text-muted); transition: all .15s; white-space: nowrap; }
+    .tab:hover { color: var(--text); background: var(--bg-hover); }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
+    .content { flex: 1; min-height: 0; overflow: hidden; padding: 20px; position: relative; }
+    .content > div { max-height: 100%; overflow-y: auto; }
+    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+    .card-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+    .btn { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-size: 13px; cursor: pointer; transition: all .15s; display: inline-flex; align-items: center; gap: 6px; }
+    .btn:hover { background: var(--bg-hover); }
+    .btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+    .btn-danger { color: var(--danger); border-color: var(--danger); }
+    .input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 13px; outline: none; }
+    .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(59,130,246,.15); }
+    .textarea { resize: vertical; min-height: 80px; font-family: inherit; }
+    .select { appearance: none; padding-right: 28px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 8px center; }
+    .label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text); margin: 0 0 8px; line-height: 1.3; }
+    .label::before { content: ""; display: inline-block; width: 3px; height: 14px; border-radius: 2px; background: var(--primary); flex-shrink: 0; }
+    .form-row { margin-bottom: 14px; }
+    .flex { display: flex; } .gap-2 { gap: 8px; } .gap-3 { gap: 12px; } .gap-4 { gap: 16px; }
+    .items-center { align-items: center; } .justify-between { justify-content: space-between; }
+    .flex-1 { flex: 1; } .flex-wrap { flex-wrap: wrap; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .text-sm { font-size: 13px; } .text-xs { font-size: 11px; }
+    .text-muted { color: var(--text-muted); } .text-dim { color: var(--text-dim); }
+    .text-success { color: var(--success); } .text-warning { color: var(--warning); } .text-danger { color: var(--danger); }
+    .tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; }
+    .tag-blue { background: rgba(59,130,246,.15); color: #60a5fa; }
+    .tag-orange { background: rgba(245,158,11,.15); color: #fbbf24; }
+    .tag-green { background: rgba(34,197,94,.15); color: #4ade80; }
+    .tag-red { background: rgba(239,68,68,.15); color: #f87171; }
+    .tag-gray { background: rgba(148,163,184,.15); color: #94a3b8; }
+    .mode-btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); font-size: 12px; cursor: pointer; transition: all .15s; }
+    .mode-btn:hover { background: var(--bg-hover); color: var(--text); }
+    .mode-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .ratio-btn { min-width: 56px; height: 40px; padding: 0 12px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 500; transition: all .15s; color: var(--text-muted); background: var(--bg-card); user-select: none; }
+    .ratio-btn:hover { border-color: var(--primary); color: var(--text); }
+    .ratio-btn.active { border-color: var(--primary); color: var(--primary); background: rgba(59,130,246,.10); font-weight: 600; box-shadow: 0 0 0 1px var(--primary) inset; }
+    .slider-wrap { display: flex; align-items: center; gap: 12px; }
+    .slider-wrap input[type=range] { flex: 1; accent-color: var(--primary); }
+    .slider-val { min-width: 40px; text-align: center; font-size: 14px; font-weight: 600; color: var(--primary); }
+    .switch { position: relative; width: 36px; height: 20px; border-radius: 10px; background: var(--border); cursor: pointer; transition: .2s; }
+    .switch.on { background: var(--primary); }
+    .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: .2s; }
+    .switch.on::after { left: 18px; }
+    .upload-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 24px; text-align: center; cursor: pointer; transition: .15s; color: var(--text-muted); }
+    .upload-zone:hover { border-color: var(--primary); background: rgba(59,130,246,.04); }
+    .split-layout { display: flex; gap: 20px; height: 100%; }
+    .split-left { width: 42%; min-width: 380px; overflow-y: auto; flex-shrink: 0; }
+    .split-right { flex: 1; overflow-y: auto; }
+    .video-player-wrap { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; aspect-ratio: 16/9; position: relative; display: flex; align-items: center; justify-content: center; }
+    .video-player-wrap video { max-width: 100%; max-height: 100%; }
+    .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: var(--text-dim); }
+    .empty-state svg { width: 48px; height: 48px; margin-bottom: 12px; opacity: .5; }
+    .task-card { display: flex; gap: 12px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); transition: .15s; cursor: pointer; margin-bottom: 8px; }
+    .task-card:hover { background: var(--bg-hover); }
+    .task-card.selected { border-color: var(--primary); background: var(--primary-light, rgba(99,102,241,.08)); }
+    .task-thumb {
+      width: 72px; height: 56px; border-radius: 6px; background: var(--bg-hover);
+      flex-shrink: 0; overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--text-dim);
+    }
+    .task-thumb img, .task-thumb video { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+    .task-thumb--failed { color: var(--danger); background: rgba(239,68,68,.08); }
+    .task-thumb__icon { width: 22px; height: 22px; opacity: .55; }
+    .task-info { flex: 1; min-width: 0; }
+    .task-info h4 { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
+    .task-meta { font-size: 11px; color: var(--text-dim); display: flex; gap: 8px; flex-wrap: wrap; }
+    .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; }
+    .spinner-sm { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .6s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .tip-bar { background: rgba(59,130,246,.08); border: 1px solid rgba(59,130,246,.2); border-radius: 6px; padding: 8px 12px; font-size: 12px; color: var(--primary); margin-bottom: 12px; }
+    .keyword-tag { display: inline-block; padding: 2px 8px; margin: 2px; border-radius: 4px; font-size: 12px; background: var(--bg-hover); color: var(--text-muted); cursor: pointer; transition: .15s; border: 1px solid transparent; }
+    .keyword-tag:hover { border-color: var(--primary); color: var(--primary); }
+    .template-card { padding: 10px 14px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; transition: .15s; }
+    .template-card:hover { border-color: var(--primary); background: rgba(59,130,246,.04); }
+    .template-card h4 { font-size: 13px; font-weight: 500; margin-bottom: 4px; }
+    .template-card p { font-size: 12px; color: var(--text-dim); }
+    .setting-section { margin-bottom: 24px; }
+    .setting-section h3 { font-size: 14px; font-weight: 600; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    .folder-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .folder-row .input { flex: 1; }
+    .video-controls { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: rgba(0,0,0,.8); color: #fff; font-size: 12px; }
+    .video-controls button { background: none; border: none; color: #fff; cursor: pointer; padding: 4px; font-size: 12px; }
+    .video-controls button:hover { color: var(--primary); }
+    .progress-bar { height: 3px; background: var(--border); border-radius: 2px; flex: 1; position: relative; cursor: pointer; }
+    .progress-bar-fill { height: 100%; background: var(--primary); border-radius: 2px; transition: width .1s; }
+    @media (max-width: 860px) { .split-layout { flex-direction: column; } .split-left { width: 100%; min-width: unset; } }
+    .ico { display: inline-flex; align-items: center; justify-content: center; width: 1em; height: 1em; vertical-align: -0.125em; flex-shrink: 0; }
+    .ico svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .ico-sm { width: 14px; height: 14px; }
+    /* ── compact overrides ── */
+    .content { padding: 14px 16px; }
+    .card { padding: 14px; margin-bottom: 12px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+    .form-row { margin-bottom: 10px; }
+    /* (.label compact-override removed — keep the upgraded label styles
+     *  defined above so all form-field labels get the section-title look) */
+    .header { padding: 10px 18px; }
+    .tab { padding: 9px 16px; }
+    .btn { padding: 7px 14px; }
+    /* ── task started modal ── */
+    .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; z-index: 2000; animation: ak-fade-in .15s ease-out; padding: 20px; }
+    .modal-card { background: var(--bg-card); border-radius: 12px; padding: 22px 24px; max-width: 420px; width: 100%; box-shadow: 0 20px 50px rgba(0,0,0,.25); animation: ak-scale-in .15s ease-out; }
+    .modal-icon { width: 42px; height: 42px; border-radius: 50%; background: rgba(34,197,94,.12); color: var(--success); display: flex; align-items: center; justify-content: center; margin-bottom: 14px; font-size: 22px; }
+    .modal-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+    .modal-desc { font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 18px; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    @keyframes ak-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes ak-scale-in { from { transform: scale(.94); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    /* ── advanced toggles row (Tongyi-style: label + switch tightly grouped) ── */
+    .toggle-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+    .toggle-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px; border-radius: 6px;
+      cursor: pointer; transition: background .15s;
+      user-select: none;
+    }
+    .toggle-row:hover { background: var(--bg-hover); }
+    .toggle-row__label { font-size: 13px; color: var(--text); flex: 1; }
+    .toggle-row .switch { flex-shrink: 0; }
+    .advanced-divider { height: 1px; background: var(--border); margin: 14px 0 12px; }
+    /* ── full-width primary button (block) ── */
+    .btn-block {
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      width: 100%; padding: 12px 16px; font-size: 14px; font-weight: 600;
+      border-radius: 8px;
+    }
+    /* ── prompt textarea wrapper with floating counter ── */
+    .prompt-wrap { position: relative; }
+    .prompt-wrap .prompt-counter {
+      position: absolute; bottom: 8px; right: 12px;
+      font-size: 11px; color: var(--text-dim);
+      pointer-events: none;
+      background: linear-gradient(to right, transparent, var(--bg) 30%);
+      padding: 2px 4px 2px 16px; border-radius: 4px;
+    }
+    /* ── header: API key status pill ── */
+    .api-pill {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 10px; border-radius: 999px;
+      font-size: 12px; font-weight: 500;
+      background: rgba(34,197,94,.12); color: var(--success);
+      cursor: default;
+    }
+    .api-pill--missing {
+      background: rgba(245,158,11,.15); color: var(--warning);
+      cursor: pointer;
+    }
+    .api-pill--missing:hover { filter: brightness(0.95); }
+    /* ── filter group (tongyi-style horizontal pill rows) ── */
+    .filter-group { display: flex; flex-direction: column; gap: 6px; }
+    .filter-group + .filter-group { margin-top: 8px; }
+    .filter-group__label {
+      font-size: 11px; font-weight: 600;
+      color: var(--text-muted); text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .filter-group__buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+    .filter-group__buttons .mode-btn { padding: 5px 12px; font-size: 12px; }
+    /* ── system component callout body (settings) ── */
+    .deps-help {
+      font-size: 12px; color: var(--text-muted); line-height: 1.7;
+      background: var(--bg); border: 1px solid var(--border);
+      border-left: 3px solid var(--primary);
+      border-radius: 6px; padding: 10px 12px; margin-bottom: 10px;
+    }
+    .deps-help strong { color: var(--text); font-weight: 600; }
+    .deps-help ul { margin: 6px 0 0 18px; padding: 0; }
+    .deps-help li { margin: 2px 0; }
+    /* ── in-plugin FFmpeg installer (replaces retired dep-gate.js) ── */
+    .sysdep-card {
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px; margin-top: 8px; background: var(--bg-card);
+    }
+    .sysdep-card__head {
+      display: flex; align-items: center; gap: 10px;
+      flex-wrap: wrap;
+    }
+    .sysdep-card__title {
+      font-size: 13px; font-weight: 600; color: var(--text); flex: 1;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .sysdep-card__badge {
+      font-size: 11px; padding: 2px 8px; border-radius: 999px;
+      display: inline-flex; align-items: center; gap: 4px;
+      background: var(--bg); border: 1px solid var(--border);
+    }
+    .sysdep-card__badge--ok {
+      color: var(--success);
+      background: rgba(34,197,94,.10); border-color: rgba(34,197,94,.35);
+    }
+    .sysdep-card__badge--missing {
+      color: var(--danger);
+      background: rgba(239,68,68,.10); border-color: rgba(239,68,68,.35);
+    }
+    .sysdep-card__badge--busy {
+      color: var(--warning);
+      background: rgba(245,158,11,.10); border-color: rgba(245,158,11,.35);
+    }
+    .sysdep-card__path {
+      font-size: 11px; color: var(--text-dim); margin-top: 4px;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      word-break: break-all;
+    }
+    .sysdep-card__actions {
+      display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px;
+    }
+    .sysdep-card__sudo-hint {
+      margin-top: 10px; padding: 8px 10px; border-radius: 6px;
+      background: rgba(245,158,11,.10); border: 1px solid rgba(245,158,11,.35);
+      font-size: 12px; color: var(--text);
+    }
+    .sysdep-card__sudo-cmd {
+      display: flex; align-items: center; gap: 6px; margin-top: 6px;
+      padding: 6px 8px; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+    .sysdep-card__sudo-cmd code { flex: 1; word-break: break-all; }
+    .perms-table {
+      width: 100%; margin-top: 10px; border-collapse: collapse;
+      font-size: 12px;
+    }
+    .perms-table th, .perms-table td {
+      text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border);
+    }
+    .perms-table th {
+      font-weight: 600; color: var(--text-dim); font-size: 11px;
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+    .perms-table tr:last-child td { border-bottom: 0; }
+    .perms-table code {
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 11px; padding: 1px 5px; border-radius: 3px;
+      background: var(--bg); border: 1px solid var(--border);
+    }
+    .perms-tag {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: 999px; font-size: 11px;
+      font-weight: 500; border: 1px solid transparent;
+    }
+    .perms-tag--ok {
+      color: var(--success);
+      background: rgba(34,197,94,.10); border-color: rgba(34,197,94,.35);
+    }
+    .perms-tag--missing {
+      color: var(--danger);
+      background: rgba(239,68,68,.10); border-color: rgba(239,68,68,.35);
+    }
+    .sysdep-log {
+      margin-top: 10px; border: 1px solid var(--border); border-radius: 6px;
+      background: var(--bg); overflow: hidden;
+    }
+    .sysdep-log__head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 10px; border-bottom: 1px solid var(--border);
+      font-size: 11px; color: var(--text-muted); font-weight: 500;
+    }
+    .sysdep-log__body {
+      max-height: 180px; overflow-y: auto; padding: 8px 10px;
+      margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 11px; line-height: 1.5; color: var(--text);
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .sysdep-log__body--empty {
+      color: var(--text-dim); font-style: italic;
+    }
+    .sysdep-spinner {
+      display: inline-block; width: 12px; height: 12px;
+      border: 2px solid var(--border); border-top-color: var(--primary);
+      border-radius: 50%; animation: sysdep-spin .8s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes sysdep-spin { to { transform: rotate(360deg); } }
+    /* ── inline ffmpeg-missing notice (storyboard) ── */
+    .inline-warn {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 12px; margin-bottom: 12px;
+      background: rgba(245,158,11,.10); border: 1px solid rgba(245,158,11,.35);
+      border-radius: 8px; font-size: 13px; color: var(--text);
+    }
+    .inline-warn__text { flex: 1; }
+    .inline-warn__text small { display: block; color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+
+    /* ── In-plugin folder picker modal ── */
+    /* Override .modal-card's 420px cap — picker needs the room for
+       breadcrumb + sidebar + listing + footer to all sit comfortably. */
+    .folder-picker { width: min(820px, 96vw); max-width: min(820px, 96vw); max-height: 82vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+    .folder-picker__head { padding: 16px 20px 12px; border-bottom: 1px solid var(--border); }
+    .folder-picker__title { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: var(--text); }
+    .folder-picker__crumbs { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-muted); flex-wrap: wrap; min-height: 22px; }
+    .folder-picker__crumb { padding: 2px 8px; border-radius: 4px; cursor: pointer; transition: background .12s; user-select: none; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .folder-picker__crumb:hover { background: var(--bg-hover); color: var(--text); }
+    .folder-picker__crumb-sep { color: var(--text-muted); opacity: .5; }
+    .folder-picker__body { display: flex; flex: 1; min-height: 360px; max-height: 60vh; overflow: hidden; }
+    .folder-picker__sidebar { width: 160px; border-right: 1px solid var(--border); padding: 8px 0; overflow-y: auto; background: var(--bg-hover); flex-shrink: 0; }
+    .folder-picker__shortcut { display: flex; align-items: center; gap: 8px; padding: 7px 14px; font-size: 12px; color: var(--text); cursor: pointer; transition: background .12s; }
+    .folder-picker__shortcut:hover { background: var(--bg-card); }
+    .folder-picker__shortcut.active { background: var(--bg-card); color: var(--primary); font-weight: 500; }
+    .folder-picker__list { flex: 1; overflow-y: auto; padding: 4px 0; }
+    .folder-picker__item { display: flex; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px; color: var(--text); cursor: pointer; transition: background .1s; user-select: none; }
+    .folder-picker__item:hover { background: var(--bg-hover); }
+    .folder-picker__item.selected { background: rgba(99, 102, 241, .12); color: var(--primary); }
+    .folder-picker__item-icon { width: 16px; height: 16px; flex-shrink: 0; opacity: .8; }
+    .folder-picker__item-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .folder-picker__empty { padding: 32px 16px; text-align: center; font-size: 12px; color: var(--text-muted); }
+    .folder-picker__error { padding: 16px; background: rgba(239, 68, 68, .08); border-bottom: 1px solid rgba(239, 68, 68, .25); color: var(--danger); font-size: 12px; }
+    .folder-picker__foot { display: flex; align-items: center; gap: 10px; padding: 12px 20px; border-top: 1px solid var(--border); background: var(--bg-card); }
+    .folder-picker__current { flex: 1; font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .folder-picker__newinput { flex: 1; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; background: var(--bg-card); color: var(--text); }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+// ── Minimal Bridge SDK with direct HTTP fallback ──
+const BRIDGE_VER = 1;
+let _ctx = null, _caps = [], _pending = {}, _handlers = {};
+let _bridgeConnected = false;
+const _inIframe = window.parent !== window;
+function uid() { return Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
+function post(msg) { if (_inIframe) window.parent.postMessage({ __akita_bridge: true, version: BRIDGE_VER, ...msg }, "*"); }
+
+function _detectApiBase() {
+  if (_ctx && _ctx.apiBase) return _ctx.apiBase;
+  var loc = window.location;
+  if (loc.port === "5173" || loc.port === "1420") return "http://127.0.0.1:18900";
+  return loc.origin;
+}
+
+function directFetch(method, path, body) {
+  var url = path.startsWith("http") ? path : _detectApiBase() + path;
+  var opts = { method: method, headers: { "Content-Type": "application/json" } };
+  if (body && method !== "GET" && method !== "HEAD") {
+    if (body instanceof FormData) { opts.body = body; delete opts.headers["Content-Type"]; }
+    else { opts.body = JSON.stringify(body); }
+  }
+  return fetch(url, opts).then(function(resp) {
+    return resp.json().then(function(json) {
+      return { ok: resp.ok, status: resp.status, body: json };
+    });
+  });
+}
+
+function apiCall(method, path, body) {
+  if (!_inIframe || !_bridgeConnected) return directFetch(method, path, body);
+  return new Promise(function(resolve, reject) {
+    var id = uid();
+    _pending[id] = { resolve: resolve, reject: reject };
+    post({ type: "bridge:api-request", requestId: id, payload: { method: method, path: path, body: body } });
+    setTimeout(function() {
+      if (_pending[id]) {
+        delete _pending[id];
+        directFetch(method, path, body).then(resolve).catch(reject);
+      }
+    }, 5000);
+  });
+}
+
+function pluginApi(method, path, body) {
+  var base = _ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/seedance-video";
+  return apiCall(method, base + path, body);
+}
+
+window.addEventListener("message", function(e) {
+  var d = e.data;
+  if (!d || !d.__akita_bridge) return;
+  if (d.type === "bridge:init" && d.payload) {
+    _ctx = d.payload;
+    _bridgeConnected = true;
+    if (_ctx.theme) {
+      document.documentElement.setAttribute("data-theme", _ctx.theme.includes("dark") ? "dark" : "light");
+    }
+  }
+  if (d.type === "bridge:handshake-ack" && d.payload) { _caps = d.payload.capabilities || []; _bridgeConnected = true; }
+  var _ackTypes = ["bridge:api-response","bridge:clipboard-ack","bridge:download-ack","bridge:show-in-folder-ack","bridge:pick-folder-ack"];
+  if (_ackTypes.indexOf(d.type) !== -1 && d.requestId && _pending[d.requestId]) {
+    _pending[d.requestId].resolve(d.payload);
+    delete _pending[d.requestId];
+  }
+  if (d.type === "bridge:theme-change" && d.payload) {
+    document.documentElement.setAttribute("data-theme", (d.payload.theme || "").includes("dark") ? "dark" : "light");
+  }
+  if (d.type === "bridge:event" && d.payload) {
+    var h = _handlers[d.payload.eventType];
+    if (h) h.forEach(function(fn) { fn(d.payload.data); });
+  }
+});
+// Retry bridge:ready until host acknowledges (fixes race condition where
+// regular script executes before host's useEffect sets up the listener)
+var _readyInterval = null;
+function _sendReady() {
+  post({ type: "bridge:ready" });
+  post({ type: "bridge:handshake", payload: { sdkVersion: "1.0.0" } });
+}
+_sendReady();
+if (_inIframe) {
+  _readyInterval = setInterval(function() {
+    if (_bridgeConnected) { clearInterval(_readyInterval); return; }
+    _sendReady();
+  }, 300);
+  setTimeout(function() { if (_readyInterval) clearInterval(_readyInterval); }, 20000);
+}
+function onEvent(type, fn) { (_handlers[type] = _handlers[type] || []).push(fn); }
+
+function uploadFile(file) {
+  var base = _detectApiBase() + (_ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/seedance-video");
+  var fd = new FormData();
+  fd.append("file", file);
+  return fetch(base + "/upload", { method: "POST", body: fd }).then(function(r) { return r.json(); });
+}
+
+// ── Standard SDK: showToast ──
+function showToast(body, type) {
+  type = type || "success";
+  if (_inIframe && _bridgeConnected) {
+    post({ type: "bridge:notification", payload: { title: "", body: body, type: type } });
+    return;
+  }
+  console.log("[Toast]", type, body);
+}
+
+// Bridge-layer i18n shim: prefers OpenAkitaI18n (which has built-in bridge.*
+// defaults, see ui-kit/i18n.js), and falls back to the literal English text
+// when i18n.js is not yet loaded so we never show raw "bridge.x.y" keys.
+function _bt(key, vars, fallback) {
+  if (window.OpenAkitaI18n && typeof window.OpenAkitaI18n.t === "function") {
+    var v = window.OpenAkitaI18n.t(key, vars);
+    if (v && v !== key) return v;
+  }
+  if (!fallback) return key;
+  if (vars) {
+    return String(fallback).replace(/\{(\w+)\}/g, function (_m, n) {
+      return vars[n] != null ? String(vars[n]) : "{" + n + "}";
+    });
+  }
+  return fallback;
+}
+
+// ── Standard SDK: downloadFile ──
+function downloadFile(url, filename) {
+  var resolvedUrl = url.startsWith("http") ? url : _detectApiBase() + url;
+  var fname = filename || "download";
+
+  if (_inIframe && _bridgeConnected) {
+    var id = uid();
+    _pending[id] = {
+      resolve: function(payload) {
+        if (payload && payload.ok) {
+          var path = payload.path || _bt("bridge.download.okFolder", null, "Saved to Downloads folder");
+          showToast(payload.path
+            ? _bt("bridge.download.ok", { path: path }, "Saved to: {path}")
+            : path, "success");
+        } else {
+          showToast(_bt("bridge.download.fail", { msg: (payload && payload.error) || _bt("bridge.unknownError", null, "Unknown error") }, "Download failed: {msg}"), "error");
+        }
+      },
+      reject: function(err) { showToast(_bt("bridge.download.fail", { msg: err }, "Download failed: {msg}"), "error"); },
+    };
+    post({ type: "bridge:download", requestId: id, payload: { url: resolvedUrl, filename: fname } });
+    return;
+  }
+
+  if (window.__TAURI_INTERNALS__) {
+    window.__TAURI_INTERNALS__.invoke("download_file", { url: resolvedUrl, filename: fname })
+      .then(function(path) { showToast(_bt("bridge.download.ok", { path: path }, "Saved to: {path}"), "success"); })
+      .catch(function(err) { showToast(_bt("bridge.download.fail", { msg: err }, "Download failed: {msg}"), "error"); });
+    return;
+  }
+
+  var a = document.createElement("a");
+  a.href = resolvedUrl;
+  a.download = fname;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function() { document.body.removeChild(a); }, 300);
+  showToast(_bt("bridge.download.started", null, "Download started"), "success");
+}
+
+// ── Standard SDK: showInFolder ──
+function showInFolder(path) {
+  if (_inIframe && _bridgeConnected) {
+    post({ type: "bridge:show-in-folder", payload: { path: path } });
+    return Promise.resolve();
+  }
+  return Promise.resolve();
+}
+
+// ── Standard SDK: pickFolder ──
+function pickFolder(title) {
+  if (_inIframe && _bridgeConnected) {
+    return new Promise(function(resolve) {
+      var id = uid();
+      _pending[id] = { resolve: function(payload) { resolve(payload && payload.path || null); }, reject: function() { resolve(null); } };
+      post({ type: "bridge:pick-folder", requestId: id, payload: { title: title || _bt("bridge.pickFolder.title", null, "Pick a folder") } });
+      setTimeout(function() { if (_pending[id]) { delete _pending[id]; resolve(null); } }, 60000);
+    });
+  }
+  return Promise.resolve(null);
+}
+
+// ── Standard SDK: copyToClipboard ──
+function copyToClipboard(text) {
+  if (_inIframe && _bridgeConnected) {
+    var id = uid();
+    _pending[id] = { resolve: function() { showToast(_bt("bridge.clipboard.ok", null, "Copied to clipboard")); }, reject: function() {} };
+    post({ type: "bridge:clipboard", requestId: id, payload: { text: text } });
+    return;
+  }
+  if (navigator.clipboard) { navigator.clipboard.writeText(text).then(function() { showToast(_bt("bridge.clipboard.ok", null, "Copied to clipboard")); }); }
+}
+
+window.__bridge = {
+  apiCall: apiCall, pluginApi: pluginApi, onEvent: onEvent,
+  getCtx: function() { return _ctx; },
+  uploadFile: uploadFile, downloadFile: downloadFile,
+  showToast: showToast, showInFolder: showInFolder,
+  pickFolder: pickFolder, copyToClipboard: copyToClipboard,
+};
+
+// ── React via CDN (production build) ──
+</script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useCallback, useRef } = React;
+const { pluginApi, onEvent, uploadFile, downloadFile, showToast, showInFolder, pickFolder, copyToClipboard } = window.__bridge;
+
+// ── i18n dictionary — keep keys sorted by scope: app/tabs/banner/modes/ratios/
+//    create/preview/tasks/assets/guide/storyboard/settings/status/toast/err.
+const I18N_DICT = {
+  zh: {
+    "app.title": "Seedance 视频生成",
+    "app.subtitle": "AI 视频创作",
+    "app.api.label": "API Key",
+    "app.api.missing": "请先配置 API Key",
+    "app.api.tooltip": "点击前往设置页配置 API Key",
+    "tabs.create": "创建",
+    "tabs.tasks": "任务列表",
+    "tabs.assets": "素材库",
+    "tabs.guide": "提示词指南",
+    "tabs.storyboard": "分镜工作台",
+    "tabs.settings": "设置",
+    "banner.noKey.title": "尚未配置 ARK API Key",
+    "banner.noKey.desc": "所有创建任务都会失败。请前往设置页填入火山引擎 Volcengine Ark API Key。",
+    "banner.noKey.cta": "前往配置",
+    "modes.t2v": "文生视频",
+    "modes.i2v": "首帧",
+    "modes.i2v_end": "首尾帧",
+    "modes.multimodal": "多模态",
+    "modes.edit": "编辑",
+    "modes.extend": "延长",
+    "create.section.mode": "生成模式",
+    "create.section.firstFrame": "首帧上传",
+    "create.section.firstLastFrame": "首尾帧上传",
+    "create.section.multimodal": "参考素材",
+    "create.section.editVideo": "原始视频",
+    "create.section.extendVideo": "待延长视频",
+    "create.section.prompt": "提示词",
+    "create.section.params": "参数配置",
+    "create.section.advanced": "高级选项",
+    "create.label.model": "模型",
+    "create.label.ratio": "比例",
+    "create.label.resolution": "分辨率",
+    "create.label.duration": "时长 ({min}-{max}秒)",
+    "create.label.tier": "推理模式",
+    "create.tier.online": "在线",
+    "create.tier.flex": "离线半价",
+    "create.toggle.audio": "声音",
+    "create.toggle.watermark": "水印",
+    "create.toggle.lastFrame": "返回尾帧",
+    "create.toggle.draft": "样片模式",
+    "create.toggle.webSearch": "联网搜索",
+    "create.prompt.placeholder": "描述你想生成的视频内容...",
+    "create.prompt.counter": "{n}/5000",
+    "create.btn.optimize": "AI 优化",
+    "create.btn.optimize.title": "调用 LLM 自动润色 / 重写提示词，让画面描述更细致一致",
+    "create.btn.startVideo": "生成视频",
+    "create.btn.startDraft": "生成样片预览",
+    "create.btn.startFlex": "提交离线任务",
+    "create.upload.firstHint": "拖拽或点击上传首帧图片",
+    "create.upload.firstSubHint": "建议高清图片 (300-6000px)，比例与目标视频一致",
+    "create.upload.startFrame": "首帧图片",
+    "create.upload.startFrameHint": "起始画面",
+    "create.upload.endFrame": "尾帧图片",
+    "create.upload.endFrameHint": "结束画面",
+    "create.upload.endFrameTip": "首尾帧间的过渡由 AI 自动补全，差异越大效果越戏剧化",
+    "create.upload.multimodal": "拖拽或点击上传参考素材（可多选）",
+    "create.upload.multimodalHint": "支持图片/视频/音频，提示词中用「图片1」「视频2」引用",
+    "create.upload.multimodalTip": "提示词引用方式: 在提示词中写「图片1」「视频2」「音频1」，序号为同类素材的上传顺序",
+    "create.upload.editLabel": "拖拽或点击上传待编辑的视频",
+    "create.upload.extendLabel": "拖拽或点击上传待延长的视频",
+    "create.upload.videoHint": "支持 mp4/mov/webp 格式",
+    "create.upload.uploading": "上传中: {name}",
+    "create.upload.uploaded": "已上传: {name}",
+    "create.tip.t2v": "文生视频随机性较大，适合激发灵感。如有明确预期，建议先生图再图生视频",
+    "create.tip.i2v": "建议上传高清高质量图片（300-6000px），图片比例建议与目标视频一致以避免裁切",
+    "create.tip.i2v_end": "首尾帧间的画面由 AI 自动过渡补全，尾帧差异越大效果越戏剧化",
+    "create.tip.multimodal": "提示词中用「图片1」「视频2」「音频1」引用素材，序号为同类素材上传顺序",
+    "create.tip.edit": "描述要替换/增加/删除的元素、时机和位置，强调保持不变的部分",
+    "create.tip.extend": "向前/向后延长视频，或多段串联。描述延长内容 + 过渡方式",
+    "preview.empty.title": "AI 视频制作就绪",
+    "preview.empty.hint": "填写参数后点击生成",
+    "preview.running.title": "正在生成中...",
+    "preview.running.hint": "通常需要 1~3 分钟，请耐心等待",
+    "preview.failed": "生成失败",
+    "preview.waiting": "等待结果...",
+    "preview.revised": "修改后提示词: {text}",
+    "preview.btn.download": "下载",
+    "preview.btn.new": "新建",
+    "preview.ctrl.stepBack": "逐帧后退",
+    "preview.ctrl.stepFwd": "逐帧前进",
+    "preview.ctrl.loop": "循环",
+    "modal.taskStarted.title": "任务已开始",
+    "modal.taskStarted.draft": "样片预览正在生成，通常需要 30 秒~1 分钟。可前往任务列表查看进度。",
+    "modal.taskStarted.flex": "离线任务已提交，半价模式通常需要 5~30 分钟。可前往任务列表查看进度。",
+    "modal.taskStarted.online": "视频正在云端异步生成，通常需要 1~3 分钟。可前往任务列表查看生成进度。",
+    "modal.taskStarted.continue": "继续创建",
+    "modal.taskStarted.goTasks": "前往任务列表",
+    "tasks.filter.status": "状态",
+    "tasks.filter.type": "类型",
+    "tasks.filter.all": "全部",
+    "tasks.filter.allTypes": "全部类型",
+    "tasks.filter.running": "进行中",
+    "tasks.filter.succeeded": "已完成",
+    "tasks.filter.failed": "失败",
+    "tasks.filter.draft": "样片",
+    "tasks.filter.flex": "离线",
+    "tasks.refresh": "刷新",
+    "tasks.empty": "暂无任务",
+    "tasks.empty.title": "暂无任务",
+    "tasks.empty.hint": "在「创建」标签页创建第一个视频任务后会显示在这里",
+    "tasks.empty.noSelection.title": "选择一个任务查看详情",
+    "tasks.empty.noSelection.hint": "左侧列表中点击任意任务，可在此查看视频预览、参数、提示词与下载/重试操作",
+    "tasks.noPrompt": "(无提示词)",
+    "tasks.total": "共 {n} 个任务",
+    "tasks.tag.flex": "Flex半价",
+    "tasks.tag.draft": "样片",
+    "tasks.tag.downloaded": "已下载",
+    "tasks.tag.failed": "失败",
+    "tasks.tag.running": "生成中",
+    "tasks.tag.done": "完成",
+    "tasks.btn.retry": "重试",
+    "tasks.btn.delete": "删除",
+    "tasks.detail.title": "任务详情",
+    "tasks.detail.confirmDelete": "确定要删除这个任务吗？此操作不可恢复。",
+    "tasks.detail.id": "任务 ID",
+    "tasks.detail.mode": "模式",
+    "tasks.detail.model": "模型",
+    "tasks.detail.ratio": "画面比例",
+    "tasks.detail.duration": "时长",
+    "tasks.detail.resolution": "分辨率",
+    "tasks.detail.tier": "推理模式",
+    "tasks.detail.createdAt": "创建时间",
+    "tasks.detail.prompt": "提示词",
+    "tasks.detail.errorTitle": "失败原因",
+    "tasks.detail.runningHint": "视频正在云端异步生成，通常需要 1~3 分钟。",
+    "tasks.detail.downloaded": "本地已下载: {path}",
+    "assets.filter.all": "全部",
+    "assets.filter.image": "图片",
+    "assets.filter.video": "视频",
+    "assets.filter.audio": "音频",
+    "assets.empty.title": "暂无素材",
+    "assets.empty.hint": "在创建面板上传素材后会自动显示在这里",
+    "assets.count": "{n} 个素材",
+    "assets.btn.delete": "删除",
+    "guide.search.placeholder": "搜索模板或关键词...",
+    "guide.section.templates": "模板库（点击查看 / 套用）",
+    "guide.section.cameras": "镜头语言速查",
+    "guide.section.atmosphere": "氛围关键词库",
+    "guide.section.formulas": "提示词公式",
+    "guide.section.tips": "提示词编写技巧",
+    "guide.templates.empty": "暂无模板数据（后端未连接或正在加载中）",
+    "guide.atmosphere.light": "光影",
+    "guide.atmosphere.color": "色调",
+    "guide.atmosphere.texture": "质感",
+    "guide.atmosphere.mood": "情绪",
+    "guide.tips.body": "1. 建议 80-200 字，不超过 300 字（5000字符上限）\n2. 使用**时间轴格式**让镜头有节奏：「0-3s: 推镜头, 4-6s: 特写」\n3. 加入**镜头语言**：推/拉/摇/移/跟/环绕/升降/希区柯克变焦\n4. 加入**声音设计**：配乐风格 + 环境音效 + 人声\n5. 避免出现**人脸/真人面孔**相关描述（当前模型限制）\n6. 描述越具体，AI 越能精准生成你想要的视频",
+    "story.section.input": "故事输入",
+    "story.section.usage": "使用说明",
+    "story.section.params": "生成参数",
+    "story.label.story": "故事 / 脚本内容",
+    "story.label.totalDuration": "目标总时长 (秒)",
+    "story.label.segDuration": "每段时长 (秒)",
+    "story.label.ratio": "画面比例",
+    "story.label.style": "视觉风格",
+    "story.label.model": "模型",
+    "story.label.resolution": "分辨率",
+    "story.label.genMode": "生成模式",
+    "story.label.transition": "拼接过渡",
+    "story.story.placeholder": "请输入你的视频故事内容，AI 会自动拆解为多段分镜脚本...\n\n示例：一只小猫在阳光明媚的花园里探索，先好奇地闻花朵，然后追逐蝴蝶，最后在树荫下打盹。",
+    "story.estimate": "预计将拆解为 {n} 个视频片段，每段 {seg} 秒，总时长约 {total} 秒",
+    "story.decompose.idle": "AI 分镜拆解",
+    "story.decompose.busy": "AI 拆解中...",
+    "story.decompose.connect": "正在连接 AI 模型...",
+    "story.decompose.analyze": "AI 正在分析故事结构，生成分镜脚本...",
+    "story.decompose.batch": "正在生成 {n} 段分镜，请耐心等待...",
+    "story.decompose.long": "LLM 推理中，较长的故事可能需要 20-40 秒...",
+    "story.usage.body": "1. 输入你的故事或脚本，AI 会将其拆解为多段 Seedance 分镜\n2. 可以编辑每段分镜的提示词、时长和过渡方式\n3. 串行模式下，每段视频会使用上一段的尾帧作为参考，保证画面连贯\n4. 生成完成后可用 ffmpeg 拼接为完整长视频",
+    "story.usage.warn": "**注意：**Seedance 2.0 不支持含真人面部的参考图。串行链接如遇人脸审核，系统会自动降级为纯文本生成，画面连贯性可能降低。建议使用虚拟人物、动物、风景等主题。",
+    "story.edit.title": "分镜编辑 — {n} 段",
+    "story.edit.hint": "点击段落展开编辑，拖动排序，自由调整",
+    "story.btn.back": "返回",
+    "story.btn.addSeg": "添加段",
+    "story.btn.startGen": "开始生成 ({mode})",
+    "story.btn.startGenSerial": "串行接力",
+    "story.btn.startGenParallel": "并行独立",
+    "story.btn.moveUp": "上移",
+    "story.btn.moveDown": "下移",
+    "story.btn.delete": "删除",
+    "story.btn.newProject": "新建项目",
+    "story.btn.backEdit": "返回编辑",
+    "story.btn.openFolder": "打开所在文件夹",
+    "story.gen.title": "正在生成 {n} 段视频...",
+    "story.gen.serialDesc": "串行模式: 逐段生成，每段使用上一段结果作为参考",
+    "story.gen.parallelDesc": "并行模式: 所有段落同时生成",
+    "story.gen.estimate": "预计需要 {min} 分钟，请耐心等待",
+    "story.results.done": "长视频生成完成",
+    "story.results.title": "生成结果",
+    "story.results.summary": "总计: {total} 段 · 成功 {ok}{fail}",
+    "story.results.failPart": " · 失败 {n}",
+    "story.concat.title": "拼接完成",
+    "story.concat.tip": "可拼接 {n} 个视频片段",
+    "story.ffmpeg.warn.title": "FFmpeg 未安装，无法拼接长视频",
+    "story.ffmpeg.warn.hint": "请前往「设置 > 系统组件」一键安装 FFmpeg",
+    "story.ffmpeg.warn.cta": "前往安装",
+    "story.concat.idle": "拼接为长视频 ({mode})",
+    "story.concat.busy": "拼接中...",
+    "story.concat.modeCut": "硬切",
+    "story.concat.modeFade": "交叉淡化",
+    "story.totalEstimate": "共 {n} 段，预计总时长 {sec} 秒",
+    "story.statTotal": "总计:",
+    "story.statSuccess": "成功:",
+    "story.statFail": "失败:",
+    "settings.section.api": "API 配置",
+    "settings.section.defaults": "默认参数",
+    "settings.section.folder": "文件夹设置",
+    "settings.section.webhook": "Webhook 设置",
+    "settings.section.system": "系统组件",
+    "settings.system.intro.strong": "FFmpeg 仅用于「分镜工作台」的长视频拼接，以及「素材库」的视频缩略预览。",
+    "settings.system.intro.body": "文生视频 / 图生视频 / 任务列表 / 提示词指南等核心功能不依赖 FFmpeg。如果你不需要长视频拼接，可以暂时跳过安装。\n\nFFmpeg 是系统级组件（共享 PATH 安装），并非本插件私有——任何已经装好 ffmpeg 的机器都会自动检测到，无需重复安装；同样，安装/卸载也会影响其他用到 ffmpeg 的插件和程序。",
+    "settings.system.platform.win": "Windows: 「一键安装」会调用 winget 自动安装 Gyan.FFmpeg，无需管理员权限。",
+    "settings.system.platform.mac": "macOS: 「一键安装」会调用 Homebrew 自动安装 ffmpeg。",
+    "settings.system.platform.linux": "Linux: apt / dnf 需要 root 权限。如果 OpenAkita 以普通用户身份运行，请按提示在终端执行 sudo apt-get install ffmpeg。",
+    "settings.system.detecting": "正在检测...",
+    "settings.system.status.found": "已安装 v{ver}",
+    "settings.system.status.foundNoVer": "已安装",
+    "settings.system.status.missing": "未安装",
+    "settings.system.location": "路径：{path}",
+    "settings.system.btn.install": "一键安装",
+    "settings.system.btn.installVia": "一键安装 ({strategy})",
+    "settings.system.btn.recheck": "重新检测",
+    "settings.system.btn.openHome": "查看官方文档",
+    "settings.system.btn.copyCmd": "复制命令",
+    "settings.system.btn.copied": "已复制",
+    "settings.system.btn.cancel": "取消",
+    "settings.system.btn.uninstall": "卸载",
+    "settings.system.btn.uninstallVia": "卸载 ({strategy})",
+    "settings.system.btn.uninstallConfirmBtn": "确认卸载",
+    "settings.system.installing": "安装中... ({elapsed})",
+    "settings.system.uninstalling": "卸载中... ({elapsed})",
+    "settings.system.installEstimate": "预计耗时约 {sec} 秒",
+    "settings.system.installed": "FFmpeg 安装成功",
+    "settings.system.installFailed": "安装失败：{msg}",
+    "settings.system.uninstalled": "FFmpeg 已卸载",
+    "settings.system.uninstallFailed": "卸载失败：{msg}",
+    "settings.system.uninstallConfirm": "确定要卸载 FFmpeg 吗？\n\n注意：FFmpeg 是系统级组件（装在 Windows 用户 PATH / macOS Homebrew / Linux /usr/bin），不是 Seedance 插件私有的——卸载会影响 OpenAkita 上所有依赖 FFmpeg 的插件（如字幕生成、视频翻译、配音等），以及你系统上其他用到 ffmpeg 的程序。\n\n本插件中将不可用：分镜工作台长视频拼接、素材库视频缩略预览。",
+    "settings.system.requiresSudo": "Linux 需要 root 权限。请在终端手动执行：",
+    "settings.system.requiresSudoUninstall": "Linux 需要 root 权限。请在终端手动执行：",
+    "settings.system.noMethod": "当前系统暂无自动安装方案，请前往官方文档手动下载。",
+    "settings.system.logTitle": "安装日志",
+    "settings.system.logTitleUninstall": "卸载日志",
+    "settings.system.logEmpty": "暂无输出",
+    "settings.section.permissions": "插件权限",
+    "settings.perms.intro.strong": "本插件需要以下高级权限才能完整工作。",
+    "settings.perms.intro.body": "首次安装时未自动授予；点击下方按钮一键授权（等价于在「设置中心 → 插件管理 → 权限」勾选保存）。",
+    "settings.perms.allOk": "所有所需权限已授予。",
+    "settings.perms.btn.grantAll": "一键授予所有权限",
+    "settings.perms.granting": "授予中...",
+    "settings.perms.granted": "权限已授予，插件已重新加载",
+    "settings.perms.grantFailed": "授权失败：{msg}",
+    "settings.perms.col.permission": "权限",
+    "settings.perms.col.feature": "用途",
+    "settings.perms.col.status": "状态",
+    "settings.perms.status.ok": "已授予",
+    "settings.perms.status.missing": "未授予",
+    "banner.perms.title": "插件缺少必要权限，部分功能将不可用",
+    "banner.perms.desc": "请前往「设置 → 插件权限」一键授权",
+    "banner.perms.cta": "前往授权",
+    "settings.label.apiKey": "ARK API Key",
+    "settings.api.placeholder": "输入 Volcengine Ark API Key",
+    "settings.api.show": "显示",
+    "settings.api.hide": "隐藏",
+    "settings.api.save": "保存",
+    "settings.api.required": "必填项",
+    "settings.api.help": "获取方式: 前往 console.volcengine.com/ark 创建 API Key",
+    "settings.label.tier": "默认推理模式",
+    "settings.tier.online": "在线推理",
+    "settings.tier.flex": "离线推理 (半价)",
+    "settings.label.poll": "轮询间隔",
+    "settings.poll.10": "10 秒",
+    "settings.poll.15": "15 秒",
+    "settings.poll.30": "30 秒",
+    "settings.poll.60": "60 秒",
+    "settings.label.optimizeLevel": "优化级别",
+    "settings.optimize.light": "轻度润色",
+    "settings.optimize.professional": "专业重写",
+    "settings.optimize.storyboard": "分镜脚本",
+    "settings.label.outputDir": "视频输出目录",
+    "settings.outputDir.placeholder": "默认: ~/seedance-output/",
+    "settings.btn.browse": "选择",
+    "settings.btn.open": "打开",
+    "settings.label.subdir": "子目录结构",
+    "settings.subdir.date": "按日期",
+    "settings.subdir.project": "按项目",
+    "settings.subdir.flat": "扁平",
+    "settings.label.naming": "文件命名规则",
+    "settings.toggle.autoDownload": "自动下载完成的视频",
+    "settings.label.assetsDir": "素材文件夹",
+    "settings.assetsDir.placeholder": "默认: ~/seedance-assets/",
+    "settings.stats.outputDir": "视频输出",
+    "settings.stats.assetsDir": "素材",
+    "settings.stats.cacheDir": "缓存",
+    "settings.stats.fileCount": "{n} 个文件",
+    "settings.label.callback": "回调 URL（可选）",
+    "settings.callback.placeholder": "https://...",
+    "settings.callback.help": "配置后任务状态变化时自动通知，减少轮询",
+    "settings.toast.saved": "设置已保存",
+    "settings.toast.keyError": "API Key 保存异常，请重试",
+    "settings.toast.saveFailed": "保存失败: {msg}",
+    "settings.pickOutput": "选择视频输出目录",
+    "settings.pickAssets": "选择素材文件夹",
+    "settings.folder.opened": "已在文件管理器中打开 {path}",
+    "settings.folder.openFailed": "打开文件夹失败: {msg}",
+    "settings.folder.pickFailed": "选择文件夹失败，请重试",
+    "settings.folder.pickUnavailable": "文件夹选择器没响应，请重启应用后重试，或直接在左侧输入框粘贴路径再点【打开】",
+    "settings.folder.savedTo": "存储位置已切换到 {path}",
+    "picker.title": "选择文件夹",
+    "picker.shortcut.start": "起始位置",
+    "picker.crumb.root": "起始位置",
+    "picker.empty": "（此目录下无子文件夹）",
+    "picker.loading": "加载中…",
+    "picker.btn.cancel": "取消",
+    "picker.btn.choose": "选择此文件夹",
+    "picker.btn.newFolder": "新建文件夹",
+    "picker.btn.create": "创建",
+    "picker.btn.confirmCreate": "确认",
+    "picker.newFolder.placeholder": "输入文件夹名称",
+    "picker.error.load": "无法读取目录: {msg}",
+    "picker.error.create": "创建文件夹失败: {msg}",
+    "picker.created": "已创建 {name}",
+    "toast.optimizeOk": "提示词优化完成",
+    "toast.optimizeFail": "提示词优化失败: {msg}",
+    "toast.optimizeNoChange": "提示词无需优化或 LLM 返回了相同内容",
+    "toast.optimizeError": "提示词优化请求失败: {msg}",
+    "toast.copyOk": "已复制到剪贴板",
+    "toast.downloadOk": "已保存到: {path}",
+    "toast.downloadFail": "下载失败: {msg}",
+    "toast.downloadStarted": "下载已开始",
+    "toast.networkError": "网络错误: {msg}",
+    "toast.requestFail": "请求失败: {msg}",
+    "toast.decomposeOk": "分镜拆解完成，共 {n} 段",
+    "toast.decomposeFail": "分镜拆解失败: {msg}",
+    "toast.genFail": "生成失败: {msg}",
+    "toast.concatNeed2": "至少需要 2 个成功的视频片段",
+    "toast.concatFail": "拼接失败: {msg}",
+    "toast.unknownErr": "未知错误",
+    "err.title": "插件 UI 渲染出错",
+    "err.retry": "重试渲染",
+    "err.stackLabel": "错误堆栈详情",
+  },
+  en: {
+    "app.title": "Seedance Video",
+    "app.subtitle": "AI Video Studio",
+    "app.api.label": "API Key",
+    "app.api.missing": "Configure API Key first",
+    "app.api.tooltip": "Click to open Settings and configure your API Key",
+    "tabs.create": "Create",
+    "tabs.tasks": "Tasks",
+    "tabs.assets": "Assets",
+    "tabs.guide": "Prompt Guide",
+    "tabs.storyboard": "Storyboard",
+    "tabs.settings": "Settings",
+    "banner.noKey.title": "ARK API Key not configured",
+    "banner.noKey.desc": "All create requests will fail. Open Settings and paste your Volcengine Ark API Key.",
+    "banner.noKey.cta": "Open Settings",
+    "modes.t2v": "Text → Video",
+    "modes.i2v": "First Frame",
+    "modes.i2v_end": "First+Last Frame",
+    "modes.multimodal": "Multimodal",
+    "modes.edit": "Edit",
+    "modes.extend": "Extend",
+    "create.section.mode": "Mode",
+    "create.section.firstFrame": "First Frame",
+    "create.section.firstLastFrame": "First & Last Frame",
+    "create.section.multimodal": "Reference Assets",
+    "create.section.editVideo": "Source Video",
+    "create.section.extendVideo": "Video to Extend",
+    "create.section.prompt": "Prompt",
+    "create.section.params": "Parameters",
+    "create.section.advanced": "Advanced",
+    "create.label.model": "Model",
+    "create.label.ratio": "Aspect ratio",
+    "create.label.resolution": "Resolution",
+    "create.label.duration": "Duration ({min}-{max}s)",
+    "create.label.tier": "Inference",
+    "create.tier.online": "Online",
+    "create.tier.flex": "Flex (50% off)",
+    "create.toggle.audio": "Audio",
+    "create.toggle.watermark": "Watermark",
+    "create.toggle.lastFrame": "Return last frame",
+    "create.toggle.draft": "Draft",
+    "create.toggle.webSearch": "Web search",
+    "create.prompt.placeholder": "Describe the video you want to generate…",
+    "create.prompt.counter": "{n}/5000",
+    "create.btn.optimize": "AI Optimize",
+    "create.btn.optimize.title": "Use an LLM to refine the prompt for richer, more consistent imagery.",
+    "create.btn.startVideo": "Generate Video",
+    "create.btn.startDraft": "Generate Draft Preview",
+    "create.btn.startFlex": "Submit Flex Job",
+    "create.upload.firstHint": "Drag or click to upload first-frame image",
+    "create.upload.firstSubHint": "HD image (300–6000px). Match your target aspect ratio.",
+    "create.upload.startFrame": "First frame",
+    "create.upload.startFrameHint": "Starting picture",
+    "create.upload.endFrame": "Last frame",
+    "create.upload.endFrameHint": "Ending picture",
+    "create.upload.endFrameTip": "AI fills the in-between transition. Larger differences = more dramatic.",
+    "create.upload.multimodal": "Drag or click to upload reference assets (multi-select)",
+    "create.upload.multimodalHint": "Image/video/audio supported. Reference as 'image1' / 'video2' / 'audio1'.",
+    "create.upload.multimodalTip": "Refer to assets in the prompt as 'image1', 'video2', 'audio1' (in upload order).",
+    "create.upload.editLabel": "Drag or click to upload the video to edit",
+    "create.upload.extendLabel": "Drag or click to upload the video to extend",
+    "create.upload.videoHint": "mp4 / mov / webm",
+    "create.upload.uploading": "Uploading: {name}",
+    "create.upload.uploaded": "Uploaded: {name}",
+    "create.tip.t2v": "Text-to-video is exploratory. For predictable results, generate an image first then image-to-video.",
+    "create.tip.i2v": "Use HD images (300–6000px). Match the target video aspect ratio to avoid cropping.",
+    "create.tip.i2v_end": "AI fills the in-between transition. Larger frame differences create more drama.",
+    "create.tip.multimodal": "Reference assets in the prompt as 'image1' / 'video2' / 'audio1' by upload order.",
+    "create.tip.edit": "Describe what to replace / add / remove, when, and where. Call out what stays the same.",
+    "create.tip.extend": "Extend forward, backward, or chain. Describe new content + transition style.",
+    "preview.empty.title": "Ready to create",
+    "preview.empty.hint": "Fill in parameters and press generate",
+    "preview.running.title": "Generating…",
+    "preview.running.hint": "Usually 1–3 minutes. Hold tight.",
+    "preview.failed": "Generation failed",
+    "preview.waiting": "Waiting for result…",
+    "preview.revised": "Revised prompt: {text}",
+    "preview.btn.download": "Download",
+    "preview.btn.new": "New",
+    "preview.ctrl.stepBack": "Step back",
+    "preview.ctrl.stepFwd": "Step forward",
+    "preview.ctrl.loop": "Loop",
+    "modal.taskStarted.title": "Task started",
+    "modal.taskStarted.draft": "Draft preview is generating (~30s–1min). Check Tasks for progress.",
+    "modal.taskStarted.flex": "Flex job submitted (~5–30 min, half-price). Check Tasks for progress.",
+    "modal.taskStarted.online": "Video is generating in the cloud (~1–3 min). Check Tasks for progress.",
+    "modal.taskStarted.continue": "Keep creating",
+    "modal.taskStarted.goTasks": "Open Tasks",
+    "tasks.filter.status": "Status",
+    "tasks.filter.type": "Type",
+    "tasks.filter.all": "All",
+    "tasks.filter.allTypes": "All types",
+    "tasks.filter.running": "Running",
+    "tasks.filter.succeeded": "Done",
+    "tasks.filter.failed": "Failed",
+    "tasks.filter.draft": "Draft",
+    "tasks.filter.flex": "Flex",
+    "tasks.refresh": "Refresh",
+    "tasks.empty": "No tasks yet",
+    "tasks.empty.title": "No tasks yet",
+    "tasks.empty.hint": "Create your first video task in the Create tab — it will appear here.",
+    "tasks.empty.noSelection.title": "Select a task to see details",
+    "tasks.empty.noSelection.hint": "Click any task on the left to preview the video, see its parameters and prompt, and access download / retry actions.",
+    "tasks.noPrompt": "(no prompt)",
+    "tasks.total": "{n} tasks total",
+    "tasks.tag.flex": "Flex 50%",
+    "tasks.tag.draft": "Draft",
+    "tasks.tag.downloaded": "Saved",
+    "tasks.tag.failed": "Failed",
+    "tasks.tag.running": "Running",
+    "tasks.tag.done": "Done",
+    "tasks.btn.retry": "Retry",
+    "tasks.btn.delete": "Delete",
+    "tasks.detail.title": "Task details",
+    "tasks.detail.confirmDelete": "Delete this task? This cannot be undone.",
+    "tasks.detail.id": "Task ID",
+    "tasks.detail.mode": "Mode",
+    "tasks.detail.model": "Model",
+    "tasks.detail.ratio": "Aspect ratio",
+    "tasks.detail.duration": "Duration",
+    "tasks.detail.resolution": "Resolution",
+    "tasks.detail.tier": "Tier",
+    "tasks.detail.createdAt": "Created at",
+    "tasks.detail.prompt": "Prompt",
+    "tasks.detail.errorTitle": "Failure reason",
+    "tasks.detail.runningHint": "The video is being generated in the cloud — typically 1–3 minutes.",
+    "tasks.detail.downloaded": "Downloaded locally: {path}",
+    "assets.filter.all": "All",
+    "assets.filter.image": "Images",
+    "assets.filter.video": "Videos",
+    "assets.filter.audio": "Audio",
+    "assets.empty.title": "No assets",
+    "assets.empty.hint": "Files you upload from Create show up here.",
+    "assets.count": "{n} assets",
+    "assets.btn.delete": "Delete",
+    "guide.search.placeholder": "Search templates or keywords…",
+    "guide.section.templates": "Templates (click to view / apply)",
+    "guide.section.cameras": "Camera language",
+    "guide.section.atmosphere": "Atmosphere keywords",
+    "guide.section.formulas": "Prompt formulas",
+    "guide.section.tips": "Prompt-writing tips",
+    "guide.templates.empty": "No templates yet (backend offline or still loading).",
+    "guide.atmosphere.light": "Light",
+    "guide.atmosphere.color": "Color",
+    "guide.atmosphere.texture": "Texture",
+    "guide.atmosphere.mood": "Mood",
+    "guide.tips.body": "1. 80–200 chars works well; hard cap 5000.\n2. Use a **timeline** for rhythm: '0–3s: push-in, 4–6s: close-up'.\n3. Add **camera language**: push / pull / pan / dolly / orbit / crane / dolly-zoom.\n4. Add **sound design**: music style + ambience + voice.\n5. Avoid **human faces** (current model limit).\n6. The more concrete you are, the closer the video gets to your idea.",
+    "story.section.input": "Story",
+    "story.section.usage": "How to use",
+    "story.section.params": "Generation parameters",
+    "story.label.story": "Story / script",
+    "story.label.totalDuration": "Total duration (seconds)",
+    "story.label.segDuration": "Per-segment duration",
+    "story.label.ratio": "Aspect ratio",
+    "story.label.style": "Visual style",
+    "story.label.model": "Model",
+    "story.label.resolution": "Resolution",
+    "story.label.genMode": "Generation mode",
+    "story.label.transition": "Concatenation transition",
+    "story.story.placeholder": "Type your story; AI will break it into a sequence of storyboard segments…\n\nExample: A kitten explores a sunny garden — first sniffs flowers, then chases a butterfly, finally naps under a tree.",
+    "story.estimate": "Estimated {n} segments × {seg}s ≈ {total}s total",
+    "story.decompose.idle": "AI Storyboard",
+    "story.decompose.busy": "Decomposing…",
+    "story.decompose.connect": "Connecting to the AI model…",
+    "story.decompose.analyze": "AI is analysing the story and drafting segments…",
+    "story.decompose.batch": "Generating {n} segments — hold on…",
+    "story.decompose.long": "LLM still thinking; longer stories may take 20–40s…",
+    "story.usage.body": "1. Type your story; AI breaks it into Seedance segments.\n2. Edit each segment — prompt, duration, transition.\n3. Serial mode reuses each segment's last frame as the next reference for visual continuity.\n4. After generation, ffmpeg concatenates everything into a long video.",
+    "story.usage.warn": "**Note:** Seedance 2.0 does not accept reference images with human faces. Serial linking will fall back to text-only generation if the safety check trips, which can reduce continuity. Prefer animated characters, animals, or scenery.",
+    "story.edit.title": "Edit storyboard — {n} segments",
+    "story.edit.hint": "Click a segment to expand and edit. Reorder freely.",
+    "story.btn.back": "Back",
+    "story.btn.addSeg": "Add segment",
+    "story.btn.startGen": "Start generation ({mode})",
+    "story.btn.startGenSerial": "Serial",
+    "story.btn.startGenParallel": "Parallel",
+    "story.btn.moveUp": "Up",
+    "story.btn.moveDown": "Down",
+    "story.btn.delete": "Delete",
+    "story.btn.newProject": "New project",
+    "story.btn.backEdit": "Back to editor",
+    "story.btn.openFolder": "Open folder",
+    "story.gen.title": "Generating {n} segments…",
+    "story.gen.serialDesc": "Serial: each segment uses the previous result as reference.",
+    "story.gen.parallelDesc": "Parallel: all segments run at the same time.",
+    "story.gen.estimate": "Approx {min} minutes — please be patient.",
+    "story.results.done": "Long video generated",
+    "story.results.title": "Results",
+    "story.results.summary": "Total: {total} · Success {ok}{fail}",
+    "story.results.failPart": " · Failed {n}",
+    "story.concat.title": "Concatenated",
+    "story.concat.tip": "Ready to concatenate {n} segments",
+    "story.ffmpeg.warn.title": "FFmpeg is missing, long-video stitching is unavailable",
+    "story.ffmpeg.warn.hint": "Open Settings > System Components to install FFmpeg with one click",
+    "story.ffmpeg.warn.cta": "Open Settings",
+    "story.concat.idle": "Concatenate ({mode})",
+    "story.concat.busy": "Concatenating…",
+    "story.concat.modeCut": "Hard cut",
+    "story.concat.modeFade": "Crossfade",
+    "story.totalEstimate": "{n} segments · ~{sec}s total",
+    "story.statTotal": "Total:",
+    "story.statSuccess": "Success:",
+    "story.statFail": "Failed:",
+    "settings.section.api": "API",
+    "settings.section.defaults": "Defaults",
+    "settings.section.folder": "Folders",
+    "settings.section.webhook": "Webhook",
+    "settings.section.system": "System Components",
+    "settings.system.intro.strong": "FFmpeg is only used for long-video stitching in the Storyboard tab and video thumbnail previews in Assets.",
+    "settings.system.intro.body": "Text-to-video, image-to-video, the task list and prompt guide do not depend on FFmpeg. If you do not need long-video stitching you may skip this install.\n\nFFmpeg is a system-wide component (shared PATH install), not private to this plugin — any machine that already has ffmpeg will auto-detect it without re-installing; conversely, installing/uninstalling will affect every other plugin and program that uses ffmpeg.",
+    "settings.system.platform.win": "Windows: \"One-click install\" calls winget to install Gyan.FFmpeg without admin rights.",
+    "settings.system.platform.mac": "macOS: \"One-click install\" uses Homebrew to install ffmpeg.",
+    "settings.system.platform.linux": "Linux: apt / dnf require root. If OpenAkita is running as a normal user, run sudo apt-get install ffmpeg in a terminal as your packaging policy permits.",
+    "settings.system.detecting": "Detecting...",
+    "settings.system.status.found": "Installed v{ver}",
+    "settings.system.status.foundNoVer": "Installed",
+    "settings.system.status.missing": "Not installed",
+    "settings.system.location": "Path: {path}",
+    "settings.system.btn.install": "Install",
+    "settings.system.btn.installVia": "Install via {strategy}",
+    "settings.system.btn.recheck": "Re-check",
+    "settings.system.btn.openHome": "Open homepage",
+    "settings.system.btn.copyCmd": "Copy command",
+    "settings.system.btn.copied": "Copied",
+    "settings.system.btn.cancel": "Cancel",
+    "settings.system.btn.uninstall": "Uninstall",
+    "settings.system.btn.uninstallVia": "Uninstall ({strategy})",
+    "settings.system.btn.uninstallConfirmBtn": "Confirm uninstall",
+    "settings.system.installing": "Installing... ({elapsed})",
+    "settings.system.uninstalling": "Uninstalling... ({elapsed})",
+    "settings.system.installEstimate": "Estimated ~{sec}s",
+    "settings.system.installed": "FFmpeg installed successfully",
+    "settings.system.installFailed": "Install failed: {msg}",
+    "settings.system.uninstalled": "FFmpeg uninstalled",
+    "settings.system.uninstallFailed": "Uninstall failed: {msg}",
+    "settings.system.uninstallConfirm": "Uninstall FFmpeg?\n\nNote: FFmpeg is a SYSTEM-WIDE component (Windows user PATH / macOS Homebrew / Linux /usr/bin), not private to the Seedance plugin — uninstalling will affect every OpenAkita plugin that depends on it (subtitles, video translation, dubbing, etc.) as well as any other software on your system that uses ffmpeg.\n\nIn this plugin, you will lose: long-video stitching (Storyboard tab) and video thumbnail previews (Asset library).",
+    "settings.system.requiresSudo": "Linux requires root. Run this in a terminal:",
+    "settings.system.requiresSudoUninstall": "Linux requires root. Run this in a terminal:",
+    "settings.system.noMethod": "No automated installer for this OS — open the homepage to download manually.",
+    "settings.system.logTitle": "Install log",
+    "settings.system.logTitleUninstall": "Uninstall log",
+    "settings.system.logEmpty": "No output yet",
+    "settings.section.permissions": "Plugin permissions",
+    "settings.perms.intro.strong": "This plugin needs the following advanced permissions to work fully.",
+    "settings.perms.intro.body": "They were not granted automatically on install. Click below to grant them in one click (equivalent to checking them in Settings Center → Plugin Manager → Permissions).",
+    "settings.perms.allOk": "All required permissions are granted.",
+    "settings.perms.btn.grantAll": "Grant all permissions",
+    "settings.perms.granting": "Granting...",
+    "settings.perms.granted": "Permissions granted, plugin reloaded",
+    "settings.perms.grantFailed": "Grant failed: {msg}",
+    "settings.perms.col.permission": "Permission",
+    "settings.perms.col.feature": "Used by",
+    "settings.perms.col.status": "Status",
+    "settings.perms.status.ok": "Granted",
+    "settings.perms.status.missing": "Missing",
+    "banner.perms.title": "Plugin missing required permissions — some features will not work",
+    "banner.perms.desc": "Open Settings → Plugin permissions to grant them",
+    "banner.perms.cta": "Grant now",
+    "settings.label.apiKey": "ARK API Key",
+    "settings.api.placeholder": "Paste your Volcengine Ark API Key",
+    "settings.api.show": "Show",
+    "settings.api.hide": "Hide",
+    "settings.api.save": "Save",
+    "settings.api.required": "Required",
+    "settings.api.help": "Get one at console.volcengine.com/ark",
+    "settings.label.tier": "Default inference",
+    "settings.tier.online": "Online",
+    "settings.tier.flex": "Flex (half-price)",
+    "settings.label.poll": "Polling interval",
+    "settings.poll.10": "10 s",
+    "settings.poll.15": "15 s",
+    "settings.poll.30": "30 s",
+    "settings.poll.60": "60 s",
+    "settings.label.optimizeLevel": "Optimization level",
+    "settings.optimize.light": "Light polish",
+    "settings.optimize.professional": "Pro rewrite",
+    "settings.optimize.storyboard": "Storyboard",
+    "settings.label.outputDir": "Video output folder",
+    "settings.outputDir.placeholder": "Default: ~/seedance-output/",
+    "settings.btn.browse": "Select",
+    "settings.btn.open": "Open",
+    "settings.label.subdir": "Sub-folder layout",
+    "settings.subdir.date": "By date",
+    "settings.subdir.project": "By project",
+    "settings.subdir.flat": "Flat",
+    "settings.label.naming": "File naming",
+    "settings.toggle.autoDownload": "Auto-download finished videos",
+    "settings.label.assetsDir": "Assets folder",
+    "settings.assetsDir.placeholder": "Default: ~/seedance-assets/",
+    "settings.stats.outputDir": "Output",
+    "settings.stats.assetsDir": "Assets",
+    "settings.stats.cacheDir": "Cache",
+    "settings.stats.fileCount": "{n} files",
+    "settings.label.callback": "Callback URL (optional)",
+    "settings.callback.placeholder": "https://…",
+    "settings.callback.help": "Push status changes instead of polling.",
+    "settings.toast.saved": "Settings saved",
+    "settings.toast.keyError": "API Key did not save correctly — try again",
+    "settings.toast.saveFailed": "Save failed: {msg}",
+    "settings.pickOutput": "Pick video output folder",
+    "settings.pickAssets": "Pick assets folder",
+    "settings.folder.opened": "Opened {path} in file manager",
+    "settings.folder.openFailed": "Failed to open folder: {msg}",
+    "settings.folder.pickFailed": "Could not pick a folder, please retry",
+    "settings.folder.pickUnavailable": "Folder picker not responding — restart the app or paste the path into the box on the left and click Open.",
+    "settings.folder.savedTo": "Storage path set to {path}",
+    "picker.title": "Select a folder",
+    "picker.shortcut.start": "Starting points",
+    "picker.crumb.root": "Start",
+    "picker.empty": "(no subfolders here)",
+    "picker.loading": "Loading…",
+    "picker.btn.cancel": "Cancel",
+    "picker.btn.choose": "Choose this folder",
+    "picker.btn.newFolder": "New folder",
+    "picker.btn.create": "Create",
+    "picker.btn.confirmCreate": "Confirm",
+    "picker.newFolder.placeholder": "Folder name",
+    "picker.error.load": "Cannot read folder: {msg}",
+    "picker.error.create": "Failed to create folder: {msg}",
+    "picker.created": "Created {name}",
+    "toast.optimizeOk": "Prompt optimized",
+    "toast.optimizeFail": "Optimization failed: {msg}",
+    "toast.optimizeNoChange": "Prompt unchanged — LLM returned identical text",
+    "toast.optimizeError": "Optimization request failed: {msg}",
+    "toast.copyOk": "Copied to clipboard",
+    "toast.downloadOk": "Saved to: {path}",
+    "toast.downloadFail": "Download failed: {msg}",
+    "toast.downloadStarted": "Download started",
+    "toast.networkError": "Network error: {msg}",
+    "toast.requestFail": "Request failed: {msg}",
+    "toast.decomposeOk": "Storyboard ready: {n} segments",
+    "toast.decomposeFail": "Decompose failed: {msg}",
+    "toast.genFail": "Generation failed: {msg}",
+    "toast.concatNeed2": "Need at least 2 successful segments to concat",
+    "toast.concatFail": "Concat failed: {msg}",
+    "toast.unknownErr": "Unknown error",
+    "err.title": "Plugin UI render error",
+    "err.retry": "Retry render",
+    "err.stackLabel": "Error stack trace",
+  },
+};
+
+const _i18n = (function () {
+  if (window.OpenAkitaI18n && window.OpenAkitaI18n.register) {
+    window.OpenAkitaI18n.register(I18N_DICT);
+    return window.OpenAkitaI18n;
+  }
+  let loc = (navigator && navigator.language) || "zh";
+  const subs = new Set();
+  return {
+    t: function (k, vars) {
+      const base = (loc || "zh").split(/[-_]/)[0];
+      const tpl = (I18N_DICT[loc] && I18N_DICT[loc][k])
+        || (I18N_DICT[base] && I18N_DICT[base][k])
+        || (I18N_DICT.en && I18N_DICT.en[k])
+        || k;
+      return vars
+        ? String(tpl).replace(/\{(\w+)\}/g, (_, n) => vars[n] != null ? String(vars[n]) : "{" + n + "}")
+        : tpl;
+    },
+    locale: () => loc,
+    setLocale: (l) => { loc = l; subs.forEach(fn => { try { fn(l); } catch (_) {} }); },
+    onChange: (fn) => { subs.add(fn); return () => subs.delete(fn); },
+  };
+})();
+
+function useT() {
+  const [, setTick] = useState(0);
+  useEffect(() => _i18n.onChange(() => setTick(x => x + 1)), []);
+  return _i18n.t;
+}
+
+function useLocale() {
+  const [loc, setLoc] = useState(() => _i18n.locale());
+  useEffect(() => _i18n.onChange((l) => setLoc(l)), []);
+  return loc;
+}
+
+function _tr(key, vars, fallback) {
+  if (window.OpenAkitaI18n && window.OpenAkitaI18n.t) {
+    const v = window.OpenAkitaI18n.t(key, vars);
+    if (v && v !== key) return v;
+  }
+  if (fallback) {
+    if (vars) {
+      return String(fallback).replace(/\{(\w+)\}/g, (_, n) =>
+        vars[n] != null ? String(vars[n]) : "{" + n + "}",
+      );
+    }
+    return fallback;
+  }
+  return key;
+}
+
+// SVG Icon system — replaces all emoji
+const I = {
+  video: <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="18" rx="2"/><path d="M8 10l5 3-5 3z"/></svg>,
+  play: <svg viewBox="0 0 24 24"><polygon points="5,3 19,12 5,21"/></svg>,
+  pause: <svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>,
+  skipBack: <svg viewBox="0 0 24 24"><polygon points="11,19 2,12 11,5"/><polygon points="22,19 13,12 22,5"/></svg>,
+  skipFwd: <svg viewBox="0 0 24 24"><polygon points="13,19 22,12 13,5"/><polygon points="2,19 11,12 2,5"/></svg>,
+  repeat: <svg viewBox="0 0 24 24"><polyline points="17,1 21,5 17,9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7,23 3,19 7,15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>,
+  download: <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
+  refresh: <svg viewBox="0 0 24 24"><polyline points="23,4 23,10 17,10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>,
+  image: <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"/><path d="M21 15l-5-5L5 21"/></svg>,
+  film: <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/></svg>,
+  music: <svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>,
+  folder: <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>,
+  folderOpen: <svg viewBox="0 0 24 24"><path d="M5 19a2 2 0 01-2-2V6a2 2 0 012-2h4l2 2h9a2 2 0 012 2v1M5 19h14a2 2 0 002-2l1-7H7.5"/></svg>,
+  sparkles: <svg viewBox="0 0 24 24"><path d="M12 2l2.09 6.26L20 10.27l-4.74 3.82L16.18 21 12 17.27 7.82 21l.92-6.91L4 10.27l5.91-2.01z" fill="currentColor" stroke="none"/></svg>,
+  lightbulb: <svg viewBox="0 0 24 24"><path d="M9 21h6M12 3a6 6 0 00-3.32 10.98L9 16h6l.32-2.02A6 6 0 0012 3z"/></svg>,
+  warn: <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+  check: <svg viewBox="0 0 24 24"><polyline points="20,6 9,17 4,12"/></svg>,
+  x: <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+  settings: <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>,
+  key: <svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.78 7.78 5.5 5.5 0 017.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>,
+  link: <svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>,
+  book: <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>,
+  bot: <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><line x1="12" y1="7" x2="12" y2="11"/><circle cx="8" cy="16" r="1" fill="currentColor" stroke="none"/><circle cx="16" cy="16" r="1" fill="currentColor" stroke="none"/></svg>,
+  rocket: <svg viewBox="0 0 24 24"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 00-2.91-.09z"/><path d="M12 15l-3-3a22 22 0 012-3.95A12.88 12.88 0 0122 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 01-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>,
+  scissors: <svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/></svg>,
+  arrowLeft: <svg viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12,19 5,12 12,5"/></svg>,
+  arrowUp: <svg viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5,12 12,5 19,12"/></svg>,
+  arrowDown: <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19,12 12,19 5,12"/></svg>,
+  plus: <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+  trash: <svg viewBox="0 0 24 24"><polyline points="3,6 5,6 21,6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>,
+  camera: <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>,
+  palette: <svg viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r="2" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r="2" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r="2" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12" r="2" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.5-.77 1.5-1.5 0-.37-.13-.7-.37-.97-.24-.26-.37-.6-.37-.97 0-.83.67-1.5 1.5-1.5H16c3.31 0 6-2.69 6-6 0-5.17-4.36-9.06-10-9.06z"/></svg>,
+  ruler: <svg viewBox="0 0 24 24"><path d="M16 4L4 16l4 4L20 8z"/><path d="M8 16l-2-2"/><path d="M12 12l-2-2"/><path d="M16 8l-2-2"/></svg>,
+  fileText: <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>,
+  online: <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>,
+  offline: <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/></svg>,
+  package: <svg viewBox="0 0 24 24"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27,6.96 12,12.01 20.73,6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>,
+};
+function Ico({ name, style: s }) { return <span className="ico" style={s}>{I[name]}</span>; }
+
+// ── Task Started Modal ──
+function TaskStartedModal({ open, onClose, onGoToTasks, title, desc }) {
+  const t = useT();
+  if (!open) return null;
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-icon"><Ico name="check"/></div>
+        <div className="modal-title">{title || t("modal.taskStarted.title")}</div>
+        <div className="modal-desc">{desc}</div>
+        <div className="modal-actions">
+          <button className="btn" onClick={onClose}>{t("modal.taskStarted.continue")}</button>
+          <button className="btn btn-primary" onClick={() => { onClose(); onGoToTasks && onGoToTasks(); }}>
+            {t("modal.taskStarted.goTasks")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── In-plugin folder picker ──────────────────────────────────────────
+// Tauri's native folder dialog has been unreliable across capability/
+// version combinations and the host bridge silently swallows failures.
+// To guarantee that "Select" always works, we render our own folder
+// browser modal backed by /storage/list-dir + /storage/mkdir. No bridge,
+// no Tauri dialog plugin — pure plugin backend + React.
+function FolderPickerModal({ open, title, initialPath, onCancel, onSelect }) {
+  const t = useT();
+  const [path, setPath] = useState("");
+  const [items, setItems] = useState([]);
+  const [parent, setParent] = useState(null);
+  const [isAnchor, setIsAnchor] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [newFolderMode, setNewFolderMode] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const newFolderInputRef = useRef(null);
+
+  // Load anchors initially; if the user passed an initialPath try to
+  // navigate straight there. Failing that (path doesn't exist), fall
+  // back to anchors so the modal is never empty.
+  const load = useCallback(async (p) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const qs = p ? `?path=${encodeURIComponent(p)}` : "";
+      const r = await pluginApi("GET", `/storage/list-dir${qs}`);
+      if (r.ok && r.body?.ok) {
+        setPath(r.body.path || "");
+        setParent(r.body.parent || null);
+        setItems(r.body.items || []);
+        setIsAnchor(!!r.body.is_anchor);
+      } else {
+        setError(r.body?.detail || `HTTP ${r.status || "?"}`);
+        // Fall back to anchors so the user can still navigate.
+        if (p) {
+          const r2 = await pluginApi("GET", `/storage/list-dir`);
+          if (r2.ok && r2.body?.ok) {
+            setPath("");
+            setParent(null);
+            setItems(r2.body.items || []);
+            setIsAnchor(true);
+          }
+        }
+      }
+    } catch (e) {
+      setError(String(e && e.message || e));
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    setNewFolderMode(false);
+    setNewFolderName("");
+    load(initialPath || "");
+  }, [open, initialPath, load]);
+
+  useEffect(() => {
+    if (newFolderMode && newFolderInputRef.current) {
+      newFolderInputRef.current.focus();
+    }
+  }, [newFolderMode]);
+
+  const handleNavigate = (p) => {
+    setNewFolderMode(false);
+    load(p);
+  };
+
+  const handleCreate = async () => {
+    const name = (newFolderName || "").trim();
+    if (!name || !path) return;
+    try {
+      const r = await pluginApi("POST", "/storage/mkdir", { parent: path, name });
+      if (r.ok && r.body?.ok) {
+        showToast(_tr("picker.created", { name }));
+        setNewFolderMode(false);
+        setNewFolderName("");
+        await load(path);
+      } else {
+        showToast(_tr("picker.error.create", { msg: r.body?.detail || "" }), "error");
+      }
+    } catch (e) {
+      showToast(_tr("picker.error.create", { msg: String(e && e.message || e) }), "error");
+    }
+  };
+
+  // Build breadcrumb segments from `path`. Handles both Windows
+  // ("C:\Users\Foo") and Unix ("/home/foo") layouts. Each segment is
+  // clickable and navigates to the cumulative path.
+  const crumbs = (() => {
+    if (!path) return [];
+    const norm = path.replace(/\\/g, "/");
+    const parts = norm.split("/").filter(Boolean);
+    const out = [];
+    if (norm.startsWith("/")) {
+      out.push({ name: "/", path: "/" });
+      let acc = "";
+      for (const seg of parts) {
+        acc += "/" + seg;
+        out.push({ name: seg, path: acc });
+      }
+    } else if (parts[0] && /^[A-Za-z]:$/.test(parts[0])) {
+      out.push({ name: parts[0], path: parts[0] + "/" });
+      let acc = parts[0];
+      for (let i = 1; i < parts.length; i++) {
+        acc += "/" + parts[i];
+        out.push({ name: parts[i], path: acc });
+      }
+    } else {
+      out.push({ name: path, path });
+    }
+    return out;
+  })();
+
+  if (!open) return null;
+  return (
+    <div className="modal-mask" onClick={onCancel}>
+      <div className="modal-card folder-picker" onClick={e => e.stopPropagation()}>
+        <div className="folder-picker__head">
+          <div className="folder-picker__title">{title || t("picker.title")}</div>
+          <div className="folder-picker__crumbs">
+            <span
+              className="folder-picker__crumb"
+              onClick={() => handleNavigate("")}
+              title={t("picker.crumb.root")}
+            ><Ico name="folderOpen"/></span>
+            {crumbs.map((c, i) => (
+              <React.Fragment key={i}>
+                <span className="folder-picker__crumb-sep">/</span>
+                <span
+                  className="folder-picker__crumb"
+                  onClick={() => handleNavigate(c.path)}
+                  title={c.path}
+                >{c.name}</span>
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+
+        {error && (
+          <div className="folder-picker__error">{_tr("picker.error.load", { msg: error })}</div>
+        )}
+
+        <div className="folder-picker__body">
+          <div className="folder-picker__sidebar">
+            <div className="folder-picker__shortcut" onClick={() => handleNavigate("")}>
+              <Ico name="folder"/>{t("picker.shortcut.start")}
+            </div>
+          </div>
+          <div className="folder-picker__list">
+            {loading && <div className="folder-picker__empty">{t("picker.loading")}</div>}
+            {!loading && !isAnchor && parent != null && (
+              <div className="folder-picker__item" onClick={() => handleNavigate(parent)}>
+                <span className="folder-picker__item-icon">↰</span>
+                <span className="folder-picker__item-name">..</span>
+              </div>
+            )}
+            {!loading && items.length === 0 && (
+              <div className="folder-picker__empty">{t("picker.empty")}</div>
+            )}
+            {!loading && items.map((it) => (
+              <div
+                key={it.path}
+                className="folder-picker__item"
+                onClick={() => handleNavigate(it.path)}
+                title={it.path}
+              >
+                <span className="folder-picker__item-icon"><Ico name="folder"/></span>
+                <span className="folder-picker__item-name">{it.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="folder-picker__foot">
+          {newFolderMode ? (
+            <>
+              <input
+                ref={newFolderInputRef}
+                className="folder-picker__newinput"
+                value={newFolderName}
+                onChange={e => setNewFolderName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === "Enter") handleCreate();
+                  if (e.key === "Escape") { setNewFolderMode(false); setNewFolderName(""); }
+                }}
+                placeholder={t("picker.newFolder.placeholder")}
+              />
+              <button className="btn btn-sm" onClick={() => { setNewFolderMode(false); setNewFolderName(""); }}>{t("picker.btn.cancel")}</button>
+              <button className="btn btn-sm btn-primary" disabled={!newFolderName.trim()} onClick={handleCreate}>{t("picker.btn.confirmCreate")}</button>
+            </>
+          ) : (
+            <>
+              <span className="folder-picker__current" title={path}>{path || ""}</span>
+              <button
+                className="btn btn-sm"
+                disabled={!path || isAnchor}
+                onClick={() => setNewFolderMode(true)}
+              >{t("picker.btn.newFolder")}</button>
+              <button className="btn btn-sm" onClick={onCancel}>{t("picker.btn.cancel")}</button>
+              <button
+                className="btn btn-sm btn-primary"
+                disabled={!path || isAnchor}
+                onClick={() => onSelect(path)}
+              >{t("picker.btn.choose")}</button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Constants ──
+// Mode/Tab labels are i18n keys; resolved via t() at render time so locale
+// changes re-render correctly. Order is part of the UI contract — never sort.
+const MODE_IDS = ["t2v", "i2v", "i2v_end", "multimodal", "edit", "extend"];
+const RATIOS = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"];
+const TAB_IDS = ["create", "tasks", "assets", "guide", "storyboard", "settings"];
+
+// ── Hooks ──
+function useModels() {
+  const [models, setModels] = useState([]);
+  useEffect(() => {
+    pluginApi("GET", "/models").then(r => r.body?.models && setModels(r.body.models)).catch(() => {});
+  }, []);
+  return models;
+}
+
+function useTasks() {
+  const [tasks, setTasks] = useState([]);
+  const [total, setTotal] = useState(0);
+  const load = useCallback((params = {}) => {
+    const q = new URLSearchParams(params).toString();
+    pluginApi("GET", `/tasks?${q}`).then(r => {
+      if (r.body?.tasks) { setTasks(r.body.tasks); setTotal(r.body.total); }
+    }).catch(() => {});
+  }, []);
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    onEvent("plugin:seedance-video:task_update", () => load());
+  }, []);
+  useEffect(() => {
+    var hasRunning = tasks.some(t => t.status === "running" || t.status === "pending");
+    if (!hasRunning) return;
+    var timer = setInterval(() => load(), 10000);
+    return () => clearInterval(timer);
+  }, [tasks]);
+  return { tasks, total, reload: load };
+}
+
+// ── Components ──
+
+function FileUploadZone({ id, accept, multiple, onUpload, label, hint }) {
+  const t = useT();
+  const [uploading, setUploading] = useState(false);
+  const [fileName, setFileName] = useState("");
+  const [dragOver, setDragOver] = useState(false);
+
+  const handleFiles = async (files) => {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    for (const file of files) {
+      setFileName(file.name);
+      await onUpload(file);
+    }
+    setUploading(false);
+  };
+
+  return (
+    <div className={`upload-zone${dragOver ? " drag-over" : ""}`}
+      style={dragOver ? {borderColor:"var(--primary)",background:"rgba(59,130,246,.08)"} : {}}
+      onClick={() => !uploading && document.getElementById(id)?.click()}
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files); }}>
+      <input id={id} type="file" accept={accept} multiple={multiple} hidden
+        onChange={(e) => handleFiles(e.target.files)} />
+      {uploading ? (
+        <div className="flex items-center gap-2" style={{justifyContent:"center"}}>
+          <div className="spinner" style={{width:16,height:16}} />
+          <span className="text-sm">{t("create.upload.uploading", { name: fileName })}</span>
+        </div>
+      ) : (
+        <>
+          <p style={{fontSize:13}}>{label}</p>
+          {hint && <p className="text-xs text-dim" style={{marginTop:4}}>{hint}</p>}
+          {fileName && <p className="text-xs text-success" style={{marginTop:4}}><Ico name="check"/> {t("create.upload.uploaded", { name: fileName })}</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
+function VideoPlayer({ task }) {
+  const t = useT();
+  const videoRef = useRef(null);
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCt] = useState(0);
+  const [duration, setDur] = useState(0);
+  const [speed, setSpeed] = useState(1);
+  const [loop, setLoop] = useState(true);
+
+  const videoSrc = task?.id
+    ? `${_detectApiBase()}/api/plugins/seedance-video/videos/${task.id}`
+    : null;
+
+  const togglePlay = () => {
+    if (!videoRef.current) return;
+    if (videoRef.current.paused) { videoRef.current.play(); setPlaying(true); }
+    else { videoRef.current.pause(); setPlaying(false); }
+  };
+
+  const changeSpeed = () => {
+    const speeds = [0.25, 0.5, 1, 1.5, 2];
+    const idx = speeds.indexOf(speed);
+    const next = speeds[(idx + 1) % speeds.length];
+    setSpeed(next);
+    if (videoRef.current) videoRef.current.playbackRate = next;
+  };
+
+  const stepFrame = (dir) => {
+    if (!videoRef.current) return;
+    videoRef.current.pause(); setPlaying(false);
+    videoRef.current.currentTime += dir * (1/24);
+  };
+
+  if (!task) return (
+    <div className="oa-preview-empty" style={{minHeight: 280, padding: "32px 20px", textAlign: "center"}}>
+      <span className="oa-preview-empty__icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M15 10l-4 3V7l4 3z"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+      </span>
+      <div className="oa-preview-empty__title" style={{whiteSpace: "nowrap"}}>{t("preview.empty.title")}</div>
+      <div className="oa-preview-empty__hint" style={{marginTop: 4}}>{t("preview.empty.hint")}</div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div className="video-player-wrap">
+        {task.status === "running" || task.status === "pending" ? (
+          <div className="empty-state">
+            <div className="spinner" style={{width:32,height:32,marginBottom:12}}/>
+            <p>{t("preview.running.title")}</p>
+            <p className="text-xs text-dim" style={{marginTop:6}}>{t("preview.running.hint")}</p>
+          </div>
+        ) : task.status === "succeeded" && videoSrc ? (
+          <video ref={videoRef} src={videoSrc} loop={loop} autoPlay muted
+            onTimeUpdate={() => setCt(videoRef.current?.currentTime || 0)}
+            onLoadedMetadata={() => setDur(videoRef.current?.duration || 0)}
+            onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
+            style={{width:"100%",height:"100%",objectFit:"contain"}} />
+        ) : task.status === "failed" ? (
+          <div className="empty-state">
+            <p style={{color:"var(--text-danger,#dc2626)"}}>{task.error_message || t("preview.failed")}</p>
+          </div>
+        ) : (
+          <div className="empty-state">
+            <p>{t("preview.waiting")}</p>
+          </div>
+        )}
+      </div>
+      {task.status === "succeeded" && videoSrc && (
+        <div className="video-controls">
+          <button onClick={() => stepFrame(-1)} title={t("preview.ctrl.stepBack")}><Ico name="skipBack"/></button>
+          <button onClick={togglePlay}>{playing ? <Ico name="pause"/> : <Ico name="play"/>}</button>
+          <button onClick={() => stepFrame(1)} title={t("preview.ctrl.stepFwd")}><Ico name="skipFwd"/></button>
+          <div className="progress-bar" onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const pct = (e.clientX - rect.left) / rect.width;
+            if (videoRef.current) videoRef.current.currentTime = pct * duration;
+          }}>
+            <div className="progress-bar-fill" style={{width: duration ? `${(currentTime/duration)*100}%` : "0%"}} />
+          </div>
+          <span>{currentTime.toFixed(1)}s / {duration.toFixed(1)}s</span>
+          <button onClick={changeSpeed}>{speed}x</button>
+          <button onClick={() => setLoop(!loop)} style={{opacity: loop?1:.5}} title={t("preview.ctrl.loop")}><Ico name="repeat"/></button>
+        </div>
+      )}
+      {task.revised_prompt && (
+        <div style={{padding:"8px 12px",fontSize:12,color:"var(--text-dim)",fontStyle:"italic"}}>
+          {t("preview.revised", { text: task.revised_prompt })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CreateTab({ models, onGoToTasks }) {
+  const [mode, setMode] = useState("t2v");
+  const [prompt, setPrompt] = useState("");
+  const [model, setModel] = useState("2.0");
+  const [ratio, setRatio] = useState("16:9");
+  const [resolution, setResolution] = useState("720p");
+  const [duration, setDuration] = useState(5);
+  const [audio, setAudio] = useState(true);
+  const [seed, setSeed] = useState(-1);
+  const [serviceTier, setServiceTier] = useState("default");
+  const [draft, setDraft] = useState(false);
+  const [returnLastFrame, setReturnLastFrame] = useState(false);
+  const [watermark, setWatermark] = useState(false);
+  const [webSearch, setWebSearch] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [activeTask, setActiveTask] = useState(null);
+  const [optimizing, setOptimizing] = useState(false);
+
+  useEffect(() => {
+    if (!activeTask || (activeTask.status !== "running" && activeTask.status !== "pending")) return;
+    var timer = setInterval(() => {
+      pluginApi("GET", `/tasks/${activeTask.id}`).then(r => {
+        if (r.body?.task) setActiveTask(r.body.task);
+      }).catch(() => {});
+    }, 8000);
+    return () => clearInterval(timer);
+  }, [activeTask?.id, activeTask?.status]);
+
+  const currentModel = models.find(m => m.id === model);
+  const minDur = currentModel?.duration_range?.[0] || 2;
+  const maxDur = currentModel?.duration_range?.[1] || 15;
+  const canDraft = currentModel?.supports_draft || false;
+  const can1080 = currentModel?.resolutions?.includes("1080p") || false;
+  const canWebSearch = currentModel?.supports_web_search && mode === "t2v";
+
+  const t = useT();
+  // MODE_TIPS body lives in I18N_DICT (create.tip.<id>); resolve via t() so
+  // locale switches without re-creating the component.
+
+  useEffect(() => {
+    if (duration < minDur) setDuration(minDur);
+    if (duration > maxDur) setDuration(maxDur);
+  }, [model]);
+
+  const [createError, setCreateError] = useState("");
+  const [taskStartedOpen, setTaskStartedOpen] = useState(false);
+  const [taskStartedDesc, setTaskStartedDesc] = useState("");
+  const handleCreate = async () => {
+    setLoading(true);
+    setCreateError("");
+    try {
+      const r = await pluginApi("POST", draft ? "/tasks/draft" : "/tasks", {
+        prompt, mode, model, ratio, duration, resolution, n: 1,
+        generate_audio: audio, seed, watermark, return_last_frame: returnLastFrame,
+        web_search: webSearch && canWebSearch, service_tier: serviceTier,
+      });
+      if (r.ok && r.body?.task) {
+        setActiveTask(r.body.task);
+        setTaskStartedDesc(
+          draft
+            ? t("modal.taskStarted.draft")
+            : serviceTier === "flex"
+              ? t("modal.taskStarted.flex")
+              : t("modal.taskStarted.online")
+        );
+        setTaskStartedOpen(true);
+      } else {
+        var msg = r.body?.detail || r.body?.error || _tr("toast.requestFail", { msg: "HTTP " + r.status }, "Request failed: {msg}");
+        setCreateError(msg);
+      }
+    } catch (e) { setCreateError(_tr("toast.networkError", { msg: e.message }, "Network error: {msg}")); }
+    setLoading(false);
+  };
+
+  const handleOptimize = async () => {
+    if (!prompt.trim()) return;
+    setOptimizing(true);
+    try {
+      var base = _ctx ? "/api/plugins/" + _ctx.pluginId : "/api/plugins/seedance-video";
+      const r = await directFetch("POST", base + "/prompt-optimize", { prompt, mode, duration, ratio });
+      if (r.body?.ok && r.body?.result && r.body.result !== prompt) {
+        setPrompt(r.body.result);
+        showToast(_tr("toast.optimizeOk", null, "Prompt optimized"), "success");
+      } else if (!r.body?.ok) {
+        // Backend now returns structured error codes — surface the human
+        // message when present so the user sees "missing brain.access"
+        // (fixable in Settings) instead of a misleading "LLM unavailable".
+        const msg = r.body?.message || r.body?.error || r.body?.detail || "LLM unavailable";
+        showToast(_tr("toast.optimizeFail", { msg }, "Optimization failed: {msg}"), "error");
+      } else {
+        showToast(_tr("toast.optimizeNoChange", null, "Prompt unchanged"), "warning");
+      }
+    } catch (e) {
+      showToast(_tr("toast.optimizeError", { msg: e.message || "network" }, "Optimization request failed: {msg}"), "error");
+    }
+    setOptimizing(false);
+  };
+
+  return (
+    <>
+    <div className="split-layout">
+      <div className="split-left">
+        <div className="card">
+          <div className="oa-section-label">{t("create.section.mode")}</div>
+          <div className="flex gap-2 flex-wrap">
+            {MODE_IDS.map(id => (
+              <button key={id} className={`mode-btn ${mode===id?"active":""}`}
+                onClick={() => setMode(id)}
+                disabled={currentModel && !currentModel.modes?.includes(id)}
+              >{t("modes." + id)}</button>
+            ))}
+          </div>
+        </div>
+
+        <div className="tip-bar"><Ico name="lightbulb"/> {t("create.tip." + mode)}</div>
+
+        {mode === "i2v" && (
+          <div className="card">
+            <div className="oa-section-label">{t("create.section.firstFrame")}</div>
+            <FileUploadZone id="upload-first-frame" accept="image/*"
+              onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
+              label={t("create.upload.firstHint")}
+              hint={t("create.upload.firstSubHint")} />
+          </div>
+        )}
+
+        {mode === "i2v_end" && (
+          <div className="card">
+            <div className="oa-section-label">{t("create.section.firstLastFrame")}</div>
+            <div className="grid-2">
+              <FileUploadZone id="upload-start-frame" accept="image/*"
+                onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
+                label={t("create.upload.startFrame")} hint={t("create.upload.startFrameHint")} />
+              <FileUploadZone id="upload-end-frame" accept="image/*"
+                onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
+                label={t("create.upload.endFrame")} hint={t("create.upload.endFrameHint")} />
+            </div>
+            <p className="text-xs text-dim" style={{marginTop:6}}>{t("create.upload.endFrameTip")}</p>
+          </div>
+        )}
+
+        {mode === "multimodal" && (
+          <div className="card">
+            <div className="oa-section-label">{t("create.section.multimodal")}</div>
+            <FileUploadZone id="upload-multimodal" accept="image/*,video/*,audio/*" multiple
+              onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
+              label={t("create.upload.multimodal")}
+              hint={t("create.upload.multimodalHint")} />
+            <div className="tip-bar" style={{marginTop:8}}>
+              <Ico name="lightbulb"/> {t("create.upload.multimodalTip")}
+            </div>
+          </div>
+        )}
+
+        {(mode === "edit" || mode === "extend") && (
+          <div className="card">
+            <div className="oa-section-label">{mode === "edit" ? t("create.section.editVideo") : t("create.section.extendVideo")}</div>
+            <FileUploadZone id="upload-source-video" accept="video/*"
+              onUpload={async (file) => { try { await uploadFile(file); } catch(e) { console.error(e); } }}
+              label={mode === "edit" ? t("create.upload.editLabel") : t("create.upload.extendLabel")}
+              hint={t("create.upload.videoHint")} />
+          </div>
+        )}
+
+        <div className="card">
+          <div className="oa-section-label oa-section-label--inline">
+            <span>{t("create.section.prompt")}</span>
+            <button type="button"
+              className="oa-ai-btn"
+              onClick={handleOptimize}
+              disabled={optimizing || !prompt.trim()}
+              title={t("create.btn.optimize.title")}>
+              {optimizing
+                ? <span className="spinner" style={{width:12,height:12}} />
+                : <span className="oa-ai-btn__icon" aria-hidden="true">
+                    <Ico name="sparkles"/>
+                  </span>}
+              <span>{t("create.btn.optimize")}</span>
+            </button>
+          </div>
+          <div className="prompt-wrap">
+            <textarea className="input textarea" value={prompt} onChange={e => setPrompt(e.target.value)}
+              placeholder={t("create.prompt.placeholder")} rows={4} />
+            <span className="prompt-counter">{t("create.prompt.counter", { n: prompt.length })}</span>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="oa-section-label">{t("create.section.params")}</div>
+          <div className="form-row">
+            <label className="label">{t("create.label.model")}</label>
+            <select className="input select" value={model} onChange={e => setModel(e.target.value)}>
+              {models.map(m => <option key={m.id} value={m.id}>{m.name} · RPM {m.rpm}</option>)}
+            </select>
+          </div>
+          <div className="form-row">
+            <label className="label">{t("create.label.ratio")}</label>
+            <div className="flex gap-2 flex-wrap">
+              {RATIOS.map(r => (
+                <div key={r} className={`ratio-btn ${ratio===r?"active":""}`} onClick={() => setRatio(r)}>{r}</div>
+              ))}
+            </div>
+          </div>
+          <div className="form-row">
+            <label className="label">{t("create.label.resolution")}</label>
+            <div className="flex gap-2">
+              {["480p","720p","1080p"].map(r => (
+                <button key={r} className={`mode-btn ${resolution===r?"active":""}`}
+                  onClick={() => setResolution(r)}
+                  disabled={r==="1080p" && !can1080}
+                >{r}</button>
+              ))}
+            </div>
+          </div>
+          <div className="form-row">
+            <label className="label">{t("create.label.duration", { min: minDur, max: maxDur })}</label>
+            <div className="slider-wrap">
+              <input type="range" min={minDur} max={maxDur} value={duration} onChange={e => setDuration(+e.target.value)} />
+              <span className="slider-val">{duration}s</span>
+            </div>
+          </div>
+          <div className="form-row">
+            <label className="label">{t("create.label.tier")}</label>
+            <div className="flex gap-2">
+              <button className={`mode-btn ${serviceTier==="default"?"active":""}`} onClick={() => setServiceTier("default")}><Ico name="online"/> {t("create.tier.online")}</button>
+              <button className={`mode-btn ${serviceTier==="flex"?"active":""}`} onClick={() => setServiceTier("flex")}><Ico name="offline"/> {t("create.tier.flex")}</button>
+            </div>
+          </div>
+          <div className="advanced-divider" />
+          <div className="oa-section-label" style={{fontSize:12,marginBottom:8}}>{t("create.section.advanced")}</div>
+          <div className="toggle-grid">
+            <label className="toggle-row" onClick={() => setAudio(!audio)}>
+              <span className="toggle-row__label">{t("create.toggle.audio")}</span>
+              <div className={`switch ${audio?"on":""}`} />
+            </label>
+            <label className="toggle-row" onClick={() => setWatermark(!watermark)}>
+              <span className="toggle-row__label">{t("create.toggle.watermark")}</span>
+              <div className={`switch ${watermark?"on":""}`} />
+            </label>
+            <label className="toggle-row" onClick={() => setReturnLastFrame(!returnLastFrame)}>
+              <span className="toggle-row__label">{t("create.toggle.lastFrame")}</span>
+              <div className={`switch ${returnLastFrame?"on":""}`} />
+            </label>
+            {canDraft && (
+              <label className="toggle-row" onClick={() => setDraft(!draft)}>
+                <span className="toggle-row__label">{t("create.toggle.draft")}</span>
+                <div className={`switch ${draft?"on":""}`} />
+              </label>
+            )}
+            {canWebSearch && (
+              <label className="toggle-row" onClick={() => setWebSearch(!webSearch)}>
+                <span className="toggle-row__label">{t("create.toggle.webSearch")}</span>
+                <div className={`switch ${webSearch?"on":""}`} />
+              </label>
+            )}
+          </div>
+        </div>
+
+        {createError && (
+          <div style={{padding:"10px 12px",background:"var(--bg-danger,#fef2f2)",border:"1px solid var(--border-danger,#fca5a5)",borderRadius:8,color:"var(--text-danger,#dc2626)",fontSize:13,marginBottom:8,wordBreak:"break-all"}}>
+            {createError}
+          </div>
+        )}
+        <button className="btn btn-primary btn-block"
+          onClick={handleCreate} disabled={loading || !prompt.trim()}>
+          {loading
+            ? <span className="spinner" style={{width:16,height:16,borderTopColor:"#fff",borderColor:"rgba(255,255,255,.35)"}}/>
+            : <span>{draft ? t("create.btn.startDraft") : serviceTier==="flex" ? t("create.btn.startFlex") : t("create.btn.startVideo")}</span>}
+        </button>
+      </div>
+
+      <div className="split-right">
+        <div className="oa-preview-area oa-preview-area--centered">
+          <VideoPlayer task={activeTask} />
+          {activeTask && (
+            <div className="flex gap-2" style={{marginTop:12, justifyContent:"center"}}>
+              <button className="btn btn-sm" onClick={() => downloadFile(`/api/plugins/seedance-video/videos/${activeTask.id}?download=1`, `seedance_${activeTask.prompt?.slice(0,20) || activeTask.id}.mp4`)}><Ico name="download"/> {t("preview.btn.download")}</button>
+              <button className="btn btn-sm" onClick={() => { setActiveTask(null); }}><Ico name="refresh"/> {t("preview.btn.new")}</button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+    <TaskStartedModal
+      open={taskStartedOpen}
+      onClose={() => setTaskStartedOpen(false)}
+      onGoToTasks={onGoToTasks}
+      desc={taskStartedDesc}
+    />
+    </>
+  );
+}
+
+function TaskListTab() {
+  const t = useT();
+  const { tasks, total, reload } = useTasks();
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [selected, setSelected] = useState(null);
+
+  const STATUS_FILTERS = [
+    { v: "all",       k: "tasks.filter.all",       icon: null      },
+    { v: "running",   k: "tasks.filter.running",   icon: "refresh" },
+    { v: "succeeded", k: "tasks.filter.succeeded", icon: "check"   },
+    { v: "failed",    k: "tasks.filter.failed",    icon: "warn"    },
+  ];
+  const TYPE_FILTERS = [
+    { v: "all",   k: "tasks.filter.allTypes", icon: null      },
+    { v: "draft", k: "tasks.filter.draft",    icon: "image"   },
+    { v: "flex",  k: "tasks.filter.flex",     icon: "package" },
+  ];
+  const safeTasks = Array.isArray(tasks) ? tasks : [];
+  const filtered = safeTasks.filter(it => {
+    if (statusFilter === "running" && !(it.status === "running" || it.status === "pending")) return false;
+    if (statusFilter === "succeeded" && it.status !== "succeeded") return false;
+    if (statusFilter === "failed" && it.status !== "failed") return false;
+    if (typeFilter === "draft" && !it.is_draft) return false;
+    if (typeFilter === "flex" && it.service_tier !== "flex") return false;
+    return true;
+  });
+
+  // Keep `selected` in sync with the live task list — when polling refreshes
+  // a task (e.g. running → succeeded) the selected reference would otherwise
+  // stay frozen on the stale snapshot and the right pane would never update.
+  useEffect(() => {
+    if (!selected) return;
+    const fresh = safeTasks.find(x => x.id === selected.id);
+    if (fresh && fresh !== selected) setSelected(fresh);
+  }, [tasks]);
+
+  const apiBase = `/api/plugins/seedance-video`;
+  const videoSrcFor = (id) => `${_detectApiBase()}${apiBase}/videos/${id}`;
+
+  const handleDelete = async (id) => {
+    if (!confirm(t("tasks.detail.confirmDelete"))) return;
+    await pluginApi("DELETE", `/tasks/${id}`);
+    if (selected && selected.id === id) setSelected(null);
+    reload();
+  };
+
+  const handleRetry = async (id) => {
+    await pluginApi("POST", `/tasks/${id}/retry`);
+    reload();
+  };
+
+  return (
+    <div className="split-layout">
+      <div className="split-left oa-list-panel" style={{width:"50%"}}>
+        <div className="oa-list-panel__filters">
+          <div>
+            <div className="oa-section-label">{t("tasks.filter.status")}</div>
+            <div className="oa-filter-group__buttons">
+              {STATUS_FILTERS.map(f => (
+                <button key={f.v} className={`mode-btn ${statusFilter===f.v?"active":""}`}
+                        onClick={() => setStatusFilter(f.v)}>
+                  {f.icon
+                    ? <span style={{display:"inline-flex", alignItems:"center", gap:4}}>
+                        <Ico name={f.icon}/> {t(f.k)}
+                      </span>
+                    : t(f.k)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="oa-section-label">{t("tasks.filter.type")}</div>
+            <div className="oa-filter-group__buttons">
+              {TYPE_FILTERS.map(f => (
+                <button key={f.v} className={`mode-btn ${typeFilter===f.v?"active":""}`}
+                        onClick={() => setTypeFilter(f.v)}>
+                  {f.icon
+                    ? <span style={{display:"inline-flex", alignItems:"center", gap:4}}>
+                        <Ico name={f.icon}/> {t(f.k)}
+                      </span>
+                    : t(f.k)}
+                </button>
+              ))}
+              <button className="btn btn-sm" onClick={() => reload()} style={{marginLeft:"auto"}}>
+                <Ico name="refresh"/> {t("tasks.refresh")}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <hr className="oa-list-panel__divider" />
+
+        <div className="oa-list-panel__items">
+          {filtered.length === 0 ? (
+            <div className="oa-preview-empty" style={{minHeight: 160, padding: "24px 16px"}}>
+              <span className="oa-preview-empty__icon" aria-hidden="true">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <rect x="3" y="4" width="18" height="16" rx="2"/>
+                  <path d="M8 10h8M8 14h6"/>
+                </svg>
+              </span>
+              <div className="oa-preview-empty__title">{t("tasks.empty.title")}</div>
+              <div className="oa-preview-empty__hint">{t("tasks.empty.hint")}</div>
+            </div>
+          ) : filtered.map(it => {
+            const isSelected = selected?.id === it.id;
+            const isRunning = it.status === "running" || it.status === "pending";
+            return (
+              <div key={it.id}
+                   className={`task-card ${isSelected ? "selected" : ""}`}
+                   onClick={() => setSelected(it)}>
+                <div className={`task-thumb ${it.status==="failed" ? "task-thumb--failed" : ""}`}>
+                  {it.status === "succeeded" ? (
+                    // First frame as poster — preload="metadata" gives us
+                    // the cover image without buffering the whole file.
+                    <video src={videoSrcFor(it.id)} preload="metadata" muted playsInline />
+                  ) : isRunning ? (
+                    <div className="spinner-sm" />
+                  ) : it.status === "failed" ? (
+                    <Ico name="warn"/>
+                  ) : (
+                    <span className="task-thumb__icon"><Ico name="film"/></span>
+                  )}
+                </div>
+                <div className="task-info">
+                  <h4>{it.prompt || t("tasks.noPrompt")}</h4>
+                  <div className="task-meta">
+                    {isRunning && <span className="tag tag-blue">{t("tasks.tag.running")}</span>}
+                    {it.status === "succeeded" && (
+                      it.local_video_path
+                        ? <span className="tag tag-green">{t("tasks.tag.downloaded")}</span>
+                        : <span className="tag tag-green">{t("tasks.tag.done")}</span>
+                    )}
+                    {it.status === "failed" && <span className="tag tag-red">{t("tasks.tag.failed")}</span>}
+                    {it.is_draft && <span className="tag tag-orange">{t("tasks.tag.draft")}</span>}
+                    {it.service_tier === "flex" && <span className="tag tag-blue">{t("tasks.tag.flex")}</span>}
+                    <span>{it.mode}</span>
+                    <span>{it.model}</span>
+                    <span>{it.params?.ratio || "16:9"}</span>
+                    <span>{it.params?.duration || 5}s</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="oa-list-panel__footer">
+          <span className="text-xs text-dim">{t("tasks.total", { n: total })}</span>
+        </div>
+      </div>
+
+      <div className={"split-right oa-preview-area" + (!selected ? " oa-preview-area--centered" : "")}>
+        {selected ? (
+          <div style={{width: "100%"}}>
+            <div className="card">
+              <div className="flex items-center justify-between" style={{marginBottom: 12}}>
+                <span className="card-title" style={{marginBottom:0}}>{t("tasks.detail.title")}</span>
+                <div className="flex gap-2">
+                  {selected.status === "succeeded" && (
+                    <button className="btn btn-sm"
+                            onClick={() => downloadFile(`${apiBase}/videos/${selected.id}?download=1`,
+                                                        `seedance_${(selected.prompt||selected.id).slice(0,20)}.mp4`)}>
+                      <Ico name="download"/> {t("preview.btn.download")}
+                    </button>
+                  )}
+                  {selected.status === "failed" && (
+                    <button className="btn btn-sm" onClick={() => handleRetry(selected.id)}>
+                      <Ico name="refresh"/> {t("tasks.btn.retry")}
+                    </button>
+                  )}
+                  <button className="btn btn-sm btn-danger" onClick={() => handleDelete(selected.id)}>
+                    <Ico name="trash"/> {t("tasks.btn.delete")}
+                  </button>
+                </div>
+              </div>
+
+              <VideoPlayer task={selected} />
+
+              {selected.status === "failed" && (
+                <div style={{marginTop:12, padding:"10px 12px",
+                             background:"rgba(239,68,68,.08)", border:"1px solid rgba(239,68,68,.25)",
+                             borderRadius:6, color:"var(--danger)", fontSize:12}}>
+                  <strong>{t("tasks.detail.errorTitle")}：</strong>
+                  {selected.error_message || t("preview.failed")}
+                </div>
+              )}
+
+              {selected.status === "succeeded" && selected.local_video_path && (
+                <div className="text-xs text-dim" style={{marginTop:8, wordBreak:"break-all"}}>
+                  {t("tasks.detail.downloaded", { path: selected.local_video_path })}
+                </div>
+              )}
+            </div>
+
+            <div className="card">
+              <div className="grid-2">
+                <div>
+                  <span className="text-xs text-dim">{t("tasks.detail.id")}</span>
+                  <div className="text-sm" style={{wordBreak:"break-all"}}>{selected.id}</div>
+                </div>
+                <div>
+                  <span className="text-xs text-dim">{t("tasks.detail.mode")}</span>
+                  <div className="text-sm">{selected.mode || "—"}</div>
+                </div>
+                <div>
+                  <span className="text-xs text-dim">{t("tasks.detail.model")}</span>
+                  <div className="text-sm">{selected.model || "—"}</div>
+                </div>
+                <div>
+                  <span className="text-xs text-dim">{t("tasks.detail.ratio")}</span>
+                  <div className="text-sm">{selected.params?.ratio || "16:9"}</div>
+                </div>
+                <div>
+                  <span className="text-xs text-dim">{t("tasks.detail.duration")}</span>
+                  <div className="text-sm">{(selected.params?.duration || 5) + "s"}</div>
+                </div>
+                <div>
+                  <span className="text-xs text-dim">{t("tasks.detail.resolution")}</span>
+                  <div className="text-sm">{selected.params?.resolution || "720p"}</div>
+                </div>
+                <div>
+                  <span className="text-xs text-dim">{t("tasks.detail.tier")}</span>
+                  <div className="text-sm">{selected.service_tier === "flex" ? "Flex" : "Online"}</div>
+                </div>
+                <div>
+                  <span className="text-xs text-dim">{t("tasks.detail.createdAt")}</span>
+                  <div className="text-sm">{selected.created_at || "—"}</div>
+                </div>
+              </div>
+              {selected.prompt && (
+                <div style={{marginTop: 12}}>
+                  <span className="text-xs text-dim">{t("tasks.detail.prompt")}</span>
+                  <div className="text-sm" style={{marginTop: 4, padding: "8px 10px",
+                                                    background: "var(--bg)", borderRadius: 6,
+                                                    whiteSpace:"pre-wrap", wordBreak:"break-word"}}>
+                    {selected.prompt}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="oa-preview-empty">
+            <span className="oa-preview-empty__icon" aria-hidden="true">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <rect x="3" y="4" width="18" height="16" rx="2"/>
+                <path d="M8 10h8M8 14h6"/>
+              </svg>
+            </span>
+            <div className="oa-preview-empty__title">{t("tasks.empty.noSelection.title")}</div>
+            <div className="oa-preview-empty__hint">{t("tasks.empty.noSelection.hint")}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AssetsTab() {
+  const t = useT();
+  const [assets, setAssets] = useState([]);
+  const [filter, setFilter] = useState(null);
+  const load = () => {
+    const q = filter ? `?type=${filter}` : "";
+    pluginApi("GET", `/assets${q}`).then(r => {
+      const list = Array.isArray(r.body && r.body.assets) ? r.body.assets : [];
+      setAssets(list);
+    }).catch(() => {});
+  };
+  useEffect(load, [filter]);
+
+  const FILTERS = [
+    { v: null,    k: "assets.filter.all" },
+    { v: "image", k: "assets.filter.image" },
+    { v: "video", k: "assets.filter.video" },
+    { v: "audio", k: "assets.filter.audio" },
+  ];
+
+  return (
+    <div>
+      <div className="flex gap-2 items-center" style={{marginBottom:16}}>
+        {FILTERS.map(f => (
+          <button key={String(f.v)} className={`mode-btn ${filter===f.v?"active":""}`} onClick={() => setFilter(f.v)}>
+            {t(f.k)}
+          </button>
+        ))}
+        <span className="text-xs text-dim" style={{marginLeft:"auto"}}>{t("assets.count", { n: assets.length })}</span>
+      </div>
+      {assets.length === 0 ? (
+        <div className="empty-state"><p>{t("assets.empty.title")}</p><p className="text-xs text-dim">{t("assets.empty.hint")}</p></div>
+      ) : (
+        <div className="grid-3" style={{gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))"}}>
+          {assets.map(a => (
+            <div key={a.id} className="card" style={{padding:8,textAlign:"center"}}>
+              <div style={{width:"100%",aspectRatio:"1",background:"var(--bg)",borderRadius:4,marginBottom:6,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24}}>
+                {{image:<Ico name="image"/>,video:<Ico name="film"/>,audio:<Ico name="music"/>}[a.type] || <Ico name="folder"/>}
+              </div>
+              <div className="text-xs" style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.original_name || a.id}</div>
+              <div className="text-xs text-dim">{a.type} · {a.size_bytes ? Math.round(a.size_bytes/1024)+"KB" : "?"}</div>
+              <button className="btn btn-sm btn-danger" style={{marginTop:6,width:"100%"}} onClick={async () => {
+                await pluginApi("DELETE", `/assets/${a.id}`); load();
+              }}>{t("assets.btn.delete")}</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PromptGuideTab() {
+  const t = useT();
+  const locale = useLocale();
+  const FALLBACK_CAMERAS = [
+    {zh:"推镜头",en:"Push in",desc:"向前靠近主体"},{zh:"拉镜头",en:"Pull out",desc:"向后远离主体"},
+    {zh:"摇镜头",en:"Pan",desc:"水平旋转拍摄"},{zh:"移镜头",en:"Dolly/Tracking",desc:"平移跟随"},
+    {zh:"跟镜头",en:"Follow",desc:"追踪主体运动"},{zh:"环绕镜头",en:"Orbit",desc:"绕主体旋转"},
+    {zh:"升降镜头",en:"Crane/Jib",desc:"垂直升降"},{zh:"希区柯克变焦",en:"Dolly Zoom",desc:"同时推拉+变焦，恐惧/不安感"},
+    {zh:"一镜到底",en:"One-take",desc:"长镜头无剪辑"},{zh:"手持晃动",en:"Handheld",desc:"手持相机的真实质感"},
+  ];
+  const FALLBACK_ATMOSPHERE = {
+    light:["逆光","侧光","丁达尔效应","伦勃朗光","体积光","柔光","硬光"],
+    color:["暖色调","冷色调","赛博朋克","复古胶片","黑白","霓虹","日落色调"],
+    texture:["电影级","纪录片风格","油画感","水墨感","CG质感","像素风","写实"],
+    mood:["温馨","紧张","悬疑","欢快","忧伤","史诗","治愈","恐怖","浪漫"],
+  };
+  const FALLBACK_FORMULAS = {
+    t2v:"主体+运动 / 背景+运动 / 镜头+运动",
+    i2v:"参考图片特征 + 画面变化描述 + 镜头运动",
+    i2v_end:"首帧到尾帧的过渡描述 + 中间画面变化 + 镜头运动",
+    multimodal:"参考「图片N」中的特征 + 参考「视频N」的运镜 + 音色→角色说:台词",
+    edit:"保持不变的部分 + 替换/增加/删除的元素 + 时机和位置",
+    extend:"延续描述 + 新内容方向 + 过渡方式",
+  };
+
+  const [guide, setGuide] = useState({ cameras: FALLBACK_CAMERAS, atmosphere: FALLBACK_ATMOSPHERE, formulas: FALLBACK_FORMULAS });
+  const [templates, setTemplates] = useState([]);
+  const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState({});
+  const [selectedTemplate, setSelectedTemplate] = useState(null);
+
+  useEffect(() => {
+    const q = `?locale=${encodeURIComponent(locale || "zh")}`;
+    pluginApi("GET", "/prompt-guide" + q).then(r => {
+      if (r.body?.cameras) setGuide({ cameras: r.body.cameras, atmosphere: r.body.atmosphere || FALLBACK_ATMOSPHERE, formulas: r.body.formulas || FALLBACK_FORMULAS });
+    }).catch(() => {});
+    pluginApi("GET", "/prompt-templates" + q).then(r => {
+      const list = Array.isArray(r.body && r.body.templates) ? r.body.templates : [];
+      setTemplates(list);
+    }).catch(() => {});
+  }, [locale]);
+
+  const toggleSection = (key) => setExpanded(prev => ({...prev, [key]: !prev[key]}));
+
+  const filteredTemplates = templates.filter(t =>
+    !search || t.name.includes(search) || (t.name_en||"").toLowerCase().includes(search.toLowerCase()) || t.description.includes(search)
+  );
+
+  const tipsHtml = (window.OpenAkitaMD && typeof window.OpenAkitaMD.render === "function")
+    ? window.OpenAkitaMD.render(t("guide.tips.body"))
+    : null;
+
+  return (
+    <div style={{maxWidth:800}}>
+      <input className="input" placeholder={t("guide.search.placeholder")} value={search} onChange={e => setSearch(e.target.value)} style={{marginBottom:16}} />
+
+      <div className="card" style={{cursor:"pointer"}} onClick={() => toggleSection("templates")}>
+        <div className="oa-section-label oa-section-label--inline" style={{justifyContent:"space-between"}}>
+          <span><Ico name="fileText"/> {t("guide.section.templates")}</span>
+          <span className="text-dim">{expanded.templates ? "▲" : "▼"}</span>
+        </div>
+        {expanded.templates && (
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:8,marginTop:8}} onClick={e => e.stopPropagation()}>
+            {filteredTemplates.length === 0 && <p className="text-sm text-dim">{t("guide.templates.empty")}</p>}
+            {filteredTemplates.map(tpl => (
+              <div key={tpl.id} className="template-card" onClick={() => setSelectedTemplate(selectedTemplate?.id === tpl.id ? null : tpl)}>
+                <h4>{tpl.name} <span className="text-xs text-dim">{tpl.name_en}</span></h4>
+                <p>{tpl.description}</p>
+                <div className="flex gap-2 flex-wrap" style={{marginTop:4}}>
+                  {tpl.modes?.map(m => <span key={m} className="tag tag-blue">{m}</span>)}
+                </div>
+                {selectedTemplate?.id === tpl.id && tpl.template && (
+                  <div style={{marginTop:8,padding:8,background:"var(--bg)",borderRadius:6,fontSize:12,whiteSpace:"pre-wrap",color:"var(--text-muted)"}}>
+                    {tpl.template}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card" style={{cursor:"pointer"}} onClick={() => toggleSection("cameras")}>
+        <div className="oa-section-label oa-section-label--inline" style={{justifyContent:"space-between"}}>
+          <span><Ico name="camera"/> {t("guide.section.cameras")}</span>
+          <span className="text-dim">{expanded.cameras ? "▲" : "▼"}</span>
+        </div>
+        {expanded.cameras && (
+          <div className="flex gap-2 flex-wrap" style={{marginTop:8}} onClick={e => e.stopPropagation()}>
+            {guide.cameras.map(c => (
+              <span key={c.zh} className="keyword-tag" title={c.desc} style={{cursor:"help"}}>
+                {c.zh} ({c.en})
+                <span className="text-xs text-dim" style={{display:"block",marginTop:2}}>{c.desc}</span>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card" style={{cursor:"pointer"}} onClick={() => toggleSection("atmosphere")}>
+        <div className="oa-section-label oa-section-label--inline" style={{justifyContent:"space-between"}}>
+          <span><Ico name="palette"/> {t("guide.section.atmosphere")}</span>
+          <span className="text-dim">{expanded.atmosphere ? "▲" : "▼"}</span>
+        </div>
+        {expanded.atmosphere && (
+          <div style={{marginTop:8}} onClick={e => e.stopPropagation()}>
+            {Object.entries(guide.atmosphere).map(([cat, words]) => (
+              <div key={cat} style={{marginBottom:10}}>
+                <span className="label" style={{marginBottom:4,display:"inline-block"}}>{t("guide.atmosphere." + cat) || cat}</span>
+                <div className="flex gap-2 flex-wrap">
+                  {words.map(w => <span key={w} className="keyword-tag">{w}</span>)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card" style={{cursor:"pointer"}} onClick={() => toggleSection("formulas")}>
+        <div className="oa-section-label oa-section-label--inline" style={{justifyContent:"space-between"}}>
+          <span><Ico name="ruler"/> {t("guide.section.formulas")}</span>
+          <span className="text-dim">{expanded.formulas ? "▲" : "▼"}</span>
+        </div>
+        {expanded.formulas && (
+          <div style={{marginTop:8}} onClick={e => e.stopPropagation()}>
+            {Object.entries(guide.formulas).map(([mode, formula]) => (
+              <div key={mode} style={{marginBottom:8,padding:8,background:"var(--bg)",borderRadius:6}}>
+                <span className="tag tag-blue" style={{marginRight:8}}>{t("modes." + mode) || mode}</span>
+                <span className="text-sm">{formula}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="oa-section-label"><Ico name="lightbulb"/> {t("guide.section.tips")}</div>
+        {tipsHtml
+          ? <div className="oa-md-content" dangerouslySetInnerHTML={{ __html: tipsHtml }} />
+          : <pre style={{whiteSpace:"pre-wrap",fontSize:13,color:"var(--text-muted)",lineHeight:1.8,fontFamily:"inherit"}}>{t("guide.tips.body")}</pre>}
+      </div>
+    </div>
+  );
+}
+
+function StoryboardTab({ onGoToSettings }) {
+  const t = useT();
+  const [story, setStory] = useState("");
+  const [totalDuration, setTotalDuration] = useState(60);
+  const [segDuration, setSegDuration] = useState(10);
+  const [ratio, setRatio] = useState("16:9");
+  const [style, setStyle] = useState("电影级画质");
+  const [model, setModel] = useState("2.0");
+  const [resolution, setResolution] = useState("720p");
+  const [genMode, setGenMode] = useState("serial");
+  const [transition, setTransition] = useState("none");
+  const [fadeDur, setFadeDur] = useState(0.5);
+  const [segments, setSegments] = useState([]);
+  const [decomposing, setDecomposing] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [concatenating, setConcatenating] = useState(false);
+  const [genResults, setGenResults] = useState([]);
+  const [concatPath, setConcatPath] = useState("");
+  const [ffmpegOk, setFfmpegOk] = useState(null);
+  const [step, setStep] = useState("input");
+  const [editIdx, setEditIdx] = useState(-1);
+
+  useEffect(() => {
+    pluginApi("GET", "/long-video/ffmpeg-check").then(r => {
+      setFfmpegOk(r.body?.available ?? false);
+    }).catch(() => setFfmpegOk(false));
+  }, []);
+
+  const [decomposeProgress, setDecomposeProgress] = useState("");
+  const decompose = async () => {
+    if (!story.trim()) return;
+    setDecomposing(true);
+    setDecomposeProgress(_tr("story.decompose.connect"));
+    var timer = setTimeout(() => setDecomposeProgress(_tr("story.decompose.analyze")), 3000);
+    var timer2 = setTimeout(() => setDecomposeProgress(_tr("story.decompose.batch", { n: Math.max(1, Math.round(totalDuration / segDuration)) })), 10000);
+    var timer3 = setTimeout(() => setDecomposeProgress(_tr("story.decompose.long")), 20000);
+    try {
+      const r = await pluginApi("POST", "/long-video/storyboard", {
+        story, total_duration: totalDuration, segment_duration: segDuration, ratio, style,
+      });
+      if (r.body?.ok && r.body.storyboard?.segments) {
+        setSegments(r.body.storyboard.segments);
+        setStep("edit");
+        showToast(_tr("toast.decomposeOk", { n: r.body.storyboard.segments.length }));
+      } else {
+        showToast(_tr("toast.decomposeFail", { msg: r.body?.error || _tr("toast.unknownErr") }), "error");
+      }
+    } catch (e) { showToast(_tr("toast.requestFail", { msg: e.message }), "error"); }
+    clearTimeout(timer); clearTimeout(timer2); clearTimeout(timer3);
+    setDecomposing(false);
+    setDecomposeProgress("");
+  };
+
+  const updateSeg = (idx, field, val) => {
+    setSegments(prev => prev.map((s, i) => i === idx ? {...s, [field]: val} : s));
+  };
+
+  const removeSeg = (idx) => {
+    setSegments(prev => prev.filter((_, i) => i !== idx).map((s, i) => ({...s, index: i + 1})));
+  };
+
+  const addSeg = () => {
+    setSegments(prev => [...prev, {
+      index: prev.length + 1, duration: segDuration, prompt: "",
+      key_frame_description: "", end_frame_description: "",
+      transition_to_next: "cut", camera_notes: "", audio_notes: "",
+    }]);
+  };
+
+  const moveSeg = (idx, dir) => {
+    const arr = [...segments];
+    const target = idx + dir;
+    if (target < 0 || target >= arr.length) return;
+    [arr[idx], arr[target]] = [arr[target], arr[idx]];
+    setSegments(arr.map((s, i) => ({...s, index: i + 1})));
+  };
+
+  const startGeneration = async () => {
+    if (segments.length === 0) return;
+    setGenerating(true);
+    setGenResults([]);
+    setStep("generating");
+    try {
+      const r = await pluginApi("POST", "/long-video/generate", {
+        segments, model, ratio, resolution, mode: genMode, transition, fade_duration: fadeDur,
+      });
+      if (r.body?.ok) {
+        setGenResults(r.body.results || []);
+        setStep("results");
+      } else {
+        showToast(_tr("toast.genFail", { msg: r.body?.error || "" }), "error");
+        setStep("edit");
+      }
+    } catch (e) {
+      showToast(_tr("toast.requestFail", { msg: e.message }), "error");
+      setStep("edit");
+    }
+    setGenerating(false);
+  };
+
+  const doConcat = async () => {
+    const successIds = genResults.filter(r => r.status === "succeeded" && r.id).map(r => r.id);
+    if (successIds.length < 2) { showToast(_tr("toast.concatNeed2"), "warning"); return; }
+    setConcatenating(true);
+    try {
+      for (const tid of successIds) {
+        const t = genResults.find(r => r.id === tid);
+        if (!t?.local_video_path) {
+          await pluginApi("GET", `/videos/${tid}/download`);
+        }
+      }
+      const r = await pluginApi("POST", "/long-video/concat", {
+        task_ids: successIds, transition, fade_duration: fadeDur,
+      });
+      if (r.body?.ok) {
+        setConcatPath(r.body.output_path);
+        setStep("done");
+      } else {
+        showToast(_tr("toast.concatFail", { msg: r.body?.detail || r.body?.error || "" }), "error");
+      }
+    } catch (e) { showToast(_tr("toast.concatFail", { msg: e.message }), "error"); }
+    setConcatenating(false);
+  };
+
+  const segCountEst = Math.max(1, Math.round(totalDuration / segDuration));
+
+  if (step === "input") {
+    const usageHtml = (window.OpenAkitaMD && typeof window.OpenAkitaMD.render === "function")
+      ? window.OpenAkitaMD.render(t("story.usage.body") + "\n\n" + t("story.usage.warn"))
+      : null;
+    return (
+      <div style={{maxWidth:720}}>
+        <div className="card">
+          <div className="oa-section-label"><Ico name="book"/> {t("story.section.input")}</div>
+          <div className="form-row">
+            <label className="label">{t("story.label.story")}</label>
+            <textarea className="input textarea" rows={6} value={story} onChange={e => setStory(e.target.value)}
+              placeholder={t("story.story.placeholder")} />
+          </div>
+
+          <div className="grid-2">
+            <div className="form-row">
+              <label className="label">{t("story.label.totalDuration")}</label>
+              <input className="input" type="number" min={10} max={600} value={totalDuration}
+                onChange={e => setTotalDuration(+e.target.value)} />
+            </div>
+            <div className="form-row">
+              <label className="label">{t("story.label.segDuration")}</label>
+              <select className="input select" value={segDuration} onChange={e => setSegDuration(+e.target.value)}>
+                <option value={5}>5</option><option value={8}>8</option>
+                <option value={10}>10</option><option value={15}>15</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <label className="label">{t("story.label.ratio")}</label>
+              <select className="input select" value={ratio} onChange={e => setRatio(e.target.value)}>
+                <option value="16:9">16:9</option><option value="9:16">9:16</option>
+                <option value="1:1">1:1</option><option value="4:3">4:3</option>
+                <option value="3:4">3:4</option><option value="21:9">21:9</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <label className="label">{t("story.label.style")}</label>
+              <input className="input" value={style} onChange={e => setStyle(e.target.value)} />
+            </div>
+          </div>
+
+          <div style={{padding:"10px 12px",background:"var(--bg)",borderRadius:6,marginBottom:14,fontSize:13,color:"var(--text-muted)"}}>
+            {t("story.estimate", { n: segCountEst, seg: segDuration, total: segCountEst * segDuration })}
+          </div>
+
+          <div className="flex gap-2 justify-between items-center">
+            {decomposing && decomposeProgress ? (
+              <div style={{fontSize:13,color:"var(--primary)",display:"flex",alignItems:"center",gap:8}}>
+                <span className="spinner-sm" />
+                {decomposeProgress}
+              </div>
+            ) : <div />}
+            <button className="btn btn-primary" disabled={!story.trim() || decomposing} onClick={decompose}>
+              {decomposing
+                ? t("story.decompose.busy")
+                : <><Ico name="film"/> {t("story.decompose.idle")}</>}
+            </button>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="oa-section-label"><Ico name="lightbulb"/> {t("story.section.usage")}</div>
+          {usageHtml
+            ? <div className="oa-md-content" dangerouslySetInnerHTML={{ __html: usageHtml }} />
+            : <pre style={{whiteSpace:"pre-wrap",fontSize:13,color:"var(--text-muted)",lineHeight:1.8,fontFamily:"inherit"}}>{t("story.usage.body") + "\n\n" + t("story.usage.warn")}</pre>}
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "edit") {
+    return (
+      <div style={{maxWidth:800}}>
+        <div className="flex justify-between items-center" style={{marginBottom:14}}>
+          <div>
+            <h3 style={{fontSize:16,fontWeight:600}}>{t("story.edit.title", { n: segments.length })}</h3>
+            <p className="text-xs text-dim">{t("story.edit.hint")}</p>
+          </div>
+          <div className="flex gap-2">
+            <button className="btn btn-sm" onClick={() => setStep("input")}><Ico name="arrowLeft"/> {t("story.btn.back")}</button>
+            <button className="btn btn-sm" onClick={addSeg}><Ico name="plus"/> {t("story.btn.addSeg")}</button>
+          </div>
+        </div>
+
+        <div className="card" style={{marginBottom:14}}>
+          <div className="oa-section-label"><Ico name="settings"/> {t("story.section.params")}</div>
+          <div className="grid-2">
+            <div className="form-row">
+              <label className="label">{t("story.label.model")}</label>
+              <select className="input select" value={model} onChange={e => setModel(e.target.value)}>
+                <option value="2.0">Seedance 2.0</option>
+                <option value="1.0-pro">Seedance 1.0 Pro</option>
+                <option value="1.0-lite">Seedance 1.0 Lite</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <label className="label">{t("story.label.resolution")}</label>
+              <select className="input select" value={resolution} onChange={e => setResolution(e.target.value)}>
+                <option value="720p">720p</option><option value="1080p">1080p</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <label className="label">{t("story.label.genMode")}</label>
+              <select className="input select" value={genMode} onChange={e => setGenMode(e.target.value)}>
+                <option value="serial">{t("story.btn.startGenSerial")}</option>
+                <option value="parallel">{t("story.btn.startGenParallel")}</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <label className="label">{t("story.label.transition")}</label>
+              <div className="flex gap-2">
+                <select className="input select flex-1" value={transition} onChange={e => setTransition(e.target.value)}>
+                  <option value="none">{t("story.concat.modeCut")}</option>
+                  <option value="crossfade">{t("story.concat.modeFade")}</option>
+                </select>
+                {transition === "crossfade" && (
+                  <input className="input" type="number" step={0.1} min={0.2} max={2} value={fadeDur}
+                    onChange={e => setFadeDur(+e.target.value)} style={{width:80}} />
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {segments.map((seg, idx) => (
+          <div key={idx} className="card" style={{position:"relative",borderLeft: editIdx===idx?"3px solid var(--primary)":"3px solid transparent"}}>
+            <div className="flex justify-between items-center" style={{cursor:"pointer"}} onClick={() => setEditIdx(editIdx === idx ? -1 : idx)}>
+              <div className="flex gap-2 items-center">
+                <span className="badge badge-info" style={{minWidth:28,textAlign:"center"}}>{seg.index || idx+1}</span>
+                <span style={{fontWeight:500,fontSize:14}}>{seg.prompt ? seg.prompt.slice(0, 60) + (seg.prompt.length > 60 ? "..." : "") : t("tasks.noPrompt")}</span>
+              </div>
+              <div className="flex gap-2 items-center">
+                <span className="text-xs text-dim">{seg.duration || segDuration}s</span>
+                <span className="text-xs text-dim">{seg.transition_to_next || "cut"}</span>
+                <span style={{fontSize:11,color:"var(--text-dim)"}}>{editIdx === idx ? "▲" : "▼"}</span>
+              </div>
+            </div>
+
+            {editIdx === idx && (
+              <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid var(--border)"}}>
+                <div className="form-row">
+                  <label className="label">{t("create.section.prompt")}</label>
+                  <textarea className="input textarea" rows={3} value={seg.prompt || ""}
+                    onChange={e => updateSeg(idx, "prompt", e.target.value)} />
+                </div>
+                <div className="grid-2">
+                  <div className="form-row">
+                    <label className="label">{t("story.label.segDuration")}</label>
+                    <input className="input" type="number" min={4} max={15} value={seg.duration || segDuration}
+                      onChange={e => updateSeg(idx, "duration", +e.target.value)} />
+                  </div>
+                  <div className="form-row">
+                    <label className="label">{t("story.label.transition")}</label>
+                    <select className="input select" value={seg.transition_to_next || "cut"}
+                      onChange={e => updateSeg(idx, "transition_to_next", e.target.value)}>
+                      <option value="cut">{t("story.concat.modeCut")}</option>
+                      <option value="crossfade">{t("story.concat.modeFade")}</option>
+                      <option value="ai_extend">AI</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="grid-2">
+                  <div className="form-row">
+                    <label className="label">{t("create.upload.startFrame")}</label>
+                    <input className="input" value={seg.key_frame_description || ""}
+                      onChange={e => updateSeg(idx, "key_frame_description", e.target.value)} />
+                  </div>
+                  <div className="form-row">
+                    <label className="label">{t("create.upload.endFrame")}</label>
+                    <input className="input" value={seg.end_frame_description || ""}
+                      onChange={e => updateSeg(idx, "end_frame_description", e.target.value)} />
+                  </div>
+                </div>
+                <div className="grid-2">
+                  <div className="form-row">
+                    <label className="label">{t("guide.section.cameras")}</label>
+                    <input className="input" value={seg.camera_notes || ""}
+                      onChange={e => updateSeg(idx, "camera_notes", e.target.value)} />
+                  </div>
+                  <div className="form-row">
+                    <label className="label">{t("create.toggle.audio")}</label>
+                    <input className="input" value={seg.audio_notes || ""}
+                      onChange={e => updateSeg(idx, "audio_notes", e.target.value)} />
+                  </div>
+                </div>
+                <div className="flex gap-2" style={{marginTop:8}}>
+                  <button className="btn btn-sm" disabled={idx===0} onClick={() => moveSeg(idx, -1)}><Ico name="arrowUp"/> {t("story.btn.moveUp")}</button>
+                  <button className="btn btn-sm" disabled={idx===segments.length-1} onClick={() => moveSeg(idx, 1)}><Ico name="arrowDown"/> {t("story.btn.moveDown")}</button>
+                  <div style={{flex:1}} />
+                  <button className="btn btn-sm btn-danger" onClick={() => removeSeg(idx)}>{t("story.btn.delete")}</button>
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+
+        <div className="flex justify-between" style={{marginTop:16}}>
+          <p className="text-sm text-dim">
+            {t("story.totalEstimate", { n: segments.length, sec: segments.reduce((s, seg) => s + (seg.duration || segDuration), 0) })}
+          </p>
+          <button className="btn btn-primary" disabled={segments.length === 0 || generating} onClick={startGeneration}>
+            <Ico name="rocket"/> {t("story.btn.startGen", { mode: genMode === "serial" ? t("story.btn.startGenSerial") : t("story.btn.startGenParallel") })}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "generating") {
+    const minRange = genMode === "serial" ? (segments.length * 2 + "-" + segments.length * 5) : "2-5";
+    return (
+      <div style={{maxWidth:640}}>
+        <div className="card" style={{textAlign:"center",padding:40}}>
+          <div className="spinner" style={{margin:"0 auto 16px"}} />
+          <p style={{fontSize:16,fontWeight:500}}>{t("story.gen.title", { n: segments.length })}</p>
+          <p className="text-sm text-dim" style={{marginTop:8}}>
+            {genMode === "serial" ? t("story.gen.serialDesc") : t("story.gen.parallelDesc")}
+          </p>
+          <p className="text-sm text-dim" style={{marginTop:4}}>
+            {t("story.gen.estimate", { min: minRange })}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === "results" || step === "done") {
+    const succCount = genResults.filter(r => r.status === "succeeded").length;
+    const failCount = genResults.filter(r => r.status === "failed" || r.error).length;
+
+    return (
+      <div style={{maxWidth:800}}>
+        <div className="flex justify-between items-center" style={{marginBottom:14}}>
+          <h3 style={{fontSize:16,fontWeight:600}}>
+            {step === "done" ? <><Ico name="check"/> {t("story.results.done")}</> : t("story.results.title")}
+          </h3>
+          <div className="flex gap-2">
+            <button className="btn btn-sm" onClick={() => { setStep("input"); setSegments([]); setGenResults([]); setConcatPath(""); }}>
+              {t("story.btn.newProject")}
+            </button>
+            <button className="btn btn-sm" onClick={() => setStep("edit")}>{t("story.btn.backEdit")}</button>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="flex gap-4" style={{fontSize:13}}>
+            <span>{t("story.statTotal")} <strong>{genResults.length}</strong></span>
+            <span style={{color:"var(--success)"}}>{t("story.statSuccess")} <strong>{succCount}</strong></span>
+            {failCount > 0 && <span style={{color:"var(--danger)"}}>{t("story.statFail")} <strong>{failCount}</strong></span>}
+          </div>
+        </div>
+
+        {genResults.map((r, idx) => (
+          <div key={idx} className="card" style={{borderLeft:`3px solid ${r.status==="succeeded"?"var(--success)":r.error||r.status==="failed"?"var(--danger)":"var(--warning)"}`}}>
+            <div className="flex justify-between items-center">
+              <div className="flex gap-2 items-center">
+                <span className="badge" style={{minWidth:28,textAlign:"center",background:r.status==="succeeded"?"var(--success)":"var(--danger)",color:"#fff"}}>
+                  {idx + 1}
+                </span>
+                <span style={{fontSize:13}}>{r.prompt ? r.prompt.slice(0, 50) + "..." : segments[idx]?.prompt?.slice(0, 50) || ""}</span>
+              </div>
+              <span className={"badge badge-" + (r.status === "succeeded" ? "success" : "error")}>
+                {r.status === "succeeded" ? <><Ico name="check"/> {t("tasks.tag.done")}</> : r.error ? <><Ico name="x"/> {t("tasks.tag.failed")}</> : r.status || ""}
+              </span>
+            </div>
+            {r.error && <p className="text-xs" style={{color:"var(--danger)",marginTop:6}}>{r.error}</p>}
+            {r.video_url && (
+              <div style={{marginTop:8}}>
+                <video src={r.video_url} controls style={{maxWidth:"100%",maxHeight:200,borderRadius:6}} />
+              </div>
+            )}
+          </div>
+        ))}
+
+        {step === "done" && concatPath && (
+          <div className="card" style={{borderLeft:"3px solid var(--success)",background:"rgba(34,197,94,.05)"}}>
+            <div className="oa-section-label"><Ico name="film"/> {t("story.concat.title")}</div>
+            <p style={{fontSize:13,color:"var(--text-muted)",wordBreak:"break-all"}}>{concatPath}</p>
+            <button className="btn btn-sm" style={{marginTop:8}} onClick={() =>
+              showInFolder(concatPath)
+            }><Ico name="folderOpen"/> {t("story.btn.openFolder")}</button>
+          </div>
+        )}
+
+        {step === "results" && succCount >= 2 && (
+          <div style={{marginTop:16}}>
+            {ffmpegOk === false && (
+              <div className="inline-warn">
+                <span style={{flexShrink:0,color:"var(--warning)"}}><Ico name="warn"/></span>
+                <div className="inline-warn__text">
+                  <strong>{t("story.ffmpeg.warn.title")}</strong>
+                  <small>{t("story.ffmpeg.warn.hint")}</small>
+                </div>
+                {onGoToSettings && (
+                  <button className="btn btn-sm btn-primary" onClick={() => onGoToSettings()}>
+                    {t("story.ffmpeg.warn.cta")}
+                  </button>
+                )}
+              </div>
+            )}
+            <div className="flex justify-between items-center">
+              <p className="text-sm text-dim">
+                {ffmpegOk ? <><Ico name="check"/> {t("story.concat.tip", { n: succCount })}</> : ""}
+              </p>
+              <button className="btn btn-primary" disabled={!ffmpegOk || concatenating} onClick={doConcat}>
+                {concatenating
+                  ? t("story.concat.busy")
+                  : <><Ico name="scissors"/> {t("story.concat.idle", { mode: transition === "crossfade" ? t("story.concat.modeFade") : t("story.concat.modeCut") })}</>}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return null;
+}
+
+// ── FfmpegInstaller ─────────────────────────────────────────────────────
+// Self-contained replacement for the retired SDK 0.6.x dep-gate.js widget.
+// Talks to the in-plugin /system/* routes (see seedance_inline/system_deps.py)
+// using a fire-and-poll cycle: POST .../install kicks off a background
+// subprocess, then we GET .../status every 3s until busy:false.
+function PermissionsPanel({ status, onChanged }) {
+  // ``status`` is the latest /permissions/check payload; ``onChanged``
+  // bubbles up to the App so the top banner can re-evaluate after a
+  // successful grant. The grant call hits the HOST admin endpoint
+  // (/api/plugins/{id}/_admin/permissions/grant) — pluginApi prefixes
+  // /api/plugins/{pluginId} so we just pass the suffix.
+  const t = useT();
+  const [granting, setGranting] = useState(false);
+
+  if (!status) {
+    return (
+      <div className="sysdep-card">
+        <div className="sysdep-card__head">
+          <span className="sysdep-spinner"/>
+          <span className="sysdep-card__title">{t("settings.system.detecting")}</span>
+        </div>
+      </div>
+    );
+  }
+
+  const missing = status.missing || [];
+  const checks = status.checks || [];
+  const allOk = missing.length === 0;
+
+  const grantAll = async () => {
+    if (!missing.length) return;
+    setGranting(true);
+    try {
+      const r = await pluginApi("POST", "/_admin/permissions/grant", {
+        permissions: missing,
+        reload: true,
+      });
+      const body = r.body || {};
+      if (body.ok) {
+        showToast(_tr("settings.perms.granted"));
+        if (onChanged) await onChanged();
+      } else {
+        showToast(_tr("settings.perms.grantFailed", { msg: body.error || "unknown" }), "error");
+      }
+    } catch (e) {
+      showToast(_tr("settings.perms.grantFailed", { msg: e.message || "network error" }), "error");
+    }
+    setGranting(false);
+  };
+
+  return (
+    <div className="sysdep-card">
+      <div className="sysdep-card__head">
+        <div className="sysdep-card__title">
+          <Ico name="key"/> {t("settings.section.permissions")}
+          {allOk
+            ? <span className="sysdep-card__badge sysdep-card__badge--ok">
+                <Ico name="check"/> {t("settings.perms.allOk")}
+              </span>
+            : <span className="sysdep-card__badge sysdep-card__badge--missing">
+                <Ico name="warn"/> {missing.length}
+              </span>}
+        </div>
+      </div>
+      {!allOk && (
+        <div className="deps-help" style={{marginTop:10, marginBottom:0}}>
+          <strong>{t("settings.perms.intro.strong")}</strong>
+          <div style={{marginTop:4}}>{t("settings.perms.intro.body")}</div>
+        </div>
+      )}
+      <table className="perms-table">
+        <thead>
+          <tr>
+            <th>{t("settings.perms.col.permission")}</th>
+            <th>{t("settings.perms.col.feature")}</th>
+            <th style={{width:90}}>{t("settings.perms.col.status")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {checks.map(c => (
+            <tr key={c.permission}>
+              <td><code>{c.permission}</code></td>
+              <td>{c.feature}</td>
+              <td>
+                {c.granted
+                  ? <span className="perms-tag perms-tag--ok"><Ico name="check"/> {t("settings.perms.status.ok")}</span>
+                  : <span className="perms-tag perms-tag--missing"><Ico name="warn"/> {t("settings.perms.status.missing")}</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {!allOk && (
+        <div className="sysdep-card__actions">
+          <button className="btn btn-sm btn-primary" onClick={grantAll} disabled={granting}>
+            {granting
+              ? <><span className="sysdep-spinner"/> {t("settings.perms.granting")}</>
+              : <><Ico name="check"/> {t("settings.perms.btn.grantAll")}</>}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FfmpegInstaller({ onInstalled, onUninstalled }) {
+  const t = useT();
+  const [snap, setSnap] = useState(null);     // { found, version, location, methods, uninstall_methods, busy, last_install, ... }
+  const [loading, setLoading] = useState(true);
+  const [busyOp, setBusyOp] = useState("");   // "" | "install" | "uninstall"
+  const [status, setStatus] = useState(null); // live status (busy, log_tail, elapsed_sec, op_kind, ...)
+  const [copied, setCopied] = useState(false);
+  // Inline uninstall confirm: window.confirm() is silently blocked because
+  // the host iframe sandbox does NOT include allow-modals (see
+  // apps/setup-center/src/views/PluginAppHost.tsx). We render our own
+  // confirmation callout instead so the click actually has an effect.
+  const [confirmingUninstall, setConfirmingUninstall] = useState(false);
+  // Re-check needs an explicit spinner since the underlying GET is so fast
+  // (<100ms typically) that without a min-duration throttle the user sees
+  // no visual feedback at all.
+  const [rechecking, setRechecking] = useState(false);
+  const pollRef = useRef(null);
+  const logRef = useRef(null);
+  const opNotifiedRef = useRef(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const r = await pluginApi("GET", "/system/components");
+      const item = (r.body?.items || []).find(x => x.id === "ffmpeg");
+      if (item) {
+        setSnap(item);
+        if (item.busy) {
+          // server says an op is still running (e.g. user re-opened the
+          // tab mid-install / mid-uninstall) — pick polling back up using
+          // whichever op_kind the server reports.
+          setBusyOp(item.last_install?.op_kind || "install");
+        }
+      }
+    } catch (e) {
+      setSnap({ id: "ffmpeg", found: false, methods: [], uninstall_methods: [], is_root: false });
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [status?.log_tail?.length]);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }, []);
+
+  useEffect(() => {
+    if (!busyOp) { stopPolling(); return; }
+    opNotifiedRef.current = false;
+    const tick = async () => {
+      try {
+        const r = await pluginApi("GET", "/system/ffmpeg/status");
+        const st = r.body || {};
+        setStatus(st);
+        if (!st.busy) {
+          stopPolling();
+          const finishedOp = busyOp;
+          setBusyOp("");
+          await refresh();
+          if (opNotifiedRef.current) return;
+          opNotifiedRef.current = true;
+          // Success criteria differs per op: install wants found=true,
+          // uninstall wants found=false. The error toast also needs the
+          // matching i18n key.
+          if (finishedOp === "uninstall") {
+            if (!st.found) {
+              showToast(_tr("settings.system.uninstalled"));
+              if (onUninstalled) onUninstalled();
+            } else {
+              const msg = st.error || _tr("settings.system.status.found", { ver: st.version || "?" });
+              showToast(_tr("settings.system.uninstallFailed", { msg }), "error");
+            }
+          } else {
+            if (st.found) {
+              showToast(_tr("settings.system.installed"));
+              if (onInstalled) onInstalled(true);
+            } else {
+              const msg = st.error || _tr("settings.system.status.missing");
+              showToast(_tr("settings.system.installFailed", { msg }), "error");
+            }
+          }
+        }
+      } catch (e) {
+        // network blip — try again next tick instead of bailing
+      }
+    };
+    tick();
+    pollRef.current = setInterval(tick, 3000);
+    return stopPolling;
+  }, [busyOp, refresh, stopPolling, onInstalled, onUninstalled]);
+
+  useEffect(() => () => stopPolling(), [stopPolling]);
+
+  const formatElapsed = (sec) => {
+    const s = Math.max(0, Math.round(sec || 0));
+    const mm = String(Math.floor(s / 60)).padStart(2, "0");
+    const ss = String(s % 60).padStart(2, "0");
+    return mm + ":" + ss;
+  };
+
+  const startInstall = async (methodIndex) => {
+    setStatus({ busy: true, log_tail: [], elapsed_sec: 0, op_kind: "install" });
+    setBusyOp("install");
+    try {
+      const r = await pluginApi("POST", "/system/ffmpeg/install", { method_index: methodIndex });
+      const body = r.body || {};
+      if (body.ok === false) {
+        setBusyOp("");
+        const msg = body.error || "unknown";
+        showToast(_tr("settings.system.installFailed", { msg }), "error");
+      }
+    } catch (e) {
+      setBusyOp("");
+      showToast(_tr("settings.system.installFailed", { msg: e.message || "network error" }), "error");
+    }
+  };
+
+  const startUninstall = async (methodIndex) => {
+    setConfirmingUninstall(false);
+    setStatus({ busy: true, log_tail: [], elapsed_sec: 0, op_kind: "uninstall" });
+    setBusyOp("uninstall");
+    try {
+      const r = await pluginApi("POST", "/system/ffmpeg/uninstall", { method_index: methodIndex });
+      const body = r.body || {};
+      if (body.ok === false) {
+        setBusyOp("");
+        const msg = body.error || "unknown";
+        showToast(_tr("settings.system.uninstallFailed", { msg }), "error");
+      }
+    } catch (e) {
+      setBusyOp("");
+      showToast(_tr("settings.system.uninstallFailed", { msg: e.message || "network error" }), "error");
+    }
+  };
+
+  const handleRecheck = async () => {
+    if (rechecking || busyOp) return;
+    setRechecking(true);
+    const t0 = Date.now();
+    try {
+      await refresh();
+    } finally {
+      const elapsed = Date.now() - t0;
+      const minDelay = 400;
+      if (elapsed < minDelay) {
+        await new Promise(r => setTimeout(r, minDelay - elapsed));
+      }
+      setRechecking(false);
+    }
+  };
+
+  const copyCmd = (cmd) => {
+    if (!cmd) return;
+    copyToClipboard(cmd);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  if (loading) {
+    return (
+      <div className="sysdep-card">
+        <div className="sysdep-card__head">
+          <span className="sysdep-spinner"/>
+          <span className="sysdep-card__title">{t("settings.system.detecting")}</span>
+        </div>
+      </div>
+    );
+  }
+
+  const found = !!snap?.found;
+  const methods = snap?.methods || [];
+  const uninstallMethods = snap?.uninstall_methods || [];
+  const isRoot = !!snap?.is_root;
+  const installing = busyOp === "install";
+  const uninstalling = busyOp === "uninstall";
+  const busy = !!busyOp;
+  const liveStatus = busy ? status : (snap?.last_install || null);
+  const logLines = liveStatus?.log_tail || [];
+  const lastOpKind = liveStatus?.op_kind || "install";
+
+  // Pick a "primary" install method: the first executable method whose
+  // requires_sudo is satisfied — falls back to the first one regardless.
+  const primaryIdx = (() => {
+    for (let i = 0; i < methods.length; i++) {
+      const m = methods[i];
+      if (m.strategy === "manual") continue;
+      if (m.requires_sudo && !isRoot) continue;
+      return i;
+    }
+    return methods.findIndex(m => m.strategy !== "manual");
+  })();
+  const primary = primaryIdx >= 0 ? methods[primaryIdx] : null;
+  const manualMethod = methods.find(m => m.strategy === "manual");
+  const blockingSudoMethod = (!found && primary == null)
+    ? methods.find(m => m.requires_sudo && !isRoot)
+    : null;
+
+  // Same logic for the uninstall recipe.
+  const uninstallPrimaryIdx = (() => {
+    for (let i = 0; i < uninstallMethods.length; i++) {
+      const m = uninstallMethods[i];
+      if (m.strategy === "manual") continue;
+      if (m.requires_sudo && !isRoot) continue;
+      return i;
+    }
+    return -1;
+  })();
+  const uninstallPrimary = uninstallPrimaryIdx >= 0 ? uninstallMethods[uninstallPrimaryIdx] : null;
+
+  return (
+    <div className="sysdep-card">
+      <div className="sysdep-card__head">
+        <div className="sysdep-card__title">
+          <Ico name="package"/> FFmpeg
+          {uninstalling
+            ? <span className="sysdep-card__badge sysdep-card__badge--busy">
+                <span className="sysdep-spinner"/>
+                {t("settings.system.uninstalling", { elapsed: formatElapsed(liveStatus?.elapsed_sec) })}
+              </span>
+            : installing
+              ? <span className="sysdep-card__badge sysdep-card__badge--busy">
+                  <span className="sysdep-spinner"/>
+                  {t("settings.system.installing", { elapsed: formatElapsed(liveStatus?.elapsed_sec) })}
+                </span>
+              : found
+                ? <span className="sysdep-card__badge sysdep-card__badge--ok">
+                    <Ico name="check"/>
+                    {snap.version
+                      ? t("settings.system.status.found", { ver: snap.version })
+                      : t("settings.system.status.foundNoVer")}
+                  </span>
+                : <span className="sysdep-card__badge sysdep-card__badge--missing">
+                    <Ico name="warn"/> {t("settings.system.status.missing")}
+                  </span>}
+        </div>
+      </div>
+      {found && snap.location && (
+        <div className="sysdep-card__path">{t("settings.system.location", { path: snap.location })}</div>
+      )}
+
+      <div className="sysdep-card__actions">
+        {!busy && !found && primary && (
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => startInstall(primaryIdx)}
+            title={primary.command_hint || primary.strategy}>
+            <Ico name="package"/>{" "}
+            {t("settings.system.btn.install")}
+          </button>
+        )}
+        {!busy && found && uninstallPrimary && !confirmingUninstall && (
+          <button
+            className="btn btn-sm btn-danger"
+            onClick={() => setConfirmingUninstall(true)}
+            title={uninstallPrimary.command_hint || uninstallPrimary.strategy}
+            style={{borderColor:"var(--danger)", color:"var(--danger)"}}>
+            <Ico name="trash"/>{" "}
+            {t("settings.system.btn.uninstall")}
+          </button>
+        )}
+        {!busy && (
+          <button className="btn btn-sm" onClick={handleRecheck} disabled={rechecking}>
+            {rechecking
+              ? <><span className="sysdep-spinner"/>{" "}{t("settings.system.detecting")}</>
+              : <><Ico name="refresh"/> {t("settings.system.btn.recheck")}</>}
+          </button>
+        )}
+        {snap?.homepage && (
+          <a className="btn btn-sm" href={snap.homepage} target="_blank" rel="noopener noreferrer">
+            <Ico name="link"/> {t("settings.system.btn.openHome")}
+          </a>
+        )}
+      </div>
+
+      {!busy && found && confirmingUninstall && uninstallPrimary && (
+        <div className="sysdep-card__sudo-hint"
+             style={{borderColor:"var(--danger)", background:"rgba(239,68,68,.08)"}}>
+          <div style={{whiteSpace:"pre-wrap", color:"var(--text)", fontSize:12, lineHeight:1.6}}>
+            {t("settings.system.uninstallConfirm")}
+          </div>
+          <div className="sysdep-card__sudo-cmd" style={{marginTop:10}}>
+            <code>{uninstallPrimary.command_hint || uninstallPrimary.strategy}</code>
+          </div>
+          <div style={{display:"flex", gap:6, marginTop:10, justifyContent:"flex-end"}}>
+            <button className="btn btn-sm" onClick={() => setConfirmingUninstall(false)}>
+              {t("settings.system.btn.cancel")}
+            </button>
+            <button className="btn btn-sm btn-danger"
+                    style={{background:"var(--danger)", color:"#fff", borderColor:"var(--danger)"}}
+                    onClick={() => startUninstall(uninstallPrimaryIdx)}>
+              <Ico name="trash"/>{" "}{t("settings.system.btn.uninstallConfirmBtn")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!found && !busy && !primary && manualMethod && !blockingSudoMethod && (
+        <div className="sysdep-card__sudo-hint" style={{borderLeft: "3px solid var(--primary)"}}>
+          {t("settings.system.noMethod")}
+        </div>
+      )}
+
+      {!found && !busy && blockingSudoMethod && blockingSudoMethod.command_hint && (
+        <div className="sysdep-card__sudo-hint">
+          <div>{t("settings.system.requiresSudo")}</div>
+          <div className="sysdep-card__sudo-cmd">
+            <code>sudo {blockingSudoMethod.command_hint}</code>
+            <button className="btn btn-sm" onClick={() => copyCmd("sudo " + blockingSudoMethod.command_hint)}>
+              {copied ? t("settings.system.btn.copied") : t("settings.system.btn.copyCmd")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {(busy || logLines.length > 0) && (
+        <div className="sysdep-log">
+          <div className="sysdep-log__head">
+            <span>{lastOpKind === "uninstall"
+              ? t("settings.system.logTitleUninstall")
+              : t("settings.system.logTitle")}</span>
+            {busy && liveStatus?.elapsed_sec != null && (
+              <span>{formatElapsed(liveStatus.elapsed_sec)}</span>
+            )}
+          </div>
+          {logLines.length === 0
+            ? <pre className="sysdep-log__body sysdep-log__body--empty">{t("settings.system.logEmpty")}</pre>
+            : <pre className="sysdep-log__body" ref={logRef}>{logLines.join("\n")}</pre>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function SettingsTab({ onKeyChange, onFfmpegChanged, permsStatus, onPermsRefresh }) {
+  const t = useT();
+  const [config, setConfig] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
+
+  useEffect(() => {
+    pluginApi("GET", "/settings").then(r => {
+      if (r.body?.config) {
+        setConfig(r.body.config);
+      }
+    }).catch(() => {});
+  }, []);
+
+  const save = async (updates) => {
+    setSaving(true);
+    try {
+      var r = await pluginApi("PUT", "/settings", { updates });
+      if (r.body?.config) {
+        setConfig(r.body.config);
+        if (updates.ark_api_key && r.body.config.ark_api_key !== updates.ark_api_key) {
+          showToast(_tr("settings.toast.keyError"), "error");
+          setSaving(false);
+          return;
+        }
+      }
+      if (updates.ark_api_key) {
+        setApiKey("");
+        if (onKeyChange && r.body?.config?.ark_api_key) onKeyChange(r.body.config.ark_api_key);
+      }
+      showToast(_tr("settings.toast.saved"));
+    } catch (e) {
+      showToast(_tr("settings.toast.saveFailed", { msg: e.message }), "error");
+    }
+    setSaving(false);
+  };
+
+  const [stats, setStats] = useState(null);
+  useEffect(() => {
+    pluginApi("GET", "/storage/stats").then(r => r.body?.stats && setStats(r.body.stats)).catch(() => {});
+  }, []);
+
+  const statKeyMap = {output_dir:"settings.stats.outputDir", assets_dir:"settings.stats.assetsDir", cache_dir:"settings.stats.cacheDir"};
+
+  // ── Folder helpers ────────────────────────────────────────────────
+  // "Open" goes through the plugin backend (mkdir -p + spawn explorer/
+  // open/xdg-open). This works even when the user has NOT customized
+  // the folder yet — the backend resolves `key` to the same default
+  // that /storage/stats uses, so "默认: ~/seedance-output/" is openable.
+  const openFolderByKey = async (key) => {
+    try {
+      const r = await pluginApi("POST", "/storage/open-folder", { key });
+      if (!r.body?.ok) {
+        showToast(_tr("settings.folder.openFailed", { msg: r.body?.detail || "" }), "error");
+      }
+    } catch (e) {
+      showToast(_tr("settings.folder.openFailed", { msg: e.message || String(e) }), "error");
+    }
+  };
+
+  // "Select" opens the in-plugin folder picker modal. The native Tauri
+  // dialog has been unreliable across capability/version combos, so we
+  // serve our own browser backed by /storage/list-dir + /storage/mkdir.
+  // This needs ZERO host or Tauri cooperation and works in plain web
+  // mode too.
+  const [folderPicker, setFolderPicker] = useState(null); // {key, title, initialPath} | null
+  const openFolderPicker = (configKey, titleKey) => {
+    setFolderPicker({
+      key: configKey,
+      title: _tr(titleKey),
+      initialPath: (config[configKey] || "").trim(),
+    });
+  };
+  const handleFolderPickerSelect = (path) => {
+    if (!folderPicker) return;
+    const k = folderPicker.key;
+    setFolderPicker(null);
+    if (path) {
+      setConfig({...config, [k]: path});
+      save({[k]: path});
+      showToast(_tr("settings.folder.savedTo", { path }));
+    }
+  };
+
+  return (
+    <div style={{maxWidth:640}}>
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"><Ico name="key"/> {t("settings.section.api")}</h3>
+        <div className={"form-row" + (config.ark_api_key ? "" : " oa-config-field-callout")}
+             data-callout={config.ark_api_key ? undefined : t("settings.api.required")}>
+          <label className="label">{t("settings.label.apiKey")}</label>
+          <div className="flex gap-2">
+            <input className="input flex-1" type={showKey?"text":"password"}
+              value={apiKey !== "" ? apiKey : (config.ark_api_key || "")} onChange={e => setApiKey(e.target.value)}
+              placeholder={t("settings.api.placeholder")} />
+            <button className="btn btn-sm" onClick={() => setShowKey(!showKey)}>{showKey ? t("settings.api.hide") : t("settings.api.show")}</button>
+            <button className="btn btn-sm btn-primary" disabled={!apiKey} onClick={() => save({ark_api_key: apiKey})}>{t("settings.api.save")}</button>
+          </div>
+          <p className="text-xs text-dim" style={{marginTop:4}}>{t("settings.api.help")}</p>
+        </div>
+      </div>
+
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"><Ico name="key"/> {t("settings.section.permissions")}</h3>
+        <PermissionsPanel status={permsStatus} onChanged={onPermsRefresh} />
+      </div>
+
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"><Ico name="package"/> {t("settings.section.system")}</h3>
+        <div className="deps-help">
+          <strong>{t("settings.system.intro.strong")}</strong>
+          <div style={{marginTop:4}}>{t("settings.system.intro.body")}</div>
+          <ul>
+            <li>{t("settings.system.platform.win")}</li>
+            <li>{t("settings.system.platform.mac")}</li>
+            <li>{t("settings.system.platform.linux")}</li>
+          </ul>
+        </div>
+        <FfmpegInstaller onInstalled={() => onFfmpegChanged && onFfmpegChanged(true)} />
+      </div>
+
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"><Ico name="settings"/> {t("settings.section.defaults")}</h3>
+        <div className="grid-2">
+          <div className="form-row">
+            <label className="label">{t("settings.label.tier")}</label>
+            <select className="input select" value={config.service_tier_default || "default"}
+              onChange={e => save({service_tier_default: e.target.value})}>
+              <option value="default">{t("settings.tier.online")}</option>
+              <option value="flex">{t("settings.tier.flex")}</option>
+            </select>
+          </div>
+          <div className="form-row">
+            <label className="label">{t("settings.label.poll")}</label>
+            <select className="input select" value={config.poll_interval || "15"}
+              onChange={e => save({poll_interval: e.target.value})}>
+              <option value="10">{t("settings.poll.10")}</option>
+              <option value="15">{t("settings.poll.15")}</option>
+              <option value="30">{t("settings.poll.30")}</option>
+              <option value="60">{t("settings.poll.60")}</option>
+            </select>
+          </div>
+          <div className="form-row">
+            <label className="label">{t("settings.label.optimizeLevel")}</label>
+            <select className="input select" value={config.llm_optimize_level || "professional"}
+              onChange={e => save({llm_optimize_level: e.target.value})}>
+              <option value="light">{t("settings.optimize.light")}</option>
+              <option value="professional">{t("settings.optimize.professional")}</option>
+              <option value="storyboard">{t("settings.optimize.storyboard")}</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"><Ico name="folder"/> {t("settings.section.folder")}</h3>
+        <div className="form-row">
+          <label className="label">{t("settings.label.outputDir")}</label>
+          <div className="folder-row">
+            <input className="input" value={config.output_dir || ""} placeholder={t("settings.outputDir.placeholder")}
+              onChange={e => setConfig({...config, output_dir: e.target.value})}
+              onBlur={e => save({output_dir: e.target.value})} />
+            <button className="btn btn-sm" onClick={() => openFolderPicker("output_dir", "settings.pickOutput")}>{t("settings.btn.browse")}</button>
+            <button className="btn btn-sm" onClick={() => openFolderByKey("output_dir")}>{t("settings.btn.open")}</button>
+          </div>
+          <div className="grid-2" style={{marginTop:6}}>
+            <div>
+              <label className="label">{t("settings.label.subdir")}</label>
+              <select className="input select" value={config.output_subdir_mode || "date"}
+                onChange={e => save({output_subdir_mode: e.target.value})}>
+                <option value="date">{t("settings.subdir.date")}</option>
+                <option value="project">{t("settings.subdir.project")}</option>
+                <option value="flat">{t("settings.subdir.flat")}</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">{t("settings.label.naming")}</label>
+              <select className="input select" value={config.output_naming_rule || "{date}_{prompt_prefix}"}
+                onChange={e => save({output_naming_rule: e.target.value})}>
+                <option value="{'{'}task_id{'}'}">{'{'}task_id{'}'}.mp4</option>
+                <option value="{'{'}date{'}'}_{'{'}prompt_prefix{'}'}">{'{'}date{'}'}_{'{'}prompt{'}'}.mp4</option>
+                <option value="{'{'}date{'}'}_{'{'}mode{'}'}_{'{'}seq{'}'}">{'{'}date{'}'}_{'{'}mode{'}'}_{'{'}seq{'}'}.mp4</option>
+              </select>
+            </div>
+          </div>
+          <div className="flex items-center justify-between" style={{marginTop:8}}>
+            <span className="text-sm">{t("settings.toggle.autoDownload")}</span>
+            <div className={`switch ${config.auto_download==="true"?"on":""}`}
+              onClick={() => save({auto_download: config.auto_download==="true"?"false":"true"})} />
+          </div>
+        </div>
+
+        <div className="form-row">
+          <label className="label">{t("settings.label.assetsDir")}</label>
+          <div className="folder-row">
+            <input className="input" value={config.assets_dir || ""} placeholder={t("settings.assetsDir.placeholder")}
+              onChange={e => setConfig({...config, assets_dir: e.target.value})}
+              onBlur={e => save({assets_dir: e.target.value})} />
+            <button className="btn btn-sm" onClick={() => openFolderPicker("assets_dir", "settings.pickAssets")}>{t("settings.btn.browse")}</button>
+            <button className="btn btn-sm" onClick={() => openFolderByKey("assets_dir")}>{t("settings.btn.open")}</button>
+          </div>
+        </div>
+
+        {stats && (
+          <div className="grid-3" style={{marginTop:12}}>
+            {Object.entries(stats).map(([k, s]) => (
+              <div key={k} className="card" style={{padding:10,textAlign:"center"}}>
+                <div className="text-xs text-dim">{statKeyMap[k] ? t(statKeyMap[k]) : k}</div>
+                <div style={{fontSize:18,fontWeight:600,color:"var(--primary)",margin:"4px 0"}}>{s.size_mb} MB</div>
+                <div className="text-xs text-dim">{t("settings.stats.fileCount", { n: s.file_count })}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="setting-section oa-settings-section">
+        <h3 className="oa-settings-section__title"><Ico name="link"/> {t("settings.section.webhook")}</h3>
+        <div className="form-row">
+          <label className="label">{t("settings.label.callback")}</label>
+          <input className="input" value={config.callback_url || ""} placeholder={t("settings.callback.placeholder")}
+            onChange={e => setConfig({...config, callback_url: e.target.value})}
+            onBlur={e => save({callback_url: e.target.value})} />
+          <p className="text-xs text-dim" style={{marginTop:4}}>{t("settings.callback.help")}</p>
+        </div>
+      </div>
+
+      <FolderPickerModal
+        open={!!folderPicker}
+        title={folderPicker?.title}
+        initialPath={folderPicker?.initialPath}
+        onCancel={() => setFolderPicker(null)}
+        onSelect={handleFolderPickerSelect}
+      />
+    </div>
+  );
+}
+
+// ── Main App ──
+function App() {
+  const t = useT();
+  const [activeTab, setActiveTab] = useState(0);
+  const models = useModels();
+  const [configLoaded, setConfigLoaded] = useState(false);
+  const [keyStatus, setKeyStatus] = useState("");
+  const [permsStatus, setPermsStatus] = useState(null);
+
+  useEffect(() => {
+    pluginApi("GET", "/settings").then(r => {
+      setConfigLoaded(true);
+      if (r.body?.config?.ark_api_key) setKeyStatus(r.body.config.ark_api_key);
+    }).catch(() => setConfigLoaded(true));
+  }, []);
+
+  // Refresh on mount, and re-expose so SettingsTab can re-fetch after a
+  // grant succeeds. Wrapped in useCallback so child effects with this in
+  // their deps array don't loop.
+  const refreshPerms = useCallback(async () => {
+    try {
+      const r = await pluginApi("GET", "/permissions/check");
+      if (r.body?.ok) setPermsStatus(r.body);
+    } catch (e) {
+      // permission probe failure is non-fatal; assume granted to avoid
+      // a permanent banner when the endpoint itself is unreachable.
+      setPermsStatus({ ok: true, all_granted: true, missing: [], checks: [] });
+    }
+  }, []);
+  useEffect(() => { refreshPerms(); }, [refreshPerms]);
+
+  const settingsIdx = TAB_IDS.indexOf("settings");
+  const permsMissing = permsStatus && !permsStatus.all_granted;
+
+  return (
+    <div className="app">
+      <div className="header">
+        <h1 className="oa-hero-title">
+          <span className="oa-hero-title__icon"><Ico name="video"/></span>
+          <span className="oa-hero-title__text">
+            {t("app.title")}
+            <span className="oa-hero-title__sub">{t("app.subtitle")}</span>
+          </span>
+        </h1>
+        <div className="header-right">
+          {keyStatus
+            ? <span className="api-pill" title={keyStatus}>
+                <Ico name="check"/> {t("app.api.label")}: {keyStatus.length > 12 ? keyStatus.slice(0,4)+"..."+keyStatus.slice(-4) : keyStatus}
+              </span>
+            : <span className="api-pill api-pill--missing"
+                onClick={() => setActiveTab(settingsIdx)}
+                title={t("app.api.tooltip")}>
+                <Ico name="warn"/> {t("app.api.missing")}
+              </span>}
+        </div>
+      </div>
+      <div className="tabs">
+        {TAB_IDS.map((id, i) => (
+          <div key={id} className={`tab ${activeTab===i?"active":""}`} onClick={() => setActiveTab(i)}>{t("tabs." + id)}</div>
+        ))}
+      </div>
+      {!keyStatus && configLoaded && activeTab !== settingsIdx && (
+        <div className="oa-config-banner" role="alert"
+             style={{margin:"12px 16px 0", flexShrink:0}}>
+          <span className="oa-icon oa-config-banner__icon"
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.warning() : ""}} />
+          <div className="oa-config-banner__text">
+            <strong>{t("banner.noKey.title")}</strong>
+            <div style={{fontSize:12, color:"var(--text-muted)", marginTop:2}}>
+              {t("banner.noKey.desc")}
+            </div>
+          </div>
+          <button className="oa-config-banner__action" type="button"
+                  onClick={() => setActiveTab(settingsIdx)}>
+            {t("banner.noKey.cta")}
+            <span className="oa-icon"
+                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.arrowRight() : ""}} />
+          </button>
+        </div>
+      )}
+      {permsMissing && activeTab !== settingsIdx && (
+        <div className="oa-config-banner" role="alert"
+             style={{margin:"12px 16px 0", flexShrink:0,
+                     borderColor:"var(--warning, #f59e0b)"}}>
+          <span className="oa-icon oa-config-banner__icon"
+                style={{color:"var(--warning, #f59e0b)"}}
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.warning() : ""}} />
+          <div className="oa-config-banner__text">
+            <strong>{t("banner.perms.title")}</strong>
+            <div style={{fontSize:12, color:"var(--text-muted)", marginTop:2}}>
+              {t("banner.perms.desc")}
+            </div>
+          </div>
+          <button className="oa-config-banner__action" type="button"
+                  onClick={() => setActiveTab(settingsIdx)}>
+            {t("banner.perms.cta")}
+            <span className="oa-icon"
+                  dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.arrowRight() : ""}} />
+          </button>
+        </div>
+      )}
+      <div className="content">
+        {activeTab === 0 && <CreateTab models={models} onGoToTasks={() => setActiveTab(1)} />}
+        {activeTab === 1 && <TaskListTab />}
+        {activeTab === 2 && <AssetsTab />}
+        {activeTab === 3 && <PromptGuideTab />}
+        {activeTab === 4 && <StoryboardTab onGoToSettings={() => setActiveTab(settingsIdx)} />}
+        {activeTab === settingsIdx && (
+          <SettingsTab
+            onKeyChange={k => setKeyStatus(k)}
+            permsStatus={permsStatus}
+            onPermsRefresh={refreshPerms}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// React 18 production build will UNMOUNT the entire root if any component
+// throws and there is no error boundary above it. This boundary catches
+// those errors at the App root, keeps the host shell visible, and shows
+// the actual error message + stack so we can debug.
+class PluginErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null, info: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    this.setState({ info });
+    console.error("[seedance-video] render error:", error, info);
+  }
+  reset = () => this.setState({ error: null, info: null });
+  render() {
+    if (!this.state.error) return this.props.children;
+    const err = this.state.error;
+    const stack = (err && err.stack) || String(err);
+    const compStack = (this.state.info && this.state.info.componentStack) || "";
+    const tr = (k) => _i18n.t(k);
+    return (
+      <div style={{padding: 24, maxWidth: 820, margin: "0 auto"}}>
+        <div className="oa-config-banner" role="alert" style={{borderColor: "var(--danger, #ef4444)"}}>
+          <span className="oa-icon oa-config-banner__icon" style={{color: "var(--danger, #ef4444)"}}
+                dangerouslySetInnerHTML={{__html: window.OpenAkitaIcons ? window.OpenAkitaIcons.warning() : ""}} />
+          <div className="oa-config-banner__text">
+            <strong>{tr("err.title")}</strong>
+            <div style={{fontSize: 12, color: "var(--text-muted)", marginTop: 4}}>
+              {err && err.message ? err.message : String(err)}
+            </div>
+          </div>
+          <button className="oa-config-banner__action" type="button" onClick={this.reset}>
+            {tr("err.retry")}
+          </button>
+        </div>
+        <details style={{marginTop: 16, fontSize: 12, color: "var(--text-muted)"}} open>
+          <summary style={{cursor: "pointer", marginBottom: 8}}>{tr("err.stackLabel")}</summary>
+          <pre style={{padding: 12, background: "var(--bg-card, var(--bg))", border: "1px solid var(--border)", borderRadius: 6, overflow: "auto", maxHeight: 240, whiteSpace: "pre-wrap", wordBreak: "break-word"}}>
+{stack}
+{compStack ? "\n--- React component stack ---" + compStack : ""}
+          </pre>
+        </details>
+      </div>
+    );
+  }
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <PluginErrorBoundary><App /></PluginErrorBoundary>
+);
+// Tell the host we have rendered the first frame so it can dismiss the
+// loading overlay accurately (instead of guessing from iframe.onLoad,
+// which fires before Babel-standalone compiles this script).
+if (window.OpenAkita && typeof window.OpenAkita.ready === "function") {
+  window.OpenAkita.ready();
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+{
+  "id": "media-post",
+  "name": "Media Post",
+  "version": "0.1.0",
+  "description": "Post-edit publishing kit — VLM cover picker (Qwen-VL-max 6-axis aesthetics), smart-recompose horizontal->vertical with EMA-smoothed subject tracking, 5-platform SEO pack (Qwen-Plus), and chapter cards (Playwright + ffmpeg drawtext fallback)",
+  "display_name_zh": "媒体发布套件",
+  "display_name_en": "Media Post",
+  "description_i18n": {
+    "zh": "视频成片到发布物料一站式 — VLM 智能选封面（Qwen-VL-max 6 维美学评分）/ 横竖屏智能重构图（EMA 平滑 + 主体跟踪）/ 5 平台 SEO 包（Qwen-Plus）/ 章节卡渲染（Playwright 主路径 + ffmpeg drawtext 降级）",
+    "en": "One-stop publishing kit from edited video to platform-ready assets — smart cover picking (Qwen-VL-max 6-axis scoring), horizontal-to-vertical smart recompose (EMA-smoothed subject tracking), 5-platform SEO pack (Qwen-Plus), chapter cards (Playwright primary + ffmpeg drawtext fallback)"
+  },
+  "type": "python",
+  "entry": "plugin.py",
+  "author": "OpenAkita",
+  "category": "creative",
+  "tags": ["video", "post-production", "publishing", "cover", "recompose", "seo", "chapter-cards", "dashscope", "qwen-vl", "ffmpeg"],
+  "permissions": [
+    "tools.register",
+    "routes.register",
+    "hooks.basic",
+    "config.read",
+    "config.write",
+    "data.own",
+    "brain.access"
+  ],
+  "requires": {
+    "openakita": ">=1.27.0",
+    "plugin_api": "~2",
+    "plugin_ui_api": "~1",
+    "sdk": ">=0.7.0,<0.8.0"
+  },
+  "provides": {
+    "tools": [
+      "media_post_create",
+      "media_post_status",
+      "media_post_list",
+      "media_post_cancel"
+    ],
+    "routes": true
+  },
+  "ui": {
+    "entry": "ui/dist/index.html",
+    "title": "媒体发布套件",
+    "title_i18n": {
+      "zh": "媒体发布套件",
+      "en": "Media Post"
+    },
+    "sidebar_group": "apps",
+    "permissions": ["upload", "download", "notifications", "theme", "clipboard"]
+  }
+}
