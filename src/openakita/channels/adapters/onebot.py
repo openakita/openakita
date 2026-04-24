@@ -768,7 +768,9 @@ class OneBotAdapter(ChannelAdapter):
             raise FileNotFoundError(f"File not found: {file_path}")
 
         chat_id_int = int(chat_id)
-        _is_grp = is_group if is_group is not None else True  # 文件上传默认尝试群
+        _is_grp = is_group if is_group is not None else (
+            self._chat_type_map.get(chat_id, "group") == "group"
+        )
 
         if caption:
             text_msg = [{"type": "text", "data": {"text": caption}}]
@@ -806,7 +808,9 @@ class OneBotAdapter(ChannelAdapter):
             raise FileNotFoundError(f"Voice file not found: {voice_path}")
 
         chat_id_int = int(chat_id)
-        _is_grp = is_group if is_group is not None else True
+        _is_grp = is_group if is_group is not None else (
+            self._chat_type_map.get(chat_id, "group") == "group"
+        )
 
         normalized = str(path.resolve()).replace("\\", "/")
         msg_array = [{"type": "record", "data": {"file": f"file:///{normalized}"}}]
