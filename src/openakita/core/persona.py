@@ -126,6 +126,59 @@ class PersonaTrait:
         )
 
 
+def persist_trait_to_memory(memory_manager: Any, trait: "PersonaTrait") -> bool:
+    """将 PersonaTrait 持久化到 MemoryStore（按 dimension 去重 + 统一 content / tags 格式）。
+
+    复用方：
+      - core/agent.py turn 处理（从用户消息挖掘出来的 trait）
+      - tools/handlers/persona.py update_persona_trait 工具
+      - 任何 TraitMiner 后续接入点
+
+    返回 True 表示新增或更新成功，False 表示 memory_manager 不可用。
+    """
+    if memory_manager is None:
+        return False
+
+    store = getattr(memory_manager, "store", None)
+    if store is not None:
+        try:
+            existing = store.query_semantic(memory_type="persona_trait", limit=50)
+        except Exception as e:
+            logger.debug(f"persist_trait_to_memory: query_semantic failed: {e}")
+            existing = []
+        for old in existing:
+            if old.content.startswith(f"{trait.dimension}="):
+                try:
+                    store.update_semantic(
+                        old.id,
+                        {
+                            "content": f"{trait.dimension}={trait.preference}",
+                            "importance_score": max(old.importance_score, trait.confidence),
+                        },
+                    )
+                except Exception as e:
+                    logger.debug(f"persist_trait_to_memory: update_semantic failed: {e}")
+                    return False
+                return True
+
+    try:
+        from ..memory.types import Memory, MemoryPriority, MemoryType
+
+        memory = Memory(
+            type=MemoryType.PERSONA_TRAIT,
+            priority=MemoryPriority.LONG_TERM,
+            content=f"{trait.dimension}={trait.preference}",
+            source=trait.source,
+            tags=[f"dimension:{trait.dimension}", f"preference:{trait.preference}"],
+            importance_score=trait.confidence,
+        )
+        memory_manager.add_memory(memory)
+        return True
+    except Exception as e:
+        logger.debug(f"persist_trait_to_memory: add_memory failed: {e}")
+        return False
+
+
 @dataclass
 class MergedPersona:
     """合并后的最终人格描述"""

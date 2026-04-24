@@ -3343,37 +3343,10 @@ class Agent:
                     self.trait_miner.mine_from_message(message, role="user"),
                     timeout=10,
                 )
-                for trait in mined_traits:
-                    store = getattr(self.memory_manager, "store", None)
-                    if store:
-                        existing = store.query_semantic(memory_type="persona_trait", limit=50)
-                        found = False
-                        for old in existing:
-                            if old.content.startswith(f"{trait.dimension}="):
-                                store.update_semantic(
-                                    old.id,
-                                    {
-                                        "content": f"{trait.dimension}={trait.preference}",
-                                        "importance_score": max(
-                                            old.importance_score, trait.confidence
-                                        ),
-                                    },
-                                )
-                                found = True
-                                break
-                        if found:
-                            continue
-                    from ..memory.types import Memory, MemoryPriority, MemoryType
+                from .persona import persist_trait_to_memory
 
-                    mem = Memory(
-                        type=MemoryType.PERSONA_TRAIT,
-                        priority=MemoryPriority.LONG_TERM,
-                        content=f"{trait.dimension}={trait.preference}",
-                        source=trait.source,
-                        tags=[f"dimension:{trait.dimension}", f"preference:{trait.preference}"],
-                        importance_score=trait.confidence,
-                    )
-                    self.memory_manager.add_memory(mem)
+                for trait in mined_traits:
+                    persist_trait_to_memory(self.memory_manager, trait)
                 if mined_traits:
                     logger.debug(f"[TraitMiner] Mined {len(mined_traits)} traits from user message")
             except Exception as e:
