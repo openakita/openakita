@@ -1,6 +1,6 @@
 ---
 name: chat-ui
-description: "Chat UI building blocks for React/Next.js from ui.inference.sh. Components: container, messages, input, typing indicators, avatars. Capabilities: chat interfaces, message lists, input handling, streaming. Use for: building custom chat UIs, messaging interfaces, AI assistants. Triggers: chat ui, chat component, message list, chat input, shadcn chat,"  react chat, chat interface, messaging ui, conversation ui, chat building blocks
+description: "Chat UI building blocks for React/Next.js from ui.inference.sh. Components: container, messages, input, typing indicators, avatars. Capabilities: chat interfaces, message lists, input handling, streaming. Use for: building custom chat UIs, messaging interfaces, AI assistants. Triggers: chat ui, chat component, message list, chat input, shadcn chat, react chat, chat interface, messaging ui, conversation ui, chat building blocks"
 ---
 
 # Chat UI Components

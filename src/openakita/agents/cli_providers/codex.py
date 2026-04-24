@@ -699,11 +699,10 @@ class CodexAdapter:
             )
 
         final_text = "".join(acc.text_parts)
-        if (
-            request.profile.cli_permission_mode == CliPermissionMode.WRITE
-            and not final_text.strip()
-            and not acc.tools_used
-        ):
+        # Empty turn detection: catch CLI processes that exit successfully but do nothing.
+        # Previously only checked in WRITE mode; now applies to all modes to prevent
+        # "exits code 0, 0 tools, no output" being treated as success.
+        if not final_text.strip() and not acc.tools_used:
             return ProviderRunResult(
                 final_text=final_text,
                 tools_used=[],

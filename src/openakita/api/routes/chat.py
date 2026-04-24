@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Module-level set to hold references to background tasks and prevent GC.
+# Without this, asyncio.create_task() returns a Task with no external reference,
+# so the GC may collect it while it's still awaiting (slow I/O).
+_background_tasks: set[asyncio.Task] = set()
+
 _PRIMARY_CHAT_UNSUPPORTED_CODE = "primary_chat_profile_unsupported"
 
 
@@ -358,7 +363,9 @@ def _schedule_background_save(
             except Exception:
                 pass
 
-    asyncio.create_task(_bg_drain_and_save())
+    task = asyncio.create_task(_bg_drain_and_save())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
     logger.info(
         "[Chat API] Scheduled background save for long-running task (conv=%s)",
         conversation_id,

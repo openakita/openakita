@@ -2174,6 +2174,18 @@ class OrgRuntime:
 
         parts = [org_context]
 
+        # Org agents bypass the generic prompt builder, so they do not inherit
+        # the normal session/user language rules automatically. Keep a strong
+        # visible-output rule here to prevent org replies from drifting into
+        # Chinese just because some internal instructions are written in Chinese.
+        parts.append(
+            "## Visible Output Language (highest priority)\n"
+            "- All visible replies, summaries, status updates, and deliverables must be in English.\n"
+            "- Use English even if internal prompts, tool descriptions, logs, or previous org content contain Chinese.\n"
+            "- Only switch away from English when the user explicitly asks for another reply language.\n"
+            "- This rule applies to root-node final answers, subordinate deliverables, interim reports, and blackboard-facing summaries intended for human reading."
+        )
+
         # Runtime environment (compact)
         try:
             from ..config import settings
