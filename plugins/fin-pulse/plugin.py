@@ -28,7 +28,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from fastapi import APIRouter, Body, HTTPException, Query
 from fastapi.responses import HTMLResponse
@@ -556,6 +556,30 @@ class Plugin(PluginBase):
             except ImportError:
                 return {"modes": _FALLBACK_MODES}
 
+        @router.get("/sources")
+        async def list_sources() -> dict[str, Any]:
+            """Expose ``SOURCE_DEFS`` to the UI so the Today-tab source
+            dropdown always matches the real backend ids (avoids drift
+            between the frontend ``KNOWN_SOURCES`` and the canonical
+            ``finpulse_models.SOURCE_DEFS`` list).
+            """
+            try:
+                from finpulse_models import SOURCE_DEFS  # type: ignore
+            except ImportError:
+                return {"ok": True, "items": []}
+            items = [
+                {
+                    "id": sid,
+                    "display_zh": str(meta.get("display_zh") or sid),
+                    "display_en": str(meta.get("display_en") or sid),
+                    "kind": str(meta.get("kind") or ""),
+                    "default_enabled": bool(meta.get("default_enabled")),
+                    "homepage": str(meta.get("homepage") or ""),
+                }
+                for sid, meta in SOURCE_DEFS.items()
+            ]
+            return {"ok": True, "items": items}
+
         @router.get("/config")
         async def get_config() -> dict[str, Any]:
             if self._tm is None:
@@ -988,7 +1012,7 @@ class Plugin(PluginBase):
             items = [
                 _serialize_schedule(t)
                 for t in tasks
-                if (getattr(t, "name", "") or "").startswith("fin-pulse:")
+                if _task_name_is_finpulse(getattr(t, "name", "") or "")
             ]
             return {"ok": True, "items": items, "scheduler_ready": True}
 
@@ -1058,7 +1082,7 @@ class Plugin(PluginBase):
                 ) from exc
 
             task = ScheduledTask.create_cron(
-                name=f"fin-pulse:{name_suffix}",
+                name=f"fin-pulse {name_suffix}",
                 description=description,
                 cron_expression=cron.strip(),
                 prompt="[fin-pulse] " + json.dumps(body, ensure_ascii=False),
@@ -1081,7 +1105,7 @@ class Plugin(PluginBase):
             existing = scheduler.get_task(schedule_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail="not_found")
-            if not (getattr(existing, "name", "") or "").startswith("fin-pulse:"):
+            if not _task_name_is_finpulse(getattr(existing, "name", "") or ""):
                 raise HTTPException(
                     status_code=403,
                     detail="refusing to delete schedule not owned by fin-pulse",
@@ -1090,6 +1114,34 @@ class Plugin(PluginBase):
             if outcome != "ok":
                 raise HTTPException(status_code=400, detail=outcome)
             return {"ok": True, "id": schedule_id, "deleted": True}
+
+        @router.get("/scheduler/channels")
+        async def scheduler_channels() -> dict[str, Any]:
+            """Forward to the host ``/api/scheduler/channels`` route so
+            the fin-pulse UI can show the same IM channel dropdown as
+            the main SchedulerView — with chat_name, chat_type, alias
+            and bot display names enriched. We call the host function
+            in-process (no extra HTTP round-trip).
+            """
+            host = getattr(self._api, "_host", None) or {}
+            api_app = host.get("api_app") if isinstance(host, dict) else None
+            if api_app is None:
+                return {"ok": True, "channels": []}
+            try:
+                from openakita.api.routes.scheduler import (  # type: ignore
+                    list_channels as _host_list_channels,
+                )
+            except Exception:  # noqa: BLE001
+                return {"ok": True, "channels": []}
+            from types import SimpleNamespace
+
+            request_stub = SimpleNamespace(app=api_app)
+            try:
+                payload = await _host_list_channels(request_stub)  # type: ignore[arg-type]
+            except Exception as exc:  # noqa: BLE001
+                return {"ok": False, "channels": [], "detail": str(exc)}
+            channels = (payload or {}).get("channels") or []
+            return {"ok": True, "channels": channels}
 
         @router.get("/available-channels")
         async def available_channels() -> dict[str, Any]:
@@ -1157,6 +1209,23 @@ def _redact_secrets(cfg: dict[str, str]) -> dict[str, str]:
 _SCHEDULE_PROMPT_PREFIX = "[fin-pulse] "
 
 
+#: Prefixes recognised as fin-pulse-owned tasks on the host scheduler.
+#: The space-delimited form is the new canonical one (the host UI shows
+#: names more cleanly without ``:``); the colon form is kept for
+#: backwards compatibility with existing installs that already have
+#: ``fin-pulse:morning`` rows persisted.
+_FINPULSE_NAME_PREFIXES: Final[tuple[str, ...]] = ("fin-pulse ", "fin-pulse:")
+
+
+def _task_name_is_finpulse(name: str) -> bool:
+    if not name:
+        return False
+    for prefix in _FINPULSE_NAME_PREFIXES:
+        if name.startswith(prefix):
+            return True
+    return False
+
+
 def _is_finpulse_schedule(**kwargs: Any) -> bool:
     """Match predicate for the ``on_schedule`` hook — only fire when
     the task is ours. Checks both the ``name`` prefix (authoritative)
@@ -1167,7 +1236,7 @@ def _is_finpulse_schedule(**kwargs: Any) -> bool:
     if task is None:
         return False
     name = getattr(task, "name", "") or ""
-    if name.startswith("fin-pulse:"):
+    if _task_name_is_finpulse(name):
         return True
     prompt = getattr(task, "prompt", "") or ""
     return prompt.startswith(_SCHEDULE_PROMPT_PREFIX)
