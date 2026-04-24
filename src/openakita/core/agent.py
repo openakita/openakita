@@ -4278,6 +4278,9 @@ general Q&A yourself.
         session_type = "im" if _channel and _channel not in ("cli", "desktop") else "cli"
         self._current_session_type = session_type
 
+        # Store early voice transcripts for display in streaming response
+        self._voice_transcripts_for_display = _early_transcripts if _early_transcripts else []
+
         return messages, session_type, task_monitor, conversation_id, im_tokens
 
     async def _finalize_session(
@@ -4845,6 +4848,16 @@ general Q&A yourself.
             )
 
             yield {"type": "heartbeat"}
+
+            # Display voice transcription to user before agent starts working
+            _voice_transcripts = getattr(self, "_voice_transcripts_for_display", [])
+            if _voice_transcripts:
+                _transcript_text = " ".join(_voice_transcripts)
+                yield {
+                    "type": "voice_transcription",
+                    "content": _transcript_text,
+                }
+                self._voice_transcripts_for_display = []  # Clear after displaying
 
             # 准备阶段后检查：如果准备期间收到了取消信号（含 pending cancel）
             _conv_cancel_id = conversation_id or session_id

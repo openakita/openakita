@@ -31,6 +31,7 @@ class StreamEventType(StrEnum):
     # ── Text output ──
     TEXT_DELTA = "text_delta"
     TEXT_REPLACE = "text_replace"
+    VOICE_TRANSCRIPTION = "voice_transcription"
 
     # ── Tool execution ──
     TOOL_CALL_START = "tool_call_start"

@@ -2210,6 +2210,12 @@ export function ChatView({
                   chainGroups = chainGroups.map((g, i) => i === chainGroups.length - 1 ? currentChainGroup! : g);
                 }
                 break;
+              case "voice_transcription":
+                // Display voice transcription to user before agent response
+                if (event.content) {
+                  currentContent = `🎤 *[语音识别]*: ${event.content}\n\n---\n\n`;
+                }
+                break;
               case "text_delta":
                 currentContent += event.content;
                 break;
