@@ -27,6 +27,7 @@ export type SidebarProps = {
   desktopVersion: string;
   backendVersion: string | null;
   serviceRunning: boolean;
+  onBugReport: () => void;
   onRefreshStatus: () => Promise<void>;
   isWeb?: boolean;
   mobileOpen?: boolean;

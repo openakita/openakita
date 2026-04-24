@@ -5172,6 +5172,7 @@ function MainApp() {
         desktopVersion={desktopVersion}
         backendVersion={backendVersion}
         serviceRunning={serviceStatus?.running ?? false}
+        onBugReport={() => setBugReportOpen(true)}
         onRefreshStatus={async () => { await refreshStatus(undefined, undefined, true); }}
         isWeb={IS_WEB}
         httpApiBase={httpApiBase()}
