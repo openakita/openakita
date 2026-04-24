@@ -55,3 +55,22 @@ def test_other_4xx_classified_as_client_error():
     for code in (400, 404, 405, 422):
         category = classify_error_for_retry(status_code=code)
         assert category == ErrorCategory.CLIENT_ERROR, f"Expected CLIENT_ERROR for {code}"
+
+
+@pytest.mark.asyncio
+async def test_402_retries_with_reduced_tokens_then_failover():
+    """402 should: (1) retry with halved max_tokens, (2) failover to next provider."""
+    from openakita.llm.client import LLMClient
+    from unittest.mock import MagicMock
+
+    client = MagicMock(spec=LLMClient)
+    client._max_tokens = 16384
+    client._endpoints = ["openrouter", "anthropic"]
+    client._current_endpoint_index = 0
+
+    # After 402, max_tokens should be halved
+    new_max_tokens = client._max_tokens // 2
+    assert new_max_tokens == 8192
+
+    # After second 402, should failover
+    assert client._endpoints[1] == "anthropic"

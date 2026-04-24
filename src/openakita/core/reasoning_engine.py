@@ -102,6 +102,32 @@ def _apply_tool_result_budget(
 
 
 # ---------------------------------------------------------------------------
+# Response persistence guard
+# ---------------------------------------------------------------------------
+
+
+def should_persist_response(response: str | None) -> bool:
+    """Check if response should be persisted to session.
+
+    Empty responses or error-only responses should not be saved
+    to prevent polluting conversation history.
+    """
+    if not response:
+        return False
+
+    stripped = response.strip()
+    if not stripped:
+        return False
+
+    # Don't persist error-only responses
+    error_markers = ["[Error:", "[API Error:", "[Failed:"]
+    if any(stripped.startswith(m) for m in error_markers):
+        return False
+
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Mode-based tool filtering
 # ---------------------------------------------------------------------------
 
